@@ -83,7 +83,13 @@ You will need installed locally:
    ```
    Copy the printed values into `.env.local` and into the Vercel dashboard env vars (Production + Preview + Development scopes).
 
-6. **Critical:** `AUTH_JWT_SECRET` must equal the Supabase project's JWT secret (Dashboard → Project Settings → API → JWT Settings). If they drift, every authenticated request 500s. Set both at once. Rotate both at once.
+6. **Critical — Supabase HS256 standby key.** Supabase's new JWT signing-keys system (late 2025+) replaces the editable single JWT Secret. Configure your `AUTH_JWT_SECRET` as an **HS256 standby key** in the Supabase dashboard:
+   - Supabase Dashboard → JWT Keys → Create standby key
+   - Algorithm: HS256
+   - Key value: paste your `AUTH_JWT_SECRET` (the exact same string, no encoding changes)
+   - Save without promoting to current
+   
+   This lets Supabase PostgREST verify the JWTs our app signs, so RLS sees `request.jwt.claim.user_id` natively. **If the two values drift apart, every authenticated request 500s.** Rotate them together. See `docs/runbooks/jwt-rotation.md` (Phase 2).
 
 7. **Run the dev server.**
    ```bash

@@ -1,0 +1,33 @@
+# =============================================================================
+# Files excluded from Vercel CLI deploys (`vercel deploy`).
+#
+# .gitignore handles GitHub-bound exclusions; this file handles what gets
+# uploaded when deploying via the CLI. The two overlap heavily but exist for
+# different purposes.
+# =============================================================================
+
+# Never upload local secrets — Vercel's env var system is the source of truth.
+.env
+.env.local
+.env.*.local
+.env.*.development
+.env.*.preview
+.env.*.production
+.env.local.generated.tmp
+
+# Build outputs and caches
+.next
+.vercel
+node_modules
+*.tsbuildinfo
+
+# Dev tooling artifacts
+.claude
+coverage
+.DS_Store
+
+# Misc
+README.md
+AGENTS.md
+CLAUDE.md
+docs
