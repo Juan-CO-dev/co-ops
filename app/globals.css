@@ -1,0 +1,92 @@
+@import "tailwindcss";
+
+/*
+ * CO-OPS Design Tokens — Section 14 of Foundation Spec v1.2.
+ *
+ * These names are LOAD-BEARING. Modules reference them by name.
+ * Do not rename without a coordinated migration across all modules.
+ */
+
+:root {
+  /* Surface palette (dark theme always — no prefers-color-scheme switching) */
+  --co-bg: #0A0A0B;
+  --co-surface: #111113;
+  --co-surface-2: #18181b;
+  --co-border: #1a1a1e;
+  --co-border-2: #2a2a2e;
+
+  /* Brand */
+  --co-gold: #D4A843;
+  --co-gold-deep: #B8860B;
+
+  /* Text */
+  --co-text: #E5E5E5;
+  --co-text-muted: #888888;
+  --co-text-dim: #555555;
+  --co-text-faint: #333333;
+
+  /* Status */
+  --co-success: #2D7D46;
+  --co-warning: #F59E0B;
+  --co-danger: #C0392B;
+  --co-info: #2E75B6;
+
+  /* Role colors (Section 7.1) */
+  --role-cgs:          #D4A843;
+  --role-owner:        #6B7280;
+  --role-moo:          #1F4E79;
+  --role-gm:           #2E75B6;
+  --role-agm:          #2D7D46;
+  --role-catering-mgr: #E67E22;
+  --role-shift-lead:   #8B5CF6;
+  --role-key-holder:   #F59E0B;
+  --role-trainer:      #EC4899;
+}
+
+@theme inline {
+  /* Surface palette */
+  --color-co-bg: var(--co-bg);
+  --color-co-surface: var(--co-surface);
+  --color-co-surface-2: var(--co-surface-2);
+  --color-co-border: var(--co-border);
+  --color-co-border-2: var(--co-border-2);
+
+  /* Brand */
+  --color-co-gold: var(--co-gold);
+  --color-co-gold-deep: var(--co-gold-deep);
+
+  /* Text */
+  --color-co-text: var(--co-text);
+  --color-co-text-muted: var(--co-text-muted);
+  --color-co-text-dim: var(--co-text-dim);
+  --color-co-text-faint: var(--co-text-faint);
+
+  /* Status */
+  --color-co-success: var(--co-success);
+  --color-co-warning: var(--co-warning);
+  --color-co-danger: var(--co-danger);
+  --color-co-info: var(--co-info);
+
+  /* Roles */
+  --color-role-cgs: var(--role-cgs);
+  --color-role-owner: var(--role-owner);
+  --color-role-moo: var(--role-moo);
+  --color-role-gm: var(--role-gm);
+  --color-role-agm: var(--role-agm);
+  --color-role-catering-mgr: var(--role-catering-mgr);
+  --color-role-shift-lead: var(--role-shift-lead);
+  --color-role-key-holder: var(--role-key-holder);
+  --color-role-trainer: var(--role-trainer);
+
+  /* Typography — DM Sans from next/font, exposed as --font-dm-sans */
+  --font-sans: var(--font-dm-sans), "Segoe UI", system-ui, sans-serif;
+}
+
+html, body {
+  background: var(--co-bg);
+  color: var(--co-text);
+  font-family: var(--font-sans);
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
