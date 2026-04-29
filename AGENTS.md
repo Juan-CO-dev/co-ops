@@ -73,3 +73,78 @@ If you find any committed reference to `complimentsonly.com`, fix it in the same
 - **`NEXT_PUBLIC_APP_URL`** — currently unset in Vercel env. Resolve when production domain is known (or use `VERCEL_URL` injection).
 - **PAT expiration calendar reminder** — Juan's responsibility; flagged once during Phase 0 push troubleshooting.
 - **Resend domain verification** — `complimentsonlysubs.com` not yet verified; `EMAIL_FROM` swap deferred until it is.
+
+### Juan's project identity
+
+Juan's CO/project identity is **`juan@complimentsonlysubs.com`** (his CO work email — also the seed CGS user email in the database). His personal Gmail is kept entirely separate from CO contexts; do not use it as a project identity, do not reference it in code, configs, or docs. If any tooling has captured a Gmail address as Juan's project identity, correct it.
+
+---
+
+## Phase 1 — Database (schema + RLS + seed; Session A complete 2026-04-29)
+
+### Stack as actually built
+
+- **Postgres 17.6.1.111** on Supabase (`co-ops` project, us-east-1, id `bgcvurheqzylyfehqgzh`). Spec §3.1 said PG15; PG17 is what's running. No blocker.
+- **`pgcrypto` extension** enabled (`crypt()` + `gen_salt('bf', 12)` for the placeholder bcrypt in Juan's seed `pin_hash`).
+- **53 tables** in `public` schema (spec said ~45; actual count is 53 across §4.1–§4.16).
+- **28 named migrations** applied via the Supabase MCP `apply_migration` tool — every change is traceable. 15 schema, 10 RLS, 3 seed.
+- **`relrowsecurity = true` on every table.** Confirmed by `pg_class` smoke test.
+
+### RLS footguns and durable lessons (Session A)
+
+These cost an extra round of corrective migrations in Session A. **Read this section before writing any RLS policy.**
+
+#### `FOR ALL` permits DELETE silently
+
+Postgres permissive policies OR-stack **per operation**. A `FOR ALL` write policy applies to SELECT, INSERT, UPDATE, **AND DELETE**. Pairing `FOR ALL USING (level >= N)` with `FOR DELETE USING (false)` does *not* deny deletes — the OR-stack resolves to `(level >= N) OR false = level >= N`, so any user passing the write check can delete.
+
+**Fix:** never use `FOR ALL` for writes. Always split into `FOR INSERT` + `FOR UPDATE`, paired with an explicit `FOR DELETE USING (false)`. The spec verbatim policies in §5.2 / §5.4 / §5.5 had this bug; corrected in `0021_rls_auth_corrections` and `0023_rls_verbatim_corrections`.
+
+#### Append-only philosophy is enforced at RLS
+
+CO-OPS is append-only. Every table has `_no_user_delete USING (false)`. Configuration tables (with `active` columns — `vendors`, `vendor_items`, `par_levels`, `checklist_templates`, `checklist_template_items`, `announcements`, `recipes`, etc.) are **deactivated via `active = false`, never deleted**. The audit trail and correction-table model rely on rows persisting; delete + re-insert breaks history.
+
+If you find yourself wanting to `DELETE`, you're in the wrong code path. Flip `active`, append a correction row, or supersede via a new immutable record.
+
+#### RLS policy naming convention
+
+- `<table>_<action>` for permissive policies that allow operations.
+  - Examples: `users_read_self`, `vendor_items_insert`, `announcements_update`, `shift_overlays_update_self`.
+- `<table>_no_user_<operation>` for explicit denies via `USING (false)` / `WITH CHECK (false)`.
+  - Examples: `audit_no_user_insert`, `users_no_user_delete`, `prep_list_resolutions_no_user_update`.
+
+Service-role bypasses RLS entirely. The `_no_user_*` policies block end-user clients while letting `lib/audit.ts`, `lib/notifications.ts`, integration adapters, etc. continue to write via service-role client.
+
+#### Column-level enforcement is app-layer, not RLS
+
+Postgres can't do per-column RLS cleanly. Where the spec/policy needs column-level gating, RLS allows the row write and the API layer rejects payloads touching restricted columns. Documented sites (each has a `COMMENT ON POLICY` or migration comment):
+
+- **`shift_overlays.forecast_notes`** — CGS-only (level 8). `/api/overlays/*` rejects payloads from non-CGS users that include this field.
+- **`vendors_update_trivial`** — RLS allows AGM+ to update any vendor row; `/api/admin/vendors/[id]` enforces trivial-vs-full edit split (trivial = AGM+: contact_person/email/phone, ordering_email/url, notes; full = GM+: name/category/ordering_days/payment_terms/account_number/active).
+- **`notification_recipients_update_self`** — RLS allows users to update their own delivery row; the API rejects payloads touching `delivery_status`/`delivery_method`/`delivered_at` (only `read_at`/`acknowledged_at` are user-editable).
+- **`users_update_self`** vs **`users_update_admin`** OR-stack — RLS allows self-updates to any field; the admin API enforces that self-updates only touch `phone`/`sms_consent`/`sms_consent_at`. Sensitive fields (role, email, email_verified, active, pin_hash, password_hash, locked_until, failed_login_count) require the admin path.
+
+**`training_progress` self-signoff prevention** is an exception — it *can* be enforced in RLS via `signed_off_by != current_user_id()` in WITH CHECK, and is. Use RLS when the constraint is row-shaped; use app-layer when it's column-shaped or cross-row.
+
+#### `canActOn` (admin cannot act on peer/senior) is app-layer
+
+Strict-greater target check (admin's level > target's level) lives in the admin API, not RLS. RLS gates "can this user touch the table at all?"; the admin route enforces "can this admin act on this specific target?". `lib/roles.ts` `canActOn()` is the helper.
+
+### What's seeded
+
+- **2 locations**: Capitol Hill (code `MEP`, type `permanent`), P Street (code `EM`, type `permanent`). `created_by = NULL` (bootstrap, before Juan existed).
+- **1 user**: Juan (`juan@complimentsonlysubs.com`, role `cgs`, active, email_verified). `created_by = NULL` (bootstrap). **`pin_hash` is a placeholder bcrypt of the literal string `seed_placeholder` at cost 12** — Phase 2 must overwrite via the admin tool / PIN reset flow before Juan can sign in.
+- **1 vendor**: `TBD - Reassign` (category `other`, active). The visible suffix is the Cristian/Juan reminder to remap items post-foundation.
+- **24 vendor_items** attached to TBD - Reassign with `weekday_par = NULL` and `weekend_par = NULL`. NULL is intentional — pars are set per-location via `par_levels` (Phase 5 admin tool).
+
+### Auth path the schema expects
+
+The custom JWT layer (Phase 2 `lib/auth.ts`) sets `request.jwt.claim.user_id` per request via `set_config('request.jwt.claim.user_id', '<uuid>', true)`. Helper functions read from this claim. Service-role connections bypass RLS entirely — used for `lib/audit.ts`, `lib/notifications.ts`, integration adapters, password reset / email verification flows, and the prep-list resolution generator.
+
+### Carry-overs to future phases
+
+- **Phase 1 Session B (RLS audit)** — gate before Phase 2 opens. See `docs/PHASE_1_SESSION_A_HANDOFF.md`.
+- **Phase 2 must overwrite Juan's placeholder `pin_hash`** before any auth attempt. Until then, all PIN auth attempts will (correctly) fail.
+- **Phase 4+ API routes** must enforce the documented column-level boundaries above (`forecast_notes`, vendors trivial-vs-full, notification recipients fields, users self-update fields).
+- **Phase 6 `/api/photos/[id]`** must validate parent artifact RLS before issuing signed URLs. `report_photos_read` is permissive at level ≥3 because the polymorphic FK prevents clean parent-artifact join in RLS — the API is the second layer.
+- **Supabase Storage bucket** (`report-photos`, private) — deferred to Phase 6 with the rest of the photo service. Storage policies, CORS, and signed-URL config bundle there.
