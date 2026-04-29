@@ -56,7 +56,7 @@ export function canActOn(actor: RoleCode, target: RoleCode): boolean {
   return getRoleLevel(actor) > getRoleLevel(target);
 }
 
-/** Minimum PIN length: 5 digits for level 5+, 4 digits for level 4 and below. */
-export function minPinLength(role: RoleCode): 4 | 5 {
-  return getRoleLevel(role) >= 5 ? 5 : 4;
+/** PIN length: 4 digits for all roles (Phase 2 Session 1 — matches Toast/7shifts punch-in convention). */
+export function minPinLength(_role: RoleCode): 4 {
+  return 4;
 }

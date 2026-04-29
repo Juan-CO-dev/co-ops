@@ -41,7 +41,7 @@ The Foundation Spec v1.2 specifies older versions. We deviated to current stable
 
 These foundation libraries are populated in full from spec §4 + §7. Phase 3 doesn't need to write them — only runtime helpers (location scoping logic, step-up modal wiring, session cookie readers).
 
-- `lib/roles.ts` — full role registry, level lookups, `minPinLength()` (5 for level ≥5, 4 below). PIN length is a Juan addition not in spec — see Phase 0 transcript decision #1.
+- `lib/roles.ts` — full role registry, level lookups, `minPinLength()` (returns `4` for all roles per Phase 2 Session 1 decision — matches Toast/7shifts punch-in convention).
 - `lib/permissions.ts` — full permission matrix
 - `lib/destructive-actions.ts` — full destructive action list
 - `lib/types.ts` — TypeScript shapes for every artifact (User, Location, Vendor, VendorItem, ParLevel, ChecklistTemplate, ChecklistInstance, ChecklistCompletion, ChecklistSubmission, ChecklistIncompleteReason, PrepListResolution, ShiftOverlay, WrittenReport, Announcement, TrainingReport, ReportPhoto, AuditLogEntry, HandoffFlag). camelCase at the application layer; the Supabase client layer (Phase 1) handles the snake_case translation.
@@ -151,12 +151,58 @@ Strict-greater target check (admin's level > target's level) lives in the admin 
 
 ### Auth path the schema expects
 
-The custom JWT layer (Phase 2 `lib/auth.ts`) sets `request.jwt.claim.user_id` per request via `set_config('request.jwt.claim.user_id', '<uuid>', true)`. Helper functions read from this claim. Service-role connections bypass RLS entirely — used for `lib/audit.ts`, `lib/notifications.ts`, integration adapters, password reset / email verification flows, and the prep-list resolution generator.
+The custom JWT layer (Phase 2 `lib/auth.ts`) signs an HS256 JWT containing `user_id` and `role: 'authenticated'` (plus app-layer convenience claims — see Phase 2 Session 2 entries). The JWT is sent on the `Authorization: Bearer …` header; PostgREST verifies it against the configured HS256 signing key and exposes the claims as `request.jwt.claims` (plural JSONB). Helper functions read `current_setting('request.jwt.claims', true)::jsonb ->> '<key>'` (per migration `0032_helpers_modern_claim_format`). Service-role connections bypass RLS entirely — used for `lib/audit.ts`, `lib/notifications.ts`, integration adapters, password reset / email verification flows, and the prep-list resolution generator.
 
 ### Carry-overs to future phases
 
-- **Phase 1 Session B (RLS audit)** — gate before Phase 2 opens. See `docs/PHASE_1_SESSION_A_HANDOFF.md`.
+- **Phase 1 Session B (RLS audit)** — complete (124/124 pass; see `docs/PHASE_1_RLS_AUDIT.md`). Phase 1 locked at tag `phase-1-complete` on main.
 - **Phase 2 must overwrite Juan's placeholder `pin_hash`** before any auth attempt. Until then, all PIN auth attempts will (correctly) fail.
 - **Phase 4+ API routes** must enforce the documented column-level boundaries above (`forecast_notes`, vendors trivial-vs-full, notification recipients fields, users self-update fields).
 - **Phase 6 `/api/photos/[id]`** must validate parent artifact RLS before issuing signed URLs. `report_photos_read` is permissive at level ≥3 because the polymorphic FK prevents clean parent-artifact join in RLS — the API is the second layer.
 - **Supabase Storage bucket** (`report-photos`, private) — deferred to Phase 6 with the rest of the photo service. Storage policies, CORS, and signed-URL config bundle there.
+
+---
+
+## Phase 2 — Session 2 (auth lib + standby-key gate, 2026-04-29)
+
+### Durable-knowledge entries
+
+Seven architectural lessons surfaced during Session 2 implementation. They are independent of any specific Phase 2 deliverable and apply to every auth-bearing path in the codebase.
+
+#### PIN length is 4 digits for all roles
+
+Locked Phase 2 Session 1: every role uses a 4-digit PIN — including level-5+ roles that also have email+password as a secondary auth path. Matches Toast / 7shifts punch-in convention so frontline staff don't mode-switch between systems. Earlier draft spec considered a 5/4 split (5 digits for level≥5, 4 below); that was rejected in Session 1 — the operational cost of the split exceeds the marginal entropy gain when the lockout policy (5 failures / 15 min lock) is the actual brute-force defense. `lib/roles.ts` `minPinLength()` returns `4` for every role; do not reintroduce role-conditional length logic.
+
+#### PostgREST reserves the `role` JWT claim for the database role
+
+PostgREST inspects the `role` claim in any verified JWT and uses it as the Postgres role to switch into for the request. The claim must contain a valid Postgres role name (`authenticated`, `anon`, `service_role`); anything else (such as our app role `cgs`) causes PostgREST to attempt `SET ROLE <invalid>` and fail. Our app role therefore lives in `app_role`, not `role`. **Final JWT claim shape locked Phase 2 Session 2:**
+
+```ts
+{ user_id, app_role, role_level, locations, session_id, role: 'authenticated', iat, exp }
+```
+
+`proxy.ts` (Phase 2 Session 2) attaches `x-co-role` from `app_role`, `x-co-role-level` from `role_level`, etc. — never from the PostgREST-reserved `role` claim. Caught Phase 2 Session 2 architecture review.
+
+#### Supabase Management API hex-decodes HS256 secrets on key creation
+
+When creating an HS256 signing key via `POST /v1/projects/{ref}/config/auth/signing-keys` with `private_jwk.k` set to a hex string, the API interprets the value as hex-encoded and decodes it to raw bytes server-side (so a 64-character hex `AUTH_JWT_SECRET` becomes a 32-byte HS256 key). Our app must therefore consume `AUTH_JWT_SECRET` via `Buffer.from(secret, "hex")` to produce matching key bytes. Caught Phase 2 Session 2 standby-key smoke test (UTF-8 interpretation produced signatures that PostgREST rejected with PGRST301; hex-decoded interpretation verified correctly). The pattern is baked into `lib/auth.ts` (`getJwtKey()`).
+
+#### PostgREST v12+ deprecated `request.jwt.claim.<name>` (singular)
+
+Modern PostgREST populates only `request.jwt.claims` (plural, JSONB containing the full payload). RLS helpers reading the singular form silently return NULL even when the JWT verifies correctly. Migration `0032_helpers_modern_claim_format` updated `current_user_id()` to read `current_setting('request.jwt.claims', true)::jsonb ->> 'user_id'`; `current_user_role_level()` and `current_user_locations()` were unaffected because they delegate through `current_user_id()`. The Phase 1 RLS audit harness set `request.jwt.claim.user_id` directly via `SET LOCAL`, bypassing PostgREST's claim-extraction step — the policies themselves were correct, only the claim-source pointer was stale. Honest accounting: this latent bug would have shown up the moment Phase 2 hit PostgREST with a real JWT, regardless of how thorough the Phase 1 audit was, because the audit's harness construction sidestepped the integration path.
+
+#### JWT-embedded authorization claims have refresh latency
+
+`locations`, `app_role`, and `role_level` are signed into the session JWT for app-layer convenience and only refresh on session rotation (re-login or 12-hour exp). If admin user-deactivation or location-removal must take effect immediately, the admin path must revoke active sessions in addition to mutating the user record. **Phase 5 admin user/location routes acceptance criterion:** every user/location mutation in the admin API that affects authorization (deactivate, role change, location add/remove) must call `revokeSession()` for every active session of the affected user inside the same transaction.
+
+#### Session storage uses dual verification: JWT + token_hash
+
+The session JWT carries identity (`session_id` claim) and is signed/verified via `AUTH_JWT_SECRET`. The `sessions.token_hash` column stores `hashToken(jwt)` (SHA-256). `requireSession` validates BOTH layers: JWT signature/exp via `verifyJwt`, AND that `hashToken(rawCookieJwt) === sessions.token_hash` for the row identified by `session_id`. This dual-check protects against `AUTH_JWT_SECRET` leak scenarios — a forged JWT can pass signature verification but won't match the stored hash for any existing session. On mismatch, `requireSession` returns 401 with cleared cookie AND writes an `audit_log` entry tagged `session_token_mismatch` (action: `session_token_mismatch`, resource_table: `sessions`, resource_id: the session row id, metadata captures IP + user-agent + reason). The schema column was added in Phase 1 — Phase 2 Session 2 surfaced it during session-lifecycle implementation and wired the verification path correctly. Pattern lives in `lib/session.ts` (`createSession` writes the hash, `requireSession` verifies it).
+
+#### audit_log is permanent and accumulates orphaned references
+
+When test/smoke setups create temporary resources and trigger audit events, the audit row references a `resource_id` that is later cleaned up. The audit row remains. This is correct: the record of detection is more important than referential integrity for forensic data. Production auditors investigating `audit_log` entries should not assume `resource_id` always points to an existing row — historical events about deleted resources are valid evidence. Phase 2 Session 2 smoke testing produced one such row (`session_token_mismatch` with orphaned `session_id`); it stays. The `audit()` helper (`lib/audit.ts`) uses console-error-and-continue failure semantics for the same philosophy: losing an audit row is bad, but breaking the user-facing operation because logging failed is worse — the calling flow always proceeds even when the audit insert errors.
+
+### Session 2 closing summary
+
+Phase 2 Session 2 (foundation: lib + proxy) is complete. Live as of this session: `lib/auth.ts` (8 stateless primitives — bcrypt PIN/password with peppers, JWT sign/verify via jose with hex-decoded `AUTH_JWT_SECRET`, token generate/hash for at-rest storage); `lib/session.ts` (7 exports — `createSession`, `requireSession` with dual JWT+token_hash verification and `/admin/*`-exit step-up auto-clear, `revokeSession`, `unlockStepUp`/`clearStepUp`, `pruneExpiredSessions`, `SESSION_COOKIE_NAME`); `lib/permissions.ts` runtime wiring; `lib/locations.ts` (level-7+ all-locations override and assignment-list lookup); `lib/audit.ts` (single `audit()` helper, service-role-only, console-error failure semantics, destructive auto-derivation); `lib/supabase.ts` + `lib/supabase-server.ts` (anon browser, per-request authenticated, service-role); `proxy.ts` (edge-runtime JWT signature/exp validation only, attaches `x-co-{user-id,app-role,role-level,session-id}` headers, defensive public-path bypass); migration `0032_helpers_modern_claim_format` (helpers read `request.jwt.claims` JSONB). Queued for Sessions 3–5: API route handlers (`/api/auth/{pin,password,logout,step-up,verify,password-reset-request,password-reset}`); login/verify/reset UI components; `docs/PHASE_2_AUTH_AUDIT.md`; Juan's real `pin_hash` overwrite via the admin-tool flow; `docs/runbooks/jwt-rotation.md`. Auth library is functionally complete — the route layer in Session 3 is consumption, not new primitives.

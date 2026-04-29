@@ -55,6 +55,9 @@ export interface UserLocation {
 export interface Session {
   id: string;
   userId: string;
+  /** SHA-256 of the JWT carried in the session cookie. requireSession validates it
+   *  alongside JWT signature/exp as defense against AUTH_JWT_SECRET leak forgery. */
+  tokenHash: string;
   authMethod: "pin" | "password";
   stepUpUnlocked: boolean;
   stepUpUnlockedAt: string | null;
