@@ -327,13 +327,30 @@ function extractIp(req: NextRequest): string | null {
 
 // ─── revokeSession / unlockStepUp / clearStepUp / pruneExpiredSessions ──────
 
-export async function revokeSession(sessionId: string): Promise<void> {
+/**
+ * Idempotent session revocation.
+ *
+ * Sets revoked_at = now() for the session, but ONLY if it isn't already
+ * revoked (`.is("revoked_at", null)` filter). Returns the number of rows
+ * actually flipped:
+ *   1 → newly revoked this call
+ *   0 → already revoked, or session id doesn't exist (caller decides
+ *       whether to treat as anomaly; logout treats it as idempotent success)
+ *
+ * The 0-rows case is the silent-denial pattern from AGENTS.md (Phase 1 RLS
+ * audit) applied at the app layer for an idempotent operation. service-role
+ * bypasses RLS; the .is() filter is the actual gate here.
+ */
+export async function revokeSession(sessionId: string): Promise<{ rowsAffected: number }> {
   const sb = getServiceRoleClient();
-  const { error } = await sb
+  const { data, error } = await sb
     .from("sessions")
     .update({ revoked_at: new Date().toISOString() })
-    .eq("id", sessionId);
+    .eq("id", sessionId)
+    .is("revoked_at", null)
+    .select("id");
   if (error) throw new Error(`revokeSession failed: ${error.message}`);
+  return { rowsAffected: data?.length ?? 0 };
 }
 
 export async function unlockStepUp(sessionId: string): Promise<void> {
@@ -353,6 +370,31 @@ export async function clearStepUp(sessionId: string): Promise<void> {
     .update({ step_up_unlocked: false, step_up_unlocked_at: null })
     .eq("id", sessionId);
   if (error) throw new Error(`clearStepUp failed: ${error.message}`);
+}
+
+// ─── cookie helpers (route-handler-facing) ──────────────────────────────────
+
+/**
+ * Apply a freshly-minted session cookie to a response. Routes call this after
+ * recordSuccessfulAuth (or createSession directly) to attach the JWT cookie
+ * with consistent httpOnly/secure/sameSite/path config.
+ */
+export function applySessionCookie(
+  res: NextResponse,
+  session: CreateSessionResult,
+): NextResponse {
+  res.cookies.set(session.cookieName, session.jwt, cookieOptions(session.cookieMaxAgeSeconds));
+  return res;
+}
+
+/**
+ * Clear the session cookie on a response. Used by /api/auth/logout and by
+ * any route that detects a stale/invalid session cookie at the edge of the
+ * request lifecycle. Mirrors the unauthorized() helper's clearing behavior.
+ */
+export function clearSessionCookie(res: NextResponse): NextResponse {
+  res.cookies.set(COOKIE_NAME, "", clearedCookieOptions());
+  return res;
 }
 
 /** Housekeeping for future cron use — not invoked anywhere in v1. */

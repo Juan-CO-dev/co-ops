@@ -37,6 +37,10 @@ const PUBLIC_PATHS = new Set<string>([
   "/reset-password",
   "/api/auth/pin",
   "/api/auth/password",
+  // Logout is public so it can clear the cookie idempotently even when the
+  // session is already invalid/revoked. The route does its own best-effort
+  // cookie + JWT read; it never depends on proxy-enforced auth.
+  "/api/auth/logout",
   "/api/auth/verify",
   "/api/auth/password-reset-request",
   "/api/auth/password-reset",
@@ -92,6 +96,8 @@ export const config = {
   //   - The root login page (the `.+` quantifier requires ≥ 1 char after `/`,
   //     so `/` alone is excluded).
   matcher: [
-    "/((?!_next/static|_next/image|favicon\\.ico|verify$|reset-password$|api/auth/(pin|password|verify|password-reset-request|password-reset)$).+)",
+    // Next 16 disallows capturing groups in matcher patterns. Use non-capturing
+    // group `(?:...)` for the alternation of public auth endpoints.
+    "/((?!_next/static|_next/image|favicon\\.ico|verify$|reset-password$|api/auth/(?:pin|password|logout|verify|password-reset-request|password-reset)$).+)",
   ],
 };
