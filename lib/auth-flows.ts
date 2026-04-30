@@ -30,8 +30,31 @@ import type { RoleCode } from "./roles";
 const FAILURE_LIMIT = 5;
 const LOCKOUT_MINUTES = 15;
 
-/** Reasons that count toward the failure threshold. Other reasons audit but don't escalate. */
-const COUNTABLE_FAILURE_REASONS = new Set<string>(["wrong_pin", "wrong_password"]);
+/**
+ * Reasons that count toward the failure threshold.
+ *
+ * `wrong_pin` / `wrong_password` are the obvious cases. `missing_pin_hash` /
+ * `missing_password_hash` are the defensive-guard branches in /api/auth/{pin,
+ * password} that fire when the user's hash field is null/empty (e.g., a seed
+ * user bootstrapped before verify, an admin-cleared credential, mid-reset
+ * state). From the attacker's perspective those return the same 401
+ * invalid_credentials as a wrong credential, so they MUST rate-limit
+ * identically — otherwise an attacker can spam an account in this unusual
+ * no-hash state without ever tripping lockout.
+ *
+ * The audit row still distinguishes the reason for forensic purposes.
+ *
+ * Reasons NOT in this set (intentional): `user_not_found`, `email_not_found`,
+ * `account_inactive`, `email_not_verified`, `account_locked_attempt`,
+ * `role_not_email_auth`. Those either have no userId (no row to lock) or
+ * represent state the admin needs to resolve, not credential brute-force.
+ */
+const COUNTABLE_FAILURE_REASONS = new Set<string>([
+  "wrong_pin",
+  "wrong_password",
+  "missing_pin_hash",
+  "missing_password_hash",
+]);
 
 export interface AuthAttemptContext {
   ipAddress: string | null;

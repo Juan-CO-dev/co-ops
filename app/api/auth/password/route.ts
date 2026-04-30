@@ -124,8 +124,17 @@ export async function POST(req: NextRequest) {
   // 7. Verify password
   if (!user.password_hash) {
     // Defensive: a verified, active, level-5+ user without a password_hash
-    // means they completed verify-and-set-password incompletely.
-    await recordFailedAttempt(user.id, "password", "missing_password_hash", ctx);
+    // means they completed verify-and-set-password incompletely. Counts
+    // toward lockout (see lib/auth-flows.ts COUNTABLE_FAILURE_REASONS) — if
+    // this attempt crossed the threshold, return 423 immediately so the user
+    // doesn't see a misleading 401 on the threshold-crossing attempt.
+    const result = await recordFailedAttempt(user.id, "password", "missing_password_hash", ctx);
+    if (result.locked) {
+      const fresh = await isLocked(user.id);
+      return jsonError(423, "account_locked", {
+        retry_after_seconds: fresh.retryAfterSeconds,
+      });
+    }
     return jsonError(401, "invalid_credentials");
   }
   const ok = await verifyPassword(password, user.password_hash);

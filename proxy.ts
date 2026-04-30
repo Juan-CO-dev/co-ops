@@ -44,6 +44,12 @@ const PUBLIC_PATHS = new Set<string>([
   "/api/auth/verify",
   "/api/auth/password-reset-request",
   "/api/auth/password-reset",
+  // Tile-flow login surfaces these as public so the unauthenticated page can
+  // populate location → role → name pickers before any sign-in attempt.
+  // Privacy tradeoff documented in AGENTS.md: surfaces names by location+role
+  // but no email/last-login.
+  "/api/locations",
+  "/api/users/login-options",
 ]);
 
 function isPublicPath(pathname: string): boolean {
@@ -98,6 +104,6 @@ export const config = {
   matcher: [
     // Next 16 disallows capturing groups in matcher patterns. Use non-capturing
     // group `(?:...)` for the alternation of public auth endpoints.
-    "/((?!_next/static|_next/image|favicon\\.ico|verify$|reset-password$|api/auth/(?:pin|password|logout|verify|password-reset-request|password-reset)$).+)",
+    "/((?!_next/static|_next/image|favicon\\.ico|verify$|reset-password$|api/auth/(?:pin|password|logout|verify|password-reset-request|password-reset)$|api/locations$|api/users/login-options$).+)",
   ],
 };

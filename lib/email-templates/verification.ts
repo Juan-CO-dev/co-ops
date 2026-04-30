@@ -23,20 +23,20 @@ export function renderVerificationEmail(input: VerificationEmailInput): Rendered
   const url = `${appUrl()}/verify?token=${input.rawToken}`;
   const html = renderEmailLayout({
     preheader: "Set your password to activate your account.",
-    heading: "Welcome to CO-OPS",
+    heading: "Welcome to Compliments Only",
     bodyHtml: `
-      <p style="margin:0;">Click below to set your password for Compliments Only Operations.</p>
+      <p style="margin:0;">Click below to set your password and finish setting up your account.</p>
     `,
     cta: { label: "SET PASSWORD", url },
-    footerNote: `This link expires in ${input.expiresInHours} hours. If you didn't expect this email, ignore it.`,
+    footerNote: `This link expires in ${input.expiresInHours} hours.`,
   });
   const text = [
-    "Welcome to CO-OPS",
+    "Welcome to Compliments Only",
     "",
-    "Click below to set your password for Compliments Only Operations:",
+    "Click below to set your password and finish setting up your account:",
     url,
     "",
-    `This link expires in ${input.expiresInHours} hours. If you didn't expect this email, ignore it.`,
+    `This link expires in ${input.expiresInHours} hours.`,
   ].join("\n");
   return { html, text };
 }

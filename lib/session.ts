@@ -25,6 +25,8 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { cookies as nextCookies, headers as nextHeaders } from "next/headers";
+import { redirect } from "next/navigation";
 
 import { signJwt, verifyJwt, hashToken, type AppJwtClaims } from "./auth";
 import { getServiceRoleClient } from "./supabase-server";
@@ -217,35 +219,32 @@ export async function createSession(
   };
 }
 
-// ─── requireSession ──────────────────────────────────────────────────────────
+// ─── requireSession (route handler + server component) ──────────────────────
 
 /**
- * Validate the session cookie and return the auth context for the route handler.
+ * Core session validation — pure function over (rawJwt, ipAddress, userAgent,
+ * currentPath). Used by both the NextRequest-shaped route-handler wrapper
+ * (`requireSession`) and the next/headers-shaped server-component wrapper
+ * (`requireSessionFromHeaders`) so dual-verification, idle-timeout, last-
+ * activity touch, and step-up auto-clear logic all live in exactly one place.
  *
- * @param req           Incoming request (cookies + headers).
- * @param currentPath   Path being served. Used to drive step-up clearing —
- *                      when navigating outside /admin/*, an unlocked step-up
- *                      flag is cleared automatically so the next admin entry
- *                      requires re-confirmation.
- *
- * Returns AuthContext on success. On any failure (missing cookie, bad
- * signature, expired exp, missing/revoked/expired session row, idle timeout,
- * token_hash mismatch, deactivated user) returns a 401 NextResponse with a
- * cleared cookie. Callers should `return result` directly when they get a
- * NextResponse — and treat the AuthContext as the request-scoped identity.
+ * Returns AuthContext on success or { denied: true } on any failure. Wrappers
+ * convert the sentinel into the appropriate response shape (NextResponse 401
+ * vs server-side redirect).
  */
-export async function requireSession(
-  req: NextRequest,
+async function requireSessionCore(
+  rawJwt: string | null,
+  ipAddress: string | null,
+  userAgent: string | null,
   currentPath: string,
-): Promise<AuthContext | NextResponse> {
-  const rawJwt = req.cookies.get(COOKIE_NAME)?.value;
-  if (!rawJwt) return unauthorized();
+): Promise<AuthContext | { denied: true }> {
+  if (!rawJwt) return { denied: true };
 
   let claims;
   try {
     claims = await verifyJwt(rawJwt);
   } catch {
-    return unauthorized();
+    return { denied: true };
   }
 
   const sb = getServiceRoleClient();
@@ -254,7 +253,7 @@ export async function requireSession(
     .select("*")
     .eq("id", claims.session_id)
     .maybeSingle<SessionRow>();
-  if (error || !rowRaw) return unauthorized();
+  if (error || !rowRaw) return { denied: true };
   const row = rowRaw;
 
   // Token-hash dual verification — guards against AUTH_JWT_SECRET-leak forgery.
@@ -267,19 +266,19 @@ export async function requireSession(
       resourceTable: "sessions",
       resourceId: row.id,
       metadata: { reason: "JWT signature valid but token_hash did not match sessions row" },
-      ipAddress: extractIp(req),
-      userAgent: req.headers.get("user-agent"),
+      ipAddress,
+      userAgent,
     });
-    return unauthorized();
+    return { denied: true };
   }
 
-  if (row.revoked_at) return unauthorized();
+  if (row.revoked_at) return { denied: true };
   const now = new Date();
-  if (new Date(row.expires_at) <= now) return unauthorized();
+  if (new Date(row.expires_at) <= now) return { denied: true };
 
   const idleThresholdMs = idleMinutes() * 60 * 1000;
   const lastActivity = row.last_activity_at ? new Date(row.last_activity_at) : new Date(0);
-  if (now.getTime() - lastActivity.getTime() > idleThresholdMs) return unauthorized();
+  if (now.getTime() - lastActivity.getTime() > idleThresholdMs) return { denied: true };
 
   // Touch last_activity_at — non-blocking semantics: if the touch fails, keep
   // the request flowing rather than 401-ing on a transient write error.
@@ -291,8 +290,8 @@ export async function requireSession(
     .select("*")
     .eq("id", claims.user_id)
     .maybeSingle<UserRow>();
-  if (userErr || !userRowRaw) return unauthorized();
-  if (!userRowRaw.active) return unauthorized();
+  if (userErr || !userRowRaw) return { denied: true };
+  if (!userRowRaw.active) return { denied: true };
   const userRow = userRowRaw;
 
   // Step-up auto-clearing: when the actor leaves the /admin/* surface, the
@@ -317,6 +316,66 @@ export async function requireSession(
     level: getRoleLevel(userRow.role),
     locations: claims.locations,
   };
+}
+
+/**
+ * Validate the session cookie and return the auth context for a ROUTE HANDLER.
+ *
+ * @param req           Incoming request (cookies + headers).
+ * @param currentPath   Path being served. Used to drive step-up clearing —
+ *                      when navigating outside /admin/*, an unlocked step-up
+ *                      flag is cleared automatically so the next admin entry
+ *                      requires re-confirmation.
+ *
+ * Returns AuthContext on success. On any failure returns a 401 NextResponse
+ * with a cleared cookie. Callers should `return result` directly when they
+ * get a NextResponse — and treat the AuthContext as the request-scoped identity.
+ */
+export async function requireSession(
+  req: NextRequest,
+  currentPath: string,
+): Promise<AuthContext | NextResponse> {
+  const rawJwt = req.cookies.get(COOKIE_NAME)?.value ?? null;
+  const result = await requireSessionCore(
+    rawJwt,
+    extractIp(req),
+    req.headers.get("user-agent"),
+    currentPath,
+  );
+  if ("denied" in result) return unauthorized();
+  return result;
+}
+
+/**
+ * Validate the session cookie and return the auth context for a SERVER COMPONENT.
+ *
+ * Unlike the route-handler `requireSession`, denial here triggers a redirect
+ * to `/?next=<currentPath>` — Server Components can't return a NextResponse,
+ * and the user-facing experience for an authenticated-page denial is "send
+ * me to login." Reads cookies + headers via next/headers (Server-Component-only).
+ *
+ * Imports `redirect` statically so TS sees its `never` return type and narrows
+ * the result type below the failure branch. session.ts is Node-runtime only
+ * (proxy.ts is the edge layer; it imports verifyJwt from lib/auth, NOT from
+ * here), so the next/navigation import is safe.
+ */
+export async function requireSessionFromHeaders(
+  currentPath: string,
+): Promise<AuthContext> {
+  const cookieStore = await nextCookies();
+  const headerStore = await nextHeaders();
+  const rawJwt = cookieStore.get(COOKIE_NAME)?.value ?? null;
+
+  const xff = headerStore.get("x-forwarded-for");
+  const ipAddress = xff ? (xff.split(",")[0]?.trim() ?? null) : headerStore.get("x-real-ip");
+  const userAgent = headerStore.get("user-agent");
+
+  const result = await requireSessionCore(rawJwt, ipAddress, userAgent, currentPath);
+  if ("denied" in result) {
+    const target = currentPath ? `/?next=${encodeURIComponent(currentPath)}` : "/";
+    redirect(target); // throws — `never` return type narrows the type below
+  }
+  return result;
 }
 
 function extractIp(req: NextRequest): string | null {

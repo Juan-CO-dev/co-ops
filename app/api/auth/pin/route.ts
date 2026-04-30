@@ -108,9 +108,18 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // 5. Verify PIN (defensive: pin_hash should always be set for active users)
+  // 5. Verify PIN (defensive: pin_hash should always be set for active users).
+  // Counts toward lockout (see lib/auth-flows.ts COUNTABLE_FAILURE_REASONS) —
+  // if this attempt crossed the threshold, return 423 immediately so the user
+  // doesn't see a misleading 401 on the threshold-crossing attempt.
   if (!user.pin_hash) {
-    await recordFailedAttempt(user.id, "pin", "missing_pin_hash", ctx);
+    const result = await recordFailedAttempt(user.id, "pin", "missing_pin_hash", ctx);
+    if (result.locked) {
+      const fresh = await isLocked(user.id);
+      return jsonError(423, "account_locked", {
+        retry_after_seconds: fresh.retryAfterSeconds,
+      });
+    }
     return jsonError(401, "invalid_credentials");
   }
   const ok = await verifyPin(pin, user.pin_hash);
