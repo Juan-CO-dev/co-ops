@@ -24,7 +24,7 @@
  *   POST /api/auth/password-reset-request (public) — forgot-password (in form)
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { LocationTile } from "@/components/auth/LocationTile";
@@ -79,6 +79,18 @@ const TILE_FLOW_ROLES: RoleCode[] = [
 ];
 
 export default function LoginPage() {
+  // Suspense boundary required by Next 16 because LoginPageContent reads
+  // useSearchParams() — the static prerender pass bails to client-side render
+  // for that subtree, then hydrates the live URL on mount. AuthShell visual
+  // frame renders inside the content tree, so a null fallback is fine here.
+  return (
+    <Suspense fallback={null}>
+      <LoginPageContent />
+    </Suspense>
+  );
+}
+
+function LoginPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const idleReason = searchParams?.get("reason") === "idle";

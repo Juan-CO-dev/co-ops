@@ -12,7 +12,7 @@
  * (defense-in-depth: assume compromise).
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 import { AuthShell } from "@/components/auth/AuthShell";
@@ -21,6 +21,15 @@ import { SetPasswordForm, type SetPasswordResult } from "@/components/auth/SetPa
 const HEX_TOKEN_RE = /^[0-9a-f]{64}$/i;
 
 export default function ResetPasswordPage() {
+  // Suspense required by Next 16 — ResetPasswordPageContent reads useSearchParams().
+  return (
+    <Suspense fallback={null}>
+      <ResetPasswordPageContent />
+    </Suspense>
+  );
+}
+
+function ResetPasswordPageContent() {
   const searchParams = useSearchParams();
   const tokenParam = searchParams?.get("token") ?? "";
   const tokenValid = HEX_TOKEN_RE.test(tokenParam);

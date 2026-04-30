@@ -16,7 +16,7 @@
  *   6. Network/server error → top toast.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { AuthShell } from "@/components/auth/AuthShell";
@@ -25,6 +25,15 @@ import { SetPasswordForm, type SetPasswordResult } from "@/components/auth/SetPa
 const HEX_TOKEN_RE = /^[0-9a-f]{64}$/i;
 
 export default function VerifyPage() {
+  // Suspense required by Next 16 — VerifyPageContent reads useSearchParams().
+  return (
+    <Suspense fallback={null}>
+      <VerifyPageContent />
+    </Suspense>
+  );
+}
+
+function VerifyPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const tokenParam = searchParams?.get("token") ?? "";
