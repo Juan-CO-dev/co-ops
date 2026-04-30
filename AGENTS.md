@@ -331,3 +331,21 @@ Heartbeat is a thin wrapper around `requireSession` whose only purpose is to ext
 
 `components/auth/PasswordModal.tsx` is a fully-built scaffold for Phase 5+ admin tools — when destructive actions need step-up auth confirmation, the parent admin surface mounts the modal with `open={true}` and `onConfirm={() => proceed()}`. Wired to POST `/api/auth/step-up`, response handling matches Session 3 lock (401 wrong password / 403 step_up_not_available / 423 defensive lockout banner / 401 unauthorized → onCancel). NO LOCKOUT on repeated step-up failures — the actor is already authenticated, so locking them out of admin doesn't meaningfully raise the bar. `components/auth/PinConfirmModal.tsx` is a fully-built scaffold for Phase 4 checklist confirmation flows. The route it depends on (`POST /api/auth/pin-confirm`) does NOT exist yet — the modal's submit handler is stubbed with a TODO surfacing the inline error "PIN confirmation not yet wired (Phase 4)." so the scaffold doesn't pretend to work. Phase 4 swaps the stub for a real fetch with the same response-handling pattern as PasswordModal. Both modals share IdleTimeoutWarning's overlay shell pattern (centered, dark backdrop, focus-trapped).
 
+---
+
+## Phase 2 — Session 5 (auth audit + Phase 2 closure, 2026-04-30)
+
+### Durable-knowledge entries
+
+#### Schema-level enforcement is the real defense for `pin_hash` non-null
+
+The route handler's `missing_pin_hash` defensive branch in `/api/auth/pin/route.ts` is unreachable in production because `users.pin_hash` is `NOT NULL` at the schema level. Postgres returns sqlstate 23502 on any UPDATE that tries to clear it. The branch is retained as defense-in-depth against future migrations that might relax the constraint (e.g., if Phase 4+ introduces optional PIN-only roles). Future-Claude reading this branch should NOT remove it as dead code — its purpose is forward-looking. Discovered during Phase 2 Session 5 audit harness construction.
+
+#### Supabase JS UPDATE swallows constraint-violation errors silently — must check `error` field
+
+A `.update()` call that hits a NOT NULL or other constraint violation returns the error in the response object but does NOT throw. Calling code that only inspects `data` will see stale state without realizing the write failed. Pattern: every service-role write must explicitly check `if (error)` and surface the error. Discovered during Phase 2 Session 5 audit harness debugging when `resetSL` silently failed and produced ghost test failures. Phase 5+ admin user-management routes inherit this discipline.
+
+### Session 5 closing summary
+
+Phase 2 Session 5 (auth audit + Phase 2 closure) is complete. Live as of this session: `docs/PHASE_2_AUTH_AUDIT.md` (5,968-word grey-box audit covering 8 threats, 40-case coverage matrix, RLS cross-layer integration evidence, 7 known-gap items, explicit "Phase 2 approved for merge" statement); `scripts/phase-2-audit-harness.ts` (regression harness — invocable via `npx tsx --env-file=.env.local scripts/phase-2-audit-harness.ts`, idempotent, fixture user_ids stable across runs, exits 0 on all-pass); `phase-2-audit-results.json` (40/40 passing across 10 functional groups: PIN sign-in, password sign-in, step-up, verify, password-reset-request, password-reset, logout, heartbeat, RLS cross-layer, session lifecycle); `scripts/phase-2-juan-dogfood-issue.ts` (one-shot operational tool that issued Juan's real verify token via Resend — Juan's `password_hash` is now real, `email_verified_at` set by the verify flow itself, sign-in regression confirmed end-to-end with double-cycle testing). Token cleanup applied pre- and post-dogfood (zero active synthetic tokens at close). Branch tag `phase-2-complete` applied at merge. Phase 2 closes; Phase 3 opens against `main` with auth, RLS, and the foundation libraries fully proven.
+
