@@ -1,29 +1,109 @@
 /**
  * Edge proxy — Phase 2.
  *
- * Renamed from `middleware.ts` per Next.js 16 deprecation. Spec Section 15
- * lists `middleware.ts`; current convention is `proxy.ts` with the same
- * semantics. Recap of foundation phase 0 documents the deviation.
+ * Renamed from `middleware.ts` per Next 16. Same export shape, same role.
  *
- * Responsibilities:
- *   1. Read session JWT from httpOnly cookie
- *   2. Validate signature + expiry; reject if invalid
- *   3. Enforce 10-minute idle timeout (last_activity_at + 10m < now)
- *   4. Touch last_activity_at on each authenticated request
- *   5. Redirect unauthed users to /
- *   6. Clear step_up_unlocked when navigating away from /admin/*
- *   7. Pass session claims through to route handlers via x-co-* headers
+ * Responsibilities (edge runtime — no DB access):
+ *   1. Read session JWT from the httpOnly cookie.
+ *   2. Validate signature + exp via lib/auth verifyJwt.
+ *   3. On any failure → 302 redirect to / with `?next=<orig>` for return-to-origin.
+ *   4. On success → attach x-co-{user-id,app-role,role-level,session-id}
+ *      headers to the forwarded request and pass through.
  *
- * Phase 0 stub — runs no-op so dev works without auth.
+ * NOT this proxy's job (handled in lib/session.ts requireSession on the
+ * Node-runtime side):
+ *   - sessions row lookup, revoked/expired/idle checks
+ *   - token_hash dual verification
+ *   - last_activity_at touch
+ *   - step-up clearing on URL transition out of /admin/*
+ *
+ * Public-path exclusion is implemented via:
+ *   (a) the matcher's negative-lookahead regex (so the proxy fn never runs
+ *       for explicitly-public paths), AND
+ *   (b) a defensive isPublicPath() check at the top of the proxy fn.
+ * (a) is the production fast path; (b) is defense-in-depth — if the matcher
+ * misses an edge case (or someone adds a new public route without updating
+ * the matcher), the function still bypasses correctly.
  */
 
-import { NextResponse } from "next/server";
-import type { NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
+import { verifyJwt } from "./lib/auth";
 
-export function proxy(_req: NextRequest) {
-  return NextResponse.next();
+const COOKIE_NAME = "co_ops_session";
+
+const PUBLIC_PATHS = new Set<string>([
+  "/",
+  "/verify",
+  "/reset-password",
+  "/api/auth/pin",
+  "/api/auth/password",
+  // Logout is public so it can clear the cookie idempotently even when the
+  // session is already invalid/revoked. The route does its own best-effort
+  // cookie + JWT read; it never depends on proxy-enforced auth.
+  "/api/auth/logout",
+  "/api/auth/verify",
+  "/api/auth/password-reset-request",
+  "/api/auth/password-reset",
+  // Tile-flow login surfaces these as public so the unauthenticated page can
+  // populate location → role → name pickers before any sign-in attempt.
+  // Privacy tradeoff documented in AGENTS.md: surfaces names by location+role
+  // but no email/last-login.
+  "/api/locations",
+  "/api/users/login-options",
+]);
+
+function isPublicPath(pathname: string): boolean {
+  return PUBLIC_PATHS.has(pathname);
+}
+
+export async function proxy(req: NextRequest): Promise<NextResponse> {
+  const pathname = req.nextUrl.pathname;
+
+  // Defensive bypass — matcher should already exclude these.
+  if (isPublicPath(pathname)) return NextResponse.next();
+
+  const rawJwt = req.cookies.get(COOKIE_NAME)?.value;
+  if (!rawJwt) return redirectToLogin(req);
+
+  let claims;
+  try {
+    claims = await verifyJwt(rawJwt);
+  } catch {
+    return redirectToLogin(req);
+  }
+
+  // Forward identity headers to the downstream Node-runtime handler.
+  // requireSession() will still run there — these are convenience hints,
+  // not authorization. The handler must call requireSession() for the real
+  // session check (sessions row, token_hash, idle, revoked, etc.).
+  const headers = new Headers(req.headers);
+  headers.set("x-co-user-id", claims.user_id);
+  headers.set("x-co-app-role", claims.app_role);
+  headers.set("x-co-role-level", String(claims.role_level));
+  headers.set("x-co-session-id", claims.session_id);
+
+  return NextResponse.next({ request: { headers } });
+}
+
+function redirectToLogin(req: NextRequest): NextResponse {
+  const url = req.nextUrl.clone();
+  url.pathname = "/";
+  url.search = "";
+  if (req.nextUrl.pathname !== "/") {
+    url.searchParams.set("next", req.nextUrl.pathname + req.nextUrl.search);
+  }
+  return NextResponse.redirect(url);
 }
 
 export const config = {
-  matcher: [],
+  // Match every path EXCEPT:
+  //   - Next infrastructure (_next/static, _next/image, favicon.ico)
+  //   - Public auth endpoints (verify, reset-password, /api/auth/{pin,password,verify,password-reset-request,password-reset})
+  //   - The root login page (the `.+` quantifier requires ≥ 1 char after `/`,
+  //     so `/` alone is excluded).
+  matcher: [
+    // Next 16 disallows capturing groups in matcher patterns. Use non-capturing
+    // group `(?:...)` for the alternation of public auth endpoints.
+    "/((?!_next/static|_next/image|favicon\\.ico|verify$|reset-password$|api/auth/(?:pin|password|logout|verify|password-reset-request|password-reset)$|api/locations$|api/users/login-options$).+)",
+  ],
 };

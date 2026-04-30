@@ -41,7 +41,7 @@ The Foundation Spec v1.2 specifies older versions. We deviated to current stable
 
 These foundation libraries are populated in full from spec §4 + §7. Phase 3 doesn't need to write them — only runtime helpers (location scoping logic, step-up modal wiring, session cookie readers).
 
-- `lib/roles.ts` — full role registry, level lookups, `minPinLength()` (5 for level ≥5, 4 below). PIN length is a Juan addition not in spec — see Phase 0 transcript decision #1.
+- `lib/roles.ts` — full role registry, level lookups, `minPinLength()` (returns `4` for all roles per Phase 2 Session 1 decision — matches Toast/7shifts punch-in convention).
 - `lib/permissions.ts` — full permission matrix
 - `lib/destructive-actions.ts` — full destructive action list
 - `lib/types.ts` — TypeScript shapes for every artifact (User, Location, Vendor, VendorItem, ParLevel, ChecklistTemplate, ChecklistInstance, ChecklistCompletion, ChecklistSubmission, ChecklistIncompleteReason, PrepListResolution, ShiftOverlay, WrittenReport, Announcement, TrainingReport, ReportPhoto, AuditLogEntry, HandoffFlag). camelCase at the application layer; the Supabase client layer (Phase 1) handles the snake_case translation.
@@ -151,12 +151,201 @@ Strict-greater target check (admin's level > target's level) lives in the admin 
 
 ### Auth path the schema expects
 
-The custom JWT layer (Phase 2 `lib/auth.ts`) sets `request.jwt.claim.user_id` per request via `set_config('request.jwt.claim.user_id', '<uuid>', true)`. Helper functions read from this claim. Service-role connections bypass RLS entirely — used for `lib/audit.ts`, `lib/notifications.ts`, integration adapters, password reset / email verification flows, and the prep-list resolution generator.
+The custom JWT layer (Phase 2 `lib/auth.ts`) signs an HS256 JWT containing `user_id` and `role: 'authenticated'` (plus app-layer convenience claims — see Phase 2 Session 2 entries). The JWT is sent on the `Authorization: Bearer …` header; PostgREST verifies it against the configured HS256 signing key and exposes the claims as `request.jwt.claims` (plural JSONB). Helper functions read `current_setting('request.jwt.claims', true)::jsonb ->> '<key>'` (per migration `0032_helpers_modern_claim_format`). Service-role connections bypass RLS entirely — used for `lib/audit.ts`, `lib/notifications.ts`, integration adapters, password reset / email verification flows, and the prep-list resolution generator.
 
 ### Carry-overs to future phases
 
-- **Phase 1 Session B (RLS audit)** — gate before Phase 2 opens. See `docs/PHASE_1_SESSION_A_HANDOFF.md`.
+- **Phase 1 Session B (RLS audit)** — complete (124/124 pass; see `docs/PHASE_1_RLS_AUDIT.md`). Phase 1 locked at tag `phase-1-complete` on main.
 - **Phase 2 must overwrite Juan's placeholder `pin_hash`** before any auth attempt. Until then, all PIN auth attempts will (correctly) fail.
 - **Phase 4+ API routes** must enforce the documented column-level boundaries above (`forecast_notes`, vendors trivial-vs-full, notification recipients fields, users self-update fields).
 - **Phase 6 `/api/photos/[id]`** must validate parent artifact RLS before issuing signed URLs. `report_photos_read` is permissive at level ≥3 because the polymorphic FK prevents clean parent-artifact join in RLS — the API is the second layer.
 - **Supabase Storage bucket** (`report-photos`, private) — deferred to Phase 6 with the rest of the photo service. Storage policies, CORS, and signed-URL config bundle there.
+
+---
+
+## Phase 2 — Session 2 (auth lib + standby-key gate, 2026-04-29)
+
+### Durable-knowledge entries
+
+Seven architectural lessons surfaced during Session 2 implementation. They are independent of any specific Phase 2 deliverable and apply to every auth-bearing path in the codebase.
+
+#### PIN length is 4 digits for all roles
+
+Locked Phase 2 Session 1: every role uses a 4-digit PIN — including level-5+ roles that also have email+password as a secondary auth path. Matches Toast / 7shifts punch-in convention so frontline staff don't mode-switch between systems. Earlier draft spec considered a 5/4 split (5 digits for level≥5, 4 below); that was rejected in Session 1 — the operational cost of the split exceeds the marginal entropy gain when the lockout policy (5 failures / 15 min lock) is the actual brute-force defense. `lib/roles.ts` `minPinLength()` returns `4` for every role; do not reintroduce role-conditional length logic.
+
+#### PostgREST reserves the `role` JWT claim for the database role
+
+PostgREST inspects the `role` claim in any verified JWT and uses it as the Postgres role to switch into for the request. The claim must contain a valid Postgres role name (`authenticated`, `anon`, `service_role`); anything else (such as our app role `cgs`) causes PostgREST to attempt `SET ROLE <invalid>` and fail. Our app role therefore lives in `app_role`, not `role`. **Final JWT claim shape locked Phase 2 Session 2:**
+
+```ts
+{ user_id, app_role, role_level, locations, session_id, role: 'authenticated', iat, exp }
+```
+
+`proxy.ts` (Phase 2 Session 2) attaches `x-co-role` from `app_role`, `x-co-role-level` from `role_level`, etc. — never from the PostgREST-reserved `role` claim. Caught Phase 2 Session 2 architecture review.
+
+#### Supabase Management API hex-decodes HS256 secrets on key creation
+
+When creating an HS256 signing key via `POST /v1/projects/{ref}/config/auth/signing-keys` with `private_jwk.k` set to a hex string, the API interprets the value as hex-encoded and decodes it to raw bytes server-side (so a 64-character hex `AUTH_JWT_SECRET` becomes a 32-byte HS256 key). Our app must therefore consume `AUTH_JWT_SECRET` via `Buffer.from(secret, "hex")` to produce matching key bytes. Caught Phase 2 Session 2 standby-key smoke test (UTF-8 interpretation produced signatures that PostgREST rejected with PGRST301; hex-decoded interpretation verified correctly). The pattern is baked into `lib/auth.ts` (`getJwtKey()`).
+
+#### PostgREST v12+ deprecated `request.jwt.claim.<name>` (singular)
+
+Modern PostgREST populates only `request.jwt.claims` (plural, JSONB containing the full payload). RLS helpers reading the singular form silently return NULL even when the JWT verifies correctly. Migration `0032_helpers_modern_claim_format` updated `current_user_id()` to read `current_setting('request.jwt.claims', true)::jsonb ->> 'user_id'`; `current_user_role_level()` and `current_user_locations()` were unaffected because they delegate through `current_user_id()`. The Phase 1 RLS audit harness set `request.jwt.claim.user_id` directly via `SET LOCAL`, bypassing PostgREST's claim-extraction step — the policies themselves were correct, only the claim-source pointer was stale. Honest accounting: this latent bug would have shown up the moment Phase 2 hit PostgREST with a real JWT, regardless of how thorough the Phase 1 audit was, because the audit's harness construction sidestepped the integration path.
+
+#### JWT-embedded authorization claims have refresh latency
+
+`locations`, `app_role`, and `role_level` are signed into the session JWT for app-layer convenience and only refresh on session rotation (re-login or 12-hour exp). If admin user-deactivation or location-removal must take effect immediately, the admin path must revoke active sessions in addition to mutating the user record. **Phase 5 admin user/location routes acceptance criterion:** every user/location mutation in the admin API that affects authorization (deactivate, role change, location add/remove) must call `revokeSession()` for every active session of the affected user inside the same transaction.
+
+#### Session storage uses dual verification: JWT + token_hash
+
+The session JWT carries identity (`session_id` claim) and is signed/verified via `AUTH_JWT_SECRET`. The `sessions.token_hash` column stores `hashToken(jwt)` (SHA-256). `requireSession` validates BOTH layers: JWT signature/exp via `verifyJwt`, AND that `hashToken(rawCookieJwt) === sessions.token_hash` for the row identified by `session_id`. This dual-check protects against `AUTH_JWT_SECRET` leak scenarios — a forged JWT can pass signature verification but won't match the stored hash for any existing session. On mismatch, `requireSession` returns 401 with cleared cookie AND writes an `audit_log` entry tagged `session_token_mismatch` (action: `session_token_mismatch`, resource_table: `sessions`, resource_id: the session row id, metadata captures IP + user-agent + reason). The schema column was added in Phase 1 — Phase 2 Session 2 surfaced it during session-lifecycle implementation and wired the verification path correctly. Pattern lives in `lib/session.ts` (`createSession` writes the hash, `requireSession` verifies it).
+
+#### audit_log is permanent and accumulates orphaned references
+
+When test/smoke setups create temporary resources and trigger audit events, the audit row references a `resource_id` that is later cleaned up. The audit row remains. This is correct: the record of detection is more important than referential integrity for forensic data. Production auditors investigating `audit_log` entries should not assume `resource_id` always points to an existing row — historical events about deleted resources are valid evidence. Phase 2 Session 2 smoke testing produced one such row (`session_token_mismatch` with orphaned `session_id`); it stays. The `audit()` helper (`lib/audit.ts`) uses console-error-and-continue failure semantics for the same philosophy: losing an audit row is bad, but breaking the user-facing operation because logging failed is worse — the calling flow always proceeds even when the audit insert errors.
+
+### Session 2 closing summary
+
+Phase 2 Session 2 (foundation: lib + proxy) is complete. Live as of this session: `lib/auth.ts` (8 stateless primitives — bcrypt PIN/password with peppers, JWT sign/verify via jose with hex-decoded `AUTH_JWT_SECRET`, token generate/hash for at-rest storage); `lib/session.ts` (7 exports — `createSession`, `requireSession` with dual JWT+token_hash verification and `/admin/*`-exit step-up auto-clear, `revokeSession`, `unlockStepUp`/`clearStepUp`, `pruneExpiredSessions`, `SESSION_COOKIE_NAME`); `lib/permissions.ts` runtime wiring; `lib/locations.ts` (level-7+ all-locations override and assignment-list lookup); `lib/audit.ts` (single `audit()` helper, service-role-only, console-error failure semantics, destructive auto-derivation); `lib/supabase.ts` + `lib/supabase-server.ts` (anon browser, per-request authenticated, service-role); `proxy.ts` (edge-runtime JWT signature/exp validation only, attaches `x-co-{user-id,app-role,role-level,session-id}` headers, defensive public-path bypass); migration `0032_helpers_modern_claim_format` (helpers read `request.jwt.claims` JSONB). Queued for Sessions 3–5: API route handlers (`/api/auth/{pin,password,logout,step-up,verify,password-reset-request,password-reset}`); login/verify/reset UI components; `docs/PHASE_2_AUTH_AUDIT.md`; Juan's real `pin_hash` overwrite via the admin-tool flow; `docs/runbooks/jwt-rotation.md`. Auth library is functionally complete — the route layer in Session 3 is consumption, not new primitives.
+
+---
+
+## Phase 2 — Session 3 (API routes + email flows + JWT rotation runbook, 2026-04-29)
+
+### Durable-knowledge entries
+
+Nine architectural lessons surfaced during Session 3 implementation. They span proxy edge cases, defense-in-depth choices, deployment shape, and audit conventions; all apply beyond the Session 3 deliverables.
+
+#### Next 16 disallows capturing groups in proxy matcher patterns
+
+`proxy.ts` `config.matcher` regexes are compiled by Next 16 at build/dev start. Any `(...)` capturing group raises `Error parsing ... Capturing groups are not allowed at <pos>` and the proxy fails to register — meaning every protected path is reachable without auth until the matcher is fixed. Use non-capturing groups `(?:...)` for alternation: `api/auth/(?:pin|password|logout|verify|password-reset-request|password-reset)$`. Caught Phase 2 Session 3 Step 1 first dev-server boot — Session 2's smoke had validated proxy logic via mocked `NextRequest`/`NextResponse` but never ran `next dev`, so the parser error slipped through. **Durable lesson:** integration smokes that touch proxy/middleware behavior must exercise a real dev server, not just unit-test the function in isolation. Audit any future `config.matcher` change by booting `next dev` and watching the startup log for parser errors before declaring smoke green.
+
+#### Enumeration-defense scope (constant-shape now; per-IP rate limiting deferred)
+
+`/api/auth/verify` and `/api/auth/password-reset-request` return constant-shape responses regardless of internal state — `verify` always returns 400 `invalid_token` on any token failure (not_found / consumed / expired); `password-reset-request` always returns 200 `{ ok: true }` regardless of whether the email maps to a user, the role supports email auth, the user is active, or the email is verified. Internal disposition is captured exclusively in audit metadata (`metadata.outcome` for reset-request; `auth_token_invalid` / `auth_token_consumed_replay` / `auth_token_expired` action discrimination for verify). Per-IP rate limiting is **explicitly deferred to Phase 5+** when Vercel KV (or equivalent) infrastructure lands — for foundation, the constant-shape pattern is the actual leak-defense; per-IP throttling would only address brute-force volume, which the lockout policy already limits per-user. Acceptable risk for small-team / single-tenant deployment; revisit before any meaningful production traffic.
+
+#### Proxy 307 semantics for POST redirects
+
+`NextResponse.redirect()` returns **307** (Temporary Redirect) in Next 13+, which preserves the request method. For unauthenticated POSTs to non-public API routes, this means the browser/fetch follows the redirect and re-POSTs to `/`, instead of GET-ing the login page. UI in Session 4+ must treat 307 from API routes as an auth failure (extract the `Location` header, navigate the user to `/?next=<orig>`), NOT silently follow the redirect. Server-side fetch in tests must use `redirect: "manual"` to observe the raw 307; default `redirect: "follow"` causes confusing 200s from the home page route. Caught Phase 2 Session 3 Step 2 smoke (case 4: step-up / no session expected 401, got 200 because fetch followed the redirect to `/`).
+
+#### `revokeSession` idempotency contract
+
+`lib/session.ts` `revokeSession(sessionId)` is idempotent: it sets `revoked_at = now()` only when `revoked_at IS NULL` (`.is("revoked_at", null)` filter), and returns `{ rowsAffected: number }`. `rowsAffected: 1` means the call newly revoked the session; `rowsAffected: 0` means already-revoked OR the session id doesn't exist. Callers decide how to interpret 0: `/api/auth/logout` treats it as success-with-anomaly-audit (logout is intent-honoring, not state-asserting; the audit row's `metadata.outcome` distinguishes `revoked` vs `already_revoked` vs `session_not_found`). Future admin paths that revoke other users' sessions can branch differently (e.g., return 404 if 0 rows). The idempotent design mirrors the Phase 1 silent-denial pattern (UPDATE returning 0 rows is not an error in Postgres) but applied at the app layer for an intent-honoring operation.
+
+#### Worktree filesystem isolation
+
+Claude Code worktrees are git-isolated AND filesystem-isolated. `public/`, `.env.local`, and any other untracked-but-required files live only in the parent repo unless explicitly copied. The pattern when starting any worktree-based session is: copy `.env.local` from `<parent>/co-ops/.env.local`, and copy any required untracked assets (e.g., `public/brand/*`). The `.gitignore` correctly keeps these out of git history; the worktree-init bootstrap is the orchestrator's responsibility. Surfaced Phase 2 Session 3 Step 3 pre-flight when `public/brand/` was empty in the worktree but populated in the parent. **Carry-over:** Phase 5+ session kickoffs that touch `public/`, `.env.local`, or other gitignored paths should include explicit asset-copy commands in the kickoff prompt.
+
+#### Email templates: typography-only header is the foundation default
+
+Both verification and password-reset emails use a **typography-only header** — "Compliments Only" set in bold system-font ALL CAPS at 28px with tight tracking (`letter-spacing: -0.02em`) on the Mustard band. The image-based wordmark (`co-wordmark.png`) was tried first and dropped after first-pass visual review: Gmail (and other major clients) blocks `http://localhost` image sources as anti-tracking defense, and image-proxying behavior varies even for production-domain HTTPS sources. Typography renders identically across Gmail / iOS / Apple Mail / Outlook (the latter degrades letter-spacing gracefully, still readable). Inline base64-embedded images were also tried and worked, but added a deploy-shape concern (`fs.readFileSync` from `public/`) that was eliminated by the typographic switch. **The image variant returns to email as a refinement once the production domain is verified and HTTPS image serving is reliable across clients; the typographic header stays as the fallback either way.**
+
+#### Email-rendering routes must stay Node runtime if disk-loaded assets return
+
+`/api/auth/verify`, `/api/auth/password-reset-request`, and any future email-sending route default to Node runtime in Next 16 — sufficient because emails are pure HTML strings (no `fs`). If the image-based wordmark variant returns and reads from disk via `fs.readFileSync`, those routes MUST stay on Node runtime — `export const runtime = "edge"` would break the read because `fs` is Node-only. Currently moot because templates are pure strings; documenting the constraint so a future "let's edge-ify all auth routes for cold-start latency" suggestion knows the trade-off.
+
+#### Audit-action vocabulary lock (Phase 2 Session 3)
+
+The auth-event audit vocabulary is locked at end of Session 3. New auth flows in Phase 5+ should reuse these names verbatim and add new entries in the same `auth_*` namespace:
+
+- `auth_signin_pin_success` / `auth_signin_pin_failure`
+- `auth_signin_password_success` / `auth_signin_password_failure`
+- `auth_account_locked` (fires exactly once per lockout-threshold crossing)
+- `auth_logout` (metadata.outcome ∈ {revoked, already_revoked, session_not_found, jwt_invalid, no_cookie})
+- `auth_step_up_success` / `auth_step_up_failure`
+- `auth_email_verified`
+- `auth_password_reset_requested` (metadata.outcome ∈ {user_not_found, user_inactive, role_not_email_auth, email_not_verified, email_sent, email_failed, insert_failed})
+- `auth_password_reset_success`
+- `auth_token_invalid` / `auth_token_expired` / `auth_token_consumed_replay` (token-validation failure modes; `resource_table` identifies which token table — `email_verifications` or `password_resets`)
+- `session_token_mismatch` (grandfathered from Phase 2 Session 2 — JWT signature passed but stored `token_hash` didn't match; possible `AUTH_JWT_SECRET` leak forgery)
+
+Failure-metadata convention: `reason` for sign-in failures (`wrong_pin`, `wrong_password`, `user_not_found`, `email_not_found`, `account_inactive`, `email_not_verified`, `account_locked_attempt`, `missing_pin_hash`, `missing_password_hash`, `role_not_email_auth`); `requested_user_id` / `requested_email` when `actor_id` is null (spray-attack forensics); `attempt_number` for countable-reason failures; `triggered_lockout: true` on the failure that crossed the threshold. **Note for Session 5 audit:** the `auth_token_expired` path is implemented symmetrically to `auth_token_invalid` and `auth_token_consumed_replay` but was not exercised in Step 3 smoke. Session 5 audit should add an explicit expired-token scenario (insert a verification or password-reset row with `expires_at` in the past, attempt consume, verify the `auth_token_expired` audit row emits with `metadata.expires_at` populated).
+
+#### Defense pattern: credential or authorization changes revoke active sessions
+
+Whenever a user's auth state changes such that the holder of an active session JWT may no longer be the intended owner, the mutation MUST also revoke active sessions. The pattern: mutate the user record AND `UPDATE sessions SET revoked_at = now() WHERE user_id = ? AND revoked_at IS NULL`, capturing `metadata.sessions_revoked: <count>` on the audit row for forensic visibility. Triggers:
+
+- **Password reset** (Phase 2 Session 3, `/api/auth/password-reset` — implemented, smoked end-to-end with 6 active sessions revoked).
+- **Admin password change, role demotion, location removal, account deactivation** (Phase 5+ admin user/location routes — acceptance criterion).
+
+The pattern is defense-in-depth against a leaked / forgotten / shared credential: invalidating the credential alone leaves any pre-existing session JWT valid until 12h JWT-exp or idle-timeout. Revoking active sessions kills that residual access immediately.
+
+### Session 3 closing summary
+
+Phase 2 Session 3 (API routes + email flows + JWT rotation runbook) is complete and integration-smoked end-to-end. Live as of this session: `app/api/auth/{pin,password,logout,step-up,verify,password-reset-request,password-reset}` (7 route handlers, all Node runtime, all consuming Session 2's lib primitives); `lib/auth-flows.ts` (3 helpers — `isLocked`, `recordFailedAttempt` with `extraMetadata` for spray-attack forensics, `recordSuccessfulAuth` setting `last_login_at` + creating session + auditing + clearing counters); `lib/api-helpers.ts` (`jsonError` / `jsonOk` / `extractIp` / `parseJsonBody`, locked error response shape with optional `field` for validation errors and `retry_after_seconds` for 423 lockouts); `lib/email.ts` (Resend wrapper with console-error-and-continue semantics, never throws); `lib/email-templates/_layout.ts` + `verification.ts` + `password-reset.ts` (branded HTML with typography-only header per brand book primary palette); `lib/session.ts` extensions (`revokeSession` returns rowsAffected and is idempotent; `applySessionCookie` / `clearSessionCookie` route-handler-facing cookie helpers); `proxy.ts` matcher fix (capturing → non-capturing group) and `/api/auth/logout` added to `PUBLIC_PATHS`; `docs/runbooks/jwt-rotation.md` (313-line operational runbook with dashboard-preferred path, monitoring SQL queries, recovery procedures, forbidden patterns, rotation log). Smoke gates passed: 8/8 Step 1 (PIN + password sign-in), 7/7 Step 2 (logout + step-up), 10/10 Step 3 (verify + password-reset cycle with real Resend deliverability), 7/7 Step 4 final integration. Juan's smoke-test PIN/password were restored to seed-placeholder values before commit. Queued for Sessions 4–5: login/verify/reset UI components (Session 4); `docs/PHASE_2_AUTH_AUDIT.md` (Session 5); Juan's real PIN/password set via admin-tool flow (Session 5); explicit `auth_token_expired` exercise in Session 5 audit.
+
+---
+
+## Phase 2 — Session 4 (UI surfaces — in progress, 2026-04-29)
+
+### Durable-knowledge entries
+
+#### Phase 0 design tokens repointed to brand-book values
+
+Phase 0 design tokens were repointed to brand book values in Phase 2 Session 4. Token names (`--co-bg`, `--co-text`, `--co-gold`, etc.) are load-bearing across modules per Phase 0's comment in `app/globals.css` ("Modules reference them by name. Do not rename without a coordinated migration across all modules."). Original v1.1-era values were dark-theme: `--co-bg: #0A0A0B`, `--co-text: #E5E5E5`, `--co-gold: #D4A843`. v1.2's brand book is canonical; values were updated to the brand-book primary palette while names stayed stable: Mayo `#FFF9E4` → `--co-bg`, Diet Coke `#141414` → `--co-text`, Mustard `#FFE560` → `--co-gold`. Added `--co-cta: #FF3A44` for brand Red — semantically distinct from Mustard gold per the brand book's "use sparingly" rule for CTA text only. Status tokens (`--co-success`, `--co-danger`, `--co-info`) shifted to brand-book secondary palette where applicable. Any future module that looks visually wrong after this swap should fix its color usage rather than reverting tokens — the v1.1 dark-theme design predates the brand-book lock.
+
+#### `/api/users/login-options` privacy contract is documented and accepted
+
+`/api/users/login-options` is a public, unauthenticated endpoint that exposes user names by `(location_id, role)` for the tile-flow login surface. By design — the floor-staff login UX requires showing names in tiles before any credential is collected, mirroring the Toast/7shifts punch-in pattern. Email and `last_login_at` are NOT exposed. Privacy tradeoff acknowledged: an unauthenticated party can enumerate "who works at MEP as Shift Lead" by walking `(location, role)` permutations against the public `/api/locations`. Acceptable for foundation given CO's small-team / single-tenant / public-storefront nature. If CO-OPS ever multi-tenants or hosts non-public roles, revisit: gate behind a low-friction first-factor (e.g., location-code entry), or rate-limit at the IP level.
+
+#### Next.js 16 dev mode cross-origin safety blocks LAN access without `allowedDevOrigins`
+
+Next.js 16 dev mode blocks cross-origin requests to `/_next/*` by default. When testing on a phone via the dev server's LAN IP (e.g., `http://10.0.0.20:3000`), HTML loads but JS bundle requests get blocked, leaving the page rendered but non-interactive ("looks like a screenshot"). Fix: add the LAN IP to `allowedDevOrigins` in `next.config.ts`. The dev server log emits an explicit warning — `⚠ Blocked cross-origin request to Next.js dev resource /_next/webpack-hmr from "<host>"`. Watch for this when mobile testing fails. Production builds aren't affected; this is dev-only.
+
+#### PostgREST embedded-select `.eq()` filter on relation can fail unpredictably
+
+PostgREST embedded select with `.eq()` filters on the embedded relation can return 500 errors depending on FK detection and RLS-policy interaction. Pattern like `.select('*, users!inner(...)').eq('users.active', true)` is fragile. Safer pattern: two-step query — first lookup gets IDs from the join table, second query loads the target table with all filters applied directly. First implemented in `/api/users/login-options` (Phase 2 Session 4). Pattern repeats wherever cross-table filtering meets RLS-protected tables.
+
+#### Worktree filesystem isolation — commit per step or risk losing the working tree
+
+Phase 2 Session 4 was lost mid-session when the worktree directory was partially wiped (likely a worktree management operation by a parallel process). All Session 4 work was uncommitted (lived only in working tree across 6 build steps), so it could not be recovered from git. The branch `claude/loving-yalow-cd1cdf` was unaffected (its only commit was the Session 3 close), but the working-tree changes vanished. Lesson locked: **commit after every step in long sessions**. Commit messages: `wip(s<session>-step-<N>): <description>`. Squash to a clean message at end before merging. The cost of an extra `git commit` per step is trivial; the cost of redoing 5 hours of work is not. Also: never assume an active dev server is preserving anything — Turbopack's `.next/` cache may keep serving stale compiled output even after source files are deleted, masking the loss until the next typecheck or rebuild.
+
+
+#### Lockout countable-failure-reasons must include defensive `missing_*_hash` branches
+
+A defensive guard branch in `/api/auth/{pin,password}` that fires when the user's hash field is null/empty must be a "countable" failure reason — same rate-limit semantics as wrong credentials, since both return 401 invalid_credentials to the attacker. If the defensive branch isn't countable, an attacker can spam an account in this unusual no-hash state without ever tripping lockout. Additionally, the route handler MUST check `result.locked` after `recordFailedAttempt` for the defensive branch and return 423 on the threshold-crossing attempt — otherwise the user sees a misleading 401 on attempt N (the lockout-triggering one) and 423 only on attempt N+1 (an off-by-one user-facing UX). Surfaced original Phase 2 Session 4 Step 2 visual review when Juan tested the lockout banner against his seed user (email_verified=true + password_hash=null, an unusual state from being directly bootstrapped without going through the verify flow). Fixed in `lib/auth-flows.ts` (countable set extended) + both `pin/route.ts` and `password/route.ts` (lock-check parity in defensive branches). Phase 2 Session 5 audit should regression-test this with both the wrong-credentials path AND the missing-hash path, since they're separate code branches.
+
+
+#### Email templates use typography-only header as foundation default
+
+Both verification and password-reset email templates use a typography-only header — Mustard band with "COMPLIMENTS ONLY" set in bold system-font ALL CAPS with tight letter-spacing (-0.02em) to evoke Midnight Sans's condensed feel. The image-based wordmark variant (co-wordmark.png) was dropped because Gmail blocks `http://localhost` image sources (anti-tracking) and image-proxying behavior varies across clients. Typography renders identically everywhere. The image variant returns to email as a refinement once the production domain is verified and HTTPS image serving is reliable across clients; the typographic header stays as the fallback either way. CTA button is Diet Coke fill, brand Red text, ALL CAPS, ≥48px tap target, 18px font, 36px horizontal padding — meets brand book "Red used most sparingly — only as CTA text" rule.
+
+#### `NEXT_PUBLIC_APP_URL` is baked into email links at send time and must match the recipient's reachable URL
+
+`NEXT_PUBLIC_APP_URL` is read by `lib/email-templates/_layout.ts` at email render time and concatenated into every CTA URL (`/verify?token=…`, `/reset-password?token=…`). Because emails are static once delivered, the URL value at send-time freezes into the link forever. **Local desktop-only dev:** `http://localhost:3000`. **Local + mobile-on-LAN testing:** `http://10.0.0.20:3000` — must match the dev server's LAN bind, not localhost (localhost only resolves to a dev server on the device running it; on a phone, localhost means the phone itself, which has no dev server). **Vercel preview:** the preview URL. **Production:** the production canonical domain (e.g., `https://complimentsonlysubs.com` once DNS lands). Phase 5+ deployment checklist must include this env var update in Vercel project settings (not just `.env.local`).
+
+#### Resend default sender restricts deliverable recipients to the verified Resend account email
+
+`EMAIL_FROM=onboarding@resend.dev` (Resend's default sender) is the foundation-phase choice. Domain verification of `complimentsonlysubs.com` is queued for Phase 5+ once Pete approves DNS configuration. Until domain verification, the default sender restricts deliverable recipients to the verified Resend account email only — i.e., `juan@complimentsonlysubs.com`. Any production email path that targets a non-Juan address will silently 422 from Resend's side. Foundation phase is single-user (Juan) by design, so this constraint is acceptable. When admin tools onboard real users in Phase 5+, the sender domain switch is a prerequisite — block any user-create flow that emails a non-Juan address until then.
+
+
+#### `requireSessionFromHeaders` is the Server Component variant of session validation
+
+`lib/session.ts` extracts a `requireSessionCore(rawJwt, ipAddress, userAgent, currentPath)` private helper that holds all dual-verification logic (sessions row + token_hash + revoked + idle + last_activity_at touch + step-up auto-clear). Two thin wrappers consume it: `requireSession(req, currentPath)` for route handlers (returns `AuthContext | NextResponse 401`) and `requireSessionFromHeaders(currentPath)` for Server Components (reads cookies+headers via `next/headers`, returns `AuthContext`, redirects to `/?next=<currentPath>` on denial). Server Components can't return a NextResponse, and the user-facing experience for an authenticated-page denial is "send me to login" — so the redirect-on-denial pattern is right. `redirect` is statically imported from `next/navigation` so TS sees its `never` return type and narrows the result type below the failure branch. `lib/session.ts` is Node-runtime only — `proxy.ts` is the edge layer and imports `verifyJwt` from `lib/auth.ts`, NOT from `lib/session.ts` — so `next/navigation` + `next/headers` static imports here are safe.
+
+#### `/api/auth/heartbeat` intentionally writes no audit row
+
+Heartbeat is a thin wrapper around `requireSession` whose only purpose is to extend the active session by touching `last_activity_at` (a side effect of `requireSession`). It writes NO audit row per call. Justification: every authenticated request in the system already touches `last_activity_at`, so adding an explicit audit row per heartbeat would generate 1 row every 30 seconds during the warning-modal period (or whatever cadence the IdleTimeoutWarning uses) — pure log noise without forensic value. Real session lifecycle events (sign-in, sign-out, token revocation, lockout) keep their audit rows. If heartbeat surfaces a session anomaly later (token_hash mismatch, deactivated user, revoked session), `requireSession`'s built-in audit fires inside the core path, not at the route layer.
+
+
+#### `PasswordModal` and `PinConfirmModal` are unused scaffolds in foundation
+
+`components/auth/PasswordModal.tsx` is a fully-built scaffold for Phase 5+ admin tools — when destructive actions need step-up auth confirmation, the parent admin surface mounts the modal with `open={true}` and `onConfirm={() => proceed()}`. Wired to POST `/api/auth/step-up`, response handling matches Session 3 lock (401 wrong password / 403 step_up_not_available / 423 defensive lockout banner / 401 unauthorized → onCancel). NO LOCKOUT on repeated step-up failures — the actor is already authenticated, so locking them out of admin doesn't meaningfully raise the bar. `components/auth/PinConfirmModal.tsx` is a fully-built scaffold for Phase 4 checklist confirmation flows. The route it depends on (`POST /api/auth/pin-confirm`) does NOT exist yet — the modal's submit handler is stubbed with a TODO surfacing the inline error "PIN confirmation not yet wired (Phase 4)." so the scaffold doesn't pretend to work. Phase 4 swaps the stub for a real fetch with the same response-handling pattern as PasswordModal. Both modals share IdleTimeoutWarning's overlay shell pattern (centered, dark backdrop, focus-trapped).
+
+---
+
+## Phase 2 — Session 5 (auth audit + Phase 2 closure, 2026-04-30)
+
+### Durable-knowledge entries
+
+#### Schema-level enforcement is the real defense for `pin_hash` non-null
+
+The route handler's `missing_pin_hash` defensive branch in `/api/auth/pin/route.ts` is unreachable in production because `users.pin_hash` is `NOT NULL` at the schema level. Postgres returns sqlstate 23502 on any UPDATE that tries to clear it. The branch is retained as defense-in-depth against future migrations that might relax the constraint (e.g., if Phase 4+ introduces optional PIN-only roles). Future-Claude reading this branch should NOT remove it as dead code — its purpose is forward-looking. Discovered during Phase 2 Session 5 audit harness construction.
+
+#### Supabase JS UPDATE swallows constraint-violation errors silently — must check `error` field
+
+A `.update()` call that hits a NOT NULL or other constraint violation returns the error in the response object but does NOT throw. Calling code that only inspects `data` will see stale state without realizing the write failed. Pattern: every service-role write must explicitly check `if (error)` and surface the error. Discovered during Phase 2 Session 5 audit harness debugging when `resetSL` silently failed and produced ghost test failures. Phase 5+ admin user-management routes inherit this discipline.
+
+### Session 5 closing summary
+
+Phase 2 Session 5 (auth audit + Phase 2 closure) is complete. Live as of this session: `docs/PHASE_2_AUTH_AUDIT.md` (5,968-word grey-box audit covering 8 threats, 40-case coverage matrix, RLS cross-layer integration evidence, 7 known-gap items, explicit "Phase 2 approved for merge" statement); `scripts/phase-2-audit-harness.ts` (regression harness — invocable via `npx tsx --env-file=.env.local scripts/phase-2-audit-harness.ts`, idempotent, fixture user_ids stable across runs, exits 0 on all-pass); `phase-2-audit-results.json` (40/40 passing across 10 functional groups: PIN sign-in, password sign-in, step-up, verify, password-reset-request, password-reset, logout, heartbeat, RLS cross-layer, session lifecycle); `scripts/phase-2-juan-dogfood-issue.ts` (one-shot operational tool that issued Juan's real verify token via Resend — Juan's `password_hash` is now real, `email_verified_at` set by the verify flow itself, sign-in regression confirmed end-to-end with double-cycle testing). Token cleanup applied pre- and post-dogfood (zero active synthetic tokens at close). Branch tag `phase-2-complete` applied at merge. Phase 2 closes; Phase 3 opens against `main` with auth, RLS, and the foundation libraries fully proven.
+

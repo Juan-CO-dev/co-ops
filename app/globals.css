@@ -1,35 +1,46 @@
 @import "tailwindcss";
 
 /*
- * CO-OPS Design Tokens — Section 14 of Foundation Spec v1.2.
+ * CO-OPS Design Tokens.
  *
- * These names are LOAD-BEARING. Modules reference them by name.
- * Do not rename without a coordinated migration across all modules.
+ * v1.1-era values were dark theme (`--co-bg: #0A0A0B`, `--co-text: #E5E5E5`,
+ * `--co-gold: #D4A843`). v1.2's brand book is the canonical visual reference,
+ * and Phase 2 Session 4 repointed these values to brand-book colors while
+ * keeping the token NAMES stable — Phase 0's comment marked them as load-
+ * bearing, so renaming would have churned every module that already references
+ * `bg-co-bg` / `text-co-text` / `text-co-gold`.
+ *
+ * Brand book mapping (BRAND_REFERENCE.md):
+ *   Mustard    #FFE560  → --co-gold       (anchor color, used for the band)
+ *   Mayo       #FFF9E4  → --co-bg         (background / light surface)
+ *   Diet Coke  #141414  → --co-text       (primary text / dark on light)
+ *   Red        #FF3A44  → --co-cta        (NEW — CTA text only, "use sparingly")
  */
 
 :root {
-  /* Surface palette (dark theme always — no prefers-color-scheme switching) */
-  --co-bg: #0A0A0B;
-  --co-surface: #111113;
-  --co-surface-2: #18181b;
-  --co-border: #1a1a1e;
-  --co-border-2: #2a2a2e;
+  /* Surface palette — light, branded warmth */
+  --co-bg: #FFF9E4;          /* Mayo */
+  --co-surface: #FFFFFF;     /* Pure white card surface on Mayo */
+  --co-surface-2: #FFF4D0;   /* Slightly deeper Mayo for hover/pressed */
+  --co-border: #E8DEB8;      /* Hairline border, derived from Mayo */
+  --co-border-2: #D4C98E;    /* Stronger border for emphasis */
 
   /* Brand */
-  --co-gold: #D4A843;
-  --co-gold-deep: #B8860B;
+  --co-gold: #FFE560;        /* Mustard — anchor */
+  --co-gold-deep: #E6C84A;   /* Pressed/hover Mustard */
+  --co-cta: #FF3A44;         /* Brand Red — CTA text ONLY (use sparingly) */
 
   /* Text */
-  --co-text: #E5E5E5;
-  --co-text-muted: #888888;
-  --co-text-dim: #555555;
-  --co-text-faint: #333333;
+  --co-text: #141414;        /* Diet Coke — primary */
+  --co-text-muted: #4A4A4A;  /* Muted body text */
+  --co-text-dim: #6E6E6E;    /* Dim labels */
+  --co-text-faint: #A0A0A0;  /* Faint helper text */
 
   /* Status */
-  --co-success: #2D7D46;
+  --co-success: #28B25C;     /* Brand Green */
   --co-warning: #F59E0B;
-  --co-danger: #C0392B;
-  --co-info: #2E75B6;
+  --co-danger: #FF3A44;      /* Brand Red */
+  --co-info: #3F73B9;        /* Brand Blue */
 
   /* Role colors (Section 7.1) */
   --role-cgs:          #D4A843;
@@ -54,6 +65,7 @@
   /* Brand */
   --color-co-gold: var(--co-gold);
   --color-co-gold-deep: var(--co-gold-deep);
+  --color-co-cta: var(--co-cta);
 
   /* Text */
   --color-co-text: var(--co-text);
@@ -78,8 +90,11 @@
   --color-role-key-holder: var(--role-key-holder);
   --color-role-trainer: var(--role-trainer);
 
-  /* Typography — DM Sans from next/font, exposed as --font-dm-sans */
+  /* Typography — DM Sans from next/font (kept until production-domain web-font
+   * load lands, then swap to GT America body / Midnight Sans display per
+   * brand book). Wordmark itself uses system-font ALL CAPS — see app/page.tsx. */
   --font-sans: var(--font-dm-sans), "Segoe UI", system-ui, sans-serif;
+  --font-display: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
 html, body {
@@ -89,4 +104,18 @@ html, body {
   font-feature-settings: "cv11", "ss01";
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Auth UI animations (Phase 2 Session 4). */
+.co-shake {
+  animation: co-shake-anim 0.4s ease-in-out;
+}
+@keyframes co-shake-anim {
+  0%, 100% { transform: translateX(0); }
+  15% { transform: translateX(-8px); }
+  30% { transform: translateX(8px); }
+  45% { transform: translateX(-6px); }
+  60% { transform: translateX(6px); }
+  75% { transform: translateX(-3px); }
+  90% { transform: translateX(3px); }
 }

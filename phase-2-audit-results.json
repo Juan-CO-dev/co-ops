@@ -1,0 +1,1120 @@
+{
+  "harness_run_at": "2026-04-30T06:33:10.898Z",
+  "harness_completed_at": "2026-04-30T06:33:54.051Z",
+  "base_url": "http://localhost:3000",
+  "fixtures": {
+    "sl_user_id": "94f204ff-fac1-43b9-84d4-6cb93bf94efb",
+    "gm_user_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+    "sl_email": "audit_test_sl@audit.invalid",
+    "gm_email": "audit_test_gm@audit.invalid"
+  },
+  "total_cases": 40,
+  "passed": 40,
+  "failed": 0,
+  "cases": [
+    {
+      "id": "pin-signin-happy",
+      "endpoint": "POST /api/auth/pin",
+      "expected_status": 200,
+      "actual_status": 200,
+      "expected_audit_actions": [
+        "auth_signin_pin_success"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_signin_pin_success",
+          "actor_id": "94f204ff-fac1-43b9-84d4-6cb93bf94efb",
+          "resource_table": "sessions",
+          "resource_id": "96b4e802-c7a2-4e06-86fe-53759dcbabf3",
+          "metadata": {
+            "method": "pin",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness"
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "200 + cookie set + auth_signin_pin_success row"
+    },
+    {
+      "id": "pin-signin-wrong",
+      "endpoint": "POST /api/auth/pin",
+      "expected_status": 401,
+      "actual_status": 401,
+      "expected_audit_actions": [
+        "auth_signin_pin_failure (reason=wrong_pin)"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_signin_pin_failure",
+          "actor_id": "94f204ff-fac1-43b9-84d4-6cb93bf94efb",
+          "resource_table": "users",
+          "resource_id": "94f204ff-fac1-43b9-84d4-6cb93bf94efb",
+          "metadata": {
+            "reason": "wrong_pin",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "attempt_number": 1
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "401 invalid_credentials + audit reason=wrong_pin attempt_number=1"
+    },
+    {
+      "id": "pin-missing-hash-unreachable-by-schema",
+      "endpoint": "(direct service-role UPDATE)",
+      "expected_status": "23502 (Postgres NOT NULL violation)",
+      "actual_status": 0,
+      "expected_audit_actions": [
+        "(none — schema-level enforcement)"
+      ],
+      "captured_audit_rows": [],
+      "passed": true,
+      "evidence": "UPDATE users SET pin_hash=NULL → 23502 not_null_violation; route's missing_pin_hash branch is unreachable in production; schema is the real defense (sinceIso=2026-04-30T06:33:15.243Z)"
+    },
+    {
+      "id": "pin-lockout-threshold-crossing",
+      "endpoint": "POST /api/auth/pin (×5)",
+      "expected_status": 423,
+      "actual_status": 423,
+      "expected_audit_actions": [
+        "auth_signin_pin_failure ×5 (5th has triggered_lockout=true)",
+        "auth_account_locked ×1"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_signin_pin_failure",
+          "actor_id": "94f204ff-fac1-43b9-84d4-6cb93bf94efb",
+          "resource_table": "users",
+          "resource_id": "94f204ff-fac1-43b9-84d4-6cb93bf94efb",
+          "metadata": {
+            "reason": "wrong_pin",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "attempt_number": 1
+          }
+        },
+        {
+          "action": "auth_signin_pin_failure",
+          "actor_id": "94f204ff-fac1-43b9-84d4-6cb93bf94efb",
+          "resource_table": "users",
+          "resource_id": "94f204ff-fac1-43b9-84d4-6cb93bf94efb",
+          "metadata": {
+            "reason": "wrong_pin",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "attempt_number": 2
+          }
+        },
+        {
+          "action": "auth_signin_pin_failure",
+          "actor_id": "94f204ff-fac1-43b9-84d4-6cb93bf94efb",
+          "resource_table": "users",
+          "resource_id": "94f204ff-fac1-43b9-84d4-6cb93bf94efb",
+          "metadata": {
+            "reason": "wrong_pin",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "attempt_number": 3
+          }
+        },
+        {
+          "action": "auth_signin_pin_failure",
+          "actor_id": "94f204ff-fac1-43b9-84d4-6cb93bf94efb",
+          "resource_table": "users",
+          "resource_id": "94f204ff-fac1-43b9-84d4-6cb93bf94efb",
+          "metadata": {
+            "reason": "wrong_pin",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "attempt_number": 4
+          }
+        },
+        {
+          "action": "auth_signin_pin_failure",
+          "actor_id": "94f204ff-fac1-43b9-84d4-6cb93bf94efb",
+          "resource_table": "users",
+          "resource_id": "94f204ff-fac1-43b9-84d4-6cb93bf94efb",
+          "metadata": {
+            "reason": "wrong_pin",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "attempt_number": 5,
+            "triggered_lockout": true
+          }
+        },
+        {
+          "action": "auth_account_locked",
+          "actor_id": "94f204ff-fac1-43b9-84d4-6cb93bf94efb",
+          "resource_table": "users",
+          "resource_id": "94f204ff-fac1-43b9-84d4-6cb93bf94efb",
+          "metadata": {
+            "method": "pin",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "failed_count": 5,
+            "locked_until": "2026-04-30T06:48:18.177Z",
+            "lockout_minutes": 15
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "5th attempt → 423 retry_after=900s, 5 failures audited, lock row emitted"
+    },
+    {
+      "id": "pin-locked-precondition",
+      "endpoint": "POST /api/auth/pin (account already locked)",
+      "expected_status": 423,
+      "actual_status": 423,
+      "expected_audit_actions": [
+        "auth_signin_pin_failure (reason=account_locked_attempt; failed_login_count NOT incremented)"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_signin_pin_failure",
+          "actor_id": "94f204ff-fac1-43b9-84d4-6cb93bf94efb",
+          "resource_table": "users",
+          "resource_id": "94f204ff-fac1-43b9-84d4-6cb93bf94efb",
+          "metadata": {
+            "reason": "account_locked_attempt",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness"
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "423 retry_after=300s + reason=account_locked_attempt + failed_login_count untouched (precondition gate works without inflating counter)"
+    },
+    {
+      "id": "password-signin-happy",
+      "endpoint": "POST /api/auth/password",
+      "expected_status": 200,
+      "actual_status": 200,
+      "expected_audit_actions": [
+        "auth_signin_password_success"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_signin_password_success",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "sessions",
+          "resource_id": "2389a3d3-e1eb-4bec-a00a-8f7bc7e3f15a",
+          "metadata": {
+            "method": "password",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness"
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "200 + cookie set + auth_signin_password_success row"
+    },
+    {
+      "id": "password-signin-wrong",
+      "endpoint": "POST /api/auth/password",
+      "expected_status": 401,
+      "actual_status": 401,
+      "expected_audit_actions": [
+        "auth_signin_password_failure (reason=wrong_password)"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_signin_password_failure",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "users",
+          "resource_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "metadata": {
+            "reason": "wrong_password",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "attempt_number": 1
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "401 + audit reason=wrong_password attempt=1"
+    },
+    {
+      "id": "password-signin-missing-hash",
+      "endpoint": "POST /api/auth/password",
+      "expected_status": 401,
+      "actual_status": 401,
+      "expected_audit_actions": [
+        "auth_signin_password_failure (reason=missing_password_hash)"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_signin_password_failure",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "users",
+          "resource_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "metadata": {
+            "reason": "missing_password_hash",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "attempt_number": 1
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "401 + audit reason=missing_password_hash + counter incremented"
+    },
+    {
+      "id": "password-lockout-threshold-crossing",
+      "endpoint": "POST /api/auth/password (×5)",
+      "expected_status": 423,
+      "actual_status": 423,
+      "expected_audit_actions": [
+        "auth_signin_password_failure ×5 (5th has triggered_lockout=true)",
+        "auth_account_locked ×1"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_signin_password_failure",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "users",
+          "resource_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "metadata": {
+            "reason": "wrong_password",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "attempt_number": 1
+          }
+        },
+        {
+          "action": "auth_signin_password_failure",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "users",
+          "resource_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "metadata": {
+            "reason": "wrong_password",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "attempt_number": 2
+          }
+        },
+        {
+          "action": "auth_signin_password_failure",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "users",
+          "resource_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "metadata": {
+            "reason": "wrong_password",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "attempt_number": 3
+          }
+        },
+        {
+          "action": "auth_signin_password_failure",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "users",
+          "resource_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "metadata": {
+            "reason": "wrong_password",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "attempt_number": 4
+          }
+        },
+        {
+          "action": "auth_signin_password_failure",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "users",
+          "resource_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "metadata": {
+            "reason": "wrong_password",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "attempt_number": 5,
+            "triggered_lockout": true
+          }
+        },
+        {
+          "action": "auth_account_locked",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "users",
+          "resource_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "metadata": {
+            "method": "password",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "failed_count": 5,
+            "locked_until": "2026-04-30T06:48:24.110Z",
+            "lockout_minutes": 15
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "5th attempt → 423 retry_after=900s, 5 failures audited, lock row emitted"
+    },
+    {
+      "id": "password-missing-hash-lockout-regression",
+      "endpoint": "POST /api/auth/password (×5, password_hash NULL)",
+      "expected_status": 423,
+      "actual_status": 423,
+      "expected_audit_actions": [
+        "auth_signin_password_failure ×5 (reason=missing_password_hash; 5th triggered_lockout=true)",
+        "auth_account_locked ×1"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_signin_password_failure",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "users",
+          "resource_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "metadata": {
+            "reason": "missing_password_hash",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "attempt_number": 1
+          }
+        },
+        {
+          "action": "auth_signin_password_failure",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "users",
+          "resource_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "metadata": {
+            "reason": "missing_password_hash",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "attempt_number": 2
+          }
+        },
+        {
+          "action": "auth_signin_password_failure",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "users",
+          "resource_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "metadata": {
+            "reason": "missing_password_hash",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "attempt_number": 3
+          }
+        },
+        {
+          "action": "auth_signin_password_failure",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "users",
+          "resource_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "metadata": {
+            "reason": "missing_password_hash",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "attempt_number": 4
+          }
+        },
+        {
+          "action": "auth_signin_password_failure",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "users",
+          "resource_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "metadata": {
+            "reason": "missing_password_hash",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "attempt_number": 5,
+            "triggered_lockout": true
+          }
+        },
+        {
+          "action": "auth_account_locked",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "users",
+          "resource_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "metadata": {
+            "method": "password",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "failed_count": 5,
+            "locked_until": "2026-04-30T06:48:25.938Z",
+            "lockout_minutes": 15
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "defensive missing_password_hash branch counted toward lockout; 5th → 423 retry=900s"
+    },
+    {
+      "id": "step-up-happy",
+      "endpoint": "POST /api/auth/step-up",
+      "expected_status": 200,
+      "actual_status": 200,
+      "expected_audit_actions": [
+        "auth_step_up_success"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_step_up_success",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "sessions",
+          "resource_id": "d7aa0d44-1f51-4afa-89e3-e44424a866ef",
+          "metadata": {
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness"
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "200 + step_up_unlocked=true on sessions row + audit row"
+    },
+    {
+      "id": "step-up-wrong-password",
+      "endpoint": "POST /api/auth/step-up",
+      "expected_status": 401,
+      "actual_status": 401,
+      "expected_audit_actions": [
+        "auth_step_up_failure (reason=wrong_password)"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_step_up_failure",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "sessions",
+          "resource_id": "161fb1f2-1370-4e2a-b10f-ea65e5111f5c",
+          "metadata": {
+            "reason": "wrong_password",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness"
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "401 + audit reason=wrong_password + users.failed_login_count untouched (no lockout)"
+    },
+    {
+      "id": "step-up-role-not-eligible",
+      "endpoint": "POST /api/auth/step-up",
+      "expected_status": 403,
+      "actual_status": 403,
+      "expected_audit_actions": [
+        "auth_step_up_failure (reason=role_not_email_auth)"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_step_up_failure",
+          "actor_id": "94f204ff-fac1-43b9-84d4-6cb93bf94efb",
+          "resource_table": "sessions",
+          "resource_id": "45df1eb6-748e-47a2-b82e-f3adf14b735c",
+          "metadata": {
+            "reason": "role_not_email_auth",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness"
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "403 step_up_not_available + audit reason=role_not_email_auth"
+    },
+    {
+      "id": "step-up-no-lockout-on-failure",
+      "endpoint": "POST /api/auth/step-up (×6 wrong)",
+      "expected_status": "401×6 (no 423)",
+      "actual_status": 401,
+      "expected_audit_actions": [
+        "auth_step_up_failure ×6 (no auth_account_locked)"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_step_up_failure",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "sessions",
+          "resource_id": "c0578e9c-184f-46e5-9679-4d223bd9e256",
+          "metadata": {
+            "reason": "wrong_password",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness"
+          }
+        },
+        {
+          "action": "auth_step_up_failure",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "sessions",
+          "resource_id": "c0578e9c-184f-46e5-9679-4d223bd9e256",
+          "metadata": {
+            "reason": "wrong_password",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness"
+          }
+        },
+        {
+          "action": "auth_step_up_failure",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "sessions",
+          "resource_id": "c0578e9c-184f-46e5-9679-4d223bd9e256",
+          "metadata": {
+            "reason": "wrong_password",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness"
+          }
+        },
+        {
+          "action": "auth_step_up_failure",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "sessions",
+          "resource_id": "c0578e9c-184f-46e5-9679-4d223bd9e256",
+          "metadata": {
+            "reason": "wrong_password",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness"
+          }
+        },
+        {
+          "action": "auth_step_up_failure",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "sessions",
+          "resource_id": "c0578e9c-184f-46e5-9679-4d223bd9e256",
+          "metadata": {
+            "reason": "wrong_password",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness"
+          }
+        },
+        {
+          "action": "auth_step_up_failure",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "sessions",
+          "resource_id": "c0578e9c-184f-46e5-9679-4d223bd9e256",
+          "metadata": {
+            "reason": "wrong_password",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness"
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "all 6 attempts → 401, 6 step_up_failure audits, no account_locked row, users counters untouched"
+    },
+    {
+      "id": "verify-happy-auto-signin",
+      "endpoint": "POST /api/auth/verify",
+      "expected_status": 200,
+      "actual_status": 200,
+      "expected_audit_actions": [
+        "auth_email_verified",
+        "auth_signin_password_success"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_email_verified",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "users",
+          "resource_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "metadata": {
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "verification_id": "2588008c-4054-4139-9933-485d47c7fba4"
+          }
+        },
+        {
+          "action": "auth_signin_password_success",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "sessions",
+          "resource_id": "c4f2ebb0-c10e-4ceb-afee-2341954a4d14",
+          "metadata": {
+            "method": "password",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness"
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "200 + cookie + token consumed + password_hash set + email_verified=true + auto-signin audited"
+    },
+    {
+      "id": "verify-replay-consumed",
+      "endpoint": "POST /api/auth/verify",
+      "expected_status": 400,
+      "actual_status": 400,
+      "expected_audit_actions": [
+        "auth_token_consumed_replay (resource_table=email_verifications)"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_token_consumed_replay",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "email_verifications",
+          "resource_id": "ffbbe8ad-9112-48bc-94d9-4429ec1dc357",
+          "metadata": {
+            "context": "verify",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "consumed_at": "2026-04-30T06:33:37.422+00:00"
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "400 invalid_token + auth_token_consumed_replay audited"
+    },
+    {
+      "id": "verify-expired",
+      "endpoint": "POST /api/auth/verify",
+      "expected_status": 400,
+      "actual_status": 400,
+      "expected_audit_actions": [
+        "auth_token_expired (resource_table=email_verifications, metadata.expires_at populated)"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_token_expired",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "email_verifications",
+          "resource_id": "5b7ddf3c-90a2-4b9b-953f-f3db83758186",
+          "metadata": {
+            "context": "verify",
+            "expires_at": "2026-04-30T05:33:37.773+00:00",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness"
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "400 invalid_token + auth_token_expired audited with metadata.expires_at"
+    },
+    {
+      "id": "verify-invalid",
+      "endpoint": "POST /api/auth/verify",
+      "expected_status": 400,
+      "actual_status": 400,
+      "expected_audit_actions": [
+        "auth_token_invalid (resource_table=email_verifications, actor_id=null)"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_token_invalid",
+          "actor_id": null,
+          "resource_table": "email_verifications",
+          "resource_id": null,
+          "metadata": {
+            "context": "verify",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness"
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "400 invalid_token + auth_token_invalid audited (actor null)"
+    },
+    {
+      "id": "password-reset-request-happy",
+      "endpoint": "POST /api/auth/password-reset-request",
+      "expected_status": 200,
+      "actual_status": 200,
+      "expected_audit_actions": [
+        "auth_password_reset_requested (outcome ∈ {email_sent, email_failed})"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_password_reset_requested",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "password_resets",
+          "resource_id": "63aab646-ca7e-41e8-bd8e-25d93e5d1410",
+          "metadata": {
+            "outcome": "email_failed",
+            "expires_at": "2026-04-30T07:33:38.486Z",
+            "ip_address": "127.0.0.1",
+            "send_error": "You can only send testing emails to your own email address (juan@complimentsonlysubs.com). To send emails to other recipients, please verify a domain at resend.com/domains, and change the `from` address to an email using this domain.",
+            "user_agent": "phase-2-audit-harness",
+            "requested_email": "audit_test_gm@audit.invalid"
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "200 constant-shape + outcome=email_failed (Resend disposition for synthetic recipient)"
+    },
+    {
+      "id": "password-reset-request-user-not-found",
+      "endpoint": "POST /api/auth/password-reset-request",
+      "expected_status": 200,
+      "actual_status": 200,
+      "expected_audit_actions": [
+        "auth_password_reset_requested (outcome=user_not_found, requested_email captured, actor_id=null)"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_password_reset_requested",
+          "actor_id": null,
+          "resource_table": "password_resets",
+          "resource_id": null,
+          "metadata": {
+            "outcome": "user_not_found",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "requested_email": "nonexistent-spray-target@audit.invalid"
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "200 constant-shape + user_not_found + requested_email captured for spray forensics"
+    },
+    {
+      "id": "password-reset-request-user-inactive",
+      "endpoint": "POST /api/auth/password-reset-request",
+      "expected_status": 200,
+      "actual_status": 200,
+      "expected_audit_actions": [
+        "auth_password_reset_requested (outcome=user_inactive)"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_password_reset_requested",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "password_resets",
+          "resource_id": null,
+          "metadata": {
+            "outcome": "user_inactive",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "requested_email": "audit_test_gm@audit.invalid"
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "200 constant-shape + outcome=user_inactive"
+    },
+    {
+      "id": "password-reset-request-email-not-verified",
+      "endpoint": "POST /api/auth/password-reset-request",
+      "expected_status": 200,
+      "actual_status": 200,
+      "expected_audit_actions": [
+        "auth_password_reset_requested (outcome=email_not_verified)"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_password_reset_requested",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "password_resets",
+          "resource_id": null,
+          "metadata": {
+            "outcome": "email_not_verified",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "requested_email": "audit_test_gm@audit.invalid"
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "200 constant-shape + outcome=email_not_verified"
+    },
+    {
+      "id": "password-reset-request-role-not-email-auth",
+      "endpoint": "POST /api/auth/password-reset-request",
+      "expected_status": 200,
+      "actual_status": 200,
+      "expected_audit_actions": [
+        "auth_password_reset_requested (outcome=role_not_email_auth)"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_password_reset_requested",
+          "actor_id": "94f204ff-fac1-43b9-84d4-6cb93bf94efb",
+          "resource_table": "password_resets",
+          "resource_id": null,
+          "metadata": {
+            "outcome": "role_not_email_auth",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "requested_email": "audit_test_sl@audit.invalid"
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "200 constant-shape + outcome=role_not_email_auth (SL has hasEmailAuth=false)"
+    },
+    {
+      "id": "password-reset-happy",
+      "endpoint": "POST /api/auth/password-reset",
+      "expected_status": 200,
+      "actual_status": 200,
+      "expected_audit_actions": [
+        "auth_password_reset_success (metadata.sessions_revoked >= 2, no Set-Cookie, no auto-signin)"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_password_reset_success",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "users",
+          "resource_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "metadata": {
+            "reset_id": "250489a3-5db9-40b1-b66a-c064e3c2683e",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "sessions_revoked": 2
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "200 + sessions_revoked=2 + active sessions now 0 + no Set-Cookie (no auto-signin)"
+    },
+    {
+      "id": "password-reset-replay-consumed",
+      "endpoint": "POST /api/auth/password-reset",
+      "expected_status": 400,
+      "actual_status": 400,
+      "expected_audit_actions": [
+        "auth_token_consumed_replay (resource_table=password_resets)"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_token_consumed_replay",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "password_resets",
+          "resource_id": "0ba22d64-cb20-4de3-845e-982d38ccb0ac",
+          "metadata": {
+            "context": "password_reset",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness",
+            "consumed_at": "2026-04-30T06:33:42.851+00:00"
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "400 invalid_token + auth_token_consumed_replay audited"
+    },
+    {
+      "id": "password-reset-expired",
+      "endpoint": "POST /api/auth/password-reset",
+      "expected_status": 400,
+      "actual_status": 400,
+      "expected_audit_actions": [
+        "auth_token_expired (resource_table=password_resets, metadata.expires_at populated)"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_token_expired",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "password_resets",
+          "resource_id": "6882bc7b-678a-46a7-b084-c57ec7c999d8",
+          "metadata": {
+            "context": "password_reset",
+            "expires_at": "2026-04-30T05:33:43.263+00:00",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness"
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "400 invalid_token + auth_token_expired audited with metadata.expires_at"
+    },
+    {
+      "id": "password-reset-invalid",
+      "endpoint": "POST /api/auth/password-reset",
+      "expected_status": 400,
+      "actual_status": 400,
+      "expected_audit_actions": [
+        "auth_token_invalid (resource_table=password_resets, actor_id=null)"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_token_invalid",
+          "actor_id": null,
+          "resource_table": "password_resets",
+          "resource_id": null,
+          "metadata": {
+            "context": "password_reset",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness"
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "400 invalid_token + auth_token_invalid audited"
+    },
+    {
+      "id": "logout-valid-revoked",
+      "endpoint": "POST /api/auth/logout",
+      "expected_status": 200,
+      "actual_status": 200,
+      "expected_audit_actions": [
+        "auth_logout (outcome=revoked)"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_logout",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "sessions",
+          "resource_id": "7a42211a-edf9-4b9a-ab5e-0a8a6537c60e",
+          "metadata": {
+            "outcome": "revoked",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness"
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "200 + cookie cleared + outcome=revoked + sessions row revoked"
+    },
+    {
+      "id": "logout-already-revoked",
+      "endpoint": "POST /api/auth/logout",
+      "expected_status": 200,
+      "actual_status": 200,
+      "expected_audit_actions": [
+        "auth_logout (outcome=already_revoked)"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_logout",
+          "actor_id": "8c31ecd8-11f1-40f9-a0a8-f4faf689d4a7",
+          "resource_table": "sessions",
+          "resource_id": "7a42211a-edf9-4b9a-ab5e-0a8a6537c60e",
+          "metadata": {
+            "outcome": "already_revoked",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness"
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "200 idempotent + outcome=already_revoked"
+    },
+    {
+      "id": "logout-no-cookie",
+      "endpoint": "POST /api/auth/logout",
+      "expected_status": 200,
+      "actual_status": 200,
+      "expected_audit_actions": [
+        "auth_logout (outcome=no_cookie, actor_id=null)"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_logout",
+          "actor_id": null,
+          "resource_table": "sessions",
+          "resource_id": null,
+          "metadata": {
+            "outcome": "no_cookie",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness"
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "200 idempotent + outcome=no_cookie"
+    },
+    {
+      "id": "logout-invalid-jwt",
+      "endpoint": "POST /api/auth/logout",
+      "expected_status": 200,
+      "actual_status": 200,
+      "expected_audit_actions": [
+        "auth_logout (outcome=jwt_invalid, actor_id=null)"
+      ],
+      "captured_audit_rows": [
+        {
+          "action": "auth_logout",
+          "actor_id": null,
+          "resource_table": "sessions",
+          "resource_id": null,
+          "metadata": {
+            "outcome": "jwt_invalid",
+            "ip_address": "127.0.0.1",
+            "user_agent": "phase-2-audit-harness"
+          }
+        }
+      ],
+      "passed": true,
+      "evidence": "200 idempotent + outcome=jwt_invalid"
+    },
+    {
+      "id": "heartbeat-valid-touch",
+      "endpoint": "POST /api/auth/heartbeat",
+      "expected_status": 200,
+      "actual_status": 200,
+      "expected_audit_actions": [],
+      "captured_audit_rows": [],
+      "passed": true,
+      "evidence": "200 + last_activity_at advanced from 2026-04-30T06:33:16.497Z to 2026-04-30T06:33:46.592+00:00"
+    },
+    {
+      "id": "heartbeat-no-cookie-proxy-bounce",
+      "endpoint": "POST /api/auth/heartbeat",
+      "expected_status": 307,
+      "actual_status": 307,
+      "expected_audit_actions": [],
+      "captured_audit_rows": [],
+      "passed": true,
+      "evidence": "307 redirect with Location=/?next=%2Fapi%2Fauth%2Fheartbeat (proxy denied at edge)"
+    },
+    {
+      "id": "rls-cross-layer-sl-self-only",
+      "endpoint": "GET /rest/v1/users (SL session JWT → PostgREST → RLS)",
+      "expected_status": 200,
+      "actual_status": 200,
+      "expected_audit_actions": [
+        "(none — RLS read does not audit)"
+      ],
+      "captured_audit_rows": [],
+      "passed": true,
+      "evidence": "SL (level 4) sees 1 row (own row only) — users_read_self self-predicate fired; admin branch correctly suppressed; cross-layer JWT→PostgREST→helpers integration confirmed"
+    },
+    {
+      "id": "rls-cross-layer-gm-admin-branch",
+      "endpoint": "GET /rest/v1/users (GM session JWT → PostgREST → RLS)",
+      "expected_status": 200,
+      "actual_status": 200,
+      "expected_audit_actions": [
+        "(none — RLS read does not audit)"
+      ],
+      "captured_audit_rows": [],
+      "passed": true,
+      "evidence": "GM (level 6) sees 10 rows (matches service-role total of 10) — users_read_self admin branch (level >= 6) fired; strictly broader than SL's self-only result; cross-layer integration confirmed at the differential boundary"
+    },
+    {
+      "id": "lifecycle-create",
+      "endpoint": "POST /api/auth/password (session create)",
+      "expected_status": 200,
+      "actual_status": 200,
+      "expected_audit_actions": [
+        "auth_signin_password_success (already covered above)"
+      ],
+      "captured_audit_rows": [],
+      "passed": true,
+      "evidence": "sessions row: token_hash matches hashToken(JWT), step_up_unlocked=false, last_activity_at recent, expires_at ≈ +12h"
+    },
+    {
+      "id": "lifecycle-idle-timeout-db",
+      "endpoint": "POST /api/auth/heartbeat (last_activity_at backdated)",
+      "expected_status": 401,
+      "actual_status": 401,
+      "expected_audit_actions": [],
+      "captured_audit_rows": [],
+      "passed": true,
+      "evidence": "401 + cookie cleared (requireSession idle check fired)"
+    },
+    {
+      "id": "lifecycle-jwt-exp-db-side",
+      "endpoint": "POST /api/auth/heartbeat (sessions.expires_at backdated)",
+      "expected_status": 401,
+      "actual_status": 401,
+      "expected_audit_actions": [],
+      "captured_audit_rows": [],
+      "passed": true,
+      "evidence": "401 + cookie cleared (requireSession sessions.expires_at check fired; proxy let JWT through)"
+    },
+    {
+      "id": "lifecycle-jwt-exp-signature-side",
+      "endpoint": "POST /api/auth/heartbeat (forged JWT with past exp)",
+      "expected_status": 307,
+      "actual_status": 307,
+      "expected_audit_actions": [],
+      "captured_audit_rows": [],
+      "passed": true,
+      "evidence": "307 redirect (proxy edge JWT verifyJwt threw JWTExpired before request reached the route)"
+    },
+    {
+      "id": "lifecycle-step-up-auto-clear",
+      "endpoint": "POST /api/auth/heartbeat (after step-up; non-/admin path)",
+      "expected_status": 200,
+      "actual_status": 200,
+      "expected_audit_actions": [],
+      "captured_audit_rows": [],
+      "passed": true,
+      "evidence": "step-up unlocked → heartbeat (non-/admin) → requireSessionCore cleared step_up_unlocked back to false"
+    }
+  ]
+}
