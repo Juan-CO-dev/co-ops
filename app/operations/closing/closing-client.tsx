@@ -96,6 +96,12 @@ export interface ClosingInitialState {
 
 const STATION_FALLBACK = "General";
 
+// The "I'm the last out" station. When all 5 of its items have live (non-
+// superseded) completions, the finalize affordance unlocks for KH+ actors.
+// String must match the seed-script ITEMS exactly — see
+// scripts/seed-closing-template.ts.
+const WALK_OUT_VERIFICATION_STATION = "Walk-Out Verification";
+
 function groupByStation(items: ChecklistTemplateItem[]): Map<string, ChecklistTemplateItem[]> {
   const out = new Map<string, ChecklistTemplateItem[]>();
   for (const it of items) {
@@ -202,6 +208,25 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
   );
 
   const allRequiredDone = totalCount.completed === totalCount.required;
+
+  // Walk-Out Verification is the "I'm the last out" signal. All 5 items
+  // (lights off, devices charging, oven off, front doors locked, back door
+  // locked) must have live (non-superseded) completions for the closing to
+  // be finalize-eligible. If any item is undone or superseded by another
+  // user, this flips back to false and the finalize UI disappears
+  // reactively.
+  const walkOutVerificationComplete = useMemo(() => {
+    const walkOutItems = templateItems.filter(
+      (it) => it.station === WALK_OUT_VERIFICATION_STATION,
+    );
+    if (walkOutItems.length === 0) return false;
+    return walkOutItems.every((it) => completions.has(it.id));
+  }, [templateItems, completions]);
+
+  // Finalize gate: KH+ (security gate for lock-up) AND Walk-Out Verification
+  // complete (the "I'm the last out" signal). Both must hold. See
+  // SPEC_AMENDMENTS.md C.26 for the operational rationale.
+  const canFinalize = !readOnly && actor.level >= 4 && walkOutVerificationComplete;
 
   // Incomplete-required IDs — for the review section's reason inputs.
   const incompleteRequiredIds = useMemo(() => {
@@ -473,26 +498,33 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
       </div>
 
       {/*
-       * Finalization UI is role-gated. Per CO's Model A (SPEC_AMENDMENTS.md
-       * C.26): closing is multi-author over hours; employees + KH+ all tick
-       * items throughout the shift via the optimistic UI. ONE person
-       * finalizes — typically the "last out" KH or AGM who completed
-       * Walk-Out Verification — and that person attests with PIN.
+       * Finalization UI gated by TWO conditions (SPEC_AMENDMENTS.md C.26):
        *
-       * Item completion: open to anyone whose level >= each item's
+       *   1. actor.level >= 4 (KH+) — security gate; only KH+ can lock up
+       *   2. walkOutVerificationComplete — operational gate; the "I'm the
+       *      last out" signal. All 5 Walk-Out Verification items must have
+       *      live completions. The person who tapped the last of them is
+       *      the finalizer.
+       *
+       * Per CO's Model A: closing is multi-author over hours. Items A, B,
+       * and C tick items throughout shift (Crunchy Boi at 2pm, 3rd Party
+       * at 4pm, etc.). Whoever's actually last-out does Walk-Out Verification
+       * (lights / devices / oven / doors). THAT action signals "I'm
+       * finalizing this closing" and unlocks Review & submit for that person.
+       *
+       * Reactive: if a Walk-Out Verification item gets superseded or undone
+       * by another user, walkOutVerificationComplete flips back to false
+       * and the finalize UI disappears. Re-completing brings it back.
+       *
+       * Item completion stays open to anyone whose level >= each item's
        * min_role_level (gated inside ChecklistItem + RLS in
-       * lib/checklists.ts).
-       * Finalization (review screen + sticky footer + PIN modal): gated to
-       * actorLevel >= 4 (KH+) here. Below KH, no submit path renders;
-       * employees contribute work and walk away. Their items are already
-       * saved individually.
+       * lib/checklists.ts) — this gate only governs the finalize path.
        *
-       * The PinConfirmModal mount below is also gated — no path leads to it
-       * for level 3 actors, so omitting the mount keeps the React tree
-       * minimal AND defends against any future code path that tries to
-       * setPinOpen(true) directly.
+       * The PinConfirmModal mount below is gated alongside — defense-in-
+       * depth so any future code path that tries to setPinOpen(true) for
+       * a non-finalizing actor finds no modal to open.
        */}
-      {!readOnly && actor.level >= 4 ? (
+      {canFinalize ? (
         <>
           {/* Inline submit at end of list */}
           <div className="mt-8 flex flex-col gap-2">
@@ -565,10 +597,11 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
       ) : null}
 
       {/* PinConfirmModal — mounted only when finalization is gate-allowed
-       * (matches the actorLevel >= 4 gate above per SPEC_AMENDMENTS.md C.26).
-       * Defense-in-depth: even if a future code path tries to setPinOpen(true)
-       * for a level-3 actor, the mount is absent and the modal can't render. */}
-      {!readOnly && actor.level >= 4 ? (
+       * (matches the canFinalize gate above per SPEC_AMENDMENTS.md C.26:
+       * KH+ AND Walk-Out Verification complete). Defense-in-depth: any
+       * future code path that tries to setPinOpen(true) outside the gate
+       * finds no modal mounted. */}
+      {canFinalize ? (
         <PinConfirmModal
           open={pinOpen}
           instanceId={instance.id}
