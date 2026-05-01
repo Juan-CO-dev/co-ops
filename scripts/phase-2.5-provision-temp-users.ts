@@ -68,8 +68,17 @@ function readPassword(envVar: string, who: string): string {
 
 async function provisionUser(
   sb: SupabaseClient,
-  spec: UserSpec,
+  rawSpec: UserSpec,
 ): Promise<{ userId: string; auditRowId: string }> {
+  // Lowercase the email before any DB write. Login routes
+  // (/api/auth/password) call .toLowerCase() on the input before lookup;
+  // users.email is case-sensitive text with a case-sensitive unique
+  // constraint, so a mixed-case stored email is unfindable and surfaces as
+  // an `email_not_found` audit reason that does NOT increment
+  // failed_login_count (not in COUNTABLE_FAILURE_REASONS) — silent failure.
+  // See AGENTS.md Phase 2.5 entry "Always lowercase email at insert time".
+  const spec: UserSpec = { ...rawSpec, email: rawSpec.email.toLowerCase() };
+
   // Pre-flight: refuse if email already exists. Belt-and-suspenders to the
   // unique constraint — gives a clearer error than a 23505.
   const { data: existing, error: existErr } = await sb
