@@ -112,9 +112,24 @@ Concretely, an Opening instance:
 
 ---
 
+## C.23 — `locations.timezone` referenced in spec but not in schema
+
+**Date added:** 2026-05-01
+**Spec sections:** §4.1 (`locations` table), Module #1 dashboard date calculations (step 8)
+**What spec says:** Module #1 Build #1 step 8 design referenced `locations.timezone` for computing today / yesterday dates per location ("use locations.timezone field, default to America/New_York if null"). Foundation Spec v1.2 §4.1 lists the `locations` table with: `id`, `name`, `code`, `type`, `active`, `address`, `phone`, `created_at`, `created_by`. **No `timezone` column.** `lib/types.ts` `Location` interface mirrors §4.1 — also no `timezone` field.
+**What built reality is:** Step 8's dashboard hardcodes `OPERATIONAL_TZ = "America/New_York"` for all date calculations. Both CO locations (MEP / EM) are in DC, same TZ — operational reality is single-timezone in v1. `app/dashboard/page.tsx` documents the rationale in its header comment.
+**Why:** Touching schema in step 8 of Build #1 violates the §2.10 foundation lock (foundation-only-empty-tables rule; schema locked at end of Phase 1). The single-TZ assumption is correct for current operational reality. Adding the column for a hypothetical future expansion is premature.
+**v1.3 action:**
+- If/when CO expands beyond DC (different timezone), add a Supabase MCP migration: `ALTER TABLE locations ADD COLUMN timezone TEXT NOT NULL DEFAULT 'America/New_York';` Backfill all existing rows with the default. Update `lib/types.ts` `Location` interface to include `timezone: string`.
+- Update §4.1 to include the `timezone` column.
+- Code change at the consumer (`app/dashboard/page.tsx` and any future TZ-dependent surface) is a one-line swap from the hardcoded constant to a per-row read off the resolved Location object.
+- Don't introduce until operational expansion forces the issue.
+
+---
+
 ## How to add an entry
 
-1. Pick the next monotonic ID (`C.<n>` — current next: C.23).
+1. Pick the next monotonic ID (`C.<n>` — current next: C.24).
 2. Spec sections under amendment.
 3. Quote what spec says.
 4. Document what built reality is.
