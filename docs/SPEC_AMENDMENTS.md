@@ -145,9 +145,36 @@ Concretely, an Opening instance:
 
 ---
 
+## C.25 — User permission model needs role + tags, not role only
+
+**Date added:** 2026-05-01
+**Spec sections:** §4.1 (`users` table), §7.1 (RoleCode hierarchy in `lib/roles.ts`), §7.2 (PERMISSION_MIN_LEVEL matrix)
+**What spec says:** Foundation Spec v1.2 §4.1 / §7.1 model user permissions as a single `role` field tied to a hierarchical level. `RoleCode` is one of `cgs / owner / moo / gm / agm / catering_mgr / shift_lead / key_holder / trainer`, each with a numeric level. Permission checks via `lib/permissions.ts` `hasPermission(role, key)` resolve through `getRoleLevel(role) >= PERMISSION_MIN_LEVEL[key]`.
+**What built reality is:** CO's operational reality includes capabilities that are orthogonal to the role hierarchy — most prominently "trainer." Examples Juan flagged during Build #1 step 10 testing:
+- A KH who is also a trainer needs full KH permissions plus the ability to file training reports / lead trainee shifts
+- An employee not yet promoted to KH may still hold the trainer capability — they can train newer employees on prep / cleaning standards even before they have key-holder responsibilities
+- A Shift Lead who is also a trainer needs both
+- An AGM who is NOT a trainer should not be filing training reports as the primary trainer (per spec §7.2 `training_report.write` permission, currently level 3+ — open to anyone, but the trainer ↔ trainee assignment relationship has no formal model)
+
+The current `users.role = 'trainer'` enum value treats trainer as a single role at level 3, which forces a choice: an employee is either KH OR trainer, never both. Operationally, both should be possible.
+**Why this matters:** Build #1 closing checklist doesn't surface the gap directly because closing items are role-leveled, not capability-leveled. Build #2 (Prep) and Build #3 (Opening) and Module #14 (Training) WILL surface it: training reports, trainee assignment, trainer-led shift attestation — all need to query "is this user a trainer?" independent of their seniority role.
+**v1.3 action:**
+- Introduce a tags layer. Two implementation options:
+  - **Option A — separate table:** `CREATE TABLE user_tags (user_id UUID REFERENCES users(id), tag TEXT, granted_at TIMESTAMPTZ, granted_by UUID, PRIMARY KEY(user_id, tag))`. Tags are append-only with audit; deactivation handled via `active BOOLEAN` or row-removal.
+  - **Option B — JSONB column on users:** `ALTER TABLE users ADD COLUMN tags TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]`. Simpler queries; less audit granularity.
+- Update `lib/roles.ts` / `lib/permissions.ts`:
+  - Remove `trainer` from `RoleCode` (or keep it as a transitional "trainer-only with no other role" employee level)
+  - Add `hasCapability(user, tag)` checks for `'trainer'` and any future tags
+  - Permission matrix gains capability-keyed entries alongside role-keyed entries
+- Module #14 (Training) design uses tags for trainer assignment; Module #2 (Prep) and Module #3 (Opening) consult tags for trainer-led shift annotations.
+- Until the migration lands, the `trainer` role enum value stays — backwards-compatible, lets foundation continue to operate. Phase 5+ admin user-management tooling adds tag assignment/revocation at the same time the schema migration ships.
+- Captured during Build #1 step 10 testing when Juan flagged the gap. Don't try to retrofit the tag system into Build #1 — the data model change requires schema migration plus admin-tool UI to support it. Address in the user-permissions design conversation when Modules 2/3/14 land.
+
+---
+
 ## How to add an entry
 
-1. Pick the next monotonic ID (`C.<n>` — current next: C.25).
+1. Pick the next monotonic ID (`C.<n>` — current next: C.26).
 2. Spec sections under amendment.
 3. Quote what spec says.
 4. Document what built reality is.
