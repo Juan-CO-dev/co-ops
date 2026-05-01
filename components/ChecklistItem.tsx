@@ -99,6 +99,14 @@ interface ChecklistItemProps {
   /** Instance status — disables interaction when not 'open'. */
   instanceStatus: ChecklistStatus;
   /**
+   * Read-only override. When true, the row is strictly non-interactive
+   * regardless of instance status. Used by surfaces that present a
+   * historical or restricted view (e.g., yesterday's unconfirmed closing,
+   * already-confirmed instance review). Status reflects reality;
+   * readOnly reflects intent — both can be set independently.
+   */
+  readOnly?: boolean;
+  /**
    * Async callback. Parent fires the API call.
    * Returns { completion } on success, { error } on failure.
    * Component handles optimistic-flip, in-flight, rollback, retry locally.
@@ -203,6 +211,7 @@ export function ChecklistItem({
   completionAuthor,
   actorLevel,
   instanceStatus,
+  readOnly = false,
   onComplete,
 }: ChecklistItemProps) {
   // Local state for optimistic flip / in-flight / error. The "live" view
@@ -235,7 +244,7 @@ export function ChecklistItem({
   const isSelfAuthor = completionAuthor?.isSelf === true;
   const roleGated = actorLevel < templateItem.minRoleLevel;
   const instanceLocked = instanceStatus !== "open";
-  const interactable = !roleGated && !instanceLocked && !inFlight;
+  const interactable = !roleGated && !instanceLocked && !readOnly && !inFlight;
 
   // ─── Save flow ────────────────────────────────────────────────────────────
 
@@ -400,6 +409,7 @@ export function ChecklistItem({
     // Disabled-feeling states
     roleGated ? "opacity-60 cursor-not-allowed" : "",
     instanceLocked ? "opacity-70 cursor-not-allowed" : "",
+    readOnly ? "opacity-70 cursor-default" : "",
     inFlight ? "ring-2 ring-co-gold-deep cursor-wait" : "",
     error ? "border-co-cta/60" : "",
     // Completed visual treatment

@@ -127,9 +127,27 @@ Concretely, an Opening instance:
 
 ---
 
+## C.24 — Page-level reads use service-role instead of authed client
+
+**Date added:** 2026-05-01
+**Spec sections:** §5 (RLS philosophy), §15 (lib/supabase-server.ts use-case list), Module #1 Build #1 step 8 (`/dashboard`) and step 9 (`/operations/closing`)
+**What spec says:** Spec §5 establishes RLS as the primary access-control layer; service-role usage is reserved per `lib/supabase-server.ts` for "audit log writes, notification deliveries, integration adapters, lockout state mutations, prep-list resolution generator, email verification + password reset token operations." Page-level reads aren't on that list — they'd default to authed client, RLS-gated.
+**What built reality is:** Both `/dashboard` (step 8) and `/operations/closing` (step 9) Server Components use service-role for their data reads (locations, templates, instances, items, completions, author-name joins). Auth is enforced at the boundary via `requireSessionFromHeaders` + `lockLocationContext`; service-role bypasses RLS for the actual queries below the boundary.
+**Why:**
+- Server Components don't have direct access to the JWT (`requireSessionFromHeaders` returns the AuthContext but not the raw cookie value), so constructing an authed client requires extra plumbing through `cookies()` from `next/headers`.
+- `requireSessionFromHeaders` + `lockLocationContext` provide the equivalent guarantees app-layer that RLS would provide DB-layer for the queries we actually run (location-scoped reads where the actor's accessible locations have already been verified).
+- For Build #1 simplicity — both pages are read-only at the page level (writes go through API routes which DO use authed clients), so the security exposure is bounded.
+**Acceptable risk for Build #1**, NOT a permanent stance. Defense-in-depth would have RLS gating the page reads even if the app-layer auth check ever breaks. The hardening path: in each Server Component, read the session JWT from the cookie store via `next/headers`, construct an authed client via `lib/supabase-server.ts createAuthedClient(jwt)`, use that for page-level reads. Service-role stays scoped to the writes that legitimately need it (per `lib/supabase-server.ts` use-case comment).
+**v1.3 action:**
+- Hardening pass: convert `/dashboard` and `/operations/closing` page-level reads to authed client. Verify with a quick smoke test that nothing relied on service-role's RLS bypass (the role-7+ all-locations override flows through `accessibleLocations`, so the authed client should still resolve correctly when the user has the override claim).
+- Revisit when any new Server Component is added — default it to authed client at construction time; only fall back to service-role with explicit justification.
+- Captured during Module #1 Build #1 step 9 implementation.
+
+---
+
 ## How to add an entry
 
-1. Pick the next monotonic ID (`C.<n>` — current next: C.24).
+1. Pick the next monotonic ID (`C.<n>` — current next: C.25).
 2. Spec sections under amendment.
 3. Quote what spec says.
 4. Document what built reality is.
