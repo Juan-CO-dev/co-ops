@@ -1,43 +1,78 @@
 "use client";
 
 /**
- * PinConfirmModal — Phase 2 Session 4 scaffold; wired in Phase 4 checklist
- * confirmation flows.
+ * PinConfirmModal — Module #1 Build #1 step 7.
  *
- * PIN re-entry attestation for checklist confirmations (all levels). NOT a
- * destructive-action gate — it's an attestation that "I, the signed-in user,
- * confirm this checklist submission." Used at the end of opening / closing
- * checklist flows.
+ * PIN re-entry attestation for checklist instance confirmation (all levels).
+ * NOT a destructive-action gate — it's an attestation that "I, the signed-in
+ * user, confirm this checklist submission." Used at the end of opening,
+ * prep, and closing checklist flows.
  *
  * Props:
- *   open      — whether the modal is rendered
- *   onConfirm — called with the entered PIN after a successful pin-confirm.
- *   onCancel  — user backed out without confirming.
+ *   open               — whether the modal is rendered
+ *   instanceId         — the checklist instance being confirmed
+ *   incompleteReasons  — empty when all required items completed; populated
+ *                        per template_item_id when the soft-block triggers
+ *   onConfirmed        — fired with the confirmed instance on 200 OK; parent
+ *                        uses this to refresh state and close the modal
+ *   onError            — fired with the parsed ChecklistApiError for non-
+ *                        recoverable cases (instance_closed, role_level_
+ *                        insufficient, missing/extra reasons, supersede_
+ *                        failed). Modal still surfaces an inline message so
+ *                        the user sees feedback before parent reacts.
+ *   onCancel           — user backed out without confirming
  *
- * Network: POST /api/auth/pin-confirm with { pin }. **NOT YET IMPLEMENTED** —
- * the route gets built when Phase 4 actually wires this. For now the network
- * call is stubbed: on 4-digit entry, the modal surfaces an inline error
- * "PIN confirmation not yet wired (Phase 4)." so the scaffold doesn't pretend
- * to work. Once the route lands, swap the stub for a real fetch with the same
- * response-handling pattern as PasswordModal:
+ * Network: POST /api/checklist/confirm with body
+ *   { instanceId, pin, incompleteReasons }
+ * Per spec §6.1, PIN validation lives inside the confirm route — there is
+ * no separate /api/auth/pin-confirm. Single PIN attestation covers the
+ * entire close-of-shift workflow. PIN failure does NOT lock the account or
+ * increment failed_login_count (Phase 2 Session 4 step-up precedent — the
+ * actor is already authenticated; locking step-up doesn't raise the bar).
+ * PIN failure DOES audit (lib/checklists.ts confirmInstance writes
+ * `checklist.confirm` with `metadata.outcome: "pin_mismatch"`).
  *
- *   200                     → onConfirm(pin)
- *   401 invalid_credentials → inline error "Wrong PIN." with shake + 200ms haptic
- *   401 unauthorized        → onCancel (parent's enforcement handles re-auth)
- *   network/server          → inline error
+ * Response handling (switches on err.code, not HTTP status — code is the
+ * stable discriminator):
  *
- * Like the PIN keypad on the login surface, accepts haptic feedback (10ms
- * digit press, 200ms error buzz) and supports the "Use system keyboard"
- * toggle for users who prefer their phone's native keyboard.
+ *   200                              → onConfirmed(instance), modal closes
+ *   pin_mismatch                     → inline "Incorrect PIN.", clear, retry
+ *   missing_pin_hash                 → inline "Account not configured…",
+ *                                       defensive; unreachable per current
+ *                                       schema (users.pin_hash NOT NULL)
+ *   instance_closed                  → "Already submitted.", onError
+ *   single_submission_locked         → "Locked.", onError
+ *   role_level_insufficient          → "Your role can't confirm.", onError
+ *   missing_reasons / extra_reasons  → "Reload and try again.", onError
+ *                                       (parent computed reasons wrong)
+ *   supersede_failed                 → "Save partially failed.", onError
+ *   missing_count / missing_photo    → "Items still need data.", onError
+ *                                       (parent didn't gate; defensive)
+ *   (other / network)                → "Try again.", retry
+ *
+ * PIN handling: state-only during submission; cleared on every error path
+ * via triggerError; cleared on success before onConfirmed; never logged,
+ * never persisted, never sent anywhere except the API request body.
+ *
+ * UI: existing keypad / focus trap / shake-on-error / system-keyboard
+ * toggle preserved verbatim from the Phase 2 Session 4 scaffold. Haptic
+ * feedback (10ms digit press, 200ms error buzz) preserved. No lockout
+ * banner (intentional — see Phase 2 Session 4 lesson).
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+
+import type { ChecklistApiError } from "@/components/ChecklistItem";
+import type { ChecklistInstance } from "@/lib/types";
 
 const PIN_LENGTH = 4;
 
 export interface PinConfirmModalProps {
   open: boolean;
-  onConfirm: (pin: string) => Promise<void> | void;
+  instanceId: string;
+  incompleteReasons: Array<{ templateItemId: string; reason: string }>;
+  onConfirmed: (instance: ChecklistInstance) => void;
+  onError: (error: ChecklistApiError) => void;
   onCancel: () => void;
 }
 
@@ -51,7 +86,14 @@ function vibrateIfAvailable(durationMs: number) {
   }
 }
 
-export function PinConfirmModal({ open, onConfirm, onCancel }: PinConfirmModalProps) {
+export function PinConfirmModal({
+  open,
+  instanceId,
+  incompleteReasons,
+  onConfirmed,
+  onError,
+  onCancel,
+}: PinConfirmModalProps) {
   const [pin, setPin] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -86,27 +128,105 @@ export function PinConfirmModal({ open, onConfirm, onCancel }: PinConfirmModalPr
       setSubmitting(true);
       setError(null);
       try {
-        // TODO(phase-4): implement /api/auth/pin-confirm and replace this stub.
-        //   const res = await fetch("/api/auth/pin-confirm", {
-        //     method: "POST",
-        //     headers: { "Content-Type": "application/json" },
-        //     body: JSON.stringify({ pin: full }),
-        //     redirect: "manual",
-        //   });
-        //   if (res.ok) { await onConfirm(full); return; }
-        //   if (res.status === 401) { triggerError("Wrong PIN."); return; }
-        //   triggerError("Try again.");
-        triggerError("PIN confirmation not yet wired (Phase 4).");
+        const res = await fetch("/api/checklist/confirm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            instanceId,
+            pin: full,
+            incompleteReasons,
+          }),
+          // Per Phase 2 Session 3 lesson: NextResponse.redirect returns 307
+          // and fetch follows by default, masking auth-gate denials. Manual
+          // lets us see and surface the redirect as a recoverable error.
+          redirect: "manual",
+        });
+
+        if (res.ok) {
+          const data = (await res.json()) as { instance: ChecklistInstance };
+          // Best-effort scrub of in-memory PIN before yielding control.
+          setPin("");
+          onConfirmed(data.instance);
+          return;
+        }
+
+        // Non-ok: parse as ChecklistApiError. Switch on err.code (the stable
+        // discriminator); HTTP status is informational at most.
+        let body: ChecklistApiError;
+        try {
+          body = (await res.json()) as ChecklistApiError;
+        } catch {
+          triggerError("Unable to confirm. Please try again.");
+          return;
+        }
+
+        switch (body.code) {
+          case "pin_mismatch":
+            // Recoverable: clear input, allow retry. No onError — modal
+            // owns this case end-to-end.
+            triggerError("Incorrect PIN.");
+            return;
+
+          case "missing_pin_hash":
+            // Defensive: current schema (users.pin_hash NOT NULL) makes
+            // this unreachable. Surfacing meaningfully if it ever fires.
+            triggerError(
+              "Account not configured for PIN confirmation. Contact your administrator.",
+            );
+            return;
+
+          case "instance_closed":
+            triggerError("This closing was already submitted.");
+            onError(body);
+            return;
+
+          case "single_submission_locked":
+            triggerError("This checklist is locked.");
+            onError(body);
+            return;
+
+          case "role_level_insufficient":
+            triggerError("Your role doesn't have permission to confirm this closing.");
+            onError(body);
+            return;
+
+          case "missing_reasons":
+          case "extra_reasons":
+            // Caller bug — parent computed reasons wrong before opening.
+            // Generic message so the user has a path forward; onError
+            // lets the parent recover (close + recompute + reopen).
+            triggerError("Unable to confirm. Please reload and try again.");
+            onError(body);
+            return;
+
+          case "missing_count":
+          case "missing_photo":
+            // Parent bug — an item was marked complete without its required
+            // count or photo. User can't fix by completing more items;
+            // items they completed are already complete. Same recovery
+            // path as missing/extra reasons: parent recomputes state.
+            triggerError("Unable to confirm. Please reload and try again.");
+            onError(body);
+            return;
+
+          case "supersede_failed":
+            // Forensic case — both completion ids are in body. Don't
+            // retry blindly; let parent decide.
+            triggerError("Save partially failed. Please reload and try again.");
+            onError(body);
+            return;
+
+          default:
+            triggerError("Unable to confirm. Please try again.");
+            return;
+        }
       } catch {
         triggerError("Network error. Try again.");
       } finally {
         setSubmitting(false);
       }
-      // Reference onConfirm so TS doesn't flag it unused while the network
-      // call is stubbed; harmless no-op when triggerError fired.
-      void onConfirm;
     },
-    [onConfirm, triggerError],
+    [instanceId, incompleteReasons, onConfirmed, onError, triggerError],
   );
 
   const handleDigit = useCallback(
