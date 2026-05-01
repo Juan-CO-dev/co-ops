@@ -93,3 +93,65 @@ Cristian's explicit location assignments (§3.2) are a temp workaround for the l
 ## 6. Single-line summary
 
 > Phase 2.5 bridge: Pete (owner, `73ac4b61-ff87-4db6-b338-9098dfe3f295`) + Cristian (moo, `0d467b64-6865-461b-b4fd-f3a17c3a056f`) provisioned via service-role direct insert on 2026-04-30; both `active=true email_verified=true` with bcrypt-hashed passwords + placeholder PIN; Cristian assigned to MEP+EM, Pete unscoped via level-7 override; `user.create` audit rows `607ddafa…` + `e35750f8…` carry `metadata.phase="2.5_temp_provisioning"`; scrubbed via canonical flow in Phase 5+ once Resend domain verification lands.
+
+---
+
+## 7. Temp PIN provisioning (2026-05-01, Build #1 step 10 smoke)
+
+Build #1 (Module #1 Daily Operations) shipped the closing checklist UI and PIN-confirm flow. Smoke testing the full closer-attests-with-PIN path against production needs working PINs on the test accounts. The proper user-initiated PIN-set flow doesn't exist yet — that's a Build #1.5 / Build #2 deliverable, modeled on the existing verify-and-set-password flow.
+
+Bridge: [scripts/set-temp-pin.ts](../scripts/set-temp-pin.ts) — admin-action script that lookups a user by email and writes a bcrypt-hashed PIN to `users.pin_hash` via service-role, with a `user.set_pin` audit row (destructive=true, on the locked DESTRUCTIVE_ACTIONS list).
+
+### What was set on 2026-05-01
+
+| User | Email | Temp PIN | Audit row id |
+|---|---|---|---|
+| Juan | `juan@complimentsonlysubs.com` | **`1234`** | `064d1686-37c9-42f8-bd1b-c5452a490f7a` |
+| Pete | `pete@complimentsonlysubs.com` | **`1234`** | `fefc6e67-1241-48cc-80de-79843f2aae1a` |
+| Cristian | `cristian@complimentsonlysubs.com` | **`1234`** | `4cf2aa01-80ac-4fc8-999d-6ebf91b9edd2` |
+
+The PIN value (`1234`) is captured in this doc on purpose. These are temporary admin-set PINs, not user-chosen secrets. The doc is the canonical record of what's outstanding so the eventual scrub knows what to invalidate. Same hygiene as Phase 2.5 plaintext-passwords-out-of-band: the credentials have known short lifetimes; documentation tracks them so they can be retired cleanly.
+
+### Why all three got the same PIN
+
+For Build #1 smoke, all three test accounts use `1234` so Juan can:
+- Test his own attestation flow (his account, his closing)
+- Test on Pete's behalf when validating owner-tier interactions
+- Test on Cristian's behalf when validating MoO-tier interactions
+
+PIN sharing is acceptable here because:
+- All three accounts are bridge accounts being used for testing
+- The PIN value is publicly documented in this doc — it isn't a secret
+- Phase 5+ scrub removes all admin-set PINs before any non-test user touches the system
+
+### Scrub procedure for production
+
+When the proper user-initiated PIN-set flow ships (Build #1.5 / Build #2):
+
+1. **Identify all admin-set PINs** by querying `audit_log`:
+   ```sql
+   SELECT actor_id, resource_id AS user_id, occurred_at, metadata
+     FROM audit_log
+    WHERE action = 'user.set_pin'
+      AND metadata->>'set_method' = 'admin_script'
+    ORDER BY resource_id, occurred_at DESC;
+   ```
+   The most recent row per `resource_id` identifies users whose current PIN is admin-set.
+
+2. **For each user without a later user-driven PIN-set audit row** (the Build #1.5 flow's audit action would be different — likely `user.pin_set_self` or similar), null out the PIN:
+   ```sql
+   UPDATE users SET pin_hash = '<placeholder>' WHERE id IN (...);
+   ```
+   Note: `pin_hash` is `NOT NULL` per schema. Either (a) set to a bcrypt of a long random string the user can't possibly know, OR (b) the Build #1.5 migration relaxes the NOT NULL constraint — preferred (b) so the column genuinely reflects "no PIN set."
+
+3. **Force prompt-on-next-login.** Build #1.5's PIN-set flow should detect "user has no settable PIN" state on sign-in and route to the set-your-PIN screen before letting them proceed.
+
+4. **Audit the scrub.** Each user gets a `user.reset_pin` audit row with metadata indicating the scrub origin and the prior `user.set_pin` audit_id being scrubbed.
+
+5. **Communicate out-of-band** to each user: "Your temporary PIN has been retired. On your next login, you'll be prompted to set your own."
+
+### Carry-overs
+
+- Build #1.5 / Build #2 ships the proper user-initiated PIN-set flow + the scrub procedure above.
+- Until then, every new user provisioned via admin tooling needs a temp PIN set — `scripts/set-temp-pin.ts` is the canonical bridge.
+- Do NOT use `set-temp-pin.ts` for non-bridge production flows once the proper flow ships. The script is documented as bridge tooling; future tooling should reject `set_method: "admin_script"` PIN setting except via the existing migration / scrub paths.
