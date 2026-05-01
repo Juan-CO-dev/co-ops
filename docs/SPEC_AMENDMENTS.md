@@ -209,9 +209,40 @@ Below the gate: items + per-station progress + sticky top progress bar render, b
 
 ---
 
+## C.27 — Notes need multi-tier visibility architecture (deferred)
+
+**Date added:** 2026-05-01
+**Spec sections:** §4.3 (`checklist_completions` schema — `notes TEXT`), §5.2 (RLS on `checklist_completions`), Module #1 Build #1 step 6 (`ChecklistItem` notes affordance)
+**What spec says:** Spec §4.3 models notes as a single nullable text field on `checklist_completions`. Spec assumes one note per completion, no visibility scoping, no author attribution beyond the implicit `completed_by` linkage.
+**What built reality is (per Juan's Pass 1 testing feedback):** CO's operational reality requires a richer notes model:
+- **Public notes** — visible to all roles. Author-tagged with name + timestamp so the closer's note carries attribution context for the next shift.
+- **Role-gated managerial notes** — visible only to actors at or above the author's level. A Shift Lead's managerial note is visible to SL+ (level 4+); an AGM's managerial note is visible to AGM+ (level 5+); a CGS note visible to CGS only. Mirrors how real kitchen handoffs work: some context is for everyone (public), some is "for managers' eyes" so it doesn't reach the floor team.
+- **Multi-note per completion** — closing is multi-author over hours. Multiple authors may want to leave context on the same item ("Boris noticed the burner was sticky at 4pm, AGM noted it for follow-up at 9pm, GM signed off on the maintenance plan in the morning"). The current single-text-field model collapses these into one note that any later author overwrites or appends to inconsistently.
+- **Visible UI rendering** — Build #1 stores notes via `checklist_completions.notes` (writeable from the row's expand affordance per step 6), but doesn't render them anywhere. The notes are forensic-only at this stage.
+
+**What the design would likely look like:**
+- New `checklist_completion_notes` table: `(id, completion_id, author_id, author_role, body, visibility, created_at)`. `visibility ∈ {'public', 'managerial'}`.
+- New RLS policies scoping `managerial` notes to `current_user_role_level() >= author_role_level` per row. `public` notes readable by anyone with the parent completion read access.
+- `ChecklistItem` refactor — render notes inline below the row when expanded, grouped by visibility tier and ordered chronologically.
+- Authoring UI: the existing notes textarea expands into a "post note" affordance with a public/managerial toggle. AGM+ defaults to managerial; KH/SL defaults to public (with toggle available for SL to escalate to managerial visibility).
+- Migration path for existing `checklist_completions.notes`: copy any non-null values into a single public note row authored by the original `completed_by` user. Then either drop the column or leave it as a denormalized "first-note" field for query convenience (TBD at design time).
+
+**Why defer:**
+- Real usage feedback from Cristian's first week of Build #1 closings should inform the visibility model + authoring patterns BEFORE schema is locked. Building a complex schema based on hypothetical workflows is the kind of premature architecture that ages badly.
+- Build #1 is operationally functional without notes UI — the multi-author closing workflow validates end-to-end with items + completions + finalize. Notes are an enrichment layer, not a critical path.
+- The existing `checklist_completions.notes` field continues to capture stored notes; nothing is lost. When the proper notes model ships, migration is straightforward.
+
+**v1.3 action:**
+- Build #1.5 polish session OR Build #2 kickoff design conversation: surface notes architecture as a top-tier discussion item. Inputs to that conversation: Cristian's first-week feedback on what notes he actually wants to leave + read.
+- Schema migration goes through Supabase MCP `apply_migration` (Phase 1 lock notwithstanding — adding tables is non-breaking; the lock is about not modifying foundation tables).
+- ChecklistItem notes-display refactor is a step-6-style component update; doesn't touch lib/checklists or API routes (notes are rendered, not validated against operational rules).
+- Captured during Phase 3 Build #1 step 10 Pass 1 testing.
+
+---
+
 ## How to add an entry
 
-1. Pick the next monotonic ID (`C.<n>` — current next: C.27).
+1. Pick the next monotonic ID (`C.<n>` — current next: C.28).
 2. Spec sections under amendment.
 3. Quote what spec says.
 4. Document what built reality is.
