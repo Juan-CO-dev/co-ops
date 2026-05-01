@@ -28,7 +28,7 @@ The complete design is in `CO-OPS_Foundation_Spec_v1.2.md` (kept outside this re
 | Styling | Tailwind CSS v4 (CSS-first config via `@theme inline`) |
 | Hosting | Vercel (auto-deploy from GitHub `main`) |
 
-The spec specifies Next.js 14 / Sonnet 4 / Node 20; foundation runs current stable versions instead — see the Phase 0 recap for the deviation rationale.
+The spec specifies Next.js 14 / Sonnet 4 / Node 20 / Postgres 15; foundation runs current stable versions instead — see the Phase 0 recap for the deviation rationale.
 
 ---
 
@@ -108,7 +108,7 @@ app/         Next.js App Router pages (login, dashboard, modules, /admin/*, /api
 components/  Reusable React components (Nav, PlaceholderCard, Modals, etc.)
 lib/         Pure logic — types, roles, permissions, auth, checklists, handoff, adapters
 scripts/     One-off CLIs (secret generation, future migrations)
-middleware.ts  Edge middleware for session validation + idle timeout (Phase 2)
+proxy.ts     Edge proxy for session validation + idle timeout (Next 16's renamed middleware.ts)
 ```
 
 Module pages currently render `<PlaceholderCard />` — they're stubbed during foundation and replaced module-by-module across the build.
@@ -119,17 +119,13 @@ Module pages currently render `<PlaceholderCard />` — they're stubbed during f
 
 | Phase | Status |
 |---|---|
-| 0 — Repo + scaffold | in progress |
-| 1 — Database schema + RLS | not started |
-| 2 — Auth | not started |
-| 3 — RBAC | not started (constants/types written during Phase 0) |
-| 4 — Nav shell | not started |
-| 5 — Foundation admin tools | not started |
-| 6 — Shared services | not started |
-| 7 — Integration adapters | not started |
-| 8 — Acceptance | not started |
+| 0 — Foundation scaffold | complete |
+| 1 — Database schema + RLS | complete |
+| 2 — Auth | complete (in production) |
+| 2.5 — Temp user provisioning | complete |
+| 3 — Housekeeping | in progress (CI gate landed; module work next) |
 
-When all of Phase 0–8 lands, foundation ships and Module #1 (Daily Operations) begins in a fresh chat session.
+Phase 3 opens module work — Daily Operations (Module #1) is the next module to begin. See `AGENTS.md` for the canonical phase log and durable knowledge.
 
 ---
 
