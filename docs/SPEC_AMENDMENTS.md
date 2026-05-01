@@ -172,9 +172,36 @@ The current `users.role = 'trainer'` enum value treats trainer as a single role 
 
 ---
 
+## C.26 — Closing finalization is role-gated; item completion is not
+
+**Date added:** 2026-05-01
+**Spec sections:** §2.4 (per-item completion model), §6.1 (PIN re-entry), Module #1 Build #1 step 9 (`/operations/closing` UI), §15 lib/checklists.ts (already enforces this at the lib + RLS layer per spec §6.1 step 5)
+**What spec says:** Spec §2.4 establishes per-item completion ("Items on the artifact have `min_role_level`. A user with level X sees and can complete items at levels ≤ X."). Spec §6.1 step 5 establishes confirm-time role check ("user's role level is sufficient to confirm this checklist (≥ all min_role_levels of completed items, OR equal to highest completed item level)"). Both rules already exist in the lib/RLS layer; the UI just needs to mirror them.
+**What built reality is (per Juan's confirmed Model A operational reality):** Closing is a **multi-author multi-hour process**. Employees, KH+, and managers all tick items throughout the shift; items save individually via the optimistic UI flow in `ChecklistItem` (per step 6). Only **one person** finalizes the closing — typically the "last out" KH or AGM who completed Walk-Out Verification — and **that person** attests with PIN.
+
+The Build #1 UI surfaced "Review & submit" (sticky footer pill, inline button, review section, PinConfirmModal) to every actor regardless of role, which conflated "I'm done with my work" with "the closing is being finalized." Operationally these are different actions: an employee ticks items and walks away (no finalization needed); a KH/AGM finalizes when ready.
+
+**Fix applied** in `app/operations/closing/closing-client.tsx`:
+- Sticky footer pill, inline "Review & submit" CTA, review section, and PinConfirmModal mount are all wrapped in `actor.level >= 4` (KH+).
+- Below KH (level 3 employees / trainers), the closing page renders items and progress only — no finalization path. Their item completions still save individually.
+- ChecklistItem behavior unchanged — every actor whose level satisfies the item's `min_role_level` can still complete items.
+- `lib/checklists.ts` `confirmInstance` was already enforcing the role check at the lib layer per spec §6.1 step 5 (highest-completed-item gate); the UI now mirrors it as defense-in-depth and as user experience clarity.
+- `PinConfirmModal` mount gated alongside the CTA so even a future code path that tries to `setPinOpen(true)` for a level-3 actor finds no modal mounted.
+
+**Why this matters:** Without the gate, employees would see a "Review & submit" button at the bottom of their closing items, implying they should tap it. Tapping would open PinConfirmModal asking for their PIN. Their attempt would fail at `/api/checklist/confirm` with `role_level_insufficient` (the lib check fires for items above their level). The error UX would be confusing and the modal interaction wasteful. Removing the path entirely is the right answer: employees contribute work, KH+ closes the closing.
+
+**Build #1 testing implication:** Validates correctly for the three test accounts (Juan cgs/8, Pete owner/7, Cristian moo/6.5 — all see the full UI). Employee-level UX validation comes when CO onboards real level-3 accounts (Build #1.5+). The architecture is correct now even if we can't fully test the level-3 path against live users yet.
+
+**v1.3 action:**
+- Document this gate explicitly in spec §6.1 alongside the existing role-sufficiency rule. The lib + RLS layer enforce one half ("the confirmer's level must clear the highest completed item's min_role_level"); the UI enforces the other half ("only show the finalization affordance to actors who could plausibly be the finalizer").
+- Future modules (Opening, Prep, future artifact types) inherit the same model: completion open to qualified levels, finalization gated to KH+. The `actor.level >= 4` gate is the canonical check.
+- If CO ever introduces a "self-finalize" mode where a single-person shift finalizes their own work without a senior present, the gate stays — that single person IS at least KH (level 4) anyway, since solo shifts at CO are KH+ shifts by operational policy.
+
+---
+
 ## How to add an entry
 
-1. Pick the next monotonic ID (`C.<n>` — current next: C.26).
+1. Pick the next monotonic ID (`C.<n>` — current next: C.27).
 2. Spec sections under amendment.
 3. Quote what spec says.
 4. Document what built reality is.

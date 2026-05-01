@@ -472,59 +472,79 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
         })}
       </div>
 
-      {/* Inline submit at end of list (only when interactive) */}
-      {!readOnly ? (
-        <div className="mt-8 flex flex-col gap-2">
-          <button
-            type="button"
-            onClick={handleReviewToggle}
-            className={[
-              "inline-flex min-h-[64px] w-full items-center justify-center rounded-xl",
-              "px-5 text-base font-bold uppercase tracking-[0.12em]",
-              "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
-              allRequiredDone
-                ? "border-2 border-co-text bg-co-gold text-co-text hover:bg-co-gold-deep"
-                : "border-2 border-co-border-2 bg-co-surface text-co-text hover:border-co-text",
-            ].join(" ")}
-          >
-            {reviewOpen ? "Hide review" : allRequiredDone ? "Review & submit" : "Review & submit (incomplete)"}
-          </button>
-          <p className="text-center text-[11px] text-co-text-muted">
-            {totalCount.completed} of {totalCount.required} required complete
-          </p>
-        </div>
-      ) : null}
+      {/*
+       * Finalization UI is role-gated. Per CO's Model A (SPEC_AMENDMENTS.md
+       * C.26): closing is multi-author over hours; employees + KH+ all tick
+       * items throughout the shift via the optimistic UI. ONE person
+       * finalizes — typically the "last out" KH or AGM who completed
+       * Walk-Out Verification — and that person attests with PIN.
+       *
+       * Item completion: open to anyone whose level >= each item's
+       * min_role_level (gated inside ChecklistItem + RLS in
+       * lib/checklists.ts).
+       * Finalization (review screen + sticky footer + PIN modal): gated to
+       * actorLevel >= 4 (KH+) here. Below KH, no submit path renders;
+       * employees contribute work and walk away. Their items are already
+       * saved individually.
+       *
+       * The PinConfirmModal mount below is also gated — no path leads to it
+       * for level 3 actors, so omitting the mount keeps the React tree
+       * minimal AND defends against any future code path that tries to
+       * setPinOpen(true) directly.
+       */}
+      {!readOnly && actor.level >= 4 ? (
+        <>
+          {/* Inline submit at end of list */}
+          <div className="mt-8 flex flex-col gap-2">
+            <button
+              type="button"
+              onClick={handleReviewToggle}
+              className={[
+                "inline-flex min-h-[64px] w-full items-center justify-center rounded-xl",
+                "px-5 text-base font-bold uppercase tracking-[0.12em]",
+                "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
+                allRequiredDone
+                  ? "border-2 border-co-text bg-co-gold text-co-text hover:bg-co-gold-deep"
+                  : "border-2 border-co-border-2 bg-co-surface text-co-text hover:border-co-text",
+              ].join(" ")}
+            >
+              {reviewOpen ? "Hide review" : allRequiredDone ? "Review & submit" : "Review & submit (incomplete)"}
+            </button>
+            <p className="text-center text-[11px] text-co-text-muted">
+              {totalCount.completed} of {totalCount.required} required complete
+            </p>
+          </div>
 
-      {/* Review section — inline scroll-down */}
-      {!readOnly && reviewOpen ? (
-        <ReviewSection
-          templateItems={templateItems}
-          completions={completions}
-          incompleteRequiredIds={incompleteRequiredIds}
-          reasonDrafts={reasonDrafts}
-          setReasonDrafts={setReasonDrafts}
-          reasonsReady={reasonsReady}
-          onContinue={handleContinue}
-        />
-      ) : null}
+          {/* Review section — inline scroll-down */}
+          {reviewOpen ? (
+            <ReviewSection
+              templateItems={templateItems}
+              completions={completions}
+              incompleteRequiredIds={incompleteRequiredIds}
+              reasonDrafts={reasonDrafts}
+              setReasonDrafts={setReasonDrafts}
+              reasonsReady={reasonsReady}
+              onContinue={handleContinue}
+            />
+          ) : null}
 
-      {/* Sticky footer — always-reachable shortcut, less prominent */}
-      {!readOnly ? (
-        <StickyFooter
-          completed={totalCount.completed}
-          required={totalCount.required}
-          allRequiredDone={allRequiredDone}
-          onTap={() => {
-            setReviewOpen(true);
-            // Best-effort scroll the review section into view.
-            if (typeof window !== "undefined") {
-              window.requestAnimationFrame(() => {
-                const el = document.getElementById("closing-review");
-                if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-              });
-            }
-          }}
-        />
+          {/* Sticky footer — always-reachable shortcut, less prominent */}
+          <StickyFooter
+            completed={totalCount.completed}
+            required={totalCount.required}
+            allRequiredDone={allRequiredDone}
+            onTap={() => {
+              setReviewOpen(true);
+              // Best-effort scroll the review section into view.
+              if (typeof window !== "undefined") {
+                window.requestAnimationFrame(() => {
+                  const el = document.getElementById("closing-review");
+                  if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+                });
+              }
+            }}
+          />
+        </>
       ) : null}
 
       {/* Read-only — quick "back to dashboard" affordance */}
@@ -544,8 +564,11 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
         </div>
       ) : null}
 
-      {/* PinConfirmModal — only mounted in interactive mode */}
-      {!readOnly ? (
+      {/* PinConfirmModal — mounted only when finalization is gate-allowed
+       * (matches the actorLevel >= 4 gate above per SPEC_AMENDMENTS.md C.26).
+       * Defense-in-depth: even if a future code path tries to setPinOpen(true)
+       * for a level-3 actor, the mount is absent and the modal can't render. */}
+      {!readOnly && actor.level >= 4 ? (
         <PinConfirmModal
           open={pinOpen}
           instanceId={instance.id}
