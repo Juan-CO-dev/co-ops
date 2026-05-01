@@ -17,7 +17,7 @@ The complete design is in `CO-OPS_Foundation_Spec_v1.2.md` (kept outside this re
 | Framework | Next.js 16 (App Router, Turbopack) |
 | Runtime | Node.js 22 LTS |
 | Language | TypeScript (strict + `noUncheckedIndexedAccess`) |
-| Database | Supabase Postgres 15 (with RLS) |
+| Database | Supabase Postgres 17 (with RLS) |
 | Storage | Supabase Storage |
 | Auth | Custom JWT layer over Supabase (peppered bcrypt, dual-mode PIN / email+password) |
 | AI | Claude Sonnet 4.6 (`claude-sonnet-4-6`) via server-side proxy |
