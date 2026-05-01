@@ -1,27 +1,38 @@
 /**
- * /dashboard — Phase 2 Session 4 placeholder.
+ * /dashboard — Module #1 Build #1 step 8.
  *
- * Authenticated landing surface after sign-in. Phase 4+ replaces the body
- * with the real shell (announcements, handoff card, today's open artifacts,
- * role-gated module grid) — for now, just enough to confirm sign-in worked
- * and to host the IdleTimeoutWarning client component.
+ * Operator's "what do I need to do right now" view. Action-oriented, compact,
+ * today-focused. NOT a reports console — see docs/MODULE_REPORTS_CONSOLE_VISION.md
+ * for the future management-facing surface that handles tabs / filters /
+ * drill-down / history. Two distinct surfaces, neither becomes the other.
  *
- * Server Component. Calls requireSessionFromHeaders('/dashboard') for the
- * full session check (sessions row, token_hash dual verify, idle, revoked,
- * deactivated user, step-up auto-clear). On any denial it redirects to
- * /?next=/dashboard so the user lands back here after re-auth.
+ * Server Component. Calls requireSessionFromHeaders for the full session
+ * check (sessions row, token_hash dual verify, idle, revoked, deactivated
+ * user, step-up auto-clear) before any data load.
  *
- * Note: proxy.ts already validated JWT signature + exp at the edge before
- * this handler runs. requireSessionFromHeaders is the second layer (database
- * checks) — both layers are required.
+ * Reads `?loc=<id>` to determine selected location for the multi-location
+ * case. Defaults to the first accessible location alphabetically. Single-
+ * location users see no switcher.
+ *
+ * Today / yesterday computed in America/New_York — both CO locations
+ * (MEP / EM) are in DC, same TZ. The spec referenced a `locations.timezone`
+ * field that doesn't exist in the schema (§4.1) or types; honoring the spec
+ * intent by hardcoding the operational TZ. When/if CO expands beyond DC
+ * the schema gets a timezone column and this hardcode becomes a per-row
+ * read.
  */
+
+import Link from "next/link";
 
 import { AuthShell } from "@/components/auth/AuthShell";
 import { IdleTimeoutWarning } from "@/components/auth/IdleTimeoutWarning";
 import { LogoutButton } from "@/components/auth/LogoutButton";
 import { ROLES } from "@/lib/roles";
+import { accessibleLocations, type LocationActor } from "@/lib/locations";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
+
+const OPERATIONAL_TZ = "America/New_York";
 
 interface LocationLite {
   id: string;
@@ -29,26 +40,257 @@ interface LocationLite {
   code: string;
 }
 
-async function loadLocationNames(ids: string[]): Promise<LocationLite[]> {
-  if (ids.length === 0) return [];
-  const sb = getServiceRoleClient();
-  const { data } = await sb
+type ClosingStatus = "open" | "confirmed" | "incomplete_confirmed";
+
+interface ClosingInstanceLite {
+  id: string;
+  date: string;
+  status: ClosingStatus;
+}
+
+interface OperationalState {
+  /** YYYY-MM-DD in OPERATIONAL_TZ. */
+  todayDate: string;
+  yesterdayDate: string;
+  /** True when the location has a "Standard Closing" template seeded. */
+  hasClosingTemplate: boolean;
+  /** Today's closing instance, if any. */
+  todayInstance: ClosingInstanceLite | null;
+  /** When today's instance is open: total required items + completed required items. */
+  todayProgress: { completed: number; required: number } | null;
+  /** Yesterday's closing instance — only surfaced when status='open' (the alert case). */
+  yesterdayUnconfirmed: ClosingInstanceLite | null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Date helpers — TZ-aware
+// ─────────────────────────────────────────────────────────────────────────────
+
+function nyDateString(d: Date): string {
+  // Intl.DateTimeFormat with en-CA locale yields YYYY-MM-DD reliably.
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: OPERATIONAL_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
+function todayAndYesterday(): { today: string; yesterday: string } {
+  const now = new Date();
+  const today = nyDateString(now);
+  // Compute yesterday by subtracting one day from `today` in calendar terms,
+  // then formatting back as YYYY-MM-DD. Using UTC arithmetic on the date-only
+  // string sidesteps DST concerns (we're not converting between zones — just
+  // walking calendar days).
+  const todayUtc = new Date(`${today}T00:00:00Z`);
+  todayUtc.setUTCDate(todayUtc.getUTCDate() - 1);
+  const yesterday = todayUtc.toISOString().slice(0, 10);
+  return { today, yesterday };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Data loaders
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function loadAccessibleLocations(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  actor: LocationActor,
+): Promise<LocationLite[]> {
+  // accessibleLocations returns "all" for level 7+, else the explicit ID list.
+  // For "all" we fetch every active location; for the explicit list we filter.
+  const access = accessibleLocations(actor);
+  let query = sb
     .from("locations")
     .select("id, name, code")
-    .in("id", ids)
+    .eq("active", true)
     .order("name", { ascending: true });
+  if (access !== "all") {
+    if (access.length === 0) return [];
+    query = query.in("id", access);
+  }
+  const { data, error } = await query;
+  if (error) throw new Error(`load locations: ${error.message}`);
   return (data ?? []) as LocationLite[];
 }
 
-export default async function DashboardPage() {
+async function loadOperationalState(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+): Promise<OperationalState> {
+  const { today, yesterday } = todayAndYesterday();
+
+  // Two-step query (per AGENTS.md Phase 2 Session 4: PostgREST embedded-select
+  // .eq() filter on relation can fail unpredictably). Resolve template first,
+  // then instances.
+  const { data: tmpl, error: tmplErr } = await sb
+    .from("checklist_templates")
+    .select("id")
+    .eq("location_id", locationId)
+    .eq("type", "closing")
+    .eq("active", true)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ id: string }>();
+  if (tmplErr) throw new Error(`load closing template: ${tmplErr.message}`);
+
+  if (!tmpl) {
+    return {
+      todayDate: today,
+      yesterdayDate: yesterday,
+      hasClosingTemplate: false,
+      todayInstance: null,
+      todayProgress: null,
+      yesterdayUnconfirmed: null,
+    };
+  }
+
+  const { data: instances, error: instErr } = await sb
+    .from("checklist_instances")
+    .select("id, date, status")
+    .eq("template_id", tmpl.id)
+    .eq("location_id", locationId)
+    .in("date", [today, yesterday]);
+  if (instErr) throw new Error(`load instances: ${instErr.message}`);
+
+  const todayInstance =
+    (instances ?? []).find((i) => i.date === today) ??
+    null;
+  const yesterdayInstance =
+    (instances ?? []).find((i) => i.date === yesterday) ??
+    null;
+
+  // Yesterday's alert fires only for status='open' (was-not-confirmed).
+  const yesterdayUnconfirmed =
+    yesterdayInstance && yesterdayInstance.status === "open"
+      ? (yesterdayInstance as ClosingInstanceLite)
+      : null;
+
+  // X-of-Y progress only when today's instance is open.
+  let todayProgress: { completed: number; required: number } | null = null;
+  if (todayInstance && todayInstance.status === "open") {
+    const { data: requiredItems, error: reqErr } = await sb
+      .from("checklist_template_items")
+      .select("id")
+      .eq("template_id", tmpl.id)
+      .eq("required", true)
+      .eq("active", true);
+    if (reqErr) throw new Error(`load required items: ${reqErr.message}`);
+    const requiredIds = new Set((requiredItems ?? []).map((r) => r.id as string));
+
+    const { data: liveCompletions, error: compErr } = await sb
+      .from("checklist_completions")
+      .select("template_item_id")
+      .eq("instance_id", todayInstance.id)
+      .is("superseded_at", null);
+    if (compErr) throw new Error(`load live completions: ${compErr.message}`);
+
+    const completedRequired = new Set<string>();
+    for (const c of liveCompletions ?? []) {
+      const id = c.template_item_id as string;
+      if (requiredIds.has(id)) completedRequired.add(id);
+    }
+    todayProgress = {
+      completed: completedRequired.size,
+      required: requiredIds.size,
+    };
+  }
+
+  return {
+    todayDate: today,
+    yesterdayDate: yesterday,
+    hasClosingTemplate: true,
+    todayInstance: (todayInstance as ClosingInstanceLite | null) ?? null,
+    todayProgress,
+    yesterdayUnconfirmed,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// View helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+function formatDateLabel(yyyymmdd: string): string {
+  // YYYY-MM-DD → "Tue, May 1"
+  const [y, m, d] = yyyymmdd.split("-").map(Number);
+  if (!y || !m || !d) return yyyymmdd;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return new Intl.DateTimeFormat("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(dt);
+}
+
+interface StatusCopy {
+  label: string;
+  cta: string;
+  ctaTone: "primary" | "review";
+}
+
+function statusCopyFor(state: OperationalState): StatusCopy {
+  if (!state.hasClosingTemplate) {
+    return {
+      label: "No closing template configured for this location.",
+      cta: "Open closing",
+      ctaTone: "review",
+    };
+  }
+  const inst = state.todayInstance;
+  if (!inst) {
+    return { label: "Not started", cta: "Start closing", ctaTone: "primary" };
+  }
+  if (inst.status === "confirmed") {
+    return { label: "Confirmed", cta: "Review closing", ctaTone: "review" };
+  }
+  if (inst.status === "incomplete_confirmed") {
+    return {
+      label: "Submitted with incomplete items",
+      cta: "Review closing",
+      ctaTone: "review",
+    };
+  }
+  // open
+  const p = state.todayProgress;
+  const progress = p ? `${p.completed} of ${p.required} items` : "in progress";
+  return {
+    label: `In progress · ${progress}`,
+    cta: "Continue closing",
+    ctaTone: "primary",
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Page
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface DashboardPageProps {
+  searchParams: Promise<{ loc?: string }>;
+}
+
+export default async function DashboardPage({ searchParams }: DashboardPageProps) {
   const auth = await requireSessionFromHeaders("/dashboard");
   const role = ROLES[auth.role];
-  const locations = await loadLocationNames(auth.locations);
 
-  // Level 7+ (Owner, CGS) have all-locations override; if their assignment
-  // list is empty, surface that instead of "no locations" — they intentionally
-  // aren't bound to a specific row in user_locations.
-  const allLocations = auth.level >= 7 && locations.length === 0;
+  const sb = getServiceRoleClient();
+  const locationActor: LocationActor = {
+    role: auth.role,
+    locations: auth.locations,
+  };
+  const locations = await loadAccessibleLocations(sb, locationActor);
+
+  const { loc } = await searchParams;
+  const selectedLocation =
+    (loc ? locations.find((l) => l.id === loc) : null) ??
+    locations[0] ??
+    null;
+
+  const operational = selectedLocation
+    ? await loadOperationalState(sb, selectedLocation.id)
+    : null;
+
+  const allLocationsBadge = auth.level >= 7 && auth.locations.length === 0;
 
   return (
     <AuthShell>
@@ -60,11 +302,10 @@ export default async function DashboardPage() {
           <h2 className="mt-1 text-3xl font-extrabold leading-tight text-co-text">
             Hi, {auth.user.name}.
           </h2>
-          <p className="mt-1 text-sm text-co-text-muted">
-            You're signed in. Real dashboard lands in Phase 4.
-          </p>
         </div>
 
+        {/* Role badge — user identity, not location. Stays separate from
+         * the location chrome below. */}
         <div className="flex flex-wrap gap-2">
           <span
             className="
@@ -83,8 +324,14 @@ export default async function DashboardPage() {
             />
             {role.label}
           </span>
+        </div>
 
-          {allLocations ? (
+        {/* Location chrome — single non-interactive chip for single-location
+         * users; switcher (interactive selectable pills) for multi-location.
+         * No co-existence: the surface either shows the user's one location
+         * or lets them switch. */}
+        {allLocationsBadge && locations.length === 0 ? (
+          <div className="flex flex-wrap gap-2">
             <span
               className="
                 inline-flex items-center rounded-full border-2 border-co-border-2
@@ -94,7 +341,9 @@ export default async function DashboardPage() {
             >
               All locations
             </span>
-          ) : locations.length === 0 ? (
+          </div>
+        ) : locations.length === 0 ? (
+          <div className="flex flex-wrap gap-2">
             <span
               className="
                 inline-flex items-center rounded-full border-2 border-co-border
@@ -104,29 +353,44 @@ export default async function DashboardPage() {
             >
               No locations
             </span>
-          ) : (
-            locations.map((loc) => (
-              <span
-                key={loc.id}
-                className="
-                  inline-flex items-center rounded-full border-2 border-co-border-2
-                  bg-co-surface px-3 py-1.5 text-xs font-bold uppercase tracking-[0.14em]
-                  text-co-text-muted
-                "
-              >
-                {loc.code} · {loc.name}
-              </span>
-            ))
-          )}
-        </div>
+          </div>
+        ) : locations.length === 1 ? (
+          // Single accessible location — non-interactive chip; no switcher needed.
+          <div className="flex flex-wrap gap-2">
+            <span
+              className="
+                inline-flex items-center rounded-full border-2 border-co-border-2
+                bg-co-surface px-3 py-1.5 text-xs font-bold uppercase tracking-[0.14em]
+                text-co-text-muted
+              "
+            >
+              {locations[0]!.code} · {locations[0]!.name}
+            </span>
+          </div>
+        ) : selectedLocation ? (
+          <LocationSwitcher
+            locations={locations}
+            selectedId={selectedLocation.id}
+          />
+        ) : null}
 
-        <div className="rounded-2xl border-2 border-co-border bg-co-surface p-5 shadow-sm sm:p-6">
-          <p className="text-sm text-co-text-muted">
-            Phase 4 will replace this card with the announcements banner, the
-            handoff flag, today's open checklist instances, and the role-gated
-            module grid.
-          </p>
-        </div>
+        {/* Yesterday-unconfirmed alert — operational concern, not a history view. */}
+        {selectedLocation && operational?.yesterdayUnconfirmed ? (
+          <YesterdayUnconfirmedAlert
+            location={selectedLocation}
+            yesterdayDate={operational.yesterdayDate}
+          />
+        ) : null}
+
+        {/* Today's Operations card. */}
+        {selectedLocation && operational ? (
+          <TodaysOperationsCard
+            location={selectedLocation}
+            state={operational}
+          />
+        ) : (
+          <NoLocationsState />
+        )}
 
         <div className="flex justify-center">
           <LogoutButton />
@@ -135,5 +399,184 @@ export default async function DashboardPage() {
 
       <IdleTimeoutWarning />
     </AuthShell>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// View sub-components
+// ─────────────────────────────────────────────────────────────────────────────
+
+function LocationSwitcher({
+  locations,
+  selectedId,
+}: {
+  locations: LocationLite[];
+  selectedId: string;
+}) {
+  return (
+    <nav
+      aria-label="Location switcher"
+      className="flex flex-wrap gap-2"
+    >
+      {locations.map((loc) => {
+        const isSelected = loc.id === selectedId;
+        return (
+          <Link
+            key={loc.id}
+            href={`/dashboard?loc=${loc.id}`}
+            scroll={false}
+            aria-current={isSelected ? "page" : undefined}
+            className={[
+              "inline-flex min-h-[44px] items-center rounded-full px-4 py-2",
+              "text-xs font-bold uppercase tracking-[0.14em]",
+              "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
+              isSelected
+                ? "border-2 border-co-text bg-co-gold text-co-text"
+                : "border-2 border-co-border-2 bg-co-surface text-co-text-muted hover:border-co-text hover:text-co-text",
+            ].join(" ")}
+          >
+            {loc.code} · {loc.name}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+
+function YesterdayUnconfirmedAlert({
+  location,
+  yesterdayDate,
+}: {
+  location: LocationLite;
+  yesterdayDate: string;
+}) {
+  return (
+    <section
+      role="alert"
+      aria-label="Yesterday's closing was not confirmed"
+      className="
+        flex flex-col gap-3 rounded-2xl
+        border-2 border-co-gold-deep bg-[#FFF4D0]
+        p-4 sm:p-5
+      "
+    >
+      <div className="flex items-start gap-3">
+        <span
+          aria-hidden
+          className="
+            mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center
+            rounded-full bg-co-gold-deep text-co-text
+          "
+        >
+          <WarningIcon />
+        </span>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-bold text-co-text">
+            Yesterday&rsquo;s closing at {location.code} was not confirmed.
+          </p>
+          <p className="mt-1 text-xs text-co-text-muted">
+            {formatDateLabel(yesterdayDate)} · status open. Review and finalize
+            so handoff data is captured.
+          </p>
+        </div>
+      </div>
+      <div className="sm:pl-10">
+        <Link
+          href={`/operations/closing?location=${location.id}&date=${yesterdayDate}`}
+          className="
+            inline-flex min-h-[48px] items-center justify-center rounded-md
+            border-2 border-co-text bg-co-surface px-4 text-sm font-bold uppercase tracking-[0.12em] text-co-text
+            transition hover:bg-co-surface-2
+            focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
+          "
+        >
+          Review yesterday&rsquo;s closing
+        </Link>
+      </div>
+    </section>
+  );
+}
+
+function TodaysOperationsCard({
+  location,
+  state,
+}: {
+  location: LocationLite;
+  state: OperationalState;
+}) {
+  const copy = statusCopyFor(state);
+  const ctaClasses =
+    copy.ctaTone === "primary"
+      ? "border-2 border-co-text bg-co-gold text-co-text hover:bg-co-gold-deep"
+      : "border-2 border-co-border-2 bg-co-surface text-co-text hover:border-co-text";
+
+  return (
+    <section
+      aria-label={`Today's operations at ${location.name}`}
+      className="
+        rounded-2xl border-2 border-co-border bg-co-surface
+        p-5 shadow-sm sm:p-6
+      "
+    >
+      <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-co-text-dim">
+        Today&rsquo;s operations
+      </p>
+      <h3 className="mt-1 text-xl font-extrabold leading-tight text-co-text">
+        {location.code} &middot; {location.name}
+      </h3>
+      <p className="mt-1 text-xs text-co-text-muted">
+        {formatDateLabel(state.todayDate)}
+      </p>
+
+      <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
+            Closing checklist
+          </p>
+          <p className="mt-1 text-base font-semibold text-co-text">{copy.label}</p>
+        </div>
+        {state.hasClosingTemplate ? (
+          <Link
+            href={`/operations/closing?location=${location.id}`}
+            className={[
+              "inline-flex min-h-[48px] items-center justify-center rounded-md",
+              "px-5 text-sm font-bold uppercase tracking-[0.12em]",
+              "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
+              ctaClasses,
+            ].join(" ")}
+          >
+            {copy.cta}
+          </Link>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function NoLocationsState() {
+  return (
+    <section className="rounded-2xl border-2 border-co-border bg-co-surface p-5 text-center sm:p-6">
+      <p className="text-sm text-co-text-muted">
+        You don&rsquo;t have any accessible locations yet. An admin needs to
+        assign you to a location before operational checklists become
+        available.
+      </p>
+    </section>
+  );
+}
+
+function WarningIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path
+        d="M8 1.5L15 14H1L8 1.5z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+        fill="none"
+      />
+      <path d="M8 6v3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="8" cy="11.5" r="0.75" fill="currentColor" />
+    </svg>
   );
 }
