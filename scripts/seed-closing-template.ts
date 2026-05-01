@@ -38,11 +38,29 @@
  * Run:
  *   npx tsx --env-file=.env.local scripts/seed-closing-template.ts
  *
- * Idempotency: pre-flight checks for an existing "Standard Closing v1" row at
- * each location and skips it cleanly (logs the existing template_id) so
- * re-runs after partial success are safe. To force a re-seed, manually
- * deactivate the existing row first (UPDATE checklist_templates SET active =
- * false ...) or delete the orphan row + items if it was created mid-failure.
+ * Convergent semantics: re-running the script converges the database to the
+ * spec encoded in ITEMS below. On first run for a location, creates the
+ * template + items + audit. On re-run with a pre-existing template, syncs
+ * each item by display_order — updates label / role / required / count /
+ * photo / station / description fields where they differ from the spec.
+ * Net-no-change re-runs emit no audit row; net-with-changes re-runs emit a
+ * single `checklist_template.update` audit row per location summarizing the
+ * changes.
+ *
+ * The convergent path replaces an earlier idempotency-by-skip approach
+ * (which was safe for partial-success recovery but couldn't propagate
+ * spec edits). Build #1 hasn't shipped to real users yet — updating
+ * existing template_items in place is correct; full template versioning
+ * via name suffix + active flag (per SPEC_AMENDMENTS.md C.19, Path A)
+ * isn't justified at this stage since there are no historical instances
+ * to preserve.
+ *
+ * Items are matched by `display_order` (stable across renames). If a
+ * future spec edit changes the count or order of items, the sync path
+ * inserts new ones and leaves removed ones in place — operators must
+ * deactivate removed items via the admin tool when it ships, or via a
+ * dedicated cleanup script. Build #1's spec edits are field-level only
+ * (label/role/description), so this sync handles them cleanly.
  *
  * Per §6.2 audit-doc discipline: every service-role write destructures
  * { error } and throws on error. Audit row written to audit_log under action
@@ -154,8 +172,12 @@ const ITEMS: SeedItem[] = [
   { station: "Closing Manager", label: "Count the drawer" },
   {
     station: "Closing Manager",
-    label: "Split up Tips",
-    minRoleLevel: 5, // AGM+
+    label: "Count and secure tips",
+    notes:
+      "Count tips, place in safe. Weekly distribution handled separately by AGM+.",
+    // Pass-1 testing correction (was role 5 / "Split up Tips"): end-of-shift
+    // tips action is KH+ — count and secure. Weekly tip distribution is the
+    // AGM+ action and happens separately, not during closing.
   },
   {
     station: "Closing Manager",
@@ -179,19 +201,158 @@ const ITEMS: SeedItem[] = [
 // Insert orchestration
 // ---------------------------------------------------------------------------
 
+type SeedOutcome = "created" | "synced_with_changes" | "synced_no_changes";
+
+interface ItemChange {
+  templateItemId: string;
+  displayOrder: number;
+  /** field names that were updated */
+  changedFields: string[];
+}
+
 interface SeedResult {
   locationId: string;
   templateId: string;
   itemCount: number;
-  created: boolean; // false when skipped because already existed
+  outcome: SeedOutcome;
+  changes: ItemChange[];
   auditRowId: string | null;
+}
+
+interface ExistingItemRow {
+  id: string;
+  station: string | null;
+  display_order: number;
+  label: string;
+  description: string | null;
+  min_role_level: number;
+  required: boolean;
+  expects_count: boolean;
+  expects_photo: boolean;
+  active: boolean;
+}
+
+async function syncItemsForTemplate(
+  sb: SupabaseClient,
+  locationId: string,
+  templateId: string,
+): Promise<{ itemCount: number; changes: ItemChange[] }> {
+  const { data: existingRows, error: readErr } = await sb
+    .from("checklist_template_items")
+    .select(
+      "id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, active",
+    )
+    .eq("template_id", templateId);
+  if (readErr) {
+    throw new Error(
+      `sync: load existing items failed for template ${templateId} (location ${locationId}): ${readErr.message}`,
+    );
+  }
+  const existingByDisplayOrder = new Map<number, ExistingItemRow>();
+  for (const r of (existingRows ?? []) as ExistingItemRow[]) {
+    existingByDisplayOrder.set(r.display_order, r);
+  }
+
+  const changes: ItemChange[] = [];
+
+  for (let i = 0; i < ITEMS.length; i++) {
+    const spec = ITEMS[i];
+    if (!spec) continue;
+    const existing = existingByDisplayOrder.get(i);
+
+    const desiredLabel = spec.label;
+    const desiredStation = spec.station;
+    const desiredDescription = spec.notes ?? null;
+    const desiredMinRoleLevel = spec.minRoleLevel ?? 4;
+    const desiredRequired = spec.required ?? true;
+    const desiredExpectsCount = spec.expectsCount ?? false;
+    const desiredExpectsPhoto = spec.expectsPhoto ?? false;
+
+    if (!existing) {
+      // Insert a new item at this display_order.
+      const { data: inserted, error: insertErr } = await sb
+        .from("checklist_template_items")
+        .insert({
+          template_id: templateId,
+          station: desiredStation,
+          display_order: i,
+          label: desiredLabel,
+          description: desiredDescription,
+          min_role_level: desiredMinRoleLevel,
+          required: desiredRequired,
+          expects_count: desiredExpectsCount,
+          expects_photo: desiredExpectsPhoto,
+          vendor_item_id: null,
+          active: true,
+        })
+        .select("id")
+        .maybeSingle<{ id: string }>();
+      if (insertErr || !inserted) {
+        throw new Error(
+          `sync: insert at display_order ${i} failed for template ${templateId}: ${insertErr?.message ?? "no row"}`,
+        );
+      }
+      changes.push({
+        templateItemId: inserted.id,
+        displayOrder: i,
+        changedFields: ["inserted"],
+      });
+      continue;
+    }
+
+    const fieldsToUpdate: Record<string, unknown> = {};
+    if (existing.label !== desiredLabel) fieldsToUpdate.label = desiredLabel;
+    if (existing.station !== desiredStation) fieldsToUpdate.station = desiredStation;
+    if ((existing.description ?? null) !== desiredDescription) {
+      fieldsToUpdate.description = desiredDescription;
+    }
+    if (existing.min_role_level !== desiredMinRoleLevel) {
+      fieldsToUpdate.min_role_level = desiredMinRoleLevel;
+    }
+    if (existing.required !== desiredRequired) fieldsToUpdate.required = desiredRequired;
+    if (existing.expects_count !== desiredExpectsCount) {
+      fieldsToUpdate.expects_count = desiredExpectsCount;
+    }
+    if (existing.expects_photo !== desiredExpectsPhoto) {
+      fieldsToUpdate.expects_photo = desiredExpectsPhoto;
+    }
+    if (!existing.active) fieldsToUpdate.active = true;
+
+    if (Object.keys(fieldsToUpdate).length === 0) continue;
+
+    const { error: updateErr } = await sb
+      .from("checklist_template_items")
+      .update(fieldsToUpdate)
+      .eq("id", existing.id);
+    if (updateErr) {
+      throw new Error(
+        `sync: update item ${existing.id} failed: ${updateErr.message}`,
+      );
+    }
+    changes.push({
+      templateItemId: existing.id,
+      displayOrder: i,
+      changedFields: Object.keys(fieldsToUpdate),
+    });
+  }
+
+  // Item count after sync (existing inserts + spec items; spec is the source).
+  const { count, error: countErr } = await sb
+    .from("checklist_template_items")
+    .select("*", { count: "exact", head: true })
+    .eq("template_id", templateId);
+  if (countErr) {
+    throw new Error(`sync: post-update count failed: ${countErr.message}`);
+  }
+
+  return { itemCount: count ?? 0, changes };
 }
 
 async function seedForLocation(
   sb: SupabaseClient,
   locationId: string,
 ): Promise<SeedResult> {
-  // Pre-flight: existing template at this location with same name? Skip cleanly.
+  // Pre-flight: existing template at this location with same name?
   const { data: existing, error: existErr } = await sb
     .from("checklist_templates")
     .select("id, name, active")
@@ -205,22 +366,64 @@ async function seedForLocation(
     );
   }
   if (existing) {
-    // Count items so we can confirm the prior seed completed before partial-state.
-    const { count, error: countErr } = await sb
-      .from("checklist_template_items")
-      .select("*", { count: "exact", head: true })
-      .eq("template_id", existing.id);
-    if (countErr) {
+    // SYNC PATH — converge existing items toward the spec.
+    const { itemCount, changes } = await syncItemsForTemplate(sb, locationId, existing.id);
+
+    if (changes.length === 0) {
+      return {
+        locationId,
+        templateId: existing.id,
+        itemCount,
+        outcome: "synced_no_changes",
+        changes: [],
+        auditRowId: null,
+      };
+    }
+
+    // Audit the sync. `checklist_template.update` is non-destructive
+    // (auto-derives destructive=false) and follows the Phase 2 free-form
+    // non-destructive vocabulary pattern.
+    const { data: auditRow, error: auditErr } = await sb
+      .from("audit_log")
+      .insert({
+        actor_id: JUAN_USER_ID,
+        actor_role: "cgs",
+        action: "checklist_template.update",
+        resource_table: "checklist_templates",
+        resource_id: existing.id,
+        destructive: false,
+        metadata: {
+          phase: "3_module_1_build_1",
+          reason: "seed sync — convergent re-run propagating spec edits",
+          sync_method: "seed_script",
+          script_path: "scripts/seed-closing-template.ts",
+          location_id: locationId,
+          template_name: TEMPLATE_NAME,
+          changed_item_count: changes.length,
+          changes: changes.map((c) => ({
+            template_item_id: c.templateItemId,
+            display_order: c.displayOrder,
+            changed_fields: c.changedFields,
+          })),
+          ip_address: null,
+          user_agent: null,
+        },
+      })
+      .select("id")
+      .maybeSingle<{ id: string }>();
+    if (auditErr || !auditRow) {
       throw new Error(
-        `pre-flight checklist_template_items count failed for template ${existing.id}: ${countErr.message}`,
+        `sync audit_log insert failed for template ${existing.id}: ${auditErr?.message ?? "no row"}`,
       );
     }
+
     return {
       locationId,
       templateId: existing.id,
-      itemCount: count ?? 0,
-      created: false,
-      auditRowId: null,
+      itemCount,
+      outcome: "synced_with_changes",
+      changes,
+      auditRowId: auditRow.id,
     };
   }
 
@@ -329,7 +532,8 @@ async function seedForLocation(
     locationId,
     templateId,
     itemCount: ITEMS.length,
-    created: true,
+    outcome: "created",
+    changes: [],
     auditRowId: auditRow.id,
   };
 }
@@ -355,10 +559,23 @@ async function main() {
   const mep = await seedForLocation(sb, LOCATION_MEP);
   const em = await seedForLocation(sb, LOCATION_EM);
 
-  const summary = (r: SeedResult, label: string) =>
-    r.created
-      ? `  ${label}: created template ${r.templateId} with ${r.itemCount} items (audit_id=${r.auditRowId})\n`
-      : `  ${label}: SKIPPED — template ${r.templateId} already exists with ${r.itemCount} items\n`;
+  const summary = (r: SeedResult, label: string): string => {
+    if (r.outcome === "created") {
+      return `  ${label}: CREATED template ${r.templateId} with ${r.itemCount} items (audit_id=${r.auditRowId})\n`;
+    }
+    if (r.outcome === "synced_no_changes") {
+      return `  ${label}: in sync — template ${r.templateId} (${r.itemCount} items, no changes)\n`;
+    }
+    const changeLines = r.changes
+      .map(
+        (c) =>
+          `      · display_order ${c.displayOrder}: ${c.changedFields.join(", ")} (item ${c.templateItemId})`,
+      )
+      .join("\n");
+    return (
+      `  ${label}: SYNCED template ${r.templateId} with ${r.changes.length} item change(s) (audit_id=${r.auditRowId})\n${changeLines}\n`
+    );
+  };
 
   process.stdout.write(`OK\n${summary(mep, "MEP")}${summary(em, "EM ")}`);
 }
