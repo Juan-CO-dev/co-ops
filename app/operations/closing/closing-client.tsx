@@ -440,6 +440,26 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
 
   return (
     <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
+      {/* Persistent back-to-dashboard affordance — visible across all states
+       * (in-progress, finalize-ready, read-only). Standard mobile back-nav
+       * pattern; lets the closer step away mid-closing without finalizing. */}
+      <div className="mb-3">
+        <a
+          href="/dashboard"
+          aria-label="Back to dashboard"
+          className="
+            inline-flex min-h-[44px] items-center gap-1.5 -ml-2 px-2 py-2
+            text-xs font-bold uppercase tracking-[0.14em] text-co-text-muted
+            transition hover:text-co-text
+            focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
+            rounded-md
+          "
+        >
+          <ChevronLeftIcon />
+          <span>Dashboard</span>
+        </a>
+      </div>
+
       {/* Header */}
       <div>
         <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
@@ -579,22 +599,10 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
         </>
       ) : null}
 
-      {/* Read-only — quick "back to dashboard" affordance */}
-      {readOnly ? (
-        <div className="mt-8 flex justify-center">
-          <a
-            href="/dashboard"
-            className="
-              inline-flex min-h-[48px] items-center justify-center rounded-md
-              border-2 border-co-text bg-co-surface px-4 text-sm font-bold uppercase tracking-[0.12em] text-co-text
-              transition hover:bg-co-surface-2
-              focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
-            "
-          >
-            Back to dashboard
-          </a>
-        </div>
-      ) : null}
+      {/* Note: the read-only-mode "Back to dashboard" CTA was previously
+       * here. It was lifted to the persistent top-of-page affordance so
+       * the closer can navigate away across any state, not just after
+       * finalization. */}
 
       {/* PinConfirmModal — mounted only when finalization is gate-allowed
        * (matches the canFinalize gate above per SPEC_AMENDMENTS.md C.26:
@@ -988,6 +996,14 @@ function ChevronUpIcon() {
   return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
       <path d="M3 10L8 5L13 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function ChevronLeftIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
+      <path d="M10 3L5 8L10 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
