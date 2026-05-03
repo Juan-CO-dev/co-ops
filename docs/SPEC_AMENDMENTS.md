@@ -240,15 +240,232 @@ Below the gate: items + per-station progress + sticky top progress bar render, b
 
 ---
 
+## C.28 — Revocation + accountability tagging (two-window architecture)
+
+**Date added:** 2026-05-03
+**Spec sections:** §2.5 (immutable completions), §4.3 (`checklist_completions`), §5.2 (RLS on `checklist_completions`)
+**What spec says:** §2.5 establishes that "checklist completions and submissions are immutable on creation. To correct a checklist completion, submit a new completion event (which supersedes by recency)." Spec doesn't explicitly model revocation, accountability correction, or the "wrong person tapped" case.
+**What built reality is:** Per Cristian's first-shift Build #1 use, closers want error correction without friction. Juan's refined model is two-window:
+
+1. **Within 60s of completion (silent self-untick):** the actor who just tapped sees an "Undo" affordance that revokes the completion silently. Pure error correction — no reason required, no audit metadata beyond `revocation_reason: 'error_tap'` + `in_quick_window: true`. Constrained to self (`completed_by === actor.userId`).
+
+2. **After 60s (structured action by self):** the actor who completed sees an "Edit completion" affordance with three chips:
+   - `wrong_user_credited` — opens picker; the actor admits they tapped but someone else did the work. Original completion stays; `actual_completer_id` is annotated. Operational truth (the tap) preserved; accountability truth (who actually did it) corrected.
+   - `not_actually_done` — revokes the completion; the row reopens.
+   - `other` — revokes with a required free-form note (enforced at lib layer since cross-column constraints are awkward in Postgres).
+
+3. **KH+ peer correction (any time after 60s):** any KH+ actor (level ≥4) viewing any completed row sees a "Tag actual completer" affordance. Picker scope (computed server-side): users with at least one non-revoked completion on this `checklist_instance` OR users with any sign-in audit row at this location today, filtered by item's `min_role_level`.
+
+4. **Tag replacement rules:** lateral and upward allowed (`replacement_actor.level >= current_tagger.level`); downward not (a KH cannot override an AGM tag). Original tagger can self-correct any time regardless of level.
+
+5. **Architectural separation of two truths:** `completed_by` is **operational truth** — the append-only record of who tapped — and is never modified. `actual_completer_id` is **accountability truth** — annotated retrospectively when the wrong person was credited. The two columns answer different questions and intentionally diverge. The audit trail of `actual_completer_tagged_by` + `actual_completer_tagged_at` preserves the correction event itself as immutable history.
+
+6. **Future signal for Reports Console:** patterns of `actual_completer_id != completed_by` rows surface as data-quality signals (volume + role distribution over time) — diagnostic, not punitive. Captured in Module #1 Build #5 (Synthesis View) or the future Reports Console module (scope per [`docs/MODULE_REPORTS_CONSOLE_VISION.md`](./MODULE_REPORTS_CONSOLE_VISION.md)).
+
+**Why:** Spec's append-only model is correct for "what happened in the system" but operationally insufficient for "who actually did the work." Real shifts have wrong-person taps, mid-shift relief, and trainee handoff that the system needs to capture without losing the original tap event. The two-window design (60s silent vs. structured-after) maps to real human error patterns: most fat-finger errors are caught within seconds; deliberate accountability corrections require a structured intent-capture path that the audit log can rely on. The "operational truth vs accountability truth" split keeps the data model honest about what each column means.
+**v1.3 action:**
+- Add to `checklist_completions` schema: `revoked_at TIMESTAMPTZ`, `revoked_by UUID`, `revocation_reason TEXT CHECK (IN ('error_tap', 'not_actually_done', 'other'))`, `revocation_note TEXT`, `actual_completer_id UUID`, `actual_completer_tagged_at TIMESTAMPTZ`, `actual_completer_tagged_by UUID`. All nullable; FKs to `users(id)`. Migration ships in Build #1.5 PR 1.
+- Reword §2.5: "Completions are append-only for the `completed_by` field; corrections to operational error use the revocation columns (`revoked_*`); corrections to accountability error use the `actual_completer_*` columns. Tag replacement enforces lateral-and-upward only at the lib layer."
+- Add audit action codes: `checklist_completion.revoke` (metadata: `in_quick_window`, `reason`, `note?`) and `checklist_completion.tag_actual_completer` (metadata: `actual_completer_id`, `replaced_prior_tag?: { tagger_id, prior_actual_completer_id }`). Both auto-derived destructive via `lib/destructive-actions.ts`.
+- New `ChecklistError` subclasses: `ChecklistOutsideQuickWindowError`, `ChecklistNotSelfError`, `ChecklistTagWithinQuickWindowError`, `ChecklistInvalidPickerCandidateError`, `ChecklistTagHierarchyViolationError`, `ChecklistRevocationNoteRequiredError`.
+- Lib functions in `lib/checklists.ts`: `revokeCompletion(authed, completionId, actor)` (60s self-only silent), `revokeWithReason(authed, completionId, actor, payload)` (post-60s self with reason+note), `tagActualCompleter(authed, completionId, actor, actualCompleterId)` (KH+ post-60s with picker scope + hierarchy enforcement). API routes in Build #1.5 PR 1; UI in PR 2.
+- Captured during Phase 3 Build #1.5 design from Cristian's Build #1 first-shift production feedback + Juan's refined two-window model.
+
+---
+
+## C.29 — Notes inline display
+
+**Date added:** 2026-05-03
+**Spec sections:** §4.3 (`checklist_completions.notes`), C.27 (notes multi-tier visibility — deferred)
+**What spec says:** §4.3 models notes as a single nullable text field on `checklist_completions`. C.27 defers the multi-tier visibility architecture (public vs managerial, multi-note per completion) pending real-usage feedback.
+**What built reality is:** Notes are stored via `checklist_completions.notes` per the Build #1 step 6 notes-edit affordance, but are not rendered anywhere in the UI. Build #1.5 PR 3 surfaces stored notes inline in the row meta slot — below the completion attribution — for any live (non-revoked) completion with a non-null note. Format: small text using `co-text-muted`, italicized or with a "Note:" prefix. The C.27 multi-tier architecture stays deferred — Build #1.5 PR 3 just renders what's already stored to whoever can read the row (single note, no scoping, no per-author attribution beyond what's already visible from `completed_by`).
+**Why:** The notes data exists and is being captured but is invisible, which means neither the closer who wrote it nor the next-shift staff who would benefit ever see it. A single rendering pass closes the visibility gap without committing to the full multi-tier architecture before Cristian has accumulated enough first-week notes to argue a specific visibility model.
+**v1.3 action:**
+- `ChecklistItem` renders `completion.notes` inline when non-null and the completion is live. Touch limited to `components/ChecklistItem.tsx` in Build #1.5 PR 3.
+- No schema change.
+- C.27's multi-tier architecture remains the next architectural step once usage data argues for a specific scoping model.
+- Captured during Phase 3 Build #1.5 scoping (visibility gap noticed during Cristian's first-shift use).
+
+---
+
+## C.30 — Station header prominence
+
+**Date added:** 2026-05-03
+**Spec sections:** §10–§12 (Module #1 Daily Operations UI styling — not specifically prescriptive on station headers)
+**What spec says:** Spec doesn't specify visual weight of station headers in the closing UI. The design language is implicit, inherited from brand book and prior step decisions in Build #1.
+**What built reality is:** Build #1's station headers are too quiet visually for operational use. Cristian's first-shift feedback surfaced the friction: closers can't quickly identify their current station while moving between physical work and the screen. Build #1.5 PR 4 increases prominence in `app/operations/closing/closing-client.tsx`:
+- Bump font size: `text-base` → `text-lg`
+- Bolder weight: `font-medium` → `font-semibold`
+- Add a thin Mustard-deep accent line beneath each station header (~1px, full width of header text)
+
+Pure visual polish — no data model or behavioral changes.
+**Why:** Closing operations are physical-first — closer is moving between equipment, prep stations, and back to the screen to tick items. The screen needs to support quick re-orientation; subdued station headers force the closer to read more carefully than the operational tempo allows.
+**v1.3 action:**
+- Update §10–§12 design language documentation to specify station headers as `text-lg` / `font-semibold` with Mustard-deep accent. Document the rationale (physical-first operational flow demands quick scan-ability).
+- Future operational surfaces (Opening, Prep) inherit the same station-header treatment for consistency.
+- Captured during Phase 3 Build #1.5 scoping (Cristian's first-shift visual prominence feedback).
+
+---
+
+## C.31 — Spanish toggle (i18n infrastructure for static UI strings)
+
+**Date added:** 2026-05-03
+**Spec sections:** §1 (CO operational context — Spanish-speaking staff), §4.1 (`users` table), Module #1 UI surfaces
+**What spec says:** Spec acknowledges CO has Spanish-speaking staff but doesn't specify i18n infrastructure for static UI strings. All Build #1 UI ships English-only.
+**What built reality is:** Static UI strings need bilingual support for CO's Spanish-speaking frontline staff. Build #1.5 PR 5 ships the i18n infrastructure:
+- Translation file structure: `lib/i18n/en.json` and `lib/i18n/es.json`, keyed by translation key (e.g., `dashboard.greeting.hello`, `closing.review.continue`)
+- React translation provider via Context (no external library — Next 16 + React 19 native Context is sufficient for static-string translation; the operational scope doesn't justify a dedicated i18n library at this stage)
+- Translation hook `useTranslation()` returns `t(key, params?)` and current language
+- Schema migration: `ALTER TABLE users ADD COLUMN language TEXT NOT NULL DEFAULT 'en' CHECK (language IN ('en', 'es'))`
+- Language selector UI in the user menu / settings area; on change, PATCH user record + reload provider context
+- All static strings refactored to use translation keys (one-time refactor across all UI files); namespaced by surface area: `auth.*`, `dashboard.*`, `closing.*`, `common.*`. Keys describe the string semantically (`closing.review.submit_button`), not literally
+- Spanish translations generated for all existing keys — operational/practical Spanish, not formal — audience is Spanish-speaking restaurant workers
+
+What's NOT in scope:
+- Free-form content (notes, comments, written reports) stays in original language
+- Database content (template item names, descriptions) stays English-only for now; multilingual database content deferred to Module #2 or beyond
+- AI translation at read-time deferred to future AI integration
+- URL routing (`/en/...` vs `/es/...`) NOT implemented; language is purely a per-user preference
+
+**Why:** CO's frontline staff includes Spanish speakers operating the closing checklist nightly. English-only UI creates real comprehension friction at the wrong layer (operational, not strategic). Static-string translation is the high-leverage low-cost first step. Free-form content translation is a different problem (read-time AI translation when the AI integration lands) and the architectures shouldn't be coupled.
+**v1.3 action:**
+- Add `users.language` column to spec §4.1 schema documentation. Migration number reserved at PR 5 architectural surface time, applied at PR 5 implementation.
+- Add `lib/i18n/` to lib structure docs.
+- Add Spanish-translation-as-shipping-requirement to UI design language docs — every new UI surface in Build #2+ ships with translation keys (not literal strings) and a Spanish translation pass in the same PR.
+- Free-form content translation (notes, written reports) becomes its own architectural conversation when AI integration lands.
+- Captured during Phase 3 Build #1.5 scoping.
+
+---
+
+## C.32 — Login tile employee + trainee surfaces
+
+**Date added:** 2026-05-03
+**Spec sections:** §7.1 (RoleCode hierarchy), Module #1 Build #1 step 1 (login screen tiles)
+**What spec says:** §7.1 lists the RoleCode hierarchy including `employee` (level 3) and `trainee` (level 2), but Build #1's login screen surfaced tiles only for higher-level accounts (KH+). The lower-level role tiles weren't built because Build #1 didn't have employee or trainee accounts to surface.
+**What built reality is:** Build #1.5 PR 6 verifies that `employee` (level 3) and `trainee` (level 2) role codes exist in the `RoleCode` enum + `lib/roles.ts` registry, then adds tile support on the login screen so any active user account at the location renders a tile regardless of role level. If the role codes are missing at recon time, a small enum migration ships alongside the UI change.
+
+Trainee permission scoping (read-only, training-period restrictions) remains at current design — no permission changes in this PR. Trainee-specific permission gating is a Module #2 concern (per C.34); Build #1.5 PR 6 only adds the tile rendering surface so trainee accounts can sign in at all.
+**Why:** Build #1.5 begins the path to onboarding real employee + trainee accounts. The login screen needs to render tiles for those role levels before any of them can sign in. The permission scoping conversation is separate (Module #2 design conversation, captured in C.34).
+**v1.3 action:**
+- Verify §7.1 RoleCode hierarchy includes `employee` and `trainee`; if not, document the addition.
+- Update Module #1 Build #1 step 1 spec text to remove any "higher-level only" tile rendering logic — login tiles render for all active users at the location.
+- Trainee permission scoping (training-period restrictions, read-only constraints) is a Module #2 design question and is captured in C.33 + C.34.
+- Captured during Phase 3 Build #1.5 scoping.
+
+---
+
+## C.33 — Full user level structure (9 levels, 0 through 8)
+
+**Date added:** 2026-05-03
+**Spec sections:** §7.1 (RoleCode hierarchy)
+**What spec says:** §7.1 lists the RoleCode hierarchy at levels 2 (trainee), 3 (employee, trainer), 4 (key_holder), 5 (shift_lead, catering_mgr), 6 (gm), 6.5 (moo), 7 (owner), 8 (cgs). Spec doesn't model the lower levels (prospect, unassigned) because those are not authenticated system users in the current foundation.
+**What built reality is (and intended for v1.3):** CO-OPS user lifecycle has 9 levels covering the full hire-to-promote arc:
+- 0 — **prospect** (in recruitment pipeline, no login)
+- 1 — **unassigned** (hired, no PIN, no system access)
+- 2 — **trainee** (read-only scoped to role, 4-week training period)
+- 3 — **employee** (full operational role)
+- 4 — **key holder**
+- 5 — **AGM / shift lead**
+- 6.5 — **MoO, GM** (consolidated as effectively-equivalent in operational decision-making per CO's structure)
+- 7 — **owner**
+- 8 — **cgs**
+
+State transitions: prospect → unassigned (hiring decision); unassigned → trainee (PIN setup); trainee → employee (4-week training completion + manager sign-off); subsequent promotions (manager-driven, audited). Each transition is an operational action with audit trail, not a manual database edit.
+
+Build #1.5 PR 6 verifies + surfaces the **existing roles only** — levels 2 through 8 that already have foundation registry entries. Full lifecycle architecture (levels 0–1 + state-transition workflows) is deferred to Module #2 (C.34).
+**Why:** Documenting the full level structure now (even before the lower levels are implemented) gives Module #2 design a clear architectural target — the lifecycle stages it must support. Without this captured, Module #2 risks rebuilding the level model from scratch and missing transitions like prospect → unassigned that don't fit cleanly into a CRUD model.
+**v1.3 action:**
+- Update §7.1 RoleCode hierarchy to include levels 0 (`prospect`) and 1 (`unassigned`) as future-reserved values.
+- Document the state-transition graph with each transition as an audited operational action: hiring decision, PIN setup, training completion, promotion.
+- Each transition becomes an admin action surface in Module #2 (per C.34) — not a direct database mutation.
+- The 4-week training period is the canonical milestone for trainee → employee; Module #2 design specifies the milestone-tracking + manager-sign-off flow.
+- Captured during Phase 3 Build #1.5 scoping (Build #1.5 PR 6 acts on levels 2–8 only; levels 0–1 reserved for Module #2).
+
+---
+
+## C.34 — Module #2: User Lifecycle & Recruitment (deferred)
+
+**Date added:** 2026-05-03
+**Spec sections:** §7 (User permission model), §13 (Admin tooling — partial coverage of user management)
+**What spec says:** Spec §13 describes admin user-management tooling at a CRUD level (create, deactivate, role change). Recruitment, onboarding, training pipeline, and lifecycle state transitions are not modeled.
+**What built reality is (deferred — captured here, designed in Module #2):** Module #2 is distinct from Module #1 (Daily Operations / Checklists). Scope:
+
+(a) **Recruitment pipeline UI** for AGM+ — prospect tracking, evaluation, hiring decisions. AGM+ access (no separate "recruiter" tag).
+
+(b) **Onboarding workflow** — PIN setup, first-day setup, account activation.
+
+(c) **Training pipeline** — 4-week trainee period with milestone tracking, trainer endorsements per the C.25 tag system, certification per task type.
+
+(d) **Promotion mechanics** — trainee → employee, employee → KH, etc., with audit trail. Each promotion is a structured operational action, not a database edit.
+
+(e) **Cross-location candidate allocation** — prospects and trainees are a CO-wide pool initially. Locations can bid/request candidates from the pool. Supports labor capacity forecasting (4 weeks out) and natural talent flow between locations.
+
+(f) **Region scoping architecture (dormant initially)** — data model supports region-based candidate pools when activated. Region structure controlled by MoO+. Default region applied to existing locations until first multi-region expansion. Single-region behavior (dormant region scoping) matches the CO-wide pool today; MoO+ activation gates the transition to region-aware pool when CO expands beyond a single metro.
+
+Distinct data model, workflows, UI surfaces, and role considerations from Module #1.
+**Why:** User lifecycle management has a fundamentally different operational tempo from daily ops. Daily ops are shift-cadence (hourly to daily); lifecycle ops are weeks-to-months (recruitment cycles, training periods, promotion windows). Mixing them in one module obscures both. The cross-location pool + region scoping decisions are also strategic-tier (MoO+ activates region structure), not operational-tier (shift staff trigger prep instances).
+**v1.3 action:**
+- Reserve Module #2 as the user-lifecycle module.
+- Defer detailed design to a dedicated module-design conversation after Module #1 stabilizes (post Build #5 / Synthesis View).
+- Module #2 design references C.25 (tags layer), C.32 (trainee tile surfacing), C.33 (full level structure including levels 0–1), and this entry (C.34 — scope).
+- Until Module #2 ships, user lifecycle is handled via Phase 5+ admin tooling per Phase 2.5 §7 (manual provisioning, scrub procedure).
+- Captured during Phase 3 Build #1.5 scoping (no PR — pure deferred capture).
+
+---
+
+## C.35 — Login tile performance indicators (deferred to dedicated design)
+
+**Date added:** 2026-05-03
+**Spec sections:** Module #1 Build #1 step 1 (login screen tiles), Module #1 Build #5 (Synthesis View)
+**What spec says:** Spec doesn't model performance indicators on login tiles. Login is purely identity selection in spec.
+**What built reality is (deferred — not building in Build #1.5):** Concept floated during Build #1.5 scoping: visual indicators on login tiles showing each user's recent performance metric (e.g., closing time, task count, sequence adherence). Defer to a dedicated design conversation because the metric definition has high leverage on culture and behavior:
+
+- **Metric definition** — what counts as "doing well"? Closing time alone incentivizes rushing. Task count alone incentivizes ticking-without-doing. Sequence adherence alone may penalize legitimate workflow variations.
+- **Visibility scoping** — who sees whose color? Public visibility creates social pressure / public ranking; manager-only visibility avoids that but reduces the indicator's motivational pull.
+- **Cultural consideration** — performance ranking is a double-edged signal. The wrong metric incentivizes gaming behavior; the right metric reinforces operational excellence. CO's small-team culture amplifies both effects.
+
+**Why defer:** Building a half-designed performance indicator surfaces the wrong incentive permanently. The metric design conversation needs Pete + Cristian + Juan in the room with operational data from real shifts (Build #5 Synthesis View output is the natural input).
+**v1.3 action:**
+- Reserve as a future surface within Module #1 (login screen) or as part of a dedicated "Performance Surfaces" cross-cutting concern.
+- Schedule the design conversation after Build #5 ships and Synthesis View output is available as input.
+- Capture metric design carefully — wrong metrics incentivize gaming. Multiple complementary metrics with role-aware visibility are likely better than a single composite metric.
+- Captured during Phase 3 Build #1.5 scoping (no PR — pure deferred capture).
+
+---
+
+## C.36 — Module #3: Content / Social Media (deferred)
+
+**Date added:** 2026-05-03
+**Spec sections:** None — module not yet modeled in spec
+**What spec says:** Spec doesn't model content / social media operations. CO-OPS foundation focuses on daily ops + user lifecycle.
+**What built reality is (deferred — captured here, designed in Module #3):** New module entirely separate from Module #1 (Daily Operations) and Module #2 (User Lifecycle & Recruitment). Scope:
+
+- Creative direction question handling (where does brand-relevant creative input go?)
+- Photo / asset management (uploads, tagging, retrieval)
+- Metrics reporting (engagement, post performance)
+- Photoshoot request scheduling (when staff are needed for content)
+- Content idea capture (running list of post / campaign ideas)
+- Content participant coordination (which staff appears in what content; consent + scheduling)
+- Calendar / scheduling integration (post timing, photoshoot timing, content release coordination with operations)
+
+Distinct data model, workflows, role considerations.
+**Why:** Content operations sit outside daily ops and user lifecycle but interact with both (staff scheduling, creative direction tied to ops calendar, photo subjects who are also on the floor). Modeling content as a separate module prevents bleed-through that would muddy Module #1 / Module #2 schemas.
+**v1.3 action:**
+- Reserve Module #3 as the content / social media module.
+- Defer detailed design to a dedicated module-design conversation, scheduled after Module #1 + Module #2 stabilize.
+- Captured during Phase 3 Build #1.5 scoping (no PR — pure deferred capture).
+
+---
+
 ## How to add an entry
 
-1. Pick the next monotonic ID (`C.<n>` — current next: C.28).
+1. Pick the next monotonic ID (`C.<n>` — current next: C.37).
 2. Spec sections under amendment.
 3. Quote what spec says.
 4. Document what built reality is.
 5. Why the divergence is correct (operational reasoning, not just "we changed our mind").
 6. What v1.3 should do — concrete action so the spec can be reconciled mechanically.
 
-Date entries to whatever calendar the project is on (currently 2026-05-01).
+Date entries to whatever calendar the project is on (currently 2026-05-03).
 
 This file is consumed by future spec versions. Its purpose is to make spec drift cheap to reconcile, not to legitimize ad-hoc deviations. Every entry should pass the test "would I tell Pete or Cristian this is the right way to do it?" before it lands here.
