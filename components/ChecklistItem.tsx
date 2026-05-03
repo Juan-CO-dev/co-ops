@@ -1,63 +1,73 @@
 "use client";
 
 /**
- * ChecklistItem — Module #1 Build #1 step 6.
+ * ChecklistItem — Module #1 Build #1 step 6, extended Build #1.5 PR 2.
  *
- * Renders one row in a checklist instance UI. Designed for the cleaning-
- * phase Closing Checklist (50 rows × 10 stations); reusable by Opening
- * (build #3) and Prep (build #2) once those land.
+ * Build #1.5 PR 2 adds revoke + accountability tagging affordances per
+ * SPEC_AMENDMENTS.md C.28's two-window architecture. Locked design
+ * decisions for the UI:
  *
- * Visual model: row, not card. Left-edge interactive icon (≥48×48 tap
- * target), label center-left, completion meta right-aligned. Station
- * grouping is the parent page's job — this component knows nothing about
- * grouping.
+ *   #1 Inline placement (not a toast or modal)
+ *   #2 Always labeled "Undo" regardless of elapsed time. Behavior changes
+ *      silently based on elapsed: < 60s = silent revoke (optimistic);
+ *      >= 60s = expand reveals three chips. Stable label, stable position.
+ *   #3 Inline expand for picker UX (matches #1).
+ *   #4 Three chips visible at once on post-60s expand.
+ *   #5 Revoked rows revert to not-yet-completed visually (forensic record
+ *      lives in audit + DB, not UI).
+ *   #6+#8 Both attributions visible on tagged rows. Original completer at
+ *      standard styling; "credited to [name]" annotation in Mustard-deep
+ *      accent below. Subtle, no visual shame on the original tap.
+ *   #7 Picker excludes self for wrong_user_credited self-correction.
+ *      KH+ peer-correction picker shows all candidates including original
+ *      completer.
+ *   #9 Notes-edit affordance untouched — separate first-class affordance,
+ *      semantically distinct from completion correction (per C.27).
+ *   #10 Picker shows name + role badge, alphabetical sort (server provides).
+ *   No PIN re-entry for revoke/tag — routine ops, not finalization.
  *
- * State hierarchy (7 states; the spec said 7, this component renders 6 —
- * the `superseded` state is collapsed per design review since the live-
- * completion-only render is the operationally meaningful view; supersede
- * history is a synthesis-view concern):
+ *   Optimistic vs pessimistic per affordance:
+ *     - Silent revoke (within 60s): optimistic, fast revert
+ *     - Structured revoke (post-60s with reason): pessimistic
+ *     - Tag actual completer: pessimistic (picker scope + hierarchy can fail)
  *
- *   - not-yet-completable-by-role: actor.level < templateItem.minRoleLevel.
- *     Lock icon, dimmed row, role badge in meta slot ("AGM+ only"). Not
- *     interactive.
- *   - not-yet-completed: open circle icon, full-color label, no meta.
- *     Tap-anywhere-on-row affordance.
- *   - completed-by-self: filled Mustard circle with check, label dimmed,
- *     meta = "you · 2:14 PM". Tap to re-complete (supersedes prior).
- *   - completed-by-other: filled co-surface-2 circle with dim check,
- *     label dimmed, meta = "JC · 2:14 PM". Re-complete still available
- *     to anyone meeting min_role_level.
- *   - in-flight: subtle co-gold-deep border pulse, spinner inside the
- *     left icon, row temporarily non-interactive.
- *   - errored: co-cta (brand Red) left-edge accent, error message in
- *     meta slot, "Retry" affordance. Auto-clears on successful retry.
+ * Tap-handler resilience: client uses completion.completedAt + 60s as the
+ * dispatch heuristic. On server-side `outside_quick_window` from the silent
+ * path (clock skew, request latency), gracefully fall through to revealing
+ * the three-chip expand. Same UX, no error toast.
  *
- * Optimistic vs pessimistic save (per Module #1 design review):
- *   - Optimistic for plain completions (no count / photo / notes).
- *   - Pessimistic for data-carrying completions (count, photo, notes).
- *   - Rule: if any of (countValue, photoId, notes) is non-null in the
- *     payload, save is pessimistic. The data IS the point of the action,
- *     so the row should reflect the saved value, not the pending intent.
+ * Layout change vs Build #1: meta moves below the row top-line for completed
+ * rows, freeing the right slot for the Undo button. Keeps the row top-line
+ * clean: tick + label + Undo. Meta + tagged annotation stack indented under
+ * the label. Role-gated rows keep the badge in the right slot (state, not
+ * metadata); in-flight / error keep status text on the right (transient).
  *
- * API ownership: hybrid — this component owns visual lifecycle
- * (optimistic flip, in-flight, rollback, retry) but the parent owns the
- * actual API call via the async onComplete callback. The parent injects
- * instanceId + actor via closure inside the callback. Component stays
- * pure-ish (props in, callback out).
+ * State hierarchy (unchanged from Build #1, plus revoked rendering):
  *
- * Notes-edit reuses the supersede flow per SPEC_AMENDMENTS.md C.22 —
- * editing a note on a completed item creates a new completion that
- * supersedes the prior. Acceptable write multiplier for v1.
+ *   - not-yet-completable-by-role: lock icon, dimmed row, role badge.
+ *   - not-yet-completed: open circle, full-color label, no meta. (Also
+ *     the visual rendered when `revoked` is true — full revert per #5.)
+ *   - completed-by-self: filled Mustard circle, label dimmed, meta below.
+ *     If actor === completed_by, the Undo button renders on the right.
+ *   - completed-by-other: filled co-surface-2 circle. KH+ actors see a
+ *     "Tag actual completer" affordance instead of Undo (Undo is self-only).
+ *   - in-flight: spinner, row temporarily non-interactive.
+ *   - errored: brand Red accent, error message in meta slot, Retry.
  *
- * Photo input is stubbed — `expects_photo: true` items show a "Take
- * photo" affordance that surfaces "Photo capture wires in Build #4"
- * when tapped. The validation gate (expects_photo + null photoId →
- * blocked) is real now so we don't ship a silent no-photo path.
+ * API ownership: hybrid — component owns visual lifecycle and
+ * optimistic/pessimistic flow; parent owns the actual API calls via the
+ * async callback props. Parent injects instanceId + actor via closure.
  */
 
 import { useEffect, useState } from "react";
 
-import type { ChecklistCompletion, ChecklistStatus, ChecklistTemplateItem } from "@/lib/types";
+import type {
+  ChecklistCompletion,
+  ChecklistRevocationReason,
+  ChecklistStatus,
+  ChecklistTemplateItem,
+} from "@/lib/types";
+import type { RoleCode } from "@/lib/roles";
 
 // Mirror of the API error shape produced by app/api/checklist/_helpers.ts
 // mapChecklistError(). Parent passes errors through verbatim from the API
@@ -66,15 +76,22 @@ import type { ChecklistCompletion, ChecklistStatus, ChecklistTemplateItem } from
 export interface ChecklistApiError {
   code: string;
   message: string;
-  /** Carried on supersede_failed responses — both completion ids. */
   newCompletionId?: string;
   priorCompletionId?: string;
-  /** Carried on role_level_insufficient responses. */
   required?: number;
   actual?: number;
-  /** Carried on missing/extra reasons responses (not used in this component). */
   missingTemplateItemIds?: string[];
   extraTemplateItemIds?: string[];
+  // Revoke / tag (per SPEC_AMENDMENTS.md C.28)
+  completion_id?: string;
+  elapsed_ms?: number;
+  remaining_ms?: number;
+  proposed_actual_completer_id?: string;
+  reason?: string;
+  current_tagger_level?: number;
+  attempted_replacer_level?: number;
+  operation?: string;
+  field?: string;
 }
 
 export type ChecklistCompletePayload = {
@@ -88,35 +105,87 @@ export type ChecklistCompleteResult =
   | { completion: ChecklistCompletion }
   | { error: ChecklistApiError };
 
+export type ChecklistRevokeResult =
+  | { revoked: true; completion: ChecklistCompletion }
+  | { error: ChecklistApiError };
+
+export type ChecklistTagResult =
+  | { tagged: true; completion: ChecklistCompletion; replacedPriorTag: boolean }
+  | { error: ChecklistApiError };
+
+export interface PickerCandidateView {
+  id: string;
+  name: string;
+  role: RoleCode;
+  level: number;
+}
+
+export type ChecklistPickerResult =
+  | { candidates: PickerCandidateView[] }
+  | { error: ChecklistApiError };
+
 interface ChecklistItemProps {
   templateItem: ChecklistTemplateItem;
-  /** Live (non-superseded) completion for this item, or null. */
+  /** Live (non-superseded, non-revoked) completion for this item, or null. */
   completion: ChecklistCompletion | null;
   /** Resolved by parent via users join — kept off the component to avoid a fetch per row. */
   completionAuthor?: { name: string; isSelf: boolean } | null;
+  /**
+   * Resolved by parent. When `completion.actualCompleterId` is non-null,
+   * this carries the actual completer's display name for the
+   * "credited to [name]" annotation. Null when no tag is set.
+   */
+  actualCompleterAuthor?: { name: string; isSelf: boolean } | null;
   /** Caller's role level — drives the role-gate visual + interaction state. */
   actorLevel: number;
+  /** Caller's user id — drives self-vs-peer logic for revoke and tag affordances. */
+  actorUserId: string;
   /** Instance status — disables interaction when not 'open'. */
   instanceStatus: ChecklistStatus;
-  /**
-   * Read-only override. When true, the row is strictly non-interactive
-   * regardless of instance status. Used by surfaces that present a
-   * historical or restricted view (e.g., yesterday's unconfirmed closing,
-   * already-confirmed instance review). Status reflects reality;
-   * readOnly reflects intent — both can be set independently.
-   */
+  /** Read-only override (per Build #1 step 9). */
   readOnly?: boolean;
-  /**
-   * Async callback. Parent fires the API call.
-   * Returns { completion } on success, { error } on failure.
-   * Component handles optimistic-flip, in-flight, rollback, retry locally.
-   */
+  /** Async completion callback (existing). */
   onComplete: (payload: ChecklistCompletePayload) => Promise<ChecklistCompleteResult>;
+  /**
+   * Async silent-revoke callback (within 60s, self-only). Fires
+   * POST /api/checklist/completions/[id]/revoke. Component owns the
+   * optimistic flip; on success, the row reverts to not-yet-completed.
+   * On `outside_quick_window` error, component falls through to the
+   * three-chip expand without surfacing a user-facing error.
+   */
+  onRevoke?: (completionId: string) => Promise<ChecklistRevokeResult>;
+  /**
+   * Async structured-revoke callback (post-60s, self-only). Fires
+   * POST /api/checklist/completions/[id]/revoke-with-reason.
+   * Pessimistic — UI commits on server confirmation.
+   */
+  onRevokeWithReason?: (
+    completionId: string,
+    payload: { reason: "not_actually_done" | "other"; note?: string | null },
+  ) => Promise<ChecklistRevokeResult>;
+  /**
+   * Async tag-actual-completer callback (post-60s, KH+ OR self). Fires
+   * POST /api/checklist/completions/[id]/tag-actual-completer. Pessimistic.
+   */
+  onTagActualCompleter?: (
+    completionId: string,
+    actualCompleterId: string,
+  ) => Promise<ChecklistTagResult>;
+  /**
+   * Async picker-candidates loader. Fires
+   * GET /api/checklist/completions/[id]/picker-candidates. Component
+   * triggers this on demand when wrong_user_credited or KH+ "Tag actual
+   * completer" expands; result is cached in local state until the expand
+   * closes.
+   */
+  onLoadPickerCandidates?: (completionId: string) => Promise<ChecklistPickerResult>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
+
+const QUICK_WINDOW_MS = 60_000;
 
 const formatTime = (iso: string): string => {
   try {
@@ -127,19 +196,12 @@ const formatTime = (iso: string): string => {
   }
 };
 
-const initialsFor = (name: string): string => {
-  const parts = name.trim().split(/\s+/).slice(0, 2);
-  return parts.map((p) => p[0]?.toUpperCase() ?? "").join("");
-};
-
 const isDataCarrying = (payload: ChecklistCompletePayload): boolean =>
   (payload.countValue !== undefined && payload.countValue !== null) ||
   (payload.photoId !== undefined && payload.photoId !== null) ||
   (payload.notes !== undefined && payload.notes !== null);
 
 const roleBadgeText = (level: number): string => {
-  // Compact label for the meta slot when the row is role-gated. Sticks to
-  // the four levels actually present in foundation closing templates.
   if (level >= 8) return "CGS only";
   if (level >= 7) return "Owner+ only";
   if (level >= 6.5) return "MoO+ only";
@@ -149,10 +211,37 @@ const roleBadgeText = (level: number): string => {
   return `Level ${level}+ only`;
 };
 
-// Closed set of ChecklistError codes from lib/checklists.ts. The exhaustive
-// switch in errorMessageFor() relies on this union — adding a new code in
-// Build #2/3/4 surfaces as a compile error on the assertNever line until
-// the switch is updated.
+const roleBadgeShort = (role: RoleCode): string => {
+  switch (role) {
+    case "cgs":
+      return "CGS";
+    case "owner":
+      return "Owner";
+    case "moo":
+      return "MoO";
+    case "gm":
+      return "GM";
+    case "agm":
+      return "AGM";
+    case "catering_mgr":
+      return "Catering Mgr";
+    case "shift_lead":
+      return "SL";
+    case "key_holder":
+      return "KH";
+    case "trainer":
+      return "Trainer";
+    // Note: `employee` (level 3) and `trainee` (level 2) role codes land in
+    // Build #1.5 PR 6 per SPEC_AMENDMENTS.md C.32. Picker scope filtering
+    // (level >= min_role_level) will allow them to surface here once the
+    // enum + login tile work lands. The default branch handles any future
+    // RoleCode added to lib/roles.ts that isn't yet wired in this switch.
+    default:
+      return role;
+  }
+};
+
+// Closed set of ChecklistError codes from lib/checklists.ts.
 type ChecklistErrorCode =
   | "instance_closed"
   | "single_submission_locked"
@@ -162,10 +251,18 @@ type ChecklistErrorCode =
   | "pin_mismatch"
   | "missing_reasons"
   | "extra_reasons"
-  | "supersede_failed";
+  | "supersede_failed"
+  // Build #1.5 PR 1 additions (per SPEC_AMENDMENTS.md C.28)
+  | "outside_quick_window"
+  | "not_self"
+  | "tag_within_quick_window"
+  | "invalid_picker_candidate"
+  | "tag_hierarchy_violation"
+  | "revocation_note_required"
+  | "concurrent_modification"
+  | "use_quick_revoke"
+  | "completion_not_found";
 
-// Maps an API error code to a user-facing message. Switch logic uses the
-// stable `code` field (not the human message — those are tuning copy).
 const errorMessageFor = (err: ChecklistApiError): string => {
   const code = err.code as ChecklistErrorCode;
   switch (code) {
@@ -187,13 +284,27 @@ const errorMessageFor = (err: ChecklistApiError): string => {
       return "Reasons supplied for completed items.";
     case "supersede_failed":
       return "Save partially failed — tap to retry.";
+    case "outside_quick_window":
+      // Should never surface — handled by tap-dispatch fallthrough.
+      return "Pick a reason for the undo.";
+    case "not_self":
+      return "You can only undo your own taps.";
+    case "tag_within_quick_window":
+      return "Wait a moment, then try again.";
+    case "invalid_picker_candidate":
+      return "That person can't be tagged here.";
+    case "tag_hierarchy_violation":
+      return "Can't override a more senior tag.";
+    case "revocation_note_required":
+      return "Add a note first.";
+    case "concurrent_modification":
+      return "Just modified by someone else — try again.";
+    case "use_quick_revoke":
+      // Handled by tap-dispatch fallthrough; never surfaces.
+      return "Use Undo instead.";
+    case "completion_not_found":
+      return "This item was just modified — refresh.";
     default: {
-      // Exhaustiveness guard: adding a new ChecklistErrorCode without
-      // updating this switch becomes a compile error here. For runtime
-      // codes outside the closed set (component-internal stubs like
-      // `photo_not_wired`, or any unknown string from the API),
-      // err.code falls through to this branch — we surface err.message
-      // so the user still sees something meaningful.
       const _exhaustive: never = code;
       void _exhaustive;
       return err.message || "Save failed — tap to retry.";
@@ -205,73 +316,103 @@ const errorMessageFor = (err: ChecklistApiError): string => {
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
+type ExpandMode = "none" | "three_chip" | "picker_self_credit" | "picker_kh_tag" | "note_other";
+
 export function ChecklistItem({
   templateItem,
   completion,
   completionAuthor,
+  actualCompleterAuthor,
   actorLevel,
+  actorUserId,
   instanceStatus,
   readOnly = false,
   onComplete,
+  onRevoke,
+  onRevokeWithReason,
+  onTagActualCompleter,
+  onLoadPickerCandidates,
 }: ChecklistItemProps) {
-  // Local state for optimistic flip / in-flight / error. The "live" view
-  // is (localCompletion ?? completion) — local takes precedence during
-  // an optimistic flip; reverts to prop on error rollback.
+  // Local state for optimistic flip / in-flight / error.
   const [localCompletion, setLocalCompletion] = useState<ChecklistCompletion | null>(null);
+  // Optimistic-revoke flag: when true, render as not-yet-completed even if
+  // `completion` prop still carries the row. Set on successful silent revoke;
+  // reset by the useEffect when parent provides a fresh completion (typically
+  // null after revoke). On error, restored to false to roll back.
+  const [revoked, setRevoked] = useState(false);
   const [inFlight, setInFlight] = useState(false);
   const [error, setError] = useState<ChecklistApiError | null>(null);
 
-  // Expand state for count / notes inputs.
+  // Expand state for count / notes inputs (existing).
   const [expanded, setExpanded] = useState(false);
   const [countDraft, setCountDraft] = useState<string>("");
   const [notesDraft, setNotesDraft] = useState<string>("");
 
-  // Reset local state if parent supplies a fresh completion (e.g., after a
-  // successful pessimistic save the parent re-renders us with the new prop).
-  // Relies on parent always providing a fresh completion ID after save —
-  // lib/checklists.ts (getOrCreateInstance, completeItem, confirmInstance)
-  // honors this contract by inserting new rows rather than mutating in
-  // place. If a future code path mutates an existing completion's fields
-  // without changing its id, this effect won't fire and local optimistic
-  // state would not clear — an issue worth re-validating then.
+  // Revoke / tag expand state.
+  const [expandMode, setExpandMode] = useState<ExpandMode>("none");
+  const [otherNoteDraft, setOtherNoteDraft] = useState<string>("");
+  const [pickerCandidates, setPickerCandidates] = useState<PickerCandidateView[] | null>(null);
+  const [pickerLoading, setPickerLoading] = useState(false);
+
+  // Reset local state when parent supplies a fresh completion (id change).
   useEffect(() => {
     setLocalCompletion(null);
+    setRevoked(false);
     setError(null);
+    setExpandMode("none");
+    setOtherNoteDraft("");
+    setPickerCandidates(null);
   }, [completion?.id]);
 
-  const liveCompletion = localCompletion ?? completion;
+  const propCompletion = completion;
+  const liveCompletion = revoked ? null : (localCompletion ?? propCompletion);
   const isCompleted = liveCompletion !== null;
   const isSelfAuthor = completionAuthor?.isSelf === true;
+  const isActorCompletedBy = liveCompletion?.completedBy === actorUserId;
+  const isTagged = liveCompletion?.actualCompleterId != null;
   const roleGated = actorLevel < templateItem.minRoleLevel;
   const instanceLocked = instanceStatus !== "open";
   const interactable = !roleGated && !instanceLocked && !readOnly && !inFlight;
 
-  // ─── Save flow ────────────────────────────────────────────────────────────
+  // Affordance visibility:
+  //   - Undo: visible when row is completed by self AND interactable AND
+  //     onRevoke/onRevokeWithReason callbacks wired.
+  //   - Tag actual completer: visible to KH+ (level >= 4) on completed rows
+  //     authored by anyone other than self, AND interactable AND
+  //     onTagActualCompleter callback wired. (Self uses the wrong_user_credited
+  //     chip from the post-60s Undo expand, not this affordance.)
+  const showUndo =
+    isCompleted &&
+    isActorCompletedBy &&
+    interactable &&
+    !!onRevoke &&
+    !!onRevokeWithReason;
+  const showTagAffordance =
+    isCompleted &&
+    !isActorCompletedBy &&
+    actorLevel >= 4 &&
+    interactable &&
+    !!onTagActualCompleter &&
+    !!onLoadPickerCandidates;
+
+  // ─── Save flow (existing completion path, unchanged) ──────────────────────
 
   const performSave = async (payload: ChecklistCompletePayload) => {
     const dataCarrying = isDataCarrying(payload);
     setError(null);
 
     if (!dataCarrying) {
-      // Optimistic — synthesize a tentative completion immediately.
-      // completedBy uses a sentinel string ("__optimistic__") since
-      // ChecklistCompletion.completedBy is `string` (non-nullable) per
-      // lib/types.ts. The value is never read for identity — render
-      // logic gets self-vs-other coloring from props.completionAuthor.
       const optimistic: ChecklistCompletion = {
         id: `optimistic-${Date.now()}`,
         instanceId: completion?.instanceId ?? "",
         templateItemId: templateItem.id,
-        completedBy: "__optimistic__",
+        completedBy: actorUserId,
         completedAt: new Date().toISOString(),
         countValue: null,
         photoId: null,
         notes: null,
         supersededAt: null,
         supersededBy: null,
-        // Revoke / tag fields per SPEC_AMENDMENTS.md C.28 — always null on a
-        // fresh optimistic completion. PR 2 wires the actual revoke/tag UI;
-        // here we just satisfy the type contract.
         revokedAt: null,
         revokedBy: null,
         revocationReason: null,
@@ -288,20 +429,14 @@ export function ChecklistItem({
       const result = await onComplete(payload);
       if ("error" in result) {
         setError(result.error);
-        // Rollback the optimistic flip; for pessimistic saves there's
-        // nothing to roll back since we never set localCompletion.
         if (!dataCarrying) setLocalCompletion(null);
       } else {
-        // Success: clear local optimistic; the parent will pass the real
-        // completion via props on its next render. For pessimistic saves
-        // the same — parent owns the post-save state.
         setLocalCompletion(null);
         setExpanded(false);
         setCountDraft("");
         setNotesDraft("");
       }
     } catch (caught) {
-      // Network / unexpected — synthesize a generic error.
       setError({
         code: "unknown",
         message: caught instanceof Error ? caught.message : "Save failed",
@@ -315,10 +450,8 @@ export function ChecklistItem({
   const handleRowTap = () => {
     if (!interactable) return;
 
-    // Data-carrying items: open the expand panel instead of saving directly.
     if (templateItem.expectsCount || templateItem.expectsPhoto) {
       setExpanded((prev) => !prev);
-      // Pre-fill drafts from the existing completion if we're editing.
       if (!expanded && liveCompletion) {
         setCountDraft(
           liveCompletion.countValue !== null ? String(liveCompletion.countValue) : "",
@@ -328,28 +461,20 @@ export function ChecklistItem({
       return;
     }
 
-    // Plain item: save (or re-complete on tap of an already-completed row).
     void performSave({ templateItemId: templateItem.id });
   };
 
   const handleCountSave = () => {
     const trimmed = countDraft.trim();
     if (templateItem.expectsCount && trimmed === "") {
-      setError({
-        code: "missing_count",
-        message: "Enter a count value first.",
-      });
+      setError({ code: "missing_count", message: "Enter a count value first." });
       return;
     }
     const parsed = trimmed === "" ? null : Number(trimmed);
     if (parsed !== null && Number.isNaN(parsed)) {
-      setError({
-        code: "invalid_payload",
-        message: "Enter a valid number.",
-      });
+      setError({ code: "invalid_payload", message: "Enter a valid number." });
       return;
     }
-
     void performSave({
       templateItemId: templateItem.id,
       countValue: parsed,
@@ -358,13 +483,209 @@ export function ChecklistItem({
   };
 
   const handleNotesEditSave = () => {
-    // Notes-only edit on a completed plain item — reuses supersede flow
-    // per SPEC_AMENDMENTS.md C.22. Pessimistic since notes is data.
     void performSave({
       templateItemId: templateItem.id,
       notes: notesDraft.trim() === "" ? null : notesDraft.trim(),
     });
   };
+
+  // ─── Undo / revoke / tag flow (Build #1.5 PR 2) ───────────────────────────
+
+  /**
+   * Heuristic: client uses live completion's completedAt + 60s as initial
+   * dispatch. On `outside_quick_window` from server (clock skew, latency),
+   * gracefully fall through to revealing the three-chip expand.
+   */
+  const handleUndoClick = async () => {
+    if (!liveCompletion || !onRevoke) return;
+    setError(null);
+
+    const elapsedMs = Date.now() - new Date(liveCompletion.completedAt).getTime();
+
+    if (elapsedMs < QUICK_WINDOW_MS) {
+      // Silent path — optimistic revert.
+      setRevoked(true);
+      setInFlight(true);
+      try {
+        const result = await onRevoke(liveCompletion.id);
+        if ("error" in result) {
+          if (result.error.code === "outside_quick_window") {
+            // Server says window already closed — fall through silently.
+            setRevoked(false);
+            setExpandMode("three_chip");
+          } else {
+            setRevoked(false);
+            setError(result.error);
+          }
+        }
+        // On success: leave revoked=true; useEffect will reset when parent
+        // re-renders with completion.id changing (or completion=null).
+      } catch (caught) {
+        setRevoked(false);
+        setError({
+          code: "unknown",
+          message: caught instanceof Error ? caught.message : "Undo failed",
+        });
+      } finally {
+        setInFlight(false);
+      }
+      return;
+    }
+
+    // Past window — reveal the three-chip expand.
+    setExpandMode("three_chip");
+  };
+
+  const handleChipSelect = async (chip: "wrong_user_credited" | "not_actually_done" | "other") => {
+    if (!liveCompletion) return;
+    setError(null);
+
+    if (chip === "wrong_user_credited") {
+      // Self wrong_user_credited: open the picker (server-side scope, then
+      // client-side self-exclusion per design lock #7).
+      setExpandMode("picker_self_credit");
+      await loadPickerOnce();
+      return;
+    }
+
+    if (chip === "not_actually_done") {
+      if (!onRevokeWithReason) return;
+      setInFlight(true);
+      try {
+        const result = await onRevokeWithReason(liveCompletion.id, {
+          reason: "not_actually_done",
+        });
+        if ("error" in result) {
+          setError(result.error);
+        } else {
+          setRevoked(true);
+          setExpandMode("none");
+        }
+      } catch (caught) {
+        setError({
+          code: "unknown",
+          message: caught instanceof Error ? caught.message : "Revoke failed",
+        });
+      } finally {
+        setInFlight(false);
+      }
+      return;
+    }
+
+    if (chip === "other") {
+      // Reveal note textarea; submit happens via handleOtherNoteSubmit.
+      setExpandMode("note_other");
+      setOtherNoteDraft("");
+    }
+  };
+
+  const handleOtherNoteSubmit = async () => {
+    if (!liveCompletion || !onRevokeWithReason) return;
+    const note = otherNoteDraft.trim();
+    if (note.length === 0) {
+      setError({
+        code: "revocation_note_required",
+        message: "Add a note first.",
+        completion_id: liveCompletion.id,
+      });
+      return;
+    }
+    setError(null);
+    setInFlight(true);
+    try {
+      const result = await onRevokeWithReason(liveCompletion.id, {
+        reason: "other",
+        note,
+      });
+      if ("error" in result) {
+        setError(result.error);
+      } else {
+        setRevoked(true);
+        setExpandMode("none");
+        setOtherNoteDraft("");
+      }
+    } catch (caught) {
+      setError({
+        code: "unknown",
+        message: caught instanceof Error ? caught.message : "Revoke failed",
+      });
+    } finally {
+      setInFlight(false);
+    }
+  };
+
+  const handleTagAffordanceClick = async () => {
+    if (!liveCompletion) return;
+    setError(null);
+    setExpandMode("picker_kh_tag");
+    await loadPickerOnce();
+  };
+
+  const loadPickerOnce = async () => {
+    if (!liveCompletion || !onLoadPickerCandidates) return;
+    if (pickerCandidates !== null) return; // cached for this expand session
+    setPickerLoading(true);
+    try {
+      const result = await onLoadPickerCandidates(liveCompletion.id);
+      if ("error" in result) {
+        setError(result.error);
+        setPickerCandidates([]);
+      } else {
+        setPickerCandidates(result.candidates);
+      }
+    } catch (caught) {
+      setError({
+        code: "unknown",
+        message: caught instanceof Error ? caught.message : "Picker load failed",
+      });
+      setPickerCandidates([]);
+    } finally {
+      setPickerLoading(false);
+    }
+  };
+
+  const handlePickerSelect = async (actualCompleterId: string) => {
+    if (!liveCompletion || !onTagActualCompleter) return;
+    setError(null);
+    setInFlight(true);
+    try {
+      const result = await onTagActualCompleter(liveCompletion.id, actualCompleterId);
+      if ("error" in result) {
+        setError(result.error);
+      } else {
+        // Pessimistic — parent will pass new completion via props with
+        // actualCompleterId set; useEffect resets local state on id change.
+        // For tag, the completion id stays the same (UPDATE, not insert),
+        // so we manually update localCompletion to reflect the tag immediately.
+        setLocalCompletion(result.completion);
+        setExpandMode("none");
+        setPickerCandidates(null);
+      }
+    } catch (caught) {
+      setError({
+        code: "unknown",
+        message: caught instanceof Error ? caught.message : "Tag failed",
+      });
+    } finally {
+      setInFlight(false);
+    }
+  };
+
+  const handleExpandCancel = () => {
+    setExpandMode("none");
+    setOtherNoteDraft("");
+    setPickerCandidates(null);
+    setError(null);
+  };
+
+  // Self-exclusion for the wrong_user_credited self-correction picker per
+  // design lock #7. KH+ peer-correction picker shows all candidates.
+  const visiblePickerCandidates =
+    pickerCandidates === null
+      ? null
+      : expandMode === "picker_self_credit"
+        ? pickerCandidates.filter((c) => c.id !== actorUserId)
+        : pickerCandidates;
 
   // ─── ARIA + visual computation ────────────────────────────────────────────
 
@@ -376,7 +697,11 @@ export function ChecklistItem({
     if (isCompleted && liveCompletion) {
       const who = isSelfAuthor ? "you" : completionAuthor?.name ?? "another user";
       const when = formatTime(liveCompletion.completedAt);
-      return `${templateItem.label} — completed by ${who}${when ? ` at ${when}` : ""}`;
+      const taggedSuffix =
+        isTagged && actualCompleterAuthor
+          ? `, credited to ${actualCompleterAuthor.isSelf ? "you" : actualCompleterAuthor.name}`
+          : "";
+      return `${templateItem.label} — completed by ${who}${when ? ` at ${when}` : ""}${taggedSuffix}`;
     }
     return `${templateItem.label} — not completed`;
   })();
@@ -389,40 +714,46 @@ export function ChecklistItem({
     return <EmptyCircleIcon />;
   })();
 
-  const metaText = (() => {
+  // Right-slot text (only for state, not metadata).
+  const rightSlotText = (() => {
     if (roleGated) return roleBadgeText(templateItem.minRoleLevel);
     if (inFlight) return "Saving…";
     if (error) return errorMessageFor(error);
-    if (isCompleted && liveCompletion) {
-      const who = isSelfAuthor ? "you" : completionAuthor?.name ?? "—";
-      const when = formatTime(liveCompletion.completedAt);
-      const countSuffix =
-        liveCompletion.countValue !== null && liveCompletion.countValue !== undefined
-          ? `${liveCompletion.countValue}° · `
-          : "";
-      return `${countSuffix}${who}${when ? ` · ${when}` : ""}`;
-    }
     return null;
+  })();
+
+  // Below-row meta stack (for completed rows without transient state).
+  const showMetaStack = isCompleted && !inFlight && !error && !roleGated;
+  const metaPrimaryText = (() => {
+    if (!showMetaStack || !liveCompletion) return null;
+    const who = isSelfAuthor ? "you" : completionAuthor?.name ?? "—";
+    const when = formatTime(liveCompletion.completedAt);
+    const countSuffix =
+      liveCompletion.countValue !== null && liveCompletion.countValue !== undefined
+        ? `${liveCompletion.countValue}° · `
+        : "";
+    return `${countSuffix}${who}${when ? ` · ${when}` : ""}`;
+  })();
+  const taggedAnnotationText = (() => {
+    if (!showMetaStack || !isTagged || !actualCompleterAuthor) return null;
+    const who = actualCompleterAuthor.isSelf ? "you" : actualCompleterAuthor.name;
+    return `→ credited to ${who}`;
   })();
 
   // ─── Row classes ─────────────────────────────────────────────────────────
 
   const rowClasses = [
-    // Base layout
     "group relative flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left",
-    "min-h-[56px]", // ≥48 tap target with margin
+    "min-h-[56px]",
     "border border-co-border bg-co-surface",
     "transition",
-    // Interactive states (only when interactable)
     interactable ? "hover:border-co-gold-deep hover:bg-co-surface-2 active:bg-co-surface-2" : "",
     interactable ? "focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60" : "",
-    // Disabled-feeling states
     roleGated ? "opacity-60 cursor-not-allowed" : "",
     instanceLocked ? "opacity-70 cursor-not-allowed" : "",
     readOnly ? "opacity-70 cursor-default" : "",
     inFlight ? "ring-2 ring-co-gold-deep cursor-wait" : "",
     error ? "border-co-cta/60" : "",
-    // Completed visual treatment
     isCompleted && !error ? "bg-co-surface-2/60" : "",
   ]
     .filter(Boolean)
@@ -432,55 +763,73 @@ export function ChecklistItem({
 
   return (
     <div className="w-full">
-      <button
-        type="button"
-        onClick={handleRowTap}
-        disabled={!interactable && !error}
-        aria-label={ariaLabel}
-        aria-pressed={isCompleted}
-        className={rowClasses}
-      >
-        {/* Left-edge icon zone — ≥48×48 hit area */}
-        <span
-          aria-hidden
-          className="flex h-12 w-12 shrink-0 items-center justify-center"
+      <div className="flex items-stretch gap-2">
+        <button
+          type="button"
+          onClick={handleRowTap}
+          disabled={!interactable && !error}
+          aria-label={ariaLabel}
+          aria-pressed={isCompleted}
+          className={`flex-1 ${rowClasses}`}
         >
-          {leftIcon}
-        </span>
-
-        {/* Label + optional description */}
-        <span className="flex flex-1 flex-col items-start gap-0.5 min-w-0">
-          <span
-            className={[
-              "text-sm font-semibold leading-tight text-co-text",
-              isCompleted && !error ? "text-co-text-muted" : "",
-            ]
-              .filter(Boolean)
-              .join(" ")}
-          >
-            {templateItem.label}
+          <span aria-hidden className="flex h-12 w-12 shrink-0 items-center justify-center">
+            {leftIcon}
           </span>
-          {templateItem.description ? (
-            <span className="text-[11px] text-co-text-dim line-clamp-2">
-              {templateItem.description}
+
+          <span className="flex flex-1 flex-col items-start gap-0.5 min-w-0">
+            <span
+              className={[
+                "text-sm font-semibold leading-tight text-co-text",
+                isCompleted && !error ? "text-co-text-muted" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+            >
+              {templateItem.label}
+            </span>
+            {templateItem.description ? (
+              <span className="text-[11px] text-co-text-dim line-clamp-2">
+                {templateItem.description}
+              </span>
+            ) : null}
+          </span>
+
+          {rightSlotText ? (
+            <span
+              className={[
+                "shrink-0 text-[11px] font-medium tabular-nums",
+                error ? "text-co-cta" : "text-co-text-dim",
+              ].join(" ")}
+            >
+              {rightSlotText}
             </span>
           ) : null}
-        </span>
+        </button>
 
-        {/* Meta slot */}
-        {metaText ? (
-          <span
-            className={[
-              "shrink-0 text-[11px] font-medium tabular-nums",
-              error ? "text-co-cta" : "text-co-text-dim",
-            ].join(" ")}
-          >
-            {metaText}
-          </span>
+        {/* Right-side action affordances (Undo / Tag) — sibling of row button. */}
+        {showUndo ? (
+          <UndoButton onClick={handleUndoClick} disabled={inFlight || expandMode !== "none"} />
+        ) : showTagAffordance ? (
+          <TagAffordanceButton
+            onClick={handleTagAffordanceClick}
+            disabled={inFlight || expandMode !== "none"}
+          />
         ) : null}
-      </button>
+      </div>
 
-      {/* Expand panel for data-carrying items (count + notes) */}
+      {/* Below-row meta stack — completer/time + credited-to annotation. */}
+      {(metaPrimaryText || taggedAnnotationText) ? (
+        <div className="ml-15 mt-1 flex flex-col gap-0.5 text-[11px] tabular-nums leading-tight">
+          {metaPrimaryText ? (
+            <span className="text-co-text-dim">{metaPrimaryText}</span>
+          ) : null}
+          {taggedAnnotationText ? (
+            <span className="font-semibold text-co-gold-deep">{taggedAnnotationText}</span>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* Expand panel for data-carrying items (count + notes) — unchanged. */}
       {expanded && (templateItem.expectsCount || templateItem.expectsPhoto) ? (
         <div
           className="mt-1 rounded-lg border border-co-border-2 bg-co-surface-2 p-3"
@@ -512,7 +861,6 @@ export function ChecklistItem({
               <span className="block text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
                 Photo
               </span>
-              {/* Stub — PhotoUploader wires in Build #4. */}
               <button
                 type="button"
                 onClick={() =>
@@ -581,8 +929,45 @@ export function ChecklistItem({
         </div>
       ) : null}
 
-      {/* Notes-edit panel for completed plain items (not data-carrying) */}
-      {!expanded && isCompleted && !templateItem.expectsCount && !templateItem.expectsPhoto && interactable ? (
+      {/* Three-chip expand — post-60s Undo path. */}
+      {expandMode === "three_chip" ? (
+        <ThreeChipExpand
+          onChip={handleChipSelect}
+          onCancel={handleExpandCancel}
+          disabled={inFlight}
+        />
+      ) : null}
+
+      {/* "Other" reason — note textarea. */}
+      {expandMode === "note_other" ? (
+        <OtherNotePanel
+          note={otherNoteDraft}
+          setNote={setOtherNoteDraft}
+          onSubmit={handleOtherNoteSubmit}
+          onCancel={handleExpandCancel}
+          disabled={inFlight}
+        />
+      ) : null}
+
+      {/* Picker (used by both wrong_user_credited self-correction and KH+ tag). */}
+      {expandMode === "picker_self_credit" || expandMode === "picker_kh_tag" ? (
+        <PickerExpand
+          loading={pickerLoading}
+          candidates={visiblePickerCandidates ?? []}
+          mode={expandMode}
+          onSelect={handlePickerSelect}
+          onCancel={handleExpandCancel}
+          disabled={inFlight}
+        />
+      ) : null}
+
+      {/* Notes-edit affordance (existing) — unchanged per design lock #9. */}
+      {expandMode === "none" &&
+      !expanded &&
+      isCompleted &&
+      !templateItem.expectsCount &&
+      !templateItem.expectsPhoto &&
+      interactable ? (
         <NotesEditAffordance
           completion={liveCompletion}
           notesDraft={notesDraft}
@@ -596,8 +981,285 @@ export function ChecklistItem({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Sub-components
+// Sub-components — Build #1 (existing) + Build #1.5 PR 2 additions
 // ─────────────────────────────────────────────────────────────────────────────
+
+function UndoButton({ onClick, disabled }: { onClick: () => void; disabled: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label="Undo this completion"
+      className="
+        shrink-0 inline-flex min-h-[48px] min-w-[64px] items-center justify-center rounded-lg
+        border-2 border-co-border bg-co-surface px-3
+        text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-muted
+        transition hover:border-co-cta/60 hover:text-co-cta active:bg-co-surface-2
+        focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
+        disabled:cursor-not-allowed disabled:opacity-50
+      "
+    >
+      Undo
+    </button>
+  );
+}
+
+function TagAffordanceButton({
+  onClick,
+  disabled,
+}: {
+  onClick: () => void;
+  disabled: boolean;
+}) {
+  // Label is always "Tag" regardless of whether a prior tag exists. User
+  // intent ("I want to attribute this work") is the constant; whether the
+  // system has a prior tag is implementation detail. Mirrors the Undo
+  // button's stable-label rule (per design lock #2).
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label="Tag actual completer"
+      className="
+        shrink-0 inline-flex min-h-[48px] min-w-[64px] items-center justify-center rounded-lg
+        border-2 border-co-border bg-co-surface px-3
+        text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-muted
+        transition hover:border-co-gold-deep hover:text-co-text active:bg-co-surface-2
+        focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
+        disabled:cursor-not-allowed disabled:opacity-50
+      "
+    >
+      Tag
+    </button>
+  );
+}
+
+function ThreeChipExpand({
+  onChip,
+  onCancel,
+  disabled,
+}: {
+  onChip: (chip: "wrong_user_credited" | "not_actually_done" | "other") => void;
+  onCancel: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <div
+      className="mt-1 rounded-lg border border-co-border-2 bg-co-surface-2 p-3"
+      role="region"
+      aria-label="Choose undo reason"
+    >
+      <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
+        What happened?
+      </div>
+      <div className="mt-2 flex flex-col gap-2">
+        <Chip onClick={() => onChip("wrong_user_credited")} disabled={disabled}>
+          Wrong person credited
+        </Chip>
+        <Chip onClick={() => onChip("not_actually_done")} disabled={disabled}>
+          Not actually done
+        </Chip>
+        <Chip onClick={() => onChip("other")} disabled={disabled}>
+          Other (note required)
+        </Chip>
+      </div>
+      <div className="mt-2 flex">
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={disabled}
+          className="
+            inline-flex min-h-[40px] items-center px-3 text-[11px] font-semibold text-co-text-dim
+            underline-offset-2 hover:text-co-text-muted hover:underline
+            focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/40
+            disabled:cursor-not-allowed disabled:opacity-50
+          "
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Chip({
+  onClick,
+  disabled,
+  children,
+}: {
+  onClick: () => void;
+  disabled: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="
+        inline-flex min-h-[48px] items-center justify-start rounded-lg
+        border-2 border-co-border bg-white px-4 text-left
+        text-sm font-semibold text-co-text
+        transition hover:border-co-gold-deep hover:bg-co-surface
+        focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
+        disabled:cursor-not-allowed disabled:opacity-50
+      "
+    >
+      {children}
+    </button>
+  );
+}
+
+function OtherNotePanel({
+  note,
+  setNote,
+  onSubmit,
+  onCancel,
+  disabled,
+}: {
+  note: string;
+  setNote: (s: string) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <div
+      className="mt-1 rounded-lg border border-co-border-2 bg-co-surface-2 p-3"
+      role="region"
+      aria-label="Add note for undo"
+    >
+      <label className="block">
+        <span className="block text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
+          Note (required)
+        </span>
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={2}
+          placeholder="Briefly explain"
+          className="
+            mt-1 w-full rounded-md border-2 border-co-border bg-white px-3 py-2
+            text-sm text-co-text
+            focus:outline-none focus:border-co-gold focus-visible:ring-4 focus-visible:ring-co-gold/40
+          "
+          autoFocus
+        />
+      </label>
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          onClick={onSubmit}
+          disabled={disabled || note.trim().length === 0}
+          className="
+            inline-flex min-h-[48px] flex-1 items-center justify-center rounded-md
+            bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.12em] text-co-text
+            transition hover:bg-co-gold-deep
+            focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
+            disabled:cursor-not-allowed disabled:opacity-50
+          "
+        >
+          {disabled ? "Saving…" : "Submit undo"}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={disabled}
+          className="
+            inline-flex min-h-[48px] items-center justify-center rounded-md
+            border-2 border-co-border bg-white px-4 text-sm font-semibold text-co-text-muted
+            transition hover:border-co-border-2
+            focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/40
+            disabled:cursor-not-allowed disabled:opacity-50
+          "
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PickerExpand({
+  loading,
+  candidates,
+  mode,
+  onSelect,
+  onCancel,
+  disabled,
+}: {
+  loading: boolean;
+  candidates: PickerCandidateView[];
+  mode: "picker_self_credit" | "picker_kh_tag";
+  onSelect: (id: string) => void;
+  onCancel: () => void;
+  disabled: boolean;
+}) {
+  const headingText =
+    mode === "picker_self_credit" ? "Who actually did this?" : "Tag actual completer";
+  const emptyText =
+    mode === "picker_self_credit"
+      ? "No other candidates available right now."
+      : "No candidates available right now.";
+
+  return (
+    <div
+      className="mt-1 rounded-lg border border-co-border-2 bg-co-surface-2 p-3"
+      role="region"
+      aria-label={headingText}
+    >
+      <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
+        {headingText}
+      </div>
+      {loading ? (
+        <div className="mt-2 text-sm text-co-text-dim">Loading…</div>
+      ) : candidates.length === 0 ? (
+        <div className="mt-2 text-sm text-co-text-dim">{emptyText}</div>
+      ) : (
+        <ul className="mt-2 flex flex-col gap-2">
+          {candidates.map((c) => (
+            <li key={c.id}>
+              <button
+                type="button"
+                onClick={() => onSelect(c.id)}
+                disabled={disabled}
+                className="
+                  flex w-full min-h-[48px] items-center justify-between gap-3 rounded-lg
+                  border-2 border-co-border bg-white px-4 text-left
+                  transition hover:border-co-gold-deep hover:bg-co-surface
+                  focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
+                  disabled:cursor-not-allowed disabled:opacity-50
+                "
+              >
+                <span className="text-sm font-semibold text-co-text">{c.name}</span>
+                <span className="shrink-0 text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
+                  {roleBadgeShort(c.role)}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="mt-2 flex">
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={disabled}
+          className="
+            inline-flex min-h-[40px] items-center px-3 text-[11px] font-semibold text-co-text-dim
+            underline-offset-2 hover:text-co-text-muted hover:underline
+            focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/40
+            disabled:cursor-not-allowed disabled:opacity-50
+          "
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function NotesEditAffordance({
   completion,
@@ -689,9 +1351,7 @@ function NotesEditAffordance({
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Icons (inline SVG — no external dep)
-// ─────────────────────────────────────────────────────────────────────────────
+// ─── Icons (inline SVG — unchanged from Build #1) ──────────────────────────
 
 function EmptyCircleIcon() {
   return (
@@ -759,3 +1419,8 @@ function ErrorIcon() {
     </svg>
   );
 }
+
+// Marker prop reference to silence react/no-unused-prop-types if linting later.
+// ChecklistRevocationReason is imported transitively through ChecklistCompletion;
+// keeping the type re-export wired for downstream consumers.
+export type { ChecklistRevocationReason };

@@ -53,6 +53,9 @@ import {
   type ChecklistApiError,
   type ChecklistCompletePayload,
   type ChecklistCompleteResult,
+  type ChecklistPickerResult,
+  type ChecklistRevokeResult,
+  type ChecklistTagResult,
 } from "@/components/ChecklistItem";
 import { PinConfirmModal } from "@/components/auth/PinConfirmModal";
 import type {
@@ -297,6 +300,208 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
     [instance.id, actor.userId],
   );
 
+  // ─── Revoke / tag callbacks (Build #1.5 PR 2 per SPEC_AMENDMENTS.md C.28) ─
+
+  /**
+   * Silent within-60s self-revoke. Optimistic on the component side; on
+   * server success we remove the completion from the parent map so the row
+   * goes back to not-yet-completed (matches design lock #5: full revert,
+   * forensic record lives in DB+audit).
+   */
+  const handleItemRevoke = useCallback(
+    async (completionId: string): Promise<ChecklistRevokeResult> => {
+      try {
+        const res = await fetch(`/api/checklist/completions/${completionId}/revoke`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+          redirect: "manual",
+        });
+        if (res.ok) {
+          const data = (await res.json()) as { revoked: true; completion: ChecklistCompletion };
+          // Drop the completion from the live map so the row visually reverts.
+          setCompletions((prev) => {
+            const next = new Map(prev);
+            next.delete(data.completion.templateItemId);
+            return next;
+          });
+          return { revoked: true, completion: data.completion };
+        }
+        let body: ChecklistApiError;
+        try {
+          body = (await res.json()) as ChecklistApiError;
+        } catch {
+          body = { code: "unknown", message: "Undo failed." };
+        }
+        return { error: body };
+      } catch (err) {
+        return {
+          error: {
+            code: "network",
+            message: err instanceof Error ? err.message : "Network error.",
+          },
+        };
+      }
+    },
+    [],
+  );
+
+  /**
+   * Post-60s structured self-revoke with reason (+ optional note). Pessimistic
+   * — UI commits on server confirmation, then we remove from parent map.
+   */
+  const handleItemRevokeWithReason = useCallback(
+    async (
+      completionId: string,
+      payload: { reason: "not_actually_done" | "other"; note?: string | null },
+    ): Promise<ChecklistRevokeResult> => {
+      try {
+        const res = await fetch(
+          `/api/checklist/completions/${completionId}/revoke-with-reason`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ reason: payload.reason, note: payload.note ?? null }),
+            redirect: "manual",
+          },
+        );
+        if (res.ok) {
+          const data = (await res.json()) as { revoked: true; completion: ChecklistCompletion };
+          setCompletions((prev) => {
+            const next = new Map(prev);
+            next.delete(data.completion.templateItemId);
+            return next;
+          });
+          return { revoked: true, completion: data.completion };
+        }
+        let body: ChecklistApiError;
+        try {
+          body = (await res.json()) as ChecklistApiError;
+        } catch {
+          body = { code: "unknown", message: "Undo failed." };
+        }
+        return { error: body };
+      } catch (err) {
+        return {
+          error: {
+            code: "network",
+            message: err instanceof Error ? err.message : "Network error.",
+          },
+        };
+      }
+    },
+    [],
+  );
+
+  /**
+   * Tag actual completer (KH+ peer correction or self wrong_user_credited).
+   * Pessimistic — UI commits on server confirmation. The completion stays in
+   * the live map (revoke-only removes); we replace it with the updated row
+   * so the actual_completer_id annotation surfaces. Author name for the new
+   * actualCompleterId is fetched from the picker candidates locally; if the
+   * map doesn't have it (rare race), the page-level author resolution will
+   * supply it on next render.
+   */
+  const handleItemTagActualCompleter = useCallback(
+    async (completionId: string, actualCompleterId: string): Promise<ChecklistTagResult> => {
+      try {
+        const res = await fetch(
+          `/api/checklist/completions/${completionId}/tag-actual-completer`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ actualCompleterId }),
+            redirect: "manual",
+          },
+        );
+        if (res.ok) {
+          const data = (await res.json()) as {
+            tagged: true;
+            completion: ChecklistCompletion;
+            replacedPriorTag: boolean;
+          };
+          setCompletions((prev) => {
+            const next = new Map(prev);
+            next.set(data.completion.templateItemId, data.completion);
+            return next;
+          });
+          return {
+            tagged: true,
+            completion: data.completion,
+            replacedPriorTag: data.replacedPriorTag,
+          };
+        }
+        let body: ChecklistApiError;
+        try {
+          body = (await res.json()) as ChecklistApiError;
+        } catch {
+          body = { code: "unknown", message: "Tag failed." };
+        }
+        return { error: body };
+      } catch (err) {
+        return {
+          error: {
+            code: "network",
+            message: err instanceof Error ? err.message : "Network error.",
+          },
+        };
+      }
+    },
+    [],
+  );
+
+  /**
+   * Loads picker candidates for a specific completion. Component caches the
+   * result for the duration of the expand session; we re-fetch each time
+   * the picker opens (no parent-side cache).
+   *
+   * Side-effect: when candidates load successfully, we merge their names
+   * into the parent's authorMap so the eventual tagged annotation has the
+   * actual_completer_id name available without a second fetch.
+   */
+  const handleLoadPickerCandidates = useCallback(
+    async (completionId: string): Promise<ChecklistPickerResult> => {
+      try {
+        const res = await fetch(
+          `/api/checklist/completions/${completionId}/picker-candidates`,
+          {
+            method: "GET",
+            redirect: "manual",
+          },
+        );
+        if (res.ok) {
+          const data = (await res.json()) as {
+            candidates: Array<{ id: string; name: string; role: RoleCode; level: number }>;
+          };
+          // Merge candidate names into authorMap for downstream tag annotation.
+          setAuthorMap((prev) => {
+            const next = new Map(prev);
+            for (const c of data.candidates) {
+              if (!next.has(c.id)) next.set(c.id, c.name);
+            }
+            return next;
+          });
+          return { candidates: data.candidates };
+        }
+        let body: ChecklistApiError;
+        try {
+          body = (await res.json()) as ChecklistApiError;
+        } catch {
+          body = { code: "unknown", message: "Picker load failed." };
+        }
+        return { error: body };
+      } catch (err) {
+        return {
+          error: {
+            code: "network",
+            message: err instanceof Error ? err.message : "Network error.",
+          },
+        };
+      }
+    },
+    [],
+  );
+
   // ─── PinConfirmModal callbacks ──────────────────────────────────────────
 
   const handlePinConfirmed = useCallback(
@@ -511,6 +716,10 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
               expanded={stationExpanded.get(station) ?? true}
               onToggle={() => toggleStation(station)}
               onComplete={handleItemComplete}
+              onRevoke={handleItemRevoke}
+              onRevokeWithReason={handleItemRevokeWithReason}
+              onTagActualCompleter={handleItemTagActualCompleter}
+              onLoadPickerCandidates={handleLoadPickerCandidates}
               setRef={setStationRef(station)}
             />
           );
@@ -685,6 +894,10 @@ function StationGroup({
   expanded,
   onToggle,
   onComplete,
+  onRevoke,
+  onRevokeWithReason,
+  onTagActualCompleter,
+  onLoadPickerCandidates,
   setRef,
 }: {
   station: string;
@@ -697,6 +910,16 @@ function StationGroup({
   expanded: boolean;
   onToggle: () => void;
   onComplete: (payload: ChecklistCompletePayload) => Promise<ChecklistCompleteResult>;
+  onRevoke: (completionId: string) => Promise<ChecklistRevokeResult>;
+  onRevokeWithReason: (
+    completionId: string,
+    payload: { reason: "not_actually_done" | "other"; note?: string | null },
+  ) => Promise<ChecklistRevokeResult>;
+  onTagActualCompleter: (
+    completionId: string,
+    actualCompleterId: string,
+  ) => Promise<ChecklistTagResult>;
+  onLoadPickerCandidates: (completionId: string) => Promise<ChecklistPickerResult>;
   setRef: (el: HTMLElement | null) => void;
 }) {
   const requiredItems = items.filter((it) => it.required);
@@ -758,16 +981,29 @@ function StationGroup({
                   isSelf: c.completedBy === actor.userId,
                 }
               : null;
+            const actualCompleterAuthor =
+              c && c.actualCompleterId
+                ? {
+                    name: authorMap.get(c.actualCompleterId) ?? "—",
+                    isSelf: c.actualCompleterId === actor.userId,
+                  }
+                : null;
             return (
               <ChecklistItem
                 key={it.id}
                 templateItem={it}
                 completion={c}
                 completionAuthor={author}
+                actualCompleterAuthor={actualCompleterAuthor}
                 actorLevel={actor.level}
+                actorUserId={actor.userId}
                 instanceStatus={instanceStatus}
                 readOnly={readOnly}
                 onComplete={onComplete}
+                onRevoke={onRevoke}
+                onRevokeWithReason={onRevokeWithReason}
+                onTagActualCompleter={onTagActualCompleter}
+                onLoadPickerCandidates={onLoadPickerCandidates}
               />
             );
           })}
