@@ -739,6 +739,17 @@ export function ChecklistItem({
     const who = actualCompleterAuthor.isSelf ? "you" : actualCompleterAuthor.name;
     return `→ credited to ${who}`;
   })();
+  // Inline notes display (per SPEC_AMENDMENTS.md C.29). Renders editorial
+  // commentary stored on the live completion when present. Italicized + muted
+  // — italics signal "editorial, not data"; the multi-tier visibility model
+  // (public vs managerial per C.27) is still deferred and will distinguish
+  // tiers via color/weight when it lands. Renders LAST in the meta stack so
+  // structural info (tag annotation) reads before editorial commentary.
+  const noteText = (() => {
+    if (!showMetaStack || !liveCompletion) return null;
+    const trimmed = liveCompletion.notes?.trim() ?? "";
+    return trimmed.length > 0 ? trimmed : null;
+  })();
 
   // ─── Row classes ─────────────────────────────────────────────────────────
 
@@ -817,14 +828,21 @@ export function ChecklistItem({
         ) : null}
       </div>
 
-      {/* Below-row meta stack — completer/time + credited-to annotation. */}
-      {(metaPrimaryText || taggedAnnotationText) ? (
-        <div className="ml-15 mt-1 flex flex-col gap-0.5 text-[11px] tabular-nums leading-tight">
+      {/* Below-row meta stack — completer/time + credited-to annotation + inline notes (C.29).
+          tabular-nums is scoped to metaPrimaryText only (the timestamp line) instead of the
+          wrapper, since tag annotation and notes carry no numerals that benefit from tabular
+          alignment — applying it broadly would force monospace-digit width on text that
+          shouldn't have it. */}
+      {(metaPrimaryText || taggedAnnotationText || noteText) ? (
+        <div className="ml-15 mt-1 flex flex-col gap-0.5 text-[11px] leading-tight">
           {metaPrimaryText ? (
-            <span className="text-co-text-dim">{metaPrimaryText}</span>
+            <span className="tabular-nums text-co-text-dim">{metaPrimaryText}</span>
           ) : null}
           {taggedAnnotationText ? (
             <span className="font-semibold text-co-gold-deep">{taggedAnnotationText}</span>
+          ) : null}
+          {noteText ? (
+            <span className="italic text-co-text-muted">{noteText}</span>
           ) : null}
         </div>
       ) : null}
