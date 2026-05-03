@@ -269,6 +269,16 @@ export function ChecklistItem({
         notes: null,
         supersededAt: null,
         supersededBy: null,
+        // Revoke / tag fields per SPEC_AMENDMENTS.md C.28 — always null on a
+        // fresh optimistic completion. PR 2 wires the actual revoke/tag UI;
+        // here we just satisfy the type contract.
+        revokedAt: null,
+        revokedBy: null,
+        revocationReason: null,
+        revocationNote: null,
+        actualCompleterId: null,
+        actualCompleterTaggedAt: null,
+        actualCompleterTaggedBy: null,
       };
       setLocalCompletion(optimistic);
     }

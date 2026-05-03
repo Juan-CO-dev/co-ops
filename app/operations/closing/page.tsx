@@ -44,6 +44,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
+  ChecklistRevocationReason,
   ChecklistStatus,
   ChecklistTemplateItem,
 } from "@/lib/types";
@@ -156,6 +157,15 @@ interface CompletionRow {
   notes: string | null;
   superseded_at: string | null;
   superseded_by: string | null;
+  // Revoke / tag fields per SPEC_AMENDMENTS.md C.28. PR 1 wires server-side
+  // reads to surface them; PR 2 ships the UI rendering.
+  revoked_at: string | null;
+  revoked_by: string | null;
+  revocation_reason: ChecklistRevocationReason | null;
+  revocation_note: string | null;
+  actual_completer_id: string | null;
+  actual_completer_tagged_at: string | null;
+  actual_completer_tagged_by: string | null;
 }
 
 const rowToCompletion = (r: CompletionRow): ChecklistCompletion => ({
@@ -169,6 +179,13 @@ const rowToCompletion = (r: CompletionRow): ChecklistCompletion => ({
   notes: r.notes,
   supersededAt: r.superseded_at,
   supersededBy: r.superseded_by,
+  revokedAt: r.revoked_at,
+  revokedBy: r.revoked_by,
+  revocationReason: r.revocation_reason,
+  revocationNote: r.revocation_note,
+  actualCompleterId: r.actual_completer_id,
+  actualCompleterTaggedAt: r.actual_completer_tagged_at,
+  actualCompleterTaggedBy: r.actual_completer_tagged_by,
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -341,14 +358,18 @@ export default async function ClosingPage({ searchParams }: PageProps) {
   if (itemsErr) throw new Error(`load items: ${itemsErr.message}`);
   const templateItems = ((itemsRows ?? []) as TemplateItemRow[]).map(rowToTemplateItem);
 
-  // Load live (non-superseded) completions.
+  // Load live (non-superseded, non-revoked) completions. Revoked completions
+  // are excluded from the live set per SPEC_AMENDMENTS.md C.28 — same
+  // semantics as superseded. The progress bar, station counters, and
+  // Walk-Out Verification gate all treat revoked rows as not-completed.
   const { data: completionRows, error: compErr } = await sb
     .from("checklist_completions")
     .select(
-      "id, instance_id, template_item_id, completed_by, completed_at, count_value, photo_id, notes, superseded_at, superseded_by",
+      "id, instance_id, template_item_id, completed_by, completed_at, count_value, photo_id, notes, superseded_at, superseded_by, revoked_at, revoked_by, revocation_reason, revocation_note, actual_completer_id, actual_completer_tagged_at, actual_completer_tagged_by",
     )
     .eq("instance_id", instanceRow.id)
-    .is("superseded_at", null);
+    .is("superseded_at", null)
+    .is("revoked_at", null);
   if (compErr) throw new Error(`load completions: ${compErr.message}`);
   const completions = ((completionRows ?? []) as CompletionRow[]).map(rowToCompletion);
 

@@ -178,11 +178,13 @@ async function loadOperationalState(
     if (reqErr) throw new Error(`load required items: ${reqErr.message}`);
     const requiredIds = new Set((requiredItems ?? []).map((r) => r.id as string));
 
+    // Live = non-superseded AND non-revoked (per SPEC_AMENDMENTS.md C.28).
     const { data: liveCompletions, error: compErr } = await sb
       .from("checklist_completions")
       .select("template_item_id")
       .eq("instance_id", todayInstance.id)
-      .is("superseded_at", null);
+      .is("superseded_at", null)
+      .is("revoked_at", null);
     if (compErr) throw new Error(`load live completions: ${compErr.message}`);
 
     const completedRequired = new Set<string>();
