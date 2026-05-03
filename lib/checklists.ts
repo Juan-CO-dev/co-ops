@@ -1244,7 +1244,7 @@ function startOfTodayInNyAsUtcIso(): string {
   return new Date(utcMidnightOfNyDate.getTime() + offsetHours * 3600 * 1000).toISOString();
 }
 
-interface PickerCandidate {
+export interface PickerCandidate {
   id: string;
   name: string;
   role: RoleCode;
@@ -1735,4 +1735,54 @@ export async function tagActualCompleter(
   });
 
   return { completion: rowToCompletion(updatedRow), replacedPriorTag: replacingPriorTag };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// loadPickerCandidatesForCompletion — public wrapper for the picker GET route.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Public surface for picker-scope candidate enumeration. Loads the live
+ * completion (location-access RLS-gated via authed client), authorizes
+ * (KH+ OR self), then returns the candidate list scoped to the completion's
+ * instance + template_item.
+ *
+ * Self-exclusion (when the actor IS the completed_by and is using the
+ * wrong_user_credited self-correction flow) is the CALLER's responsibility
+ * — this function returns the full candidate set including self where
+ * applicable, and the UI filters self out for the wrong_user_credited
+ * sub-affordance per the PR 2 design lock.
+ *
+ * Errors mirror tagActualCompleter: ChecklistError("completion_not_found")
+ * if the completion is not visible to the actor or is revoked/superseded;
+ * ChecklistRoleViolationError if actor isn't KH+ AND isn't self.
+ */
+export async function loadPickerCandidatesForCompletion(
+  authed: SupabaseClient,
+  args: {
+    completionId: string;
+    actor: ChecklistActor;
+  },
+): Promise<PickerCandidate[]> {
+  const { completionId, actor } = args;
+
+  const completion = await loadLiveCompletionOrThrow(authed, completionId);
+
+  const isSelf = actor.userId === completion.completed_by;
+  if (!isSelf && actor.level < 4) {
+    throw new ChecklistRoleViolationError(
+      4,
+      actor.level,
+      `Picker access requires KH+ (level >= 4) or self (when actor === completed_by).`,
+    );
+  }
+
+  const instance = await loadInstanceOrThrow(authed, completion.instance_id);
+  const item = await loadTemplateItemOrThrow(authed, completion.template_item_id);
+
+  return loadPickerCandidates({
+    instanceId: completion.instance_id,
+    locationId: instance.location_id,
+    minRoleLevel: item.min_role_level,
+  });
 }

@@ -373,9 +373,15 @@ export default async function ClosingPage({ searchParams }: PageProps) {
   if (compErr) throw new Error(`load completions: ${compErr.message}`);
   const completions = ((completionRows ?? []) as CompletionRow[]).map(rowToCompletion);
 
-  // Resolve author names for completion meta + confirmedBy.
+  // Resolve author names for completion meta + confirmedBy + accountability
+  // tagging (per SPEC_AMENDMENTS.md C.28). actualCompleterId carries the
+  // accountability-truth author whose name is rendered as the
+  // "credited to [name]" annotation in ChecklistItem.
   const authorIds = new Set<string>();
-  for (const c of completions) authorIds.add(c.completedBy);
+  for (const c of completions) {
+    authorIds.add(c.completedBy);
+    if (c.actualCompleterId) authorIds.add(c.actualCompleterId);
+  }
   if (instanceRow.confirmed_by) authorIds.add(instanceRow.confirmed_by);
   const authors: Record<string, string> = {};
   if (authorIds.size > 0) {
