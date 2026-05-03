@@ -39,6 +39,8 @@ import { redirect } from "next/navigation";
 
 import { getOrCreateInstance } from "@/lib/checklists";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
+import { serverT } from "@/lib/i18n/server";
+import type { Language } from "@/lib/i18n/types";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import type {
@@ -201,36 +203,38 @@ interface BannerContext {
   confirmedByName: string | null;
 }
 
-function deriveBanner(ctx: BannerContext): StatusBanner | null {
+function deriveBanner(ctx: BannerContext, language: Language): StatusBanner | null {
   // Yesterday's open instance → strict read-only with manager-finalize message.
   if (ctx.isHistorical && ctx.isYesterday && ctx.status === "open") {
     return {
       tone: "yesterday_unconfirmed",
-      message: "Yesterday's closing was not confirmed. Contact a manager to finalize.",
+      message: serverT(language, "closing.banner.yesterday_unconfirmed"),
     };
   }
   // Confirmed / incomplete-confirmed → status-specific banner (today or historical).
   if (ctx.status === "confirmed") {
     const time = ctx.confirmedAt ? formatTime(ctx.confirmedAt) : "";
     const who = ctx.confirmedByName ?? "—";
+    const timePrefix = time ? serverT(language, "closing.banner.time_prefix", { time }) : "";
     return {
       tone: "confirmed",
-      message: `Closing confirmed${time ? ` · ${time}` : ""} by ${who}`,
+      message: serverT(language, "closing.banner.confirmed", { time: timePrefix, who }),
     };
   }
   if (ctx.status === "incomplete_confirmed") {
     const time = ctx.confirmedAt ? formatTime(ctx.confirmedAt) : "";
     const who = ctx.confirmedByName ?? "—";
+    const timePrefix = time ? serverT(language, "closing.banner.time_prefix", { time }) : "";
     return {
       tone: "incomplete_confirmed",
-      message: `Closing submitted with incomplete items${time ? ` · ${time}` : ""} by ${who}`,
+      message: serverT(language, "closing.banner.incomplete_confirmed", { time: timePrefix, who }),
     };
   }
   // Older historical (not yesterday, not confirmed) — abandoned older closing.
   if (ctx.isHistorical) {
     return {
       tone: "historical",
-      message: `Read-only · viewing ${formatDateLabel(ctx.date)}'s closing`,
+      message: serverT(language, "closing.banner.historical", { date: formatDateLabel(ctx.date) }),
     };
   }
   return null;
@@ -288,7 +292,12 @@ export default async function ClosingPage({ searchParams }: PageProps) {
     .maybeSingle<{ id: string }>();
   if (tmplErr) throw new Error(`load template: ${tmplErr.message}`);
   if (!templateRow) {
-    return <NoTemplateView locationLabel={`${locationRow.code} · ${locationRow.name}`} />;
+    return (
+      <NoTemplateView
+        locationLabel={`${locationRow.code} · ${locationRow.name}`}
+        language={auth.user.language}
+      />
+    );
   }
 
   // Date determination.
@@ -407,14 +416,17 @@ export default async function ClosingPage({ searchParams }: PageProps) {
     instanceRow.status === "confirmed" ||
     instanceRow.status === "incomplete_confirmed";
 
-  const banner = deriveBanner({
-    isHistorical,
-    isYesterday,
-    date: targetDate,
-    status: instanceRow.status,
-    confirmedAt: instanceRow.confirmed_at,
-    confirmedByName: instanceRow.confirmed_by ? authors[instanceRow.confirmed_by] ?? null : null,
-  });
+  const banner = deriveBanner(
+    {
+      isHistorical,
+      isYesterday,
+      date: targetDate,
+      status: instanceRow.status,
+      confirmedAt: instanceRow.confirmed_at,
+      confirmedByName: instanceRow.confirmed_by ? authors[instanceRow.confirmed_by] ?? null : null,
+    },
+    auth.user.language,
+  );
 
   const initialState: ClosingInitialState = {
     location: locationRow,
@@ -423,6 +435,9 @@ export default async function ClosingPage({ searchParams }: PageProps) {
     initialCompletions,
     authors,
     actor: { userId: auth.user.id, role: auth.role, level: auth.level },
+    actorName: auth.user.name,
+    actorEmail: auth.user.email,
+    actorLanguage: auth.user.language,
     readOnly: isReadOnly,
     banner,
     todayDate: today,
@@ -435,17 +450,16 @@ export default async function ClosingPage({ searchParams }: PageProps) {
 // Empty-state views
 // ─────────────────────────────────────────────────────────────────────────────
 
-function NoTemplateView({ locationLabel }: { locationLabel: string }) {
+function NoTemplateView({ locationLabel, language }: { locationLabel: string; language: Language }) {
   return (
     <main className="mx-auto max-w-2xl p-4 sm:p-6">
       <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
-        Closing checklist
+        {serverT(language, "closing.no_template.heading")}
       </p>
       <h1 className="mt-1 text-2xl font-extrabold text-co-text">{locationLabel}</h1>
       <section className="mt-6 rounded-2xl border-2 border-co-border bg-co-surface p-5 text-center sm:p-6">
         <p className="text-sm text-co-text-muted">
-          No closing template configured for this location. An admin needs to seed a
-          closing template before you can open a closing here.
+          {serverT(language, "closing.no_template.body")}
         </p>
         <a
           href="/dashboard"
@@ -456,7 +470,7 @@ function NoTemplateView({ locationLabel }: { locationLabel: string }) {
             focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
           "
         >
-          Return to dashboard
+          {serverT(language, "closing.no_template.return_dashboard")}
         </a>
       </section>
     </main>

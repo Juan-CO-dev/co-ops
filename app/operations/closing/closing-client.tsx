@@ -58,6 +58,9 @@ import {
   type ChecklistTagResult,
 } from "@/components/ChecklistItem";
 import { PinConfirmModal } from "@/components/auth/PinConfirmModal";
+import { UserMenu } from "@/components/UserMenu";
+import { TranslationProvider, useTranslation } from "@/lib/i18n/provider";
+import type { Language } from "@/lib/i18n/types";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
@@ -88,6 +91,11 @@ export interface ClosingInitialState {
   initialCompletions: Record<string, ChecklistCompletion>;
   authors: Record<string, string>;
   actor: { userId: string; role: RoleCode; level: number };
+  /** Actor's display name + email — for UserMenu (per SPEC_AMENDMENTS.md C.31). */
+  actorName: string;
+  actorEmail: string | null;
+  /** Actor's language preference, fetched fresh from users.language each render. */
+  actorLanguage: Language;
   readOnly: boolean;
   banner: StatusBanner | null;
   todayDate: string;
@@ -161,6 +169,19 @@ function formatTime(iso: string): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function ClosingClient({ initialState }: { initialState: ClosingInitialState }) {
+  // Wrap the entire client surface in TranslationProvider so all descendants
+  // (ChecklistItem, UserMenu, future translated surfaces) share the same
+  // language Context. initialLanguage comes from users.language fetched by
+  // the page Server Component — fresh per render, no JWT staleness.
+  return (
+    <TranslationProvider initialLanguage={initialState.actorLanguage}>
+      <ClosingClientInner initialState={initialState} />
+    </TranslationProvider>
+  );
+}
+
+function ClosingClientInner({ initialState }: { initialState: ClosingInitialState }) {
+  const { t } = useTranslation();
   const {
     location,
     instance: initialInstance,
@@ -168,6 +189,8 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
     initialCompletions,
     authors,
     actor,
+    actorName,
+    actorEmail,
     readOnly: initialReadOnly,
     banner: initialBanner,
   } = initialState;
@@ -514,20 +537,21 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
       const time = confirmedInstance.confirmedAt
         ? formatTime(confirmedInstance.confirmedAt)
         : "";
-      const who = "you";
+      const who = t("common.you");
+      const timePrefix = time ? t("closing.banner.time_prefix", { time }) : "";
       if (confirmedInstance.status === "confirmed") {
         setBanner({
           tone: "confirmed",
-          message: `Closing confirmed${time ? ` · ${time}` : ""} by ${who}`,
+          message: t("closing.banner.confirmed", { time: timePrefix, who }),
         });
       } else {
         setBanner({
           tone: "incomplete_confirmed",
-          message: `Closing submitted with incomplete items${time ? ` · ${time}` : ""} by ${who}`,
+          message: t("closing.banner.incomplete_confirmed", { time: timePrefix, who }),
         });
       }
     },
-    [],
+    [t],
   );
 
   const handlePinError = useCallback((err: ChecklistApiError) => {
@@ -544,7 +568,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
       setReadOnly(true);
       setBanner({
         tone: "historical",
-        message: "This closing was already submitted by another user. Reload to view.",
+        message: t("closing.error.concurrent_modification"),
       });
     }
   }, []);
@@ -645,13 +669,15 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
 
   return (
     <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
-      {/* Persistent back-to-dashboard affordance — visible across all states
-       * (in-progress, finalize-ready, read-only). Standard mobile back-nav
-       * pattern; lets the closer step away mid-closing without finalizing. */}
-      <div className="mb-3">
+      {/* Top bar: persistent back-to-dashboard CTA (left) + UserMenu (right).
+       * UserMenu hosts the language toggle per SPEC_AMENDMENTS.md C.31; built
+       * as foundation for future expansion (password change, notification
+       * prefs) — name is UserMenu, not LanguageSelector, so future PRs don't
+       * refactor. */}
+      <div className="mb-3 flex items-center justify-between gap-3">
         <a
           href="/dashboard"
-          aria-label="Back to dashboard"
+          aria-label={t("closing.page.dashboard_back_aria")}
           className="
             inline-flex min-h-[44px] items-center gap-1.5 -ml-2 px-2 py-2
             text-xs font-bold uppercase tracking-[0.14em] text-co-text-muted
@@ -661,14 +687,15 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
           "
         >
           <ChevronLeftIcon />
-          <span>Dashboard</span>
+          <span>{t("closing.page.dashboard_back")}</span>
         </a>
+        <UserMenu userName={actorName} userEmail={actorEmail} />
       </div>
 
       {/* Header */}
       <div>
         <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
-          Closing checklist
+          {t("closing.page.title")}
         </p>
         <h1 className="mt-1 text-2xl font-extrabold leading-tight text-co-text">
           {headerLabel}
@@ -682,10 +709,13 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
       <div className="sticky top-0 z-20 -mx-4 mt-4 border-b border-co-border bg-co-bg/90 px-4 py-2 backdrop-blur-sm sm:-mx-6 sm:px-6">
         <div className="flex items-center justify-between gap-3">
           <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
-            Progress
+            {t("closing.page.progress_label")}
           </span>
-          <span className="text-xs font-semibold tabular-nums text-co-text">
-            {totalCount.completed} of {totalCount.required} required
+          <span
+            className="text-xs font-semibold tabular-nums text-co-text"
+            aria-label={t("closing.page.progress_aria", { completed: totalCount.completed, total: totalCount.required })}
+          >
+            {t("closing.page.progress_count", { completed: totalCount.completed, total: totalCount.required })}
           </span>
         </div>
         <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-co-border">
@@ -769,10 +799,17 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
                   : "border-2 border-co-border-2 bg-co-surface text-co-text hover:border-co-text",
               ].join(" ")}
             >
-              {reviewOpen ? "Hide review" : allRequiredDone ? "Review & submit" : "Review & submit (incomplete)"}
+              {reviewOpen
+                ? t("closing.review.button_hide")
+                : allRequiredDone
+                ? t("closing.review.button_complete")
+                : t("closing.review.button_incomplete")}
             </button>
             <p className="text-center text-[11px] text-co-text-muted">
-              {totalCount.completed} of {totalCount.required} required complete
+              {t("closing.station.progress_required", {
+                completed: totalCount.completed,
+                total: totalCount.required,
+              })}
             </p>
           </div>
 
@@ -922,6 +959,7 @@ function StationGroup({
   onLoadPickerCandidates: (completionId: string) => Promise<ChecklistPickerResult>;
   setRef: (el: HTMLElement | null) => void;
 }) {
+  const { t } = useTranslation();
   const requiredItems = items.filter((it) => it.required);
   const completedRequired = requiredItems.filter((it) => completions.has(it.id)).length;
   const totalRequired = requiredItems.length;
@@ -937,7 +975,7 @@ function StationGroup({
     <section
       data-station={station}
       ref={setRef}
-      aria-label={`${station} station`}
+      aria-label={t("closing.station.toggle_aria", { station })}
       className="rounded-2xl border-2 border-co-border bg-co-surface"
     >
       <button
@@ -967,8 +1005,8 @@ function StationGroup({
             </span>
           </span>
           <span className="text-[11px] text-co-text-muted">
-            {completedRequired} of {totalRequired} required done
-            {aboveRoleCount > 0 ? ` · ${aboveRoleCount} awaiting higher role` : ""}
+            {t("closing.station.progress_required", { completed: completedRequired, total: totalRequired })}
+            {aboveRoleCount > 0 ? t("closing.station.awaiting_higher_role", { count: aboveRoleCount }) : ""}
           </span>
         </div>
         <span aria-hidden className="text-co-text-muted">
@@ -1039,13 +1077,13 @@ function ReviewSection({
   reasonsReady: boolean;
   onContinue: () => void;
 }) {
+  const { t } = useTranslation();
   const itemsById = useMemo(() => {
     const m = new Map<string, ChecklistTemplateItem>();
     for (const it of templateItems) m.set(it.id, it);
     return m;
   }, [templateItems]);
 
-  const completedCount = templateItems.filter((it) => it.required && completions.has(it.id)).length;
   const requiredTotal = templateItems.filter((it) => it.required).length;
   const incompleteTotal = incompleteRequiredIds.length;
   const allDone = incompleteTotal === 0;
@@ -1053,28 +1091,21 @@ function ReviewSection({
   return (
     <section
       id="closing-review"
-      aria-label="Review and submit"
+      aria-label={t("closing.review.button_complete")}
       className="mt-6 rounded-2xl border-2 border-co-text bg-co-surface p-5 sm:p-6"
     >
       <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
-        Review &amp; submit
+        {t("closing.review.button_complete")}
       </p>
       <h2 className="mt-1 text-lg font-extrabold text-co-text">
-        {allDone
-          ? "All required items complete"
-          : `${completedCount} of ${requiredTotal} required complete`}
+        {allDone ? t("closing.review.heading_complete") : t("closing.review.heading_incomplete")}
       </h2>
-      {!allDone ? (
-        <p className="mt-1 text-sm text-co-text-muted">
-          {incompleteTotal} item{incompleteTotal === 1 ? "" : "s"} require{" "}
-          {incompleteTotal === 1 ? "a " : ""}written reason
-          {incompleteTotal === 1 ? "" : "s"} before you submit.
-        </p>
-      ) : (
-        <p className="mt-1 text-sm text-co-text-muted">
-          Tap continue to confirm with your PIN.
-        </p>
-      )}
+      <p className="mt-1 text-sm text-co-text-muted">
+        {t("closing.station.progress_required", {
+          completed: requiredTotal - incompleteTotal,
+          total: requiredTotal,
+        })}
+      </p>
 
       {/* Incomplete-required reason inputs */}
       {incompleteRequiredIds.length > 0 ? (
@@ -1086,7 +1117,9 @@ function ReviewSection({
             return (
               <label key={id} className="block">
                 <span className="block text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
-                  {it.station ?? STATION_FALLBACK} · {it.label}
+                  {it.station ?? STATION_FALLBACK}
+                  {t("closing.review.station_label_separator")}
+                  {it.label}
                 </span>
                 <textarea
                   value={draft}
@@ -1099,7 +1132,7 @@ function ReviewSection({
                     });
                   }}
                   rows={2}
-                  placeholder="Why couldn't this be completed?"
+                  placeholder={t("closing.review.reason_placeholder")}
                   className="
                     mt-1 w-full rounded-md border-2 border-co-border bg-white px-3 py-2
                     text-sm text-co-text
@@ -1126,7 +1159,7 @@ function ReviewSection({
             : "border-2 border-co-border-2 bg-co-surface text-co-text-faint cursor-not-allowed",
         ].join(" ")}
       >
-        Continue to PIN confirm
+        {t("closing.review.continue")}
       </button>
     </section>
   );
@@ -1147,6 +1180,7 @@ function StickyFooter({
   allRequiredDone: boolean;
   onTap: () => void;
 }) {
+  const { t } = useTranslation();
   // Reduced opacity + smaller height per step 9 Dim 11 pushback: sticky is
   // the shortcut, not the destination. Inline submit at the bottom of the
   // list is the primary natural-arc-completion CTA.
@@ -1172,7 +1206,8 @@ function StickyFooter({
             : "border-2 border-co-border-2 bg-co-surface/95 text-co-text-muted hover:border-co-text hover:text-co-text",
         ].join(" ")}
       >
-        Review &amp; submit · {completed}/{required}
+        {t("closing.review.button_complete")} ·{" "}
+        {t("closing.page.progress_count", { completed, total: required })}
       </button>
     </div>
   );

@@ -63,6 +63,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { ChecklistApiError } from "@/components/ChecklistItem";
+import { useTranslation } from "@/lib/i18n/provider";
 import type { ChecklistInstance } from "@/lib/types";
 
 const PIN_LENGTH = 4;
@@ -94,6 +95,7 @@ export function PinConfirmModal({
   onError,
   onCancel,
 }: PinConfirmModalProps) {
+  const { t } = useTranslation();
   const [pin, setPin] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -156,77 +158,62 @@ export function PinConfirmModal({
         try {
           body = (await res.json()) as ChecklistApiError;
         } catch {
-          triggerError("Unable to confirm. Please try again.");
+          triggerError(t("auth.pin_modal.error_unknown"));
           return;
         }
 
         switch (body.code) {
           case "pin_mismatch":
-            // Recoverable: clear input, allow retry. No onError — modal
-            // owns this case end-to-end.
-            triggerError("Incorrect PIN.");
+            triggerError(t("auth.pin_modal.error_pin_mismatch"));
             return;
 
           case "missing_pin_hash":
-            // Defensive: current schema (users.pin_hash NOT NULL) makes
-            // this unreachable. Surfacing meaningfully if it ever fires.
-            triggerError(
-              "Account not configured for PIN confirmation. Contact your administrator.",
-            );
+            triggerError(t("auth.pin_modal.error_missing_pin_hash"));
             return;
 
           case "instance_closed":
-            triggerError("This closing was already submitted.");
+            triggerError(t("auth.pin_modal.error_already_submitted"));
             onError(body);
             return;
 
           case "single_submission_locked":
-            triggerError("This checklist is locked.");
+            triggerError(t("auth.pin_modal.error_locked"));
             onError(body);
             return;
 
           case "role_level_insufficient":
-            triggerError("Your role doesn't have permission to confirm this closing.");
+            triggerError(t("auth.pin_modal.error_role"));
             onError(body);
             return;
 
           case "missing_reasons":
           case "extra_reasons":
-            // Caller bug — parent computed reasons wrong before opening.
-            // Generic message so the user has a path forward; onError
-            // lets the parent recover (close + recompute + reopen).
-            triggerError("Unable to confirm. Please reload and try again.");
+            triggerError(t("auth.pin_modal.error_reload"));
             onError(body);
             return;
 
           case "missing_count":
           case "missing_photo":
-            // Parent bug — an item was marked complete without its required
-            // count or photo. User can't fix by completing more items;
-            // items they completed are already complete. Same recovery
-            // path as missing/extra reasons: parent recomputes state.
-            triggerError("Unable to confirm. Please reload and try again.");
+            triggerError(t("auth.pin_modal.error_reload"));
             onError(body);
             return;
 
           case "supersede_failed":
-            // Forensic case — both completion ids are in body. Don't
-            // retry blindly; let parent decide.
-            triggerError("Save partially failed. Please reload and try again.");
+            triggerError(t("auth.pin_modal.error_partial_save"));
             onError(body);
             return;
 
           default:
-            triggerError("Unable to confirm. Please try again.");
+            triggerError(t("auth.pin_modal.error_unknown"));
             return;
         }
       } catch {
-        triggerError("Network error. Try again.");
+        triggerError(t("auth.pin_modal.error_network"));
       } finally {
         setSubmitting(false);
       }
     },
-    [instanceId, incompleteReasons, onConfirmed, onError, triggerError],
+    [instanceId, incompleteReasons, onConfirmed, onError, triggerError, t],
   );
 
   const handleDigit = useCallback(
@@ -298,14 +285,14 @@ export function PinConfirmModal({
     >
       <div className="w-full max-w-sm rounded-2xl border-2 border-co-border bg-co-surface p-6 shadow-2xl">
         <h2 id="pin-confirm-title" className="text-xl font-extrabold leading-tight text-co-text">
-          Confirm with your PIN
+          {t("auth.pin_modal.title")}
         </h2>
         <p className="mt-2 text-sm text-co-text-muted">
-          Enter your 4-digit PIN to confirm this action.
+          {t("auth.pin_modal.subtitle")}
         </p>
 
         <div
-          aria-label={`PIN entry: ${pin.length} of ${PIN_LENGTH} digits entered`}
+          aria-label={t("auth.pin_modal.pin_entry_aria", { entered: pin.length, total: PIN_LENGTH })}
           className={`mt-5 flex items-center justify-center gap-4 ${shake ? "co-shake" : ""}`}
         >
           {dots.map((filled, i) => (
@@ -327,14 +314,14 @@ export function PinConfirmModal({
         )}
 
         {!useSystemKeyboard ? (
-          <div className="mt-5 grid grid-cols-3 gap-2" aria-label="PIN keypad">
+          <div className="mt-5 grid grid-cols-3 gap-2" aria-label={t("auth.pin_modal.keypad_aria")}>
             {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
               <KeypadButton key={d} onClick={() => handleDigit(d)} disabled={submitting}>
                 {d}
               </KeypadButton>
             ))}
             <KeypadButton variant="ghost" onClick={handleClear} disabled={submitting}>
-              Clear
+              {t("auth.pin_modal.clear")}
             </KeypadButton>
             <KeypadButton onClick={() => handleDigit("0")} disabled={submitting}>
               0
@@ -355,7 +342,7 @@ export function PinConfirmModal({
               value={pin}
               disabled={submitting}
               onChange={(e) => handleSystemInput(e.target.value)}
-              aria-label="PIN"
+              aria-label={t("auth.pin_modal.pin_label")}
               className="
                 w-full max-w-[240px] rounded-xl border-2 border-co-border-2
                 bg-co-surface px-4 py-3 text-center text-2xl font-extrabold
@@ -382,7 +369,7 @@ export function PinConfirmModal({
               disabled:cursor-not-allowed disabled:opacity-50
             "
           >
-            Cancel
+            {t("auth.pin_modal.cancel")}
           </button>
           <button
             type="button"
@@ -395,7 +382,7 @@ export function PinConfirmModal({
               disabled:opacity-50
             "
           >
-            {useSystemKeyboard ? "Use on-screen keypad" : "Use system keyboard"}
+            {useSystemKeyboard ? t("auth.pin_modal.use_keypad") : t("auth.pin_modal.use_system_keyboard")}
           </button>
         </div>
       </div>
@@ -430,9 +417,10 @@ function KeypadButton({
 }
 
 function Spinner() {
+  const { t } = useTranslation();
   return (
     <span
-      aria-label="Loading"
+      aria-label={t("auth.pin_modal.loading_aria")}
       className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-co-text/30 border-t-co-text"
     />
   );

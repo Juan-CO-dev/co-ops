@@ -405,3 +405,34 @@ GitHub Actions workflow `.github/workflows/build.yml` runs `npm run build` on ev
 
 When `main` accumulates squash-commits from a series of PRs while the local branch still has the original (non-squash) commits, the next PR off the same branch sees conflicts on files touched by both. The squash-merge replaces all the PR's individual commits with one new commit on main; the local branch still has the originals. When new work is added on top and pushed, GitHub sees the local branch as having the originals + new commits, none of which are on main, while main has the squash-equivalent — and the file-level overlap surfaces as `mergeStateStatus: DIRTY` / `mergeable: CONFLICTING` even though the actual file contents at each old revision match the squash commit byte-for-byte. The fix: between PRs from the same branch, run `git fetch origin main && git reset --hard origin/main` before starting the next step's work (working tree must be clean first). Cherry-pick any uncommitted-but-needed work onto the fresh base. This applies to multi-PR build sequences (e.g., Module #1 Build #1 steps 4–7 each shipping as separate PRs on the same `claude/<name>` branch). Captured during Phase 3 Module #1 Build #1 step 6 when PR #10 came up `CONFLICTING` and required a rebase-and-force-push to clear; the PR was rescued by `git reset --hard origin/main && git cherry-pick <step-6-commits> && git push --force-with-lease`. Force-push to a feature branch is fine in this scenario — no other contributors, branch protection on `main` doesn't apply to feature branches.
 
+---
+
+## Phase 3 — Build #1.5 PR 5a (i18n infrastructure + closing-flow translations, 2026-05-04)
+
+### i18n: translate-from-day-one (after Build #1.5 PR 5a)
+
+Every new UI surface in Build #2+ ships with translation keys and Spanish translations in the same PR. English-only string literals are scope-incomplete.
+
+Practical pattern:
+- New JSX literal strings get a translation key in `lib/i18n/en.json` + `lib/i18n/es.json`
+- `useTranslation()` hook in client components; `serverT()` in Server Components
+- Don't ship "translation pass deferred" — that creates permanent partial-translation drift across the app
+- One key per visible string + every ARIA label
+- Key naming: dot-namespaced semantic (`closing.review.continue`, not `closing.text_review_submit`); namespace prefixes in current use are `auth.*`, `closing.*`, `common.*`, `user_menu.*`; future surfaces add `dashboard.*`, `operations.*`, `recipes.*`, etc. as they land
+- Spanish style: operational/practical, not formal — audience is restaurant frontline staff. Verb commands are tú-form (`Pon`, `Toca`, `Elige`), not usted (`Ponga`, `Toque`, `Elija`)
+- Param interpolation: `{name}`-style placeholders. No ICU MessageFormat (no plurals, no nested formatting — out of scope)
+
+Spec reference: `docs/SPEC_AMENDMENTS.md` C.37.
+
+### Why language is NOT in JWT claims (architectural decision, PR 5a)
+
+`users.language` is read fresh per Server Component render via `requireSession` (which selects `*` from `users` and propagates `language` through the `User` type). NOT embedded in the session JWT. Reasoning: putting language in JWT creates a staleness problem after toggle — user changes language → Context updates locally → next page navigation triggers Server Component render → server reads stale JWT → passes old value to Provider → user briefly sees old language until next login. Multiplied across normal navigation patterns, this is meaningful UX confusion. Direct DB read per page render avoids the problem entirely; cost is negligible (already loaded by `requireSession` via `select("*")`). Pattern for future user-preference fields (notification prefs, theme, etc.): keep JWT focused on authorization claims (role, locations, level — things that gate access); read user-preference state from `users` per-request. Captured during Build #1.5 PR 5a architectural surfacing.
+
+### Why no audit row on PATCH /api/users/me/language
+
+Language updates skip the `audit()` helper. Mirrors the convention for `phone` and `sms_consent` self-updates (per Phase 2 column-level enforcement notes): `users_update_self` self-updates are routine UI-preference changes, not security or authorization events. Audit log is forensic evidence for things that would matter at incident review — language toggle isn't on that list. If a future field on the self-update path graduates to security-relevant (e.g., backup phone for 2FA), it gets its own audit; the language path stays clean. Captured during Build #1.5 PR 5a route implementation.
+
+### UserMenu component name vs LanguageSelector
+
+The dropdown in the closing-page header is named `UserMenu` (not `LanguageSelector`) deliberately — PR 5a ships only the language section but the component is foundation for future settings expansions (password change, notification prefs, eventually Module #2 training progress, account info, etc.). Naming for current scope only would force a refactor on the first follow-up. Trigger affordance is an avatar-style initial circle, not a text label, because the closing-page header already shows location code + name — adding another text affordance would crowd. Captured during Build #1.5 PR 5a design lock.
+
