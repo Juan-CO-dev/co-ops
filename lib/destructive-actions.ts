@@ -39,6 +39,12 @@ export const DESTRUCTIVE_ACTIONS = [
   "checklist_template.delete_or_deactivate",
   "checklist_template_item.delete",
 
+  // Checklist completion correction (per SPEC_AMENDMENTS.md C.28)
+  // — destructive because they alter operational/accountability record.
+  // Auto-derived destructive=true on the audit row via isDestructive().
+  "checklist_completion.revoke",
+  "checklist_completion.tag_actual_completer",
+
   // Bulk / sensitive
   "reports.bulk_export",
   "reports.bulk_correct",

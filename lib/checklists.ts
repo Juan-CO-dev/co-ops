@@ -53,10 +53,11 @@ import type { SupabaseClient, PostgrestError } from "@supabase/supabase-js";
 import { verifyPin } from "./auth";
 import { audit } from "./audit";
 import { getServiceRoleClient } from "./supabase-server";
-import type { RoleCode } from "./roles";
+import { getRoleLevel, type RoleCode } from "./roles";
 import type {
   ChecklistInstance,
   ChecklistCompletion,
+  ChecklistRevocationReason,
   ChecklistSubmission,
   ChecklistIncompleteReason,
   ChecklistStatus,
@@ -198,6 +199,156 @@ export class ChecklistSupersedeFailedError extends ChecklistError {
   }
 }
 
+// ─── Quick-window constants (per SPEC_AMENDMENTS.md C.28) ──────────────────
+
+/**
+ * Silent-revoke window: completions can be silently undone (no reason, no
+ * note, error_tap audit) within QUICK_WINDOW_MS of completed_at. After
+ * this window, structured revocation (revokeWithReason) or KH+ peer
+ * tagging (tagActualCompleter) is the path.
+ *
+ * Window measured from the LIVE row's completed_at (resets on supersede
+ * per C.22's notes-edit-is-re-completion model). Alternative would be a
+ * hard cap from earliest completion in the supersede chain; rejected
+ * because the user mental model expects "just touched it, can undo."
+ * Theoretical exploit (extending window via repeated note edits) is
+ * empty — extending silent-revoke doesn't unlock anything that
+ * revokeWithReason doesn't already grant.
+ */
+const QUICK_WINDOW_MS = 60_000;
+
+/** Returns ms elapsed since completedAt. Negative if completedAt is in the future (clock skew). */
+function elapsedSinceCompleted(completedAtIso: string, now: Date = new Date()): number {
+  return now.getTime() - new Date(completedAtIso).getTime();
+}
+
+// ─── Revoke / tag errors (per SPEC_AMENDMENTS.md C.28) ─────────────────────
+
+/**
+ * Thrown by revokeCompletion when the live completion's completed_at is
+ * older than QUICK_WINDOW_MS (60s). Caller should switch to revokeWithReason
+ * (post-60s structured path).
+ */
+export class ChecklistOutsideQuickWindowError extends ChecklistError {
+  constructor(public readonly completionId: string, public readonly elapsedMs: number) {
+    super(
+      `Completion ${completionId} is past the silent-revoke window (${elapsedMs}ms elapsed; window is ${QUICK_WINDOW_MS}ms).`,
+      "outside_quick_window",
+    );
+    this.name = "ChecklistOutsideQuickWindowError";
+  }
+}
+
+/**
+ * Thrown by revokeCompletion or revokeWithReason when the actor isn't the
+ * row's completed_by. Self-only enforcement; KH+ peer correction goes
+ * through tagActualCompleter, NOT revoke.
+ */
+export class ChecklistNotSelfError extends ChecklistError {
+  constructor(public readonly completionId: string) {
+    super(
+      `Completion ${completionId} can only be revoked by the original completer.`,
+      "not_self",
+    );
+    this.name = "ChecklistNotSelfError";
+  }
+}
+
+/**
+ * Thrown by tagActualCompleter when the live completion's completed_at is
+ * still within QUICK_WINDOW_MS. Within the silent-correction window, the
+ * actor self-corrects via Undo; KH+ peer correction is blocked to avoid
+ * racing the actor's own correction.
+ */
+export class ChecklistTagWithinQuickWindowError extends ChecklistError {
+  constructor(public readonly completionId: string, public readonly remainingMs: number) {
+    super(
+      `Completion ${completionId} is still within the silent-correction window (${remainingMs}ms remaining); KH+ tagging blocked until window expires.`,
+      "tag_within_quick_window",
+    );
+    this.name = "ChecklistTagWithinQuickWindowError";
+  }
+}
+
+/**
+ * Thrown by tagActualCompleter when the supplied actualCompleterId fails
+ * picker scope: not a completer on this instance AND not a today-signed-in
+ * member of this location, OR fails the role floor (level < min_role_level
+ * of the template_item), OR is not active.
+ */
+export class ChecklistInvalidPickerCandidateError extends ChecklistError {
+  constructor(
+    public readonly completionId: string,
+    public readonly proposedActualCompleterId: string,
+    public readonly reason: "out_of_scope" | "role_below_floor" | "inactive" | "not_found",
+  ) {
+    super(
+      `Proposed actual_completer ${proposedActualCompleterId} for completion ${completionId} failed picker scope: ${reason}.`,
+      "invalid_picker_candidate",
+    );
+    this.name = "ChecklistInvalidPickerCandidateError";
+  }
+}
+
+/**
+ * Thrown by tagActualCompleter when an existing tag is being replaced and
+ * the new tagger's level is below the current tagger's level. Lateral and
+ * upward replacement is allowed (level >= current_tagger.level); downward
+ * is not. Self-correction by the original tagger is always allowed
+ * regardless of level (handled by allowing actor.userId === current_tagger).
+ */
+export class ChecklistTagHierarchyViolationError extends ChecklistError {
+  constructor(
+    public readonly completionId: string,
+    public readonly currentTaggerLevel: number,
+    public readonly attemptedReplacerLevel: number,
+  ) {
+    super(
+      `Cannot replace existing actual_completer tag on completion ${completionId}: replacer level ${attemptedReplacerLevel} is below current tagger level ${currentTaggerLevel}.`,
+      "tag_hierarchy_violation",
+    );
+    this.name = "ChecklistTagHierarchyViolationError";
+  }
+}
+
+/**
+ * Thrown by revokeWithReason when reason='other' but note is empty/missing.
+ * Cross-column constraint enforced at lib layer (not Postgres CHECK) per
+ * the schema migration's column comment.
+ */
+export class ChecklistRevocationNoteRequiredError extends ChecklistError {
+  constructor(public readonly completionId: string) {
+    super(
+      `Revocation note is required when reason='other' on completion ${completionId}.`,
+      "revocation_note_required",
+    );
+    this.name = "ChecklistRevocationNoteRequiredError";
+  }
+}
+
+/**
+ * Thrown when a revoke/tag UPDATE matches 0 rows because the row was
+ * concurrently revoked, superseded, or otherwise mutated between the
+ * pre-flight load and the UPDATE. This is a state conflict (409),
+ * not a server error (500): another operation legitimately won the race.
+ *
+ * UI can decide to retry (re-load the row, re-evaluate affordances) or
+ * surface a "this completion was just modified by someone else" message.
+ */
+export class ChecklistConcurrentModificationError extends ChecklistError {
+  constructor(
+    public readonly completionId: string,
+    public readonly operation: "revoke" | "revoke_with_reason" | "tag_actual_completer",
+    cause?: string,
+  ) {
+    super(
+      `Completion ${completionId} was concurrently modified during ${operation}${cause ? `: ${cause}` : ""}.`,
+      "concurrent_modification",
+    );
+    this.name = "ChecklistConcurrentModificationError";
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // snake_case ↔ camelCase row mappers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -225,7 +376,18 @@ interface CompletionRow {
   notes: string | null;
   superseded_at: string | null;
   superseded_by: string | null;
+  revoked_at: string | null;
+  revoked_by: string | null;
+  revocation_reason: ChecklistRevocationReason | null;
+  revocation_note: string | null;
+  actual_completer_id: string | null;
+  actual_completer_tagged_at: string | null;
+  actual_completer_tagged_by: string | null;
 }
+
+/** Column list for SELECTs against checklist_completions — single source of truth. */
+const COMPLETION_COLUMNS =
+  "id, instance_id, template_item_id, completed_by, completed_at, count_value, photo_id, notes, superseded_at, superseded_by, revoked_at, revoked_by, revocation_reason, revocation_note, actual_completer_id, actual_completer_tagged_at, actual_completer_tagged_by";
 
 interface SubmissionRow {
   id: string;
@@ -278,6 +440,13 @@ const rowToCompletion = (r: CompletionRow): ChecklistCompletion => ({
   notes: r.notes,
   supersededAt: r.superseded_at,
   supersededBy: r.superseded_by,
+  revokedAt: r.revoked_at,
+  revokedBy: r.revoked_by,
+  revocationReason: r.revocation_reason,
+  revocationNote: r.revocation_note,
+  actualCompleterId: r.actual_completer_id,
+  actualCompleterTaggedAt: r.actual_completer_tagged_at,
+  actualCompleterTaggedBy: r.actual_completer_tagged_by,
 });
 
 const rowToSubmission = (r: SubmissionRow): ChecklistSubmission => ({
@@ -586,9 +755,7 @@ export async function completeItem(
       photo_id: args.photoId ?? null,
       notes: args.notes ?? null,
     })
-    .select(
-      "id, instance_id, template_item_id, completed_by, completed_at, count_value, photo_id, notes, superseded_at, superseded_by",
-    )
+    .select(COMPLETION_COLUMNS)
     .maybeSingle<CompletionRow>();
   if (insertErr) throw new Error(`completeItem insert: ${insertErr.message}`);
   if (!inserted) throw new Error(`completeItem insert returned no row`);
@@ -1032,4 +1199,540 @@ export async function confirmInstance(
     status: newStatus,
     incompleteReasonRows: reasonRows,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Revoke / tag helpers (per SPEC_AMENDMENTS.md C.28)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const NY_TZ = "America/New_York";
+
+/**
+ * Returns the UTC ISO timestamp corresponding to "today 00:00 in NY"
+ * (per SPEC_AMENDMENTS.md C.23 single-TZ convention). Used by the picker-
+ * scope query to bound "sessions created today."
+ *
+ * Implementation: detect NY's UTC offset for the current NY date by formatting
+ * UTC midnight on that date back into NY time and reading the hour. NY is
+ * always UTC-4 (EDT) or UTC-5 (EST), so offsetHours below is always 4 or 5.
+ *
+ * Inline rather than centralized helper because this is the only consumer
+ * at the lib layer; the dashboard page has its own date-string formatter
+ * for a different purpose (display).
+ */
+function startOfTodayInNyAsUtcIso(): string {
+  const now = new Date();
+  const nyDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: NY_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+  const utcMidnightOfNyDate = new Date(`${nyDate}T00:00:00Z`);
+  const nyHourAtUtcMidnight = parseInt(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: NY_TZ,
+      hour: "2-digit",
+      hour12: false,
+    }).format(utcMidnightOfNyDate),
+    10,
+  );
+  // At UTC 00:00 on nyDate, NY shows yesterday-evening (e.g., 19 or 20).
+  // offsetHours = how many hours later UTC midnight is, after NY midnight.
+  // The `% 24` defends against the theoretical hour=0 case (impossible for NY).
+  const offsetHours = (24 - nyHourAtUtcMidnight) % 24;
+  return new Date(utcMidnightOfNyDate.getTime() + offsetHours * 3600 * 1000).toISOString();
+}
+
+interface PickerCandidate {
+  id: string;
+  name: string;
+  role: RoleCode;
+  level: number;
+}
+
+/**
+ * Picker scope for tagActualCompleter (per SPEC_AMENDMENTS.md C.28).
+ *
+ * Candidates = (users with non-revoked, non-superseded completions on this
+ *               instance)
+ *            ∪ (users whose user_locations includes this location AND who
+ *               have a sessions row created since start of NY today)
+ * filtered by (users.active = true AND level >= templateItem.min_role_level)
+ *
+ * Sessions don't bind to location (Phase 2 architectural decision — sessions
+ * are per-user, the user's accessible locations are denormalized into the
+ * JWT claims). "Signed in today at this location" is approximated as
+ * "location-assigned AND signed in today (anywhere)." Pete (level 7,
+ * all-locations override) signing into MEP would appear in EM's picker too —
+ * acceptable false-positive class. If picker noise becomes friction at
+ * scale (5+ locations), revisit by adding location_id to the sessions
+ * table or introducing a new audit signal (e.g., page_view.location_scope).
+ *
+ * Two-step queries throughout (no PostgREST embedded selects with cross-
+ * table .eq() filters per AGENTS.md Phase 2 Session 4 fragility lesson).
+ *
+ * Service-role for all reads — picker-scope candidate enumeration legitimately
+ * needs to see (a) all completers on the instance regardless of who they
+ * are, (b) all location members, (c) all today's sign-ins. Authed-client
+ * RLS would filter sessions to the actor's own row only, breaking the
+ * "today's roster" half. Trust boundary: this helper is invoked only after
+ * the API route has already authenticated and authorized the actor (KH+
+ * for tag, self for wrong_user_credited self-correction).
+ */
+async function loadPickerCandidates(args: {
+  instanceId: string;
+  locationId: string;
+  minRoleLevel: number;
+}): Promise<PickerCandidate[]> {
+  const sb = getServiceRoleClient();
+
+  // 1. Completers on this instance (live = non-revoked AND non-superseded).
+  const { data: completerRows, error: completerErr } = await sb
+    .from("checklist_completions")
+    .select("completed_by")
+    .eq("instance_id", args.instanceId)
+    .is("revoked_at", null)
+    .is("superseded_at", null);
+  if (completerErr) throw new Error(`loadPickerCandidates completers: ${completerErr.message}`);
+  const completerIds = new Set((completerRows ?? []).map((r) => r.completed_by as string));
+
+  // 2. user_ids assigned to this location.
+  const { data: locRows, error: locErr } = await sb
+    .from("user_locations")
+    .select("user_id")
+    .eq("location_id", args.locationId);
+  if (locErr) throw new Error(`loadPickerCandidates location members: ${locErr.message}`);
+  const locationMembers = new Set((locRows ?? []).map((r) => r.user_id as string));
+
+  // 3. user_ids with a sessions row created today (NY tz).
+  const todayStartUtc = startOfTodayInNyAsUtcIso();
+  const { data: sessionRows, error: sessionErr } = await sb
+    .from("sessions")
+    .select("user_id")
+    .gte("created_at", todayStartUtc);
+  if (sessionErr) throw new Error(`loadPickerCandidates sessions: ${sessionErr.message}`);
+  const todaySignins = new Set((sessionRows ?? []).map((r) => r.user_id as string));
+
+  // 4. Union: completers ∪ (locationMembers ∩ todaySignins).
+  const candidateIds = new Set<string>(completerIds);
+  for (const uid of locationMembers) {
+    if (todaySignins.has(uid)) candidateIds.add(uid);
+  }
+  if (candidateIds.size === 0) return [];
+
+  // 5. Load user details, filter by active + min_role_level (in app layer
+  //    since RoleCode → level is registry-driven, not DB-driven).
+  const { data: userRows, error: userErr } = await sb
+    .from("users")
+    .select("id, name, role, active")
+    .in("id", Array.from(candidateIds))
+    .eq("active", true);
+  if (userErr) throw new Error(`loadPickerCandidates users: ${userErr.message}`);
+
+  const candidates: PickerCandidate[] = [];
+  for (const u of (userRows ?? []) as Array<{ id: string; name: string; role: RoleCode; active: boolean }>) {
+    const level = getRoleLevel(u.role);
+    if (level >= args.minRoleLevel) {
+      candidates.push({ id: u.id, name: u.name, role: u.role, level });
+    }
+  }
+  candidates.sort((a, b) => a.name.localeCompare(b.name));
+  return candidates;
+}
+
+/**
+ * Loads a live (non-revoked, non-superseded) completion by id, throwing
+ * `ChecklistError` with code "completion_not_found" if absent or already
+ * revoked/superseded. Used as the first step of revoke/tag flows so each
+ * function can assume a live row.
+ */
+async function loadLiveCompletionOrThrow(
+  authed: SupabaseClient,
+  completionId: string,
+): Promise<CompletionRow> {
+  const { data, error } = await authed
+    .from("checklist_completions")
+    .select(COMPLETION_COLUMNS)
+    .eq("id", completionId)
+    .is("revoked_at", null)
+    .is("superseded_at", null)
+    .maybeSingle<CompletionRow>();
+  if (error) throw new Error(`load completion ${completionId}: ${error.message}`);
+  if (!data) {
+    throw new ChecklistError(
+      `Completion ${completionId} not found, revoked, or superseded.`,
+      "completion_not_found",
+    );
+  }
+  return data;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// revokeCompletion — silent within-60s self-untick (no reason, no note).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Silent self-revoke for a just-tapped completion. Window is QUICK_WINDOW_MS
+ * (60s) measured from the live row's completed_at. Self-only.
+ *
+ * Validation:
+ *   - Completion must exist and be live (not already revoked/superseded).
+ *   - actor.userId === completion.completed_by (else ChecklistNotSelfError).
+ *   - now - completed_at < QUICK_WINDOW_MS (else ChecklistOutsideQuickWindowError;
+ *     caller should switch to revokeWithReason).
+ *
+ * On success: sets revoked_at=now, revoked_by=actor.userId,
+ * revocation_reason='error_tap'. No note. Audits
+ * checklist_completion.revoke with metadata.in_quick_window=true and
+ * reason='error_tap'.
+ *
+ * Service-role for the UPDATE (existing checklist_completions_no_user_update
+ * RLS denies UPDATE for everyone; same pattern as supersede in completeItem).
+ */
+export async function revokeCompletion(
+  authed: SupabaseClient,
+  args: {
+    completionId: string;
+    actor: ChecklistActor;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  },
+): Promise<{ completion: ChecklistCompletion }> {
+  const { completionId, actor } = args;
+
+  const completion = await loadLiveCompletionOrThrow(authed, completionId);
+
+  if (completion.completed_by !== actor.userId) {
+    throw new ChecklistNotSelfError(completionId);
+  }
+
+  const elapsed = elapsedSinceCompleted(completion.completed_at);
+  if (elapsed >= QUICK_WINDOW_MS) {
+    throw new ChecklistOutsideQuickWindowError(completionId, elapsed);
+  }
+
+  const sb = getServiceRoleClient();
+  const nowIso = new Date().toISOString();
+  const { data: updatedRows, error: updateErr } = await sb
+    .from("checklist_completions")
+    .update({
+      revoked_at: nowIso,
+      revoked_by: actor.userId,
+      revocation_reason: "error_tap",
+    })
+    .eq("id", completionId)
+    .is("revoked_at", null)
+    .is("superseded_at", null)
+    .select(COMPLETION_COLUMNS);
+
+  if (updateErr) {
+    throw new Error(`revokeCompletion update: ${updateErr.message}`);
+  }
+  if (!updatedRows || updatedRows.length === 0) {
+    throw new ChecklistConcurrentModificationError(completionId, "revoke");
+  }
+
+  const updatedRow = updatedRows[0] as CompletionRow;
+
+  await audit({
+    actorId: actor.userId,
+    actorRole: actor.role,
+    action: "checklist_completion.revoke",
+    resourceTable: "checklist_completions",
+    resourceId: completionId,
+    metadata: {
+      instance_id: completion.instance_id,
+      template_item_id: completion.template_item_id,
+      in_quick_window: true,
+      reason: "error_tap",
+      elapsed_ms: elapsed,
+    },
+    ipAddress: args.ipAddress ?? null,
+    userAgent: args.userAgent ?? null,
+  });
+
+  return { completion: rowToCompletion(updatedRow) };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// revokeWithReason — post-60s self-revoke with structured reason (+ optional note).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Structured self-revoke for a completion past the silent window. Self-only.
+ *
+ * Validation:
+ *   - Completion must exist and be live.
+ *   - actor.userId === completion.completed_by (else ChecklistNotSelfError).
+ *   - now - completed_at >= QUICK_WINDOW_MS (else: caller should use the silent
+ *     revokeCompletion path; surfaced as ChecklistError "use_quick_revoke" so
+ *     UI can self-correct without forcing user to wait 60s).
+ *   - reason ∈ {'not_actually_done', 'other'}. ('error_tap' is silent-only;
+ *     attempting it here is rejected to keep the audit trail honest about
+ *     window membership.)
+ *   - When reason='other', note must be non-empty (else
+ *     ChecklistRevocationNoteRequiredError).
+ *
+ * On success: sets revoked_at=now, revoked_by=actor.userId,
+ * revocation_reason=<reason>, revocation_note=<note when reason='other'>.
+ * Audits checklist_completion.revoke with metadata.in_quick_window=false,
+ * reason, and (when present) note.
+ */
+export async function revokeWithReason(
+  authed: SupabaseClient,
+  args: {
+    completionId: string;
+    actor: ChecklistActor;
+    reason: "not_actually_done" | "other";
+    note?: string | null;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  },
+): Promise<{ completion: ChecklistCompletion }> {
+  const { completionId, actor, reason } = args;
+
+  // Reject 'error_tap' explicitly — that path is reserved for the silent
+  // revokeCompletion route, where in_quick_window=true is part of the audit
+  // contract. Allowing 'error_tap' here would muddy the forensic distinction.
+  if ((reason as string) === "error_tap") {
+    throw new ChecklistError(
+      `revokeWithReason does not accept reason='error_tap'; use revokeCompletion (silent within-60s path).`,
+      "invalid_payload",
+    );
+  }
+
+  const note = args.note?.trim() ?? "";
+  if (reason === "other" && note.length === 0) {
+    throw new ChecklistRevocationNoteRequiredError(completionId);
+  }
+
+  const completion = await loadLiveCompletionOrThrow(authed, completionId);
+
+  if (completion.completed_by !== actor.userId) {
+    throw new ChecklistNotSelfError(completionId);
+  }
+
+  const elapsed = elapsedSinceCompleted(completion.completed_at);
+  if (elapsed < QUICK_WINDOW_MS) {
+    // Caller is still within silent window — they should use revokeCompletion.
+    // We surface a ChecklistError rather than auto-routing because UI clarity:
+    // the caller should know which path it's on (silent vs structured).
+    throw new ChecklistError(
+      `Completion ${completionId} is still within the silent-revoke window (${QUICK_WINDOW_MS - elapsed}ms remaining); use revokeCompletion.`,
+      "use_quick_revoke",
+    );
+  }
+
+  const sb = getServiceRoleClient();
+  const nowIso = new Date().toISOString();
+  const { data: updatedRows, error: updateErr } = await sb
+    .from("checklist_completions")
+    .update({
+      revoked_at: nowIso,
+      revoked_by: actor.userId,
+      revocation_reason: reason,
+      revocation_note: reason === "other" ? note : null,
+    })
+    .eq("id", completionId)
+    .is("revoked_at", null)
+    .is("superseded_at", null)
+    .select(COMPLETION_COLUMNS);
+
+  if (updateErr) {
+    throw new Error(`revokeWithReason update: ${updateErr.message}`);
+  }
+  if (!updatedRows || updatedRows.length === 0) {
+    throw new ChecklistConcurrentModificationError(completionId, "revoke_with_reason");
+  }
+
+  const updatedRow = updatedRows[0] as CompletionRow;
+
+  await audit({
+    actorId: actor.userId,
+    actorRole: actor.role,
+    action: "checklist_completion.revoke",
+    resourceTable: "checklist_completions",
+    resourceId: completionId,
+    metadata: {
+      instance_id: completion.instance_id,
+      template_item_id: completion.template_item_id,
+      in_quick_window: false,
+      reason,
+      note: reason === "other" ? note : null,
+      elapsed_ms: elapsed,
+    },
+    ipAddress: args.ipAddress ?? null,
+    userAgent: args.userAgent ?? null,
+  });
+
+  return { completion: rowToCompletion(updatedRow) };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// tagActualCompleter — KH+ peer correction (or self wrong_user_credited).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Annotates a live completion with `actual_completer_id` (per
+ * SPEC_AMENDMENTS.md C.28's accountability-truth model). Does NOT revoke
+ * the original completion: completed_by remains operational truth (the
+ * append-only tap event); actual_completer_id is the retrospective
+ * correction of who actually did the work.
+ *
+ * Authorization: KH+ (level >= 4) OR self when actor.userId ===
+ * completion.completed_by (a self "wrong_user_credited" chip flow).
+ *
+ * Validation:
+ *   - Completion must exist and be live.
+ *   - now - completed_at >= QUICK_WINDOW_MS (else
+ *     ChecklistTagWithinQuickWindowError; within the silent window the
+ *     actor self-corrects via revokeCompletion's Undo, NOT via tagging).
+ *   - actor.level >= 4 OR actor.userId === completion.completed_by.
+ *   - actualCompleterId must be in picker scope for this instance + location
+ *     (loadPickerCandidates above), filtered by template_item.min_role_level.
+ *     Failures discriminated by reason code on ChecklistInvalidPickerCandidateError.
+ *   - Tag replacement rules: if an existing actual_completer_id is being
+ *     replaced, replacer level must be >= current tagger's level (lateral
+ *     and upward only). Self-correction by the original tagger is always
+ *     allowed regardless of level.
+ *
+ * On success: sets actual_completer_id=<newId>, actual_completer_tagged_at=now,
+ * actual_completer_tagged_by=actor.userId. Audits
+ * checklist_completion.tag_actual_completer with metadata including
+ * actual_completer_id and (when replacing) replaced_prior_tag.
+ */
+export async function tagActualCompleter(
+  authed: SupabaseClient,
+  args: {
+    completionId: string;
+    actor: ChecklistActor;
+    actualCompleterId: string;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  },
+): Promise<{ completion: ChecklistCompletion; replacedPriorTag: boolean }> {
+  const { completionId, actor, actualCompleterId } = args;
+
+  const completion = await loadLiveCompletionOrThrow(authed, completionId);
+
+  // Window check: tagging blocked during the actor's silent-correction window.
+  const elapsed = elapsedSinceCompleted(completion.completed_at);
+  if (elapsed < QUICK_WINDOW_MS) {
+    throw new ChecklistTagWithinQuickWindowError(completionId, QUICK_WINDOW_MS - elapsed);
+  }
+
+  // Authorization: KH+ OR self.
+  const isSelf = actor.userId === completion.completed_by;
+  if (!isSelf && actor.level < 4) {
+    throw new ChecklistRoleViolationError(
+      4,
+      actor.level,
+      `Tagging actual completer requires KH+ (level >= 4) or self (when actor === completed_by).`,
+    );
+  }
+
+  // Load template_item to enforce min_role_level on the candidate, and the
+  // instance to derive location_id for picker scope.
+  const instance = await loadInstanceOrThrow(authed, completion.instance_id);
+  const item = await loadTemplateItemOrThrow(authed, completion.template_item_id);
+
+  // Picker-scope check on the proposed actualCompleterId.
+  const candidates = await loadPickerCandidates({
+    instanceId: completion.instance_id,
+    locationId: instance.location_id,
+    minRoleLevel: item.min_role_level,
+  });
+  const chosen = candidates.find((c) => c.id === actualCompleterId);
+  if (!chosen) {
+    // Distinguish out_of_scope vs inactive vs role_below_floor vs not_found
+    // via service-role lookup on the user record for forensic clarity.
+    const sb = getServiceRoleClient();
+    const { data: targetUser } = await sb
+      .from("users")
+      .select("id, role, active")
+      .eq("id", actualCompleterId)
+      .maybeSingle<{ id: string; role: RoleCode; active: boolean }>();
+    let reason: "out_of_scope" | "role_below_floor" | "inactive" | "not_found";
+    if (!targetUser) {
+      reason = "not_found";
+    } else if (!targetUser.active) {
+      reason = "inactive";
+    } else if (getRoleLevel(targetUser.role) < item.min_role_level) {
+      reason = "role_below_floor";
+    } else {
+      reason = "out_of_scope";
+    }
+    throw new ChecklistInvalidPickerCandidateError(completionId, actualCompleterId, reason);
+  }
+
+  // Tag replacement rules: if a prior tag exists, enforce hierarchy.
+  const priorTaggerId = completion.actual_completer_tagged_by;
+  const priorActualCompleterId = completion.actual_completer_id;
+  const replacingPriorTag = priorTaggerId !== null && priorActualCompleterId !== null;
+
+  if (replacingPriorTag) {
+    // Self-correction by the original tagger is always allowed.
+    if (priorTaggerId !== actor.userId) {
+      // Lookup prior tagger's level via service-role.
+      const sb = getServiceRoleClient();
+      const { data: priorTagger } = await sb
+        .from("users")
+        .select("role")
+        .eq("id", priorTaggerId)
+        .maybeSingle<{ role: RoleCode }>();
+      const priorLevel = priorTagger ? getRoleLevel(priorTagger.role) : 0;
+      if (actor.level < priorLevel) {
+        throw new ChecklistTagHierarchyViolationError(completionId, priorLevel, actor.level);
+      }
+    }
+  }
+
+  // UPDATE via service-role (existing _no_user_update RLS denies for everyone).
+  const sb = getServiceRoleClient();
+  const nowIso = new Date().toISOString();
+  const { data: updatedRows, error: updateErr } = await sb
+    .from("checklist_completions")
+    .update({
+      actual_completer_id: actualCompleterId,
+      actual_completer_tagged_at: nowIso,
+      actual_completer_tagged_by: actor.userId,
+    })
+    .eq("id", completionId)
+    .is("revoked_at", null)
+    .is("superseded_at", null)
+    .select(COMPLETION_COLUMNS);
+
+  if (updateErr) {
+    throw new Error(`tagActualCompleter update: ${updateErr.message}`);
+  }
+  if (!updatedRows || updatedRows.length === 0) {
+    throw new ChecklistConcurrentModificationError(completionId, "tag_actual_completer");
+  }
+
+  const updatedRow = updatedRows[0] as CompletionRow;
+
+  await audit({
+    actorId: actor.userId,
+    actorRole: actor.role,
+    action: "checklist_completion.tag_actual_completer",
+    resourceTable: "checklist_completions",
+    resourceId: completionId,
+    metadata: {
+      instance_id: completion.instance_id,
+      template_item_id: completion.template_item_id,
+      actual_completer_id: actualCompleterId,
+      replaced_prior_tag: replacingPriorTag
+        ? {
+            tagger_id: priorTaggerId,
+            prior_actual_completer_id: priorActualCompleterId,
+          }
+        : null,
+      self_tag: isSelf,
+    },
+    ipAddress: args.ipAddress ?? null,
+    userAgent: args.userAgent ?? null,
+  });
+
+  return { completion: rowToCompletion(updatedRow), replacedPriorTag: replacingPriorTag };
 }

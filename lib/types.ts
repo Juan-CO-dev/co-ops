@@ -187,6 +187,14 @@ export interface ChecklistInstance {
   createdAt: string;
 }
 
+/**
+ * Revocation reason for a completion (per SPEC_AMENDMENTS.md C.28):
+ *   - error_tap          silent within-60s self-untick; no note required
+ *   - not_actually_done  post-60s structured self-revoke; no note required
+ *   - other              post-60s structured self-revoke; note REQUIRED
+ */
+export type ChecklistRevocationReason = "error_tap" | "not_actually_done" | "other";
+
 export interface ChecklistCompletion {
   id: string;
   instanceId: string;
@@ -199,6 +207,28 @@ export interface ChecklistCompletion {
   /** Non-null when a later completion superseded this one. */
   supersededAt: string | null;
   supersededBy: string | null;
+  /**
+   * Revocation tracking (per SPEC_AMENDMENTS.md C.28). All four fields are
+   * null on un-revoked completions. revoked_at and revocation_reason are
+   * always set together; revocation_note is set only when reason='other'.
+   * revoked_by always equals completedBy today (revocation is self-only),
+   * but is kept as a separate FK for forward-compatibility with future
+   * KH+ admin override paths.
+   */
+  revokedAt: string | null;
+  revokedBy: string | null;
+  revocationReason: ChecklistRevocationReason | null;
+  revocationNote: string | null;
+  /**
+   * Accountability tagging (per SPEC_AMENDMENTS.md C.28). When the wrong
+   * person was credited via tap, actualCompleterId annotates the row with
+   * who actually did the work. completedBy remains operational truth (the
+   * append-only tap event) and is never modified. All three fields are
+   * null on un-tagged completions; set together when an annotation lands.
+   */
+  actualCompleterId: string | null;
+  actualCompleterTaggedAt: string | null;
+  actualCompleterTaggedBy: string | null;
 }
 
 export interface ChecklistSubmission {
