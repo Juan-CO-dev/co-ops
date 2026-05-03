@@ -61,6 +61,8 @@
 
 import { useEffect, useState } from "react";
 
+import { useTranslation } from "@/lib/i18n/provider";
+import type { TranslationKey } from "@/lib/i18n/types";
 import type {
   ChecklistCompletion,
   ChecklistRevocationReason,
@@ -201,41 +203,44 @@ const isDataCarrying = (payload: ChecklistCompletePayload): boolean =>
   (payload.photoId !== undefined && payload.photoId !== null) ||
   (payload.notes !== undefined && payload.notes !== null);
 
-const roleBadgeText = (level: number): string => {
-  if (level >= 8) return "CGS only";
-  if (level >= 7) return "Owner+ only";
-  if (level >= 6.5) return "MoO+ only";
-  if (level >= 6) return "GM+ only";
-  if (level >= 5) return "AGM+ only";
-  if (level >= 4) return "Shift Lead+ only";
-  return `Level ${level}+ only`;
+// Translation-aware role-badge helpers. Take t as a parameter so they stay
+// pure functions at module scope (testable, no hook dependency); callers
+// pass the t function from useTranslation().
+type TFn = (key: TranslationKey, params?: Record<string, string | number>) => string;
+
+const roleBadgeText = (t: TFn, level: number): string => {
+  if (level >= 8) return t("closing.role_badge.cgs_only");
+  if (level >= 7) return t("closing.role_badge.owner_plus_only");
+  if (level >= 6.5) return t("closing.role_badge.moo_plus_only");
+  if (level >= 6) return t("closing.role_badge.gm_plus_only");
+  if (level >= 5) return t("closing.role_badge.agm_plus_only");
+  if (level >= 4) return t("closing.role_badge.shift_lead_plus_only");
+  return t("closing.role_badge.level_plus_only", { level });
 };
 
-const roleBadgeShort = (role: RoleCode): string => {
+const roleBadgeShort = (t: TFn, role: RoleCode): string => {
   switch (role) {
     case "cgs":
-      return "CGS";
+      return t("closing.role_short.cgs");
     case "owner":
-      return "Owner";
+      return t("closing.role_short.owner");
     case "moo":
-      return "MoO";
+      return t("closing.role_short.moo");
     case "gm":
-      return "GM";
+      return t("closing.role_short.gm");
     case "agm":
-      return "AGM";
+      return t("closing.role_short.agm");
     case "catering_mgr":
-      return "Catering Mgr";
+      return t("closing.role_short.catering_mgr");
     case "shift_lead":
-      return "SL";
+      return t("closing.role_short.shift_lead");
     case "key_holder":
-      return "KH";
+      return t("closing.role_short.key_holder");
     case "trainer":
-      return "Trainer";
+      return t("closing.role_short.trainer");
     // Note: `employee` (level 3) and `trainee` (level 2) role codes land in
-    // Build #1.5 PR 6 per SPEC_AMENDMENTS.md C.32. Picker scope filtering
-    // (level >= min_role_level) will allow them to surface here once the
-    // enum + login tile work lands. The default branch handles any future
-    // RoleCode added to lib/roles.ts that isn't yet wired in this switch.
+    // Build #1.5 PR 6 per SPEC_AMENDMENTS.md C.32. Default returns the raw
+    // role code for any future RoleCode value not yet wired in this switch.
     default:
       return role;
   }
@@ -263,51 +268,50 @@ type ChecklistErrorCode =
   | "use_quick_revoke"
   | "completion_not_found";
 
-const errorMessageFor = (err: ChecklistApiError): string => {
+const errorMessageFor = (t: TFn, err: ChecklistApiError): string => {
   const code = err.code as ChecklistErrorCode;
   switch (code) {
     case "instance_closed":
-      return "This checklist is already confirmed.";
+      return t("closing.error.instance_closed");
     case "single_submission_locked":
-      return "This template is locked after first submission.";
+      return t("closing.error.single_submission_locked");
     case "role_level_insufficient":
-      return "Your role can't complete this item.";
+      return t("closing.error.role_level_insufficient");
     case "missing_count":
-      return "Enter a count value first.";
+      return t("closing.error.missing_count");
     case "missing_photo":
-      return "Take a photo first.";
+      return t("closing.error.missing_photo");
     case "pin_mismatch":
-      return "PIN didn't match.";
+      return t("closing.error.pin_mismatch");
     case "missing_reasons":
-      return "Reasons required for incomplete items.";
+      return t("closing.error.missing_reasons");
     case "extra_reasons":
-      return "Reasons supplied for completed items.";
+      return t("closing.error.extra_reasons");
     case "supersede_failed":
-      return "Save partially failed — tap to retry.";
+      return t("closing.error.supersede_failed");
     case "outside_quick_window":
       // Should never surface — handled by tap-dispatch fallthrough.
-      return "Pick a reason for the undo.";
+      return t("closing.error.outside_quick_window");
     case "not_self":
-      return "You can only undo your own taps.";
+      return t("closing.error.not_self");
     case "tag_within_quick_window":
-      return "Wait a moment, then try again.";
+      return t("closing.error.tag_within_quick_window");
     case "invalid_picker_candidate":
-      return "That person can't be tagged here.";
+      return t("closing.error.invalid_picker_candidate");
     case "tag_hierarchy_violation":
-      return "Can't override a more senior tag.";
+      return t("closing.error.tag_hierarchy_violation");
     case "revocation_note_required":
-      return "Add a note first.";
+      return t("closing.error.revocation_note_required");
     case "concurrent_modification":
-      return "Just modified by someone else — try again.";
+      return t("closing.error.concurrent_modification");
     case "use_quick_revoke":
-      // Handled by tap-dispatch fallthrough; never surfaces.
-      return "Use Undo instead.";
+      return t("closing.error.use_quick_revoke");
     case "completion_not_found":
-      return "This item was just modified — refresh.";
+      return t("closing.error.completion_not_found");
     default: {
       const _exhaustive: never = code;
       void _exhaustive;
-      return err.message || "Save failed — tap to retry.";
+      return err.message || t("closing.error.fallback");
     }
   }
 };
@@ -333,6 +337,7 @@ export function ChecklistItem({
   onTagActualCompleter,
   onLoadPickerCandidates,
 }: ChecklistItemProps) {
+  const { t } = useTranslation();
   // Local state for optimistic flip / in-flight / error.
   const [localCompletion, setLocalCompletion] = useState<ChecklistCompletion | null>(null);
   // Optimistic-revoke flag: when true, render as not-yet-completed even if
@@ -439,7 +444,7 @@ export function ChecklistItem({
     } catch (caught) {
       setError({
         code: "unknown",
-        message: caught instanceof Error ? caught.message : "Save failed",
+        message: caught instanceof Error ? caught.message : t("closing.error.fallback"),
       });
       if (!dataCarrying) setLocalCompletion(null);
     } finally {
@@ -467,12 +472,12 @@ export function ChecklistItem({
   const handleCountSave = () => {
     const trimmed = countDraft.trim();
     if (templateItem.expectsCount && trimmed === "") {
-      setError({ code: "missing_count", message: "Enter a count value first." });
+      setError({ code: "missing_count", message: t("closing.error.missing_count") });
       return;
     }
     const parsed = trimmed === "" ? null : Number(trimmed);
     if (parsed !== null && Number.isNaN(parsed)) {
-      setError({ code: "invalid_payload", message: "Enter a valid number." });
+      setError({ code: "invalid_payload", message: t("closing.error.invalid_number") });
       return;
     }
     void performSave({
@@ -524,7 +529,7 @@ export function ChecklistItem({
         setRevoked(false);
         setError({
           code: "unknown",
-          message: caught instanceof Error ? caught.message : "Undo failed",
+          message: caught instanceof Error ? caught.message : t("closing.error.fallback"),
         });
       } finally {
         setInFlight(false);
@@ -564,7 +569,7 @@ export function ChecklistItem({
       } catch (caught) {
         setError({
           code: "unknown",
-          message: caught instanceof Error ? caught.message : "Revoke failed",
+          message: caught instanceof Error ? caught.message : t("closing.error.fallback"),
         });
       } finally {
         setInFlight(false);
@@ -585,7 +590,7 @@ export function ChecklistItem({
     if (note.length === 0) {
       setError({
         code: "revocation_note_required",
-        message: "Add a note first.",
+        message: t("closing.error.revocation_note_required"),
         completion_id: liveCompletion.id,
       });
       return;
@@ -607,7 +612,7 @@ export function ChecklistItem({
     } catch (caught) {
       setError({
         code: "unknown",
-        message: caught instanceof Error ? caught.message : "Revoke failed",
+        message: caught instanceof Error ? caught.message : t("closing.error.fallback"),
       });
     } finally {
       setInFlight(false);
@@ -636,7 +641,7 @@ export function ChecklistItem({
     } catch (caught) {
       setError({
         code: "unknown",
-        message: caught instanceof Error ? caught.message : "Picker load failed",
+        message: caught instanceof Error ? caught.message : t("closing.error.fallback"),
       });
       setPickerCandidates([]);
     } finally {
@@ -664,7 +669,7 @@ export function ChecklistItem({
     } catch (caught) {
       setError({
         code: "unknown",
-        message: caught instanceof Error ? caught.message : "Tag failed",
+        message: caught instanceof Error ? caught.message : t("closing.error.fallback"),
       });
     } finally {
       setInFlight(false);
@@ -690,20 +695,33 @@ export function ChecklistItem({
   // ─── ARIA + visual computation ────────────────────────────────────────────
 
   const ariaLabel = (() => {
-    if (roleGated) return `${templateItem.label} — ${roleBadgeText(templateItem.minRoleLevel)}`;
-    if (instanceLocked) return `${templateItem.label} — instance ${instanceStatus}`;
-    if (inFlight) return `${templateItem.label} — saving`;
-    if (error) return `${templateItem.label} — ${errorMessageFor(error)}`;
+    if (roleGated)
+      return t("closing.row.aria_role_gated", {
+        label: templateItem.label,
+        role_text: roleBadgeText(t, templateItem.minRoleLevel),
+      });
+    if (instanceLocked)
+      return t("closing.row.aria_locked", { label: templateItem.label, status: instanceStatus });
+    if (inFlight) return t("closing.row.aria_saving", { label: templateItem.label });
+    if (error)
+      return t("closing.row.aria_error", { label: templateItem.label, error: errorMessageFor(t, error) });
     if (isCompleted && liveCompletion) {
-      const who = isSelfAuthor ? "you" : completionAuthor?.name ?? "another user";
+      const who = isSelfAuthor ? t("common.you") : completionAuthor?.name ?? "—";
       const when = formatTime(liveCompletion.completedAt);
-      const taggedSuffix =
+      const credited =
         isTagged && actualCompleterAuthor
-          ? `, credited to ${actualCompleterAuthor.isSelf ? "you" : actualCompleterAuthor.name}`
+          ? t("closing.row.aria_credited_to", {
+              name: actualCompleterAuthor.isSelf ? t("common.you") : actualCompleterAuthor.name,
+            })
           : "";
-      return `${templateItem.label} — completed by ${who}${when ? ` at ${when}` : ""}${taggedSuffix}`;
+      return t("closing.row.aria_completed_by", {
+        label: templateItem.label,
+        who,
+        when: when ? t("closing.row.aria_at_time", { time: when }) : "",
+        credited,
+      });
     }
-    return `${templateItem.label} — not completed`;
+    return t("closing.row.aria_not_completed", { label: templateItem.label });
   })();
 
   const leftIcon = (() => {
@@ -716,9 +734,9 @@ export function ChecklistItem({
 
   // Right-slot text (only for state, not metadata).
   const rightSlotText = (() => {
-    if (roleGated) return roleBadgeText(templateItem.minRoleLevel);
-    if (inFlight) return "Saving…";
-    if (error) return errorMessageFor(error);
+    if (roleGated) return roleBadgeText(t, templateItem.minRoleLevel);
+    if (inFlight) return t("common.saving");
+    if (error) return errorMessageFor(t, error);
     return null;
   })();
 
@@ -726,7 +744,7 @@ export function ChecklistItem({
   const showMetaStack = isCompleted && !inFlight && !error && !roleGated;
   const metaPrimaryText = (() => {
     if (!showMetaStack || !liveCompletion) return null;
-    const who = isSelfAuthor ? "you" : completionAuthor?.name ?? "—";
+    const who = isSelfAuthor ? t("common.you") : completionAuthor?.name ?? "—";
     const when = formatTime(liveCompletion.completedAt);
     const countSuffix =
       liveCompletion.countValue !== null && liveCompletion.countValue !== undefined
@@ -736,8 +754,8 @@ export function ChecklistItem({
   })();
   const taggedAnnotationText = (() => {
     if (!showMetaStack || !isTagged || !actualCompleterAuthor) return null;
-    const who = actualCompleterAuthor.isSelf ? "you" : actualCompleterAuthor.name;
-    return `→ credited to ${who}`;
+    const who = actualCompleterAuthor.isSelf ? t("common.you") : actualCompleterAuthor.name;
+    return t("closing.row.credited_to", { name: who });
   })();
   // Inline notes display (per SPEC_AMENDMENTS.md C.29). Renders editorial
   // commentary stored on the live completion when present. Italicized + muted
@@ -852,19 +870,19 @@ export function ChecklistItem({
         <div
           className="mt-1 rounded-lg border border-co-border-2 bg-co-surface-2 p-3"
           role="region"
-          aria-label={`${templateItem.label} details`}
+          aria-label={t("closing.expand.aria_details", { label: templateItem.label })}
         >
           {templateItem.expectsCount ? (
             <label className="block">
               <span className="block text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
-                Count
+                {t("closing.expand.count_label")}
               </span>
               <input
                 type="text"
                 inputMode="decimal"
                 value={countDraft}
                 onChange={(e) => setCountDraft(e.target.value)}
-                placeholder="e.g. 38"
+                placeholder={t("closing.expand.count_placeholder")}
                 className="
                   mt-1 w-full rounded-md border-2 border-co-border bg-white px-3 py-2
                   text-base text-co-text
@@ -877,14 +895,14 @@ export function ChecklistItem({
           {templateItem.expectsPhoto ? (
             <div className="mt-3">
               <span className="block text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
-                Photo
+                {t("closing.expand.photo_label")}
               </span>
               <button
                 type="button"
                 onClick={() =>
                   setError({
                     code: "photo_not_wired",
-                    message: "Photo capture coming soon.",
+                    message: t("closing.error.photo_not_wired"),
                   })
                 }
                 className="
@@ -892,20 +910,20 @@ export function ChecklistItem({
                   border-2 border-dashed border-co-border-2 bg-white px-4 text-sm font-semibold text-co-text-dim
                 "
               >
-                Photo capture coming soon
+                {t("closing.expand.photo_stub")}
               </button>
             </div>
           ) : null}
 
           <label className="mt-3 block">
             <span className="block text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
-              Notes (optional)
+              {t("closing.expand.notes_label")}
             </span>
             <textarea
               value={notesDraft}
               onChange={(e) => setNotesDraft(e.target.value)}
               rows={2}
-              placeholder="Anything noteworthy?"
+              placeholder={t("closing.expand.notes_placeholder")}
               className="
                 mt-1 w-full rounded-md border-2 border-co-border bg-white px-3 py-2
                 text-sm text-co-text
@@ -927,7 +945,7 @@ export function ChecklistItem({
                 disabled:cursor-wait disabled:opacity-60
               "
             >
-              {inFlight ? "Saving…" : isCompleted ? "Update" : "Save"}
+              {inFlight ? t("common.saving") : isCompleted ? t("closing.expand.update") : t("closing.expand.save")}
             </button>
             <button
               type="button"
@@ -941,7 +959,7 @@ export function ChecklistItem({
                 disabled:cursor-wait disabled:opacity-60
               "
             >
-              Cancel
+              {t("common.cancel")}
             </button>
           </div>
         </div>
@@ -1003,12 +1021,13 @@ export function ChecklistItem({
 // ─────────────────────────────────────────────────────────────────────────────
 
 function UndoButton({ onClick, disabled }: { onClick: () => void; disabled: boolean }) {
+  const { t } = useTranslation();
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      aria-label="Undo this completion"
+      aria-label={t("closing.row.aria_undo")}
       className="
         shrink-0 inline-flex min-h-[48px] min-w-[64px] items-center justify-center rounded-lg
         border-2 border-co-border bg-co-surface px-3
@@ -1018,7 +1037,7 @@ function UndoButton({ onClick, disabled }: { onClick: () => void; disabled: bool
         disabled:cursor-not-allowed disabled:opacity-50
       "
     >
-      Undo
+      {t("closing.row.undo")}
     </button>
   );
 }
@@ -1034,12 +1053,13 @@ function TagAffordanceButton({
   // intent ("I want to attribute this work") is the constant; whether the
   // system has a prior tag is implementation detail. Mirrors the Undo
   // button's stable-label rule (per design lock #2).
+  const { t } = useTranslation();
   return (
     <button
       type="button"
       onClick={onClick}
       disabled={disabled}
-      aria-label="Tag actual completer"
+      aria-label={t("closing.row.aria_tag")}
       className="
         shrink-0 inline-flex min-h-[48px] min-w-[64px] items-center justify-center rounded-lg
         border-2 border-co-border bg-co-surface px-3
@@ -1049,7 +1069,7 @@ function TagAffordanceButton({
         disabled:cursor-not-allowed disabled:opacity-50
       "
     >
-      Tag
+      {t("closing.row.tag")}
     </button>
   );
 }
@@ -1063,24 +1083,25 @@ function ThreeChipExpand({
   onCancel: () => void;
   disabled: boolean;
 }) {
+  const { t } = useTranslation();
   return (
     <div
       className="mt-1 rounded-lg border border-co-border-2 bg-co-surface-2 p-3"
       role="region"
-      aria-label="Choose undo reason"
+      aria-label={t("closing.three_chip.heading")}
     >
       <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
-        What happened?
+        {t("closing.three_chip.heading")}
       </div>
       <div className="mt-2 flex flex-col gap-2">
         <Chip onClick={() => onChip("wrong_user_credited")} disabled={disabled}>
-          Wrong person credited
+          {t("closing.three_chip.wrong_user_credited")}
         </Chip>
         <Chip onClick={() => onChip("not_actually_done")} disabled={disabled}>
-          Not actually done
+          {t("closing.three_chip.not_actually_done")}
         </Chip>
         <Chip onClick={() => onChip("other")} disabled={disabled}>
-          Other (note required)
+          {t("closing.three_chip.other")}
         </Chip>
       </div>
       <div className="mt-2 flex">
@@ -1095,7 +1116,7 @@ function ThreeChipExpand({
             disabled:cursor-not-allowed disabled:opacity-50
           "
         >
-          Cancel
+          {t("common.cancel")}
         </button>
       </div>
     </div>
@@ -1143,21 +1164,22 @@ function OtherNotePanel({
   onCancel: () => void;
   disabled: boolean;
 }) {
+  const { t } = useTranslation();
   return (
     <div
       className="mt-1 rounded-lg border border-co-border-2 bg-co-surface-2 p-3"
       role="region"
-      aria-label="Add note for undo"
+      aria-label={t("closing.note_other.aria_label")}
     >
       <label className="block">
         <span className="block text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
-          Note (required)
+          {t("closing.note_other.label")}
         </span>
         <textarea
           value={note}
           onChange={(e) => setNote(e.target.value)}
           rows={2}
-          placeholder="Briefly explain"
+          placeholder={t("closing.note_other.placeholder")}
           className="
             mt-1 w-full rounded-md border-2 border-co-border bg-white px-3 py-2
             text-sm text-co-text
@@ -1179,7 +1201,7 @@ function OtherNotePanel({
             disabled:cursor-not-allowed disabled:opacity-50
           "
         >
-          {disabled ? "Saving…" : "Submit undo"}
+          {disabled ? t("common.saving") : t("closing.note_other.submit")}
         </button>
         <button
           type="button"
@@ -1193,7 +1215,7 @@ function OtherNotePanel({
             disabled:cursor-not-allowed disabled:opacity-50
           "
         >
-          Cancel
+          {t("common.cancel")}
         </button>
       </div>
     </div>
@@ -1215,12 +1237,15 @@ function PickerExpand({
   onCancel: () => void;
   disabled: boolean;
 }) {
+  const { t } = useTranslation();
   const headingText =
-    mode === "picker_self_credit" ? "Who actually did this?" : "Tag actual completer";
+    mode === "picker_self_credit"
+      ? t("closing.picker.self_credit_heading")
+      : t("closing.picker.kh_tag_heading");
   const emptyText =
     mode === "picker_self_credit"
-      ? "No other candidates available right now."
-      : "No candidates available right now.";
+      ? t("closing.picker.empty_self_credit")
+      : t("closing.picker.empty_kh_tag");
 
   return (
     <div
@@ -1232,7 +1257,7 @@ function PickerExpand({
         {headingText}
       </div>
       {loading ? (
-        <div className="mt-2 text-sm text-co-text-dim">Loading…</div>
+        <div className="mt-2 text-sm text-co-text-dim">{t("common.loading")}</div>
       ) : candidates.length === 0 ? (
         <div className="mt-2 text-sm text-co-text-dim">{emptyText}</div>
       ) : (
@@ -1253,7 +1278,7 @@ function PickerExpand({
               >
                 <span className="text-sm font-semibold text-co-text">{c.name}</span>
                 <span className="shrink-0 text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
-                  {roleBadgeShort(c.role)}
+                  {roleBadgeShort(t, c.role)}
                 </span>
               </button>
             </li>
@@ -1272,7 +1297,7 @@ function PickerExpand({
             disabled:cursor-not-allowed disabled:opacity-50
           "
         >
-          Cancel
+          {t("common.cancel")}
         </button>
       </div>
     </div>
@@ -1292,6 +1317,7 @@ function NotesEditAffordance({
   inFlight: boolean;
   onSave: () => void;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const existingNote = completion?.notes ?? null;
 
@@ -1308,9 +1334,9 @@ function NotesEditAffordance({
           underline-offset-2 hover:text-co-text-muted hover:underline
           focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/40
         "
-        aria-label={existingNote ? "Edit note" : "Add note"}
+        aria-label={existingNote ? t("closing.notes_edit.edit") : t("closing.notes_edit.add")}
       >
-        {existingNote ? "Edit note" : "Add note"}
+        {existingNote ? t("closing.notes_edit.edit") : t("closing.notes_edit.add")}
       </button>
     );
   }
@@ -1319,13 +1345,13 @@ function NotesEditAffordance({
     <div
       className="mt-1 rounded-lg border border-co-border-2 bg-co-surface-2 p-3"
       role="region"
-      aria-label="Edit note"
+      aria-label={t("closing.notes_edit.aria_label")}
     >
       <textarea
         value={notesDraft}
         onChange={(e) => setNotesDraft(e.target.value)}
         rows={2}
-        placeholder="Anything noteworthy?"
+        placeholder={t("closing.notes_edit.placeholder")}
         className="
           w-full rounded-md border-2 border-co-border bg-white px-3 py-2
           text-sm text-co-text
@@ -1348,7 +1374,7 @@ function NotesEditAffordance({
             disabled:cursor-wait disabled:opacity-60
           "
         >
-          {inFlight ? "Saving…" : "Save note"}
+          {inFlight ? t("common.saving") : t("closing.notes_edit.save_button")}
         </button>
         <button
           type="button"
@@ -1362,7 +1388,7 @@ function NotesEditAffordance({
             disabled:cursor-wait disabled:opacity-60
           "
         >
-          Cancel
+          {t("common.cancel")}
         </button>
       </div>
     </div>

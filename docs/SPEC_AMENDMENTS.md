@@ -457,15 +457,30 @@ Distinct data model, workflows, role considerations.
 
 ---
 
+## C.37 — Translation-keys-from-day-one (CO-OPS i18n convention)
+
+**Date added:** 2026-05-04
+**Spec sections:** §1 (CO operational context), C.31 (i18n infrastructure)
+**What spec says:** Spec doesn't address how new UI surfaces should handle i18n after PR 5a establishes the infrastructure.
+**What built reality is (and intended for v1.3):** Every new UI surface in Build #2+ ships with translation keys (not literal strings) and a Spanish translation pass in the same PR. English-only string literals in JSX are scope-incomplete and must not ship. This applies to all future modules: recipe/training (Module #?), prep workflow (Module #1 Build #2), opening checklist (Build #3), shift overlay (Build #4), synthesis view (Build #5), Module #2 user lifecycle, Module #3 content/social media, and any future modules.
+**Why:** Shipping English-only UI surfaces silently breaks the Spanish toggle for users who've selected Spanish — they see a half-translated app, which creates UX confusion and operational distrust ("the toggle doesn't actually work"). Half-translated surfaces are worse than monolingual English. The only sustainable path is: every new feature includes both languages from the moment it ships, no exceptions, no "translation pass later."
+**v1.3 action:**
+- Add a top-level convention statement to spec §1 establishing this as a CO-OPS architectural norm
+- Future module specs reference this amendment in their definition-of-done
+- AGENTS.md captures the working-rhythm version of this convention
+- Captured during Phase 3 Build #1.5 PR 5a after Juan's push-back on partial-translation drift risk (the "ship complete or don't ship" expansion of PR 5a's scope to cover the full closing flow + PinConfirmModal end-to-end)
+
+---
+
 ## How to add an entry
 
-1. Pick the next monotonic ID (`C.<n>` — current next: C.37).
+1. Pick the next monotonic ID (`C.<n>` — current next: C.38).
 2. Spec sections under amendment.
 3. Quote what spec says.
 4. Document what built reality is.
 5. Why the divergence is correct (operational reasoning, not just "we changed our mind").
 6. What v1.3 should do — concrete action so the spec can be reconciled mechanically.
 
-Date entries to whatever calendar the project is on (currently 2026-05-03).
+Date entries to whatever calendar the project is on (currently 2026-05-04).
 
 This file is consumed by future spec versions. Its purpose is to make spec drift cheap to reconcile, not to legitimize ad-hoc deviations. Every entry should pass the test "would I tell Pete or Cristian this is the right way to do it?" before it lands here.

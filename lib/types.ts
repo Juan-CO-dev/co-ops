@@ -31,6 +31,8 @@ export interface User {
   lastLoginAt: string | null;
   failedLoginCount: number;
   lockedUntil: string | null;
+  /** UI language preference per SPEC_AMENDMENTS.md C.31. */
+  language: "en" | "es";
 }
 
 export interface Location {
