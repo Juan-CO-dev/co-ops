@@ -957,7 +957,12 @@ function StationGroup({
                 <SmallCheckIcon />
               </span>
             ) : null}
-            <span className="text-sm font-bold uppercase tracking-[0.14em] text-co-text">
+            {/* Station header prominence per SPEC_AMENDMENTS.md C.30. text-lg
+                bump + Mustard-deep accent line; font-bold preserved (existing
+                baseline already at upper bound; spec's font-semibold would
+                regress weight). border-b-2 over spec's ~1px guideline because
+                text-lg at operational arm's length needs the confident anchor. */}
+            <span className="text-lg font-bold uppercase tracking-[0.14em] text-co-text border-b-2 border-co-gold-deep pb-0.5">
               {station}
             </span>
           </span>
