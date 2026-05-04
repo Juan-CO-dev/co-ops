@@ -281,5 +281,11 @@
   "dashboard.am_prep.assigned_by": "Assigned by {name}",
   "dashboard.am_prep.assigned_by_note": "\"{note}\"",
   "dashboard.am_prep.no_template": "AM Prep template not configured",
-  "dashboard.am_prep.aria": "AM Prep — {status}"
+  "dashboard.am_prep.aria": "AM Prep — {status}",
+
+  "closing.report_ref.attribution": "Submitted by {name} at {time}",
+  "closing.report_ref.empty_subtitle": "Pending — submit from the dashboard",
+  "closing.report_ref.empty_aria": "{label} — pending submission",
+  "closing.report_ref.complete_aria": "{label} — submitted by {name} at {time}",
+  "closing.report_ref.tap_to_submit_aria": "{label} — tap to submit from the AM Prep page"
 }

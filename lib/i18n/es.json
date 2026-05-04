@@ -281,5 +281,11 @@
   "dashboard.am_prep.assigned_by": "Asignada por {name}",
   "dashboard.am_prep.assigned_by_note": "\"{note}\"",
   "dashboard.am_prep.no_template": "Plantilla de Prep AM no configurada",
-  "dashboard.am_prep.aria": "Lista de Prep AM — {status}"
+  "dashboard.am_prep.aria": "Lista de Prep AM — {status}",
+
+  "closing.report_ref.attribution": "Enviado por {name} a las {time}",
+  "closing.report_ref.empty_subtitle": "Pendiente — envía desde el dashboard",
+  "closing.report_ref.empty_aria": "{label} — pendiente de envío",
+  "closing.report_ref.complete_aria": "{label} — enviado por {name} a las {time}",
+  "closing.report_ref.tap_to_submit_aria": "{label} — toca para enviar desde la página de Lista de Prep AM"
 }

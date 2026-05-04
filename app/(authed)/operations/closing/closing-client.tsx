@@ -58,8 +58,10 @@ import {
   type ChecklistTagResult,
 } from "@/components/ChecklistItem";
 import { PinConfirmModal } from "@/components/auth/PinConfirmModal";
+import { ReportReferenceItem } from "@/components/ReportReferenceItem";
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
 import { useTranslation } from "@/lib/i18n/provider";
+import type { Language } from "@/lib/i18n/types";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
@@ -162,12 +164,24 @@ function isStationFullyComplete(
   return true;
 }
 
-function formatTime(iso: string): string {
+/**
+ * Language-aware time formatter (per AGENTS.md "Language-aware time/date
+ * formatting" canonical pattern). Uses es-US when language === "es",
+ * en-US otherwise.
+ *
+ * Lifted to language-aware in Build #2 PR 1's closing-client report-
+ * reference rendering commit — closing-client was the outlier flagged
+ * in the AGENTS.md durable lesson; previously hardcoded "en-US"
+ * regardless of language (real Spanish-UX bug — Spanish users always
+ * saw English-format times in the post-confirm banner). Now matches
+ * dashboard's formatDateLabel + AmPrepForm's formatTime convention.
+ */
+function formatTime(iso: string, language: Language): string {
   try {
-    return new Date(iso).toLocaleTimeString("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-    });
+    return new Date(iso).toLocaleTimeString(
+      language === "es" ? "es-US" : "en-US",
+      { hour: "numeric", minute: "2-digit" },
+    );
   } catch {
     return "";
   }
@@ -553,7 +567,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
       setReadOnly(true);
       // Banner reflects new status.
       const time = confirmedInstance.confirmedAt
-        ? formatTime(confirmedInstance.confirmedAt)
+        ? formatTime(confirmedInstance.confirmedAt, language)
         : "";
       const who = t("common.you");
       const timePrefix = time ? t("closing.banner.time_prefix", { time }) : "";
@@ -772,6 +786,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
               instanceStatus={instance.status}
               readOnly={readOnly}
               expanded={stationExpanded.get(station) ?? true}
+              locationId={location.id}
               onToggle={() => toggleStation(station)}
               onComplete={handleItemComplete}
               onRevoke={handleItemRevoke}
@@ -959,6 +974,7 @@ function StationGroup({
   instanceStatus,
   readOnly,
   expanded,
+  locationId,
   onToggle,
   onComplete,
   onRevoke,
@@ -978,6 +994,12 @@ function StationGroup({
   instanceStatus: ChecklistStatus;
   readOnly: boolean;
   expanded: boolean;
+  /**
+   * Location id — threaded through to ReportReferenceItem for the
+   * empty-state tap-to-navigate href (/operations/am-prep?location=<id>).
+   * Cleaning rows ignore this prop.
+   */
+  locationId: string;
   onToggle: () => void;
   onComplete: (payload: ChecklistCompletePayload) => Promise<ChecklistCompleteResult>;
   onRevoke: (completionId: string) => Promise<ChecklistRevokeResult>;
@@ -1060,6 +1082,28 @@ function StationGroup({
                   isSelf: c.completedBy === actor.userId,
                 }
               : null;
+
+            // Per SPEC_AMENDMENTS.md C.42: items with non-null
+            // reportReferenceType are auto-completed by their source
+            // report's submission RPC, NOT by user tap. They render a
+            // distinct visual (Brand Green check + inline attribution
+            // when complete; tap-to-navigate empty state when not yet
+            // submitted). Walk-Out Verification gate is unaffected —
+            // those items live in the "Walk-Out Verification" station,
+            // never in stations that carry report-reference items.
+            if (it.reportReferenceType !== null) {
+              return (
+                <ReportReferenceItem
+                  key={it.id}
+                  templateItem={it}
+                  completion={c}
+                  completionAuthor={author}
+                  locationId={locationId}
+                  readOnly={readOnly}
+                />
+              );
+            }
+
             const actualCompleterAuthor =
               c && c.actualCompleterId
                 ? {
