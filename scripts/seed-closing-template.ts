@@ -69,6 +69,8 @@
  * lib/destructive-actions.ts) with metadata explaining the seed origin.
  */
 
+import { pathToFileURL } from "node:url";
+
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 // Juan's user_id — actor for the audit rows. Stable since Phase 1 seed.
@@ -168,7 +170,7 @@ const DESCRIPTION_ES: Record<string, string> = {
  * which renders Spanish station header + English label. Better than forcing
  * a placeholder English string into the Spanish bucket.
  */
-function buildTranslations(item: SeedItem): { es: Record<string, string> } | null {
+export function buildTranslations(item: SeedItem): { es: Record<string, string> } | null {
   const labelEs = LABEL_ES[item.label];
   const stationEs = item.station ? STATION_ES[item.station] : undefined;
   const descEs = item.notes ? DESCRIPTION_ES[item.notes] : undefined;
@@ -188,7 +190,7 @@ function buildTranslations(item: SeedItem): { es: Record<string, string> } | nul
 // render in the order listed here (mapped to display_order at insert time).
 // ---------------------------------------------------------------------------
 
-interface SeedItem {
+export interface SeedItem {
   station: string;
   label: string;
   /** override defaults; omit for defaults (role=4, required=true, no count/photo) */
@@ -200,7 +202,7 @@ interface SeedItem {
   notes?: string;
 }
 
-const ITEMS: SeedItem[] = [
+export const ITEMS: SeedItem[] = [
   // Crunchy Boi Station
   { station: "Crunchy Boi Station", label: "Restock" },
   { station: "Crunchy Boi Station", label: "Wipe inside & outside" },
@@ -737,7 +739,14 @@ async function main() {
   process.stdout.write(`OK\n${summary(mep, "MEP")}${summary(em, "EM ")}`);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Only run main() when this script is invoked directly via tsx/node, not
+// when imported by another seed (e.g., scripts/seed-standard-closing-v2.ts
+// re-exports v1's ITEMS for the v2 swap). pathToFileURL handles
+// platform-specific path conversion (Windows path forms, paths with
+// special characters) correctly — more robust than manual string concat.
+if (import.meta.url === pathToFileURL(process.argv[1]!).href) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
