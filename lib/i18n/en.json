@@ -260,5 +260,13 @@
   "am_prep.error.instance_not_found": "AM Prep instance not found — refresh the page",
   "am_prep.error.invalid_payload": "Submission was malformed — refresh the page",
   "am_prep.error.network": "Network error — try again",
-  "am_prep.error.fallback": "Submission failed — try again"
+  "am_prep.error.fallback": "Submission failed — try again",
+
+  "am_prep.page.title": "AM Prep",
+  "am_prep.page.dashboard_back": "Back to dashboard",
+  "am_prep.page.dashboard_back_aria": "Back to dashboard",
+
+  "am_prep.no_template.heading": "AM Prep template not configured",
+  "am_prep.no_template.body": "Contact a manager to set up the AM Prep template at this location.",
+  "am_prep.no_template.return_dashboard": "Return to dashboard"
 }

@@ -260,5 +260,13 @@
   "am_prep.error.instance_not_found": "Instancia de Prep AM no encontrada — recarga la página",
   "am_prep.error.invalid_payload": "El envío estaba mal formado — recarga la página",
   "am_prep.error.network": "Error de red — intenta de nuevo",
-  "am_prep.error.fallback": "Envío fallido — intenta de nuevo"
+  "am_prep.error.fallback": "Envío fallido — intenta de nuevo",
+
+  "am_prep.page.title": "Lista de Prep AM",
+  "am_prep.page.dashboard_back": "Volver al dashboard",
+  "am_prep.page.dashboard_back_aria": "Volver al dashboard",
+
+  "am_prep.no_template.heading": "Plantilla de Prep AM no configurada",
+  "am_prep.no_template.body": "Contacta a un gerente para configurar la plantilla de Prep AM en esta ubicación.",
+  "am_prep.no_template.return_dashboard": "Volver al dashboard"
 }
