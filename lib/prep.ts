@@ -158,7 +158,7 @@ export function isPrepMeta(value: unknown): value is PrepMeta {
   return true;
 }
 
-function isPrepInputs(value: unknown): value is PrepInputs {
+export function isPrepInputs(value: unknown): value is PrepInputs {
   if (!isPlainObject(value)) return false;
   if (value.onHand !== undefined && typeof value.onHand !== "number") return false;
   if (value.portioned !== undefined && typeof value.portioned !== "number") return false;
