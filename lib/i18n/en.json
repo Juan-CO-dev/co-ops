@@ -154,5 +154,53 @@
   "auth.pin_modal.error_reload": "Unable to confirm. Please reload and try again.",
   "auth.pin_modal.error_partial_save": "Save partially failed. Please reload and try again.",
   "auth.pin_modal.error_unknown": "Unable to confirm. Please try again.",
-  "auth.pin_modal.error_network": "Network error. Try again."
+  "auth.pin_modal.error_network": "Network error. Try again.",
+
+  "dashboard.header.label": "Dashboard",
+  "dashboard.header.greeting": "Hi, {name}.",
+  "dashboard.location.all": "All locations",
+  "dashboard.location.none": "No locations",
+  "dashboard.location.switcher_aria": "Location switcher",
+
+  "dashboard.today.label": "Today's operations",
+  "dashboard.today.aria": "Today's operations at {location}",
+  "dashboard.today.closing_label": "Closing checklist",
+
+  "dashboard.status.no_template": "No closing template configured for this location.",
+  "dashboard.status.not_started": "Not started",
+  "dashboard.status.confirmed": "Confirmed",
+  "dashboard.status.incomplete_confirmed": "Submitted with incomplete items",
+  "dashboard.status.in_progress": "In progress · {progress}",
+  "dashboard.status.in_progress_progress": "{completed} of {required} items",
+  "dashboard.status.in_progress_fallback": "in progress",
+
+  "dashboard.cta.open_closing": "Open closing",
+  "dashboard.cta.start_closing": "Start closing",
+  "dashboard.cta.review_closing": "Review closing",
+  "dashboard.cta.continue_closing": "Continue closing",
+
+  "dashboard.yesterday.aria": "Yesterday's closing was not confirmed",
+  "dashboard.yesterday.title": "Yesterday's closing at {code} was not confirmed.",
+  "dashboard.yesterday.body": "{date} · status open. Review and finalize so handoff data is captured.",
+  "dashboard.yesterday.cta": "Review yesterday's closing",
+
+  "dashboard.no_locations.body": "You don't have any accessible locations yet. An admin needs to assign you to a location before operational checklists become available.",
+
+  "auth.logout.label": "Log out",
+  "auth.logout.submitting": "Signing out…",
+
+  "auth.idle.title": "Still there?",
+  "auth.idle.body": "You'll be signed out for inactivity in",
+  "auth.idle.stay": "Stay signed in",
+  "auth.idle.logout_now": "Log out now",
+
+  "role.cgs": "Chief Growth Strategist",
+  "role.owner": "Owner",
+  "role.moo": "Manager of Operations",
+  "role.gm": "General Manager",
+  "role.agm": "Assistant General Manager",
+  "role.catering_mgr": "Catering Manager",
+  "role.shift_lead": "Shift Lead",
+  "role.key_holder": "Key Holder",
+  "role.trainer": "Trainer"
 }
