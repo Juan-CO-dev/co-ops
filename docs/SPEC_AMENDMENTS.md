@@ -908,6 +908,30 @@ Captured during Phase 3 Build #2 PR 1 architectural conversation when trainer-vs
 
 ---
 
+## C.46 — Submitted reports should support KH+ post-submission updates with attribution
+
+**Date added:** 2026-05-04
+**Spec sections:** §2.5 (immutable completions), C.42 (reports architecture), C.18 (prep workflow)
+
+**What spec says:** §2.5 establishes immutable completions; corrections via supersede-by-recency. C.42 documents the reports architecture but doesn't specify a post-submission edit flow.
+
+**What built reality should be:** when a report (AM Prep, eventually opening, cash, etc.) has been submitted and is in read-only state, KH+ users should have an edit affordance to update values with attribution. Pattern:
+
+- Edit affordance visible on read-only state for KH+ users
+- Tapping edit reopens the form with current values populated
+- Submission creates a new completion row that supersedes the prior (per §2.5)
+- Attribution metadata captures: `original_completed_by`, `original_completed_at`, `updated_by`, `updated_at`, `update_reason` (optional free-form)
+- Read-only banner becomes: "Submitted by Cristian at 9:47 PM, updated by Juan at 10:23 PM"
+- Audit trail captures the update event with full prior + new values
+
+**Why:** real operational reality — closer or another KH+ catches errors after submitting. Re-submitting a "fresh" report loses attribution to the original action; in-place corrections lose the immutable-history guarantee. Supersede-by-recency preserves both.
+
+**v1.3 action:** implement in Build #2 PR 2 (next PR after PR 1's vertical slice). Architecture should generalize across all report types (AM Prep, opening, cash, mid-day prep, etc.) — not AM Prep-specific. Worth dedicated design conversation when Build #2 PR 2 scopes.
+
+Captured during Phase 3 Build #2 PR 1 smoke test from Juan's operational feedback ("the closing manager that day KH+ should be able to update the report with a updated by tag and time etc.").
+
+---
+
 ## How to add an entry
 
 1. Pick the next monotonic ID (`C.<n>` — current next: C.46).

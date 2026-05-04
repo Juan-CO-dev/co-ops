@@ -71,6 +71,37 @@ const COLUMN_TRANSLATION_KEY: Record<PrepColumn, TranslationKey> = {
   free_text: "am_prep.column.free_text",
 };
 
+/**
+ * Per-column ARIA-label translation keys. Most columns reuse the visible
+ * header key (already short / unambiguous). PORTIONED is the exception:
+ * the visible header is truncated to "PORT" / "PORC" to fit Sides'
+ * 4-column compressed-table layout, but the ARIA label MUST keep the full
+ * word for screen-reader operators ("Sides · Tuna Salad · PORTIONED").
+ * Resolves via `am_prep.column.portioned_aria`.
+ */
+const COLUMN_ARIA_KEY: Partial<Record<PrepColumn, TranslationKey>> = {
+  portioned: "am_prep.column.portioned_aria",
+};
+
+/**
+ * Sections where TOTAL is auto-calculated from sibling source fields
+ * (operator can't type into it). Cooks is excluded — Cooks TOTAL stays
+ * operator-supplied because Cooks items are batched ahead with
+ * multi-day validity (vodka/marinara: day-of + next day; caramelized
+ * onion: 3+ days), so TOTAL captures total batch quantity across active
+ * days rather than mirroring ON HAND. Auto-calc would force a 1:1
+ * mirror of ON HAND which is the wrong operational signal.
+ *
+ * Mirrored on the AmPrepForm side (TOTAL_SOURCES map). Keep these in
+ * sync if a section gets added or its formula changes.
+ */
+const SECTIONS_WITH_AUTO_TOTAL: ReadonlySet<string> = new Set([
+  "Veg",
+  "Sides",
+  "Sauces",
+  "Slicing",
+]);
+
 export interface PrepRowProps {
   /** Stable id (template_item_id) — used for React key + onChange dispatch. */
   templateItemId: string;
@@ -125,9 +156,11 @@ export interface PrepRowProps {
 
 export function PrepRow({
   templateItemId,
-  section: _section, // reserved for future use (e.g., section-aware analytics);
-  // currently unused — sectionDisplay is what renders, but we keep the
-  // system-key prop in the public API for downstream consumers per C.38.
+  // section: SYSTEM-KEY (English source-of-truth per C.38). Used for the
+  // auto-calc TOTAL gate (SECTIONS_WITH_AUTO_TOTAL above) — Cooks TOTAL
+  // stays editable because of its multi-day batch semantic. Display
+  // string for the section header comes from `sectionDisplay`.
+  section,
   sectionDisplay,
   label,
   parValue,
@@ -191,15 +224,22 @@ export function PrepRow({
       {/* Operator-input cells. */}
       {inputColumns.map((col) => {
         const field = COLUMN_INPUT_FIELD[col];
-        const colLabel = t(COLUMN_TRANSLATION_KEY[col]);
+        // ARIA label uses the full-word translation when available
+        // (PORTIONED → "PORTIONED" not "PORT"). Header text uses the
+        // visible-truncated translation. Per Bug B fix in Build #2 PR 1.
+        const ariaColLabel = t(COLUMN_ARIA_KEY[col] ?? COLUMN_TRANSLATION_KEY[col]);
         const ariaLabel = t("am_prep.row.input_aria", {
           section: sectionDisplay,
           item: label,
-          column: colLabel,
+          column: ariaColLabel,
         });
         // Read raw string directly — no Number() round-trip per Part 2 lock.
         const stringValue = rawInputs[field] ?? "";
         const fieldError = rowErrors?.[field];
+        // TOTAL cells in auto-calc sections are read-only display
+        // (computed from source fields by AmPrepForm.handleChange).
+        // Cooks TOTAL stays editable per the multi-day batch semantic.
+        const isAutoCalcTotal = col === "total" && SECTIONS_WITH_AUTO_TOTAL.has(section);
         return (
           <div key={col} className="flex flex-col gap-0.5">
             <PrepNumericCell
@@ -207,6 +247,7 @@ export function PrepRow({
               onChange={(raw) => onChange(templateItemId, field, raw)}
               ariaLabel={ariaLabel}
               disabled={disabled}
+              readOnly={isAutoCalcTotal}
             />
             {fieldError ? (
               <span

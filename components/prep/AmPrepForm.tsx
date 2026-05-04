@@ -69,6 +69,48 @@ const SECTION_ORDER: ReadonlyArray<PrepSectionEnum> = [
 const NUMERIC_FIELDS = ["onHand", "portioned", "line", "backUp", "total"] as const;
 type NumericField = (typeof NUMERIC_FIELDS)[number];
 
+/**
+ * Per-section TOTAL auto-calc formula sources. Sections present in this
+ * map auto-compute TOTAL when any source field changes; sections absent
+ * (Cooks, Misc) do NOT auto-calc.
+ *
+ * Cooks is intentionally excluded: Cooks items are batched ahead with
+ * multi-day validity (vodka/marinara: day-of + next day; caramelized
+ * onion: 3+ days). Cooks TOTAL captures total batch quantity across
+ * active days, distinct from ON HAND ("currently on the line"). Auto-
+ * calc would force a 1:1 mirror of ON HAND which is the wrong
+ * operational signal — operator supplies TOTAL manually for Cooks.
+ *
+ * Mirrored on PrepRow's SECTIONS_WITH_AUTO_TOTAL set (which gates the
+ * read-only display on the TOTAL cell). Keep in sync if a section gets
+ * added or its formula changes.
+ *
+ * Empty-source semantics (locked Build #2 PR 1 Bug A fix): TOTAL stays
+ * empty until ALL sources are non-empty. If any source is "" the TOTAL
+ * is "". Both sources "0" → TOTAL "0". Both filled → TOTAL = sum. Any
+ * source non-finite → TOTAL "" (validator surfaces the underlying error).
+ */
+const TOTAL_SOURCES: Partial<Record<PrepSectionEnum, ReadonlyArray<NumericField>>> = {
+  Veg: ["onHand", "backUp"],
+  Sides: ["portioned", "backUp"],
+  Sauces: ["line", "backUp"],
+  Slicing: ["line", "backUp"],
+};
+
+function computeTotal(section: PrepSectionEnum, raw: RawPrepInputs): string {
+  const sources = TOTAL_SOURCES[section];
+  if (!sources) return ""; // Cooks / Misc — operator-supplied or n/a
+  const nums: number[] = [];
+  for (const src of sources) {
+    const v = raw[src];
+    if (v === undefined || v === "") return ""; // any empty → TOTAL empty
+    const n = Number(v);
+    if (!Number.isFinite(n)) return ""; // validator surfaces source-side error
+    nums.push(n);
+  }
+  return String(nums.reduce((a, b) => a + b, 0));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // State derivation helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -287,6 +329,16 @@ export function AmPrepForm({
     return groups;
   }, [templateItems]);
 
+  // Lookup: templateItemId → section. Used by handleChange to gate auto-
+  // calc TOTAL per section.
+  const sectionByItemId = useMemo(() => {
+    const map = new Map<string, PrepSectionEnum>();
+    for (const item of templateItems) {
+      if (item.prepMeta) map.set(item.id, item.prepMeta.section);
+    }
+    return map;
+  }, [templateItems]);
+
   // Derive initial rawValues from initialValues prop (one-time at mount).
   const initialRawValues = useMemo(() => {
     const raw: Record<string, RawPrepInputs> = {};
@@ -347,11 +399,20 @@ export function AmPrepForm({
         if (field === "freeText") {
           return { ...prev, [templateItemId]: { ...prevRow, freeText: rawValue } };
         }
-        // Numeric fields — store raw string for typing-in-progress preservation.
-        return { ...prev, [templateItemId]: { ...prevRow, [field]: rawValue } };
+        // Numeric field — store raw string. Auto-calc TOTAL when a source
+        // field changes in a section that has the auto-calc formula
+        // (Veg/Sides/Sauces/Slicing). Cooks is excluded: its TOTAL
+        // captures multi-day batch quantity (operator-supplied) — see
+        // TOTAL_SOURCES JSDoc for the operational rationale.
+        const nextRow: RawPrepInputs = { ...prevRow, [field]: rawValue };
+        const section = sectionByItemId.get(templateItemId);
+        if (section && field !== "total" && TOTAL_SOURCES[section]) {
+          nextRow.total = computeTotal(section, nextRow);
+        }
+        return { ...prev, [templateItemId]: nextRow };
       });
     },
-    [],
+    [sectionByItemId],
   );
 
   // ─── Submit ─────────────────────────────────────────────────────────────

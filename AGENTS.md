@@ -635,3 +635,18 @@ Pattern: edit UI exposes both English (source) and Spanish (translation) inputs;
 
 `specialInstruction` is the only field where translation source-of-truth lives in nested JSONB (`prep_meta.specialInstruction`). The resolver internally reaches for the fallback so callers stay uniform — the admin form should mirror the same shape (English specialInstruction sets `prep_meta.specialInstruction`; Spanish sets `translations.es.specialInstruction`). Captured during Build #2 PR 1 specialInstruction translation extension.
 
+### Smoke-test instructions must point to the PR's preview URL, not production (after Build #2 PR 1)
+
+PR descriptions and smoke-test instructions must use the PR's own preview deployment URL — Vercel branch-based: `https://co-ops-git-<branch-slug>-juan-co-devs-projects.vercel.app/` — NOT the production URL `https://co-ops-ashy.vercel.app`. Production is bound to `main`; until a PR merges, that URL serves stale code without any of the PR's changes.
+
+Caught during Build #2 PR 1 smoke test: the PR description told Juan to test against `co-ops-ashy.vercel.app` (production main), causing two false-positive bug reports — "AM Prep tile not visible" (the dashboard tile commit wasn't on main yet) and "closing checklist allows ticking AM Prep List" (the report-reference rendering branch wasn't on main yet either). Both "bugs" disappeared once Juan re-tested against the PR's preview URL. The actual code changes were on the PR branch, never on main pre-merge.
+
+**How to find the actual preview URL:**
+- Vercel auto-posts a comment on every PR with the directly-loadable preview URL — check the PR conversation tab
+- Branch-slug derivation: replace `/` with `-` in the branch name (e.g., `claude/dreamy-tesla-a03563` → `claude-dreamy-tesla-a03563`) and slot into `co-ops-git-<slug>-juan-co-devs-projects.vercel.app`
+- The Vercel check status on the PR (`gh pr checks <num>`) links to the Vercel dashboard for the deployment, NOT the directly-loadable preview URL — that's why grabbing the URL from the Vercel comment is more reliable
+
+**Rule for future PR descriptions:** always include the preview URL explicitly in the test plan section. Production URL `co-ops-ashy.vercel.app` is reserved for post-merge regression smokes only.
+
+Sibling lesson to Phase 2's "Vercel env var records can exist with empty values" — both belong to the broader principle that deployment behavior must be verified in the actual deployment context the change targets, not by inspecting build logs or generic / production URLs.
+
