@@ -154,5 +154,53 @@
   "auth.pin_modal.error_reload": "No se pudo confirmar. Recarga e intenta de nuevo.",
   "auth.pin_modal.error_partial_save": "Guardado parcial. Recarga e intenta de nuevo.",
   "auth.pin_modal.error_unknown": "No se pudo confirmar. Intenta de nuevo.",
-  "auth.pin_modal.error_network": "Error de red. Intenta de nuevo."
+  "auth.pin_modal.error_network": "Error de red. Intenta de nuevo.",
+
+  "dashboard.header.label": "Panel",
+  "dashboard.header.greeting": "Hola, {name}.",
+  "dashboard.location.all": "Todas las ubicaciones",
+  "dashboard.location.none": "Sin ubicaciones",
+  "dashboard.location.switcher_aria": "Cambiar ubicación",
+
+  "dashboard.today.label": "Operaciones de hoy",
+  "dashboard.today.aria": "Operaciones de hoy en {location}",
+  "dashboard.today.closing_label": "Lista de cierre",
+
+  "dashboard.status.no_template": "No hay plantilla de cierre para esta ubicación.",
+  "dashboard.status.not_started": "Sin empezar",
+  "dashboard.status.confirmed": "Confirmado",
+  "dashboard.status.incomplete_confirmed": "Enviado con ítems sin completar",
+  "dashboard.status.in_progress": "En progreso · {progress}",
+  "dashboard.status.in_progress_progress": "{completed} de {required} ítems",
+  "dashboard.status.in_progress_fallback": "en progreso",
+
+  "dashboard.cta.open_closing": "Abrir cierre",
+  "dashboard.cta.start_closing": "Empezar cierre",
+  "dashboard.cta.review_closing": "Revisar cierre",
+  "dashboard.cta.continue_closing": "Continuar cierre",
+
+  "dashboard.yesterday.aria": "El cierre de ayer no fue confirmado",
+  "dashboard.yesterday.title": "El cierre de ayer en {code} no fue confirmado.",
+  "dashboard.yesterday.body": "{date} · estado abierto. Revisa y finaliza para capturar el handoff.",
+  "dashboard.yesterday.cta": "Revisar el cierre de ayer",
+
+  "dashboard.no_locations.body": "Aún no tienes ubicaciones asignadas. Un administrador debe asignarte una antes de que las listas operativas estén disponibles.",
+
+  "auth.logout.label": "Cerrar sesión",
+  "auth.logout.submitting": "Cerrando sesión…",
+
+  "auth.idle.title": "¿Sigues ahí?",
+  "auth.idle.body": "Por inactividad cerraremos sesión en",
+  "auth.idle.stay": "Seguir conectado",
+  "auth.idle.logout_now": "Cerrar sesión ahora",
+
+  "role.cgs": "Estratega de Crecimiento",
+  "role.owner": "Dueño",
+  "role.moo": "Gerente de Operaciones",
+  "role.gm": "Gerente General",
+  "role.agm": "Subgerente General",
+  "role.catering_mgr": "Gerente de Catering",
+  "role.shift_lead": "Líder de Turno",
+  "role.key_holder": "Encargado de Llaves",
+  "role.trainer": "Entrenador"
 }

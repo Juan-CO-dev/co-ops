@@ -29,6 +29,8 @@ import { IdleTimeoutWarning } from "@/components/auth/IdleTimeoutWarning";
 import { LogoutButton } from "@/components/auth/LogoutButton";
 import { ROLES } from "@/lib/roles";
 import { accessibleLocations, type LocationActor } from "@/lib/locations";
+import { serverT } from "@/lib/i18n/server";
+import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
@@ -212,12 +214,14 @@ async function loadOperationalState(
 // View helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-function formatDateLabel(yyyymmdd: string): string {
-  // YYYY-MM-DD → "Tue, May 1"
+function formatDateLabel(yyyymmdd: string, language: Language): string {
+  // YYYY-MM-DD → "Tue, May 1" (en) or "mar, 1 may" (es). Locale follows
+  // user language preference per SPEC_AMENDMENTS.md C.31.
   const [y, m, d] = yyyymmdd.split("-").map(Number);
   if (!y || !m || !d) return yyyymmdd;
   const dt = new Date(Date.UTC(y, m - 1, d));
-  return new Intl.DateTimeFormat("en-US", {
+  const locale = language === "es" ? "es-US" : "en-US";
+  return new Intl.DateTimeFormat(locale, {
     weekday: "short",
     month: "short",
     day: "numeric",
@@ -231,34 +235,47 @@ interface StatusCopy {
   ctaTone: "primary" | "review";
 }
 
-function statusCopyFor(state: OperationalState): StatusCopy {
+function statusCopyFor(state: OperationalState, language: Language): StatusCopy {
   if (!state.hasClosingTemplate) {
     return {
-      label: "No closing template configured for this location.",
-      cta: "Open closing",
+      label: serverT(language, "dashboard.status.no_template"),
+      cta: serverT(language, "dashboard.cta.open_closing"),
       ctaTone: "review",
     };
   }
   const inst = state.todayInstance;
   if (!inst) {
-    return { label: "Not started", cta: "Start closing", ctaTone: "primary" };
+    return {
+      label: serverT(language, "dashboard.status.not_started"),
+      cta: serverT(language, "dashboard.cta.start_closing"),
+      ctaTone: "primary",
+    };
   }
   if (inst.status === "confirmed") {
-    return { label: "Confirmed", cta: "Review closing", ctaTone: "review" };
+    return {
+      label: serverT(language, "dashboard.status.confirmed"),
+      cta: serverT(language, "dashboard.cta.review_closing"),
+      ctaTone: "review",
+    };
   }
   if (inst.status === "incomplete_confirmed") {
     return {
-      label: "Submitted with incomplete items",
-      cta: "Review closing",
+      label: serverT(language, "dashboard.status.incomplete_confirmed"),
+      cta: serverT(language, "dashboard.cta.review_closing"),
       ctaTone: "review",
     };
   }
   // open
   const p = state.todayProgress;
-  const progress = p ? `${p.completed} of ${p.required} items` : "in progress";
+  const progress = p
+    ? serverT(language, "dashboard.status.in_progress_progress", {
+        completed: p.completed,
+        required: p.required,
+      })
+    : serverT(language, "dashboard.status.in_progress_fallback");
   return {
-    label: `In progress · ${progress}`,
-    cta: "Continue closing",
+    label: serverT(language, "dashboard.status.in_progress", { progress }),
+    cta: serverT(language, "dashboard.cta.continue_closing"),
     ctaTone: "primary",
   };
 }
@@ -273,7 +290,15 @@ interface DashboardPageProps {
 
 export default async function DashboardPage({ searchParams }: DashboardPageProps) {
   const auth = await requireSessionFromHeaders("/dashboard");
+  const language: Language = auth.user.language;
   const role = ROLES[auth.role];
+  // Tactical inline lookup for role badge label per SPEC_AMENDMENTS.md C.38
+  // discipline. Role registry uses English labels; we map to translation
+  // keys here via the canonical `role.<code>` namespace. Proper system-wide
+  // role-registry translation pattern (C.38-style resolver) is deferred to
+  // a future architectural conversation; this inline lookup is intentionally
+  // scope-bounded for PR 5d, NOT the long-term answer. See AGENTS.md.
+  const roleLabel = serverT(language, `role.${auth.role}` as TranslationKey);
 
   const sb = getServiceRoleClient();
   const locationActor: LocationActor = {
@@ -299,10 +324,10 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
       <div className="mt-2 flex flex-col gap-6">
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
-            Dashboard
+            {serverT(language, "dashboard.header.label")}
           </p>
           <h2 className="mt-1 text-3xl font-extrabold leading-tight text-co-text">
-            Hi, {auth.user.name}.
+            {serverT(language, "dashboard.header.greeting", { name: auth.user.name })}
           </h2>
         </div>
 
@@ -324,7 +349,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
               className="inline-block h-2 w-2 rounded-full"
               style={{ background: role.color }}
             />
-            {role.label}
+            {roleLabel}
           </span>
         </div>
 
@@ -341,7 +366,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                 text-co-text-muted
               "
             >
-              All locations
+              {serverT(language, "dashboard.location.all")}
             </span>
           </div>
         ) : locations.length === 0 ? (
@@ -353,7 +378,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                 text-co-text-faint
               "
             >
-              No locations
+              {serverT(language, "dashboard.location.none")}
             </span>
           </div>
         ) : locations.length === 1 ? (
@@ -373,6 +398,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
           <LocationSwitcher
             locations={locations}
             selectedId={selectedLocation.id}
+            language={language}
           />
         ) : null}
 
@@ -381,6 +407,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
           <YesterdayUnconfirmedAlert
             location={selectedLocation}
             yesterdayDate={operational.yesterdayDate}
+            language={language}
           />
         ) : null}
 
@@ -389,9 +416,10 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
           <TodaysOperationsCard
             location={selectedLocation}
             state={operational}
+            language={language}
           />
         ) : (
-          <NoLocationsState />
+          <NoLocationsState language={language} />
         )}
 
         <div className="flex justify-center">
@@ -411,13 +439,15 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 function LocationSwitcher({
   locations,
   selectedId,
+  language,
 }: {
   locations: LocationLite[];
   selectedId: string;
+  language: Language;
 }) {
   return (
     <nav
-      aria-label="Location switcher"
+      aria-label={serverT(language, "dashboard.location.switcher_aria")}
       className="flex flex-wrap gap-2"
     >
       {locations.map((loc) => {
@@ -448,14 +478,16 @@ function LocationSwitcher({
 function YesterdayUnconfirmedAlert({
   location,
   yesterdayDate,
+  language,
 }: {
   location: LocationLite;
   yesterdayDate: string;
+  language: Language;
 }) {
   return (
     <section
       role="alert"
-      aria-label="Yesterday's closing was not confirmed"
+      aria-label={serverT(language, "dashboard.yesterday.aria")}
       className="
         flex flex-col gap-3 rounded-2xl
         border-2 border-co-gold-deep bg-[#FFF4D0]
@@ -474,11 +506,12 @@ function YesterdayUnconfirmedAlert({
         </span>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-bold text-co-text">
-            Yesterday&rsquo;s closing at {location.code} was not confirmed.
+            {serverT(language, "dashboard.yesterday.title", { code: location.code })}
           </p>
           <p className="mt-1 text-xs text-co-text-muted">
-            {formatDateLabel(yesterdayDate)} · status open. Review and finalize
-            so handoff data is captured.
+            {serverT(language, "dashboard.yesterday.body", {
+              date: formatDateLabel(yesterdayDate, language),
+            })}
           </p>
         </div>
       </div>
@@ -492,7 +525,7 @@ function YesterdayUnconfirmedAlert({
             focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
           "
         >
-          Review yesterday&rsquo;s closing
+          {serverT(language, "dashboard.yesterday.cta")}
         </Link>
       </div>
     </section>
@@ -502,11 +535,13 @@ function YesterdayUnconfirmedAlert({
 function TodaysOperationsCard({
   location,
   state,
+  language,
 }: {
   location: LocationLite;
   state: OperationalState;
+  language: Language;
 }) {
-  const copy = statusCopyFor(state);
+  const copy = statusCopyFor(state, language);
   const ctaClasses =
     copy.ctaTone === "primary"
       ? "border-2 border-co-text bg-co-gold text-co-text hover:bg-co-gold-deep"
@@ -514,26 +549,26 @@ function TodaysOperationsCard({
 
   return (
     <section
-      aria-label={`Today's operations at ${location.name}`}
+      aria-label={serverT(language, "dashboard.today.aria", { location: location.name })}
       className="
         rounded-2xl border-2 border-co-border bg-co-surface
         p-5 shadow-sm sm:p-6
       "
     >
       <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-co-text-dim">
-        Today&rsquo;s operations
+        {serverT(language, "dashboard.today.label")}
       </p>
       <h3 className="mt-1 text-xl font-extrabold leading-tight text-co-text">
         {location.code} &middot; {location.name}
       </h3>
       <p className="mt-1 text-xs text-co-text-muted">
-        {formatDateLabel(state.todayDate)}
+        {formatDateLabel(state.todayDate, language)}
       </p>
 
       <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
-            Closing checklist
+            {serverT(language, "dashboard.today.closing_label")}
           </p>
           <p className="mt-1 text-base font-semibold text-co-text">{copy.label}</p>
         </div>
@@ -555,13 +590,11 @@ function TodaysOperationsCard({
   );
 }
 
-function NoLocationsState() {
+function NoLocationsState({ language }: { language: Language }) {
   return (
     <section className="rounded-2xl border-2 border-co-border bg-co-surface p-5 text-center sm:p-6">
       <p className="text-sm text-co-text-muted">
-        You don&rsquo;t have any accessible locations yet. An admin needs to
-        assign you to a location before operational checklists become
-        available.
+        {serverT(language, "dashboard.no_locations.body")}
       </p>
     </section>
   );

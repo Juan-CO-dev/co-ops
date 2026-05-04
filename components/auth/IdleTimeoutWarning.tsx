@@ -30,6 +30,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { useTranslation } from "@/lib/i18n/provider";
+
 const TOTAL_IDLE_SECONDS = 10 * 60; // matches default SESSION_IDLE_MINUTES = 10
 const WARNING_BEFORE_SECONDS = 30; // show modal 30s before forced logout
 const TICK_MS = 1000;
@@ -37,6 +39,7 @@ const TICK_MS = 1000;
 const ACTIVITY_EVENTS = ["mousedown", "keydown", "touchstart", "scroll"] as const;
 
 export function IdleTimeoutWarning() {
+  const { t } = useTranslation();
   const router = useRouter();
   const lastActivityRef = useRef<number>(Date.now());
   const [warningOpen, setWarningOpen] = useState(false);
@@ -143,10 +146,10 @@ export function IdleTimeoutWarning() {
     >
       <div className="w-full max-w-sm rounded-2xl border-2 border-co-border bg-co-surface p-6 shadow-2xl">
         <h2 id="idle-warning-title" className="text-center text-xl font-extrabold leading-tight text-co-text">
-          Still there?
+          {t("auth.idle.title")}
         </h2>
         <p id="idle-warning-body" className="mt-2 text-center text-sm text-co-text-muted">
-          You'll be signed out for inactivity in
+          {t("auth.idle.body")}
         </p>
         <p
           aria-live="polite"
@@ -169,7 +172,7 @@ export function IdleTimeoutWarning() {
               focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
             "
           >
-            Stay signed in
+            {t("auth.idle.stay")}
           </button>
           <button
             ref={logoutBtnRef}
@@ -183,7 +186,7 @@ export function IdleTimeoutWarning() {
               focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
             "
           >
-            Log out now
+            {t("auth.idle.logout_now")}
           </button>
         </div>
       </div>

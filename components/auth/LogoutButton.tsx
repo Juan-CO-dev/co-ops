@@ -11,7 +11,10 @@
 import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { useTranslation } from "@/lib/i18n/provider";
+
 export function LogoutButton() {
+  const { t } = useTranslation();
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
 
@@ -40,7 +43,7 @@ export function LogoutButton() {
         disabled:cursor-not-allowed disabled:opacity-50
       "
     >
-      {submitting ? "Signing out…" : "Log out"}
+      {submitting ? t("auth.logout.submitting") : t("auth.logout.label")}
     </button>
   );
 }

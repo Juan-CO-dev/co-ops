@@ -436,6 +436,21 @@ Language updates skip the `audit()` helper. Mirrors the convention for `phone` a
 
 The dropdown in the closing-page header is named `UserMenu` (not `LanguageSelector`) deliberately — PR 5a ships only the language section but the component is foundation for future settings expansions (password change, notification prefs, eventually Module #2 training progress, account info, etc.). Naming for current scope only would force a refactor on the first follow-up. Trigger affordance is an avatar-style initial circle, not a text label, because the closing-page header already shows location code + name — adding another text affordance would crowd. Captured during Build #1.5 PR 5a design lock.
 
+### Role labels use tactical inline lookup pattern (after Build #1.5 PR 5d)
+
+PR 5d's dashboard greeting + role badge surfaced the role-label translation problem: `lib/roles.ts` `ROLES` registry stores English labels (`"Chief Growth Strategist"`, `"Owner"`, etc.) on each role definition. Per the C.37 translate-from-day-one convention, those labels can't render English on a Spanish-language dashboard.
+
+Tactical pattern shipped in PR 5d: translation keys `role.<code>` (e.g., `role.cgs`, `role.owner`, `role.shift_lead`) added to `lib/i18n/{en,es}.json` for all 9 current `RoleCode` values. Dashboard renders via `serverT(language, \`role.\${actor.role}\` as TranslationKey)`. Inline lookup at the consumer; no resolver helper, no JSONB column on the role registry.
+
+This is intentionally scope-bounded:
+- NOT a system-wide role-registry translation pattern (no resolver like `lib/i18n/content.ts` resolveTemplateItemContent for template-item content)
+- NOT applied to other registry-driven user-visible strings (location types, vendor categories, audit action labels — none of these surface on the dashboard today, but they will in admin tooling, Reports Console, etc.)
+- NOT a binding commitment to `role.<code>` namespace as the canonical pattern
+
+The proper system-wide pattern (C.38-style resolver for registry content) is deferred to a future architectural conversation alongside vendor items / recipes / training content / prep templates / etc. Until that conversation lands, NEW user-visible registry strings extend the inline-lookup pattern (cheap to migrate later).
+
+When adding a new `RoleCode` value to `lib/roles.ts`: also add `role.<new_code>` keys to BOTH `lib/i18n/en.json` and `lib/i18n/es.json` in the same PR. Dashboard's tactical inline lookup will pick them up automatically. Captured during Build #1.5 PR 5d.
+
 ### Authed layout redirect path is currently static (after Build #1.5 PR 5b)
 
 The `(authed)` layout calls `requireSessionFromHeaders("/dashboard")` for the auth boundary. On auth denial, all routes in the group redirect to `/?next=/dashboard` regardless of the original target. This loses deep-link intent for users who hit `/operations/closing` (or future paths) directly while unauthenticated — the layout's auth call runs FIRST and redirects before the page-level auth call (which would carry the correct path) ever executes.
