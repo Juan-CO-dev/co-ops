@@ -1,14 +1,17 @@
 "use client";
 
 /**
- * CooksSection — Build #2 PR 1, Part 1.
+ * CooksSection — Build #2 PR 1.
  *
- * Renders the "Cooks" prep section. Columns: PAR / ON HAND / TOTAL.
+ * Renders the "Cooks" prep section. Columns: PAR / ON HAND / BACK UP / TOTAL.
  *
- * Note the absence of BACK UP — Cooks-section items (Vodka sauce, Marinara,
- * Compound Butter, Caramelized onion, Jus) are typically prepped end-to-end
- * with no separate "unbottled" stage. The 3-column layout reflects that
- * operational reality.
+ * Cooks items (Vodka sauce, Marinara, Compound Butter, Caramelized onion,
+ * Jus) are batched ahead with multi-day validity. BACK UP captures
+ * "leftover from prior batches still service-ready"; TOTAL = ON HAND +
+ * BACK UP. BACK UP added in Build #2 PR 1 follow-up per Juan smoke ("we
+ * need the backup to know how much we have leftover that needs to be
+ * prepped for service"). With BACK UP present, Cooks auto-calcs TOTAL
+ * via PrepRow's SECTIONS_WITH_AUTO_TOTAL gate.
  *
  * Section is read-only in Part 1 (controlled-input shape from parent shell).
  */
@@ -22,7 +25,7 @@ import { PrepSection } from "../PrepSection";
 import type { RawPrepInputs } from "../types";
 
 const SECTION_KEY = "Cooks";
-const INPUT_COLUMNS = ["on_hand", "total"] as const;
+const INPUT_COLUMNS = ["on_hand", "back_up", "total"] as const;
 
 export interface CooksSectionProps {
   templateItems: ChecklistTemplateItem[];
@@ -46,6 +49,7 @@ export function CooksSection({ templateItems, rawValues, onChange, disabled, err
   const columnHeaders = [
     { key: "par", label: t("am_prep.column.par") },
     { key: "on_hand", label: t("am_prep.column.on_hand") },
+    { key: "back_up", label: t("am_prep.column.back_up") },
     { key: "total", label: t("am_prep.column.total") },
   ];
 

@@ -70,45 +70,70 @@ const NUMERIC_FIELDS = ["onHand", "portioned", "line", "backUp", "total"] as con
 type NumericField = (typeof NUMERIC_FIELDS)[number];
 
 /**
- * Per-section TOTAL auto-calc formula sources. Sections present in this
- * map auto-compute TOTAL when any source field changes; sections absent
- * (Cooks, Misc) do NOT auto-calc.
+ * Per-section TOTAL auto-calc formula. Sections present in this map
+ * auto-compute TOTAL when any source field changes; sections absent
+ * (Misc) do NOT auto-calc.
  *
- * Cooks is intentionally excluded: Cooks items are batched ahead with
- * multi-day validity (vodka/marinara: day-of + next day; caramelized
- * onion: 3+ days). Cooks TOTAL captures total batch quantity across
- * active days, distinct from ON HAND ("currently on the line"). Auto-
- * calc would force a 1:1 mirror of ON HAND which is the wrong
- * operational signal — operator supplies TOTAL manually for Cooks.
+ * Primary / secondary semantics (locked Build #2 PR 1 follow-up per
+ * Juan smoke):
+ *   - PRIMARY field is the operationally-always-reported source (ON HAND
+ *     for Veg/Cooks; PORTIONED for Sides; LINE for Sauces/Slicing).
+ *     Required: TOTAL stays empty until primary is filled.
+ *   - SECONDARY field is BACK UP (always; "leftover that needs to be
+ *     prepped for service"). Optional: empty SECONDARY treated as 0
+ *     in the sum so operators do not have to type 0 on every line
+ *     without backups.
+ *
+ * Cooks history: original Q-A1 decision excluded Cooks because the
+ * column shape was ["par","on_hand","total"] (no BACK UP) and auto-calc
+ * would have forced TOTAL = ON HAND, masking the multi-day batch
+ * semantic. Build #2 PR 1 follow-up added BACK UP per Juan ("we need
+ * the backup to know how much we have leftover that needs to be
+ * prepped for service"). With BACK UP present, TOTAL = ON HAND + BACK
+ * UP cleanly captures total service-ready quantity across active days
+ * (vodka/marinara: day-of + next day; caramelized onion: 3+ days) —
+ * BACK UP being "what is left from prior batches still service-ready"
+ * is exactly what makes the sum operationally correct. Cooks now
+ * auto-calcs.
  *
  * Mirrored on PrepRow's SECTIONS_WITH_AUTO_TOTAL set (which gates the
  * read-only display on the TOTAL cell). Keep in sync if a section gets
  * added or its formula changes.
  *
- * Empty-source semantics (locked Build #2 PR 1 Bug A fix): TOTAL stays
- * empty until ALL sources are non-empty. If any source is "" the TOTAL
- * is "". Both sources "0" → TOTAL "0". Both filled → TOTAL = sum. Any
- * source non-finite → TOTAL "" (validator surfaces the underlying error).
+ * Empty-source semantics:
+ *   - primary "" → TOTAL "" (no value to sum)
+ *   - primary filled, secondary "" → TOTAL = primary (treat empty as 0)
+ *   - both filled → TOTAL = primary + secondary
+ *   - any source non-finite → TOTAL "" (validator surfaces the
+ *     underlying parse error on the source field)
  */
-const TOTAL_SOURCES: Partial<Record<PrepSectionEnum, ReadonlyArray<NumericField>>> = {
-  Veg: ["onHand", "backUp"],
-  Sides: ["portioned", "backUp"],
-  Sauces: ["line", "backUp"],
-  Slicing: ["line", "backUp"],
+const TOTAL_SOURCES: Partial<
+  Record<PrepSectionEnum, { primary: NumericField; secondary: NumericField }>
+> = {
+  Veg: { primary: "onHand", secondary: "backUp" },
+  Cooks: { primary: "onHand", secondary: "backUp" },
+  Sides: { primary: "portioned", secondary: "backUp" },
+  Sauces: { primary: "line", secondary: "backUp" },
+  Slicing: { primary: "line", secondary: "backUp" },
 };
 
 function computeTotal(section: PrepSectionEnum, raw: RawPrepInputs): string {
   const sources = TOTAL_SOURCES[section];
-  if (!sources) return ""; // Cooks / Misc — operator-supplied or n/a
-  const nums: number[] = [];
-  for (const src of sources) {
-    const v = raw[src];
-    if (v === undefined || v === "") return ""; // any empty → TOTAL empty
-    const n = Number(v);
-    if (!Number.isFinite(n)) return ""; // validator surfaces source-side error
-    nums.push(n);
+  if (!sources) return ""; // Misc — n/a
+  const primaryRaw = raw[sources.primary];
+  if (primaryRaw === undefined || primaryRaw === "") return "";
+  const primaryNum = Number(primaryRaw);
+  if (!Number.isFinite(primaryNum)) return "";
+  // Secondary (BACK UP) defaults to 0 when empty — operator UX win:
+  // no need to type 0 on lines without backups.
+  let secondaryNum = 0;
+  const secondaryRaw = raw[sources.secondary];
+  if (secondaryRaw !== undefined && secondaryRaw !== "") {
+    const n = Number(secondaryRaw);
+    if (!Number.isFinite(n)) return "";
+    secondaryNum = n;
   }
-  return String(nums.reduce((a, b) => a + b, 0));
+  return String(primaryNum + secondaryNum);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -401,9 +426,9 @@ export function AmPrepForm({
         }
         // Numeric field — store raw string. Auto-calc TOTAL when a source
         // field changes in a section that has the auto-calc formula
-        // (Veg/Sides/Sauces/Slicing). Cooks is excluded: its TOTAL
-        // captures multi-day batch quantity (operator-supplied) — see
-        // TOTAL_SOURCES JSDoc for the operational rationale.
+        // (Veg/Cooks/Sides/Sauces/Slicing). All 5 numeric sections now
+        // auto-calc — see TOTAL_SOURCES JSDoc for primary/secondary
+        // semantics + Cooks BACK UP-column history.
         const nextRow: RawPrepInputs = { ...prevRow, [field]: rawValue };
         const section = sectionByItemId.get(templateItemId);
         if (section && field !== "total" && TOTAL_SOURCES[section]) {

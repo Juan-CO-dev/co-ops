@@ -85,18 +85,22 @@ const COLUMN_ARIA_KEY: Partial<Record<PrepColumn, TranslationKey>> = {
 
 /**
  * Sections where TOTAL is auto-calculated from sibling source fields
- * (operator can't type into it). Cooks is excluded — Cooks TOTAL stays
- * operator-supplied because Cooks items are batched ahead with
- * multi-day validity (vodka/marinara: day-of + next day; caramelized
- * onion: 3+ days), so TOTAL captures total batch quantity across active
- * days rather than mirroring ON HAND. Auto-calc would force a 1:1
- * mirror of ON HAND which is the wrong operational signal.
+ * (operator can't type into it). All 5 numeric sections now auto-calc.
+ *
+ * Cooks history: originally excluded (column shape was
+ * ["par","on_hand","total"] — auto-calc would have forced TOTAL = ON
+ * HAND, masking the multi-day batch semantic). Build #2 PR 1 follow-up
+ * added BACK UP to Cooks per Juan smoke; with BACK UP present, TOTAL
+ * = ON HAND + BACK UP cleanly captures total service-ready quantity
+ * across active days (vodka/marinara: day-of + next day; caramelized
+ * onion: 3+ days). Cooks now auto-calcs alongside the other sections.
  *
  * Mirrored on the AmPrepForm side (TOTAL_SOURCES map). Keep these in
  * sync if a section gets added or its formula changes.
  */
 const SECTIONS_WITH_AUTO_TOTAL: ReadonlySet<string> = new Set([
   "Veg",
+  "Cooks",
   "Sides",
   "Sauces",
   "Slicing",

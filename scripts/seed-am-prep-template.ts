@@ -59,7 +59,14 @@
  * Audit metadata convention (per AGENTS.md "Audit metadata context
  * attribution in seed scripts" durable lesson):
  *   - phase: "3_module_1_build_2_pr_1"
- *   - reason: "Standard AM Prep v1 — initial seed"
+ *   - CREATE-path reason: "Standard AM Prep v1 — initial seed" — the
+ *     template's create-time canonical audit string; describes the
+ *     template in its current final shape regardless of script-edit
+ *     history. Stays stable across spec edits unless the version bumps.
+ *   - SYNC-path reason: "Cooks BACK UP column addition for multi-day
+ *     batch TOTAL semantic" — Build #2 PR 1 follow-up; SYNC reasons
+ *     describe the specific change between states, so they update each
+ *     PR re-run that mutates production data.
  *
  * ⚠️ AUDIT METADATA CONTEXT MARKER ⚠️
  * If you re-run this script in a NEW PR context (e.g., a future Build
@@ -233,7 +240,15 @@ interface SeedAmPrepItem {
 
 // Section column conventions per C.18 + lib/types.ts PrepColumn JSDoc.
 const VEG_COLUMNS: PrepColumn[] = ["par", "on_hand", "back_up", "total"];
-const COOKS_COLUMNS: PrepColumn[] = ["par", "on_hand", "total"];
+// Cooks: BACK UP column added Build #2 PR 1 follow-up per Juan smoke.
+// Original shape was ["par", "on_hand", "total"] (no BACK UP); the
+// addition unlocks auto-calc TOTAL = ON HAND + BACK UP per the
+// multi-day batch semantic — BACK UP captures "what's left from prior
+// batches still service-ready," so the sum represents total
+// service-ready quantity across active days. Earlier Q-A1 "Cooks
+// stays manual" decision was based on the column-less shape and is
+// superseded by this column addition.
+const COOKS_COLUMNS: PrepColumn[] = ["par", "on_hand", "back_up", "total"];
 const SIDES_COLUMNS: PrepColumn[] = ["par", "portioned", "back_up", "total"];
 const SAUCES_COLUMNS: PrepColumn[] = ["par", "line", "back_up", "total"];
 const SLICING_COLUMNS: PrepColumn[] = ["par", "line", "back_up", "total"];
@@ -531,7 +546,7 @@ async function seedForLocation(
         destructive: false,
         metadata: {
           phase: "3_module_1_build_2_pr_1",
-          reason: "Standard AM Prep v1 — initial seed",
+          reason: "Cooks BACK UP column addition for multi-day batch TOTAL semantic",
           sync_method: "seed_script",
           script_path: "scripts/seed-am-prep-template.ts",
           location_id: locationId,
