@@ -346,12 +346,19 @@ export interface ChecklistTemplate {
  * `label`/`description`/`station` columns remain the en source-of-truth
  * AND the system-key for any matching/grouping logic — translations
  * resolve at render time only via lib/i18n/content.ts resolveTemplateItemContent.
+ *
+ * `specialInstruction` translates `prepMeta.specialInstruction` (NOT a
+ * top-level column). This is currently the only field where the
+ * source-of-truth lives in nested JSONB rather than a top-level column;
+ * resolveTemplateItemContent reaches into prep_meta for the fallback so
+ * the caller's contract stays uniform.
  */
 export type ChecklistTemplateItemTranslations = {
   [language in "en" | "es"]?: {
     label?: string;
     description?: string | null;
     station?: string | null;
+    specialInstruction?: string | null;
   };
 };
 

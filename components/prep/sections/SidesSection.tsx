@@ -70,7 +70,7 @@ export function SidesSection({ templateItems, rawValues, onChange, disabled, err
             label={resolved.label}
             parValue={meta.parValue}
             parUnit={meta.parUnit}
-            specialInstruction={meta.specialInstruction}
+            specialInstruction={resolved.specialInstruction}
             inputColumns={INPUT_COLUMNS}
             rawInputs={rawValues[item.id] ?? {}}
             onChange={onChange}
