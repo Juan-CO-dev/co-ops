@@ -908,27 +908,128 @@ Captured during Phase 3 Build #2 PR 1 architectural conversation when trainer-vs
 
 ---
 
-## C.46 — Submitted reports should support KH+ post-submission updates with attribution
+## C.46 — Submitted reports support post-submission updates with attribution (chained, capped, role+status-gated)
 
 **Date added:** 2026-05-04
-**Spec sections:** §2.5 (immutable completions), C.42 (reports architecture), C.18 (prep workflow)
+**Date updated:** 2026-05-04 (full architecture locked between Build #2 PR 2 merge and PR 3 implementation)
+**Spec sections:** §2.5 (immutable completions, supersede-by-recency), C.18 (prep workflow), C.19 (closing as anchor), C.42 (reports architecture)
 
-**What spec says:** §2.5 establishes immutable completions; corrections via supersede-by-recency. C.42 documents the reports architecture but doesn't specify a post-submission edit flow.
+**What spec says:** §2.5 establishes immutable completions with corrections via supersede-by-recency. C.42 documents the reports architecture and the auto-completion mechanic but doesn't specify a post-submission edit flow.
 
-**What built reality should be:** when a report (AM Prep, eventually opening, cash, etc.) has been submitted and is in read-only state, KH+ users should have an edit affordance to update values with attribution. Pattern:
+**What built reality should be:** when a report (AM Prep first; opening, cash, mid-day prep, etc. inherit) has been submitted, original submitters and KH+ users have an edit affordance to update values with chained attribution preserving the original action plus every update in sequence.
 
-- Edit affordance visible on read-only state for KH+ users
-- Tapping edit reopens the form with current values populated
-- Submission creates a new completion row that supersedes the prior (per §2.5)
-- Attribution metadata captures: `original_completed_by`, `original_completed_at`, `updated_by`, `updated_at`, `update_reason` (optional free-form)
-- Read-only banner becomes: "Submitted by Cristian at 9:47 PM, updated by Juan at 10:23 PM"
-- Audit trail captures the update event with full prior + new values
+The architecture below was locked after Build #2 PR 2's merge. Build #2 PR 3 implements C.46 for AM Prep specifically; future report-type PRs (Cash Report, Opening Report, Mid-day Prep) inherit the schema additions, RPC pattern, audit shape, and UI affordance pattern, with each report type defining its own per-report access rules in lib code.
 
-**Why:** real operational reality — closer or another KH+ catches errors after submitting. Re-submitting a "fresh" report loses attribution to the original action; in-place corrections lose the immutable-history guarantee. Supersede-by-recency preserves both.
+### A1 — Edit access rules
 
-**v1.3 action:** implement in Build #2 PR 2 (next PR after PR 1's vertical slice). Architecture should generalize across all report types (AM Prep, opening, cash, mid-day prep, etc.) — not AM Prep-specific. Worth dedicated design conversation when Build #2 PR 2 scopes.
+- **Original submitter** (regardless of role-level) can edit while the closing instance status is `open`. On closing finalization (status flips to `confirmed`), assigned sub-KH+ submitters lose edit access.
+- **KH+ users** (`role_level >= 3` per C.41 reconciliation) can edit anytime, regardless of closing status, until the edit cap is reached.
+- **Sub-KH+ non-submitters** never have edit access.
 
-Captured during Phase 3 Build #2 PR 1 smoke test from Juan's operational feedback ("the closing manager that day KH+ should be able to update the report with a updated by tag and time etc.").
+**Edit cap:** 3 total updates per submission chain (not per-actor). Original submission + 3 updates = 4 entries maximum. After the 3rd update lands, the form locks permanently to read-only for everyone — no further edits, regardless of role.
+
+The cap is intentional: unlimited update churn would erode the operational signal of a "submitted" report; 3 updates is enough headroom for typical correction workflows (closer catches their own error; another KH+ catches a missed line; final reconciliation pass) without becoming a full collaborative-editing surface.
+
+### A2 — Edit affordance placement
+
+- **Original submitter** sees "Edit" affordance on:
+  - Dashboard AM Prep tile (until closing is finalized; then the affordance hides for sub-KH+ submitters)
+  - Closing checklist's report-reference item (until closing is finalized; same gate)
+- **Other KH+ users** (didn't submit) see "Edit" only on the closing checklist's report-reference item (the tile is action-oriented for "what should I do today"; KH+ users who didn't submit didn't action it today, so no tile-side surface).
+- **Sub-KH+ users who didn't submit** see no edit affordance — view-only from dashboard tile.
+
+### A3 — Edit mode UX
+
+- Tapping "Edit" navigates to `/operations/am-prep` (same page as fresh submission)
+- Form mounts in editable mode with all 32 required entries pre-populated with the current chain-resolved values
+- Submit CTA label changes from "Submit AM Prep" to "Update AM Prep"
+- Banner above the form reads "Editing AM Prep submitted by [name] at [time]" — distinct from the read-only mode banner so the operator knows they're in edit mode, not just viewing
+- Cancel button explicit (matches Build #2 PR 1's discard-changes pattern); returns to read-only mode without saving
+- On update success, banner becomes the chained attribution: `"Submitted by Cristian at 9:47 PM, updated by Sam at 10:00 PM, updated by Juan at 10:23 PM"`
+
+### A4 — Closing-side rendering
+
+- The closing checklist's auto-completed AM Prep List item does NOT supersede on AM Prep edit. The existing closing completion row stays in place (FK preserved; auto_complete_meta still references the original AM Prep submission).
+- Closing-side rendering reads the AM Prep submission chain dynamically at render time (Server Component). One extra query against `checklist_submissions` for today's AM Prep chain; cached at the Server Component render boundary.
+- ReportReferenceItem renders the chained attribution: `"AM Prep List ✓ — submitted by [name] at [time], updated by [name] at [time], updated by [name] at [time]"` — same comma-separated chain pattern as the AM Prep page's banner.
+
+### A5 — Schema additions
+
+```sql
+-- checklist_completions
+ALTER TABLE checklist_completions ADD COLUMN original_completion_id UUID NULL
+  REFERENCES checklist_completions(id);
+ALTER TABLE checklist_completions ADD COLUMN edit_count INTEGER NOT NULL DEFAULT 0;
+-- original_completion_id is NULL for the original (chain head); FK for every update.
+-- edit_count is 0 for original, 1-3 for updates (cap enforced in RPC).
+
+-- checklist_submissions
+ALTER TABLE checklist_submissions ADD COLUMN original_submission_id UUID NULL
+  REFERENCES checklist_submissions(id);
+ALTER TABLE checklist_submissions ADD COLUMN edit_count INTEGER NOT NULL DEFAULT 0;
+-- Same chain pattern.
+```
+
+No closing-side schema additions: closing reads the AM Prep chain dynamically per A4. Avoids the supersede-cascade complexity that would arise if the closing's auto-complete row had to track the chain too.
+
+### A6 — RPC changes
+
+Extend the existing `submit_am_prep_atomic` RPC with an `is_update: boolean` parameter:
+
+- **`is_update = false`** (existing behavior): creates AM Prep completions + submission row + flips instance to `confirmed` + auto-completes closing's report-reference item. All in one transaction.
+- **`is_update = true`** (new): validates edit cap not exceeded + role+status access check; creates new completions linked to the original chain via `original_completion_id`; creates new submission row with `edit_count = previous + 1`; emits `report.update` audit row; does NOT change instance status (stays `confirmed`); does NOT touch closing's auto-complete row (preserves A4 dynamic-read pattern).
+
+Atomicity guarantees stay in a single RPC call. No client-side multi-call orchestration needed.
+
+### A7 — Audit shape
+
+Action: `report.update` (generalized across all report types per A9). Standard destructive-action pattern (auto-derived `destructive=true` via `lib/destructive-actions.ts`).
+
+```ts
+metadata: {
+  report_type: "am_prep",                    // generalizes to "cash_report" | "opening_report" | etc.
+  report_instance_id: string,                // checklist_instances.id
+  original_submission_id: string,            // chain head
+  original_completed_by: string,             // user_id of original submitter
+  original_completed_at: string,             // ISO timestamp
+  updated_by: string,                        // user_id of the actor who triggered this update
+  updated_at: string,                        // ISO timestamp
+  edit_count: number,                        // 1-3
+  changed_fields: string[],                  // e.g., ["onHand:tuna_salad", "yesNo:cook_bacon"]
+}
+```
+
+`changed_fields` shape captures both the field name and the template_item_id slug for forensic trace. Operationally invaluable when reconciling discrepancies post-shift.
+
+### A8 — Typed errors
+
+Two new errors in `lib/prep.ts` (joining the existing `PrepRoleViolationError`, `PrepInstanceNotOpenError`, etc.):
+
+- `ChecklistEditLimitExceededError` → 422 response with `code: "edit_limit_exceeded"` (chain already at edit_count=3; no further updates accepted)
+- `ChecklistEditAccessDeniedError` → 403 response with `code: "edit_access_denied"` — covers two underlying scenarios surfaced through one error code:
+  - Sub-KH+ submitter trying to edit after closing finalized
+  - Sub-KH+ non-submitter trying to edit (no submission attribution + no KH+ override)
+
+Existing typed errors (PrepRoleViolationError, PrepInstanceNotOpenError, etc.) still apply where their semantics still hold.
+
+### A9 — Generalization commitment
+
+This amendment captures the **canonical pattern** for post-submission update support across all CO-OPS report types:
+
+- **Schema additions** (`original_*_id` + `edit_count`) reused on every report's submissions/completions tables
+- **RPC pattern** (`is_update` parameter; chain-link + edit-cap enforcement; preserve auto-complete artifacts) reused for every report's submission RPC
+- **Audit shape** (`report.update` action with `report_type` discriminator) reused for every report
+- **UI affordance pattern** (Edit button on tile + closing-ref item; "Editing..." banner; "Update X" CTA; chained attribution rendering) reused
+
+**Per-report rules vary** (Cash Report's edit access might differ from AM Prep's; the assigned-submitter-loses-access-on-finalization rule may not apply to every report type). Each report type defines its own access predicate in lib code. But the architectural primitives are shared infrastructure.
+
+**Build #2 PR 3 ships AM Prep only.** Future report-type implementations (Cash Report, Opening Report, Mid-day Prep) inherit C.46 via this amendment; they do not re-debate the architecture.
+
+**Why:** real operational reality — closer or another KH+ catches errors after submitting. Re-submitting a "fresh" report loses attribution to the original action; in-place corrections lose the immutable-history guarantee. Supersede-by-recency with capped chained attribution preserves the original signal, the correction trail, and the operational dignity of the "submitted" state.
+
+**v1.3 action:** implement C.46 in Build #2 PR 3 (next PR after PR 2's TZ + required-fields validation). Schema additions + RPC update + lib edit-access + API extension + AmPrepForm edit mode + Dashboard tile edit affordance + ReportReferenceItem edit affordance + chained attribution + 2 new typed errors + new translations + `report.update` audit emission. The future generalization to other report types references this amendment as the locked canonical pattern; per-report-type access rules captured at each implementation PR.
+
+Captured during Phase 3 Build #2 PR 1 smoke test from Juan's operational feedback ("the closing manager that day KH+ should be able to update the report with a updated by tag and time etc."); architecture locked between Build #2 PR 2 merge and PR 3 implementation.
 
 ---
 
