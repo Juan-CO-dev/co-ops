@@ -10,10 +10,15 @@
  *
  *   400 prep_shape          — caller-driven shape error in entries/inputs
  *   403 prep_role_violation — actor below AM_PREP_BASE_LEVEL AND no assignment
+ *   403 edit_access_denied  — sub-KH+ user attempting unauthorized edit
+ *                             (C.46 A8; reason discriminator distinguishes
+ *                             closing_finalized_for_submitter vs
+ *                             not_submitter_and_not_kh)
  *   409 prep_instance_not_open — concurrent confirm or instance state changed
  *   422 prep_auto_complete_failed — request well-formed, precondition not met
  *                                   (closing instance doesn't exist for the date;
  *                                   client should start closing first then re-submit)
+ *   422 edit_limit_exceeded — chain at edit_count=3 cap (C.46 A8)
  *   500 prep_invariant      — lib-internal narrowing assertion (server bug; never
  *                             reaches user under normal conditions)
  *   500 internal_error      — unmatched/unexpected lib error (shouldn't happen)
@@ -25,6 +30,8 @@
  */
 
 import {
+  ChecklistEditAccessDeniedError,
+  ChecklistEditLimitExceededError,
   PrepAutoCompleteError,
   PrepError,
   PrepInstanceNotOpenError,
@@ -55,6 +62,19 @@ export function mapPrepError(err: PrepError): NextResponse {
       message: err.message,
       prep_instance_id: err.prepInstanceId,
       closing_item_template_item_id: err.closingItemTemplateItemId,
+    });
+  }
+  if (err instanceof ChecklistEditLimitExceededError) {
+    return jsonError(422, err.code, {
+      message: err.message,
+      original_submission_id: err.originalSubmissionId,
+      current_edit_count: err.currentEditCount,
+    });
+  }
+  if (err instanceof ChecklistEditAccessDeniedError) {
+    return jsonError(403, err.code, {
+      message: err.message,
+      reason: err.reason,
     });
   }
   if (err instanceof PrepShapeError) {
