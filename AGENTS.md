@@ -451,6 +451,49 @@ The proper system-wide pattern (C.38-style resolver for registry content) is def
 
 When adding a new `RoleCode` value to `lib/roles.ts`: also add `role.<new_code>` keys to BOTH `lib/i18n/en.json` and `lib/i18n/es.json` in the same PR. Dashboard's tactical inline lookup will pick them up automatically. Captured during Build #1.5 PR 5d.
 
+### Ship-complete principle (Build #1.5 norm)
+
+Always finish things fully before moving on, unless architecturally better to defer. Default is ship-complete; partial scope must clear the architectural-deferral bar.
+
+Legitimate defers (cleared the bar): Module #2 user lifecycle (different operational tempo, deserves its own design conversation per C.34); Module #3 content/social media (orthogonal domain per C.36); multi-tier notes visibility (waiting on real-usage feedback per C.27); system-wide registry-translation pattern (deserves architectural conversation alongside vendor items / recipes / training, per C.38 footnote and PR 5d's tactical role-label lookup).
+
+NOT legitimate defers (don't clear the bar): "translate dashboard later" while shipping translated closing flow (creates the same partial-translation gap that C.37 was created to prevent — surfaced in Juan's PR 5c smoke test as a real UX regression and corrected via PR 5d). "Translate UI scaffolding but skip DB content" (surfaced in Juan's PR 5a smoke test as another partial-translation gap and corrected via PR 5c).
+
+The bar question: would shipping this partial state recreate a gap a prior amendment was created to prevent? If yes, defer is illegitimate — finish the scope. If the deferred piece is architecturally distinct (different module, different data model, different operational tempo, requires its own design conversation), the defer is legitimate.
+
+Captured during Build #1.5 closing after the partial-translation pattern surfaced twice and Juan locked the principle as a working norm going forward.
+
+### System-key vs display-string discipline (Build #1.5 architectural rule)
+
+For any field that's both a business key (used for matching/grouping/gate logic) AND user-visible content (rendered to the user), keep the original field as the English source-of-truth and translate at render time only. NEVER use translated strings for matching keys.
+
+Canonical example: `it.station === "Walk-Out Verification"` — the Walk-Out Verification finalize gate matches against the English `station` column. A Spanish-language user's resolved `"Verificación de Salida"` would NOT equal the English constant, and the finalize affordance would never unlock for them. Translation happens at render time only via `lib/i18n/content.ts` resolveTemplateItemContent.
+
+Future translatable content (vendor items, recipes, training, prep templates, anything DB-stored) follows the same pattern: original column = system source-of-truth + match key; resolver returns display string from translations blob with fallback to original. Inline comments at every callsite where business-key matching could be confused with display.
+
+Five guarded sites today (per C.38 + PR 5c review): `groupByStation` callsite; `walkOutVerificationComplete` Walk-Out gate; `data-station={station}` IntersectionObserver attribute; `StationGroup` props split (`station` system key vs `stationDisplay` translated); `ChecklistItem` resolver call positioning.
+
+Captured during Build #1.5 PR 5c after Juan flagged the architectural risk during design surfacing; reaffirmed as a CO-OPS architectural rule for all future translatable DB content.
+
+### Smoke test as architectural finder (Build #1.5 norm)
+
+First-shift production use of new features surfaces architectural gaps that didn't appear in design or implementation. Build #1.5 surfaced three such finds via Juan's smoke testing:
+- Revoke/tag accountability architecture (Cristian's first-shift use revealed the operational need for both two-window revocation AND accountability tagging — became C.28 and PRs 1–2)
+- Dashboard translation gap (Juan's PR 5a smoke test revealed UserMenu was closing-page-only, language toggle inaccessible from dashboard — became PR 5b refactor)
+- Template-item content translation gap (Juan's PR 5b smoke test revealed UI scaffolding translated but DB content still English — became C.38 and PR 5c)
+
+Treat operational smoke-test reports as potential architectural finds, not just bugs. The default response when Juan reports something feels off after smoke is: pause, surface architectural read first, only proceed to bug-fix if the architectural read confirms it's truly a bug rather than a design gap. The pattern of "small UX issue surfacing larger architectural problem" repeats; design loops include smoke testing as a first-class architectural-discovery step, not just a verification step.
+
+Captured during Build #1.5 closing after the three-finds pattern repeated.
+
+### Handoff doc as session artifact (Build #1.5 norm)
+
+End-of-major-milestone handoff docs live at `docs/PHASE_X_BUILD_Y_HANDOFF.md` and capture: where we are (PR-by-PR shipped status), architectural model (the conceptual primitives a fresh session needs to internalize), build sequence (what shipped, what's remaining, what's deferred), spec amendments referenced (clustered numerical IDs from the build), exact production identifiers (URLs, project refs, location IDs, template IDs, account IDs), working rhythm (preserved across builds), next session pickup (numbered actionable steps). Build #1.5 reaffirmed this pattern via `docs/PHASE_3_BUILD_1.5_HANDOFF.md` shipped before PR 6 to give the next session a clean cold-start surface.
+
+Pattern to maintain: write the handoff at major milestones (end of build, end of phase, end of session if work is mid-build), and link cross-references between handoffs (Build #1 handoff → Build #1.5 handoff → Build #2 handoff, etc.) so a fresh session can read the most recent handoff first and walk back as needed for full context. Direct push to main (no PR) is the intended path for handoff docs — they're documentation, not feature work.
+
+Captured during Build #1.5 closing.
+
 ### Authed layout redirect path is currently static (after Build #1.5 PR 5b)
 
 The `(authed)` layout calls `requireSessionFromHeaders("/dashboard")` for the auth boundary. On auth denial, all routes in the group redirect to `/?next=/dashboard` regardless of the original target. This loses deep-link intent for users who hit `/operations/closing` (or future paths) directly while unauthenticated — the layout's auth call runs FIRST and redirects before the page-level auth call (which would carry the correct path) ever executes.
