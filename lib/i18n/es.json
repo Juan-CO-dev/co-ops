@@ -30,6 +30,8 @@
   "closing.role_short.shift_lead": "SL",
   "closing.role_short.key_holder": "KH",
   "closing.role_short.trainer": "Entrenador",
+  "closing.role_short.employee": "Empleado",
+  "closing.role_short.trainee": "Aprendiz",
 
   "closing.row.undo": "Deshacer",
   "closing.row.tag": "Asignar",
@@ -202,5 +204,7 @@
   "role.catering_mgr": "Gerente de Catering",
   "role.shift_lead": "Líder de Turno",
   "role.key_holder": "Encargado de Llaves",
-  "role.trainer": "Entrenador"
+  "role.trainer": "Entrenador",
+  "role.employee": "Empleado",
+  "role.trainee": "Aprendiz"
 }

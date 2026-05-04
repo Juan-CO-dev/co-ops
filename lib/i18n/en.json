@@ -30,6 +30,8 @@
   "closing.role_short.shift_lead": "SL",
   "closing.role_short.key_holder": "KH",
   "closing.role_short.trainer": "Trainer",
+  "closing.role_short.employee": "Employee",
+  "closing.role_short.trainee": "Trainee",
 
   "closing.row.undo": "Undo",
   "closing.row.tag": "Tag",
@@ -202,5 +204,7 @@
   "role.catering_mgr": "Catering Manager",
   "role.shift_lead": "Shift Lead",
   "role.key_holder": "Key Holder",
-  "role.trainer": "Trainer"
+  "role.trainer": "Trainer",
+  "role.employee": "Employee",
+  "role.trainee": "Trainee"
 }

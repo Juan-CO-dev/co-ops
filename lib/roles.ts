@@ -15,7 +15,9 @@ export type RoleCode =
   | "catering_mgr"
   | "shift_lead"
   | "key_holder"
-  | "trainer";
+  | "trainer"
+  | "employee"
+  | "trainee";
 
 export interface RoleDefinition {
   code: RoleCode;
@@ -41,6 +43,9 @@ export const ROLES: Record<RoleCode, RoleDefinition> = {
   shift_lead:   { code: "shift_lead",   label: "Shift Lead",              shortLabel: "SL",  level: 4,   color: "#8B5CF6", hasEmailAuth: false, canAdmin: false },
   key_holder:   { code: "key_holder",   label: "Key Holder",              shortLabel: "KH",  level: 3,   color: "#F59E0B", hasEmailAuth: false, canAdmin: false },
   trainer:      { code: "trainer",      label: "Trainer",                 shortLabel: "TR",  level: 3,   color: "#EC4899", hasEmailAuth: false, canAdmin: false },
+  // Color picks for employee/trainee are tactical neutrals; revisit alongside brand-book role-color system formalization in Module #2 work.
+  employee:     { code: "employee",     label: "Employee",                shortLabel: "EMP", level: 3,   color: "#0EA5E9", hasEmailAuth: false, canAdmin: false },
+  trainee:      { code: "trainee",      label: "Trainee",                 shortLabel: "TRN", level: 2,   color: "#94A3B8", hasEmailAuth: false, canAdmin: false },
 };
 
 export function getRoleLevel(code: RoleCode): number {
