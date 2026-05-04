@@ -586,3 +586,5 @@ Captured during Build #2 PR 1 Part 2 follow-up when AmPrepForm's `formatTime` he
 
 Future formatting helpers (date pickers, timestamp displays, duration strings, anywhere a `Intl.DateTimeFormat` or `toLocale*` call lands): take `language: Language` as a parameter and pass it explicitly.
 
+**Duplication watch:** as of Build #2 PR 1 dashboard tile commit, the `formatTimeForLanguage` (or equivalent inline helper) is duplicated across 4 modules: `app/(authed)/operations/closing/page.tsx`, `app/(authed)/operations/closing/closing-client.tsx` (browser-locale outlier — see canonical-pattern note above), `components/prep/AmPrepForm.tsx`, and `app/(authed)/dashboard/page.tsx`. Each module keeps its own inline copy per the codebase's "self-contained module" convention. **Defer the lift to `lib/i18n/format.ts` until a 5th site needs the helper** — that's the friction signal that the duplication has crossed the line into worth-extracting. Same applies to `formatDateLabel` for date-only strings (currently 1 site in dashboard).
+

@@ -31,8 +31,10 @@ import { ROLES } from "@/lib/roles";
 import { accessibleLocations, type LocationActor } from "@/lib/locations";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
+import { loadAmPrepDashboardState } from "@/lib/prep";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import type { ChecklistInstance } from "@/lib/types";
 
 const OPERATIONAL_TZ = "America/New_York";
 
@@ -317,6 +319,21 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     ? await loadOperationalState(sb, selectedLocation.id)
     : null;
 
+  // AM Prep dashboard tile state — slim shape distinct from
+  // /operations/am-prep page's loadAmPrepState. Only loads what the tile
+  // needs (template existence, today's instance status + confirmedBy
+  // name, assignment + assigner name for sub-KH+ users). Sub-KH+
+  // assignment lookup short-circuits inside the function via
+  // actor.level >= AM_PREP_BASE_LEVEL gate.
+  const amPrepDashboard =
+    selectedLocation && operational
+      ? await loadAmPrepDashboardState(sb, {
+          locationId: selectedLocation.id,
+          date: operational.todayDate,
+          actor: { userId: auth.user.id, role: auth.role, level: auth.level },
+        })
+      : null;
+
   const allLocationsBadge = auth.level >= 7 && auth.locations.length === 0;
 
   return (
@@ -421,6 +438,29 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         ) : (
           <NoLocationsState language={language} />
         )}
+
+        {/* Reports section — renders only when at least one tile is visible
+         * to the actor. Per C.42: dashboard tiles are action-oriented for
+         * today's operations; the reports HUB (historical browse) is a
+         * separate page that ships in a Build #2 follow-up PR.
+         *
+         * Tile visibility predicate per C.42 + C.41:
+         *   - actor.level >= AM_PREP_BASE_LEVEL (3, KH+ post-C.41), OR
+         *   - active report_assignments row for (user, am_prep, location, today)
+         *
+         * Sub-KH+ users without an assignment see no Reports section at all
+         * (no empty placeholder). Future tiles (Mid-day Prep, Cash report,
+         * Opening report, Special, Training) plug into the same section
+         * under their own visibility predicates. */}
+        {selectedLocation && amPrepDashboard?.isVisibleToActor ? (
+          <ReportsSection language={language}>
+            <AmPrepTile
+              location={selectedLocation}
+              state={amPrepDashboard}
+              language={language}
+            />
+          </ReportsSection>
+        ) : null}
 
         <div className="flex justify-center">
           <LogoutButton />
@@ -598,6 +638,213 @@ function NoLocationsState({ language }: { language: Language }) {
       </p>
     </section>
   );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Reports section + tiles (per SPEC_AMENDMENTS.md C.42)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Container for action-oriented report tiles (per C.42 dashboard surface).
+ * Renders a Mustard-deep accent header above the stacked tiles. Caller is
+ * responsible for the "at least one tile visible" predicate before
+ * mounting this — the section itself doesn't render an empty state because
+ * sub-KH+ users without any assignments should see no Reports section at
+ * all (not an empty placeholder).
+ *
+ * Future report tiles (Mid-day Prep, Cash, Opening, Special, Training)
+ * plug in as siblings inside the children prop, each gated by their own
+ * loadXxxDashboardState predicate.
+ */
+function ReportsSection({
+  language,
+  children,
+}: {
+  language: Language;
+  children: React.ReactNode;
+}) {
+  return (
+    <section
+      aria-label={serverT(language, "dashboard.reports.heading")}
+      className="flex flex-col gap-3"
+    >
+      <h3
+        className="
+          inline-block self-start text-lg font-bold uppercase tracking-[0.14em] text-co-text
+          border-b-2 border-co-gold-deep pb-0.5
+        "
+      >
+        {serverT(language, "dashboard.reports.heading")}
+      </h3>
+      <div className="flex flex-col gap-3">{children}</div>
+    </section>
+  );
+}
+
+interface AmPrepTileState {
+  hasTemplate: boolean;
+  todayInstance: {
+    id: string;
+    status: ChecklistInstance["status"];
+    confirmedAt: string | null;
+    confirmedBy: string | null;
+  } | null;
+  confirmedByName: string | null;
+  assignment: {
+    assignmentId: string;
+    note: string | null;
+    assignerId: string;
+    assignerName: string;
+  } | null;
+  isVisibleToActor: boolean;
+}
+
+/**
+ * AM Prep dashboard tile — three visual states (not started / in progress
+ * / submitted) driven by today's instance status, plus an optional
+ * assignment indicator below the CTA when the actor is sub-KH+ and has
+ * an active assignment.
+ *
+ * Always-tappable: tapping navigates to /operations/am-prep?location=<id>
+ * regardless of state. The destination page handles state-specific
+ * rendering (form / read-only banner / no-template empty state). Better
+ * UX than disabling the tile — closer/manager always sees an explanation
+ * via the page's banner.
+ *
+ * Status-driven CTA + subtitle (per locked surface decision):
+ *   - status: undefined (no instance)  → "Start AM Prep" + "Not yet started" — primary fill
+ *   - status: 'open'  (in progress)    → "Continue AM Prep" + "In progress" — review outline
+ *   - status: 'confirmed' (submitted)  → "View AM Prep" + "Submitted at {time} by {name}" — review outline
+ *   - hasTemplate: false                → no CTA, "AM Prep template not configured" subtitle
+ */
+function AmPrepTile({
+  location,
+  state,
+  language,
+}: {
+  location: LocationLite;
+  state: AmPrepTileState;
+  language: Language;
+}) {
+  // No-template branch — render the tile but without a CTA. Operator
+  // contacts a manager to seed the template; until then the tile is
+  // informational only.
+  if (!state.hasTemplate) {
+    return (
+      <section
+        aria-label={serverT(language, "dashboard.am_prep.aria", {
+          status: serverT(language, "dashboard.am_prep.no_template"),
+        })}
+        className="rounded-2xl border-2 border-co-border bg-co-surface p-5 shadow-sm sm:p-6"
+      >
+        <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
+          {serverT(language, "dashboard.am_prep.tile_label")}
+        </p>
+        <p className="mt-2 text-sm text-co-text-muted italic">
+          {serverT(language, "dashboard.am_prep.no_template")}
+        </p>
+      </section>
+    );
+  }
+
+  // Status-driven copy + CTA tone.
+  type CtaTone = "primary" | "review";
+  const status = state.todayInstance?.status;
+  const subtitle: string = (() => {
+    if (!state.todayInstance) {
+      return serverT(language, "dashboard.am_prep.status_not_started");
+    }
+    if (status === "open") {
+      return serverT(language, "dashboard.am_prep.status_in_progress");
+    }
+    // confirmed / incomplete_confirmed (incomplete_confirmed is type-
+    // reachable but operationally unreachable for AM Prep per RPC atomic
+    // write — same defensive coverage as AmPrepForm.tsx).
+    const time = state.todayInstance.confirmedAt
+      ? formatTimeForLanguage(state.todayInstance.confirmedAt, language)
+      : "";
+    const name = state.confirmedByName ?? "—";
+    return serverT(language, "dashboard.am_prep.status_submitted", { time, name });
+  })();
+
+  const ctaLabel: string = (() => {
+    if (!state.todayInstance) return serverT(language, "dashboard.am_prep.cta_start");
+    if (status === "open") return serverT(language, "dashboard.am_prep.cta_continue");
+    return serverT(language, "dashboard.am_prep.cta_view");
+  })();
+
+  const ctaTone: CtaTone = !state.todayInstance ? "primary" : "review";
+  const ctaClasses =
+    ctaTone === "primary"
+      ? "border-2 border-co-text bg-co-gold text-co-text hover:bg-co-gold-deep"
+      : "border-2 border-co-border-2 bg-co-surface text-co-text hover:border-co-text";
+
+  return (
+    <section
+      aria-label={serverT(language, "dashboard.am_prep.aria", { status: subtitle })}
+      className="rounded-2xl border-2 border-co-border bg-co-surface p-5 shadow-sm sm:p-6"
+    >
+      <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-co-text-dim">
+        {serverT(language, "dashboard.am_prep.tile_label")}
+      </p>
+
+      <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex flex-col gap-1">
+          <p className="text-base font-semibold text-co-text">{subtitle}</p>
+          {/* Assignment indicator — separate italic line per locked design.
+           * Only renders when the tile is visible solely BECAUSE of an
+           * active assignment (sub-KH+ user). KH+ users always have base
+           * access; assignment field is null for them regardless. */}
+          {state.assignment ? (
+            <>
+              <p className="text-[12px] italic text-co-text-muted">
+                {serverT(language, "dashboard.am_prep.assigned_by", {
+                  name: state.assignment.assignerName,
+                })}
+              </p>
+              {state.assignment.note ? (
+                <p className="text-[12px] italic text-co-text-dim">
+                  {serverT(language, "dashboard.am_prep.assigned_by_note", {
+                    note: state.assignment.note,
+                  })}
+                </p>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+
+        <Link
+          href={`/operations/am-prep?location=${location.id}`}
+          className={[
+            "inline-flex min-h-[48px] items-center justify-center rounded-md",
+            "px-5 text-sm font-bold uppercase tracking-[0.12em]",
+            "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
+            ctaClasses,
+          ].join(" ")}
+        >
+          {ctaLabel}
+        </Link>
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Language-aware time formatter (per AGENTS.md "Language-aware time/date
+ * formatting" canonical pattern). Uses es-US when language === "es",
+ * en-US otherwise. Mirrors AmPrepForm's formatTime; defined locally here
+ * so the dashboard module stays self-contained without a cross-component
+ * util import.
+ */
+function formatTimeForLanguage(iso: string, language: Language): string {
+  try {
+    return new Date(iso).toLocaleTimeString(
+      language === "es" ? "es-US" : "en-US",
+      { hour: "numeric", minute: "2-digit" },
+    );
+  } catch {
+    return "";
+  }
 }
 
 function WarningIcon() {

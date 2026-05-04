@@ -845,6 +845,170 @@ export async function loadAssignmentForToday(
 }
 
 /**
+ * Slim shape loader for the dashboard AM Prep tile. Distinct from
+ * loadAmPrepState (which loads templateItems + completions for the page
+ * surface) and loadAssignmentForToday (which is just the assignment row).
+ *
+ * Returns ONLY what the tile needs to render:
+ *   - hasTemplate: drives the "no_template" tile state
+ *   - todayInstance: drives the three visual states (not started / in
+ *     progress / submitted) via instance.status
+ *   - confirmedByName: pre-resolved name for the "Submitted at {time} by
+ *     {name}" subtitle
+ *   - assignment: pre-resolved with assigner name for the assignment
+ *     indicator on sub-KH+ tiles
+ *   - isVisibleToActor: hasBaseAccess || (assignment !== null) — single
+ *     truth value for the dashboard's "should the tile render" gate
+ *
+ * The assignment join + assignerName lookup ONLY fire for sub-KH+ users
+ * (caller passes in the actor.level and the function short-circuits
+ * the assignment query when level >= AM_PREP_BASE_LEVEL). KH+ users
+ * always have base access; the assignment field comes back as null for
+ * them regardless of whether one exists in the DB.
+ *
+ * Does NOT load templateItems or completions — that's loadAmPrepState's
+ * job for the page surface.
+ */
+export async function loadAmPrepDashboardState(
+  service: SupabaseClient,
+  args: {
+    locationId: string;
+    date: string;
+    actor: PrepActor;
+  },
+): Promise<{
+  hasTemplate: boolean;
+  todayInstance: {
+    id: string;
+    status: ChecklistInstance["status"];
+    confirmedAt: string | null;
+    confirmedBy: string | null;
+  } | null;
+  confirmedByName: string | null;
+  assignment: {
+    assignmentId: string;
+    note: string | null;
+    assignerId: string;
+    assignerName: string;
+  } | null;
+  isVisibleToActor: boolean;
+}> {
+  // Resolve active prep template for this location.
+  const { data: tmplRow, error: tmplErr } = await service
+    .from("checklist_templates")
+    .select("id")
+    .eq("location_id", args.locationId)
+    .eq("type", "prep")
+    .eq("active", true)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ id: string }>();
+  if (tmplErr) throw new Error(`loadAmPrepDashboardState: load template: ${tmplErr.message}`);
+
+  const hasTemplate = tmplRow !== null;
+
+  // Today's instance (if any). No get-or-create — dashboard reads only.
+  let todayInstance: {
+    id: string;
+    status: ChecklistInstance["status"];
+    confirmedAt: string | null;
+    confirmedBy: string | null;
+  } | null = null;
+  let confirmedByName: string | null = null;
+
+  if (hasTemplate && tmplRow) {
+    const { data: instRow, error: instErr } = await service
+      .from("checklist_instances")
+      .select("id, status, confirmed_at, confirmed_by")
+      .eq("template_id", tmplRow.id)
+      .eq("location_id", args.locationId)
+      .eq("date", args.date)
+      .maybeSingle<{
+        id: string;
+        status: ChecklistInstance["status"];
+        confirmed_at: string | null;
+        confirmed_by: string | null;
+      }>();
+    if (instErr) throw new Error(`loadAmPrepDashboardState: load instance: ${instErr.message}`);
+
+    if (instRow) {
+      todayInstance = {
+        id: instRow.id,
+        status: instRow.status,
+        confirmedAt: instRow.confirmed_at,
+        confirmedBy: instRow.confirmed_by,
+      };
+
+      // Resolve confirmedBy name for the subtitle ("Submitted at {time} by
+      // {name}"). Single user lookup — cheap.
+      if (instRow.confirmed_by) {
+        const { data: userRow, error: userErr } = await service
+          .from("users")
+          .select("name")
+          .eq("id", instRow.confirmed_by)
+          .maybeSingle<{ name: string }>();
+        if (userErr) {
+          throw new Error(`loadAmPrepDashboardState: load confirmer name: ${userErr.message}`);
+        }
+        confirmedByName = userRow?.name ?? null;
+      }
+    }
+  }
+
+  // Assignment lookup — only fires for sub-KH+ actors (KH+ always have
+  // base access; assignment row state is irrelevant for them). Saves a
+  // query for the common KH+ case.
+  let assignment: {
+    assignmentId: string;
+    note: string | null;
+    assignerId: string;
+    assignerName: string;
+  } | null = null;
+
+  const hasBaseAccess = args.actor.level >= AM_PREP_BASE_LEVEL;
+  if (!hasBaseAccess) {
+    const raw = await loadAssignmentForToday(service, {
+      userId: args.actor.userId,
+      reportType: "am_prep",
+      locationId: args.locationId,
+      date: args.date,
+    });
+    if (raw) {
+      // Resolve assigner name for the "Assigned by {name}" indicator.
+      const { data: assignerRow, error: assignerErr } = await service
+        .from("users")
+        .select("name")
+        .eq("id", raw.assignerId)
+        .maybeSingle<{ name: string }>();
+      if (assignerErr) {
+        throw new Error(
+          `loadAmPrepDashboardState: load assigner name: ${assignerErr.message}`,
+        );
+      }
+      assignment = {
+        assignmentId: raw.assignmentId,
+        note: raw.note,
+        assignerId: raw.assignerId,
+        // Defensive fallback — if assigner row got soft-deleted between
+        // assignment-create and tile-render, fall back to em-dash rather
+        // than break the tile.
+        assignerName: assignerRow?.name ?? "—",
+      };
+    }
+  }
+
+  const isVisibleToActor = hasBaseAccess || assignment !== null;
+
+  return {
+    hasTemplate,
+    todayInstance,
+    confirmedByName,
+    assignment,
+    isVisibleToActor,
+  };
+}
+
+/**
  * Resolves the closing's report-reference template item id for a given
  * report type at a location. Returns null when no closing template exists
  * OR when the active closing template doesn't carry the requested

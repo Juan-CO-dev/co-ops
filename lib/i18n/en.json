@@ -268,5 +268,18 @@
 
   "am_prep.no_template.heading": "AM Prep template not configured",
   "am_prep.no_template.body": "Contact a manager to set up the AM Prep template at this location.",
-  "am_prep.no_template.return_dashboard": "Return to dashboard"
+  "am_prep.no_template.return_dashboard": "Return to dashboard",
+
+  "dashboard.reports.heading": "Reports",
+  "dashboard.am_prep.tile_label": "AM Prep",
+  "dashboard.am_prep.cta_start": "Start AM Prep",
+  "dashboard.am_prep.cta_continue": "Continue AM Prep",
+  "dashboard.am_prep.cta_view": "View AM Prep",
+  "dashboard.am_prep.status_not_started": "Not yet started",
+  "dashboard.am_prep.status_in_progress": "In progress",
+  "dashboard.am_prep.status_submitted": "Submitted at {time} by {name}",
+  "dashboard.am_prep.assigned_by": "Assigned by {name}",
+  "dashboard.am_prep.assigned_by_note": "\"{note}\"",
+  "dashboard.am_prep.no_template": "AM Prep template not configured",
+  "dashboard.am_prep.aria": "AM Prep — {status}"
 }

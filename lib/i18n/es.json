@@ -268,5 +268,18 @@
 
   "am_prep.no_template.heading": "Plantilla de Prep AM no configurada",
   "am_prep.no_template.body": "Contacta a un gerente para configurar la plantilla de Prep AM en esta ubicación.",
-  "am_prep.no_template.return_dashboard": "Volver al dashboard"
+  "am_prep.no_template.return_dashboard": "Volver al dashboard",
+
+  "dashboard.reports.heading": "Reportes",
+  "dashboard.am_prep.tile_label": "Lista de Prep AM",
+  "dashboard.am_prep.cta_start": "Iniciar Lista de Prep AM",
+  "dashboard.am_prep.cta_continue": "Continuar Lista de Prep AM",
+  "dashboard.am_prep.cta_view": "Ver Lista de Prep AM",
+  "dashboard.am_prep.status_not_started": "Aún no iniciada",
+  "dashboard.am_prep.status_in_progress": "En progreso",
+  "dashboard.am_prep.status_submitted": "Enviada a las {time} por {name}",
+  "dashboard.am_prep.assigned_by": "Asignada por {name}",
+  "dashboard.am_prep.assigned_by_note": "\"{note}\"",
+  "dashboard.am_prep.no_template": "Plantilla de Prep AM no configurada",
+  "dashboard.am_prep.aria": "Lista de Prep AM — {status}"
 }
