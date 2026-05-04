@@ -24,67 +24,131 @@
 
 ---
 
-## C.18 — Prep workflow has two trigger paths (closer-initiated and operator-initiated), not opener-initiated
+## C.18 — Prep workflow architectural model (refined post-Image 1 reveal)
 
 **Date added:** 2026-05-01
-**Spec sections:** §1.4 (Artifact model), §2.4 (Per-item completion), §4.3 (Checklist tables), §10 / §15 lib/prep.ts, §16 Phase 6 step 46
+**Date updated:** 2026-05-04
+**Spec sections:** §1.4 (Artifact model), §4.3 (Checklist tables), §10 / §15 lib/prep.ts
 **What spec says:** Prep is modeled as opener-driven. Spec §15 lib/prep.ts comment: "1. Resolve par per vendor_item for (location, day-of-week) 2. Read on-hand from latest opening checklist closing-count completions 3. needed = max(par_target − on_hand, 0)." The implication is that opening produces counts and prep math derives from them.
-**What built reality is (and intended for v1.3):** Two trigger paths:
-1. **Closer-initiated (`triggered_by: 'closing'`)** — at end of shift, the closer estimates tomorrow's prep needs based on today's depletion. This is the AM Prep List that ships in Build #2 as Phase 2 of the closing flow. The operator's judgment is the source of truth, not a system computation.
-2. **Operator-initiated (`triggered_by: 'manual'`)** — when any shift staff member (level 3+) notices depletion across multiple items mid-shift and decides a fresh prep instance is warranted.
 
-Both produce `checklist_instances` rows where `template.type = 'prep'`, distinguished by a new `triggered_by` field (plus `triggered_by_user_id` and `triggered_at`). **No new `prep_instances` table is needed** — reuses existing `checklist_*` infrastructure.
+**What built reality is (refined):** the prep workflow's architectural model is refined now that the actual operational artifact (CO's paper AM Prep List, "Image 1") is known. The two-trigger-paths model from the original C.18 stands; the data model is richer than originally scoped and the surfacing changes.
 
-**Why:** The spec model assumes computable inventory math (par minus on-hand from opener-collected counts). CO's operational reality is judgment-driven: the closer who watched today's depletion knows tomorrow's needs better than a static par would. And mid-day operator triggers are an emergent signal — they tell us when forecasted prep was insufficient — that the spec model has no way to capture.
+Two trigger paths for prep instances:
+
+1. **Closer-initiated AM Prep (`triggered_by: 'closing'`)**: end of shift, single-author KH+ artifact (assignable to trainer or employee for training purposes). The closer fills the AM Prep List as their last operational task before closing finalize. Submission auto-completes the closing checklist's "AM Prep List submitted" item per C.42 reports architecture.
+
+2. **Mid-day prep (`triggered_by: 'manual'`)**: any shift staff (level 3+, per C.21) can trigger a fresh prep instance when depletion surfaces. Multiple per day possible, numbered for the day per C.43.
+
+**Data model is richer than originally scoped:**
+
+Prep items have section-aware schemas with multiple numeric fields per item:
+
+- **Veg section**: PAR / ON HAND / BACK UP / TOTAL columns
+- **Cooks section**: PAR / ON HAND / TOTAL columns (no BACK UP)
+- **Sides section**: PAR / PORTIONED / BACK UP / TOTAL (PORTIONED replaces ON HAND semantically)
+- **Sauces section**: PAR / LINE / BACK UP / TOTAL (LINE replaces ON HAND)
+- **Slicing section**: PAR / LINE / BACK UP / TOTAL
+- **Misc/Notes section**: yes/no flags (e.g., meatball ready states, cook bacon) + free-form notes
+
+PAR semantics:
+- **PAR**: target quantity item should have
+- **ON HAND / PORTIONED / LINE**: bottled/portioned/ready-for-service quantity
+- **BACK UP**: unbottled/un-portioned quantity available but needs prep work to be service-ready
+- **TOTAL**: combined service-readiness (operational interpretation; ON HAND + BACK UP semantically)
+
+Units vary per item (QT, BTL, BAG, pan, count, "Prep Daily" special instruction).
+
+**Why the original C.18 model is preserved but data model expanded:**
+
+The original two-trigger-paths model and the operator-judgment-driven philosophy stand. What changes is the per-item structure, which is genuinely richer than `checklist_completions.count_value` can express cleanly. AM Prep is treated as a specialized form, not a force-fit into checklist primitives. Reuses existing checklist instance lifecycle, auth, audit, role-gate, RLS infrastructure (per C.42's reuse-where-natural principle) but uses a custom per-item data shape.
 
 **v1.3 action:**
-- Add to `checklist_instances` schema: `triggered_by TEXT CHECK (triggered_by IN ('closing', 'opening', 'manual'))`, `triggered_by_user_id UUID REFERENCES users(id)`, `triggered_at TIMESTAMPTZ`. (Or store all three on a JSONB `metadata` column — defer specific implementation to Build #2 design.)
-- Reframe §10 / §15 lib/prep.ts: prep math is operator-supplied, not system-computed. `prep_list_resolutions` rows still exist as the audit trail of what par/on-hand/needed values were *at generation time*, but the values come from the operator's input, not a query.
-- Permission for mid-day prep triggering: level 3+ (anyone on shift). See C.21.
+
+- Update §1.4 prep artifact description with the section-aware data model
+- Add prep-specific tables/extensions to §4.3 schema
+- Update §15 lib/prep.ts: prep math is operator-supplied, not system-computed; per-item data model carries PAR (denormalized from template), ON HAND/PORTIONED/LINE, BACK UP, TOTAL plus unit and section
+- Reference C.42 (reports architecture) for surfacing details and C.43 (mid-day prep numbering) for multi-instance handling
+- Reference C.44 (PAR template editing) for GM+ admin tooling
 
 ---
 
-## C.19 — Closing has two phases (cleaning checklist + AM Prep List generation)
+## C.19 — Closing as anchor, reports surface as items
 
 **Date added:** 2026-05-01
-**Spec sections:** §1.4 (Artifact model), §4.3 (Checklist tables), §10–§12 (Module #1 Daily Operations), §16 Phase 6
-**What spec says:** Closing is modeled as a single artifact: cleaning checklist with role-leveled items, multi-submission, PIN-confirmed.
-**What built reality is:** Closing is **two phases** combined into one close-of-shift workflow:
-- **Phase 1 — cleaning checklist (Image 6 content).** Station-grouped role-leveled items. Ships in Module #1 Build #1.
-- **Phase 2 — AM Prep List generation.** Closer estimates tomorrow's prep needs. Generates a `checklist_instances` row with `template.type = 'prep'` and (per C.18) `triggered_by = 'closing'`. Ships in Module #1 Build #2 as part of the Prep workflow.
+**Date updated:** 2026-05-04
+**Spec sections:** §1.4 (Artifact model), §4.3, §10–§12 (Module #1 Daily Operations), §16 Phase 6
+**What spec says:** Closing is modeled as a single artifact: cleaning checklist with role-leveled items, multi-submission, PIN-confirmed. The original C.19 framed closing as having two phases (cleaning checklist + AM Prep List generation).
 
-Single PIN attestation covers both phases: at end of close-of-shift, the closer enters PIN once, attesting to *both* the cleaning checklist completion and the AM Prep List. Audit captures both artifact creations under the same logical event.
+**What built reality is (refined):** Build #2's architectural surfacing reveals the closing checklist is better understood as the **shift anchor** that aggregates references to all operational reports for the day, with cleaning items + report-reference items + Walk-Out Verification all living in the same checklist.
 
-**UI seam for Build #1 → Build #2 evolution:** The Build #1 closing UI ends with `[items] → [review] → [PinConfirmModal]`. The "Continue" button on the review screen is implemented via a function prop pattern (`onContinue: () => openPinModal()` in Build #1; `onContinue: () => navigateToPhase2()` in Build #2). When Phase 2 ships, it inserts between review and PIN: `[review] → [Phase 2 prep estimation] → [PinConfirmModal]`. The PIN modal covers both attestations.
+Closing checklist remains a single operational artifact that finalizes the shift via PIN. Its template now includes three categories of items:
 
-**Build #2 ships a new closing template version** that excludes the "Fill out AM Prep List" line item — Phase 2 (digital AM Prep List generation) replaces it functionally. **Template versioning is implemented via name-suffix + active flag (Path A), no schema change.** Build #2 inserts `name = 'Standard Closing v2'` with `active = true`, flips `'Standard Closing v1'.active = false`. Old `checklist_instances` retain their FK to v1; new instances FK to v2. The existing UNIQUE `(location_id, type, name)` constraint already permits this (different `name` strings, no conflict). No `version` column is added to `checklist_templates` — Path A append-only honors §2.10 (foundation locks schema).
+1. **Cleaning items** — existing per-station cleaning tasks (Image 6 content, shipped in Build #1)
+2. **Report-reference items** — items that auto-complete when their corresponding operational report is submitted (per C.42 reports architecture):
+   - "AM Prep List" item — auto-completes when AM Prep submitted that day
+   - "Cash report" item — auto-completes when cash report submitted that day
+   - "Opening report" item — auto-completes when opening report submitted that day (yesterday's opener for next-day's closer; today's opener for today's closer)
+   - Future report types added as items as Build #2+ ships them
+3. **Walk-Out Verification items** — existing 5-item finalize-gate (lights/devices/oven/doors, shipped in Build #1)
 
-**Why:** CO's operational reality is one act, two artifacts. Spec's single-artifact model loses the linkage between today's closing observations and tomorrow's prep estimate. Modeling them as two phases of one workflow preserves the linkage *and* lets each phase ship in the right build (cleaning is well-defined now; prep estimation needs the prep_instances trigger model from C.18 first).
+**The "two phases" framing is replaced with:**
+
+The closing flow is one phase from the closer's UX perspective: open the closing checklist, tick cleaning items throughout the shift, fill AM Prep List as one of the last operational tasks (which auto-completes its closing item), submit cash report (auto-completes its closing item), complete Walk-Out Verification, finalize with PIN.
+
+The auto-completion mechanic links report submissions to closing checklist items: when a report is submitted for the current operational date, a `checklist_completion` row is written for the corresponding closing template item, with completion attribution preserving the report submitter and a metadata link to the report instance.
+
+**Existing closing finalize architecture preserved:**
+
+- Walk-Out Verification gate from C.26 remains the operational signal
+- Role gate (KH+) for finalization remains
+- Incomplete required items can still be finalized with reasons (per Build #1 spec §6.1) — if a report wasn't submitted, the closer flags the corresponding closing item as incomplete with a reason ("Opener didn't show, opening report not done"). Same flow as any other incomplete required item.
+
+**Standard Closing v2 still happens via Path A versioning:**
+
+The original "Fill out AM Prep List" line item from Closing v1 is replaced by the new "AM Prep List" report-reference item in Closing v2. v1 stays active for old instances; v2 active for new instances. No schema change beyond template seeding.
+
+**Why this refinement:**
+
+The two-phases model treated AM Prep as architecturally special (its own phase). Reality is AM Prep is one of several operational reports the closer must reference; cash report and opening report carry the same architectural weight. Treating closing as the anchor that aggregates report references via auto-completing items gives a unified model that scales to all report types (per C.42).
 
 **v1.3 action:**
-- Restructure §1.4 closing artifact description: "Closing has two phases: (a) cleaning checklist completion, (b) AM Prep List generation. Single PIN attestation. The AM Prep List generates a paired prep_instance with `triggered_by = 'closing'` per C.18."
-- Document the Phase 1 → Phase 2 UI seam pattern in §10 (shared infrastructure services) as a reference for future multi-phase artifacts.
-- Document template versioning via append-only name-suffix + active flag in §13.5 (Checklist Template Management) as the canonical pattern for non-breaking template evolution.
+
+- Restructure §1.4 closing artifact description: closing checklist is the day's anchor; aggregates cleaning items, report-reference items (auto-complete via report submission), and Walk-Out Verification items
+- Document the report-item auto-completion mechanic in §10 (shared infrastructure services) — when a report submission lands, a paired `checklist_completion` row writes for the corresponding closing item
+- Reference C.42 for the broader reports architecture
+- Standard Closing v2 ships in Build #2 PR pass that includes AM Prep
 
 ---
 
-## C.20 — Opening is a verification artifact, not a count-collection artifact
+## C.20 — Opening report (semantic rename, surfaces via reports architecture)
 
 **Date added:** 2026-05-01
-**Spec sections:** §1.4 (Artifact model), §4.3, §10–§12 (Module #1 Daily Operations), §15 lib/prep.ts (which references "opener-collected counts")
+**Date updated:** 2026-05-04
+**Spec sections:** §1.4 (Artifact model), §4.3, §10–§12 (Module #1 Daily Operations)
 **What spec says:** Opening collects on-hand counts of inventory items. Those counts feed the prep-math computation per §15 lib/prep.ts.
-**What built reality is:** Opening's purpose is **quality control on the prior closing + spot-check validation of the AM Prep List instance generated at end of last close**. It is not the source of inventory counts. Counts are operator judgment captured at closing (per C.18). The opener confirms or flags discrepancies; they don't generate the canonical numbers.
 
-Concretely, an Opening instance:
-- Reviews the prior closing instance's completed items and its AM Prep List
-- Flags any obvious closer mistakes (item left unfinished, prep estimate visibly wrong against actual current state)
-- Triggers a `checklist_instances` row with `template.type = 'prep'` and (per C.18) `triggered_by = 'opening'` only when the opener's spot-check disagrees with the closer's estimate
+**What built reality is (refined):** the verification artifact described in original C.20 (opening = quality control on prior closing + AM Prep validation, NOT count collection) is semantically renamed to **"Opening report"** and surfaces per C.42's reports architecture. Original operational purpose unchanged.
 
-**Why:** CO's operational loop is closer-led, not opener-led. The closer has watched the depletion; the opener has not. Opening as data-entry duplicates work and creates two competing numbers (closer's estimate vs opener's count) for the same question. Opening as verification keeps the data canonical (closer's estimate is authoritative until validated otherwise) and surfaces signal (opener disagreement) instead of noise (opener-recapture of what's already known).
+Opening report is the named artifact that opens each operational day. Per C.42 reports architecture:
+- Reachable from a dedicated dashboard tile
+- Submitted by the opener (KH+ typically; assignment rules per role permissions)
+- Auto-completes the corresponding closing checklist item ("Opening report") when submitted
+- Has its own searchable history (opening reports across days/locations)
+
+The verification semantics from original C.20 are preserved:
+- Reviews prior closing's completed items
+- Validates the AM Prep List generated at close (spot-check actual current state vs closer's estimate)
+- Triggers a fresh prep_instance with `triggered_by = 'opening'` ONLY when opener's spot-check materially disagrees with closer's estimate
+
+**Why renamed:**
+
+C.42's reports architecture treats each operational artifact as a first-class report on the dashboard. Calling it "opening verification" leaves the name implying it's an internal check rather than a first-class operational deliverable. "Opening report" makes it parallel with "Cash report," "AM Prep List," etc.
 
 **v1.3 action:**
-- Reframe §1.4 opening artifact description: "Opening verifies the prior closing's completion quality and validates the AM Prep List generated at close. Counts are not collected at opening — they were captured at closing per C.18. Opening can trigger a fresh prep_instance with `triggered_by = 'opening'` only when the opener's spot-check materially disagrees with the closer's estimate."
-- Update §15 lib/prep.ts comment: prep math comes from operator input (closer at end of shift; opener on disagreement; any shift member on mid-day depletion) — never from a stored opener-count query.
+
+- Update §1.4 opening artifact description: name is "Opening report"; verification semantics from original C.20 stand
+- Reference C.42 for surfacing model
+- The C.20 "opener doesn't generate canonical numbers" point stands — opening report's optional prep-trigger fires only on disagreement
 
 ---
 
@@ -560,9 +624,238 @@ Confused-deputy risk if translated strings are used as matching keys: a Spanish-
 
 ---
 
+## C.42 — Operational reports architecture
+
+**Date added:** 2026-05-04
+**Spec sections:** §1 (CO operational context), §1.4 (Artifact model), §4.3 (Schema)
+**What spec says:** spec doesn't address the dashboard-as-hub model with first-class reports as operational artifacts. The original CO-OPS spec implicitly treated closing as THE operational artifact.
+
+**What built reality is:**
+
+CO-OPS treats operational artifacts as first-class reports. Each report type:
+- Has a dedicated dashboard tile/button
+- Has its own search/history surface
+- Has its own data model designed for its operational purpose (custom where needed, reuse `checklist_*` primitives where natural)
+- Reflects on the closing checklist via auto-completion of a corresponding report-reference item
+
+**Reports inventory (Build #2+ scope):**
+
+| Report | Trigger | Who | Required for closing? | Multi-per-day? |
+|---|---|---|---|---|
+| Opening report | Start of day | Opener (KH+) | Yes (per C.19/C.20) | No |
+| AM Prep List | End of shift, part of closing | Closer (KH+, assignable) | Yes (per C.18/C.19) | No |
+| Mid-day prep | Anytime needed | Shift staff (L3+) | No | Yes (per C.43) |
+| Cash report | End of shift | Cash-counting role | Yes (per C.19) | No |
+| Special report | Anytime | Anyone | No | Yes |
+| Training report | When training event happens | Trainer or trainer-tagged staff (per C.25) | No | Yes |
+
+Required-for-closing reports (Opening, AM Prep, Cash) auto-complete their corresponding closing checklist items when submitted. Non-blocking reports (Mid-day prep, Special, Training) don't have closing items — they exist independently on the dashboard.
+
+**Auto-completion mechanic:**
+
+When a required report is submitted for the current operational date:
+- A `checklist_completion` row is written to the corresponding closing template item
+- The completion's `completed_by` is the report submitter
+- Metadata captures a link to the report instance (`report_type`, `report_instance_id`)
+- Closer sees the item auto-checked in the closing UI **with attribution rendered inline**: "AM Prep List ✓ — submitted by Cristian at 9:47 PM"
+
+The attribution rendering is a deliberate operational signal. The closer reviewing closing items sees at a glance who did what without drilling into the report. Same pattern for cash report ("Cash report ✓ — submitted by Sam at 10:15 PM"), opening report ("Opening report ✓ — submitted by Maria at 6:32 AM"), etc. If reconciliation issues surface later (cash discrepancy, AM prep estimate vs reality mismatch, etc.), the closer knows immediately who to follow up with.
+
+If the report isn't submitted by the time closing finalizes, the closer flags the corresponding closing item as incomplete with a reason (per existing C.26 closing-finalize-with-incomplete-reasons flow). Same architectural pattern as any other incomplete required cleaning item — no new gating concept needed.
+
+**Two surfaces, distinct scopes:**
+
+CO-OPS distinguishes between action surfaces (do/view today) and a dedicated reports hub (historical browse/search). The dashboard renders action tiles per role; the reports hub is its own page for historical access.
+
+**Surface 1 — Dashboard report tiles (action-oriented).**
+
+The dashboard renders report tiles for what's relevant to the user RIGHT NOW for TODAY's operational date. Tile visibility is gated by:
+
+1. **Role-based base permissions** — a tile renders for a user if their role has scope on that report type for today's operations (e.g., KH+ sees the Cash report tile; trainee normally doesn't)
+2. **Assignment-down from KH+** — when a KH+ explicitly assigns a report to a trainer or employee for tonight's closing as a training exercise, the assignee's dashboard surfaces that tile for that operational date only
+
+Default role-based visibility for dashboard tiles:
+
+| Report | Trainee (L2) | Employee (L3) | Shift Lead (L4) | Key Holder (L5) | AGM+ (L6+) |
+|---|---|---|---|---|---|
+| Opening report | (hidden) | (hidden) | tile present | tile present | tile present |
+| AM Prep List | (hidden, unless assigned) | (hidden, unless assigned) | (hidden, unless assigned) | tile present | tile present |
+| Mid-day prep | tile present | tile present | tile present | tile present | tile present |
+| Cash report | (hidden) | (hidden) | tile present | tile present | tile present |
+| Special report | tile present | tile present | tile present | tile present | tile present |
+| Training report | (hidden, unless assigned as trainee) | (hidden, unless assigned as trainer) | tile present | tile present | tile present |
+
+Notes on the split:
+
+- **Opening report**: SL and KH both have base access. Operationally, whoever opens the shop fills it.
+- **AM Prep List**: KH+ has base access (closing is a KH+ responsibility; AM Prep is one of the closer's last tasks). SL doesn't see the tile by default but can be assigned down (KH assigns to SL for training in closing workflow). This is the operational reality — closing is the KH's responsibility, not SL's.
+- **Mid-day prep**: any shift staff (L3+) per C.21. SL and KH both included.
+- **Cash report**: SL and KH both have base access. "Sometimes the KH will do cash reports and sometimes shift lead." Either can submit; either can be assigned to do it via assignment-down.
+- **Special report**: anyone can submit (anytime).
+- **Training report**: trainer-tagged staff or trainer role can submit. SL and KH both included as potential trainers.
+
+The assignment-down mechanic is a real architectural concept and applies to ALL report types, not just AM Prep. Any user with creation scope on a report type can assign that report to someone of equal or lower role level for an operational date. Common patterns:
+
+- **AM Prep**: KH+ assigns to trainer or employee for training value at closing
+- **Mid-day prep**: KH+ assigns to line cook (employee) to teach prep workflow
+- **Cash report**: AGM+ assigns to KH for training cash-handling responsibility
+- **Opening report**: KH+ assigns to trainer for training opening verification
+- **Training report**: trainer assigns to themselves OR AGM+ assigns specific trainer to specific trainee
+- **Special report**: rarely assigned (anyone can submit) but possible if needed
+
+A single `report_assignments` schema serves all six report types: assigner_id, assignee_id, report_type, operational_date, optional note. The assignee's dashboard surfaces the assigned tile for that operational date based on `report_assignments`. After the operational date passes, the assignment is historical — assignee can still read what they submitted via the reports hub, but the tile no longer surfaces on dashboard.
+
+Two-layer visibility enforcement: UI tile rendering (dashboard conditional on role + assignments) AND API access (RLS policies). UI-only enforcement is insufficient — RLS is the source of truth.
+
+**Surface 2 — Reports hub (read-oriented, separate page).**
+
+A dedicated "Reports" button on the dashboard opens its own page that lets users browse historical reports relevant to their role scope. This is not where reports are created or actioned — it's the operational library.
+
+Reports hub serves three purposes:
+1. **Training value** — trainees and employees browse past AM Prep submissions, opening reports, etc. to learn from real operational history
+2. **Reconciliation and audit** — KH+, AGM+, GM+ search for specific reports during reconciliation moments (cash discrepancy investigation, prep estimate accuracy review)
+3. **Cross-shift continuity** — anyone reviewing prior shifts' work without needing to action anything
+
+Default read-scope for the reports hub:
+
+| Report | Trainee (L2) | Employee (L3) | Shift Lead (L4) | Key Holder (L5) | AGM+ (L6+) |
+|---|---|---|---|---|---|
+| Opening report | read (all) | read (all) | read (all) | read (all) | read + audit |
+| AM Prep List | read (all) | read (all) | read (all) | read (all) | read + audit |
+| Mid-day prep | read (all) | read (all) | read (all) | read (all) | read + audit |
+| Cash report | (hidden) | (hidden) | read (all) | read (all) | read + audit |
+| Special report | read (own + own location) | read (all) | read (all) | read (all) | read + audit |
+| Training report | read (own as trainee) | read (own + own location) | read (all) | read (all) | read + audit |
+
+The dashboard gates AC-tion ("can I do this report today"). The reports hub gates VIS-ibility into operational history. They're orthogonal concerns with intentionally different rules.
+
+**Why two surfaces:**
+
+(1) The action surface needs to be focused — too many tiles dilute the dashboard's "what should I do right now" purpose
+(2) The historical browse surface benefits from dedicated UI patterns (filters, search, date ranges) that would clutter the dashboard
+(3) Training-value access (trainees reading past AM Preps) belongs in a browsing context, not as dashboard tiles
+(4) Cross-shift continuity (KH reviewing what the prior shift left) is a "go to the library" workflow, not a "tap a tile" workflow
+
+Module #2 (User Lifecycle) work will refine both visibility maps and add training-progression transitions. For Build #2 first PR, ship the dashboard tiles with sensible defaults; the reports hub page itself is a separate PR within Build #2 (probably PR pass 2 or 3 after AM Prep ships).
+
+**Data model approach (custom-where-needed, reuse-where-natural):**
+
+- **AM Prep, Mid-day prep, Opening report**: reuse `checklist_*` infrastructure (instance lifecycle, auth, audit, RLS) with custom per-item data shape per C.18's refined model. New `prep_template_items` extension or JSONB column on existing `checklist_template_items` for the rich PAR/ON HAND/BACK UP/TOTAL structure.
+- **Cash report**: dedicated table for drawer count, tip count, denomination breakdowns, reconciliation. Distinct enough from checklist primitives that custom shape is warranted.
+- **Special report**: lightweight text + photo capture; could be its own table or a minimal `checklist_*` reuse.
+- **Training report**: dedicated table for trainer + trainee + topic + attestation; ties into C.25's tag system and Module #14 (Training).
+- **Closing checklist**: existing `checklist_*` infrastructure unchanged.
+
+**Why this architecture:**
+
+(1) Treats operational artifacts as first-class — staff finds them on the dashboard rather than buried inside other flows.
+(2) Searchable history per report type — "show me all cash reports this week" is a real query.
+(3) Auto-completion mechanic preserves the closing-as-anchor concept without forcing every report through checklist primitives.
+(4) Reuse-where-natural keeps code surface bounded; custom-where-needed prevents architectural force-fits.
+(5) Pluggable: future report types (vendor receiving, maintenance, etc.) extend the same dashboard-tile + closing-item-auto-completion pattern.
+
+**v1.3 action:**
+
+- Add §1 description of dashboard-as-action-hub + reports-hub-as-library two-surface model
+- Document the auto-completion mechanic in §10 shared infrastructure services, including inline attribution rendering on closing items
+- Document dashboard tile visibility map (role-based + assignment-aware) and reports hub read-scope map (role-based) — two distinct visibility models in §10
+- Document the `report_assignments` schema concept (assigner, assignee, report type, operational date) for assignment-down mechanic
+- Document two-layer enforcement: UI tile rendering + RLS policies (RLS as source of truth)
+- Document the report types inventory in §4.3 schema or a new Module #1 sub-section
+- New module conventions document the dashboard-tile + reports-hub + closing-item-auto-completion pattern as canonical for future operational reports
+- Reference Module #2 work as the natural moment to refine both visibility maps per role progression
+- Schedule reports hub UI as a separate PR within Build #2 (after AM Prep first PR ships)
+
+---
+
+## C.43 — Mid-day prep multiple instances per day, numbered
+
+**Date added:** 2026-05-04
+**Spec sections:** §4.3 (`checklist_instances`), C.18 (prep trigger paths)
+**What spec says:** existing UNIQUE `(template_id, location_id, date)` constraint on `checklist_instances` blocks multiple instances of the same template at the same location on the same date.
+
+**What built reality is:**
+
+Mid-day prep templates allow multiple instances per day at the same location. Two or three mid-day preps in one day is operationally normal at CO. Each is disambiguated by `triggered_at` (timestamp) and presented to staff as numbered for the day:
+- "Mid-day Prep #1 (12:30 PM)"
+- "Mid-day Prep #2 (3:15 PM)"
+- "Mid-day Prep #3 (5:45 PM)"
+
+**Schema change:**
+
+The `(template_id, location_id, date)` UNIQUE constraint is preserved for non-prep-and-non-mid-day templates (closing, opening, AM prep — all single-per-day). For mid-day prep specifically:
+- The constraint doesn't apply (or is conditional on template type)
+- `triggered_at` becomes the disambiguator for multiple instances
+- `triggered_by_user_id` (per C.18) captures who triggered each
+
+Implementation choice between (a) dropping the UNIQUE constraint generally and enforcing single-per-day at lib layer for non-prep templates, or (b) keeping the constraint conditional on template type — to be decided during Build #2 implementation. Recommend (b) for safety: explicit DB constraint matching template type.
+
+**UI presentation:**
+
+Dashboard "Mid-day Prep" tile shows today's instances in a list with their numbered labels and status (in-progress / submitted). Tap an instance → view its details. Tap "+ New mid-day prep" → trigger a fresh instance (for level 3+ users per C.21).
+
+**Why:**
+
+Mid-day prep is operationally emergent — line cooks notice depletion when service realities surface it. Multiple per day is normal. Single-per-day constraint forces awkward workarounds (overwriting, finding the prior instance to update). Allowing multiple with explicit numbering matches operational reality.
+
+**v1.3 action:**
+
+- Update §4.3 `checklist_instances` constraint description: UNIQUE `(template_id, location_id, date)` applies to single-per-day templates; mid-day prep is the exception, disambiguated by `triggered_at`
+- Reference C.18 for the trigger model
+- Document numbered-display convention for multi-instance prep in §10 shared infrastructure
+
+---
+
+## C.44 — PAR template editing by GM+ (admin tooling)
+
+**Date added:** 2026-05-04
+**Spec sections:** §13 (Admin tooling), Module #1 prep templates
+**What spec says:** spec doesn't address operational-config admin tooling for prep templates. The implicit assumption was static seed data.
+
+**What built reality is:**
+
+Prep templates (AM Prep, Mid-day Prep) have items, sections, and PAR values that change over operational reality. Items are added (new menu item with new prep needs), removed (discontinued item), edited (PAR target adjusted as catering volume grows, unit changes, section reorganized).
+
+GM+ (level 6+) has admin tooling to:
+- Add new prep items (name, section, PAR value, unit, position)
+- Edit existing items (rename, change PAR, change unit, move sections, reorder)
+- Deactivate items (soft-delete; historical AM Prep instances retain references via denormalized snapshot)
+- Reorder items within sections
+
+**Versioning approach (denormalized snapshot, not template versioning):**
+
+Historical AM Prep instances cache the PAR value, item name, section, and unit at submission time. PAR changes don't retroactively affect old reports. Implementation: prep completion rows carry the relevant denormalized fields (item_name_at_submission, par_at_submission, unit_at_submission, section_at_submission) alongside the operator-submitted values (on_hand, back_up, total).
+
+This avoids template versioning complexity (per Path A versioning per C.19) for prep items specifically. GM edits affect future submissions only; historical submissions remain accurate to their submission moment.
+
+**Why denormalized snapshot vs Path A versioning:**
+
+Path A versioning works well for operational templates as wholes (Standard Closing v1 → v2). Per-item versioning of every prep item would be heavy and querying historical reports would require joining version-specific item rows. Denormalized snapshot trades some storage cost (a few extra fields per completion row) for query simplicity and unambiguous historical accuracy.
+
+**Soft-delete for items:**
+
+Removing an item via GM+ admin sets `active = false` on the prep_template_item. Historical references still resolve (via the denormalized snapshot). Active items only render in new prep submissions. Deactivated items can be reactivated.
+
+**Audit:**
+
+GM+ edits to prep template items emit audit rows. Standard destructive-action audit pattern — `prep_template_item.create`, `prep_template_item.update`, `prep_template_item.deactivate`, `prep_template_item.reactivate`.
+
+**Scope note:**
+
+PR-scope-wise, GM+ admin tooling is NOT part of Build #2's first PR (AM Prep vertical slice). Build #2's first PR ships AM Prep with seed-script-defined items; the editing UI lands as a follow-up PR within Build #2 (probably PR pass 1.5 or 2). Worth capturing as an amendment now so the data model accommodates editability from the start (denormalized snapshots in completion rows, soft-delete on template items).
+
+**v1.3 action:**
+
+- Add §13 admin tooling section for prep template editing
+- Document denormalized snapshot pattern for prep completions
+- Reference C.18 (prep model) and C.42 (reports architecture)
+- Schedule the GM+ admin UI in Build #2 second PR (or third) within the prep vertical slice
+
+---
+
 ## How to add an entry
 
-1. Pick the next monotonic ID (`C.<n>` — current next: C.42).
+1. Pick the next monotonic ID (`C.<n>` — current next: C.45).
 2. Spec sections under amendment.
 3. Quote what spec says.
 4. Document what built reality is.
