@@ -76,6 +76,8 @@ const TILE_FLOW_ROLES: RoleCode[] = [
   "shift_lead",
   "key_holder",
   "trainer",
+  "employee",
+  "trainee",
 ];
 
 export default function LoginPage() {

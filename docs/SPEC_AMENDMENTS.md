@@ -530,9 +530,39 @@ Confused-deputy risk if translated strings are used as matching keys: a Spanish-
 
 ---
 
+## C.40 — Pre-auth surfaces stay English permanently (not deferred)
+
+**Date added:** 2026-05-04
+**Spec sections:** §1 (CO operational context), C.31 (i18n infrastructure), C.37 (translate-from-day-one)
+
+**What spec says:** C.31 establishes i18n infrastructure; C.37 establishes translate-from-day-one for new UI surfaces. Spec doesn't address pre-auth surfaces explicitly.
+
+**What built reality is (and is intended to remain):** pre-auth surfaces — login screen (`/`), email verify pages, reset-password pages, and `PasswordModal` when mounted in pre-auth contexts — stay English permanently. This is **not a deferral**; it's a deliberate architectural commitment.
+
+**Why:** pre-auth users have not expressed a language preference. Defaulting to a non-English language requires either (a) browser locale guessing (unreliable — English speakers in non-English-default browsers get the wrong default) or (b) remembered cookies from prior sessions (privacy-edge, requires explicit opt-in). English is the universal entry point — every authenticated user has navigated past it and reached UserMenu where they can express preference. The C.37 translate-from-day-one convention applies to **authenticated** UI surfaces; pre-auth surfaces are explicitly out of scope.
+
+**v1.3 action:** document spec §1 with the pre-auth-stays-English commitment alongside C.31's i18n infrastructure description. Future modules adding pre-auth UI (e.g., new account-recovery flows, signup if introduced) inherit this commitment automatically. Captured during Phase 3 Build #1.5 PR 6 after Juan's explicit decision to lock pre-auth-English permanently rather than defer to a future translation pass.
+
+---
+
+## C.41 — Level number divergence between DB+lib implementation and C.33 documented intent
+
+**Date added:** 2026-05-04
+**Spec sections:** §7.1 (RoleCode hierarchy), C.26 (Walk-Out gate), C.33 (full 9-level user structure)
+
+**What spec says:** C.33 documents the intended 9-level structure including `key_holder` at level 4 and `shift_lead` at level 5.
+
+**What built reality is (current divergence):** DB constraint and `lib/roles.ts` currently implement `key_holder` at level 3 and `shift_lead` at level 4. The C.26 walk-out gate (`level >= 4` — only KH+ can lock up) operationally functions today because `shift_lead` is at level 4 in implementation, satisfying the gate at SL or above. But the documented C.33 intent (`key_holder` at level 4) hasn't been reconciled with implementation. Build #1.5 PR 6 (employee + trainee tile rendering) added `employee` at level 3 and `trainee` at level 2 per C.32; this surfaced — but did not fix — the broader C.33 divergence.
+
+**Why this is acceptable for now:** operational behavior is correct (level-4 gate fires for SL+ today, which matches the spec's "KH+ can finalize" intent because SL > KH in role hierarchy regardless of numeric level). The divergence is a documentation/implementation drift, not a behavior bug. Reconciling it requires touching every RLS policy referencing role levels, the helper function `current_user_role_level()`, the permission matrix in `lib/permissions.ts`, and `lib/checklists.ts` finalize gates. Out of scope for Build #1.5.
+
+**v1.3 action:** reconcile when Module #2 user lifecycle work lands (Module #2 will redefine the level map per C.33's full structure including levels 0–1, which is the natural moment to fix the existing 2–8 numbering). Until then, `lib/roles.ts` and DB CHECK constraint stay at current values; tests and gates against `level >= 4` continue to function as "SL+" effectively. Captured during Phase 3 Build #1.5 PR 6 recon when employee + trainee role addition surfaced the broader structure divergence.
+
+---
+
 ## How to add an entry
 
-1. Pick the next monotonic ID (`C.<n>` — current next: C.40).
+1. Pick the next monotonic ID (`C.<n>` — current next: C.42).
 2. Spec sections under amendment.
 3. Quote what spec says.
 4. Document what built reality is.
