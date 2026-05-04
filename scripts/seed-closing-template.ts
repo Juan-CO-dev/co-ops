@@ -29,7 +29,8 @@
  * description, and clone the items into each.
  *
  * Per-item defaults (override only where called out below):
- *   - min_role_level = 4 (key_holder)
+ *   - min_role_level = 3 (key_holder; reconciled in Build #2 PR 1 per
+ *     C.41 sub-finding — KH is level 3 in current implementation)
  *   - required = true
  *   - expects_count = false
  *   - expects_photo = false
@@ -379,7 +380,12 @@ async function syncItemsForTemplate(
     const desiredLabel = spec.label;
     const desiredStation = spec.station;
     const desiredDescription = spec.notes ?? null;
-    const desiredMinRoleLevel = spec.minRoleLevel ?? 4;
+    // Default min_role_level reduced from 4 → 3 per Build #2 PR 1 / C.41
+    // sub-finding: KH (level 3 in current implementation) was excluded from
+    // closing finalize by the prior `>= 4` gate, contradicting C.26's
+    // "KH+ can finalize" intent. Convergent re-run propagates the fix to
+    // existing 49 items per location.
+    const desiredMinRoleLevel = spec.minRoleLevel ?? 3;
     const desiredRequired = spec.required ?? true;
     const desiredExpectsCount = spec.expectsCount ?? false;
     const desiredExpectsPhoto = spec.expectsPhoto ?? false;
@@ -516,6 +522,13 @@ async function seedForLocation(
     const translationsChangedItemIds = changes
       .filter((c) => c.changedFields.includes("translations"))
       .map((c) => ({ template_item_id: c.templateItemId, display_order: c.displayOrder }));
+    // ⚠️ AUDIT METADATA CONTEXT: when re-running this seed in a new PR
+    // context, update the `phase` and `reason` strings below to match the
+    // current work. These are NOT auto-derived; failure to update carries
+    // stale attribution forward into production audit_log (see C.41
+    // sub-finding incident — Build #2 PR 1 ran a seed re-run without
+    // updating these strings, requiring an audit.metadata_correction row
+    // to fix the forensic trail; see scripts/correct-c41-seed-audit-attribution.ts).
     const { data: auditRow, error: auditErr } = await sb
       .from("audit_log")
       .insert({
@@ -526,8 +539,8 @@ async function seedForLocation(
         resource_id: existing.id,
         destructive: false,
         metadata: {
-          phase: "3_module_1_build_1.5_pr_5c",
-          reason: "seed sync — convergent re-run propagating spec edits",
+          phase: "3_module_1_build_2_pr_1",
+          reason: "C.41 reconciliation — closing finalize gate KH+ at level >= 3",
           sync_method: "seed_script",
           script_path: "scripts/seed-closing-template.ts",
           location_id: locationId,
@@ -542,7 +555,7 @@ async function seedForLocation(
           translations_changed_count: translationsChangedCount,
           translations_changed_items: translationsChangedItemIds,
           languages_populated: ["es"],
-          spec_amendments_referenced: ["C.38"],
+          spec_amendments_referenced: ["C.38", "C.41"],
           ip_address: null,
           user_agent: null,
         },
@@ -601,7 +614,7 @@ async function seedForLocation(
     display_order: idx,
     label: it.label,
     description: it.notes ?? null,
-    min_role_level: it.minRoleLevel ?? 4,
+    min_role_level: it.minRoleLevel ?? 3,
     required: it.required ?? true,
     expects_count: it.expectsCount ?? false,
     expects_photo: it.expectsPhoto ?? false,

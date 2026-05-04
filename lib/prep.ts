@@ -75,12 +75,17 @@ export interface PrepActor {
 }
 
 /**
- * Per C.42: AM Prep base-tile-visible at "KH+" — operationally implemented
- * as level >= 4 (SL+) per C.41 documented divergence. Same convention as
- * closing finalize per C.26. Below this, assignment-down via
- * report_assignments is the path.
+ * Per C.42: AM Prep base-tile-visible at "KH+". Reconciled in Build #2 PR 1
+ * to level >= 3 — matches C.26's "KH+ can finalize" intent now that the
+ * closing finalize gate is also level >= 3 per the C.41 sub-finding fix.
+ * Below this, assignment-down via report_assignments is the path.
+ *
+ * The broader level-number restructure (renumbering KH=4, SL=5 per spec
+ * C.33 intent) remains deferred to Module #2 user lifecycle work; this
+ * constant moves with the closing finalize gate when that reconciliation
+ * lands.
  */
-export const AM_PREP_BASE_LEVEL = 4;
+export const AM_PREP_BASE_LEVEL = 3;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Runtime validators (narrowing predicates)

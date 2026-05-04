@@ -263,7 +263,14 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
   // Finalize gate: KH+ (security gate for lock-up) AND Walk-Out Verification
   // complete (the "I'm the last out" signal). Both must hold. See
   // SPEC_AMENDMENTS.md C.26 for the operational rationale.
-  const canFinalize = !readOnly && actor.level >= 4 && walkOutVerificationComplete;
+  //
+  // KH+ in current implementation = level >= 3 (key_holder is level 3 per
+  // lib/roles.ts). The earlier `actor.level >= 4` value contradicted C.26
+  // by excluding KHs (level 3); reconciled in Build #2 PR 1 per the C.41
+  // sub-finding. The broader level-number restructure (renumbering KH=4,
+  // SL=5 per spec C.33 intent) remains deferred to Module #2 user
+  // lifecycle work.
+  const canFinalize = !readOnly && actor.level >= 3 && walkOutVerificationComplete;
 
   // Incomplete-required IDs — for the review section's reason inputs.
   const incompleteRequiredIds = useMemo(() => {

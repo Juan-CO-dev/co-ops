@@ -1653,12 +1653,15 @@ export async function tagActualCompleter(
   }
 
   // Authorization: KH+ OR self.
+  // KH+ in current implementation = level >= 3 (per C.41 sub-finding;
+  // earlier `< 4` excluded KHs from peer correction). Reconciled in
+  // Build #2 PR 1; broader level renumbering deferred to Module #2.
   const isSelf = actor.userId === completion.completed_by;
-  if (!isSelf && actor.level < 4) {
+  if (!isSelf && actor.level < 3) {
     throw new ChecklistRoleViolationError(
-      4,
+      3,
       actor.level,
-      `Tagging actual completer requires KH+ (level >= 4) or self (when actor === completed_by).`,
+      `Tagging actual completer requires KH+ (level >= 3) or self (when actor === completed_by).`,
     );
   }
 
@@ -1798,12 +1801,15 @@ export async function loadPickerCandidatesForCompletion(
 
   const completion = await loadLiveCompletionOrThrow(authed, completionId);
 
+  // KH+ in current implementation = level >= 3 (per C.41 sub-finding;
+  // earlier `< 4` excluded KHs from picker access). Reconciled in
+  // Build #2 PR 1; broader level renumbering deferred to Module #2.
   const isSelf = actor.userId === completion.completed_by;
-  if (!isSelf && actor.level < 4) {
+  if (!isSelf && actor.level < 3) {
     throw new ChecklistRoleViolationError(
-      4,
+      3,
       actor.level,
-      `Picker access requires KH+ (level >= 4) or self (when actor === completed_by).`,
+      `Picker access requires KH+ (level >= 3) or self (when actor === completed_by).`,
     );
   }
 

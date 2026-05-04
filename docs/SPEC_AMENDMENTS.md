@@ -622,6 +622,19 @@ Confused-deputy risk if translated strings are used as matching keys: a Spanish-
 
 **v1.3 action:** reconcile when Module #2 user lifecycle work lands (Module #2 will redefine the level map per C.33's full structure including levels 0–1, which is the natural moment to fix the existing 2–8 numbering). Until then, `lib/roles.ts` and DB CHECK constraint stay at current values; tests and gates against `level >= 4` continue to function as "SL+" effectively. Captured during Phase 3 Build #1.5 PR 6 recon when employee + trainee role addition surfaced the broader structure divergence.
 
+**Build #2 PR 1 sub-finding (added 2026-05-04):** the closing finalize gate in `lib/checklists.ts` and `closing-client.tsx` uses `actor.level >= 4`, which operationally EXCLUDES KH (level 3 in current implementation) — directly contradicting C.26's "KH+ can finalize" intent. The same divergence appears at the `revokeWithReason` and `tagActualCompleter` peer-correction gates. The earlier rationalization in this amendment ("level-4 gate fires for SL+ today, which matches the spec's 'KH+ can finalize' intent because `SL > KH` in role hierarchy regardless of numeric level") was logically incoherent — `SL > KH` means `level >= 4` EXCLUDES KH, NOT includes them. The bug had been latent because Cristian (MoO 6.5) and Pete (owner 7) both clear the gate trivially; KH-level users never tested the finalize path. RLS audit during the same PR confirmed the closing finalize bug is purely app-layer — closing RLS uses per-item `min_role_level` thresholds (correct) and `>= 3` location-scoped writes (correct); no closing-related RLS policy needs the same fix.
+
+**Build #2 PR 1 fix (2026-05-04):** Build #2 PR 1 ships the gate correction:
+
+- `closing-client.tsx` `canFinalize`: `actor.level >= 4` → `actor.level >= 3`
+- `lib/checklists.ts` `revokeWithReason` peer-correction: `< 4` → `< 3`
+- `lib/checklists.ts` `tagActualCompleter` peer-correction: `< 4` → `< 3`
+- `lib/prep.ts` `AM_PREP_BASE_LEVEL`: `4` → `3` (parallel new gate; AM Prep is one of the closer's last tasks, same authorization semantic)
+- `scripts/seed-closing-template.ts` default `minRoleLevel` (create + sync paths): `4` → `3`
+- Convergent seed re-run against production: 49 closing template items × 2 locations (MEP + EM) = 98 row updates, 2 `checklist_template.update` audit rows tagged with `phase: "3_module_1_build_2_pr_1"` and `reason: "C.41 reconciliation — closing finalize gate KH+ semantic"`
+
+The broader level-number restructure documented in C.33 (renumbering KH=4, SL=5 per spec intent, plus levels 0–1) remains deferred to Module #2 user lifecycle work per the original C.41 framing. The Build #2 PR 1 fix only reconciles the specific app-layer gate that contradicted C.26; the underlying level numbers in `lib/roles.ts` stay at current values until Module #2 ships. Two non-closing RLS sites that use `current_user_role_level() >= 4` (`maintenance_tickets_insert/update` and `shift_overlay_corrections_insert`) were surveyed during the audit: maintenance_tickets is plausibly the same bug class but deferred to its own module's call; shift_overlay_corrections is intentionally managerial-domain and stays at `>= 4`.
+
 ---
 
 ## C.42 — Operational reports architecture
@@ -853,9 +866,41 @@ PR-scope-wise, GM+ admin tooling is NOT part of Build #2's first PR (AM Prep ver
 
 ---
 
+## C.45 — Capabilities model: `is_trainee` and `is_trainer` as tags on user records
+
+**Date added:** 2026-05-04
+**Spec sections:** §7.1 (RoleCode hierarchy), C.32 (login tile employee + trainee surfaces), C.33 (full 9-level user structure), C.41 (level number divergence)
+
+**What spec says:** PR 6 (per C.32) added `employee` (level 3) and `trainee` (level 2) as RoleCodes. Existing `trainer` (level 3) is also a RoleCode.
+
+**What architectural intent is (locked here, implementation deferred):** trainer and trainee are CAPABILITIES that compose onto a role-level, not roles themselves. Specifically:
+
+- `is_trainee` capability — auto-applied to new hires at hire-time (level 2 employee), removable ONLY via explicit operational action (supervisor decision) or automatically removed when user is promoted to level >= 3. Once removed, never re-applied.
+- `is_trainer` capability — granted by appropriate authority (Module #2 to lock the granting threshold; likely MoO+), removable. Composable with any role-level >= [Module #2 decides floor].
+
+**Why:** roles describe operational seniority (level); capabilities describe orthogonal authority (training oversight). Treating trainer/trainee as roles caused level collision (employee, key_holder, trainer all at level 3 in current implementation) and made the trainee-graduation mechanic implicit rather than explicit. Tag model makes "graduation" an explicit operational event (Cristian saying "Maria is fully ramped") and lets training authority compose with any underlying role.
+
+The capabilities-as-tags pattern that this amendment establishes for `is_trainee` / `is_trainer` is the **canonical pattern for any future operational capability that's orthogonal to role-level seniority**. Future capabilities (e.g., shift-supervisor delegation, cash-handling certification, location-specific authority) follow this same model rather than introducing additional role tiers. Module #2 inherits the architectural discipline; future modules don't re-debate role-vs-tag for each new capability — the precedent is set here.
+
+**Implementation deferred to Module #2 user lifecycle work**, which will:
+
+- Move `employee` from level 3 to level 2 (consolidates with where trainee currently sits)
+- Remove `trainee` as a RoleCode (migrate any trainee-role users to employee + `is_trainee` tag)
+- Remove `trainer` as a RoleCode (migrate to `is_trainer` tag, attached to whatever role-level the trainer-tagged user actually holds)
+- Add either `is_trainee` / `is_trainer` boolean columns on `users` (Path X) OR a `user_capabilities` table (Path Y); Module #2 decides based on full capability inventory at that scope
+- Update RLS policies, permission checks, and assignment-down logic to use the capability check pattern
+
+Build #2 PR 1 (current) ships with the closing finalize gate fix (`level >= 4` → `level >= 3`) per C.41 reconciliation but does NOT execute the role-to-capability refactor. AM Prep PR 1's authorization (`AM_PREP_BASE_LEVEL = 3`) and assignment-down logic will be refactored when Module #2 ships, but the fundamental data model (`report_assignments` storing `assignee_id`) is unaffected by the refactor.
+
+**v1.3 action:** when Module #2 user lifecycle work scope is locked, this amendment becomes the architectural anchor for the role-to-capability refactor. Spec §7.1 RoleCode hierarchy gets restructured at that time. Future capability additions reference this amendment as precedent; the role-vs-tag question is closed.
+
+Captured during Phase 3 Build #2 PR 1 architectural conversation when trainer-vs-employee level collision surfaced and Juan locked the capabilities model.
+
+---
+
 ## How to add an entry
 
-1. Pick the next monotonic ID (`C.<n>` — current next: C.45).
+1. Pick the next monotonic ID (`C.<n>` — current next: C.46).
 2. Spec sections under amendment.
 3. Quote what spec says.
 4. Document what built reality is.

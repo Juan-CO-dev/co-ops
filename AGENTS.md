@@ -509,3 +509,39 @@ Schedule the fix when introducing notifications, deep links from external source
 
 Captured during Build #1.5 PR 5b architectural surfacing.
 
+### Audit metadata context attribution in seed scripts (Build #2 PR 1 incident)
+
+Convergent seed scripts (e.g., `scripts/seed-closing-template.ts`, future `scripts/seed-am-prep-template.ts`) emit audit rows with hardcoded `phase` and `reason` metadata strings. These strings are NOT auto-derived from git context, PR title, or branch name — they are literal hardcoded values in the script.
+
+When re-running a seed in a NEW PR context (e.g., Build #2 PR 1 running a previously-shipped PR 5c seed for a different reason), the hardcoded strings MUST be updated to match the current work BEFORE running the seed. Failure to update carries stale attribution forward into production audit_log.
+
+The audit-the-audit pattern (`action: 'audit.metadata_correction'`) exists for surgical correction when this happens — see the C.41 reconciliation incident (Build #2 PR 1) for the canonical use:
+
+- The Build #2 PR 1 seed re-run produced 2 audit rows (`593b2a38-d0c6-476d-bc49-748fc691da65` MEP, `8611e98f-7aca-467a-ab2a-97bff21a7359` EM) carrying stale `phase: "3_module_1_build_1.5_pr_5c"` and `reason: "seed sync — convergent re-run propagating spec edits"` metadata when the actual context was Build #2 PR 1 C.41 reconciliation (closing finalize gate KH+ at level >= 3).
+- Detected during verification spot-check (Supabase MCP query against audit_log).
+- Resolved via `scripts/correct-c41-seed-audit-attribution.ts` writing a single `audit.metadata_correction` row (`66bd6c5a-7191-4918-b9bf-ea7df4993e15`) referencing both stale row IDs, capturing the correct phase/reason, and pointing future-Claude at the durable lesson here.
+- Append-only philosophy forbids UPDATE on existing audit_log rows; corrective rows are the only forensic resolution path.
+
+Prefer prevention over correction: marker comments are now in place on the audit-emission code in `scripts/seed-closing-template.ts` reminding the next editor to update the strings. Future seed scripts should inherit this pattern: hardcoded phase/reason strings + marker comment + responsibility to update when re-running.
+
+The corrective row's metadata schema (canonical for future incidents):
+```
+action: 'audit.metadata_correction'
+resource_table: 'audit_log'
+resource_id: <one stale row id, chronologically earliest>
+metadata: {
+  corrected_audit_ids: [<all stale row ids>],
+  reason: <human-readable description of the stale-attribution incident>,
+  actual_phase: <the correct phase string>,
+  actual_reason: <the correct reason string>,
+  spec_amendments_referenced: [<relevant amendment IDs>],
+  detected_during: <how the incident was caught>,
+  actual_data_change: <description of what actually changed in production>,
+  seed_script_path: <path to the script that emitted stale attribution>,
+  seed_script_now_fixed: true,
+  durable_lesson_captured_in: 'AGENTS.md'
+}
+```
+
+Captured during Build #2 PR 1 verification — the lib phase plus C.41 gate fix landed clean, but the seed re-run's audit metadata exposed the hardcoded-strings risk that's been latent since the seed script was written.
+
