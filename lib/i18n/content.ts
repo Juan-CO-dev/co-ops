@@ -2,15 +2,17 @@
  * Multilingual database content resolver (per SPEC_AMENDMENTS.md C.38).
  *
  * Tactical helper for translating user-facing fields stored on
- * `checklist_template_items` (label, description, station). System-wide
- * multilingual database content (vendor items, recipes, training, prep
- * templates, etc.) is deferred to a dedicated architectural conversation.
+ * `checklist_template_items` (label, description, station, and the
+ * nested `prepMeta.specialInstruction`). System-wide multilingual
+ * database content (vendor items, recipes, training, prep templates,
+ * etc.) is deferred to a dedicated architectural conversation.
  *
  * CRITICAL DISCIPLINE — system-key vs display-string separation:
  *
- *   The original `label` / `description` / `station` columns are the
- *   English source-of-truth AND the system-key for any matching/grouping
- *   logic. Examples that MUST match against the original (English) field:
+ *   The original `label` / `description` / `station` columns AND
+ *   `prepMeta.specialInstruction` are the English source-of-truth AND
+ *   the system-key for any matching/grouping logic. Examples that MUST
+ *   match against the original (English) field:
  *     - `it.station === WALK_OUT_VERIFICATION_STATION` (Walk-Out gate)
  *     - station-grouping keys in the closing UI (per-station sections)
  *     - any future template-item matching by label or description
@@ -23,6 +25,14 @@
  *   Future translatable content (vendor items, recipes, etc.) must
  *   follow the same discipline: original field is system source-of-truth;
  *   translations override at render only.
+ *
+ * `specialInstruction` is currently the only field where the
+ * source-of-truth lives in nested JSONB (prepMeta) rather than a
+ * top-level column. The resolver internally reaches into prep_meta for
+ * the fallback so the caller's contract stays uniform — caller passes
+ * one item and gets the resolved bag of strings without needing to
+ * thread the nested data separately. Future similar fields (if any are
+ * added) should follow the same pattern.
  *
  * Resolution order: requested language → original column (en source).
  * Empty-string translations are treated as "translation present" (caller
@@ -37,12 +47,17 @@ export interface ResolvedTemplateItemContent {
   label: string;
   description: string | null;
   station: string | null;
+  specialInstruction: string | null;
 }
 
 export function resolveTemplateItemContent(
   item: ChecklistTemplateItem,
   language: Language,
 ): ResolvedTemplateItemContent {
+  // specialInstruction's source-of-truth lives in prep_meta JSONB; reach
+  // in for the fallback. Non-prep items (prepMeta === null) get null.
+  const fallbackSpecialInstruction = item.prepMeta?.specialInstruction ?? null;
+
   // English is the source-of-truth; an explicit `en` translations entry
   // would only exist as an override (not in current production data).
   // For language='en' the column values ARE the answer — no lookup needed.
@@ -51,6 +66,7 @@ export function resolveTemplateItemContent(
       label: item.label,
       description: item.description,
       station: item.station,
+      specialInstruction: fallbackSpecialInstruction,
     };
   }
 
@@ -59,6 +75,10 @@ export function resolveTemplateItemContent(
     label: pickString(translated?.label, item.label),
     description: pickNullableString(translated?.description, item.description),
     station: pickNullableString(translated?.station, item.station),
+    specialInstruction: pickNullableString(
+      translated?.specialInstruction,
+      fallbackSpecialInstruction,
+    ),
   };
 }
 

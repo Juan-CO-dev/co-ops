@@ -509,3 +509,144 @@ Schedule the fix when introducing notifications, deep links from external source
 
 Captured during Build #1.5 PR 5b architectural surfacing.
 
+### Audit metadata context attribution in seed scripts (Build #2 PR 1 incident)
+
+Convergent seed scripts (e.g., `scripts/seed-closing-template.ts`, future `scripts/seed-am-prep-template.ts`) emit audit rows with hardcoded `phase` and `reason` metadata strings. These strings are NOT auto-derived from git context, PR title, or branch name — they are literal hardcoded values in the script.
+
+When re-running a seed in a NEW PR context (e.g., Build #2 PR 1 running a previously-shipped PR 5c seed for a different reason), the hardcoded strings MUST be updated to match the current work BEFORE running the seed. Failure to update carries stale attribution forward into production audit_log.
+
+The audit-the-audit pattern (`action: 'audit.metadata_correction'`) exists for surgical correction when this happens — see the C.41 reconciliation incident (Build #2 PR 1) for the canonical use:
+
+- The Build #2 PR 1 seed re-run produced 2 audit rows (`593b2a38-d0c6-476d-bc49-748fc691da65` MEP, `8611e98f-7aca-467a-ab2a-97bff21a7359` EM) carrying stale `phase: "3_module_1_build_1.5_pr_5c"` and `reason: "seed sync — convergent re-run propagating spec edits"` metadata when the actual context was Build #2 PR 1 C.41 reconciliation (closing finalize gate KH+ at level >= 3).
+- Detected during verification spot-check (Supabase MCP query against audit_log).
+- Resolved via `scripts/correct-c41-seed-audit-attribution.ts` writing a single `audit.metadata_correction` row (`66bd6c5a-7191-4918-b9bf-ea7df4993e15`) referencing both stale row IDs, capturing the correct phase/reason, and pointing future-Claude at the durable lesson here.
+- Append-only philosophy forbids UPDATE on existing audit_log rows; corrective rows are the only forensic resolution path.
+
+Prefer prevention over correction: marker comments are now in place on the audit-emission code in `scripts/seed-closing-template.ts` reminding the next editor to update the strings. Future seed scripts should inherit this pattern: hardcoded phase/reason strings + marker comment + responsibility to update when re-running.
+
+The corrective row's metadata schema (canonical for future incidents):
+```
+action: 'audit.metadata_correction'
+resource_table: 'audit_log'
+resource_id: <one stale row id, chronologically earliest>
+metadata: {
+  corrected_audit_ids: [<all stale row ids>],
+  reason: <human-readable description of the stale-attribution incident>,
+  actual_phase: <the correct phase string>,
+  actual_reason: <the correct reason string>,
+  spec_amendments_referenced: [<relevant amendment IDs>],
+  detected_during: <how the incident was caught>,
+  actual_data_change: <description of what actually changed in production>,
+  seed_script_path: <path to the script that emitted stale attribution>,
+  seed_script_now_fixed: true,
+  durable_lesson_captured_in: 'AGENTS.md'
+}
+```
+
+Captured during Build #2 PR 1 verification — the lib phase plus C.41 gate fix landed clean, but the seed re-run's audit metadata exposed the hardcoded-strings risk that's been latent since the seed script was written.
+
+### Role-level gate audits must include UI-side gates
+
+When fixing or restructuring role-level gates (e.g., C.41 reconciliation from `level >= 4` to `>= 3`), the audit MUST cover three layers:
+
+1. **Lib-layer gates** (e.g., `lib/checklists.ts` authorization checks, `lib/prep.ts` AM_PREP_BASE_LEVEL, `lib/report-assignments.ts` ASSIGNMENT_BASE_LEVEL)
+2. **RLS policies** (per-table read/write policies referencing `current_user_role_level()`)
+3. **UI-side gates** (e.g., `components/*.tsx` visibility checks like `actorLevel >= 4`, `closing-client.tsx` `canFinalize` derivation)
+
+Missing any layer ships an incomplete fix:
+- Lib accepts an action but UI doesn't surface it = operationally broken (button doesn't appear).
+- UI surfaces an action but lib rejects it = bad UX (button appears but doesn't work).
+- RLS allows but lib gates differently = silent inconsistency that surfaces under unusual code paths.
+
+**Concrete audit pattern:** `grep -r "level >= " lib/ components/ app/` (and `level < `, both directions) and review every match against the intended gate semantic. Comment-only matches still get updated to prevent the same logical-rationalization bug from accumulating in docs.
+
+Captured during Build #2 PR 1 when:
+- `components/ChecklistItem.tsx:406` `showTagAffordance` was caught during a follow-up recon pass after lib + RLS layers had already been reconciled.
+- `lib/report-assignments.ts:54` `ASSIGNMENT_BASE_LEVEL = 4` was caught during the same sweep — it had been introduced during the lib phase carrying forward the (then-current) `AM_PREP_BASE_LEVEL = 4` convention; should have moved with the closing finalize gate fix but was missed.
+- 7 additional stale-comment sites (JSDoc, inline rationale) referencing `level >= 4` for "KH+" semantic were updated to `level >= 3` to prevent the same logical-incoherence bug from accumulating in documentation.
+
+The lesson: any gate change must trigger a 3-layer grep sweep BEFORE declaring the fix complete. Running the sweep retroactively is what caught these; running it preemptively prevents the cleanup commit entirely.
+
+### Language-aware time/date formatting is the canonical pattern
+
+Every time/date formatting site in CO-OPS uses a language-aware locale derived from `useTranslation()`'s `language` (or `serverT`'s language param in Server Components) — NOT browser locale via `toLocaleTimeString(undefined, ...)`. The canonical pattern (established in PR 5d's dashboard `formatDateLabel`):
+
+```ts
+function formatTime(iso: string, language: Language): string {
+  return new Date(iso).toLocaleTimeString(
+    language === "es" ? "es-US" : "en-US",
+    { hour: "numeric", minute: "2-digit" },
+  );
+}
+```
+
+Reasoning: a Spanish-language user with an en-US browser locale should see Spanish-language time/date formatting (matching their app preference), not browser-default. The alternative — letting browser locale leak through — produces inconsistent UX for users whose device locale differs from their app preference (e.g., Cristian's Spanish-speaking colleagues using shared phones with en-US system settings).
+
+Captured during Build #2 PR 1 Part 2 follow-up when AmPrepForm's `formatTime` helper was caught using `toLocaleTimeString(undefined, ...)` (browser locale) and corrected to language-aware. Closing-client's existing `formatTime` (which still uses browser locale) is a known outlier; its cleanup is deferred but tracked here so any future formatting site lands on the canonical pattern from the start.
+
+Future formatting helpers (date pickers, timestamp displays, duration strings, anywhere a `Intl.DateTimeFormat` or `toLocale*` call lands): take `language: Language` as a parameter and pass it explicitly.
+
+**Duplication watch:** as of Build #2 PR 1 closing-client report-reference rendering commit, `formatTime` (or equivalent inline helper) is duplicated across 5 modules: `app/(authed)/operations/closing/page.tsx`, `app/(authed)/operations/closing/closing-client.tsx`, `components/prep/AmPrepForm.tsx`, `app/(authed)/dashboard/page.tsx`, and `components/ReportReferenceItem.tsx`. **All five sites now use language-aware locale** (closing-client was the prior browser-locale-hardcoding-`"en-US"` outlier; lifted to language-aware in the closing-client report-reference rendering commit, which also fixed a real Spanish-UX bug where Spanish users saw English-format times in the post-confirm banner). The pattern is canonical — any new time-formatting site inherits it from the start.
+
+We've now hit the 5-site threshold the prior version of this lesson set as the lift trigger. **Lift `formatTime(iso, language)` to `lib/i18n/format.ts` in the next commit that touches any of these 5 modules** (or in a standalone cleanup commit if Juan wants to pull it forward). All 5 inline copies replace with a single import. Same applies to `formatDateLabel` for date-only strings (currently 1 site in dashboard; revisit when a 2nd site needs it).
+
+### loadAmPrepState single-prep-template assumption (after Build #2 PR 1)
+
+`lib/prep.ts loadAmPrepState` filters `type='prep' AND active=true` and picks the most recently created active prep template at the location. This works while only one prep template exists per location. When Mid-day Prep ships per C.43, both AM Prep and Mid-day Prep will be `type='prep'` and the loader will need refinement.
+
+Three resolution options for that future moment:
+- Filter by name pattern (`name LIKE 'Standard AM Prep%'`) — fragile, name-coupling
+- Distinct discriminator column (e.g., `prep_subtype: 'am_prep' | 'mid_day_prep'`) — schema migration, cleanest
+- Split the `checklist_templates.type` CHECK constraint to add `'am_prep'` and `'mid_day_prep'` as distinct values — schema migration, most invasive
+
+Decide at Mid-day Prep design time when the full discriminator landscape is in view. C.43 sub-finding captures the same architectural tension on the spec side. Captured during Build #2 PR 1 AM Prep seed implementation.
+
+### Convergent seed scripts re-exporting ITEMS must gate main() behind a direct-invocation check (after Build #2 PR 1)
+
+When a seed script imports data exports (ITEMS, buildTranslations, SeedItem) from another seed, the source seed's top-level `main()` runs as an import side-effect. This silently re-runs the source seed's full convergent path on every downstream invocation. Latent risk: future spec edits to the source seed propagate through downstream invocations carrying the source seed's audit metadata strings (phase, reason), polluting the audit_log forensic chain with stale-attribution rows that need `audit.metadata_correction` rows to remediate.
+
+Fix pattern: gate `main()` behind `pathToFileURL` from `node:url`:
+
+```ts
+import { pathToFileURL } from "node:url";
+
+if (import.meta.url === pathToFileURL(process.argv[1]!).href) {
+  main().catch((err) => { console.error(err); process.exit(1); });
+}
+```
+
+Apply to ALL seed scripts that export data, even when no current downstream importer exists — defensive against a future seed accidentally triggering the script's full convergent path on import. `pathToFileURL` handles platform-specific path conversion (Windows path forms, paths with special characters) correctly; manual string-concat (`file://${process.argv[1]}`) is brittle.
+
+Caught during Build #2 PR 1 first v2 production seed run when v1's `seed-closing-template` log line and MEP/EM sync lines appeared alongside v2's output. Production impact was zero (v1 ran convergent → synced_no_changes → no audit row) but the latent risk was real. Both seed-closing-template.ts and seed-standard-closing-v2.ts now use the gate idiom.
+
+### MiscSection always renders YES/NO toggle pair (after Build #2 PR 1)
+
+`components/prep/sections/MiscSection.tsx`'s MiscRow ALWAYS renders the YES/NO chip pair; the textarea is conditional on `meta.columns.includes("free_text")`. A `columns: ["free_text"]`-only Misc item (e.g., a section-level free-form notes sink, which Image 1's paper AM Prep List has at the end of the Misc block) would render as YES/NO buttons + textarea — operator selects YES or NO for nothing.
+
+Future capability requires conditional YES/NO rendering based on `meta.columns.includes("yes_no")` (~5 LOC change to MiscRow + 1 i18n key). Build #2 PR 1's Standard AM Prep v1 ships 4 yes_no Misc items (Meatball mix, Meatballs ready, Meatballs reheat, Cook Bacon?) — all have `columns: ["yes_no"]` or `["yes_no", "free_text"]`, so the gap doesn't surface. Section-level notes sink deferred.
+
+When the conditional YES/NO render lands as a follow-up, also extend the seed's SeedAmPrepItem to accept `columns: ["free_text"]`-only items at the end of the Misc block (Image 1 source has this) and add the corresponding ITEM entry. Captured during Build #2 PR 1 Q-v2 review.
+
+### C.44 admin tooling must support translation editing alongside English source-of-truth fields (after Build #2 PR 1)
+
+When the GM+ admin tooling for prep templates ships per C.44, the edit UI must support setting `translations.es.{label, description, station, specialInstruction}` alongside the English source-of-truth fields. Without this, GM-authored values render English-only for Spanish users — recreating the partial-translation gap C.37 was created to prevent.
+
+Pattern: edit UI exposes both English (source) and Spanish (translation) inputs; save handler updates both atomically; resolver behavior (`lib/i18n/content.ts resolveTemplateItemContent`) unchanged. Same discipline applies to closing template item admin tooling and any future template-item admin surface.
+
+`specialInstruction` is the only field where translation source-of-truth lives in nested JSONB (`prep_meta.specialInstruction`). The resolver internally reaches for the fallback so callers stay uniform — the admin form should mirror the same shape (English specialInstruction sets `prep_meta.specialInstruction`; Spanish sets `translations.es.specialInstruction`). Captured during Build #2 PR 1 specialInstruction translation extension.
+
+### Smoke-test instructions must point to the PR's preview URL, not production (after Build #2 PR 1)
+
+PR descriptions and smoke-test instructions must use the PR's own preview deployment URL — Vercel branch-based: `https://co-ops-git-<branch-slug>-juan-co-devs-projects.vercel.app/` — NOT the production URL `https://co-ops-ashy.vercel.app`. Production is bound to `main`; until a PR merges, that URL serves stale code without any of the PR's changes.
+
+Caught during Build #2 PR 1 smoke test: the PR description told Juan to test against `co-ops-ashy.vercel.app` (production main), causing two false-positive bug reports — "AM Prep tile not visible" (the dashboard tile commit wasn't on main yet) and "closing checklist allows ticking AM Prep List" (the report-reference rendering branch wasn't on main yet either). Both "bugs" disappeared once Juan re-tested against the PR's preview URL. The actual code changes were on the PR branch, never on main pre-merge.
+
+**How to find the actual preview URL:**
+- Vercel auto-posts a comment on every PR with the directly-loadable preview URL — check the PR conversation tab
+- Branch-slug derivation: replace `/` with `-` in the branch name (e.g., `claude/dreamy-tesla-a03563` → `claude-dreamy-tesla-a03563`) and slot into `co-ops-git-<slug>-juan-co-devs-projects.vercel.app`
+- The Vercel check status on the PR (`gh pr checks <num>`) links to the Vercel dashboard for the deployment, NOT the directly-loadable preview URL — that's why grabbing the URL from the Vercel comment is more reliable
+
+**Rule for future PR descriptions:** always include the preview URL explicitly in the test plan section. Production URL `co-ops-ashy.vercel.app` is reserved for post-merge regression smokes only.
+
+Sibling lesson to Phase 2's "Vercel env var records can exist with empty values" — both belong to the broader principle that deployment behavior must be verified in the actual deployment context the change targets, not by inspecting build logs or generic / production URLs.
+

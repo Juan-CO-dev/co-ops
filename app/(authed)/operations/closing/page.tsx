@@ -44,12 +44,16 @@ import type { Language } from "@/lib/i18n/types";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import type {
+  AutoCompleteMeta,
   ChecklistCompletion,
   ChecklistInstance,
   ChecklistRevocationReason,
   ChecklistStatus,
   ChecklistTemplateItem,
   ChecklistTemplateItemTranslations,
+  PrepData,
+  PrepMeta,
+  ReportType,
 } from "@/lib/types";
 
 import { ClosingClient, type ClosingInitialState, type StatusBanner } from "./closing-client";
@@ -105,6 +109,9 @@ interface InstanceRow {
   confirmed_at: string | null;
   confirmed_by: string | null;
   created_at: string;
+  // Build #2 (per SPEC_AMENDMENTS.md C.18 + C.43; migration 0038).
+  triggered_by_user_id: string | null;
+  triggered_at: string | null;
 }
 
 const rowToInstance = (r: InstanceRow): ChecklistInstance => ({
@@ -117,6 +124,8 @@ const rowToInstance = (r: InstanceRow): ChecklistInstance => ({
   confirmedAt: r.confirmed_at,
   confirmedBy: r.confirmed_by,
   createdAt: r.created_at,
+  triggeredByUserId: r.triggered_by_user_id,
+  triggeredAt: r.triggered_at,
 });
 
 interface TemplateItemRow {
@@ -133,6 +142,11 @@ interface TemplateItemRow {
   vendor_item_id: string | null;
   active: boolean;
   translations: ChecklistTemplateItemTranslations | null;
+  // Build #2 (per SPEC_AMENDMENTS.md C.18 + C.42; migration 0036).
+  // prep_meta NULL on cleaning items; report_reference_type non-null on
+  // closing's report-reference items (auto-complete on report submission).
+  prep_meta: unknown | null;
+  report_reference_type: ReportType | null;
 }
 
 const rowToTemplateItem = (r: TemplateItemRow): ChecklistTemplateItem => ({
@@ -149,6 +163,11 @@ const rowToTemplateItem = (r: TemplateItemRow): ChecklistTemplateItem => ({
   vendorItemId: r.vendor_item_id,
   active: r.active,
   translations: r.translations,
+  // Pass-through; lib/prep.ts narrows the JSONB shape via isPrepMeta() for
+  // prep-aware consumers. The closing surface only reads reportReferenceType
+  // (later step in this PR — render report-reference items distinctly).
+  prepMeta: (r.prep_meta ?? null) as PrepMeta | null,
+  reportReferenceType: r.report_reference_type,
 });
 
 interface CompletionRow {
@@ -171,6 +190,16 @@ interface CompletionRow {
   actual_completer_id: string | null;
   actual_completer_tagged_at: string | null;
   actual_completer_tagged_by: string | null;
+  // Build #2 (per SPEC_AMENDMENTS.md C.18 + C.44; migration 0037). Always
+  // NULL on closing-page-loaded completions (closing items don't carry
+  // prep payloads). Pass-through here for type completeness.
+  prep_data: unknown | null;
+  // Build #2 (per SPEC_AMENDMENTS.md C.42; migration 0040). Populated on
+  // the closing's auto-completed report-reference items (e.g., "AM Prep
+  // List ✓ — submitted by Cristian at 9:47 PM"). Closing-client reads
+  // this to branch attribution-style rendering vs user-notes rendering
+  // (later step in this PR).
+  auto_complete_meta: unknown | null;
 }
 
 const rowToCompletion = (r: CompletionRow): ChecklistCompletion => ({
@@ -191,6 +220,8 @@ const rowToCompletion = (r: CompletionRow): ChecklistCompletion => ({
   actualCompleterId: r.actual_completer_id,
   actualCompleterTaggedAt: r.actual_completer_tagged_at,
   actualCompleterTaggedBy: r.actual_completer_tagged_by,
+  prepData: (r.prep_data ?? null) as PrepData | null,
+  autoCompleteMeta: (r.auto_complete_meta ?? null) as AutoCompleteMeta | null,
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -320,7 +351,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
     const { data, error } = await sb
       .from("checklist_instances")
       .select(
-        "id, template_id, location_id, date, shift_start_at, status, confirmed_at, confirmed_by, created_at",
+        "id, template_id, location_id, date, shift_start_at, status, confirmed_at, confirmed_by, created_at, triggered_by_user_id, triggered_at",
       )
       .eq("template_id", templateRow.id)
       .eq("location_id", locationParam)
@@ -355,6 +386,8 @@ export default async function ClosingPage({ searchParams }: PageProps) {
       confirmed_at: result.instance.confirmedAt,
       confirmed_by: result.instance.confirmedBy,
       created_at: result.instance.createdAt,
+      triggered_by_user_id: result.instance.triggeredByUserId,
+      triggered_at: result.instance.triggeredAt,
     };
   }
 
@@ -362,7 +395,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
   const { data: itemsRows, error: itemsErr } = await sb
     .from("checklist_template_items")
     .select(
-      "id, template_id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, vendor_item_id, active, translations",
+      "id, template_id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, vendor_item_id, active, translations, prep_meta, report_reference_type",
     )
     .eq("template_id", templateRow.id)
     .eq("active", true)
@@ -377,7 +410,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
   const { data: completionRows, error: compErr } = await sb
     .from("checklist_completions")
     .select(
-      "id, instance_id, template_item_id, completed_by, completed_at, count_value, photo_id, notes, superseded_at, superseded_by, revoked_at, revoked_by, revocation_reason, revocation_note, actual_completer_id, actual_completer_tagged_at, actual_completer_tagged_by",
+      "id, instance_id, template_item_id, completed_by, completed_at, count_value, photo_id, notes, superseded_at, superseded_by, revoked_at, revoked_by, revocation_reason, revocation_note, actual_completer_id, actual_completer_tagged_at, actual_completer_tagged_by, prep_data, auto_complete_meta",
     )
     .eq("instance_id", instanceRow.id)
     .is("superseded_at", null)

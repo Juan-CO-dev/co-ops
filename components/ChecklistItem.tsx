@@ -390,10 +390,11 @@ export function ChecklistItem({
   // Affordance visibility:
   //   - Undo: visible when row is completed by self AND interactable AND
   //     onRevoke/onRevokeWithReason callbacks wired.
-  //   - Tag actual completer: visible to KH+ (level >= 4) on completed rows
-  //     authored by anyone other than self, AND interactable AND
-  //     onTagActualCompleter callback wired. (Self uses the wrong_user_credited
-  //     chip from the post-60s Undo expand, not this affordance.)
+  //   - Tag actual completer: visible to KH+ (level >= 3, per C.41
+  //     reconciliation) on completed rows authored by anyone other than
+  //     self, AND interactable AND onTagActualCompleter callback wired.
+  //     (Self uses the wrong_user_credited chip from the post-60s Undo
+  //     expand, not this affordance.)
   const showUndo =
     isCompleted &&
     isActorCompletedBy &&
@@ -403,7 +404,7 @@ export function ChecklistItem({
   const showTagAffordance =
     isCompleted &&
     !isActorCompletedBy &&
-    actorLevel >= 4 &&
+    actorLevel >= 3 &&
     interactable &&
     !!onTagActualCompleter &&
     !!onLoadPickerCandidates;
@@ -433,6 +434,8 @@ export function ChecklistItem({
         actualCompleterId: null,
         actualCompleterTaggedAt: null,
         actualCompleterTaggedBy: null,
+        prepData: null,
+        autoCompleteMeta: null,
       };
       setLocalCompletion(optimistic);
     }
