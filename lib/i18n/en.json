@@ -206,5 +206,35 @@
   "role.key_holder": "Key Holder",
   "role.trainer": "Trainer",
   "role.employee": "Employee",
-  "role.trainee": "Trainee"
+  "role.trainee": "Trainee",
+
+  "am_prep.column.par": "PAR",
+  "am_prep.column.par_with_unit": "PAR ({unit})",
+  "am_prep.column.on_hand": "ON HAND",
+  "am_prep.column.portioned": "PORTIONED",
+  "am_prep.column.line": "LINE",
+  "am_prep.column.back_up": "BACK UP",
+  "am_prep.column.total": "TOTAL",
+  "am_prep.column.yes_no": "Y/N",
+  "am_prep.column.free_text": "NOTES",
+
+  "am_prep.row.input_aria": "{section} · {item} · {column}",
+  "am_prep.row.par_value_with_unit": "{value} {unit}",
+
+  "am_prep.misc.yes": "YES",
+  "am_prep.misc.no": "NO",
+  "am_prep.misc.toggle_aria": "{item}: currently {state}, tap to change",
+  "am_prep.misc.notes_placeholder": "Add notes…",
+  "am_prep.misc.notes_label": "Notes",
+
+  "am_prep.section.aria": "{section} prep section",
+  "am_prep.section.empty": "No items in {section}",
+  "am_prep.section.loading": "Loading {section}…",
+
+  "am_prep.section.veg": "Veg",
+  "am_prep.section.cooks": "Cooks",
+  "am_prep.section.sides": "Sides",
+  "am_prep.section.sauces": "Sauces",
+  "am_prep.section.slicing": "Slicing",
+  "am_prep.section.misc": "Misc"
 }

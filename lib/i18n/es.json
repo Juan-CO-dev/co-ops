@@ -206,5 +206,35 @@
   "role.key_holder": "Encargado de Llaves",
   "role.trainer": "Entrenador",
   "role.employee": "Empleado",
-  "role.trainee": "Aprendiz"
+  "role.trainee": "Aprendiz",
+
+  "am_prep.column.par": "PAR",
+  "am_prep.column.par_with_unit": "PAR ({unit})",
+  "am_prep.column.on_hand": "EN MANO",
+  "am_prep.column.portioned": "PORCIONADO",
+  "am_prep.column.line": "LÍNEA",
+  "am_prep.column.back_up": "RESPALDO",
+  "am_prep.column.total": "TOTAL",
+  "am_prep.column.yes_no": "S/N",
+  "am_prep.column.free_text": "NOTAS",
+
+  "am_prep.row.input_aria": "{section} · {item} · {column}",
+  "am_prep.row.par_value_with_unit": "{value} {unit}",
+
+  "am_prep.misc.yes": "SÍ",
+  "am_prep.misc.no": "NO",
+  "am_prep.misc.toggle_aria": "{item}: actualmente {state}, toca para cambiar",
+  "am_prep.misc.notes_placeholder": "Agrega notas…",
+  "am_prep.misc.notes_label": "Notas",
+
+  "am_prep.section.aria": "Sección de prep {section}",
+  "am_prep.section.empty": "No hay ítems en {section}",
+  "am_prep.section.loading": "Cargando {section}…",
+
+  "am_prep.section.veg": "Verduras",
+  "am_prep.section.cooks": "Cocidos",
+  "am_prep.section.sides": "Acompañantes",
+  "am_prep.section.sauces": "Salsas",
+  "am_prep.section.slicing": "Rebanado",
+  "am_prep.section.misc": "Misceláneo"
 }
