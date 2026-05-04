@@ -58,9 +58,7 @@ import {
   type ChecklistTagResult,
 } from "@/components/ChecklistItem";
 import { PinConfirmModal } from "@/components/auth/PinConfirmModal";
-import { UserMenu } from "@/components/UserMenu";
-import { TranslationProvider, useTranslation } from "@/lib/i18n/provider";
-import type { Language } from "@/lib/i18n/types";
+import { useTranslation } from "@/lib/i18n/provider";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
@@ -91,14 +89,14 @@ export interface ClosingInitialState {
   initialCompletions: Record<string, ChecklistCompletion>;
   authors: Record<string, string>;
   actor: { userId: string; role: RoleCode; level: number };
-  /** Actor's display name + email — for UserMenu (per SPEC_AMENDMENTS.md C.31). */
-  actorName: string;
-  actorEmail: string | null;
-  /** Actor's language preference, fetched fresh from users.language each render. */
-  actorLanguage: Language;
   readOnly: boolean;
   banner: StatusBanner | null;
   todayDate: string;
+  // NOTE: actorName / actorEmail / actorLanguage no longer carried here —
+  // UserMenu mounts at the (authed) route group layout (per
+  // SPEC_AMENDMENTS.md C.39); TranslationProvider is layout-owned and
+  // reads users.language directly. This component just consumes via
+  // useTranslation().
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -169,18 +167,10 @@ function formatTime(iso: string): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function ClosingClient({ initialState }: { initialState: ClosingInitialState }) {
-  // Wrap the entire client surface in TranslationProvider so all descendants
-  // (ChecklistItem, UserMenu, future translated surfaces) share the same
-  // language Context. initialLanguage comes from users.language fetched by
-  // the page Server Component — fresh per render, no JWT staleness.
-  return (
-    <TranslationProvider initialLanguage={initialState.actorLanguage}>
-      <ClosingClientInner initialState={initialState} />
-    </TranslationProvider>
-  );
-}
-
-function ClosingClientInner({ initialState }: { initialState: ClosingInitialState }) {
+  // TranslationProvider mounts at the (authed) route group layout level
+  // (per SPEC_AMENDMENTS.md C.39). This component just consumes via
+  // useTranslation(); UserMenu is also layout-owned and floats in the
+  // top-right corner across all authenticated pages.
   const { t } = useTranslation();
   const {
     location,
@@ -189,8 +179,6 @@ function ClosingClientInner({ initialState }: { initialState: ClosingInitialStat
     initialCompletions,
     authors,
     actor,
-    actorName,
-    actorEmail,
     readOnly: initialReadOnly,
     banner: initialBanner,
   } = initialState;
@@ -669,12 +657,11 @@ function ClosingClientInner({ initialState }: { initialState: ClosingInitialStat
 
   return (
     <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
-      {/* Top bar: persistent back-to-dashboard CTA (left) + UserMenu (right).
-       * UserMenu hosts the language toggle per SPEC_AMENDMENTS.md C.31; built
-       * as foundation for future expansion (password change, notification
-       * prefs) — name is UserMenu, not LanguageSelector, so future PRs don't
-       * refactor. */}
-      <div className="mb-3 flex items-center justify-between gap-3">
+      {/* Persistent back-to-dashboard CTA. UserMenu floats in the
+          top-right corner from the (authed) layout (per
+          SPEC_AMENDMENTS.md C.39); reserved zone has min-h sized so this
+          back-link doesn't collide. */}
+      <div className="mb-3">
         <a
           href="/dashboard"
           aria-label={t("closing.page.dashboard_back_aria")}
@@ -689,7 +676,6 @@ function ClosingClientInner({ initialState }: { initialState: ClosingInitialStat
           <ChevronLeftIcon />
           <span>{t("closing.page.dashboard_back")}</span>
         </a>
-        <UserMenu userName={actorName} userEmail={actorEmail} />
       </div>
 
       {/* Header */}

@@ -436,3 +436,18 @@ Language updates skip the `audit()` helper. Mirrors the convention for `phone` a
 
 The dropdown in the closing-page header is named `UserMenu` (not `LanguageSelector`) deliberately — PR 5a ships only the language section but the component is foundation for future settings expansions (password change, notification prefs, eventually Module #2 training progress, account info, etc.). Naming for current scope only would force a refactor on the first follow-up. Trigger affordance is an avatar-style initial circle, not a text label, because the closing-page header already shows location code + name — adding another text affordance would crowd. Captured during Build #1.5 PR 5a design lock.
 
+### Authed layout redirect path is currently static (after Build #1.5 PR 5b)
+
+The `(authed)` layout calls `requireSessionFromHeaders("/dashboard")` for the auth boundary. On auth denial, all routes in the group redirect to `/?next=/dashboard` regardless of the original target. This loses deep-link intent for users who hit `/operations/closing` (or future paths) directly while unauthenticated — the layout's auth call runs FIRST and redirects before the page-level auth call (which would carry the correct path) ever executes.
+
+Acceptable trade-off for Build #1.5 (deep-link auth scenarios rare in current usage — ~10 active users, mostly dashboard/closing during shifts; wrong-redirect-target is single-occurrence annoyance, not blocker).
+
+Clean fix when revisited:
+- Add `requireSessionThrows()` variant in `lib/auth.ts` (or `lib/session.ts`) that throws a typed `UnauthenticatedError` on auth fail instead of calling `redirect()`
+- Layout uses the throws variant; an error boundary in the layout (or root error.tsx) catches and redirects with a neutral path
+- Page-level auth calls (which know their own path) handle the actual redirect with correct `?next=` targeting
+
+Schedule the fix when introducing notifications, deep links from external sources (email confirm flows, Slack/SMS link-outs), or any feature where direct-link auth scenarios become common. Until then, the static `/dashboard` fallback is the operational reality.
+
+Captured during Build #1.5 PR 5b architectural surfacing.
+
