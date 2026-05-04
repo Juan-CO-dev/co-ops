@@ -36,7 +36,7 @@
 import { useCallback, useMemo, useState } from "react";
 
 import { useTranslation } from "@/lib/i18n/provider";
-import type { TranslationKey, TranslationParams } from "@/lib/i18n/types";
+import type { Language, TranslationKey, TranslationParams } from "@/lib/i18n/types";
 import type {
   ChecklistInstance,
   ChecklistTemplateItem,
@@ -211,9 +211,21 @@ interface SubmitResponseBodySuccess {
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-function formatTime(iso: string): string {
+/**
+ * Language-aware time formatter (per dashboard's PR 5d formatDateLabel
+ * pattern). Uses es-US locale when language === "es", en-US otherwise.
+ *
+ * Architectural commitment per AGENTS.md "Language-aware time/date
+ * formatting" durable lesson: every time/date formatting site in CO-OPS
+ * uses language-aware locale going forward. Closing-client's existing
+ * browser-locale time formatting is a known outlier pending cleanup.
+ */
+function formatTime(iso: string, language: Language): string {
   try {
-    return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    return new Date(iso).toLocaleTimeString(
+      language === "es" ? "es-US" : "en-US",
+      { hour: "numeric", minute: "2-digit" },
+    );
   } catch {
     return "";
   }
@@ -252,7 +264,7 @@ export function AmPrepForm({
   authors,
   actor,
 }: AmPrepFormProps) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
 
   // Group items by section.
   const itemsBySection = useMemo(() => {
@@ -304,6 +316,15 @@ export function AmPrepForm({
 
   // Read-only when the instance has already been confirmed (server load OR
   // post-submission flip in this session).
+  //
+  // `incomplete_confirmed` is type-reachable via ChecklistStatus but
+  // operationally unreachable for AM Prep instances under current code:
+  // closing's confirmInstance (lib/checklists.ts) is the only path that
+  // sets that status, and AM Prep doesn't use confirmInstance — the
+  // submit_am_prep_atomic RPC always writes 'confirmed'. Kept here as
+  // defensive coverage in case a future template-type unification
+  // routes prep through confirmInstance, OR if an admin tool ever
+  // surfaces a manual status transition.
   const isReadOnly =
     instance.status === "confirmed" ||
     instance.status === "incomplete_confirmed" ||
@@ -403,7 +424,7 @@ export function AmPrepForm({
   const successBanner = (() => {
     if (submitState.kind !== "success") return null;
     const time = submitState.instance.confirmedAt
-      ? formatTime(submitState.instance.confirmedAt)
+      ? formatTime(submitState.instance.confirmedAt, language)
       : "";
     return t("am_prep.banner.success", { time, name: actor.name });
   })();
@@ -418,7 +439,7 @@ export function AmPrepForm({
       return null;
     }
     const confirmedByName = instance.confirmedBy ? authors[instance.confirmedBy] ?? "—" : "—";
-    const time = instance.confirmedAt ? formatTime(instance.confirmedAt) : "";
+    const time = instance.confirmedAt ? formatTime(instance.confirmedAt, language) : "";
     return t("am_prep.banner.read_only", { name: confirmedByName, time });
   })();
 

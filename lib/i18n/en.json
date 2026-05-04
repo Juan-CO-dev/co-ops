@@ -251,7 +251,6 @@
   "am_prep.error.summary_other": "Fix {count} issues before submitting",
   "am_prep.error.numeric_invalid": "Enter a number",
   "am_prep.error.negative_blocked": "Cannot be negative",
-  "am_prep.error.no_changes": "No changes to submit",
   "am_prep.error.prep_role_violation": "You don't have permission to submit AM Prep",
   "am_prep.error.prep_instance_not_open": "AM Prep was already submitted by another user — refresh the page",
   "am_prep.error.prep_auto_complete_failed": "Closing not yet started — start it from the dashboard, then re-submit AM Prep",

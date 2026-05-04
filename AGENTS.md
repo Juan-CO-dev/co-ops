@@ -567,3 +567,22 @@ Captured during Build #2 PR 1 when:
 
 The lesson: any gate change must trigger a 3-layer grep sweep BEFORE declaring the fix complete. Running the sweep retroactively is what caught these; running it preemptively prevents the cleanup commit entirely.
 
+### Language-aware time/date formatting is the canonical pattern
+
+Every time/date formatting site in CO-OPS uses a language-aware locale derived from `useTranslation()`'s `language` (or `serverT`'s language param in Server Components) — NOT browser locale via `toLocaleTimeString(undefined, ...)`. The canonical pattern (established in PR 5d's dashboard `formatDateLabel`):
+
+```ts
+function formatTime(iso: string, language: Language): string {
+  return new Date(iso).toLocaleTimeString(
+    language === "es" ? "es-US" : "en-US",
+    { hour: "numeric", minute: "2-digit" },
+  );
+}
+```
+
+Reasoning: a Spanish-language user with an en-US browser locale should see Spanish-language time/date formatting (matching their app preference), not browser-default. The alternative — letting browser locale leak through — produces inconsistent UX for users whose device locale differs from their app preference (e.g., Cristian's Spanish-speaking colleagues using shared phones with en-US system settings).
+
+Captured during Build #2 PR 1 Part 2 follow-up when AmPrepForm's `formatTime` helper was caught using `toLocaleTimeString(undefined, ...)` (browser locale) and corrected to language-aware. Closing-client's existing `formatTime` (which still uses browser locale) is a known outlier; its cleanup is deferred but tracked here so any future formatting site lands on the canonical pattern from the start.
+
+Future formatting helpers (date pickers, timestamp displays, duration strings, anywhere a `Intl.DateTimeFormat` or `toLocale*` call lands): take `language: Language` as a parameter and pass it explicitly.
+
