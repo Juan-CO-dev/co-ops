@@ -3,12 +3,13 @@
  *
  * Response: { candidates: Array<{ id, name, role, level }> }
  *
- * Per SPEC_AMENDMENTS.md C.28's picker scope rules. Authorization: KH+ (level >= 4)
- * OR self when actor === completed_by. Returns the full candidate set
- * (completers ∪ (location-assigned ∩ today's sign-ins), filtered by item's
- * min_role_level + active). Self-exclusion for the wrong_user_credited
- * self-correction flow is the UI's responsibility (per PR 2 design lock #7);
- * this endpoint returns the unfiltered server-side scope.
+ * Per SPEC_AMENDMENTS.md C.28's picker scope rules. Authorization: KH+
+ * (level >= 3, per C.41 reconciliation) OR self when actor === completed_by.
+ * Returns the full candidate set (completers ∪ (location-assigned ∩
+ * today's sign-ins), filtered by item's min_role_level + active).
+ * Self-exclusion for the wrong_user_credited self-correction flow is the
+ * UI's responsibility (per PR 2 design lock #7); this endpoint returns
+ * the unfiltered server-side scope.
  *
  * Forwards lib's ChecklistError taxonomy through the standard mapper:
  *   400 completion_not_found  — id not visible to caller, revoked, or superseded

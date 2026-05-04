@@ -50,8 +50,20 @@ export interface ReportAssignmentActor {
   locations: string[];
 }
 
-/** Per C.42: KH+ has assignment authority. Maps to level >= 4 (SL+) per C.41 divergence. */
-const ASSIGNMENT_BASE_LEVEL = 4;
+/**
+ * Per C.42: KH+ has assignment authority. Reconciled in Build #2 PR 1
+ * cleanup commit to level >= 3 (key_holder is level 3 in current
+ * implementation per lib/roles.ts) — same convention as the closing
+ * finalize gate per C.26 + C.41 reconciliation. The broader level-number
+ * restructure remains deferred to Module #2.
+ *
+ * Note on the cleanup: this constant was missed during the initial C.41
+ * fix because it was introduced in the lib phase carrying forward the
+ * (then-current) AM_PREP_BASE_LEVEL = 4 convention. Caught during a
+ * follow-up grep sweep (per AGENTS.md "Role-level gate audits must
+ * include UI-side gates" durable lesson).
+ */
+const ASSIGNMENT_BASE_LEVEL = 3;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Errors

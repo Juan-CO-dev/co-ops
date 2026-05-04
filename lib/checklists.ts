@@ -1610,15 +1610,16 @@ export async function revokeWithReason(
  * append-only tap event); actual_completer_id is the retrospective
  * correction of who actually did the work.
  *
- * Authorization: KH+ (level >= 4) OR self when actor.userId ===
- * completion.completed_by (a self "wrong_user_credited" chip flow).
+ * Authorization: KH+ (level >= 3, per C.41 reconciliation) OR self when
+ * actor.userId === completion.completed_by (a self "wrong_user_credited"
+ * chip flow).
  *
  * Validation:
  *   - Completion must exist and be live.
  *   - now - completed_at >= QUICK_WINDOW_MS (else
  *     ChecklistTagWithinQuickWindowError; within the silent window the
  *     actor self-corrects via revokeCompletion's Undo, NOT via tagging).
- *   - actor.level >= 4 OR actor.userId === completion.completed_by.
+ *   - actor.level >= 3 OR actor.userId === completion.completed_by.
  *   - actualCompleterId must be in picker scope for this instance + location
  *     (loadPickerCandidates above), filtered by template_item.min_role_level.
  *     Failures discriminated by reason code on ChecklistInvalidPickerCandidateError.

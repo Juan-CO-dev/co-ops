@@ -787,7 +787,8 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
       {/*
        * Finalization UI gated by TWO conditions (SPEC_AMENDMENTS.md C.26):
        *
-       *   1. actor.level >= 4 (KH+) — security gate; only KH+ can lock up
+       *   1. actor.level >= 3 (KH+, per C.41 reconciliation) — security
+       *      gate; only KH+ can lock up
        *   2. walkOutVerificationComplete — operational gate; the "I'm the
        *      last out" signal. All 5 Walk-Out Verification items must have
        *      live completions. The person who tapped the last of them is

@@ -39,10 +39,11 @@
  * C.43 (mid-day prep multi-instance — accommodated by triggered_at column;
  * not exercised in this PR).
  *
- * Authorization note (per C.41 documented divergence): "KH+" in C.42 maps
- * to level >= 4 in current implementation (SL+) — same convention as the
- * closing finalize gate per C.26. When Module #2 reconciles per C.41,
- * both gates move together.
+ * Authorization note (per C.41 reconciliation): "KH+" in C.42 maps to
+ * level >= 3 in current implementation (key_holder is level 3 per
+ * lib/roles.ts) — same convention as the closing finalize gate per
+ * C.26 + the C.41 sub-finding fix. When Module #2 reconciles the
+ * broader level-number restructure per C.33, both gates move together.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";

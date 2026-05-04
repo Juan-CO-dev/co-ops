@@ -7,7 +7,7 @@
  * Response: { tagged: true, completion: ChecklistCompletion, replacedPriorTag: boolean }
  *
  * Per SPEC_AMENDMENTS.md C.28 accountability-truth model:
- *   - Authorization: KH+ (level >= 4) OR self when actor === completed_by
+ *   - Authorization: KH+ (level >= 3, per C.41 reconciliation) OR self when actor === completed_by
  *   - Past 60s of completed_at — else 409 tag_within_quick_window (during the
  *     silent window the actor self-corrects via /revoke; tagging blocked to
  *     avoid racing the actor's own correction)

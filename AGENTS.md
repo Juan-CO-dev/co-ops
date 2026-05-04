@@ -545,3 +545,25 @@ metadata: {
 
 Captured during Build #2 PR 1 verification — the lib phase plus C.41 gate fix landed clean, but the seed re-run's audit metadata exposed the hardcoded-strings risk that's been latent since the seed script was written.
 
+### Role-level gate audits must include UI-side gates
+
+When fixing or restructuring role-level gates (e.g., C.41 reconciliation from `level >= 4` to `>= 3`), the audit MUST cover three layers:
+
+1. **Lib-layer gates** (e.g., `lib/checklists.ts` authorization checks, `lib/prep.ts` AM_PREP_BASE_LEVEL, `lib/report-assignments.ts` ASSIGNMENT_BASE_LEVEL)
+2. **RLS policies** (per-table read/write policies referencing `current_user_role_level()`)
+3. **UI-side gates** (e.g., `components/*.tsx` visibility checks like `actorLevel >= 4`, `closing-client.tsx` `canFinalize` derivation)
+
+Missing any layer ships an incomplete fix:
+- Lib accepts an action but UI doesn't surface it = operationally broken (button doesn't appear).
+- UI surfaces an action but lib rejects it = bad UX (button appears but doesn't work).
+- RLS allows but lib gates differently = silent inconsistency that surfaces under unusual code paths.
+
+**Concrete audit pattern:** `grep -r "level >= " lib/ components/ app/` (and `level < `, both directions) and review every match against the intended gate semantic. Comment-only matches still get updated to prevent the same logical-rationalization bug from accumulating in docs.
+
+Captured during Build #2 PR 1 when:
+- `components/ChecklistItem.tsx:406` `showTagAffordance` was caught during a follow-up recon pass after lib + RLS layers had already been reconciled.
+- `lib/report-assignments.ts:54` `ASSIGNMENT_BASE_LEVEL = 4` was caught during the same sweep — it had been introduced during the lib phase carrying forward the (then-current) `AM_PREP_BASE_LEVEL = 4` convention; should have moved with the closing finalize gate fix but was missed.
+- 7 additional stale-comment sites (JSDoc, inline rationale) referencing `level >= 4` for "KH+" semantic were updated to `level >= 3` to prevent the same logical-incoherence bug from accumulating in documentation.
+
+The lesson: any gate change must trigger a 3-layer grep sweep BEFORE declaring the fix complete. Running the sweep retroactively is what caught these; running it preemptively prevents the cleanup commit entirely.
+
