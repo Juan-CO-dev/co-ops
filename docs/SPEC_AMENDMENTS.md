@@ -472,9 +472,36 @@ Distinct data model, workflows, role considerations.
 
 ---
 
+## C.39 — Authenticated route group with floating UserMenu pattern
+
+**Date added:** 2026-05-04
+**Spec sections:** §1 (CO operational context), C.31 (i18n infrastructure), Module #1 Build #1.5 PR 5b
+**What spec says:** Spec doesn't address authentication boundary placement or how cross-cutting authenticated UI concerns (i18n provider, user menu) mount across the app.
+**What built reality is:** PR 5b establishes `app/(authed)/*` as the authenticated route group. The group's `layout.tsx` owns three cross-cutting concerns:
+1. `requireSessionFromHeaders()` auth boundary — denial redirects to `/?next=<path>` per Phase 2 Session 4
+2. `TranslationProvider` mount with `user.language` read at the layout level — every authenticated client component gets translation Context for free
+3. `UserMenu` mounted as a fixed-position floating element (`top-4 right-4 z-30`) — every authenticated page gets user-menu access without per-page boilerplate
+
+Page-level `requireSessionFromHeaders` calls are KEPT for typed auth access (locations, level, role for page logic). The ~5ms duplicate cost is acceptable vs prop-drilling from this layout — Server Component layouts can't cleanly pass typed objects to children, and the alternatives (Context from a Server layer, or layout-children prop API gymnastics) create worse downstream problems.
+
+Pages render their own structural chrome (headers, banners) underneath/beside the floating UserMenu. AuthShell stays on dashboard as page-level chrome; closing page keeps its minimal operational chrome.
+
+**Why:** Solves the partial-language-toggle problem (UserMenu was previously closing-page-only, so language toggle was inaccessible from the dashboard); future authenticated pages inherit translation + menu access for free; preserves each page's chrome design (no banner stacking); no per-page UserMenu mount boilerplate; cleanly separates cross-cutting concerns (auth, translation, UserMenu) from page chrome design.
+
+**Architectural constraint:** Top-right corner real estate is reserved for UserMenu (40×40 avatar circle + dropdown panel) and future floating elements (notification bell, breadcrumbs, etc.). Future module designs must NOT place critical interactive content in this corner where the floating UserMenu would overlap it.
+
+**v1.3 action:**
+- Document `app/(authed)/*` as the canonical authenticated route group
+- New authenticated pages live inside this group and automatically inherit auth boundary, translation context, UserMenu access
+- Update spec §13 admin tooling and Module #2 user lifecycle module to reference this pattern
+- Future cross-cutting authenticated concerns (notification bell, breadcrumbs, command palette, etc.) mount at the same `(authed)/layout.tsx` rather than per-page
+- Captured during Phase 3 Build #1.5 PR 5b after Juan's smoke test revealed UserMenu was closing-page-only
+
+---
+
 ## How to add an entry
 
-1. Pick the next monotonic ID (`C.<n>` — current next: C.38).
+1. Pick the next monotonic ID (`C.<n>` — current next: C.40).
 2. Spec sections under amendment.
 3. Quote what spec says.
 4. Document what built reality is.
