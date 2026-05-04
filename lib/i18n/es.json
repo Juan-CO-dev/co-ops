@@ -252,6 +252,7 @@
   "am_prep.error.summary_other": "Corrige {count} problemas antes de enviar",
   "am_prep.error.numeric_invalid": "Ingresa un número",
   "am_prep.error.negative_blocked": "No puede ser negativo",
+  "am_prep.error.primary_required": "Obligatorio",
   "am_prep.error.prep_role_violation": "No tienes permiso para enviar Lista de Prep AM",
   "am_prep.error.prep_instance_not_open": "Otro usuario ya envió la Lista de Prep AM — recarga la página",
   "am_prep.error.prep_auto_complete_failed": "El cierre no ha comenzado — ábrelo desde el dashboard, luego envía de nuevo",

@@ -39,6 +39,7 @@ import { redirect } from "next/navigation";
 
 import { getOrCreateInstance } from "@/lib/checklists";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
+import { formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
 import { requireSessionFromHeaders } from "@/lib/session";
@@ -83,17 +84,12 @@ function formatDateLabel(yyyymmdd: string): string {
   }).format(dt);
 }
 
-function formatTime(iso: string): string {
-  try {
-    return new Date(iso).toLocaleTimeString("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-      timeZone: OPERATIONAL_TZ,
-    });
-  } catch {
-    return "";
-  }
-}
+// formatTime imported from @/lib/i18n/format above; canonical helper
+// (Build #2 PR 2) consolidates 6 prior inline copies and always pins
+// to the operational TZ. The previous inline closing/page formatTime
+// already passed timeZone: OPERATIONAL_TZ, so this surface was
+// TZ-correct, but lifted for the language-locale add (was hardcoded
+// "en-US") and for consistency with the canonical pattern.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // snake_case → camelCase row mappers
@@ -247,7 +243,7 @@ function deriveBanner(ctx: BannerContext, language: Language): StatusBanner | nu
   }
   // Confirmed / incomplete-confirmed → status-specific banner (today or historical).
   if (ctx.status === "confirmed") {
-    const time = ctx.confirmedAt ? formatTime(ctx.confirmedAt) : "";
+    const time = ctx.confirmedAt ? formatTime(ctx.confirmedAt, language) : "";
     const who = ctx.confirmedByName ?? "—";
     const timePrefix = time ? serverT(language, "closing.banner.time_prefix", { time }) : "";
     return {
@@ -256,7 +252,7 @@ function deriveBanner(ctx: BannerContext, language: Language): StatusBanner | nu
     };
   }
   if (ctx.status === "incomplete_confirmed") {
-    const time = ctx.confirmedAt ? formatTime(ctx.confirmedAt) : "";
+    const time = ctx.confirmedAt ? formatTime(ctx.confirmedAt, language) : "";
     const who = ctx.confirmedByName ?? "—";
     const timePrefix = time ? serverT(language, "closing.banner.time_prefix", { time }) : "";
     return {

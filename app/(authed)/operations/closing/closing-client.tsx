@@ -60,6 +60,7 @@ import {
 import { PinConfirmModal } from "@/components/auth/PinConfirmModal";
 import { ReportReferenceItem } from "@/components/ReportReferenceItem";
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
+import { formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language } from "@/lib/i18n/types";
 import type {
@@ -164,28 +165,10 @@ function isStationFullyComplete(
   return true;
 }
 
-/**
- * Language-aware time formatter (per AGENTS.md "Language-aware time/date
- * formatting" canonical pattern). Uses es-US when language === "es",
- * en-US otherwise.
- *
- * Lifted to language-aware in Build #2 PR 1's closing-client report-
- * reference rendering commit — closing-client was the outlier flagged
- * in the AGENTS.md durable lesson; previously hardcoded "en-US"
- * regardless of language (real Spanish-UX bug — Spanish users always
- * saw English-format times in the post-confirm banner). Now matches
- * dashboard's formatDateLabel + AmPrepForm's formatTime convention.
- */
-function formatTime(iso: string, language: Language): string {
-  try {
-    return new Date(iso).toLocaleTimeString(
-      language === "es" ? "es-US" : "en-US",
-      { hour: "numeric", minute: "2-digit" },
-    );
-  } catch {
-    return "";
-  }
-}
+// formatTime imported from @/lib/i18n/format below; canonical helper
+// (Build #2 PR 2) lifts the prior inline copy to a single shared
+// implementation that always uses the operational TZ regardless of
+// runtime context (server vs client).
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Top-level component

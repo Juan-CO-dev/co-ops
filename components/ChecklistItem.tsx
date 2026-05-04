@@ -62,6 +62,7 @@
 import { useEffect, useState } from "react";
 
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
+import { formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type {
@@ -190,14 +191,12 @@ interface ChecklistItemProps {
 
 const QUICK_WINDOW_MS = 60_000;
 
-const formatTime = (iso: string): string => {
-  try {
-    const d = new Date(iso);
-    return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
-  } catch {
-    return "";
-  }
-};
+// formatTime imported from @/lib/i18n/format; canonical helper (Build
+// #2 PR 2) consolidates 6 prior inline copies. Bonus side effect: this
+// site previously used `toLocaleTimeString(undefined, ...)` (browser
+// locale + browser TZ — both correct only by accident in DC); the
+// canonical helper takes language explicitly + pins to operational TZ
+// regardless of where the operator's browser is.
 
 const isDataCarrying = (payload: ChecklistCompletePayload): boolean =>
   (payload.countValue !== undefined && payload.countValue !== null) ||
@@ -719,7 +718,7 @@ export function ChecklistItem({
       return t("closing.row.aria_error", { label: resolved.label, error: errorMessageFor(t, error) });
     if (isCompleted && liveCompletion) {
       const who = isSelfAuthor ? t("common.you") : completionAuthor?.name ?? "—";
-      const when = formatTime(liveCompletion.completedAt);
+      const when = formatTime(liveCompletion.completedAt, language);
       const credited =
         isTagged && actualCompleterAuthor
           ? t("closing.row.aria_credited_to", {
@@ -757,7 +756,7 @@ export function ChecklistItem({
   const metaPrimaryText = (() => {
     if (!showMetaStack || !liveCompletion) return null;
     const who = isSelfAuthor ? t("common.you") : completionAuthor?.name ?? "—";
-    const when = formatTime(liveCompletion.completedAt);
+    const when = formatTime(liveCompletion.completedAt, language);
     const countSuffix =
       liveCompletion.countValue !== null && liveCompletion.countValue !== undefined
         ? `${liveCompletion.countValue}° · `

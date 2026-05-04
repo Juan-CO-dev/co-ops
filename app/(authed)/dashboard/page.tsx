@@ -29,6 +29,7 @@ import { IdleTimeoutWarning } from "@/components/auth/IdleTimeoutWarning";
 import { LogoutButton } from "@/components/auth/LogoutButton";
 import { ROLES } from "@/lib/roles";
 import { accessibleLocations, type LocationActor } from "@/lib/locations";
+import { formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { loadAmPrepDashboardState } from "@/lib/prep";
@@ -761,7 +762,7 @@ function AmPrepTile({
     // reachable but operationally unreachable for AM Prep per RPC atomic
     // write — same defensive coverage as AmPrepForm.tsx).
     const time = state.todayInstance.confirmedAt
-      ? formatTimeForLanguage(state.todayInstance.confirmedAt, language)
+      ? formatTime(state.todayInstance.confirmedAt, language)
       : "";
     const name = state.confirmedByName ?? "—";
     return serverT(language, "dashboard.am_prep.status_submitted", { time, name });
@@ -829,23 +830,12 @@ function AmPrepTile({
   );
 }
 
-/**
- * Language-aware time formatter (per AGENTS.md "Language-aware time/date
- * formatting" canonical pattern). Uses es-US when language === "es",
- * en-US otherwise. Mirrors AmPrepForm's formatTime; defined locally here
- * so the dashboard module stays self-contained without a cross-component
- * util import.
- */
-function formatTimeForLanguage(iso: string, language: Language): string {
-  try {
-    return new Date(iso).toLocaleTimeString(
-      language === "es" ? "es-US" : "en-US",
-      { hour: "numeric", minute: "2-digit" },
-    );
-  } catch {
-    return "";
-  }
-}
+// formatTime imported from @/lib/i18n/format (added in import block);
+// canonical helper (Build #2 PR 2) consolidates 6 prior inline copies.
+// Critical fix: dashboard tile previously rendered UTC time on the
+// server (Vercel runtime is UTC) — Juan's smoke surfaced "Submitted at
+// 7:17 PM by Juan" for a 3:17 PM EDT submission (4-hour offset = EDT
+// vs UTC). Canonical formatTime always pins to operational TZ.
 
 function WarningIcon() {
   return (

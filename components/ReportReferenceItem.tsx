@@ -56,8 +56,8 @@
 import Link from "next/link";
 
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
+import { formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
-import type { Language } from "@/lib/i18n/types";
 import type { ChecklistCompletion, ChecklistTemplateItem } from "@/lib/types";
 
 interface ReportReferenceItemProps {
@@ -74,23 +74,6 @@ interface ReportReferenceItemProps {
   locationId: string;
   /** Read-only override — disables empty-state tap when closing is finalized. */
   readOnly: boolean;
-}
-
-/**
- * Language-aware time formatter (per AGENTS.md "Language-aware time/date
- * formatting" canonical pattern). Local copy because the component is
- * self-contained per the existing convention; lifted to lib/i18n/format.ts
- * only when a 5th duplicate site surfaces.
- */
-function formatTime(iso: string, language: Language): string {
-  try {
-    return new Date(iso).toLocaleTimeString(
-      language === "es" ? "es-US" : "en-US",
-      { hour: "numeric", minute: "2-digit" },
-    );
-  } catch {
-    return "";
-  }
 }
 
 export function ReportReferenceItem({

@@ -40,6 +40,14 @@ export interface MiscSectionProps {
   rawValues: Record<string, RawPrepInputs>;
   onChange: (templateItemId: string, field: keyof RawPrepInputs, rawValue: string) => void;
   disabled?: boolean;
+  /**
+   * Per-row, per-field validation errors (translated). Misc rows surface
+   * yesNo-required errors (Build #2 PR 2 Bug D fix) — every Misc item is
+   * an operationally-critical attestation; submission blocks until all 4
+   * yes/no toggles have been answered. Error renders below the toggle
+   * pair as Brand-Red micro-copy + role="alert" for screen readers.
+   */
+  errors?: Record<string, Partial<Record<keyof RawPrepInputs, string>>>;
 }
 
 /**
@@ -62,6 +70,7 @@ function MiscRow({
   hasFreeText,
   onChange,
   disabled,
+  yesNoError,
 }: {
   templateItemId: string;
   itemLabel: string;
@@ -70,6 +79,8 @@ function MiscRow({
   hasFreeText: boolean;
   onChange: (templateItemId: string, field: keyof RawPrepInputs, rawValue: string) => void;
   disabled?: boolean;
+  /** Translated yesNo-required error (or any future yesNo validation error). */
+  yesNoError?: string;
 }) {
   const { t } = useTranslation();
   const isYes = yesNo === true;
@@ -132,6 +143,19 @@ function MiscRow({
         </div>
       </div>
 
+      {/* yesNo-required validation error — renders below the toggle pair
+          (and above any free-text textarea) so it sits next to the
+          interaction the operator needs to fix. role="alert" exposes
+          the error to assistive tech as it appears. */}
+      {yesNoError ? (
+        <span
+          role="alert"
+          className="text-[11px] leading-tight text-co-cta font-semibold"
+        >
+          {yesNoError}
+        </span>
+      ) : null}
+
       {hasFreeText ? (
         <label className="block">
           <span className="sr-only">{t("am_prep.misc.notes_label")}</span>
@@ -154,7 +178,13 @@ function MiscRow({
   );
 }
 
-export function MiscSection({ templateItems, rawValues, onChange, disabled }: MiscSectionProps) {
+export function MiscSection({
+  templateItems,
+  rawValues,
+  onChange,
+  disabled,
+  errors,
+}: MiscSectionProps) {
   const { t, language } = useTranslation();
   const sectionDisplay = (() => {
     const first = templateItems[0];
@@ -193,6 +223,7 @@ export function MiscSection({ templateItems, rawValues, onChange, disabled }: Mi
               hasFreeText={hasFreeText}
               onChange={onChange}
               disabled={disabled}
+              yesNoError={errors?.[item.id]?.yesNo}
             />
           );
         })}
