@@ -590,3 +590,48 @@ Future formatting helpers (date pickers, timestamp displays, duration strings, a
 
 We've now hit the 5-site threshold the prior version of this lesson set as the lift trigger. **Lift `formatTime(iso, language)` to `lib/i18n/format.ts` in the next commit that touches any of these 5 modules** (or in a standalone cleanup commit if Juan wants to pull it forward). All 5 inline copies replace with a single import. Same applies to `formatDateLabel` for date-only strings (currently 1 site in dashboard; revisit when a 2nd site needs it).
 
+### loadAmPrepState single-prep-template assumption (after Build #2 PR 1)
+
+`lib/prep.ts loadAmPrepState` filters `type='prep' AND active=true` and picks the most recently created active prep template at the location. This works while only one prep template exists per location. When Mid-day Prep ships per C.43, both AM Prep and Mid-day Prep will be `type='prep'` and the loader will need refinement.
+
+Three resolution options for that future moment:
+- Filter by name pattern (`name LIKE 'Standard AM Prep%'`) — fragile, name-coupling
+- Distinct discriminator column (e.g., `prep_subtype: 'am_prep' | 'mid_day_prep'`) — schema migration, cleanest
+- Split the `checklist_templates.type` CHECK constraint to add `'am_prep'` and `'mid_day_prep'` as distinct values — schema migration, most invasive
+
+Decide at Mid-day Prep design time when the full discriminator landscape is in view. C.43 sub-finding captures the same architectural tension on the spec side. Captured during Build #2 PR 1 AM Prep seed implementation.
+
+### Convergent seed scripts re-exporting ITEMS must gate main() behind a direct-invocation check (after Build #2 PR 1)
+
+When a seed script imports data exports (ITEMS, buildTranslations, SeedItem) from another seed, the source seed's top-level `main()` runs as an import side-effect. This silently re-runs the source seed's full convergent path on every downstream invocation. Latent risk: future spec edits to the source seed propagate through downstream invocations carrying the source seed's audit metadata strings (phase, reason), polluting the audit_log forensic chain with stale-attribution rows that need `audit.metadata_correction` rows to remediate.
+
+Fix pattern: gate `main()` behind `pathToFileURL` from `node:url`:
+
+```ts
+import { pathToFileURL } from "node:url";
+
+if (import.meta.url === pathToFileURL(process.argv[1]!).href) {
+  main().catch((err) => { console.error(err); process.exit(1); });
+}
+```
+
+Apply to ALL seed scripts that export data, even when no current downstream importer exists — defensive against a future seed accidentally triggering the script's full convergent path on import. `pathToFileURL` handles platform-specific path conversion (Windows path forms, paths with special characters) correctly; manual string-concat (`file://${process.argv[1]}`) is brittle.
+
+Caught during Build #2 PR 1 first v2 production seed run when v1's `seed-closing-template` log line and MEP/EM sync lines appeared alongside v2's output. Production impact was zero (v1 ran convergent → synced_no_changes → no audit row) but the latent risk was real. Both seed-closing-template.ts and seed-standard-closing-v2.ts now use the gate idiom.
+
+### MiscSection always renders YES/NO toggle pair (after Build #2 PR 1)
+
+`components/prep/sections/MiscSection.tsx`'s MiscRow ALWAYS renders the YES/NO chip pair; the textarea is conditional on `meta.columns.includes("free_text")`. A `columns: ["free_text"]`-only Misc item (e.g., a section-level free-form notes sink, which Image 1's paper AM Prep List has at the end of the Misc block) would render as YES/NO buttons + textarea — operator selects YES or NO for nothing.
+
+Future capability requires conditional YES/NO rendering based on `meta.columns.includes("yes_no")` (~5 LOC change to MiscRow + 1 i18n key). Build #2 PR 1's Standard AM Prep v1 ships 4 yes_no Misc items (Meatball mix, Meatballs ready, Meatballs reheat, Cook Bacon?) — all have `columns: ["yes_no"]` or `["yes_no", "free_text"]`, so the gap doesn't surface. Section-level notes sink deferred.
+
+When the conditional YES/NO render lands as a follow-up, also extend the seed's SeedAmPrepItem to accept `columns: ["free_text"]`-only items at the end of the Misc block (Image 1 source has this) and add the corresponding ITEM entry. Captured during Build #2 PR 1 Q-v2 review.
+
+### C.44 admin tooling must support translation editing alongside English source-of-truth fields (after Build #2 PR 1)
+
+When the GM+ admin tooling for prep templates ships per C.44, the edit UI must support setting `translations.es.{label, description, station, specialInstruction}` alongside the English source-of-truth fields. Without this, GM-authored values render English-only for Spanish users — recreating the partial-translation gap C.37 was created to prevent.
+
+Pattern: edit UI exposes both English (source) and Spanish (translation) inputs; save handler updates both atomically; resolver behavior (`lib/i18n/content.ts resolveTemplateItemContent`) unchanged. Same discipline applies to closing template item admin tooling and any future template-item admin surface.
+
+`specialInstruction` is the only field where translation source-of-truth lives in nested JSONB (`prep_meta.specialInstruction`). The resolver internally reaches for the fallback so callers stay uniform — the admin form should mirror the same shape (English specialInstruction sets `prep_meta.specialInstruction`; Spanish sets `translations.es.specialInstruction`). Captured during Build #2 PR 1 specialInstruction translation extension.
+

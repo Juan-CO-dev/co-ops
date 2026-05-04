@@ -817,6 +817,16 @@ Mid-day prep is operationally emergent — line cooks notice depletion when serv
 - Reference C.18 for the trigger model
 - Document numbered-display convention for multi-instance prep in §10 shared infrastructure
 
+**Build #2 PR 1 sub-finding (added 2026-05-04):** during AM Prep seed implementation, recon revealed `lib/prep.ts loadAmPrepState` filters `type='prep' AND active=true` and picks most-recent active by `created_at DESC`. Works in PR 1 with one prep template per location (only "Standard AM Prep v1" exists). When Mid-day Prep ships per this amendment, both AM Prep AND Mid-day Prep will be `type='prep'` and the loader needs refinement.
+
+Three options for Mid-day Prep design time:
+
+1. **Filter by name pattern** (e.g., `name LIKE 'Standard AM Prep%'`) — fragile, name-coupling, rejected
+2. **Distinct discriminator column** (e.g., `prep_subtype: 'am_prep' | 'mid_day_prep'`) — schema migration, cleanest
+3. **Split the type enum** — schema migration with CHECK constraint update on `checklist_templates.type` to add `'am_prep'` and `'mid_day_prep'` as distinct values
+
+Decision deferred to Mid-day Prep design time when the full discriminator landscape is in view. AGENTS.md "loadAmPrepState single-prep-template assumption" durable lesson captures the same architectural tension on the implementation side. Until then, Build #2 PR 1's AM Prep seed uses `type: 'prep'` with name `"Standard AM Prep v1"`; the convention for future prep templates (mid-day, training prep, etc.) is locked to a name suffix containing the subtype until the discriminator question is resolved.
+
 ---
 
 ## C.44 — PAR template editing by GM+ (admin tooling)
