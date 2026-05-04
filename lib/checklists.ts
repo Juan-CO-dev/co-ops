@@ -55,12 +55,14 @@ import { audit } from "./audit";
 import { getServiceRoleClient } from "./supabase-server";
 import { getRoleLevel, type RoleCode } from "./roles";
 import type {
+  AutoCompleteMeta,
   ChecklistInstance,
   ChecklistCompletion,
   ChecklistRevocationReason,
   ChecklistSubmission,
   ChecklistIncompleteReason,
   ChecklistStatus,
+  PrepData,
 } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -363,6 +365,9 @@ interface InstanceRow {
   confirmed_at: string | null;
   confirmed_by: string | null;
   created_at: string;
+  // Build #2 (per SPEC_AMENDMENTS.md C.18 + C.43; migration 0038).
+  triggered_by_user_id: string | null;
+  triggered_at: string | null;
 }
 
 interface CompletionRow {
@@ -383,11 +388,20 @@ interface CompletionRow {
   actual_completer_id: string | null;
   actual_completer_tagged_at: string | null;
   actual_completer_tagged_by: string | null;
+  // Build #2 (per SPEC_AMENDMENTS.md C.18 + C.44; migration 0037). lib/checklists.ts
+  // is the cleaning-checklist path; for prep-aware reads use lib/prep.ts which
+  // narrows the JSONB shape via isPrepData() and throws on drift.
+  prep_data: unknown | null;
+  // Build #2 (per SPEC_AMENDMENTS.md C.42; migration 0040). Structured
+  // attribution for auto-complete completions. Populated on closing's
+  // report-reference items when their source report submits; NULL on
+  // user-tap completions.
+  auto_complete_meta: unknown | null;
 }
 
 /** Column list for SELECTs against checklist_completions — single source of truth. */
 const COMPLETION_COLUMNS =
-  "id, instance_id, template_item_id, completed_by, completed_at, count_value, photo_id, notes, superseded_at, superseded_by, revoked_at, revoked_by, revocation_reason, revocation_note, actual_completer_id, actual_completer_tagged_at, actual_completer_tagged_by";
+  "id, instance_id, template_item_id, completed_by, completed_at, count_value, photo_id, notes, superseded_at, superseded_by, revoked_at, revoked_by, revocation_reason, revocation_note, actual_completer_id, actual_completer_tagged_at, actual_completer_tagged_by, prep_data, auto_complete_meta";
 
 interface SubmissionRow {
   id: string;
@@ -427,6 +441,8 @@ const rowToInstance = (r: InstanceRow): ChecklistInstance => ({
   confirmedAt: r.confirmed_at,
   confirmedBy: r.confirmed_by,
   createdAt: r.created_at,
+  triggeredByUserId: r.triggered_by_user_id,
+  triggeredAt: r.triggered_at,
 });
 
 const rowToCompletion = (r: CompletionRow): ChecklistCompletion => ({
@@ -447,6 +463,12 @@ const rowToCompletion = (r: CompletionRow): ChecklistCompletion => ({
   actualCompleterId: r.actual_completer_id,
   actualCompleterTaggedAt: r.actual_completer_tagged_at,
   actualCompleterTaggedBy: r.actual_completer_tagged_by,
+  // Pass through; lib/prep.ts narrows for prep-aware consumers. Cleaning
+  // consumers ignore this field (always NULL on cleaning completions).
+  prepData: (r.prep_data ?? null) as PrepData | null,
+  // Pass through; closing-client UI reads this to render attribution-style
+  // text on auto-complete rows. Always NULL on cleaning user-tap rows.
+  autoCompleteMeta: (r.auto_complete_meta ?? null) as AutoCompleteMeta | null,
 });
 
 const rowToSubmission = (r: SubmissionRow): ChecklistSubmission => ({
@@ -484,7 +506,7 @@ async function loadInstanceOrThrow(
   const { data, error } = await authed
     .from("checklist_instances")
     .select(
-      "id, template_id, location_id, date, shift_start_at, status, confirmed_at, confirmed_by, created_at",
+      "id, template_id, location_id, date, shift_start_at, status, confirmed_at, confirmed_by, created_at, triggered_by_user_id, triggered_at",
     )
     .eq("id", instanceId)
     .maybeSingle<InstanceRow>();
@@ -599,7 +621,7 @@ export async function getOrCreateInstance(
   const { data: existing, error: readErr } = await authed
     .from("checklist_instances")
     .select(
-      "id, template_id, location_id, date, shift_start_at, status, confirmed_at, confirmed_by, created_at",
+      "id, template_id, location_id, date, shift_start_at, status, confirmed_at, confirmed_by, created_at, triggered_by_user_id, triggered_at",
     )
     .eq("template_id", templateId)
     .eq("location_id", locationId)
@@ -611,17 +633,25 @@ export async function getOrCreateInstance(
   }
 
   // Insert path. RLS gates on location_id ∈ user_locations AND role_level >= 3.
+  // Per SPEC_AMENDMENTS.md C.18 + C.43 (migration 0038): every newly-created
+  // instance captures the actor as triggered_by + the precise trigger
+  // timestamp. Universal across closing/opening/prep — Mid-day Prep PR
+  // uses triggered_at as the multi-instance disambiguator. Pre-Build-#2
+  // rows have NULL here (back-compat).
+  const triggerTimestamp = new Date().toISOString();
   const { data: inserted, error: insertErr } = await authed
     .from("checklist_instances")
     .insert({
       template_id: templateId,
       location_id: locationId,
       date,
-      shift_start_at: new Date().toISOString(),
+      shift_start_at: triggerTimestamp,
       status: "open" as ChecklistStatus,
+      triggered_by_user_id: actor.userId,
+      triggered_at: triggerTimestamp,
     })
     .select(
-      "id, template_id, location_id, date, shift_start_at, status, confirmed_at, confirmed_by, created_at",
+      "id, template_id, location_id, date, shift_start_at, status, confirmed_at, confirmed_by, created_at, triggered_by_user_id, triggered_at",
     )
     .maybeSingle<InstanceRow>();
 
@@ -630,7 +660,7 @@ export async function getOrCreateInstance(
     const { data: race, error: raceErr } = await authed
       .from("checklist_instances")
       .select(
-        "id, template_id, location_id, date, shift_start_at, status, confirmed_at, confirmed_by, created_at",
+        "id, template_id, location_id, date, shift_start_at, status, confirmed_at, confirmed_by, created_at, triggered_by_user_id, triggered_at",
       )
       .eq("template_id", templateId)
       .eq("location_id", locationId)
@@ -1166,7 +1196,7 @@ export async function confirmInstance(
     .eq("id", instanceId)
     .eq("status", "open") // optimistic concurrency: re-confirm only if still open
     .select(
-      "id, template_id, location_id, date, shift_start_at, status, confirmed_at, confirmed_by, created_at",
+      "id, template_id, location_id, date, shift_start_at, status, confirmed_at, confirmed_by, created_at, triggered_by_user_id, triggered_at",
     )
     .maybeSingle<InstanceRow>();
   if (updateErr) throw new Error(`confirmInstance update instance: ${updateErr.message}`);

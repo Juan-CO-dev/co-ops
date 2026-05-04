@@ -433,6 +433,8 @@ export function ChecklistItem({
         actualCompleterId: null,
         actualCompleterTaggedAt: null,
         actualCompleterTaggedBy: null,
+        prepData: null,
+        autoCompleteMeta: null,
       };
       setLocalCompletion(optimistic);
     }

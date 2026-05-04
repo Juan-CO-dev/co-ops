@@ -138,6 +138,187 @@ export interface ParLevel {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Reports (SPEC_AMENDMENTS.md C.42)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Operational report types per SPEC_AMENDMENTS.md C.42.
+ *
+ * Mirrors the Postgres `report_type_enum` (created in migration 0036, also
+ * consumed by `report_assignments.report_type` per migration 0039). Single
+ * source-of-truth: when a new report type is added, the enum AND this union
+ * are updated in lockstep (one `ALTER TYPE ADD VALUE` migration + this
+ * single union update).
+ *
+ * Used by:
+ *   - ChecklistTemplateItem.reportReferenceType (closing's auto-complete items)
+ *   - ReportAssignment.reportType (assignment-down across all report types)
+ *
+ * Runtime narrowing helper: lib/prep.ts isReportType().
+ */
+export type ReportType =
+  | "am_prep"
+  | "mid_day_prep"
+  | "cash_report"
+  | "opening_report"
+  | "training_report"
+  | "special_report";
+
+/**
+ * Generic assignment-down record per SPEC_AMENDMENTS.md C.42. One table
+ * serves all six report types via the shared report_type_enum.
+ *
+ * Strict-greater assigner-vs-assignee level (level >= assignee level)
+ * enforced in the admin API (canActOn pattern), NOT RLS — RLS can't
+ * easily look up the assignee's role across rows.
+ *
+ * Append-only: retraction is `active = false`, never row delete.
+ */
+export interface ReportAssignment {
+  id: string;
+  reportType: ReportType;
+  locationId: string;
+  /** ISO YYYY-MM-DD; consistent with ChecklistInstance.date. */
+  operationalDate: string;
+  assignerId: string;
+  assigneeId: string;
+  note: string | null;
+  createdAt: string;
+  active: boolean;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Prep (SPEC_AMENDMENTS.md C.18 + C.44)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Prep section enum mirrored as a TS union. Stored as a raw string inside
+ * `checklist_template_items.prep_meta.section` JSONB (Postgres doesn't
+ * enforce inside JSONB; lib/prep.ts isPrepSection() validates on read).
+ *
+ * `section` IS the system key (per SPEC_AMENDMENTS.md C.38) for prep
+ * grouping/matching — never use the translated render-string for matching.
+ */
+export type PrepSection =
+  | "Veg"
+  | "Cooks"
+  | "Sides"
+  | "Sauces"
+  | "Slicing"
+  | "Misc";
+
+/**
+ * Per-row column descriptors for the AM Prep form. The template item's
+ * `prep_meta.columns` array enumerates which numeric inputs the form renders
+ * for that row. Section conventions:
+ *   - Veg:     ["par", "on_hand", "back_up", "total"]
+ *   - Cooks:   ["par", "on_hand", "total"]
+ *   - Sides:   ["par", "portioned", "back_up", "total"]
+ *   - Sauces:  ["par", "line", "back_up", "total"]
+ *   - Slicing: ["par", "line", "back_up", "total"]
+ *   - Misc:    ["yes_no"] OR ["yes_no", "free_text"]
+ *
+ * Convention: PrepColumn values stay snake_case because they double as i18n
+ * key suffixes (am_prep.column.on_hand → "ON HAND" / "EN MANO"). The
+ * corresponding PrepInputs field names are camelCase versions (onHand,
+ * backUp, etc.) — JSONB blob keys camelCase per the Build #2 convention.
+ *
+ * "par" is descriptive (rendered as a read-only column showing
+ * prepMeta.parValue); operator-editable inputs are the others.
+ *
+ * Runtime narrowing helper: lib/prep.ts isPrepColumn().
+ */
+export type PrepColumn =
+  | "par"
+  | "on_hand"
+  | "portioned"
+  | "line"
+  | "back_up"
+  | "total"
+  | "yes_no"
+  | "free_text";
+
+/**
+ * Section-aware metadata for prep-template items per SPEC_AMENDMENTS.md C.18.
+ * Stored as JSONB on `checklist_template_items.prep_meta`.
+ *
+ * `section` MUST equal the parent ChecklistTemplateItem's `station` field —
+ * this redundancy gives a typed accessor for prep-aware code without
+ * re-parsing the loosely-typed `station` text. lib/prep.ts setPrepItemSection()
+ * is the single write helper that sets both atomically (used by seed +
+ * future GM admin tool); the read path asserts the invariant.
+ *
+ * All keys camelCase per Build #2 convention: JSONB blob keys are pure
+ * application data (Postgres doesn't care), so we keep one convention.
+ */
+export interface PrepMeta {
+  section: PrepSection;
+  parValue: number | null;
+  parUnit: string | null;
+  specialInstruction: string | null;
+  columns: PrepColumn[];
+}
+
+/**
+ * Operator-supplied prep input values. Populated subset matches the
+ * template item's `prepMeta.columns` array.
+ *
+ * All keys camelCase per Build #2 convention. Stored in
+ * `checklist_completions.prep_data.inputs`.
+ */
+export interface PrepInputs {
+  onHand?: number;
+  portioned?: number;
+  line?: number;
+  backUp?: number;
+  total?: number;
+  yesNo?: boolean;
+  freeText?: string;
+}
+
+/**
+ * Denormalized snapshot per SPEC_AMENDMENTS.md C.44. Captured at submission
+ * time so subsequent template edits via the GM admin tool (Build #2 follow-up
+ * PR) don't retroactively affect historical reports.
+ *
+ * All keys camelCase per Build #2 convention. Stored in
+ * `checklist_completions.prep_data.snapshot`.
+ */
+export interface PrepSnapshot {
+  section: PrepSection;
+  itemName: string;
+  parValue: number | null;
+  parUnit: string | null;
+  specialInstruction: string | null;
+}
+
+export interface PrepData {
+  inputs: PrepInputs;
+  snapshot: PrepSnapshot;
+}
+
+/**
+ * Structured attribution for auto-complete completions per SPEC_AMENDMENTS.md C.42.
+ * Stored as JSONB on `checklist_completions.auto_complete_meta`. NULL on
+ * user-tap completions; populated only on rows inserted by the auto-complete
+ * mechanic (e.g., the closing's "AM Prep List" report-reference item
+ * completion gets this on AM Prep submission).
+ *
+ * Architecturally distinct from `notes` (user-typed free text). Closing-client
+ * UI branches on `completion.autoCompleteMeta IS NOT NULL` to render
+ * attribution-style ("AM Prep List ✓ — submitted by Cristian at 9:47 PM")
+ * vs user-notes rendering. Two semantically distinct concerns, two columns.
+ *
+ * All keys camelCase per Build #2 convention.
+ */
+export interface AutoCompleteMeta {
+  reportType: ReportType;
+  reportInstanceId: string;
+  /** ISO timestamp — when the source report was submitted. */
+  reportSubmittedAt: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Checklists
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -189,6 +370,24 @@ export interface ChecklistTemplateItem {
   vendorItemId: string | null;
   active: boolean;
   translations: ChecklistTemplateItemTranslations | null;
+  /**
+   * Section-aware metadata for prep-template items per SPEC_AMENDMENTS.md C.18.
+   * NULL on cleaning items and on report-reference items.
+   *
+   * `prepMeta.section` IS the system key (English source-of-truth) for prep
+   * grouping/matching; same discipline as the Walk-Out Verification gate
+   * (per SPEC_AMENDMENTS.md C.38). The display-string for the section header
+   * is the existing `station` column resolved through `translations.es.station`
+   * at render time only — never on a key path.
+   *
+   * `prepMeta.section` and `station` MUST stay in sync. Both seed scripts
+   * and the future GM admin tool MUST write through a single helper
+   * (setPrepItemSection in lib/prep.ts) that sets both atomically. The
+   * lib/prep.ts read path asserts the invariant and throws on drift.
+   */
+  prepMeta: PrepMeta | null;
+  /** Marks closing items that auto-complete on report submission per SPEC_AMENDMENTS.md C.42. */
+  reportReferenceType: ReportType | null;
 }
 
 export type ChecklistStatus = "open" | "confirmed" | "incomplete_confirmed";
@@ -204,6 +403,19 @@ export interface ChecklistInstance {
   confirmedAt: string | null;
   confirmedBy: string | null;
   createdAt: string;
+  /**
+   * User who initiated this instance per SPEC_AMENDMENTS.md C.18. Distinct
+   * from per-completion `completedBy` — this is the row-creator. NULL on
+   * pre-Build-#2 rows (closing/opening instances created before migration
+   * 0038 landed).
+   */
+  triggeredByUserId: string | null;
+  /**
+   * Precise trigger timestamp per SPEC_AMENDMENTS.md C.43. Used by Mid-day
+   * Prep (Build #2 follow-up PR) as the multi-instance disambiguator. NULL
+   * on pre-Build-#2 rows.
+   */
+  triggeredAt: string | null;
 }
 
 /**
@@ -248,6 +460,21 @@ export interface ChecklistCompletion {
   actualCompleterId: string | null;
   actualCompleterTaggedAt: string | null;
   actualCompleterTaggedBy: string | null;
+  /**
+   * Operator-supplied prep payload per SPEC_AMENDMENTS.md C.18 + C.44.
+   * Populated for prep-completion rows only; NULL on cleaning + report-
+   * reference auto-complete completions. `count_value` (single numeric)
+   * stays NULL for prep rows — prep numbers live in `prepData.inputs`.
+   */
+  prepData: PrepData | null;
+  /**
+   * Structured attribution for auto-complete completions per SPEC_AMENDMENTS.md C.42.
+   * NULL on user-tap completions; populated on rows written by the
+   * auto-complete mechanic (closing's report-reference items auto-completed
+   * on report submission). Closing-client UI branches on this for
+   * attribution-style rendering vs user-notes rendering.
+   */
+  autoCompleteMeta: AutoCompleteMeta | null;
 }
 
 export interface ChecklistSubmission {
