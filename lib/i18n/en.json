@@ -236,5 +236,30 @@
   "am_prep.section.sides": "Sides",
   "am_prep.section.sauces": "Sauces",
   "am_prep.section.slicing": "Slicing",
-  "am_prep.section.misc": "Misc"
+  "am_prep.section.misc": "Misc",
+
+  "am_prep.submit.button": "Submit AM Prep",
+  "am_prep.submit.button_in_flight": "Submitting…",
+  "am_prep.submit.button_no_changes": "No changes to submit",
+  "am_prep.submit.button_fix_errors": "Fix issues before submitting",
+  "am_prep.submit.discard": "Discard changes",
+
+  "am_prep.banner.success": "AM Prep submitted at {time} by {name}",
+  "am_prep.banner.read_only": "AM Prep already submitted today by {name} at {time}",
+
+  "am_prep.error.summary_one": "Fix 1 issue before submitting",
+  "am_prep.error.summary_other": "Fix {count} issues before submitting",
+  "am_prep.error.numeric_invalid": "Enter a number",
+  "am_prep.error.negative_blocked": "Cannot be negative",
+  "am_prep.error.no_changes": "No changes to submit",
+  "am_prep.error.prep_role_violation": "You don't have permission to submit AM Prep",
+  "am_prep.error.prep_instance_not_open": "AM Prep was already submitted by another user — refresh the page",
+  "am_prep.error.prep_auto_complete_failed": "Closing not yet started — start it from the dashboard, then re-submit AM Prep",
+  "am_prep.error.prep_shape": "One of the entries is invalid — check the highlighted fields",
+  "am_prep.error.prep_invariant": "Submission failed due to a server-side data issue — contact a manager",
+  "am_prep.error.location_access_denied": "You don't have access to this location",
+  "am_prep.error.instance_not_found": "AM Prep instance not found — refresh the page",
+  "am_prep.error.invalid_payload": "Submission was malformed — refresh the page",
+  "am_prep.error.network": "Network error — try again",
+  "am_prep.error.fallback": "Submission failed — try again"
 }

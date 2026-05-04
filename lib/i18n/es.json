@@ -236,5 +236,30 @@
   "am_prep.section.sides": "Acompañantes",
   "am_prep.section.sauces": "Salsas",
   "am_prep.section.slicing": "Rebanado",
-  "am_prep.section.misc": "Misceláneo"
+  "am_prep.section.misc": "Misceláneo",
+
+  "am_prep.submit.button": "Enviar Lista de Prep AM",
+  "am_prep.submit.button_in_flight": "Enviando…",
+  "am_prep.submit.button_no_changes": "Sin cambios para enviar",
+  "am_prep.submit.button_fix_errors": "Corrige los errores antes de enviar",
+  "am_prep.submit.discard": "Descartar cambios",
+
+  "am_prep.banner.success": "Lista de Prep AM enviada a las {time} por {name}",
+  "am_prep.banner.read_only": "Lista de Prep AM ya enviada hoy por {name} a las {time}",
+
+  "am_prep.error.summary_one": "Corrige 1 problema antes de enviar",
+  "am_prep.error.summary_other": "Corrige {count} problemas antes de enviar",
+  "am_prep.error.numeric_invalid": "Ingresa un número",
+  "am_prep.error.negative_blocked": "No puede ser negativo",
+  "am_prep.error.no_changes": "Sin cambios para enviar",
+  "am_prep.error.prep_role_violation": "No tienes permiso para enviar Lista de Prep AM",
+  "am_prep.error.prep_instance_not_open": "Otro usuario ya envió la Lista de Prep AM — recarga la página",
+  "am_prep.error.prep_auto_complete_failed": "El cierre no ha comenzado — ábrelo desde el dashboard, luego envía de nuevo",
+  "am_prep.error.prep_shape": "Una de las entradas es inválida — revisa los campos resaltados",
+  "am_prep.error.prep_invariant": "Envío fallido por un problema de datos del servidor — contacta a un gerente",
+  "am_prep.error.location_access_denied": "No tienes acceso a esta ubicación",
+  "am_prep.error.instance_not_found": "Instancia de Prep AM no encontrada — recarga la página",
+  "am_prep.error.invalid_payload": "El envío estaba mal formado — recarga la página",
+  "am_prep.error.network": "Error de red — intenta de nuevo",
+  "am_prep.error.fallback": "Envío fallido — intenta de nuevo"
 }

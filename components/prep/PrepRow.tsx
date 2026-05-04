@@ -36,22 +36,22 @@
 
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
-import type { PrepColumn, PrepInputs } from "@/lib/types";
+import type { PrepColumn } from "@/lib/types";
 
 import { PrepNumericCell } from "./PrepNumericCell";
+import type { RawPrepInputs } from "./types";
 
 /**
- * Maps each PrepColumn (system-key snake_case) to:
- *   - the i18n key for its column header label
- *   - the field name on PrepInputs (camelCase) it controls
+ * Maps each numeric PrepColumn (system-key snake_case) to the camelCase
+ * field name on RawPrepInputs (and PrepInputs) it controls.
  *
  * `par` is read-only (no input field; displayed value comes from
- * prep_meta.parValue + parUnit). Excluded from this map's "input" use cases;
- * the row treats it specially.
+ * prep_meta.parValue + parUnit). Excluded from this map; the row treats
+ * it specially.
  */
 const COLUMN_INPUT_FIELD: Record<
   Exclude<PrepColumn, "par" | "yes_no" | "free_text">,
-  keyof PrepInputs
+  Exclude<keyof RawPrepInputs, "yesNo" | "freeText">
 > = {
   on_hand: "onHand",
   portioned: "portioned",
@@ -99,29 +99,28 @@ export interface PrepRowProps {
    *   ["on_hand"], ["on_hand", "back_up", "total"], ["portioned", "back_up", "total"], etc.
    */
   inputColumns: ReadonlyArray<Exclude<PrepColumn, "par" | "yes_no" | "free_text">>;
-  /** Current operator-supplied values for this row. */
-  inputs: PrepInputs;
   /**
-   * Per-cell change callback. Field name is the camelCase key on PrepInputs
-   * (resolved by the row from the column descriptor); value is the raw
-   * string from the input element.
+   * Current operator-typed raw values for this row. Numeric fields are
+   * strings (preserves "3.", "0.0" during typing); AmPrepForm parses to
+   * PrepInputs only at submission time.
+   */
+  rawInputs: RawPrepInputs;
+  /**
+   * Per-cell change callback. Field name is the camelCase key on
+   * RawPrepInputs (resolved by the row from the column descriptor); value
+   * is the raw string from the input element.
    *
    * Parent owns parsing/validation; row stays dumb.
    */
-  onChange: (templateItemId: string, field: keyof PrepInputs, rawValue: string) => void;
+  onChange: (templateItemId: string, field: keyof RawPrepInputs, rawValue: string) => void;
   /** Read-only display (after submit). Disables all inputs. */
   disabled?: boolean;
-}
-
-/**
- * Stringifies a PrepInputs field for display in the input element.
- * Numbers are rendered without coercing decimals (3 → "3"); undefined → "".
- * String fields (freeText) and boolean (yesNo) are not handled here — they
- * have their own row primitives in MiscSection.
- */
-function inputFieldToString(value: number | undefined): string {
-  if (value === undefined) return "";
-  return String(value);
+  /**
+   * Optional per-field validation error map. AmPrepForm sets a string
+   * (translated) for each field that failed parse/validate. Renders below
+   * the input cell as brand-Red text. Empty/missing → no error UI.
+   */
+  rowErrors?: Partial<Record<keyof RawPrepInputs, string>>;
 }
 
 export function PrepRow({
@@ -135,9 +134,10 @@ export function PrepRow({
   parUnit,
   specialInstruction,
   inputColumns,
-  inputs,
+  rawInputs,
   onChange,
   disabled = false,
+  rowErrors,
 }: PrepRowProps) {
   const { t } = useTranslation();
   // PAR cell display: "{value} {unit}" — or just the value if unit is null,
@@ -197,18 +197,26 @@ export function PrepRow({
           item: label,
           column: colLabel,
         });
-        const currentValue = inputs[field];
-        // PrepInputs numeric fields are number | undefined; cast is safe
-        // because COLUMN_INPUT_FIELD only maps to numeric keys.
-        const stringValue = inputFieldToString(currentValue as number | undefined);
+        // Read raw string directly — no Number() round-trip per Part 2 lock.
+        const stringValue = rawInputs[field] ?? "";
+        const fieldError = rowErrors?.[field];
         return (
-          <PrepNumericCell
-            key={col}
-            value={stringValue}
-            onChange={(raw) => onChange(templateItemId, field, raw)}
-            ariaLabel={ariaLabel}
-            disabled={disabled}
-          />
+          <div key={col} className="flex flex-col gap-0.5">
+            <PrepNumericCell
+              value={stringValue}
+              onChange={(raw) => onChange(templateItemId, field, raw)}
+              ariaLabel={ariaLabel}
+              disabled={disabled}
+            />
+            {fieldError ? (
+              <span
+                role="alert"
+                className="text-[10px] leading-tight text-co-cta text-center"
+              >
+                {fieldError}
+              </span>
+            ) : null}
+          </div>
         );
       })}
     </div>

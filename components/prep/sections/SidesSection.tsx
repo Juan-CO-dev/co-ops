@@ -15,22 +15,24 @@
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
-import type { ChecklistTemplateItem, PrepInputs } from "@/lib/types";
+import type { ChecklistTemplateItem } from "@/lib/types";
 
 import { PrepRow } from "../PrepRow";
 import { PrepSection } from "../PrepSection";
+import type { RawPrepInputs } from "../types";
 
 const SECTION_KEY = "Sides";
 const INPUT_COLUMNS = ["portioned", "back_up", "total"] as const;
 
 export interface SidesSectionProps {
   templateItems: ChecklistTemplateItem[];
-  values: Record<string, PrepInputs>;
-  onChange: (templateItemId: string, field: keyof PrepInputs, rawValue: string) => void;
+  rawValues: Record<string, RawPrepInputs>;
+  onChange: (templateItemId: string, field: keyof RawPrepInputs, rawValue: string) => void;
   disabled?: boolean;
+  errors?: Record<string, Partial<Record<keyof RawPrepInputs, string>>>;
 }
 
-export function SidesSection({ templateItems, values, onChange, disabled }: SidesSectionProps) {
+export function SidesSection({ templateItems, rawValues, onChange, disabled, errors }: SidesSectionProps) {
   const { t, language } = useTranslation();
   const sectionDisplay = (() => {
     const first = templateItems[0];
@@ -70,9 +72,10 @@ export function SidesSection({ templateItems, values, onChange, disabled }: Side
             parUnit={meta.parUnit}
             specialInstruction={meta.specialInstruction}
             inputColumns={INPUT_COLUMNS}
-            inputs={values[item.id] ?? {}}
+            rawInputs={rawValues[item.id] ?? {}}
             onChange={onChange}
             disabled={disabled}
+            rowErrors={errors?.[item.id]}
           />
         );
       })}

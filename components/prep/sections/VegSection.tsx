@@ -16,10 +16,11 @@
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
-import type { ChecklistTemplateItem, PrepInputs } from "@/lib/types";
+import type { ChecklistTemplateItem } from "@/lib/types";
 
 import { PrepRow } from "../PrepRow";
 import { PrepSection } from "../PrepSection";
+import type { RawPrepInputs } from "../types";
 
 const SECTION_KEY = "Veg";
 const INPUT_COLUMNS = ["on_hand", "back_up", "total"] as const;
@@ -27,12 +28,14 @@ const INPUT_COLUMNS = ["on_hand", "back_up", "total"] as const;
 export interface VegSectionProps {
   /** Pre-narrowed (via narrowPrepTemplateItem) and pre-filtered to section="Veg". */
   templateItems: ChecklistTemplateItem[];
-  values: Record<string, PrepInputs>;
-  onChange: (templateItemId: string, field: keyof PrepInputs, rawValue: string) => void;
+  rawValues: Record<string, RawPrepInputs>;
+  onChange: (templateItemId: string, field: keyof RawPrepInputs, rawValue: string) => void;
   disabled?: boolean;
+  /** Per-row, per-field validation errors. Optional. */
+  errors?: Record<string, Partial<Record<keyof RawPrepInputs, string>>>;
 }
 
-export function VegSection({ templateItems, values, onChange, disabled }: VegSectionProps) {
+export function VegSection({ templateItems, rawValues, onChange, disabled, errors }: VegSectionProps) {
   const { t, language } = useTranslation();
   // Resolve section display name. Pulled from the first item's translations
   // JSONB (per C.38) or falls back to the am_prep.section.veg i18n key.
@@ -77,9 +80,10 @@ export function VegSection({ templateItems, values, onChange, disabled }: VegSec
             parUnit={meta.parUnit}
             specialInstruction={meta.specialInstruction}
             inputColumns={INPUT_COLUMNS}
-            inputs={values[item.id] ?? {}}
+            rawInputs={rawValues[item.id] ?? {}}
             onChange={onChange}
             disabled={disabled}
+            rowErrors={errors?.[item.id]}
           />
         );
       })}

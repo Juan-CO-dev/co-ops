@@ -28,16 +28,17 @@
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
-import type { ChecklistTemplateItem, PrepInputs } from "@/lib/types";
+import type { ChecklistTemplateItem } from "@/lib/types";
 
 import { PrepSection } from "../PrepSection";
+import type { RawPrepInputs } from "../types";
 
 const SECTION_KEY = "Misc";
 
 export interface MiscSectionProps {
   templateItems: ChecklistTemplateItem[];
-  values: Record<string, PrepInputs>;
-  onChange: (templateItemId: string, field: keyof PrepInputs, rawValue: string) => void;
+  rawValues: Record<string, RawPrepInputs>;
+  onChange: (templateItemId: string, field: keyof RawPrepInputs, rawValue: string) => void;
   disabled?: boolean;
 }
 
@@ -67,7 +68,7 @@ function MiscRow({
   yesNo: boolean | undefined;
   freeText: string | undefined;
   hasFreeText: boolean;
-  onChange: (templateItemId: string, field: keyof PrepInputs, rawValue: string) => void;
+  onChange: (templateItemId: string, field: keyof RawPrepInputs, rawValue: string) => void;
   disabled?: boolean;
 }) {
   const { t } = useTranslation();
@@ -153,7 +154,7 @@ function MiscRow({
   );
 }
 
-export function MiscSection({ templateItems, values, onChange, disabled }: MiscSectionProps) {
+export function MiscSection({ templateItems, rawValues, onChange, disabled }: MiscSectionProps) {
   const { t, language } = useTranslation();
   const sectionDisplay = (() => {
     const first = templateItems[0];
@@ -180,7 +181,7 @@ export function MiscSection({ templateItems, values, onChange, disabled }: MiscS
           const resolved = resolveTemplateItemContent(item, language);
           const meta = item.prepMeta;
           if (!meta) return null;
-          const inputs = values[item.id] ?? {};
+          const inputs = rawValues[item.id] ?? {};
           const hasFreeText = meta.columns.includes("free_text");
           return (
             <MiscRow

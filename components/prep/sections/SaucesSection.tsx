@@ -15,22 +15,24 @@
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
-import type { ChecklistTemplateItem, PrepInputs } from "@/lib/types";
+import type { ChecklistTemplateItem } from "@/lib/types";
 
 import { PrepRow } from "../PrepRow";
 import { PrepSection } from "../PrepSection";
+import type { RawPrepInputs } from "../types";
 
 const SECTION_KEY = "Sauces";
 const INPUT_COLUMNS = ["line", "back_up", "total"] as const;
 
 export interface SaucesSectionProps {
   templateItems: ChecklistTemplateItem[];
-  values: Record<string, PrepInputs>;
-  onChange: (templateItemId: string, field: keyof PrepInputs, rawValue: string) => void;
+  rawValues: Record<string, RawPrepInputs>;
+  onChange: (templateItemId: string, field: keyof RawPrepInputs, rawValue: string) => void;
   disabled?: boolean;
+  errors?: Record<string, Partial<Record<keyof RawPrepInputs, string>>>;
 }
 
-export function SaucesSection({ templateItems, values, onChange, disabled }: SaucesSectionProps) {
+export function SaucesSection({ templateItems, rawValues, onChange, disabled, errors }: SaucesSectionProps) {
   const { t, language } = useTranslation();
   const sectionDisplay = (() => {
     const first = templateItems[0];
@@ -70,9 +72,10 @@ export function SaucesSection({ templateItems, values, onChange, disabled }: Sau
             parUnit={meta.parUnit}
             specialInstruction={meta.specialInstruction}
             inputColumns={INPUT_COLUMNS}
-            inputs={values[item.id] ?? {}}
+            rawInputs={rawValues[item.id] ?? {}}
             onChange={onChange}
             disabled={disabled}
+            rowErrors={errors?.[item.id]}
           />
         );
       })}
