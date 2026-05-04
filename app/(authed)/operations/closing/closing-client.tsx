@@ -58,6 +58,7 @@ import {
   type ChecklistTagResult,
 } from "@/components/ChecklistItem";
 import { PinConfirmModal } from "@/components/auth/PinConfirmModal";
+import { resolveTemplateItemContent } from "@/lib/i18n/content";
 import { useTranslation } from "@/lib/i18n/provider";
 import type {
   ChecklistCompletion,
@@ -109,11 +110,21 @@ const STATION_FALLBACK = "General";
 // superseded) completions, the finalize affordance unlocks for KH+ actors.
 // String must match the seed-script ITEMS exactly — see
 // scripts/seed-closing-template.ts.
+//
+// SYSTEM-KEY DISCIPLINE (per SPEC_AMENDMENTS.md C.38): all station-based
+// matching/grouping uses the original (English) it.station value as the
+// system key. Translation happens at DISPLAY ONLY via
+// resolveTemplateItemContent — never on a key path. Translating the
+// matching key would break the Walk-Out gate for Spanish-language users
+// (Spanish "Verificación de Salida" wouldn't equal English
+// "Walk-Out Verification" and the finalize affordance would never appear).
 const WALK_OUT_VERIFICATION_STATION = "Walk-Out Verification";
 
 function groupByStation(items: ChecklistTemplateItem[]): Map<string, ChecklistTemplateItem[]> {
   const out = new Map<string, ChecklistTemplateItem[]>();
   for (const it of items) {
+    // System-key match against original (English) it.station per
+    // SPEC_AMENDMENTS.md C.38 — translation is render-only.
     const key = it.station ?? STATION_FALLBACK;
     if (!out.has(key)) out.set(key, []);
     out.get(key)!.push(it);
@@ -171,7 +182,12 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
   // (per SPEC_AMENDMENTS.md C.39). This component just consumes via
   // useTranslation(); UserMenu is also layout-owned and floats in the
   // top-right corner across all authenticated pages.
-  const { t } = useTranslation();
+  //
+  // `language` is destructured for resolveTemplateItemContent calls (per
+  // SPEC_AMENDMENTS.md C.38) — the resolver runs at consistent locations:
+  // station-display computation in the stations.map below, and inside
+  // ChecklistItem for label/description display. NEVER on a key path.
+  const { t, language } = useTranslation();
   const {
     location,
     instance: initialInstance,
@@ -229,6 +245,13 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
   // be finalize-eligible. If any item is undone or superseded by another
   // user, this flips back to false and the finalize UI disappears
   // reactively.
+  //
+  // SYSTEM-KEY MATCH (per SPEC_AMENDMENTS.md C.38): match against original
+  // (English) it.station — never against a translated value. A Spanish-
+  // language user's resolved station string "Verificación de Salida" would
+  // NOT equal WALK_OUT_VERIFICATION_STATION ("Walk-Out Verification") if
+  // we translated here, and the finalize gate would never unlock for them.
+  // Translation happens at display only via resolveTemplateItemContent.
   const walkOutVerificationComplete = useMemo(() => {
     const walkOutItems = templateItems.filter(
       (it) => it.station === WALK_OUT_VERIFICATION_STATION,
@@ -715,14 +738,26 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
         </div>
       </div>
 
-      {/* Stations */}
+      {/* Stations.
+          `station` value is the SYSTEM KEY (original English; used for
+          React keys, refs, data-attrs, IntersectionObserver scroll
+          detection, and the Walk-Out gate). `stationDisplay` is the
+          render-only translation derived from the first item's
+          translations via resolveTemplateItemContent. Per
+          SPEC_AMENDMENTS.md C.38 system-key vs display-string discipline. */}
       <div className="mt-4 flex flex-col gap-4">
         {stationKeys.map((station) => {
           const items = stationGroups.get(station) ?? [];
+          const firstItem = items[0];
+          const stationDisplay =
+            firstItem
+              ? resolveTemplateItemContent(firstItem, language).station ?? station
+              : station;
           return (
             <StationGroup
               key={station}
               station={station}
+              stationDisplay={stationDisplay}
               items={items}
               completions={completions}
               authorMap={authorMap}
@@ -908,6 +943,7 @@ function BannerView({ banner }: { banner: StatusBanner }) {
 
 function StationGroup({
   station,
+  stationDisplay,
   items,
   completions,
   authorMap,
@@ -923,7 +959,10 @@ function StationGroup({
   onLoadPickerCandidates,
   setRef,
 }: {
+  /** SYSTEM KEY (original English) — used for data-station, refs, IntersectionObserver. */
   station: string;
+  /** DISPLAY STRING (translated per current language) — used for the visible header text. */
+  stationDisplay: string;
   items: ChecklistTemplateItem[];
   completions: Map<string, ChecklistCompletion>;
   authorMap: Map<string, string>;
@@ -959,9 +998,12 @@ function StationGroup({
 
   return (
     <section
+      // System-key on data-station for IntersectionObserver auto-collapse
+      // detection (per SPEC_AMENDMENTS.md C.38 — never translate keys).
       data-station={station}
       ref={setRef}
-      aria-label={t("closing.station.toggle_aria", { station })}
+      // Display string in the user-facing aria-label.
+      aria-label={t("closing.station.toggle_aria", { station: stationDisplay })}
       className="rounded-2xl border-2 border-co-border bg-co-surface"
     >
       <button
@@ -987,7 +1029,7 @@ function StationGroup({
                 regress weight). border-b-2 over spec's ~1px guideline because
                 text-lg at operational arm's length needs the confident anchor. */}
             <span className="text-lg font-bold uppercase tracking-[0.14em] text-co-text border-b-2 border-co-gold-deep pb-0.5">
-              {station}
+              {stationDisplay}
             </span>
           </span>
           <span className="text-[11px] text-co-text-muted">
@@ -1063,7 +1105,7 @@ function ReviewSection({
   reasonsReady: boolean;
   onContinue: () => void;
 }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const itemsById = useMemo(() => {
     const m = new Map<string, ChecklistTemplateItem>();
     for (const it of templateItems) m.set(it.id, it);
@@ -1100,12 +1142,17 @@ function ReviewSection({
             const it = itemsById.get(id);
             if (!it) return null;
             const draft = reasonDrafts.get(id) ?? "";
+            // Resolver call once per row — display only (per
+            // SPEC_AMENDMENTS.md C.38). The reason-keying is by `id`
+            // (line 1146 key), not by label/station, so no system-key
+            // concern here.
+            const resolved = resolveTemplateItemContent(it, language);
             return (
               <label key={id} className="block">
                 <span className="block text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
-                  {it.station ?? STATION_FALLBACK}
+                  {resolved.station ?? STATION_FALLBACK}
                   {t("closing.review.station_label_separator")}
-                  {it.label}
+                  {resolved.label}
                 </span>
                 <textarea
                   value={draft}
