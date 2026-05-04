@@ -61,6 +61,7 @@
 
 import { useEffect, useState } from "react";
 
+import { resolveTemplateItemContent } from "@/lib/i18n/content";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type {
@@ -337,7 +338,14 @@ export function ChecklistItem({
   onTagActualCompleter,
   onLoadPickerCandidates,
 }: ChecklistItemProps) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
+  // Resolve translated display content ONCE per render (per SPEC_AMENDMENTS.md
+  // C.38 system-key vs display-string discipline). Used for the row's visible
+  // label, description, and ARIA attributes. The original templateItem.label
+  // / description / station remain available for any system-key matching
+  // (none in this component today; future grouping/lookup logic must use
+  // the original fields, not `resolved`).
+  const resolved = resolveTemplateItemContent(templateItem, language);
   // Local state for optimistic flip / in-flight / error.
   const [localCompletion, setLocalCompletion] = useState<ChecklistCompletion | null>(null);
   // Optimistic-revoke flag: when true, render as not-yet-completed even if
@@ -695,16 +703,17 @@ export function ChecklistItem({
   // ─── ARIA + visual computation ────────────────────────────────────────────
 
   const ariaLabel = (() => {
+    // ARIA labels are display-only; use resolved.label for user-facing text.
     if (roleGated)
       return t("closing.row.aria_role_gated", {
-        label: templateItem.label,
+        label: resolved.label,
         role_text: roleBadgeText(t, templateItem.minRoleLevel),
       });
     if (instanceLocked)
-      return t("closing.row.aria_locked", { label: templateItem.label, status: instanceStatus });
-    if (inFlight) return t("closing.row.aria_saving", { label: templateItem.label });
+      return t("closing.row.aria_locked", { label: resolved.label, status: instanceStatus });
+    if (inFlight) return t("closing.row.aria_saving", { label: resolved.label });
     if (error)
-      return t("closing.row.aria_error", { label: templateItem.label, error: errorMessageFor(t, error) });
+      return t("closing.row.aria_error", { label: resolved.label, error: errorMessageFor(t, error) });
     if (isCompleted && liveCompletion) {
       const who = isSelfAuthor ? t("common.you") : completionAuthor?.name ?? "—";
       const when = formatTime(liveCompletion.completedAt);
@@ -715,13 +724,13 @@ export function ChecklistItem({
             })
           : "";
       return t("closing.row.aria_completed_by", {
-        label: templateItem.label,
+        label: resolved.label,
         who,
         when: when ? t("closing.row.aria_at_time", { time: when }) : "",
         credited,
       });
     }
-    return t("closing.row.aria_not_completed", { label: templateItem.label });
+    return t("closing.row.aria_not_completed", { label: resolved.label });
   })();
 
   const leftIcon = (() => {
@@ -814,11 +823,11 @@ export function ChecklistItem({
                 .filter(Boolean)
                 .join(" ")}
             >
-              {templateItem.label}
+              {resolved.label}
             </span>
-            {templateItem.description ? (
+            {resolved.description ? (
               <span className="text-[11px] text-co-text-dim line-clamp-2">
-                {templateItem.description}
+                {resolved.description}
               </span>
             ) : null}
           </span>
@@ -870,7 +879,7 @@ export function ChecklistItem({
         <div
           className="mt-1 rounded-lg border border-co-border-2 bg-co-surface-2 p-3"
           role="region"
-          aria-label={t("closing.expand.aria_details", { label: templateItem.label })}
+          aria-label={t("closing.expand.aria_details", { label: resolved.label })}
         >
           {templateItem.expectsCount ? (
             <label className="block">

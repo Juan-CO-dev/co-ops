@@ -158,6 +158,22 @@ export interface ChecklistTemplate {
   updatedAt: string;
 }
 
+/**
+ * Optional translations for user-facing template-item content per
+ * SPEC_AMENDMENTS.md C.38. Shape allows partial coverage (some fields
+ * translated, others fall back to the original column). The original
+ * `label`/`description`/`station` columns remain the en source-of-truth
+ * AND the system-key for any matching/grouping logic — translations
+ * resolve at render time only via lib/i18n/content.ts resolveTemplateItemContent.
+ */
+export type ChecklistTemplateItemTranslations = {
+  [language in "en" | "es"]?: {
+    label?: string;
+    description?: string | null;
+    station?: string | null;
+  };
+};
+
 export interface ChecklistTemplateItem {
   id: string;
   templateId: string;
@@ -172,6 +188,7 @@ export interface ChecklistTemplateItem {
   expectsPhoto: boolean;
   vendorItemId: string | null;
   active: boolean;
+  translations: ChecklistTemplateItemTranslations | null;
 }
 
 export type ChecklistStatus = "open" | "confirmed" | "incomplete_confirmed";

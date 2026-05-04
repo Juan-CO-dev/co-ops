@@ -49,6 +49,7 @@ import type {
   ChecklistRevocationReason,
   ChecklistStatus,
   ChecklistTemplateItem,
+  ChecklistTemplateItemTranslations,
 } from "@/lib/types";
 
 import { ClosingClient, type ClosingInitialState, type StatusBanner } from "./closing-client";
@@ -131,6 +132,7 @@ interface TemplateItemRow {
   expects_photo: boolean;
   vendor_item_id: string | null;
   active: boolean;
+  translations: ChecklistTemplateItemTranslations | null;
 }
 
 const rowToTemplateItem = (r: TemplateItemRow): ChecklistTemplateItem => ({
@@ -146,6 +148,7 @@ const rowToTemplateItem = (r: TemplateItemRow): ChecklistTemplateItem => ({
   expectsPhoto: r.expects_photo,
   vendorItemId: r.vendor_item_id,
   active: r.active,
+  translations: r.translations,
 });
 
 interface CompletionRow {
@@ -359,7 +362,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
   const { data: itemsRows, error: itemsErr } = await sb
     .from("checklist_template_items")
     .select(
-      "id, template_id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, vendor_item_id, active",
+      "id, template_id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, vendor_item_id, active, translations",
     )
     .eq("template_id", templateRow.id)
     .eq("active", true)

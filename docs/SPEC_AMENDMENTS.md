@@ -499,6 +499,37 @@ Pages render their own structural chrome (headers, banners) underneath/beside th
 
 ---
 
+## C.38 — Closing template items use JSONB translations as a tactical fix; system-wide multilingual database content deferred
+
+**Date added:** 2026-05-04
+**Spec sections:** §4.3 (`checklist_template_items`), C.31 (i18n infrastructure)
+**What spec says:** Spec doesn't address multilingual database content for `checklist_template_items` (or for other DB-stored user-facing strings like vendor items, recipes, training content, prep templates). C.31 deferred multilingual DB content to "Module #2 or beyond" but didn't specify the architectural pattern.
+**What built reality is:** Build #1.5 PR 5c adds `checklist_template_items.translations JSONB NULL` as a tactical fix for the closing-flow Spanish experience. Shape: `{ "es": { "label": "...", "description": "...", "station": "..." } }`. Resolver `lib/i18n/content.ts` `resolveTemplateItemContent(item, language)` returns translated content when present and falls back to the original `label`/`description`/`station` columns otherwise.
+
+What this is NOT:
+- NOT a system-wide multilingual content architecture decision
+- NOT applied to vendor items, recipes, training content, prep templates, or other DB content yet
+- NOT a binding commitment to the JSONB-column pattern as the canonical solution; future architectural conversation might choose a translation table, locale-keyed rows, or other pattern
+
+**System-key vs display-string discipline (CRITICAL):** Business keys stay English-source. The original `label` / `description` / `station` columns are the system source-of-truth AND the system-key for matching/grouping logic. Translation happens at render time only via the resolver. Examples:
+- `it.station === WALK_OUT_VERIFICATION_STATION` (Walk-Out gate matching)
+- station-grouping keys in the closing UI (`groupByStation`)
+- `data-station` attribute used by IntersectionObserver scroll detection
+- Future vendor item names for inventory matching, recipe names for prep template matching
+
+Confused-deputy risk if translated strings are used as matching keys: a Spanish-language user's resolved station "Verificación de Salida" would not equal the English `WALK_OUT_VERIFICATION_STATION` constant, and the Walk-Out gate would never unlock for them. Future translatable content (vendor items, recipes, training, prep templates) MUST follow the same discipline: original field is the system source-of-truth, translations override at render only.
+
+**Why:** The Spanish toggle from PR 5a translated UI scaffolding (Undo, Review and submit, Cancel, etc.) but checklist item content stayed English because it lives in the DB. Spanish-speaking closers saw Spanish chrome but English work items ("Wipe down meat slicer," "Lock back door") — half-translated for the people the toggle is meant to serve. Tactical JSONB fix completes the closing-flow Spanish experience without committing to a system-wide architecture under deadline pressure.
+
+**v1.3 action:**
+- Document the JSONB translations column on `checklist_template_items` as the tactical pattern; explicitly call out it's NOT canonical
+- Document the system-key vs display-string discipline as a CO-OPS architectural norm; add to spec §1 alongside C.37's translate-from-day-one convention
+- Schedule a dedicated architectural conversation for system-wide multilingual database content BEFORE Build #2 introduces more user-visible DB content (prep template items, opening checklist items in Build #3, vendor items in admin tooling, recipes/training in future modules). The conversation should evaluate JSONB-column vs translations-table vs locale-keyed-rows patterns and pick the canonical one for the system
+- Until that conversation lands, NEW user-visible DB content uses the JSONB pattern by extension (cheap to migrate later if a different pattern wins)
+- Captured during Phase 3 Build #1.5 PR 5c after Juan's smoke-test surfaced the partial-translation gap (UI scaffolding translated; DB content stayed English)
+
+---
+
 ## How to add an entry
 
 1. Pick the next monotonic ID (`C.<n>` — current next: C.40).

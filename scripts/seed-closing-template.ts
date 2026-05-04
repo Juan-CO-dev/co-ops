@@ -85,6 +85,103 @@ const TEMPLATE_DESCRIPTION =
   "(template versioning per SPEC_AMENDMENTS.md C.19).";
 
 // ---------------------------------------------------------------------------
+// Spanish translation maps (per SPEC_AMENDMENTS.md C.38).
+//
+// Keyed by the original (English) string so a label/station change in ITEMS
+// requires the same change in these maps. Idempotent: the seed sync re-
+// computes the JSONB translations blob from these lookups every run; a map
+// edit re-runs cleanly. Unknown labels/stations/descriptions fall through
+// to the en source-of-truth (resolver returns the original column value).
+//
+// Operational/practical Spanish per C.31 — tú-form imperatives, restaurant
+// frontline staff audience. Juan smoke-tests post-merge.
+// ---------------------------------------------------------------------------
+
+const STATION_ES: Record<string, string> = {
+  "Crunchy Boi Station": "Estación Crunchy Boi",
+  "3rd Party Station": "Estación de terceros",
+  "Walk Ins station": "Estación walk-ins",
+  "Prep Fridge": "Refri de prep",
+  "Shut Down Back Line": "Apagar línea trasera",
+  "Expo Station": "Estación Expo",
+  "Clean front of house": "Limpiar el frente",
+  "Prep Area": "Área de prep",
+  "Closing Manager": "Gerente de cierre",
+  "Walk-Out Verification": "Verificación de salida",
+};
+
+const LABEL_ES: Record<string, string> = {
+  Restock: "Reabastecer",
+  "Wipe inside & outside": "Limpiar adentro y afuera",
+  "Wipe tops of sauce bottles": "Limpiar tapas de salsas",
+  "Combine & check dates on sauces": "Combinar y revisar fechas de salsas",
+  "Pull out station and sweep": "Sacar estación y barrer",
+  "Walk-in temp log": "Registro de temperatura del walk-in",
+  "Wipe down burners": "Limpiar quemadores",
+  "Wipe down tile walls": "Limpiar paredes de azulejo",
+  "Wipe wall under prep tables": "Limpiar pared bajo las mesas de prep",
+  "Change & stock cannoli pan": "Cambiar y surtir bandeja de cannoli",
+  "Wipe out sides fridge": "Limpiar el lateral del refrigerador",
+  "Restock bevs": "Reabastecer bebidas",
+  "Cookies & gluten free": "Galletas y gluten free",
+  Bathrooms: "Baños",
+  "Patio furniture": "Muebles del patio",
+  Sweep: "Barrer",
+  Mop: "Trapear",
+  "Restock bev fridge": "Reabastecer refri de bebidas",
+  "Put away / organize cases": "Guardar y organizar cajas",
+  "Organize Back Walk In": "Organizar walk-in trasero",
+  "Clean Oven Window": "Limpiar vidrio del horno",
+  "Organize Smallwares & Utensils": "Organizar utensilios pequeños",
+  "Organize Dry Storage": "Organizar almacén seco",
+  "Wipe down 3 door fridge": "Limpiar refri de 3 puertas",
+  "Wipe out 3 bay sink": "Limpiar fregadero de 3 compartimientos",
+  "Drain & turn off dish Machine": "Drenar y apagar el lavaplatos",
+  "Trash to dumpster": "Basura al contenedor",
+  "Count the drawer": "Contar la caja",
+  "Count and secure tips": "Contar y guardar propinas",
+  "Fill out AM Prep List": "Llenar lista de prep AM",
+  "Lights off": "Luces apagadas",
+  "Devices charging": "Dispositivos cargando",
+  "Oven off": "Horno apagado",
+  "Front doors locked": "Puertas de enfrente cerradas con llave",
+  "Back door locked": "Puerta trasera cerrada con llave",
+};
+
+const DESCRIPTION_ES: Record<string, string> = {
+  "Record cooler temp in Fahrenheit": "Anotar temperatura del walk-in en Fahrenheit",
+  "Count tips, place in safe. Weekly distribution handled separately by AGM+.":
+    "Contar propinas y guardarlas en la caja fuerte. La distribución semanal la maneja AGM+ aparte.",
+  "Placeholder for paper continuation; evolves to Phase 2 trigger in Build #2 via template versioning (Standard Closing v2 omits this item). See SPEC_AMENDMENTS.md C.19.":
+    "Marcador de transición del papel; evoluciona en Build #2 vía versión de plantilla (Standard Closing v2 elimina este ítem). Ver SPEC_AMENDMENTS.md C.19.",
+};
+
+/**
+ * Builds the translations JSONB blob for a SeedItem. Returns null when no
+ * Spanish translations are available for any of the item's user-facing
+ * fields — the column stays NULL and the resolver falls through to en.
+ *
+ * Partial coverage is honest: only fields with translations get keys; missing
+ * fields fall through to the en column at render time. So a label without a
+ * Spanish equivalent + a station with one yields { es: { station: "..." } },
+ * which renders Spanish station header + English label. Better than forcing
+ * a placeholder English string into the Spanish bucket.
+ */
+function buildTranslations(item: SeedItem): { es: Record<string, string> } | null {
+  const labelEs = LABEL_ES[item.label];
+  const stationEs = item.station ? STATION_ES[item.station] : undefined;
+  const descEs = item.notes ? DESCRIPTION_ES[item.notes] : undefined;
+
+  const esEntry: Record<string, string> = {};
+  if (labelEs) esEntry.label = labelEs;
+  if (stationEs) esEntry.station = stationEs;
+  if (descEs) esEntry.description = descEs;
+
+  if (Object.keys(esEntry).length === 0) return null;
+  return { es: esEntry };
+}
+
+// ---------------------------------------------------------------------------
 // Item registry. Order matters: physical-flow order through the kitchen.
 // Stations render in the order they appear here; items within a station
 // render in the order listed here (mapped to display_order at insert time).
@@ -230,6 +327,25 @@ interface ExistingItemRow {
   expects_count: boolean;
   expects_photo: boolean;
   active: boolean;
+  translations: Record<string, unknown> | null;
+}
+
+/**
+ * Stable JSON comparison for the translations JSONB blob. Sorts keys at
+ * each level so re-runs don't churn on key-order differences. Matches the
+ * Postgres JSONB equality semantics (which are key-order-independent at the
+ * storage layer but the JS `JSON.stringify` is not).
+ */
+function jsonEqual(a: unknown, b: unknown): boolean {
+  return stableStringify(a) === stableStringify(b);
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(",")}}`;
 }
 
 async function syncItemsForTemplate(
@@ -240,7 +356,7 @@ async function syncItemsForTemplate(
   const { data: existingRows, error: readErr } = await sb
     .from("checklist_template_items")
     .select(
-      "id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, active",
+      "id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, active, translations",
     )
     .eq("template_id", templateId);
   if (readErr) {
@@ -268,6 +384,8 @@ async function syncItemsForTemplate(
     const desiredExpectsCount = spec.expectsCount ?? false;
     const desiredExpectsPhoto = spec.expectsPhoto ?? false;
 
+    const desiredTranslations = buildTranslations(spec);
+
     if (!existing) {
       // Insert a new item at this display_order.
       const { data: inserted, error: insertErr } = await sb
@@ -284,6 +402,7 @@ async function syncItemsForTemplate(
           expects_photo: desiredExpectsPhoto,
           vendor_item_id: null,
           active: true,
+          translations: desiredTranslations,
         })
         .select("id")
         .maybeSingle<{ id: string }>();
@@ -317,6 +436,13 @@ async function syncItemsForTemplate(
       fieldsToUpdate.expects_photo = desiredExpectsPhoto;
     }
     if (!existing.active) fieldsToUpdate.active = true;
+    // Translations diff via stable JSON comparison (per SPEC_AMENDMENTS.md
+    // C.38). null === null is no-op; either-side-null with the other set
+    // triggers an update; both-set runs through stableStringify so re-runs
+    // don't churn on key-order differences.
+    if (!jsonEqual(existing.translations, desiredTranslations)) {
+      fieldsToUpdate.translations = desiredTranslations;
+    }
 
     if (Object.keys(fieldsToUpdate).length === 0) continue;
 
@@ -382,7 +508,14 @@ async function seedForLocation(
 
     // Audit the sync. `checklist_template.update` is non-destructive
     // (auto-derives destructive=false) and follows the Phase 2 free-form
-    // non-destructive vocabulary pattern.
+    // non-destructive vocabulary pattern. Translations-specific forensic
+    // detail per SPEC_AMENDMENTS.md C.38 wet-run requirements.
+    const translationsChangedCount = changes.filter((c) =>
+      c.changedFields.includes("translations"),
+    ).length;
+    const translationsChangedItemIds = changes
+      .filter((c) => c.changedFields.includes("translations"))
+      .map((c) => ({ template_item_id: c.templateItemId, display_order: c.displayOrder }));
     const { data: auditRow, error: auditErr } = await sb
       .from("audit_log")
       .insert({
@@ -393,7 +526,7 @@ async function seedForLocation(
         resource_id: existing.id,
         destructive: false,
         metadata: {
-          phase: "3_module_1_build_1",
+          phase: "3_module_1_build_1.5_pr_5c",
           reason: "seed sync — convergent re-run propagating spec edits",
           sync_method: "seed_script",
           script_path: "scripts/seed-closing-template.ts",
@@ -405,6 +538,11 @@ async function seedForLocation(
             display_order: c.displayOrder,
             changed_fields: c.changedFields,
           })),
+          // Translations-specific forensic summary (per C.38).
+          translations_changed_count: translationsChangedCount,
+          translations_changed_items: translationsChangedItemIds,
+          languages_populated: ["es"],
+          spec_amendments_referenced: ["C.38"],
           ip_address: null,
           user_agent: null,
         },
@@ -469,6 +607,7 @@ async function seedForLocation(
     expects_photo: it.expectsPhoto ?? false,
     vendor_item_id: null,
     active: true,
+    translations: buildTranslations(it),
   }));
 
   const { error: itemsErr } = await sb
@@ -515,7 +654,12 @@ async function seedForLocation(
         location_id: locationId,
         template_name: TEMPLATE_NAME,
         item_count: ITEMS.length,
-        spec_amendments_referenced: ["C.18", "C.19", "C.20"],
+        // Translations-specific forensic summary (per C.38). Counts items
+        // where buildTranslations() returned non-null at create time.
+        translations_populated_count: ITEMS.filter((it) => buildTranslations(it) !== null)
+          .length,
+        languages_populated: ["es"],
+        spec_amendments_referenced: ["C.18", "C.19", "C.20", "C.38"],
         ip_address: null,
         user_agent: null,
       },
