@@ -1,15 +1,37 @@
 "use client";
 
 /**
- * AmPrepForm — Build #2 PR 1, Part 2 (interactive logic).
+ * AmPrepForm — Build #2 PR 1, Part 2 (interactive logic), updated in
+ * Build #2 PR 2 with daily-completeness-attestation validation.
+ *
+ * Operational design intent (Build #2 PR 2 Bug D, locked from Juan
+ * smoke):
+ *
+ *   AM Prep is a daily completeness attestation. All primary source
+ *   fields (28 across Veg/Cooks/Sides/Sauces/Slicing) and all 4 Misc
+ *   Y/N attestations are required. The form blocks submission until
+ *   32 entries are completed. BACK UP fields and free_text remain
+ *   optional. TOTAL fields auto-calculate from primary + secondary
+ *   per the TOTAL_SOURCES map.
+ *
+ *   Operator types 0 if there is nothing on hand — empty is rejected.
+ *   Per Juan: "all on hand should be filled out before submitting.
+ *   With on hand counts they either have to put zero or the number
+ *   of the count."
+ *
+ *   Per-row inline errors render on the primary cell (numeric
+ *   sections) or below the YES/NO toggle pair (Misc) + a form-level
+ *   summary counts the total. Submit button stays disabled until
+ *   every required field is filled.
  *
  * Top-level component for the AM Prep form. Owns:
  *   - rawValues state (RawPrepInputs per templateItemId; numeric fields
  *     stored as raw strings to preserve "3.", "0.0" during typing)
  *   - dirty tracking (compare current rawValues against initialRawValues
  *     via stable JSON.stringify)
- *   - validation (numeric parse + negative blocking + at-least-one-changed
- *     gate; per-row inline + form-level summary)
+ *   - validation (numeric parse + negative blocking + primary-required
+ *     per section + Misc yesNo-required; per-row inline + form-level
+ *     summary)
  *   - submit handler (POST /api/prep/submit; error code → translated
  *     message via am_prep.error.<code> namespace)
  *   - read-only mode rendering (when instance.status === 'confirmed' OR
@@ -24,10 +46,6 @@
  * Submission semantics:
  *   - No PIN attestation (locked S5 — closing finalize PIN attests to
  *     the whole shift including AM Prep)
- *   - Empty entries: [] is allowed server-side (per locked plan); UI
- *     blocks at-least-one-changed via the dirty gate before letting
- *     submit fire, so the empty-payload path doesn't normally reach
- *     the server.
  *   - Pessimistic UX: inputs disabled during in-flight; success flips
  *     to read-only mode + success banner; error keeps inputs editable +
  *     surfaces error banner.
@@ -35,6 +53,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 
+import { formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language, TranslationKey, TranslationParams } from "@/lib/i18n/types";
 import type {
@@ -191,6 +210,7 @@ interface ValidationResult {
 
 function validateRawValues(
   rawValues: Record<string, RawPrepInputs>,
+  sectionByItemId: Map<string, PrepSectionEnum>,
   t: (key: TranslationKey, params?: TranslationParams) => string,
 ): ValidationResult {
   const errors: Record<string, Partial<Record<keyof RawPrepInputs, string>>> = {};
@@ -200,12 +220,12 @@ function validateRawValues(
   for (const [templateItemId, raw] of Object.entries(rawValues)) {
     const rowErrors: Partial<Record<keyof RawPrepInputs, string>> = {};
     const inputs: PrepInputs = {};
-    let rowHasAnyValue = false;
+    const section = sectionByItemId.get(templateItemId);
 
     // Numeric fields — parse + validate.
     for (const f of NUMERIC_FIELDS) {
       const raw_v = raw[f];
-      if (raw_v === undefined || raw_v === "") continue; // empty allowed
+      if (raw_v === undefined || raw_v === "") continue; // empty allowed at parse time; primary-required check below
       const parsed = Number(raw_v);
       if (!Number.isFinite(parsed)) {
         rowErrors[f] = t("am_prep.error.numeric_invalid");
@@ -218,24 +238,58 @@ function validateRawValues(
         continue;
       }
       inputs[f] = parsed;
-      rowHasAnyValue = true;
     }
 
     // Boolean / string fields pass through.
     if (raw.yesNo !== undefined) {
       inputs.yesNo = raw.yesNo;
-      rowHasAnyValue = true;
     }
     if (raw.freeText !== undefined && raw.freeText.length > 0) {
       inputs.freeText = raw.freeText;
-      rowHasAnyValue = true;
+    }
+
+    // Primary-required check (Build #2 PR 2 Bug D fix). AM Prep is a
+    // daily completeness attestation: ALL primary source fields must
+    // be filled before submission (operator types 0 if there's
+    // nothing on hand). BACK UP and free_text remain optional.
+    //
+    // Numeric sections (Veg/Cooks/Sides/Sauces/Slicing) require their
+    // section-specific primary (onHand for Veg/Cooks; portioned for
+    // Sides; line for Sauces/Slicing — drawn from TOTAL_SOURCES).
+    //
+    // Misc requires yesNo on every item (operationally-critical
+    // attestations: meatball mix ready, meatballs ready to cook,
+    // etc.). free_text on Cook Bacon? stays optional.
+    if (section && section !== "Misc") {
+      const sources = TOTAL_SOURCES[section];
+      if (sources) {
+        const primaryRaw = raw[sources.primary];
+        if (primaryRaw === undefined || primaryRaw === "") {
+          // Only set the required-error if there isn't already a
+          // parse-error on the same field (parse-error is more
+          // specific feedback for the operator).
+          if (!rowErrors[sources.primary]) {
+            rowErrors[sources.primary] = t("am_prep.error.primary_required");
+            errorCount += 1;
+          }
+        }
+      }
+    }
+    if (section === "Misc") {
+      if (raw.yesNo === undefined) {
+        rowErrors.yesNo = t("am_prep.error.primary_required");
+        errorCount += 1;
+      }
     }
 
     if (Object.keys(rowErrors).length > 0) {
       errors[templateItemId] = rowErrors;
     }
 
-    if (rowHasAnyValue && Object.keys(rowErrors).length === 0) {
+    // Push to entries when row has no errors. With required
+    // validation, every row that gets here has at least its primary
+    // field filled — so silently-empty rows no longer slip through.
+    if (Object.keys(rowErrors).length === 0) {
       entries.push({ templateItemId, inputs });
     }
   }
@@ -272,30 +326,6 @@ interface SubmitResponseBodySuccess {
   instance: ChecklistInstance;
   submittedCompletionIds: string[];
   closingAutoCompleteId: string | null;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Language-aware time formatter (per dashboard's PR 5d formatDateLabel
- * pattern). Uses es-US locale when language === "es", en-US otherwise.
- *
- * Architectural commitment per AGENTS.md "Language-aware time/date
- * formatting" durable lesson: every time/date formatting site in CO-OPS
- * uses language-aware locale going forward. Closing-client's existing
- * browser-locale time formatting is a known outlier pending cleanup.
- */
-function formatTime(iso: string, language: Language): string {
-  try {
-    return new Date(iso).toLocaleTimeString(
-      language === "es" ? "es-US" : "en-US",
-      { hour: "numeric", minute: "2-digit" },
-    );
-  } catch {
-    return "";
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -389,7 +419,10 @@ export function AmPrepForm({
     [rawValues, initialRawValuesString],
   );
 
-  const validation = useMemo(() => validateRawValues(rawValues, t), [rawValues, t]);
+  const validation = useMemo(
+    () => validateRawValues(rawValues, sectionByItemId, t),
+    [rawValues, sectionByItemId, t],
+  );
 
   // Read-only when the instance has already been confirmed (server load OR
   // post-submission flip in this session).
@@ -616,6 +649,7 @@ export function AmPrepForm({
         rawValues={rawValues}
         onChange={handleChange}
         disabled={isReadOnly}
+        errors={validation.errors}
       />
 
       {/* Form-level error summary — accessibility-driven (per locked
