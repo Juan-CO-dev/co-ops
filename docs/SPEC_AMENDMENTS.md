@@ -1047,15 +1047,223 @@ Captured during Build #2 PR 3 smoke when Juan tried to edit the pre-C.46 EM subm
 
 ---
 
+## C.47 — Time Clock: login = clock-in, logout = clock-out, geofence-based, DC-compliant
+
+**Date added:** 2026-05-05
+**Spec sections:** §2 (locked architectural decisions), §4.1 (`users`, `locations`), §4.2 (`sessions`), §4.16 (`audit_log`), §10 (shared infrastructure services), §11 (integration adapters), §16 (build sequencing)
+
+**What spec says:** §2 lists "Integration philosophy" (CO-OPS is the single source of operational truth; 7shifts and Toast are synced, not replaced). §11 mentions 7shifts as the scheduling adapter but does not address time punches. Login and logout are treated as pure session management. No Time Clock module or geofence concept exists in v1.2.
+
+**What built reality should be:**
+
+CO-OPS closes the gap between authentication and labor-law punch records by treating login as clock-in and logout as clock-out — with a geofence gate determining the actual punch timestamp. This integrates with the CO-OPS → 7shifts → Toast Payroll stack so a staff member never touches a separate time-clock app.
+
+The architecture below was locked during the Wave 1 spec refresh session (2026-05-05). Implementation is explicitly deferred 6–12 months (Wave 8 per MODULE_PRIORITY_LIST.md, alongside AI Insights — both require 7shifts + Toast integration adapters to be in place first). Schema migrations land at implementation time; no schema changes land during Wave 1.
+
+### A1 — Login is clock-in; logout is clock-out
+
+Every session start event is a clock-in candidate; every session end event is a clock-out candidate. "Punch happened" is determined by the geofence gate at A3–A5. CO-OPS writes the punch to 7shifts via POST /time_punches (A9); 7shifts feeds Toast Payroll CSV. Staff members never use a separate time clock — the CO-OPS login tile IS the punch interface.
+
+### A2 — 500ft default geofence, tunable per location by GM+
+
+Each location has a configurable geofence radius (`locations.geofence_radius_ft INTEGER NOT NULL DEFAULT 500`). GM+ adjusts via admin tooling. Geofence center is the location's lat/long (`locations.latitude`, `locations.longitude` — new columns). Distance check uses the Haversine formula on the browser-supplied coordinates at login/logout time.
+
+### A3 — Login-outside-geofence: clock-in deferred to proximity-entry moment
+
+Session is created normally (auth doesn't gate on geofence). Dashboard shows persistent banner: **"You're authenticated but not yet clocked in. You'll clock in automatically when you arrive at the location."** Banner not dismissible; persists until geofence-enter event fires or session ends. Foreground `watchPosition` detects entry → clock-in fires with the geofence-enter timestamp as the punch time.
+
+Privacy-first means transparent, not invisible.
+
+**Session-but-no-punch scenario:** logout/idle before geofence-enter writes audit row `action: 'time_clock.login_no_punch'`, `metadata.reason: 'session_ended_before_geofence_entry'`. Manager reconciliation (A6) can add a manual punch.
+
+### A4 — Logout-inside-geofence: punch timestamp is logout moment
+
+Clean path. Punch written immediately. Audit: `time_clock.logout_punched`, `metadata.geofence_state: 'inside'`.
+
+### A5 — Logout-outside-geofence: punch timestamp is last-in-proximity moment
+
+Clock-out timestamp = `sessions.last_inside_geofence_at` (server-side high-water mark of the most recent `watchPosition` callback that reported inside-geofence with no subsequent outside-geofence callback before logout). If NULL (never reported inside), no auto-punch — fall to A3's no-punch path.
+
+If populated:
+1. Clock-out timestamp = `last_inside_geofence_at`
+2. Late-clock-out reason prompt at logout (selection from A8)
+3. Punch written to 7shifts with reason metadata; session revoked
+4. Emits `action: 'time_clock.logout_auto_corrected'` with `metadata.original_logout_at`, `metadata.punch_timestamp`, `metadata.reason_category`
+
+**Implementation note:** `last_inside_geofence_at` is updated via heartbeat-style PATCH or extension of `/api/auth/heartbeat` carrying position state. Exact wire-up deferred to implementation; the server-side session column is locked here.
+
+### A6 — Manager gap reconciliation; thresholds locked
+
+Manager reconciliation queue handles edge cases: forgotten clock-outs, device failures, geofence misfires, payroll disputes.
+
+Scope:
+- **Add punch** — `time_clock.punch_added` (requires reason + employee attestation per A7)
+- **Correct timestamp** — `time_clock.punch_corrected` (requires reason + delta + attestation)
+- **Void punch** — `time_clock.punch_voided` (requires reason + approval per delta magnitude)
+
+All mutations write CO-OPS → 7shifts (PATCH /time_punches/:id; DELETE for void). CO-OPS audit_log is the authoritative forensic chain.
+
+**Approval thresholds (locked here):** KH+ initiates all reconciliation; MoO+ approval required for corrections with > 15 minutes delta from original or spanning two calendar days (DC pay-period boundary concern). Thresholds may evolve based on operational experience post-implementation; changes require a new amendment entry.
+
+### A7 — Mandatory employee attestation when auto-correction shifts time
+
+When A5 auto-correction fires OR a manager adds/corrects a punch, the affected employee attests on next login.
+
+Attestation flow:
+1. Banner: "Your [clock-in/clock-out] on [date] was recorded as [time]. Please confirm."
+2. **Confirm** → `time_clock.attestation_confirmed`; session proceeds
+3. **Flag for review** → `time_clock.attestation_flagged`; queues second-level reconciliation review with optional note; session proceeds (flagging is non-blocking)
+
+Attestation rows carry corrected timestamp, original timestamp, correction source (auto vs manager-id), and disposition. DC compliance: explicit record that staff were shown their punch records and had opportunity to dispute (TWWFAA paper-time-sheet sign-off equivalent).
+
+### A8 — Late clock-out reason categories
+
+- `stayed_late_shift_need`
+- `stayed_late_manager_request`
+- `stayed_late_personal`
+- `forgot_to_clock_out`
+- `device_issue`
+- `other` — free-text required when selected
+
+**Status:** preliminary list locked here; final lock at implementation time when full punch-correction UX is designed. No changes between here and implementation without new amendment entry — 7shifts metadata shape and DC reporting queries key on these strings.
+
+### A9 — Integration stack: CO-OPS → 7shifts → Toast Payroll CSV
+
+1. **CO-OPS → 7shifts:** POST /time_punches on clock-in; PATCH /time_punches/:id on clock-out / correction / reconciliation. CO-OPS holds lifecycle; 7shifts is the sink. REST API confirmed writeable.
+2. **7shifts → Toast Payroll:** 7shifts exports CSV to Toast on configured pay-period schedule. CO-OPS does not touch Toast directly.
+
+CO-OPS retains local `time_punches` (A12) as authoritative CO-OPS-side record. Sync failure → record locally, queue retry. Local-first principle locked here; retry queue mechanics implementation-time.
+
+### A10 — Browser-only PWA delivery (Serwist + manifest.json)
+
+Time Clock is a feature of the existing CO-OPS PWA. No App Store, no native push, no NFC. Geolocation is the only new device API. Serwist + `manifest.json` already part of foundation stack.
+
+### A11 — Foreground location only; no background tracking
+
+Geolocation requested only at login (A3 evaluation), continuously via `watchPosition` while foreground (A3 entry detection + A5 high-water mark), and at logout (A4/A5 evaluation).
+
+CO-OPS does NOT use Background Geolocation API, does NOT store position coordinates beyond the binary inside/outside signal + `last_inside_geofence_at` timestamp, does NOT share position data with 7shifts or Toast. Position visibility to CO-OPS is "were you inside the geofence at these moments?" — not a movement trail.
+
+Permission-denied state is not a sign-in blocker; falls back to manual punch + manager reconciliation queue with `metadata.geolocation_denied: true`.
+
+### A12 — DC labor compliance: second precision, no rounding, 3-year retention, TWWFAA schema
+
+CO operates under the District of Columbia Tipped Wage Workers Fairness Amendment Act (TWWFAA). Schema is designed for DC compliance from day one:
+
+- **Second precision** on all `TIMESTAMPTZ` punch columns. No rounding (DC law prohibits).
+- **3-year retention** — `time_punches` and time-clock `audit_log` rows are permanent (append-only philosophy). DC requires 3 years; CO-OPS retains indefinitely.
+- **TWWFAA quarterly reporting shape** — `time_punches` carries employee ID, location, punch-in/out timestamps, role-level at punch time (tipped/non-tipped classification), correction chain — produces the quarterly wage report without joins.
+
+**Target schema (locked at implementation time — no migrations land in Wave 1):**
+
+```sql
+-- Per-location geofence config
+ALTER TABLE locations ADD COLUMN geofence_radius_ft INTEGER NOT NULL DEFAULT 500;
+ALTER TABLE locations ADD COLUMN latitude DECIMAL(10,7) NULL;
+ALTER TABLE locations ADD COLUMN longitude DECIMAL(10,7) NULL;
+
+-- Session-level geofence tracking
+ALTER TABLE sessions ADD COLUMN last_inside_geofence_at TIMESTAMPTZ NULL;
+
+-- Authoritative punch record (CO-OPS side)
+CREATE TABLE time_punches (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  user_id UUID NOT NULL REFERENCES users(id),
+  location_id UUID NOT NULL REFERENCES locations(id),
+  session_id UUID NOT NULL REFERENCES sessions(id),
+  punch_in_at TIMESTAMPTZ NOT NULL,
+  punch_out_at TIMESTAMPTZ NULL,
+  punch_out_source TEXT NULL
+    CHECK (punch_out_source IN (
+      'logout_inside', 'logout_auto_corrected', 'manager', 'manual'
+    )),
+  late_reason_category TEXT NULL
+    CHECK (late_reason_category IN (
+      'stayed_late_shift_need', 'stayed_late_manager_request', 'stayed_late_personal',
+      'forgot_to_clock_out', 'device_issue', 'other'
+    )),
+  late_reason_free_text TEXT NULL,
+  role_level_at_punch NUMERIC(4,1) NOT NULL,
+  seven_shifts_punch_id TEXT NULL,
+  seven_shifts_synced_at TIMESTAMPTZ NULL,
+  seven_shifts_sync_status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (seven_shifts_sync_status IN ('pending', 'synced', 'failed', 'retry')),
+  original_punch_id UUID NULL REFERENCES time_punches(id),
+  correction_count INTEGER NOT NULL DEFAULT 0,
+  manager_correction_by UUID NULL REFERENCES users(id),
+  employee_attested_at TIMESTAMPTZ NULL,
+  employee_attestation_disposition TEXT NULL
+    CHECK (employee_attestation_disposition IN ('confirmed', 'flagged'))
+);
+
+CREATE INDEX time_punches_user_date ON time_punches(user_id, punch_in_at DESC);
+CREATE INDEX time_punches_location_date ON time_punches(location_id, punch_in_at DESC);
+CREATE INDEX time_punches_sync_status ON time_punches(seven_shifts_sync_status)
+  WHERE seven_shifts_sync_status IN ('pending', 'failed', 'retry');
+```
+
+RLS: employee read-own, KH+ read-location, MoO+ read-all. Writes service-role only — CO-OPS lib writes punches; clients never write directly.
+
+### A13 — Implementation deferred 6–12 months; schema migrations at implementation time
+
+Time Clock depends on 7shifts and Toast integration adapters being in place and operationally stable. These are Wave 8 priority. Wave 8 is approximately 6–12 months out from Wave 1 (current).
+
+**No schema migrations land during Wave 1.** Schema changes in A12 are documented as the intended target; they migrate at Wave 8 implementation. Prevents early schema additions that might conflict with integration adapter design decisions made when that wave is actually planned.
+
+C.47 serves as the architectural commitment so the Wave 8 implementation session starts from resolved architecture rather than re-debating foundational questions.
+
+### A14 — 7shifts is authoritative punch record for payroll; CO-OPS is richer forensic record
+
+Operational authority split (matches §2 integration philosophy):
+
+- **7shifts** — authoritative punch sink for payroll. Toast trusts 7shifts. Payroll dispute → 7shifts is the record.
+- **CO-OPS `time_punches`** — richer forensic record. Carries geofence metadata, `last_inside_geofence_at`, correction chain, attestation history, sync status, A8 reason categories. Not stored in 7shifts.
+
+When the two diverge (reconciliation, 7shifts direct edit, sync failure), CO-OPS records divergence in `audit_log` and surfaces it in manager reconciliation queue. Resolution flows through CO-OPS (which then syncs to 7shifts) — never by editing 7shifts directly.
+
+### A15 — Manual punch entry fallback for device-failure edge cases
+
+When geolocation unavailable, permission denied, or device failed, KH+ can enter a punch manually on behalf of an employee via the reconciliation queue. Explicit device-failure path — not a standard flow.
+
+Requirements:
+1. **Manager-initiated only** — employee cannot self-add manual punch (prevents self-serving fraud)
+2. **Required reason** — A8 category (typically `device_issue`); free text required if `other`
+3. **Full audit trail** — `time_clock.punch_added` with `metadata.creation_method: 'manual_entry'`, `metadata.reason`, `metadata.entered_by`, `metadata.entered_at`
+4. **Employee attestation** — A7 prompt on next login; flag escalates to MoO+
+
+Manual punches sync to 7shifts via same POST /time_punches; `punch_out_source = 'manual'`.
+
+**Why manager-initiated only:** DC labor law makes employer responsible for accurate records. Manager-entered punches are the employer's record-correction mechanism; employee-self-entered would be operationally indistinguishable from fraud without additional verification infrastructure that's out of scope for v1.
+
+**v1.3 action:**
+
+- Add Time Clock as a module in §1.4 artifact model
+- Add §2 locked architectural decision (Time Clock: login = clock-in; geofence-gated)
+- Add §11 integration adapter entry for 7shifts time-punch API
+- Add §4.1 deferred-schema notes for `locations` (`geofence_radius_ft`, `latitude`, `longitude`) and `users` (none — language column folds via C.31)
+- Add §4.2 deferred-schema note for `sessions` (`last_inside_geofence_at`)
+- Add §4.17 `time_punches` table schema (per A12, deferred to Wave 8)
+- Add RLS policies for `time_punches` in §5 (deferred to Wave 8)
+- Add §10 entries for geofence event model, sync-retry queue, manager reconciliation queue, employee attestation flow
+- Add `DESTRUCTIVE_ACTIONS` entries: `time_clock.punch_corrected`, `time_clock.punch_voided`, `time_clock.punch_added`, `time_clock.attestation_flagged`
+- Add §3.4 Compliance sub-section (DC TWWFAA: second precision, no rounding, 3-year retention, quarterly reporting shape)
+- Document Wave 8 deferral in §16 build sequencing
+- Reference MODULE_PRIORITY_LIST.md Wave 8 for sequencing rationale
+
+Captured during Wave 1 spec refresh session (2026-05-05). Architecture locked with 15 sub-decisions (A1–A15) before any implementation begins, per the CO-OPS working rhythm of discuss-before-building.
+
+---
+
 ## How to add an entry
 
-1. Pick the next monotonic ID (`C.<n>` — current next: C.46).
+1. Pick the next monotonic ID (`C.<n>` — current next: C.48).
 2. Spec sections under amendment.
 3. Quote what spec says.
 4. Document what built reality is.
 5. Why the divergence is correct (operational reasoning, not just "we changed our mind").
 6. What v1.3 should do — concrete action so the spec can be reconciled mechanically.
 
-Date entries to whatever calendar the project is on (currently 2026-05-04).
+Date entries to whatever calendar the project is on (currently 2026-05-05).
 
 This file is consumed by future spec versions. Its purpose is to make spec drift cheap to reconcile, not to legitimize ad-hoc deviations. Every entry should pass the test "would I tell Pete or Cristian this is the right way to do it?" before it lands here.
