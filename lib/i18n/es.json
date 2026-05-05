@@ -252,6 +252,8 @@
   "am_prep.banner.read_only": "Lista de Prep AM ya enviada hoy por {name} a las {time}",
   "am_prep.banner.read_only_chain": "Lista de Prep AM ya enviada hoy: {attribution}",
   "am_prep.banner.editing": "Editando Lista de Prep AM enviada por {name} a las {time}",
+  "am_prep.banner.template_diverged_one": "1 elemento agregado desde que se envió este reporte — aparecerá en el reporte de mañana.",
+  "am_prep.banner.template_diverged_other": "{count} elementos agregados desde que se envió este reporte — aparecerán en el reporte de mañana.",
 
   "am_prep.attribution.original": "Enviado por {name} a las {time}",
   "am_prep.attribution.update": "actualizado por {name} a las {time}",

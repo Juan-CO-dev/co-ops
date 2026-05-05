@@ -1031,6 +1031,18 @@ This amendment captures the **canonical pattern** for post-submission update sup
 
 Captured during Phase 3 Build #2 PR 1 smoke test from Juan's operational feedback ("the closing manager that day KH+ should be able to update the report with a updated by tag and time etc."); architecture locked between Build #2 PR 2 merge and PR 3 implementation.
 
+### Build #2 PR 3 sub-finding — template-divergence between original submission and edit (added 2026-05-04)
+
+Pre-C.46 EM AM Prep submission (`4ee8ef10-89b8-4cac-9218-f820acea12f8`) had 36 chain-head completions; live EM template had 38 active items by smoke time (Radish + Cucumber added between original submission and the smoke test). Initial PR 3 implementation passed the full live template to AmPrepForm in edit/read_only modes, causing the C.44 alignment guard in `submitAmPrepUpdate` to correctly reject submissions containing items not in the chain head's universe — but with bad UX (server-side `prep_shape` error mapped to "check the highlighted fields" banner without per-row highlighting fired client-side). Operator could fill the 2 new items (form's primary-required check fired on them, asking the operator to fill them to enable submit), then submit failed at the lib layer.
+
+**Architectural commitment:** snapshot universe is locked at chain-head submission time per C.44. Template additions between original submission and edit appear ONLY on subsequent fresh submissions, NOT retroactively in the chain. This extends C.44's "snapshot frozen at submission time" semantic from PAR/section/unit values to the **template structure itself** (which items exist in the universe) — a strictly stronger snapshot lock than C.44 alone implied.
+
+**Implementation:** the page Server Component filters `templateItems` to the chain head's `completion_ids` universe in edit/read_only modes; submit mode (no chain yet) renders the full live template. The chain head's `completion_ids` array is the canonical reference (rather than filtering by `editCount === 0` on completion rows) so the filter doesn't depend on completion-row state semantics. A small info banner (`am_prep.banner.template_diverged_one|other`) surfaces the divergence count to operators for clarity: "{N} items added since this report was submitted — they'll appear on tomorrow's report."
+
+**Generalization:** future report types inheriting C.46 (Cash Report, Opening Report, Mid-day Prep — per A9) inherit this snapshot-universe semantic. Each report type's edit-mode loader must filter templateItems to chain-head universe; the info banner pattern is reusable.
+
+Captured during Build #2 PR 3 smoke when Juan tried to edit the pre-C.46 EM submission and hit `prep_shape`. Resolved by adding `chainHeadTemplateItemIds` derivation to `loadChainStateForPage` + filter at the page Server Component before passing `templateItems` to AmPrepForm.
+
 ---
 
 ## How to add an entry

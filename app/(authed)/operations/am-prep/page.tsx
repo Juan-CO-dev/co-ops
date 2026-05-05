@@ -227,19 +227,36 @@ export default async function AmPrepPage({ searchParams }: PageProps) {
         </h1>
       </div>
 
-      <div className="mt-4">
-        <AmPrepForm
-          instance={state.instance}
-          templateItems={state.templateItems}
-          initialValues={initialValues}
-          authors={state.authors}
-          actor={{ userId: auth.user.id, name: auth.user.name }}
-          mode={mode}
-          chainAttribution={chainState.chain}
-          originalSubmissionId={chainState.originalSubmissionId}
-          locationId={locationParam}
-        />
-      </div>
+      {/* C.46 + C.44 — when a chain exists (edit/read_only modes), filter
+          templateItems to the chain head's snapshot universe. Template
+          additions between original submission and edit appear ONLY on
+          tomorrow's fresh submission, not retroactively in the chain. */}
+      {(() => {
+        const editableTemplateItems =
+          chainState.chain.length === 0
+            ? state.templateItems
+            : state.templateItems.filter((it) =>
+                chainState.chainHeadTemplateItemIds.has(it.id),
+              );
+        const divergedItemCount =
+          state.templateItems.length - editableTemplateItems.length;
+        return (
+          <div className="mt-4">
+            <AmPrepForm
+              instance={state.instance}
+              templateItems={editableTemplateItems}
+              initialValues={initialValues}
+              authors={state.authors}
+              actor={{ userId: auth.user.id, name: auth.user.name }}
+              mode={mode}
+              chainAttribution={chainState.chain}
+              originalSubmissionId={chainState.originalSubmissionId}
+              locationId={locationParam}
+              divergedItemCount={divergedItemCount}
+            />
+          </div>
+        );
+      })()}
     </main>
   );
 }
@@ -259,14 +276,25 @@ async function loadChainStateForPage(args: {
   originalSubmissionId: string | null;
   maxEditCount: number;
   closingStatus: ChecklistInstance["status"] | null;
+  /**
+   * C.46 + C.44 — set of template_item_ids in the chain head's completion
+   * universe. Used to filter the form's templateItems prop when a chain
+   * exists, so that template additions between the original submission
+   * and the edit don't surface in edit/read_only modes (they appear on
+   * tomorrow's fresh submission per C.44 snapshot-frozen-at-submission).
+   * Empty Set when no chain exists.
+   */
+  chainHeadTemplateItemIds: Set<string>;
 }> {
-  // Find chain head submission (original_submission_id IS NULL).
+  // Find chain head submission (original_submission_id IS NULL). Pull
+  // completion_ids too — used to derive the chain head's template_item
+  // universe per C.44 snapshot-locked semantic.
   const { data: headSub, error: headErr } = await args.sb
     .from("checklist_submissions")
-    .select("id")
+    .select("id, completion_ids")
     .eq("instance_id", args.instance.id)
     .is("original_submission_id", null)
-    .maybeSingle<{ id: string }>();
+    .maybeSingle<{ id: string; completion_ids: string[] }>();
   if (headErr) {
     throw new Error(`am-prep page: load chain head: ${headErr.message}`);
   }
@@ -277,6 +305,7 @@ async function loadChainStateForPage(args: {
       originalSubmissionId: null,
       maxEditCount: 0,
       closingStatus: null,
+      chainHeadTemplateItemIds: new Set(),
     };
   }
 
@@ -287,6 +316,27 @@ async function loadChainStateForPage(args: {
     (max, e) => (e.editCount > max ? e.editCount : max),
     0,
   );
+
+  // Load chain head's completions to derive the snapshot-locked
+  // template_item universe. Use completion_ids array directly (canonical
+  // reference of "what was in this submission"); avoids dependence on
+  // completion-row state filtering that could drift if chain semantics
+  // ever change.
+  const chainHeadTemplateItemIds = new Set<string>();
+  if (headSub.completion_ids.length > 0) {
+    const { data: headComps, error: headCompErr } = await args.sb
+      .from("checklist_completions")
+      .select("template_item_id")
+      .in("id", headSub.completion_ids);
+    if (headCompErr) {
+      throw new Error(
+        `am-prep page: load chain head completions: ${headCompErr.message}`,
+      );
+    }
+    for (const c of (headComps ?? []) as Array<{ template_item_id: string }>) {
+      chainHeadTemplateItemIds.add(c.template_item_id);
+    }
+  }
 
   // Closing status (two-step pattern per AGENTS.md PostgREST gotcha).
   const { data: closingTemplates, error: cTmplErr } = await args.sb
@@ -323,6 +373,7 @@ async function loadChainStateForPage(args: {
     originalSubmissionId: headSub.id,
     maxEditCount,
     closingStatus,
+    chainHeadTemplateItemIds,
   };
 }
 
