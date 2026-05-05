@@ -45,6 +45,17 @@ export const DESTRUCTIVE_ACTIONS = [
   "checklist_completion.revoke",
   "checklist_completion.tag_actual_completer",
 
+  // Report post-submission update (per SPEC_AMENDMENTS.md C.46 A7)
+  // — destructive because it's an additive correction to a submitted
+  // report. Audit row is emitted from inside submit_am_prep_atomic RPC
+  // (atomic with chain write); RPC-side INSERT into audit_log explicitly
+  // sets destructive=true rather than relying on JS-side audit() helper's
+  // auto-derive. The action name lives here so future generalization to
+  // other report types (Cash Report, Opening Report, Mid-day Prep — per
+  // C.46 A9) reuses the same destructive registration. isDestructive()
+  // returns true for "report.update" via the registry membership check.
+  "report.update",
+
   // Bulk / sensitive
   "reports.bulk_export",
   "reports.bulk_correct",
