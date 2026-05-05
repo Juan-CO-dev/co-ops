@@ -79,6 +79,46 @@ export function formatTime(iso: string, language: Language): string {
 }
 
 /**
+ * Format a YYYY-MM-DD date string into a localized short label
+ * ("Tue, May 5" / "mar, 5 may"). Returns the input string verbatim on
+ * parse failure (defensive — preserves the existing inline-helper
+ * behavior).
+ *
+ * Lifted from 2 inline copies (dashboard / closing-page) per the AGENTS.md
+ * "Language-aware time/date formatting" durable lesson hitting its 2-site
+ * lift trigger. Closing-page version was hardcoded `"en-US"` (Spanish-UX
+ * regression — Spanish users saw English-format dates on the historical
+ * banner + no-instance view); this lift fixes it.
+ *
+ * Same architectural commitments as formatTime:
+ *   - Locale follows app language preference (not browser default).
+ *   - Date math is anchored to UTC at parse time and the formatter pins
+ *     `timeZone: "UTC"` so the day boundary doesn't shift under
+ *     locale-default conversion. YYYY-MM-DD has no intrinsic TZ; UTC is
+ *     the safe canonical anchor (matches both prior inline implementations).
+ *
+ * @param yyyymmdd  Date string in YYYY-MM-DD form (DB `date` column shape).
+ * @param language  App language code; "es" → es-US, anything else → en-US.
+ *
+ * Usage:
+ *   import { formatDateLabel } from "@/lib/i18n/format";
+ *   const label = formatDateLabel(state.todayDate, language);
+ *   // → "Tue, May 5" (en) / "mar, 5 may" (es)
+ */
+export function formatDateLabel(yyyymmdd: string, language: Language): string {
+  const [y, m, d] = yyyymmdd.split("-").map(Number);
+  if (!y || !m || !d) return yyyymmdd;
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  const locale = language === "es" ? "es-US" : "en-US";
+  return new Intl.DateTimeFormat(locale, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  }).format(dt);
+}
+
+/**
  * Translation function shape compatible with both serverT (lib/i18n/server.ts)
  * and the client-side t from useTranslation (lib/i18n/provider.tsx). Used by
  * formatChainAttribution so callers can supply either.

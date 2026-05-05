@@ -44,7 +44,7 @@ import {
   type ChecklistChainEntry,
 } from "@/lib/checklists";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
-import { formatTime } from "@/lib/i18n/format";
+import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
 import { requireSessionFromHeaders } from "@/lib/session";
@@ -77,24 +77,16 @@ function nyDateString(d: Date): string {
   }).format(d);
 }
 
-function formatDateLabel(yyyymmdd: string): string {
-  const [y, m, d] = yyyymmdd.split("-").map(Number);
-  if (!y || !m || !d) return yyyymmdd;
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  return new Intl.DateTimeFormat("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  }).format(dt);
-}
-
-// formatTime imported from @/lib/i18n/format above; canonical helper
-// (Build #2 PR 2) consolidates 6 prior inline copies and always pins
-// to the operational TZ. The previous inline closing/page formatTime
-// already passed timeZone: OPERATIONAL_TZ, so this surface was
-// TZ-correct, but lifted for the language-locale add (was hardcoded
-// "en-US") and for consistency with the canonical pattern.
+// formatTime + formatDateLabel imported from @/lib/i18n/format above;
+// canonical helpers consolidate prior inline copies and always pin to the
+// operational TZ + app language preference. The previous inline closing-
+// page formatTime already passed timeZone: OPERATIONAL_TZ, so that surface
+// was TZ-correct (Build #2 PR 2 lifted it for the language-locale add).
+// formatDateLabel was the remaining outlier — hardcoded "en-US" locale,
+// rendering English date labels for Spanish-language users on the
+// historical banner + no-instance view (a real Spanish-UX bug). Lifted in
+// the Build #2 cleanup PR alongside the canonical-helpers consolidation;
+// callers now pass `language` so the date locale follows app preference.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // snake_case → camelCase row mappers
@@ -276,7 +268,7 @@ function deriveBanner(ctx: BannerContext, language: Language): StatusBanner | nu
   if (ctx.isHistorical) {
     return {
       tone: "historical",
-      message: serverT(language, "closing.banner.historical", { date: formatDateLabel(ctx.date) }),
+      message: serverT(language, "closing.banner.historical", { date: formatDateLabel(ctx.date, language) }),
     };
   }
   return null;
@@ -371,7 +363,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
       return (
         <NoInstanceView
           locationLabel={`${locationRow.code} · ${locationRow.name}`}
-          dateLabel={formatDateLabel(targetDate)}
+          dateLabel={formatDateLabel(targetDate, auth.user.language)}
         />
       );
     }

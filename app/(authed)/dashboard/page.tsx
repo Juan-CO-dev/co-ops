@@ -30,7 +30,7 @@ import { LogoutButton } from "@/components/auth/LogoutButton";
 import { ROLES } from "@/lib/roles";
 import { canEditReport } from "@/lib/checklists";
 import { accessibleLocations, type LocationActor } from "@/lib/locations";
-import { formatTime } from "@/lib/i18n/format";
+import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { loadAmPrepDashboardState } from "@/lib/prep";
@@ -218,20 +218,8 @@ async function loadOperationalState(
 // View helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-function formatDateLabel(yyyymmdd: string, language: Language): string {
-  // YYYY-MM-DD → "Tue, May 1" (en) or "mar, 1 may" (es). Locale follows
-  // user language preference per SPEC_AMENDMENTS.md C.31.
-  const [y, m, d] = yyyymmdd.split("-").map(Number);
-  if (!y || !m || !d) return yyyymmdd;
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  const locale = language === "es" ? "es-US" : "en-US";
-  return new Intl.DateTimeFormat(locale, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    timeZone: "UTC",
-  }).format(dt);
-}
+// formatDateLabel imported from @/lib/i18n/format (added in import block);
+// canonical helper consolidates dashboard + closing-page inline copies.
 
 interface StatusCopy {
   label: string;
