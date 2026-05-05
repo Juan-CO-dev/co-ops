@@ -301,7 +301,11 @@ export const ITEMS: SeedItem[] = [
 // Insert orchestration
 // ---------------------------------------------------------------------------
 
-type SeedOutcome = "created" | "synced_with_changes" | "synced_no_changes";
+type SeedOutcome =
+  | "created"
+  | "synced_with_changes"
+  | "synced_no_changes"
+  | "synced_skipped_inactive";
 
 interface ItemChange {
   templateItemId: string;
@@ -500,6 +504,34 @@ async function seedForLocation(
     );
   }
   if (existing) {
+    // Defensive early-exit: a deactivated template row is a superseded
+    // version (Path A — see SPEC_AMENDMENTS.md C.19 + AGENTS.md "Path A
+    // versioning supersession requires explicit deactivate of prior
+    // versions"). Silently re-syncing items into a deactivated template
+    // would emit a `checklist_template.update` audit row against an
+    // inactive row — operationally weird and forensically misleading.
+    // Skip the sync and return a no-op outcome so re-runs of the v1 seed
+    // post-flip stay clean.
+    if (!existing.active) {
+      const { count, error: countErr } = await sb
+        .from("checklist_template_items")
+        .select("*", { count: "exact", head: true })
+        .eq("template_id", existing.id);
+      if (countErr) {
+        throw new Error(
+          `pre-flight item count failed for inactive template ${existing.id}: ${countErr.message}`,
+        );
+      }
+      return {
+        locationId,
+        templateId: existing.id,
+        itemCount: count ?? 0,
+        outcome: "synced_skipped_inactive",
+        changes: [],
+        auditRowId: null,
+      };
+    }
+
     // SYNC PATH — converge existing items toward the spec.
     const { itemCount, changes } = await syncItemsForTemplate(sb, locationId, existing.id);
 
@@ -724,6 +756,9 @@ async function main() {
     }
     if (r.outcome === "synced_no_changes") {
       return `  ${label}: in sync — template ${r.templateId} (${r.itemCount} items, no changes)\n`;
+    }
+    if (r.outcome === "synced_skipped_inactive") {
+      return `  ${label}: SKIPPED — template ${r.templateId} is inactive (superseded; ${r.itemCount} items unchanged). Per AGENTS.md "Path A versioning supersession" — v1 was flipped via migration 0045_flip_v1_closing_inactive on 2026-05-05; further sync runs are a no-op by design.\n`;
     }
     const changeLines = r.changes
       .map(

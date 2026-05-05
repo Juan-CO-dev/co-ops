@@ -680,3 +680,40 @@ Resolved by refactoring `validateRawValues` to take `templateItems: ChecklistTem
 
 **Defense-in-depth gap (acceptable for v1, document for follow-up):** server-side `lib/prep.ts submitAmPrep` does NOT validate that entries cover all required template items. The 32-required architectural intent is enforced ONLY client-side via `validateRawValues`. A direct API caller (curl/Postman) or a malicious client could submit `{instanceId, entries: []}` and the server would accept it. Acceptable for CO-OPS v1 (small-team / single-tenant; no untrusted API access today) — defense-in-depth becomes meaningful when admin tooling, third-party integrations, or non-form submission paths land. Server-side enforcement would require lib to load templateItems + apply section-aware primary-required logic — non-trivial duplication of code that lives in the form component today.
 
+---
+
+## Phase 3 — Build #2 cleanup PR (v1 closing flip-to-inactive, 2026-05-05)
+
+### Path A versioning supersession requires explicit deactivate of prior versions
+
+Path A versioning per C.19 ships vN+1 as a separate row with `active=true` and relies on the closing-page resolver (most-recent-active by `created_at DESC LIMIT 1`) to pick the new version. **Resolver-stranding alone is not enough** to retire the prior version: any code path that pulls *all* active templates of a type — `loadAmPrepDashboardState` ([lib/prep.ts:1107](lib/prep.ts:1107)), `loadAmPrepState` ([lib/prep.ts:1654](lib/prep.ts:1654)), the AM-prep page's closing-status lookup ([app/(authed)/operations/am-prep/page.tsx:292](app/(authed)/operations/am-prep/page.tsx:292)) — still sees the prior version and can resolve to its instances (including stranded open rows that the resolver's single-template lookup never matches).
+
+The full Path A supersession pattern is therefore:
+1. Ship vN+1 as a new row, `active=true`, parallel to vN.
+2. Verify vN+1 is operationally serving (resolver returns its id; new instances landing on it).
+3. Flip vN to `active=false` in a follow-up cleanup PR. Document any stranded vN instances in the audit metadata (`stranded_open_instance_ids`, `stranded_completion_counts`).
+
+The lag between (1) and (3) is intentional — gives operators a rollback window if vN+1 misbehaves under real use. CO-OPS Build #2 used a 1-day lag (v2 seeded 2026-05-04 17:15Z; v1 flipped 2026-05-05 via migration `0045_flip_v1_closing_inactive`).
+
+**Stranded instances are unavoidable at the moment vN+1 starts serving** — any open vN instance whose date matches a date that vN+1 is asked about becomes orphaned because (a) the resolver picks vN+1, and (b) `getOrCreateInstance` keys on `(template_id, location_id, date)` so it never matches the vN row. The schema status CHECK does not include a `'cancelled'` or `'superseded'` value, so stranded instances stay at `status='open'` forever; document them in the deactivation audit row's metadata for forensic clarity. Build #2 cleanup left 3 stranded v1 instances (EM 2026-05-03 / 19 completions, EM 2026-05-04 / 0 completions, MEP 2026-05-03 / 3 completions) — captured in the migration's audit metadata.
+
+Migrations that deactivate templates must use `'checklist_template.delete_or_deactivate'` ([lib/destructive-actions.ts:39](lib/destructive-actions.ts:39)) as the canonical action — `destructive=true` auto-derives via `isDestructive()`. Do not invent a new action name (`'checklist_template.deactivate'`, `'audit.template.deactivate'`) — the existing registry entry covers both delete and deactivate semantics by design.
+
+Convergent seed scripts that read existing rows by name must add a defensive early-exit when the existing row's `active=false` (template is superseded) — silently re-syncing items into a deactivated template emits a `checklist_template.update` audit row against a deactivated row, which is operationally weird and forensically misleading. Pattern shipped in Build #2 v1-flip cleanup: new outcome literal `synced_skipped_inactive` in [scripts/seed-closing-template.ts](scripts/seed-closing-template.ts), log message "v1 template superseded; skipping sync", return without writing.
+
+### Migration-driven audit emission convention (precedent set by 0045)
+
+Migration-direct audit_log INSERTs use the following metadata shape to disambiguate from seed-script and RPC-emitted rows:
+
+- `actor_id` = the human invoker (Juan in foundation phase; future admin invokers when the admin tooling lands)
+- `metadata.actor_context = "migration_apply"` — explicit invocation-context qualifier
+- `metadata.migration = "<filename without .sql>"` — e.g., `"0045_flip_v1_closing_inactive"`
+- `metadata.phase` + `metadata.reason` per the existing seed-script convention
+- `before_state` / `after_state` JSONB carrying the field-level transition for forensic clarity (matches `audit_log` physical column shape)
+- `metadata.ip_address` / `metadata.user_agent` set to `null` (no request context for migrations)
+- Top-level `destructive` set explicitly (don't rely on `isDestructive()` auto-derive — that's JS-side; SQL-side INSERTs must set the column directly)
+
+Established by migration `0045_flip_v1_closing_inactive` (2026-05-05). Future migration-driven audit emissions mirror this shape. The `actor_context` qualifier joins the existing convention of metadata keys that name the invocation context: `creation_method = "seed_script" | "service_role_direct_insert"`, `sync_method = "seed_script"`, now `actor_context = "migration_apply"`.
+
+Sibling lesson to "RPC-side audit_log INSERTs must mirror the actual column shape" (Build #2 PR 3 smoke) — both belong to the broader principle that SQL-side audit emission is its own discipline distinct from the JS-side `audit()` helper, with column shape and metadata conventions specific to the emission path.
+
