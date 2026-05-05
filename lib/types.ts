@@ -482,6 +482,14 @@ export interface ChecklistCompletion {
    * attribution-style rendering vs user-notes rendering.
    */
   autoCompleteMeta: AutoCompleteMeta | null;
+  /**
+   * C.46 — chain head FK. NULL on chain head (original completion); references
+   * the chain head's id for every update completion in the chain. Populated
+   * by submit_am_prep_atomic on update path; NULL on original-submission rows.
+   */
+  originalCompletionId: string | null;
+  /** C.46 — edit position. 0 for chain head; 1-3 for updates (cap enforced in RPC). */
+  editCount: number;
 }
 
 export interface ChecklistSubmission {

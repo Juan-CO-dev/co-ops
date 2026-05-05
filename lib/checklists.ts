@@ -397,11 +397,15 @@ interface CompletionRow {
   // report-reference items when their source report submits; NULL on
   // user-tap completions.
   auto_complete_meta: unknown | null;
+  // Build #2 PR 3 (per SPEC_AMENDMENTS.md C.46; migration 0042). Chain link
+  // FK + edit position. NULL/0 on chain head (original); FK/1-3 on updates.
+  original_completion_id: string | null;
+  edit_count: number;
 }
 
 /** Column list for SELECTs against checklist_completions — single source of truth. */
 const COMPLETION_COLUMNS =
-  "id, instance_id, template_item_id, completed_by, completed_at, count_value, photo_id, notes, superseded_at, superseded_by, revoked_at, revoked_by, revocation_reason, revocation_note, actual_completer_id, actual_completer_tagged_at, actual_completer_tagged_by, prep_data, auto_complete_meta";
+  "id, instance_id, template_item_id, completed_by, completed_at, count_value, photo_id, notes, superseded_at, superseded_by, revoked_at, revoked_by, revocation_reason, revocation_note, actual_completer_id, actual_completer_tagged_at, actual_completer_tagged_by, prep_data, auto_complete_meta, original_completion_id, edit_count";
 
 interface SubmissionRow {
   id: string;
@@ -469,6 +473,10 @@ const rowToCompletion = (r: CompletionRow): ChecklistCompletion => ({
   // Pass through; closing-client UI reads this to render attribution-style
   // text on auto-complete rows. Always NULL on cleaning user-tap rows.
   autoCompleteMeta: (r.auto_complete_meta ?? null) as AutoCompleteMeta | null,
+  // C.46 chain link: NULL on chain head (original); FK on updates.
+  originalCompletionId: r.original_completion_id,
+  // C.46 edit position: 0 on chain head; 1-3 on updates.
+  editCount: r.edit_count,
 });
 
 const rowToSubmission = (r: SubmissionRow): ChecklistSubmission => ({
@@ -1821,5 +1829,132 @@ export async function loadPickerCandidatesForCompletion(
     instanceId: completion.instance_id,
     locationId: instance.location_id,
     minRoleLevel: item.min_role_level,
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// C.46 — Report edit access predicate + chain attribution loader
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * C.46 A1 — pure access predicate for post-submission report updates.
+ *
+ * No DB side effects; just decides whether the actor is allowed to edit the
+ * report. canEdit=true ONLY when:
+ *   - actor is the original submitter, OR actor.level >= 3 (KH+)
+ *   - AND if actor is sub-KH+ original submitter, closing must NOT be finalized
+ *   - AND chain is not at cap (edit_count < 3)
+ *
+ * Reason values when canEdit=false (precedence top-to-bottom):
+ *   - "not_submitter_and_not_kh"        — sub-KH+ user, didn't submit
+ *   - "closing_finalized_for_submitter" — sub-KH+ submitter post-finalization
+ *   - "cap_exceeded"                    — edit_count >= 3 (any actor)
+ *
+ * Reasons are internal-only discriminators. UI layer translates to
+ * user-facing messages via Phase 6 translation keys; never displays raw
+ * reason strings.
+ *
+ * Note: closingStatus === null means no closing instance exists for the
+ * operational date; treated as "not finalized" for edit access (operationally:
+ * AM Prep submitted before closing exists; submitter can still edit).
+ *
+ * "KH+" (key holder and above) per C.41 reconciliation = level >= 3.
+ */
+export function canEditReport(args: {
+  actor: { userId: string; level: number };
+  originalSubmitterId: string;
+  closingStatus: ChecklistStatus | null;
+  currentEditCount: number;
+}): { canEdit: true } | { canEdit: false; reason: string } {
+  const isKH = args.actor.level >= 3;
+  const isOriginal = args.actor.userId === args.originalSubmitterId;
+  const closingFinalized =
+    args.closingStatus !== null && args.closingStatus !== "open";
+  const capExceeded = args.currentEditCount >= 3;
+
+  if (!isKH && !isOriginal) {
+    return { canEdit: false, reason: "not_submitter_and_not_kh" };
+  }
+  if (!isKH && closingFinalized) {
+    return { canEdit: false, reason: "closing_finalized_for_submitter" };
+  }
+  if (capExceeded) {
+    return { canEdit: false, reason: "cap_exceeded" };
+  }
+  return { canEdit: true };
+}
+
+/** C.46 A4 — single chain entry as resolved for closing-side rendering. */
+export interface ChecklistChainEntry {
+  submissionId: string;
+  submitterId: string;
+  submitterName: string;
+  /** ISO timestamp. */
+  submittedAt: string;
+  /** 0 = chain head; 1-3 = updates. */
+  editCount: number;
+}
+
+/**
+ * C.46 A4 — chain rebuild for closing-side dynamic rendering.
+ *
+ * Returns the full chain (head + all updates) ordered by edit_count ASC,
+ * with submitter names resolved via embedded user lookup. Single round trip.
+ *
+ * Used by Server Components that render chained attribution like
+ * "Submitted by Cristian at 9:47 PM, updated by Juan at 10:23 PM" — the
+ * banner on the AM Prep page's read-only state and the closing checklist's
+ * report-reference item.
+ *
+ * Embedded-relation note: per AGENTS.md, PostgREST embedded-select `.eq()`
+ * filters ON the embedded relation can fail unpredictably. This query
+ * filters on parent columns (id, original_submission_id) and merely embeds
+ * the user's name — safe.
+ */
+export async function loadChecklistChainAttribution(
+  service: SupabaseClient,
+  args: { originalSubmissionId: string },
+): Promise<ChecklistChainEntry[]> {
+  const { data, error } = await service
+    .from("checklist_submissions")
+    .select(
+      `
+      id,
+      submitted_by,
+      submitted_at,
+      edit_count,
+      original_submission_id,
+      submitter:users!checklist_submissions_submitted_by_fkey(name)
+    `,
+    )
+    .or(
+      `id.eq.${args.originalSubmissionId},original_submission_id.eq.${args.originalSubmissionId}`,
+    )
+    .order("edit_count", { ascending: true });
+
+  if (error) {
+    throw new Error(`loadChecklistChainAttribution: ${error.message}`);
+  }
+
+  type Row = {
+    id: string;
+    submitted_by: string;
+    submitted_at: string;
+    edit_count: number;
+    submitter: { name: string } | { name: string }[] | null;
+  };
+
+  const rows = (data ?? []) as Row[];
+  return rows.map((r) => {
+    // supabase-js can return embedded relations as either a single object or
+    // a single-element array depending on FK detection. Normalize to single.
+    const submitter = Array.isArray(r.submitter) ? r.submitter[0] : r.submitter;
+    return {
+      submissionId: r.id,
+      submitterId: r.submitted_by,
+      submitterName: submitter?.name ?? "Unknown",
+      submittedAt: r.submitted_at,
+      editCount: r.edit_count,
+    };
   });
 }

@@ -650,3 +650,33 @@ Caught during Build #2 PR 1 smoke test: the PR description told Juan to test aga
 
 Sibling lesson to Phase 2's "Vercel env var records can exist with empty values" — both belong to the broader principle that deployment behavior must be verified in the actual deployment context the change targets, not by inspecting build logs or generic / production URLs.
 
+### RPC-side audit_log INSERTs must mirror the actual column shape, not the JS-side audit() helper's argument shape (Build #2 PR 3 smoke)
+
+Migration `0043_c46_submit_am_prep_atomic_with_update` wrote the `report.update` audit row inside the RPC's update branch with this INSERT:
+
+```sql
+INSERT INTO audit_log (actor_id, action, resource_table, resource_id,
+  metadata, ip_address, user_agent, destructive)
+VALUES (...)
+```
+
+But `audit_log`'s actual column shape is `id, occurred_at, actor_id, actor_role, action, resource_table, resource_id, before_state, after_state, metadata, destructive` — **no `ip_address` or `user_agent` columns.** The JS-side `audit()` helper accepts those as named parameters and packs them inside the `metadata` JSONB. The RPC migration mirrored the helper's argument shape rather than the actual table schema.
+
+Postgres raised sqlstate `42703` (`column "ip_address" of relation "audit_log" does not exist`) on every update-path call; the whole transaction rolled back; the lib's error-mapping branches (P0001/23514/23503) didn't cover 42703 so it fell through to a generic `Error`; the route returned `500 internal_error`; the UI surfaced "Submission failed — try again" with no diagnostic. Caught only by querying `audit_log` directly during smoke diagnosis (the JS-side audit helper had captured the failure with `metadata.outcome = "update_rpc_failed"` and `rpc_error_code = "42703"`).
+
+Resolved in migration `0044_c46_audit_emission_column_fix` — moved `ip_address` + `user_agent` into the `metadata` jsonb_build_object call, matching the JS-side audit() helper convention so audit_log queries can filter consistently across both emission paths.
+
+**Verification step now mandatory** for any RPC migration that INSERTs to a shared table: query `information_schema.columns` for that table to enumerate the exact column shape BEFORE writing the INSERT. Don't infer columns from JS-side helpers — the JS layer often packs richer arguments than the table actually stores. Place forensic enrichment (IP/UA/etc.) inside `metadata` JSONB to align with `lib/audit.ts` conventions; reserve top-level columns for what the table physically exposes. Phase 4 design surface for migration 0043 only verified `actor_role` nullability — should have enumerated all 11 columns. Future RPC-writes-to-shared-table migrations must run the column enumeration as a hard pre-flight check.
+
+### Form validation must iterate the source of truth (templateItems / templates / config), not operator-state-only structures (rawValues / state maps) (Build #2 PR 3 smoke)
+
+`validateRawValues` in `components/prep/AmPrepForm.tsx` originally iterated `Object.entries(rawValues)`. For items the operator never touched, rawValues had no entry → validation skipped them entirely → primary-required check never executed. An operator could submit AM Prep with only one row tapped (e.g., a Misc YES button) and the form would accept it as a valid 1-entry submission. PR 2's Bug D fix (32 required entries before submit) was implemented but bypassable.
+
+Surfaced when Juan's smoke test of the post-scrub fresh AM Prep at EM produced a submission with `cid_count = 1` — only "Meatball mix - YES" recorded, all 28 numeric primaries + 3 other Misc items skipped. Form accepted submit despite the architectural intent of "32 required."
+
+Resolved by refactoring `validateRawValues` to take `templateItems: ChecklistTemplateItem[]` as a parameter and iterate IT instead of rawValues. For each template item, look up `rawValues[item.id] ?? {}` (default empty when untouched). Existing per-field parse + primary-required logic runs against the looked-up raw, regardless of operator interaction. Empty primary → `am_prep.error.primary_required` error fires inline + form-level summary; submit-disabled gate correctly blocks empty submissions.
+
+**Pattern (durable rule):** validation that enforces architectural completeness must walk the source-of-truth structure, not the operator-interaction-only structure. Source-of-truth examples: templateItems for forms, schema columns for DB validators, config files for runtime checks. Operator-state-only examples: rawValues, react state maps, dirty-tracking sets. The latter only contain entries for items the user has touched — they're a subset of what needs validation, not the universe.
+
+**Defense-in-depth gap (acceptable for v1, document for follow-up):** server-side `lib/prep.ts submitAmPrep` does NOT validate that entries cover all required template items. The 32-required architectural intent is enforced ONLY client-side via `validateRawValues`. A direct API caller (curl/Postman) or a malicious client could submit `{instanceId, entries: []}` and the server would accept it. Acceptable for CO-OPS v1 (small-team / single-tenant; no untrusted API access today) — defense-in-depth becomes meaningful when admin tooling, third-party integrations, or non-form submission paths land. Server-side enforcement would require lib to load templateItems + apply section-aware primary-required logic — non-trivial duplication of code that lives in the form component today.
+

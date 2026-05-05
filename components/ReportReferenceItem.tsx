@@ -55,8 +55,9 @@
 
 import Link from "next/link";
 
+import type { ChecklistChainEntry } from "@/lib/checklists";
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
-import { formatTime } from "@/lib/i18n/format";
+import { formatChainAttribution, formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { ChecklistCompletion, ChecklistTemplateItem } from "@/lib/types";
 
@@ -74,6 +75,17 @@ interface ReportReferenceItemProps {
   locationId: string;
   /** Read-only override — disables empty-state tap when closing is finalized. */
   readOnly: boolean;
+  /**
+   * C.46 — full AM Prep submission chain (head + updates) for chained
+   * attribution rendering. Empty/null when chain not loaded or single-entry
+   * (legacy single-author rendering applies).
+   */
+  chainAttribution?: ChecklistChainEntry[] | null;
+  /**
+   * C.46 — caller-computed predicate per A2: KH+ at any time OR original
+   * submitter while closing not finalized. Drives Edit affordance rendering.
+   */
+  canEdit?: boolean;
 }
 
 export function ReportReferenceItem({
@@ -82,26 +94,41 @@ export function ReportReferenceItem({
   completionAuthor,
   locationId,
   readOnly,
+  chainAttribution,
+  canEdit = false,
 }: ReportReferenceItemProps) {
   const { t, language } = useTranslation();
   const resolved = resolveTemplateItemContent(templateItem, language);
 
   const isAutoCompleted = completion !== null && completion.autoCompleteMeta !== null;
+  const editHref = `/operations/am-prep?location=${locationId}&edit=true`;
 
   // ─── State 1: Live auto-complete ──────────────────────────────────────────
 
   if (isAutoCompleted && completion) {
-    const submitterName = completionAuthor?.name ?? "—";
+    // C.46 — chain rendering: 2+ entries → comma-separated chain via shared
+    // formatter; 1 entry / no chain → existing single-author rendering.
+    const hasChain = chainAttribution !== undefined && chainAttribution !== null && chainAttribution.length >= 2;
+    const submitterName = hasChain
+      ? chainAttribution![0]!.submitterName
+      : completionAuthor?.name ?? "—";
     const time = formatTime(completion.completedAt, language);
-    const attribution = t("closing.report_ref.attribution", {
-      name: submitterName,
-      time,
-    });
-    const ariaLabel = t("closing.report_ref.complete_aria", {
-      label: resolved.label,
-      name: submitterName,
-      time,
-    });
+    const attribution = hasChain
+      ? formatChainAttribution(chainAttribution!, language, t)
+      : t("closing.report_ref.attribution", {
+          name: submitterName,
+          time,
+        });
+    const ariaLabel = hasChain
+      ? t("closing.report_ref.complete_aria_chain", {
+          label: resolved.label,
+          attribution,
+        })
+      : t("closing.report_ref.complete_aria", {
+          label: resolved.label,
+          name: submitterName,
+          time,
+        });
 
     return (
       <div
@@ -123,6 +150,25 @@ export function ReportReferenceItem({
           </span>
           <span className="text-[11px] text-co-text-dim">{attribution}</span>
         </span>
+        {/* C.46 A2 — Edit affordance for KH+ users + original submitters
+            while access is valid. Secondary text-link styling (Edit is
+            correction action, not primary). */}
+        {canEdit ? (
+          <Link
+            href={editHref}
+            aria-label={t("closing.report_ref.edit_link_aria", {
+              name: submitterName,
+            })}
+            className="
+              shrink-0 text-[11px] font-bold uppercase tracking-[0.12em]
+              text-co-text-muted transition hover:text-co-text
+              focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/40
+              rounded-md px-2 py-1.5 -mr-1
+            "
+          >
+            {t("closing.report_ref.edit_link")}
+          </Link>
+        ) : null}
       </div>
     );
   }

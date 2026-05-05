@@ -59,6 +59,7 @@ import {
 } from "@/components/ChecklistItem";
 import { PinConfirmModal } from "@/components/auth/PinConfirmModal";
 import { ReportReferenceItem } from "@/components/ReportReferenceItem";
+import type { ChecklistChainEntry } from "@/lib/checklists";
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
 import { formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
@@ -96,6 +97,16 @@ export interface ClosingInitialState {
   readOnly: boolean;
   banner: StatusBanner | null;
   todayDate: string;
+  /**
+   * C.46 — chain attribution per report-reference template_item_id. Empty
+   * map when no AM Prep auto-complete rows exist on this closing.
+   */
+  reportRefChains: Record<string, ChecklistChainEntry[]>;
+  /**
+   * C.46 — canEdit predicate (precomputed by Server Component) per
+   * report-reference template_item_id. Drives Edit affordance rendering.
+   */
+  reportRefCanEdit: Record<string, boolean>;
   // NOTE: actorName / actorEmail / actorLanguage no longer carried here —
   // UserMenu mounts at the (authed) route group layout (per
   // SPEC_AMENDMENTS.md C.39); TranslationProvider is layout-owned and
@@ -194,6 +205,8 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
     actor,
     readOnly: initialReadOnly,
     banner: initialBanner,
+    reportRefChains,
+    reportRefCanEdit,
   } = initialState;
 
   // Live state.
@@ -770,6 +783,8 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
               readOnly={readOnly}
               expanded={stationExpanded.get(station) ?? true}
               locationId={location.id}
+              reportRefChains={reportRefChains}
+              reportRefCanEdit={reportRefCanEdit}
               onToggle={() => toggleStation(station)}
               onComplete={handleItemComplete}
               onRevoke={handleItemRevoke}
@@ -958,6 +973,8 @@ function StationGroup({
   readOnly,
   expanded,
   locationId,
+  reportRefChains,
+  reportRefCanEdit,
   onToggle,
   onComplete,
   onRevoke,
@@ -983,6 +1000,10 @@ function StationGroup({
    * Cleaning rows ignore this prop.
    */
   locationId: string;
+  /** C.46 — chain attribution per template_item_id (report-ref items only). */
+  reportRefChains: Record<string, ChecklistChainEntry[]>;
+  /** C.46 — canEdit per template_item_id (report-ref items only). */
+  reportRefCanEdit: Record<string, boolean>;
   onToggle: () => void;
   onComplete: (payload: ChecklistCompletePayload) => Promise<ChecklistCompleteResult>;
   onRevoke: (completionId: string) => Promise<ChecklistRevokeResult>;
@@ -1083,6 +1104,8 @@ function StationGroup({
                   completionAuthor={author}
                   locationId={locationId}
                   readOnly={readOnly}
+                  chainAttribution={reportRefChains[it.id] ?? null}
+                  canEdit={reportRefCanEdit[it.id] ?? false}
                 />
               );
             }

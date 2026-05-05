@@ -49,6 +49,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { audit } from "./audit";
+import { canEditReport } from "./checklists";
 import type {
   AutoCompleteMeta,
   ChecklistCompletion,
@@ -278,6 +279,53 @@ export class PrepInstanceNotOpenError extends PrepError {
       "prep_instance_not_open",
     );
     this.name = "PrepInstanceNotOpenError";
+  }
+}
+
+/**
+ * C.46 A8 — thrown by submitAmPrep when an update is attempted against a
+ * chain already at the cap (edit_count = 3). The RPC raises sqlstate P0001
+ * with this semantic; lib maps to this typed error → HTTP 422.
+ *
+ * Code string is unprefixed (`edit_limit_exceeded`) because per C.46 A9 this
+ * error generalizes across all report types (Cash Report, Opening Report,
+ * Mid-day Prep, etc.). Currently lives in lib/prep.ts because PR 3 ships
+ * AM Prep only; rename/move when generalization happens.
+ */
+export class ChecklistEditLimitExceededError extends PrepError {
+  constructor(
+    public readonly originalSubmissionId: string,
+    public readonly currentEditCount: number,
+  ) {
+    super(
+      `ChecklistEditLimitExceededError: chain ${originalSubmissionId} ` +
+        `at edit_count=${currentEditCount}; cap=3.`,
+      "edit_limit_exceeded",
+    );
+    this.name = "ChecklistEditLimitExceededError";
+  }
+}
+
+/**
+ * C.46 A8 — thrown by submitAmPrep when canEditReport returns canEdit=false
+ * for an access reason (NOT cap — cap raises ChecklistEditLimitExceededError).
+ *
+ * Reason discriminator (internal-only; UI translates at render time per the
+ * Phase 6 translation keys, never displays raw reason strings):
+ *   - "closing_finalized_for_submitter" — sub-KH+ original submitter
+ *     attempting to edit after closing has been finalized
+ *   - "not_submitter_and_not_kh" — sub-KH+ user attempting to edit a chain
+ *     they didn't originally submit
+ *
+ * Maps to HTTP 403.
+ */
+export class ChecklistEditAccessDeniedError extends PrepError {
+  constructor(public readonly reason: string) {
+    super(
+      `ChecklistEditAccessDeniedError: ${reason}`,
+      "edit_access_denied",
+    );
+    this.name = "ChecklistEditAccessDeniedError";
   }
 }
 
@@ -571,6 +619,9 @@ interface CompletionRow {
   actual_completer_tagged_by: string | null;
   prep_data: unknown | null;
   auto_complete_meta: unknown | null;
+  // C.46 chain link + edit position (migration 0042).
+  original_completion_id: string | null;
+  edit_count: number;
 }
 
 const INSTANCE_COLUMNS =
@@ -580,7 +631,7 @@ const TEMPLATE_ITEM_COLUMNS =
   "id, template_id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, vendor_item_id, active, translations, prep_meta, report_reference_type";
 
 const COMPLETION_COLUMNS =
-  "id, instance_id, template_item_id, completed_by, completed_at, count_value, photo_id, notes, superseded_at, superseded_by, revoked_at, revoked_by, revocation_reason, revocation_note, actual_completer_id, actual_completer_tagged_at, actual_completer_tagged_by, prep_data, auto_complete_meta";
+  "id, instance_id, template_item_id, completed_by, completed_at, count_value, photo_id, notes, superseded_at, superseded_by, revoked_at, revoked_by, revocation_reason, revocation_note, actual_completer_id, actual_completer_tagged_at, actual_completer_tagged_by, prep_data, auto_complete_meta, original_completion_id, edit_count";
 
 function rowToInstance(r: InstanceRow): ChecklistInstance {
   return {
@@ -639,6 +690,9 @@ function rowToCompletion(r: CompletionRow): ChecklistCompletion {
     actualCompleterTaggedBy: r.actual_completer_tagged_by,
     prepData: (r.prep_data ?? null) as PrepData | null,
     autoCompleteMeta: (r.auto_complete_meta ?? null) as AutoCompleteMeta | null,
+    // C.46 chain link + edit position.
+    originalCompletionId: r.original_completion_id,
+    editCount: r.edit_count,
   };
 }
 
@@ -892,6 +946,12 @@ export async function loadAmPrepDashboardState(
     assignerName: string;
   } | null;
   isVisibleToActor: boolean;
+  /** C.46: chain head submission id for today's AM Prep instance, null if none. */
+  originalSubmissionId: string | null;
+  /** C.46: max edit_count across the chain (0 if no chain or single original submission). */
+  chainEditCount: number;
+  /** C.46: today's closing instance status at this location, null if no closing instance exists. */
+  closingStatus: ChecklistInstance["status"] | null;
 }> {
   // Resolve active prep template for this location.
   const { data: tmplRow, error: tmplErr } = await service
@@ -999,12 +1059,91 @@ export async function loadAmPrepDashboardState(
 
   const isVisibleToActor = hasBaseAccess || assignment !== null;
 
+  // C.46 — load chain head submission id + max edit_count + closing status
+  // for today's AM Prep instance. Used by the dashboard tile + page loader
+  // to compute the edit-affordance predicate via canEditReport.
+  let originalSubmissionId: string | null = null;
+  let chainEditCount = 0;
+  let closingStatus: ChecklistInstance["status"] | null = null;
+
+  if (todayInstance) {
+    // Chain head: original submission has original_submission_id IS NULL.
+    const { data: headSub, error: headErr } = await service
+      .from("checklist_submissions")
+      .select("id")
+      .eq("instance_id", todayInstance.id)
+      .is("original_submission_id", null)
+      .maybeSingle<{ id: string }>();
+    if (headErr) {
+      throw new Error(
+        `loadAmPrepDashboardState: load chain head: ${headErr.message}`,
+      );
+    }
+    originalSubmissionId = headSub?.id ?? null;
+
+    if (originalSubmissionId) {
+      // Max edit_count across chain head + updates.
+      const { data: editCounts, error: countErr } = await service
+        .from("checklist_submissions")
+        .select("edit_count")
+        .or(
+          `id.eq.${originalSubmissionId},original_submission_id.eq.${originalSubmissionId}`,
+        );
+      if (countErr) {
+        throw new Error(
+          `loadAmPrepDashboardState: load chain edit counts: ${countErr.message}`,
+        );
+      }
+      const counts = ((editCounts ?? []) as Array<{ edit_count: number }>).map(
+        (r) => r.edit_count,
+      );
+      chainEditCount = counts.length === 0 ? 0 : Math.max(...counts);
+    }
+  }
+
+  // Closing instance status for today (two-step pattern per AGENTS.md
+  // PostgREST embedded-select gotcha — first get closing template ids,
+  // then look up the instance).
+  const { data: closingTemplates, error: cTmplErr } = await service
+    .from("checklist_templates")
+    .select("id")
+    .eq("location_id", args.locationId)
+    .eq("type", "closing")
+    .eq("active", true);
+  if (cTmplErr) {
+    throw new Error(
+      `loadAmPrepDashboardState: load closing templates: ${cTmplErr.message}`,
+    );
+  }
+  const closingTemplateIds = (
+    (closingTemplates ?? []) as Array<{ id: string }>
+  ).map((t) => t.id);
+  if (closingTemplateIds.length > 0) {
+    const { data: closingInst, error: cInstErr } = await service
+      .from("checklist_instances")
+      .select("status")
+      .in("template_id", closingTemplateIds)
+      .eq("date", args.date)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<{ status: ChecklistInstance["status"] }>();
+    if (cInstErr) {
+      throw new Error(
+        `loadAmPrepDashboardState: load closing instance: ${cInstErr.message}`,
+      );
+    }
+    closingStatus = closingInst?.status ?? null;
+  }
+
   return {
     hasTemplate,
     todayInstance,
     confirmedByName,
     assignment,
     isVisibleToActor,
+    originalSubmissionId,
+    chainEditCount,
+    closingStatus,
   };
 }
 
@@ -1060,6 +1199,96 @@ interface SubmitRpcResult {
   submissionId: string;
   completionIds: string[];
   autoCompleteId: string | null;
+  /** C.46 update path: edit_count of the new submission (0 on original; 1-3 on update). */
+  editCount: number;
+  /** C.46 update path: chain head submission id (null on original; FK on update). */
+  originalSubmissionId: string | null;
+}
+
+/**
+ * C.46 — diff helper. Computes per-column change discriminators between the
+ * chain-resolved current state and the new submission entries. Result feeds
+ * into the report.update audit row's metadata.changed_fields per A7.
+ *
+ * Format: `<column>:<itemSlug>` where slug = `itemName.toLowerCase().replace(/\s+/g, "_")`.
+ * Examples: `"onHand:tuna_salad"`, `"yesNo:cook_bacon"`.
+ *
+ * Diff is server-side (NOT caller-passed) so concurrent edits between
+ * form-load and submit are reflected accurately in the audit trail.
+ *
+ * Cost: 2 queries (chain submissions + their completions). Chain max length
+ * is 4 entries × 32 items ≈ 128 rows worst case — bounded.
+ */
+async function computeChangedFields(
+  service: SupabaseClient,
+  originalSubmissionId: string,
+  newEntries: Array<{ templateItemId: string; inputs: PrepInputs }>,
+): Promise<string[]> {
+  // 1. Load chain submissions to flatten their completion_ids.
+  const { data: chainSubs, error: subsErr } = await service
+    .from("checklist_submissions")
+    .select("id, edit_count, completion_ids")
+    .or(`id.eq.${originalSubmissionId},original_submission_id.eq.${originalSubmissionId}`)
+    .order("edit_count", { ascending: true });
+  if (subsErr) {
+    throw new Error(`computeChangedFields: load chain submissions: ${subsErr.message}`);
+  }
+
+  const allCompletionIds: string[] = [];
+  for (const s of (chainSubs ?? []) as Array<{ completion_ids: string[] }>) {
+    for (const cid of s.completion_ids ?? []) allCompletionIds.push(cid);
+  }
+  if (allCompletionIds.length === 0) return [];
+
+  // 2. Load completions; for each template_item_id, pick the one with max
+  //    edit_count (chain-resolved current state per template_item).
+  const { data: completions, error: cErr } = await service
+    .from("checklist_completions")
+    .select("id, template_item_id, prep_data, edit_count")
+    .in("id", allCompletionIds);
+  if (cErr) {
+    throw new Error(`computeChangedFields: load completions: ${cErr.message}`);
+  }
+
+  type CurrentState = {
+    inputs: PrepInputs;
+    itemName: string;
+    editCount: number;
+  };
+  const currentByItemId = new Map<string, CurrentState>();
+  for (const c of (completions ?? []) as Array<{
+    template_item_id: string;
+    prep_data: unknown;
+    edit_count: number;
+  }>) {
+    if (!isPrepData(c.prep_data)) continue;
+    const existing = currentByItemId.get(c.template_item_id);
+    if (!existing || c.edit_count > existing.editCount) {
+      currentByItemId.set(c.template_item_id, {
+        inputs: c.prep_data.inputs,
+        itemName: c.prep_data.snapshot.itemName,
+        editCount: c.edit_count,
+      });
+    }
+  }
+
+  // 3. Diff each new entry against chain-resolved current; emit per-column entries.
+  const changed: string[] = [];
+  for (const entry of newEntries) {
+    const current = currentByItemId.get(entry.templateItemId);
+    if (!current) continue;  // RPC's C.44 guard catches this; defensive skip here
+    const slug = current.itemName.toLowerCase().replace(/\s+/g, "_");
+    const prev = current.inputs;
+    const next = entry.inputs;
+    if (prev.onHand !== next.onHand) changed.push(`onHand:${slug}`);
+    if (prev.portioned !== next.portioned) changed.push(`portioned:${slug}`);
+    if (prev.line !== next.line) changed.push(`line:${slug}`);
+    if (prev.backUp !== next.backUp) changed.push(`backUp:${slug}`);
+    if (prev.total !== next.total) changed.push(`total:${slug}`);
+    if (prev.yesNo !== next.yesNo) changed.push(`yesNo:${slug}`);
+    if ((prev.freeText ?? "") !== (next.freeText ?? "")) changed.push(`freeText:${slug}`);
+  }
+  return changed;
 }
 
 /**
@@ -1093,18 +1322,47 @@ export async function submitAmPrep(
       templateItemId: string;
       inputs: PrepInputs;
     }>;
-    /** Looked up by caller from the closing template; null if absent. */
+    /** Looked up by caller from the closing template; null if absent. Ignored on update path (per C.46 A4). */
     closingReportRefItemId: string | null;
-    /** Active assignment for the actor, if any (caller pre-resolves). */
+    /** Active assignment for the actor, if any (caller pre-resolves). Ignored on update path. */
     activeAssignmentId: string | null;
     ipAddress?: string | null;
     userAgent?: string | null;
+    /** C.46 A6: when true, this is a chained update against an existing submission. */
+    isUpdate?: boolean;
+    /** C.46 A6: chain head submission id; required when isUpdate=true. */
+    originalSubmissionId?: string;
   },
 ): Promise<{
   instance: ChecklistInstance;
   submittedCompletionIds: string[];
+  /** Always `null` on update path per C.46 A4 (closing auto-complete row untouched). */
   closingAutoCompleteId: string | null;
+  /** C.46: edit_count of the new submission (0 on original; 1-3 on update). */
+  editCount: number;
+  /** C.46: chain head submission id (null on original; FK on update). */
+  originalSubmissionId: string | null;
 }> {
+  // C.46 update path: delegate to submitAmPrepUpdate before the existing
+  // original-submission flow. Original-submission flow is runtime-identical
+  // for isUpdate=false (no behavior change on the default path; existing
+  // 4-arg callers see undefined → false → branch skipped → original code).
+  if (args.isUpdate) {
+    if (!args.originalSubmissionId) {
+      throw new Error(
+        `submitAmPrep: originalSubmissionId required when isUpdate=true`,
+      );
+    }
+    return submitAmPrepUpdate(service, {
+      instanceId: args.instanceId,
+      actor: args.actor,
+      entries: args.entries,
+      originalSubmissionId: args.originalSubmissionId,
+      ipAddress: args.ipAddress ?? null,
+      userAgent: args.userAgent ?? null,
+    });
+  }
+
   // 1. Authorization gate.
   const isAuthorized =
     args.actor.level >= AM_PREP_BASE_LEVEL || args.activeAssignmentId !== null;
@@ -1279,5 +1537,305 @@ export async function submitAmPrep(
     instance: rowToInstance(result.instance),
     submittedCompletionIds: result.completionIds,
     closingAutoCompleteId: result.autoCompleteId,
+    editCount: 0,
+    originalSubmissionId: null,
+  };
+}
+
+/**
+ * C.46 A6 update-path implementation. Called by submitAmPrep when isUpdate=true.
+ *
+ * Flow:
+ *   1. Load chain head submission for access predicate input
+ *   2. Load max edit_count across chain
+ *   3. Load closing instance status for access predicate input
+ *   4. canEditReport gate — throw ChecklistEditAccessDeniedError or
+ *      ChecklistEditLimitExceededError based on reason discriminator
+ *   5. Load chain head completions; inherit their snapshots verbatim (Option B
+ *      per C.46 A6 + C.44 — chain represents one logical submission for the
+ *      date; pars/sections don't drift mid-chain even if C.44 admin tooling
+ *      edits the live template between original submission and the update)
+ *   6. computeChangedFields (server-side diff against chain-resolved current)
+ *   7. Invoke RPC with is_update=true + chain head id + changed_fields
+ *   8. Map RPC errors:
+ *        - P0001 → ChecklistEditLimitExceededError (race past lib pre-check)
+ *        - check_violation → PrepShapeError (template_item not in chain head;
+ *          C.44 alignment guard)
+ *        - foreign_key_violation → generic Error (chain head not found —
+ *          shouldn't happen since we just loaded it)
+ *   9. Return; NO JS-side success audit (RPC emits report.update inside its
+ *      transaction per A7).
+ */
+async function submitAmPrepUpdate(
+  service: SupabaseClient,
+  args: {
+    instanceId: string;
+    actor: PrepActor;
+    entries: Array<{ templateItemId: string; inputs: PrepInputs }>;
+    originalSubmissionId: string;
+    ipAddress: string | null;
+    userAgent: string | null;
+  },
+): Promise<{
+  instance: ChecklistInstance;
+  submittedCompletionIds: string[];
+  closingAutoCompleteId: string | null;
+  editCount: number;
+  originalSubmissionId: string | null;
+}> {
+  // 1. Load chain head submission. Pull completion_ids too so we can fetch
+  //    the head's snapshot rows in one extra round trip (C.46 A6 + C.44:
+  //    update inherits chain head's snapshot exactly — see step 5b).
+  const { data: chainHeadRow, error: chainErr } = await service
+    .from("checklist_submissions")
+    .select("id, submitted_by, submitted_at, instance_id, original_submission_id, completion_ids")
+    .eq("id", args.originalSubmissionId)
+    .maybeSingle<{
+      id: string;
+      submitted_by: string;
+      submitted_at: string;
+      instance_id: string;
+      original_submission_id: string | null;
+      completion_ids: string[];
+    }>();
+  if (chainErr) {
+    throw new Error(`submitAmPrep: load chain head: ${chainErr.message}`);
+  }
+  if (!chainHeadRow) {
+    throw new Error(
+      `submitAmPrep: chain head ${args.originalSubmissionId} not found`,
+    );
+  }
+  if (chainHeadRow.original_submission_id !== null) {
+    throw new Error(
+      `submitAmPrep: ${args.originalSubmissionId} is an update row, not a chain head`,
+    );
+  }
+  if (chainHeadRow.instance_id !== args.instanceId) {
+    throw new Error(
+      `submitAmPrep: chain head ${args.originalSubmissionId} is for instance ${chainHeadRow.instance_id}, not ${args.instanceId}`,
+    );
+  }
+
+  // 2. Load max edit_count across chain.
+  const { data: chainCounts, error: countErr } = await service
+    .from("checklist_submissions")
+    .select("edit_count")
+    .or(
+      `id.eq.${args.originalSubmissionId},original_submission_id.eq.${args.originalSubmissionId}`,
+    );
+  if (countErr) {
+    throw new Error(`submitAmPrep: load chain edit counts: ${countErr.message}`);
+  }
+  const editCounts = ((chainCounts ?? []) as Array<{ edit_count: number }>).map(
+    (r) => r.edit_count,
+  );
+  const currentEditCount = editCounts.length === 0 ? 0 : Math.max(...editCounts);
+
+  // 3. Load prep instance (location/date for closing lookup) + closing status.
+  const { data: instRow, error: instErr } = await service
+    .from("checklist_instances")
+    .select("id, template_id, location_id, date, status")
+    .eq("id", args.instanceId)
+    .maybeSingle<{
+      id: string;
+      template_id: string;
+      location_id: string;
+      date: string;
+      status: ChecklistInstance["status"];
+    }>();
+  if (instErr) throw new Error(`submitAmPrep: load instance: ${instErr.message}`);
+  if (!instRow) {
+    throw new Error(`submitAmPrep: instance ${args.instanceId} not found`);
+  }
+
+  // Safer two-step pattern (per AGENTS.md PostgREST embedded-select gotcha):
+  // first get closing template ids at the location, then look up the instance.
+  const { data: closingTemplates, error: tmplErr } = await service
+    .from("checklist_templates")
+    .select("id")
+    .eq("location_id", instRow.location_id)
+    .eq("type", "closing")
+    .eq("active", true);
+  if (tmplErr) {
+    throw new Error(`submitAmPrep: load closing templates: ${tmplErr.message}`);
+  }
+  const closingTemplateIds = (
+    (closingTemplates ?? []) as Array<{ id: string }>
+  ).map((t) => t.id);
+
+  let closingStatus: ChecklistInstance["status"] | null = null;
+  if (closingTemplateIds.length > 0) {
+    const { data: closingInst, error: cInstErr } = await service
+      .from("checklist_instances")
+      .select("status")
+      .in("template_id", closingTemplateIds)
+      .eq("date", instRow.date)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<{ status: ChecklistInstance["status"] }>();
+    if (cInstErr) {
+      throw new Error(`submitAmPrep: load closing instance: ${cInstErr.message}`);
+    }
+    closingStatus = closingInst?.status ?? null;
+  }
+
+  // 4. Access predicate (canEditReport from lib/checklists.ts).
+  const access = canEditReport({
+    actor: { userId: args.actor.userId, level: args.actor.level },
+    originalSubmitterId: chainHeadRow.submitted_by,
+    closingStatus,
+    currentEditCount,
+  });
+
+  if (!access.canEdit) {
+    void audit({
+      actorId: args.actor.userId,
+      actorRole: args.actor.role,
+      action: "prep.submit",
+      resourceTable: "checklist_instances",
+      resourceId: args.instanceId,
+      metadata: {
+        outcome: "update_denied",
+        reason: access.reason,
+        original_submission_id: args.originalSubmissionId,
+        original_submitter_id: chainHeadRow.submitted_by,
+        closing_status: closingStatus,
+        current_edit_count: currentEditCount,
+        report_type: "am_prep",
+      },
+      ipAddress: args.ipAddress,
+      userAgent: args.userAgent,
+    });
+    if (access.reason === "cap_exceeded") {
+      throw new ChecklistEditLimitExceededError(
+        args.originalSubmissionId,
+        currentEditCount,
+      );
+    }
+    throw new ChecklistEditAccessDeniedError(access.reason);
+  }
+
+  // 5. Load chain head completions to inherit their snapshots verbatim.
+  //    Per C.46 A6 + C.44: update path inherits chain head's snapshot rather
+  //    than rebuilding from live template. The chain represents one logical
+  //    submission for the date; pars/sections shouldn't drift mid-chain even
+  //    if the C.44 admin tooling edits the live template between original
+  //    submission and the update. Skips the loadTemplateItems +
+  //    narrowPrepTemplateItem step entirely on update path — the head
+  //    snapshot was already validated at original submission time.
+  const { data: headCompletions, error: headCompErr } = await service
+    .from("checklist_completions")
+    .select("template_item_id, prep_data")
+    .in("id", chainHeadRow.completion_ids);
+  if (headCompErr) {
+    throw new Error(`submitAmPrep: load chain head completions: ${headCompErr.message}`);
+  }
+  const headSnapshotsByItemId = new Map<string, PrepSnapshot>();
+  for (const c of (headCompletions ?? []) as Array<{
+    template_item_id: string;
+    prep_data: unknown;
+  }>) {
+    if (!isPrepData(c.prep_data)) continue;
+    headSnapshotsByItemId.set(c.template_item_id, c.prep_data.snapshot);
+  }
+
+  // Build rpcEntries using chain head snapshots. Any entry whose
+  // template_item_id isn't in the chain head's completions is rejected here
+  // (the RPC's C.44 alignment guard would catch it too, but we surface the
+  // typed error early with better forensic detail).
+  const rpcEntries = args.entries.map((entry) => {
+    const headSnapshot = headSnapshotsByItemId.get(entry.templateItemId);
+    if (!headSnapshot) {
+      throw new PrepShapeError(
+        entry.templateItemId,
+        `template_item not found in chain head submission ${args.originalSubmissionId} (C.44 alignment)`,
+      );
+    }
+    return {
+      templateItemId: entry.templateItemId,
+      inputs: entry.inputs,
+      snapshot: headSnapshot,
+    };
+  });
+
+  // 6. Compute changed_fields server-side against chain-resolved current.
+  const changedFields = await computeChangedFields(
+    service,
+    args.originalSubmissionId,
+    args.entries,
+  );
+
+  // 7. Invoke RPC with update params. Single transaction; failure rolls back.
+  const { data: rpcData, error: rpcErr } = await service.rpc(
+    "submit_am_prep_atomic",
+    {
+      p_prep_instance_id: args.instanceId,
+      p_actor_id: args.actor.userId,
+      p_entries: rpcEntries,
+      p_closing_report_ref_item_id: null,
+      p_is_update: true,
+      p_original_submission_id: args.originalSubmissionId,
+      p_changed_fields: changedFields,
+      p_ip_address: args.ipAddress,
+      p_user_agent: args.userAgent,
+    },
+  );
+
+  if (rpcErr) {
+    // Audit failure (RPC didn't get to write its own audit row).
+    void audit({
+      actorId: args.actor.userId,
+      actorRole: args.actor.role,
+      action: "prep.submit",
+      resourceTable: "checklist_instances",
+      resourceId: args.instanceId,
+      metadata: {
+        outcome: "update_rpc_failed",
+        original_submission_id: args.originalSubmissionId,
+        rpc_error_code: rpcErr.code,
+        rpc_error: rpcErr.message,
+        report_type: "am_prep",
+      },
+      ipAddress: args.ipAddress,
+      userAgent: args.userAgent,
+    });
+
+    // P0001 = application-defined exception — RPC raises this when the
+    // post-lock cap check sees edit_count >= 3 (race past lib pre-check).
+    if (rpcErr.code === "P0001") {
+      throw new ChecklistEditLimitExceededError(
+        args.originalSubmissionId,
+        currentEditCount,
+      );
+    }
+    // check_violation = chain shape violation OR template_item_id in entries
+    // not present in chain head's completions (C.44 alignment guard).
+    if (rpcErr.code === "23514") {
+      throw new PrepShapeError(
+        args.originalSubmissionId,
+        `RPC chain validation failed: ${rpcErr.message}`,
+      );
+    }
+    // foreign_key_violation = chain head not found (shouldn't happen since
+    // we just loaded it; race with concurrent delete, which is impossible
+    // under append-only philosophy).
+    throw new Error(`submitAmPrep: update RPC failed: ${rpcErr.message}`);
+  }
+
+  if (!rpcData) {
+    throw new Error(`submitAmPrep: update RPC returned no data`);
+  }
+  const result = rpcData as SubmitRpcResult;
+
+  // 8. NO JS-side success audit on update path. RPC emitted report.update
+  //    inside its transaction (per C.46 A7) atomically with the chain write.
+
+  return {
+    instance: rowToInstance(result.instance),
+    submittedCompletionIds: result.completionIds,
+    closingAutoCompleteId: null,  // per A4: update path doesn't touch closing auto-complete
+    editCount: result.editCount,
+    originalSubmissionId: result.originalSubmissionId,
   };
 }
