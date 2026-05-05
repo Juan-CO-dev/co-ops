@@ -210,8 +210,31 @@ interface ValidationResult {
   entries: Array<{ templateItemId: string; inputs: PrepInputs }> | null;
 }
 
+/**
+ * Iterates `templateItems` (source of truth — what the form must cover)
+ * rather than `Object.entries(rawValues)` (operator-state-only).
+ *
+ * Why this matters (PR 2 Bug D fix, hardened in PR 3 smoke): if the loop
+ * iterates rawValues, items the operator never touched are silently
+ * skipped — no entry in rawValues means no validation runs, no error
+ * fires, primary-required check never executes. An operator could submit
+ * with only 1 row touched (e.g., a Misc YES tap) and the form would
+ * accept it as a valid 1-entry submission. PR 2's "32 required" intent
+ * was UX-layer-only and bypassable.
+ *
+ * Iterating `templateItems` enforces the architectural intent: every
+ * template item must be evaluated, regardless of whether the operator
+ * has interacted with it. Empty primary fields surface as inline errors;
+ * the form-level "Fix N issues" summary fires; submit stays disabled
+ * until the operator fills every required cell.
+ *
+ * Surfaced during Build #2 PR 3 smoke when Juan submitted EM AM Prep
+ * with only "Meatball mix - YES" tapped (1 cid_count instead of 36+)
+ * and the form accepted it cleanly.
+ */
 function validateRawValues(
   rawValues: Record<string, RawPrepInputs>,
+  templateItems: ChecklistTemplateItem[],
   sectionByItemId: Map<string, PrepSectionEnum>,
   t: (key: TranslationKey, params?: TranslationParams) => string,
 ): ValidationResult {
@@ -219,7 +242,10 @@ function validateRawValues(
   const entries: Array<{ templateItemId: string; inputs: PrepInputs }> = [];
   let errorCount = 0;
 
-  for (const [templateItemId, raw] of Object.entries(rawValues)) {
+  for (const item of templateItems) {
+    const templateItemId = item.id;
+    // Default to empty raw row when operator has never touched this item.
+    const raw: RawPrepInputs = rawValues[templateItemId] ?? {};
     const rowErrors: Partial<Record<keyof RawPrepInputs, string>> = {};
     const inputs: PrepInputs = {};
     const section = sectionByItemId.get(templateItemId);
@@ -262,6 +288,10 @@ function validateRawValues(
     // Misc requires yesNo on every item (operationally-critical
     // attestations: meatball mix ready, meatballs ready to cook,
     // etc.). free_text on Cook Bacon? stays optional.
+    //
+    // Per-row required check now ALWAYS fires because we iterate
+    // templateItems (not rawValues). Untouched rows get default {} for
+    // raw, so primary fields are undefined → primary_required error.
     if (section && section !== "Misc") {
       const sources = TOTAL_SOURCES[section];
       if (sources) {
@@ -289,8 +319,8 @@ function validateRawValues(
     }
 
     // Push to entries when row has no errors. With required
-    // validation, every row that gets here has at least its primary
-    // field filled — so silently-empty rows no longer slip through.
+    // validation enforced per templateItem, the entries array contains
+    // exactly one entry per template item when validation is clean.
     if (Object.keys(rowErrors).length === 0) {
       entries.push({ templateItemId, inputs });
     }
@@ -451,8 +481,8 @@ export function AmPrepForm({
   );
 
   const validation = useMemo(
-    () => validateRawValues(rawValues, sectionByItemId, t),
-    [rawValues, sectionByItemId, t],
+    () => validateRawValues(rawValues, templateItems, sectionByItemId, t),
+    [rawValues, templateItems, sectionByItemId, t],
   );
 
   // C.46 — read-only is now derived from the explicit `mode` prop (replaces
