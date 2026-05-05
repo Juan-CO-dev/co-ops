@@ -252,8 +252,6 @@
   "am_prep.banner.read_only": "AM Prep already submitted today by {name} at {time}",
   "am_prep.banner.read_only_chain": "AM Prep already submitted today: {attribution}",
   "am_prep.banner.editing": "Editing AM Prep submitted by {name} at {time}",
-  "am_prep.banner.template_diverged_one": "1 item added since this report was submitted — it'll appear on tomorrow's report.",
-  "am_prep.banner.template_diverged_other": "{count} items added since this report was submitted — they'll appear on tomorrow's report.",
 
   "am_prep.attribution.original": "Submitted by {name} at {time}",
   "am_prep.attribution.update": "updated by {name} at {time}",

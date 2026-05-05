@@ -372,16 +372,6 @@ export interface AmPrepFormProps {
   originalSubmissionId?: string | null;
   /** Location id — used for the Cancel button's stay-on-page navigation. */
   locationId?: string;
-  /**
-   * C.46 + C.44 — count of template items added since the original
-   * submission (not in chain head's snapshot universe). > 0 surfaces a
-   * small info banner explaining that those items will appear on
-   * tomorrow's fresh submission. The page Server Component computes this
-   * from `state.templateItems.length - editableTemplateItems.length`;
-   * the form only consumes the count (already-filtered templateItems is
-   * what's passed via the templateItems prop).
-   */
-  divergedItemCount?: number;
 }
 
 type SubmitState =
@@ -400,7 +390,6 @@ export function AmPrepForm({
   chainAttribution = [],
   originalSubmissionId = null,
   locationId,
-  divergedItemCount = 0,
 }: AmPrepFormProps) {
   const { t, language } = useTranslation();
   const router = useRouter();
@@ -667,27 +656,6 @@ export function AmPrepForm({
         </section>
       ) : null}
 
-      {/* C.46 + C.44 — template-divergence info banner. Renders when chain
-          exists AND live template has more items than chain head's snapshot
-          universe (template additions since original submission). Operator
-          sees a small note explaining the new items appear on tomorrow's
-          report; this report's edit operates within its locked snapshot. */}
-      {divergedItemCount > 0 ? (
-        <section
-          role="note"
-          aria-live="polite"
-          className="
-            rounded-2xl border border-co-border bg-co-surface
-            px-4 py-3 text-xs text-co-text-muted
-          "
-        >
-          {divergedItemCount === 1
-            ? t("am_prep.banner.template_diverged_one")
-            : t("am_prep.banner.template_diverged_other", {
-                count: divergedItemCount,
-              })}
-        </section>
-      ) : null}
 
       {/* Read-only banner (server-loaded confirmed instance). */}
       {readOnlyBanner ? (
