@@ -37,12 +37,17 @@ import {
   loadAmPrepState,
   loadAssignmentForToday,
 } from "@/lib/prep";
+import {
+  canEditReport,
+  loadChecklistChainAttribution,
+  type ChecklistChainEntry,
+} from "@/lib/checklists";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import type { PrepInputs } from "@/lib/types";
+import type { ChecklistInstance, PrepInputs } from "@/lib/types";
 
 import { AmPrepForm } from "@/components/prep/AmPrepForm";
 
@@ -58,7 +63,7 @@ function nyDateString(d: Date): string {
 }
 
 interface PageProps {
-  searchParams: Promise<{ location?: string }>;
+  searchParams: Promise<{ location?: string; edit?: string }>;
 }
 
 export default async function AmPrepPage({ searchParams }: PageProps) {
@@ -66,7 +71,8 @@ export default async function AmPrepPage({ searchParams }: PageProps) {
   //    requireSessionFromHeaders again to get a typed AuthContext for its
   //    own auth-aware reads — same pattern as closing-page).
   const auth = await requireSessionFromHeaders("/operations/am-prep");
-  const { location: locationParam } = await searchParams;
+  const { location: locationParam, edit: editParam } = await searchParams;
+  const editRequested = editParam === "true";
 
   if (!locationParam) redirect("/dashboard");
 
@@ -136,17 +142,60 @@ export default async function AmPrepPage({ searchParams }: PageProps) {
   //    narrowPrepCompletion — non-null prepData carries { inputs, snapshot }
   //    per C.18 + C.44. We extract the inputs payload for the form.
   //
+  //    For chained submissions (C.46): state.completions already contains
+  //    completions across the chain (chain head + updates). For each
+  //    template_item_id, the latest by edit_count reflects the
+  //    chain-resolved current state — used here for initialValues.
+  //
   //    Edge case: if instance status is 'open' but completions exist
   //    (shouldn't happen with single-submission templates per RPC atomic
   //    write, but defensive), the form renders editable with pre-populated
   //    values. Per submitAmPrep RPC behavior, completions and
   //    status='confirmed' are written atomically.
+  const latestEditCountByItem = new Map<string, number>();
   const initialValues: Record<string, PrepInputs> = {};
   for (const c of state.completions) {
-    if (c.prepData) {
+    if (!c.prepData) continue;
+    const existing = latestEditCountByItem.get(c.templateItemId);
+    if (existing === undefined || (c.editCount ?? 0) >= existing) {
+      latestEditCountByItem.set(c.templateItemId, c.editCount ?? 0);
       initialValues[c.templateItemId] = c.prepData.inputs;
     }
   }
+
+  // 6. C.46 — load chain attribution + compute edit-mode access. Only
+  //    meaningful when the instance is already confirmed (chain head exists).
+  const chainState = await loadChainStateForPage({
+    sb,
+    instance: state.instance,
+    locationId: locationParam,
+    date: today,
+  });
+  const access =
+    chainState.chain.length > 0
+      ? canEditReport({
+          actor: { userId: auth.user.id, level: auth.level },
+          originalSubmitterId: chainState.chain[0]!.submitterId,
+          closingStatus: chainState.closingStatus,
+          currentEditCount: chainState.maxEditCount,
+        })
+      : { canEdit: false as const, reason: "no_chain" };
+
+  // Race-case redirect: ?edit=true requested but actor lacks access. Drop
+  // the param so the user lands in read-only mode rather than rendering
+  // edit UI we'd immediately deny.
+  if (editRequested && !access.canEdit) {
+    redirect(`/operations/am-prep?location=${locationParam}`);
+  }
+
+  // Mode derivation: three discrete modes (replaces former isReadOnly
+  // derivation inside AmPrepForm).
+  const mode: "submit" | "edit" | "read_only" =
+    chainState.chain.length === 0
+      ? "submit"
+      : editRequested && access.canEdit
+        ? "edit"
+        : "read_only";
 
   return (
     <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
@@ -185,10 +234,96 @@ export default async function AmPrepPage({ searchParams }: PageProps) {
           initialValues={initialValues}
           authors={state.authors}
           actor={{ userId: auth.user.id, name: auth.user.name }}
+          mode={mode}
+          chainAttribution={chainState.chain}
+          originalSubmissionId={chainState.originalSubmissionId}
+          locationId={locationParam}
         />
       </div>
     </main>
   );
+}
+
+/**
+ * C.46 helper — loads chain attribution + max edit_count + closing status
+ * for the page Server Component. Returns empty chain when the instance has
+ * no chain head (i.e., not yet submitted; mode="submit" path).
+ */
+async function loadChainStateForPage(args: {
+  sb: ReturnType<typeof getServiceRoleClient>;
+  instance: ChecklistInstance;
+  locationId: string;
+  date: string;
+}): Promise<{
+  chain: ChecklistChainEntry[];
+  originalSubmissionId: string | null;
+  maxEditCount: number;
+  closingStatus: ChecklistInstance["status"] | null;
+}> {
+  // Find chain head submission (original_submission_id IS NULL).
+  const { data: headSub, error: headErr } = await args.sb
+    .from("checklist_submissions")
+    .select("id")
+    .eq("instance_id", args.instance.id)
+    .is("original_submission_id", null)
+    .maybeSingle<{ id: string }>();
+  if (headErr) {
+    throw new Error(`am-prep page: load chain head: ${headErr.message}`);
+  }
+
+  if (!headSub) {
+    return {
+      chain: [],
+      originalSubmissionId: null,
+      maxEditCount: 0,
+      closingStatus: null,
+    };
+  }
+
+  const chain = await loadChecklistChainAttribution(args.sb, {
+    originalSubmissionId: headSub.id,
+  });
+  const maxEditCount = chain.reduce(
+    (max, e) => (e.editCount > max ? e.editCount : max),
+    0,
+  );
+
+  // Closing status (two-step pattern per AGENTS.md PostgREST gotcha).
+  const { data: closingTemplates, error: cTmplErr } = await args.sb
+    .from("checklist_templates")
+    .select("id")
+    .eq("location_id", args.locationId)
+    .eq("type", "closing")
+    .eq("active", true);
+  if (cTmplErr) {
+    throw new Error(`am-prep page: load closing templates: ${cTmplErr.message}`);
+  }
+  const closingTemplateIds = (
+    (closingTemplates ?? []) as Array<{ id: string }>
+  ).map((t) => t.id);
+
+  let closingStatus: ChecklistInstance["status"] | null = null;
+  if (closingTemplateIds.length > 0) {
+    const { data: closingInst, error: cInstErr } = await args.sb
+      .from("checklist_instances")
+      .select("status")
+      .in("template_id", closingTemplateIds)
+      .eq("date", args.date)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<{ status: ChecklistInstance["status"] }>();
+    if (cInstErr) {
+      throw new Error(`am-prep page: load closing instance: ${cInstErr.message}`);
+    }
+    closingStatus = closingInst?.status ?? null;
+  }
+
+  return {
+    chain,
+    originalSubmissionId: headSub.id,
+    maxEditCount,
+    closingStatus,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

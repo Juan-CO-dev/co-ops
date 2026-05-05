@@ -619,6 +619,9 @@ interface CompletionRow {
   actual_completer_tagged_by: string | null;
   prep_data: unknown | null;
   auto_complete_meta: unknown | null;
+  // C.46 chain link + edit position (migration 0042).
+  original_completion_id: string | null;
+  edit_count: number;
 }
 
 const INSTANCE_COLUMNS =
@@ -628,7 +631,7 @@ const TEMPLATE_ITEM_COLUMNS =
   "id, template_id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, vendor_item_id, active, translations, prep_meta, report_reference_type";
 
 const COMPLETION_COLUMNS =
-  "id, instance_id, template_item_id, completed_by, completed_at, count_value, photo_id, notes, superseded_at, superseded_by, revoked_at, revoked_by, revocation_reason, revocation_note, actual_completer_id, actual_completer_tagged_at, actual_completer_tagged_by, prep_data, auto_complete_meta";
+  "id, instance_id, template_item_id, completed_by, completed_at, count_value, photo_id, notes, superseded_at, superseded_by, revoked_at, revoked_by, revocation_reason, revocation_note, actual_completer_id, actual_completer_tagged_at, actual_completer_tagged_by, prep_data, auto_complete_meta, original_completion_id, edit_count";
 
 function rowToInstance(r: InstanceRow): ChecklistInstance {
   return {
@@ -687,6 +690,9 @@ function rowToCompletion(r: CompletionRow): ChecklistCompletion {
     actualCompleterTaggedBy: r.actual_completer_tagged_by,
     prepData: (r.prep_data ?? null) as PrepData | null,
     autoCompleteMeta: (r.auto_complete_meta ?? null) as AutoCompleteMeta | null,
+    // C.46 chain link + edit position.
+    originalCompletionId: r.original_completion_id,
+    editCount: r.edit_count,
   };
 }
 
@@ -940,6 +946,12 @@ export async function loadAmPrepDashboardState(
     assignerName: string;
   } | null;
   isVisibleToActor: boolean;
+  /** C.46: chain head submission id for today's AM Prep instance, null if none. */
+  originalSubmissionId: string | null;
+  /** C.46: max edit_count across the chain (0 if no chain or single original submission). */
+  chainEditCount: number;
+  /** C.46: today's closing instance status at this location, null if no closing instance exists. */
+  closingStatus: ChecklistInstance["status"] | null;
 }> {
   // Resolve active prep template for this location.
   const { data: tmplRow, error: tmplErr } = await service
@@ -1047,12 +1059,91 @@ export async function loadAmPrepDashboardState(
 
   const isVisibleToActor = hasBaseAccess || assignment !== null;
 
+  // C.46 — load chain head submission id + max edit_count + closing status
+  // for today's AM Prep instance. Used by the dashboard tile + page loader
+  // to compute the edit-affordance predicate via canEditReport.
+  let originalSubmissionId: string | null = null;
+  let chainEditCount = 0;
+  let closingStatus: ChecklistInstance["status"] | null = null;
+
+  if (todayInstance) {
+    // Chain head: original submission has original_submission_id IS NULL.
+    const { data: headSub, error: headErr } = await service
+      .from("checklist_submissions")
+      .select("id")
+      .eq("instance_id", todayInstance.id)
+      .is("original_submission_id", null)
+      .maybeSingle<{ id: string }>();
+    if (headErr) {
+      throw new Error(
+        `loadAmPrepDashboardState: load chain head: ${headErr.message}`,
+      );
+    }
+    originalSubmissionId = headSub?.id ?? null;
+
+    if (originalSubmissionId) {
+      // Max edit_count across chain head + updates.
+      const { data: editCounts, error: countErr } = await service
+        .from("checklist_submissions")
+        .select("edit_count")
+        .or(
+          `id.eq.${originalSubmissionId},original_submission_id.eq.${originalSubmissionId}`,
+        );
+      if (countErr) {
+        throw new Error(
+          `loadAmPrepDashboardState: load chain edit counts: ${countErr.message}`,
+        );
+      }
+      const counts = ((editCounts ?? []) as Array<{ edit_count: number }>).map(
+        (r) => r.edit_count,
+      );
+      chainEditCount = counts.length === 0 ? 0 : Math.max(...counts);
+    }
+  }
+
+  // Closing instance status for today (two-step pattern per AGENTS.md
+  // PostgREST embedded-select gotcha — first get closing template ids,
+  // then look up the instance).
+  const { data: closingTemplates, error: cTmplErr } = await service
+    .from("checklist_templates")
+    .select("id")
+    .eq("location_id", args.locationId)
+    .eq("type", "closing")
+    .eq("active", true);
+  if (cTmplErr) {
+    throw new Error(
+      `loadAmPrepDashboardState: load closing templates: ${cTmplErr.message}`,
+    );
+  }
+  const closingTemplateIds = (
+    (closingTemplates ?? []) as Array<{ id: string }>
+  ).map((t) => t.id);
+  if (closingTemplateIds.length > 0) {
+    const { data: closingInst, error: cInstErr } = await service
+      .from("checklist_instances")
+      .select("status")
+      .in("template_id", closingTemplateIds)
+      .eq("date", args.date)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<{ status: ChecklistInstance["status"] }>();
+    if (cInstErr) {
+      throw new Error(
+        `loadAmPrepDashboardState: load closing instance: ${cInstErr.message}`,
+      );
+    }
+    closingStatus = closingInst?.status ?? null;
+  }
+
   return {
     hasTemplate,
     todayInstance,
     confirmedByName,
     assignment,
     isVisibleToActor,
+    originalSubmissionId,
+    chainEditCount,
+    closingStatus,
   };
 }
 

@@ -28,6 +28,7 @@ import { AuthShell } from "@/components/auth/AuthShell";
 import { IdleTimeoutWarning } from "@/components/auth/IdleTimeoutWarning";
 import { LogoutButton } from "@/components/auth/LogoutButton";
 import { ROLES } from "@/lib/roles";
+import { canEditReport } from "@/lib/checklists";
 import { accessibleLocations, type LocationActor } from "@/lib/locations";
 import { formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
@@ -459,6 +460,21 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
               location={selectedLocation}
               state={amPrepDashboard}
               language={language}
+              showEditAffordance={
+                // C.46 A2 — dashboard tile edit affordance only fires for the
+                // original submitter (per-A2 "tile is action-oriented"; KH+
+                // non-submitters see Edit on the closing report-ref item, not
+                // the tile). canEditReport gates cap + closing-finalized
+                // for sub-KH+ submitters.
+                amPrepDashboard.todayInstance?.confirmedBy === auth.user.id &&
+                amPrepDashboard.originalSubmissionId !== null &&
+                canEditReport({
+                  actor: { userId: auth.user.id, level: auth.level },
+                  originalSubmitterId: amPrepDashboard.todayInstance.confirmedBy,
+                  closingStatus: amPrepDashboard.closingStatus,
+                  currentEditCount: amPrepDashboard.chainEditCount,
+                }).canEdit
+              }
             />
           </ReportsSection>
         ) : null}
@@ -698,6 +714,12 @@ interface AmPrepTileState {
     assignerName: string;
   } | null;
   isVisibleToActor: boolean;
+  /** C.46 — chain head id; null if no chain (tile predicate uses to filter). */
+  originalSubmissionId: string | null;
+  /** C.46 — max edit_count across chain; 0 if no chain. */
+  chainEditCount: number;
+  /** C.46 — closing instance status today; drives canEditReport. */
+  closingStatus: ChecklistInstance["status"] | null;
 }
 
 /**
@@ -722,10 +744,13 @@ function AmPrepTile({
   location,
   state,
   language,
+  showEditAffordance = false,
 }: {
   location: LocationLite;
   state: AmPrepTileState;
   language: Language;
+  /** C.46 — caller-computed predicate; tile renders Edit affordance when true. */
+  showEditAffordance?: boolean;
 }) {
   // No-template branch — render the tile but without a CTA. Operator
   // contacts a manager to seed the template; until then the tile is
@@ -771,14 +796,29 @@ function AmPrepTile({
   const ctaLabel: string = (() => {
     if (!state.todayInstance) return serverT(language, "dashboard.am_prep.cta_start");
     if (status === "open") return serverT(language, "dashboard.am_prep.cta_continue");
+    // C.46 — if the actor is the original submitter and access is still
+    // valid (cap not reached, closing not finalized for sub-KH+), the CTA
+    // becomes "Edit AM Prep" rather than "View AM Prep" + the href adds
+    // ?edit=true to land in edit mode directly.
+    if (showEditAffordance) return serverT(language, "dashboard.am_prep.cta_edit");
     return serverT(language, "dashboard.am_prep.cta_view");
   })();
 
-  const ctaTone: CtaTone = !state.todayInstance ? "primary" : "review";
+  // C.46 — Edit affordance gets primary tone (action-oriented) since it's
+  // the submitter's path to correct their report. View is review-tone.
+  const ctaTone: CtaTone =
+    !state.todayInstance || showEditAffordance ? "primary" : "review";
   const ctaClasses =
     ctaTone === "primary"
       ? "border-2 border-co-text bg-co-gold text-co-text hover:bg-co-gold-deep"
       : "border-2 border-co-border-2 bg-co-surface text-co-text hover:border-co-text";
+
+  // C.46 — when edit affordance fires, append ?edit=true so the page lands
+  // in edit mode directly. Otherwise default to read_only or submit (page
+  // resolves which).
+  const ctaHref = `/operations/am-prep?location=${location.id}${
+    showEditAffordance ? "&edit=true" : ""
+  }`;
 
   return (
     <section
@@ -815,7 +855,7 @@ function AmPrepTile({
         </div>
 
         <Link
-          href={`/operations/am-prep?location=${location.id}`}
+          href={ctaHref}
           className={[
             "inline-flex min-h-[48px] items-center justify-center rounded-md",
             "px-5 text-sm font-bold uppercase tracking-[0.12em]",

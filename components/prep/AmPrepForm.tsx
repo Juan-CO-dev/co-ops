@@ -51,9 +51,11 @@
  *     surfaces error banner.
  */
 
+import { useRouter } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 
-import { formatTime } from "@/lib/i18n/format";
+import type { ChecklistChainEntry } from "@/lib/checklists";
+import { formatChainAttribution, formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language, TranslationKey, TranslationParams } from "@/lib/i18n/types";
 import type {
@@ -326,6 +328,10 @@ interface SubmitResponseBodySuccess {
   instance: ChecklistInstance;
   submittedCompletionIds: string[];
   closingAutoCompleteId: string | null;
+  /** C.46 — present on every response (0 on original; 1-3 on update). */
+  editCount: number;
+  /** C.46 — null on original-submission response; chain-head id on update. */
+  originalSubmissionId: string | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -339,13 +345,33 @@ export interface AmPrepFormProps {
   /**
    * Server-loaded existing values (PrepInputs typed). Empty for a fresh
    * prep instance; populated on returning-user reads of a confirmed
-   * instance (read-only mode displays them).
+   * instance (read-only mode displays them) or in edit mode (chain-resolved
+   * current values).
    */
   initialValues: Record<string, PrepInputs>;
   /** Author name lookup for the read-only banner. */
   authors: Record<string, string>;
   /** Current actor — drives success-banner attribution. */
   actor: { userId: string; name: string };
+  /**
+   * C.46 — three discrete modes (replaces former isReadOnly derivation):
+   *   - "submit"    — no prior submission; render form for first submission
+   *   - "edit"      — submission exists; actor has edit access; ?edit=true
+   *                   was requested. Form pre-populated with chain-resolved
+   *                   values; CTA "Update AM Prep"; explicit Cancel button
+   *   - "read_only" — submission exists; render values as static + chain
+   *                   attribution banner
+   */
+  mode: "submit" | "edit" | "read_only";
+  /**
+   * C.46 — full chain (head + updates) for attribution rendering. Empty
+   * array on submit mode (no chain yet); 1+ entries on edit/read_only.
+   */
+  chainAttribution?: ChecklistChainEntry[];
+  /** C.46 — chain head submission id; required for the edit-mode POST. */
+  originalSubmissionId?: string | null;
+  /** Location id — used for the Cancel button's stay-on-page navigation. */
+  locationId?: string;
 }
 
 type SubmitState =
@@ -360,8 +386,13 @@ export function AmPrepForm({
   initialValues,
   authors,
   actor,
+  mode,
+  chainAttribution = [],
+  originalSubmissionId = null,
+  locationId,
 }: AmPrepFormProps) {
   const { t, language } = useTranslation();
+  const router = useRouter();
 
   // Group items by section.
   const itemsBySection = useMemo(() => {
@@ -424,20 +455,13 @@ export function AmPrepForm({
     [rawValues, sectionByItemId, t],
   );
 
-  // Read-only when the instance has already been confirmed (server load OR
-  // post-submission flip in this session).
-  //
-  // `incomplete_confirmed` is type-reachable via ChecklistStatus but
-  // operationally unreachable for AM Prep instances under current code:
-  // closing's confirmInstance (lib/checklists.ts) is the only path that
-  // sets that status, and AM Prep doesn't use confirmInstance — the
-  // submit_am_prep_atomic RPC always writes 'confirmed'. Kept here as
-  // defensive coverage in case a future template-type unification
-  // routes prep through confirmInstance, OR if an admin tool ever
-  // surfaces a manual status transition.
+  // C.46 — read-only is now derived from the explicit `mode` prop (replaces
+  // the former instance.status-based derivation). Mode is computed once in
+  // the page Server Component and passed down. In-session flips during
+  // submit (in_flight + success) still disable inputs locally — those are
+  // session-local UI state that the server-derived mode wouldn't know about.
   const isReadOnly =
-    instance.status === "confirmed" ||
-    instance.status === "incomplete_confirmed" ||
+    mode === "read_only" ||
     submitState.kind === "in_flight" ||
     submitState.kind === "success";
 
@@ -479,13 +503,23 @@ export function AmPrepForm({
     if (validation.entries === null) return; // guard — button should be disabled
     setSubmitState({ kind: "in_flight" });
     try {
+      // C.46 — when in edit mode, post is_update=true + chain head id.
+      const requestBody =
+        mode === "edit" && originalSubmissionId
+          ? {
+              instanceId: instance.id,
+              entries: validation.entries,
+              isUpdate: true,
+              originalSubmissionId,
+            }
+          : {
+              instanceId: instance.id,
+              entries: validation.entries,
+            };
       const res = await fetch("/api/prep/submit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          instanceId: instance.id,
-          entries: validation.entries,
-        }),
+        body: JSON.stringify(requestBody),
         redirect: "manual",
       });
       if (res.ok) {
@@ -514,7 +548,7 @@ export function AmPrepForm({
         message: t("am_prep.error.network"),
       });
     }
-  }, [instance.id, validation.entries, t]);
+  }, [instance.id, validation.entries, t, mode, originalSubmissionId]);
 
   // ─── Discard changes ────────────────────────────────────────────────────
 
@@ -523,13 +557,29 @@ export function AmPrepForm({
     if (submitState.kind === "error") setSubmitState({ kind: "idle" });
   }, [initialRawValues, submitState.kind]);
 
+  // ─── C.46 Cancel (edit mode) ────────────────────────────────────────────
+  // Stay on /operations/am-prep, drop ?edit=true → toggles to read_only mode.
+  // Less disorienting than full nav-to-dashboard.
+  const handleCancelEdit = useCallback(() => {
+    if (locationId) {
+      router.push(`/operations/am-prep?location=${locationId}`);
+    } else {
+      router.push("/dashboard");
+    }
+  }, [router, locationId]);
+
   // ─── Submit-button computed state ───────────────────────────────────────
 
   const submitButtonText = (() => {
-    if (submitState.kind === "in_flight") return t("am_prep.submit.button_in_flight");
+    const isEditMode = mode === "edit";
+    if (submitState.kind === "in_flight") {
+      return isEditMode
+        ? t("am_prep.submit.button_update_in_flight")
+        : t("am_prep.submit.button_in_flight");
+    }
     if (validation.errorCount > 0) return t("am_prep.submit.button_fix_errors");
     if (!isDirty) return t("am_prep.submit.button_no_changes");
-    return t("am_prep.submit.button");
+    return isEditMode ? t("am_prep.submit.button_update") : t("am_prep.submit.button");
   })();
 
   const submitDisabled =
@@ -554,18 +604,58 @@ export function AmPrepForm({
     // success banner above; both cover the read-only-now state but with
     // different attribution copy.
     if (submitState.kind === "success") return null;
-    if (instance.status !== "confirmed" && instance.status !== "incomplete_confirmed") {
-      return null;
+    if (mode !== "read_only") return null;
+    // C.46 — chain rendering: 2+ entries → comma-separated chain via shared
+    // formatter; 1 entry → existing single-author banner copy. Empty chain
+    // falls through to the legacy single-author derivation (defensive).
+    if (chainAttribution.length >= 2) {
+      return t("am_prep.banner.read_only_chain", {
+        attribution: formatChainAttribution(chainAttribution, language, t),
+      });
     }
+    if (chainAttribution.length === 1) {
+      const head = chainAttribution[0]!;
+      return t("am_prep.banner.read_only", {
+        name: head.submitterName,
+        time: formatTime(head.submittedAt, language),
+      });
+    }
+    // Defensive fallback (no chain loaded but mode says read_only).
     const confirmedByName = instance.confirmedBy ? authors[instance.confirmedBy] ?? "—" : "—";
     const time = instance.confirmedAt ? formatTime(instance.confirmedAt, language) : "";
     return t("am_prep.banner.read_only", { name: confirmedByName, time });
+  })();
+
+  // C.46 — editing banner ("Editing AM Prep submitted by [name] at [time]").
+  // Renders only in edit mode; uses chain head's attribution.
+  const editingBanner = (() => {
+    if (mode !== "edit") return null;
+    if (chainAttribution.length === 0) return null;
+    const head = chainAttribution[0]!;
+    return t("am_prep.banner.editing", {
+      name: head.submitterName,
+      time: formatTime(head.submittedAt, language),
+    });
   })();
 
   // ─── Render ─────────────────────────────────────────────────────────────
 
   return (
     <div className="flex flex-col gap-4">
+      {/* C.46 editing banner (mode === "edit"). */}
+      {editingBanner ? (
+        <section
+          role="status"
+          aria-live="polite"
+          className="
+            rounded-2xl border-2 border-co-gold/60 bg-co-surface-2
+            p-4 sm:p-5 text-sm font-semibold text-co-text
+          "
+        >
+          {editingBanner}
+        </section>
+      ) : null}
+
       {/* Read-only banner (server-loaded confirmed instance). */}
       {readOnlyBanner ? (
         <section
@@ -709,6 +799,26 @@ export function AmPrepForm({
               "
             >
               {t("am_prep.submit.discard")}
+            </button>
+          ) : null}
+
+          {/* C.46 Cancel button (edit mode) — explicit nav-back-to-read-only.
+              Distinct from Discard (which keeps user in edit mode + resets
+              values); Cancel exits edit mode entirely. Stay-on-page pattern:
+              drops ?edit=true → page re-renders in read_only mode. */}
+          {mode === "edit" ? (
+            <button
+              type="button"
+              onClick={handleCancelEdit}
+              className="
+                inline-flex min-h-[36px] items-center justify-center self-center
+                px-3 text-xs font-semibold uppercase tracking-[0.12em] text-co-text-muted
+                transition hover:text-co-text
+                focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/40
+                rounded-md
+              "
+            >
+              {t("am_prep.submit.button_cancel")}
             </button>
           ) : null}
         </div>

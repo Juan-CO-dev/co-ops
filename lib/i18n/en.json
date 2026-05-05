@@ -243,10 +243,18 @@
   "am_prep.submit.button_in_flight": "Submitting…",
   "am_prep.submit.button_no_changes": "No changes to submit",
   "am_prep.submit.button_fix_errors": "Fix issues before submitting",
+  "am_prep.submit.button_update": "Update AM Prep",
+  "am_prep.submit.button_update_in_flight": "Updating…",
+  "am_prep.submit.button_cancel": "Cancel",
   "am_prep.submit.discard": "Discard changes",
 
   "am_prep.banner.success": "AM Prep submitted at {time} by {name}",
   "am_prep.banner.read_only": "AM Prep already submitted today by {name} at {time}",
+  "am_prep.banner.read_only_chain": "AM Prep already submitted today: {attribution}",
+  "am_prep.banner.editing": "Editing AM Prep submitted by {name} at {time}",
+
+  "am_prep.attribution.original": "Submitted by {name} at {time}",
+  "am_prep.attribution.update": "updated by {name} at {time}",
 
   "am_prep.error.summary_one": "Fix 1 issue before submitting",
   "am_prep.error.summary_other": "Fix {count} issues before submitting",
@@ -258,6 +266,10 @@
   "am_prep.error.prep_auto_complete_failed": "Closing not yet started — start it from the dashboard, then re-submit AM Prep",
   "am_prep.error.prep_shape": "One of the entries is invalid — check the highlighted fields",
   "am_prep.error.prep_invariant": "Submission failed due to a server-side data issue — contact a manager",
+  "am_prep.error.edit_limit_exceeded": "This AM Prep has reached its 3-update limit",
+  "am_prep.error.edit_access_denied": "You can't edit this AM Prep",
+  "am_prep.error.edit_access_denied_closing_finalized": "Closing has been finalized — only KH+ can edit now",
+  "am_prep.error.edit_access_denied_not_submitter": "You weren't the original submitter — only KH+ can edit",
   "am_prep.error.location_access_denied": "You don't have access to this location",
   "am_prep.error.instance_not_found": "AM Prep instance not found — refresh the page",
   "am_prep.error.invalid_payload": "Submission was malformed — refresh the page",
@@ -277,6 +289,7 @@
   "dashboard.am_prep.cta_start": "Start AM Prep",
   "dashboard.am_prep.cta_continue": "Continue AM Prep",
   "dashboard.am_prep.cta_view": "View AM Prep",
+  "dashboard.am_prep.cta_edit": "Edit AM Prep",
   "dashboard.am_prep.status_not_started": "Not yet started",
   "dashboard.am_prep.status_in_progress": "In progress",
   "dashboard.am_prep.status_submitted": "Submitted at {time} by {name}",
@@ -286,8 +299,12 @@
   "dashboard.am_prep.aria": "AM Prep — {status}",
 
   "closing.report_ref.attribution": "Submitted by {name} at {time}",
+  "closing.report_ref.attribution_chain": "{attribution}",
   "closing.report_ref.empty_subtitle": "Pending — submit from the dashboard",
   "closing.report_ref.empty_aria": "{label} — pending submission",
   "closing.report_ref.complete_aria": "{label} — submitted by {name} at {time}",
-  "closing.report_ref.tap_to_submit_aria": "{label} — tap to submit from the AM Prep page"
+  "closing.report_ref.complete_aria_chain": "{label} — {attribution}",
+  "closing.report_ref.tap_to_submit_aria": "{label} — tap to submit from the AM Prep page",
+  "closing.report_ref.edit_link": "Edit",
+  "closing.report_ref.edit_link_aria": "Edit AM Prep submitted by {name}"
 }

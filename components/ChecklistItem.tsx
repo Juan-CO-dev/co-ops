@@ -435,6 +435,10 @@ export function ChecklistItem({
         actualCompleterTaggedBy: null,
         prepData: null,
         autoCompleteMeta: null,
+        // C.46 — optimistic cleaning-tap completion is never part of an
+        // edit chain (chains are AM Prep-specific); chain-head defaults.
+        originalCompletionId: null,
+        editCount: 0,
       };
       setLocalCompletion(optimistic);
     }

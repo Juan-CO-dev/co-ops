@@ -397,11 +397,15 @@ interface CompletionRow {
   // report-reference items when their source report submits; NULL on
   // user-tap completions.
   auto_complete_meta: unknown | null;
+  // Build #2 PR 3 (per SPEC_AMENDMENTS.md C.46; migration 0042). Chain link
+  // FK + edit position. NULL/0 on chain head (original); FK/1-3 on updates.
+  original_completion_id: string | null;
+  edit_count: number;
 }
 
 /** Column list for SELECTs against checklist_completions — single source of truth. */
 const COMPLETION_COLUMNS =
-  "id, instance_id, template_item_id, completed_by, completed_at, count_value, photo_id, notes, superseded_at, superseded_by, revoked_at, revoked_by, revocation_reason, revocation_note, actual_completer_id, actual_completer_tagged_at, actual_completer_tagged_by, prep_data, auto_complete_meta";
+  "id, instance_id, template_item_id, completed_by, completed_at, count_value, photo_id, notes, superseded_at, superseded_by, revoked_at, revoked_by, revocation_reason, revocation_note, actual_completer_id, actual_completer_tagged_at, actual_completer_tagged_by, prep_data, auto_complete_meta, original_completion_id, edit_count";
 
 interface SubmissionRow {
   id: string;
@@ -469,6 +473,10 @@ const rowToCompletion = (r: CompletionRow): ChecklistCompletion => ({
   // Pass through; closing-client UI reads this to render attribution-style
   // text on auto-complete rows. Always NULL on cleaning user-tap rows.
   autoCompleteMeta: (r.auto_complete_meta ?? null) as AutoCompleteMeta | null,
+  // C.46 chain link: NULL on chain head (original); FK on updates.
+  originalCompletionId: r.original_completion_id,
+  // C.46 edit position: 0 on chain head; 1-3 on updates.
+  editCount: r.edit_count,
 });
 
 const rowToSubmission = (r: SubmissionRow): ChecklistSubmission => ({

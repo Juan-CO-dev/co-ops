@@ -37,7 +37,12 @@
 
 import { redirect } from "next/navigation";
 
-import { getOrCreateInstance } from "@/lib/checklists";
+import {
+  canEditReport,
+  getOrCreateInstance,
+  loadChecklistChainAttribution,
+  type ChecklistChainEntry,
+} from "@/lib/checklists";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
@@ -196,6 +201,11 @@ interface CompletionRow {
   // this to branch attribution-style rendering vs user-notes rendering
   // (later step in this PR).
   auto_complete_meta: unknown | null;
+  // C.46 chain link + edit position (migration 0042). Always NULL/0 on
+  // closing-page-loaded completions (closing items don't have edit chains —
+  // only AM Prep submissions do). Pass-through here for type completeness.
+  original_completion_id: string | null;
+  edit_count: number;
 }
 
 const rowToCompletion = (r: CompletionRow): ChecklistCompletion => ({
@@ -218,6 +228,8 @@ const rowToCompletion = (r: CompletionRow): ChecklistCompletion => ({
   actualCompleterTaggedBy: r.actual_completer_tagged_by,
   prepData: (r.prep_data ?? null) as PrepData | null,
   autoCompleteMeta: (r.auto_complete_meta ?? null) as AutoCompleteMeta | null,
+  originalCompletionId: r.original_completion_id,
+  editCount: r.edit_count,
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -406,7 +418,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
   const { data: completionRows, error: compErr } = await sb
     .from("checklist_completions")
     .select(
-      "id, instance_id, template_item_id, completed_by, completed_at, count_value, photo_id, notes, superseded_at, superseded_by, revoked_at, revoked_by, revocation_reason, revocation_note, actual_completer_id, actual_completer_tagged_at, actual_completer_tagged_by, prep_data, auto_complete_meta",
+      "id, instance_id, template_item_id, completed_by, completed_at, count_value, photo_id, notes, superseded_at, superseded_by, revoked_at, revoked_by, revocation_reason, revocation_note, actual_completer_id, actual_completer_tagged_at, actual_completer_tagged_by, prep_data, auto_complete_meta, original_completion_id, edit_count",
     )
     .eq("instance_id", instanceRow.id)
     .is("superseded_at", null)
@@ -442,6 +454,94 @@ export default async function ClosingPage({ searchParams }: PageProps) {
     initialCompletions[c.templateItemId] = c;
   }
 
+  // C.46 — for each AM Prep report-reference auto-complete row, load the
+  // submission chain attribution + compute canEdit. Batched: get chain head
+  // ids in one query, then fetch chains in parallel.
+  const amPrepAutoCompleteRows = completions.filter((c) => {
+    const meta = c.autoCompleteMeta;
+    return (
+      meta !== null &&
+      typeof meta === "object" &&
+      (meta as { reportType?: string }).reportType === "am_prep"
+    );
+  });
+  const reportRefChains: Record<string, ChecklistChainEntry[]> = {};
+  const reportRefCanEdit: Record<string, boolean> = {};
+  if (amPrepAutoCompleteRows.length > 0) {
+    const prepInstanceIds = amPrepAutoCompleteRows
+      .map((c) => {
+        const meta = c.autoCompleteMeta as { reportInstanceId?: string } | null;
+        return meta?.reportInstanceId ?? null;
+      })
+      .filter((x): x is string => x !== null);
+
+    if (prepInstanceIds.length > 0) {
+      // Batch lookup chain heads (original_submission_id IS NULL for heads).
+      const { data: headSubs, error: headErr } = await sb
+        .from("checklist_submissions")
+        .select("id, instance_id, submitted_by")
+        .in("instance_id", prepInstanceIds)
+        .is("original_submission_id", null);
+      if (headErr) throw new Error(`load chain heads: ${headErr.message}`);
+
+      const headByPrepInstance = new Map<
+        string,
+        { id: string; submittedBy: string }
+      >();
+      for (const h of (headSubs ?? []) as Array<{
+        id: string;
+        instance_id: string;
+        submitted_by: string;
+      }>) {
+        headByPrepInstance.set(h.instance_id, { id: h.id, submittedBy: h.submitted_by });
+      }
+
+      // Load each chain in parallel + compute canEdit per the closing's status.
+      const chainResults = await Promise.all(
+        amPrepAutoCompleteRows.map(async (c) => {
+          const meta = c.autoCompleteMeta as { reportInstanceId?: string } | null;
+          const prepInstanceId = meta?.reportInstanceId;
+          if (!prepInstanceId) return { templateItemId: c.templateItemId, chain: [], canEdit: false };
+          const head = headByPrepInstance.get(prepInstanceId);
+          if (!head) return { templateItemId: c.templateItemId, chain: [], canEdit: false };
+          const chain = await loadChecklistChainAttribution(sb, {
+            originalSubmissionId: head.id,
+          });
+          const maxEditCount = chain.reduce(
+            (max, e) => (e.editCount > max ? e.editCount : max),
+            0,
+          );
+          const access = canEditReport({
+            actor: { userId: auth.user.id, level: auth.level },
+            originalSubmitterId: head.submittedBy,
+            closingStatus: instanceRow.status,
+            currentEditCount: maxEditCount,
+          });
+          return {
+            templateItemId: c.templateItemId,
+            chain,
+            canEdit: access.canEdit,
+          };
+        }),
+      );
+
+      for (const r of chainResults) {
+        reportRefChains[r.templateItemId] = r.chain;
+        reportRefCanEdit[r.templateItemId] = r.canEdit;
+      }
+
+      // Add chain submitter ids to authors-to-resolve (for display in chain).
+      const chainAuthorIds = new Set<string>();
+      for (const r of chainResults) {
+        for (const e of r.chain) chainAuthorIds.add(e.submitterId);
+      }
+      // loadChecklistChainAttribution already resolves names, so authors map
+      // doesn't need additional lookups for chain entries — they carry
+      // submitterName directly.
+      void chainAuthorIds;
+    }
+  }
+
   // Determine read-only mode + banner.
   const isReadOnly =
     isHistorical ||
@@ -470,6 +570,8 @@ export default async function ClosingPage({ searchParams }: PageProps) {
     readOnly: isReadOnly,
     banner,
     todayDate: today,
+    reportRefChains,
+    reportRefCanEdit,
   };
 
   return <ClosingClient initialState={initialState} />;

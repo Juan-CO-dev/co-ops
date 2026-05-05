@@ -44,7 +44,8 @@
  *   // → "3:17 PM" (en) / "3:17 p. m." (es) — always operational TZ
  */
 
-import type { Language } from "@/lib/i18n/types";
+import type { ChecklistChainEntry } from "@/lib/checklists";
+import type { Language, TranslationKey, TranslationParams } from "@/lib/i18n/types";
 
 /**
  * Operational TZ. Hardcoded to America/New_York while CO operates
@@ -75,4 +76,48 @@ export function formatTime(iso: string, language: Language): string {
   } catch {
     return "";
   }
+}
+
+/**
+ * Translation function shape compatible with both serverT (lib/i18n/server.ts)
+ * and the client-side t from useTranslation (lib/i18n/provider.tsx). Used by
+ * formatChainAttribution so callers can supply either.
+ */
+type TranslateFn = (key: TranslationKey, params?: TranslationParams) => string;
+
+/**
+ * C.46 A4 — chained-attribution string formatter.
+ *
+ * Renders the full chain (head + updates) as a single comma-separated string
+ * suitable for banner display in AmPrepForm read-only / edit-mode banners and
+ * for ReportReferenceItem closing-side rendering.
+ *
+ * Format:
+ *   - 1 entry  → "Submitted by {name} at {time}"
+ *   - 2+ entries → "Submitted by {name1} at {time1}, updated by {name2} at {time2}, ..."
+ *
+ * No Intl.ListFormat — chain isn't an "X, Y, and Z" conjunction; it's a
+ * sequence with role-specific connector verbs. Per-segment translation keys
+ * joined with ", " is the right pattern. Spanish punctuation in this context
+ * uses ", " same as English; no locale-specific separator needed.
+ *
+ * Translation keys consumed (Phase 6 ships):
+ *   - am_prep.attribution.original — "Submitted by {name} at {time}"
+ *   - am_prep.attribution.update   — "updated by {name} at {time}"
+ *
+ * Returns empty string for an empty chain (defensive).
+ */
+export function formatChainAttribution(
+  chain: ChecklistChainEntry[],
+  language: Language,
+  t: TranslateFn,
+): string {
+  if (chain.length === 0) return "";
+  const segments = chain.map((entry, i) => {
+    const time = formatTime(entry.submittedAt, language);
+    return i === 0
+      ? t("am_prep.attribution.original", { name: entry.submitterName, time })
+      : t("am_prep.attribution.update", { name: entry.submitterName, time });
+  });
+  return segments.join(", ");
 }

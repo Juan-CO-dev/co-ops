@@ -243,10 +243,18 @@
   "am_prep.submit.button_in_flight": "Enviando…",
   "am_prep.submit.button_no_changes": "Sin cambios para enviar",
   "am_prep.submit.button_fix_errors": "Corrige los errores antes de enviar",
+  "am_prep.submit.button_update": "Actualizar Lista de Prep AM",
+  "am_prep.submit.button_update_in_flight": "Actualizando…",
+  "am_prep.submit.button_cancel": "Cancelar",
   "am_prep.submit.discard": "Descartar cambios",
 
   "am_prep.banner.success": "Lista de Prep AM enviada a las {time} por {name}",
   "am_prep.banner.read_only": "Lista de Prep AM ya enviada hoy por {name} a las {time}",
+  "am_prep.banner.read_only_chain": "Lista de Prep AM ya enviada hoy: {attribution}",
+  "am_prep.banner.editing": "Editando Lista de Prep AM enviada por {name} a las {time}",
+
+  "am_prep.attribution.original": "Enviado por {name} a las {time}",
+  "am_prep.attribution.update": "actualizado por {name} a las {time}",
 
   "am_prep.error.summary_one": "Corrige 1 problema antes de enviar",
   "am_prep.error.summary_other": "Corrige {count} problemas antes de enviar",
@@ -258,6 +266,10 @@
   "am_prep.error.prep_auto_complete_failed": "El cierre no ha comenzado — ábrelo desde el dashboard, luego envía de nuevo",
   "am_prep.error.prep_shape": "Una de las entradas es inválida — revisa los campos resaltados",
   "am_prep.error.prep_invariant": "Envío fallido por un problema de datos del servidor — contacta a un gerente",
+  "am_prep.error.edit_limit_exceeded": "Esta Lista de Prep AM alcanzó su límite de 3 actualizaciones",
+  "am_prep.error.edit_access_denied": "No puedes editar esta Lista de Prep AM",
+  "am_prep.error.edit_access_denied_closing_finalized": "El cierre ya finalizó — solo KH+ puede editar ahora",
+  "am_prep.error.edit_access_denied_not_submitter": "No fuiste quien envió originalmente — solo KH+ puede editar",
   "am_prep.error.location_access_denied": "No tienes acceso a esta ubicación",
   "am_prep.error.instance_not_found": "Instancia de Prep AM no encontrada — recarga la página",
   "am_prep.error.invalid_payload": "El envío estaba mal formado — recarga la página",
@@ -277,6 +289,7 @@
   "dashboard.am_prep.cta_start": "Iniciar Lista de Prep AM",
   "dashboard.am_prep.cta_continue": "Continuar Lista de Prep AM",
   "dashboard.am_prep.cta_view": "Ver Lista de Prep AM",
+  "dashboard.am_prep.cta_edit": "Editar Lista de Prep AM",
   "dashboard.am_prep.status_not_started": "Aún no iniciada",
   "dashboard.am_prep.status_in_progress": "En progreso",
   "dashboard.am_prep.status_submitted": "Enviada a las {time} por {name}",
@@ -286,8 +299,12 @@
   "dashboard.am_prep.aria": "Lista de Prep AM — {status}",
 
   "closing.report_ref.attribution": "Enviado por {name} a las {time}",
+  "closing.report_ref.attribution_chain": "{attribution}",
   "closing.report_ref.empty_subtitle": "Pendiente — envía desde el dashboard",
   "closing.report_ref.empty_aria": "{label} — pendiente de envío",
   "closing.report_ref.complete_aria": "{label} — enviado por {name} a las {time}",
-  "closing.report_ref.tap_to_submit_aria": "{label} — toca para enviar desde la página de Lista de Prep AM"
+  "closing.report_ref.complete_aria_chain": "{label} — {attribution}",
+  "closing.report_ref.tap_to_submit_aria": "{label} — toca para enviar desde la página de Lista de Prep AM",
+  "closing.report_ref.edit_link": "Editar",
+  "closing.report_ref.edit_link_aria": "Editar Lista de Prep AM enviada por {name}"
 }
