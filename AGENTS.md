@@ -588,7 +588,12 @@ Future formatting helpers (date pickers, timestamp displays, duration strings, a
 
 **Duplication watch:** as of Build #2 PR 1 closing-client report-reference rendering commit, `formatTime` (or equivalent inline helper) is duplicated across 5 modules: `app/(authed)/operations/closing/page.tsx`, `app/(authed)/operations/closing/closing-client.tsx`, `components/prep/AmPrepForm.tsx`, `app/(authed)/dashboard/page.tsx`, and `components/ReportReferenceItem.tsx`. **All five sites now use language-aware locale** (closing-client was the prior browser-locale-hardcoding-`"en-US"` outlier; lifted to language-aware in the closing-client report-reference rendering commit, which also fixed a real Spanish-UX bug where Spanish users saw English-format times in the post-confirm banner). The pattern is canonical — any new time-formatting site inherits it from the start.
 
-We've now hit the 5-site threshold the prior version of this lesson set as the lift trigger. **Lift `formatTime(iso, language)` to `lib/i18n/format.ts` in the next commit that touches any of these 5 modules** (or in a standalone cleanup commit if Juan wants to pull it forward). All 5 inline copies replace with a single import. Same applies to `formatDateLabel` for date-only strings (currently 1 site in dashboard; revisit when a 2nd site needs it).
+**Canonical helpers in `lib/i18n/format.ts` (current state):**
+- `formatTime(iso, language)` — lifted from 5 inline copies in Build #2 PR 2; consolidates time formatting + operational TZ + language-aware locale.
+- `formatDateLabel(yyyymmdd, language)` — lifted from 2 inline copies (dashboard + closing-page) in the Build #2 cleanup PR. Threshold tripped at 2 sites *and* the closing-page version was hardcoded `"en-US"` (a real Spanish-UX bug — Spanish users saw English-format dates on the historical banner + no-instance view). Lift consolidated both copies and threaded `language` through both closing-page callsites, fixing the bug.
+- `formatChainAttribution(chain, language, t)` — C.46 A4 chained-attribution string formatter (Build #2 PR 3).
+
+**Rule for future date/time/duration sites:** any new YYYY-MM-DD label site, ISO timestamp display, or `Intl.DateTimeFormat` / `toLocale*` call uses these helpers from the start. Never reintroduce inline copies; never hardcode locale; always pass `language: Language`.
 
 ### loadAmPrepState single-prep-template assumption (after Build #2 PR 1)
 
