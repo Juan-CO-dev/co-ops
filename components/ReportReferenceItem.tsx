@@ -28,8 +28,13 @@
  *      - Empty circle (same shape as cleaning's not-yet-completed state)
  *      - Item label
  *      - Italic subtitle: "Pending — submit from the dashboard"
- *      - Tap navigates to /operations/am-prep?location=<id> (saves the
- *        closer a step vs forcing dashboard navigation)
+ *      - Tap navigates to the source-report page resolved by
+ *        templateItem.reportReferenceType (per C.42 generalization).
+ *        AM Prep items → /operations/am-prep; Opening verified items
+ *        → /operations/opening (added Build #3 PR 2 hotfix; previously
+ *        hardcoded to AM Prep — Cristian's first-shift smoke surfaced
+ *        the misroute when tapping the Opening verified empty state
+ *        from closing).
  *      - cursor-pointer + hover affordance
  *
  *   3. Empty pending (no completion AND read-only):
@@ -60,6 +65,30 @@ import { resolveTemplateItemContent } from "@/lib/i18n/content";
 import { formatChainAttribution, formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { ChecklistCompletion, ChecklistTemplateItem } from "@/lib/types";
+
+/**
+ * Resolves the source-report page route for a report-reference item by
+ * branching on templateItem.reportReferenceType. System-key match per
+ * C.38 (the original English value, not a translated display string).
+ *
+ * Future report types (mid_day_prep, cash_report, training_report,
+ * special_report) add cases here as their pages ship; until their
+ * routes exist, the defensive default sends them to AM Prep so closer
+ * isn't dead-ended on a 404. Closing-template seed discipline today is
+ * to add a report-reference item only when its target page exists, so
+ * the default branch is forensic-only.
+ */
+function reportRoute(
+  reportType: ChecklistTemplateItem["reportReferenceType"],
+): string {
+  switch (reportType) {
+    case "opening_report":
+      return "/operations/opening";
+    case "am_prep":
+    default:
+      return "/operations/am-prep";
+  }
+}
 
 interface ReportReferenceItemProps {
   templateItem: ChecklistTemplateItem;
@@ -101,7 +130,8 @@ export function ReportReferenceItem({
   const resolved = resolveTemplateItemContent(templateItem, language);
 
   const isAutoCompleted = completion !== null && completion.autoCompleteMeta !== null;
-  const editHref = `/operations/am-prep?location=${locationId}&edit=true`;
+  const baseRoute = reportRoute(templateItem.reportReferenceType);
+  const editHref = `${baseRoute}?location=${locationId}&edit=true`;
 
   // ─── State 1: Live auto-complete ──────────────────────────────────────────
 
@@ -176,7 +206,7 @@ export function ReportReferenceItem({
   // ─── State 2 + 3: Empty pending (interactive when !readOnly) ──────────────
 
   const subtitleText = t("closing.report_ref.empty_subtitle");
-  const tapHref = `/operations/am-prep?location=${locationId}`;
+  const tapHref = `${baseRoute}?location=${locationId}`;
 
   // Tappable when the closing is still open (closer can navigate to AM
   // Prep and submit it from there).
