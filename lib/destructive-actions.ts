@@ -77,6 +77,20 @@ export const DESTRUCTIVE_ACTIONS = [
   // signal (per design doc §4.5).
   "report.drop",
 
+  // Audit forensic recovery (Build #3 PR 2 — added during C.49 seed remediation).
+  // Distinct from audit.metadata_correction:
+  //   audit.metadata_correction = correcting wrong/incomplete metadata on an
+  //                               existing audit row (entries already exist
+  //                               but carry stale or incorrect context)
+  //   audit.gap_recovery        = backfilling forensic record for changes that
+  //                               landed WITHOUT any audit row (mid-run failure,
+  //                               race condition, etc.); the supplemental row
+  //                               documents the orphaned changes after the fact
+  // Schema convention: metadata.recovery_type, metadata.failed_run_error,
+  // metadata.orphaned_changes (op-by-op array), metadata.resolving_audit_row_id
+  // (forward link to the row that completed the work in the recovery run).
+  "audit.gap_recovery",
+
   // Bulk / sensitive
   "reports.bulk_export",
   "reports.bulk_correct",
