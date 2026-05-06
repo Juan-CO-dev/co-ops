@@ -337,6 +337,72 @@ export interface ChecklistTemplate {
   createdAt: string;
   createdBy: string | null;
   updatedAt: string;
+  /**
+   * Build #3 PR 1 — gate predicate that gates instance CREATION (the
+   * submission path through getOrCreateInstance). NULL means no gate
+   * (all existing templates default to NULL on PR 1 merge — back-compat
+   * preserves current behavior). PR 4 writes concrete predicates for
+   * AM Prep, Opening, Closing, and Mid-day Prep templates.
+   *
+   * Evaluator: lib/checklists.ts evaluateGatePredicate. The shape is
+   * locked to GatePredicate (single `requires_state` array of clauses,
+   * AND-semantics across clauses). Any unknown shape is rejected at
+   * evaluator time so we don't silently misinterpret future schema
+   * drift.
+   */
+  submissionGatePredicate: GatePredicate | null;
+  /**
+   * Build #3 PR 1 — gate predicate that gates instance EDITS (the C.46
+   * post-submission update path). Same shape as submissionGatePredicate;
+   * NULL means no gate. PR 1 ships the column + lib evaluator; PR 4
+   * wires canEditReport to consume the result. Until then, canEditReport
+   * keeps its existing behavior unchanged.
+   */
+  editGatePredicate: GatePredicate | null;
+}
+
+// ─── Build #3 PR 1 — gate predicates ───────────────────────────────────────
+
+/**
+ * Single clause inside a GatePredicate. Encodes a requirement on the
+ * operational state of an upstream artifact:
+ *
+ *   "the artifact of `template_type` at the same location, on the
+ *    operational date offset by `operational_date_offset` days, must
+ *    have a status in `status_in[]`."
+ *
+ * Examples:
+ *   - Opening's submission gate (per design doc §4.8): the prior night's
+ *     closing must be in any non-open state.
+ *     `{ template_type: 'closing', operational_date_offset: -1,
+ *        status_in: ['confirmed', 'incomplete_confirmed', 'auto_finalized'] }`
+ *   - AM Prep's edit gate: today's closing must still be 'open' (locks
+ *     once the closing finalizes).
+ *     `{ template_type: 'closing', operational_date_offset: 0,
+ *        status_in: ['open'] }`
+ *   - Mid-day Prep's submission gate: today's Opening Report must be
+ *     submitted (any non-open status).
+ *     `{ template_type: 'opening', operational_date_offset: 0,
+ *        status_in: ['confirmed', 'incomplete_confirmed', 'auto_finalized'] }`
+ */
+export interface GatePredicateRequiresState {
+  template_type: ChecklistType;
+  operational_date_offset: number;
+  status_in: ChecklistStatus[];
+}
+
+/**
+ * Gate predicate stored on `checklist_templates.submission_gate_predicate`
+ * and `.edit_gate_predicate` (both JSONB columns, NULL = no gate). All
+ * clauses in `requires_state` must be satisfied (AND-semantics). The
+ * shape is intentionally minimal — locked at one variant for Build #3
+ * because PR 4 only configures predicates of this shape. When a real
+ * second shape surfaces (likely with Toast forward projection), extend
+ * via a discriminated union; until then, evaluator throws on unknown
+ * shapes rather than fail-open.
+ */
+export interface GatePredicate {
+  requires_state: GatePredicateRequiresState[];
 }
 
 /**
@@ -397,7 +463,33 @@ export interface ChecklistTemplateItem {
   reportReferenceType: ReportType | null;
 }
 
-export type ChecklistStatus = "open" | "confirmed" | "incomplete_confirmed";
+/**
+ * Build #3 PR 1 — `auto_finalized` joins the status enum (per design doc
+ * §4.4). Operational paths into each non-open status:
+ *   - `confirmed`            → closer PIN-attests; all required items completed
+ *   - `incomplete_confirmed` → closer PIN-attests with reasons for incompletes
+ *   - `auto_finalized`       → opener-release OR system_auto OR migration backfill;
+ *                              actor type discriminated on `finalizedAtActorType`
+ */
+export type ChecklistStatus = "open" | "confirmed" | "incomplete_confirmed" | "auto_finalized";
+
+/**
+ * Build #3 PR 1 — discriminator for which operational path produced the
+ * non-open status (per design doc §4.4). NULL on rows still `'open'`;
+ * always set when status transitions out of `'open'`.
+ *
+ *   `closer_confirm`  → status ∈ {'confirmed','incomplete_confirmed'} via PIN attestation
+ *   `opener_release`  → status='auto_finalized' via opener tapping Release UI (PR 4)
+ *   `system_auto`     → status='auto_finalized' via pg_cron / lazy-eval (PR 1)
+ *
+ * Note the migration-time backfill of pre-PR-1 stranded v1 instances
+ * sets `system_auto` here (the column's CHECK constraint only knows the
+ * three production-path values); the migration-backfill provenance is
+ * captured separately on the audit row's `metadata.release_source =
+ * 'migration_backfill'`. This keeps the runtime CHECK tight while
+ * preserving forensic provenance in audit metadata.
+ */
+export type FinalizedAtActorType = "closer_confirm" | "opener_release" | "system_auto";
 
 export interface ChecklistInstance {
   id: string;
@@ -423,6 +515,42 @@ export interface ChecklistInstance {
    * on pre-Build-#2 rows.
    */
   triggeredAt: string | null;
+  /**
+   * Build #3 PR 1 — discriminator for the operational path that finalized
+   * this instance. NULL on `'open'` rows; populated when status transitions
+   * out of `'open'`. See `FinalizedAtActorType` for value semantics.
+   */
+  finalizedAtActorType: FinalizedAtActorType | null;
+  /**
+   * Build #3 PR 1 — assignment / drop fields supporting C.42 assignment-down
+   * + self-claim/drop semantics (per design doc §4.5).
+   *
+   * Three operational states:
+   *   1. (assignedTo=NULL,  assignmentLocked=false) → unclaimed, anyone with
+   *      creation permission can self-initiate by setting assignedTo
+   *   2. (assignedTo=X,     assignmentLocked=false) → self-claimed by X; X
+   *      can drop, others can't pick up until X drops
+   *   3. (assignedTo=Y,     assignmentLocked=true)  → manager-assigned to Y
+   *      via C.42 mechanic; Y CANNOT drop; only assigner+ can reassign
+   *
+   * CHECK constraint forbids (assignedTo=NULL, assignmentLocked=true). PR 1
+   * ships the columns + dropInstance() helper for self-drop only;
+   * reassignment + manager-assignment paths are out-of-scope for PR 1.
+   */
+  assignedTo: string | null;
+  assignmentLocked: boolean;
+  /**
+   * Build #3 PR 1 — most-recent-drop tracking on the instance row. Full
+   * drop history lives in `audit_log` via `report.drop` events (audit_log
+   * IS the event log; no separate drops table). On re-claim, dropInstance
+   * does NOT NULL these out — they remain as "last time this instance was
+   * dropped" historical metadata until the next drop overwrites them.
+   * Forensically, the audit chain via `report.drop` is the canonical
+   * timeline; the instance row is convenience.
+   */
+  droppedAt: string | null;
+  droppedBy: string | null;
+  droppedReason: string | null;
 }
 
 /**
