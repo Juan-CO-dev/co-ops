@@ -306,5 +306,68 @@
   "closing.report_ref.complete_aria_chain": "{label} — {attribution}",
   "closing.report_ref.tap_to_submit_aria": "{label} — tap to submit from the AM Prep page",
   "closing.report_ref.edit_link": "Edit",
-  "closing.report_ref.edit_link_aria": "Edit AM Prep submitted by {name}"
+  "closing.report_ref.edit_link_aria": "Edit AM Prep submitted by {name}",
+
+  "opening.page.label": "Opening Report",
+  "opening.page.title": "Phase 1 — Verification",
+  "opening.page.subtitle": "Verify last night's closing matches reality. Tap each station once you've checked it; add a comment if anything looks off.",
+  "opening.page.dashboard_back": "Back to dashboard",
+
+  "opening.no_location.body": "No locations available for your account.",
+
+  "opening.no_template.heading": "Opening template not configured",
+  "opening.no_template.body": "Contact a manager — the Opening template hasn't been set up yet at {code}.",
+  "opening.no_template.aria": "Opening template not configured",
+
+  "opening.gate.aria": "Waiting on prior closing finalization",
+  "opening.gate.title": "Waiting on last night's closing at {code}",
+  "opening.gate.body": "The closing report from {date} hasn't been finalized yet. Opening will unlock once it's confirmed or auto-released.",
+  "opening.gate.cta_view_prior_closing": "View last night's closing",
+
+  "opening.read_only.label": "Opening · {code}",
+  "opening.read_only.title": "Opening verified",
+  "opening.read_only.attribution": "Submitted by {name} at {time}",
+  "opening.read_only.attribution_no_time": "Submitted by {name}",
+
+  "opening.station.aria": "{station} — verification",
+  "opening.station.tick_button": "Verified",
+  "opening.station.ticked_button": "Verified",
+  "opening.station.tick_aria": "Mark {station} as verified",
+  "opening.station.untick_aria": "Untick {station}",
+
+  "opening.item.add_addon": "Add comment",
+  "opening.item.add_addon_with_content": "Edit comment",
+  "opening.item.count_input_placeholder": "—",
+  "opening.item.count_input_aria": "Temperature reading for {item}",
+  "opening.item.count_required_inline": "Temp required",
+  "opening.item.comment_label": "Comment",
+  "opening.item.comment_placeholder": "Note any discrepancy",
+  "opening.item.comment_aria": "Comment for {item}",
+  "opening.item.photo_pending_label": "Photo upload coming soon",
+  "opening.item.photo_pending_tooltip": "Photo capture will activate in a future build. Use the comment field for now.",
+
+  "opening.phase.tab_phase1": "Phase 1 · Verify",
+  "opening.phase.tab_phase2_disabled": "Phase 2 · Prep",
+  "opening.phase.tab_phase2_subtitle": "Next phase",
+
+  "opening.submit.counter_verified": "{ticked} of {total} verified",
+  "opening.submit.counter_temps": "{filled} of {total} temp readings entered",
+  "opening.submit.gate_ready": "Submit ready",
+  "opening.submit.gate_disabled_items_remaining": "{remaining} items not yet verified",
+  "opening.submit.gate_disabled_temps_required": "Temp reading required for {item}",
+  "opening.submit.gate_disabled_generic": "Submit disabled",
+  "opening.submit.button_label": "Submit Opening",
+  "opening.submit.submitting": "Submitting…",
+
+  "opening.error.role_level_insufficient": "Your role can't submit Opening — contact a manager.",
+  "opening.error.instance_not_open": "Opening was already submitted — refresh the page.",
+  "opening.error.auto_complete_failed": "Last night's closing record can't be linked — contact a manager.",
+  "opening.error.missing_count": "A fridge temperature reading is missing.",
+  "opening.error.invalid_entry_shape": "Submission was malformed — refresh the page.",
+  "opening.error.invalid_payload": "Submission was malformed — refresh the page.",
+  "opening.error.location_access_denied": "You don't have access to this location.",
+  "opening.error.instance_not_found": "Opening instance not found — refresh the page.",
+  "opening.error.network": "Network error — try again.",
+  "opening.error.fallback": "Submission failed — try again.",
+  "opening.error.internal_error": "Something went wrong — try again."
 }
