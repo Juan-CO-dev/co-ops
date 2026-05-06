@@ -105,6 +105,16 @@ interface InstanceRow {
   // Build #2 (per SPEC_AMENDMENTS.md C.18 + C.43; migration 0038).
   triggered_by_user_id: string | null;
   triggered_at: string | null;
+  // Build #3 PR 1 — finalize discriminator + assignment/drop tracking
+  // (migration 0046). Third parallel mirror of lib/checklists.ts +
+  // lib/prep.ts InstanceRow shapes; consolidation deferred to a future
+  // cleanup PR.
+  finalized_at_actor_type: ChecklistInstance["finalizedAtActorType"];
+  assigned_to: string | null;
+  assignment_locked: boolean;
+  dropped_at: string | null;
+  dropped_by: string | null;
+  dropped_reason: string | null;
 }
 
 const rowToInstance = (r: InstanceRow): ChecklistInstance => ({
@@ -119,6 +129,13 @@ const rowToInstance = (r: InstanceRow): ChecklistInstance => ({
   createdAt: r.created_at,
   triggeredByUserId: r.triggered_by_user_id,
   triggeredAt: r.triggered_at,
+  // Build #3 PR 1 — finalize + assignment/drop fields.
+  finalizedAtActorType: r.finalized_at_actor_type,
+  assignedTo: r.assigned_to,
+  assignmentLocked: r.assignment_locked,
+  droppedAt: r.dropped_at,
+  droppedBy: r.dropped_by,
+  droppedReason: r.dropped_reason,
 });
 
 interface TemplateItemRow {
@@ -351,7 +368,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
     const { data, error } = await sb
       .from("checklist_instances")
       .select(
-        "id, template_id, location_id, date, shift_start_at, status, confirmed_at, confirmed_by, created_at, triggered_by_user_id, triggered_at",
+        "id, template_id, location_id, date, shift_start_at, status, confirmed_at, confirmed_by, created_at, triggered_by_user_id, triggered_at, finalized_at_actor_type, assigned_to, assignment_locked, dropped_at, dropped_by, dropped_reason",
       )
       .eq("template_id", templateRow.id)
       .eq("location_id", locationParam)
@@ -388,6 +405,13 @@ export default async function ClosingPage({ searchParams }: PageProps) {
       created_at: result.instance.createdAt,
       triggered_by_user_id: result.instance.triggeredByUserId,
       triggered_at: result.instance.triggeredAt,
+      // Build #3 PR 1 — finalize + assignment/drop fields (mirror lib/checklists.ts).
+      finalized_at_actor_type: result.instance.finalizedAtActorType,
+      assigned_to: result.instance.assignedTo,
+      assignment_locked: result.instance.assignmentLocked,
+      dropped_at: result.instance.droppedAt,
+      dropped_by: result.instance.droppedBy,
+      dropped_reason: result.instance.droppedReason,
     };
   }
 
