@@ -348,7 +348,7 @@
 
   "opening.phase.tab_phase1": "Phase 1 · Verify",
   "opening.phase.tab_phase2_disabled": "Phase 2 · Prep",
-  "opening.phase.tab_phase2_tooltip": "Prep entry coming in the next build.",
+  "opening.phase.tab_phase2_subtitle": "Next phase",
 
   "opening.submit.counter_verified": "{ticked} of {total} verified",
   "opening.submit.counter_temps": "{filled} of {total} temp readings entered",

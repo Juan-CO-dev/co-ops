@@ -348,7 +348,7 @@
 
   "opening.phase.tab_phase1": "Fase 1 · Verificar",
   "opening.phase.tab_phase2_disabled": "Fase 2 · Prep",
-  "opening.phase.tab_phase2_tooltip": "La entrada de prep llega en la próxima versión.",
+  "opening.phase.tab_phase2_subtitle": "Próxima fase",
 
   "opening.submit.counter_verified": "{ticked} de {total} verificadas",
   "opening.submit.counter_temps": "{filled} de {total} temperaturas registradas",

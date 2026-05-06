@@ -232,13 +232,18 @@ export function OpeningClient({ instance, templateItems, language }: OpeningClie
         </span>
         <span
           aria-disabled
-          title={t("opening.phase.tab_phase2_tooltip")}
           className="
-            inline-flex items-center px-3 py-2
-            text-xs font-bold uppercase tracking-[0.14em] text-co-text-faint cursor-not-allowed
+            flex flex-col items-start gap-0.5 px-3 py-2
+            border-b-2 border-transparent
+            cursor-not-allowed opacity-80
           "
         >
-          {t("opening.phase.tab_phase2_disabled")}
+          <span className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-muted">
+            {t("opening.phase.tab_phase2_disabled")}
+          </span>
+          <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-co-text-dim">
+            {t("opening.phase.tab_phase2_subtitle")}
+          </span>
         </span>
       </div>
 
