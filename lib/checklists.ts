@@ -62,6 +62,10 @@ import type {
   ChecklistSubmission,
   ChecklistIncompleteReason,
   ChecklistStatus,
+  ChecklistType,
+  FinalizedAtActorType,
+  GatePredicate,
+  GatePredicateRequiresState,
   PrepData,
 } from "./types";
 
@@ -351,6 +355,69 @@ export class ChecklistConcurrentModificationError extends ChecklistError {
   }
 }
 
+// ─── Build #3 PR 1 — gate predicate + assignment errors ────────────────────
+
+/**
+ * Thrown by getOrCreateInstance (submission gate) and any future caller
+ * of evaluateGatePredicate that wants throw-based handling. Carries the
+ * failed clause so the UI can render specific "waiting on [closing for
+ * 2026-05-04]" copy. PR 1 wires this into instance creation only;
+ * canEditReport / form-render-time gates land in PR 4.
+ */
+export class GateNotSatisfiedError extends ChecklistError {
+  constructor(
+    public readonly templateId: string,
+    public readonly gate: "submission" | "edit",
+    public readonly failedClause: GatePredicateRequiresState,
+    public readonly observedStatus: ChecklistStatus | null,
+  ) {
+    super(
+      `${gate} gate not satisfied for template ${templateId}: requires ${failedClause.template_type} at offset ${failedClause.operational_date_offset} in [${failedClause.status_in.join(", ")}], observed=${observedStatus ?? "no_instance"}.`,
+      "gate_not_satisfied",
+    );
+    this.name = "GateNotSatisfiedError";
+  }
+}
+
+/**
+ * Thrown by dropInstance when the actor attempts to self-drop a
+ * manager-assigned instance (assignment_locked=true). Manager-assigned
+ * work cannot be self-dropped; only assigner+ can reassign or release.
+ * Reassignment is out of scope for PR 1 — this error simply refuses
+ * the operation and points the actor at a manager.
+ */
+export class AssignmentLockedError extends ChecklistError {
+  constructor(
+    public readonly instanceId: string,
+    public readonly assignedTo: string | null,
+  ) {
+    super(
+      `Instance ${instanceId} is manager-assigned${assignedTo ? ` to ${assignedTo}` : ""}; only the assigner or higher can reassign.`,
+      "assignment_locked",
+    );
+    this.name = "AssignmentLockedError";
+  }
+}
+
+/**
+ * Thrown by dropInstance when the actor isn't the current assignee. PR 1
+ * scope: dropInstance handles self-drop only. KH+/AGM+ revoke-and-reassign
+ * lives in C.42 admin tooling, not here.
+ */
+export class NotAssignedToActorError extends ChecklistError {
+  constructor(
+    public readonly instanceId: string,
+    public readonly actorUserId: string,
+    public readonly currentAssignee: string | null,
+  ) {
+    super(
+      `Instance ${instanceId} cannot be dropped by ${actorUserId}: current assignee is ${currentAssignee ?? "unclaimed"}.`,
+      "not_assigned_to_actor",
+    );
+    this.name = "NotAssignedToActorError";
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // snake_case ↔ camelCase row mappers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -368,6 +435,15 @@ interface InstanceRow {
   // Build #2 (per SPEC_AMENDMENTS.md C.18 + C.43; migration 0038).
   triggered_by_user_id: string | null;
   triggered_at: string | null;
+  // Build #3 PR 1 — finalize discriminator + assignment/drop tracking
+  // (migration 0046). NULL on existing rows pre-migration; populated
+  // going forward.
+  finalized_at_actor_type: FinalizedAtActorType | null;
+  assigned_to: string | null;
+  assignment_locked: boolean;
+  dropped_at: string | null;
+  dropped_by: string | null;
+  dropped_reason: string | null;
 }
 
 interface CompletionRow {
@@ -406,6 +482,20 @@ interface CompletionRow {
 /** Column list for SELECTs against checklist_completions — single source of truth. */
 const COMPLETION_COLUMNS =
   "id, instance_id, template_item_id, completed_by, completed_at, count_value, photo_id, notes, superseded_at, superseded_by, revoked_at, revoked_by, revocation_reason, revocation_note, actual_completer_id, actual_completer_tagged_at, actual_completer_tagged_by, prep_data, auto_complete_meta, original_completion_id, edit_count";
+
+/**
+ * Column list for SELECTs against checklist_instances — single source of
+ * truth. Build #3 PR 1 introduced the constant after migration 0046
+ * added 6 new columns; collapsing the 5 prior inline copies into this
+ * constant ensures a future column addition only edits one site.
+ *
+ * lib/prep.ts has its own parallel INSTANCE_COLUMNS constant (and its
+ * own InstanceRow + rowToInstance) — historical duplication, not fixed
+ * in PR 1. Both must stay in sync. Consolidation is a candidate for a
+ * future cleanup PR but doesn't gate any build.
+ */
+const INSTANCE_COLUMNS =
+  "id, template_id, location_id, date, shift_start_at, status, confirmed_at, confirmed_by, created_at, triggered_by_user_id, triggered_at, finalized_at_actor_type, assigned_to, assignment_locked, dropped_at, dropped_by, dropped_reason";
 
 interface SubmissionRow {
   id: string;
@@ -447,6 +537,13 @@ const rowToInstance = (r: InstanceRow): ChecklistInstance => ({
   createdAt: r.created_at,
   triggeredByUserId: r.triggered_by_user_id,
   triggeredAt: r.triggered_at,
+  // Build #3 PR 1 — finalize discriminator + assignment/drop fields.
+  finalizedAtActorType: r.finalized_at_actor_type,
+  assignedTo: r.assigned_to,
+  assignmentLocked: r.assignment_locked,
+  droppedAt: r.dropped_at,
+  droppedBy: r.dropped_by,
+  droppedReason: r.dropped_reason,
 });
 
 const rowToCompletion = (r: CompletionRow): ChecklistCompletion => ({
@@ -514,7 +611,7 @@ async function loadInstanceOrThrow(
   const { data, error } = await authed
     .from("checklist_instances")
     .select(
-      "id, template_id, location_id, date, shift_start_at, status, confirmed_at, confirmed_by, created_at, triggered_by_user_id, triggered_at",
+      INSTANCE_COLUMNS,
     )
     .eq("id", instanceId)
     .maybeSingle<InstanceRow>();
@@ -629,7 +726,7 @@ export async function getOrCreateInstance(
   const { data: existing, error: readErr } = await authed
     .from("checklist_instances")
     .select(
-      "id, template_id, location_id, date, shift_start_at, status, confirmed_at, confirmed_by, created_at, triggered_by_user_id, triggered_at",
+      INSTANCE_COLUMNS,
     )
     .eq("template_id", templateId)
     .eq("location_id", locationId)
@@ -638,6 +735,44 @@ export async function getOrCreateInstance(
   if (readErr) throw new Error(`getOrCreateInstance read: ${readErr.message}`);
   if (existing) {
     return { instance: rowToInstance(existing), created: false };
+  }
+
+  // Build #3 PR 1 — submission gate evaluation. Loads the template's
+  // submission_gate_predicate and runs the evaluator if configured. NULL
+  // predicate (default for all templates pre-PR-4) → no gate, proceed
+  // to insert (back-compat). Predicate present → fail-closed semantics
+  // per locked decision B.2; throw GateNotSatisfiedError so the route
+  // handler maps to HTTP 409 with structured failure context.
+  //
+  // Service-role for the gate read so the evaluator sees ground truth
+  // even if RLS evolves to scope template visibility differently. The
+  // template lookup is by primary key (cheap; no scan).
+  const service = getServiceRoleClient();
+  const { data: tmplGate, error: tmplGateErr } = await service
+    .from("checklist_templates")
+    .select("submission_gate_predicate")
+    .eq("id", templateId)
+    .maybeSingle<{ submission_gate_predicate: GatePredicate | null }>();
+  if (tmplGateErr) {
+    throw new Error(`getOrCreateInstance template gate read: ${tmplGateErr.message}`);
+  }
+  if (!tmplGate) {
+    throw new Error(`getOrCreateInstance: template ${templateId} not found`);
+  }
+  if (tmplGate.submission_gate_predicate) {
+    const result = await evaluateGatePredicate(service, {
+      predicate: tmplGate.submission_gate_predicate,
+      locationId,
+      operationalDate: date,
+    });
+    if (!result.satisfied) {
+      throw new GateNotSatisfiedError(
+        templateId,
+        "submission",
+        result.failedClause,
+        result.observedStatus,
+      );
+    }
   }
 
   // Insert path. RLS gates on location_id ∈ user_locations AND role_level >= 3.
@@ -659,7 +794,7 @@ export async function getOrCreateInstance(
       triggered_at: triggerTimestamp,
     })
     .select(
-      "id, template_id, location_id, date, shift_start_at, status, confirmed_at, confirmed_by, created_at, triggered_by_user_id, triggered_at",
+      INSTANCE_COLUMNS,
     )
     .maybeSingle<InstanceRow>();
 
@@ -668,7 +803,7 @@ export async function getOrCreateInstance(
     const { data: race, error: raceErr } = await authed
       .from("checklist_instances")
       .select(
-        "id, template_id, location_id, date, shift_start_at, status, confirmed_at, confirmed_by, created_at, triggered_by_user_id, triggered_at",
+        INSTANCE_COLUMNS,
       )
       .eq("template_id", templateId)
       .eq("location_id", locationId)
@@ -1204,7 +1339,7 @@ export async function confirmInstance(
     .eq("id", instanceId)
     .eq("status", "open") // optimistic concurrency: re-confirm only if still open
     .select(
-      "id, template_id, location_id, date, shift_start_at, status, confirmed_at, confirmed_by, created_at, triggered_by_user_id, triggered_at",
+      INSTANCE_COLUMNS,
     )
     .maybeSingle<InstanceRow>();
   if (updateErr) throw new Error(`confirmInstance update instance: ${updateErr.message}`);
@@ -1957,4 +2092,419 @@ export async function loadChecklistChainAttribution(
       editCount: r.edit_count,
     };
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Build #3 PR 1 — Gate predicate evaluator
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Result of evaluating a GatePredicate against the live operational state
+ * at a given (location, operational_date). Discriminated union so callers
+ * branch on `result.satisfied` and TypeScript narrows the rest of the
+ * shape.
+ */
+export type GateEvaluationResult =
+  | { satisfied: true }
+  | {
+      satisfied: false;
+      failedClause: GatePredicateRequiresState;
+      /** Resolved status of the upstream artifact, or null when no instance exists. */
+      observedStatus: ChecklistStatus | null;
+      /** Why the gate failed: missing template, missing instance, or status mismatch. */
+      reason: "template_not_found" | "instance_not_found" | "status_mismatch";
+    };
+
+/**
+ * Build #3 PR 1 — evaluates a GatePredicate against the live operational
+ * state at a (locationId, operationalDate). Per design doc §4.2, gating
+ * is NOT wall-clock — it's the operational state of upstream artifacts.
+ *
+ * Semantics (locked PR 1):
+ *   - NULL predicate → `{ satisfied: true }` (no gate; back-compat for
+ *     all existing templates pre-PR-4)
+ *   - Each clause in `requires_state` evaluated independently; ALL must
+ *     pass for the gate to pass (AND-semantics)
+ *   - For each clause: resolve the active template at this location of
+ *     `template_type`; resolve the instance at (template, location,
+ *     operational_date + offset); check `instance.status IN status_in[]`
+ *   - **Fail-closed corner cases** (per locked decision B.2):
+ *       (a) no active template of `template_type` at this location → fail
+ *       (b) no instance at the offset date → fail
+ *       (c) instance status not in `status_in[]` → fail
+ *
+ * Use service-role client: the gate must see ground truth, not the
+ * actor's RLS-filtered view. The actor has location-scoped access today
+ * so this is currently equivalent, but service-role is the durable
+ * choice if RLS evolves.
+ *
+ * Throws on unknown predicate shape (per locked decision B.1: lock to
+ * one shape now; extend via discriminated union when a real second
+ * shape surfaces).
+ */
+export async function evaluateGatePredicate(
+  service: SupabaseClient,
+  args: {
+    predicate: GatePredicate | null;
+    locationId: string;
+    /** YYYY-MM-DD; same shape as ChecklistInstance.date. */
+    operationalDate: string;
+  },
+): Promise<GateEvaluationResult> {
+  const { predicate, locationId, operationalDate } = args;
+  if (predicate === null) return { satisfied: true };
+
+  // Shape lock: single supported variant. Extend via discriminated union
+  // when Toast forward projection (or another concrete need) lands.
+  if (
+    !predicate ||
+    typeof predicate !== "object" ||
+    !Array.isArray(predicate.requires_state)
+  ) {
+    throw new Error(
+      `evaluateGatePredicate: unsupported predicate shape; expected { requires_state: [...] }`,
+    );
+  }
+
+  for (const clause of predicate.requires_state) {
+    if (
+      typeof clause !== "object" ||
+      typeof clause.template_type !== "string" ||
+      typeof clause.operational_date_offset !== "number" ||
+      !Array.isArray(clause.status_in)
+    ) {
+      throw new Error(
+        `evaluateGatePredicate: unsupported clause shape: ${JSON.stringify(clause)}`,
+      );
+    }
+
+    // (a) Resolve active template at this location matching template_type.
+    const { data: tmpl, error: tmplErr } = await service
+      .from("checklist_templates")
+      .select("id")
+      .eq("location_id", locationId)
+      .eq("type", clause.template_type)
+      .eq("active", true)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<{ id: string }>();
+    if (tmplErr) {
+      throw new Error(`evaluateGatePredicate template resolve: ${tmplErr.message}`);
+    }
+    if (!tmpl) {
+      return {
+        satisfied: false,
+        failedClause: clause,
+        observedStatus: null,
+        reason: "template_not_found",
+      };
+    }
+
+    // Resolve target operational date by offset. Using YYYY-MM-DD
+    // calendar arithmetic via UTC (matches dashboard pattern; sidesteps
+    // DST since we're walking calendar days only).
+    const targetDate = shiftDateByDays(operationalDate, clause.operational_date_offset);
+
+    // (b) Resolve instance for that template at the target date.
+    const { data: inst, error: instErr } = await service
+      .from("checklist_instances")
+      .select("status")
+      .eq("template_id", tmpl.id)
+      .eq("location_id", locationId)
+      .eq("date", targetDate)
+      .maybeSingle<{ status: ChecklistStatus }>();
+    if (instErr) {
+      throw new Error(`evaluateGatePredicate instance resolve: ${instErr.message}`);
+    }
+    if (!inst) {
+      return {
+        satisfied: false,
+        failedClause: clause,
+        observedStatus: null,
+        reason: "instance_not_found",
+      };
+    }
+
+    // (c) Status check.
+    if (!clause.status_in.includes(inst.status)) {
+      return {
+        satisfied: false,
+        failedClause: clause,
+        observedStatus: inst.status,
+        reason: "status_mismatch",
+      };
+    }
+  }
+
+  return { satisfied: true };
+}
+
+/**
+ * YYYY-MM-DD calendar arithmetic helper. Walks calendar days via UTC
+ * (DST-safe because we're not converting between zones — just adding
+ * days to a date-only string).
+ */
+function shiftDateByDays(yyyymmdd: string, offsetDays: number): string {
+  const d = new Date(`${yyyymmdd}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + offsetDays);
+  return d.toISOString().slice(0, 10);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Build #3 PR 1 — dropInstance (self-drop only; manager paths deferred)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build #3 PR 1 — drops (un-claims) a self-claimed instance, releasing
+ * it for someone else to pick up.
+ *
+ * PR 1 scope: self-drop only.
+ *   - Permitted when assignment_locked=false AND assigned_to=actor.userId
+ *   - Throws AssignmentLockedError when assignment_locked=true
+ *   - Throws NotAssignedToActorError when actor isn't the current assignee
+ *
+ * State after drop (per locked decisions A.3, A.4, D.2):
+ *   - assigned_to → NULL
+ *   - assignment_locked stays false (was already false; assertion)
+ *   - dropped_at = now(), dropped_by = actor, dropped_reason = reason
+ *   - status stays 'open' (drop != finalize; instance is re-claimable)
+ *   - triggered_by_user_id / triggered_at PRESERVED for forensic chain
+ *
+ * Audit emission: `report.drop` (destructive=true via registry). Full
+ * drop history lives in audit_log (audit_log IS the event log; no
+ * separate drops table per A.5). On re-claim + re-drop, the instance
+ * row's dropped_* triplet overwrites; audit chain accumulates.
+ *
+ * Reassignment (manager moves assignment from A to B) is a separate
+ * C.42 path, NOT in PR 1 scope. The KH+/AGM+ admin can already
+ * inspect and act on instances via other paths.
+ */
+export async function dropInstance(
+  authed: SupabaseClient,
+  args: {
+    instanceId: string;
+    actor: ChecklistActor;
+    reason: string;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  },
+): Promise<{ instance: ChecklistInstance }> {
+  const { instanceId, actor, reason } = args;
+
+  // Pre-flight: load instance to discriminate the three error cases.
+  const inst = await loadInstanceOrThrow(authed, instanceId);
+
+  if (inst.assignment_locked) {
+    throw new AssignmentLockedError(instanceId, inst.assigned_to);
+  }
+  if (inst.assigned_to !== actor.userId) {
+    throw new NotAssignedToActorError(instanceId, actor.userId, inst.assigned_to);
+  }
+
+  // Service-role for the UPDATE to keep semantics consistent with the
+  // existing supersede / revoke paths (RLS on checklist_instances permits
+  // user UPDATE for the actor's location, but service-role lets us write
+  // an audit row inside the same control flow without juggling clients).
+  const service = getServiceRoleClient();
+  const droppedAt = new Date().toISOString();
+  const priorAssignedTo = inst.assigned_to;
+  const priorAssignmentLocked = inst.assignment_locked;
+
+  const { data: updated, error: updateErr } = await service
+    .from("checklist_instances")
+    .update({
+      assigned_to: null,
+      dropped_at: droppedAt,
+      dropped_by: actor.userId,
+      dropped_reason: reason,
+    })
+    .eq("id", instanceId)
+    // Concurrency guard: only update if still assigned to this actor and
+    // not concurrently locked. Mirrors the supersede pattern's optimistic
+    // check.
+    .eq("assigned_to", actor.userId)
+    .eq("assignment_locked", false)
+    .select(INSTANCE_COLUMNS)
+    .maybeSingle<InstanceRow>();
+  if (updateErr) throw new Error(`dropInstance update: ${updateErr.message}`);
+  if (!updated) {
+    // 0 rows affected — concurrent modification (someone else dropped, or
+    // a manager just locked it). Surface the conflict so the UI can re-
+    // load and re-evaluate affordances.
+    throw new ChecklistError(
+      `dropInstance: instance ${instanceId} concurrently modified during drop.`,
+      "concurrent_modification",
+    );
+  }
+
+  await audit({
+    actorId: actor.userId,
+    actorRole: actor.role,
+    action: "report.drop",
+    resourceTable: "checklist_instances",
+    resourceId: instanceId,
+    metadata: {
+      template_id: inst.template_id,
+      location_id: inst.location_id,
+      date: inst.date,
+      dropped_reason: reason,
+      prior_assigned_to: priorAssignedTo,
+      prior_assignment_locked: priorAssignmentLocked,
+    },
+    ipAddress: args.ipAddress ?? null,
+    userAgent: args.userAgent ?? null,
+  });
+
+  return { instance: rowToInstance(updated) };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Build #3 PR 1 — Auto-release helpers (opener-release + system_auto)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Build #3 PR 1 — opener taps Release UI on an unfinalized prior closing.
+ * PR 1 ships the lib helper; PR 4 wires the UI.
+ *
+ * Pre-conditions:
+ *   - instance is a closing-template instance
+ *   - instance.status === 'open'
+ *
+ * Effects:
+ *   - status → 'auto_finalized'
+ *   - finalized_at_actor_type → 'opener_release'
+ *   - audit `closing.released_unfinalized` with metadata.release_source='opener'
+ *   - metadata.notification_pending=true so PR 3's notification builder
+ *     can reconstruct routing for opener-release events that fired in the
+ *     gap between PR 1 and PR 3 merges (per locked decision C.4 refinement)
+ *
+ * Reason category from the chip selector + optional free-text. Required
+ * brief reason captures the operational signal (closer_walked_out vs
+ * closer_forgot vs equipment_issue_at_close vs other).
+ */
+export async function releaseClosingByOpener(
+  service: SupabaseClient,
+  args: {
+    instanceId: string;
+    opener: ChecklistActor;
+    reasonCategory: "closer_walked_out" | "closer_forgot" | "equipment_issue_at_close" | "other";
+    reasonText: string | null;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  },
+): Promise<{ instance: ChecklistInstance }> {
+  const { instanceId, opener, reasonCategory, reasonText } = args;
+
+  // Pre-flight: load + verify status='open' AND template type='closing'.
+  const { data: inst, error: instErr } = await service
+    .from("checklist_instances")
+    .select(`${INSTANCE_COLUMNS}, template:checklist_templates!inner(type)`)
+    .eq("id", instanceId)
+    .maybeSingle<InstanceRow & { template: { type: ChecklistType } | { type: ChecklistType }[] }>();
+  if (instErr) throw new Error(`releaseClosingByOpener load: ${instErr.message}`);
+  if (!inst) throw new Error(`releaseClosingByOpener: instance ${instanceId} not found`);
+  // Normalize embedded relation (may be single or single-element array).
+  const tmpl = Array.isArray(inst.template) ? inst.template[0] : inst.template;
+  if (tmpl?.type !== "closing") {
+    throw new ChecklistError(
+      `releaseClosingByOpener: instance ${instanceId} is not a closing template (type=${tmpl?.type})`,
+      "not_closing_template",
+    );
+  }
+  if (inst.status !== "open") {
+    throw new ChecklistInstanceClosedError(instanceId, inst.status);
+  }
+
+  // Atomic update: status + finalize discriminator. Concurrency guard on
+  // status='open' so a race with system_auto / closer-confirm doesn't
+  // double-finalize.
+  const { data: updated, error: updateErr } = await service
+    .from("checklist_instances")
+    .update({
+      status: "auto_finalized" as ChecklistStatus,
+      finalized_at_actor_type: "opener_release" as FinalizedAtActorType,
+    })
+    .eq("id", instanceId)
+    .eq("status", "open")
+    .select(INSTANCE_COLUMNS)
+    .maybeSingle<InstanceRow>();
+  if (updateErr) throw new Error(`releaseClosingByOpener update: ${updateErr.message}`);
+  if (!updated) {
+    throw new ChecklistError(
+      `releaseClosingByOpener: instance ${instanceId} concurrently finalized.`,
+      "concurrent_modification",
+    );
+  }
+
+  await audit({
+    actorId: opener.userId,
+    actorRole: opener.role,
+    action: "closing.released_unfinalized",
+    resourceTable: "checklist_instances",
+    resourceId: instanceId,
+    metadata: {
+      release_source: "opener",
+      reason_category: reasonCategory,
+      reason_text: reasonText,
+      template_id: inst.template_id,
+      location_id: inst.location_id,
+      date: inst.date,
+      // C.4 refinement: PR 3 builds notification infra; until then,
+      // surface notification_pending=true so opener-release events
+      // fired in the PR-1-to-PR-3 gap can be routed retroactively.
+      notification_pending: true,
+    },
+    ipAddress: args.ipAddress ?? null,
+    userAgent: args.userAgent ?? null,
+  });
+
+  return { instance: rowToInstance(updated) };
+}
+
+/**
+ * Build #3 PR 1 — lazy auto-release evaluator. Wraps the SQL function
+ * `release_overdue_closings(p_location_ids uuid[])` which is the source
+ * of truth for the system_auto release path (per locked decision C.2:
+ * SQL function as source of truth, lib helper as thin wrapper). pg_cron
+ * calls the same function with NULL on a 6h interval as the backstop.
+ *
+ * Args.locationIds:
+ *   - "all"   → release across every location (matches level 7+ override
+ *               and the cron NULL-arg invocation)
+ *   - []      → no-op short-circuit; level<7 user with no assigned
+ *               locations has nothing to evaluate
+ *   - [...]   → release only at these locations
+ *
+ * Returns the count of instances that transitioned to 'auto_finalized'.
+ * Caller-side errors are caught + logged — this is a fire-and-forget
+ * helper called from non-critical paths (dashboard render, post-login
+ * hooks). NEVER throws to the caller; failures degrade gracefully to
+ * the cron backstop.
+ *
+ * The wrapper accepts a SupabaseClient parameter so callers can pass
+ * service-role explicitly (recommended) and tests can pass mocks.
+ */
+export async function evaluateAutoReleaseForUserLocations(
+  service: SupabaseClient,
+  args: { locationIds: string[] | "all" },
+): Promise<{ releasedCount: number }> {
+  const { locationIds } = args;
+  if (locationIds !== "all" && locationIds.length === 0) {
+    return { releasedCount: 0 };
+  }
+  try {
+    const { data, error } = await service.rpc("release_overdue_closings", {
+      p_location_ids: locationIds === "all" ? null : locationIds,
+    });
+    if (error) {
+      console.error(`[evaluateAutoReleaseForUserLocations] rpc failed:`, error.message);
+      return { releasedCount: 0 };
+    }
+    const count = typeof data === "number" ? data : 0;
+    return { releasedCount: count };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[evaluateAutoReleaseForUserLocations] unexpected error:`, msg);
+    return { releasedCount: 0 };
+  }
 }

@@ -579,6 +579,15 @@ interface InstanceRow {
   created_at: string;
   triggered_by_user_id: string | null;
   triggered_at: string | null;
+  // Build #3 PR 1 — finalize discriminator + assignment/drop tracking
+  // (migration 0046). Parallels lib/checklists.ts InstanceRow; both
+  // must stay in sync. Consolidation deferred to a future cleanup PR.
+  finalized_at_actor_type: ChecklistInstance["finalizedAtActorType"];
+  assigned_to: string | null;
+  assignment_locked: boolean;
+  dropped_at: string | null;
+  dropped_by: string | null;
+  dropped_reason: string | null;
 }
 
 interface TemplateItemRow {
@@ -625,7 +634,7 @@ interface CompletionRow {
 }
 
 const INSTANCE_COLUMNS =
-  "id, template_id, location_id, date, shift_start_at, status, confirmed_at, confirmed_by, created_at, triggered_by_user_id, triggered_at";
+  "id, template_id, location_id, date, shift_start_at, status, confirmed_at, confirmed_by, created_at, triggered_by_user_id, triggered_at, finalized_at_actor_type, assigned_to, assignment_locked, dropped_at, dropped_by, dropped_reason";
 
 const TEMPLATE_ITEM_COLUMNS =
   "id, template_id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, vendor_item_id, active, translations, prep_meta, report_reference_type";
@@ -646,6 +655,14 @@ function rowToInstance(r: InstanceRow): ChecklistInstance {
     createdAt: r.created_at,
     triggeredByUserId: r.triggered_by_user_id,
     triggeredAt: r.triggered_at,
+    // Build #3 PR 1 — finalize + assignment/drop fields. Mirror parallel
+    // mapper in lib/checklists.ts.
+    finalizedAtActorType: r.finalized_at_actor_type,
+    assignedTo: r.assigned_to,
+    assignmentLocked: r.assignment_locked,
+    droppedAt: r.dropped_at,
+    droppedBy: r.dropped_by,
+    droppedReason: r.dropped_reason,
   };
 }
 

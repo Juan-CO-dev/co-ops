@@ -1255,15 +1255,40 @@ Captured during Wave 1 spec refresh session (2026-05-05). Architecture locked wi
 
 ---
 
+## C.48 — Closing auto-release time-anchor: `shift_start_at + 16h` constant, not `locations.closes_at + 12h`
+
+**Date added:** 2026-05-06
+**Spec sections under amendment:** Build #3 design doc §4.3 (Auto-finalize mechanism); spec v1.3 §4.1 (`locations` table schema)
+**Build:** Wave 2 Build #1 (Opening Report) — PR 1
+
+**What design doc says:** §4.3 specifies the system auto-release backstop fires "12 hours after `location.closes_at`, if closing still 'open'." This implies a per-location operating-hours field on `locations` that the cron / lazy evaluator anchors against.
+
+**What built reality is:** PR 1 anchors the auto-release window on `checklist_instances.shift_start_at + 16 hours` instead, applied as a global constant (not per-location). The 16h figure covers an 8h closing-shift maximum + an 8h overnight gap before the next morning's opener arrives. The window lives in the SQL function `release_overdue_closings(p_location_ids uuid[])` (migration 0046).
+
+The `locations.closes_at` column is NOT added in PR 1. The `locations` table currently has no operating-hours data (nine columns: `id, name, code, type, active, address, phone, created_at, created_by` — confirmed via `information_schema.columns`).
+
+**Why the divergence is correct:**
+
+1. **Avoids a per-location data-entry dependency.** Adding `locations.closes_at` would require Pete-side or seed-side population before the cron could function correctly. Without that data, the cron either fail-closes (no releases ever fire) or fail-opens (releases fire too eagerly with NULL anchors). Using `shift_start_at` — already populated on every closing instance — makes the cron self-sufficient on day one.
+2. **`shift_start_at` is a more honest anchor.** Operations vary: a Wednesday closing might start at 9pm; a busy Friday might start at 11pm. Anchoring on the actual shift start tracks the actual operational duration, not a static "we typically close at 11pm" assumption.
+3. **The 16h constant is defensible and tunable.** 8h closing-shift max (CO's longest closing shifts) + 8h overnight gap (worst case: closer leaves at 7am Sunday after a 11pm Saturday open; next opener arrives Monday at 7am) = 16h. If real operational data later surfaces a tighter or looser bound, change the constant in the SQL function — single-site edit.
+4. **CO is single-tenant in DC today.** Two locations (MEP, EM), both same TZ, similar operating windows. A per-location closes_at adds complexity without solving a current problem. When CO multi-tenants or expands beyond DC, revisit.
+
+**v1.4 action:** Update the design doc / spec to reflect `shift_start_at + 16h` as the canonical anchor for the system_auto release path. Document the forward path: when location admin tooling lands (post-Phase 5+), add `locations.close_grace_hours INTEGER DEFAULT 16` so per-location overrides become possible without changing the SQL function shape. The opener-release path (per design doc §4.3) is unaffected — it has no time anchor (opener taps Release whenever they arrive); only the system_auto cron path is touched by this amendment.
+
+**Restart-of-amendments note:** This is the first amendment after Wave 1 closed (spec v1.3 fold landed in PR #38). Per the design doc's frame ("amendments after Wave 1 should accumulate starting C.48"), C.48 marks the resumption of amendment capture for divergences that emerge during Build #3+ work.
+
+---
+
 ## How to add an entry
 
-1. Pick the next monotonic ID (`C.<n>` — current next: C.48).
+1. Pick the next monotonic ID (`C.<n>` — current next: C.49).
 2. Spec sections under amendment.
 3. Quote what spec says.
 4. Document what built reality is.
 5. Why the divergence is correct (operational reasoning, not just "we changed our mind").
 6. What v1.3 should do — concrete action so the spec can be reconciled mechanically.
 
-Date entries to whatever calendar the project is on (currently 2026-05-05).
+Date entries to whatever calendar the project is on (currently 2026-05-06).
 
 This file is consumed by future spec versions. Its purpose is to make spec drift cheap to reconcile, not to legitimize ad-hoc deviations. Every entry should pass the test "would I tell Pete or Cristian this is the right way to do it?" before it lands here.

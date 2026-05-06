@@ -56,6 +56,27 @@ export const DESTRUCTIVE_ACTIONS = [
   // returns true for "report.update" via the registry membership check.
   "report.update",
 
+  // Closing auto-finalize without manual confirmation (Build #3 PR 1).
+  // — destructive because the operational record transitions to
+  // 'auto_finalized' without the closer's PIN-attestation. Three release
+  // sources distinguished via metadata.release_source:
+  //   'opener'           — opener tapped Release UI (PR 4)
+  //   'system_auto'      — pg_cron / lazy-eval picked up an overdue closing
+  //   'migration_backfill' — one-shot backfill of pre-PR-1 stranded v1
+  //                        instances (migration 0046; CHECK constraint on
+  //                        finalized_at_actor_type does NOT include this
+  //                        — it lives in audit metadata only).
+  "closing.released_unfinalized",
+
+  // Report drop / un-claim (Build #3 PR 1).
+  // — destructive because it releases an in-progress instance back to
+  // unclaimed; assignment_locked instances cannot be self-dropped. Audit
+  // metadata captures prior_assigned_to, prior_assignment_locked, and
+  // dropped_reason for forensic chain. Pattern over time: someone
+  // dropping reports they self-initiated often = capacity/attention
+  // signal (per design doc §4.5).
+  "report.drop",
+
   // Bulk / sensitive
   "reports.bulk_export",
   "reports.bulk_correct",

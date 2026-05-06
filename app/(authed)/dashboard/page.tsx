@@ -22,13 +22,14 @@
  * read.
  */
 
+import { after } from "next/server";
 import Link from "next/link";
 
 import { AuthShell } from "@/components/auth/AuthShell";
 import { IdleTimeoutWarning } from "@/components/auth/IdleTimeoutWarning";
 import { LogoutButton } from "@/components/auth/LogoutButton";
 import { ROLES } from "@/lib/roles";
-import { canEditReport } from "@/lib/checklists";
+import { canEditReport, evaluateAutoReleaseForUserLocations } from "@/lib/checklists";
 import { accessibleLocations, type LocationActor } from "@/lib/locations";
 import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
@@ -298,6 +299,25 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     locations: auth.locations,
   };
   const locations = await loadAccessibleLocations(sb, locationActor);
+
+  // Build #3 PR 1 — lazy auto-release trigger. Fires after the response
+  // is sent (Next 15+ `after()` keeps the request alive past dispatch),
+  // so dashboard render latency is unaffected. Scoped to the user's
+  // accessible locations: level 7+ with `auth.locations === []` means
+  // all-locations override → pass "all"; otherwise pass the explicit
+  // ID list. The helper itself is fire-and-forget-safe — it logs
+  // errors and never throws to its caller.
+  //
+  // The pg_cron 6h backstop catches anything the lazy path misses
+  // (per locked decision C.2). For Juan-only test usage today, lazy
+  // verification urgency is low; this seam exists so the path warms
+  // up before real ops go live.
+  after(async () => {
+    const scope = auth.level >= 7 && auth.locations.length === 0
+      ? ("all" as const)
+      : auth.locations;
+    await evaluateAutoReleaseForUserLocations(sb, { locationIds: scope });
+  });
 
   const { loc } = await searchParams;
   const selectedLocation =
