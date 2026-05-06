@@ -1280,9 +1280,80 @@ The `locations.closes_at` column is NOT added in PR 1. The `locations` table cur
 
 ---
 
+## C.49 — Closing v2 fridge temp coverage + Opening verified cross-reference (lesson: verify against operational artifacts, not generic priors)
+
+**Date added:** 2026-05-06
+**Spec sections under amendment:** spec v1.3 §4.3 (Checklist tables); BUILD_3_OPENING_REPORT_DESIGN.md §2 (Phase 1 Verification Checklist) + §5 (PR 2 sequence)
+**Build:** Wave 2 Build #1 (Opening Report) — PR 2
+
+**What spec says:** v1.3 §4.3 defines the checklist template/item structure. Build #1 seeded Standard Closing v1 (then v2 in Build #2 PR 1) per CO's paper closing checklist available at the time. The Build #3 design doc §2.1 specifies that opening "mirrors closing's station structure for visual/cognitive parity" and lists three flavors of opening items, including "counts/state verification" — which implies opening verifies state that closing claimed.
+
+**What built reality is:**
+
+Closing v2 has temp tracking on at most 1 of CO's 8 fridges. The single existing temp item is labeled `"Walk-in temp log"` (Walk Ins station, display_order=15) — historically misleading naming because **no walk-in cooler exists at CO**. The label refers to the under-station fridge at the Walk Ins Station (which itself is named for walk-in customers, not refrigeration). CO's actual fridge inventory is 8 fridges, 0 walk-in coolers, 0 freezers:
+
+1. 3-door fridge (Prep Area)
+2. Back-line drinks fridge (Shut Down Back Line)
+3. Sauce fridge (Prep Fridge — its own station per the paper checklist)
+4. Deli display fridge (Expo)
+5. FOH drinks fridge (Clean front of house)
+6. Crunchy Boi station fridge
+7. 3rd Party station fridge
+8. Walk Ins station fridge
+
+Closing v2 also has the item `"Wipe out sides fridge"` (Expo Station, display_order=25) — the "sides fridge" naming is historical/colloquial for the deli display fridge (#4 above).
+
+Additionally, closing v2's Walk Ins station has historical naming drift: the `station` column value is `"Walk Ins station"` (lowercase 's') across all 5 existing items, where the canonical convention (matching the other 9 stations and the operational context) is `"Walk Ins Station"` (capital S). This is Build #1 seed drift — never operationally noticed because the closing-page renders the same string regardless of capitalization. C.49 standardizes the station value in place via UPDATE, touching all 6 rows currently at the lowercase value (5 existing items + the renamed temp log).
+
+Closing v2 has no cross-reference item for Opening Report submission. C.42 established the report-reference auto-completion mechanic (closing's `"AM Prep List"` item with `report_reference_type='am_prep'` auto-completes when AM Prep submits). Opening needs the same mechanic in reverse temporal direction: closing(N) has an `"Opening verified"` item with `report_reference_type='opening_report'` that auto-completes when Opening(N+1) submits.
+
+The PR 2 changes (mechanical, in-place additive seed; applied identically to MEP and EM templates):
+
+| # | Op | Item / target | Station | display_order |
+|---|---|---|---|---|
+| 1 | UPDATE (station-value, 6 rows touched) | "Walk Ins station" → "Walk Ins Station" (canonical capital S) | n/a — column-value standardization | n/a |
+| 2 | UPDATE (rename, id preserved) | "Walk-in temp log" → "Walk Ins station fridge temp log" | Walk Ins Station (post-rename #1) | 15 |
+| 3 | UPDATE (rename, id preserved) | "Wipe out sides fridge" → "Wipe out deli display fridge" | Expo Station | 25 |
+| 4 | INSERT | "Crunchy Boi station fridge temp log" (expects_count=true) | Crunchy Boi Station | 50 |
+| 5 | INSERT | "3rd Party station fridge temp log" (expects_count=true) | 3rd Party Station | 51 |
+| 6 | INSERT | "Sauce fridge temp log" (expects_count=true) | Prep Fridge | 52 |
+| 7 | INSERT | "Back-line drinks fridge temp log" (expects_count=true) | Shut Down Back Line | 53 |
+| 8 | INSERT | "Deli display fridge temp log" (expects_count=true) | Expo Station | 54 |
+| 9 | INSERT | "FOH drinks fridge temp log" (expects_count=true) | Clean front of house | 55 |
+| 10 | INSERT | "3-door fridge temp log" (expects_count=true) | Prep Area | 56 |
+| 11 | INSERT | "Opening verified" (report_reference_type='opening_report') | Closing Manager | 57 |
+
+`display_order` for new items appended at MAX+1 globally (50–57). The closing-client's `groupByStation` uses first-encounter Map insertion ordering (`closing-client.tsx:137`), so new items at order=50+ correctly cluster at the end of their respective station cards without renumbering existing items. Each new item ships with EN + ES translations inline via the `translations` JSONB column per C.37 translate-from-day-one.
+
+**Operation order matters:** station-value standardization (rename #1) runs FIRST so the subsequent label rename (rename #2) can look up by `(station="Walk Ins Station", label="Walk-in temp log")` — i.e., post-standardization station value. Reversing the order would create an idempotency hazard on re-runs (the label-rename's `lookup-by-new` couldn't find the new label at the now-lowercase station). The opening template (Standard Opening v1) uses `"Walk Ins Station"` (capital S) from creation; only closing v2 needs the catch-up standardization.
+
+Closing v2 final state post-C.49: **58 items, 10 stations, 8 fridge temp checks, 1 cross-reference auto-completion item** (Walk Ins station value standardized to canonical capital S across all 6 rows; row count unchanged because the standardization is column-value-only).
+
+Plus a new template entirely: **Standard Opening v1** (10 stations mirroring closing exactly, 44 items, 8 fridge temp checks (one per fridge), all required, all KH+ at min_role_level=3). Seeded fresh; no prior Opening template exists. Auto-completion of closing's new "Opening verified" item via the existing C.42 lib mechanic — no new auto-completion code.
+
+**Why the divergence is correct:**
+
+1. **Don't infer domain structure from generic priors.** The Build #3 PR 2 design conversation surfaced that the implementing assistant had inferred a "walk-in cooler" + freezer station from generic restaurant knowledge — wrong. CO has zero walk-in coolers, zero freezers. The closing v2 template + the paper checklist + on-floor reality are the operational ground truth; the implementing surface MUST verify against those artifacts before proposing structure. This is the third related repetition across the design conversation — converging on a meta-principle: **read surfaces over new workflows; don't add new workflows when a new read surface will do; don't infer structure when the operational artifact tells you what's there.** The first two repetitions: Synthesis View as computed read over granular artifacts (not a separate workflow), Maintenance Log as aggregated read over equipment-tagged completions (not a separate equipment workflow).
+
+2. **Closing template needs to evolve to support opening's verification scope.** Build #1's closing seed was complete for the closing-only universe; it missed temp logging breadth because there was no opening to verify against. Adding opening's verification scope retroactively expanded closing's responsibility. Both templates need to evolve together; PR 2's bundled change captures that joint architectural step rather than splitting into closing-only-then-opening-only PRs that would deploy a temp-logging gap to production between them.
+
+3. **"Walk-Out Verification" station name kept identical on both opening and closing templates.** The `closing-client.tsx:135` hard-codes `WALK_OUT_VERIFICATION_STATION = "Walk-Out Verification"` for the finalize gate. Opening's mirror station shares the same name to enable clean Synthesis View / Reports Console querying later (per C.42 architecture). Different items underneath each template; identical station name. `submit_opening_atomic`'s whole-form atomic submission bypasses per-station gates, so the shared name is operationally fine for opening.
+
+4. **The discovery mechanism: multi-source verification.** Juan's operational knowledge surfaced the wrong-fridge-inventory call (no walk-in cooler exists). Claude Code's database queries surfaced the existing closing v2 state including the misnamed "Walk-in temp log" item and the "Wipe out sides fridge" item. The paper checklist photo surfaced the Prep Fridge structural call (it's intentionally its own station, not a misstructured one). Each source caught different gaps; no source alone would have caught everything. Future builds touching operational structure should expect to need 2-3 verification sources before locking scope — Juan's eyes-on, database queries, and the operational artifact (paper, photo, or on-floor walkthrough).
+
+**v1.4 action:**
+
+1. Update §4.3 (or add a new sub-section) capturing Standard Closing v2's final state post-C.49: 58 items across 10 stations, 8 fridge temp checks (matching CO's actual 8-fridge inventory), 1 cross-reference auto-completion item.
+2. Add Standard Opening v1 to the seeded templates list: 44 items across 10 stations (mirrors closing's structure with adapted opening-context items per three flavors — safety/security verification, counts/state verification, opening-specific tasks with no closing pair), 8 fridge temp checks (one per fridge), all required, all KH+ (min_role_level=3).
+3. Add an architectural principle to the spec's working-rhythm section: **"Verify against operational artifacts, not generic priors."** When designing a new module that touches operational structure (stations, equipment, financial flows, role assignments), the implementing surface must verify against the existing operational artifacts — production schema, paper checklists, on-floor reality — before proposing structure inferred from generic domain knowledge. The closing template + the paper checklist are the operational ground truth for what stations/equipment exist; new templates must mirror that, not invent.
+4. **Add a canonical fridge inventory reference table to §4.3 (alongside template descriptions).** The 8 fridges with their station mapping per the table above. Templates reference fridges via `expects_count=true` items; the table makes the equipment universe explicit so future module designs (Maintenance Log Wave 7, Synthesis View, AI Insights) reference the table directly rather than re-deriving from completion data. This is "read surfaces over new workflows" in action — equipment is read off operational templates, not modeled separately. The table becomes part of the operational template universe, not buried in operational-context prose.
+5. Capture the in-place-additive-vs-Path-A-v3 precedent in the working-rhythm section. **In-place additive seed** is the right pattern when (a) all changes are additive INSERTs or label-only UPDATEs preserving id, (b) historical instances retain their snapshot via C.44 snapshot-universe-locking, (c) no item removals or breaking changes. Snapshot universe locking ensures historical instances retain their template-state-at-submission; new instances created post-seed include the new items. Renames preserve `template_item.id`, so the FK chain in `checklist_completions` stays intact for historical instances. **Path A v3** is the heavier artifact reserved for substantial revisions (item removals, role-level changes, structural restructuring). PR 2 = canonical reference for in-place; Build #2 cleanup PR (`960d0fa`) = canonical reference for Path A flip-to-inactive.
+
+---
+
 ## How to add an entry
 
-1. Pick the next monotonic ID (`C.<n>` — current next: C.49).
+1. Pick the next monotonic ID (`C.<n>` — current next: C.50).
 2. Spec sections under amendment.
 3. Quote what spec says.
 4. Document what built reality is.
