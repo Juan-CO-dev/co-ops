@@ -306,5 +306,68 @@
   "closing.report_ref.complete_aria_chain": "{label} — {attribution}",
   "closing.report_ref.tap_to_submit_aria": "{label} — toca para enviar desde la página de Lista de Prep AM",
   "closing.report_ref.edit_link": "Editar",
-  "closing.report_ref.edit_link_aria": "Editar Lista de Prep AM enviada por {name}"
+  "closing.report_ref.edit_link_aria": "Editar Lista de Prep AM enviada por {name}",
+
+  "opening.page.label": "Reporte de Apertura",
+  "opening.page.title": "Fase 1 — Verificación",
+  "opening.page.subtitle": "Verifica que el cierre de anoche corresponda con la realidad. Toca cada estación una vez que la revises; añade un comentario si algo no coincide.",
+  "opening.page.dashboard_back": "Volver al dashboard",
+
+  "opening.no_location.body": "No hay ubicaciones disponibles para tu cuenta.",
+
+  "opening.no_template.heading": "Plantilla de Apertura no configurada",
+  "opening.no_template.body": "Contacta a un gerente — la plantilla de Apertura aún no está configurada en {code}.",
+  "opening.no_template.aria": "Plantilla de Apertura no configurada",
+
+  "opening.gate.aria": "Esperando finalización del cierre anterior",
+  "opening.gate.title": "Esperando el cierre de anoche en {code}",
+  "opening.gate.body": "El reporte de cierre del {date} aún no se ha finalizado. La Apertura se desbloqueará cuando se confirme o se libere automáticamente.",
+  "opening.gate.cta_view_prior_closing": "Ver el cierre de anoche",
+
+  "opening.read_only.label": "Apertura · {code}",
+  "opening.read_only.title": "Apertura verificada",
+  "opening.read_only.attribution": "Enviado por {name} a las {time}",
+  "opening.read_only.attribution_no_time": "Enviado por {name}",
+
+  "opening.station.aria": "{station} — verificación",
+  "opening.station.tick_button": "Verificar",
+  "opening.station.ticked_button": "Verificado",
+  "opening.station.tick_aria": "Marcar {station} como verificada",
+  "opening.station.untick_aria": "Quitar marca de {station}",
+
+  "opening.item.add_addon": "Añadir comentario",
+  "opening.item.add_addon_with_content": "Editar comentario",
+  "opening.item.count_input_placeholder": "—",
+  "opening.item.count_input_aria": "Lectura de temperatura para {item}",
+  "opening.item.count_required_inline": "Falta temperatura",
+  "opening.item.comment_label": "Comentario",
+  "opening.item.comment_placeholder": "Anota cualquier discrepancia",
+  "opening.item.comment_aria": "Comentario para {item}",
+  "opening.item.photo_pending_label": "Subida de foto disponible próximamente",
+  "opening.item.photo_pending_tooltip": "La captura de foto se activará en una versión futura. Por ahora usa el comentario.",
+
+  "opening.phase.tab_phase1": "Fase 1 · Verificar",
+  "opening.phase.tab_phase2_disabled": "Fase 2 · Prep",
+  "opening.phase.tab_phase2_tooltip": "La entrada de prep llega en la próxima versión.",
+
+  "opening.submit.counter_verified": "{ticked} de {total} verificadas",
+  "opening.submit.counter_temps": "{filled} de {total} temperaturas registradas",
+  "opening.submit.gate_ready": "Listo para enviar",
+  "opening.submit.gate_disabled_items_remaining": "{remaining} elementos sin verificar",
+  "opening.submit.gate_disabled_temps_required": "Falta lectura de temperatura para {item}",
+  "opening.submit.gate_disabled_generic": "Envío deshabilitado",
+  "opening.submit.button_label": "Enviar Apertura",
+  "opening.submit.submitting": "Enviando…",
+
+  "opening.error.role_level_insufficient": "Tu rol no puede enviar la Apertura — contacta a un gerente.",
+  "opening.error.instance_not_open": "La Apertura ya se envió — refresca la página.",
+  "opening.error.auto_complete_failed": "El cierre de anoche no se puede vincular — contacta a un gerente.",
+  "opening.error.missing_count": "Falta una lectura de temperatura.",
+  "opening.error.invalid_entry_shape": "El envío estaba mal formado — refresca la página.",
+  "opening.error.invalid_payload": "El envío estaba mal formado — refresca la página.",
+  "opening.error.location_access_denied": "No tienes acceso a esta ubicación.",
+  "opening.error.instance_not_found": "Instancia de Apertura no encontrada — refresca la página.",
+  "opening.error.network": "Error de red — intenta de nuevo.",
+  "opening.error.fallback": "El envío falló — intenta de nuevo.",
+  "opening.error.internal_error": "Algo salió mal — intenta de nuevo."
 }
