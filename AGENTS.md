@@ -722,3 +722,140 @@ Established by migration `0045_flip_v1_closing_inactive` (2026-05-05). Future mi
 
 Sibling lesson to "RPC-side audit_log INSERTs must mirror the actual column shape" (Build #2 PR 3 smoke) — both belong to the broader principle that SQL-side audit emission is its own discipline distinct from the JS-side `audit()` helper, with column shape and metadata conventions specific to the emission path.
 
+---
+
+## Phase 3 — Build #3 cleanup PR (Wave 2 Build #1 close-out, 2026-05-06)
+
+### Durable-knowledge entries
+
+Seven architectural lessons surfaced during Build #3 (Wave 2 Build #1 — auto-release infrastructure + Opening Report verification checklist). They are independent of any specific Build #3 deliverable and apply to every operational-template, audit-emission, and PR-housekeeping path going forward. Bucket #4 of this cleanup PR adds an eighth entry covering the migration text repo capture convention.
+
+### Pre-INSERT pg_enum query for enum-constrained columns
+
+When authoring INSERT statements (or convergent seeds) against enum-constrained columns, query `pg_enum` for the actual labels BEFORE writing the INSERT. Design docs and prompt context frequently use natural-language shorthand for enum values — that shorthand rarely matches the production label exactly. The label-vs-shorthand drift slips past code review (it reads naturally) and only surfaces when the INSERT errors with `invalid input value for enum`.
+
+PR 2 Surface 2 caught this: design doc named the report-reference type `'opening'` (natural shorthand); production enum label is `'opening_report'`. The seed's first run errored on the constraint; the gap-recovery row at `b927ae16-7ee1-43fa-8336-0c6b725b3a00` captures the orphaned-changes forensic detail.
+
+Pre-flight pattern (sibling to the Build #2 PR 3 information_schema column-shape lesson):
+
+```sql
+SELECT enumlabel FROM pg_enum
+WHERE enumtypid = '<type_name>'::regtype
+ORDER BY enumsortorder;
+```
+
+Run BEFORE writing any INSERT against an enum-constrained column. Both lessons (the Build #2 PR 3 information_schema column-shape lesson and this one) belong to the broader principle: SQL-side emission shape must be verified against production schema directly, not inferred from JS-side helpers, design docs, or prompt context.
+
+### `audit.gap_recovery` action pattern
+
+`audit.gap_recovery` is the canonical action for the case where a mid-run failure (or race condition) caused changes to land without their corresponding audit row. Distinct from `audit.metadata_correction`, which corrects an existing audit row's metadata after the fact; gap_recovery emits a NEW audit row covering changes that should have had one but didn't.
+
+Schema convention for gap_recovery metadata:
+
+```jsonc
+{
+  "recovery_type": "<short label, e.g. 'partial_seed_run_enum_mismatch'>",
+  "failed_run_error": "<original error that aborted the run>",
+  "orphaned_changes": [
+    { "op": "INSERT" | "UPDATE", "target": "<table.row_ref>",
+      "before": "...", "after": "..." }
+  ],
+  "resolving_audit_row_id": "<UUID of the audit row that completed the work>"
+}
+```
+
+`orphaned_changes` is op-by-op (not a summary blob) so future-Claude can reconstruct exactly what was modified outside the audit chain. `resolving_audit_row_id` is the forward link to the audit row the second, successful run emitted; queries that walk forward from gap_recovery → resolving find the canonical record.
+
+Canonical example: PR 2 Surface 2 enum mismatch produced gap-recovery row `b927ae16-7ee1-43fa-8336-0c6b725b3a00`. The first seed run aborted mid-INSERT on the enum label drift; some additive INSERTs had landed before the abort but never emitted the seed's own audit row. The fix-and-retry produced the canonical audit row; the gap-recovery row references both the failed run's error and the canonical row id.
+
+Append-only philosophy applies: never UPDATE the original failed-run state OR the canonical audit row to "make it right." gap_recovery as a forward-emission preserves the full forensic chain.
+
+### Multi-source verification working-rhythm
+
+Operational-structure design (stations, equipment, role boundaries, data shapes that mirror physical reality) requires 2–3 independent verification sources before scope can be locked. No single source catches every gap. The five canonical source classes:
+
+1. **Juan's operational knowledge** — institutional, on-floor reality not written down anywhere
+2. **Database queries** — production schema, audit log, completion data
+3. **Operational artifact** — paper checklist, photo, on-floor walkthrough, surviving training material
+4. **Claude Code's pre-flight read against codebase** — actual code shapes, file presence, helper signatures
+5. **Juan's smoke test on rendered output** — post-deploy visual verification of UX
+
+PR 2 surfaced five distinct design gaps live, each caught by a different source class:
+
+- **Closing v2 fridge gap** (8 fridges, not 1) — caught by source #1 (Juan's operational knowledge surfaced the wrong-fridge-inventory call before the implementing surface had read closing v2 carefully enough)
+- **Lowercase-`s` station drift** (`"Walk Ins station"` vs `"Walk Ins Station"`) — caught by source #2 (DB query surfaced the production state; invisible to the closing-page render and never operationally noticed)
+- **Walk-in cooler / freezer phantom near-miss** — caught by source #3 (operational artifact: paper closing checklist + on-floor walkthrough corrected the proposal that had inferred phantom equipment from generic priors)
+- **Photo upload assumption** (`PhotoUploader.tsx` Phase 6 stub) — caught by source #4 (Claude Code's pre-flight read of the codebase surfaced that the photo path was a stub, not a wired implementation)
+- **Phase 2 tab visibility** (assignment-locked routing logic) — caught by source #5 (Juan's smoke test on rendered output exposed the tab-visibility gap that pre-deploy reads hadn't surfaced)
+
+If we'd had only one source class, each gap would have shipped. Future builds touching operational structure must explicitly enumerate which source classes have verified scope BEFORE locking — and surface to Juan when only one source is available so a second can be obtained. The five source classes are not exhaustive (future builds may surface a sixth — e.g., third-party integration probe), but they cover the substrate as of Build #3.
+
+### In-place additive vs Path A v3 precedent
+
+Two patterns exist for evolving a seeded template post-production. Picking the right one is dictated by the change shape, not preference.
+
+**In-place additive** — extend the existing template row in place. Use when ALL of the following hold:
+- All changes are additive INSERTs OR label-only UPDATEs preserving `template_item.id`
+- Historical instances retain their snapshot via C.44 universe locking (template state at submission time is preserved)
+- No item removals, no role-level changes that would break historical chains, no structural restructuring
+
+The id-preservation discipline is what makes in-place safe — `checklist_completions.template_item_id` FK chains stay intact for historical instances; new instances post-seed pick up the new items via the live template lookup. C.44 snapshot universe locking guarantees the historical universe never sees them.
+
+**Path A v3 (flip-to-inactive)** — ship vN+1 as a new row, validate operationally, then flip vN to `active=false` in a follow-up cleanup PR. Use when ANY of:
+- Item removals (breaks historical FK chains if applied in-place)
+- Role-level changes (changes who could legitimately have completed an item)
+- Structural restructuring (station renames with semantic shift, item reordering with semantic shift, template_meta migrations)
+
+Canonical references:
+- **In-place additive: PR 2 squash `a02022f` (2026-05-06)** — Standard Closing v2 evolved from 50 → 58 items via additive INSERTs + label-only UPDATEs preserving id; Standard Opening v1 seeded fresh; closing v2 station-value standardization done in place because it was column-value normalization, not structural change
+- **Path A canonical: Build #2 cleanup squash `960d0fa`** — Standard Closing v1 → v2 supersession with explicit deactivation of v1 in a follow-up cleanup PR
+
+When in doubt, Path A is the safer default — it's slightly more work but preserves the historical/live separation cleanly. Reach for in-place only when the criteria above are unambiguously satisfied.
+
+### Verify against operational artifacts, not generic priors
+
+When designing a new module, view, or template that touches operational structure (stations, equipment, role boundaries, financial flows), the implementing surface MUST verify against existing operational artifacts before proposing structure. Two paired rules:
+
+**Negative rule:** Don't infer domain structure from training-data priors. Generic "what a restaurant has" knowledge — walk-in coolers, freezers, prep tables, line cooks — does not describe CO. CO has zero walk-in coolers, zero freezers, eight under-station fridges with their own per-station naming. The shape of CO's operations is specific and surfaced in the existing closing template, the paper checklists, and Juan's operational knowledge — not inferable from a prompt context that says "restaurant."
+
+**Positive rule:** When operational artifacts exist (paper checklists, production schema, on-floor reality, prior shipped templates), they ARE ground truth. Read them carefully before proposing scope. When artifacts don't exist, surface the gap to Juan rather than fabricating structure from priors.
+
+PR 2 caught the canonical near-miss: the implementing assistant proposed Standard Opening v1 with stations for "walk-in cooler" and "freezer" — both phantom equipment that doesn't exist at CO. The closing v2 template + the paper closing checklist + Juan's operational walkthrough corrected the proposal before it shipped. Without the multi-source check (rule above), the phantom would have landed and required a Path A v3 cleanup.
+
+Pair this rule with "read surfaces over new workflows" (next entry) — they reinforce each other but answer different questions. This rule is about evidence sources for operational structure; the next is about module-shape decisions once the operational structure is established.
+
+### Read surfaces over new workflows (meta-principle)
+
+When proposing a new capability, default to a new read surface over a new workflow. Operational rhythm produces data; future modules surface that data differently for different audiences. Adding a new workflow when a read surface would suffice creates orphan workflows (operators learn another submission step) and orphan data shapes (the new workflow's data isn't connected to existing reports/completions).
+
+Three converged repetitions in the Build #3 PR 2 design conversation:
+
+1. **Synthesis View as computed read** — a single morning view aggregating Opening Report verification + AM Prep submission + closing's prior-night results. NOT a new submission flow; a computed read over the granular artifacts that already exist.
+2. **Maintenance Log as aggregated read** — equipment-tagged completions across closing/opening/mid-day surface as a maintenance log via filter/aggregation. NOT a new equipment-state-tracking workflow; a read surface over data the operational rhythm already produces.
+3. **Equipment fridge inventory captured inline on operational checklists** — fridge temp logs are items on closing/opening templates with fridge identity carried in item label + station. NOT a separate equipment registry table with a separate "log a temp reading" workflow. Per C.49, the 8 fridges become a read off the templates, not a modeled-separately resource.
+
+Useful guard against scope sprawl: when a new module is proposed, the FIRST question is "is this a new read surface over existing data, or a genuinely new workflow that produces new data?" Default to read surface. Reach for new workflow only when the data genuinely doesn't exist anywhere — and then prefer extending an existing capture artifact (adding a station/item to closing) over a new artifact entirely.
+
+Pair with "verify against operational artifacts" (previous entry) — that rule ensures you understand what data exists; this one decides what to build on top of it.
+
+The principle has forward architectural commitment: Reports Hub (Wave 2), Synthesis View (Wave 2), Maintenance Log (Wave 7), AI Insights (Wave 6) are all explicitly designed as read surfaces over capture artifacts. This entry makes the principle durable for any future module proposal.
+
+### Branch deletion via `gh api -X DELETE` (canonical first-line pattern)
+
+When merging a PR from a worktree branch, delete the remote branch via `gh api -X DELETE`, NOT via `gh pr merge --delete-branch`. The local-branch deletion path fails when the parent worktree has main checked out — `gh pr merge --delete-branch` tries to delete the local branch in the parent repo, hits the "currently checked out" lock, and aborts the deletion silently or with a confusing error.
+
+Three occurrences confirm the pattern, not a one-off:
+- PR #38 (Wave 1 spec v1.3 fold)
+- PR #39 (Build #3 PR 1 — auto-release infrastructure)
+- PR #40 (Build #3 PR 2 — Opening Report verification checklist)
+
+Canonical command:
+
+```bash
+gh api -X DELETE repos/Juan-CO-dev/co-ops/git/refs/heads/<branch-name>
+```
+
+**Skip the `gh pr merge --delete-branch` path entirely. Don't even attempt it.** The API path is the first-line pattern from cold-start.
+
+Local-branch cleanup (if needed) is separate — `git branch -D <name>` from a non-main-checked-out worktree works fine. The remote-deletion-via-API + optional-local-cleanup-as-needed split is the correct mental model for worktree-aware PR housekeeping.
+
