@@ -50,8 +50,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { audit } from "./audit";
 import { canEditReport } from "./checklists";
+import {
+  COMPLETION_COLUMNS,
+  INSTANCE_COLUMNS,
+  type CompletionRow,
+  type InstanceRow,
+  rowToCompletion,
+  rowToInstance,
+} from "./checklist-rows";
 import type {
-  AutoCompleteMeta,
   ChecklistCompletion,
   ChecklistInstance,
   ChecklistTemplateItem,
@@ -567,29 +574,6 @@ export async function seedPrepItem(
 // Read loaders
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface InstanceRow {
-  id: string;
-  template_id: string;
-  location_id: string;
-  date: string;
-  shift_start_at: string | null;
-  status: ChecklistInstance["status"];
-  confirmed_at: string | null;
-  confirmed_by: string | null;
-  created_at: string;
-  triggered_by_user_id: string | null;
-  triggered_at: string | null;
-  // Build #3 PR 1 — finalize discriminator + assignment/drop tracking
-  // (migration 0046). Parallels lib/checklists.ts InstanceRow; both
-  // must stay in sync. Consolidation deferred to a future cleanup PR.
-  finalized_at_actor_type: ChecklistInstance["finalizedAtActorType"];
-  assigned_to: string | null;
-  assignment_locked: boolean;
-  dropped_at: string | null;
-  dropped_by: string | null;
-  dropped_reason: string | null;
-}
-
 interface TemplateItemRow {
   id: string;
   template_id: string;
@@ -608,63 +592,8 @@ interface TemplateItemRow {
   report_reference_type: ReportType | null;
 }
 
-interface CompletionRow {
-  id: string;
-  instance_id: string;
-  template_item_id: string;
-  completed_by: string;
-  completed_at: string;
-  count_value: string | number | null;
-  photo_id: string | null;
-  notes: string | null;
-  superseded_at: string | null;
-  superseded_by: string | null;
-  revoked_at: string | null;
-  revoked_by: string | null;
-  revocation_reason: ChecklistCompletion["revocationReason"];
-  revocation_note: string | null;
-  actual_completer_id: string | null;
-  actual_completer_tagged_at: string | null;
-  actual_completer_tagged_by: string | null;
-  prep_data: unknown | null;
-  auto_complete_meta: unknown | null;
-  // C.46 chain link + edit position (migration 0042).
-  original_completion_id: string | null;
-  edit_count: number;
-}
-
-const INSTANCE_COLUMNS =
-  "id, template_id, location_id, date, shift_start_at, status, confirmed_at, confirmed_by, created_at, triggered_by_user_id, triggered_at, finalized_at_actor_type, assigned_to, assignment_locked, dropped_at, dropped_by, dropped_reason";
-
 const TEMPLATE_ITEM_COLUMNS =
   "id, template_id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, vendor_item_id, active, translations, prep_meta, report_reference_type";
-
-const COMPLETION_COLUMNS =
-  "id, instance_id, template_item_id, completed_by, completed_at, count_value, photo_id, notes, superseded_at, superseded_by, revoked_at, revoked_by, revocation_reason, revocation_note, actual_completer_id, actual_completer_tagged_at, actual_completer_tagged_by, prep_data, auto_complete_meta, original_completion_id, edit_count";
-
-function rowToInstance(r: InstanceRow): ChecklistInstance {
-  return {
-    id: r.id,
-    templateId: r.template_id,
-    locationId: r.location_id,
-    date: r.date,
-    shiftStartAt: r.shift_start_at,
-    status: r.status,
-    confirmedAt: r.confirmed_at,
-    confirmedBy: r.confirmed_by,
-    createdAt: r.created_at,
-    triggeredByUserId: r.triggered_by_user_id,
-    triggeredAt: r.triggered_at,
-    // Build #3 PR 1 — finalize + assignment/drop fields. Mirror parallel
-    // mapper in lib/checklists.ts.
-    finalizedAtActorType: r.finalized_at_actor_type,
-    assignedTo: r.assigned_to,
-    assignmentLocked: r.assignment_locked,
-    droppedAt: r.dropped_at,
-    droppedBy: r.dropped_by,
-    droppedReason: r.dropped_reason,
-  };
-}
 
 function rowToTemplateItem(r: TemplateItemRow): ChecklistTemplateItem {
   return {
@@ -683,33 +612,6 @@ function rowToTemplateItem(r: TemplateItemRow): ChecklistTemplateItem {
     translations: r.translations,
     prepMeta: (r.prep_meta ?? null) as PrepMeta | null,
     reportReferenceType: r.report_reference_type,
-  };
-}
-
-function rowToCompletion(r: CompletionRow): ChecklistCompletion {
-  return {
-    id: r.id,
-    instanceId: r.instance_id,
-    templateItemId: r.template_item_id,
-    completedBy: r.completed_by,
-    completedAt: r.completed_at,
-    countValue: r.count_value === null ? null : Number(r.count_value),
-    photoId: r.photo_id,
-    notes: r.notes,
-    supersededAt: r.superseded_at,
-    supersededBy: r.superseded_by,
-    revokedAt: r.revoked_at,
-    revokedBy: r.revoked_by,
-    revocationReason: r.revocation_reason,
-    revocationNote: r.revocation_note,
-    actualCompleterId: r.actual_completer_id,
-    actualCompleterTaggedAt: r.actual_completer_tagged_at,
-    actualCompleterTaggedBy: r.actual_completer_tagged_by,
-    prepData: (r.prep_data ?? null) as PrepData | null,
-    autoCompleteMeta: (r.auto_complete_meta ?? null) as AutoCompleteMeta | null,
-    // C.46 chain link + edit position.
-    originalCompletionId: r.original_completion_id,
-    editCount: r.edit_count,
   };
 }
 

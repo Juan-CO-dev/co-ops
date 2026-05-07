@@ -128,6 +128,12 @@ The original sequence assumed Module 1 was a single artifact and that Module 3 (
 - **Pete already had his "wow moment"** when AM Prep + Closing v2 shipped and Cristian started using it operationally. AI Insights doesn't need to be early — it's downstream value when data exists.
 - **Module 1 fragmentation** is healthy, not concerning. Each report type teaches the platform something specific (AM Prep = inventory snapshot + prep tracking; Closing = settlement + reconciliation; Mid-Shift = operational pulse). Shipping them sequentially lets the architecture prove out per type.
 
+### May 6, 2026 (Wave 2 ordering refinement)
+
+After Build #3 PR 2 (Opening Report Phase 1 Verification Checklist) shipped, the following change to Wave 2 ordering was locked:
+
+**Wave 2 ordering refinement — Opening Report sequenced before Mid-day Prep; Mid-day Prep added as separate module from Mid-Shift Report.** Original §5 Wave 2 listed Mid-Shift Report; Build #3 design conversation (2026-05-05/06) clarified two distinct concerns: (1) Mid-day Prep is the operational capture artifact for mid-shift prep submissions per C.43; (2) Mid-Shift Report is a future read surface aggregating Mid-day Prep + Toast read + other mid-shift signals. Opening Report (Build #3) sequenced before Mid-day Prep (Build #4) because Opening's bring-to-par output is what Mid-day Prep depends on for ground truth. Mid-Shift Report stays in Wave 2 ordering after capture artifacts are live. Captured in `BUILD_3_OPENING_REPORT_DESIGN.md`.
+
 ---
 
 ## 5. Current Updated Priority List (May 5, 2026)
@@ -141,7 +147,7 @@ This is the active build sequence. Modules grouped by **shipping wave** rather t
 - C.46 post-submission edit + chained attribution (Build #2 PR 3)
 - Cleanup PRs (v1 closing flip, formatDateLabel lift)
 
-### Wave 1: Spec v1.3 refresh (NEXT — pending)
+### Wave 1: Spec v1.3 refresh (✅ shipped 2026-05-06, squash fbf6930)
 
 Mechanical fold of amendments C.16-C.46 into v1.2 base + integration of C.47 (Time Clock architectural commitment). Pure documentation work, no code. Closes Build #2 fully and produces unified source of truth before Module #2 work begins.
 
@@ -151,13 +157,15 @@ Each ships as its own focused module per the locked Build #2 architecture (chain
 
 | Module | Why it matters | Dependencies |
 |---|---|---|
-| **Mid-Shift Report** | Operational pulse during the day, captures shift-change handoff data | Build #2 patterns, daily report tables |
+| **Opening Report** (Build #3, ✅ shipped 2026-05-06, squash a02022f) | Phase 1 morning verification + bring-to-par output that Mid-day Prep depends on for ground truth | Build #2 patterns, closing v2 cross-references |
+| **Mid-day Prep** (Build #4) | Operational capture artifact for mid-shift prep submissions per C.43 (multiple instances per day, numbered) | Build #2 + Build #3 patterns, Opening's bring-to-par output |
+| **Mid-Shift Report** | Future read surface aggregating Mid-day Prep + Toast read + other mid-shift signals (distinct from Mid-day Prep capture artifact); read-surface default per AGENTS.md (f) | Mid-day Prep live, Toast adapter |
 | **PM Report** | Late-day operational data (closing-prep but not closing) | Build #2 patterns |
 | **Cash Deposit Confirmation** | Closes cash-handling loop, Cristian's accountability win (was Module 8 in original list) | Photo service, daily report cash data |
 | **Maintenance Log** | Equipment notes from daily reports get a real workflow home (was Module 7 in original list) | Photo service, audit log, daily report data |
 | **Catering Reports** | Maria's catering operation tracking, distinct from catering pipeline | Catering tables, photo service |
 
-**Sequencing within Wave 2:** likely Mid-Shift + PM ship first (closest to existing AM Prep / Closing patterns), then Cash Deposit + Maintenance (lighter modules), then Catering Reports.
+**Sequencing within Wave 2:** Opening Report shipped first (Build #3); Mid-day Prep ships next (Build #4) because Opening's bring-to-par output is its ground truth dependency. Mid-Shift Report follows once Mid-day Prep capture is live (it's a read surface over Mid-day Prep + Toast). PM Report, Cash Deposit, and Maintenance Log can ship in parallel once their substrate modules (Build #2 patterns, Toast read, audit log) are sufficient. Catering Reports ship last in Wave 2 — Maria's catering operation tracking is operationally bounded (no cross-template dependencies) so it doesn't unblock other work; capture artifact for catering events is its own scope.
 
 ### Wave 3: Reports Hub (after Wave 2 substantially complete)
 
