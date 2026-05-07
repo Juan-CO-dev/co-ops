@@ -136,21 +136,22 @@ export class OpeningEntryShapeError extends OpeningError {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Entry shape — what the form sends per item
+// Entry shape — what the form sends per item (discriminated union)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Per-item entry shape for opening Phase 1 submission. Top-level columns
- * (count_value, photo_id, notes) — no prep_data JSONB because opening
- * Phase 1 has nothing prep-shaped.
+ * Phase 1 entry — verification ticks + optional fridge temp counts +
+ * optional discrepancy photo/comment. Top-level checklist_completion
+ * columns (count_value, photo_id, notes); no prep_data JSONB.
  *
  * Form state in opening-client.tsx tracks the same shape plus a `ticked`
  * boolean for the per-station gate; the `ticked` field stays client-side
  * (every entry sent to the RPC IS ticked, by definition of the submit
  * gate enforcing "all 44 ticked before submit enables").
  */
-export interface OpeningEntry {
+export interface OpeningEntryPhase1 {
   templateItemId: string;
+  phase: "phase1";
   /** Populated for the 8 fridge temp items (template_item.expects_count=true). NULL otherwise. */
   countValue: number | null;
   /** Optional discrepancy photo. Always null in PR 2 (Phase 6 wires the upload). */
@@ -158,6 +159,64 @@ export interface OpeningEntry {
   /** Optional discrepancy comment. NULL when none. */
   notes: string | null;
 }
+
+/**
+ * Phase 2 entry — three-values prep verification + optional over/under-par
+ * capture + closer-estimate snapshot resolved at form-load time. Stored in
+ * checklist_completions.prep_data.phase2 JSONB; count_value/photo_id/notes
+ * stay NULL.
+ *
+ * Per locked Q3: closerEstimateSnapshot is trusted from the form's
+ * loadCloserEstimateSnapshots resolution; the RPC does NOT re-resolve.
+ * If the AM Prep gets edited (C.46 chain edit) between form-load and
+ * submit, the form's snapshot is the operational truth at the moment
+ * the opener saw it. The amPrepCompletionId in the snapshot lets future
+ * audit consumers detect divergence without paying the per-submit
+ * re-resolution cost.
+ *
+ * Per locked Q5: under-par fires one notification per entry (N-per-item
+ * grain) inside the RPC transaction; recipients = KH+ at this location +
+ * MoO + Owner.
+ */
+export interface OpeningEntryPhase2 {
+  templateItemId: string;
+  phase: "phase2";
+  phase2: {
+    /** Opener's count on arrival. Required. */
+    openerActual: number;
+    /** What opener actually prepped today. Required. */
+    openerPrepped: number;
+    /** Over-par capture: opener prepped > expected par. NULL when normal. */
+    overPar: {
+      reasonCategory:
+        | "management_directive"
+        | "clear_fridge_space"
+        | "prevent_expiration"
+        | "forecast_busy"
+        | "bulk_efficiency"
+        | "other";
+      /** Required when reasonCategory='management_directive'; null otherwise. */
+      directedBy: string | null;
+      /** Optional free-text nuance; required when reasonCategory='other'. */
+      freeText: string | null;
+    } | null;
+    /** Under-par capture: opener prepped < expected par. Triggers urgent notification. */
+    underPar: {
+      reasonCategory:
+        | "ingredient_unavailable"
+        | "equipment_issue"
+        | "time_constraint"
+        | "staff_shortage"
+        | "other";
+      /** REQUIRED for under-par per design doc §3.3. */
+      freeText: string;
+    } | null;
+    /** Closer-estimate snapshot from prior-night AM Prep. NULL when no AM Prep yesterday OR par-null item. */
+    closerEstimateSnapshot: CloserEstimateSnapshot | null;
+  };
+}
+
+export type OpeningEntry = OpeningEntryPhase1 | OpeningEntryPhase2;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase 2 closer-estimate snapshot — what the form reads to render the
@@ -661,6 +720,8 @@ interface SubmitRpcResult {
   autoCompleteId: string | null;
   editCount: number;
   originalSubmissionId: string | null;
+  /** Build #3 PR 3 Step 4 — IDs of notifications fired for under-par Phase 2 entries. */
+  underParNotificationIds: string[];
 }
 
 /**
@@ -700,6 +761,8 @@ export async function submitOpening(
   closingAutoCompleteId: string | null;
   editCount: number;
   originalSubmissionId: string | null;
+  /** Build #3 PR 3 Step 4 — IDs of notifications fired for under-par Phase 2 entries. */
+  underParNotificationIds: string[];
 }> {
   // Authorization gate (original-submission path; update path uses canEditReport
   // and is not in PR 2 scope).
@@ -721,27 +784,82 @@ export async function submitOpening(
     throw new OpeningRoleViolationError(OPENING_BASE_LEVEL, args.actor.level);
   }
 
-  // Per-entry validation: count_value required for items that expect count.
-  // (Defense-in-depth; the form should also enforce this client-side.)
-  // Server-side validation iterates the ENTRIES array, not the source-of-truth
-  // template — so it doesn't catch missing entries. The form is the
-  // source-of-truth gate ("all 44 ticked"); the RPC is the second layer.
+  // Per-entry validation (defense-in-depth; the form should also enforce
+  // client-side). Server-side validation iterates the ENTRIES array, not the
+  // source-of-truth template — so it doesn't catch missing entries. The form
+  // is the source-of-truth gate; the RPC is the second layer.
+  //
+  // Discriminated union narrows on entry.phase ("phase1" | "phase2"); each
+  // branch validates its own field shape.
   for (const entry of args.entries) {
-    if (entry.countValue !== null && typeof entry.countValue !== "number") {
-      throw new OpeningEntryShapeError(
-        `entry ${entry.templateItemId} countValue must be number or null`,
-      );
+    if (entry.phase === "phase1") {
+      if (entry.countValue !== null && typeof entry.countValue !== "number") {
+        throw new OpeningEntryShapeError(
+          `phase1 entry ${entry.templateItemId} countValue must be number or null`,
+        );
+      }
+    } else {
+      // phase2 — validate the phase2 sub-object shape
+      if (typeof entry.phase2.openerActual !== "number") {
+        throw new OpeningEntryShapeError(
+          `phase2 entry ${entry.templateItemId} openerActual must be number`,
+        );
+      }
+      if (typeof entry.phase2.openerPrepped !== "number") {
+        throw new OpeningEntryShapeError(
+          `phase2 entry ${entry.templateItemId} openerPrepped must be number`,
+        );
+      }
+      // Under-par requires non-empty freeText per design doc §3.3.
+      if (entry.phase2.underPar !== null && !entry.phase2.underPar.freeText.trim()) {
+        throw new OpeningEntryShapeError(
+          `phase2 entry ${entry.templateItemId} underPar.freeText is required when under-par`,
+        );
+      }
+      // Over-par with reasonCategory='other' requires freeText per design doc §3.2.
+      if (
+        entry.phase2.overPar !== null &&
+        entry.phase2.overPar.reasonCategory === "other" &&
+        (entry.phase2.overPar.freeText === null || !entry.phase2.overPar.freeText.trim())
+      ) {
+        throw new OpeningEntryShapeError(
+          `phase2 entry ${entry.templateItemId} overPar.freeText is required when reasonCategory='other'`,
+        );
+      }
+      // Over-par with reasonCategory='management_directive' requires directedBy
+      // (architectural intent: accountability tagging — locked Surface D (a)).
+      if (
+        entry.phase2.overPar !== null &&
+        entry.phase2.overPar.reasonCategory === "management_directive" &&
+        entry.phase2.overPar.directedBy === null
+      ) {
+        throw new OpeningEntryShapeError(
+          `phase2 entry ${entry.templateItemId} overPar.directedBy is required when reasonCategory='management_directive'`,
+        );
+      }
     }
   }
 
-  // Marshal entries for the RPC. count_value, photo_id, notes pass through
-  // as JSON strings (RPC casts to numeric / uuid / text via NULLIF + cast).
-  const rpcEntries = args.entries.map((e) => ({
-    templateItemId: e.templateItemId,
-    countValue: e.countValue === null ? "" : String(e.countValue),
-    photoId: e.photoId ?? "",
-    notes: e.notes ?? "",
-  }));
+  // Marshal entries for the RPC, dispatching on phase. Phase 1 sends
+  // count_value/photo_id/notes as JSON strings (RPC casts via NULLIF + cast);
+  // Phase 2 sends the full phase2 sub-object as JSONB (RPC stores in
+  // checklist_completions.prep_data.phase2 verbatim).
+  const rpcEntries = args.entries.map((e) => {
+    if (e.phase === "phase1") {
+      return {
+        templateItemId: e.templateItemId,
+        phase: "phase1" as const,
+        countValue: e.countValue === null ? "" : String(e.countValue),
+        photoId: e.photoId ?? "",
+        notes: e.notes ?? "",
+      };
+    }
+    return {
+      templateItemId: e.templateItemId,
+      phase: "phase2" as const,
+      phase2: e.phase2,
+    };
+  });
 
   let rpcResult: SubmitRpcResult;
   try {
@@ -853,5 +971,6 @@ export async function submitOpening(
     closingAutoCompleteId: rpcResult.autoCompleteId,
     editCount: rpcResult.editCount,
     originalSubmissionId: rpcResult.originalSubmissionId,
+    underParNotificationIds: rpcResult.underParNotificationIds ?? [],
   };
 }

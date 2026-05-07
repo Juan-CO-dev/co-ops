@@ -203,10 +203,20 @@ export async function POST(req: NextRequest) {
 
   // 4. Submit. Lib emits the opening.submit audit row internally per outcome.
   try {
+    // Build #3 PR 3 Step 4: map wire body (Phase-1-only today) into the
+    // OpeningEntry discriminated union with explicit phase: "phase1". When
+    // Step 6 form mechanics ship Phase 2 wire shape, extend validateBody +
+    // this mapping to dispatch on the body's discriminator.
     const result = await submitOpening(service, {
       instanceId: body.instanceId,
       actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level },
-      entries: body.entries,
+      entries: body.entries.map((e) => ({
+        templateItemId: e.templateItemId,
+        phase: "phase1" as const,
+        countValue: e.countValue,
+        photoId: e.photoId,
+        notes: e.notes,
+      })),
       closingReportRefItemId,
       ipAddress: extractIp(req),
       userAgent: req.headers.get("user-agent"),
@@ -217,6 +227,7 @@ export async function POST(req: NextRequest) {
       closingAutoCompleteId: result.closingAutoCompleteId,
       editCount: result.editCount,
       originalSubmissionId: result.originalSubmissionId,
+      underParNotificationIds: result.underParNotificationIds,
     });
   } catch (err) {
     if (err instanceof OpeningError) return mapOpeningError(err);
