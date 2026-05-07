@@ -25,9 +25,16 @@ import { accessibleLocations, type LocationActor } from "@/lib/locations";
 import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
-import { loadOpeningState } from "@/lib/opening";
+import {
+  loadCloserEstimateSnapshots,
+  loadOpeningState,
+  type CloserEstimateSnapshot,
+} from "@/lib/opening";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import type { OpeningPhase2Meta } from "@/lib/types";
+
+import type { ManagerOption } from "@/components/opening/OverParModal";
 
 import { OpeningClient } from "./opening-client";
 
@@ -211,17 +218,90 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
     );
   }
 
+  // Build #3 PR 3 Step 6 — load Phase 2 closer-estimate snapshots + AGM+
+  // managers at this location. Both pre-loaded server-side; OpeningClient
+  // consumes via props.
+  const phase2ItemIds = state.templateItems
+    .filter((it) => (it.prepMeta as OpeningPhase2Meta | null)?.openingPhase2 === true)
+    .map((it) => it.id);
+
+  let closerSnapshots: Record<string, CloserEstimateSnapshot | null> = {};
+  if (phase2ItemIds.length > 0) {
+    const snapshotMap = await loadCloserEstimateSnapshots(sb, {
+      locationId: selectedLocation.id,
+      priorOperationalDate: yesterday,
+      openingTemplateItemIds: phase2ItemIds,
+    });
+    // Serialize Map to plain object for Server-Component → Client boundary.
+    closerSnapshots = Object.fromEntries(snapshotMap);
+  }
+
+  const managers = await loadAgmPlusManagers(sb, selectedLocation.id);
+
   // status='open' — render the form.
   return (
     <AuthShell>
       <OpeningClient
         instance={state.instance}
         templateItems={state.templateItems}
+        closerSnapshots={closerSnapshots}
+        managers={managers}
         language={language}
       />
       <IdleTimeoutWarning />
     </AuthShell>
   );
+}
+
+/**
+ * Loads users at level >= 5 (AGM+) at this location for the over-par
+ * `directedBy` dropdown. Per locked Sub-decision (g): AGM+ scope. Includes
+ * level-7+ users (Owner) regardless of user_locations membership per the
+ * all-locations-override rule.
+ */
+async function loadAgmPlusManagers(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+): Promise<ManagerOption[]> {
+  // Two queries (per AGENTS.md "PostgREST embedded-select" lesson):
+  //   1. user_locations rows at this location for AGM+ codes
+  //   2. all level-7+ users (location-unscoped global override)
+  const AGM_PLUS_CODES = ["cgs", "owner", "moo", "gm", "agm", "catering_mgr"];
+
+  const { data: locScoped, error: locErr } = await sb
+    .from("user_locations")
+    .select("user_id")
+    .eq("location_id", locationId);
+  if (locErr) throw new Error(`load location-scoped manager ids: ${locErr.message}`);
+  const locScopedIds = ((locScoped ?? []) as Array<{ user_id: string }>).map(
+    (r) => r.user_id,
+  );
+
+  // Combined: users matching role AGM+ AND (in locScopedIds OR role in {owner, cgs}).
+  // Owner+CGS are level >= 7 with all-locations override; others must be
+  // location-scoped.
+  let query = sb
+    .from("users")
+    .select("id, name, role")
+    .eq("active", true)
+    .in("role", AGM_PLUS_CODES)
+    .order("name", { ascending: true });
+
+  const { data: allCandidates, error: usersErr } = await query;
+  if (usersErr) throw new Error(`load AGM+ users: ${usersErr.message}`);
+
+  const result: ManagerOption[] = [];
+  for (const u of (allCandidates ?? []) as Array<{
+    id: string;
+    name: string;
+    role: string;
+  }>) {
+    const isGlobal = u.role === "cgs" || u.role === "owner";
+    if (isGlobal || locScopedIds.includes(u.id)) {
+      result.push({ id: u.id, name: u.name, role: u.role });
+    }
+  }
+  return result;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
