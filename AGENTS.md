@@ -859,3 +859,40 @@ gh api -X DELETE repos/Juan-CO-dev/co-ops/git/refs/heads/<branch-name>
 
 Local-branch cleanup (if needed) is separate — `git branch -D <name>` from a non-main-checked-out worktree works fine. The remote-deletion-via-API + optional-local-cleanup-as-needed split is the correct mental model for worktree-aware PR housekeeping.
 
+### Migration text repo capture (convention from Build #3 cleanup PR onward)
+
+Every migration applied via Supabase MCP `apply_migration` also lands as `supabase/migrations/NNNN_<name>.sql` in the same PR. Filenames match Supabase's `name` field exactly to maintain grep consistency between code comments (which cite migrations by name) and on-disk files.
+
+Two header formats:
+
+**Retroactive (migrations 0044-0048, captured 2026-05-06):**
+
+```sql
+-- Captured retroactively 2026-05-06 from supabase.migrations table.
+-- Functional equivalent of applied migration; may differ in whitespace
+-- or transaction wrapping from original MCP apply_migration input.
+-- Canonical reference: <lib site path:line OR AGENTS.md lesson>
+```
+
+**Going-forward (0049+):**
+
+```sql
+-- Migration NNNN_<name>
+-- Applied via Supabase MCP apply_migration on YYYY-MM-DD.
+-- Canonical reference: <lib site path:line OR AGENTS.md lesson>
+```
+
+**File structure (both formats):** the provenance metadata block sits at the top, followed by a single blank line, followed by the migration's own original author comment block (which documents what the SQL does + why). The two answer different questions — provenance vs purpose — and merging blurs the separation. Keep them stacked, separated by a single blank line.
+
+**Pain point being solved:** when future-Claude reads `lib/prep.ts:582` ("Build #3 PR 1 — migration 0046"), there must be an in-repo path to read what 0046 actually did. Without the file, the reader has to ask Juan to query Supabase, reason from comments, or infer from code behavior. With the file, the bidirectional trace (lib comment → migration file → lib site canonical reference) makes troubleshooting fast.
+
+**Migration → durable lesson cross-references.** Migrations that exist to fix a bug captured as a durable lesson should reference that lesson in their header, sibling to the canonical lib-site reference. Both `0044_c46_audit_emission_column_fix` (→ "RPC-side audit_log INSERTs must mirror the actual column shape" lesson) and `0048_create_submit_opening_atomic_rpc` (→ pg_enum pre-flight lesson) demonstrate this pattern. Two cross-references is a pattern; document the practice rather than leaving it as informal precedent. Note that the cross-reference may point to either the lesson the migration *applied* (forward direction) or the lesson the migration *taught* (backward direction; e.g., 0048's gap-recovery row `b927ae16-7ee1-43fa-8336-0c6b725b3a00` capturing the orphaned-changes detail from the failed first run is what generated the pg_enum lesson). Both directions are valid; the header should be honest about which.
+
+**On earlier migrations (pre-0044):** Not captured retroactively in this PR. The convention covers 0044-onward. If a future debugging path requires reading a pre-0044 migration's SQL and Supabase dashboard access becomes a friction point, that's the signal to retroactively backfill the relevant range. Default until then: leave pre-0044 in Supabase only.
+
+**Caveats:**
+
+- Retroactive captures are recovered from the `supabase_migrations.schema_migrations` table content. The recovered SQL is functionally equivalent to what was applied but may differ in whitespace or transaction wrapping from the original MCP `apply_migration` tool input. Treat retroactive files as documentation of effect, not exact-byte reproductions.
+- Going-forward migrations should still be applied via Supabase MCP, not via `supabase db push` or direct psql — the file is the readable record of what was applied; the MCP tool is the apply path.
+- The convention is not enforced by CI today. Forward hardening: add a CI check that fails if a code comment mentions `migration NNNN` without a corresponding `supabase/migrations/NNNN_*.sql` file. Captured as a future task; not in this PR's scope.
+
