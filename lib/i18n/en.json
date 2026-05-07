@@ -369,5 +369,16 @@
   "opening.error.instance_not_found": "Opening instance not found — refresh the page.",
   "opening.error.network": "Network error — try again.",
   "opening.error.fallback": "Submission failed — try again.",
-  "opening.error.internal_error": "Something went wrong — try again."
+  "opening.error.internal_error": "Something went wrong — try again.",
+
+  "notifications.under_par_alert.title": "Under-par: {itemName} at {locationCode}",
+  "notifications.under_par_alert.body": "{openerName} prepped {prepped} (par {par}, was estimated at {closer}). Reason: {reasonCategory}. {freeText}",
+  "notifications.under_par_alert.reason.ingredient_unavailable": "Ingredient unavailable",
+  "notifications.under_par_alert.reason.equipment_issue": "Equipment issue",
+  "notifications.under_par_alert.reason.time_constraint": "Time constraint",
+  "notifications.under_par_alert.reason.staff_shortage": "Staff shortage",
+  "notifications.under_par_alert.reason.other": "Other",
+  "notifications.priority.urgent": "Urgent",
+  "notifications.priority.info": "Info",
+  "notifications.empty_state": "No new notifications"
 }

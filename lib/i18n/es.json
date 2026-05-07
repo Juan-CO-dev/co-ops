@@ -369,5 +369,16 @@
   "opening.error.instance_not_found": "Instancia de Apertura no encontrada — refresca la página.",
   "opening.error.network": "Error de red — intenta de nuevo.",
   "opening.error.fallback": "El envío falló — intenta de nuevo.",
-  "opening.error.internal_error": "Algo salió mal — intenta de nuevo."
+  "opening.error.internal_error": "Algo salió mal — intenta de nuevo.",
+
+  "notifications.under_par_alert.title": "Por debajo del par: {itemName} en {locationCode}",
+  "notifications.under_par_alert.body": "{openerName} preparó {prepped} (par {par}, estimación de cierre {closer}). Razón: {reasonCategory}. {freeText}",
+  "notifications.under_par_alert.reason.ingredient_unavailable": "Ingrediente no disponible",
+  "notifications.under_par_alert.reason.equipment_issue": "Problema con el equipo",
+  "notifications.under_par_alert.reason.time_constraint": "Restricción de tiempo",
+  "notifications.under_par_alert.reason.staff_shortage": "Falta de personal",
+  "notifications.under_par_alert.reason.other": "Otro",
+  "notifications.priority.urgent": "Urgente",
+  "notifications.priority.info": "Información",
+  "notifications.empty_state": "Sin notificaciones nuevas"
 }
