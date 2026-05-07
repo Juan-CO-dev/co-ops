@@ -43,6 +43,14 @@ import {
   loadChecklistChainAttribution,
   type ChecklistChainEntry,
 } from "@/lib/checklists";
+import {
+  COMPLETION_COLUMNS,
+  INSTANCE_COLUMNS,
+  type CompletionRow,
+  type InstanceRow,
+  rowToCompletion,
+  rowToInstance,
+} from "@/lib/checklist-rows";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
@@ -50,14 +58,11 @@ import type { Language } from "@/lib/i18n/types";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import type {
-  AutoCompleteMeta,
   ChecklistCompletion,
   ChecklistInstance,
-  ChecklistRevocationReason,
   ChecklistStatus,
   ChecklistTemplateItem,
   ChecklistTemplateItemTranslations,
-  PrepData,
   PrepMeta,
   ReportType,
 } from "@/lib/types";
@@ -91,52 +96,6 @@ function nyDateString(d: Date): string {
 // ─────────────────────────────────────────────────────────────────────────────
 // snake_case → camelCase row mappers
 // ─────────────────────────────────────────────────────────────────────────────
-
-interface InstanceRow {
-  id: string;
-  template_id: string;
-  location_id: string;
-  date: string;
-  shift_start_at: string | null;
-  status: ChecklistStatus;
-  confirmed_at: string | null;
-  confirmed_by: string | null;
-  created_at: string;
-  // Build #2 (per SPEC_AMENDMENTS.md C.18 + C.43; migration 0038).
-  triggered_by_user_id: string | null;
-  triggered_at: string | null;
-  // Build #3 PR 1 — finalize discriminator + assignment/drop tracking
-  // (migration 0046). Third parallel mirror of lib/checklists.ts +
-  // lib/prep.ts InstanceRow shapes; consolidation deferred to a future
-  // cleanup PR.
-  finalized_at_actor_type: ChecklistInstance["finalizedAtActorType"];
-  assigned_to: string | null;
-  assignment_locked: boolean;
-  dropped_at: string | null;
-  dropped_by: string | null;
-  dropped_reason: string | null;
-}
-
-const rowToInstance = (r: InstanceRow): ChecklistInstance => ({
-  id: r.id,
-  templateId: r.template_id,
-  locationId: r.location_id,
-  date: r.date,
-  shiftStartAt: r.shift_start_at,
-  status: r.status,
-  confirmedAt: r.confirmed_at,
-  confirmedBy: r.confirmed_by,
-  createdAt: r.created_at,
-  triggeredByUserId: r.triggered_by_user_id,
-  triggeredAt: r.triggered_at,
-  // Build #3 PR 1 — finalize + assignment/drop fields.
-  finalizedAtActorType: r.finalized_at_actor_type,
-  assignedTo: r.assigned_to,
-  assignmentLocked: r.assignment_locked,
-  droppedAt: r.dropped_at,
-  droppedBy: r.dropped_by,
-  droppedReason: r.dropped_reason,
-});
 
 interface TemplateItemRow {
   id: string;
@@ -178,67 +137,6 @@ const rowToTemplateItem = (r: TemplateItemRow): ChecklistTemplateItem => ({
   // (later step in this PR — render report-reference items distinctly).
   prepMeta: (r.prep_meta ?? null) as PrepMeta | null,
   reportReferenceType: r.report_reference_type,
-});
-
-interface CompletionRow {
-  id: string;
-  instance_id: string;
-  template_item_id: string;
-  completed_by: string;
-  completed_at: string;
-  count_value: string | number | null;
-  photo_id: string | null;
-  notes: string | null;
-  superseded_at: string | null;
-  superseded_by: string | null;
-  // Revoke / tag fields per SPEC_AMENDMENTS.md C.28. PR 1 wires server-side
-  // reads to surface them; PR 2 ships the UI rendering.
-  revoked_at: string | null;
-  revoked_by: string | null;
-  revocation_reason: ChecklistRevocationReason | null;
-  revocation_note: string | null;
-  actual_completer_id: string | null;
-  actual_completer_tagged_at: string | null;
-  actual_completer_tagged_by: string | null;
-  // Build #2 (per SPEC_AMENDMENTS.md C.18 + C.44; migration 0037). Always
-  // NULL on closing-page-loaded completions (closing items don't carry
-  // prep payloads). Pass-through here for type completeness.
-  prep_data: unknown | null;
-  // Build #2 (per SPEC_AMENDMENTS.md C.42; migration 0040). Populated on
-  // the closing's auto-completed report-reference items (e.g., "AM Prep
-  // List ✓ — submitted by Cristian at 9:47 PM"). Closing-client reads
-  // this to branch attribution-style rendering vs user-notes rendering
-  // (later step in this PR).
-  auto_complete_meta: unknown | null;
-  // C.46 chain link + edit position (migration 0042). Always NULL/0 on
-  // closing-page-loaded completions (closing items don't have edit chains —
-  // only AM Prep submissions do). Pass-through here for type completeness.
-  original_completion_id: string | null;
-  edit_count: number;
-}
-
-const rowToCompletion = (r: CompletionRow): ChecklistCompletion => ({
-  id: r.id,
-  instanceId: r.instance_id,
-  templateItemId: r.template_item_id,
-  completedBy: r.completed_by,
-  completedAt: r.completed_at,
-  countValue: r.count_value === null ? null : Number(r.count_value),
-  photoId: r.photo_id,
-  notes: r.notes,
-  supersededAt: r.superseded_at,
-  supersededBy: r.superseded_by,
-  revokedAt: r.revoked_at,
-  revokedBy: r.revoked_by,
-  revocationReason: r.revocation_reason,
-  revocationNote: r.revocation_note,
-  actualCompleterId: r.actual_completer_id,
-  actualCompleterTaggedAt: r.actual_completer_tagged_at,
-  actualCompleterTaggedBy: r.actual_completer_tagged_by,
-  prepData: (r.prep_data ?? null) as PrepData | null,
-  autoCompleteMeta: (r.auto_complete_meta ?? null) as AutoCompleteMeta | null,
-  originalCompletionId: r.original_completion_id,
-  editCount: r.edit_count,
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -367,9 +265,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
   if (isHistorical) {
     const { data, error } = await sb
       .from("checklist_instances")
-      .select(
-        "id, template_id, location_id, date, shift_start_at, status, confirmed_at, confirmed_by, created_at, triggered_by_user_id, triggered_at, finalized_at_actor_type, assigned_to, assignment_locked, dropped_at, dropped_by, dropped_reason",
-      )
+      .select(INSTANCE_COLUMNS)
       .eq("template_id", templateRow.id)
       .eq("location_id", locationParam)
       .eq("date", targetDate)
@@ -433,9 +329,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
   // Walk-Out Verification gate all treat revoked rows as not-completed.
   const { data: completionRows, error: compErr } = await sb
     .from("checklist_completions")
-    .select(
-      "id, instance_id, template_item_id, completed_by, completed_at, count_value, photo_id, notes, superseded_at, superseded_by, revoked_at, revoked_by, revocation_reason, revocation_note, actual_completer_id, actual_completer_tagged_at, actual_completer_tagged_by, prep_data, auto_complete_meta, original_completion_id, edit_count",
-    )
+    .select(COMPLETION_COLUMNS)
     .eq("instance_id", instanceRow.id)
     .is("superseded_at", null)
     .is("revoked_at", null);

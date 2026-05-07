@@ -54,11 +54,17 @@ import { verifyPin } from "./auth";
 import { audit } from "./audit";
 import { getServiceRoleClient } from "./supabase-server";
 import { getRoleLevel, type RoleCode } from "./roles";
+import {
+  COMPLETION_COLUMNS,
+  INSTANCE_COLUMNS,
+  type CompletionRow,
+  type InstanceRow,
+  rowToCompletion,
+  rowToInstance,
+} from "./checklist-rows";
 import type {
-  AutoCompleteMeta,
   ChecklistInstance,
   ChecklistCompletion,
-  ChecklistRevocationReason,
   ChecklistSubmission,
   ChecklistIncompleteReason,
   ChecklistStatus,
@@ -66,7 +72,6 @@ import type {
   FinalizedAtActorType,
   GatePredicate,
   GatePredicateRequiresState,
-  PrepData,
 } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -422,81 +427,6 @@ export class NotAssignedToActorError extends ChecklistError {
 // snake_case ↔ camelCase row mappers
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface InstanceRow {
-  id: string;
-  template_id: string;
-  location_id: string;
-  date: string;
-  shift_start_at: string | null;
-  status: ChecklistStatus;
-  confirmed_at: string | null;
-  confirmed_by: string | null;
-  created_at: string;
-  // Build #2 (per SPEC_AMENDMENTS.md C.18 + C.43; migration 0038).
-  triggered_by_user_id: string | null;
-  triggered_at: string | null;
-  // Build #3 PR 1 — finalize discriminator + assignment/drop tracking
-  // (migration 0046). NULL on existing rows pre-migration; populated
-  // going forward.
-  finalized_at_actor_type: FinalizedAtActorType | null;
-  assigned_to: string | null;
-  assignment_locked: boolean;
-  dropped_at: string | null;
-  dropped_by: string | null;
-  dropped_reason: string | null;
-}
-
-interface CompletionRow {
-  id: string;
-  instance_id: string;
-  template_item_id: string;
-  completed_by: string;
-  completed_at: string;
-  count_value: string | number | null;
-  photo_id: string | null;
-  notes: string | null;
-  superseded_at: string | null;
-  superseded_by: string | null;
-  revoked_at: string | null;
-  revoked_by: string | null;
-  revocation_reason: ChecklistRevocationReason | null;
-  revocation_note: string | null;
-  actual_completer_id: string | null;
-  actual_completer_tagged_at: string | null;
-  actual_completer_tagged_by: string | null;
-  // Build #2 (per SPEC_AMENDMENTS.md C.18 + C.44; migration 0037). lib/checklists.ts
-  // is the cleaning-checklist path; for prep-aware reads use lib/prep.ts which
-  // narrows the JSONB shape via isPrepData() and throws on drift.
-  prep_data: unknown | null;
-  // Build #2 (per SPEC_AMENDMENTS.md C.42; migration 0040). Structured
-  // attribution for auto-complete completions. Populated on closing's
-  // report-reference items when their source report submits; NULL on
-  // user-tap completions.
-  auto_complete_meta: unknown | null;
-  // Build #2 PR 3 (per SPEC_AMENDMENTS.md C.46; migration 0042). Chain link
-  // FK + edit position. NULL/0 on chain head (original); FK/1-3 on updates.
-  original_completion_id: string | null;
-  edit_count: number;
-}
-
-/** Column list for SELECTs against checklist_completions — single source of truth. */
-const COMPLETION_COLUMNS =
-  "id, instance_id, template_item_id, completed_by, completed_at, count_value, photo_id, notes, superseded_at, superseded_by, revoked_at, revoked_by, revocation_reason, revocation_note, actual_completer_id, actual_completer_tagged_at, actual_completer_tagged_by, prep_data, auto_complete_meta, original_completion_id, edit_count";
-
-/**
- * Column list for SELECTs against checklist_instances — single source of
- * truth. Build #3 PR 1 introduced the constant after migration 0046
- * added 6 new columns; collapsing the 5 prior inline copies into this
- * constant ensures a future column addition only edits one site.
- *
- * lib/prep.ts has its own parallel INSTANCE_COLUMNS constant (and its
- * own InstanceRow + rowToInstance) — historical duplication, not fixed
- * in PR 1. Both must stay in sync. Consolidation is a candidate for a
- * future cleanup PR but doesn't gate any build.
- */
-const INSTANCE_COLUMNS =
-  "id, template_id, location_id, date, shift_start_at, status, confirmed_at, confirmed_by, created_at, triggered_by_user_id, triggered_at, finalized_at_actor_type, assigned_to, assignment_locked, dropped_at, dropped_by, dropped_reason";
-
 interface SubmissionRow {
   id: string;
   instance_id: string;
@@ -524,57 +454,6 @@ interface TemplateItemRow {
   expects_photo: boolean;
   active: boolean;
 }
-
-const rowToInstance = (r: InstanceRow): ChecklistInstance => ({
-  id: r.id,
-  templateId: r.template_id,
-  locationId: r.location_id,
-  date: r.date,
-  shiftStartAt: r.shift_start_at,
-  status: r.status,
-  confirmedAt: r.confirmed_at,
-  confirmedBy: r.confirmed_by,
-  createdAt: r.created_at,
-  triggeredByUserId: r.triggered_by_user_id,
-  triggeredAt: r.triggered_at,
-  // Build #3 PR 1 — finalize discriminator + assignment/drop fields.
-  finalizedAtActorType: r.finalized_at_actor_type,
-  assignedTo: r.assigned_to,
-  assignmentLocked: r.assignment_locked,
-  droppedAt: r.dropped_at,
-  droppedBy: r.dropped_by,
-  droppedReason: r.dropped_reason,
-});
-
-const rowToCompletion = (r: CompletionRow): ChecklistCompletion => ({
-  id: r.id,
-  instanceId: r.instance_id,
-  templateItemId: r.template_item_id,
-  completedBy: r.completed_by,
-  completedAt: r.completed_at,
-  countValue: r.count_value === null ? null : Number(r.count_value),
-  photoId: r.photo_id,
-  notes: r.notes,
-  supersededAt: r.superseded_at,
-  supersededBy: r.superseded_by,
-  revokedAt: r.revoked_at,
-  revokedBy: r.revoked_by,
-  revocationReason: r.revocation_reason,
-  revocationNote: r.revocation_note,
-  actualCompleterId: r.actual_completer_id,
-  actualCompleterTaggedAt: r.actual_completer_tagged_at,
-  actualCompleterTaggedBy: r.actual_completer_tagged_by,
-  // Pass through; lib/prep.ts narrows for prep-aware consumers. Cleaning
-  // consumers ignore this field (always NULL on cleaning completions).
-  prepData: (r.prep_data ?? null) as PrepData | null,
-  // Pass through; closing-client UI reads this to render attribution-style
-  // text on auto-complete rows. Always NULL on cleaning user-tap rows.
-  autoCompleteMeta: (r.auto_complete_meta ?? null) as AutoCompleteMeta | null,
-  // C.46 chain link: NULL on chain head (original); FK on updates.
-  originalCompletionId: r.original_completion_id,
-  // C.46 edit position: 0 on chain head; 1-3 on updates.
-  editCount: r.edit_count,
-});
 
 const rowToSubmission = (r: SubmissionRow): ChecklistSubmission => ({
   id: r.id,
