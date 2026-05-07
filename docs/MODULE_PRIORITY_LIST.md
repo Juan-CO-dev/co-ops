@@ -147,7 +147,7 @@ This is the active build sequence. Modules grouped by **shipping wave** rather t
 - C.46 post-submission edit + chained attribution (Build #2 PR 3)
 - Cleanup PRs (v1 closing flip, formatDateLabel lift)
 
-### Wave 1: Spec v1.3 refresh (NEXT — pending)
+### Wave 1: Spec v1.3 refresh (✅ shipped 2026-05-06, squash fbf6930)
 
 Mechanical fold of amendments C.16-C.46 into v1.2 base + integration of C.47 (Time Clock architectural commitment). Pure documentation work, no code. Closes Build #2 fully and produces unified source of truth before Module #2 work begins.
 
