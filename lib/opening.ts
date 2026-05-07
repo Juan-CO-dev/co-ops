@@ -1,21 +1,27 @@
 /**
- * Opening Report Phase 1 lifecycle — Build #3 PR 2.
+ * Opening Report Phase 1 + Phase 2 lifecycle — Build #3 PR 2 + PR 3.
  *
- * Mirrors lib/prep.ts shape. Three primary public functions:
+ * Mirrors lib/prep.ts shape. Four primary public functions:
  *   - loadOpeningState         — Server Component data loader (page.tsx)
  *   - submitOpening            — invokes submit_opening_atomic RPC
  *   - resolveClosingOpeningVerifiedRefItemId — finds closing(N-1)'s
  *                                "Opening verified" item id for the
  *                                cross-reference auto-completion target
+ *   - loadCloserEstimateSnapshots — Phase 2 closer-estimate resolver;
+ *                                reads canonical (chain-resolved via
+ *                                C.46 MAX(edit_count)) AM Prep snapshot
+ *                                per opening Phase 2 item
  *
  * Plus typed errors that route handlers translate to HTTP shapes via
  * mapOpeningError (app/api/opening/_helpers.ts).
  *
  * Design references:
- *   - BUILD_3_OPENING_REPORT_DESIGN.md §2 (Phase 1 verification)
+ *   - BUILD_3_OPENING_REPORT_DESIGN.md §2 (Phase 1 verification), §3 (Phase 2)
  *   - SPEC_AMENDMENTS.md C.42 (auto-completion mechanic), C.49
  *     (closing v2 + opening v1 templates), C.46 (chained edit forward-
- *     compat; PR 2 doesn't ship edit UI but RPC supports it)
+ *     compat; PR 2 doesn't ship edit UI but RPC supports it),
+ *     C.50 PENDING (Phase 2 join key, notifications.priority,
+ *     prep_data.phase2 runtime narrowing, C.46 chain coexistence)
  *
  * Atomicity: submit_opening_atomic RPC handles 44 completion inserts +
  * submission row + instance status transition + closing auto-complete
@@ -33,6 +39,7 @@ import {
   rowToCompletion,
   rowToInstance,
 } from "./checklist-rows";
+import { isPrepData } from "./prep";
 import type { RoleCode } from "./roles";
 import type {
   ChecklistCompletion,
@@ -150,6 +157,45 @@ export interface OpeningEntry {
   photoId: string | null;
   /** Optional discrepancy comment. NULL when none. */
   notes: string | null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 2 closer-estimate snapshot — what the form reads to render the
+// "closer's projection" column for each Phase 2 item
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Closer's bring-to-par projection from prior-night AM Prep, snapshot-frozen
+ * via C.44 + chain-resolved via C.46 MAX(edit_count) per template_item.
+ *
+ * The resolver (loadCloserEstimateSnapshots) returns Map<openingTemplateItemId,
+ * CloserEstimateSnapshot | null>. NULL when:
+ *   - no AM Prep template at this location
+ *   - no AM Prep submission for prior operational date
+ *   - opening template item has no references_template_item_id (not a Phase 2 item)
+ *   - canonical AM Prep completion has no `inputs.total` (e.g., Misc YES/NO item)
+ *   - chain fully revoked (no canonical row remains after revoked_at IS NULL filter)
+ *   - prep_data shape mismatch (defensive; should not happen for AM Prep submissions)
+ *
+ * The snapshot is frozen INTO the opener's Phase 2 completion at submit time
+ * (Step 4 RPC); this resolver reads what the form should render, not what
+ * gets persisted.
+ */
+export interface CloserEstimateSnapshot {
+  /** Closer's bring-to-par projection from prior-night AM Prep. */
+  total: number;
+  /** Par at AM Prep submission time (C.44 snapshot). */
+  parValue: number | null;
+  /** AM Prep item label at submission time (C.44 snapshot). */
+  itemName: string;
+  /** Forensic chain: the canonical AM Prep completion this snapshot reads from. */
+  amPrepCompletionId: string;
+  /** Forensic chain: the parent AM Prep instance. */
+  amPrepInstanceId: string;
+  /** "Submitted at [time]" attribution context. */
+  amPrepCompletedAt: string;
+  /** C.46 edit_count at the time of read (0 = original; 1-3 = post-edit). UI hint. */
+  amPrepEditCount: number;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -403,6 +449,205 @@ export async function resolveClosingOpeningVerifiedRefItemId(
     throw new Error(`resolveClosingOpeningVerifiedRefItemId: load item: ${itemErr.message}`);
   }
   return itemRow?.id ?? null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// loadCloserEstimateSnapshots — Phase 2 closer-estimate resolver
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Resolves closer-estimate snapshots for a set of opening Phase 2 template
+ * items. Returns a Map keyed by opening template_item_id; value is the
+ * canonical AM Prep snapshot per the chain (MAX(edit_count)) OR null when
+ * no AM Prep value resolves.
+ *
+ * Four-step resolution (per AGENTS.md "PostgREST embedded-select .eq() filter
+ * on relation can fail unpredictably" lesson — multi-query over single JOIN):
+ *   1. Read opening template items → openingId → amPrepTemplateItemId map
+ *      (via references_template_item_id column added in migration 0049)
+ *   2. Resolve active AM Prep template at this location (most-recent-active
+ *      per C.43 sub-finding; refine alongside Mid-day Prep landing)
+ *   3. Resolve AM Prep instance for prior operational date (single-per-day
+ *      per the existing UNIQUE (template_id, location_id, date) constraint)
+ *   4. Read completions for that instance + amPrep item filter; JS-side
+ *      chain-resolve via MAX(edit_count) per template_item
+ *
+ * Chain semantic note (durable lesson captured in AGENTS.md alongside C.50):
+ * C.46 chain edits do NOT supersede via superseded_at. All chain rows remain
+ * `superseded_at IS NULL AND revoked_at IS NULL` simultaneously. The
+ * chain-resolution discipline is MAX(edit_count) per template_item, NOT
+ * `WHERE superseded_at IS NULL`. Mirrors lib/prep.ts:1146 computeChangedFields.
+ *
+ * Snapshot freeze pattern (C.44): the snapshot is captured INTO the opener's
+ * Phase 2 completion at submit time (Step 4 RPC); THIS resolver reads what
+ * the form should render at any moment, not what gets persisted.
+ *
+ * Cost: 4 queries; ~28 items per location × ≤4 chain rows = ~112 rows max
+ * on the completion read. Negligible for Server Component render. If Phase 2
+ * grows to hundreds of items, revisit single-query optimization.
+ */
+export async function loadCloserEstimateSnapshots(
+  service: SupabaseClient,
+  args: {
+    locationId: string;
+    /** Yesterday's operational date (YYYY-MM-DD); the date AM Prep was submitted. */
+    priorOperationalDate: string;
+    /** The Phase 2 template_item_ids to resolve. */
+    openingTemplateItemIds: string[];
+  },
+): Promise<Map<string, CloserEstimateSnapshot | null>> {
+  const result = new Map<string, CloserEstimateSnapshot | null>();
+  if (args.openingTemplateItemIds.length === 0) return result;
+
+  // Step 1: opening items → amPrep item IDs.
+  const { data: refRows, error: refErr } = await service
+    .from("checklist_template_items")
+    .select("id, references_template_item_id")
+    .in("id", args.openingTemplateItemIds);
+  if (refErr) {
+    throw new Error(
+      `loadCloserEstimateSnapshots: load opening item refs: ${refErr.message}`,
+    );
+  }
+
+  const openingToAmPrep = new Map<string, string>();
+  const amPrepIds = new Set<string>();
+  for (const r of (refRows ?? []) as Array<{
+    id: string;
+    references_template_item_id: string | null;
+  }>) {
+    if (r.references_template_item_id) {
+      openingToAmPrep.set(r.id, r.references_template_item_id);
+      amPrepIds.add(r.references_template_item_id);
+    }
+  }
+  if (amPrepIds.size === 0) return result;
+
+  // Step 2: resolve active AM Prep template at this location.
+  // Single-prep-template assumption per C.43 sub-finding (lib/prep.ts loadAmPrepState
+  // uses the same most-recent-active picker; refine alongside Mid-day Prep landing).
+  const { data: amPrepTmpl, error: tmplErr } = await service
+    .from("checklist_templates")
+    .select("id")
+    .eq("location_id", args.locationId)
+    .eq("type", "prep")
+    .eq("active", true)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ id: string }>();
+  if (tmplErr) {
+    throw new Error(
+      `loadCloserEstimateSnapshots: load AM Prep template: ${tmplErr.message}`,
+    );
+  }
+  if (!amPrepTmpl) {
+    // No AM Prep template at this location → all openings get null per Q2 fallback.
+    for (const openingId of openingToAmPrep.keys()) {
+      result.set(openingId, null);
+    }
+    return result;
+  }
+
+  // Step 3: resolve AM Prep instance for prior operational date.
+  const { data: amPrepInstance, error: instErr } = await service
+    .from("checklist_instances")
+    .select("id")
+    .eq("template_id", amPrepTmpl.id)
+    .eq("location_id", args.locationId)
+    .eq("date", args.priorOperationalDate)
+    .maybeSingle<{ id: string }>();
+  if (instErr) {
+    throw new Error(
+      `loadCloserEstimateSnapshots: load AM Prep instance: ${instErr.message}`,
+    );
+  }
+  if (!amPrepInstance) {
+    // No AM Prep submission yesterday → all openings get null per Q2 fallback.
+    for (const openingId of openingToAmPrep.keys()) {
+      result.set(openingId, null);
+    }
+    return result;
+  }
+
+  // Step 4: read completions for that instance + amPrep item filter; JS-side
+  // chain-resolve via MAX(edit_count) per template_item.
+  const { data: compRows, error: compErr } = await service
+    .from("checklist_completions")
+    .select("id, template_item_id, instance_id, edit_count, completed_at, prep_data")
+    .eq("instance_id", amPrepInstance.id)
+    .in("template_item_id", Array.from(amPrepIds))
+    .is("revoked_at", null);
+  if (compErr) {
+    throw new Error(
+      `loadCloserEstimateSnapshots: load AM Prep completions: ${compErr.message}`,
+    );
+  }
+
+  // Reduce: keep MAX(edit_count) per template_item.
+  // Mirrors lib/prep.ts:1185 computeChangedFields chain-resolution pattern.
+  interface CanonicalRow {
+    id: string;
+    instanceId: string;
+    editCount: number;
+    completedAt: string;
+    prepData: unknown;
+  }
+  const canonicalByItem = new Map<string, CanonicalRow>();
+  for (const c of (compRows ?? []) as Array<{
+    id: string;
+    template_item_id: string;
+    instance_id: string;
+    edit_count: number;
+    completed_at: string;
+    prep_data: unknown;
+  }>) {
+    const existing = canonicalByItem.get(c.template_item_id);
+    if (!existing || c.edit_count > existing.editCount) {
+      canonicalByItem.set(c.template_item_id, {
+        id: c.id,
+        instanceId: c.instance_id,
+        editCount: c.edit_count,
+        completedAt: c.completed_at,
+        prepData: c.prep_data,
+      });
+    }
+  }
+
+  // Build result Map keyed by opening template_item_id.
+  for (const [openingId, amPrepId] of openingToAmPrep.entries()) {
+    const canonical = canonicalByItem.get(amPrepId);
+    if (!canonical) {
+      // No completion for this AM Prep item in yesterday's submission.
+      result.set(openingId, null);
+      continue;
+    }
+    if (!isPrepData(canonical.prepData)) {
+      // Defensive: prep_data shape mismatch. Should not happen for AM Prep
+      // submissions but never assume — narrow per the lib/prep.ts validator.
+      result.set(openingId, null);
+      continue;
+    }
+    const total = canonical.prepData.inputs.total;
+    if (typeof total !== "number") {
+      // Misc YES/NO items have no .total — return null per Q2 fallback. Phase 2
+      // form skips Misc items entirely per Surface A scope-out, so this branch
+      // should be unreachable in practice; defense-in-depth for if/when Misc
+      // Phase 2 representation lands as a follow-up.
+      result.set(openingId, null);
+      continue;
+    }
+    result.set(openingId, {
+      total,
+      parValue: canonical.prepData.snapshot.parValue,
+      itemName: canonical.prepData.snapshot.itemName,
+      amPrepCompletionId: canonical.id,
+      amPrepInstanceId: canonical.instanceId,
+      amPrepCompletedAt: canonical.completedAt,
+      amPrepEditCount: canonical.editCount,
+    });
+  }
+
+  return result;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
