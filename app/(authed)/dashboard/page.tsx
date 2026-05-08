@@ -28,12 +28,14 @@ import Link from "next/link";
 import { AuthShell } from "@/components/auth/AuthShell";
 import { IdleTimeoutWarning } from "@/components/auth/IdleTimeoutWarning";
 import { LogoutButton } from "@/components/auth/LogoutButton";
+import { NotificationBell } from "@/components/dashboard/NotificationBell";
 import { ROLES } from "@/lib/roles";
 import { canEditReport, evaluateAutoReleaseForUserLocations } from "@/lib/checklists";
 import { accessibleLocations, type LocationActor } from "@/lib/locations";
 import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
+import { loadUnreadForUser } from "@/lib/notifications";
 import { loadAmPrepDashboardState } from "@/lib/prep";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -346,6 +348,26 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 
   const allLocationsBadge = auth.level >= 7 && auth.locations.length === 0;
 
+  // Notification surface (Build #3 PR 3 Step 7) — load unread in-app
+  // notifications for the actor. Multi-location filter follows Q6
+  // lock: level 7+ with all-locations override sees everything (no
+  // location filter); sub-7 (and level 7+ with explicit user_locations)
+  // sees their accessible locations + global (location_id IS NULL).
+  const locationContextForNotifications =
+    allLocationsBadge ? undefined : auth.locations;
+  const unreadNotifications = await loadUnreadForUser(sb, auth.user.id, {
+    locationContext: locationContextForNotifications,
+  });
+  // Build a location-id → code map for card rendering. For all-locations-
+  // override users the `locations` list already covers every active
+  // location; for sub-7 users it's their accessible set. A notification
+  // tied to a location not in this map (theoretically impossible —
+  // notification.location_id ⊆ user's accessible locations by construction)
+  // falls back to the body-param locationCode in the card.
+  const locationCodes: Record<string, string> = Object.fromEntries(
+    locations.map((l) => [l.id, l.code]),
+  );
+
   return (
     <AuthShell>
       <div className="mt-2 flex flex-col gap-6">
@@ -359,25 +381,34 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         </div>
 
         {/* Role badge — user identity, not location. Stays separate from
-         * the location chrome below. */}
-        <div className="flex flex-wrap gap-2">
-          <span
-            className="
-              inline-flex items-center gap-2 rounded-full px-3 py-1.5
-              text-xs font-bold uppercase tracking-[0.14em] text-co-text
-            "
-            style={{
-              background: role.color + "33",
-              border: `1px solid ${role.color}`,
-            }}
-          >
+         * the location chrome below. NotificationBell shares this header
+         * row at the right edge per Q1 (Build #3 PR 3 Step 7 architecture
+         * lock — phone-first muscle memory, top-right of the header row).
+         */}
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-wrap gap-2">
             <span
-              aria-hidden
-              className="inline-block h-2 w-2 rounded-full"
-              style={{ background: role.color }}
-            />
-            {roleLabel}
-          </span>
+              className="
+                inline-flex items-center gap-2 rounded-full px-3 py-1.5
+                text-xs font-bold uppercase tracking-[0.14em] text-co-text
+              "
+              style={{
+                background: role.color + "33",
+                border: `1px solid ${role.color}`,
+              }}
+            >
+              <span
+                aria-hidden
+                className="inline-block h-2 w-2 rounded-full"
+                style={{ background: role.color }}
+              />
+              {roleLabel}
+            </span>
+          </div>
+          <NotificationBell
+            notifications={unreadNotifications}
+            locationCodes={locationCodes}
+          />
         </div>
 
         {/* Location chrome — single non-interactive chip for single-location
