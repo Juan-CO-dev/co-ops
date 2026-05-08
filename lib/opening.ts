@@ -299,7 +299,26 @@ function rowToTemplateItem(r: TemplateItemRow): ChecklistTemplateItem {
     vendorItemId: r.vendor_item_id,
     active: r.active,
     translations: r.translations,
-    prepMeta: null, // opening items have no prep_meta
+    // Pass prep_meta through. Pre-PR-3 era assumed opening items had no
+    // prep_meta and hardcoded null here — that assumption became architecturally
+    // stale when PR 3 Step 3 seeded 34 Phase 2 items carrying prep_meta.openingPhase2=true.
+    // Stripping the field caused the OpeningClient phase split to never see
+    // Phase 2 items → form rendered Phase 1 only → 34 bare-tick completions
+    // landed without three-values capture. Fix surfaced via Juan's S1 smoke
+    // 2026-05-08 (AGENTS.md "smoke-test as architectural finder").
+    //
+    // Type cast follows the same pragmatic pattern as lib/prep.ts:613 — the
+    // shared ChecklistTemplateItem.prepMeta type is `PrepMeta | null` (AM
+    // Prep-shaped). For opening Phase 2 items the runtime value is actually
+    // OpeningPhase2Meta. Opening consumers (opening-client.tsx, OpeningPrepEntry,
+    // page.tsx) narrow to `OpeningPhase2Meta` at use site. Future cleanup may
+    // widen ChecklistTemplateItem.prepMeta to a discriminated union
+    // (PrepMeta | OpeningPhase2Meta | null) — separate refactor.
+    //
+    // Forward note for Cleanup PR: integration test missing for loader →
+    // OpeningClient round-trip; synthetic-templateItems unit tests masked the
+    // gap during Step 6.
+    prepMeta: (r.prep_meta ?? null) as ChecklistTemplateItem["prepMeta"],
     reportReferenceType: null, // opening items don't reference other reports (closing references opening, not vice versa)
   };
 }
