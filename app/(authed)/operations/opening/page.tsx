@@ -26,9 +26,9 @@ import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
 import {
-  loadCloserEstimateSnapshots,
+  loadCloserCountSnapshots,
   loadOpeningState,
-  type CloserEstimateSnapshot,
+  type CloserCountSnapshot,
 } from "@/lib/opening";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -225,9 +225,9 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
     .filter((it) => (it.prepMeta as OpeningPhase2Meta | null)?.openingPhase2 === true)
     .map((it) => it.id);
 
-  let closerSnapshots: Record<string, CloserEstimateSnapshot | null> = {};
+  let closerSnapshots: Record<string, CloserCountSnapshot | null> = {};
   if (phase2ItemIds.length > 0) {
-    const snapshotMap = await loadCloserEstimateSnapshots(sb, {
+    const snapshotMap = await loadCloserCountSnapshots(sb, {
       locationId: selectedLocation.id,
       priorOperationalDate: yesterday,
       openingTemplateItemIds: phase2ItemIds,

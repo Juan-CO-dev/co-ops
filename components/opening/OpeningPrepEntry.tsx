@@ -13,7 +13,7 @@
  * component is pure presentation — receives values + change handlers.
  *
  * Closer-estimate snapshot (per locked Q7): caller passes resolved Map<id,
- * CloserEstimateSnapshot|null>. Per-item lookup at render time. NULL = no
+ * CloserCountSnapshot|null>. Per-item lookup at render time. NULL = no
  * AM Prep yesterday (Tomato par-null also resolves to a snapshot but with
  * parValue=null — see Q6).
  *
@@ -34,7 +34,7 @@ import { useMemo, useState } from "react";
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { useTranslation } from "@/lib/i18n/provider";
-import type { CloserEstimateSnapshot } from "@/lib/opening";
+import type { CloserCountSnapshot } from "@/lib/opening";
 import type { ChecklistTemplateItem, OpeningPhase2Meta } from "@/lib/types";
 
 import {
@@ -58,7 +58,7 @@ interface OpeningPrepEntryProps {
   values: Map<string, OpeningPrepEntryFormValue>;
   onChange: (templateItemId: string, next: OpeningPrepEntryFormValue) => void;
   /** Closer-estimate snapshots per item (null when no AM Prep yesterday OR par-null). */
-  closerSnapshots: Record<string, CloserEstimateSnapshot | null>;
+  closerSnapshots: Record<string, CloserCountSnapshot | null>;
   /** AGM+ at this location for over-par directedBy dropdown. */
   managers: ReadonlyArray<ManagerOption>;
   language: Language;
@@ -209,7 +209,7 @@ export function OpeningPrepEntry({
 interface PrepEntryRowProps {
   item: ChecklistTemplateItem;
   value: OpeningPrepEntryFormValue;
-  snapshot: CloserEstimateSnapshot | null;
+  snapshot: CloserCountSnapshot | null;
   effectivePar: number | null;
   effectiveParUnit: string | null;
   language: Language;

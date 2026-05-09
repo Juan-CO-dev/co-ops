@@ -7,7 +7,10 @@
  *   - resolveClosingOpeningVerifiedRefItemId — finds closing(N-1)'s
  *                                "Opening verified" item id for the
  *                                cross-reference auto-completion target
- *   - loadCloserEstimateSnapshots — Phase 2 closer-estimate resolver;
+ *   - loadCloserCountSnapshots — Phase 2 closer-count resolver (renamed from
+ *     loadCloserEstimateSnapshots in Step 11 per C.50 semantic correction);
+ *   - loadOpeningCloserCountSnapshots — Step 11 helper reading the persisted
+ *     closer-count snapshot table; consumed by Step 12 form rewrite;
  *                                reads canonical (chain-resolved via
  *                                C.46 MAX(edit_count)) AM Prep snapshot
  *                                per opening Phase 2 item
@@ -46,6 +49,7 @@ import type {
   ChecklistInstance,
   ChecklistTemplateItem,
   ChecklistTemplateItemTranslations,
+  OpeningPhase2Meta,
 } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -162,12 +166,15 @@ export interface OpeningEntryPhase1 {
 
 /**
  * Phase 2 entry — three-values prep verification + optional over/under-par
- * capture + closer-estimate snapshot resolved at form-load time. Stored in
+ * capture + closer-count snapshot resolved at form-load time. Stored in
  * checklist_completions.prep_data.phase2 JSONB; count_value/photo_id/notes
  * stay NULL.
  *
- * Per locked Q3: closerEstimateSnapshot is trusted from the form's
- * loadCloserEstimateSnapshots resolution; the RPC does NOT re-resolve.
+ * Per locked Q3: closerEstimateSnapshot field is trusted from the form's
+ * loadCloserCountSnapshots resolution; the RPC does NOT re-resolve.
+ * Field name closerEstimateSnapshot kept on the JSONB shape for now;
+ * Step 13 RPC rewrite (migration 0052) renames to closerCountSnapshot
+ * alongside the inner field rename `total → closerCount` per C.50.
  * If the AM Prep gets edited (C.46 chain edit) between form-load and
  * submit, the form's snapshot is the operational truth at the moment
  * the opener saw it. The amPrepCompletionId in the snapshot lets future
@@ -212,23 +219,29 @@ export interface OpeningEntryPhase2 {
       freeText: string;
     } | null;
     /** Closer-estimate snapshot from prior-night AM Prep. NULL when no AM Prep yesterday OR par-null item. */
-    closerEstimateSnapshot: CloserEstimateSnapshot | null;
+    closerEstimateSnapshot: CloserCountSnapshot | null;
   };
 }
 
 export type OpeningEntry = OpeningEntryPhase1 | OpeningEntryPhase2;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Phase 2 closer-estimate snapshot — what the form reads to render the
-// "closer's projection" column for each Phase 2 item
+// Phase 2 closer-count snapshot — what the form reads to render the
+// "closer's count" column for each Phase 2 item
+//
+// Type renamed from CloserEstimateSnapshot in Step 11 per C.50 §1: the
+// closer's value is a COUNT of remaining inventory at end of shift, NOT an
+// estimate/forecast. Inner field name `total` stays for now and renames to
+// `closerCount` in Step 13 RPC rewrite (RPC contract coupling).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Closer's bring-to-par projection from prior-night AM Prep, snapshot-frozen
- * via C.44 + chain-resolved via C.46 MAX(edit_count) per template_item.
+ * Closer's actual count of remaining inventory from prior-night AM Prep,
+ * snapshot-frozen via C.44 + chain-resolved via C.46 MAX(edit_count) per
+ * template_item.
  *
- * The resolver (loadCloserEstimateSnapshots) returns Map<openingTemplateItemId,
- * CloserEstimateSnapshot | null>. NULL when:
+ * The resolver (loadCloserCountSnapshots) returns Map<openingTemplateItemId,
+ * CloserCountSnapshot | null>. NULL when:
  *   - no AM Prep template at this location
  *   - no AM Prep submission for prior operational date
  *   - opening template item has no references_template_item_id (not a Phase 2 item)
@@ -240,8 +253,13 @@ export type OpeningEntry = OpeningEntryPhase1 | OpeningEntryPhase2;
  * (Step 4 RPC); this resolver reads what the form should render, not what
  * gets persisted.
  */
-export interface CloserEstimateSnapshot {
-  /** Closer's bring-to-par projection from prior-night AM Prep. */
+export interface CloserCountSnapshot {
+  /**
+   * Closer's actual count of remaining inventory from prior-night AM Prep.
+   * Field name `total` retained for Step 11 to maintain RPC contract
+   * compatibility; renames to `closerCount` in Step 13 alongside the outer
+   * field rename `closerEstimateSnapshot → closerCountSnapshot` per C.50.
+   */
   total: number;
   /** Par at AM Prep submission time (C.44 snapshot). */
   parValue: number | null;
@@ -365,81 +383,9 @@ export async function loadOpeningState(
   }
   if (!tmplRow) return null;
 
-  // Get-or-create the opening instance for today.
-  let instanceRow: InstanceRow | null = null;
-  const { data: existing, error: readErr } = await service
-    .from("checklist_instances")
-    .select(INSTANCE_COLUMNS)
-    .eq("template_id", tmplRow.id)
-    .eq("location_id", args.locationId)
-    .eq("date", args.date)
-    .maybeSingle<InstanceRow>();
-  if (readErr) throw new Error(`loadOpeningState: read instance: ${readErr.message}`);
-
-  if (existing) {
-    instanceRow = existing;
-  } else {
-    const triggerTimestamp = new Date().toISOString();
-    const { data: inserted, error: insertErr } = await service
-      .from("checklist_instances")
-      .insert({
-        template_id: tmplRow.id,
-        location_id: args.locationId,
-        date: args.date,
-        shift_start_at: triggerTimestamp,
-        status: "open",
-        triggered_by_user_id: args.actor.userId,
-        triggered_at: triggerTimestamp,
-      })
-      .select(INSTANCE_COLUMNS)
-      .maybeSingle<InstanceRow>();
-    if (insertErr) {
-      // Race-loss path: another caller won the INSERT. Re-read.
-      if (insertErr.code === "23505") {
-        const { data: race, error: raceErr } = await service
-          .from("checklist_instances")
-          .select(INSTANCE_COLUMNS)
-          .eq("template_id", tmplRow.id)
-          .eq("location_id", args.locationId)
-          .eq("date", args.date)
-          .maybeSingle<InstanceRow>();
-        if (raceErr || !race) {
-          throw new Error(
-            `loadOpeningState: race re-read failed: ${raceErr?.message ?? "no row"}`,
-          );
-        }
-        instanceRow = race;
-      } else {
-        throw new Error(`loadOpeningState: insert instance: ${insertErr.message}`);
-      }
-    } else {
-      if (!inserted) throw new Error(`loadOpeningState: insert returned no row`);
-      instanceRow = inserted;
-
-      // Audit the instance creation — symmetric with prep + checklists patterns.
-      void audit({
-        actorId: args.actor.userId,
-        actorRole: args.actor.role,
-        action: "checklist_instance.create",
-        resourceTable: "checklist_instances",
-        resourceId: inserted.id,
-        metadata: {
-          template_id: tmplRow.id,
-          location_id: args.locationId,
-          date: args.date,
-          template_type: "opening",
-        },
-        ipAddress: null,
-        userAgent: null,
-      });
-    }
-  }
-
-  if (!instanceRow) {
-    throw new Error(`loadOpeningState: failed to resolve instance row`);
-  }
-
-  // Load template items (active, ordered).
+  // Load template items first (active, ordered). Needed before instance create
+  // so we can pre-compute the closer-count snapshot data and pass it to the
+  // atomic instance+snapshots RPC.
   const { data: itemsRows, error: itemsErr } = await service
     .from("checklist_template_items")
     .select(TEMPLATE_ITEM_COLUMNS)
@@ -448,6 +394,139 @@ export async function loadOpeningState(
     .order("display_order", { ascending: true });
   if (itemsErr) throw new Error(`loadOpeningState: load items: ${itemsErr.message}`);
   const templateItems = ((itemsRows ?? []) as TemplateItemRow[]).map(rowToTemplateItem);
+
+  // Compute yesterday for the closer-count snapshot lookup + audit metadata.
+  // UTC anchor is fine because YYYY-MM-DD has no intrinsic TZ (same pattern as
+  // dashboard/page.tsx + opening/page.tsx).
+  const todayUtc = new Date(`${args.date}T00:00:00Z`);
+  todayUtc.setUTCDate(todayUtc.getUTCDate() - 1);
+  const yesterday = todayUtc.toISOString().slice(0, 10);
+
+  // C.50 §2 — pre-compute closer-count snapshot data for Phase 2 items. Empty
+  // array when no Phase 2 items in template (defensive — current opening
+  // template always has 34 Phase 2 items per Step 3 seed, but the pattern is
+  // forward-compatible with future templates).
+  //
+  // Per Step 11 Lock 3 sentinel handling: closer_count NULL when AM Prep
+  // missing for prior operational date OR references_template_item_id NULL on
+  // opening item. Form behavior on NULL is Step 12 territory.
+  //
+  // Note `live?.total ?? null` reads the OLD inner field name `total` — Step 13
+  // RPC rewrite renames `total → closerCount` on CloserCountSnapshot alongside
+  // the outer field rename closerEstimateSnapshot → closerCountSnapshot.
+  const phase2Items = templateItems.filter(
+    (it) => (it.prepMeta as OpeningPhase2Meta | null)?.openingPhase2 === true,
+  );
+  let snapshotsJson: Array<{
+    template_item_id: string;
+    closing_instance_id: string | null;
+    closer_count: number | null;
+    par_value: number | null;
+    par_unit: string | null;
+  }> = [];
+  if (phase2Items.length > 0) {
+    const liveSnapshotMap = await loadCloserCountSnapshots(service, {
+      locationId: args.locationId,
+      priorOperationalDate: yesterday,
+      openingTemplateItemIds: phase2Items.map((it) => it.id),
+    });
+    snapshotsJson = phase2Items.map((it) => {
+      const live = liveSnapshotMap.get(it.id) ?? null;
+      const meta = it.prepMeta as OpeningPhase2Meta | null;
+      return {
+        template_item_id: it.id,
+        closing_instance_id: live?.amPrepInstanceId ?? null,
+        closer_count: live?.total ?? null,
+        par_value: meta?.parValue ?? null,
+        par_unit: meta?.parUnit ?? null,
+      };
+    });
+  }
+
+  // Atomic instance + snapshots create via create_opening_instance_atomic
+  // RPC (migration 0052). Single Postgres transaction commits both inserts;
+  // if snapshot insert fails, instance insert rolls back too. Solves the
+  // partial-state failure mode flagged in Step 11 review (Confirm 2). Race
+  // handling is in the RPC: ON CONFLICT DO NOTHING on the instance INSERT;
+  // race-loss returns was_created=false and skips snapshot insert.
+  const { data: rpcData, error: rpcErr } = await service.rpc(
+    "create_opening_instance_atomic",
+    {
+      p_template_id: tmplRow.id,
+      p_location_id: args.locationId,
+      p_date: args.date,
+      p_actor_user_id: args.actor.userId,
+      p_snapshots: snapshotsJson,
+    },
+  );
+  if (rpcErr) {
+    throw new Error(
+      `loadOpeningState: atomic instance create failed: ${rpcErr.message}`,
+    );
+  }
+  const rpcResult = rpcData as {
+    instance_id: string;
+    was_created: boolean;
+    snapshot_count?: number;
+    with_closer_count?: number;
+    without_closer_count?: number;
+  };
+
+  // Follow-up SELECT for the full instance row (RPC returns id only).
+  const { data: instanceData, error: instReadErr } = await service
+    .from("checklist_instances")
+    .select(INSTANCE_COLUMNS)
+    .eq("id", rpcResult.instance_id)
+    .maybeSingle<InstanceRow>();
+  if (instReadErr || !instanceData) {
+    throw new Error(
+      `loadOpeningState: read instance after atomic create failed: ${instReadErr?.message ?? "no row"}`,
+    );
+  }
+  const instanceRow: InstanceRow = instanceData;
+  const wasCreated = rpcResult.was_created;
+
+  // Audits fire only when this caller won the create. Race-loss path
+  // (was_created=false) emits no audit because nothing happened in this call —
+  // the winner already emitted theirs. Best-effort fire-and-forget per
+  // existing audit() helper convention.
+  if (wasCreated) {
+    void audit({
+      actorId: args.actor.userId,
+      actorRole: args.actor.role,
+      action: "checklist_instance.create",
+      resourceTable: "checklist_instances",
+      resourceId: rpcResult.instance_id,
+      metadata: {
+        template_id: tmplRow.id,
+        location_id: args.locationId,
+        date: args.date,
+        template_type: "opening",
+      },
+      ipAddress: null,
+      userAgent: null,
+    });
+
+    if (snapshotsJson.length > 0) {
+      void audit({
+        actorId: args.actor.userId,
+        actorRole: args.actor.role,
+        action: "opening.snapshot_materialize",
+        resourceTable: "opening_closer_count_snapshots",
+        resourceId: rpcResult.instance_id,
+        metadata: {
+          opening_instance_id: rpcResult.instance_id,
+          snapshot_count: rpcResult.snapshot_count ?? snapshotsJson.length,
+          with_closer_count: rpcResult.with_closer_count ?? 0,
+          without_closer_count:
+            rpcResult.without_closer_count ?? snapshotsJson.length,
+          prior_operational_date: yesterday,
+        },
+        ipAddress: null,
+        userAgent: null,
+      });
+    }
+  }
 
   // Load live (non-superseded, non-revoked) completions for the instance.
   const { data: completionRows, error: compErr } = await service
@@ -530,14 +609,35 @@ export async function resolveClosingOpeningVerifiedRefItemId(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// loadCloserEstimateSnapshots — Phase 2 closer-estimate resolver
+// loadCloserCountSnapshots — Phase 2 closer-count resolver (live)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Resolves closer-estimate snapshots for a set of opening Phase 2 template
+ * Resolves closer-count snapshots for a set of opening Phase 2 template
  * items. Returns a Map keyed by opening template_item_id; value is the
  * canonical AM Prep snapshot per the chain (MAX(edit_count)) OR null when
  * no AM Prep value resolves.
+ *
+ * **Renamed from `loadCloserEstimateSnapshots` in Step 11 (PR 3) per C.50
+ * §1.** The closer's value is a COUNT of remaining inventory at end of
+ * shift, NOT an estimate/forecast. Semantic correction locked in the type
+ * system; inner field name `total` retained for now (RPC contract coupling
+ * — old RPC reads `total`; rewrite ships in Step 13 migration 0052).
+ *
+ * **Architectural role post-Step-11:** this LIVE resolver remains in place
+ * for callers that need fresh data without snapshot persistence (e.g., the
+ * page.tsx form-load path until Step 12 form rewrite). New opening instances
+ * created post-Step-11 ALSO get a persisted snapshot in
+ * `opening_closer_count_snapshots` (materialized in `loadOpeningState`'s
+ * create-path; read by `loadOpeningCloserCountSnapshots` helper). Persisted
+ * snapshot is the canonical source for the Step 12 form rewrite; the live
+ * resolver is the materialization source at create time.
+ *
+ * **AM Prep ↔ opening Phase 2 FK source:** column
+ * `checklist_template_items.references_template_item_id` (added in
+ * migration 0049, populated for all 68 Phase 2 items as of 2026-05-08).
+ * No JSONB duplication on prep_meta — the column-level FK is canonical
+ * per Step 11 architectural verification (Lock 1).
  *
  * Four-step resolution (per AGENTS.md "PostgREST embedded-select .eq() filter
  * on relation can fail unpredictably" lesson — multi-query over single JOIN):
@@ -564,7 +664,7 @@ export async function resolveClosingOpeningVerifiedRefItemId(
  * on the completion read. Negligible for Server Component render. If Phase 2
  * grows to hundreds of items, revisit single-query optimization.
  */
-export async function loadCloserEstimateSnapshots(
+export async function loadCloserCountSnapshots(
   service: SupabaseClient,
   args: {
     locationId: string;
@@ -573,8 +673,8 @@ export async function loadCloserEstimateSnapshots(
     /** The Phase 2 template_item_ids to resolve. */
     openingTemplateItemIds: string[];
   },
-): Promise<Map<string, CloserEstimateSnapshot | null>> {
-  const result = new Map<string, CloserEstimateSnapshot | null>();
+): Promise<Map<string, CloserCountSnapshot | null>> {
+  const result = new Map<string, CloserCountSnapshot | null>();
   if (args.openingTemplateItemIds.length === 0) return result;
 
   // Step 1: opening items → amPrep item IDs.
@@ -584,7 +684,7 @@ export async function loadCloserEstimateSnapshots(
     .in("id", args.openingTemplateItemIds);
   if (refErr) {
     throw new Error(
-      `loadCloserEstimateSnapshots: load opening item refs: ${refErr.message}`,
+      `loadCloserCountSnapshots: load opening item refs: ${refErr.message}`,
     );
   }
 
@@ -615,7 +715,7 @@ export async function loadCloserEstimateSnapshots(
     .maybeSingle<{ id: string }>();
   if (tmplErr) {
     throw new Error(
-      `loadCloserEstimateSnapshots: load AM Prep template: ${tmplErr.message}`,
+      `loadCloserCountSnapshots: load AM Prep template: ${tmplErr.message}`,
     );
   }
   if (!amPrepTmpl) {
@@ -636,7 +736,7 @@ export async function loadCloserEstimateSnapshots(
     .maybeSingle<{ id: string }>();
   if (instErr) {
     throw new Error(
-      `loadCloserEstimateSnapshots: load AM Prep instance: ${instErr.message}`,
+      `loadCloserCountSnapshots: load AM Prep instance: ${instErr.message}`,
     );
   }
   if (!amPrepInstance) {
@@ -657,7 +757,7 @@ export async function loadCloserEstimateSnapshots(
     .is("revoked_at", null);
   if (compErr) {
     throw new Error(
-      `loadCloserEstimateSnapshots: load AM Prep completions: ${compErr.message}`,
+      `loadCloserCountSnapshots: load AM Prep completions: ${compErr.message}`,
     );
   }
 
@@ -725,6 +825,81 @@ export async function loadCloserEstimateSnapshots(
     });
   }
 
+  return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// loadOpeningCloserCountSnapshots — Step 11 helper reading the persisted
+// closer-count snapshot table (consumed by Step 12 form rewrite)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * C.50 §2 — Step 11 helper. Reads the persisted closer-count snapshot rows
+ * for an opening instance, returning a Map keyed by template_item_id.
+ *
+ * The snapshot is materialized at opening instance creation by
+ * `loadOpeningState` (the create-path snapshot block above) — one row per
+ * Phase 2 template item. This helper is the canonical READ path for the
+ * Step 12 form rewrite (form reads closer counts from the persisted
+ * snapshot, not from the live `loadCloserCountSnapshots` resolver, to
+ * decouple from closing's C.46 edit window per C.44 snapshot universe
+ * locking precedent).
+ *
+ * Result field naming uses the C.50 semantic (closerCount) directly — the
+ * column on the snapshot table is `closer_count`. This is brand-new shape
+ * (Step 11), no legacy contract to preserve. The live resolver's
+ * CloserCountSnapshot type retains `.total` for now (Step 13 rename
+ * alongside RPC rewrite); this new helper does NOT inherit that legacy.
+ *
+ * Existing instances created BEFORE migration 0051 (smoke artifacts on the
+ * preview branch + production instances pre-merge) have no snapshot rows;
+ * this helper returns an empty Map for those. The Step 12 form should fall
+ * back to the live resolver in that case OR refuse to render Phase 2 (the
+ * latter is cleaner — empty snapshot = "this instance pre-dates C.50; treat
+ * as legacy").
+ */
+export interface OpeningCloserCountSnapshotRow {
+  templateItemId: string;
+  /** Forensic FK to the closing instance whose AM Prep submission provided the count. NULL = no closing yesterday. */
+  closingInstanceId: string | null;
+  /** Closer's count of remaining inventory at end-of-shift. NULL = sentinel (see Step 11 Lock 3 cases). */
+  closerCount: number | null;
+  parValue: number | null;
+  parUnit: string | null;
+  snapshotTakenAt: string;
+}
+
+export async function loadOpeningCloserCountSnapshots(
+  service: SupabaseClient,
+  instanceId: string,
+): Promise<Map<string, OpeningCloserCountSnapshotRow>> {
+  const { data, error } = await service
+    .from("opening_closer_count_snapshots")
+    .select(
+      "template_item_id, closing_instance_id, closer_count, par_value, par_unit, snapshot_taken_at",
+    )
+    .eq("opening_instance_id", instanceId);
+  if (error) {
+    throw new Error(`loadOpeningCloserCountSnapshots: ${error.message}`);
+  }
+  const result = new Map<string, OpeningCloserCountSnapshotRow>();
+  for (const row of (data ?? []) as Array<{
+    template_item_id: string;
+    closing_instance_id: string | null;
+    closer_count: number | null;
+    par_value: number | null;
+    par_unit: string | null;
+    snapshot_taken_at: string;
+  }>) {
+    result.set(row.template_item_id, {
+      templateItemId: row.template_item_id,
+      closingInstanceId: row.closing_instance_id,
+      closerCount: row.closer_count,
+      parValue: row.par_value,
+      parUnit: row.par_unit,
+      snapshotTakenAt: row.snapshot_taken_at,
+    });
+  }
   return result;
 }
 

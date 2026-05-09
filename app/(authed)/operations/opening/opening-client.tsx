@@ -27,7 +27,7 @@ import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language } from "@/lib/i18n/types";
-import type { CloserEstimateSnapshot } from "@/lib/opening";
+import type { CloserCountSnapshot } from "@/lib/opening";
 import type {
   ChecklistInstance,
   ChecklistTemplateItem,
@@ -46,7 +46,7 @@ interface OpeningClientProps {
   instance: ChecklistInstance;
   templateItems: ChecklistTemplateItem[];
   /** Closer-estimate snapshots resolved server-side (Step 7 page.tsx). */
-  closerSnapshots: Record<string, CloserEstimateSnapshot | null>;
+  closerSnapshots: Record<string, CloserCountSnapshot | null>;
   /** AGM+ at this location for over-par directedBy dropdown. */
   managers: ReadonlyArray<ManagerOption>;
   language: Language;
