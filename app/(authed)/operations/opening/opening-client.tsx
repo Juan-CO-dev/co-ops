@@ -27,7 +27,7 @@ import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language } from "@/lib/i18n/types";
-import type { CloserCountSnapshot } from "@/lib/opening";
+import type { OpeningCloserCountSnapshotRow } from "@/lib/opening";
 import type {
   ChecklistInstance,
   ChecklistTemplateItem,
@@ -38,15 +38,23 @@ import { OpeningVerificationStation } from "@/components/opening/OpeningVerifica
 import type { OpeningItemFormValue } from "@/components/opening/OpeningChecklistItem";
 import {
   OpeningPrepEntry,
-  type OpeningPrepEntryFormValue,
+  type OpeningPhase2FormValue,
 } from "@/components/opening/OpeningPrepEntry";
 import type { ManagerOption } from "@/components/opening/OverParModal";
 
 interface OpeningClientProps {
   instance: ChecklistInstance;
   templateItems: ChecklistTemplateItem[];
-  /** Closer-estimate snapshots resolved server-side (Step 7 page.tsx). */
-  closerSnapshots: Record<string, CloserCountSnapshot | null>;
+  /**
+   * Closer-count snapshots from the persisted opening_closer_count_snapshots
+   * table (loaded by page.tsx via loadOpeningCloserCountSnapshots, post-C.50).
+   * Frozen at instance create time per C.44 snapshot universe locking.
+   *
+   * Wire shape: Record (plain object) for Server-Component → Client boundary
+   * serialization (Maps don't survive JSON serialization). Converted to Map
+   * internally via useMemo for OpeningPrepEntry consumption.
+   */
+  closerSnapshots: Record<string, OpeningCloserCountSnapshotRow>;
   /** AGM+ at this location for over-par directedBy dropdown. */
   managers: ReadonlyArray<ManagerOption>;
   language: Language;
@@ -90,12 +98,12 @@ export function OpeningClient({
     return map;
   });
 
-  // Phase 2 form state.
-  const [phase2Values, setPhase2Values] = useState<Map<string, OpeningPrepEntryFormValue>>(() => {
-    const map = new Map<string, OpeningPrepEntryFormValue>();
+  // Phase 2 form state — C.50 redesign: openerRecount replaces openerActual.
+  const [phase2Values, setPhase2Values] = useState<Map<string, OpeningPhase2FormValue>>(() => {
+    const map = new Map<string, OpeningPhase2FormValue>();
     for (const item of phase2Items) {
       map.set(item.id, {
-        openerActual: null,
+        openerRecount: null,
         openerPrepped: null,
         overPar: null,
         underPar: null,
@@ -103,6 +111,38 @@ export function OpeningClient({
     }
     return map;
   });
+
+  // Phase 2 section verifications — Map<sectionKey, verified-state>. Per C.50
+  // §4: opener taps Verify Section to mark all items in section as
+  // "ground_truth = closer_count"; per-item recount is the override path.
+  // Initial state: all sections present in phase2Items, default unverified.
+  const [sectionVerifications, setSectionVerifications] = useState<
+    Map<string, boolean>
+  >(() => {
+    const map = new Map<string, boolean>();
+    for (const item of phase2Items) {
+      const meta = item.prepMeta as OpeningPhase2Meta | null;
+      if (meta?.section) map.set(meta.section, false);
+    }
+    return map;
+  });
+
+  const handleSectionVerifyToggle = (sectionKey: string) => {
+    setSectionVerifications((prev) => {
+      const updated = new Map(prev);
+      updated.set(sectionKey, !(prev.get(sectionKey) ?? false));
+      return updated;
+    });
+  };
+
+  // Convert closerSnapshots Record (RSC boundary) to Map for component-internal
+  // use. Map.get() is more idiomatic for per-item lookups in phase2Complete +
+  // OpeningPrepEntry. Memoized to stable reference; updates only when prop
+  // changes (which happens on Server Component re-render).
+  const closerSnapshotsMap = useMemo(
+    () => new Map(Object.entries(closerSnapshots)),
+    [closerSnapshots],
+  );
 
   // Active phase (locked Sub-decision (b): always start at "verification").
   const [activePhase, setActivePhase] = useState<"verification" | "prep">("verification");
@@ -144,14 +184,14 @@ export function OpeningClient({
     return n;
   }, [phase1Items, values]);
 
-  // Phase 2 counters.
+  // Phase 2 counters. Counter shows informational progress (items where
+  // opener_prepped is populated); the full submit gate is computed
+  // separately as phase2Complete.
   const totalPhase2Items = phase2Items.length;
   const filledPhase2Count = useMemo(() => {
     let n = 0;
     for (const v of phase2Values.values()) {
-      if (typeof v.openerActual === "number" && typeof v.openerPrepped === "number") {
-        n += 1;
-      }
+      if (typeof v.openerPrepped === "number") n += 1;
     }
     return n;
   }, [phase2Values]);
@@ -159,7 +199,49 @@ export function OpeningClient({
   const allTicked = tickedCount === totalPhase1Items;
   const allTempsFilled = filledTempCount === totalTempItems;
   const phase1Complete = allTicked && allTempsFilled;
-  const phase2Complete = filledPhase2Count === totalPhase2Items;
+
+  // Phase 2 submit gate per C.50 §4 — full gate check across all items:
+  //   1. ground_truth resolved (section verified OR opener_recount populated)
+  //   2. opener_prepped always required (universal — par-null items still need it)
+  //   3. when prep_need computable AND delta != 0, reason capture required
+  //      (overPar populated when delta > 0; underPar when delta < 0)
+  // Server is canonical (per §8.3 lock); this client gate prevents wasted
+  // round-trips but doesn't replace server validation.
+  const phase2Complete = useMemo(() => {
+    for (const item of phase2Items) {
+      const value = phase2Values.get(item.id);
+      if (!value) return false;
+      const meta = item.prepMeta as OpeningPhase2Meta | null;
+      const section = meta?.section ?? null;
+      const sectionVerified = section
+        ? (sectionVerifications.get(section) ?? false)
+        : false;
+      const snapshot = closerSnapshotsMap.get(item.id) ?? null;
+      const closerCount = snapshot?.closerCount ?? null;
+      const parValue = snapshot?.parValue ?? null;
+
+      // Gate 1: ground_truth resolved
+      const groundTruth =
+        value.openerRecount !== null
+          ? value.openerRecount
+          : sectionVerified
+            ? closerCount
+            : null;
+      if (groundTruth === null) return false;
+
+      // Gate 2: opener_prepped required (always)
+      if (value.openerPrepped === null) return false;
+
+      // Gate 3: reason capture if delta != 0 (only when prep_need computable)
+      if (parValue !== null) {
+        const prepNeed = Math.max(0, parValue - groundTruth);
+        const delta = value.openerPrepped - prepNeed;
+        if (delta > 0 && value.overPar === null) return false;
+        if (delta < 0 && value.underPar === null) return false;
+      }
+    }
+    return true;
+  }, [phase2Items, phase2Values, sectionVerifications, closerSnapshotsMap]);
 
   // Under-par freetext check — every phase2Values entry with underPar set
   // must have non-empty freeText (Step 4 RPC will reject otherwise).
@@ -192,7 +274,7 @@ export function OpeningClient({
 
   const handlePhase2ItemChange = (
     templateItemId: string,
-    next: OpeningPrepEntryFormValue,
+    next: OpeningPhase2FormValue,
   ) => {
     setPhase2Values((prev) => {
       const updated = new Map(prev);
@@ -271,9 +353,14 @@ export function OpeningClient({
       };
     });
 
+    // C.50 redesign: raw-inputs-only payload per §8.3 lock. Server reads
+    // closer_count from persisted opening_closer_count_snapshots; computes
+    // ground_truth + prep_need + delta server-side. Client sends only
+    // operator inputs. closerEstimateSnapshot field DROPPED from payload
+    // (snapshot is server-side now).
     const phase2Entries = phase2Items.map((item) => {
       const v = phase2Values.get(item.id) ?? {
-        openerActual: null,
+        openerRecount: null,
         openerPrepped: null,
         overPar: null,
         underPar: null,
@@ -282,22 +369,35 @@ export function OpeningClient({
         templateItemId: item.id,
         phase: "phase2" as const,
         phase2: {
-          openerActual: v.openerActual ?? 0,
+          openerRecount: v.openerRecount,
           openerPrepped: v.openerPrepped ?? 0,
           overPar: v.overPar,
           underPar: v.underPar,
-          closerEstimateSnapshot: closerSnapshots[item.id] ?? null,
         },
       };
     });
 
     const entries = [...phase1Entries, ...phase2Entries];
 
+    // Section verifications — top-level field on the request body alongside
+    // entries. Server inserts one row to opening_section_verifications per
+    // verified=true entry; absence of section in the array IS the unverified
+    // state (server doesn't need explicit unverified entries).
+    const sectionVerificationsPayload = Array.from(
+      sectionVerifications.entries(),
+    )
+      .filter(([, verified]) => verified)
+      .map(([sectionKey]) => ({ sectionKey, verified: true }));
+
     try {
       const res = await fetch("/api/opening/submit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instanceId: instance.id, entries }),
+        body: JSON.stringify({
+          instanceId: instance.id,
+          entries,
+          sectionVerifications: sectionVerificationsPayload,
+        }),
       });
 
       if (!res.ok) {
@@ -403,13 +503,15 @@ export function OpeningClient({
           ))
         : null}
 
-      {/* Phase 2: Prep entry surface */}
+      {/* Phase 2: Prep entry surface (C.50 redesign) */}
       {activePhase === "prep" ? (
         <OpeningPrepEntry
           items={phase2Items}
           values={phase2Values}
           onChange={handlePhase2ItemChange}
-          closerSnapshots={closerSnapshots}
+          closerSnapshots={closerSnapshotsMap}
+          sectionVerifications={sectionVerifications}
+          onSectionVerifyToggle={handleSectionVerifyToggle}
           managers={managers}
           language={language}
           showMissingErrors={showMissingPhase2Errors}

@@ -165,35 +165,51 @@ export interface OpeningEntryPhase1 {
 }
 
 /**
- * Phase 2 entry — three-values prep verification + optional over/under-par
- * capture + closer-count snapshot resolved at form-load time. Stored in
- * checklist_completions.prep_data.phase2 JSONB; count_value/photo_id/notes
- * stay NULL.
+ * Phase 2 entry — opener inputs for the C.50 corrected-calc model. Stored in
+ * checklist_completions.prep_data.phase2 JSONB at submit time (Step 13 RPC
+ * computes ground_truth + prep_need + delta_vs_prep_need server-side and
+ * persists the full §8.4 invariant shape).
  *
- * Per locked Q3: closerEstimateSnapshot field is trusted from the form's
- * loadCloserCountSnapshots resolution; the RPC does NOT re-resolve.
- * Field name closerEstimateSnapshot kept on the JSONB shape for now;
- * Step 13 RPC rewrite (migration 0052) renames to closerCountSnapshot
- * alongside the inner field rename `total → closerCount` per C.50.
- * If the AM Prep gets edited (C.46 chain edit) between form-load and
- * submit, the form's snapshot is the operational truth at the moment
- * the opener saw it. The amPrepCompletionId in the snapshot lets future
- * audit consumers detect divergence without paying the per-submit
- * re-resolution cost.
+ * Raw-inputs-only contract per §8.3 lock: client sends raw operator inputs
+ * (openerRecount + openerPrepped + reason capture). Server reads
+ * closer_count from the persisted opening_closer_count_snapshots table
+ * (frozen at instance creation; not re-resolved at submit). Form computes
+ * prep_need + delta live for display only; values discarded at submit.
  *
- * Per locked Q5: under-par fires one notification per entry (N-per-item
- * grain) inside the RPC transaction; recipients = KH+ at this location +
- * MoO + Owner.
+ * Per locked Concern 2 (notification dispatch): under-prep fires N-per-item
+ * (one notification per under-par entry). Recipients = KH+ at this location
+ * + MoO + Owner DISTINCT, per C.48 routing.
+ *
+ * **C.50 model shifts captured in this shape:**
+ * - `openerActual` removed: closer_count IS the canonical count when the
+ *   parent section is verified (no opener double-count). Replaced by
+ *   `openerRecount` which is populated only when opener flags an item for
+ *   per-item recount — exception path, not default.
+ * - `closerEstimateSnapshot` removed from entry: closer_count is now read
+ *   from the persisted snapshot table by the RPC (frozen at instance
+ *   create per C.44 snapshot universe locking precedent). No need to ship
+ *   the snapshot in the request payload.
+ * - over/under capture now compares to prep_need, not par. Reason
+ *   categories unchanged; semantic meaning shifts.
  */
 export interface OpeningEntryPhase2 {
   templateItemId: string;
   phase: "phase2";
   phase2: {
-    /** Opener's count on arrival. Required. */
-    openerActual: number;
+    /**
+     * Opener's recount value when this item was flagged for per-item recount
+     * (exception path). NULL when opener relies on section-verify (parent
+     * section's closer_count is canonical for this item). Server derives
+     * ground_truth_count via: `opener_recount IF NOT NULL ELSE closer_count`.
+     */
+    openerRecount: number | null;
     /** What opener actually prepped today. Required. */
     openerPrepped: number;
-    /** Over-par capture: opener prepped > expected par. NULL when normal. */
+    /**
+     * Over-prep capture: opener prepped > prep_need. NULL when at par
+     * (opener_prepped === prep_need) or under-prep. Reason category enum
+     * unchanged from pre-C.50; semantic shifts from "vs par" to "vs prep_need."
+     */
     overPar: {
       reasonCategory:
         | "management_directive"
@@ -207,7 +223,11 @@ export interface OpeningEntryPhase2 {
       /** Optional free-text nuance; required when reasonCategory='other'. */
       freeText: string | null;
     } | null;
-    /** Under-par capture: opener prepped < expected par. Triggers urgent notification. */
+    /**
+     * Under-prep capture: opener prepped < prep_need. Triggers urgent
+     * N-per-item notification dispatch. Reason category enum unchanged;
+     * semantic shifts from "vs par" to "vs prep_need."
+     */
     underPar: {
       reasonCategory:
         | "ingredient_unavailable"
@@ -215,15 +235,28 @@ export interface OpeningEntryPhase2 {
         | "time_constraint"
         | "staff_shortage"
         | "other";
-      /** REQUIRED for under-par per design doc §3.3. */
+      /** REQUIRED for under-prep per design doc §3.3 + C.50 §4. */
       freeText: string;
     } | null;
-    /** Closer-estimate snapshot from prior-night AM Prep. NULL when no AM Prep yesterday OR par-null item. */
-    closerEstimateSnapshot: CloserCountSnapshot | null;
   };
 }
 
 export type OpeningEntry = OpeningEntryPhase1 | OpeningEntryPhase2;
+
+/**
+ * Section verification entry per C.50 §2 — top-level field on the request
+ * body alongside `entries`. Section verifications are independent of the
+ * entries array (per-section, not per-item). Step 13 RPC writes one row
+ * to opening_section_verifications per `verified=true` entry. Append-only
+ * per CO-OPS convention; multi-toggle in client state collapses to final
+ * value at submit.
+ */
+export interface OpeningSectionVerificationEntry {
+  /** System-key match value (English `prep_meta.section`, e.g., "Cooks"). */
+  sectionKey: string;
+  /** True when opener tapped Verify Section; false otherwise. */
+  verified: boolean;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase 2 closer-count snapshot — what the form reads to render the
@@ -282,7 +315,7 @@ export interface CloserCountSnapshot {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const TEMPLATE_ITEM_COLUMNS =
-  "id, template_id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, vendor_item_id, active, translations, prep_meta, report_reference_type";
+  "id, template_id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, vendor_item_id, active, translations, prep_meta, report_reference_type, references_template_item_id";
 
 interface TemplateItemRow {
   id: string;
@@ -300,6 +333,7 @@ interface TemplateItemRow {
   translations: ChecklistTemplateItemTranslations | null;
   prep_meta: unknown | null;
   report_reference_type: string | null;
+  references_template_item_id: string | null;
 }
 
 function rowToTemplateItem(r: TemplateItemRow): ChecklistTemplateItem {
@@ -337,6 +371,7 @@ function rowToTemplateItem(r: TemplateItemRow): ChecklistTemplateItem {
     // OpeningClient round-trip; synthetic-templateItems unit tests masked the
     // gap during Step 6.
     prepMeta: (r.prep_meta ?? null) as ChecklistTemplateItem["prepMeta"],
+    referencesTemplateItemId: r.references_template_item_id,
     reportReferenceType: null, // opening items don't reference other reports (closing references opening, not vice versa)
   };
 }
@@ -916,6 +951,13 @@ interface SubmitRpcResult {
   originalSubmissionId: string | null;
   /** Build #3 PR 3 Step 4 — IDs of notifications fired for under-par Phase 2 entries. */
   underParNotificationIds: string[];
+  /** C.50 §4 result counters (added in migration 0053; consumed by JS-side opening.submit audit metadata). */
+  phase2Count?: number;
+  sectionVerifyCount?: number;
+  recountCount?: number;
+  atParCount?: number;
+  overPrepCount?: number;
+  underPrepCount?: number;
 }
 
 /**
@@ -941,6 +983,13 @@ export async function submitOpening(
     instanceId: string;
     actor: OpeningActor;
     entries: OpeningEntry[];
+    /**
+     * Section verifications (C.50 §2) — opener's section-level verify state
+     * at submit time. Step 13 RPC inserts one row to
+     * opening_section_verifications per `verified=true` entry. Phase 3
+     * accepts the field; Phase 5 RPC rewrite consumes it.
+     */
+    sectionVerifications?: OpeningSectionVerificationEntry[];
     /** Resolved by caller from closing template; NULL if no prior closing exists. */
     closingReportRefItemId: string | null;
     ipAddress?: string | null;
@@ -993,10 +1042,13 @@ export async function submitOpening(
         );
       }
     } else {
-      // phase2 — validate the phase2 sub-object shape
-      if (typeof entry.phase2.openerActual !== "number") {
+      // phase2 — validate the phase2 sub-object shape (C.50 redesign)
+      if (
+        entry.phase2.openerRecount !== null &&
+        typeof entry.phase2.openerRecount !== "number"
+      ) {
         throw new OpeningEntryShapeError(
-          `phase2 entry ${entry.templateItemId} openerActual must be number`,
+          `phase2 entry ${entry.templateItemId} openerRecount must be number or null`,
         );
       }
       if (typeof entry.phase2.openerPrepped !== "number") {
@@ -1067,6 +1119,9 @@ export async function submitOpening(
       p_changed_fields: null,
       p_ip_address: args.ipAddress ?? null,
       p_user_agent: args.userAgent ?? null,
+      // C.50 §2 — section verifications array (Phase 5). Server inserts one
+      // row to opening_section_verifications per verified=true entry.
+      p_section_verifications: args.sectionVerifications ?? null,
     });
     if (error) {
       // Map known RPC errors to typed exceptions.
@@ -1139,7 +1194,10 @@ export async function submitOpening(
   }
 
   // Success — emit opening.submit audit row (original-submission path only;
-  // update path emits report.update inside the RPC per C.46 A7).
+  // update path emits report.update inside the RPC per C.46 A7). Metadata
+  // includes C.50 §4 counters from RPC result (phase2_count, section_verify_count,
+  // recount_count, at_par_count, over_prep_count, under_prep_count) for forensic
+  // visibility into the C.50 calc-redesign behavior at submit time.
   if (!args.isUpdate) {
     void audit({
       actorId: args.actor.userId,
@@ -1153,6 +1211,14 @@ export async function submitOpening(
         completion_count: rpcResult.completionIds.length,
         auto_complete_id: rpcResult.autoCompleteId,
         closing_report_ref_item_id: args.closingReportRefItemId,
+        // C.50 counters
+        phase2_count: rpcResult.phase2Count ?? 0,
+        section_verify_count: rpcResult.sectionVerifyCount ?? 0,
+        recount_count: rpcResult.recountCount ?? 0,
+        at_par_count: rpcResult.atParCount ?? 0,
+        over_prep_count: rpcResult.overPrepCount ?? 0,
+        under_prep_count: rpcResult.underPrepCount ?? 0,
+        under_par_notification_count: rpcResult.underParNotificationIds.length,
       },
       ipAddress: args.ipAddress ?? null,
       userAgent: args.userAgent ?? null,

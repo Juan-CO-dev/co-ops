@@ -84,11 +84,16 @@ type WireEntry =
     };
 
 interface WirePhase2 {
-  openerActual: number;
+  /**
+   * C.50 redesign: openerRecount replaces openerActual. Number when item
+   * flagged for per-item recount; null when opener relies on section-verify.
+   */
+  openerRecount: number | null;
   openerPrepped: number;
   overPar: WireOverPar | null;
   underPar: WireUnderPar | null;
-  closerEstimateSnapshot: WireCloserSnapshot | null;
+  // closerEstimateSnapshot DROPPED in C.50 — server reads from persisted
+  // opening_closer_count_snapshots table; not in request payload anymore.
 }
 
 type OverParReason =
@@ -117,19 +122,25 @@ interface WireUnderPar {
   freeText: string;
 }
 
-interface WireCloserSnapshot {
-  total: number;
-  parValue: number | null;
-  itemName: string;
-  amPrepCompletionId: string;
-  amPrepInstanceId: string;
-  amPrepCompletedAt: string;
-  amPrepEditCount: number;
+// WireCloserSnapshot interface dropped in Phase 4 cleanup — orphan after C.50
+// removed closerEstimateSnapshot from the request payload (server reads from
+// persisted opening_closer_count_snapshots table).
+
+/**
+ * Section verification entry per C.50 §2 — top-level field on the request
+ * body alongside `entries`. Server inserts one row to
+ * opening_section_verifications per `verified=true` entry; absence of a
+ * section in the array IS the unverified state.
+ */
+interface WireSectionVerification {
+  sectionKey: string;
+  verified: boolean;
 }
 
 interface SubmitBody {
   instanceId: string;
   entries: WireEntry[];
+  sectionVerifications: WireSectionVerification[];
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -211,8 +222,13 @@ function validateBody(
         return { ok: false, field: `entries[${i}].phase2` };
       }
       const p2r = p2 as Record<string, unknown>;
-      if (typeof p2r.openerActual !== "number" || !Number.isFinite(p2r.openerActual)) {
-        return { ok: false, field: `entries[${i}].phase2.openerActual` };
+      // C.50 redesign: openerRecount (nullable) replaces openerActual (was required number).
+      let openerRecount: number | null = null;
+      if (p2r.openerRecount !== null && p2r.openerRecount !== undefined) {
+        if (typeof p2r.openerRecount !== "number" || !Number.isFinite(p2r.openerRecount)) {
+          return { ok: false, field: `entries[${i}].phase2.openerRecount` };
+        }
+        openerRecount = p2r.openerRecount;
       }
       if (typeof p2r.openerPrepped !== "number" || !Number.isFinite(p2r.openerPrepped)) {
         return { ok: false, field: `entries[${i}].phase2.openerPrepped` };
@@ -279,57 +295,52 @@ function validateBody(
         };
       }
 
-      // closerEstimateSnapshot (nullable; loose shape validation — RPC trusts).
-      let closerEstimateSnapshot: WireCloserSnapshot | null = null;
-      if (p2r.closerEstimateSnapshot !== null && p2r.closerEstimateSnapshot !== undefined) {
-        if (typeof p2r.closerEstimateSnapshot !== "object") {
-          return { ok: false, field: `entries[${i}].phase2.closerEstimateSnapshot` };
-        }
-        const s = p2r.closerEstimateSnapshot as Record<string, unknown>;
-        if (typeof s.total !== "number") {
-          return { ok: false, field: `entries[${i}].phase2.closerEstimateSnapshot.total` };
-        }
-        if (typeof s.amPrepCompletionId !== "string" || !UUID_RE.test(s.amPrepCompletionId)) {
-          return {
-            ok: false,
-            field: `entries[${i}].phase2.closerEstimateSnapshot.amPrepCompletionId`,
-          };
-        }
-        closerEstimateSnapshot = {
-          total: s.total,
-          parValue:
-            typeof s.parValue === "number"
-              ? s.parValue
-              : s.parValue === null
-                ? null
-                : null,
-          itemName: typeof s.itemName === "string" ? s.itemName : "",
-          amPrepCompletionId: s.amPrepCompletionId,
-          amPrepInstanceId:
-            typeof s.amPrepInstanceId === "string" ? s.amPrepInstanceId : "",
-          amPrepCompletedAt:
-            typeof s.amPrepCompletedAt === "string" ? s.amPrepCompletedAt : "",
-          amPrepEditCount: typeof s.amPrepEditCount === "number" ? s.amPrepEditCount : 0,
-        };
-      }
+      // closerEstimateSnapshot DROPPED in C.50 — server reads from persisted
+      // opening_closer_count_snapshots table; not validated/parsed here.
 
       entries.push({
         templateItemId: er.templateItemId,
         phase: "phase2",
         phase2: {
-          openerActual: p2r.openerActual,
+          openerRecount,
           openerPrepped: p2r.openerPrepped,
           overPar,
           underPar,
-          closerEstimateSnapshot,
         },
+      });
+    }
+  }
+
+  // C.50 §2 — sectionVerifications top-level field. Optional during transition
+  // (Phase 3 form sends it; Phase 5 RPC consumes it). Empty array = no
+  // sections verified (legitimate state for forms with all-individual-recount).
+  const sectionVerifications: WireSectionVerification[] = [];
+  if (r.sectionVerifications !== undefined && r.sectionVerifications !== null) {
+    if (!Array.isArray(r.sectionVerifications)) {
+      return { ok: false, field: "sectionVerifications" };
+    }
+    for (let i = 0; i < r.sectionVerifications.length; i++) {
+      const sv = r.sectionVerifications[i];
+      if (typeof sv !== "object" || sv === null) {
+        return { ok: false, field: `sectionVerifications[${i}]` };
+      }
+      const svr = sv as Record<string, unknown>;
+      if (typeof svr.sectionKey !== "string" || svr.sectionKey.trim().length === 0) {
+        return { ok: false, field: `sectionVerifications[${i}].sectionKey` };
+      }
+      if (typeof svr.verified !== "boolean") {
+        return { ok: false, field: `sectionVerifications[${i}].verified` };
+      }
+      sectionVerifications.push({
+        sectionKey: svr.sectionKey,
+        verified: svr.verified,
       });
     }
   }
 
   return {
     ok: true,
-    body: { instanceId: r.instanceId, entries },
+    body: { instanceId: r.instanceId, entries, sectionVerifications },
   };
 }
 
@@ -417,6 +428,7 @@ export async function POST(req: NextRequest) {
       instanceId: body.instanceId,
       actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level },
       entries: body.entries,
+      sectionVerifications: body.sectionVerifications,
       closingReportRefItemId,
       ipAddress: extractIp(req),
       userAgent: req.headers.get("user-agent"),

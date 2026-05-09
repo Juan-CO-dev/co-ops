@@ -116,6 +116,10 @@ interface TemplateItemRow {
   // closing's report-reference items (auto-complete on report submission).
   prep_meta: unknown | null;
   report_reference_type: ReportType | null;
+  // Cross-template item reference per migration 0049. NULL on closing items
+  // (closing's cross-references are encoded via report_reference_type, not
+  // this generic FK column). Phase 1 plumbing for C.50.
+  references_template_item_id: string | null;
 }
 
 const rowToTemplateItem = (r: TemplateItemRow): ChecklistTemplateItem => ({
@@ -137,6 +141,7 @@ const rowToTemplateItem = (r: TemplateItemRow): ChecklistTemplateItem => ({
   // (later step in this PR — render report-reference items distinctly).
   prepMeta: (r.prep_meta ?? null) as PrepMeta | null,
   reportReferenceType: r.report_reference_type,
+  referencesTemplateItemId: r.references_template_item_id,
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -315,7 +320,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
   const { data: itemsRows, error: itemsErr } = await sb
     .from("checklist_template_items")
     .select(
-      "id, template_id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, vendor_item_id, active, translations, prep_meta, report_reference_type",
+      "id, template_id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, vendor_item_id, active, translations, prep_meta, report_reference_type, references_template_item_id",
     )
     .eq("template_id", templateRow.id)
     .eq("active", true)

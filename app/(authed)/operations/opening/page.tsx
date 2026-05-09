@@ -26,9 +26,9 @@ import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
 import {
-  loadCloserCountSnapshots,
+  loadOpeningCloserCountSnapshots,
   loadOpeningState,
-  type CloserCountSnapshot,
+  type OpeningCloserCountSnapshotRow,
 } from "@/lib/opening";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -218,23 +218,23 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
     );
   }
 
-  // Build #3 PR 3 Step 6 — load Phase 2 closer-estimate snapshots + AGM+
-  // managers at this location. Both pre-loaded server-side; OpeningClient
-  // consumes via props.
-  const phase2ItemIds = state.templateItems
-    .filter((it) => (it.prepMeta as OpeningPhase2Meta | null)?.openingPhase2 === true)
-    .map((it) => it.id);
-
-  let closerSnapshots: Record<string, CloserCountSnapshot | null> = {};
-  if (phase2ItemIds.length > 0) {
-    const snapshotMap = await loadCloserCountSnapshots(sb, {
-      locationId: selectedLocation.id,
-      priorOperationalDate: yesterday,
-      openingTemplateItemIds: phase2ItemIds,
-    });
-    // Serialize Map to plain object for Server-Component → Client boundary.
-    closerSnapshots = Object.fromEntries(snapshotMap);
-  }
+  // C.50 §2 — load persisted closer-count snapshots from
+  // opening_closer_count_snapshots (materialized at instance create per
+  // loadOpeningState's create-path; canonical source post-Step-11). The live
+  // resolver loadCloserCountSnapshots remains in lib/opening.ts but is no
+  // longer the form's source of truth — the persisted snapshot decouples
+  // from closing's C.46 edit window per C.44 snapshot universe locking.
+  //
+  // For instances created BEFORE migration 0051, this returns an empty
+  // Map (no snapshot rows for them). New instances created via
+  // loadOpeningState's create-path always have rows.
+  //
+  // Map → Record conversion: Server-Component → Client boundary serializes
+  // via JSON; Map doesn't survive. OpeningClient receives Record and
+  // converts to Map internally for OpeningPrepEntry consumption.
+  const snapshotMap = await loadOpeningCloserCountSnapshots(sb, state.instance.id);
+  const closerSnapshots: Record<string, OpeningCloserCountSnapshotRow> =
+    Object.fromEntries(snapshotMap);
 
   const managers = await loadAgmPlusManagers(sb, selectedLocation.id);
 

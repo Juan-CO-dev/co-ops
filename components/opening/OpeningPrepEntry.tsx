@@ -1,32 +1,35 @@
 "use client";
 
 /**
- * OpeningPrepEntry — Phase 2 prep verification UI (Build #3 PR 3 Step 6).
+ * OpeningPrepEntry — Phase 2 prep verification UI (C.50 redesign).
  *
- * Section-grouped per-item layout per locked Q3:
- *   - 5 sections: Veg / Cooks / Sides / Sauces / Slicing
- *   - Per-item: label + closer-estimate display + 2 numeric inputs +
- *     computed signals + modal triggers
+ * Per-section layout per C.50 §4:
+ *   - Section header has the verify CTA (OpeningSectionVerify component)
+ *   - Per-item rows below show closer_count display + opener_prepped input
+ *   - Per-item recount drill-in (OpeningRecountPanel) for exception path
+ *   - Live prep_need preview (computed client-side, display-only)
+ *   - Modal-trigger signal banners for over/under-prep capture
  *
- * Form state model (per locked Q2): parent OpeningClient owns
- * `phase2Values: Map<templateItemId, OpeningPrepEntryFormValue>`. This
- * component is pure presentation — receives values + change handlers.
+ * **C.50 model shifts captured here:**
+ * - openerActual REMOVED from form state. closer_count is canonical when
+ *   parent section is verified; opener_recount is the per-item override.
+ * - Live prep_need preview = MAX(0, par_value - ground_truth_count).
+ *   ground_truth_count derived from opener_recount IF NOT NULL ELSE
+ *   closer_count (only if section verified).
+ * - Signal banners trigger on delta_vs_prep_need (not delta_vs_par).
+ * - NULL closer_count sentinel: section-verify disabled for sections with
+ *   any NULL item; opener must per-item recount each NULL item. NULL-reason
+ *   badge surfaces operational cause via snapshot row metadata + template
+ *   item's references_template_item_id (per Step 11 Lock 3 forward note).
  *
- * Closer-estimate snapshot (per locked Q7): caller passes resolved Map<id,
- * CloserCountSnapshot|null>. Per-item lookup at render time. NULL = no
- * AM Prep yesterday (Tomato par-null also resolves to a snapshot but with
- * parValue=null — see Q6).
+ * Form state model (per Lock 2): separate overPar / underPar slots in
+ * OpeningPhase2FormValue; UX path-differentiation via delta sign. Modals
+ * keep their existing shape (capture types unchanged); semantic shifts
+ * from "vs par" to "vs prep_need" are copy-only.
  *
- * Computed signals (per locked sub-decision (e), option (i)): both opener
- * inputs must be numeric before any signal renders. No premature partial
- * signals during typing.
- *
- * Modal triggers: tap signal banner → open OverParModal / UnderParModal.
- * Modal save sets phase2Values[id].overPar or .underPar via onChange.
- *
- * Tomato + null-par edge case (per locked Q6): when parValue null (Tomato
- * OR no closer-estimate AND prep_meta.parValue null), no over/under signals
- * computed, no modals trigger. Inputs still required via the gate.
+ * Submit-gate inline error badges per C.50 §4: "section unverified" /
+ * "prep amount required" / "reason required." Server is canonical;
+ * client-side display-only validation prevents wasted round-trips.
  */
 
 import { useMemo, useState } from "react";
@@ -34,9 +37,11 @@ import { useMemo, useState } from "react";
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { useTranslation } from "@/lib/i18n/provider";
-import type { CloserCountSnapshot } from "@/lib/opening";
+import type { OpeningCloserCountSnapshotRow } from "@/lib/opening";
 import type { ChecklistTemplateItem, OpeningPhase2Meta } from "@/lib/types";
 
+import { OpeningSectionVerify } from "./OpeningSectionVerify";
+import { OpeningRecountPanel } from "./OpeningRecountPanel";
 import {
   OverParModal,
   type ManagerOption,
@@ -44,25 +49,30 @@ import {
 } from "./OverParModal";
 import { UnderParModal, type UnderParCapture } from "./UnderParModal";
 
-export interface OpeningPrepEntryFormValue {
-  openerActual: number | null;
+export interface OpeningPhase2FormValue {
+  /** Opener recount value when item flagged for per-item recount; NULL otherwise. */
+  openerRecount: number | null;
+  /** Numeric input — what opener actually prepped today. */
   openerPrepped: number | null;
+  /** Over-prep capture; populated when delta_vs_prep_need > 0 AND opener saved a reason. */
   overPar: OverParCapture | null;
+  /** Under-prep capture; populated when delta_vs_prep_need < 0 AND opener saved a reason. */
   underPar: UnderParCapture | null;
 }
 
+export type { ManagerOption };
+
 interface OpeningPrepEntryProps {
-  /** Phase 2 template items (already filtered by openingPhase2 marker upstream). */
   items: ChecklistTemplateItem[];
-  /** Form state keyed by templateItemId. */
-  values: Map<string, OpeningPrepEntryFormValue>;
-  onChange: (templateItemId: string, next: OpeningPrepEntryFormValue) => void;
-  /** Closer-estimate snapshots per item (null when no AM Prep yesterday OR par-null). */
-  closerSnapshots: Record<string, CloserCountSnapshot | null>;
-  /** AGM+ at this location for over-par directedBy dropdown. */
+  values: Map<string, OpeningPhase2FormValue>;
+  onChange: (templateItemId: string, next: OpeningPhase2FormValue) => void;
+  /** Map<templateItemId, snapshot row> from loadOpeningCloserCountSnapshots (persisted). */
+  closerSnapshots: Map<string, OpeningCloserCountSnapshotRow>;
+  /** Map<sectionKey, verified-state> in client memory; toggled via OpeningSectionVerify. */
+  sectionVerifications: Map<string, boolean>;
+  onSectionVerifyToggle: (sectionKey: string) => void;
   managers: ReadonlyArray<ManagerOption>;
   language: Language;
-  /** True after submit attempt to highlight required-but-missing fields. */
   showMissingErrors: boolean;
 }
 
@@ -71,29 +81,49 @@ export function OpeningPrepEntry({
   values,
   onChange,
   closerSnapshots,
+  sectionVerifications,
+  onSectionVerifyToggle,
   managers,
   language,
   showMissingErrors,
 }: OpeningPrepEntryProps) {
   const { t } = useTranslation();
 
-  // Modal state — single ID at a time. Null = closed.
   const [overParModalItemId, setOverParModalItemId] = useState<string | null>(null);
   const [underParModalItemId, setUnderParModalItemId] = useState<string | null>(null);
+  const [recountPanelItemId, setRecountPanelItemId] = useState<string | null>(null);
 
-  // Group by section. Insertion-order Map per existing closing/opening pattern.
+  // Group items by section (system key from prep_meta.section).
   const sectionGroups = useMemo(() => {
     const groups = new Map<string, ChecklistTemplateItem[]>();
     for (const it of items) {
       const meta = it.prepMeta as OpeningPhase2Meta | null;
-      const section = meta?.section ?? it.station ?? "—";
-      if (!groups.has(section)) groups.set(section, []);
-      groups.get(section)!.push(it);
+      const key = meta?.section ?? "—";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(it);
     }
     return groups;
   }, [items]);
 
-  // Resolve over/under par modal targets.
+  // Per-section disabled state per Step 11 Lock 3: section disabled when
+  // any item has NULL closer_count AND no opener_recount. Opener must
+  // per-item recount NULL items before they can section-verify the rest.
+  const sectionDisabledMap = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const [section, sectionItems] of sectionGroups.entries()) {
+      const hasUnrecountedNull = sectionItems.some((it) => {
+        const snap = closerSnapshots.get(it.id) ?? null;
+        const value = values.get(it.id) ?? null;
+        return (
+          (snap?.closerCount ?? null) === null &&
+          (value?.openerRecount ?? null) === null
+        );
+      });
+      map.set(section, hasUnrecountedNull);
+    }
+    return map;
+  }, [sectionGroups, closerSnapshots, values]);
+
   const overParTarget = overParModalItemId
     ? items.find((it) => it.id === overParModalItemId)
     : null;
@@ -108,6 +138,8 @@ export function OpeningPrepEntry({
         const sectionDisplay = firstItem
           ? resolveTemplateItemContent(firstItem, language).station ?? sectionKey
           : sectionKey;
+        const verified = sectionVerifications.get(sectionKey) ?? false;
+        const disabled = sectionDisabledMap.get(sectionKey) ?? false;
 
         return (
           <section
@@ -115,28 +147,30 @@ export function OpeningPrepEntry({
             aria-label={sectionDisplay}
             className="rounded-2xl border-2 border-co-border bg-co-surface p-4 shadow-sm sm:p-5"
           >
-            <header>
+            <header className="flex items-start justify-between gap-3">
               <h3 className="text-base font-extrabold uppercase tracking-[0.14em] text-co-text">
                 {sectionDisplay}
               </h3>
+              <OpeningSectionVerify
+                sectionKey={sectionKey}
+                sectionDisplay={sectionDisplay}
+                verified={verified}
+                disabled={disabled}
+                disabledReason={disabled ? "null_items_unrecounted" : null}
+                onToggleVerified={() => onSectionVerifyToggle(sectionKey)}
+                language={language}
+              />
             </header>
 
             <ul className="mt-3 flex flex-col">
               {sectionItems.map((item) => {
                 const value = values.get(item.id) ?? {
-                  openerActual: null,
+                  openerRecount: null,
                   openerPrepped: null,
                   overPar: null,
                   underPar: null,
                 };
-                const snapshot = closerSnapshots[item.id] ?? null;
-                const meta = item.prepMeta as OpeningPhase2Meta | null;
-                const fallbackPar = meta?.parValue ?? null;
-                const fallbackParUnit = meta?.parUnit ?? null;
-                // Effective par: snapshot's frozen par (per C.44) takes
-                // precedence; fallback to mirrored par from prep_meta.
-                const effectivePar = snapshot?.parValue ?? fallbackPar;
-                const effectiveParUnit = fallbackParUnit;
+                const snapshot = closerSnapshots.get(item.id) ?? null;
 
                 return (
                   <PrepEntryRow
@@ -144,13 +178,15 @@ export function OpeningPrepEntry({
                     item={item}
                     value={value}
                     snapshot={snapshot}
-                    effectivePar={effectivePar}
-                    effectiveParUnit={effectiveParUnit}
+                    sectionVerified={verified}
+                    recountOpen={recountPanelItemId === item.id}
                     language={language}
                     showMissingErrors={showMissingErrors}
                     onChange={(next) => onChange(item.id, next)}
                     onOpenOverPar={() => setOverParModalItemId(item.id)}
                     onOpenUnderPar={() => setUnderParModalItemId(item.id)}
+                    onOpenRecount={() => setRecountPanelItemId(item.id)}
+                    onCloseRecount={() => setRecountPanelItemId(null)}
                     t={t}
                   />
                 );
@@ -168,7 +204,7 @@ export function OpeningPrepEntry({
           managers={managers}
           onSave={(capture) => {
             const cur = values.get(overParTarget.id) ?? {
-              openerActual: null,
+              openerRecount: null,
               openerPrepped: null,
               overPar: null,
               underPar: null,
@@ -187,7 +223,7 @@ export function OpeningPrepEntry({
           initial={values.get(underParTarget.id)?.underPar ?? null}
           onSave={(capture) => {
             const cur = values.get(underParTarget.id) ?? {
-              openerActual: null,
+              openerRecount: null,
               openerPrepped: null,
               overPar: null,
               underPar: null,
@@ -203,20 +239,22 @@ export function OpeningPrepEntry({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Per-item row
+// Per-item row — C.50 redesign
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface PrepEntryRowProps {
   item: ChecklistTemplateItem;
-  value: OpeningPrepEntryFormValue;
-  snapshot: CloserCountSnapshot | null;
-  effectivePar: number | null;
-  effectiveParUnit: string | null;
+  value: OpeningPhase2FormValue;
+  snapshot: OpeningCloserCountSnapshotRow | null;
+  sectionVerified: boolean;
+  recountOpen: boolean;
   language: Language;
   showMissingErrors: boolean;
-  onChange: (next: OpeningPrepEntryFormValue) => void;
+  onChange: (next: OpeningPhase2FormValue) => void;
   onOpenOverPar: () => void;
   onOpenUnderPar: () => void;
+  onOpenRecount: () => void;
+  onCloseRecount: () => void;
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }
 
@@ -224,47 +262,92 @@ function PrepEntryRow({
   item,
   value,
   snapshot,
-  effectivePar,
-  effectiveParUnit,
+  sectionVerified,
+  recountOpen,
   language,
   showMissingErrors,
   onChange,
   onOpenOverPar,
   onOpenUnderPar,
+  onOpenRecount,
+  onCloseRecount,
   t,
 }: PrepEntryRowProps) {
   const resolved = resolveTemplateItemContent(item, language);
 
-  // Per locked Sub-decision (e), option (i): both inputs numeric before signal renders.
-  const bothNumeric =
-    typeof value.openerActual === "number" &&
-    typeof value.openerPrepped === "number";
+  // Live prep_need computation per C.50 §1
+  const closerCount = snapshot?.closerCount ?? null;
+  const parValue = snapshot?.parValue ?? null;
+  const parUnit = snapshot?.parUnit ?? null;
 
-  // Over/under-par signal computed only when effective par exists AND both
-  // inputs are numeric. Tomato (null par) and no-AM-Prep-yesterday share the
-  // null-par code path: no signal, no modal trigger.
-  const overParDelta =
-    bothNumeric && effectivePar !== null && value.openerPrepped! > effectivePar
-      ? value.openerPrepped! - effectivePar
-      : null;
-  const underParDelta =
-    bothNumeric && effectivePar !== null && value.openerPrepped! < effectivePar
-      ? effectivePar - value.openerPrepped!
+  // ground_truth derivation: opener_recount IF NOT NULL ELSE closer_count
+  // (only if section verified). Without either path resolved, ground_truth
+  // is null and prep_need cannot be computed.
+  const groundTruth =
+    value.openerRecount !== null
+      ? value.openerRecount
+      : sectionVerified
+        ? closerCount
+        : null;
+
+  // prep_need = MAX(0, par_value - ground_truth_count). Per C.50 §1: if
+  // ground_truth >= par, prep_need is 0 (already at par or above).
+  const prepNeed =
+    groundTruth !== null && parValue !== null
+      ? Math.max(0, parValue - groundTruth)
       : null;
 
-  // Missing-input error highlighting after submit attempt.
-  const actualMissing = showMissingErrors && value.openerActual === null;
-  const preppedMissing = showMissingErrors && value.openerPrepped === null;
+  // delta_vs_prep_need = opener_prepped - prep_need (only when both numeric)
+  const delta =
+    prepNeed !== null && value.openerPrepped !== null
+      ? value.openerPrepped - prepNeed
+      : null;
+
+  const overDelta = delta !== null && delta > 0 ? delta : null;
+  const underDelta = delta !== null && delta < 0 ? -delta : null;
+
+  // NULL-reason badge derivation per Step 11 Lock 3 forward note. Mapping:
+  //   referencesTemplateItemId === null → "item_not_linked" (foundation gap)
+  //   closingInstanceMissing && refsExist → "no_am_prep" (closer missed last night)
+  //   else (default) → "first_day" (linked + closing exists, no value found)
+  const isNullCloserCount = closerCount === null;
+  const closingInstanceMissing = (snapshot?.closingInstanceId ?? null) === null;
+  const itemNotLinked = item.referencesTemplateItemId === null;
+  const nullReasonKey: TranslationKey | null = !isNullCloserCount
+    ? null
+    : itemNotLinked
+      ? "opening.phase2.null_reason.item_not_linked"
+      : closingInstanceMissing
+        ? "opening.phase2.null_reason.no_am_prep"
+        : "opening.phase2.null_reason.first_day";
+
+  // Submit-gate badges per C.50 §4
+  const sectionUnverifiedAndNoRecount =
+    showMissingErrors && !sectionVerified && value.openerRecount === null;
+  const prepAmountMissing =
+    showMissingErrors &&
+    prepNeed !== null &&
+    prepNeed > 0 &&
+    value.openerPrepped === null;
+  const reasonMissing =
+    showMissingErrors &&
+    delta !== null &&
+    delta !== 0 &&
+    ((delta > 0 && value.overPar === null) ||
+      (delta < 0 && value.underPar === null));
 
   const parDisplay =
-    effectivePar !== null
-      ? `${effectivePar}${effectiveParUnit ? ` ${effectiveParUnit}` : ""}`
+    parValue !== null
+      ? `${parValue}${parUnit ? ` ${parUnit}` : ""}`
       : null;
 
-  const closerEstimateBadge =
-    snapshot && snapshot.amPrepEditCount > 0
-      ? t("opening.phase2.edit_count_badge", { count: snapshot.amPrepEditCount })
-      : null;
+  // Closer-count display block label: shows "Recount" badge when opener_recount
+  // populated; otherwise shows "Closer count" (the canonical ground_truth source
+  // when section verified).
+  const groundTruthBadgeLabel =
+    value.openerRecount !== null
+      ? t("opening.phase2.recount_label")
+      : t("opening.phase2.closer_estimate_label");
 
   return (
     <li className="flex flex-col gap-2 border-t border-co-border py-3 first:border-t-0 first:pt-0">
@@ -277,61 +360,93 @@ function PrepEntryRow({
         ) : null}
       </div>
 
-      {/* Closer estimate display (read-only). */}
-      <div className="rounded-md border border-co-border-2 bg-co-bg p-2.5 text-xs">
+      {/* Closer-count display + recount affordance */}
+      <div className="flex flex-wrap items-center gap-2 rounded-md border border-co-border-2 bg-co-bg p-2.5 text-xs">
         <span className="font-bold uppercase tracking-[0.12em] text-co-text-muted">
-          {t("opening.phase2.closer_estimate_label")}:
-        </span>{" "}
-        {snapshot && typeof snapshot.total === "number" ? (
-          <>
-            <span className="font-semibold text-co-text">{snapshot.total}</span>
-            {effectiveParUnit ? (
-              <span className="text-co-text-muted"> {effectiveParUnit}</span>
-            ) : null}
-            {closerEstimateBadge ? (
-              <span className="ml-2 inline-flex items-center rounded-full border border-co-border bg-co-surface px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-co-text-dim">
-                {closerEstimateBadge}
-              </span>
-            ) : null}
-          </>
+          {groundTruthBadgeLabel}:
+        </span>
+        {value.openerRecount !== null ? (
+          <span className="font-semibold text-co-text">
+            {value.openerRecount}
+            {parUnit ? <span className="text-co-text-muted"> {parUnit}</span> : null}
+          </span>
+        ) : closerCount !== null ? (
+          <span className="font-semibold text-co-text">
+            {closerCount}
+            {parUnit ? <span className="text-co-text-muted"> {parUnit}</span> : null}
+          </span>
         ) : (
-          <span className="text-co-text-dim">
-            {t("opening.phase2.no_closer_estimate")}
+          <span className="text-co-text-dim italic">
+            {nullReasonKey ? t(nullReasonKey) : t("opening.phase2.no_closer_estimate")}
           </span>
         )}
+
+        <button
+          type="button"
+          onClick={onOpenRecount}
+          aria-label={`${t("opening.phase2.recount_cta")} — ${resolved.label}`}
+          className="
+            ml-auto inline-flex min-h-[32px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 py-1
+            text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-muted
+            transition hover:border-co-text hover:text-co-text
+            focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
+          "
+        >
+          {t("opening.phase2.recount_cta")}
+        </button>
       </div>
 
-      {/* Inputs row */}
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2">
-          <label className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-muted">
-            {t("opening.phase2.opener_actual_label")}
-          </label>
-          <NumericInput
-            value={value.openerActual}
-            onChange={(next) => onChange({ ...value, openerActual: next })}
-            ariaLabel={t("opening.phase2.input_actual_aria", { item: resolved.label })}
-            hasError={actualMissing}
-          />
+      {/* Inline recount drill-in panel — collapses when saved or cancelled. */}
+      {recountOpen ? (
+        <OpeningRecountPanel
+          itemId={item.id}
+          itemLabel={resolved.label}
+          initialValue={value.openerRecount}
+          onSave={(next) => {
+            onChange({ ...value, openerRecount: next });
+            onCloseRecount();
+          }}
+          onCancel={onCloseRecount}
+          language={language}
+        />
+      ) : null}
+
+      {/* prep_need live preview (computed client-side, display-only) */}
+      {prepNeed !== null ? (
+        <div className="flex items-center gap-2 text-xs">
+          <span className="font-bold uppercase tracking-[0.12em] text-co-text-muted">
+            {t("opening.phase2.prep_need_label")}:
+          </span>
+          <span className="font-semibold text-co-text">
+            {prepNeed}
+            {parUnit ? <span className="text-co-text-muted"> {parUnit}</span> : null}
+          </span>
         </div>
-        <div className="flex items-center gap-2">
-          <label className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-muted">
-            {t("opening.phase2.opener_prepped_label")}
-          </label>
-          <NumericInput
-            value={value.openerPrepped}
-            onChange={(next) => onChange({ ...value, openerPrepped: next })}
-            ariaLabel={t("opening.phase2.input_prepped_aria", { item: resolved.label })}
-            hasError={preppedMissing}
-          />
-        </div>
+      ) : null}
+
+      {/* opener_prepped numeric input */}
+      <div className="flex items-center gap-2">
+        <label className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-muted">
+          {t("opening.phase2.opener_prepped_label")}
+        </label>
+        <NumericInput
+          value={value.openerPrepped}
+          onChange={(next) => onChange({ ...value, openerPrepped: next })}
+          ariaLabel={t("opening.phase2.input_prepped_aria", { item: resolved.label })}
+          hasError={prepAmountMissing}
+        />
       </div>
 
-      {/* Signal banner — only when bothNumeric AND par exists AND deltas trigger. */}
-      {overParDelta !== null ? (
+      {/* Signal banners — modal triggers for over/under-prep capture */}
+      {overDelta !== null ? (
         <button
           type="button"
           onClick={onOpenOverPar}
+          aria-label={
+            value.overPar
+              ? t("opening.phase2.signal.over_prep_recorded")
+              : t("opening.phase2.signal.over_prep", { delta: overDelta })
+          }
           className={[
             "self-start inline-flex min-h-[36px] items-center gap-2 rounded-md px-3 py-1",
             "text-xs font-bold uppercase tracking-[0.12em]",
@@ -342,19 +457,19 @@ function PrepEntryRow({
           ].join(" ")}
         >
           {value.overPar
-            ? t("opening.phase2.signal.over_par_recorded")
-            : t("opening.phase2.signal.over_par", { delta: overParDelta })}
+            ? t("opening.phase2.signal.over_prep_recorded")
+            : t("opening.phase2.signal.over_prep", { delta: overDelta })}
         </button>
       ) : null}
 
-      {underParDelta !== null ? (
+      {underDelta !== null ? (
         <button
           type="button"
           onClick={onOpenUnderPar}
           aria-label={
             value.underPar
-              ? t("opening.phase2.signal.under_par_recorded")
-              : t("opening.phase2.signal.under_par", { delta: underParDelta })
+              ? t("opening.phase2.signal.under_prep_recorded")
+              : t("opening.phase2.signal.under_prep", { delta: underDelta })
           }
           className={[
             "self-start inline-flex min-h-[36px] items-center gap-2 rounded-md px-3 py-1",
@@ -366,17 +481,40 @@ function PrepEntryRow({
           ].join(" ")}
         >
           {value.underPar
-            ? t("opening.phase2.signal.under_par_recorded")
-            : t("opening.phase2.signal.under_par", { delta: underParDelta })}
+            ? t("opening.phase2.signal.under_prep_recorded")
+            : t("opening.phase2.signal.under_prep", { delta: underDelta })}
         </button>
+      ) : null}
+
+      {/* At-par indicator (informational; no action) */}
+      {delta === 0 ? (
+        <p className="self-start text-xs italic text-co-success">
+          {t("opening.phase2.signal.at_par")}
+        </p>
+      ) : null}
+
+      {/* Submit-gate inline error badges — render only when showMissingErrors active */}
+      {sectionUnverifiedAndNoRecount ? (
+        <p role="alert" className="self-start text-[11px] font-medium text-co-danger">
+          {t("opening.phase2.gate.section_unverified")}
+        </p>
+      ) : null}
+      {prepAmountMissing && !sectionUnverifiedAndNoRecount ? (
+        <p role="alert" className="self-start text-[11px] font-medium text-co-danger">
+          {t("opening.phase2.gate.prep_amount_required")}
+        </p>
+      ) : null}
+      {reasonMissing ? (
+        <p role="alert" className="self-start text-[11px] font-medium text-co-danger">
+          {t("opening.phase2.gate.reason_required")}
+        </p>
       ) : null}
     </li>
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// NumericInput — minimal local copy (mirrors OpeningCountInput shape but
-// integer-or-decimal aware; could lift to a shared component if usage grows).
+// NumericInput — local input component (mirrors prior shape; integer/decimal aware)
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface NumericInputProps {

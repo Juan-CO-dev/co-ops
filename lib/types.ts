@@ -495,6 +495,24 @@ export interface ChecklistTemplateItem {
   prepMeta: PrepMeta | null;
   /** Marks closing items that auto-complete on report submission per SPEC_AMENDMENTS.md C.42. */
   reportReferenceType: ReportType | null;
+  /**
+   * Cross-template item reference per migration 0049. For opening Phase 2
+   * items, this links to the corresponding AM Prep template item that
+   * provides `closer_count` at snapshot materialization (see C.50 §2;
+   * canonical FK source per Step 11 simplification — replaces the
+   * draft-stage `OpeningPhase2Meta.amPrepTemplateItemId` JSONB field
+   * which was architecturally redundant).
+   *
+   * Forward-extensible: future cross-template references (Mid-day Prep ↔
+   * AM Prep, PM Report ↔ Closing, etc.) can reuse this same column. The
+   * column name stays generic; semantics are contextual per consumer.
+   *
+   * NULL on items without cross-template reference (Phase 1 verification
+   * items, AM Prep items themselves, closing items unless they're report-
+   * reference items per C.42 — though those use the separate
+   * reportReferenceType column).
+   */
+  referencesTemplateItemId: string | null;
 }
 
 /**
