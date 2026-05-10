@@ -590,10 +590,11 @@ interface TemplateItemRow {
   translations: ChecklistTemplateItemTranslations | null;
   prep_meta: unknown | null;
   report_reference_type: ReportType | null;
+  references_template_item_id: string | null;
 }
 
 const TEMPLATE_ITEM_COLUMNS =
-  "id, template_id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, vendor_item_id, active, translations, prep_meta, report_reference_type";
+  "id, template_id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, vendor_item_id, active, translations, prep_meta, report_reference_type, references_template_item_id";
 
 function rowToTemplateItem(r: TemplateItemRow): ChecklistTemplateItem {
   return {
@@ -612,6 +613,7 @@ function rowToTemplateItem(r: TemplateItemRow): ChecklistTemplateItem {
     translations: r.translations,
     prepMeta: (r.prep_meta ?? null) as PrepMeta | null,
     reportReferenceType: r.report_reference_type,
+    referencesTemplateItemId: r.references_template_item_id,
   };
 }
 

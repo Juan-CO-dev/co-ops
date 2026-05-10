@@ -1351,9 +1351,287 @@ Plus a new template entirely: **Standard Opening v1** (10 stations mirroring clo
 
 ---
 
+## C.50 — Opening Report Phase 2 calculation logic redesign
+
+**Date added:** 2026-05-08
+**Status:** Locked
+**Supersedes:** Phase 2 architecture as locked in `BUILD_3_OPENING_REPORT_DESIGN.md` (three-values model: closer estimate / opener actual / opener prepped)
+**Triggered by:** Smoke run 2026-05-08 at MEP — Juan surfaced that prep_need calculation against par alone produces nonsensical economics when ground truth exceeds par
+**Scope:** Phase 2 form, dispatch RPC, schema, notification triggers, three signals computation
+**Out of scope (deferred to C.51):** Phase 1A/1B section split, opening report dashboard tile, back-to-dashboard affordance, opening submit auto-finalizing yesterday's closing
+**Build:** Wave 2 Build #1 (Opening Report) — PR 3 (branch `claude/nice-wilson-398de1`, post-S1-smoke architectural redesign)
+**Lock state:** Architectural model (§1–§7) locked 2026-05-08; §8 implementation answers locked in pre-build response on commit `b39d25b` of branch `claude/nice-wilson-398de1` (see §8 inline annotations + §9 below).
+
+### §1 — Operational model
+
+The locked three-values model treated closer estimate, opener actual, and opener prepped as three equal-weight inputs to over/under-par determination. Smoke surfaced this is operationally wrong: it forced both shifts to do equivalent counting work and computed prep need against par alone, ignoring how much was already on hand.
+
+The corrected model reflects how CO actually operates:
+
+- **Closer's role at end of shift:** Full per-item count of all tracked inventory. This is the truth at close. Captured in the closing report as `closer_count` per item. Not an estimate — an actual count.
+- **Opener's role on arrival:** Section-level spot check. Opener walks each station, scans the items, taps "verified" on the section as a whole if everything looks consistent with closer's recorded counts. Default fastest path: section-verify covers all items in that section.
+- **Per-item exception path:** If opener spots an item within a section that looks off, opener taps into that item to expand a recount input. Opener enters the corrected count → `opener_recount` is populated for that item only. The recount becomes ground truth for that item; section-verify still covers the other items in the section.
+- **Prep need derivation per item:**
+  - `ground_truth_count = opener_recount IF opener_recount IS NOT NULL ELSE closer_count`
+  - `prep_need = MAX(0, par − ground_truth_count)`
+  - If `ground_truth ≥ par`, `prep_need` is 0 (already at par or above; no prep required to reach par)
+- **Opener's prep work:** For each item where `prep_need > 0`, opener preps. The captured value is `opener_prepped` — the actual quantity made today. Audited against `prep_need`:
+  - `opener_prepped == prep_need` → at par (happy path, no notification)
+  - `opener_prepped > prep_need` → over-prep (requires reason capture; no urgent notification)
+  - `opener_prepped < prep_need` → under-prep (requires reason capture + urgent notification dispatched per C.48 routing rules)
+- **Par override case:** Opener may intentionally prep above `prep_need` (forecast busy day, catering load, prevent expiration) or below (slow day, ingredient shortage). Both are captured via the existing reason category enum + free-text. Same UI surface as today's over-par capture; semantic meaning shifts from "vs par" to "vs prep_need."
+
+### §2 — Data model
+
+**Per-section instance state (new — UI driven)**
+
+New table or JSONB structure capturing section-level verification:
+
+```sql
+opening_section_verifications:
+  artifact_instance_id    uuid (FK to artifact_instances)
+  section_key             text (e.g., 'station_bread', 'station_cheese', 'station_protein')
+  verified_at             timestamptz
+  verified_by             uuid (FK to users)
+  PRIMARY KEY (artifact_instance_id, section_key)
+```
+
+One row per section per artifact instance. Inserted when opener taps "verify section" in the form. Append-only — if opener un-verifies and re-verifies, both rows preserved with timestamps (existing CO-OPS append-only convention).
+
+Implementation question for Claude Code: new dedicated table vs. JSONB column on `artifact_instances`. JSONB is simpler for read paths (single fetch surfaces all section verifications); dedicated table is cleaner for queries and indexing. Recommend dedicated table — section verification data will be queried independently (closer accuracy signals, opener performance dashboards) and benefits from indexed access patterns.
+
+**Per-item completion state (modified)**
+
+Existing `checklist_completions` table extends to support the new fields. AM Prep already uses `prep_data` JSONB for closer estimate; opening Phase 2 follows the same pattern with a different shape:
+
+```jsonc
+checklist_completions.prep_data (JSONB, opening Phase 2 shape):
+{
+  "phase": 2,
+  "closer_count": <number>,            // populated from closing snapshot at form load
+  "spot_check_status": <enum>,         // 'matched_via_section_verify' | 'flagged_recount'
+  "opener_recount": <number | null>,   // populated only when status = 'flagged_recount'
+  "ground_truth_count": <number>,      // computed at submit time
+  "prep_need": <number>,               // computed at submit time (MAX(0, par - ground_truth_count))
+  "opener_prepped": <number>,          // captured from form
+  "delta_vs_prep_need": <number>,      // computed (opener_prepped - prep_need)
+  "over_under_status": <enum>,         // 'at_par' | 'over_prep' | 'under_prep'
+  "over_under_reason_category": <enum | null>,  // existing enum: management_directive, clear_fridge_space, etc.
+  "over_under_reason_text": <text | null>,      // free-text capture
+  "directed_by": <uuid | null>         // existing capture for management-directed over-prep
+}
+```
+
+`count_value` column on `checklist_completions` is no longer used for opening Phase 2 (closer estimate previously lived there per AM Prep convention). All Phase 2 numeric data lives in `prep_data` JSONB.
+
+**Closer-count snapshot table (new — locked per §8.1)**
+
+`opening_closer_count_snapshots` captures the closer's per-item count at the moment opener begins verification, decoupling opening's ground-truth from closer's C.46 chained-edit window:
+
+```sql
+opening_closer_count_snapshots:
+  id                       uuid PK
+  opening_instance_id      uuid FK → checklist_instances
+  template_item_id         uuid FK → checklist_template_items
+  closing_instance_id      uuid FK → checklist_instances  -- forensic trace to source closing
+  closer_count             numeric NOT NULL              -- the closer's `total` value (see 1:1 AM Prep correspondence below)
+  par_value                numeric                        -- mirrored from prep_meta.parValue at snapshot time
+  par_unit                 text                           -- mirrored from prep_meta.parUnit
+  snapshot_taken_at        timestamptz NOT NULL DEFAULT NOW()
+  snapshot_by              uuid FK → users               -- the opener who triggered the instance create
+  UNIQUE (opening_instance_id, template_item_id)
+```
+
+`loadOpeningState` materializes the snapshot from yesterday's closing live state at the moment of opening instance creation, persists, and reads from the snapshot thereafter. Subsequent C.46 chain edits to closing affect closing's chain attribution but DO NOT alter what opener verified against. Per C.44 snapshot universe locking precedent: historical reports preserve template state at submission time; same principle applied to closer-count at opening boundary.
+
+**1:1 AM Prep correspondence + `amPrepTemplateItemId` FK (architectural constraint, locked per Concerns 4 + 5)**
+
+Each opening Phase 2 item MUST have a 1:1 correspondence with an AM Prep template item. The AM Prep schema MUST carry a `total` column for the matched item; opening Phase 2's `closer_count` reads `total` at snapshot materialization time. Multi-column AM Prep state (`onHand`, `portioned`, `line`, etc.) collapses to the canonical `total` value at the opening boundary. If a future Phase 2 item lacks a corresponding AM Prep item with `total`, the FK is NULL and the seed surfaces the gap; submission fails the submit gate until reconciled.
+
+`OpeningPhase2Meta` carries `amPrepTemplateItemId: uuid` linking each opening Phase 2 item to its corresponding AM Prep template item. This explicit FK replaces label-matching (which conflicts with AGENTS.md C.38 system-key-vs-display-string discipline; label drift would silently break closer-snapshot lookup). Step 11 schema migration includes a one-time UPDATE that resolves FKs from existing seeded data via `(section, label)` matching, persists into `prep_meta` JSONB, and validates non-NULL on every Phase 2 item before C.50 implementation continues. Closer-snapshot lookups use the explicit FK exclusively from Step 11 onward.
+
+**🔧 Spec correction post-pre-build (2026-05-09, Step 11 implementation kickoff):** The `amPrepTemplateItemId` JSONB field discussed in pre-build response and locked above is architecturally redundant with the existing column `checklist_template_items.references_template_item_id` added in migration 0049 (Step 1, populated for all 68 Phase 2 items as of 2026-05-08). Pre-build response framed Concern 5 as if no FK existed; that was a verification miss — schema state should have been queried before drafting the recommendation. Step 11 implementation uses the column FK as canonical; the JSONB addition is dropped. Migration 0051 simplifies to "two new tables, no backfill, no audit emission" per Step 11 Lock 1. The architectural constraint above (1:1 AM Prep correspondence + `total` column requirement) remains correct and unchanged — only the FK persistence mechanism shifts from JSONB to the existing column. Captured as a durable lesson candidate for AGENTS.md (Step 15 wrap): **pre-build responses should query operational artifacts first** — when proposing schema additions, FK relationships, or data model changes, query current schema state before drafting recommendations. Sibling discipline to "verify against operational artifacts, not generic priors"; same principle applied to architectural-design surface.
+
+**Closer accuracy aggregation (new view or computed surface)**
+
+Closer accuracy signal is computed per-item per-closer over time. Recommend a materialized view or scheduled aggregation:
+
+```sql
+closer_accuracy_signals:
+  closer_user_id          uuid
+  template_item_id        uuid
+  artifact_instance_id    uuid
+  closer_count            number
+  ground_truth_count      number
+  delta                   number    // ground_truth - closer
+  recount_fired           boolean   // true if opener flagged a recount
+  occurred_at             timestamptz
+```
+
+Only populated for items where `ground_truth_count != closer_count` OR where opener explicitly recounted. Non-recounted, section-verified items contribute "implicit zero delta" data points (lower forensic weight but useful at scale). Implementation detail deferred to Claude Code; minimum viable shape is a query view computed on demand.
+
+### §3 — Three signals re-mapped
+
+The three-values data shape produces three operationally distinct signals:
+
+| Signal | Computation | Owner accountability | Surfaces in |
+|---|---|---|---|
+| **Closer accuracy** | Per-item Δ(`closer_count`, `ground_truth_count`) where recount fired. Aggregated over time per closer. | Closer's job performance / count discipline | Closer performance dashboards (post-Toast integration), end-of-week rollups |
+| **Opener execution** | Per-item Δ(`opener_prepped`, `prep_need`). Zero = at par. Negative = under-prep. Positive = over-prep. | Opener's job performance / prep discipline | Opener performance dashboards, end-of-week rollups |
+| **Par override / forecasting accuracy** | When `opener_prepped > prep_need` with management directive, OR `opener_prepped < prep_need` with intentional reason. | Operational judgment (currently opener; eventually Toast API + manager) | Manager review queues, par calibration over time |
+
+Each signal has a clear owner and a clear use. The current under-par notification dispatch (per C.48 routing: KH+ at same location AND MoO Cristian AND Owner Pete) fires on the **opener execution** signal when `delta_vs_prep_need < 0` AND `over_under_reason_category` is captured.
+
+### §4 — Behavior contract
+
+**Form rendering**
+
+Phase 2 renders per-section, with per-item drill-in for recounts:
+
+- Section header with verify-section CTA
+- List of items in section, each showing:
+  - Item name
+  - `closer_count` (read-only, surfaced from closing snapshot)
+  - `prep_need` (computed and shown live as opener verifies/recounts)
+  - Opener prepped input (numeric)
+- Per-item tap-in opens recount panel: input for `opener_recount`, save → `prep_need` recomputes for that item, opener prepped input enabled
+
+Form submit gate:
+
+- Every section must be verified (or all items individually flagged with recounts — equivalent)
+- Every item with `prep_need > 0` must have `opener_prepped` populated
+- Items where `opener_prepped != prep_need` must have `over_under_reason_category` + `reason_text`
+- Items with `over_under_status = 'over_prep'` and `directed_by` populated trace to a real KH+ user
+
+**`submit_opening_atomic` RPC dispatch**
+
+`submit_opening_atomic` Phase 2 path extends to:
+
+1. Validate all sections verified OR all items individually recount-flagged
+2. Compute `ground_truth_count` per item (`opener_recount` if present, else `closer_count`)
+3. Compute `prep_need` per item (`MAX(0, par − ground_truth_count)`)
+4. Compute `delta_vs_prep_need` per item (`opener_prepped − prep_need`)
+5. Validate `reason_category` + `reason_text` present where `delta != 0`
+6. Insert per-item Phase 2 completions with full `prep_data` JSONB
+7. Insert per-section verification rows for all verified sections
+8. Insert `closer_accuracy_signal` rows for items where `ground_truth != closer_count`
+9. Dispatch **one notification per item** where `delta_vs_prep_need < 0` (under-prep) — urgent priority, recipients = KH+ at same location + MoO + Owner DISTINCT, routed per C.48 (per-item granularity confirmed in lock; see "Notification triggers" above)
+10. Audit: `opening.submit` row with `phase2_count` populated, `section_verify_count`, `recount_count`
+
+**Notification triggers**
+
+Under-prep notification fires **per item — one notification per under-par item per submission**, dispatched per C.48 routing rules. Per-item granularity matches the operational unit of attention: managers may investigate items independently ("why bread" vs "why cheese"); per-item dismissal/read state matters; per-item card grain is preserved across the dashboard surface and `formatNotification` body shape from PR 3 Step 7. **Supersedes** the earlier draft framing of "batched into a single notification dispatch" — locked back to the Step 4 PR 3 kickoff convention. 3 under-par items in one submission → 3 notification rows + 9 recipient rows (3 × {KH+ at location, MoO, Owner DISTINCT}), severity urgent, in-app first, SMS when A2P clears.
+
+Over-prep does NOT fire notifications (operational signal but not urgent — captured for review, not real-time response).
+
+### §5 — Migration impact
+
+**Schema changes**
+
+- New table: `opening_closer_count_snapshots` (per §2 + §8.1 lock)
+- New table: `opening_section_verifications`
+- New JSONB field on `OpeningPhase2Meta`: `amPrepTemplateItemId` (per §2 + Concern 5 lock; populated via Step 11 backfill UPDATE)
+- New view or aggregation: `closer_accuracy_signals` (deferred implementation, contract defined; per §8.4 lock)
+- Existing `checklist_completions.prep_data` JSONB shape extended (no schema change; JSONB shape evolves)
+- **JSONB invariant enforced at RPC submit (per §8.4 lock):** every Phase 2 completion `prep_data` MUST contain `phase=2`, `closer_count`, `ground_truth_count`, `opener_prepped`, `prep_need`, `delta_vs_prep_need`, `over_under_status` (one of `'at_par' | 'over_prep' | 'under_prep'`). Even on the section-verified happy path where `closer_count == ground_truth_count` and `delta_vs_prep_need = 0`, all six fields persist. Future closer-accuracy view materializes from this shape with no backfill.
+
+**RPC changes**
+
+- `submit_opening_atomic` Phase 2 dispatch path rewritten per §4
+- Existing Phase 1 dispatch path unchanged
+- Validation logic added for prep_need-relative checks
+
+**Form changes**
+
+- `OpeningClient` Phase 2 rendering rewritten per §4
+- New section-verify component
+- New per-item recount drill-in component
+- `prep_need` surfaced live as derived value
+
+**Loader changes**
+
+- `loadOpeningState` extends to fetch `closer_count` from yesterday's closing snapshot per item
+- Section verification state hydrated from new table
+- `prep_need` computed at form-render time for live display
+
+**Notification changes**
+
+- Trigger logic moves from "delta_vs_par" to "delta_vs_prep_need"
+- Per-item notification batching into single dispatch per submission
+- Existing C.48 routing rules unchanged
+
+### §6 — What stays unchanged
+
+- Phase 1 verification flow (station ticks + temp checks + photo capture)
+- C.46 chained-edit semantics (KH+ post-submission edit, `edit_count` cap = 3)
+- C.48 auto-release infrastructure (16h window + lazy evaluator + system_auto path)
+- Multi-location architecture (region scoping, location-aware data models)
+- Append-only data convention (supersession via audit, never destructive overwrites)
+- Notification routing rules (KH+ same location + MoO + Owner for under-par urgent path)
+- Audit log structure and forensic chain conventions
+- Bilingual translation surface (still candidate for C.48 amendment when scope reopens)
+
+### §7 — Test surface requirements
+
+Per the AGENTS.md durable lesson candidate (multi-surface PRs need integration smoke before merge), C.50 implementation must include:
+
+- Unit tests for `prep_need` computation (par 10, ground_truth 8 → prep_need 2; par 10, ground_truth 12 → prep_need 0)
+- Unit tests for `ground_truth` derivation (recount present → recount; recount null → closer_count)
+- Integration test for full loader → form → submit round-trip with seeded Phase 2 items, including section-verify and per-item recount paths
+- Smoke test surface for under-par notification dispatch end-to-end (form submit with under-prep → notification row created → recipient rows dispatched)
+
+Smoke against operational data is required before merge — CI green alone insufficient.
+
+### §8 — Open implementation questions for Claude Code
+
+Locked answers landed in the pre-build response on commit `b39d25b` of branch `claude/nice-wilson-398de1`. Each question kept for forensic context with its lock annotation.
+
+1. **Closer count snapshot strategy** — how does opener form load yesterday's closing counts per item? Live query against `checklist_completions` for yesterday's closing instance, or denormalized snapshot copied at opening instance creation? Trade-off: live query keeps data fresh but couples opening to closing's edit window (C.46 chained edits could change closer's counts after opening renders); snapshot is decoupled but stale if closer edits.
+   - **🔒 Locked:** denormalized snapshot at opening instance creation. New table `opening_closer_count_snapshots` per §2. C.44 snapshot universe locking precedent applies; live query couples to closing edit window and creates audit ambiguity.
+
+2. **Section key derivation** — `section_key` (e.g., `'station_bread'`) comes from where? Template item metadata? Hardcoded in form layout? Recommend: extend template item schema with `section_key` field, populated in seed data.
+   - **🔒 Locked:** reuse existing `prep_meta.section` field; no new column. Already populated for opening Phase 2 items per Step 3 seed (values: `"Cooks"`, `"Veg"`, `"Sides"`, `"Sauces"`, `"Slicing"`). Bare names match closing v2 `station` column convention; C.38 system-key discipline says no namespacing. Redundant column would risk drift.
+
+3. **`prep_need` computation timing** — computed server-side at submit only (form shows live preview but truth lives in DB) OR server-side validation that client-computed value matches recomputation?
+   - **🔒 Locked:** server-side compute at submit only; **raw-inputs-only request shape** (no client-derived values in payload). Client preview is display-only and discarded at submit. Request payload contains: per item `templateItemId`, `openerRecount` (nullable), `openerPrepped`, `reasonCategory` (nullable), `reasonText` (nullable), `directedBy` (nullable); per section `sectionKey`, `verified`. Server derives `closer_count` (from snapshot table), `ground_truth_count`, `prep_need`, `delta_vs_prep_need`, `over_under_status`. Single source of truth in the RPC; AGENTS.md "Form validation must iterate the source of truth" discipline applied.
+
+4. **Closer accuracy view materialization** — implement now as part of C.50 OR defer to a separate amendment when closer performance dashboards are scoped?
+   - **🔒 Locked:** defer the view; tighten the per-completion `prep_data` JSONB validation invariant so the view materializes later with no backfill. RPC validates all six required fields present even on the section-verified happy path (see §5 invariant note). View itself ships with closer performance dashboards module (Wave 6+ scope).
+
+### §9 — Locked decisions from pre-build response (concerns surfaced + answered)
+
+Five architectural concerns surfaced during pre-build response on commit `b39d25b`. Each locked Y/N or counter-proposal:
+
+1. **🔒 Add lock-state clarifying note** at top of C.50. Single line documenting the architectural-model-locked / §8-implementation-locked split. Prevents future-Claude reading "Status: Locked" and missing that §8 had open questions at draft time.
+
+2. **🔒 Revert notification dispatch to N-per-item** (supersedes the C.50 §4 draft "batched into a single notification dispatch" framing). Per-item granularity matches operational unit of attention; per-item dismissal/read state matters; preserves the Step 4 PR 3 kickoff lock. 3 under-par items in one submission → 3 notification rows + 9 recipient rows. No rework to dashboard card layout or `formatNotification` body shape from PR 3 Step 7.
+
+3. **🔒 Codify submit gate rule:** for every Phase 2 item, AT LEAST ONE OF (parent section verified) OR (`opener_recount` populated) must be true. Server-side enforcement with sqlstate-mapped error if violated. Matrix:
+   - Section verified, no recount → `ground_truth = closer_count`
+   - Section verified + recount on item → `ground_truth = opener_recount` (overrides)
+   - Section NOT verified + recount on every item in section → `ground_truth = opener_recount` per item
+   - Section NOT verified + any item without recount → submit FAILS with sqlstate-mapped error
+
+4. **🔒 1:1 AM Prep correspondence + `total`-column constraint.** `closer_count` reads `total` from yesterday's AM Prep at snapshot materialization time. Multi-column AM Prep state collapses to single ground-truth at opening boundary. AM Prep schema must carry `total` for matched item; future Phase 2 items lacking a corresponding AM Prep item with `total` surface as NULL FK and fail submit gate until reconciled. Captured as architectural constraint in §2.
+
+5. **🔒 Add `amPrepTemplateItemId` FK to `OpeningPhase2Meta`.** Replaces label-matching (fragile per C.38 system-key discipline). Step 11 backfill UPDATE resolves from existing data via `(section, label)` matching, persists, validates non-NULL. From Step 11 forward, all closer-snapshot lookups use the explicit FK. Captured in §2.
+
+**Step 14 verification tightening (Q-extensions for smoke re-run):**
+
+- **Q-extension 1:** per-item `ground_truth` derivation lands correctly in `prep_data` audit (test both section-verified path AND recount path within the same submission)
+- **Q-extension 2:** `prep_need` edge case where `par=10 / ground_truth=12` produces `prep_need=0` (NOT negative)
+- **Q-extension 3:** N-per-item notification dispatch verified (3 under-par items → 3 notifications + 9 recipient rows, NOT 1 + 3)
+- **Q-extension 4:** submit gate enforcement — attempt submit with unverified section + no recount on items in that section → expect failure with sqlstate-mapped error
+
+**Step sequence (locked):** Steps 11–15 per pre-build response proposal. Step 14 incorporates Q-extensions 1–4 above before Step 15 wrap.
+
+**Migration files (locked):** `0051` (both new tables + `amPrepTemplateItemId` FK backfill UPDATE on existing seed data) and `0052` (RPC rewrite). Bundling at 0051 is right; separating RPC at 0052 follows AGENTS.md migration discipline (functions vs tables = different concerns; cleaner audit/rollback).
+
+---
+
 ## How to add an entry
 
-1. Pick the next monotonic ID (`C.<n>` — current next: C.50).
+1. Pick the next monotonic ID (`C.<n>` — current next: C.51).
 2. Spec sections under amendment.
 3. Quote what spec says.
 4. Document what built reality is.

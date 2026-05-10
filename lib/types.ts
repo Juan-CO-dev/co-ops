@@ -298,6 +298,40 @@ export interface PrepData {
 }
 
 /**
+ * Phase 2 opening item metadata per SPEC_AMENDMENTS.md C.50.
+ *
+ * Stored as JSONB on `checklist_template_items.prep_meta`. Distinct from
+ * `PrepMeta` (which is AM Prep-specific with `columns` + `specialInstruction`).
+ *
+ * Discriminator: `openingPhase2: true` signals to the form-mechanics
+ * dispatcher (Step 6) and submit_opening_atomic RPC (Step 4) to route
+ * this item through the Phase 2 storage path (prep_data.phase2 JSONB).
+ *
+ * `parValue` is mirrored from AM Prep at seed time for FALLBACK display
+ * when no closer-estimate snapshot resolves (e.g., AM Prep was missed
+ * yesterday OR Tomato-style par-null items). At form-render time, the
+ * par used for over/under-par signal computation comes from
+ * CloserEstimateSnapshot.parValue (the AM Prep snapshot's frozen par per
+ * C.44). The mirror is only the fallback path.
+ *
+ * Par drift: when AM Prep par changes via future C.44 admin tooling, the
+ * seed's UPDATE-on-drift path mirrors the new par into the opening Phase 2
+ * item's `parValue`. Drift is captured forensically in the audit row.
+ *
+ * All keys camelCase per Build #2 convention.
+ */
+export interface OpeningPhase2Meta {
+  /** Discriminator — true for Phase 2 items, absent/false for Phase 1. */
+  openingPhase2: true;
+  /** AM Prep section name (e.g., "Veg", "Cooks"). */
+  section: PrepSection;
+  /** Par mirrored from AM Prep at seed time. Null for items like Tomato (Prep Daily). */
+  parValue: number | null;
+  /** Unit-of-measure suffix mirrored from AM Prep at seed time. */
+  parUnit: string | null;
+}
+
+/**
  * Structured attribution for auto-complete completions per SPEC_AMENDMENTS.md C.42.
  * Stored as JSONB on `checklist_completions.auto_complete_meta`. NULL on
  * user-tap completions; populated only on rows inserted by the auto-complete
@@ -461,6 +495,24 @@ export interface ChecklistTemplateItem {
   prepMeta: PrepMeta | null;
   /** Marks closing items that auto-complete on report submission per SPEC_AMENDMENTS.md C.42. */
   reportReferenceType: ReportType | null;
+  /**
+   * Cross-template item reference per migration 0049. For opening Phase 2
+   * items, this links to the corresponding AM Prep template item that
+   * provides `closer_count` at snapshot materialization (see C.50 §2;
+   * canonical FK source per Step 11 simplification — replaces the
+   * draft-stage `OpeningPhase2Meta.amPrepTemplateItemId` JSONB field
+   * which was architecturally redundant).
+   *
+   * Forward-extensible: future cross-template references (Mid-day Prep ↔
+   * AM Prep, PM Report ↔ Closing, etc.) can reuse this same column. The
+   * column name stays generic; semantics are contextual per consumer.
+   *
+   * NULL on items without cross-template reference (Phase 1 verification
+   * items, AM Prep items themselves, closing items unless they're report-
+   * reference items per C.42 — though those use the separate
+   * reportReferenceType column).
+   */
+  referencesTemplateItemId: string | null;
 }
 
 /**
