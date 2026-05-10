@@ -220,13 +220,373 @@ PR 3 catch trend (positive — earlier catches require less recovery work):
 
 **C.50** — already locked + landed in spec at commit `b39d25b` + appended with §9 locks at commit `58ece4d` + spec correction note in Phase 5. No further authoring needed.
 
-**C.51 (deferred)** — out of scope for C.50 per the locks:
-- Phase 1A/1B section split (station/temp verification distinct from count verification)
+**C.51 (deferred)** — narrow scope (Phase 1A/1B split moved to C.53):
 - Opening report dashboard tile (parity with AM Prep tile)
 - Back-to-dashboard affordance on opening page
-- Opening submit auto-finalizing yesterday's closing per C.48 dependency graph
+- Opening submit auto-finalizing yesterday's closing per C.48 dependency graph (Finding 3)
+- PAR + PREP NEED visual prominence — these are the headline values for prep decisions; current layout treats them as supporting data. UX restructure should make them visually dominant. Future Toast API integration makes par dynamic; visual prominence prepares for that operational meaning.
 
 C.51 is the next amendment slot. Step 15 should NOT author C.51 itself — it's a future architectural conversation. Just leave the slot open with a brief stub.
+
+**C.52 (authored — Phase 2 collaborative real-time prep)** — full model spec was locked in conversation prior to this handoff update. Forward note: the full spec text needs to be pasted into this section by Juan when continuing (or in a separate handoff-doc commit), since it was not captured inline at the time of this commit. Pre-build response when fresh-session implementation begins should source from the locked text. Implementation will go through the same pre-build-response rhythm as C.50.
+
+Headline scope (from conversation): per-item save during Phase 2 prep entry; multi-actor location-scoped concurrent saves visible in real-time across clocked-in employees; verbal coordination handles who-preps-what (no platform-layer claiming/conflict resolution); append-only own-row edit semantics; per-item save timestamps + actor captured. C.53 §3 references C.52 in the Phase 2 data model (`saved_at` + `saved_by` per-item-save fields).
+
+**C.53 (authored — three-phase opening report restructure: verification → prep → setup)** — full text below. Locked in conversation. Ready for fresh-session implementation when PR 3 squash-merges.
+
+#### C.53 §1 — Operational model
+
+The opening report is restructured from two phases to three, each with a distinct actor model and verification activity:
+
+**Phase 1 — KH+ opener verification (single-user, sequential walk).**
+Opener arrives 2-3 hours before service. Walks the kitchen station-by-station. For each station card:
+
+- Station cleanliness check — visual confirm, single tap.
+- Temperature reading — numeric input from temp probe, with photo evidence optional.
+- Sauces topped off / dated correctly — single tap confirm.
+- Spot-check items in this station's section — opener walks the items physically, eyeballs each item against closer's count from yesterday's AM Prep. Per-item state captures one of:
+  - **Section-verified** — opener taps "verify section counts" CTA, covering all items in the station that aren't individually flagged. `ground_truth_count = closer_count` for those items.
+  - **Per-item recount** — opener taps into an item that looks off, enters `opener_recount` value. `ground_truth_count = opener_recount` for that item.
+- Station ready for service — final confirm tap.
+
+Submit Phase 1 → instance status `open` → `phase1_complete` → Phase 2 unlocks for the location with `prep_need` pre-resolved per item. By the time Phase 2 unlocks, every item has `ground_truth_count` + `prep_need` computed; the prep marching-order list is fully populated.
+
+**Phase 2 — Collaborative prep execution (location-scoped multi-actor).**
+Phase 2 renders as a clean prep-execution surface. For each item:
+
+- Item name and station context
+- PAR value (prominent — driven by Toast API integration eventually)
+- PREP NEED (prominent — already computed from Phase 1's resolved ground_truth)
+- OPENER PREPPED input (numeric, with per-item save button per C.52 collaborative model)
+- Over/under-prep signal banners + reason capture when delta ≠ 0
+
+Any clocked-in employee at the location can save per-item `opener_prepped` values. Each save persists immediately (per C.52). Other clocked-in employees at the location see updates in real-time. Verbal coordination handles who-preps-what; no claiming or conflict resolution at the platform layer.
+
+Edit semantics: append-only, own-row only. Original prepper can update their own entry to correct.
+
+Per-item under-prep notifications fire at Phase 2 submit time (not per-item save), N-per-item per Concern 2 lock, recipients per C.48 routing (KH+ at location + MoO + Owner DISTINCT).
+
+Submit Phase 2 → instance status `phase1_complete` → `phase2_complete` → Phase 3 unlocks for the same KH+ opener.
+
+**Phase 3 — KH+ opener station setup verification (single-user, sequential walk).**
+After prep is complete, opener walks the kitchen verifying station setup is service-ready. Phase 3 renders as a per-station setup checklist — items grouped by station context, each item either boolean (placed/not placed) or quantitative-with-threshold (e.g., 2-4 QT basil distributed). Multi-station items render once with their distribution semantic.
+
+For each setup item, opener taps verification (or enters quantitative value within range). Items can be untapped before submit; once submit fires, append-only audit captures the final state.
+
+Setup items include placement checks, backup inventory verification, and station-readiness items that physically prepare the kitchen for service.
+
+Submit Phase 3 → instance status `phase2_complete` → `confirmed` (if all setup items verified within range) OR `incomplete_confirmed` (if any items missing or out-of-range, with manager-level reason captured at submit time).
+
+Missing-item notifications fire at Phase 3 submit per the same N-per-item dispatch model as Phase 2 under-prep — recipients per C.48 routing.
+
+#### C.53 §2 — Why this lands operationally
+
+**Verification work stays with the verification actor.** Opener does ALL verification work (station, temp, spot-check counts, station setup) in Phase 1 + Phase 3. Cooks don't engage with verification mechanics.
+
+**Prep work surfaces clearly to prep actors.** Cooks open Phase 2 and see prep needs immediately — no verification mechanics in their view. They prep and save.
+
+**Sequential phases match physical workflow.** Opener walks → cooks prep → opener verifies setup → submit. Each phase is a distinct physical activity at a distinct time during the 2-3 hour pre-service window.
+
+**Phase boundaries enforce ordering.** Phase 2 can't start until Phase 1 verifies counts (otherwise prep_need can't compute). Phase 3 can't start until Phase 2 produces the prepped items (otherwise setup has nothing to place). Architectural gates match operational reality.
+
+**Single KH+ owns the report end-to-end.** Same opener does Phase 1 verification, oversees Phase 2 collaborative prep, executes Phase 3 setup verification. Submit authority flows from Phase 1's submitter through to Phase 3's submit.
+
+#### C.53 §3 — Data model
+
+**Phase 1 verification state.** Existing tables from C.50 stay valid; just shift WHEN data is populated:
+
+- `opening_closer_count_snapshots` — materializes at instance create (C.50 unchanged)
+- `opening_section_verifications` — populated at Phase 1 submit (was Phase 2 in C.50)
+- `checklist_completions` — Phase 1 completions for stations + temps + spot-check unchanged shape; spot-check fields land in `prep_data->phase1`:
+
+```jsonc
+{
+  "phase": 1,
+  "spot_check_status": "matched_via_section_verify" | "flagged_recount" | null,  // null for non-spot-check items
+  "opener_recount": <number | null>,
+  "ground_truth_count": <number | null>  // null for non-spot-check items (e.g. station cleanliness)
+}
+```
+
+**Phase 2 prep state.** Existing C.50 shape preserved with only `opener_prepped` + delta + status fields populated at Phase 2 submit:
+
+- `checklist_completions` — Phase 2 completions for prep items, `prep_data->phase2`:
+
+```jsonc
+{
+  "phase": 2,
+  "closer_count": <number | null>,           // mirrored from snapshot for forensic continuity
+  "ground_truth_count": <number | null>,     // mirrored from Phase 1 spot-check resolution
+  "prep_need": <number | null>,              // computed from ground_truth + par_value
+  "opener_prepped": <number>,                // captured per-item-save (C.52)
+  "delta_vs_prep_need": <number | null>,
+  "over_under_status": "at_par" | "over_prep" | "under_prep" | null,
+  "over_under_reason_category": <enum | null>,
+  "over_under_reason_text": <text | null>,
+  "directed_by": <uuid | null>,
+  "saved_at": <timestamp>,                   // per-item-save timestamp (C.52)
+  "saved_by": <uuid>                         // per-item-save actor (C.52)
+}
+```
+
+§8.4 invariant from C.50 preserved — every Phase 2 completion's `prep_data` MUST contain all six core fields once Phase 2 submits.
+
+**Phase 3 setup state — NEW.** Two new tables for setup item definitions and per-instance verifications:
+
+```sql
+-- Setup item definitions (template-like; seed data initially)
+CREATE TABLE opening_setup_items (
+  id                       uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  region_id                uuid NULL REFERENCES regions(id),  -- nullable for global items; per-region for future scoping
+  location_id              uuid NULL REFERENCES locations(id), -- nullable for region-wide items; per-location for future scoping (C.21 region scoping pattern)
+  item_label               text NOT NULL,
+  item_type                text NOT NULL CHECK (item_type IN ('boolean', 'quantitative_range')),
+  min_value                numeric NULL,        -- for quantitative_range only
+  max_value                numeric NULL,        -- for quantitative_range only
+  unit                     text NULL,            -- for quantitative_range only ("QT", "min", "logs", etc.)
+  applies_to_stations      text[] NOT NULL,      -- station_keys this item applies to
+  verification_scope       text NOT NULL CHECK (verification_scope IN ('shared', 'per_station')),
+  display_order            int NOT NULL,
+  active                   boolean NOT NULL DEFAULT true,
+  created_at               timestamptz NOT NULL DEFAULT NOW()
+  -- ...
+);
+
+-- Per-instance verification state (append-only)
+CREATE TABLE opening_setup_verifications (
+  id                       uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  opening_instance_id      uuid NOT NULL REFERENCES checklist_instances(id),
+  setup_item_id            uuid NOT NULL REFERENCES opening_setup_items(id),
+  station_key              text NULL,            -- populated for per_station verification_scope; NULL for shared
+  verified_at              timestamptz NOT NULL DEFAULT NOW(),
+  verified_by              uuid NOT NULL REFERENCES users(id),
+  verified_value           numeric NULL,         -- for quantitative_range; the number opener entered
+  in_range                 boolean NULL,         -- computed at verification time for quantitative; NULL for boolean
+  unverified_reason_category text NULL,          -- when item is intentionally NOT verified at submit (e.g., "ingredient_unavailable")
+  unverified_reason_text   text NULL
+);
+```
+
+**Important — multi-station verification semantics:**
+
+- `verification_scope = 'shared'` items (e.g., "2-4 QT basil distributed between walking + 3rd party stations") render once. Single verified row inserted with `station_key = NULL` and `verified_value` capturing the total quantity.
+- `verification_scope = 'per_station'` items (e.g., "GF bread + knife on each station") render once per station they apply to. Multiple verified rows inserted, one per `station_key`, each with its own verification state.
+
+This handles the operational distinction: bacon distributed across stations is one shared verification; towel + knife per station is verified per station independently.
+
+**Instance state graph extension.** Existing states preserved; new transitional states added:
+
+| State | Meaning | Set by |
+|---|---|---|
+| `open` | Instance created, no phase submitted | Instance create RPC |
+| `phase1_complete` | Phase 1 submitted, prep_need resolved per item | `submit_phase1_atomic` RPC |
+| `phase2_complete` | Phase 2 submitted, prep complete | `submit_phase2_atomic` RPC |
+| `confirmed` | Phase 3 submitted with all setup verified in range | `submit_phase3_atomic` RPC |
+| `incomplete_confirmed` | Phase 3 submitted with missing/out-of-range items + manager reason | `submit_phase3_atomic` RPC |
+| `auto_finalized` | C.48 16h auto-release fired; instance closed without explicit submit | `system_auto` |
+
+C.46 chain edits scoped per-phase per existing convention. KH+ can edit Phase 1 items after `phase1_complete`, Phase 2 items after `phase2_complete`, Phase 3 items after `confirmed` (or `incomplete_confirmed`). Edit_count cap = 3 per phase.
+
+#### C.53 §4 — Three signals re-mapped (no change from C.50, just re-anchored to new phase boundaries)
+
+Three signals computed from per-item state, each with distinct organizational accountability:
+
+| Signal | Computation | Owner accountability | Captured during |
+|---|---|---|---|
+| **Closer accuracy** | Δ(closer_count, ground_truth_count) per item, aggregated over time per closer. Non-zero only when opener-recount fired during Phase 1 spot-check. | Closer's job performance / count discipline | Phase 1 (spot-check) |
+| **Opener execution** | Δ(opener_prepped, prep_need) per item. Zero = at par. Negative = under-prep. Positive = over-prep. | Opener's job performance / prep discipline | Phase 2 (prep) |
+| **Setup accuracy** | Boolean items: verified count vs total count. Quantitative items: in_range count vs total count. Per-station for per_station scope; aggregate for shared scope. | Opener's job performance / service-readiness discipline (NEW SIGNAL) | Phase 3 (setup) |
+
+**New signal — Setup accuracy** — surfaces patterns over time. "Juan's openings consistently set up Caesar kits correctly; Maria's openings frequently miss backup pickle." Manager review queues consume this signal for performance discussion.
+
+#### C.53 §5 — Behavior contract per phase
+
+**Phase 1 form rendering.** Phase 1 renders as per-station cards (option α from design conversation). Each station card includes:
+
+- Station name header
+- Cleanliness check item
+- Temperature reading item (with optional photo)
+- Sauces topped off item
+- Spot-check section: items in this station, with section-verify CTA at top OR per-item recount drill-in
+- Station-ready confirm item
+
+Form scrolls station-by-station vertically. Cards are different lengths depending on items per station (Cooks station has more items than Slicing).
+
+**Submit Phase 1 gate:**
+- Every station's cleanliness + temp + ready items completed
+- Every spot-check item: section-verified OR `opener_recount` populated (per Concern 3 lock from C.50)
+
+**Phase 1 RPC — `submit_phase1_atomic`.** New RPC (replaces partial logic from C.50's `submit_opening_atomic`).
+
+Validates Phase 1 gate. Persists:
+
+- Phase 1 completions (stations + temps + spot-check entries)
+- `opening_section_verifications` rows for each section-verified entry
+- `prep_data->phase1` JSONB on spot-check completions
+- Computed `ground_truth_count` per spot-check item
+- Computed `prep_need` per spot-check item (mirroring to Phase 2 prep_data fields ahead of Phase 2 dispatch)
+
+Audit emission: `opening.phase1_submit` row with metadata (counts: stations_verified, temps_recorded, items_section_verified, items_recounted, total_recount_delta).
+
+Transitions instance status `open` → `phase1_complete`.
+
+No notification dispatch from Phase 1 (verification only; no operational deltas to surface).
+
+**Phase 2 form rendering.** Phase 2 renders as a flat list of prep items (no sections, no verification mechanics). Per item:
+
+- Item name + station context (informational, not interactive)
+- PAR value (prominent typography)
+- PREP NEED (prominent typography, color-coded by value)
+- OPENER PREPPED input (numeric, with explicit save button — C.52)
+- Over/under-prep signal banner (live-computed against current value)
+- Reason capture modals (when delta ≠ 0)
+
+Multi-actor visibility: real-time subscription on `checklist_completions` filtered to today's instance + Phase 2 completions. Updates from other clocked-in employees at the location surface immediately. Optimistic local save + reconciliation per C.52.
+
+**Submit Phase 2 gate:**
+- Every item with `prep_need > 0` has `opener_prepped` populated
+- Every item with `delta ≠ 0` has reason category + free-text captured
+- Submit authority: only the KH+ who submitted Phase 1 (`instance.phase1_submitter_id`)
+
+**Phase 2 RPC — `submit_phase2_atomic`.** Renamed from `submit_opening_atomic` (C.50's RPC). Logic simplified — Phase 1 work already done; this RPC only handles Phase 2 dispatch.
+
+Validates Phase 2 gate. Persists:
+
+- Per-item Phase 2 completion rows updated with final `opener_prepped` + computed `delta` + `over_under_status` fields (per-item-save during prep already populated `opener_prepped`; submit finalizes the row)
+- §8.4 invariant enforcement: every `prep_data->phase2` JSONB MUST contain all 6 core fields
+
+Notification dispatch: N-per-item under-prep notifications per Concern 2 lock. Same trigger condition as C.50 (`delta_vs_prep_need < 0` on submit). Same recipients (KH+ at location + MoO + Owner DISTINCT).
+
+Audit emission: `opening.phase2_submit` row with metadata (phase2_count, at_par_count, over_prep_count, under_prep_count, under_par_notification_count, total_save_events).
+
+Transitions instance status `phase1_complete` → `phase2_complete`.
+
+**Phase 3 form rendering.** Phase 3 renders as a per-station setup card. Each station card lists setup items applicable to that station:
+
+- Items with `verification_scope = 'per_station'` render in each station card they apply to (separate verification per station)
+- Items with `verification_scope = 'shared'` render once at the top of Phase 3 (or in a dedicated "shared setup" section), single verification covers all stations
+
+Per item:
+
+- Item label
+- Quantitative items: numeric input with min/max range displayed; in-range indicator
+- Boolean items: tap-confirm CTA
+
+Items can be untapped before submit; final state captured at submit.
+
+**Submit Phase 3 gate:**
+- Every Phase 3 item: verified (boolean) OR verified-with-value (quantitative) OR explicitly-unverified-with-reason
+- Submit authority: only the KH+ who submitted Phase 1 (same actor across all three phases)
+
+**Phase 3 RPC — `submit_phase3_atomic`.** New RPC.
+
+Validates Phase 3 gate. Persists:
+
+- `opening_setup_verifications` rows per item (one row for shared-scope items; multiple rows for per_station items)
+- `verified_value` for quantitative items; `in_range` computed boolean
+- `unverified_reason_category` + `unverified_reason_text` for explicitly-unverified items
+
+Notification dispatch: N-per-item missing-setup notifications when items are explicitly-unverified at submit. Same dispatch infrastructure as Phase 2 under-prep. Recipients per C.48 routing.
+
+Audit emission: `opening.phase3_submit` row with metadata (setup_items_verified, setup_items_in_range, setup_items_unverified, missing_setup_notification_count).
+
+Transitions instance status `phase2_complete` → `confirmed` (all items verified in range) OR `incomplete_confirmed` (some items unverified, manager reason captured).
+
+#### C.53 §6 — Migration impact
+
+Substantial. Implementation phases will sequence migrations carefully:
+
+**Schema migrations:**
+- New table: `opening_setup_items` (Phase 3 item definitions)
+- New table: `opening_setup_verifications` (Phase 3 per-instance verifications)
+- Status enum extension: `phase1_complete`, `phase2_complete` added to `checklist_instances.status`
+- Existing `opening_section_verifications` table: unchanged structurally; populated at different submit moment (Phase 1 instead of Phase 2)
+- Existing `opening_closer_count_snapshots` table: unchanged
+
+**RPC migrations:**
+- New RPC: `submit_phase1_atomic` — new logic; validates + persists Phase 1 completions + section verifications + spot-check fields + computed prep_need
+- Renamed RPC: `submit_opening_atomic` → `submit_phase2_atomic`. Logic simplified — Phase 2 dispatch only; spot-check work already done in Phase 1.
+- New RPC: `submit_phase3_atomic` — new logic; validates + persists setup verifications + dispatches missing-setup notifications
+
+Migration ordering: schema migrations first (tables + enum extension), then RPC migrations.
+
+**Form rewrites:**
+- Phase 1 component (`OpeningStation*` + new): existing per-station card extended with spot-check items list embedded. New `OpeningStationSpotCheck` component (analogous to existing `OpeningSectionVerify` but rendered within station card).
+- Phase 2 component (`OpeningPrepEntry`): simplified rewrite — section-verify CTAs removed, recount drill-in removed, closer-count display removed, "verify section first" pending copy removed. Renders prep marching-order list with per-item save (C.52 pattern).
+- Phase 3 component (NEW — `OpeningSetupVerify`): per-station setup card with mixed item types. Boolean tap + quantitative numeric input + range validation indicator. Multi-station verification handling.
+
+**i18n keys:**
+- Removed: Phase 2 section-verify keys, recount drill-in keys, "verify section first" pending key, closer-count display keys
+- Added (Phase 1): spot-check copy in station context (verify counts, recount item, closer count display)
+- Added (Phase 3): setup item copy (place item, verify range, missing reason categories)
+
+**Seed data:**
+- Phase 3 setup items seed — initial standard checklist (per Q-P3-1 lock). Single global checklist initially; region/location scoping reserved for future activation.
+- Existing Phase 2 seed — preserved (Standard Opening v1 template still has 34 Phase 2 items)
+- Phase 1 spot-check seed extension — existing Standard Opening v1 template's 34 spot-check items mapped to Phase 1 spot-check rendering (no schema change; just render shift)
+
+#### C.53 §7 — What stays unchanged from C.50
+
+- C.50 calculation logic (`closer_count` + `ground_truth_count` + `prep_need` + `opener_prepped` + `delta_vs_prep_need` + `over_under_status`) — preserved end-to-end
+- Three signals architecture — preserved + extended (setup accuracy added)
+- Notification dispatch (N-per-item, recipient routing, no re-emission on chain edits) — preserved
+- C.46 chained edit semantics — preserved per phase
+- C.48 auto-release infrastructure — preserved (16h window applies to instances stuck at any phase)
+- Region scoping pattern — preserved (Phase 3 setup items follow same pattern)
+- Append-only convention — preserved across all three phases
+- Bilingual translation discipline — preserved
+
+#### C.53 §8 — Open implementation questions for pre-build response
+
+When fresh session opens C.53 implementation, pre-build response surfaces:
+
+1. **Phase 3 seed data shape** — how is the standard checklist authored? SQL seed file? TypeScript-defined data with migration-time INSERT? Authoring path needs to be specified for the ~30+ setup items. Per-station `station_keys` list per item also needs structuring (alignment with existing station_keys: `'station_cooks'`, `'station_veg'`, `'station_sauces'`, `'station_slicing'`, `'station_cold'`).
+2. **Phase 2 instance state for in-progress prep** — when Phase 2 unlocks but prep isn't started yet, what does the dashboard tile show? Per C.52 collaborative design, multiple cooks may be saving entries asynchronously. Tile rendering for "phase2_complete" vs "phase1_complete with 0/34 prep entries" vs "phase1_complete with 18/34 prep entries" needs to be spec'd.
+3. **Phase 3 item ordering** — `display_order` field is in the schema. How is initial ordering set? Alphabetical? Operational priority (ingredients-first, placement-second, backups-last)? Per-station physical walking order? Pre-build response should propose an ordering convention.
+4. **Quantitative range UX edge cases** — what happens if opener enters a value outside the range? Form rejects? Form accepts with warning? Form requires reason? My read: form accepts but visually flags out-of-range; submit gate either requires reason for out-of-range items OR transitions instance to `incomplete_confirmed`. Pre-build response should propose.
+5. **Multi-station shared verification UX** — when a "shared" item like "2-4 QT basil distributed between walking + 3rd party stations" renders, where does it render in the form? At the top of Phase 3 (cross-station section)? Within the first station card it applies to? Pre-build response should propose.
+6. **C.46 chain-edit boundaries across phases** — if opener edits Phase 1 spot-check after Phase 2 submits (chain edit on Phase 1), does that retroactively change Phase 2's `ground_truth_count` + `prep_need`? Probably no (Phase 2 captured ground_truth at its submit time, not live), but the data model needs to be explicit. Pre-build response should propose.
+7. **Phase 3 incomplete + reason capture** — what reason categories apply to Phase 3 incomplete? "Ingredient unavailable" / "Equipment broken" / "Skipped due to time pressure" / etc.? Pre-build response should propose initial enum + free-text path.
+8. **Setup item edit semantics** — once Phase 3 submits, can opener chain-edit individual setup items (e.g., realized later that bacon was actually placed correctly)? Per C.46 cap-at-3 across all chains, or independent caps per phase? Pre-build response should propose.
+9. **Notification body for missing setup** — what does the notification body contain? Per-item details ("Bacon backup missing in walking station") vs aggregated summary ("3 setup items missing at MEP opening")? My read: per-item details for forensic richness, matching C.50's per-item under-prep dispatch. Pre-build response should confirm.
+
+#### C.53 §9 — Test surface requirements
+
+Per the AGENTS.md durable lesson "Multi-surface PRs need integration smoke before merge," C.53 implementation must include:
+
+- Unit tests for Phase 1 RPC: spot-check derivation (recount fired vs section-verified), prep_need computation persisted to Phase 2 prep_data ahead of Phase 2 dispatch
+- Unit tests for Phase 2 RPC simplified: validates only Phase 2 fields (Phase 1 work pre-resolved)
+- Unit tests for Phase 3 RPC: setup item validation, range checking, multi-station verification handling
+- Integration tests for full three-phase round-trip: instance create → Phase 1 submit → Phase 2 saves + submit → Phase 3 submit
+- Smoke test surface for end-to-end three-phase flow at MEP and EM (location-scoped collaborative behavior)
+- Smoke test surface for chain-edit behavior across phases (edit Phase 1 after Phase 2 submits — does Phase 2 data shift?)
+- Smoke test surface for `incomplete_confirmed` at Phase 3 (missing items + reason capture + notification dispatch)
+
+Smoke against operational data is required before merge — CI green alone insufficient.
+
+#### C.53 §10 — Implementation sequencing
+
+C.53 spans more surface than C.50 implementation did. Recommended phase structure for fresh-session implementation:
+
+| Phase | Scope | Rough LOC | Files touched |
+|---|---|---|---|
+| 1 | Schema migrations + Phase 3 seed data + types | ~300 | New tables, status enum, types, seed |
+| 2 | Phase 3 component (setup verification UI) | ~600 | New `OpeningSetupVerify`, supporting components, i18n |
+| 3 | Phase 1 component restructure (spot-check absorbed) | ~500 | `OpeningStation*` rewrite, new spot-check sub-component, i18n |
+| 4 | Phase 2 component simplification | ~400 | `OpeningPrepEntry` rewrite (smaller surface), i18n cleanup |
+| 5 | Three RPCs (Phase 1, Phase 2 rename, Phase 3) + RPC migrations | ~1500 plpgsql | Three migrations, `lib/opening.ts` dispatch |
+| 6 | Form ↔ RPC wire-shape integration + verification + commit | ~500 | Loader, route handler, types alignment, smoke prep |
+
+Total estimated: ~3800 LOC across 6 phases (vs. C.50's ~2000 LOC across 6 phases). Larger because three phases of restructure instead of one.
+
+Mid-phase surface check-ins per AGENTS.md rhythm. Single-commit at end per α lock semantic from C.50.
+
+### Cross-cutting amendments captured (not yet numbered; await fresh-session authoring)
+
+- **Offline-save-queue pattern** — applies to all reports (closing, AM Prep, opening Phase 2, Mid-day Prep). Save queued locally, replayed when online. Pattern generalizes; ship once, inherit everywhere.
+- **Role-gated historical access** — employee 1 week / KH-SL 1 month / AGM+ full. Cross-cutting; affects all report types. Implementation per existing role-level conventions.
+
+Forward note for fresh session: these amendments are NOT in `docs/SPEC_AMENDMENTS.md` yet. Captured inline in handoff doc only. Amendment authoring happens during pre-build response when implementation begins, same pattern as C.50.
 
 ### Finding 3 deferred pointer
 
