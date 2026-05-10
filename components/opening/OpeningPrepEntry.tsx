@@ -411,18 +411,30 @@ function PrepEntryRow({
         />
       ) : null}
 
-      {/* prep_need live preview (computed client-side, display-only) */}
-      {prepNeed !== null ? (
-        <div className="flex items-center gap-2 text-xs">
-          <span className="font-bold uppercase tracking-[0.12em] text-co-text-muted">
-            {t("opening.phase2.prep_need_label")}:
+      {/* prep_need live preview (computed client-side, display-only).
+       * Always renders for visual grammar consistency across items. When
+       * ground_truth is unresolved (section not verified AND no recount),
+       * shows pending-verification copy in dim style; once ground_truth
+       * resolves, value renders in normal weight. Signals/modals stay
+       * gated on resolved prep_need (numeric) — display-only line never
+       * lies about a derived value that isn't canonical. */}
+      <div className="flex items-center gap-2 text-xs">
+        {prepNeed !== null ? (
+          <>
+            <span className="font-bold uppercase tracking-[0.12em] text-co-text-muted">
+              {t("opening.phase2.prep_need_label")}:
+            </span>
+            <span className="font-semibold text-co-text">
+              {prepNeed}
+              {parUnit ? <span className="text-co-text-muted"> {parUnit}</span> : null}
+            </span>
+          </>
+        ) : (
+          <span className="text-co-text-dim italic">
+            {t("opening.phase2.prep_need_pending_verification")}
           </span>
-          <span className="font-semibold text-co-text">
-            {prepNeed}
-            {parUnit ? <span className="text-co-text-muted"> {parUnit}</span> : null}
-          </span>
-        </div>
-      ) : null}
+        )}
+      </div>
 
       {/* opener_prepped numeric input */}
       <div className="flex items-center gap-2">

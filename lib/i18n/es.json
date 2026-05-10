@@ -413,6 +413,7 @@
   "opening.phase2.recount_cancel": "Cancelar",
   "opening.phase2.recount_label": "Recuento del opener",
   "opening.phase2.prep_need_label": "Por preparar",
+  "opening.phase2.prep_need_pending_verification": "Por preparar: verifica la sección primero",
   "opening.phase2.signal.over_prep": "Sobre el necesario por {delta} — toca para registrar la razón",
   "opening.phase2.signal.under_prep": "Bajo el necesario por {delta} — toca para registrar la razón",
   "opening.phase2.signal.at_par": "Al par",

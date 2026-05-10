@@ -413,6 +413,7 @@
   "opening.phase2.recount_cancel": "Cancel",
   "opening.phase2.recount_label": "Opener recount",
   "opening.phase2.prep_need_label": "Prep need",
+  "opening.phase2.prep_need_pending_verification": "Prep need: verify section first",
   "opening.phase2.signal.over_prep": "Above prep need by {delta} — tap to record reason",
   "opening.phase2.signal.under_prep": "Below prep need by {delta} — tap to record reason",
   "opening.phase2.signal.at_par": "At par",
