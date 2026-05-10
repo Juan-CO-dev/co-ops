@@ -228,9 +228,242 @@ PR 3 catch trend (positive — earlier catches require less recovery work):
 
 C.51 is the next amendment slot. Step 15 should NOT author C.51 itself — it's a future architectural conversation. Just leave the slot open with a brief stub.
 
-**C.52 (authored — Phase 2 collaborative real-time prep)** — full model spec was locked in conversation prior to this handoff update. Forward note: the full spec text needs to be pasted into this section by Juan when continuing (or in a separate handoff-doc commit), since it was not captured inline at the time of this commit. Pre-build response when fresh-session implementation begins should source from the locked text. Implementation will go through the same pre-build-response rhythm as C.50.
+**C.52 (authored — Phase 2 collaborative real-time prep)** — full text below. Locked in conversation. Ready for fresh-session implementation when PR 3 squash-merges.
 
-Headline scope (from conversation): per-item save during Phase 2 prep entry; multi-actor location-scoped concurrent saves visible in real-time across clocked-in employees; verbal coordination handles who-preps-what (no platform-layer claiming/conflict resolution); append-only own-row edit semantics; per-item save timestamps + actor captured. C.53 §3 references C.52 in the Phase 2 data model (`saved_at` + `saved_by` per-item-save fields).
+- **Status:** Locked
+- **Triggered by:** Operational reality at Compliments Only — multiple cooks (line cooks, dishwashers also doing prep) work concurrently during the 2-3 hour pre-service window. Single-actor atomic submit model from C.50 doesn't match how the kitchen actually operates. Real-time per-item save matches the operational pattern (and reuses existing closing-checklist infrastructure).
+- **Scope:** Phase 2 prep execution becomes location-scoped collaborative real-time. Phase 1 (verification) stays single-user (KH+ opener). Submit authority remains with KH+ opener who completed Phase 1.
+- **Out of scope:** Phase 1 collaborative behavior (stays single-user); Phase 3 (handled in C.53); cross-cutting offline-save-queue (separate amendment).
+- **Depends on:** C.53 (three-phase restructure — Phase 2 simplification depends on Phase 1 absorbing verification work).
+
+#### C.52 §1 — Operational model
+
+The opening report's Phase 2 (prep execution) becomes a location-scoped collaborative surface. After C.53's Phase 1 verification submits, Phase 2 unlocks for the location with `prep_need` pre-resolved per item.
+
+**Actor model:**
+
+- **KH+ opener** — same actor who submitted Phase 1; eventually submits Phase 2 (and Phase 3 per C.53)
+- **Any clocked-in employee at the location** — can input `opener_prepped` per item with explicit save button. CO doesn't have a formal "cook" role distinction; all back-of-house staff (line cooks doing sandwich prep, dishwashers doing prep) participate in opening prep. Self-coordinated verbally; no platform-layer claiming or assignment.
+
+**Save semantic:**
+Per-item explicit save button. Each save persists immediately to `checklist_completions` with the actor's `user_id` captured as `saved_by`. Other clocked-in employees at the location see updates via real-time subscription (same pattern as the existing closing checklist's collaborative behavior).
+
+No autosave (operationally clean intent capture; explicit save = "I prepped this amount, locked in"). No claim-based locking (kitchen self-coordinates verbally; two cooks won't redundantly prep the same item).
+
+**Edit semantics:**
+Append-only, own-row only. Original prepper updates their own entry to correct (e.g., prepped 4 QT initially, realized at 7:50am they prepped another 2 QT after — they tap into marinara → recount their previous value 4 → update to 6 → save).
+
+Cross-author edits don't happen at the platform layer. Verbal coordination handles aggregation cases. If Cook A prepped 4 QT marinara and Cook B independently prepped 2 QT, verbal coordination → Cook A updates their own row to 6 QT (self-aggregation). Operationally rare; not a platform concern.
+
+**Submit authority:**
+Only the KH+ opener who submitted Phase 1 can submit Phase 2. Auth gate: `current_user_id == instance.phase1_submitter_id`. Other clocked-in employees can save per-item entries; only the Phase 1 submitter transitions instance state.
+
+**Submit gate:**
+Per C.50 §4 (preserved):
+
+- Every Phase 2 item with `prep_need > 0` has `opener_prepped` populated
+- Every item with `delta ≠ 0` has reason category + free-text captured
+
+**Submit produces:**
+
+- `confirmed` — gate fully passes; instance complete
+- `incomplete_confirmed` — opener submits with missing items + manager-level reason captured. Two distinct reason-capture surfaces: per-item under/over-prep reason captured by the prepper at save time (their accountability); whole-report incomplete-submit reason captured by KH+ opener at submission time (manager-level reasoning for missing items).
+
+#### C.52 §2 — Why this lands operationally
+
+**Matches kitchen reality.** 2-3 cooks working in close quarters during prep window, self-coordinating, prepping different items. Each saves what they prepped as they finish. Opener oversees, sees real-time progress, submits when ready.
+
+**Reuses existing infrastructure.** The closing checklist already supports multi-author per-item saves with real-time sync. C.52 is the same pattern applied to Phase 2 prep, with numeric inputs instead of binary ticks.
+
+**Per-actor accountability preserved.** `saved_by` captures who saved each entry. Audit trail surfaces "Cook A prepped 4 QT marinara at 7:32am; Cook B prepped 2 QT caramelized onion at 7:45am; Opener submitted at 8:30am." Manager review queues consume this for performance discussion.
+
+**Operationally cleaner than alternatives.** Without C.52, opener has to walk around asking each cook what they prepped, manually enter all values themselves at submit time. That's how the platform would force them to operate today (single-actor C.50 model), and that's not how kitchens actually work. C.52 closes the gap between system and reality.
+
+#### C.52 §3 — Data model
+
+C.50's `prep_data->phase2` JSONB shape preserved with two new fields:
+
+```jsonc
+{
+  "phase": 2,
+  "closer_count": <number | null>,
+  "ground_truth_count": <number | null>,
+  "prep_need": <number | null>,
+  "opener_prepped": <number>,
+  "delta_vs_prep_need": <number | null>,
+  "over_under_status": "at_par" | "over_prep" | "under_prep" | null,
+  "over_under_reason_category": <enum | null>,
+  "over_under_reason_text": <text | null>,
+  "directed_by": <uuid | null>,
+  "saved_at": <timestamp>,         // NEW per C.52 — per-item-save timestamp
+  "saved_by": <uuid>               // NEW per C.52 — per-item-save actor
+}
+```
+
+`saved_at` and `saved_by` capture the per-item save event. On C.46 chain edits (own-row corrections), `saved_at` updates to the latest save and `saved_by` stays as the original prepper (own-row edit semantics — the actor doesn't change because only the original author can edit their own entry).
+
+`completed_by` (existing column on `checklist_completions`) mirrors `saved_by` for backward-compat with closing checklist queries.
+
+§8.4 invariant from C.50 preserved: every Phase 2 completion's `prep_data->phase2` MUST contain all 6 core fields once Phase 2 submits. `saved_at` and `saved_by` are additional fields, not part of the invariant (because they're populated incrementally during prep, before the invariant is enforced at submit).
+
+#### C.52 §4 — Real-time subscription
+
+**Scope:** Location-scoped + active-instance-scoped.
+
+Each connected client subscribes to `checklist_completions` filtered to:
+
+- `instance_id` = today's opening Phase 2 instance for the user's current location
+- Phase 2 completions only (filter by `template_item_id` matching Phase 2 items)
+
+**Subscription lifecycle:**
+
+- Open on Phase 2 view mount
+- Close on Phase 2 view unmount
+- Auto-close once instance reaches terminal state (`confirmed` or `incomplete_confirmed` or `auto_finalized`)
+
+**Multi-location actors (MoO, Owner) — visibility scope:**
+Real-time subscriptions for multi-location actors are still location-scoped at the subscription level (one subscription per location they're viewing). They can switch between locations to monitor different sites. They don't get a single subscription that aggregates all locations — that would create connection-multiplication concerns.
+
+**Historical access — role-gated (separate cross-cutting amendment):**
+This is a cross-cutting concern that applies to all reports, not just Phase 2 prep. Captured separately (not in C.52 scope):
+
+- Employee level: up to 1 week historical view
+- KH through SL: up to 1 month historical view
+- AGM+: full historical view
+
+C.52 implementation should respect whatever historical access amendment is active when it ships.
+
+#### C.52 §5 — Form rendering (per-item save)
+
+Phase 2 component rewrite per C.53 §5:
+
+For each Phase 2 item:
+
+- Item name + station context (informational)
+- PAR value (prominent typography)
+- PREP NEED (prominent typography, color-coded)
+- OPENER PREPPED input (numeric)
+- **Save button per item** — explicit save fires when tapped; persists to `checklist_completions` with `saved_at = NOW()` and `saved_by = current_user_id`
+- Live save state indicator (saving / saved / error)
+- Multi-author display: "Saved by [name] at [time]" inline below the input (when populated)
+- Over/under-prep signal banner (live-computed against current saved value)
+- Reason capture modals (when delta ≠ 0)
+
+**Optimistic UI pattern:**
+
+- User taps save → input shows "saving..." indicator immediately
+- Save request fires → server confirms → indicator transitions to "saved at [time]"
+- Save fails (network, validation) → indicator shows error + retry CTA
+
+**Real-time updates from other clients:**
+
+- Subscription pushes update for any item saved by another user
+- Local state merges → input field for that item updates with the new value
+- "Saved by [name] at [time]" inline display updates
+- If current user has unsaved local changes for that item, conflict resolution applies (see below)
+
+**Conflict resolution (rare but possible):**
+Two clients editing the same item simultaneously:
+
+- Last save wins at the server level (own-row edit semantics — each save is a new completion row, latest wins per `saved_at`)
+- UI surfaces a brief conflict notification when remote update arrives while user has local changes ("This item was just saved by [name] — review their value before saving")
+- Operationally rare per Q2 lock (cooks self-coordinate verbally; two won't prep the same item)
+
+#### C.52 §6 — Submit authority + dispatch
+
+Submit Phase 2 → `submit_phase2_atomic` RPC.
+
+**Submit auth gate:**
+
+- `current_user_id == instance.phase1_submitter_id`
+- If different user attempts submit → P0001 sqlstate `phase2_submit_unauthorized`
+
+**Submit validation gate (per C.50 §4 preserved):**
+
+- Every `prep_need > 0` item has `opener_prepped` populated
+- Every `delta ≠ 0` item has reason captured
+
+**Submit dispatch:**
+
+- Persists §8.4 invariant fields if not already populated (`closer_count` + `ground_truth_count` + `prep_need` + `delta` + `over_under_status` — most populated during Phase 1 by C.53; finalized at Phase 2 submit)
+- N-per-item under-prep notifications fire per Concern 2 lock (NOT batched)
+- Audit emission `opening.phase2_submit` with metadata (`phase2_count`, `save_event_count`, `distinct_savers_count`, `at_par_count`, `over_prep_count`, `under_prep_count`, `under_par_notification_count`)
+
+**Notification dispatch timing:**
+Notifications fire at submit time, not per-item save time. Reasons:
+
+- Per-item saves are interim state (cooks may save partial values, update later)
+- Submission is the operational moment of "this is the final state for this opening"
+- Batching at submit produces clean dispatch (under-prep items captured at submit reflect final intent)
+- Avoids notification noise during prep window (Pete doesn't need 3 notifications across 30 minutes as Cook A saves marinara at 4 QT, then 6 QT, then 5 QT — only the final value matters)
+
+This matches C.50's notification timing; C.52 doesn't shift it.
+
+#### C.52 §7 — Migration impact
+
+**Schema changes:**
+
+- `checklist_completions.prep_data` JSONB shape extended with `saved_at` + `saved_by` (no schema migration; JSONB shape evolves)
+- Backward-compat: existing rows without `saved_at`/`saved_by` interpreted as "saved at completion timestamp by `completed_by` user" — Phase 2 RPC handles missing fields gracefully
+
+**RPC changes:**
+
+- `submit_phase2_atomic` (renamed from `submit_opening_atomic` per C.53) extends to:
+  - Validate auth gate (`phase1_submitter_id` match)
+  - Accept partial state (some items may have been saved during prep window with `saved_at` populated; submit finalizes)
+  - Final §8.4 invariant enforcement
+  - Existing notification dispatch logic preserved
+- New per-item save endpoint: `save_phase2_item_atomic(instance_id, template_item_id, opener_prepped, reason_category, reason_text, directed_by)`
+  - Validates: caller is clocked-in at the instance's location (auth gate)
+  - Validates: instance status is `phase1_complete` (not yet at `phase2_complete`+)
+  - Inserts new completion row with `prep_data->phase2` populated, `saved_at = NOW()`, `saved_by = current_user_id`
+  - Returns: completion row + computed delta + over_under_status (for client-side UI update)
+
+**Form changes:**
+
+- `OpeningPrepEntry` rewrites per C.53 §5 (already scoped) — additionally adds per-item save button + multi-author display + optimistic UI + real-time subscription handling
+- New `useSubscribeOpeningInstance` hook for real-time subscription lifecycle
+
+**Notification changes:**
+
+- No changes from C.50 — same trigger condition (`delta_vs_prep_need < 0`), same N-per-item, same routing, same timing (at submit)
+
+#### C.52 §8 — What stays unchanged from C.50
+
+- Calculation logic (`closer_count` + `ground_truth_count` + `prep_need` + `opener_prepped` + `delta_vs_prep_need` + `over_under_status`)
+- Three signals architecture
+- Notification dispatch (N-per-item, recipient routing, no re-emission on chain edits, fired at submit time)
+- C.46 chained edit semantics (own-row only, edit_count cap)
+- C.48 auto-release infrastructure
+- Append-only convention
+- Bilingual translation discipline
+
+#### C.52 §9 — Open implementation questions for pre-build response
+
+When fresh session opens C.52 implementation (post-PR-3, sequenced relative to C.53):
+
+1. **C.52 vs C.53 implementation ordering** — C.52 depends on C.53 (Phase 2 simplification needs Phase 1 to absorb verification first). Implementation order: C.53 first → C.52 second OR both bundled? Pre-build response should propose.
+2. **Real-time subscription library** — Supabase Realtime's existing patterns. Same as closing checklist? Pre-build response confirms exact implementation pattern matches existing collaborative surface.
+3. **Conflict resolution UX details** — when remote update arrives while user has unsaved local changes, what's the UX? Toast notification? Inline diff? Modal? Pre-build response should propose.
+4. **Per-item save endpoint vs single multi-item endpoint** — does each save fire its own RPC call (chatty, simple) or do saves batch within a debounce window (less chatty, more complex)? Pre-build response should propose. My read: per-item save endpoint, simple and matches operator intent.
+5. **Save state recovery on connection loss** — if user saves while offline, what happens? Cross-cutting offline-save-queue amendment will handle this generally; in C.52's scope, fail-fast with retry CTA is acceptable. Pre-build response should propose interim behavior.
+6. **Multi-author audit visibility** — when KH+ reviews submitted opening, do they see per-item save attribution surfaced in the form? Or only in audit log? Pre-build response should propose.
+7. **C.46 chain-edit semantics with C.52 multi-author saves** — if Cook A saves 4 QT, then later (post-submit) the opener chain-edits to 6 QT (correction), does the chain edit replace Cook A's `saved_by` attribution or preserve it? My read: chain edit creates a new completion row with `edit_count > 0`; original Cook A's row stays as the original audit trail. Pre-build response should confirm.
+8. **Visibility of in-progress saves to MoO/Owner** — multi-location actors monitoring real-time during prep. UI surface for them — same as opener's view, or different (read-only, aggregated)? Pre-build response should propose.
+
+#### C.52 §10 — Test surface requirements
+
+Per AGENTS.md "Multi-surface PRs need integration smoke before merge":
+
+- Unit tests for `save_phase2_item_atomic` RPC (auth gate, instance state validation, JSONB shape)
+- Unit tests for `submit_phase2_atomic` partial-state handling (some items pre-saved, some not)
+- Integration tests for multi-author save sequence (Cook A saves marinara, Cook B saves caramelized onion, opener submits)
+- Integration tests for conflict resolution (concurrent saves on same item)
+- Smoke test surface for full collaborative prep flow at MEP (multiple test users saving items, opener submitting)
+- Smoke test surface for real-time subscription behavior (Cook A's save appears on Cook B's screen within reasonable latency)
+- Smoke test surface for offline behavior (Cook A goes offline mid-save, comes back online; what happens to their save)
+
+Smoke against operational data is required before merge.
 
 **C.53 (authored — three-phase opening report restructure: verification → prep → setup)** — full text below. Locked in conversation. Ready for fresh-session implementation when PR 3 squash-merges.
 
