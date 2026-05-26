@@ -368,6 +368,10 @@
   "opening.error.network": "Network error — try again.",
   "opening.error.fallback": "Submission failed — try again.",
   "opening.error.internal_error": "Something went wrong — try again.",
+  "opening.error.null_source_requires_recount": "This item has no closing count from last night — tap \"Recount\" to enter a morning count instead.",
+
+  "notifications.opening_no_prior_data.title": "No prior closing data — opening at {locationCode} ({openingDate})",
+  "notifications.opening_no_prior_data.body": "{openerName} submitted today's opening at {locationCode} with no usable closing data from yesterday ({openingDate}). Attested cause: {attestationReason}. Counts established by morning recount — not captured at close. ({nullSourceCount} items)",
 
   "notifications.under_par_alert.title": "Under-par: {itemName} at {locationCode}",
   "notifications.under_par_alert.body": "{openerName} prepped {prepped} (par {par}, closer count {closer}). Reason: {reasonCategory}. {freeText}",

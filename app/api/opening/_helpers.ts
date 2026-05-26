@@ -38,6 +38,7 @@ import {
   OpeningPhase2NotEligibleError,
   OpeningPhase3NotEligibleError,
   OpeningProvenanceRequiredError,
+  OpeningNullSourceRequiresRecountError,
   OpeningRoleViolationError,
 } from "@/lib/opening";
 import { jsonError } from "@/lib/api-helpers";
@@ -73,6 +74,12 @@ export function mapOpeningError(err: OpeningError): NextResponse {
     return jsonError(422, err.code, {
       message: err.message,
       instance_id: err.instanceId,
+    });
+  }
+  if (err instanceof OpeningNullSourceRequiresRecountError) {
+    return jsonError(422, err.code, {
+      message: err.message,
+      template_item_id: err.templateItemId,
     });
   }
   if (err instanceof OpeningOutOfRangeReasonMissingError) {

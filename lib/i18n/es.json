@@ -368,6 +368,10 @@
   "opening.error.network": "Error de red — intenta de nuevo.",
   "opening.error.fallback": "El envío falló — intenta de nuevo.",
   "opening.error.internal_error": "Algo salió mal — intenta de nuevo.",
+  "opening.error.null_source_requires_recount": "Este artículo no tiene un conteo de cierre de anoche — presiona \"Recontar\" para ingresar un conteo matutino.",
+
+  "notifications.opening_no_prior_data.title": "Sin datos de cierre previo — apertura en {locationCode} ({openingDate})",
+  "notifications.opening_no_prior_data.body": "{openerName} envió la apertura de hoy en {locationCode} sin datos de cierre utilizables de ayer ({openingDate}). Causa reportada: {attestationReason}. Conteos establecidos mediante reconteo matutino — no capturados al cierre. ({nullSourceCount} artículos)",
 
   "notifications.under_par_alert.title": "Por debajo del par: {itemName} en {locationCode}",
   "notifications.under_par_alert.body": "{openerName} preparó {prepped} (par {par}, conteo de cierre {closer}). Razón: {reasonCategory}. {freeText}",
