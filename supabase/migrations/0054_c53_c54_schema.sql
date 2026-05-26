@@ -126,6 +126,7 @@ COMMENT ON COLUMN checklist_completions.count_provenance IS 'C.54 §4 — per-co
 ALTER TABLE opening_setup_items ENABLE ROW LEVEL SECURITY;
 
 -- Setup items are template-like; all authenticated users can read.
+DROP POLICY IF EXISTS opening_setup_items_select_policy ON opening_setup_items;
 CREATE POLICY opening_setup_items_select_policy
   ON opening_setup_items
   FOR SELECT
@@ -133,6 +134,7 @@ CREATE POLICY opening_setup_items_select_policy
 
 -- Only KH+ (role_level >= 3) can manage setup item definitions.
 -- Uses the existing current_user_role_level() helper from migration 0024.
+DROP POLICY IF EXISTS opening_setup_items_insert_policy ON opening_setup_items;
 CREATE POLICY opening_setup_items_insert_policy
   ON opening_setup_items
   FOR INSERT
