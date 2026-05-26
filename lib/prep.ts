@@ -644,6 +644,15 @@ export async function loadAmPrepState(
   authors: Record<string, string>;
 } | null> {
   // Resolve active AM Prep template (most-recent-active per Path A versioning).
+  // Per-location scoping via `.eq("location_id", args.locationId)` is LOAD-BEARING
+  // — prep templates exist per-location, so omitting the filter would pick the
+  // most-recently-created prep template across ALL locations. See sibling pattern
+  // in `lib/opening.ts loadOpeningState`.
+  //
+  // C.43 sub-finding: this single-prep-template assumption refines when Mid-day
+  // Prep ships — both AM Prep and Mid-day Prep will be `type='prep'`. Resolution
+  // path TBD at that build time (name pattern filter, discriminator column, or
+  // CHECK constraint split). Captured in AGENTS.md.
   const { data: tmplRow, error: tmplErr } = await service
     .from("checklist_templates")
     .select("id, name")

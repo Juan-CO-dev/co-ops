@@ -235,6 +235,10 @@ export default async function ClosingPage({ searchParams }: PageProps) {
 
   // Resolve active closing template (most recent active per Path A versioning
   // — picks v2 once Build #2 ships it without requiring code change).
+  // Per-location scoping via `.eq("location_id", locationParam)` is LOAD-BEARING
+  // — closing templates exist per-location, so omitting the filter would pick
+  // the most-recently-created closing template across ALL locations. See sibling
+  // pattern in `lib/opening.ts loadOpeningState` and `lib/prep.ts loadAmPrepState`.
   const { data: templateRow, error: tmplErr } = await sb
     .from("checklist_templates")
     .select("id")

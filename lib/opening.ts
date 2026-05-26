@@ -404,6 +404,13 @@ export async function loadOpeningState(
   authors: Record<string, string>;
 } | null> {
   // Resolve active opening template (most-recent-active per Path A versioning).
+  // The `.eq("location_id", args.locationId)` clause is LOAD-BEARING: templates
+  // are per-location (each location has its own active `type='opening'` rows).
+  // A naive `WHERE type=X AND active=true ORDER BY created_at DESC LIMIT 1`
+  // without the location_id filter would pick the most-recently-created opening
+  // template across ALL locations — wrong for any caller scoping to one location.
+  // The same pattern applies to prep templates (`lib/prep.ts loadAmPrepState`)
+  // and closing templates (`app/(authed)/operations/closing/page.tsx`).
   const { data: tmplRow, error: tmplErr } = await service
     .from("checklist_templates")
     .select("id, name")
@@ -895,7 +902,26 @@ export async function loadCloserCountSnapshots(
  */
 export interface OpeningCloserCountSnapshotRow {
   templateItemId: string;
-  /** Forensic FK to the closing instance whose AM Prep submission provided the count. NULL = no closing yesterday. */
+  /**
+   * Forensic FK to the **AM Prep instance** that captured this `closer_count`.
+   *
+   * NOTE: The underlying column on `opening_closer_count_snapshots` is misnamed
+   * `closing_instance_id` (historical artifact from an earlier draft where the
+   * source instance was thought to be the prior-night closing). The actual
+   * source is yesterday's AM Prep submission — closers count remaining
+   * inventory at end-of-shift, AM Prep submits the count the next morning, and
+   * THAT AM Prep instance is the FK target on this column. The closing instance
+   * itself never writes to this snapshot table.
+   *
+   * The TS-side property name `closingInstanceId` mirrors the (misnamed) DB
+   * column for direct mapping; renaming the column is a future schema migration
+   * with downstream cost (referenced in audit metadata, SQL queries, etc.).
+   *
+   * NULL = no AM Prep submission for the prior operational date (one of three
+   * NULL-sentinel cases per C.50 §2 / C.54 §1 — no_am_prep / first_day /
+   * item_not_linked). Opener establishes ground truth via recount per C.50's
+   * NULL-sentinel path.
+   */
   closingInstanceId: string | null;
   /** Closer's count of remaining inventory at end-of-shift. NULL = sentinel (see Step 11 Lock 3 cases). */
   closerCount: number | null;
