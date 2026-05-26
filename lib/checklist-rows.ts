@@ -43,6 +43,18 @@ import type {
   PrepData,
 } from "./types";
 
+// C.54 §4 — `count_provenance` (checklist_completions) and
+// `opener_no_prior_data_reason` (checklist_instances) are defined in the
+// application type contract (lib/types.ts ChecklistCompletion +
+// ChecklistInstance) but not yet present as physical Postgres columns.
+// The schema migration adding them lands in a downstream commit; until then
+// the row mappers below default both fields to null so callers can rely on
+// the typed shape without runtime column-not-found failures. When the
+// migration ships, add `count_provenance` to COMPLETION_COLUMNS and
+// `opener_no_prior_data_reason` to INSTANCE_COLUMNS, surface the snake_case
+// fields on CompletionRow / InstanceRow, and replace the `null` defaults
+// with `r.count_provenance` / `r.opener_no_prior_data_reason` pass-through.
+
 // ─────────────────────────────────────────────────────────────────────────────
 // checklist_instances
 // ─────────────────────────────────────────────────────────────────────────────
@@ -93,6 +105,8 @@ export function rowToInstance(r: InstanceRow): ChecklistInstance {
     droppedAt: r.dropped_at,
     droppedBy: r.dropped_by,
     droppedReason: r.dropped_reason,
+    // C.54 §4 — column ships in a downstream migration; default null until then.
+    openerNoPriorDataReason: null,
   };
 }
 
@@ -166,5 +180,7 @@ export function rowToCompletion(r: CompletionRow): ChecklistCompletion {
     autoCompleteMeta: (r.auto_complete_meta ?? null) as AutoCompleteMeta | null,
     originalCompletionId: r.original_completion_id,
     editCount: r.edit_count,
+    // C.54 §4 — column ships in a downstream migration; default null until then.
+    countProvenance: null,
   };
 }

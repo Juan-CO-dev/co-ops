@@ -78,3 +78,21 @@ export function OpeningPhaseRouter({
   if (active === 3 && phase3) return phase3({ instance });
   return null;
 }
+
+/**
+ * Type-contract-lock stub. Each phase component (Phase 1 / Phase 2 / Phase 3)
+ * wraps its body in `<PhaseContainer phase={N}>` so the visual shell stays
+ * consistent across the three downstream component implementations. The stub
+ * is a thin pass-through that renders children verbatim; the real container
+ * (header chrome, phase indicator, navigation affordances) lands when the
+ * phase components themselves do. Defining the shape here keeps the per-phase
+ * component call-sites stable across the restructure.
+ */
+export interface PhaseContainerProps {
+  phase: OpeningActivePhase;
+  children: ReactNode;
+}
+
+export function PhaseContainer({ children }: PhaseContainerProps): ReactNode {
+  return children;
+}

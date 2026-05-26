@@ -1026,6 +1026,19 @@ export interface ChecklistInstance {
   droppedAt: string | null;
   droppedBy: string | null;
   droppedReason: string | null;
+  /**
+   * C.54 §2.C — opener no-prior-data attestation captured at Phase 2 submit
+   * when any Phase 2 completion lands with `countProvenance='reconstructed_morning'`.
+   * NULL on instances where the attestation prompt did not fire (no
+   * reconstructed-morning entries) and on non-opening templates.
+   *
+   * Physical shape: dedicated column on `checklist_instances` per C.54 §4.
+   * Type contract locked here; the schema migration adding
+   * `opener_no_prior_data_reason` ships in a downstream commit. Until the
+   * column lands, the row mapper in lib/checklist-rows.ts defaults this to
+   * null.
+   */
+  openerNoPriorDataReason: OpeningNoPriorDataReason | null;
 }
 
 /**
@@ -1093,6 +1106,19 @@ export interface ChecklistCompletion {
   originalCompletionId: string | null;
   /** C.46 — edit position. 0 for chain head; 1-3 for updates (cap enforced in RPC). */
   editCount: number;
+  /**
+   * C.54 §2/§3 — per-completion provenance marker distinguishing closing-
+   * captured counts from morning-reconstructed counts. Set at submit time on
+   * opening Phase 2 completions whose `ground_truth_count` resolves via the
+   * NULL-source path; NULL elsewhere (other template types, opening Phase 1/3,
+   * and pre-C.54 completions per the no-retroactive-backfill rule).
+   *
+   * Physical shape: dedicated column on `checklist_completions` (option (i) per
+   * C.54 §4 recommendation). Type contract locked here; the schema migration
+   * adding `count_provenance` ships in a downstream commit. Until the column
+   * lands, the row mapper in lib/checklist-rows.ts defaults this to null.
+   */
+  countProvenance: C54Provenance | null;
 }
 
 export interface ChecklistSubmission {

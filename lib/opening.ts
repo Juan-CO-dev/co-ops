@@ -59,6 +59,7 @@ import type {
   OpeningEntryPhase1,
   OpeningEntryPhase2,
   OpeningEntryPhase3,
+  OpeningNoPriorDataReason,
   OpeningPhase,
   OpeningPhase2Meta,
   OpeningSectionVerificationEntry,
@@ -189,6 +190,15 @@ export class OpeningProvenanceRequiredError extends OpeningError {
 }
 
 /**
+ * C.53 + C.54 type-contract-lock alias — short, namespace-coherent name for
+ * `OpeningProvenanceRequiredError` paired with `OpeningPhaseError` and
+ * `OpeningOutOfRangeError`. Same class object; consumers may import either
+ * name.
+ */
+export const OpeningProvenanceError = OpeningProvenanceRequiredError;
+export type OpeningProvenanceError = OpeningProvenanceRequiredError;
+
+/**
  * C.53 §3 — when a Phase 3 quantitative_range setup-item verification lands
  * with `inRange=false` (verified_value outside [minValue, maxValue]), an
  * unverified-reason category MUST be captured. Thrown by the Phase 3 submit
@@ -209,19 +219,51 @@ export class OpeningOutOfRangeReasonMissingError extends OpeningError {
 }
 
 /**
+ * C.53 type-contract-lock alias — short, namespace-coherent name for
+ * `OpeningOutOfRangeReasonMissingError`. Same class object; consumers may
+ * import either name.
+ */
+export const OpeningOutOfRangeError = OpeningOutOfRangeReasonMissingError;
+export type OpeningOutOfRangeError = OpeningOutOfRangeReasonMissingError;
+
+/**
+ * C.53 — unifying base for phase-eligibility errors thrown by the submit
+ * dispatcher when an entry's `phase` does not match the instance's current
+ * operational phase (derived from `instance.status`). Consumer code may
+ * `instanceof OpeningPhaseError` to handle all three phase-eligibility paths
+ * uniformly, or branch on `error.code ∈ {phase1_not_eligible,
+ * phase2_not_eligible, phase3_not_eligible}` for per-phase handling. The
+ * three specific subclasses preserve descriptive class names for stack-trace
+ * readability + targeted catch branches.
+ */
+export class OpeningPhaseError extends OpeningError {
+  constructor(
+    message: string,
+    code:
+      | "phase1_not_eligible"
+      | "phase2_not_eligible"
+      | "phase3_not_eligible",
+    public readonly instanceId: string,
+    public readonly status: ChecklistStatus,
+  ) {
+    super(message, code);
+    this.name = "OpeningPhaseError";
+  }
+}
+
+/**
  * C.53 — dispatcher refuses to submit Phase 1 entries against an instance
  * whose status is not `'open'`. The instance has either already advanced
  * past Phase 1 (`phase1_complete`/`phase2_complete`) or is in a terminal
  * state (`confirmed`/`incomplete_confirmed`/`auto_finalized`).
  */
-export class OpeningPhase1NotEligibleError extends OpeningError {
-  constructor(
-    public readonly instanceId: string,
-    public readonly status: ChecklistStatus,
-  ) {
+export class OpeningPhase1NotEligibleError extends OpeningPhaseError {
+  constructor(instanceId: string, status: ChecklistStatus) {
     super(
       `Phase 1 submission rejected: instance ${instanceId} status is ${status} (expected 'open').`,
       "phase1_not_eligible",
+      instanceId,
+      status,
     );
     this.name = "OpeningPhase1NotEligibleError";
   }
@@ -233,14 +275,13 @@ export class OpeningPhase1NotEligibleError extends OpeningError {
  * Phase 2 prep entry can be submitted (the persisted ground_truth + prep_need
  * are written by Phase 1's atomic submit and consumed by Phase 2's).
  */
-export class OpeningPhase2NotEligibleError extends OpeningError {
-  constructor(
-    public readonly instanceId: string,
-    public readonly status: ChecklistStatus,
-  ) {
+export class OpeningPhase2NotEligibleError extends OpeningPhaseError {
+  constructor(instanceId: string, status: ChecklistStatus) {
     super(
       `Phase 2 submission rejected: instance ${instanceId} status is ${status} (expected 'phase1_complete').`,
       "phase2_not_eligible",
+      instanceId,
+      status,
     );
     this.name = "OpeningPhase2NotEligibleError";
   }
@@ -251,14 +292,13 @@ export class OpeningPhase2NotEligibleError extends OpeningError {
  * whose status is not `'phase2_complete'`. Phase 2 prep must have closed
  * before Phase 3 setup verification can be submitted.
  */
-export class OpeningPhase3NotEligibleError extends OpeningError {
-  constructor(
-    public readonly instanceId: string,
-    public readonly status: ChecklistStatus,
-  ) {
+export class OpeningPhase3NotEligibleError extends OpeningPhaseError {
+  constructor(instanceId: string, status: ChecklistStatus) {
     super(
       `Phase 3 submission rejected: instance ${instanceId} status is ${status} (expected 'phase2_complete').`,
       "phase3_not_eligible",
+      instanceId,
+      status,
     );
     this.name = "OpeningPhase3NotEligibleError";
   }
@@ -1389,4 +1429,222 @@ export async function submitOpening(
     originalSubmissionId: rpcResult.originalSubmissionId,
     underParNotificationIds: rpcResult.underParNotificationIds ?? [],
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// C.53 per-phase submit stubs (type-contract-lock)
+//
+// The C.53 restructure splits `submit_opening_atomic` into three per-phase
+// RPCs — `submit_phase1_atomic`, `submit_phase2_atomic`, `submit_phase3_atomic` —
+// each owning the atomic transaction for its phase's transition. The RPCs ship
+// in downstream commits (Phase 1 RPC + schema migrations + Phase 2 RPC with
+// C.54 NULL-source provenance + Phase 3 RPC for setup verification); this
+// commit locks the JS-side function signatures so route handlers and forms can
+// reference the contract while the runtime stays on the legacy
+// `submit_opening_atomic` path via `submitOpening` above.
+//
+// Wiring contract: each per-phase stub takes a strict per-phase entry list +
+// the actor + the instance id + the IP/UA context. The Phase 2 stub additionally
+// takes `openerNoPriorDataAttestation: OpeningNoPriorDataReason | null` per
+// C.54 §2.C (required when any Phase 2 completion lands with
+// `provenance='reconstructed_morning'`). Returns mirror the success shape of
+// `submitOpening`'s return — instance + completion ids + edit chain context.
+//
+// Calling the stubs at runtime throws OpeningError("phase{N}_rpc_not_implemented");
+// `submitOpeningByPhase` below dispatches by `entries[0].phase` and is the
+// future replacement for `submitOpening`. Downstream commit swaps the per-phase
+// stub bodies for real RPC invocations and migrates route handlers from
+// `submitOpening` → `submitOpeningByPhase` once Phase 1/2/3 RPCs ship.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Type-contract-lock shared result shape for per-phase atomic submits. The
+ * Phase 1 path additionally carries closing(N-1) auto-complete state; Phases 2
+ * + 3 leave `closingAutoCompleteId` null. Mirrors the success shape of
+ * `submitOpening` above.
+ */
+export interface OpeningPhaseSubmitResult {
+  instance: ChecklistInstance;
+  submittedCompletionIds: string[];
+  closingAutoCompleteId: string | null;
+  editCount: number;
+  originalSubmissionId: string | null;
+  underParNotificationIds: string[];
+}
+
+/**
+ * Type-contract-lock — Phase 1 atomic submit invoker.
+ *
+ * RPC contract (downstream commit):
+ *   `submit_phase1_atomic(p_opening_instance_id, p_actor_id, p_entries,
+ *      p_section_verifications, p_closing_report_ref_item_id, p_is_update,
+ *      p_original_submission_id, p_ip_address, p_user_agent)` → JSONB result
+ *      with `instance`, `submission_id`, `completion_ids`, `auto_complete_id`,
+ *      `edit_count`, `original_submission_id`, `under_par_notification_ids`.
+ *
+ * Pre-flight: instance.status must be `'open'`; otherwise the RPC raises a
+ * check_violation that the JS layer translates to
+ * `OpeningPhase1NotEligibleError`. Section verification rows are written
+ * inside the same transaction (one per `verified=true` entry).
+ */
+export async function submitPhase1Atomic(
+  _service: SupabaseClient,
+  _args: {
+    instanceId: string;
+    actor: OpeningActor;
+    entries: OpeningEntryPhase1[];
+    sectionVerifications: OpeningSectionVerificationEntry[];
+    closingReportRefItemId: string | null;
+    isUpdate?: boolean;
+    originalSubmissionId?: string;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  },
+): Promise<OpeningPhaseSubmitResult> {
+  throw new OpeningError(
+    "submit_phase1_atomic RPC not yet implemented (type-contract-lock stub).",
+    "phase1_rpc_not_implemented",
+  );
+}
+
+/**
+ * Type-contract-lock — Phase 2 atomic submit invoker.
+ *
+ * RPC contract (downstream commit):
+ *   `submit_phase2_atomic(p_opening_instance_id, p_actor_id, p_entries,
+ *      p_opener_no_prior_data_reason, p_is_update, p_original_submission_id,
+ *      p_ip_address, p_user_agent)` → JSONB result with the standard
+ *      OpeningPhaseSubmitResult fields plus C.50 counters (at_par_count,
+ *      over_prep_count, under_prep_count).
+ *
+ * Pre-flight: instance.status must be `'phase1_complete'`; otherwise raises
+ * `OpeningPhase2NotEligibleError`. Per C.54 §2.C, when any Phase 2 completion
+ * lands with `provenance='reconstructed_morning'`,
+ * `openerNoPriorDataAttestation` MUST be set or the call throws
+ * `OpeningProvenanceError` before the RPC fires.
+ */
+export async function submitPhase2Atomic(
+  _service: SupabaseClient,
+  _args: {
+    instanceId: string;
+    actor: OpeningActor;
+    entries: OpeningEntryPhase2[];
+    /**
+     * C.54 §2.C attestation. Non-null when at least one Phase 2 entry's source
+     * `closer_count` resolved from a NULL-source path (snapshot
+     * closer_count IS NULL → ground_truth derived from opener_recount per
+     * Phase 1). Required at the dispatch site when reconstructed-morning
+     * entries are present; nullable otherwise.
+     */
+    openerNoPriorDataAttestation: OpeningNoPriorDataReason | null;
+    isUpdate?: boolean;
+    originalSubmissionId?: string;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  },
+): Promise<OpeningPhaseSubmitResult> {
+  throw new OpeningError(
+    "submit_phase2_atomic RPC not yet implemented (type-contract-lock stub).",
+    "phase2_rpc_not_implemented",
+  );
+}
+
+/**
+ * Type-contract-lock — Phase 3 atomic submit invoker.
+ *
+ * RPC contract (downstream commit):
+ *   `submit_phase3_atomic(p_opening_instance_id, p_actor_id, p_entries,
+ *      p_ip_address, p_user_agent)` → JSONB result with the standard
+ *      OpeningPhaseSubmitResult fields. `closingAutoCompleteId` always null
+ *      (Phase 3 has no cross-template auto-complete target).
+ *
+ * Pre-flight: instance.status must be `'phase2_complete'`; otherwise raises
+ * `OpeningPhase3NotEligibleError`. Per-entry shape validation (verified vs
+ * unverified, out-of-range reason capture per C.53 §3) lives at the dispatch
+ * site; the RPC trusts the shape and writes verification rows + transitions
+ * the instance to `confirmed` or `incomplete_confirmed` (the latter when any
+ * entry carries `unverifiedReason`).
+ */
+export async function submitPhase3Atomic(
+  _service: SupabaseClient,
+  _args: {
+    instanceId: string;
+    actor: OpeningActor;
+    entries: OpeningEntryPhase3[];
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  },
+): Promise<OpeningPhaseSubmitResult> {
+  throw new OpeningError(
+    "submit_phase3_atomic RPC not yet implemented (type-contract-lock stub).",
+    "phase3_rpc_not_implemented",
+  );
+}
+
+/**
+ * C.53 type-contract-lock — phase-routing wrapper.
+ *
+ * Routes a homogeneous-phase entry batch to the matching per-phase atomic RPC
+ * stub. Entries must all share the same `phase`; mixed-phase batches throw
+ * `OpeningEntryShapeError`. This is the JS-side counterpart to the per-phase
+ * RPC split — when the per-phase RPC stubs above are wired to real RPCs,
+ * route handlers migrate from `submitOpening` (legacy single-RPC dispatcher
+ * preserved above for production traffic) to `submitOpeningByPhase` here in
+ * lockstep with the RPC ship.
+ *
+ * Phase 2 callers MUST pass `openerNoPriorDataAttestation` when any Phase 2
+ * entry's source closer_count resolved from a NULL-source path. The caller
+ * resolves attestation requirement from the persisted snapshot table via
+ * `loadOpeningCloserCountSnapshots`; the dispatcher does not re-check
+ * snapshots (it trusts the route handler's pre-resolution).
+ */
+export async function submitOpeningByPhase(
+  service: SupabaseClient,
+  args: {
+    instanceId: string;
+    actor: OpeningActor;
+    entries: OpeningEntry[];
+    sectionVerifications?: OpeningSectionVerificationEntry[];
+    closingReportRefItemId?: string | null;
+    openerNoPriorDataAttestation?: OpeningNoPriorDataReason | null;
+    isUpdate?: boolean;
+    originalSubmissionId?: string;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  },
+): Promise<OpeningPhaseSubmitResult> {
+  const phase = entriesPhase(args.entries);
+  if (phase === 1) {
+    return submitPhase1Atomic(service, {
+      instanceId: args.instanceId,
+      actor: args.actor,
+      entries: args.entries as OpeningEntryPhase1[],
+      sectionVerifications: args.sectionVerifications ?? [],
+      closingReportRefItemId: args.closingReportRefItemId ?? null,
+      isUpdate: args.isUpdate,
+      originalSubmissionId: args.originalSubmissionId,
+      ipAddress: args.ipAddress ?? null,
+      userAgent: args.userAgent ?? null,
+    });
+  }
+  if (phase === 2) {
+    return submitPhase2Atomic(service, {
+      instanceId: args.instanceId,
+      actor: args.actor,
+      entries: args.entries as OpeningEntryPhase2[],
+      openerNoPriorDataAttestation:
+        args.openerNoPriorDataAttestation ?? null,
+      isUpdate: args.isUpdate,
+      originalSubmissionId: args.originalSubmissionId,
+      ipAddress: args.ipAddress ?? null,
+      userAgent: args.userAgent ?? null,
+    });
+  }
+  return submitPhase3Atomic(service, {
+    instanceId: args.instanceId,
+    actor: args.actor,
+    entries: args.entries as OpeningEntryPhase3[],
+    ipAddress: args.ipAddress ?? null,
+    userAgent: args.userAgent ?? null,
+  });
 }
