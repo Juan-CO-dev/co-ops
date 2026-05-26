@@ -7,13 +7,14 @@
  *   - resolveClosingOpeningVerifiedRefItemId — finds closing(N-1)'s
  *                                "Opening verified" item id for the
  *                                cross-reference auto-completion target
- *   - loadCloserCountSnapshots — Phase 2 closer-count resolver (renamed from
- *     loadCloserEstimateSnapshots in Step 11 per C.50 semantic correction);
  *   - loadOpeningCloserCountSnapshots — Step 11 helper reading the persisted
- *     closer-count snapshot table; consumed by Step 12 form rewrite;
- *                                reads canonical (chain-resolved via
- *                                C.46 MAX(edit_count)) AM Prep snapshot
- *                                per opening Phase 2 item
+ *     closer-count snapshot table; SOLE READ PATH for Phase 2 closer counts
+ *                                post-Step-15 inline of the live resolver.
+ *                                Reads from `opening_closer_count_snapshots`
+ *                                (materialized once at instance create via
+ *                                the private materializeCloserCountSnapshots
+ *                                helper consumed only by loadOpeningState's
+ *                                create-path).
  *
  * Plus typed errors that route handlers translate to HTTP shapes via
  * mapOpeningError (app/api/opening/_helpers.ts).
@@ -277,7 +278,7 @@ export interface OpeningSectionVerificationEntry {
  * snapshot-frozen via C.44 + chain-resolved via C.46 MAX(edit_count) per
  * template_item.
  *
- * The resolver (loadCloserCountSnapshots) returns Map<openingTemplateItemId,
+ * The resolver (materializeCloserCountSnapshots) returns Map<openingTemplateItemId,
  * CloserCountSnapshot | null>. NULL when:
  *   - no AM Prep template at this location
  *   - no AM Prep submission for prior operational date
@@ -418,7 +419,7 @@ export async function loadOpeningState(
     par_unit: string | null;
   }> = [];
   if (phase2Items.length > 0) {
-    const liveSnapshotMap = await loadCloserCountSnapshots(service, {
+    const liveSnapshotMap = await materializeCloserCountSnapshots(service, {
       locationId: args.locationId,
       priorOperationalDate: yesterday,
       openingTemplateItemIds: phase2Items.map((it) => it.id),
@@ -602,29 +603,31 @@ export async function resolveClosingOpeningVerifiedRefItemId(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// loadCloserCountSnapshots — Phase 2 closer-count resolver (live)
+// materializeCloserCountSnapshots — private snapshot materializer
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Resolves closer-count snapshots for a set of opening Phase 2 template
- * items. Returns a Map keyed by opening template_item_id; value is the
- * canonical AM Prep snapshot per the chain (MAX(edit_count)) OR null when
- * no AM Prep value resolves.
+ * Private materializer. Resolves closer-count snapshots for a set of opening
+ * Phase 2 template items at instance-create time, returning a Map keyed by
+ * opening template_item_id; value is the canonical AM Prep snapshot per the
+ * chain (MAX(edit_count)) OR null when no AM Prep value resolves.
  *
- * **Renamed from `loadCloserEstimateSnapshots` in Step 11 (PR 3) per C.50
- * §1.** The closer's value is a COUNT of remaining inventory at end of
- * shift, NOT an estimate/forecast. Semantic correction locked in the type
- * system; inner field name `total` retained for now (RPC contract coupling
- * — old RPC reads `total`; rewrite ships in Step 13 migration 0052).
+ * **Step 15 wrap (2026-05-26): inlined from `export async function
+ * loadCloserCountSnapshots`** after a grep audit confirmed exactly one
+ * consumer existed in production code — `loadOpeningState`'s create-path
+ * snapshot materialization, immediately below this function definition.
+ * No dashboard preview path consumed the live resolver. The persisted
+ * snapshot table (`opening_closer_count_snapshots`) materialized at instance
+ * create via this helper is the SOLE source for Phase 2 closer-count reads
+ * post-Step-15; consumers read via `loadOpeningCloserCountSnapshots`. Inline
+ * dropped the public export surface (one less API to maintain) without
+ * changing the materialization logic.
  *
- * **Architectural role post-Step-11:** this LIVE resolver remains in place
- * for callers that need fresh data without snapshot persistence (e.g., the
- * page.tsx form-load path until Step 12 form rewrite). New opening instances
- * created post-Step-11 ALSO get a persisted snapshot in
- * `opening_closer_count_snapshots` (materialized in `loadOpeningState`'s
- * create-path; read by `loadOpeningCloserCountSnapshots` helper). Persisted
- * snapshot is the canonical source for the Step 12 form rewrite; the live
- * resolver is the materialization source at create time.
+ * Originally renamed from `loadCloserEstimateSnapshots` in Step 11 (PR 3)
+ * per C.50 §1 — the closer's value is a COUNT of remaining inventory at end
+ * of shift, NOT an estimate/forecast. Semantic correction locked in the type
+ * system; inner field name `total` retained (RPC contract coupling — RPC
+ * reads `total` from prep_data inputs JSONB).
  *
  * **AM Prep ↔ opening Phase 2 FK source:** column
  * `checklist_template_items.references_template_item_id` (added in
@@ -657,7 +660,7 @@ export async function resolveClosingOpeningVerifiedRefItemId(
  * on the completion read. Negligible for Server Component render. If Phase 2
  * grows to hundreds of items, revisit single-query optimization.
  */
-export async function loadCloserCountSnapshots(
+async function materializeCloserCountSnapshots(
   service: SupabaseClient,
   args: {
     locationId: string;
@@ -677,7 +680,7 @@ export async function loadCloserCountSnapshots(
     .in("id", args.openingTemplateItemIds);
   if (refErr) {
     throw new Error(
-      `loadCloserCountSnapshots: load opening item refs: ${refErr.message}`,
+      `materializeCloserCountSnapshots: load opening item refs: ${refErr.message}`,
     );
   }
 
@@ -708,7 +711,7 @@ export async function loadCloserCountSnapshots(
     .maybeSingle<{ id: string }>();
   if (tmplErr) {
     throw new Error(
-      `loadCloserCountSnapshots: load AM Prep template: ${tmplErr.message}`,
+      `materializeCloserCountSnapshots: load AM Prep template: ${tmplErr.message}`,
     );
   }
   if (!amPrepTmpl) {
@@ -729,7 +732,7 @@ export async function loadCloserCountSnapshots(
     .maybeSingle<{ id: string }>();
   if (instErr) {
     throw new Error(
-      `loadCloserCountSnapshots: load AM Prep instance: ${instErr.message}`,
+      `materializeCloserCountSnapshots: load AM Prep instance: ${instErr.message}`,
     );
   }
   if (!amPrepInstance) {
@@ -750,7 +753,7 @@ export async function loadCloserCountSnapshots(
     .is("revoked_at", null);
   if (compErr) {
     throw new Error(
-      `loadCloserCountSnapshots: load AM Prep completions: ${compErr.message}`,
+      `materializeCloserCountSnapshots: load AM Prep completions: ${compErr.message}`,
     );
   }
 
@@ -822,21 +825,24 @@ export async function loadCloserCountSnapshots(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// loadOpeningCloserCountSnapshots — Step 11 helper reading the persisted
-// closer-count snapshot table (consumed by Step 12 form rewrite)
+// loadOpeningCloserCountSnapshots — SOLE READ PATH for Phase 2 closer counts
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * C.50 §2 — Step 11 helper. Reads the persisted closer-count snapshot rows
- * for an opening instance, returning a Map keyed by template_item_id.
+ * C.50 §2 — reads the persisted closer-count snapshot rows for an opening
+ * instance, returning a Map keyed by template_item_id.
+ *
+ * Originally introduced in Step 11 as one of two read paths (the other was
+ * the live `loadCloserCountSnapshots` resolver). Step 15 wrap inlined the
+ * live resolver as the private `materializeCloserCountSnapshots` helper
+ * (single consumer was instance-create-time snapshot materialization), so
+ * this helper is now the **SOLE read path** for Phase 2 closer counts.
  *
  * The snapshot is materialized at opening instance creation by
  * `loadOpeningState` (the create-path snapshot block above) — one row per
- * Phase 2 template item. This helper is the canonical READ path for the
- * Step 12 form rewrite (form reads closer counts from the persisted
- * snapshot, not from the live `loadCloserCountSnapshots` resolver, to
- * decouple from closing's C.46 edit window per C.44 snapshot universe
- * locking precedent).
+ * Phase 2 template item. Form reads closer counts from the persisted
+ * snapshot to decouple from closing's C.46 edit window per C.44 snapshot
+ * universe locking precedent.
  *
  * Result field naming uses the C.50 semantic (closerCount) directly — the
  * column on the snapshot table is `closer_count`. This is brand-new shape

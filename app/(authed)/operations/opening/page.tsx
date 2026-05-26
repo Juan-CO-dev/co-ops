@@ -220,10 +220,12 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
 
   // C.50 §2 — load persisted closer-count snapshots from
   // opening_closer_count_snapshots (materialized at instance create per
-  // loadOpeningState's create-path; canonical source post-Step-11). The live
-  // resolver loadCloserCountSnapshots remains in lib/opening.ts but is no
-  // longer the form's source of truth — the persisted snapshot decouples
-  // from closing's C.46 edit window per C.44 snapshot universe locking.
+  // loadOpeningState's create-path). This is the SOLE read path for Phase 2
+  // closer counts post-Step-15 wrap; the previously-coexisting live resolver
+  // was inlined as a private materializer (`materializeCloserCountSnapshots`)
+  // since its only consumer was the create-path itself. The persisted
+  // snapshot decouples form rendering from closing's C.46 edit window per
+  // C.44 snapshot universe locking.
   //
   // For instances created BEFORE migration 0051, this returns an empty
   // Map (no snapshot rows for them). New instances created via
