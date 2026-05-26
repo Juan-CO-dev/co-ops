@@ -1,7 +1,6 @@
 -- Migration 0054_c53_c54_schema
--- Created 2026-05-26. NOT YET APPLIED — apply via Supabase MCP apply_migration
--- or Supabase dashboard SQL editor before any downstream work touches these
--- tables/columns.
+-- Applied via Supabase MCP apply_migration (plugin:supabase:supabase) on 2026-05-26.
+-- Pre-apply survey + dry-run parse completed; post-apply verification confirmed all objects present.
 -- Canonical references:
 --   - docs/SPEC_AMENDMENTS.md C.53 §3 (Phase 3 setup state — new tables), §6 (Migration impact)
 --   - docs/SPEC_AMENDMENTS.md C.54 §4 (provenance marker column shape + attestation column)
