@@ -57,7 +57,7 @@ ALTER TABLE checklist_instances
 
 CREATE TABLE IF NOT EXISTS opening_setup_items (
   id                       uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  region_id                uuid NULL REFERENCES regions(id),
+  region_id                uuid NULL,  -- FK deferred — regions table not yet in production; forward-looking per comment below
   location_id              uuid NULL REFERENCES locations(id),
   item_label               text NOT NULL,
   item_type                text NOT NULL CHECK (item_type IN ('boolean', 'quantitative_range')),
