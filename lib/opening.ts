@@ -199,6 +199,25 @@ export const OpeningProvenanceError = OpeningProvenanceRequiredError;
 export type OpeningProvenanceError = OpeningProvenanceRequiredError;
 
 /**
+ * C.53 Phase 1 — raised when a spot-check item with NULL `closer_count`
+ * arrives section-verified without an `opener_recount` value. NULL-closer-count
+ * items can ONLY be resolved by recount; section-verify is not a valid path
+ * because you can't verify-as-correct a count that doesn't exist.
+ * New from Aggie's adversarial pass (v2 lock responsibility 1 refinement).
+ */
+export class OpeningNullSourceRequiresRecountError extends OpeningError {
+  constructor(
+    public readonly templateItemId: string,
+  ) {
+    super(
+      `Spot-check item ${templateItemId} has no prior closing count and cannot be section-verified; a recount is required.`,
+      "null_source_requires_recount",
+    );
+    this.name = "OpeningNullSourceRequiresRecountError";
+  }
+}
+
+/**
  * C.53 §3 — when a Phase 3 quantitative_range setup-item verification lands
  * with `inRange=false` (verified_value outside [minValue, maxValue]), an
  * unverified-reason category MUST be captured. Thrown by the Phase 3 submit
@@ -1261,12 +1280,17 @@ export async function submitOpening(
     throw new OpeningPhase1NotEligibleError(args.instanceId, instanceStatus);
   }
 
-  // C.54 §2.C — `OpeningProvenanceRequiredError` is the typed error future
-  // Phase 2 dispatches will throw when a reconstructed-morning provenance
-  // entry lands without `openerNoPriorDataAttestation`. The snapshot lookup
-  // + provenance comparison lands with the Phase 2 RPC restructure; the
-  // error class is exported and referenced here to keep the export wired
-  // and to document the contract surface at the dispatch site.
+  // C.54 §2.C — `OpeningProvenanceRequiredError` is the typed error that
+  // the Phase 1 RPC raises (via P0001 'provenance_required' → mapOpeningError)
+  // when a reconstructed-morning provenance entry lands without
+  // `openerNoPriorDataAttestation`. Per Triad A ruling 2026-05-26, the
+  // attestation lives on Phase 1 (NULL-source detection moved there under
+  // C.53's restructure); the dispatch site is `submitOpeningByPhase`'s
+  // Phase 1 branch + `submitPhase1Atomic`'s wired body. This legacy
+  // `submitOpening` dispatcher routes via the pre-C.53 `submit_opening_atomic`
+  // RPC and does NOT enforce the C.54 attestation contract — the error class
+  // is exported and referenced here to keep the export wired for the per-
+  // phase wrappers above.
   void OpeningProvenanceRequiredError;
 
   // 5. Marshal entries for the unchanged submit_opening_atomic RPC.
@@ -1444,11 +1468,14 @@ export async function submitOpening(
 // `submit_opening_atomic` path via `submitOpening` above.
 //
 // Wiring contract: each per-phase stub takes a strict per-phase entry list +
-// the actor + the instance id + the IP/UA context. The Phase 2 stub additionally
-// takes `openerNoPriorDataAttestation: OpeningNoPriorDataReason | null` per
-// C.54 §2.C (required when any Phase 2 completion lands with
-// `provenance='reconstructed_morning'`). Returns mirror the success shape of
-// `submitOpening`'s return — instance + completion ids + edit chain context.
+// the actor + the instance id + the IP/UA context. The Phase 1 stub
+// additionally takes `openerNoPriorDataAttestation: OpeningNoPriorDataReason
+// | null` per C.54 §2.C (required when any Phase 1 spot-check entry lands
+// with `provenance='reconstructed_morning'`). Per Triad A ruling 2026-05-26,
+// attestation moved from Phase 2 to Phase 1 (NULL-source detection happens
+// in Phase 1 under C.53's restructure, so the attestation follows
+// detection). Returns mirror the success shape of `submitOpening`'s
+// return — instance + completion ids + edit chain context.
 //
 // Calling the stubs at runtime throws OpeningError("phase{N}_rpc_not_implemented");
 // `submitOpeningByPhase` below dispatches by `entries[0].phase` and is the
@@ -1475,17 +1502,31 @@ export interface OpeningPhaseSubmitResult {
 /**
  * Type-contract-lock — Phase 1 atomic submit invoker.
  *
- * RPC contract (downstream commit):
+ * RPC contract (migration 0055; Triad A rulings 2026-05-26):
  *   `submit_phase1_atomic(p_opening_instance_id, p_actor_id, p_entries,
- *      p_section_verifications, p_closing_report_ref_item_id, p_is_update,
- *      p_original_submission_id, p_ip_address, p_user_agent)` → JSONB result
- *      with `instance`, `submission_id`, `completion_ids`, `auto_complete_id`,
- *      `edit_count`, `original_submission_id`, `under_par_notification_ids`.
+ *      p_section_verifications, p_opener_no_prior_data_reason, p_is_update,
+ *      p_original_submission_id, p_changed_fields, p_ip_address, p_user_agent)`
+ *      → JSONB with `instance`, `submissionId`, `completionIds`,
+ *      `autoCompleteId` (always NULL — Phase 1 owns no opening→closing auto-
+ *      complete per C.54 §2.A; Phase 3 owns it), `editCount`,
+ *      `originalSubmissionId`, `underParNotificationIds` (always [] — Phase 2
+ *      concept), `nullSourceNotificationIds` (new — C.54 §2.B; zero or one),
+ *      plus counters `stationsVerified` / `itemsRecounted` /
+ *      `nullSourceCount` / `provenanceMarkersSet` / `attestationCapture` for
+ *      the JS-side `opening.phase1_submit` audit metadata.
  *
- * Pre-flight: instance.status must be `'open'`; otherwise the RPC raises a
- * check_violation that the JS layer translates to
+ * Pre-flight: instance.status must be `'open'`; otherwise the RPC raises
+ * P0001 'phase1_not_eligible' which the JS layer translates to
  * `OpeningPhase1NotEligibleError`. Section verification rows are written
  * inside the same transaction (one per `verified=true` entry).
+ *
+ * C.54 §2.C — Per Triad A ruling 2026-05-26, the no-prior-data attestation
+ * lives on Phase 1 (NULL-source detection moved to Phase 1 under C.53's
+ * restructure, so the per-instance attestation follows detection). When any
+ * spot-check entry resolves with `provenance='reconstructed_morning'`
+ * (snapshot closer_count IS NULL + opener provided a recount),
+ * `openerNoPriorDataAttestation` MUST be non-null or the RPC raises P0001
+ * 'provenance_required' (→ `OpeningProvenanceRequiredError`).
  */
 export async function submitPhase1Atomic(
   _service: SupabaseClient,
@@ -1494,7 +1535,14 @@ export async function submitPhase1Atomic(
     actor: OpeningActor;
     entries: OpeningEntryPhase1[];
     sectionVerifications: OpeningSectionVerificationEntry[];
-    closingReportRefItemId: string | null;
+    /**
+     * C.54 §2.C attestation. Non-null when at least one Phase 1 spot-check
+     * entry's source `closer_count` is NULL AND the opener provided a
+     * recount (provenance resolves to 'reconstructed_morning'). Required at
+     * the dispatch site when reconstructed-morning entries are present;
+     * nullable otherwise.
+     */
+    openerNoPriorDataAttestation: OpeningNoPriorDataReason | null;
     isUpdate?: boolean;
     originalSubmissionId?: string;
     ipAddress?: string | null;
@@ -1502,7 +1550,7 @@ export async function submitPhase1Atomic(
   },
 ): Promise<OpeningPhaseSubmitResult> {
   throw new OpeningError(
-    "submit_phase1_atomic RPC not yet implemented (type-contract-lock stub).",
+    "submit_phase1_atomic RPC not yet implemented (type-contract-lock stub — body wiring is a follow-up commit after migration 0055 applies).",
     "phase1_rpc_not_implemented",
   );
 }
@@ -1512,16 +1560,18 @@ export async function submitPhase1Atomic(
  *
  * RPC contract (downstream commit):
  *   `submit_phase2_atomic(p_opening_instance_id, p_actor_id, p_entries,
- *      p_opener_no_prior_data_reason, p_is_update, p_original_submission_id,
- *      p_ip_address, p_user_agent)` → JSONB result with the standard
- *      OpeningPhaseSubmitResult fields plus C.50 counters (at_par_count,
- *      over_prep_count, under_prep_count).
+ *      p_is_update, p_original_submission_id, p_ip_address, p_user_agent)`
+ *      → JSONB result with the standard OpeningPhaseSubmitResult fields plus
+ *      C.50 counters (at_par_count, over_prep_count, under_prep_count).
  *
  * Pre-flight: instance.status must be `'phase1_complete'`; otherwise raises
- * `OpeningPhase2NotEligibleError`. Per C.54 §2.C, when any Phase 2 completion
- * lands with `provenance='reconstructed_morning'`,
- * `openerNoPriorDataAttestation` MUST be set or the call throws
- * `OpeningProvenanceError` before the RPC fires.
+ * `OpeningPhase2NotEligibleError`.
+ *
+ * Per Triad A ruling 2026-05-26, C.54 §2.C attestation moved to Phase 1
+ * (NULL-source detection happens there under C.53's restructure, so the
+ * per-instance attestation follows detection). Phase 2 READS the persisted
+ * attestation from `checklist_instances.opener_no_prior_data_reason` but
+ * does NOT capture it.
  */
 export async function submitPhase2Atomic(
   _service: SupabaseClient,
@@ -1529,14 +1579,6 @@ export async function submitPhase2Atomic(
     instanceId: string;
     actor: OpeningActor;
     entries: OpeningEntryPhase2[];
-    /**
-     * C.54 §2.C attestation. Non-null when at least one Phase 2 entry's source
-     * `closer_count` resolved from a NULL-source path (snapshot
-     * closer_count IS NULL → ground_truth derived from opener_recount per
-     * Phase 1). Required at the dispatch site when reconstructed-morning
-     * entries are present; nullable otherwise.
-     */
-    openerNoPriorDataAttestation: OpeningNoPriorDataReason | null;
     isUpdate?: boolean;
     originalSubmissionId?: string;
     ipAddress?: string | null;
@@ -1592,11 +1634,14 @@ export async function submitPhase3Atomic(
  * preserved above for production traffic) to `submitOpeningByPhase` here in
  * lockstep with the RPC ship.
  *
- * Phase 2 callers MUST pass `openerNoPriorDataAttestation` when any Phase 2
- * entry's source closer_count resolved from a NULL-source path. The caller
- * resolves attestation requirement from the persisted snapshot table via
- * `loadOpeningCloserCountSnapshots`; the dispatcher does not re-check
- * snapshots (it trusts the route handler's pre-resolution).
+ * Per Triad A ruling 2026-05-26, Phase 1 callers MUST pass
+ * `openerNoPriorDataAttestation` when any Phase 1 spot-check entry resolves
+ * via NULL-source provenance (snapshot closer_count IS NULL + opener
+ * recount). The caller resolves attestation requirement from the persisted
+ * snapshot table via `loadOpeningCloserCountSnapshots`; the dispatcher does
+ * not re-check snapshots (it trusts the route handler's pre-resolution).
+ * Phase 2 no longer takes the attestation — Phase 2 reads the persisted
+ * `checklist_instances.opener_no_prior_data_reason` written by Phase 1.
  */
 export async function submitOpeningByPhase(
   service: SupabaseClient,
@@ -1615,12 +1660,25 @@ export async function submitOpeningByPhase(
 ): Promise<OpeningPhaseSubmitResult> {
   const phase = entriesPhase(args.entries);
   if (phase === 1) {
+    // Per Triad A ruling 2026-05-26 (rulings 1 + 2):
+    //   (1) Attestation moves to Phase 1: openerNoPriorDataAttestation
+    //       flows through here. NULL-source detection happens in Phase 1
+    //       under C.53's restructure; the per-instance attestation follows
+    //       detection. The Phase 1 RPC raises P0001 'provenance_required'
+    //       (→ OpeningProvenanceRequiredError) when any spot-check entry
+    //       resolves with reconstructed_morning provenance and this value
+    //       is null.
+    //   (2) closingReportRefItemId is NOT passed to Phase 1 (per C.54 §2.A,
+    //       opening→closing auto-complete lives at Phase 3 submit, NOT
+    //       Phase 1). The field stays on this wrapper's args as optional
+    //       for forward use by the Phase 3 dispatch branch when wired.
     return submitPhase1Atomic(service, {
       instanceId: args.instanceId,
       actor: args.actor,
       entries: args.entries as OpeningEntryPhase1[],
       sectionVerifications: args.sectionVerifications ?? [],
-      closingReportRefItemId: args.closingReportRefItemId ?? null,
+      openerNoPriorDataAttestation:
+        args.openerNoPriorDataAttestation ?? null,
       isUpdate: args.isUpdate,
       originalSubmissionId: args.originalSubmissionId,
       ipAddress: args.ipAddress ?? null,
@@ -1632,8 +1690,6 @@ export async function submitOpeningByPhase(
       instanceId: args.instanceId,
       actor: args.actor,
       entries: args.entries as OpeningEntryPhase2[],
-      openerNoPriorDataAttestation:
-        args.openerNoPriorDataAttestation ?? null,
       isUpdate: args.isUpdate,
       originalSubmissionId: args.originalSubmissionId,
       ipAddress: args.ipAddress ?? null,
