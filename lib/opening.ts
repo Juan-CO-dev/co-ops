@@ -7,13 +7,14 @@
  *   - resolveClosingOpeningVerifiedRefItemId — finds closing(N-1)'s
  *                                "Opening verified" item id for the
  *                                cross-reference auto-completion target
- *   - loadCloserCountSnapshots — Phase 2 closer-count resolver (renamed from
- *     loadCloserEstimateSnapshots in Step 11 per C.50 semantic correction);
  *   - loadOpeningCloserCountSnapshots — Step 11 helper reading the persisted
- *     closer-count snapshot table; consumed by Step 12 form rewrite;
- *                                reads canonical (chain-resolved via
- *                                C.46 MAX(edit_count)) AM Prep snapshot
- *                                per opening Phase 2 item
+ *     closer-count snapshot table; SOLE READ PATH for Phase 2 closer counts
+ *                                post-Step-15 inline of the live resolver.
+ *                                Reads from `opening_closer_count_snapshots`
+ *                                (materialized once at instance create via
+ *                                the private materializeCloserCountSnapshots
+ *                                helper consumed only by loadOpeningState's
+ *                                create-path).
  *
  * Plus typed errors that route handlers translate to HTTP shapes via
  * mapOpeningError (app/api/opening/_helpers.ts).
@@ -44,11 +45,15 @@ import {
 } from "./checklist-rows";
 import { isPrepData } from "./prep";
 import type { RoleCode } from "./roles";
+import {
+  TEMPLATE_ITEM_COLUMNS,
+  type TemplateItemRow,
+  rowToTemplateItem,
+} from "./template-items";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
   ChecklistTemplateItem,
-  ChecklistTemplateItemTranslations,
   OpeningPhase2Meta,
 } from "./types";
 
@@ -273,7 +278,7 @@ export interface OpeningSectionVerificationEntry {
  * snapshot-frozen via C.44 + chain-resolved via C.46 MAX(edit_count) per
  * template_item.
  *
- * The resolver (loadCloserCountSnapshots) returns Map<openingTemplateItemId,
+ * The resolver (materializeCloserCountSnapshots) returns Map<openingTemplateItemId,
  * CloserCountSnapshot | null>. NULL when:
  *   - no AM Prep template at this location
  *   - no AM Prep submission for prior operational date
@@ -314,67 +319,14 @@ export interface CloserCountSnapshot {
 // lib/checklist-rows.ts (Build #3 cleanup PR consolidation).
 // ─────────────────────────────────────────────────────────────────────────────
 
-const TEMPLATE_ITEM_COLUMNS =
-  "id, template_id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, vendor_item_id, active, translations, prep_meta, report_reference_type, references_template_item_id";
-
-interface TemplateItemRow {
-  id: string;
-  template_id: string;
-  station: string | null;
-  display_order: number;
-  label: string;
-  description: string | null;
-  min_role_level: number;
-  required: boolean;
-  expects_count: boolean;
-  expects_photo: boolean;
-  vendor_item_id: string | null;
-  active: boolean;
-  translations: ChecklistTemplateItemTranslations | null;
-  prep_meta: unknown | null;
-  report_reference_type: string | null;
-  references_template_item_id: string | null;
-}
-
-function rowToTemplateItem(r: TemplateItemRow): ChecklistTemplateItem {
-  return {
-    id: r.id,
-    templateId: r.template_id,
-    station: r.station,
-    displayOrder: r.display_order,
-    label: r.label,
-    description: r.description,
-    minRoleLevel: r.min_role_level,
-    required: r.required,
-    expectsCount: r.expects_count,
-    expectsPhoto: r.expects_photo,
-    vendorItemId: r.vendor_item_id,
-    active: r.active,
-    translations: r.translations,
-    // Pass prep_meta through. Pre-PR-3 era assumed opening items had no
-    // prep_meta and hardcoded null here — that assumption became architecturally
-    // stale when PR 3 Step 3 seeded 34 Phase 2 items carrying prep_meta.openingPhase2=true.
-    // Stripping the field caused the OpeningClient phase split to never see
-    // Phase 2 items → form rendered Phase 1 only → 34 bare-tick completions
-    // landed without three-values capture. Fix surfaced via Juan's S1 smoke
-    // 2026-05-08 (AGENTS.md "smoke-test as architectural finder").
-    //
-    // Type cast follows the same pragmatic pattern as lib/prep.ts:613 — the
-    // shared ChecklistTemplateItem.prepMeta type is `PrepMeta | null` (AM
-    // Prep-shaped). For opening Phase 2 items the runtime value is actually
-    // OpeningPhase2Meta. Opening consumers (opening-client.tsx, OpeningPrepEntry,
-    // page.tsx) narrow to `OpeningPhase2Meta` at use site. Future cleanup may
-    // widen ChecklistTemplateItem.prepMeta to a discriminated union
-    // (PrepMeta | OpeningPhase2Meta | null) — separate refactor.
-    //
-    // Forward note for Cleanup PR: integration test missing for loader →
-    // OpeningClient round-trip; synthetic-templateItems unit tests masked the
-    // gap during Step 6.
-    prepMeta: (r.prep_meta ?? null) as ChecklistTemplateItem["prepMeta"],
-    referencesTemplateItemId: r.references_template_item_id,
-    reportReferenceType: null, // opening items don't reference other reports (closing references opening, not vice versa)
-  };
-}
+// TemplateItemRow / TEMPLATE_ITEM_COLUMNS / rowToTemplateItem lifted to
+// lib/template-items.ts in Step 15 wrap (2026-05-26). The PR-3-era hardcoded
+// `reportReferenceType: null` in the opening-side mapper is dropped in favor
+// of pass-through after the Step 15 verification query confirmed 0 of 156
+// active opening template items carry a non-null `report_reference_type` in
+// production — pass-through is behavior-equivalent. Architectural rationale
+// for the prep_meta pass-through pattern (the load-bearing piece for opening
+// Phase 2 items) preserved in lib/template-items.ts file header.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // loadOpeningState — Server Component data loader
@@ -404,6 +356,13 @@ export async function loadOpeningState(
   authors: Record<string, string>;
 } | null> {
   // Resolve active opening template (most-recent-active per Path A versioning).
+  // The `.eq("location_id", args.locationId)` clause is LOAD-BEARING: templates
+  // are per-location (each location has its own active `type='opening'` rows).
+  // A naive `WHERE type=X AND active=true ORDER BY created_at DESC LIMIT 1`
+  // without the location_id filter would pick the most-recently-created opening
+  // template across ALL locations — wrong for any caller scoping to one location.
+  // The same pattern applies to prep templates (`lib/prep.ts loadAmPrepState`)
+  // and closing templates (`app/(authed)/operations/closing/page.tsx`).
   const { data: tmplRow, error: tmplErr } = await service
     .from("checklist_templates")
     .select("id, name")
@@ -460,7 +419,7 @@ export async function loadOpeningState(
     par_unit: string | null;
   }> = [];
   if (phase2Items.length > 0) {
-    const liveSnapshotMap = await loadCloserCountSnapshots(service, {
+    const liveSnapshotMap = await materializeCloserCountSnapshots(service, {
       locationId: args.locationId,
       priorOperationalDate: yesterday,
       openingTemplateItemIds: phase2Items.map((it) => it.id),
@@ -644,29 +603,31 @@ export async function resolveClosingOpeningVerifiedRefItemId(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// loadCloserCountSnapshots — Phase 2 closer-count resolver (live)
+// materializeCloserCountSnapshots — private snapshot materializer
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Resolves closer-count snapshots for a set of opening Phase 2 template
- * items. Returns a Map keyed by opening template_item_id; value is the
- * canonical AM Prep snapshot per the chain (MAX(edit_count)) OR null when
- * no AM Prep value resolves.
+ * Private materializer. Resolves closer-count snapshots for a set of opening
+ * Phase 2 template items at instance-create time, returning a Map keyed by
+ * opening template_item_id; value is the canonical AM Prep snapshot per the
+ * chain (MAX(edit_count)) OR null when no AM Prep value resolves.
  *
- * **Renamed from `loadCloserEstimateSnapshots` in Step 11 (PR 3) per C.50
- * §1.** The closer's value is a COUNT of remaining inventory at end of
- * shift, NOT an estimate/forecast. Semantic correction locked in the type
- * system; inner field name `total` retained for now (RPC contract coupling
- * — old RPC reads `total`; rewrite ships in Step 13 migration 0052).
+ * **Step 15 wrap (2026-05-26): inlined from `export async function
+ * loadCloserCountSnapshots`** after a grep audit confirmed exactly one
+ * consumer existed in production code — `loadOpeningState`'s create-path
+ * snapshot materialization, immediately below this function definition.
+ * No dashboard preview path consumed the live resolver. The persisted
+ * snapshot table (`opening_closer_count_snapshots`) materialized at instance
+ * create via this helper is the SOLE source for Phase 2 closer-count reads
+ * post-Step-15; consumers read via `loadOpeningCloserCountSnapshots`. Inline
+ * dropped the public export surface (one less API to maintain) without
+ * changing the materialization logic.
  *
- * **Architectural role post-Step-11:** this LIVE resolver remains in place
- * for callers that need fresh data without snapshot persistence (e.g., the
- * page.tsx form-load path until Step 12 form rewrite). New opening instances
- * created post-Step-11 ALSO get a persisted snapshot in
- * `opening_closer_count_snapshots` (materialized in `loadOpeningState`'s
- * create-path; read by `loadOpeningCloserCountSnapshots` helper). Persisted
- * snapshot is the canonical source for the Step 12 form rewrite; the live
- * resolver is the materialization source at create time.
+ * Originally renamed from `loadCloserEstimateSnapshots` in Step 11 (PR 3)
+ * per C.50 §1 — the closer's value is a COUNT of remaining inventory at end
+ * of shift, NOT an estimate/forecast. Semantic correction locked in the type
+ * system; inner field name `total` retained (RPC contract coupling — RPC
+ * reads `total` from prep_data inputs JSONB).
  *
  * **AM Prep ↔ opening Phase 2 FK source:** column
  * `checklist_template_items.references_template_item_id` (added in
@@ -699,7 +660,7 @@ export async function resolveClosingOpeningVerifiedRefItemId(
  * on the completion read. Negligible for Server Component render. If Phase 2
  * grows to hundreds of items, revisit single-query optimization.
  */
-export async function loadCloserCountSnapshots(
+async function materializeCloserCountSnapshots(
   service: SupabaseClient,
   args: {
     locationId: string;
@@ -719,7 +680,7 @@ export async function loadCloserCountSnapshots(
     .in("id", args.openingTemplateItemIds);
   if (refErr) {
     throw new Error(
-      `loadCloserCountSnapshots: load opening item refs: ${refErr.message}`,
+      `materializeCloserCountSnapshots: load opening item refs: ${refErr.message}`,
     );
   }
 
@@ -750,7 +711,7 @@ export async function loadCloserCountSnapshots(
     .maybeSingle<{ id: string }>();
   if (tmplErr) {
     throw new Error(
-      `loadCloserCountSnapshots: load AM Prep template: ${tmplErr.message}`,
+      `materializeCloserCountSnapshots: load AM Prep template: ${tmplErr.message}`,
     );
   }
   if (!amPrepTmpl) {
@@ -771,7 +732,7 @@ export async function loadCloserCountSnapshots(
     .maybeSingle<{ id: string }>();
   if (instErr) {
     throw new Error(
-      `loadCloserCountSnapshots: load AM Prep instance: ${instErr.message}`,
+      `materializeCloserCountSnapshots: load AM Prep instance: ${instErr.message}`,
     );
   }
   if (!amPrepInstance) {
@@ -792,7 +753,7 @@ export async function loadCloserCountSnapshots(
     .is("revoked_at", null);
   if (compErr) {
     throw new Error(
-      `loadCloserCountSnapshots: load AM Prep completions: ${compErr.message}`,
+      `materializeCloserCountSnapshots: load AM Prep completions: ${compErr.message}`,
     );
   }
 
@@ -864,21 +825,24 @@ export async function loadCloserCountSnapshots(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// loadOpeningCloserCountSnapshots — Step 11 helper reading the persisted
-// closer-count snapshot table (consumed by Step 12 form rewrite)
+// loadOpeningCloserCountSnapshots — SOLE READ PATH for Phase 2 closer counts
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * C.50 §2 — Step 11 helper. Reads the persisted closer-count snapshot rows
- * for an opening instance, returning a Map keyed by template_item_id.
+ * C.50 §2 — reads the persisted closer-count snapshot rows for an opening
+ * instance, returning a Map keyed by template_item_id.
+ *
+ * Originally introduced in Step 11 as one of two read paths (the other was
+ * the live `loadCloserCountSnapshots` resolver). Step 15 wrap inlined the
+ * live resolver as the private `materializeCloserCountSnapshots` helper
+ * (single consumer was instance-create-time snapshot materialization), so
+ * this helper is now the **SOLE read path** for Phase 2 closer counts.
  *
  * The snapshot is materialized at opening instance creation by
  * `loadOpeningState` (the create-path snapshot block above) — one row per
- * Phase 2 template item. This helper is the canonical READ path for the
- * Step 12 form rewrite (form reads closer counts from the persisted
- * snapshot, not from the live `loadCloserCountSnapshots` resolver, to
- * decouple from closing's C.46 edit window per C.44 snapshot universe
- * locking precedent).
+ * Phase 2 template item. Form reads closer counts from the persisted
+ * snapshot to decouple from closing's C.46 edit window per C.44 snapshot
+ * universe locking precedent.
  *
  * Result field naming uses the C.50 semantic (closerCount) directly — the
  * column on the snapshot table is `closer_count`. This is brand-new shape
@@ -895,7 +859,26 @@ export async function loadCloserCountSnapshots(
  */
 export interface OpeningCloserCountSnapshotRow {
   templateItemId: string;
-  /** Forensic FK to the closing instance whose AM Prep submission provided the count. NULL = no closing yesterday. */
+  /**
+   * Forensic FK to the **AM Prep instance** that captured this `closer_count`.
+   *
+   * NOTE: The underlying column on `opening_closer_count_snapshots` is misnamed
+   * `closing_instance_id` (historical artifact from an earlier draft where the
+   * source instance was thought to be the prior-night closing). The actual
+   * source is yesterday's AM Prep submission — closers count remaining
+   * inventory at end-of-shift, AM Prep submits the count the next morning, and
+   * THAT AM Prep instance is the FK target on this column. The closing instance
+   * itself never writes to this snapshot table.
+   *
+   * The TS-side property name `closingInstanceId` mirrors the (misnamed) DB
+   * column for direct mapping; renaming the column is a future schema migration
+   * with downstream cost (referenced in audit metadata, SQL queries, etc.).
+   *
+   * NULL = no AM Prep submission for the prior operational date (one of three
+   * NULL-sentinel cases per C.50 §2 / C.54 §1 — no_am_prep / first_day /
+   * item_not_linked). Opener establishes ground truth via recount per C.50's
+   * NULL-sentinel path.
+   */
   closingInstanceId: string | null;
   /** Closer's count of remaining inventory at end-of-shift. NULL = sentinel (see Step 11 Lock 3 cases). */
   closerCount: number | null;

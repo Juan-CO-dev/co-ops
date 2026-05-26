@@ -347,8 +347,6 @@
   "opening.item.photo_pending_tooltip": "La captura de foto se activará en una versión futura. Por ahora usa el comentario.",
 
   "opening.phase.tab_phase1": "Fase 1 · Verificar",
-  "opening.phase.tab_phase2_disabled": "Fase 2 · Prep",
-  "opening.phase.tab_phase2_subtitle": "Próxima fase",
 
   "opening.submit.counter_verified": "{ticked} de {total} verificadas",
   "opening.submit.counter_temps": "{filled} de {total} temperaturas registradas",

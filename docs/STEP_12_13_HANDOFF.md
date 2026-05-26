@@ -528,7 +528,7 @@ Missing-item notifications fire at Phase 3 submit per the same N-per-item dispat
 
 **Phase 1 verification state.** Existing tables from C.50 stay valid; just shift WHEN data is populated:
 
-- `opening_closer_count_snapshots` — materializes at instance create (C.50 unchanged)
+- `opening_closer_count_snapshots` — materializes at instance create (C.50 unchanged). Source of `closer_count` is **yesterday's AM Prep totals** (closers count remaining inventory at end-of-shift; AM Prep submits the count the next morning). Column `closing_instance_id` is misnamed — actually stores the AM Prep instance id; see `lib/opening.ts` `OpeningCloserCountSnapshotRow.closingInstanceId` JSDoc for the full forensic note.
 - `opening_section_verifications` — populated at Phase 1 submit (was Phase 2 in C.50)
 - `checklist_completions` — Phase 1 completions for stations + temps + spot-check unchanged shape; spot-check fields land in `prep_data->phase1`:
 

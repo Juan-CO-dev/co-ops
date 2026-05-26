@@ -57,14 +57,16 @@ import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import {
+  TEMPLATE_ITEM_COLUMNS,
+  type TemplateItemRow,
+  rowToTemplateItem,
+} from "@/lib/template-items";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
   ChecklistStatus,
   ChecklistTemplateItem,
-  ChecklistTemplateItemTranslations,
-  PrepMeta,
-  ReportType,
 } from "@/lib/types";
 
 import { ClosingClient, type ClosingInitialState, type StatusBanner } from "./closing-client";
@@ -97,52 +99,13 @@ function nyDateString(d: Date): string {
 // snake_case → camelCase row mappers
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface TemplateItemRow {
-  id: string;
-  template_id: string;
-  station: string | null;
-  display_order: number;
-  label: string;
-  description: string | null;
-  min_role_level: number;
-  required: boolean;
-  expects_count: boolean;
-  expects_photo: boolean;
-  vendor_item_id: string | null;
-  active: boolean;
-  translations: ChecklistTemplateItemTranslations | null;
-  // Build #2 (per SPEC_AMENDMENTS.md C.18 + C.42; migration 0036).
-  // prep_meta NULL on cleaning items; report_reference_type non-null on
-  // closing's report-reference items (auto-complete on report submission).
-  prep_meta: unknown | null;
-  report_reference_type: ReportType | null;
-  // Cross-template item reference per migration 0049. NULL on closing items
-  // (closing's cross-references are encoded via report_reference_type, not
-  // this generic FK column). Phase 1 plumbing for C.50.
-  references_template_item_id: string | null;
-}
-
-const rowToTemplateItem = (r: TemplateItemRow): ChecklistTemplateItem => ({
-  id: r.id,
-  templateId: r.template_id,
-  station: r.station,
-  displayOrder: r.display_order,
-  label: r.label,
-  description: r.description,
-  minRoleLevel: r.min_role_level,
-  required: r.required,
-  expectsCount: r.expects_count,
-  expectsPhoto: r.expects_photo,
-  vendorItemId: r.vendor_item_id,
-  active: r.active,
-  translations: r.translations,
-  // Pass-through; lib/prep.ts narrows the JSONB shape via isPrepMeta() for
-  // prep-aware consumers. The closing surface only reads reportReferenceType
-  // (later step in this PR — render report-reference items distinctly).
-  prepMeta: (r.prep_meta ?? null) as PrepMeta | null,
-  reportReferenceType: r.report_reference_type,
-  referencesTemplateItemId: r.references_template_item_id,
-});
+// TemplateItemRow / TEMPLATE_ITEM_COLUMNS / rowToTemplateItem lifted to
+// lib/template-items.ts in Step 15 wrap (2026-05-26). See lib/template-items.ts
+// file header for the 15-field projection rationale + the architectural note
+// on pass-through pattern. Build #2 notes about prep_meta NULL on cleaning
+// items + report_reference_type non-null on closing report-reference items
+// (per SPEC_AMENDMENTS.md C.18 + C.42; migration 0036) remain accurate at
+// the data-layer; the mapper passes through whatever the DB returns.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Banner derivation
@@ -235,6 +198,10 @@ export default async function ClosingPage({ searchParams }: PageProps) {
 
   // Resolve active closing template (most recent active per Path A versioning
   // — picks v2 once Build #2 ships it without requiring code change).
+  // Per-location scoping via `.eq("location_id", locationParam)` is LOAD-BEARING
+  // — closing templates exist per-location, so omitting the filter would pick
+  // the most-recently-created closing template across ALL locations. See sibling
+  // pattern in `lib/opening.ts loadOpeningState` and `lib/prep.ts loadAmPrepState`.
   const { data: templateRow, error: tmplErr } = await sb
     .from("checklist_templates")
     .select("id")
@@ -319,9 +286,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
   // Load template items (active only, ordered).
   const { data: itemsRows, error: itemsErr } = await sb
     .from("checklist_template_items")
-    .select(
-      "id, template_id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, vendor_item_id, active, translations, prep_meta, report_reference_type, references_template_item_id",
-    )
+    .select(TEMPLATE_ITEM_COLUMNS)
     .eq("template_id", templateRow.id)
     .eq("active", true)
     .order("display_order", { ascending: true });
