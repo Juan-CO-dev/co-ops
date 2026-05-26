@@ -896,3 +896,108 @@ Two header formats:
 - Going-forward migrations should still be applied via Supabase MCP, not via `supabase db push` or direct psql — the file is the readable record of what was applied; the MCP tool is the apply path.
 - The convention is not enforced by CI today. Forward hardening: add a CI check that fails if a code comment mentions `migration NNNN` without a corresponding `supabase/migrations/NNNN_*.sql` file. Captured as a future task; not in this PR's scope.
 
+
+---
+
+## Phase 3 — Build #3 PR 3 close-out (Step 15 wrap, 2026-05-26)
+
+### Durable-knowledge entries
+
+Eight architectural lessons surfaced across PR 3's lifecycle (Step 1 framing through Step 14 smoke). They are independent of any specific PR 3 deliverable; they apply to every future amendment, every pre-build response, every multi-surface PR. Read as a coherent set, they sharpen one meta-pattern that runs through all of them:
+
+> **Catch architectural gaps as early in the lifecycle as possible by referencing the existing codebase as canonical operational artifact, not generic priors.**
+
+The lifecycle moments where this matters most: (a) pre-build response (before code is written, the architecture is locked against the existing world); (b) review surface (mid-implementation, when coupling reveals itself); (c) smoke surface (post-deploy, when operational reality contradicts the design). Earlier catches require less recovery work. The eight patterns below are seven illustrations of catching the gap proactively + one illustration of what happens when an amendment's invalidated assumptions go unchecked.
+
+### Pre-build responses query operational artifacts first
+
+When proposing schema additions, FK relationships, or data model changes during pre-build response, query current schema state BEFORE drafting recommendations. Generic-priors reasoning ("this should exist, let's add it") risks redundant additions when the structure already exists in the codebase or schema. The pattern: schema query → confirm absence → propose addition (in that order, never the inverse).
+
+Sibling to the "verify against operational artifacts, not generic priors" lesson from Build #3 PR 2: that lesson governs operational structure (stations, equipment); this one governs schema/lib structure. Same discipline, different domain.
+
+Concrete catch: Step 11 Concern 5 — pre-build response initially proposed adding a JSONB `prep_meta.amPrepTemplateItemId` FK on opening Phase 2 template items as the AM-Prep ↔ opening link mechanism. Verification against the actual schema surfaced that migration 0049 had already added `checklist_template_items.references_template_item_id` (a column-level FK populated for all 68 Phase 2 items at the time). The JSONB duplication would have shipped as redundant infrastructure. Caught pre-commit during a verification pass; collapsed to "use the column-level FK; no JSONB addition needed" with no recovery work.
+
+Pre-build discipline: every proposed schema addition gets `information_schema.columns` / `pg_constraint` / `pg_enum` checked against production state before it's drafted into the pre-build response. Sibling-checks already in AGENTS.md: information_schema column-shape pre-flight (Build #2 PR 3), pg_enum label pre-flight (Build #3 PR 2).
+
+### Wire-shape coupling at architectural level, not conversational level
+
+Multi-surface changes (form / route handler / RPC / migration / type) are coupled by the TypeScript type system AND by operational integrity. The unit of architectural change is "all coupled surfaces ship together." Splitting at conversational boundaries when surfaces are coupled produces broken intermediate states (tsc-red on the branch, half-shipped wire-shape on preview, partial-state RPC failures in production).
+
+Three sightings consolidated in PR 3:
+
+- **Step 11 Confirm 2 atomicity hole** — instance create + closer-count-snapshot materialization were initially two separate Postgres operations. If snapshot insert failed after instance insert succeeded, the instance row stranded without snapshots. Tightened via atomic RPC `create_opening_instance_atomic` (migration 0052) so both inserts commit in one transaction or neither does.
+- **Step 12+13 alpha bundling** — form payload shape + route handler validation + RPC contract had to ship as one commit because the wire-shape change spanned all three. Splitting across commits would have created a broken-on-preview window. Locked as single bundled commit per alpha-bundling semantic.
+- **Phase 3 to Phase 4 boundary absorption** — type changes on `OpeningEntryPhase2` propagated through form / route handler / RPC; tsc errors propagated transitively. Phase 3 absorbed route handler updates that would have lived in Phase 4 because the type system refused to compile with the boundary split.
+
+The discipline: when surfaces are coupled, the commit boundary aligns to the coupling, not to the implementation phase. Review surface catches the coupling; commit boundary follows.
+
+### Operational voice varies by audience role within the same operational flow
+
+Sibling refinement to Step 8 operational voice locks. The same data point renders with different vocabulary depending on which actor reads it. Notifications dispatched to MoO+ use operational shorthand ("Under-par at MEP — 3 items"). Modals where the prepper captures reason use the actor-internal technical wording ("less than prep need / menos que necesario"). Two audiences, two registers, both operationally correct — the manager reading the notification needs the shorthand for triage scan; the prepper filling the modal needs the technical wording because they ARE reasoning about that specific comparison.
+
+Concrete sighting: Phase 4 modal vs notification copy semantic shift. Initial draft used "under-par" verbatim across both surfaces. Smoke surface review caught the mismatch: prepper reasoning ABOUT the under-par determination needed the explicit "vs prep need" wording so the cognitive load matched the input act. Locked: modal uses technical wording; notification uses operational shorthand.
+
+Forward bind: any future surface that captures actor reasoning (vs surfaces another actor's review) should adopt the technical wording at the capture site and the shorthand at the consume site. Translation surfaces inherit this — Spanish "prep need" → "necesario," Spanish "under-par" → "bajo-par"; the audience-register split is preserved across languages.
+
+### `audit.gap_recovery` pattern validated for smoke artifact cleanup
+
+The append-only data integrity convention from Build #3 PR 2 (the pg_enum smoke gap-recovery row `b927ae16-7ee1-43fa-8336-0c6b725b3a00`) was validated end-to-end on a second incident class in PR 3.
+
+When smoke surfaces forensic artifacts that need cleanup — bare-tick completions from production-vs-preview confusion, broken-mid-submit RPC rollbacks, stale loader strips that wrote incomplete data — supersede the bad rows + insert an `audit.gap_recovery` row capturing `recovery_type` / `failed_run_error` / `smoke_context` / `production_impact` / `resolving_commit`. The supersede preserves the bad rows in the database (append-only); the gap_recovery row is the forensic explanation future-Claude consults when querying `audit_log` for context.
+
+Two PR 3 sightings:
+
+- **2026-05-08 MEP smoke loader-strip artifact** — Step 6 S1 submit landed 34 bare-tick completions on the broken pre-fix loader (`prep_meta` was stripped to null at the mapper, so the form rendered Phase 1 only and submission landed without three-values capture). Superseded via `audit.gap_recovery` row `2f3bcbf1-8bc2-453c-91d8-1355c5c8f8b2`.
+- **2026-05-09 production-submission cleanup** — small follow-on artifact during dev validation; same recovery pattern.
+
+Future-Claude querying `audit_log` filtered to `WHERE superseded_at IS NULL` skips bad rows automatically. Queries inspecting bare-tick rows directly see the `gap_recovery` row in `audit_log` explaining their state. The pattern is now precedent across two incident classes (enum mismatch + loader strip); next-incident handlers should use it without reinventing the recovery shape.
+
+### Adding fields to shared types requires grepping for type consumers, not trusting that lib-level updates propagate
+
+PR 3's Phase 1 caught a duplicate `TemplateItemRow + rowToTemplateItem` mapper pattern at three sites: `lib/opening.ts`, `lib/prep.ts`, and `app/(authed)/operations/closing/page.tsx`. Adding a new field to the shared `ChecklistTemplateItem` type (`references_template_item_id` per migration 0049) required updating ALL THREE mappers; trusting that a single lib-level update would propagate would have left two callsites returning the field as undefined and the form would have rendered without the FK information.
+
+The discipline: shared type changes (any field added to a TypeScript type used across multiple modules) trace via grep BEFORE commit. The grep is mechanical — `grep -rE "<TypeName>\b" lib/ app/ components/` — and catches every callsite that needs the parallel update.
+
+Sibling site: three-layer gate audits (lib + RLS + UI) from Build #2 PR 1's C.41 reconciliation. Same discipline, different axis: that one catches gates that need parallel updates across layers; this one catches mappers that need parallel updates across modules. Both fail the same way if you skip the grep: silent incompleteness that surfaces as a behavior gap, not a compile error.
+
+Step 15 wrap (this cleanup) lifts the three mappers to `lib/template-items.ts` as the canonical consolidation point. Future fields added to `ChecklistTemplateItem` get added once, in one file, with no callsite drift.
+
+### Review-time architectural tightening matters more than ship-speed
+
+When pre-build response or implementation-surface review catches a foundational gap, tighten BEFORE commit even if it expands scope. Cost of partial-state recovery after the fact (via `audit.gap_recovery` rows, follow-on PRs, smoke re-runs) is much higher than cost of catching it during the review gate.
+
+PR 3 catch trend (positive — earlier catches require less recovery work):
+
+| Catch | Stage | Recovery cost |
+|---|---|---|
+| Build #3 PR 2 enum mismatch | post-commit | required `audit.gap_recovery` |
+| PR 3 loader prep_meta strip | post-commit | required `audit.gap_recovery` |
+| Step 11 Concern 5 redundant FK | pre-commit | clean simplification |
+| Step 11 Confirm 2 atomicity hole | pre-commit | clean tightening via atomic RPC 0052 |
+| Step 11 Concern 2 notification batching contradiction | pre-commit | reverted before code shipped |
+| Step 12+13 wire-shape coupling | pre-commit | absorbed into Phase 3 cleanly |
+| Step 15 three-mapper consolidation | pre-commit catch via typecheck | deferred to cleanup PR scope (this PR) |
+
+Five pre-commit catches, zero post-commit `gap_recovery` cycles in PR 3's primary architectural arc. The trend is the lesson: reviewer-Claude pause-and-verify discipline produces cleaner commits than push-through. The pause feels expensive in the moment (an extra round of conversation, sometimes a half-day) but compounds the wrong way if skipped — partial-state recovery isn't a one-round fix; it cascades into the next session's cold-start context.
+
+### Existing CO-OPS architectural patterns should be checked before designing net-new infrastructure
+
+Same theme family as "pre-build responses query operational artifacts" + "verify against operational artifacts not generic priors" — all variations on "the answer might already be in the codebase; check before designing."
+
+Concrete sighting: C.52 (Phase 2 collaborative real-time prep) was initially framed as net-new infrastructure during the design conversation — new RPC, new real-time subscription pattern, new conflict-resolution semantic. Caught explicitly mid-conversation: the closing-checklist already implements per-item save + real-time sync + collaborative multi-author behavior. C.52 isn't net-new infrastructure; it's the existing closing-checklist pattern applied to Phase 2 prep, with numeric inputs instead of binary ticks.
+
+Reframing collapsed the spec scope significantly and removed redundant design work. The architectural patterns sitting in the codebase ARE the spec for similar new surfaces — read them first.
+
+Forward bind: any "let's design a new X for Y" surface check first against the codebase's existing patterns for adjacent capabilities. Reports Hub (Wave 2), Synthesis View (Wave 2), Maintenance Log (Wave 7), AI Insights (Wave 6) — all designed as read surfaces over existing capture artifacts, not new workflows. C.52's pattern-reuse is the same principle applied to a write surface.
+
+### Preserved-from-prior logic must be re-verified against any amendment that changes the operational assumptions it depended on
+
+The sharpest of the eight lessons because it came from a live operational find — Juan's NULL-SENTINEL smoke at EM, 2026-05-25, captured in C.54 §9.
+
+Migration 0053's `submit_opening_atomic` RPC carried an auto-complete branch with the comment **"Logic preserved from 0050 — no C.50 changes here."** That comment was true at the literal level (no logic changed between 0050 and 0053). It was wrong at the architectural level. C.50's NULL-sentinel redesign changed the operational reality the auto-complete logic was built against — C.50 made "absence of prior-day data" a valid operational state for which morning recount IS the new source of truth. The auto-complete branch (carried forward unexamined from a pre-C.50 design) still raised `foreign_key_violation` when no closing row existed at N-1, treating absence as a defect. The form said "go" (C.50's NULL-sentinel path); the RPC said "no" (preserved C.42 auto-complete). Contradiction. Submit blocked, transaction rolled back, opener's complete-and-correct work discarded. Captured in production as instance `d49d1504-da82-48fd-bf08-05abcb3f87d1`.
+
+The failure mode is symmetric to the "check existing patterns before designing net-new" lesson, but inverted: net-new design needs to know prior patterns; **net-new amendments need to know what they invalidate in the preserved patterns.** When an amendment changes operational assumptions (C.50: absence of prior data is a valid state), every preserved code path that depended on the prior assumption needs re-verification, not "no changes — preserved from prior."
+
+The pattern for forward implementation: when a new amendment lands, the implementing PR's pre-build response includes an explicit audit of code paths that carry comments like "preserved from prior" / "unchanged from X" / "logic from Y carried forward." Each such site gets re-evaluated against the new amendment's operational assumptions. If the operational assumption shifts, the "preserved" logic gets re-verified, not waved through.
+
+Forward bind for C.53's implementation (the C.54-dependent restructure): the C.53 pre-build response must audit every `submit_phase[1-3]_atomic` RPC's branches for C.50-era assumptions that need C.54's NULL-source-as-valid-state handling. The decoupled auto-complete (C.54 §2.A) is the specific instance; the discipline is general.
