@@ -44,11 +44,15 @@ import {
 } from "./checklist-rows";
 import { isPrepData } from "./prep";
 import type { RoleCode } from "./roles";
+import {
+  TEMPLATE_ITEM_COLUMNS,
+  type TemplateItemRow,
+  rowToTemplateItem,
+} from "./template-items";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
   ChecklistTemplateItem,
-  ChecklistTemplateItemTranslations,
   OpeningPhase2Meta,
 } from "./types";
 
@@ -314,67 +318,14 @@ export interface CloserCountSnapshot {
 // lib/checklist-rows.ts (Build #3 cleanup PR consolidation).
 // ─────────────────────────────────────────────────────────────────────────────
 
-const TEMPLATE_ITEM_COLUMNS =
-  "id, template_id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, vendor_item_id, active, translations, prep_meta, report_reference_type, references_template_item_id";
-
-interface TemplateItemRow {
-  id: string;
-  template_id: string;
-  station: string | null;
-  display_order: number;
-  label: string;
-  description: string | null;
-  min_role_level: number;
-  required: boolean;
-  expects_count: boolean;
-  expects_photo: boolean;
-  vendor_item_id: string | null;
-  active: boolean;
-  translations: ChecklistTemplateItemTranslations | null;
-  prep_meta: unknown | null;
-  report_reference_type: string | null;
-  references_template_item_id: string | null;
-}
-
-function rowToTemplateItem(r: TemplateItemRow): ChecklistTemplateItem {
-  return {
-    id: r.id,
-    templateId: r.template_id,
-    station: r.station,
-    displayOrder: r.display_order,
-    label: r.label,
-    description: r.description,
-    minRoleLevel: r.min_role_level,
-    required: r.required,
-    expectsCount: r.expects_count,
-    expectsPhoto: r.expects_photo,
-    vendorItemId: r.vendor_item_id,
-    active: r.active,
-    translations: r.translations,
-    // Pass prep_meta through. Pre-PR-3 era assumed opening items had no
-    // prep_meta and hardcoded null here — that assumption became architecturally
-    // stale when PR 3 Step 3 seeded 34 Phase 2 items carrying prep_meta.openingPhase2=true.
-    // Stripping the field caused the OpeningClient phase split to never see
-    // Phase 2 items → form rendered Phase 1 only → 34 bare-tick completions
-    // landed without three-values capture. Fix surfaced via Juan's S1 smoke
-    // 2026-05-08 (AGENTS.md "smoke-test as architectural finder").
-    //
-    // Type cast follows the same pragmatic pattern as lib/prep.ts:613 — the
-    // shared ChecklistTemplateItem.prepMeta type is `PrepMeta | null` (AM
-    // Prep-shaped). For opening Phase 2 items the runtime value is actually
-    // OpeningPhase2Meta. Opening consumers (opening-client.tsx, OpeningPrepEntry,
-    // page.tsx) narrow to `OpeningPhase2Meta` at use site. Future cleanup may
-    // widen ChecklistTemplateItem.prepMeta to a discriminated union
-    // (PrepMeta | OpeningPhase2Meta | null) — separate refactor.
-    //
-    // Forward note for Cleanup PR: integration test missing for loader →
-    // OpeningClient round-trip; synthetic-templateItems unit tests masked the
-    // gap during Step 6.
-    prepMeta: (r.prep_meta ?? null) as ChecklistTemplateItem["prepMeta"],
-    referencesTemplateItemId: r.references_template_item_id,
-    reportReferenceType: null, // opening items don't reference other reports (closing references opening, not vice versa)
-  };
-}
+// TemplateItemRow / TEMPLATE_ITEM_COLUMNS / rowToTemplateItem lifted to
+// lib/template-items.ts in Step 15 wrap (2026-05-26). The PR-3-era hardcoded
+// `reportReferenceType: null` in the opening-side mapper is dropped in favor
+// of pass-through after the Step 15 verification query confirmed 0 of 156
+// active opening template items carry a non-null `report_reference_type` in
+// production — pass-through is behavior-equivalent. Architectural rationale
+// for the prep_meta pass-through pattern (the load-bearing piece for opening
+// Phase 2 items) preserved in lib/template-items.ts file header.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // loadOpeningState — Server Component data loader

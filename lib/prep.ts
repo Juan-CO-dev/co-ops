@@ -58,6 +58,11 @@ import {
   rowToCompletion,
   rowToInstance,
 } from "./checklist-rows";
+import {
+  TEMPLATE_ITEM_COLUMNS,
+  type TemplateItemRow,
+  rowToTemplateItem,
+} from "./template-items";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
@@ -574,48 +579,13 @@ export async function seedPrepItem(
 // Read loaders
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface TemplateItemRow {
-  id: string;
-  template_id: string;
-  station: string | null;
-  display_order: number;
-  label: string;
-  description: string | null;
-  min_role_level: number;
-  required: boolean;
-  expects_count: boolean;
-  expects_photo: boolean;
-  vendor_item_id: string | null;
-  active: boolean;
-  translations: ChecklistTemplateItemTranslations | null;
-  prep_meta: unknown | null;
-  report_reference_type: ReportType | null;
-  references_template_item_id: string | null;
-}
-
-const TEMPLATE_ITEM_COLUMNS =
-  "id, template_id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, vendor_item_id, active, translations, prep_meta, report_reference_type, references_template_item_id";
-
-function rowToTemplateItem(r: TemplateItemRow): ChecklistTemplateItem {
-  return {
-    id: r.id,
-    templateId: r.template_id,
-    station: r.station,
-    displayOrder: r.display_order,
-    label: r.label,
-    description: r.description,
-    minRoleLevel: r.min_role_level,
-    required: r.required,
-    expectsCount: r.expects_count,
-    expectsPhoto: r.expects_photo,
-    vendorItemId: r.vendor_item_id,
-    active: r.active,
-    translations: r.translations,
-    prepMeta: (r.prep_meta ?? null) as PrepMeta | null,
-    reportReferenceType: r.report_reference_type,
-    referencesTemplateItemId: r.references_template_item_id,
-  };
-}
+// TemplateItemRow / TEMPLATE_ITEM_COLUMNS / rowToTemplateItem lifted to
+// lib/template-items.ts in Step 15 wrap (2026-05-26). Single source of truth
+// for the 15-field display/behavior projection consumed by prep, opening,
+// and closing loaders. See lib/template-items.ts file header for the
+// architectural note on pass-through pattern and the verification query
+// that confirmed behavior-equivalence with the prior hardcoded-null variant
+// in lib/opening.ts.
 
 /**
  * Loads everything an AM Prep page Server Component needs in one call.
