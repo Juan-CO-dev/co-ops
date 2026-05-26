@@ -140,11 +140,13 @@ CREATE POLICY opening_setup_items_insert_policy
   FOR INSERT
   WITH CHECK (current_user_role_level() >= 3);
 
+DROP POLICY IF EXISTS opening_setup_items_update_policy ON opening_setup_items;
 CREATE POLICY opening_setup_items_update_policy
   ON opening_setup_items
   FOR UPDATE
   USING (current_user_role_level() >= 3);
 
+DROP POLICY IF EXISTS opening_setup_items_delete_policy ON opening_setup_items;
 CREATE POLICY opening_setup_items_delete_policy
   ON opening_setup_items
   FOR DELETE
@@ -157,6 +159,7 @@ CREATE POLICY opening_setup_items_delete_policy
 ALTER TABLE opening_setup_verifications ENABLE ROW LEVEL SECURITY;
 
 -- All authenticated users can read verification state (read-only for dashboards).
+DROP POLICY IF EXISTS opening_setup_verifications_select_policy ON opening_setup_verifications;
 CREATE POLICY opening_setup_verifications_select_policy
   ON opening_setup_verifications
   FOR SELECT
@@ -165,6 +168,7 @@ CREATE POLICY opening_setup_verifications_select_policy
 -- KH+ at the instance's location can insert verifications (Phase 3 submit path).
 -- The RPC is SECURITY DEFINER so this policy is the defense-in-depth layer;
 -- the primary gate is inside submit_phase3_atomic.
+DROP POLICY IF EXISTS opening_setup_verifications_insert_policy ON opening_setup_verifications;
 CREATE POLICY opening_setup_verifications_insert_policy
   ON opening_setup_verifications
   FOR INSERT
