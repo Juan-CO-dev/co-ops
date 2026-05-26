@@ -2248,15 +2248,205 @@ Mid-phase surface check-ins per AGENTS.md rhythm. Single-commit at end per α lo
 
 ---
 
+## C.54 — Opening submit must not be gated by prior-closing existence; missing-closing becomes a routed signal, not a wall
+
+**Date added:** 2026-05-25
+**Status:** Authored (locked); implementation rides C.53
+**Supersedes:** C.42's auto-complete semantic on the opening submit path only — the closing-side auto-complete behavior when a closing DOES exist is unchanged
+**Triggered by:** NULL-SENTINEL smoke at EM, 2026-05-25 — opener completed full opening (Phase 1 verification + 34 Phase 2 at-par recounts via the C.50 NULL-sentinel path) and was hard-blocked at submit by `submit_opening_atomic`'s auto-complete step when no closing instance existed at `(location, opening_date − 1 day)`. The opener's complete, correct work was discarded by the RPC's transaction rollback. The blocked attempt is preserved as instance `d49d1504-da82-48fd-bf08-05abcb3f87d1` (see §8 below).
+**Scope:** opening submit RPC's auto-complete branch; opener-facing attestation surface; routed missing-closing notification; per-completion provenance marker
+**Out of scope:** strict-yesterday snapshot resolver semantic (held as Task #6 / separate amendment — C.54 is correct regardless of its resolution); planned-closure calendar modeling (not first-class state in CO-OPS); C.50's NULL-sentinel Phase 2 form path (unchanged — recount source, NULL badges, recount/opener_prepped/reason gates all preserved)
+**Build:** Wave 2 Build #1 (Opening Report) — **rides C.53's three-phase restructure** (verification → prep → setup). C.53 rebuilds the exact submit surface C.54 modifies; C.54 cannot ship independently of C.53 without re-touching the same RPC twice.
+**Lock state:** Operational reasoning (§1), three coupled decisions A/B/C (§2), and locked sub-decisions (§3) all locked 2026-05-25 in conversation. Open implementation question on provenance marker physical shape (§4) — pre-build call against live schema at C.53 build time.
+
+### §1 — The contradiction (what spec said, what built reality enforced, why it breaks)
+
+**What spec said:**
+
+C.50 redesigned Phase 2 to *invite* operation when prior-night data is absent. When the closer-count snapshot is NULL for an item, the opener establishes ground truth via per-item recount; the snapshot row's NULL-reason badge surfaces this as `no_am_prep` (or `first_day` / `item_not_linked`). The form is fully designed to lead the opener through this path. The model recognizes "no prior data" as a valid operational state for which the recount IS the new source of truth.
+
+C.42 (operational reports architecture) introduced auto-complete: when a downstream report (the opening) submits, it automatically marks the upstream report's cross-reference item complete. For the opening → closing link, this means the opening's submit marks yesterday's closing's "Opening verified" report-ref item as complete. The intent was a courtesy bookkeeping action — close the loop on yesterday's closing so its dashboard tile doesn't show a perpetually-incomplete cross-reference.
+
+**What built reality enforced:**
+
+`submit_opening_atomic` (migration 0053, line 539–584; logic preserved from migration 0050 — "Logic preserved from 0050 — no C.50 changes here") executes the auto-complete inside the submit transaction. The `closing_ix` CTE looks up a closing instance at `(location_id = opening's location, date = opening's date − 1 day)`. If the CTE returns zero rows, the RPC raises sqlstate 23503 (foreign_key_violation) with `v_auto_complete_id IS NULL` — and the entire transaction rolls back. The opener's submission row, all 34 Phase 2 completions, the Phase 1 completions, and the instance status transition (`open → confirmed`) are all discarded.
+
+**Why this breaks:**
+
+A secondary bookkeeping action (cross-report courtesy link) was gating a primary operational action (the opener's submit). That inversion is the defect. The opener is never the actor who failed to close yesterday; blocking their correct work because someone else's prior-night accountability is missing is wrong under every interpretation. The form said "go" (C.50's NULL-sentinel path was designed and operational); the RPC said "no" (C.42's auto-complete carried forward unexamined). The two designs make incompatible assumptions about whether absence of prior-day data is a valid state.
+
+**Operational reality (per operator):** a missing prior-day closing is *most commonly a forgotten closing*, not a planned closure. So:
+
+- The common case is an **accountability event**, not a routine state. The system should surface it to the role that owns the discipline problem.
+- The opener's recount under NULL-source is a **morning reconstruction** of last-night's reality, not a capture of it. The two are operationally distinct and the provenance must be permanently distinguishable in the data — a reconstructed count cannot be mistaken for a closing-captured count when read later (audit, dashboard, forecast input).
+
+### §2 — Resolution — three coupled decisions
+
+#### A. Decouple auto-complete failure from submit failure
+
+Opening submit commits on its own merits. Auto-completing yesterday's closing "Opening verified" item is **best-effort**, not blocking.
+
+- Closing exists at `(location, opening_date − 1 day)` → auto-complete proceeds as today (unchanged from C.42 / 0053 logic).
+- No closing exists → auto-complete is a **no-op**. Does not raise. Does not roll back. Opening submit commits cleanly.
+
+The auto-complete branch in `submit_opening_atomic` (today's lines 539–584 in migration 0053) drops the `RAISE EXCEPTION ... ERRCODE = 'foreign_key_violation'` on `v_auto_complete_id IS NULL`. The branch becomes: "if a closing exists at N-1, insert the auto-complete row and supersede the prior live row; otherwise, do nothing." The transaction proceeds to commit either way.
+
+`OpeningAutoCompleteError` and the `auto_complete_failed` HTTP 422 error code (lib/opening.ts + app/api/opening/_helpers.ts) are removed from the submit error surface. If a future submit-RPC failure mode needs an explicit error code, it gets a new one — not this one.
+
+#### Governing predicate for B and C: NULL ground-truth source, not closing-row existence
+
+The predicate for engaging §B (notification) and §C (attestation) keys on **"did this opening reconstruct ground truth from a NULL source?"** — not on "did a closing row exist at N-1?"
+
+This covers three operational flavors uniformly:
+
+1. **No closing row at all** at `(location, N-1)` — the EM 2026-05-25 case (16-day operational gap; §A's block does not fire here under the new design; opener backfilled from NULL via recount; §B and §C engage).
+2. **Closing row exists but auto-finalized empty** — the EM 2026-05-09 case (closing row was system-auto-finalized with zero completions; §A's block never fires regardless because the closing row IS findable; but opener still backfills from NULL via recount because the snapshot's `closer_count` is NULL; §B and §C still engage).
+3. **Any opening item with no usable count from its source** — generalized to cover future failure modes where the source row exists but doesn't carry a usable value (data corruption, schema migration gap, integration outage).
+
+The question §B and §C answer is always **"captured at close, or reconstructed this morning?"** — not "what was the upstream row state?"
+
+Operationally: the predicate fires when any opening Phase 2 completion lands with the provenance marker (§4) set to "reconstructed_morning" — i.e., `opener_recount IS NOT NULL` AND the corresponding snapshot's `closer_count IS NULL` at instance create time. Server-side derivation; client need not compute.
+
+#### B. Missing-closing emits a routed MoO+ signal (primary mechanism)
+
+On submit where any Phase 2 completion has provenance = "reconstructed_morning": dispatch one notification per opening submission (not per item — the per-item granularity already lives in the completion rows for forensic readback) to MoO+ per C.48 routing rules.
+
+Notification copy (English source-of-truth, translate-from-day-one per AGENTS.md C.37):
+
+> **[Location] opening [date] submitted with no usable closing data for [date − 1].**
+> Opener-reported cause: [planned closure | missed/unknown].
+> Counts established by morning recount, not captured at close.
+
+This:
+
+- Routes the planned-vs-forgotten judgment to the role that owns the discipline problem (MoO+). The system does not try to infer whether the closing was forgotten — the opener attests (§C), and the human reviewing the notification weighs the attestation against operational context (schedule, holidays, known closures).
+- Turns recurring forgotten-closings into trackable data. The notification volume itself is a leading indicator of closing-discipline drift.
+- Does not block any actor. The opener proceeds; the closer (if reachable) can be addressed independently by MoO+ in the normal course.
+
+Notification action: `opening.submitted_with_no_prior_closing_data` (sibling to existing `opening.submit` actions; namespace-consistent with the auth_* / time_clock.* / closing.* conventions).
+
+Recipients per C.48: MoO + Owner + KH+ at this location, DISTINCT. Priority: `urgent` (matches the urgent dispatch precedent C.50 set for under-prep notifications — accountability events warrant the same operational salience).
+
+#### C. Opener attestation captures cause + provenance at submit
+
+On NULL-source detection (any opening Phase 2 item lands with `opener_recount` populated under NULL `closer_count`), the form requires a single attestation step before submit commits:
+
+> **No usable closing data for [date − 1].**
+> Reason:
+> ▢ Location was closed (planned)
+> ▢ Closing was missed / I don't know
+
+Two-tap binary-with-unknown. No free text. No directed-by. No reason category enum.
+
+Persists on the submission/instance record (exact column shape deferred to §4) and rides into the §B notification payload as `opener_reported_cause: 'planned_closure' | 'missed_or_unknown'`. The MoO+ recipient sees the attestation in the notification copy.
+
+**Per-completion provenance marker:** every Phase 2 completion whose `ground_truth_count` derives from `opener_recount` under NULL `closer_count` carries a provenance marker permanently distinguishing morning-reconstructed counts from closing-captured counts. Physical shape deferred to §4 (column vs JSONB value vs `spot_check_status` enum extension). Intent: any future read of this completion (audit, dashboard, AI forecast input, etc.) can answer the "captured-at-close vs reconstructed-this-morning" question without joining back to the snapshot row.
+
+### §3 — Locked sub-decisions
+
+1. **Predicate is NULL-source, not row-existence.** §B and §C engage on `any completion.provenance = 'reconstructed_morning'`, not on `closing row missing at N-1`. The latter is one of several upstream causes; the former is the operational reality being signaled. (Locks the "governing predicate" header above.)
+2. **Attestation is binary-with-unknown, two taps no free-text.** Forcing free-text on every NULL-source submit would create friction without proportional signal. The two-bucket categorization (planned vs missed/unknown) gives the MoO+ reviewer enough to triage; if more detail is needed, the conversation happens person-to-person, not via free-text in the form.
+3. **Manager flag fires on BOTH planned and missed/unknown, labeled differently.** A planned closure with no system record is still worth a manager knowing — planned closures aren't modeled as first-class state in CO-OPS, so the system cannot independently confirm the "planned" claim. The missed/unknown case is higher-priority (and labeled as such in the notification copy), but planned-closure also dispatches. If the volume of planned-closure notifications becomes operationally noisy, the resolution is modeling planned closures as first-class state (a separate amendment), not silencing the signal.
+4. **Auto-complete remains in the same RPC, just no longer blocking.** The auto-complete logic stays inside `submit_opening_atomic` (or its C.53 successor `submit_phase2_atomic`) — it's tightly coupled to the opening commit transaction. The change is purely behavioral (no raise on NULL) not structural (still happens at the same step).
+5. **No retroactive backfill.** Existing opening completions that landed before C.54 ships have no provenance marker; reads must tolerate NULL/missing. Forward-only — the marker is set at submit time for new completions, not patched onto historical ones. (Append-only philosophy: historical rows reflect what was true at submit time per their then-current schema; C.54 doesn't rewrite history.)
+
+### §4 — Open implementation question for C.53 pre-build
+
+**Provenance marker physical shape.** Three candidates, all viable; the call is a pre-build judgment against live schema state at C.53 build time:
+
+- **(i) New column on `checklist_completions`** — e.g., `count_provenance TEXT CHECK (count_provenance IN ('closer_captured', 'reconstructed_morning'))`. Clean schema, queryable directly, no JSONB drift risk. Cost: new migration, RLS policy review.
+- **(ii) Extend `spot_check_status` enum.** Today's values per C.50 §2 are `matched_via_section_verify` | `flagged_recount`. Could add `flagged_recount_null_source` (or rename to a 3-value enum). Pro: reuses existing field that already discriminates ground-truth derivation paths. Con: conflates two orthogonal axes (spot-check vs recount, AND captured vs reconstructed) into one column.
+- **(iii) `prep_data` JSONB value.** Add `prep_data.phase2.provenance: 'closer_captured' | 'reconstructed_morning'` alongside existing C.50 §2 fields. Pro: zero migration. Con: JSONB-buried; queries need `prep_data->>'phase2'->>'provenance'`; reads from dashboard/forecast paths pay the JSONB-extract cost.
+
+**Recommendation for the pre-build:** option (i) — dedicated column — under the assumption C.53 migrations are already non-trivial (three-phase restructure touches schema regardless) so the marginal cost of one more column is small, and the read-path cost of JSONB-buried provenance compounds across every consumer (audit, dashboard, forecast). But the call is for C.53's pre-build response against the actual migration shape proposed there. Locked here: the marker exists, distinguishes the two states, and is set at submit time. Where the bits live is the implementation choice.
+
+**Opener attestation column shape** — same trichotomy, lower stakes (one value per opening submission, not per completion). Most natural shape: column on `checklist_instances` (e.g., `opener_no_prior_data_reason TEXT CHECK (... IN ('planned_closure', 'missed_or_unknown', NULL))`) since the attestation is instance-scoped, not item-scoped. NULL when no NULL-source detected; populated only when the attestation prompt fired.
+
+### §5 — What stays unchanged from C.50 / C.42
+
+- **C.50 NULL-sentinel form path** — recount source, NULL badges (`no_am_prep` / `first_day` / `item_not_linked`), per-section disabled VERIFY when items have NULL-source-without-recount, per-item recount as ground-truth derivation, opener_prepped numeric capture, reason capture on delta. All preserved.
+- **C.42 auto-complete behavior when closing DOES exist** — `closing_ix` CTE finds the closing, insert + supersede proceeds, audit trail unchanged. C.54 only removes the downstream submit-RPC block; the success path is identical.
+- **C.50 §8.4 invariant enforcement** — `ground_truth_count` derivation, `prep_need = MAX(0, par − ground_truth)`, `delta_vs_prep_need` computation, over/under signal banners, N-per-item under-prep notification dispatch. All preserved.
+- **Closing report's submit behavior** — unchanged. C.54 is opening-side only.
+
+### §6 — Dependency flag — C.53 must have C.54 on the table from its first pre-build response
+
+C.53 (three-phase opening restructure: verification → prep → setup) rebuilds the exact submit surface C.54 modifies. C.54's requirements are **inputs to C.53's design**, not a bolt-on after:
+
+- The opener attestation surface (§2.C) must live somewhere in the three-phase flow. C.53's pre-build must place it. Candidates: end of Phase 3 (setup) right before commit; or surfaced at Phase 1 (verification) when NULL-source is first detected and the opener begins recounting. Either is defensible; C.53 picks.
+- The provenance marker (§4) must be in the data model C.53 writes. C.53's migrations are the natural home for the column add (option i) or the schema extension (option ii).
+- The decoupled auto-complete (§2.A) is part of the submit RPC C.53 rebuilds (`submit_phase2_atomic` per C.53 §6). The RPC author must drop the raise, not preserve it from the 0053 ancestor.
+- The §B routed notification dispatch is part of the same RPC's notification block (sibling to C.50's under-prep dispatch).
+
+**If C.53 is designed without C.54 in front of it, the restructure gets built and then reopened.** State this dependency prominently wherever C.53's kickoff context lives — `docs/STEP_12_13_HANDOFF.md` §C.53 entry, the C.53 entry in this file once C.51–C.53 reconcile in, and any handoff doc Step 15 produces for the C.53 build session. A fresh session must not be able to design C.53 blind to C.54.
+
+**Step 15 reconcile owes:** a "Depends on C.54" line at the top of C.53's amendment text in `docs/STEP_12_13_HANDOFF.md`, paired with the cross-references in §7 below.
+
+### §7 — Cross-references
+
+- **Task #6 (held)** — strict-yesterday snapshot resolver semantic (C.50 §2 source lookup keys on `today − 1` strictly; routine operational states routinely violate "yesterday always has data"). Sibling angle on the same gap C.54 closes. C.54 is correct regardless of how Task #6 resolves; resolving Task #6 (e.g., to "most-recent within N days" semantics) would reduce — but not eliminate — the frequency at which C.54's NULL-source path engages, since N-day windows still have boundary cases.
+- **Task #7 (held — superseded by this amendment)** — first capture of the auto-complete-vs-NULL-SENTINEL contradiction. Task #7 stays in the candidate-findings hold as the historical trace of how the find surfaced; C.54 is its resolution.
+- **C.42** — operational reports architecture / auto-complete mechanic. Partially superseded: closing-side behavior unchanged, opening-side submit-block removed.
+- **C.50** — Phase 2 calculation logic redesign + NULL-sentinel UI. Unchanged. C.54 removes the downstream block that contradicted it.
+- **C.51 (deferred stub)** — Phase 1A/1B split moved into C.53.
+- **C.52** — Phase 2 collaborative real-time prep. Independent. The §A decoupling and §B/C signaling apply regardless of single-actor vs collaborative submit.
+- **C.53** — three-phase opening restructure (verification → prep → setup). **Hard dependency.** C.54 ships inside C.53's build.
+
+### §8 — Captured artifact (do not finalize, do not delete)
+
+The blocked submit attempt is preserved as forensic evidence of the contradiction:
+
+- **Opening instance:** `d49d1504-da82-48fd-bf08-05abcb3f87d1` at EM (P Street) dated 2026-05-25, status `open`.
+- **Snapshots:** 34 rows in `opening_closer_count_snapshots` for this instance, all `closer_count IS NULL`, all `closing_instance_id IS NULL` (yesterday's closing didn't exist; AM Prep on yesterday didn't exist; both NULL-source paths active).
+- **Completions:** zero. The RPC rolled them back when the auto-complete RAISE fired.
+- **Submission row:** none. Same reason.
+- **Audit chain:**
+  - `2026-05-25 20:37:00Z` `checklist_instance.create` (today's opening instance created on form load)
+  - `2026-05-25 20:37:00Z` `opening.snapshot_materialize` (34 snapshots, all `with_closer_count: 0`, all `without_closer_count: 34`)
+  - `2026-05-25 20:44:48Z` `opening.submit` `outcome: auto_complete_failed` `rpc_error: submit_opening_atomic: no closing instance found at date N-1...`
+
+This instance demonstrates the contradiction live in production. Leaving it in `open` state preserves the evidence for the C.53 pre-build conversation and any subsequent review. **Do not finalize, confirm, delete, or re-attempt submit on this instance** until C.54's implementation lands. If operational tempo requires opening to actually submit at EM before C.54 ships, create a new instance at a different date or coordinate via manual finalize through an admin path — do not touch `d49d1504`.
+
+### §9 — Meta-lesson candidate for AGENTS.md (Step 15 wrap)
+
+A fresh instance of the meta-pattern already partially captured in AGENTS.md:
+
+> **Preserved-from-prior logic must be re-verified against any amendment that changes the operational assumptions it depended on.**
+
+The 0053 RPC's auto-complete branch carried a comment "Logic preserved from 0050 — no C.50 changes here." That comment was true at the literal level (no logic changed) but wrong at the architectural level (C.50's NULL-sentinel redesign changed the operational reality the auto-complete logic was built against). The preserved logic should have been re-examined against C.50's new "absence of prior data is valid" assumption; it wasn't, and the contradiction shipped.
+
+This is a sharper sibling to the existing AGENTS.md lesson about checking existing patterns before designing net-new — the failure mode is symmetric: net-new design needs to know the prior patterns; net-new amendments need to know what they invalidate in the preserved patterns.
+
+Step 15 should author this into AGENTS.md alongside the other Build #3 PR 3 durable lessons. The phrasing above is a draft; the Step 15 wrap can tighten.
+
+### v1.3 action checklist
+
+- Drop `RAISE EXCEPTION` on `v_auto_complete_id IS NULL` from `submit_opening_atomic` (or its C.53 successor `submit_phase2_atomic`); make the auto-complete branch a no-op when CTE returns zero rows
+- Remove `OpeningAutoCompleteError` class from `lib/opening.ts` and the `auto_complete_failed` mapping from `app/api/opening/_helpers.ts`
+- Remove `opening.error.auto_complete_failed` translation keys from `lib/i18n/en.json` + `lib/i18n/es.json`
+- Add `count_provenance` column (or equivalent per §4) to `checklist_completions` schema in §4.X; populate at submit time when `opener_recount IS NOT NULL` AND snapshot `closer_count IS NULL` → `'reconstructed_morning'`; otherwise `'closer_captured'`
+- Add `opener_no_prior_data_reason` column (or equivalent per §4) to `checklist_instances`; populate at submit time when attestation fires
+- Add notification action `opening.submitted_with_no_prior_closing_data` to the audit/notification namespace
+- Add notification recipient routing per C.48 (MoO + Owner + KH+ at location, DISTINCT, priority urgent)
+- Add opener attestation modal/inline-prompt to the C.53 submit surface (placement is a C.53 pre-build call)
+- Update DESTRUCTIVE_ACTIONS registry if `opening.submitted_with_no_prior_closing_data` qualifies (likely no — it's a forward signal, not a destructive event)
+- Add cross-reference link from C.53 entry (once C.51–C.53 reconcile into this file) pointing to C.54 as a hard dependency
+- Update `docs/STEP_12_13_HANDOFF.md` §C.53 entry with a "Depends on C.54" header
+- Update §16 build sequencing: C.54 ships inside the C.53 build, not as a separate cycle
+
+Captured during NULL-SENTINEL smoke at EM, 2026-05-25. Architecture locked (§1–§3) and open implementation question (§4) recorded before C.53 pre-build opens.
+
+---
+
 ## How to add an entry
 
-1. Pick the next monotonic ID (`C.<n>` — current next: C.54).
+1. Pick the next monotonic ID (`C.<n>` — current next: C.55).
 2. Spec sections under amendment.
 3. Quote what spec says.
 4. Document what built reality is.
 5. Why the divergence is correct (operational reasoning, not just "we changed our mind").
 6. What v1.3 should do — concrete action so the spec can be reconciled mechanically.
 
-Date entries to whatever calendar the project is on (currently 2026-05-09).
+Date entries to whatever calendar the project is on (currently 2026-05-25).
 
 This file is consumed by future spec versions. Its purpose is to make spec drift cheap to reconcile, not to legitimize ad-hoc deviations. Every entry should pass the test "would I tell Pete or Cristian this is the right way to do it?" before it lands here.
