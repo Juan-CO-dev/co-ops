@@ -57,6 +57,7 @@ import {
 } from "@/lib/opening";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import type { OpeningSpotCheckStatus } from "@/lib/types";
 
 import { mapOpeningError } from "../_helpers";
 
@@ -65,9 +66,23 @@ import { mapOpeningError } from "../_helpers";
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Wire body shape — discriminated union per entry.phase, matching
- * lib/opening.ts OpeningEntry contract (Step 4). Phase 1 entries carry
- * top-level countValue/photoId/notes; Phase 2 entries carry phase2 sub-object.
+ * Wire body shape — discriminated union per entry.phase, matching the C.53
+ * type-contract-locked OpeningEntry union in lib/types.ts.
+ *
+ * Phase 1 entries carry top-level countValue/photoId/notes PLUS the C.53
+ * spot-check fields (spotCheckStatus / openerRecount / groundTruthCount /
+ * prepNeed). The spot-check fields are nullable + defaulted by the
+ * validator when absent (legacy form omits them; they'll be populated by
+ * the new Phase 1 UI when it lands).
+ *
+ * Phase 2 entries use the new FLAT shape per C.53 (no `phase2:` wrapper,
+ * no openerRecount field — recount moved to Phase 1). lib/opening.ts's
+ * dispatcher adapts the flat shape back to the nested `phase2:` wrapper
+ * for the unchanged submit_opening_atomic RPC.
+ *
+ * Phase 3 wire validation is not yet exposed — the dispatcher throws
+ * `phase3_rpc_not_implemented` so there is no caller-visible Phase 3 path.
+ * The wire type is reserved here without a corresponding validator branch.
  */
 type WireEntry =
   | {
@@ -76,25 +91,22 @@ type WireEntry =
       countValue: number | null;
       photoId: string | null;
       notes: string | null;
+      // C.53 spot-check fields — accepted but not yet populated by legacy
+      // form; the Phase 1 UI restructure will populate them.
+      spotCheckStatus: OpeningSpotCheckStatus | null;
+      openerRecount: number | null;
+      groundTruthCount: number | null;
+      prepNeed: number | null;
     }
   | {
       templateItemId: string;
       phase: "phase2";
-      phase2: WirePhase2;
+      // C.53 flat shape: top-level fields, no `phase2:` wrapper.
+      openerPrepped: number;
+      deltaVsPrepNeed: number | null;
+      overPar: WireOverPar | null;
+      underPar: WireUnderPar | null;
     };
-
-interface WirePhase2 {
-  /**
-   * C.50 redesign: openerRecount replaces openerActual. Number when item
-   * flagged for per-item recount; null when opener relies on section-verify.
-   */
-  openerRecount: number | null;
-  openerPrepped: number;
-  overPar: WireOverPar | null;
-  underPar: WireUnderPar | null;
-  // closerEstimateSnapshot DROPPED in C.50 — server reads from persisted
-  // opening_closer_count_snapshots table; not in request payload anymore.
-}
 
 type OverParReason =
   | "management_directive"
@@ -208,42 +220,90 @@ function validateBody(
         const trimmed = er.notes.trim();
         notes = trimmed.length > 0 ? trimmed : null;
       }
+
+      // C.53 spot-check fields — optional in wire payload (legacy form omits).
+      // The Phase 1 UI restructure will populate them; validator defaults to
+      // null when absent so legacy submissions keep working.
+      let spotCheckStatus: OpeningSpotCheckStatus | null = null;
+      if (er.spotCheckStatus !== null && er.spotCheckStatus !== undefined) {
+        if (
+          er.spotCheckStatus !== "matched_via_section_verify" &&
+          er.spotCheckStatus !== "flagged_recount"
+        ) {
+          return { ok: false, field: `entries[${i}].spotCheckStatus` };
+        }
+        spotCheckStatus = er.spotCheckStatus;
+      }
+      let openerRecount: number | null = null;
+      if (er.openerRecount !== null && er.openerRecount !== undefined) {
+        if (
+          typeof er.openerRecount !== "number" ||
+          !Number.isFinite(er.openerRecount)
+        ) {
+          return { ok: false, field: `entries[${i}].openerRecount` };
+        }
+        openerRecount = er.openerRecount;
+      }
+      let groundTruthCount: number | null = null;
+      if (er.groundTruthCount !== null && er.groundTruthCount !== undefined) {
+        if (
+          typeof er.groundTruthCount !== "number" ||
+          !Number.isFinite(er.groundTruthCount)
+        ) {
+          return { ok: false, field: `entries[${i}].groundTruthCount` };
+        }
+        groundTruthCount = er.groundTruthCount;
+      }
+      let prepNeed: number | null = null;
+      if (er.prepNeed !== null && er.prepNeed !== undefined) {
+        if (typeof er.prepNeed !== "number" || !Number.isFinite(er.prepNeed)) {
+          return { ok: false, field: `entries[${i}].prepNeed` };
+        }
+        prepNeed = er.prepNeed;
+      }
+
       entries.push({
         templateItemId: er.templateItemId,
         phase: "phase1",
         countValue,
         photoId,
         notes,
+        spotCheckStatus,
+        openerRecount,
+        groundTruthCount,
+        prepNeed,
       });
     } else {
-      // phase === 'phase2'
-      const p2 = er.phase2;
-      if (typeof p2 !== "object" || p2 === null) {
-        return { ok: false, field: `entries[${i}].phase2` };
+      // phase === 'phase2' — C.53 flat shape. openerPrepped + deltaVsPrepNeed
+      // + overPar/underPar live at the top level of the entry (no `phase2:`
+      // wrapper). lib/opening.ts dispatcher adapts back to nested shape for
+      // the unchanged submit_opening_atomic RPC.
+      if (typeof er.openerPrepped !== "number" || !Number.isFinite(er.openerPrepped)) {
+        return { ok: false, field: `entries[${i}].openerPrepped` };
       }
-      const p2r = p2 as Record<string, unknown>;
-      // C.50 redesign: openerRecount (nullable) replaces openerActual (was required number).
-      let openerRecount: number | null = null;
-      if (p2r.openerRecount !== null && p2r.openerRecount !== undefined) {
-        if (typeof p2r.openerRecount !== "number" || !Number.isFinite(p2r.openerRecount)) {
-          return { ok: false, field: `entries[${i}].phase2.openerRecount` };
+      const openerPrepped = er.openerPrepped;
+
+      let deltaVsPrepNeed: number | null = null;
+      if (er.deltaVsPrepNeed !== null && er.deltaVsPrepNeed !== undefined) {
+        if (
+          typeof er.deltaVsPrepNeed !== "number" ||
+          !Number.isFinite(er.deltaVsPrepNeed)
+        ) {
+          return { ok: false, field: `entries[${i}].deltaVsPrepNeed` };
         }
-        openerRecount = p2r.openerRecount;
-      }
-      if (typeof p2r.openerPrepped !== "number" || !Number.isFinite(p2r.openerPrepped)) {
-        return { ok: false, field: `entries[${i}].phase2.openerPrepped` };
+        deltaVsPrepNeed = er.deltaVsPrepNeed;
       }
 
       // overPar (nullable; reasonCategory in OVER_PAR_REASONS; directedBy
       // required when management_directive; freeText required when 'other').
       let overPar: WireOverPar | null = null;
-      if (p2r.overPar !== null && p2r.overPar !== undefined) {
-        if (typeof p2r.overPar !== "object") {
-          return { ok: false, field: `entries[${i}].phase2.overPar` };
+      if (er.overPar !== null && er.overPar !== undefined) {
+        if (typeof er.overPar !== "object") {
+          return { ok: false, field: `entries[${i}].overPar` };
         }
-        const o = p2r.overPar as Record<string, unknown>;
+        const o = er.overPar as Record<string, unknown>;
         if (typeof o.reasonCategory !== "string" || !OVER_PAR_REASONS.has(o.reasonCategory)) {
-          return { ok: false, field: `entries[${i}].phase2.overPar.reasonCategory` };
+          return { ok: false, field: `entries[${i}].overPar.reasonCategory` };
         }
         const directedBy =
           o.directedBy === null || o.directedBy === undefined
@@ -252,10 +312,10 @@ function validateBody(
               ? o.directedBy
               : "INVALID";
         if (directedBy === "INVALID") {
-          return { ok: false, field: `entries[${i}].phase2.overPar.directedBy` };
+          return { ok: false, field: `entries[${i}].overPar.directedBy` };
         }
         if (o.reasonCategory === "management_directive" && directedBy === null) {
-          return { ok: false, field: `entries[${i}].phase2.overPar.directedBy` };
+          return { ok: false, field: `entries[${i}].overPar.directedBy` };
         }
         const freeText =
           o.freeText === null || o.freeText === undefined
@@ -264,10 +324,10 @@ function validateBody(
               ? o.freeText.trim() || null
               : "INVALID";
         if (freeText === "INVALID") {
-          return { ok: false, field: `entries[${i}].phase2.overPar.freeText` };
+          return { ok: false, field: `entries[${i}].overPar.freeText` };
         }
         if (o.reasonCategory === "other" && (freeText === null || freeText.length === 0)) {
-          return { ok: false, field: `entries[${i}].phase2.overPar.freeText` };
+          return { ok: false, field: `entries[${i}].overPar.freeText` };
         }
         overPar = {
           reasonCategory: o.reasonCategory as OverParReason,
@@ -278,16 +338,16 @@ function validateBody(
 
       // underPar (nullable; reasonCategory in UNDER_PAR_REASONS; freeText REQUIRED).
       let underPar: WireUnderPar | null = null;
-      if (p2r.underPar !== null && p2r.underPar !== undefined) {
-        if (typeof p2r.underPar !== "object") {
-          return { ok: false, field: `entries[${i}].phase2.underPar` };
+      if (er.underPar !== null && er.underPar !== undefined) {
+        if (typeof er.underPar !== "object") {
+          return { ok: false, field: `entries[${i}].underPar` };
         }
-        const u = p2r.underPar as Record<string, unknown>;
+        const u = er.underPar as Record<string, unknown>;
         if (typeof u.reasonCategory !== "string" || !UNDER_PAR_REASONS.has(u.reasonCategory)) {
-          return { ok: false, field: `entries[${i}].phase2.underPar.reasonCategory` };
+          return { ok: false, field: `entries[${i}].underPar.reasonCategory` };
         }
         if (typeof u.freeText !== "string" || u.freeText.trim().length === 0) {
-          return { ok: false, field: `entries[${i}].phase2.underPar.freeText` };
+          return { ok: false, field: `entries[${i}].underPar.freeText` };
         }
         underPar = {
           reasonCategory: u.reasonCategory as UnderParReason,
@@ -295,18 +355,13 @@ function validateBody(
         };
       }
 
-      // closerEstimateSnapshot DROPPED in C.50 — server reads from persisted
-      // opening_closer_count_snapshots table; not validated/parsed here.
-
       entries.push({
         templateItemId: er.templateItemId,
         phase: "phase2",
-        phase2: {
-          openerRecount,
-          openerPrepped: p2r.openerPrepped,
-          overPar,
-          underPar,
-        },
+        openerPrepped,
+        deltaVsPrepNeed,
+        overPar,
+        underPar,
       });
     }
   }

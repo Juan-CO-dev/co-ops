@@ -8,14 +8,19 @@
  * responses via lib/api-helpers.ts jsonError(). Each error class has a
  * stable HTTP status:
  *
- *   400 invalid_entry_shape       — caller-driven shape error in entries
- *   400 missing_count             — fridge temp item without count value
- *   403 role_level_insufficient   — actor below OPENING_BASE_LEVEL
- *   409 instance_not_open         — concurrent confirm or status change
- *   422 auto_complete_failed      — closing instance doesn't exist for date N-1
- *                                   (caller should NOT retry; data state requires
- *                                   resolution before opening submits)
- *   500 internal_error            — unmatched / unexpected lib error
+ *   400 invalid_entry_shape           — caller-driven shape error in entries
+ *   400 missing_count                 — fridge temp item without count value
+ *   403 role_level_insufficient       — actor below OPENING_BASE_LEVEL
+ *   409 instance_not_open             — concurrent confirm or status change
+ *   409 phase1_not_eligible           — C.53 entry phase mismatch (status≠'open')
+ *   409 phase2_not_eligible           — C.53 entry phase mismatch (status≠'phase1_complete')
+ *   409 phase3_not_eligible           — C.53 entry phase mismatch (status≠'phase2_complete')
+ *   422 provenance_required           — C.54 reconstructed-morning entries without opener attestation
+ *   422 out_of_range_reason_missing   — C.53 Phase 3 out-of-range verification without reason
+ *   422 auto_complete_failed          — closing instance doesn't exist for date N-1
+ *                                       (caller should NOT retry; data state requires
+ *                                       resolution before opening submits)
+ *   500 internal_error                — unmatched / unexpected lib error
  *
  * The helper attaches relevant identifiers to the response body so the
  * UI can surface a meaningful translated message via the `code`
@@ -28,6 +33,11 @@ import {
   OpeningError,
   OpeningInstanceNotOpenError,
   OpeningMissingCountError,
+  OpeningOutOfRangeReasonMissingError,
+  OpeningPhase1NotEligibleError,
+  OpeningPhase2NotEligibleError,
+  OpeningPhase3NotEligibleError,
+  OpeningProvenanceRequiredError,
   OpeningRoleViolationError,
 } from "@/lib/opening";
 import { jsonError } from "@/lib/api-helpers";
@@ -46,6 +56,30 @@ export function mapOpeningError(err: OpeningError): NextResponse {
       message: err.message,
       instance_id: err.instanceId,
       status: err.status,
+    });
+  }
+  if (
+    err instanceof OpeningPhase1NotEligibleError ||
+    err instanceof OpeningPhase2NotEligibleError ||
+    err instanceof OpeningPhase3NotEligibleError
+  ) {
+    return jsonError(409, err.code, {
+      message: err.message,
+      instance_id: err.instanceId,
+      status: err.status,
+    });
+  }
+  if (err instanceof OpeningProvenanceRequiredError) {
+    return jsonError(422, err.code, {
+      message: err.message,
+      instance_id: err.instanceId,
+    });
+  }
+  if (err instanceof OpeningOutOfRangeReasonMissingError) {
+    return jsonError(422, err.code, {
+      message: err.message,
+      setup_item_id: err.setupItemId,
+      station_key: err.stationKey,
     });
   }
   if (err instanceof OpeningAutoCompleteError) {

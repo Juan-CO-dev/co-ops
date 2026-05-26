@@ -522,8 +522,431 @@ export interface ChecklistTemplateItem {
  *   - `incomplete_confirmed` → closer PIN-attests with reasons for incompletes
  *   - `auto_finalized`       → opener-release OR system_auto OR migration backfill;
  *                              actor type discriminated on `finalizedAtActorType`
+ *
+ * C.53 — three-phase opening restructure extends the enum with two transitional
+ * states that apply ONLY to opening instances (Wave 2 Build #1):
+ *   - `phase1_complete` → opener finished Phase 1 verification; Phase 2 prep
+ *                          surface unlocks for the location (collaborative,
+ *                          multi-actor per C.52)
+ *   - `phase2_complete` → Phase 2 prep finished; Phase 3 setup verification
+ *                          unlocks for the same KH+ opener
+ *
+ * Closing/AM-Prep/Mid-day-Prep templates never enter the C.53 transitional
+ * states; they transition `open → confirmed | incomplete_confirmed |
+ * auto_finalized` directly. Consumers branching on status only need to
+ * recognize the new states when reading opening instances; existing
+ * exhaustive branches in closing/AM-Prep paths can ignore them safely
+ * (they will never receive an opening instance row).
  */
-export type ChecklistStatus = "open" | "confirmed" | "incomplete_confirmed" | "auto_finalized";
+export type ChecklistStatus =
+  | "open"
+  | "phase1_complete"
+  | "phase2_complete"
+  | "confirmed"
+  | "incomplete_confirmed"
+  | "auto_finalized";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Opening — C.53 three-phase + C.54 provenance (Wave 2 Build #1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * C.53 — phase discriminator for opening instances. Derived at read time from
+ * `ChecklistInstance.status`:
+ *   - `open`              → 1 (Phase 1 active)
+ *   - `phase1_complete`   → 2 (Phase 2 active)
+ *   - `phase2_complete`   → 3 (Phase 3 active)
+ *   - `confirmed` / `incomplete_confirmed` / `auto_finalized` → no active phase
+ *
+ * Used by `lib/opening.ts loadOpeningState` return shape (`currentPhase`) and
+ * the phase-router stub at `app/(authed)/operations/opening/phase-router.tsx`.
+ */
+export type OpeningPhase = 1 | 2 | 3;
+
+/**
+ * C.54 §2 §3 — per-completion provenance marker distinguishing closing-captured
+ * counts from morning-reconstructed counts. Set at submit time when the
+ * opening's `ground_truth_count` derives from `opener_recount` under NULL
+ * `closer_count` (snapshot row materialized with NULL source).
+ *
+ *   - `closer_captured`        → ground_truth resolved from yesterday's
+ *                                AM-Prep snapshot's `closer_count` (normal path)
+ *   - `reconstructed_morning`  → ground_truth resolved from `opener_recount`
+ *                                because the snapshot's `closer_count` was NULL
+ *                                (missing closing, system-auto-finalized empty,
+ *                                or other NULL-source upstream cause)
+ *
+ * Permanently distinguishes the two states for forensic readback (audit,
+ * dashboard, AI forecast input). Per C.54 §3 sub-decision 5 (no retroactive
+ * backfill), pre-C.54 completions carry NULL on this marker; consumers must
+ * tolerate NULL/missing.
+ *
+ * Physical shape: dedicated column on `checklist_completions` (option (i) per
+ * C.54 §4 recommendation). Schema migration ships in a downstream commit;
+ * this type locks the contract.
+ */
+export type C54Provenance = "closer_captured" | "reconstructed_morning";
+
+/**
+ * C.54 §2.C — opener attestation captured at submit time when any opening
+ * Phase 2 completion lands with `provenance = 'reconstructed_morning'`. The
+ * opener attests whether the prior-day's closing absence was a planned closure
+ * or a missed/unknown event; the value rides into the routed MoO+ notification
+ * payload (C.54 §2.B).
+ *
+ *   - `planned_closure`     → opener confirms the location was closed yesterday
+ *                              (no system record of planned closures today; the
+ *                              attestation IS the record)
+ *   - `missed_or_unknown`   → opener cannot confirm planned closure; higher-
+ *                              priority signal for MoO+ review
+ *
+ * NULL on instances where no NULL-source path engaged (the attestation prompt
+ * only fires when at least one opening Phase 2 completion carries
+ * provenance='reconstructed_morning' at submit time).
+ *
+ * Physical shape: dedicated column on `checklist_instances` per C.54 §4. The
+ * column name is `opener_no_prior_data_reason`; this type names the values.
+ */
+export type OpeningNoPriorDataReason = "planned_closure" | "missed_or_unknown";
+
+/**
+ * C.53 §3 — discriminates how an opening Phase 1 spot-check item resolved its
+ * `ground_truth_count`. Stored inside `prep_data->phase1.spot_check_status`
+ * on the Phase 1 completion row.
+ *
+ *   - `matched_via_section_verify` → opener tapped Verify Section CTA;
+ *                                     `ground_truth_count = closer_count` for
+ *                                     this item (no per-item recount fired)
+ *   - `flagged_recount`             → opener tapped per-item recount;
+ *                                     `ground_truth_count = opener_recount`
+ *                                     for this item
+ *
+ * NULL on Phase 1 entries that are not spot-check items (station cleanliness,
+ * temp readings, sauces topped off, station ready).
+ *
+ * Note: this enum is orthogonal to `C54Provenance` (which captures whether
+ * the source `closer_count` came from a closer-captured snapshot or a
+ * NULL-source path); per C.54 §4 commentary, conflating the two axes into one
+ * column was explicitly rejected in favor of two independent enums.
+ */
+export type OpeningSpotCheckStatus = "matched_via_section_verify" | "flagged_recount";
+
+/**
+ * C.53 §3 — type tag for setup item identifiers. UUID-shaped string at runtime;
+ * the brand exists at the type level only to distinguish setup-item references
+ * from arbitrary strings in downstream consumer code (form state, RPC payloads,
+ * audit metadata).
+ *
+ * The "dedicated column on checklist_completions" phrasing in the type-contract-
+ * lock prompt is interpreted as: wherever setup-item identifiers surface on
+ * completion-shaped data (forms, RPCs, audit), they use this branded alias.
+ * Whether the physical column lives on `opening_setup_verifications.setup_item_id`
+ * (per C.53 §3 schema) or extends to `checklist_completions.setup_item_id`
+ * (denormalization not currently in C.53) is a downstream schema-migration
+ * decision; this type stabilizes the consumer contract regardless.
+ */
+export type OpeningSetupItemKey = string & { readonly __brand: "OpeningSetupItemKey" };
+
+/**
+ * C.53 §3 — narrows the value-shape options for a setup item.
+ *
+ *   - `boolean`            → tap-confirm (placed / not placed)
+ *   - `quantitative_range` → numeric input within [`minValue`, `maxValue`]; in-range
+ *                             status computed at verification time
+ */
+export type OpeningSetupItemType = "boolean" | "quantitative_range";
+
+/**
+ * C.53 §3 — controls whether a setup item is verified once across all stations
+ * it applies to, or once per station.
+ *
+ *   - `shared`       → one verification row, `station_key IS NULL`, single
+ *                       `verified_value` covering all applicable stations
+ *                       (e.g., "2-4 QT basil distributed between walking +
+ *                       3rd party stations")
+ *   - `per_station`  → one verification row per applicable station, each with
+ *                       its own `station_key` and verification state
+ *                       (e.g., "GF bread + knife on each station")
+ */
+export type OpeningSetupVerificationScope = "shared" | "per_station";
+
+/**
+ * C.53 §3 — categories for `opening_setup_verifications.unverified_reason_category`
+ * when an item is explicitly NOT verified at Phase 3 submit (transitions
+ * instance to `incomplete_confirmed`). Free-text companion is
+ * `unverified_reason_text`.
+ *
+ * Initial enum per C.53 §8 Q-P3-7 (pre-build proposal); refinement during
+ * Phase 3 component build (C.53 §10 phase 2) may add or rename entries. Locked
+ * here as the type-contract baseline; downstream commits can extend.
+ */
+export type OpeningSetupUnverifiedReason =
+  | "ingredient_unavailable"
+  | "equipment_broken"
+  | "skipped_time_pressure"
+  | "other";
+
+/**
+ * C.53 §3 — definition row for an opening Phase 3 setup item. Template-like;
+ * seeded initially per C.53 §6 "Seed data" notes (single global checklist,
+ * region/location scoping reserved for future activation per C.21).
+ *
+ * Stored as `opening_setup_items`. Mapped from snake_case via downstream
+ * lib/opening-setup.ts (commit-3 territory).
+ */
+export interface OpeningSetupItem {
+  id: OpeningSetupItemKey;
+  /** NULL for global items; per-region scoping via C.21 pattern. */
+  regionId: string | null;
+  /** NULL for region-wide items; per-location scoping. */
+  locationId: string | null;
+  itemLabel: string;
+  itemType: OpeningSetupItemType;
+  /** Populated for `quantitative_range`; NULL for `boolean`. */
+  minValue: number | null;
+  maxValue: number | null;
+  unit: string | null;
+  /** Station keys this item applies to (e.g., `['station_cooks','station_veg']`). */
+  appliesToStations: string[];
+  verificationScope: OpeningSetupVerificationScope;
+  displayOrder: number;
+  active: boolean;
+  createdAt: string;
+}
+
+/**
+ * C.53 §3 — per-instance verification state for opening Phase 3 setup items.
+ * Append-only; one row per shared-scope item, one row per (item, station) pair
+ * for per_station-scope items.
+ *
+ * `verifiedValue` + `inRange` populated for quantitative items; both NULL on
+ * boolean items. `unverifiedReasonCategory` + `unverifiedReasonText` populated
+ * when the item is explicitly unverified at submit (transitions instance to
+ * `incomplete_confirmed`).
+ *
+ * Stored as `opening_setup_verifications`. Mapped from snake_case via downstream
+ * lib/opening-setup.ts (commit-3 territory).
+ */
+export interface OpeningSetupVerification {
+  id: string;
+  openingInstanceId: string;
+  setupItemId: OpeningSetupItemKey;
+  /** Populated for `per_station` scope items; NULL for `shared` scope. */
+  stationKey: string | null;
+  verifiedAt: string;
+  verifiedBy: string;
+  /** Populated for `quantitative_range`; NULL for `boolean` and unverified. */
+  verifiedValue: number | null;
+  /** Computed at verification time for quantitative; NULL for boolean and unverified. */
+  inRange: boolean | null;
+  unverifiedReasonCategory: OpeningSetupUnverifiedReason | null;
+  unverifiedReasonText: string | null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Opening — C.53 three-phase entry shapes (Wave 2 Build #1)
+//
+// Wire/lib contract for opening submissions. Discriminated by `phase`. The
+// route handler validates JSON payloads into these shapes; lib/opening.ts's
+// submit dispatcher routes by phase to the appropriate atomic RPC.
+//
+// Restructure rationale: previously OpeningEntryPhase1 + OpeningEntryPhase2
+// lived in lib/opening.ts and were submitted together via the single
+// submit_opening_atomic RPC. C.53 splits opening into three operationally
+// distinct phases (Phase 1 verification + Phase 2 prep + Phase 3 setup
+// verification), each with its own atomic submit. The types relocate to
+// lib/types.ts as the canonical contract; lib/opening.ts re-exports them
+// for back-compat with existing imports.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * C.53 Phase 1 entry — verification + spot-check + ground-truth derivation.
+ *
+ * Under C.53, the per-item recount + section-verification work that previously
+ * lived in Phase 2 (closer-count display + opener_recount capture) MOVES into
+ * Phase 1. By the time Phase 1 closes (instance.status → 'phase1_complete'),
+ * `groundTruthCount` is FROZEN per spot-check item; Phase 2 reads it without
+ * re-deriving.
+ *
+ * Existing Phase 1 fields preserved:
+ *   - `countValue` — fridge temp reading on `expects_count=true` items
+ *   - `photoId` — optional discrepancy photo
+ *   - `notes` — optional discrepancy comment
+ *
+ * New C.53 per-item fields (NULL on non-spot-check items):
+ *   - `spotCheckStatus` — discriminator from OpeningSpotCheckStatus enum
+ *   - `openerRecount` — populated when spotCheckStatus='flagged_recount'
+ *   - `groundTruthCount` — frozen value at Phase 1 close (closer_count when
+ *     section-verified, opener_recount when flagged)
+ *   - `prepNeed` — derived from `par_value - ground_truth` (clamped ≥ 0); NULL
+ *     when item has no par OR no count semantics
+ *
+ * Section verifications continue to be sent as a sibling top-level array
+ * (`OpeningSectionVerificationEntry[]`) alongside `entries[]` — independent
+ * of per-item entries because sections are not items.
+ */
+export interface OpeningEntryPhase1 {
+  templateItemId: string;
+  phase: "phase1";
+  /** Fridge temp reading on `expects_count=true` items. NULL otherwise. */
+  countValue: number | null;
+  /** Optional discrepancy photo (Phase 6 wires upload). */
+  photoId: string | null;
+  /** Optional discrepancy comment. */
+  notes: string | null;
+  /** C.53 §3 — spot-check resolution. NULL on non-spot-check items. */
+  spotCheckStatus: OpeningSpotCheckStatus | null;
+  /** C.53 §3 — opener's recount when spotCheckStatus='flagged_recount'. NULL otherwise. */
+  openerRecount: number | null;
+  /**
+   * C.53 §3 — frozen ground_truth_count at Phase 1 close. The form derives
+   * client-side from (closer_count, section verified, opener_recount); server
+   * re-derives + validates. NULL when item has no count semantics
+   * (e.g., cleanliness ticks).
+   */
+  groundTruthCount: number | null;
+  /**
+   * C.53 §3 — derived prep_need at Phase 1 close. = max(par_value - ground_truth, 0).
+   * NULL when item has no par OR no count semantics.
+   */
+  prepNeed: number | null;
+}
+
+/**
+ * C.53 Phase 2 entry — simplified prep entry.
+ *
+ * Restructure vs prior shape:
+ *   - DROPPED `phase2` sub-object nesting (top-level fields now)
+ *   - DROPPED `openerRecount` (moved to Phase 1; the recount happens during
+ *     verification, not during prep entry)
+ *   - DROPPED closer-count display (closer_count read upstream; Phase 2 sees
+ *     only the derived prep_need from Phase 1)
+ *   - KEPT `openerPrepped` (required) + `overPar` / `underPar` reason captures
+ *   - ADDED `deltaVsPrepNeed` for client-derived delta capture; server
+ *     authoritative (Phase 5 RPC recomputes from persisted Phase 1 ground_truth)
+ *
+ * Reason categories unchanged from C.50. Under-prep `freeText` REQUIRED;
+ * over-prep `freeText` required when `reasonCategory='other'`; over-prep
+ * `directedBy` required when `reasonCategory='management_directive'`.
+ */
+export interface OpeningEntryPhase2 {
+  templateItemId: string;
+  phase: "phase2";
+  /** Required — what opener prepped today. */
+  openerPrepped: number;
+  /**
+   * Signed delta = `openerPrepped - prepNeed`. NULL when `prepNeed` is NULL
+   * (item has no par OR no Phase 1 ground_truth resolved). Server is
+   * authoritative; client value used for client-side validation only.
+   */
+  deltaVsPrepNeed: number | null;
+  /** Over-prep reason capture when delta > 0; NULL when at-par OR under-prep. */
+  overPar: {
+    reasonCategory:
+      | "management_directive"
+      | "clear_fridge_space"
+      | "prevent_expiration"
+      | "forecast_busy"
+      | "bulk_efficiency"
+      | "other";
+    /** Required when `reasonCategory='management_directive'`; null otherwise. */
+    directedBy: string | null;
+    /** Optional free-text nuance; required when `reasonCategory='other'`. */
+    freeText: string | null;
+  } | null;
+  /** Under-prep reason capture when delta < 0; NULL when at-par OR over-prep. */
+  underPar: {
+    reasonCategory:
+      | "ingredient_unavailable"
+      | "equipment_issue"
+      | "time_constraint"
+      | "staff_shortage"
+      | "other";
+    /** REQUIRED per C.50 §4 (always non-empty on under-prep). */
+    freeText: string;
+  } | null;
+}
+
+/**
+ * C.53 Phase 3 entry — net-new setup verification per item.
+ *
+ * One entry per verification row written. `verificationScope` on the parent
+ * `OpeningSetupItem` controls per-station vs shared semantics:
+ *   - per-station-scope items → N entries (one per station, each with its own
+ *     `stationKey`)
+ *   - shared-scope items → one entry with `stationKey=null`
+ *
+ * Verification states encoded across the field group:
+ *   - VERIFIED (boolean item)     → `verifiedAt` + `verifiedBy` set;
+ *                                    `verifiedValue`/`inRange` NULL;
+ *                                    `unverifiedReason` NULL
+ *   - VERIFIED (quantitative)     → `verifiedAt` + `verifiedBy` set;
+ *                                    `verifiedValue` + `inRange` set;
+ *                                    `unverifiedReason` NULL
+ *   - UNVERIFIED (explicit skip)  → `verifiedAt`/`verifiedBy`/`verifiedValue`/
+ *                                    `inRange` NULL; `unverifiedReason` set —
+ *                                    transitions parent instance to
+ *                                    `incomplete_confirmed` at submit
+ */
+export interface OpeningEntryPhase3 {
+  /**
+   * Setup-item identifier (FK into `opening_setup_items.id`). Branded for
+   * type-system distinction from arbitrary string IDs (`OpeningSetupItemKey`).
+   */
+  setupItemId: OpeningSetupItemKey;
+  phase: "phase3";
+  /**
+   * Per-station scope key (matches `OpeningSetupItem.appliesToStations[N]`).
+   * NULL for shared-scope items.
+   */
+  stationKey: string | null;
+  /** ISO timestamp when opener verified. NULL when unverified. */
+  verifiedAt: string | null;
+  /** Opener user id. NULL when unverified. */
+  verifiedBy: string | null;
+  /** Populated for `itemType='quantitative_range'`; NULL for boolean and unverified. */
+  verifiedValue: number | null;
+  /**
+   * Computed at verification time for quantitative items (true when
+   * `verifiedValue` within `[minValue, maxValue]`); NULL for boolean and
+   * unverified.
+   */
+  inRange: boolean | null;
+  /**
+   * Present when opener explicitly leaves the item unverified at submit.
+   * Triggers `incomplete_confirmed` transition. NULL on verified entries.
+   */
+  unverifiedReason: {
+    category: OpeningSetupUnverifiedReason;
+    /** Free-text companion; nullable except when `category='other'` (caller-enforced). */
+    text: string | null;
+  } | null;
+}
+
+/**
+ * C.53 — discriminated union across all three opening phases. Submit
+ * dispatcher routes by phase (and, equivalently per the C.53 phase invariants,
+ * by `instance.status`).
+ */
+export type OpeningEntry =
+  | OpeningEntryPhase1
+  | OpeningEntryPhase2
+  | OpeningEntryPhase3;
+
+/**
+ * Section verification entry per C.50 §2 / C.53 §3 — top-level sibling field
+ * on the Phase 1 submit payload alongside `entries`. Section verifications
+ * are per-section, not per-item; the Phase 1 atomic submit RPC writes one
+ * row to `opening_section_verifications` per `verified=true` entry. Append-
+ * only per CO-OPS convention; multi-toggle in client state collapses to
+ * final value at submit.
+ */
+export interface OpeningSectionVerificationEntry {
+  /** System-key match value (English `prep_meta.section`, e.g., "Cooks"). */
+  sectionKey: string;
+  /** True when opener tapped Verify Section; false otherwise. */
+  verified: boolean;
+}
 
 /**
  * Build #3 PR 1 — discriminator for which operational path produced the

@@ -334,9 +334,13 @@ export function OpeningClient({
 
     setSubmitState({ status: "submitting" });
 
-    // Marshal Phase 1 entries with phase: "phase1" + Phase 2 entries with
-    // phase: "phase2" + phase2 sub-object. Single discriminated-union array
-    // matches lib/opening.ts OpeningEntry contract (Step 4).
+    // C.53 type-contract-lock: wire entries match the new OpeningEntry union.
+    // Phase 1 entries carry the new spot-check fields (spotCheckStatus,
+    // openerRecount, groundTruthCount, prepNeed) — defaulted to null here
+    // because the legacy form doesn't capture them yet; the Phase 1 UI
+    // restructure (downstream commit) will populate them.
+    // Phase 2 entries use the new flat shape (no `phase2:` wrapper, no
+    // openerRecount — recount moved to Phase 1 per C.53 §3).
     const phase1Entries = phase1Items.map((item) => {
       const v = values.get(item.id) ?? {
         countValue: null,
@@ -350,14 +354,16 @@ export function OpeningClient({
         countValue: v.countValue,
         photoId: v.photoId,
         notes: v.notes,
+        spotCheckStatus: null,
+        openerRecount: null,
+        groundTruthCount: null,
+        prepNeed: null,
       };
     });
 
-    // C.50 redesign: raw-inputs-only payload per §8.3 lock. Server reads
-    // closer_count from persisted opening_closer_count_snapshots; computes
-    // ground_truth + prep_need + delta server-side. Client sends only
-    // operator inputs. closerEstimateSnapshot field DROPPED from payload
-    // (snapshot is server-side now).
+    // C.53 flat shape: server-authoritative deltaVsPrepNeed (null at submit;
+    // server recomputes from persisted ground_truth). Closer-count snapshot
+    // is read server-side from opening_closer_count_snapshots per C.50.
     const phase2Entries = phase2Items.map((item) => {
       const v = phase2Values.get(item.id) ?? {
         openerRecount: null,
@@ -368,12 +374,10 @@ export function OpeningClient({
       return {
         templateItemId: item.id,
         phase: "phase2" as const,
-        phase2: {
-          openerRecount: v.openerRecount,
-          openerPrepped: v.openerPrepped ?? 0,
-          overPar: v.overPar,
-          underPar: v.underPar,
-        },
+        openerPrepped: v.openerPrepped ?? 0,
+        deltaVsPrepNeed: null,
+        overPar: v.overPar,
+        underPar: v.underPar,
       };
     });
 

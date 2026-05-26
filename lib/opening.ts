@@ -53,8 +53,28 @@ import {
 import type {
   ChecklistCompletion,
   ChecklistInstance,
+  ChecklistStatus,
   ChecklistTemplateItem,
+  OpeningEntry,
+  OpeningEntryPhase1,
+  OpeningEntryPhase2,
+  OpeningEntryPhase3,
+  OpeningPhase,
   OpeningPhase2Meta,
+  OpeningSectionVerificationEntry,
+} from "./types";
+
+/**
+ * C.53 — re-export entry-shape types so existing imports from `lib/opening`
+ * keep resolving. The canonical source is `lib/types.ts`; this re-export
+ * preserves the historical import path during the C.53 transition.
+ */
+export type {
+  OpeningEntry,
+  OpeningEntryPhase1,
+  OpeningEntryPhase2,
+  OpeningEntryPhase3,
+  OpeningSectionVerificationEntry,
 } from "./types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -144,124 +164,156 @@ export class OpeningEntryShapeError extends OpeningError {
   }
 }
 
+// ─── C.53 + C.54 typed errors ────────────────────────────────────────────────
+//
+// Phase-eligibility errors fire when the submit dispatcher receives entries
+// whose `phase` does not match the instance's current operational phase
+// (derived from `instance.status` per C.53). Provenance + out-of-range
+// errors fire when the opener's submission shape is inconsistent with
+// C.54's provenance contract or with the parent setup item's range bounds.
+
+/**
+ * C.54 §2.C — opener attestation (`OpeningNoPriorDataReason`) is required when
+ * any Phase 2 completion lands with `provenance='reconstructed_morning'`.
+ * Thrown by the Phase 2 submit dispatcher when the attestation is missing
+ * from the request payload despite at least one reconstructed-morning entry.
+ */
+export class OpeningProvenanceRequiredError extends OpeningError {
+  constructor(public readonly instanceId: string) {
+    super(
+      `Opening instance ${instanceId} has reconstructed-morning provenance entries; opener no-prior-data attestation is required.`,
+      "provenance_required",
+    );
+    this.name = "OpeningProvenanceRequiredError";
+  }
+}
+
+/**
+ * C.53 §3 — when a Phase 3 quantitative_range setup-item verification lands
+ * with `inRange=false` (verified_value outside [minValue, maxValue]), an
+ * unverified-reason category MUST be captured. Thrown by the Phase 3 submit
+ * dispatcher when the reason is missing on an out-of-range entry.
+ */
+export class OpeningOutOfRangeReasonMissingError extends OpeningError {
+  constructor(
+    public readonly setupItemId: string,
+    public readonly stationKey: string | null,
+  ) {
+    const station = stationKey === null ? "<shared>" : stationKey;
+    super(
+      `Phase 3 setup item ${setupItemId} (station=${station}) verified out of range without a reason category.`,
+      "out_of_range_reason_missing",
+    );
+    this.name = "OpeningOutOfRangeReasonMissingError";
+  }
+}
+
+/**
+ * C.53 — dispatcher refuses to submit Phase 1 entries against an instance
+ * whose status is not `'open'`. The instance has either already advanced
+ * past Phase 1 (`phase1_complete`/`phase2_complete`) or is in a terminal
+ * state (`confirmed`/`incomplete_confirmed`/`auto_finalized`).
+ */
+export class OpeningPhase1NotEligibleError extends OpeningError {
+  constructor(
+    public readonly instanceId: string,
+    public readonly status: ChecklistStatus,
+  ) {
+    super(
+      `Phase 1 submission rejected: instance ${instanceId} status is ${status} (expected 'open').`,
+      "phase1_not_eligible",
+    );
+    this.name = "OpeningPhase1NotEligibleError";
+  }
+}
+
+/**
+ * C.53 — dispatcher refuses to submit Phase 2 entries against an instance
+ * whose status is not `'phase1_complete'`. Phase 1 must have closed before
+ * Phase 2 prep entry can be submitted (the persisted ground_truth + prep_need
+ * are written by Phase 1's atomic submit and consumed by Phase 2's).
+ */
+export class OpeningPhase2NotEligibleError extends OpeningError {
+  constructor(
+    public readonly instanceId: string,
+    public readonly status: ChecklistStatus,
+  ) {
+    super(
+      `Phase 2 submission rejected: instance ${instanceId} status is ${status} (expected 'phase1_complete').`,
+      "phase2_not_eligible",
+    );
+    this.name = "OpeningPhase2NotEligibleError";
+  }
+}
+
+/**
+ * C.53 — dispatcher refuses to submit Phase 3 entries against an instance
+ * whose status is not `'phase2_complete'`. Phase 2 prep must have closed
+ * before Phase 3 setup verification can be submitted.
+ */
+export class OpeningPhase3NotEligibleError extends OpeningError {
+  constructor(
+    public readonly instanceId: string,
+    public readonly status: ChecklistStatus,
+  ) {
+    super(
+      `Phase 3 submission rejected: instance ${instanceId} status is ${status} (expected 'phase2_complete').`,
+      "phase3_not_eligible",
+    );
+    this.name = "OpeningPhase3NotEligibleError";
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Entry shape — what the form sends per item (discriminated union)
+// Phase resolution helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Phase 1 entry — verification ticks + optional fridge temp counts +
- * optional discrepancy photo/comment. Top-level checklist_completion
- * columns (count_value, photo_id, notes); no prep_data JSONB.
+ * C.53 — derives the active phase for an opening instance from its status.
+ * Returns NULL when the instance is in a terminal state (confirmed,
+ * incomplete_confirmed, auto_finalized).
  *
- * Form state in opening-client.tsx tracks the same shape plus a `ticked`
- * boolean for the per-station gate; the `ticked` field stays client-side
- * (every entry sent to the RPC IS ticked, by definition of the submit
- * gate enforcing "all 44 ticked before submit enables").
+ * The mapping mirrors `phase-router.tsx activePhaseForStatus` (same lookup;
+ * lib-side helper for non-UI consumers).
  */
-export interface OpeningEntryPhase1 {
-  templateItemId: string;
-  phase: "phase1";
-  /** Populated for the 8 fridge temp items (template_item.expects_count=true). NULL otherwise. */
-  countValue: number | null;
-  /** Optional discrepancy photo. Always null in PR 2 (Phase 6 wires the upload). */
-  photoId: string | null;
-  /** Optional discrepancy comment. NULL when none. */
-  notes: string | null;
+export function activeOpeningPhase(status: ChecklistStatus): OpeningPhase | null {
+  if (status === "open") return 1;
+  if (status === "phase1_complete") return 2;
+  if (status === "phase2_complete") return 3;
+  return null;
 }
 
 /**
- * Phase 2 entry — opener inputs for the C.50 corrected-calc model. Stored in
- * checklist_completions.prep_data.phase2 JSONB at submit time (Step 13 RPC
- * computes ground_truth + prep_need + delta_vs_prep_need server-side and
- * persists the full §8.4 invariant shape).
- *
- * Raw-inputs-only contract per §8.3 lock: client sends raw operator inputs
- * (openerRecount + openerPrepped + reason capture). Server reads
- * closer_count from the persisted opening_closer_count_snapshots table
- * (frozen at instance creation; not re-resolved at submit). Form computes
- * prep_need + delta live for display only; values discarded at submit.
- *
- * Per locked Concern 2 (notification dispatch): under-prep fires N-per-item
- * (one notification per under-par entry). Recipients = KH+ at this location
- * + MoO + Owner DISTINCT, per C.48 routing.
- *
- * **C.50 model shifts captured in this shape:**
- * - `openerActual` removed: closer_count IS the canonical count when the
- *   parent section is verified (no opener double-count). Replaced by
- *   `openerRecount` which is populated only when opener flags an item for
- *   per-item recount — exception path, not default.
- * - `closerEstimateSnapshot` removed from entry: closer_count is now read
- *   from the persisted snapshot table by the RPC (frozen at instance
- *   create per C.44 snapshot universe locking precedent). No need to ship
- *   the snapshot in the request payload.
- * - over/under capture now compares to prep_need, not par. Reason
- *   categories unchanged; semantic meaning shifts.
+ * C.53 — narrows an entry array to a single homogeneous phase. Throws when
+ * the array is empty (caller should validate non-empty before dispatch) or
+ * mixes phases (the C.53 phase-routing dispatcher requires a single phase
+ * per submit; cross-phase batching is no longer supported post-restructure).
  */
-export interface OpeningEntryPhase2 {
-  templateItemId: string;
-  phase: "phase2";
-  phase2: {
-    /**
-     * Opener's recount value when this item was flagged for per-item recount
-     * (exception path). NULL when opener relies on section-verify (parent
-     * section's closer_count is canonical for this item). Server derives
-     * ground_truth_count via: `opener_recount IF NOT NULL ELSE closer_count`.
-     */
-    openerRecount: number | null;
-    /** What opener actually prepped today. Required. */
-    openerPrepped: number;
-    /**
-     * Over-prep capture: opener prepped > prep_need. NULL when at par
-     * (opener_prepped === prep_need) or under-prep. Reason category enum
-     * unchanged from pre-C.50; semantic shifts from "vs par" to "vs prep_need."
-     */
-    overPar: {
-      reasonCategory:
-        | "management_directive"
-        | "clear_fridge_space"
-        | "prevent_expiration"
-        | "forecast_busy"
-        | "bulk_efficiency"
-        | "other";
-      /** Required when reasonCategory='management_directive'; null otherwise. */
-      directedBy: string | null;
-      /** Optional free-text nuance; required when reasonCategory='other'. */
-      freeText: string | null;
-    } | null;
-    /**
-     * Under-prep capture: opener prepped < prep_need. Triggers urgent
-     * N-per-item notification dispatch. Reason category enum unchanged;
-     * semantic shifts from "vs par" to "vs prep_need."
-     */
-    underPar: {
-      reasonCategory:
-        | "ingredient_unavailable"
-        | "equipment_issue"
-        | "time_constraint"
-        | "staff_shortage"
-        | "other";
-      /** REQUIRED for under-prep per design doc §3.3 + C.50 §4. */
-      freeText: string;
-    } | null;
-  };
+function entriesPhase(entries: ReadonlyArray<OpeningEntry>): OpeningPhase {
+  if (entries.length === 0) {
+    throw new OpeningEntryShapeError("entries[] must be non-empty");
+  }
+  const first = entries[0]!.phase;
+  for (const e of entries) {
+    if (e.phase !== first) {
+      throw new OpeningEntryShapeError(
+        `entries[] must be homogeneous by phase (saw '${first}' and '${e.phase}')`,
+      );
+    }
+  }
+  if (first === "phase1") return 1;
+  if (first === "phase2") return 2;
+  return 3;
 }
 
-export type OpeningEntry = OpeningEntryPhase1 | OpeningEntryPhase2;
-
-/**
- * Section verification entry per C.50 §2 — top-level field on the request
- * body alongside `entries`. Section verifications are independent of the
- * entries array (per-section, not per-item). Step 13 RPC writes one row
- * to opening_section_verifications per `verified=true` entry. Append-only
- * per CO-OPS convention; multi-toggle in client state collapses to final
- * value at submit.
- */
-export interface OpeningSectionVerificationEntry {
-  /** System-key match value (English `prep_meta.section`, e.g., "Cooks"). */
-  sectionKey: string;
-  /** True when opener tapped Verify Section; false otherwise. */
-  verified: boolean;
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Entry shapes — wire/lib contract for opening submissions
+//
+// C.53 type-contract-lock: the discriminated union `OpeningEntry` (and its
+// three phase variants) lives in `lib/types.ts`; this module re-exports for
+// import-path back-compat. See lib/types.ts "Opening — C.53 three-phase
+// entry shapes" block for the canonical definitions.
+// ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase 2 closer-count snapshot — what the form reads to render the
@@ -1010,69 +1062,178 @@ export async function submitOpening(
     throw new OpeningRoleViolationError(OPENING_BASE_LEVEL, args.actor.level);
   }
 
-  // Per-entry validation (defense-in-depth; the form should also enforce
-  // client-side). Server-side validation iterates the ENTRIES array, not the
-  // source-of-truth template — so it doesn't catch missing entries. The form
-  // is the source-of-truth gate; the RPC is the second layer.
+  // ───────────────────────────────────────────────────────────────────────────
+  // C.53 phase-routing dispatcher (type-contract-lock).
   //
-  // Discriminated union narrows on entry.phase ("phase1" | "phase2"); each
-  // branch validates its own field shape.
+  // 1. Per-entry shape validation (defense-in-depth; form should also enforce).
+  //    Phase 1 / Phase 2 / Phase 3 each carry distinct field groups; the
+  //    discriminated union narrows by entry.phase.
+  // 2. Read instance status → derive active phase via activeOpeningPhase.
+  // 3. Route by phase combination:
+  //      - solo phase3 → throw OpeningError("phase3_rpc_not_implemented")
+  //        (schema + Phase 3 RPC land in a downstream commit)
+  //      - solo phase2 → status must be 'phase1_complete'
+  //      - solo phase1 → status must be 'open'
+  //      - mixed phase1+phase2 → legacy combined path (status='open' only)
+  //      - mixed with phase3 → reject (phase3 must be solo)
+  // 4. Marshal entries for the unchanged submit_opening_atomic RPC. The RPC's
+  //    phase2 wire-contract is the OLD nested `phase2: { openerRecount,
+  //    openerPrepped, overPar, underPar }` shape; the new flat
+  //    OpeningEntryPhase2 lib contract is adapted back to nested at the call
+  //    site. openerRecount is null because the recount field MOVED to Phase 1
+  //    per C.53 §3 (legacy form's recount UI is no longer wired through the
+  //    dispatcher; the UI restructure downstream replaces it with a Phase 1
+  //    spot-check capture).
+  // ───────────────────────────────────────────────────────────────────────────
+
+  // 1. Per-entry shape validation + collect phases seen.
+  const phasesPresent = new Set<OpeningEntry["phase"]>();
   for (const entry of args.entries) {
+    phasesPresent.add(entry.phase);
     if (entry.phase === "phase1") {
       if (entry.countValue !== null && typeof entry.countValue !== "number") {
         throw new OpeningEntryShapeError(
           `phase1 entry ${entry.templateItemId} countValue must be number or null`,
         );
       }
-    } else {
-      // phase2 — validate the phase2 sub-object shape (C.50 redesign)
-      if (
-        entry.phase2.openerRecount !== null &&
-        typeof entry.phase2.openerRecount !== "number"
-      ) {
-        throw new OpeningEntryShapeError(
-          `phase2 entry ${entry.templateItemId} openerRecount must be number or null`,
-        );
-      }
-      if (typeof entry.phase2.openerPrepped !== "number") {
+    } else if (entry.phase === "phase2") {
+      if (typeof entry.openerPrepped !== "number") {
         throw new OpeningEntryShapeError(
           `phase2 entry ${entry.templateItemId} openerPrepped must be number`,
         );
       }
-      // Under-par requires non-empty freeText per design doc §3.3.
-      if (entry.phase2.underPar !== null && !entry.phase2.underPar.freeText.trim()) {
+      if (entry.underPar !== null && !entry.underPar.freeText.trim()) {
         throw new OpeningEntryShapeError(
           `phase2 entry ${entry.templateItemId} underPar.freeText is required when under-par`,
         );
       }
-      // Over-par with reasonCategory='other' requires freeText per design doc §3.2.
       if (
-        entry.phase2.overPar !== null &&
-        entry.phase2.overPar.reasonCategory === "other" &&
-        (entry.phase2.overPar.freeText === null || !entry.phase2.overPar.freeText.trim())
+        entry.overPar !== null &&
+        entry.overPar.reasonCategory === "other" &&
+        (entry.overPar.freeText === null || !entry.overPar.freeText.trim())
       ) {
         throw new OpeningEntryShapeError(
           `phase2 entry ${entry.templateItemId} overPar.freeText is required when reasonCategory='other'`,
         );
       }
-      // Over-par with reasonCategory='management_directive' requires directedBy
-      // (architectural intent: accountability tagging — locked Surface D (a)).
       if (
-        entry.phase2.overPar !== null &&
-        entry.phase2.overPar.reasonCategory === "management_directive" &&
-        entry.phase2.overPar.directedBy === null
+        entry.overPar !== null &&
+        entry.overPar.reasonCategory === "management_directive" &&
+        entry.overPar.directedBy === null
       ) {
         throw new OpeningEntryShapeError(
           `phase2 entry ${entry.templateItemId} overPar.directedBy is required when reasonCategory='management_directive'`,
         );
       }
+    } else {
+      // phase3 — setup verification entry. At least one of (verifiedAt+verifiedBy)
+      // or unverifiedReason must be set. Out-of-range verification without a
+      // reason category fires the C.53 §3 typed error so the route surfaces 422.
+      if (entry.verifiedAt === null && entry.unverifiedReason === null) {
+        throw new OpeningEntryShapeError(
+          `phase3 entry ${entry.setupItemId} must carry either verification (verifiedAt+verifiedBy) or unverifiedReason`,
+        );
+      }
+      if (entry.verifiedAt !== null && entry.verifiedBy === null) {
+        throw new OpeningEntryShapeError(
+          `phase3 entry ${entry.setupItemId} verifiedAt set without verifiedBy`,
+        );
+      }
+      if (entry.inRange === false && entry.unverifiedReason === null) {
+        throw new OpeningOutOfRangeReasonMissingError(
+          entry.setupItemId,
+          entry.stationKey,
+        );
+      }
+      if (
+        entry.unverifiedReason !== null &&
+        entry.unverifiedReason.category === "other" &&
+        (entry.unverifiedReason.text === null ||
+          !entry.unverifiedReason.text.trim())
+      ) {
+        throw new OpeningEntryShapeError(
+          `phase3 entry ${entry.setupItemId} unverifiedReason.text is required when category='other'`,
+        );
+      }
     }
   }
+  if (phasesPresent.size === 0) {
+    throw new OpeningEntryShapeError("entries[] must be non-empty");
+  }
 
-  // Marshal entries for the RPC, dispatching on phase. Phase 1 sends
-  // count_value/photo_id/notes as JSON strings (RPC casts via NULLIF + cast);
-  // Phase 2 sends the full phase2 sub-object as JSONB (RPC stores in
-  // checklist_completions.prep_data.phase2 verbatim).
+  // 2. Read instance status for phase-eligibility check.
+  const { data: instStatusRow, error: instStatusErr } = await service
+    .from("checklist_instances")
+    .select("status")
+    .eq("id", args.instanceId)
+    .maybeSingle<{ status: ChecklistStatus }>();
+  if (instStatusErr) {
+    throw new Error(
+      `submitOpening: read instance status: ${instStatusErr.message}`,
+    );
+  }
+  if (!instStatusRow) {
+    throw new Error(`submitOpening: instance ${args.instanceId} not found`);
+  }
+  const instanceStatus: ChecklistStatus = instStatusRow.status;
+
+  // 3. Phase 3 routing — must be solo, instance must be 'phase2_complete'.
+  if (phasesPresent.has("phase3")) {
+    if (phasesPresent.size > 1) {
+      throw new OpeningEntryShapeError(
+        "phase3 entries cannot mix with phase1 or phase2 entries in a single submission",
+      );
+    }
+    if (instanceStatus !== "phase2_complete") {
+      throw new OpeningPhase3NotEligibleError(args.instanceId, instanceStatus);
+    }
+    void audit({
+      actorId: args.actor.userId,
+      actorRole: args.actor.role,
+      action: "opening.submit",
+      resourceTable: "checklist_instances",
+      resourceId: args.instanceId,
+      metadata: {
+        outcome: "phase3_rpc_not_implemented",
+        entry_count: args.entries.length,
+      },
+      ipAddress: args.ipAddress ?? null,
+      userAgent: args.userAgent ?? null,
+    });
+    throw new OpeningError(
+      "Phase 3 setup-verification RPC not yet implemented (type-contract-lock placeholder).",
+      "phase3_rpc_not_implemented",
+    );
+  }
+
+  // 4. Phase 1 / Phase 2 / legacy-mixed eligibility.
+  const isPhase1Only =
+    phasesPresent.size === 1 && phasesPresent.has("phase1");
+  const isPhase2Only =
+    phasesPresent.size === 1 && phasesPresent.has("phase2");
+  const isLegacyMixed =
+    phasesPresent.has("phase1") && phasesPresent.has("phase2");
+
+  if (isPhase2Only && instanceStatus !== "phase1_complete") {
+    throw new OpeningPhase2NotEligibleError(args.instanceId, instanceStatus);
+  }
+  if ((isPhase1Only || isLegacyMixed) && instanceStatus !== "open") {
+    throw new OpeningPhase1NotEligibleError(args.instanceId, instanceStatus);
+  }
+
+  // C.54 §2.C — `OpeningProvenanceRequiredError` is the typed error future
+  // Phase 2 dispatches will throw when a reconstructed-morning provenance
+  // entry lands without `openerNoPriorDataAttestation`. The snapshot lookup
+  // + provenance comparison lands with the Phase 2 RPC restructure; the
+  // error class is exported and referenced here to keep the export wired
+  // and to document the contract surface at the dispatch site.
+  void OpeningProvenanceRequiredError;
+
+  // 5. Marshal entries for the unchanged submit_opening_atomic RPC.
+  //    Phase 1: top-level countValue/photoId/notes as JSON strings (RPC casts
+  //    via NULLIF + cast); new C.53 spot-check fields are stripped — the RPC
+  //    doesn't know about them yet (Phase 1 RPC restructure lands downstream).
+  //    Phase 2: adapt new flat shape → old nested `phase2:` wrapper.
   const rpcEntries = args.entries.map((e) => {
     if (e.phase === "phase1") {
       return {
@@ -1083,11 +1244,23 @@ export async function submitOpening(
         notes: e.notes ?? "",
       };
     }
-    return {
-      templateItemId: e.templateItemId,
-      phase: "phase2" as const,
-      phase2: e.phase2,
-    };
+    if (e.phase === "phase2") {
+      return {
+        templateItemId: e.templateItemId,
+        phase: "phase2" as const,
+        phase2: {
+          openerRecount: null,
+          openerPrepped: e.openerPrepped,
+          overPar: e.overPar,
+          underPar: e.underPar,
+        },
+      };
+    }
+    // phase3 was rejected upstream; TS narrows to never here. Defensive throw
+    // documents the marshal-step invariant.
+    throw new OpeningEntryShapeError(
+      `unexpected entry phase in marshal step: ${(e as { phase: string }).phase}`,
+    );
   });
 
   let rpcResult: SubmitRpcResult;
