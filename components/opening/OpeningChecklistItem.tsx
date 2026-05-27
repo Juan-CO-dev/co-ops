@@ -29,6 +29,10 @@ export interface OpeningItemFormValue {
   photoId: string | null;
   notes: string | null;
   ticked: boolean;
+  /** C.53 Phase 1 — morning recount on spot-check items. NULL when no recount entered.
+   *  REQUIRED on items where snapshot closer_count IS NULL;
+   *  OPTIONAL otherwise (opener-initiated correction). */
+  openerRecount: number | null;
 }
 
 interface OpeningChecklistItemProps {
@@ -38,6 +42,23 @@ interface OpeningChecklistItemProps {
   language: Language;
   /** True when item is ticked but expected count is null. Drives error styling. */
   hasMissingCountError: boolean;
+  /**
+   * C.53 Phase 1 — closer_count from snapshot materialized at instance create.
+   * Tri-state per the parent's closerSnapshotsMap lookup:
+   *   - `undefined`: item has NO snapshot row → non-spot-check item (cleanliness
+   *     tick / temp reading); recount UI NOT rendered.
+   *   - `null`:      item HAS a snapshot row with closer_count IS NULL →
+   *     NULL-source spot-check (no closing data captured); recount UI rendered
+   *     prominently with required-state styling.
+   *   - number:      item HAS a snapshot row with closer_count captured →
+   *     recount UI rendered as an optional correction affordance.
+   *
+   * Made optional in Build #3 PR 4 (3c form-split + closerCount threading)
+   * 2026-05-26: Aggie's pre-existing prop declaration was `number | null` and
+   * unused; promoting to tri-state lets the parent send `undefined` for items
+   * outside the snapshot universe without a separate isSpotCheck prop.
+   */
+  closerCount?: number | null;
 }
 
 export function OpeningChecklistItem({
@@ -46,6 +67,7 @@ export function OpeningChecklistItem({
   onChange,
   language,
   hasMissingCountError,
+  closerCount,
 }: OpeningChecklistItemProps) {
   const { t } = useTranslation();
   const [addonOpen, setAddonOpen] = useState<boolean>(
@@ -53,6 +75,27 @@ export function OpeningChecklistItem({
   );
 
   const resolved = resolveTemplateItemContent(item, language);
+
+  // Tri-state spot-check signal (see closerCount JSDoc above).
+  //   isSpotCheck = closer_count snapshot exists for this item
+  //   isNullSource = snapshot exists AND closer_count IS NULL (recount REQUIRED)
+  const isSpotCheck = closerCount !== undefined;
+  const isNullSource = closerCount === null;
+
+  // Numeric-input recount handler — empty string → null, valid number → number,
+  // invalid → ignore (input rejects). Pattern mirrors OpeningRecountPanel +
+  // OpeningCountInput.
+  const handleRecountChange = (raw: string) => {
+    const trimmed = raw.trim();
+    if (trimmed === "") {
+      onChange({ ...value, openerRecount: null });
+      return;
+    }
+    const parsed = Number(trimmed);
+    if (Number.isFinite(parsed)) {
+      onChange({ ...value, openerRecount: parsed });
+    }
+  };
 
   const tickIcon = value.ticked ? "✓" : "·";
   const tickClass = value.ticked
@@ -117,6 +160,50 @@ export function OpeningChecklistItem({
                 ? t("opening.item.add_addon_with_content")
                 : t("opening.item.add_addon")}
             </button>
+          ) : null}
+
+          {/* C.53 spot-check recount section — rendered only for items in the
+              closer-count-snapshot universe (isSpotCheck === closerCount !== undefined).
+              NULL-source items (closerCount === null) show "—" with danger styling +
+              required-state on the recount input. Captured items show the closer
+              value + optional-correction styling on the recount input. */}
+          {isSpotCheck ? (
+            <div
+              className={[
+                "mt-1 flex items-center gap-3 rounded-md border-2 px-3 py-2 text-sm",
+                isNullSource
+                  ? "border-co-danger bg-[#FFE4E4]"
+                  : "border-co-border-2 bg-co-bg",
+              ].join(" ")}
+            >
+              <span
+                className={[
+                  "shrink-0 text-xs font-bold uppercase tracking-[0.12em]",
+                  isNullSource ? "text-co-danger" : "text-co-text-muted",
+                ].join(" ")}
+              >
+                {t("opening.phase2.recount_label")}
+              </span>
+              <input
+                type="number"
+                inputMode="decimal"
+                value={value.openerRecount === null ? "" : String(value.openerRecount)}
+                onChange={(e) => handleRecountChange(e.target.value)}
+                aria-label={`${t("opening.phase2.recount_label")} — ${resolved.label}`}
+                aria-required={isNullSource}
+                className={[
+                  "inline-flex h-9 w-20 items-center rounded-md border-2 px-2",
+                  "text-base font-semibold text-co-text",
+                  "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
+                  isNullSource
+                    ? "border-co-danger bg-co-surface hover:border-co-text"
+                    : "border-co-border-2 bg-co-surface hover:border-co-text",
+                ].join(" ")}
+              />
+              <span className="ml-auto text-xs font-medium text-co-text-muted tabular-nums">
+                {closerCount === null ? "—" : String(closerCount)}
+              </span>
+            </div>
           ) : null}
         </div>
       </div>

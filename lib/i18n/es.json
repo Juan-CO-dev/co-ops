@@ -369,6 +369,24 @@
   "opening.error.fallback": "El envío falló — intenta de nuevo.",
   "opening.error.internal_error": "Algo salió mal — intenta de nuevo.",
   "opening.error.null_source_requires_recount": "Este artículo no tiene un conteo de cierre de anoche — presiona \"Recontar\" para ingresar un conteo matutino.",
+  "opening.error.provenance_required": "Se requiere una declaración del estado del cierre de anoche — selecciona una razón arriba para continuar.",
+  "opening.error.ground_truth_unresolved": "Un artículo de verificación no pudo resolverse — contacta a un gerente.",
+
+  "opening.phase1.recount.label": "Recuento",
+  "opening.phase1.recount.placeholder": "Cuenta de la mañana",
+  "opening.phase1.recount.snapshot_was": "Cerrador anotó: {count}",
+  "opening.phase1.recount.snapshot_null": "Sin datos del cierre — recuento requerido",
+  "opening.phase1.recount.hint": "Reemplaza la cuenta del cerrador",
+
+  "opening.phase1.attestation.title": "No se detectaron datos de cierre previo",
+  "opening.phase1.attestation.subtitle": "{count} artículo(s) no tenían conteo de cierre de anoche — se ingresaron recuentos matutinos. Confirma la razón:",
+  "opening.phase1.attestation.option.planned_closure": "Ubicación cerrada (planificado)",
+  "opening.phase1.attestation.option.missed_or_unknown": "Cierre omitido / No sé",
+  "opening.phase1.attestation.continue": "Enviar con declaración",
+  "opening.phase1.attestation.captured": "Declaración: {reason}",
+
+  "opening.phase2.pending_next_release.title": "Envío de Fase 2 pendiente",
+  "opening.phase2.pending_next_release.body": "La Fase 1 se envió correctamente. El envío de la Fase 2 estará disponible en la próxima actualización. No se pierde nada — tus datos de la Fase 1 están guardados.",
 
   "notifications.opening_no_prior_data.title": "Sin datos de cierre previo — apertura en {locationCode} ({openingDate})",
   "notifications.opening_no_prior_data.body": "{openerName} envió la apertura de hoy en {locationCode} sin datos de cierre utilizables de ayer ({openingDate}). Causa reportada: {attestationReason}. Conteos establecidos mediante reconteo matutino — no capturados al cierre. ({nullSourceCount} artículos)",

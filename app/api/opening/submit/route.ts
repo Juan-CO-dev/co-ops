@@ -461,6 +461,40 @@ export async function POST(req: NextRequest) {
     });
   }
 
+  // Piece 4 defensive branch (B2 brief 2026-05-26) — fast-path the
+  // `phase1_complete` instance state with a graceful "Phase 2 submission
+  // pending next update" response.
+  //
+  // Why: After Phase 1 wiring goes live (/api/opening/submit/phase1 +
+  // migration 0055), an instance can sit in `phase1_complete` while Phase 2
+  // wiring (per-phase RPC + per-phase route) is still pending. If the form
+  // POSTs Phase 2 entries to this legacy route during that interval, the
+  // legacy `submit_opening_atomic` RPC filters `WHERE status='open'` and
+  // returns 0 rows updated → check_violation → OpeningInstanceNotOpenError →
+  // 409 (bare error). That's the operator's first-touch failure mode and is
+  // unhelpful — Phase 1 IS saved, nothing was lost.
+  //
+  // Per Triad A 2026-05-26 (ack #2): return 200 with `code:
+  // 'phase2_pending_next_release'` discriminator. Phase 1 succeeded; the
+  // opener did nothing wrong; Phase 2 is simply pending. The form reads the
+  // discriminator and renders the graceful message via the i18n keys
+  // `opening.phase2.pending_next_release.title` / `.body` (shipped Aggie
+  // d9e633f). SQL filter remains as defense-in-depth.
+  //
+  // Scope: only `phase1_complete` is graceful here. Other non-open statuses
+  // (confirmed, incomplete_confirmed, auto_finalized, phase2_complete) fall
+  // through to the legacy RPC's existing OpeningInstanceNotOpenError path —
+  // those represent operator confusion or terminal state, not the
+  // operational interim case Piece 4 is designed for.
+  if (instance.status === "phase1_complete") {
+    return jsonOk({
+      code: "phase2_pending_next_release",
+      titleKey: "opening.phase2.pending_next_release.title",
+      bodyKey: "opening.phase2.pending_next_release.body",
+      instance,
+    });
+  }
+
   // Resolve closing(N-1)'s "Opening verified" item id for cross-reference.
   // NULL is fine — RPC handles (no auto-complete, no error).
   let closingReportRefItemId: string | null = null;

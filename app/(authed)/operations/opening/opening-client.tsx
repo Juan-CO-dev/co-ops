@@ -31,6 +31,7 @@ import type { OpeningCloserCountSnapshotRow } from "@/lib/opening";
 import type {
   ChecklistInstance,
   ChecklistTemplateItem,
+  OpeningNoPriorDataReason,
   OpeningPhase2Meta,
 } from "@/lib/types";
 
@@ -93,7 +94,7 @@ export function OpeningClient({
   const [values, setValues] = useState<Map<string, OpeningItemFormValue>>(() => {
     const map = new Map<string, OpeningItemFormValue>();
     for (const item of phase1Items) {
-      map.set(item.id, { countValue: null, photoId: null, notes: null, ticked: false });
+      map.set(item.id, { countValue: null, photoId: null, notes: null, ticked: false, openerRecount: null });
     }
     return map;
   });
@@ -151,6 +152,15 @@ export function OpeningClient({
   const [showMissingCountErrors, setShowMissingCountErrors] = useState(false);
   const [showMissingPhase2Errors, setShowMissingPhase2Errors] = useState(false);
 
+  // C.54 §2.C — opener attestation when any Phase 1 spot-check item has
+  // NULL-source provenance (closer_count IS NULL AND opener entered recount).
+  // Captured via the inline attestation prompt below; threaded to the
+  // /api/opening/submit/phase1 body's `openerNoPriorDataAttestation` field.
+  // Per Triad A 2026-05-26 ack #3: inline pre-submit surface (not a modal),
+  // using Aggie's shipped `opening.phase1.attestation.*` strings.
+  const [attestationReason, setAttestationReason] =
+    useState<OpeningNoPriorDataReason | null>(null);
+
   // Group Phase 1 items by station — same pattern as closing-client.tsx.
   const stationGroups = useMemo(() => {
     const groups = new Map<string, ChecklistTemplateItem[]>();
@@ -199,6 +209,31 @@ export function OpeningClient({
   const allTicked = tickedCount === totalPhase1Items;
   const allTempsFilled = filledTempCount === totalTempItems;
   const phase1Complete = allTicked && allTempsFilled;
+
+  // C.54 §2.B/§2.C — count of Phase 1 spot-check items where the source
+  // closer_count is NULL AND the opener has entered a recount. Drives the
+  // inline attestation prompt below: when count > 0, the opener MUST select
+  // a reason (planned_closure | missed_or_unknown) before Phase 1 can submit.
+  //
+  // The iteration scope is `phase1Items` — the items that POST to /phase1.
+  // Under C.53's UI restructure, spot-check items will move into this set
+  // (currently they're in phase2Items; this logic is forward-prepared for the
+  // restructure and is operationally inert until then).
+  const nullSourceItemCount = useMemo(() => {
+    let count = 0;
+    for (const item of phase1Items) {
+      const snapshot = closerSnapshotsMap.get(item.id);
+      if (!snapshot) continue; // non-spot-check item
+      if (snapshot.closerCount !== null) continue; // captured closer count
+      const v = values.get(item.id);
+      if (v?.openerRecount !== null && v?.openerRecount !== undefined) {
+        count += 1;
+      }
+    }
+    return count;
+  }, [phase1Items, values, closerSnapshotsMap]);
+
+  const needsAttestation = nullSourceItemCount > 0;
 
   // Phase 2 submit gate per C.50 §4 — full gate check across all items:
   //   1. ground_truth resolved (section verified OR opener_recount populated)
@@ -253,11 +288,20 @@ export function OpeningClient({
     return null;
   }, [phase2Items, phase2Values]);
 
-  const submitEnabled =
+  // Phase-aware submit gates per Triad A 2026-05-26 (3c form-split).
+  //   - Phase 1 submit: gate on phase1Complete + attestation (if needed).
+  //   - Phase 2 submit: gate on phase2Complete + under-par freetext present.
+  // The sticky-footer submit button binds to whichever gate matches activePhase.
+  const phase1SubmitEnabled =
     phase1Complete &&
+    (!needsAttestation || attestationReason !== null) &&
+    submitState.status !== "submitting";
+  const phase2SubmitEnabled =
     phase2Complete &&
     firstUnderParMissingFreetext === null &&
     submitState.status !== "submitting";
+  const submitEnabled =
+    activePhase === "verification" ? phase1SubmitEnabled : phase2SubmitEnabled;
 
   // First missing-temp item label (for the "Temp reading required for [X]"
   // hint when ticked but missing temp).
@@ -307,14 +351,18 @@ export function OpeningClient({
     setValues((prev) => {
       const updated = new Map(prev);
       for (const item of stationItems) {
+        // Fix-pass 2026-05-26: default-value fallback now includes
+        // `openerRecount: null` to satisfy OpeningItemFormValue contract
+        // (Aggie's WIP added the slot but missed this fallback site).
         const current = updated.get(item.id) ?? {
           countValue: null,
           photoId: null,
           notes: null,
           ticked: false,
+          openerRecount: null,
         };
-        // Q-B refinement: ONLY change `ticked`. countValue / photoId / notes
-        // persist through tick state changes.
+        // Q-B refinement: ONLY change `ticked`. countValue / photoId / notes /
+        // openerRecount persist through tick state changes.
         updated.set(item.id, { ...current, ticked });
       }
       return updated;
@@ -322,48 +370,126 @@ export function OpeningClient({
   };
 
   // ---------------------------------------------------------------------------
-  // Submit
+  // Submit — split per Triad A 2026-05-26 (3c integration flip)
+  //
+  // Phase 1 POSTs to the new /api/opening/submit/phase1 (homogeneous Phase 1
+  // payload + openerNoPriorDataAttestation + sectionVerifications). Phase 2
+  // POSTs to the legacy /api/opening/submit (homogeneous Phase 2 payload).
+  //
+  // Piece 4 (legacy route defensive branch) intercepts Phase 2 submissions
+  // when the instance is in `phase1_complete` and returns a 200 with
+  // `code: 'phase2_pending_next_release'` — handlePhase2Submit treats that as
+  // a graceful info message (not an error).
+  //
+  // 5xx fallback per Triad A 2026-05-26 (fix-pass): any 5xx response from
+  // /phase1 falls to `opening.error.fallback` regardless of the body code
+  // (covers `actor_not_found` and other integrity-violation 500s without
+  // needing dedicated i18n keys per response code).
   // ---------------------------------------------------------------------------
 
-  const handleSubmit = async () => {
-    if (!submitEnabled) {
+  const handlePhase1Submit = async () => {
+    if (!phase1SubmitEnabled) {
       setShowMissingCountErrors(true);
-      setShowMissingPhase2Errors(true);
       return;
     }
 
     setSubmitState({ status: "submitting" });
 
-    // C.53 type-contract-lock: wire entries match the new OpeningEntry union.
-    // Phase 1 entries carry the new spot-check fields (spotCheckStatus,
-    // openerRecount, groundTruthCount, prepNeed) — defaulted to null here
-    // because the legacy form doesn't capture them yet; the Phase 1 UI
-    // restructure (downstream commit) will populate them.
-    // Phase 2 entries use the new flat shape (no `phase2:` wrapper, no
-    // openerRecount — recount moved to Phase 1 per C.53 §3).
+    // Build Phase 1 entries — homogeneous per-phase payload (no Phase 2 entries).
+    // Spot-check fields are populated when the item is in the closer-count-
+    // snapshot universe; the RPC re-derives the persisted spot_check_status
+    // value, so the client just sends the best-guess discriminator.
     const phase1Entries = phase1Items.map((item) => {
       const v = values.get(item.id) ?? {
         countValue: null,
         photoId: null,
         notes: null,
         ticked: false,
+        openerRecount: null,
       };
+      const isSpotCheck = closerSnapshotsMap.has(item.id);
+      const snapshotCloserCount = isSpotCheck
+        ? closerSnapshotsMap.get(item.id)!.closerCount
+        : null;
       return {
         templateItemId: item.id,
         phase: "phase1" as const,
         countValue: v.countValue,
         photoId: v.photoId,
         notes: v.notes,
-        spotCheckStatus: null,
-        openerRecount: null,
+        spotCheckStatus: isSpotCheck
+          ? v.openerRecount !== null || snapshotCloserCount === null
+            ? ("flagged_recount" as const)
+            : ("matched_via_section_verify" as const)
+          : null,
+        openerRecount: v.openerRecount,
         groundTruthCount: null,
         prepNeed: null,
       };
     });
 
-    // C.53 flat shape: server-authoritative deltaVsPrepNeed (null at submit;
-    // server recomputes from persisted ground_truth). Closer-count snapshot
-    // is read server-side from opening_closer_count_snapshots per C.50.
+    // Section verifications — top-level field per migration 0055. Phase 1 owns
+    // section-verification under C.53; Phase 2 does NOT re-send these.
+    const sectionVerificationsPayload = Array.from(
+      sectionVerifications.entries(),
+    )
+      .filter(([, verified]) => verified)
+      .map(([sectionKey]) => ({ sectionKey, verified: true }));
+
+    try {
+      const res = await fetch("/api/opening/submit/phase1", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          instanceId: instance.id,
+          entries: phase1Entries,
+          sectionVerifications: sectionVerificationsPayload,
+          openerNoPriorDataAttestation: attestationReason,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as {
+          code?: string;
+          message?: string;
+        };
+        // 5xx fallback per Triad A: any 5xx → opening.error.fallback (covers
+        // OpeningActorNotFoundError integrity case + other server-side
+        // unexpected paths). 4xx → use the body code for specific i18n key.
+        const code = res.status >= 500 ? "fallback" : (body.code ?? "fallback");
+        setSubmitState({
+          status: "error",
+          errorCode: code,
+          errorMessage: body.message ?? "Submission failed",
+        });
+        return;
+      }
+
+      // Success — server re-render advances instance.status to phase1_complete.
+      router.refresh();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setSubmitState({
+        status: "error",
+        errorCode: "network",
+        errorMessage: msg,
+      });
+    }
+  };
+
+  const handlePhase2Submit = async () => {
+    if (!phase2SubmitEnabled) {
+      setShowMissingPhase2Errors(true);
+      return;
+    }
+
+    setSubmitState({ status: "submitting" });
+
+    // Build Phase 2 entries — homogeneous per-phase payload (no Phase 1 entries).
+    // Posts to the LEGACY /api/opening/submit route, which still dispatches via
+    // submitOpening → submit_opening_atomic for Phase 2 entries. The Phase 2
+    // per-phase RPC + route lands in a future commit; until then, Piece 4's
+    // defensive branch in the legacy route fast-paths the phase1_complete case.
     const phase2Entries = phase2Items.map((item) => {
       const v = phase2Values.get(item.id) ?? {
         openerRecount: null,
@@ -381,26 +507,15 @@ export function OpeningClient({
       };
     });
 
-    const entries = [...phase1Entries, ...phase2Entries];
-
-    // Section verifications — top-level field on the request body alongside
-    // entries. Server inserts one row to opening_section_verifications per
-    // verified=true entry; absence of section in the array IS the unverified
-    // state (server doesn't need explicit unverified entries).
-    const sectionVerificationsPayload = Array.from(
-      sectionVerifications.entries(),
-    )
-      .filter(([, verified]) => verified)
-      .map(([sectionKey]) => ({ sectionKey, verified: true }));
-
     try {
       const res = await fetch("/api/opening/submit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           instanceId: instance.id,
-          entries,
-          sectionVerifications: sectionVerificationsPayload,
+          entries: phase2Entries,
+          // Phase 1 owns section-verifications per C.53; Phase 2 sends empty.
+          sectionVerifications: [],
         }),
       });
 
@@ -409,7 +524,7 @@ export function OpeningClient({
           code?: string;
           message?: string;
         };
-        const code = body.code ?? "fallback";
+        const code = res.status >= 500 ? "fallback" : (body.code ?? "fallback");
         setSubmitState({
           status: "error",
           errorCode: code,
@@ -418,7 +533,25 @@ export function OpeningClient({
         return;
       }
 
-      // Success — server re-render branches to read-only.
+      // Piece 4 graceful response — `phase2_pending_next_release` is a 200
+      // success-shape with a discriminator. Surface as a user-visible info
+      // message via the existing error banner (re-using `errorCode` slot;
+      // the form's error-banner i18n lookup at opening.error.${errorCode}
+      // would render the wrong key, so we set a custom phase2-pending code
+      // and the banner branch below detects it).
+      const successBody = (await res.json().catch(() => ({}))) as {
+        code?: string;
+      };
+      if (successBody.code === "phase2_pending_next_release") {
+        setSubmitState({
+          status: "error",
+          errorCode: "phase2_pending_next_release",
+          errorMessage: t("opening.phase2.pending_next_release.body"),
+        });
+        return;
+      }
+
+      // Genuine success — server re-render branches to read-only / next phase.
       router.refresh();
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -427,6 +560,17 @@ export function OpeningClient({
         errorCode: "network",
         errorMessage: msg,
       });
+    }
+  };
+
+  // Phase-aware dispatcher kept as `handleSubmit` for minimal render-code
+  // changes — the sticky-footer button onClick binds here and routes by
+  // activePhase.
+  const handleSubmit = async () => {
+    if (activePhase === "verification") {
+      await handlePhase1Submit();
+    } else {
+      await handlePhase2Submit();
     }
   };
 
@@ -503,9 +647,74 @@ export function OpeningClient({
               onStationTickChange={handleStationTickChange}
               language={language}
               showMissingCountErrors={showMissingCountErrors}
+              closerSnapshotsMap={closerSnapshotsMap}
             />
           ))
         : null}
+
+      {/* C.54 §2.C inline attestation prompt — pre-submit surface that fires
+          when any Phase 1 spot-check item has NULL-source provenance
+          (closer_count IS NULL AND opener entered recount). Per Triad A
+          2026-05-26 ack #3: inline, not a separate modal component; uses
+          Aggie's shipped opening.phase1.attestation.* strings.
+
+          Visible only on the Phase 1 tab (activePhase === "verification") to
+          avoid surfacing it when the opener is on the Phase 2 tab. The
+          attestationReason captured here threads into the /phase1 POST body's
+          openerNoPriorDataAttestation field; the Phase 1 submit gate
+          (phase1SubmitEnabled) additionally requires attestationReason !== null
+          when needsAttestation is true. */}
+      {activePhase === "verification" && needsAttestation ? (
+        <section
+          role="region"
+          aria-label={t("opening.phase1.attestation.title")}
+          className="rounded-2xl border-2 border-co-danger bg-[#FFE4E4] p-4 sm:p-5"
+        >
+          <h3 className="text-base font-extrabold uppercase tracking-[0.14em] text-co-text">
+            {t("opening.phase1.attestation.title")}
+          </h3>
+          <p className="mt-1 text-sm text-co-text">
+            {t("opening.phase1.attestation.subtitle", {
+              count: nullSourceItemCount,
+            })}
+          </p>
+          <div className="mt-3 flex flex-col gap-2">
+            <label className="flex items-center gap-3 text-sm font-medium text-co-text">
+              <input
+                type="radio"
+                name="opener_no_prior_data_reason"
+                value="planned_closure"
+                checked={attestationReason === "planned_closure"}
+                onChange={() => setAttestationReason("planned_closure")}
+                className="h-5 w-5 accent-co-text"
+              />
+              {t("opening.phase1.attestation.option.planned_closure")}
+            </label>
+            <label className="flex items-center gap-3 text-sm font-medium text-co-text">
+              <input
+                type="radio"
+                name="opener_no_prior_data_reason"
+                value="missed_or_unknown"
+                checked={attestationReason === "missed_or_unknown"}
+                onChange={() => setAttestationReason("missed_or_unknown")}
+                className="h-5 w-5 accent-co-text"
+              />
+              {t("opening.phase1.attestation.option.missed_or_unknown")}
+            </label>
+          </div>
+          {attestationReason !== null ? (
+            <p className="mt-3 text-xs font-medium text-co-text">
+              {t("opening.phase1.attestation.captured", {
+                reason: t(
+                  `opening.phase1.attestation.option.${attestationReason}` as
+                    | "opening.phase1.attestation.option.planned_closure"
+                    | "opening.phase1.attestation.option.missed_or_unknown",
+                ),
+              })}
+            </p>
+          ) : null}
+        </section>
+      ) : null}
 
       {/* Phase 2: Prep entry surface (C.50 redesign) */}
       {activePhase === "prep" ? (
@@ -522,16 +731,34 @@ export function OpeningClient({
         />
       ) : null}
 
-      {/* Error banner */}
+      {/* Error / info banner — handles three shapes:
+          - phase2_pending_next_release (Piece 4 graceful 200): info styling,
+            renders opening.phase2.pending_next_release.body
+          - generic error codes: error styling, renders opening.error.${code}
+            (5xx codes fall back to opening.error.fallback per Triad A) */}
       {submitState.status === "error" ? (
-        <div
-          role="alert"
-          className="rounded-2xl border-2 border-co-danger bg-[#FFE4E4] p-4 text-sm text-co-text"
-        >
-          {t(
-            `opening.error.${submitState.errorCode ?? "fallback"}` as `opening.error.fallback`,
-          )}
-        </div>
+        submitState.errorCode === "phase2_pending_next_release" ? (
+          <div
+            role="status"
+            className="rounded-2xl border-2 border-co-text bg-co-gold p-4 text-sm text-co-text"
+          >
+            <p className="font-bold uppercase tracking-[0.12em]">
+              {t("opening.phase2.pending_next_release.title")}
+            </p>
+            <p className="mt-1">
+              {t("opening.phase2.pending_next_release.body")}
+            </p>
+          </div>
+        ) : (
+          <div
+            role="alert"
+            className="rounded-2xl border-2 border-co-danger bg-[#FFE4E4] p-4 text-sm text-co-text"
+          >
+            {t(
+              `opening.error.${submitState.errorCode ?? "fallback"}` as `opening.error.fallback`,
+            )}
+          </div>
+        )
       ) : null}
 
       {/* Sticky footer — two-counter format per Q-C lock */}
@@ -569,26 +796,35 @@ export function OpeningClient({
                 </>
               ) : null}
             </p>
+            {/* Phase-aware gate hint per 3c form-split. On the Phase 1 tab,
+                surface Phase 1 blockers (ticks, temps, attestation). On the
+                Phase 2 tab, surface Phase 2 blockers (entries, under-par
+                freetext). When attestation is required but not yet captured,
+                the inline prompt above is the actionable surface — the
+                sticky-footer hint falls to gate_disabled_generic since
+                duplicate messaging would be noise. */}
             <p className="text-[11px] text-co-text-dim">
               {submitEnabled
                 ? t("opening.submit.gate_ready")
-                : !allTicked
-                  ? t("opening.submit.gate_disabled_items_remaining", {
-                      remaining: totalPhase1Items - tickedCount,
-                    })
-                  : firstMissingTempLabel
-                    ? t("opening.submit.gate_disabled_temps_required", {
-                        item: firstMissingTempLabel,
+                : activePhase === "verification"
+                  ? !allTicked
+                    ? t("opening.submit.gate_disabled_items_remaining", {
+                        remaining: totalPhase1Items - tickedCount,
                       })
-                    : !phase2Complete
-                      ? t("opening.submit.gate_disabled_phase2_remaining", {
-                          remaining: totalPhase2Items - filledPhase2Count,
+                    : firstMissingTempLabel
+                      ? t("opening.submit.gate_disabled_temps_required", {
+                          item: firstMissingTempLabel,
                         })
-                      : firstUnderParMissingFreetext
-                        ? t("opening.submit.gate_disabled_under_par_freetext", {
-                            item: firstUnderParMissingFreetext,
-                          })
-                        : t("opening.submit.gate_disabled_generic")}
+                      : t("opening.submit.gate_disabled_generic")
+                  : !phase2Complete
+                    ? t("opening.submit.gate_disabled_phase2_remaining", {
+                        remaining: totalPhase2Items - filledPhase2Count,
+                      })
+                    : firstUnderParMissingFreetext
+                      ? t("opening.submit.gate_disabled_under_par_freetext", {
+                          item: firstUnderParMissingFreetext,
+                        })
+                      : t("opening.submit.gate_disabled_generic")}
             </p>
           </div>
           <button

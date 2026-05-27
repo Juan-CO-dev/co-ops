@@ -369,6 +369,24 @@
   "opening.error.fallback": "Submission failed — try again.",
   "opening.error.internal_error": "Something went wrong — try again.",
   "opening.error.null_source_requires_recount": "This item has no closing count from last night — tap \"Recount\" to enter a morning count instead.",
+  "opening.error.provenance_required": "An attestation of last night's closing state is required — select a reason above to continue.",
+  "opening.error.ground_truth_unresolved": "A spot-check item couldn't be resolved — contact a manager.",
+
+  "opening.phase1.recount.label": "Recount",
+  "opening.phase1.recount.placeholder": "Enter morning count",
+  "opening.phase1.recount.snapshot_was": "Closer recorded: {count}",
+  "opening.phase1.recount.snapshot_null": "No closing data — recount required",
+  "opening.phase1.recount.hint": "Overrides closer count",
+
+  "opening.phase1.attestation.title": "No prior closing data detected",
+  "opening.phase1.attestation.subtitle": "{count} item(s) had no closing count from last night — morning recounts were entered. Confirm the reason:",
+  "opening.phase1.attestation.option.planned_closure": "Location was closed (planned)",
+  "opening.phase1.attestation.option.missed_or_unknown": "Closing was missed / I don't know",
+  "opening.phase1.attestation.continue": "Submit with attestation",
+  "opening.phase1.attestation.captured": "Attestation: {reason}",
+
+  "opening.phase2.pending_next_release.title": "Phase 2 submit pending",
+  "opening.phase2.pending_next_release.body": "Phase 1 was submitted successfully. Phase 2 submission will be available in the next update. Nothing is lost — your Phase 1 data is saved.",
 
   "notifications.opening_no_prior_data.title": "No prior closing data — opening at {locationCode} ({openingDate})",
   "notifications.opening_no_prior_data.body": "{openerName} submitted today's opening at {locationCode} with no usable closing data from yesterday ({openingDate}). Attested cause: {attestationReason}. Counts established by morning recount — not captured at close. ({nullSourceCount} items)",

@@ -218,6 +218,67 @@ export class OpeningNullSourceRequiresRecountError extends OpeningError {
 }
 
 /**
+ * C.53 Phase 1 — raised when a spot-check item arrives with neither
+ * section-verification nor opener_recount, so the server cannot derive
+ * `ground_truth_count`. This is the catch-all gate for the non-NULL-closer
+ * case where the opener simply didn't resolve the item (the more specific
+ * NULL-closer-with-section-verify-but-no-recount case maps to
+ * `OpeningNullSourceRequiresRecountError` above).
+ *
+ * The Phase 1 RPC raises P0001 with message prefix
+ * "submit_phase1_atomic: ground_truth_unresolved" at two sites:
+ *   (a) Per-item gate when opener_recount IS NULL AND NOT section_verified
+ *       (the primary failure mode — opener skipped the item).
+ *   (b) Defensive raise when ground_truth is somehow still NULL after the
+ *       gate-pass (shouldn't happen — covers a logical inconsistency in
+ *       the gates above).
+ *
+ * Brief 2026-05-26 (Triad A ack #1) — added as the typed-error coordination
+ * point for the third P0001 code. i18n key
+ * `opening.error.ground_truth_unresolved` is shipped in Aggie's d9e633f
+ * commit (EN + ES).
+ */
+export class OpeningGroundTruthUnresolvedError extends OpeningError {
+  constructor(
+    public readonly templateItemId: string,
+  ) {
+    super(
+      `Spot-check item ${templateItemId} could not resolve ground_truth: neither section-verified nor recounted.`,
+      "ground_truth_unresolved",
+    );
+    this.name = "OpeningGroundTruthUnresolvedError";
+  }
+}
+
+/**
+ * Phase 1 RPC integrity violation — actor row missing from `users` at RPC
+ * dispatch time. The route layer pre-checks instance existence before
+ * dispatch (404s on missing), so RPC-time 23503 (foreign_key_violation) with
+ * an "actor" message indicates the actor was deleted between session creation
+ * and submit (rare; integrity case, not user error).
+ *
+ * Brief 2026-05-26 fix-pass (Triad A code-gate ruling): replaces the prior
+ * incorrect mapping of 23503 → `OpeningInstanceNotOpenError` (409 status-lie).
+ * Maps to 500 with code `actor_not_found` via `mapOpeningError` — honest
+ * integrity-violation surface, not a wrong-status user message.
+ *
+ * No user-facing i18n key needed; should-never-happen path falls back to
+ * `opening.error.fallback` rendering in the form (3c handlePhase1Submit
+ * 5xx-catch).
+ */
+export class OpeningActorNotFoundError extends OpeningError {
+  constructor(
+    public readonly actorId: string,
+  ) {
+    super(
+      `Actor ${actorId} not found in users table at submit_phase1_atomic dispatch time; instance was pre-checked at route layer, so this is an integrity violation (actor row deleted between session creation and submit).`,
+      "actor_not_found",
+    );
+    this.name = "OpeningActorNotFoundError";
+  }
+}
+
+/**
  * C.53 §3 — when a Phase 3 quantitative_range setup-item verification lands
  * with `inRange=false` (verified_value outside [minValue, maxValue]), an
  * unverified-reason category MUST be captured. Thrown by the Phase 3 submit
@@ -1500,37 +1561,85 @@ export interface OpeningPhaseSubmitResult {
 }
 
 /**
- * Type-contract-lock — Phase 1 atomic submit invoker.
+ * Result shape returned by `submit_phase1_atomic` RPC (migration 0055).
+ * Mirrors `OpeningPhaseSubmitResult` plus new C.54 + counter fields the
+ * JS-side `opening.phase1_submit` audit consumes.
+ */
+interface Phase1RpcResult {
+  instance: InstanceRow;
+  submissionId: string;
+  completionIds: string[];
+  /** Always null for Phase 1 (Phase 3 owns opening→closing auto-complete per C.54 §2.A). */
+  autoCompleteId: string | null;
+  editCount: number;
+  originalSubmissionId: string | null;
+  /** Always [] for Phase 1 (under-par notifications are a Phase 2 concern). */
+  underParNotificationIds: string[];
+  /** C.54 §2.B — zero or one (Pattern A: single dispatch when v_has_null_source). */
+  nullSourceNotificationIds?: string[];
+  /** Audit counters per responsibility 10. */
+  stationsVerified?: number;
+  itemsRecounted?: number;
+  nullSourceCount?: number;
+  provenanceMarkersSet?: number;
+  /** Echoed back from p_opener_no_prior_data_reason when v_has_null_source; null otherwise. */
+  attestationCapture?: OpeningNoPriorDataReason | null;
+}
+
+/**
+ * Extracts a UUID from an RPC error message of the form
+ * `"submit_phase1_atomic: <code> for item <uuid> (<label>) ..."`.
+ * Returns null when no UUID present (e.g., per-instance raises like
+ * `provenance_required` or `phase1_not_eligible`).
+ */
+function extractTemplateItemId(msg: string): string | null {
+  const m = msg.match(
+    /for item ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i,
+  );
+  return m ? m[1]! : null;
+}
+
+/**
+ * Phase 1 atomic submit invoker — wires the `submit_phase1_atomic` RPC
+ * (migration 0055).
  *
- * RPC contract (migration 0055; Triad A rulings 2026-05-26):
+ * RPC contract (migration 0055; signature locked Triad A 2026-05-26):
  *   `submit_phase1_atomic(p_opening_instance_id, p_actor_id, p_entries,
  *      p_section_verifications, p_opener_no_prior_data_reason, p_is_update,
  *      p_original_submission_id, p_changed_fields, p_ip_address, p_user_agent)`
- *      → JSONB with `instance`, `submissionId`, `completionIds`,
- *      `autoCompleteId` (always NULL — Phase 1 owns no opening→closing auto-
- *      complete per C.54 §2.A; Phase 3 owns it), `editCount`,
- *      `originalSubmissionId`, `underParNotificationIds` (always [] — Phase 2
- *      concept), `nullSourceNotificationIds` (new — C.54 §2.B; zero or one),
- *      plus counters `stationsVerified` / `itemsRecounted` /
- *      `nullSourceCount` / `provenanceMarkersSet` / `attestationCapture` for
- *      the JS-side `opening.phase1_submit` audit metadata.
+ *      → JSONB Phase1RpcResult.
  *
- * Pre-flight: instance.status must be `'open'`; otherwise the RPC raises
- * P0001 'phase1_not_eligible' which the JS layer translates to
- * `OpeningPhase1NotEligibleError`. Section verification rows are written
- * inside the same transaction (one per `verified=true` entry).
+ * Pre-flight authorization (mirrors submitOpening): actor.level ≥
+ * OPENING_BASE_LEVEL (3, KH+). Fails fast with OpeningRoleViolationError before
+ * RPC dispatch.
  *
- * C.54 §2.C — Per Triad A ruling 2026-05-26, the no-prior-data attestation
- * lives on Phase 1 (NULL-source detection moved to Phase 1 under C.53's
- * restructure, so the per-instance attestation follows detection). When any
- * spot-check entry resolves with `provenance='reconstructed_morning'`
- * (snapshot closer_count IS NULL + opener provided a recount),
- * `openerNoPriorDataAttestation` MUST be non-null or the RPC raises P0001
- * 'provenance_required' (→ `OpeningProvenanceRequiredError`).
+ * RPC error translation (catches Supabase PostgrestError shape):
+ *   - P0001 'null_source_requires_recount'  → OpeningNullSourceRequiresRecountError(itemId)
+ *   - P0001 'provenance_required'           → OpeningProvenanceRequiredError(instanceId)
+ *   - P0001 'ground_truth_unresolved'       → OpeningGroundTruthUnresolvedError(itemId)
+ *   - P0001 'phase1_not_eligible'           → OpeningPhase1NotEligibleError(instanceId, currentStatus)
+ *   - 23503 (foreign_key_violation)         → OpeningInstanceNotOpenError(instanceId, 'not_found')
+ *   - other RPC errors                      → generic Error (caught and routed to
+ *                                              rpc_failed audit outcome + re-thrown)
+ *
+ * Audit emission (JS-side; original-submission path only):
+ *   - action: 'opening.phase1_submit' (NOT destructive — append-only Phase 1)
+ *   - Update-path audit (`report.update`) fires inside the RPC per migration
+ *     0055 (mirrors 0053's split per Triad A correction 1).
+ *   - Outcomes emitted: role_insufficient | null_source_requires_recount |
+ *     provenance_required | ground_truth_unresolved | phase1_not_eligible |
+ *     instance_or_actor_not_found | rpc_failed | success
+ *
+ * C.54 §2.C — `openerNoPriorDataAttestation` MUST be non-null when any spot-
+ * check entry's source `closer_count` is NULL AND the opener provided a
+ * recount. Caller resolves attestation requirement from the persisted
+ * snapshot table; this function passes it through. The RPC's own guard
+ * raises P0001 'provenance_required' if missing, which translates to
+ * `OpeningProvenanceRequiredError` here.
  */
 export async function submitPhase1Atomic(
-  _service: SupabaseClient,
-  _args: {
+  service: SupabaseClient,
+  args: {
     instanceId: string;
     actor: OpeningActor;
     entries: OpeningEntryPhase1[];
@@ -1549,10 +1658,239 @@ export async function submitPhase1Atomic(
     userAgent?: string | null;
   },
 ): Promise<OpeningPhaseSubmitResult> {
-  throw new OpeningError(
-    "submit_phase1_atomic RPC not yet implemented (type-contract-lock stub — body wiring is a follow-up commit after migration 0055 applies).",
-    "phase1_rpc_not_implemented",
-  );
+  // Authorization gate (mirrors submitOpening:1139-1155 pattern). The
+  // C.46 chain-edit path uses canEditReport which isn't in B2 scope; the
+  // `isUpdate` parameter is forward-compat per migration 0055's chain-edit
+  // branch but no UI exercises it yet.
+  if (!args.isUpdate && args.actor.level < OPENING_BASE_LEVEL) {
+    void audit({
+      actorId: args.actor.userId,
+      actorRole: args.actor.role,
+      action: "opening.phase1_submit",
+      resourceTable: "checklist_instances",
+      resourceId: args.instanceId,
+      metadata: {
+        outcome: "role_insufficient",
+        required_level: OPENING_BASE_LEVEL,
+        actual_level: args.actor.level,
+      },
+      ipAddress: args.ipAddress ?? null,
+      userAgent: args.userAgent ?? null,
+    });
+    throw new OpeningRoleViolationError(OPENING_BASE_LEVEL, args.actor.level);
+  }
+
+  // Marshal Phase 1 entries — RPC consumes countValue/photoId/notes via
+  // NULLIF+cast (empty string → NULL), spotCheckStatus via NULLIF (empty → null),
+  // openerRecount via CASE+NULLIF+cast. groundTruthCount + prepNeed are NOT
+  // sent — server is authoritative per C.53 §3 ("server re-derives + validates").
+  const rpcEntries = args.entries.map((e) => ({
+    templateItemId: e.templateItemId,
+    phase: "phase1" as const,
+    countValue: e.countValue === null ? "" : String(e.countValue),
+    photoId: e.photoId ?? "",
+    notes: e.notes ?? "",
+    spotCheckStatus: e.spotCheckStatus ?? "",
+    openerRecount: e.openerRecount === null ? "" : String(e.openerRecount),
+  }));
+
+  let rpcResult: Phase1RpcResult;
+  try {
+    const { data, error } = await service.rpc("submit_phase1_atomic", {
+      p_opening_instance_id: args.instanceId,
+      p_actor_id: args.actor.userId,
+      p_entries: rpcEntries,
+      p_section_verifications: args.sectionVerifications ?? null,
+      p_opener_no_prior_data_reason: args.openerNoPriorDataAttestation,
+      p_is_update: args.isUpdate ?? false,
+      p_original_submission_id: args.originalSubmissionId ?? null,
+      p_changed_fields: null,
+      p_ip_address: args.ipAddress ?? null,
+      p_user_agent: args.userAgent ?? null,
+    });
+    if (error) {
+      // P0001 discrimination by RAISE EXCEPTION message prefix.
+      if (error.code === "P0001") {
+        const msg = error.message;
+        if (msg.includes("null_source_requires_recount")) {
+          const itemId = extractTemplateItemId(msg) ?? "<unknown>";
+          void audit({
+            actorId: args.actor.userId,
+            actorRole: args.actor.role,
+            action: "opening.phase1_submit",
+            resourceTable: "checklist_instances",
+            resourceId: args.instanceId,
+            metadata: {
+              outcome: "null_source_requires_recount",
+              rpc_error: msg,
+              template_item_id: itemId,
+            },
+            ipAddress: args.ipAddress ?? null,
+            userAgent: args.userAgent ?? null,
+          });
+          throw new OpeningNullSourceRequiresRecountError(itemId);
+        }
+        if (msg.includes("provenance_required")) {
+          void audit({
+            actorId: args.actor.userId,
+            actorRole: args.actor.role,
+            action: "opening.phase1_submit",
+            resourceTable: "checklist_instances",
+            resourceId: args.instanceId,
+            metadata: { outcome: "provenance_required", rpc_error: msg },
+            ipAddress: args.ipAddress ?? null,
+            userAgent: args.userAgent ?? null,
+          });
+          throw new OpeningProvenanceRequiredError(args.instanceId);
+        }
+        if (msg.includes("ground_truth_unresolved")) {
+          const itemId = extractTemplateItemId(msg) ?? "<unknown>";
+          void audit({
+            actorId: args.actor.userId,
+            actorRole: args.actor.role,
+            action: "opening.phase1_submit",
+            resourceTable: "checklist_instances",
+            resourceId: args.instanceId,
+            metadata: {
+              outcome: "ground_truth_unresolved",
+              rpc_error: msg,
+              template_item_id: itemId,
+            },
+            ipAddress: args.ipAddress ?? null,
+            userAgent: args.userAgent ?? null,
+          });
+          throw new OpeningGroundTruthUnresolvedError(itemId);
+        }
+        if (msg.includes("phase1_not_eligible")) {
+          // RPC's race-loss path. Fetch current status for accurate typed-error
+          // metadata; the failure is rare so the extra round-trip is acceptable.
+          const { data: currentRow } = await service
+            .from("checklist_instances")
+            .select("status")
+            .eq("id", args.instanceId)
+            .maybeSingle<{ status: ChecklistStatus }>();
+          const currentStatus: ChecklistStatus =
+            currentRow?.status ?? "phase1_complete";
+          void audit({
+            actorId: args.actor.userId,
+            actorRole: args.actor.role,
+            action: "opening.phase1_submit",
+            resourceTable: "checklist_instances",
+            resourceId: args.instanceId,
+            metadata: {
+              outcome: "phase1_not_eligible",
+              rpc_error: msg,
+              current_status: currentStatus,
+            },
+            ipAddress: args.ipAddress ?? null,
+            userAgent: args.userAgent ?? null,
+          });
+          throw new OpeningPhase1NotEligibleError(args.instanceId, currentStatus);
+        }
+        // Unknown P0001 — fall through to generic re-throw below.
+      }
+      if (error.code === "23503") {
+        // foreign_key_violation discrimination — migration 0055 raises 23503
+        // in two distinct pre-load sites with discriminable message text:
+        //
+        //   - "submit_phase1_atomic: opening instance % not found"
+        //     (supabase/migrations/0055_create_submit_phase1_atomic_rpc.sql:191-195)
+        //   - "submit_phase1_atomic: actor % not found"
+        //     (supabase/migrations/0055_create_submit_phase1_atomic_rpc.sql:204-208)
+        //
+        // ⚠ MESSAGE-COUPLING: this discrimination depends on the exact
+        // wording of those RAISE EXCEPTION calls. If 0055's pre-load messages
+        // are reworded, the .includes() match below MUST be updated in
+        // lockstep. (Same coupling pattern as the P0001 discrimination above.)
+        //
+        // Route layer pre-checks instance existence at instance-load (404s on
+        // missing), so RPC-time 23503 is almost certainly actor-not-found —
+        // an integrity case (actor row deleted between session creation and
+        // submit). Triad A 2026-05-26 fix-pass: map ONLY the actor case to
+        // the typed `OpeningActorNotFoundError` → 500. Instance-vanished
+        // rare race + any unrecognized 23503 message fall through to generic
+        // Error → outer catch audits as `rpc_failed` → route returns 500
+        // internal_error with the RPC message preserved.
+        if (error.message.includes("actor")) {
+          void audit({
+            actorId: args.actor.userId,
+            actorRole: args.actor.role,
+            action: "opening.phase1_submit",
+            resourceTable: "checklist_instances",
+            resourceId: args.instanceId,
+            metadata: {
+              outcome: "actor_not_found",
+              rpc_error: error.message,
+            },
+            ipAddress: args.ipAddress ?? null,
+            userAgent: args.userAgent ?? null,
+          });
+          throw new OpeningActorNotFoundError(args.actor.userId);
+        }
+        // Unrecognized 23503 (instance-vanished post-pre-check OR other FK
+        // source) — fall through. Never silently assume actor on a
+        // non-matching message; the generic-Error path preserves the RPC
+        // message text in the audit's `rpc_failed` outcome.
+      }
+      throw new Error(`submit_phase1_atomic rpc: ${error.message}`);
+    }
+    if (!data || typeof data !== "object") {
+      throw new Error("submit_phase1_atomic rpc: empty result");
+    }
+    rpcResult = data as Phase1RpcResult;
+  } catch (err) {
+    if (err instanceof OpeningError) throw err;
+    void audit({
+      actorId: args.actor.userId,
+      actorRole: args.actor.role,
+      action: "opening.phase1_submit",
+      resourceTable: "checklist_instances",
+      resourceId: args.instanceId,
+      metadata: {
+        outcome: "rpc_failed",
+        rpc_error: err instanceof Error ? err.message : String(err),
+      },
+      ipAddress: args.ipAddress ?? null,
+      userAgent: args.userAgent ?? null,
+    });
+    throw err;
+  }
+
+  // Success — emit JS-side opening.phase1_submit audit (original-submission
+  // path only; update-path audit fires RPC-side per migration 0055 + Triad A
+  // correction 1).
+  if (!args.isUpdate) {
+    void audit({
+      actorId: args.actor.userId,
+      actorRole: args.actor.role,
+      action: "opening.phase1_submit",
+      resourceTable: "checklist_instances",
+      resourceId: args.instanceId,
+      metadata: {
+        outcome: "success",
+        submission_id: rpcResult.submissionId,
+        completion_count: rpcResult.completionIds.length,
+        stations_verified: rpcResult.stationsVerified ?? 0,
+        items_recounted: rpcResult.itemsRecounted ?? 0,
+        null_source_count: rpcResult.nullSourceCount ?? 0,
+        provenance_markers_set: rpcResult.provenanceMarkersSet ?? 0,
+        attestation_capture: rpcResult.attestationCapture ?? null,
+        null_source_notification_count:
+          rpcResult.nullSourceNotificationIds?.length ?? 0,
+      },
+      ipAddress: args.ipAddress ?? null,
+      userAgent: args.userAgent ?? null,
+    });
+  }
+
+  return {
+    instance: rowToInstance(rpcResult.instance),
+    submittedCompletionIds: rpcResult.completionIds,
+    closingAutoCompleteId: rpcResult.autoCompleteId, // always null per 0055
+    editCount: rpcResult.editCount,
+    originalSubmissionId: rpcResult.originalSubmissionId,
+    underParNotificationIds: rpcResult.underParNotificationIds ?? [], // always [] per 0055
+  };
 }
 
 /**

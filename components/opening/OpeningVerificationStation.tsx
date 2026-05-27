@@ -24,6 +24,7 @@ import type { ChecklistTemplateItem } from "@/lib/types";
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
 import type { Language } from "@/lib/i18n/types";
 import { useTranslation } from "@/lib/i18n/provider";
+import type { OpeningCloserCountSnapshotRow } from "@/lib/opening";
 
 import {
   OpeningChecklistItem,
@@ -42,6 +43,15 @@ interface OpeningVerificationStationProps {
   language: Language;
   /** True when the station should highlight missing-count errors (after submit attempt). */
   showMissingCountErrors: boolean;
+  /**
+   * C.53 closer-count snapshots — keyed on templateItemId. Threaded from the
+   * parent's `closerSnapshotsMap` (derived from `closerSnapshots` prop on
+   * OpeningClient via useMemo at opening-client.tsx). Per-item lookup
+   * (`get(item.id)?.closerCount`) drives the tri-state `closerCount` prop on
+   * OpeningChecklistItem — undefined means "not a spot-check item", null
+   * means "NULL-source", number means "captured closer count."
+   */
+  closerSnapshotsMap: Map<string, OpeningCloserCountSnapshotRow>;
 }
 
 export function OpeningVerificationStation({
@@ -52,6 +62,7 @@ export function OpeningVerificationStation({
   onStationTickChange,
   language,
   showMissingCountErrors,
+  closerSnapshotsMap,
 }: OpeningVerificationStationProps) {
   const { t } = useTranslation();
 
@@ -99,17 +110,26 @@ export function OpeningVerificationStation({
 
       <ul className="mt-3 flex flex-col">
         {items.map((item) => {
+          // Fix-pass 2026-05-26: default-value fallback now includes
+          // `openerRecount: null` to satisfy OpeningItemFormValue contract
+          // (Aggie's WIP added the slot but missed this fallback site).
           const value = values.get(item.id) ?? {
             countValue: null,
             photoId: null,
             notes: null,
             ticked: false,
+            openerRecount: null,
           };
           const hasMissingCountError =
             showMissingCountErrors &&
             item.expectsCount &&
             value.ticked &&
             value.countValue === null;
+          // Tri-state per OpeningChecklistItemProps.closerCount JSDoc:
+          //   undefined → not a spot-check item (no snapshot row)
+          //   null      → NULL-source (snapshot row, closer_count IS NULL)
+          //   number    → captured closer count
+          const closerCount = closerSnapshotsMap.get(item.id)?.closerCount;
           return (
             <OpeningChecklistItem
               key={item.id}
@@ -118,6 +138,7 @@ export function OpeningVerificationStation({
               onChange={(next) => onChange(item.id, next)}
               language={language}
               hasMissingCountError={hasMissingCountError}
+              closerCount={closerCount}
             />
           );
         })}

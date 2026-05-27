@@ -28,9 +28,11 @@
  */
 
 import {
+  OpeningActorNotFoundError,
   OpeningAutoCompleteError,
   OpeningEntryShapeError,
   OpeningError,
+  OpeningGroundTruthUnresolvedError,
   OpeningInstanceNotOpenError,
   OpeningMissingCountError,
   OpeningOutOfRangeReasonMissingError,
@@ -80,6 +82,23 @@ export function mapOpeningError(err: OpeningError): NextResponse {
     return jsonError(422, err.code, {
       message: err.message,
       template_item_id: err.templateItemId,
+    });
+  }
+  if (err instanceof OpeningGroundTruthUnresolvedError) {
+    return jsonError(422, err.code, {
+      message: err.message,
+      template_item_id: err.templateItemId,
+    });
+  }
+  if (err instanceof OpeningActorNotFoundError) {
+    // Integrity violation (not user error, not wrong-status). Honest 500 per
+    // Triad A code-gate ruling 2026-05-26 — actor row missing from `users`
+    // at submit_phase1_atomic dispatch time, after route pre-checked instance.
+    // 5xx → form falls back to opening.error.fallback rendering (no
+    // dedicated i18n key for this should-never-happen path).
+    return jsonError(500, err.code, {
+      message: err.message,
+      actor_id: err.actorId,
     });
   }
   if (err instanceof OpeningOutOfRangeReasonMissingError) {

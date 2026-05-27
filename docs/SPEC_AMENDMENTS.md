@@ -2246,6 +2246,35 @@ Total estimated: ~3800 LOC across 6 phases (vs. C.50's ~2000 LOC across 6 phases
 
 Mid-phase surface check-ins per AGENTS.md rhythm. Single-commit at end per α lock semantic from C.50.
 
+### §11 — Wiring status (post-2026-05-26): infrastructure landed, UI activation gated on §10-Phase-3 restructure
+
+**Status:** wired and dormant. The no-prior-data Phase 1 path is fully wired end-to-end at the RPC + lib + route + form-orchestrator layers, but **operationally inert in the real UI** until C.53 §10 Phase 3 ("Phase 1 component restructure — spot-check absorbed") ships.
+
+**What landed in the wiring commit (Build #3 PR 4 — 2026-05-26):**
+
+- Migration `0055_create_submit_phase1_atomic_rpc` (applied prior session) — the Phase 1 atomic RPC implementing all 10 lock-v2 responsibilities + §9 chain-edit named verification gate + C.54 NULL-source provenance + per-instance attestation + Pattern A single notification dispatch
+- `lib/opening.ts` — `submitPhase1Atomic` body fully wired (was a throw stub); per-phase error class additions (`OpeningGroundTruthUnresolvedError`, `OpeningActorNotFoundError`); message-discriminated P0001 + 23503 mapping with explicit coupling comments
+- `app/api/opening/submit/phase1/route.ts` (new) — Phase 1 route with homogeneous-payload validator + attestation field + dispatch to `submitPhase1Atomic`
+- `app/api/opening/submit/route.ts` — Piece 4 defensive branch (legacy route): detects `phase1_complete` instance state and returns 200 with `code: 'phase2_pending_next_release'` discriminator instead of the bare check_violation error
+- `app/(authed)/operations/opening/opening-client.tsx` — `handleSubmit` split into `handlePhase1Submit` (POST `/phase1`) + `handlePhase2Submit` (POST legacy `/submit`); phase-aware submit button + gate hint; `needsAttestation` derived state + inline attestation prompt UI using Aggie's shipped `opening.phase1.attestation.*` strings; 5xx fallback to `opening.error.fallback`; Piece 4 graceful-response discriminator handling
+- `components/opening/OpeningVerificationStation.tsx` + `components/opening/OpeningChecklistItem.tsx` — `closerSnapshotsMap` threaded through; tri-state `closerCount` prop (undefined/null/number) drives the inline spot-check recount section render
+- `lib/i18n/{en,es}.json` — Aggie's parallel-lane strings for the 3 error codes + attestation prompt + phase2_pending_next_release notification + opening_no_prior_data alert
+
+**What is NOT yet active (operational gap):**
+
+The form's `phase1Items` set is still the legacy classification (station ticks + temp readings). C.53's §10 Phase 3 ("Phase 1 component restructure — spot-check absorbed") would move the C.53 spot-check items (currently in `phase2Items`, identified by `prep_meta.openingPhase2=true`) into `phase1Items`. Until that restructure ships:
+
+- `needsAttestation` iterates `phase1Items` looking for items with `closerSnapshotsMap.has(id) && snapshot.closerCount === null && openerRecount !== null` — **returns 0** because spot-check items aren't in `phase1Items` yet
+- The inline attestation prompt renders conditionally on `needsAttestation` — **never visible** to the opener today
+- The inline spot-check recount section in `OpeningChecklistItem` renders conditionally on `closerSnapshotsMap.get(item.id) !== undefined` — **never visible** in the Phase 1 tab today (spot-check items appear in the Phase 2 tab via the existing `OpeningPrepEntry` component)
+- The `/phase1` route receives only ticks + temps + photos + notes — RPC processes them via the non-spot-check branch (count_provenance stays NULL, no notification, no attestation)
+
+**Activation criterion:** once `phase1Items` contains the spot-check items (post-§10-Phase-3), all wiring fires correctly. The SQL-level integration check in Build #3 PR 4 (three flows — no-prior-data, normal, Piece 4 — all passed against the applied 0055 RPC) proved the RPC + lib + route are correct end-to-end at the data layer.
+
+**Operational consequence:** the d49d1504 stuck-shift class (C.54 §8 captured artifact) is **NOT yet closed in the real UI** despite this commit. The RPC can unblock the instance when called directly (proven in the integration check), but the form cannot drive that call until spot-check items move into the Phase 1 tab's submit payload. d49d1504 itself remains preserved in `open` state per C.54 §8's "do not touch" directive.
+
+**What it would take to close the gap:** C.53 §10 Phase 3 — estimated ~500 LOC per the original sequencing table — which restructures the form to put spot-check items in the Phase 1 tab (with section-verify CTAs + recount affordance) and removes the spot-check half of `OpeningPrepEntry`. After that ships, the no-prior-data path becomes live end-to-end through the UI; no additional wiring is needed at the RPC/lib/route layers.
+
 ---
 
 ## C.54 — Opening submit must not be gated by prior-closing existence; missing-closing becomes a routed signal, not a wall
