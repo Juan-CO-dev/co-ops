@@ -282,7 +282,7 @@ async function loadAgmPlusManagers(
   // Combined: users matching role AGM+ AND (in locScopedIds OR role in {owner, cgs}).
   // Owner+CGS are level >= 7 with all-locations override; others must be
   // location-scoped.
-  let query = sb
+  const query = sb
     .from("users")
     .select("id, name, role")
     .eq("active", true)

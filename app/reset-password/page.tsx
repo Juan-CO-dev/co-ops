@@ -12,6 +12,7 @@
  * (defense-in-depth: assume compromise).
  */
 
+import Link from "next/link";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
@@ -92,7 +93,7 @@ function ResetPasswordPageContent() {
             Reset password
           </h2>
           <p className="mb-5 text-center text-sm text-co-text-muted">
-            Choose a new password. You'll sign in with it next.
+            Choose a new password. You&apos;ll sign in with it next.
           </p>
           <div className="rounded-2xl border-2 border-co-border bg-co-surface p-5 shadow-sm sm:p-6">
             <SetPasswordForm
@@ -111,7 +112,7 @@ function ResetPasswordPageContent() {
           <p className="mt-3 text-sm text-co-text-muted">
             Your password has been updated. Any active sessions have been signed out for security.
           </p>
-          <a
+          <Link
             href="/"
             className="
               mt-5 inline-flex min-h-[52px] items-center justify-center gap-2 rounded-xl
@@ -121,7 +122,7 @@ function ResetPasswordPageContent() {
             "
           >
             Sign in
-          </a>
+          </Link>
         </div>
       )}
 
@@ -144,7 +145,7 @@ function DeadEndCard({ title, message }: { title: string; message: string }) {
     <div className="mt-4 rounded-2xl border-2 border-co-border bg-co-surface p-6 shadow-sm">
       <h2 className="text-xl font-extrabold leading-tight text-co-text">{title}</h2>
       <p className="mt-3 text-sm text-co-text-muted">{message}</p>
-      <a
+      <Link
         href="/"
         className="
           mt-5 inline-flex items-center gap-1 text-sm font-semibold text-co-text
@@ -152,7 +153,7 @@ function DeadEndCard({ title, message }: { title: string; message: string }) {
         "
       >
         <span aria-hidden>←</span> Back to sign in
-      </a>
+      </Link>
     </div>
   );
 }

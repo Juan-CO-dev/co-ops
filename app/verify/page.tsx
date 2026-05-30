@@ -18,6 +18,7 @@
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
 
 import { AuthShell } from "@/components/auth/AuthShell";
 import { SetPasswordForm, type SetPasswordResult } from "@/components/auth/SetPasswordForm";
@@ -113,7 +114,7 @@ function VerifyPageContent() {
             Set your password
           </h2>
           <p className="mb-5 text-center text-sm text-co-text-muted">
-            Once your password is set, you'll be signed in automatically.
+            Once your password is set, you&apos;ll be signed in automatically.
           </p>
           <div className="rounded-2xl border-2 border-co-border bg-co-surface p-5 shadow-sm sm:p-6">
             <SetPasswordForm
@@ -134,7 +135,7 @@ function DeadEndCard({ title, message }: { title: string; message: string }) {
     <div className="mt-4 rounded-2xl border-2 border-co-border bg-co-surface p-6 shadow-sm">
       <h2 className="text-xl font-extrabold leading-tight text-co-text">{title}</h2>
       <p className="mt-3 text-sm text-co-text-muted">{message}</p>
-      <a
+      <Link
         href="/"
         className="
           mt-5 inline-flex items-center gap-1 text-sm font-semibold text-co-text
@@ -142,7 +143,7 @@ function DeadEndCard({ title, message }: { title: string; message: string }) {
         "
       >
         <span aria-hidden>←</span> Back to sign in
-      </a>
+      </Link>
     </div>
   );
 }
