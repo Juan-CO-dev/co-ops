@@ -77,18 +77,34 @@ export function OpeningClient({
   const { t } = useTranslation();
   const router = useRouter();
 
+  // Convert closerSnapshots Record (RSC boundary) to a Map for per-item lookups.
+  // Memoized to a stable reference; updates only when the prop changes (Server
+  // Component re-render). Relocated above the phase split (C.53 §10) because the
+  // split predicate now reads it — see below.
+  const closerSnapshotsMap = useMemo(
+    () => new Map(Object.entries(closerSnapshots)),
+    [closerSnapshots],
+  );
+
   // Split templateItems by phase. Phase 2 items carry prep_meta.openingPhase2=true;
   // Phase 1 items have null prep_meta OR prep_meta without the marker.
+  //
+  // C.53 §10 restructure: spot-check items (openingPhase2=true AND in the
+  // closer-count-snapshot universe) are absorbed into Phase 1 — the opener
+  // verifies/recounts them on the verification tab, not the prep tab. The
+  // runtime discriminator is closerSnapshotsMap.has(it.id), the same predicate
+  // handlePhase1Submit already uses to serialize spot-check fields.
   const { phase1Items, phase2Items } = useMemo(() => {
     const p1: ChecklistTemplateItem[] = [];
     const p2: ChecklistTemplateItem[] = [];
     for (const it of templateItems) {
       const meta = it.prepMeta as OpeningPhase2Meta | null;
-      if (meta?.openingPhase2 === true) p2.push(it);
+      const isSpotCheck = closerSnapshotsMap.has(it.id);
+      if (meta?.openingPhase2 === true && !isSpotCheck) p2.push(it);
       else p1.push(it);
     }
     return { phase1Items: p1, phase2Items: p2 };
-  }, [templateItems]);
+  }, [templateItems, closerSnapshotsMap]);
 
   // Phase 1 form state.
   const [values, setValues] = useState<Map<string, OpeningItemFormValue>>(() => {
@@ -136,15 +152,6 @@ export function OpeningClient({
     });
   };
 
-  // Convert closerSnapshots Record (RSC boundary) to Map for component-internal
-  // use. Map.get() is more idiomatic for per-item lookups in phase2Complete +
-  // OpeningPrepEntry. Memoized to stable reference; updates only when prop
-  // changes (which happens on Server Component re-render).
-  const closerSnapshotsMap = useMemo(
-    () => new Map(Object.entries(closerSnapshots)),
-    [closerSnapshots],
-  );
-
   // Active phase (locked Sub-decision (b): always start at "verification").
   const [activePhase, setActivePhase] = useState<"verification" | "prep">("verification");
 
@@ -172,13 +179,32 @@ export function OpeningClient({
     return groups;
   }, [phase1Items]);
 
-  // Phase 1 counters.
-  const totalPhase1Items = phase1Items.length;
+  // C.53 §10 — partition Phase 1 items. Spot-check items (in the closer-count-
+  // snapshot universe) are resolved via section-verify/recount, NOT the tick
+  // affordance; the rest are cleanliness/temp tick rows. Splitting here lets the
+  // tick gate scope to tickItems (below) and the spot-check gate scope to
+  // spotCheckItems (spotCheckResolved, below) without cross-contamination.
+  const { tickItems, spotCheckItems } = useMemo(() => {
+    const ticks: ChecklistTemplateItem[] = [];
+    const spots: ChecklistTemplateItem[] = [];
+    for (const it of phase1Items) {
+      if (closerSnapshotsMap.has(it.id)) spots.push(it);
+      else ticks.push(it);
+    }
+    return { tickItems: ticks, spotCheckItems: spots };
+  }, [phase1Items, closerSnapshotsMap]);
+
+  // Phase 1 tick counters — scoped to tickItems so spot-check rows (which are
+  // never "ticked"; they resolve via recount/section-verify) don't inflate the
+  // denominator and strand the "all ticked" gate.
+  const totalTickItems = tickItems.length;
   const tickedCount = useMemo(() => {
     let n = 0;
-    for (const v of values.values()) if (v.ticked) n += 1;
+    for (const item of tickItems) {
+      if (values.get(item.id)?.ticked) n += 1;
+    }
     return n;
-  }, [values]);
+  }, [tickItems, values]);
 
   const totalTempItems = useMemo(
     () => phase1Items.filter((it) => it.expectsCount).length,
@@ -206,9 +232,8 @@ export function OpeningClient({
     return n;
   }, [phase2Values]);
 
-  const allTicked = tickedCount === totalPhase1Items;
+  const allTicked = tickedCount === totalTickItems;
   const allTempsFilled = filledTempCount === totalTempItems;
-  const phase1Complete = allTicked && allTempsFilled;
 
   // C.54 §2.B/§2.C — count of Phase 1 spot-check items where the source
   // closer_count is NULL AND the opener has entered a recount. Drives the
@@ -216,9 +241,8 @@ export function OpeningClient({
   // a reason (planned_closure | missed_or_unknown) before Phase 1 can submit.
   //
   // The iteration scope is `phase1Items` — the items that POST to /phase1.
-  // Under C.53's UI restructure, spot-check items will move into this set
-  // (currently they're in phase2Items; this logic is forward-prepared for the
-  // restructure and is operationally inert until then).
+  // Under C.53 §10 the spot-check items now live in this set (absorbed by the
+  // phase split above), so this attestation logic is live for them.
   const nullSourceItemCount = useMemo(() => {
     let count = 0;
     for (const item of phase1Items) {
@@ -234,6 +258,32 @@ export function OpeningClient({
   }, [phase1Items, values, closerSnapshotsMap]);
 
   const needsAttestation = nullSourceItemCount > 0;
+
+  // C.53 §10 — Phase 1 spot-check resolution gate. A spot-check item is resolved
+  // when EITHER its section is verified (closer_count accepted as ground truth)
+  // OR the opener entered a recount. NULL-source items have no valid section-
+  // verify path — the RPC enforces null_source_requires_recount; Lane B's
+  // section-verify affordance must disable verification for any section still
+  // holding an unrecounted NULL-source item, keeping this client gate aligned
+  // with the RPC. Until Lane B lands there is no section-verify button in the
+  // station, so spot-check rows resolve via the per-item recount affordance only
+  // (already rendered by OpeningChecklistItem when closerCount !== undefined).
+  const spotCheckResolved = useMemo(() => {
+    for (const item of spotCheckItems) {
+      const meta = item.prepMeta as OpeningPhase2Meta | null;
+      const section = meta?.section ?? null;
+      const sectionVerified = section
+        ? (sectionVerifications.get(section) ?? false)
+        : false;
+      const v = values.get(item.id);
+      const hasRecount =
+        v?.openerRecount !== null && v?.openerRecount !== undefined;
+      if (!sectionVerified && !hasRecount) return false;
+    }
+    return true;
+  }, [spotCheckItems, sectionVerifications, values]);
+
+  const phase1Complete = allTicked && allTempsFilled && spotCheckResolved;
 
   // Phase 2 submit gate per C.50 §4 — full gate check across all items:
   //   1. ground_truth resolved (section verified OR opener_recount populated)
@@ -592,7 +642,9 @@ export function OpeningClient({
       </div>
 
       {/* Phase tabs — Phase 1 always navigable; Phase 2 hard-gated until
-          Phase 1 complete, then becomes navigable. */}
+          Phase 1 complete, then becomes navigable. C.53 §10: when the
+          restructure leaves no Phase 2 items (all spot-check items absorbed
+          into Phase 1), the Phase 2 tab is hidden entirely. */}
       <div className="flex gap-1.5 border-b-2 border-co-border-2">
         <button
           type="button"
@@ -609,30 +661,32 @@ export function OpeningClient({
         >
           {t("opening.phase.tab_phase1")}
         </button>
-        <button
-          type="button"
-          onClick={() => handleTabClick("prep")}
-          disabled={!phase1Complete}
-          aria-disabled={!phase1Complete}
-          aria-label={
-            phase1Complete ? undefined : t("opening.phase.tab_phase2_locked_aria")
-          }
-          aria-current={activePhase === "prep" ? "page" : undefined}
-          className={[
-            "inline-flex items-center px-3 py-2",
-            "text-xs font-bold uppercase tracking-[0.14em]",
-            "transition focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60",
-            !phase1Complete
-              ? "border-b-2 border-transparent text-co-text-dim cursor-not-allowed opacity-80"
-              : activePhase === "prep"
-                ? "border-b-2 border-co-text text-co-text"
-                : "border-b-2 border-transparent text-co-text-muted hover:text-co-text",
-          ].join(" ")}
-        >
-          {phase1Complete
-            ? t("opening.phase.tab_phase2")
-            : t("opening.phase.tab_phase2_locked")}
-        </button>
+        {phase2Items.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => handleTabClick("prep")}
+            disabled={!phase1Complete}
+            aria-disabled={!phase1Complete}
+            aria-label={
+              phase1Complete ? undefined : t("opening.phase.tab_phase2_locked_aria")
+            }
+            aria-current={activePhase === "prep" ? "page" : undefined}
+            className={[
+              "inline-flex items-center px-3 py-2",
+              "text-xs font-bold uppercase tracking-[0.14em]",
+              "transition focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60",
+              !phase1Complete
+                ? "border-b-2 border-transparent text-co-text-dim cursor-not-allowed opacity-80"
+                : activePhase === "prep"
+                  ? "border-b-2 border-co-text text-co-text"
+                  : "border-b-2 border-transparent text-co-text-muted hover:text-co-text",
+            ].join(" ")}
+          >
+            {phase1Complete
+              ? t("opening.phase.tab_phase2")
+              : t("opening.phase.tab_phase2_locked")}
+          </button>
+        ) : null}
       </div>
 
       {/* Phase 1: Station cards */}
@@ -716,8 +770,10 @@ export function OpeningClient({
         </section>
       ) : null}
 
-      {/* Phase 2: Prep entry surface (C.50 redesign) */}
-      {activePhase === "prep" ? (
+      {/* Phase 2: Prep entry surface (C.50 redesign). C.53 §10: also gated on
+          phase2Items.length so an empty Phase 2 never renders even if activePhase
+          were somehow "prep" (defensive — the tab that sets it is hidden too). */}
+      {activePhase === "prep" && phase2Items.length > 0 ? (
         <OpeningPrepEntry
           items={phase2Items}
           values={phase2Values}
@@ -774,7 +830,7 @@ export function OpeningClient({
               <span className="font-bold text-co-text">
                 {t("opening.submit.counter_verified", {
                   ticked: tickedCount,
-                  total: totalPhase1Items,
+                  total: totalTickItems,
                 })}
               </span>
               {" · "}
@@ -809,7 +865,7 @@ export function OpeningClient({
                 : activePhase === "verification"
                   ? !allTicked
                     ? t("opening.submit.gate_disabled_items_remaining", {
-                        remaining: totalPhase1Items - tickedCount,
+                        remaining: totalTickItems - tickedCount,
                       })
                     : firstMissingTempLabel
                       ? t("opening.submit.gate_disabled_temps_required", {
