@@ -103,15 +103,18 @@ export function PinConfirmModal({
   const [useSystemKeyboard, setUseSystemKeyboard] = useState(false);
   const systemInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Reset state on open.
-  useEffect(() => {
+  // Reset state on open via render-phase compare — a synchronous reset inside an
+  // effect would trip react-hooks/set-state-in-effect.
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (open !== prevOpen) {
+    setPrevOpen(open);
     if (open) {
       setPin("");
       setError(null);
       setSubmitting(false);
       setShake(false);
     }
-  }, [open]);
+  }
 
   useEffect(() => {
     if (open && useSystemKeyboard) systemInputRef.current?.focus();

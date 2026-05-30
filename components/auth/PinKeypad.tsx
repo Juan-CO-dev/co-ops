@@ -71,16 +71,18 @@ export function PinKeypad({ userName, role, onSubmit, onBack }: PinKeypadProps) 
   const [retryRemaining, setRetryRemaining] = useState<number | null>(null);
   const systemInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Live lockout countdown
+  // Live lockout countdown. Expiry is driven inside the timer callback (clearing
+  // retryRemaining + the locked error there) — a synchronous setRetryRemaining(null)
+  // in the effect body would trip react-hooks/set-state-in-effect (cascading renders).
   useEffect(() => {
-    if (retryRemaining === null) return;
-    if (retryRemaining <= 0) {
-      setError(null);
-      setRetryRemaining(null);
-      return;
-    }
+    if (retryRemaining === null || retryRemaining <= 0) return;
     const t = window.setTimeout(() => {
-      setRetryRemaining((s) => (s === null ? null : s - 1));
+      if (retryRemaining <= 1) {
+        setRetryRemaining(null);
+        setError((e) => (e && e.kind === "locked" ? null : e));
+      } else {
+        setRetryRemaining(retryRemaining - 1);
+      }
     }, 1000);
     return () => window.clearTimeout(t);
   }, [retryRemaining]);

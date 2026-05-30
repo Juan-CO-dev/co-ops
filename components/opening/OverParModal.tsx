@@ -16,7 +16,7 @@
  * 'management_directive' (accountability tagging architectural intent).
  */
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import type { TranslationKey } from "@/lib/i18n/types";
 import { useTranslation } from "@/lib/i18n/provider";
@@ -85,14 +85,20 @@ export function OverParModal({
   );
   const [freeText, setFreeText] = useState<string>(initial?.freeText ?? "");
 
-  // Reset state when modal opens with new initial value.
-  useEffect(() => {
+  // Reset state when the modal opens with a new initial value. Render-phase
+  // compare instead of an effect — a synchronous reset in an effect body would
+  // trip react-hooks/set-state-in-effect.
+  const [prevOpen, setPrevOpen] = useState(open);
+  const [prevInitial, setPrevInitial] = useState(initial);
+  if (open !== prevOpen || initial !== prevInitial) {
+    setPrevOpen(open);
+    setPrevInitial(initial);
     if (open) {
       setReason(initial?.reasonCategory ?? "management_directive");
       setDirectedBy(initial?.directedBy ?? null);
       setFreeText(initial?.freeText ?? "");
     }
-  }, [open, initial]);
+  }
 
   if (!open) return null;
 

@@ -20,7 +20,7 @@
  * shipped in Step 5 (single source of truth for the reason vocabulary).
  */
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import type { TranslationKey } from "@/lib/i18n/types";
 import { useTranslation } from "@/lib/i18n/provider";
@@ -86,12 +86,19 @@ export function UnderParModal({
   );
   const [freeText, setFreeText] = useState<string>(initial?.freeText ?? "");
 
-  useEffect(() => {
+  // Reset state when the modal opens with a new initial value. Render-phase
+  // compare instead of an effect — a synchronous reset in an effect body would
+  // trip react-hooks/set-state-in-effect.
+  const [prevOpen, setPrevOpen] = useState(open);
+  const [prevInitial, setPrevInitial] = useState(initial);
+  if (open !== prevOpen || initial !== prevInitial) {
+    setPrevOpen(open);
+    setPrevInitial(initial);
     if (open) {
       setReason(initial?.reasonCategory ?? "ingredient_unavailable");
       setFreeText(initial?.freeText ?? "");
     }
-  }, [open, initial]);
+  }
 
   if (!open) return null;
 

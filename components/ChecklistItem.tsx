@@ -59,7 +59,7 @@
  * async callback props. Parent injects instanceId + actor via closure.
  */
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
 import { formatTime } from "@/lib/i18n/format";
@@ -367,14 +367,18 @@ export function ChecklistItem({
   const [pickerLoading, setPickerLoading] = useState(false);
 
   // Reset local state when parent supplies a fresh completion (id change).
-  useEffect(() => {
+  // Render-phase compare instead of an effect — a synchronous reset in an effect
+  // body would trip react-hooks/set-state-in-effect.
+  const [prevCompletionId, setPrevCompletionId] = useState(completion?.id);
+  if (completion?.id !== prevCompletionId) {
+    setPrevCompletionId(completion?.id);
     setLocalCompletion(null);
     setRevoked(false);
     setError(null);
     setExpandMode("none");
     setOtherNoteDraft("");
     setPickerCandidates(null);
-  }, [completion?.id]);
+  }
 
   const propCompletion = completion;
   const liveCompletion = revoked ? null : (localCompletion ?? propCompletion);

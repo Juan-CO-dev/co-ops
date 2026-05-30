@@ -60,28 +60,37 @@ export function PasswordModal({ open, onConfirm, onCancel }: PasswordModalProps)
 
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  // Reset state on open + focus the input.
-  useEffect(() => {
+  // Reset state on open via render-phase compare — a synchronous reset inside an
+  // effect would trip react-hooks/set-state-in-effect. Focus stays in an effect
+  // because it's a DOM side effect, not a render-phase state update.
+  const [prevOpen, setPrevOpen] = useState(open);
+  if (open !== prevOpen) {
+    setPrevOpen(open);
     if (open) {
       setPassword("");
       setError(null);
       setSubmitting(false);
       setRetryRemaining(null);
-      const t = window.setTimeout(() => inputRef.current?.focus(), 0);
-      return () => window.clearTimeout(t);
     }
+  }
+  useEffect(() => {
+    if (!open) return;
+    const t = window.setTimeout(() => inputRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
   }, [open]);
 
-  // Live lockout countdown.
+  // Live lockout countdown. Expiry (clearing error + retryRemaining) runs inside
+  // the timer callback — a synchronous reset in the effect body would trip
+  // react-hooks/set-state-in-effect.
   useEffect(() => {
-    if (retryRemaining === null) return;
-    if (retryRemaining <= 0) {
-      setError(null);
-      setRetryRemaining(null);
-      return;
-    }
+    if (retryRemaining === null || retryRemaining <= 0) return;
     const t = window.setTimeout(() => {
-      setRetryRemaining((s) => (s === null ? null : s - 1));
+      if (retryRemaining <= 1) {
+        setRetryRemaining(null);
+        setError(null);
+      } else {
+        setRetryRemaining(retryRemaining - 1);
+      }
     }, 1000);
     return () => window.clearTimeout(t);
   }, [retryRemaining]);

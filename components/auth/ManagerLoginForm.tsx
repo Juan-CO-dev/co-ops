@@ -54,15 +54,17 @@ export function ManagerLoginForm({ onSuccess, onTransientError }: ManagerLoginFo
   const [resetRequesting, setResetRequesting] = useState(false);
   const [resetSent, setResetSent] = useState(false);
 
-  // Live lockout countdown
+  // Live lockout countdown. The timer callback drives expiry (returning null
+  // from the updater) — a synchronous setLock(null) in the effect body would
+  // trip react-hooks/set-state-in-effect (cascading renders).
   useEffect(() => {
-    if (!lock) return;
-    if (lock.remaining <= 0) {
-      setLock(null);
-      return;
-    }
+    if (!lock || lock.remaining <= 0) return;
     const t = window.setTimeout(() => {
-      setLock((prev) => (prev ? { ...prev, remaining: prev.remaining - 1 } : null));
+      setLock((prev) => {
+        if (!prev) return null;
+        const next = prev.remaining - 1;
+        return next <= 0 ? null : { ...prev, remaining: next };
+      });
     }, 1000);
     return () => window.clearTimeout(t);
   }, [lock]);

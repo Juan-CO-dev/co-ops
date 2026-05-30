@@ -141,12 +141,23 @@ function LoginPageContent() {
     };
   }, []);
 
+  // Reset the user list on step change via render-phase compare. The synchronous
+  // setUsers(null)/setUsersError(null) used to live in the load effect below,
+  // which trips react-hooks/set-state-in-effect. `step` is a stable useState
+  // value, so identity comparison is reliable.
+  const [prevStep, setPrevStep] = useState(step);
+  if (step !== prevStep) {
+    setPrevStep(step);
+    if (step.kind === "name") {
+      setUsers(null);
+      setUsersError(null);
+    }
+  }
+
   // Load users when (location, role) is set.
   useEffect(() => {
     if (step.kind !== "name") return;
     let cancelled = false;
-    setUsers(null);
-    setUsersError(null);
     (async () => {
       try {
         const url = `/api/users/login-options?location_id=${encodeURIComponent(

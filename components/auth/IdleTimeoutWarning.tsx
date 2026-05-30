@@ -41,11 +41,18 @@ const ACTIVITY_EVENTS = ["mousedown", "keydown", "touchstart", "scroll"] as cons
 export function IdleTimeoutWarning() {
   const { t } = useTranslation();
   const router = useRouter();
-  const lastActivityRef = useRef<number>(Date.now());
+  // Seed to 0 at render — Date.now() during render is impure (react-hooks/purity).
+  // The mount effect below stamps the real timestamp before the idle interval's
+  // first tick (+1000ms), so the timer still measures from first paint.
+  const lastActivityRef = useRef<number>(0);
   const [warningOpen, setWarningOpen] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(WARNING_BEFORE_SECONDS);
   const stayBtnRef = useRef<HTMLButtonElement | null>(null);
   const logoutBtnRef = useRef<HTMLButtonElement | null>(null);
+
+  useEffect(() => {
+    lastActivityRef.current = Date.now();
+  }, []);
 
   // Activity listeners: only when the warning modal is closed.
   useEffect(() => {
