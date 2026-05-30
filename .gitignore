@@ -44,6 +44,9 @@ yarn-error.log*
 # Local secret-generation output
 .env.local.generated.tmp
 
+# Flash orchestration run-state (regenerated per run, not infra)
+scripts/.flash-batch-results.json
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
