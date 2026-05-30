@@ -129,15 +129,21 @@ export function OpeningClient({
     return map;
   });
 
-  // Phase 2 section verifications — Map<sectionKey, verified-state>. Per C.50
-  // §4: opener taps Verify Section to mark all items in section as
-  // "ground_truth = closer_count"; per-item recount is the override path.
-  // Initial state: all sections present in phase2Items, default unverified.
+  // Section verifications — Map<sectionKey, verified-state>. Per C.50 §4: opener
+  // taps Verify Section to mark all items in section as "ground_truth =
+  // closer_count"; per-item recount is the override path.
+  //
+  // C.53 §10 (flag A): seed from spot-check sections in phase1Items, NOT the
+  // now-always-empty phase2Items. After Lane A's split, spot-check items live in
+  // phase1Items; iterating phase2Items here would pre-seed nothing. Reads still
+  // default-false (so this is correctness/clarity, not a behavior change), but
+  // an init loop over an always-empty set is stale-looking post-Lane-A.
   const [sectionVerifications, setSectionVerifications] = useState<
     Map<string, boolean>
   >(() => {
     const map = new Map<string, boolean>();
-    for (const item of phase2Items) {
+    for (const item of phase1Items) {
+      if (!closerSnapshotsMap.has(item.id)) continue;
       const meta = item.prepMeta as OpeningPhase2Meta | null;
       if (meta?.section) map.set(meta.section, false);
     }
@@ -702,6 +708,8 @@ export function OpeningClient({
               language={language}
               showMissingCountErrors={showMissingCountErrors}
               closerSnapshotsMap={closerSnapshotsMap}
+              sectionVerifications={sectionVerifications}
+              onSectionVerifyToggle={handleSectionVerifyToggle}
             />
           ))
         : null}

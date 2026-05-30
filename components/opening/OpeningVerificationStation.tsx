@@ -20,7 +20,7 @@
  * translated station header).
  */
 
-import type { ChecklistTemplateItem } from "@/lib/types";
+import type { ChecklistTemplateItem, OpeningPhase2Meta } from "@/lib/types";
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
 import type { Language } from "@/lib/i18n/types";
 import { useTranslation } from "@/lib/i18n/provider";
@@ -30,6 +30,7 @@ import {
   OpeningChecklistItem,
   type OpeningItemFormValue,
 } from "./OpeningChecklistItem";
+import { OpeningSectionVerify } from "./OpeningSectionVerify";
 
 interface OpeningVerificationStationProps {
   /** System-key match value (English `station` from checklist_template_items). */
@@ -52,6 +53,15 @@ interface OpeningVerificationStationProps {
    * means "NULL-source", number means "captured closer count."
    */
   closerSnapshotsMap: Map<string, OpeningCloserCountSnapshotRow>;
+  /**
+   * C.53 §10 Lane B — section-verify state for spot-check stations. Spot-check
+   * stations (dedicated cards where every item is in the closer-count-snapshot
+   * universe) render OpeningSectionVerify in place of the per-station tick
+   * button. Keyed on prep_meta.section — the system key that T0.4's
+   * spotCheckResolved gate and submit_phase1_atomic both read.
+   */
+  sectionVerifications: Map<string, boolean>;
+  onSectionVerifyToggle: (sectionKey: string) => void;
 }
 
 export function OpeningVerificationStation({
@@ -63,6 +73,8 @@ export function OpeningVerificationStation({
   language,
   showMissingCountErrors,
   closerSnapshotsMap,
+  sectionVerifications,
+  onSectionVerifyToggle,
 }: OpeningVerificationStationProps) {
   const { t } = useTranslation();
 
@@ -76,6 +88,39 @@ export function OpeningVerificationStation({
     ? resolveTemplateItemContent(firstItem, language).station ?? station
     : station;
 
+  // C.53 §10 Lane B — branch the header by what the card actually contains.
+  // Seed reality: cards are homogeneous (all-tick OR all-spot-check; zero
+  // station/section overlap). Render-by-content rather than assuming
+  // homogeneity, so a future mixed card degrades correctly instead of dropping
+  // an affordance.
+  const hasSpotCheckItems = items.some((it) => closerSnapshotsMap.has(it.id));
+  const hasTickItems = items.some((it) => !closerSnapshotsMap.has(it.id));
+
+  // Section key for verify state — keyed on prep_meta.section (C.38 system-key
+  // discipline), NOT the station string. station === section for spot-check
+  // items today, but keying on the system field keeps the toggle aligned with
+  // T0.4's spotCheckResolved + the RPC if that ever drifts. All spot-check items
+  // in a card share one section (cards group by station, station === section).
+  const firstSpotCheck = items.find((it) => closerSnapshotsMap.has(it.id));
+  const sectionKey =
+    (firstSpotCheck?.prepMeta as OpeningPhase2Meta | null)?.section ?? station;
+  const sectionVerified = sectionVerifications.get(sectionKey) ?? false;
+
+  // Flag B port (mandatory Triad A condition) — mirror of OpeningPrepEntry's
+  // sectionDisabledMap: section-verify is disabled when any spot-check item has
+  // NULL closer_count AND no opener_recount. Forces recount as the only path for
+  // NULL-source items, matching the RPC's null_source_requires_recount so the
+  // disjunctive T0.4 gate (section-verified OR recount) stays RPC-consistent.
+  const sectionHasUnrecountedNull = items.some((it) => {
+    if (!closerSnapshotsMap.has(it.id)) return false;
+    const snap = closerSnapshotsMap.get(it.id);
+    const v = values.get(it.id);
+    return (
+      (snap?.closerCount ?? null) === null &&
+      (v?.openerRecount ?? null) === null
+    );
+  });
+
   return (
     <section
       aria-label={t("opening.station.aria", { station: stationDisplay })}
@@ -85,27 +130,40 @@ export function OpeningVerificationStation({
         <h3 className="text-base font-extrabold uppercase tracking-[0.14em] text-co-text">
           {stationDisplay}
         </h3>
-        <button
-          type="button"
-          onClick={() => onStationTickChange(items, !allTicked)}
-          aria-pressed={allTicked}
-          aria-label={
-            allTicked
-              ? t("opening.station.untick_aria", { station: stationDisplay })
-              : t("opening.station.tick_aria", { station: stationDisplay })
-          }
-          className={[
-            "inline-flex min-h-[40px] items-center gap-1.5 rounded-full px-3",
-            "text-xs font-bold uppercase tracking-[0.12em]",
-            "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
-            allTicked
-              ? "border-2 border-co-text bg-co-gold text-co-text hover:bg-co-gold-deep"
-              : "border-2 border-co-border-2 bg-co-surface text-co-text hover:border-co-text",
-          ].join(" ")}
-        >
-          <span aria-hidden>{allTicked ? "✓" : "○"}</span>
-          {allTicked ? t("opening.station.ticked_button") : t("opening.station.tick_button")}
-        </button>
+        {hasTickItems ? (
+          <button
+            type="button"
+            onClick={() => onStationTickChange(items, !allTicked)}
+            aria-pressed={allTicked}
+            aria-label={
+              allTicked
+                ? t("opening.station.untick_aria", { station: stationDisplay })
+                : t("opening.station.tick_aria", { station: stationDisplay })
+            }
+            className={[
+              "inline-flex min-h-[40px] items-center gap-1.5 rounded-full px-3",
+              "text-xs font-bold uppercase tracking-[0.12em]",
+              "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
+              allTicked
+                ? "border-2 border-co-text bg-co-gold text-co-text hover:bg-co-gold-deep"
+                : "border-2 border-co-border-2 bg-co-surface text-co-text hover:border-co-text",
+            ].join(" ")}
+          >
+            <span aria-hidden>{allTicked ? "✓" : "○"}</span>
+            {allTicked ? t("opening.station.ticked_button") : t("opening.station.tick_button")}
+          </button>
+        ) : null}
+        {hasSpotCheckItems ? (
+          <OpeningSectionVerify
+            sectionKey={sectionKey}
+            sectionDisplay={stationDisplay}
+            verified={sectionVerified}
+            disabled={sectionHasUnrecountedNull}
+            disabledReason={sectionHasUnrecountedNull ? "null_items_unrecounted" : null}
+            onToggleVerified={() => onSectionVerifyToggle(sectionKey)}
+            language={language}
+          />
+        ) : null}
       </header>
 
       <ul className="mt-3 flex flex-col">
