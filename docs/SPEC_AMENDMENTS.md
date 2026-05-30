@@ -2246,9 +2246,11 @@ Total estimated: ~3800 LOC across 6 phases (vs. C.50's ~2000 LOC across 6 phases
 
 Mid-phase surface check-ins per AGENTS.md rhythm. Single-commit at end per α lock semantic from C.50.
 
-### §11 — Wiring status (post-2026-05-26): infrastructure landed, UI activation gated on §10-Phase-3 restructure
+### §11 — Wiring status: SHIPPED 2026-05-30 (§10 restructure live in production); historical dormant-state detail preserved below
 
-**Status:** wired and dormant. The no-prior-data Phase 1 path is fully wired end-to-end at the RPC + lib + route + form-orchestrator layers, but **operationally inert in the real UI** until C.53 §10 Phase 3 ("Phase 1 component restructure — spot-check absorbed") ships.
+**Current status (2026-05-30):** **SHIPPED.** C.53 §10 Phase 3 restructure is live on `main` and deployed to production (`co-ops-ashy.vercel.app`). The d49d1504 stuck-shift class is **closed in the real UI** — confirmed by FT.1 operational smoke against the live `d49d1504` EM instance (see §11.1 below). The dormant-state detail that follows the §11.1 block is preserved as the accurate 2026-05-26 record (forensic history; do not delete).
+
+**Historical status (2026-05-26):** wired and dormant. The no-prior-data Phase 1 path is fully wired end-to-end at the RPC + lib + route + form-orchestrator layers, but **operationally inert in the real UI** until C.53 §10 Phase 3 ("Phase 1 component restructure — spot-check absorbed") ships.
 
 **What landed in the wiring commit (Build #3 PR 4 — 2026-05-26):**
 
@@ -2274,6 +2276,25 @@ The form's `phase1Items` set is still the legacy classification (station ticks +
 **Operational consequence:** the d49d1504 stuck-shift class (C.54 §8 captured artifact) is **NOT yet closed in the real UI** despite this commit. The RPC can unblock the instance when called directly (proven in the integration check), but the form cannot drive that call until spot-check items move into the Phase 1 tab's submit payload. d49d1504 itself remains preserved in `open` state per C.54 §8's "do not touch" directive.
 
 **What it would take to close the gap:** C.53 §10 Phase 3 — estimated ~500 LOC per the original sequencing table — which restructures the form to put spot-check items in the Phase 1 tab (with section-verify CTAs + recount affordance) and removes the spot-check half of `OpeningPrepEntry`. After that ships, the no-prior-data path becomes live end-to-end through the UI; no additional wiring is needed at the RPC/lib/route layers.
+
+### §11.1 — Activation: §10 restructure shipped 2026-05-30 (stuck-shift class closed in production)
+
+**Shipped commits (origin/main):**
+
+- `899061f` — Lane A: absorb spot-check items into Phase 1 (T0.1 phase split, T0.3 tick-gate scoping, T0.4 `spotCheckResolved` gate, T0.5 hide empty Phase 2 tab) + build doc `docs/coops_C53-C54_phase3_builddoc_B-to-A_v1.md`
+- `42562d3` — Lane B: section-verify header for spot-check stations (`OpeningVerificationStation` render-by-content branch + flag B `sectionHasUnrecountedNull` port + C.38 `prep_meta.section` keying + flag A `sectionVerifications` init repoint)
+
+**Deploy:** CI `build` GREEN on `42562d3`; Vercel production deploy `success` (`HR4htkRa5VBtfCkfaVhhNgXujc9B`). Live on `co-ops-ashy.vercel.app`.
+
+**FT.1 operational smoke (Juan, against the real `d49d1504` EM instance) — PASSED:**
+
+- No-prior-data opener flowed through the new `/phase1` path (not the legacy `/submit` path)
+- Attestation/recount path rendered and resolved (the §11 dormant items — `needsAttestation`, the inline attestation prompt, the spot-check recount section — are now **live** because spot-check items are in `phase1Items` post-restructure)
+- Submit succeeded; surfaced the `phase2_pending_next_release` message — the Piece 4 guardrail behaving correctly (honest seam; Phase 2 submit is the next loop, not a defect)
+
+**Build-state:** C.53 §10 is **done**. The d49d1504 stuck-shift class is **closed in the UI** (RPC + lib + route + form all live end-to-end). **Next loop:** the Phase 2 submit RPC (the `phase2_pending_next_release` seam is the entry point — Phase 2 prep submit is the remaining surface). `d49d1504` itself stays preserved in `open` state per C.54 §8's "do not touch" directive — the *class* is closed for new shifts; the captured artifact is not retroactively mutated.
+
+**Deferred follow-up (queued, Flash):** FT.2 — i18n re-namespace of the `opening.phase2.*` keys still used in Phase 1 chrome (`OpeningSectionVerify` reads `opening.phase2.section_verify_cta` / `section_verified_button` / `section_disabled_null_items` and the recount label `opening.phase2.recount_label`) → `opening.section_verify.*` / `opening.recount.*`. Pure rename across `lib/i18n/{en,es}.json` + callsites; no behavior change. Not blocking.
 
 ---
 
