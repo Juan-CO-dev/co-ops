@@ -371,6 +371,8 @@
   "opening.error.null_source_requires_recount": "Este artículo no tiene un conteo de cierre de anoche — presiona \"Recontar\" para ingresar un conteo matutino.",
   "opening.error.provenance_required": "Se requiere una declaración del estado del cierre de anoche — selecciona una razón arriba para continuar.",
   "opening.error.ground_truth_unresolved": "Un artículo de verificación no pudo resolverse — contacta a un gerente.",
+  "opening.error.phase2_not_eligible": "La Fase 1 debe enviarse antes de poder terminar el prep — actualiza la página.",
+  "opening.error.phase2_incomplete": "Faltan {count} artículo(s) de prep por guardar antes de terminar.",
 
   "opening.phase1.recount.label": "Recuento",
   "opening.phase1.recount.placeholder": "Cuenta de la mañana",

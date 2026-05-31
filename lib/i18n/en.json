@@ -371,6 +371,8 @@
   "opening.error.null_source_requires_recount": "This item has no closing count from last night — tap \"Recount\" to enter a morning count instead.",
   "opening.error.provenance_required": "An attestation of last night's closing state is required — select a reason above to continue.",
   "opening.error.ground_truth_unresolved": "A spot-check item couldn't be resolved — contact a manager.",
+  "opening.error.phase2_not_eligible": "Phase 1 must be submitted before prep can be finished — refresh the page.",
+  "opening.error.phase2_incomplete": "{count} prep item(s) still need to be saved before you can finish.",
 
   "opening.phase1.recount.label": "Recount",
   "opening.phase1.recount.placeholder": "Enter morning count",
