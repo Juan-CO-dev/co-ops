@@ -384,6 +384,29 @@ export class OpeningPhase3NotEligibleError extends OpeningPhaseError {
   }
 }
 
+/**
+ * C.53 Phase 2 — finalize (`submit_phase2_atomic`) refuses to advance when one
+ * or more items in the Phase 2 universe (every `openingPhase2` template item)
+ * lack a live (non-superseded, non-revoked) phase2 completion. The opener must
+ * save every prep item before finalize advances the instance to
+ * `phase2_complete`. The RPC raises P0001 with the
+ * `submit_phase2_atomic: phase2_incomplete` prefix; `missingCount` is parsed
+ * from the message for the translated UI hint. i18n key
+ * `opening.error.phase2_incomplete`.
+ */
+export class OpeningPhase2IncompleteError extends OpeningError {
+  constructor(
+    public readonly instanceId: string,
+    public readonly missingCount: number,
+  ) {
+    super(
+      `Phase 2 finalize rejected: instance ${instanceId} has ${missingCount} prep item(s) without a saved completion.`,
+      "phase2_incomplete",
+    );
+    this.name = "OpeningPhase2IncompleteError";
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase resolution helpers
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1894,39 +1917,325 @@ export async function submitPhase1Atomic(
 }
 
 /**
- * Type-contract-lock — Phase 2 atomic submit invoker.
- *
- * RPC contract (downstream commit):
- *   `submit_phase2_atomic(p_opening_instance_id, p_actor_id, p_entries,
- *      p_is_update, p_original_submission_id, p_ip_address, p_user_agent)`
- *      → JSONB result with the standard OpeningPhaseSubmitResult fields plus
- *      C.50 counters (at_par_count, over_prep_count, under_prep_count).
- *
- * Pre-flight: instance.status must be `'phase1_complete'`; otherwise raises
- * `OpeningPhase2NotEligibleError`.
- *
- * Per Triad A ruling 2026-05-26, C.54 §2.C attestation moved to Phase 1
- * (NULL-source detection happens there under C.53's restructure, so the
- * per-instance attestation follows detection). Phase 2 READS the persisted
- * attestation from `checklist_instances.opener_no_prior_data_reason` but
- * does NOT capture it.
+ * Result shape returned by `submit_phase2_atomic` RPC (migration 0056).
+ * Mirrors `OpeningPhaseSubmitResult` plus the C.50 over/under counters the
+ * JS-side `opening.phase2.submit` audit consumes. `autoCompleteId` always null
+ * (Phase 3 owns opening→closing auto-complete per C.54 §2.A).
  */
-export async function submitPhase2Atomic(
-  _service: SupabaseClient,
-  _args: {
+interface Phase2RpcResult {
+  instance: InstanceRow;
+  submissionId: string;
+  completionIds: string[];
+  autoCompleteId: string | null;
+  editCount: number;
+  originalSubmissionId: string | null;
+  underParNotificationIds: string[];
+  atParCount: number;
+  overPrepCount: number;
+  underPrepCount: number;
+}
+
+/**
+ * Result shape returned by `save_phase2_item_atomic` RPC (migration 0056) — the
+ * per-item §8.4 write. Carries the written completion row plus the
+ * server-computed delta/status for optimistic local state update.
+ */
+interface Phase2ItemSaveRpcResult {
+  completion: CompletionRow;
+  templateItemId: string;
+  completionId: string;
+  deltaVsPrepNeed: number | null;
+  overUnderStatus: "at_par" | "over_prep" | "under_prep";
+}
+
+/** Lib-layer result of {@link savePhase2Item}. */
+export interface Phase2ItemSaveResult {
+  completion: ChecklistCompletion;
+  templateItemId: string;
+  completionId: string;
+  deltaVsPrepNeed: number | null;
+  overUnderStatus: "at_par" | "over_prep" | "under_prep";
+}
+
+/** Parses the integer count from a `phase2_incomplete` RPC message. */
+function extractMissingCount(msg: string): number {
+  const m = msg.match(/phase2_incomplete — (\d+) /);
+  return m ? Number(m[1]) : 0;
+}
+
+/**
+ * Phase 2 per-item §8.4 save invoker — wires the `save_phase2_item_atomic` RPC
+ * (migration 0056). Writes ONE prep item's phase2 completion in the §8.4
+ * 14-field shape (12 core + saved_at/saved_by), sourcing ground_truth/prep_need
+ * from the item's own `prep_data->phase1`, computing delta/status via the shared
+ * `opening_phase2_compute_delta` helper. Append-only: supersedes the prior live
+ * phase2 row for the item, then INSERTs the new one (D1).
+ *
+ * Pre-flight authorization: actor.level ≥ OPENING_BASE_LEVEL (KH+).
+ *
+ * RPC error translation (P0001 by message prefix):
+ *   - phase2_not_eligible    → OpeningPhase2NotEligibleError(instanceId, currentStatus)
+ *   - phase1_not_resolved    → OpeningGroundTruthUnresolvedError(itemId)
+ *   - opener_prepped_missing
+ *     / over_par_reason_missing
+ *     / under_par_reason_missing
+ *     / under_par_freetext_required → OpeningEntryShapeError(reason)
+ *   - 23503 (actor)          → OpeningActorNotFoundError; other → generic re-throw
+ *
+ * Audit (JS-side): action `opening.phase2.item_saved`, NOT destructive
+ * (append-only per-item save). Outcomes: role_insufficient | phase2_not_eligible
+ * | phase1_not_resolved | invalid_entry_shape | rpc_failed | success.
+ */
+export async function savePhase2Item(
+  service: SupabaseClient,
+  args: {
     instanceId: string;
     actor: OpeningActor;
-    entries: OpeningEntryPhase2[];
+    entry: OpeningEntryPhase2;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  },
+): Promise<Phase2ItemSaveResult> {
+  const auditBase = {
+    actorId: args.actor.userId,
+    actorRole: args.actor.role,
+    action: "opening.phase2.item_saved" as const,
+    resourceTable: "checklist_completions" as const,
+    resourceId: args.instanceId,
+    ipAddress: args.ipAddress ?? null,
+    userAgent: args.userAgent ?? null,
+  };
+
+  if (args.actor.level < OPENING_BASE_LEVEL) {
+    void audit({
+      ...auditBase,
+      metadata: {
+        outcome: "role_insufficient",
+        required_level: OPENING_BASE_LEVEL,
+        actual_level: args.actor.level,
+        template_item_id: args.entry.templateItemId,
+      },
+    });
+    throw new OpeningRoleViolationError(OPENING_BASE_LEVEL, args.actor.level);
+  }
+
+  let rpcResult: Phase2ItemSaveRpcResult;
+  try {
+    const { data, error } = await service.rpc("save_phase2_item_atomic", {
+      p_opening_instance_id: args.instanceId,
+      p_actor_id: args.actor.userId,
+      p_template_item_id: args.entry.templateItemId,
+      p_opener_prepped: args.entry.openerPrepped,
+      p_over_par: args.entry.overPar,
+      p_under_par: args.entry.underPar,
+      p_ip_address: args.ipAddress ?? null,
+      p_user_agent: args.userAgent ?? null,
+    });
+    if (error) {
+      if (error.code === "P0001") {
+        const msg = error.message;
+        if (msg.includes("phase2_not_eligible")) {
+          const { data: row } = await service
+            .from("checklist_instances")
+            .select("status")
+            .eq("id", args.instanceId)
+            .maybeSingle<{ status: ChecklistStatus }>();
+          const status: ChecklistStatus = row?.status ?? "phase1_complete";
+          void audit({ ...auditBase, metadata: { outcome: "phase2_not_eligible", rpc_error: msg, current_status: status, template_item_id: args.entry.templateItemId } });
+          throw new OpeningPhase2NotEligibleError(args.instanceId, status);
+        }
+        if (msg.includes("phase1_not_resolved")) {
+          const itemId = extractTemplateItemId(msg) ?? args.entry.templateItemId;
+          void audit({ ...auditBase, metadata: { outcome: "phase1_not_resolved", rpc_error: msg, template_item_id: itemId } });
+          throw new OpeningGroundTruthUnresolvedError(itemId);
+        }
+        if (
+          msg.includes("opener_prepped_missing") ||
+          msg.includes("over_par_reason_missing") ||
+          msg.includes("under_par_reason_missing") ||
+          msg.includes("under_par_freetext_required")
+        ) {
+          void audit({ ...auditBase, metadata: { outcome: "invalid_entry_shape", rpc_error: msg, template_item_id: args.entry.templateItemId } });
+          throw new OpeningEntryShapeError(msg.replace(/^save_phase2_item_atomic:\s*/, ""));
+        }
+      }
+      if (error.code === "23503" && error.message.includes("actor")) {
+        void audit({ ...auditBase, metadata: { outcome: "actor_not_found", rpc_error: error.message } });
+        throw new OpeningActorNotFoundError(args.actor.userId);
+      }
+      throw new Error(`save_phase2_item_atomic rpc: ${error.message}`);
+    }
+    if (!data || typeof data !== "object") {
+      throw new Error("save_phase2_item_atomic rpc: empty result");
+    }
+    rpcResult = data as Phase2ItemSaveRpcResult;
+  } catch (err) {
+    if (err instanceof OpeningError) throw err;
+    void audit({
+      ...auditBase,
+      metadata: {
+        outcome: "rpc_failed",
+        rpc_error: err instanceof Error ? err.message : String(err),
+        template_item_id: args.entry.templateItemId,
+      },
+    });
+    throw err;
+  }
+
+  void audit({
+    ...auditBase,
+    metadata: {
+      outcome: "success",
+      template_item_id: rpcResult.templateItemId,
+      completion_id: rpcResult.completionId,
+      phase: 2,
+      over_under_status: rpcResult.overUnderStatus,
+    },
+  });
+
+  return {
+    completion: rowToCompletion(rpcResult.completion),
+    templateItemId: rpcResult.templateItemId,
+    completionId: rpcResult.completionId,
+    deltaVsPrepNeed: rpcResult.deltaVsPrepNeed,
+    overUnderStatus: rpcResult.overUnderStatus,
+  };
+}
+
+/**
+ * Phase 2 finalize invoker — wires the `submit_phase2_atomic` RPC
+ * (migration 0056). FINALIZE-ONLY (SPLIT — Question A): does NOT write per-item
+ * §8.4 (that's {@link savePhase2Item}); takes NO entries — it reads back the
+ * persisted phase2 completions, validates completeness over the Model Y universe
+ * (every `openingPhase2` item has a live phase2 completion), recomputes deltas
+ * authoritatively via the shared helper sourcing from the FROZEN
+ * `prep_data->phase1` (D4), dispatches under-prep notifications, and advances
+ * `phase1_complete → phase2_complete`. No opening→closing auto-complete (C.54 §2.A).
+ *
+ * Pre-flight authorization: actor.level ≥ OPENING_BASE_LEVEL (KH+).
+ *
+ * RPC error translation (P0001 by message prefix):
+ *   - phase2_not_eligible              → OpeningPhase2NotEligibleError(instanceId, currentStatus)
+ *   - phase2_incomplete                → OpeningPhase2IncompleteError(instanceId, missingCount)
+ *   - phase1_not_resolved              → OpeningGroundTruthUnresolvedError(itemId)
+ *   - phase2_chain_edit_not_implemented → generic re-throw (D3 — inert, no UI trigger)
+ *   - 23503 (actor)                    → OpeningActorNotFoundError; other → generic re-throw
+ *
+ * Audit (JS-side, original path): action `opening.phase2.submit`, NOT destructive.
+ * Outcomes: role_insufficient | phase2_not_eligible | phase2_incomplete |
+ * phase1_not_resolved | actor_not_found | rpc_failed | success.
+ */
+export async function submitPhase2Atomic(
+  service: SupabaseClient,
+  args: {
+    instanceId: string;
+    actor: OpeningActor;
     isUpdate?: boolean;
     originalSubmissionId?: string;
     ipAddress?: string | null;
     userAgent?: string | null;
   },
 ): Promise<OpeningPhaseSubmitResult> {
-  throw new OpeningError(
-    "submit_phase2_atomic RPC not yet implemented (type-contract-lock stub).",
-    "phase2_rpc_not_implemented",
-  );
+  const auditBase = {
+    actorId: args.actor.userId,
+    actorRole: args.actor.role,
+    action: "opening.phase2.submit" as const,
+    resourceTable: "checklist_instances" as const,
+    resourceId: args.instanceId,
+    ipAddress: args.ipAddress ?? null,
+    userAgent: args.userAgent ?? null,
+  };
+
+  if (!args.isUpdate && args.actor.level < OPENING_BASE_LEVEL) {
+    void audit({
+      ...auditBase,
+      metadata: {
+        outcome: "role_insufficient",
+        required_level: OPENING_BASE_LEVEL,
+        actual_level: args.actor.level,
+      },
+    });
+    throw new OpeningRoleViolationError(OPENING_BASE_LEVEL, args.actor.level);
+  }
+
+  let rpcResult: Phase2RpcResult;
+  try {
+    const { data, error } = await service.rpc("submit_phase2_atomic", {
+      p_opening_instance_id: args.instanceId,
+      p_actor_id: args.actor.userId,
+      p_is_update: args.isUpdate ?? false,
+      p_original_submission_id: args.originalSubmissionId ?? null,
+      p_ip_address: args.ipAddress ?? null,
+      p_user_agent: args.userAgent ?? null,
+    });
+    if (error) {
+      if (error.code === "P0001") {
+        const msg = error.message;
+        if (msg.includes("phase2_not_eligible")) {
+          const { data: row } = await service
+            .from("checklist_instances")
+            .select("status")
+            .eq("id", args.instanceId)
+            .maybeSingle<{ status: ChecklistStatus }>();
+          const status: ChecklistStatus = row?.status ?? "phase1_complete";
+          void audit({ ...auditBase, metadata: { outcome: "phase2_not_eligible", rpc_error: msg, current_status: status } });
+          throw new OpeningPhase2NotEligibleError(args.instanceId, status);
+        }
+        if (msg.includes("phase2_incomplete")) {
+          const missing = extractMissingCount(msg);
+          void audit({ ...auditBase, metadata: { outcome: "phase2_incomplete", rpc_error: msg, missing_count: missing } });
+          throw new OpeningPhase2IncompleteError(args.instanceId, missing);
+        }
+        if (msg.includes("phase1_not_resolved")) {
+          const itemId = extractTemplateItemId(msg) ?? "<unknown>";
+          void audit({ ...auditBase, metadata: { outcome: "phase1_not_resolved", rpc_error: msg, template_item_id: itemId } });
+          throw new OpeningGroundTruthUnresolvedError(itemId);
+        }
+        // phase2_chain_edit_not_implemented (D3 — inert) falls through to generic.
+      }
+      if (error.code === "23503" && error.message.includes("actor")) {
+        void audit({ ...auditBase, metadata: { outcome: "actor_not_found", rpc_error: error.message } });
+        throw new OpeningActorNotFoundError(args.actor.userId);
+      }
+      throw new Error(`submit_phase2_atomic rpc: ${error.message}`);
+    }
+    if (!data || typeof data !== "object") {
+      throw new Error("submit_phase2_atomic rpc: empty result");
+    }
+    rpcResult = data as Phase2RpcResult;
+  } catch (err) {
+    if (err instanceof OpeningError) throw err;
+    void audit({
+      ...auditBase,
+      metadata: {
+        outcome: "rpc_failed",
+        rpc_error: err instanceof Error ? err.message : String(err),
+      },
+    });
+    throw err;
+  }
+
+  void audit({
+    ...auditBase,
+    metadata: {
+      outcome: "success",
+      submission_id: rpcResult.submissionId,
+      completion_count: rpcResult.completionIds.length,
+      at_par_count: rpcResult.atParCount,
+      over_prep_count: rpcResult.overPrepCount,
+      under_prep_count: rpcResult.underPrepCount,
+      under_par_notification_count: rpcResult.underParNotificationIds.length,
+    },
+  });
+
+  return {
+    instance: rowToInstance(rpcResult.instance),
+    submittedCompletionIds: rpcResult.completionIds,
+    closingAutoCompleteId: rpcResult.autoCompleteId, // always null per 0056
+    editCount: rpcResult.editCount,
+    originalSubmissionId: rpcResult.originalSubmissionId,
+    underParNotificationIds: rpcResult.underParNotificationIds ?? [],
+  };
 }
 
 /**
@@ -2024,10 +2333,12 @@ export async function submitOpeningByPhase(
     });
   }
   if (phase === 2) {
+    // SPLIT (Question A): Phase 2 finalize is entries-less — per-item §8.4 writes
+    // land via savePhase2Item beforehand; finalize reads the persisted rows back.
+    // The dispatcher's `args.entries` are ignored on this branch.
     return submitPhase2Atomic(service, {
       instanceId: args.instanceId,
       actor: args.actor,
-      entries: args.entries as OpeningEntryPhase2[],
       isUpdate: args.isUpdate,
       originalSubmissionId: args.originalSubmissionId,
       ipAddress: args.ipAddress ?? null,

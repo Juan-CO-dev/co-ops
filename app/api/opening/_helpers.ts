@@ -15,6 +15,7 @@
  *   409 phase1_not_eligible           — C.53 entry phase mismatch (status≠'open')
  *   409 phase2_not_eligible           — C.53 entry phase mismatch (status≠'phase1_complete')
  *   409 phase3_not_eligible           — C.53 entry phase mismatch (status≠'phase2_complete')
+ *   422 phase2_incomplete             — C.53 Phase 2 finalize with unsaved prep items (Model Y universe)
  *   422 provenance_required           — C.54 reconstructed-morning entries without opener attestation
  *   422 out_of_range_reason_missing   — C.53 Phase 3 out-of-range verification without reason
  *   422 auto_complete_failed          — closing instance doesn't exist for date N-1
@@ -37,6 +38,7 @@ import {
   OpeningMissingCountError,
   OpeningOutOfRangeReasonMissingError,
   OpeningPhase1NotEligibleError,
+  OpeningPhase2IncompleteError,
   OpeningPhase2NotEligibleError,
   OpeningPhase3NotEligibleError,
   OpeningProvenanceRequiredError,
@@ -88,6 +90,15 @@ export function mapOpeningError(err: OpeningError): NextResponse {
     return jsonError(422, err.code, {
       message: err.message,
       template_item_id: err.templateItemId,
+    });
+  }
+  if (err instanceof OpeningPhase2IncompleteError) {
+    // 422 — Phase 2 finalize blocked: prep items still unsaved. UI surfaces
+    // opening.error.phase2_incomplete with the missing count.
+    return jsonError(422, err.code, {
+      message: err.message,
+      instance_id: err.instanceId,
+      missing_count: err.missingCount,
     });
   }
   if (err instanceof OpeningActorNotFoundError) {
