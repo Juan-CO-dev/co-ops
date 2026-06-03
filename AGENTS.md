@@ -1001,3 +1001,43 @@ The failure mode is symmetric to the "check existing patterns before designing n
 The pattern for forward implementation: when a new amendment lands, the implementing PR's pre-build response includes an explicit audit of code paths that carry comments like "preserved from prior" / "unchanged from X" / "logic from Y carried forward." Each such site gets re-evaluated against the new amendment's operational assumptions. If the operational assumption shifts, the "preserved" logic gets re-verified, not waved through.
 
 Forward bind for C.53's implementation (the C.54-dependent restructure): the C.53 pre-build response must audit every `submit_phase[1-3]_atomic` RPC's branches for C.50-era assumptions that need C.54's NULL-source-as-valid-state handling. The decoupled auto-complete (C.54 §2.A) is the specific instance; the discipline is general.
+
+## Phase 3 — C.53 §10 Phase 1 submit-wedge hotfix close-out (2026-06-03)
+
+Hotfix shipped as `f8dad95` (squash-merged PR #45, live in prod). Six durable, behavior-changing lessons.
+
+### Before building a reader, confirm the writer runs in prod — not just that the contract shape is correct
+
+The recurring failure-class across this whole arc: reasoning about a contract's SHAPE while never checking that its PRODUCER exists and runs. Phase 2 is a reader of `prep_data->phase1`; it was nearly treated as done before anything in prod had been confirmed to actually WRITE that 8-key contract. A correct-shaped reader against a producer that never runs is dead code that looks finished.
+
+Forward bind: when building any consumer of a data contract (reader of `prep_data->X`, of an audit row, of a derived column), the pre-build/verification step includes a prod query proving the producer has written real instances — not just a schema/type check that the shape lines up.
+
+### `router.refresh()` does NOT reset client `useState`
+
+App Router `router.refresh()` re-runs Server Components and pushes fresh props, but RECONCILES (does not remount) any Client Component lacking a changed `key` — so `useState` survives the refresh. A success path that relies on refresh to "reset" client state (e.g. a submit spinner) relies on something the framework does not do. This was the root cause of the Phase 1 submit wedge: the button spun forever because refresh re-rendered the server tree without clearing the client-side submit state.
+
+Forward bind: never assume a post-mutation `router.refresh()` clears client UI state. If client state must reset on a server transition, reset it explicitly (see next entry) or remount via a changed `key`.
+
+### To reset client state when a prop changes, use the during-render adjustment pattern, not `useEffect`
+
+For "reset client state when a server-derived prop changes," compare the prop against a stored prev value DURING render and `setState` then — not in a `useEffect`. Two reasons: (1) the React Compiler lint rule flags `setState`-in-effect; (2) the during-render pattern is more correct — it settles in the same render pass, closing the one-frame window an effect leaves where stale state is briefly visible. (react.dev "you might not need an effect".) The wedge fix uses a `prevInstanceStatus` compare to reset submit state to idle.
+
+Forward bind: prop-change-driven client-state resets default to the during-render prevState-compare pattern; reach for an effect only when the reset must run as a side-effect (subscriptions, imperative DOM), not for pure state derivation.
+
+### Status-gate destructive/transition affordances on server status, not on client spinner state
+
+The double-submit guard survives refresh because `phase1AlreadySubmitted = instance.status !== "open"` is derived from server status (`'open'` is the sole pre-submit status per 0054), not from a transient client flag. A spinner-state reset alone would NOT have closed the door — a hard refresh would have cleared the spinner and re-enabled submit. The load-bearing guard is the server-status check.
+
+Forward bind: gate any irreversible affordance (submit, finalize, revoke) on a server-authoritative status value, not on `isSubmitting`/spinner booleans. The spinner is UX; the status check is the actual guard.
+
+### A smoke result described in failure-language is not automatically a failure — map observed → expected before concluding
+
+"After submit the button shows 'Submit Opening' but grayed out / disabled" and "hard refresh + refill did NOT allow a second submit" both READ like failures but were the fix working correctly (disabled = already-submitted guard holding; refusal-to-resubmit = the point). Map each observed behavior to the expected behavior before calling a smoke green or red.
+
+Forward bind: when triaging a smoke report worded as a problem, write the expected behavior next to each observation. Only a mismatch is a failure; failure-language alone is not.
+
+### The codebase has repeatedly already-built the thing we were about to build — read for existing scaffolding before scoping anything as greenfield
+
+Same theme family as the Build #3 "check existing patterns before designing net-new" entry, now confirmed three more times in one arc: Phase 1 was already-live-not-dormant (the "next loop is a ~500 LOC activation" handoff was stale — the restructure had shipped); Phase 2 backend was ~70% existing-code adaptation, not net-new; Commit B's UI (`OpeningPrepEntry`) is a rewire of near-complete scaffolding, not a build.
+
+Forward bind: before scoping a CO-OPS surface as greenfield, read the actual current code for adjacent/precursor scaffolding. The default assumption is "some of this already exists"; prove it doesn't before estimating build (not rewire) effort.
