@@ -6,8 +6,9 @@
  * NOT the finalize RPC). Writes ONE prep item's phase2 completion in the §8.4
  * 14-field shape via savePhase2Item → save_phase2_item_atomic (append-only:
  * supersede-then-INSERT, D1). Returns the written completion + server-computed
- * delta/status for optimistic local state update. Revert is NOT here — it reuses
- * the legacy revoke routes (Question B; revert sets revoked_at only, no §8.4 write).
+ * delta/status for optimistic local state update. Revert is NOT here — it has its
+ * own thin path POST /api/opening/prep/item/revoke → revokePhase2Completion
+ * (Lane D; sets revoked_at only, no §8.4 write; closing's revoke routes untouched).
  *
  * Body: {
  *   instanceId: string,

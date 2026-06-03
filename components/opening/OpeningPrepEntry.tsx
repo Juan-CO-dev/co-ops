@@ -49,6 +49,7 @@ import {
   type OverParCapture,
 } from "./OverParModal";
 import { UnderParModal, type UnderParCapture } from "./UnderParModal";
+import { RevokeReasonModal } from "./RevokeReasonModal";
 
 export interface OpeningPhase2FormValue {
   /** Opener recount value when item flagged for per-item recount; NULL otherwise. */
@@ -104,7 +105,25 @@ export interface Phase2SaveState {
    * until first save.
    */
   savedSignature: string | null;
+  /**
+   * completions.id of the live phase2 row — the §8.4 revoke POST target. Non-null
+   * only while status==="saved" (cleared on revoke so the row goes "unsaved").
+   */
+  completionId: string | null;
 }
+
+/** §8.4 Lane D structured-path reason vocabulary (silent path stamps its own sentinel). */
+export type Phase2RevokeReason = "re_enter_count" | "other";
+
+/**
+ * Outcome of a revoke dispatch (Lane D). "needs_reason" means the SERVER chose
+ * the structured path and wants a reason — the client opens the inline form and
+ * re-dispatches. The client NEVER predicts the silent-vs-structured boundary.
+ */
+export type Phase2RevokeOutcome =
+  | { status: "revoked"; path: "silent" | "structured" }
+  | { status: "needs_reason" }
+  | { status: "error"; code: string };
 
 interface OpeningPrepEntryProps {
   items: ChecklistTemplateItem[];
@@ -119,6 +138,17 @@ interface OpeningPrepEntryProps {
   saverNames: Record<string, string>;
   /** Fires a per-row persist for the given item with the value to save. */
   onSaveItem: (templateItemId: string, value: OpeningPhase2FormValue) => void;
+  /**
+   * Fires a per-row §8.4 revoke (Lane D). Called FIRST with no reason — the
+   * SERVER decides silent (quick self-window) vs structured. On a "needs_reason"
+   * outcome the row opens the inline reason form and re-calls with reason+note.
+   * The client never computes the 60s window itself.
+   */
+  onRevokeItem: (
+    templateItemId: string,
+    reason?: Phase2RevokeReason | null,
+    note?: string | null,
+  ) => Promise<Phase2RevokeOutcome>;
   /** Map<templateItemId, snapshot row> from loadOpeningCloserCountSnapshots (persisted). */
   closerSnapshots: Map<string, OpeningCloserCountSnapshotRow>;
   /** Map<sectionKey, verified-state> in client memory; toggled via OpeningSectionVerify. */
@@ -136,6 +166,7 @@ export function OpeningPrepEntry({
   saveStates,
   saverNames,
   onSaveItem,
+  onRevokeItem,
   closerSnapshots,
   sectionVerifications,
   onSectionVerifyToggle,
@@ -148,6 +179,27 @@ export function OpeningPrepEntry({
   const [overParModalItemId, setOverParModalItemId] = useState<string | null>(null);
   const [underParModalItemId, setUnderParModalItemId] = useState<string | null>(null);
   const [recountPanelItemId, setRecountPanelItemId] = useState<string | null>(null);
+  // Revoke flow state. `revokingItemId` is the row mid-dispatch (disables its
+  // CTA + spinner); `revokeModalItemId` is the row whose structured reason form
+  // is open (only set when the SERVER returned "needs_reason").
+  const [revokingItemId, setRevokingItemId] = useState<string | null>(null);
+  const [revokeModalItemId, setRevokeModalItemId] = useState<string | null>(null);
+  // Row whose last silent-path revoke errored — surfaces an inline notice so a
+  // failed undo of a destructive action is never silent. Structured-path errors
+  // surface inside RevokeReasonModal instead.
+  const [revokeErrorItemId, setRevokeErrorItemId] = useState<string | null>(null);
+
+  // Optimistic no-reason revoke. The server decides silent-vs-structured; a
+  // "needs_reason" outcome opens the inline form (re-dispatch carries reason+note);
+  // an "error" outcome surfaces an inline notice on the row.
+  const handleRevokeClick = async (itemId: string) => {
+    setRevokingItemId(itemId);
+    setRevokeErrorItemId(null);
+    const outcome = await onRevokeItem(itemId);
+    setRevokingItemId(null);
+    if (outcome.status === "needs_reason") setRevokeModalItemId(itemId);
+    else if (outcome.status === "error") setRevokeErrorItemId(itemId);
+  };
 
   // Group items by section (system key from prep_meta.section).
   const sectionGroups = useMemo(() => {
@@ -185,6 +237,9 @@ export function OpeningPrepEntry({
     : null;
   const underParTarget = underParModalItemId
     ? items.find((it) => it.id === underParModalItemId)
+    : null;
+  const revokeTarget = revokeModalItemId
+    ? items.find((it) => it.id === revokeModalItemId)
     : null;
 
   return (
@@ -235,6 +290,7 @@ export function OpeningPrepEntry({
                     errorCode: null,
                     incompleteReason: null,
                     savedSignature: null,
+                    completionId: null,
                   };
                 const saverName =
                   saveState.savedById !== null
@@ -255,6 +311,9 @@ export function OpeningPrepEntry({
                     saverName={saverName}
                     onChange={(next) => onChange(item.id, next)}
                     onSave={(next) => onSaveItem(item.id, next)}
+                    onRevoke={() => handleRevokeClick(item.id)}
+                    revoking={revokingItemId === item.id}
+                    revokeError={revokeErrorItemId === item.id}
                     onOpenOverPar={() => setOverParModalItemId(item.id)}
                     onOpenUnderPar={() => setUnderParModalItemId(item.id)}
                     onOpenRecount={() => setRecountPanelItemId(item.id)}
@@ -310,6 +369,15 @@ export function OpeningPrepEntry({
           onCancel={() => setUnderParModalItemId(null)}
         />
       ) : null}
+
+      {revokeTarget ? (
+        <RevokeReasonModal
+          open={!!revokeModalItemId}
+          itemLabel={resolveTemplateItemContent(revokeTarget, language).label}
+          onSubmit={(reason, note) => onRevokeItem(revokeTarget.id, reason, note)}
+          onClose={() => setRevokeModalItemId(null)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -332,6 +400,12 @@ interface PrepEntryRowProps {
   onChange: (next: OpeningPhase2FormValue) => void;
   /** Fires a per-row persist with the value to save (blur / modal save). */
   onSave: (next: OpeningPhase2FormValue) => void;
+  /** Fires a per-row §8.4 revoke (no-reason; server decides the path). */
+  onRevoke: () => void;
+  /** True while this row's revoke is mid-flight (disables the CTA, shows spinner copy). */
+  revoking: boolean;
+  /** True when this row's last silent-path revoke errored (surfaces an inline notice). */
+  revokeError: boolean;
   onOpenOverPar: () => void;
   onOpenUnderPar: () => void;
   onOpenRecount: () => void;
@@ -351,6 +425,9 @@ function PrepEntryRow({
   saverName,
   onChange,
   onSave,
+  onRevoke,
+  revoking,
+  revokeError,
   onOpenOverPar,
   onOpenUnderPar,
   onOpenRecount,
@@ -599,14 +676,40 @@ function PrepEntryRow({
             {t("opening.phase2.save.saving")}
           </span>
         ) : saveState.status === "saved" ? (
-          <span className="font-medium text-co-success">
-            {saveState.savedAt !== null
-              ? t("opening.phase2.save.saved_by_at", {
-                  name: saverName ?? t("opening.phase2.save.saved_by_unknown"),
-                  time: formatTime(saveState.savedAt, language),
-                })
-              : t("opening.phase2.save.saved")}
-          </span>
+          <>
+            <span className="font-medium text-co-success">
+              {saveState.savedAt !== null
+                ? t("opening.phase2.save.saved_by_at", {
+                    name: saverName ?? t("opening.phase2.save.saved_by_unknown"),
+                    time: formatTime(saveState.savedAt, language),
+                  })
+                : t("opening.phase2.save.saved")}
+            </span>
+            {/* §8.4 revoke CTA — server decides silent vs structured; the client
+                never predicts the 60s window. */}
+            <button
+              type="button"
+              onClick={onRevoke}
+              disabled={revoking}
+              aria-label={t("opening.phase2.revoke.cta_aria", { item: resolved.label })}
+              className="
+                inline-flex min-h-[32px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 py-1
+                text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-muted
+                transition hover:border-co-danger hover:text-co-danger
+                focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
+                disabled:cursor-not-allowed disabled:opacity-60
+              "
+            >
+              {revoking
+                ? t("opening.phase2.revoke.cta_pending")
+                : t("opening.phase2.revoke.cta")}
+            </button>
+            {revokeError ? (
+              <span role="alert" className="font-bold text-co-danger">
+                {t("opening.phase2.revoke.error")}
+              </span>
+            ) : null}
+          </>
         ) : saveState.status === "failed" ? (
           <>
             <span role="alert" className="font-bold text-co-danger">

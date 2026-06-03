@@ -43,6 +43,8 @@ import {
   OpeningPrepEntry,
   type OpeningPhase2FormValue,
   type Phase2IncompleteReason,
+  type Phase2RevokeOutcome,
+  type Phase2RevokeReason,
   type Phase2SaveState,
 } from "@/components/opening/OpeningPrepEntry";
 import {
@@ -327,9 +329,15 @@ export function OpeningClient({
   // count. Items with no persisted phase2 save start "unsaved".
   const [saveStates, setSaveStates] = useState<Map<string, Phase2SaveState>>(() => {
     const savedByItem = new Map<string, OpeningPhase2SaveState>();
+    // completions.id of each live phase2 row, keyed by templateItemId — the
+    // revoke POST target a returning prepper needs to revert an already-saved row.
+    const idByItem = new Map<string, string>();
     for (const c of completions) {
       const save = readPhase2SaveState(c.prepData);
-      if (save) savedByItem.set(c.templateItemId, save);
+      if (save) {
+        savedByItem.set(c.templateItemId, save);
+        idByItem.set(c.templateItemId, c.id);
+      }
     }
     const map = new Map<string, Phase2SaveState>();
     for (const item of phase2Items) {
@@ -342,6 +350,7 @@ export function OpeningClient({
           errorCode: null,
           incompleteReason: null,
           savedSignature: phase2Signature(saveStateToFormValue(saved, item.id)),
+          completionId: idByItem.get(item.id) ?? null,
         });
       } else {
         map.set(item.id, {
@@ -351,6 +360,7 @@ export function OpeningClient({
           errorCode: null,
           incompleteReason: null,
           savedSignature: null,
+          completionId: null,
         });
       }
     }
@@ -630,6 +640,7 @@ export function OpeningClient({
           errorCode: null,
           incompleteReason: reason,
           savedSignature: prior?.savedSignature ?? null,
+          completionId: prior?.completionId ?? null,
         });
         return updated;
       });
@@ -687,6 +698,7 @@ export function OpeningClient({
         errorCode: null,
         incompleteReason: null,
         savedSignature: prior?.savedSignature ?? null,
+        completionId: prior?.completionId ?? null,
       });
       return updated;
     });
@@ -719,6 +731,7 @@ export function OpeningClient({
             errorCode,
             incompleteReason: null,
             savedSignature: prior?.savedSignature ?? null,
+            completionId: prior?.completionId ?? null,
           });
           return updated;
         });
@@ -727,6 +740,7 @@ export function OpeningClient({
 
       const body = (await res.json().catch(() => ({}))) as {
         completion?: { completedBy?: string; completedAt?: string };
+        completionId?: string;
       };
       setSaveStates((prev) => {
         const updated = new Map(prev);
@@ -737,6 +751,7 @@ export function OpeningClient({
           errorCode: null,
           incompleteReason: null,
           savedSignature: newSig,
+          completionId: body.completionId ?? null,
         });
         return updated;
       });
@@ -751,9 +766,96 @@ export function OpeningClient({
           errorCode: "network",
           incompleteReason: null,
           savedSignature: prior?.savedSignature ?? null,
+          completionId: prior?.completionId ?? null,
         });
         return updated;
       });
+    }
+  };
+
+  // Per-item revoke dispatcher (C.53 Commit B Lane D §8.4). Two-step "server
+  // decides the window" flow: the FIRST call sends no reason. The lib decides
+  // silent (<60s self-revert, no audit row) vs structured (post-window / KH+,
+  // reason required) — the CLIENT never predicts the boundary (clock skew, 60s
+  // edge). A silent revoke returns 200 here. A structured revoke with no reason
+  // returns 422 invalid_entry_shape, surfaced as { status: "needs_reason" } so
+  // the row opens the inline reason modal and re-dispatches with reason + note.
+  const handlePhase2ItemRevoke = async (
+    templateItemId: string,
+    reason?: Phase2RevokeReason | null,
+    note?: string | null,
+  ): Promise<Phase2RevokeOutcome> => {
+    const completionId = saveStates.get(templateItemId)?.completionId ?? null;
+    // No live completion to revoke (row never saved, or raced gone). The badge
+    // is already non-"saved", so there's nothing to undo client-side.
+    if (completionId === null) return { status: "error", code: "revoke_conflict" };
+
+    try {
+      const res = await fetch("/api/opening/prep/item/revoke", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          instanceId: instance.id,
+          completionId,
+          reason: reason ?? null,
+          note: note ?? null,
+        }),
+      });
+
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { code?: string };
+        // The lib 422s a no-reason structured revoke with invalid_entry_shape.
+        // Only treat that as "open the reason form" when WE sent no reason — a
+        // 422 on a reason-bearing re-POST is a genuine error, not a path signal.
+        if (
+          res.status === 422 &&
+          body.code === "invalid_entry_shape" &&
+          (reason === null || reason === undefined)
+        ) {
+          return { status: "needs_reason" };
+        }
+        const code = res.status >= 500 ? "fallback" : (body.code ?? "fallback");
+        return { status: "error", code };
+      }
+
+      const body = (await res.json().catch(() => ({}))) as {
+        path?: "silent" | "structured";
+      };
+
+      // Post-revoke Map reset (Juan's check #1): the row returns to "unsaved" —
+      // NOT "incomplete"/blank — so outstandingCount re-blocks finalize via the
+      // single-Map invariant. completionId clears (the revoked row is gone).
+      setSaveStates((prev) => {
+        const updated = new Map(prev);
+        updated.set(templateItemId, {
+          status: "unsaved",
+          savedById: null,
+          savedAt: null,
+          errorCode: null,
+          incompleteReason: null,
+          savedSignature: null,
+          completionId: null,
+        });
+        return updated;
+      });
+      // Clear the prep entry so the re-opened row is empty, but preserve
+      // openerRecount — that's a Phase 1 verify-beat value, not part of the
+      // revoked Phase 2 write.
+      setPhase2Values((prev) => {
+        const updated = new Map(prev);
+        const cur = prev.get(templateItemId);
+        updated.set(templateItemId, {
+          openerRecount: cur?.openerRecount ?? null,
+          openerPrepped: null,
+          overPar: null,
+          underPar: null,
+        });
+        return updated;
+      });
+
+      return { status: "revoked", path: body.path ?? "structured" };
+    } catch {
+      return { status: "error", code: "network" };
     }
   };
 
@@ -1132,6 +1234,7 @@ export function OpeningClient({
           saveStates={saveStates}
           saverNames={saverNames}
           onSaveItem={handlePhase2ItemSave}
+          onRevokeItem={handlePhase2ItemRevoke}
           closerSnapshots={closerSnapshotsMap}
           sectionVerifications={sectionVerifications}
           onSectionVerifyToggle={handleSectionVerifyToggle}
