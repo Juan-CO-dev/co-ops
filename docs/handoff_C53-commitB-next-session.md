@@ -268,6 +268,30 @@ evaporate. Neither blocks Commit B; both want their own altitude pass when Phase
    (Origin: re-smoke Finding B, 2026-06-03. Document-only by Juan's directive — additive, no behavior
    change ships in Commit B.)
 
+4. **NULL-source item's OWN Phase-2 ground-truth reads null for a second opener (Finding B family —
+   CAPTURE ONLY, deferred; ratified by Juan during fix #7 gate, 2026-06-03).** A NULL-source spot-check
+   item (snapshot exists with `closer_count IS NULL`) resolved by a Phase-1 recount reads
+   `groundTruth = null` for its OWN Phase-2 prep beat when a second opener has no `prep_data.phase2` row
+   yet — so the item shows "needs ground truth" in Phase 2 and the prepper must re-enter the recount.
+
+   **Why this is safely deferrable (the proof, not just the symptom):**
+   - **PRE-EXISTING.** The ground-truth read is `openerRecount !== null ? openerRecount : sectionVerified
+     ? closerCount : null` (handlePhase2ItemSave + OpeningPrepEntry). For a NULL-source item, `closerCount`
+     is `null`, so even a `sectionVerified=true` section yields `null` — the value can come ONLY from
+     `openerRecount`. That `openerRecount` reads from **phase2Values** (hydrated from `prep_data.phase2`),
+     which is empty for a fresh second opener. This was already true under the old derived seed (it also
+     set the section `true`, and `closerCount` was still `null`). Fix #7 did not create it.
+   - **NOT introduced and NOT woken by fix #7.** Fix #7 only changed the `sectionVerifications` SEED
+     (section-verify read-back). It does NOT touch the `phase2Values.openerRecount` hydration path. So
+     unlike the Finding A deferral — which a later fix *did* wake — this one lives in a distinct data
+     path that fix #7 provably leaves untouched. The two are decoupled by construction.
+   - **Fix shape (when picked up):** hydrate the Phase-1 recount into `phase2Values.openerRecount`, the
+     same hydration shape as Finding D's Phase-1 recount hydration into the `values` map (read
+     `prep_data.phase1.opener_recount` off the completion; populate the Phase-2 form seed). Small,
+     mirrors an already-shipped pattern.
+   (Origin: fix #7 surface, 2026-06-03. Document-only — fix #7 ships the section-verify seed; this
+   phase2Values hydration is the separate, decoupled follow-up.)
+
 ---
 
 ## 8. TEST FIXTURES — REMOVE AT FULL LAUNCH

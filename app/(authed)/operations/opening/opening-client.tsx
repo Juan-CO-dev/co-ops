@@ -71,6 +71,15 @@ interface OpeningClientProps {
    */
   closerSnapshots: Record<string, OpeningCloserCountSnapshotRow>;
   /**
+   * Fix #7 — distinct verified section_keys read back from
+   * opening_section_verifications (loadOpeningSectionVerifications). Seeds the
+   * sectionVerifications Map from SERVER TRUTH (opener A's persisted verify
+   * rows) rather than deriving all-true from verificationLocked. A plain
+   * string[] (not a Map) because section-verify is set-membership and an array
+   * survives the RSC→client JSON boundary directly.
+   */
+  verifiedSections: ReadonlyArray<string>;
+  /**
    * Live (non-superseded, non-revoked) completions for this instance, loaded by
    * loadOpeningState. Under dual-membership an openingPhase2 item carries TWO
    * live rows once Phase 2 saves exist — a phase1 row (prep_data ? 'phase1')
@@ -266,6 +275,7 @@ export function OpeningClient({
   instance,
   templateItems,
   closerSnapshots,
+  verifiedSections,
   completions,
   managers,
   saverNames,
@@ -302,6 +312,13 @@ export function OpeningClient({
   const closerSnapshotsMap = useMemo(
     () => new Map(Object.entries(closerSnapshots)),
     [closerSnapshots],
+  );
+
+  // Fix #7 — verified section_keys as a Set for O(1) membership in the
+  // sectionVerifications seed (path (a): section-verify row exists).
+  const verifiedSectionsSet = useMemo(
+    () => new Set(verifiedSections),
+    [verifiedSections],
   );
 
   // Split templateItems by phase — dual-membership, NOT mutually exclusive.
@@ -452,29 +469,58 @@ export function OpeningClient({
   // taps Verify Section to mark all items in section as "ground_truth =
   // closer_count"; per-item recount is the override path.
   //
-  // Section verifications are a Phase 1 (verify-beat) concern: seed from the
-  // spot-check items in phase1Items. Phase 2 (prep beat) now also carries these
-  // items under dual-membership, but section-verify state belongs to the verify
-  // tab, so iterate phase1Items here. Reads default-false, so this is
-  // correctness/clarity rather than a behavior change.
+  // Fix #7 — seed from SERVER TRUTH, not from derivation. The prior seed set
+  // every section to `verificationLocked` (all-true once Phase 1 landed), which
+  // read correct for a second opener only by coincidence — it was a derived
+  // value, not the persisted verify state. A section is verified-for-display via
+  // TWO independent resolution paths, both of which mean "resolved":
+  //   (a) section-verify  — opener tapped Verify Section → a row exists in
+  //       opening_section_verifications (verifiedSectionsSet, the new loader).
+  //   (b) per-item recount — every NULL-source item in the section was resolved
+  //       by its own Phase-1 recount (no section-verify row is written on this
+  //       path). Read off the now-hydrated Phase-1 `values` map.
+  // Seeding NAIVELY from path (a) alone (row exists ⇒ verified, else not) would
+  // WRONGLY mark a recount-resolved section unverified, which would then strip
+  // a CAPTURED item sharing that section of its closer_count ground-truth path
+  // (see handlePhase2ItemSave) — trading the derived bug for a re-gating one.
+  // Honoring both paths avoids that.
   const [sectionVerifications, setSectionVerifications] = useState<
     Map<string, boolean>
   >(() => {
-    const map = new Map<string, boolean>();
+    // Group spot-check phase1 items by section. Phase 2 carries these items too
+    // under dual-membership, but section-verify state belongs to the verify
+    // beat, so iterate phase1Items.
+    const bySection = new Map<string, ChecklistTemplateItem[]>();
     for (const item of phase1Items) {
       if (!closerSnapshotsMap.has(item.id)) continue;
       const meta = item.prepMeta as OpeningPhase2Meta | null;
-      // Finding A — hydrate from server truth. Once Phase 1 has landed
-      // (verificationLocked), the verify beat is DONE for everyone: seed
-      // verified=true so a second opener's empty form doesn't re-gate the
-      // section. This also feeds Phase 2 ground-truth (handlePhase2ItemSave
-      // reads sectionVerifications), so a returning prepper's saves compute
-      // correctly for captured-closer-count items. KNOWN EDGE: NULL-source
-      // items resolved via a Phase 1 recount (not section-verify) still need
-      // their persisted recount hydrated into phase2Values for ground-truth —
-      // deferred (bigger change); seeding verified=true is harmless for them
-      // (their save path still requires the recount).
-      if (meta?.section) map.set(meta.section, verificationLocked);
+      if (!meta?.section) continue;
+      const list = bySection.get(meta.section) ?? [];
+      list.push(item);
+      bySection.set(meta.section, list);
+    }
+
+    const map = new Map<string, boolean>();
+    for (const [section, items] of bySection) {
+      // Path (a): a persisted section-verify row exists.
+      const hasVerifyRow = verifiedSectionsSet.has(section);
+
+      // Path (b): every NULL-source item in the section was recount-resolved.
+      // NULL-source = snapshot exists with closer_count IS NULL (tri-state:
+      // closerCount === null). The `length > 0` guard is load-bearing: a
+      // CAPTURED-ONLY section (no NULL-source items) must NOT read as
+      // recount-resolved via `[].every()` (vacuous-true) — such sections can be
+      // verified ONLY via path (a), since they have no recount to infer from.
+      const nullSourceItems = items.filter(
+        (it) => closerSnapshotsMap.get(it.id)?.closerCount === null,
+      );
+      const allNullSourceResolved =
+        nullSourceItems.length > 0 &&
+        nullSourceItems.every(
+          (it) => (values.get(it.id)?.openerRecount ?? null) !== null,
+        );
+
+      map.set(section, hasVerifyRow || allNullSourceResolved);
     }
     return map;
   });

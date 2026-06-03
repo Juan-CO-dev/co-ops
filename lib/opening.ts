@@ -1196,6 +1196,41 @@ export async function loadOpeningCloserCountSnapshots(
   return result;
 }
 
+/**
+ * loadOpeningSectionVerifications — read-back of the section-verify beat
+ * (C.50 §2). The submit RPC (submitOpening) APPENDS one row to
+ * opening_section_verifications per verified=true section; this is the missing
+ * reader that lets a second opener see opener A's persisted verify state
+ * instead of a value derived from instance.status.
+ *
+ * Returns a DISTINCT list of verified section_keys (row-exists IS the verified
+ * signal — the table has no `verified` boolean; migration 0051). The table is
+ * append-only with no unique constraint, so a section can have multiple rows;
+ * we dedupe to a Set and return its keys. Returns [] for instances with no
+ * verify rows (still 'open', or no section was ever verified).
+ *
+ * A plain string[] (not a Map) crosses the RSC→client boundary directly —
+ * section-verify is a set-membership question, not a key→value lookup, and an
+ * array is JSON-serializable without the Record⇄Map dance closerSnapshots needs.
+ */
+export async function loadOpeningSectionVerifications(
+  service: SupabaseClient,
+  instanceId: string,
+): Promise<string[]> {
+  const { data, error } = await service
+    .from("opening_section_verifications")
+    .select("section_key")
+    .eq("opening_instance_id", instanceId);
+  if (error) {
+    throw new Error(`loadOpeningSectionVerifications: ${error.message}`);
+  }
+  const seen = new Set<string>();
+  for (const row of (data ?? []) as Array<{ section_key: string }>) {
+    seen.add(row.section_key);
+  }
+  return [...seen];
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // submitOpening — invoke submit_opening_atomic RPC
 // ─────────────────────────────────────────────────────────────────────────────
