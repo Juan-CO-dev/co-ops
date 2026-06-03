@@ -42,8 +42,15 @@ import {
   OpeningPrepEntry,
   type OpeningPhase2FormValue,
 } from "@/components/opening/OpeningPrepEntry";
-import type { ManagerOption, OverParCapture } from "@/components/opening/OverParModal";
-import type { UnderParCapture } from "@/components/opening/UnderParModal";
+import {
+  isOverParReasonCategory,
+  type ManagerOption,
+  type OverParCapture,
+} from "@/components/opening/OverParModal";
+import {
+  isUnderParReasonCategory,
+  type UnderParCapture,
+} from "@/components/opening/UnderParModal";
 
 interface OpeningClientProps {
   instance: ChecklistInstance;
@@ -85,6 +92,12 @@ interface SubmitState {
  * only covers the AM-Prep inputs/snapshot shape), so it's defined locally for
  * the hydration seed. Review Gate #1: this is the persisted-row → form-value
  * contract Triad A scrutinizes before Lane B.
+ *
+ * Forward-bind (Triad A, Review Gate #1): promote this to lib/types.ts as a
+ * PrepData union arm ({ inputs, snapshot } | { phase2 }) when the verify-then-
+ * prep primitive is designed — NOT now. Widening PrepData mid-build forces every
+ * existing consumer to handle the new arm; local is correct for Lane A, the
+ * promotion belongs to the primitive-design pass.
  */
 interface OpeningPhase2SaveState {
   phase: 2;
@@ -117,26 +130,61 @@ function readPhase2SaveState(prepData: unknown): OpeningPhase2SaveState | null {
   return p2 as OpeningPhase2SaveState;
 }
 
-/** Map a persisted phase2 save 1:1 onto the controlled form value. */
-function saveStateToFormValue(s: OpeningPhase2SaveState): OpeningPhase2FormValue {
+/**
+ * Map a persisted phase2 save onto the controlled form value. The numeric beats
+ * (openerRecount, openerPrepped) always hydrate. The over/under capture is
+ * reconstructed from over_under_status, but the persisted reason category is an
+ * UNTYPED text column — so it's validated at the boundary against the canonical
+ * vocabulary (isOver/UnderParReasonCategory, derived from the modals' REASON_
+ * OPTIONS). An unrecognized category does NOT get blind-cast in: the capture is
+ * left null (forcing the operator to re-pick, since the numeric that triggered
+ * over/under still hydrates) and a console.warn makes the bad value observable
+ * rather than silently swallowed. (Review Gate #1 required fix.)
+ */
+function saveStateToFormValue(
+  s: OpeningPhase2SaveState,
+  itemId: string,
+): OpeningPhase2FormValue {
+  let overPar: OverParCapture | null = null;
+  if (s.over_under_status === "over_prep") {
+    const cat = s.over_under_reason_category;
+    if (cat != null && isOverParReasonCategory(cat)) {
+      overPar = {
+        reasonCategory: cat,
+        directedBy: s.directed_by,
+        freeText: s.over_under_reason_text,
+      };
+    } else {
+      console.warn(
+        `[opening] Phase 2 hydration: invalid over-par reasonCategory ${JSON.stringify(
+          cat,
+        )} on item ${itemId} (saved_at=${s.saved_at}); leaving capture unset for re-pick.`,
+      );
+    }
+  }
+
+  let underPar: UnderParCapture | null = null;
+  if (s.over_under_status === "under_prep") {
+    const cat = s.over_under_reason_category;
+    if (cat != null && isUnderParReasonCategory(cat)) {
+      underPar = {
+        reasonCategory: cat,
+        freeText: s.over_under_reason_text ?? "",
+      };
+    } else {
+      console.warn(
+        `[opening] Phase 2 hydration: invalid under-par reasonCategory ${JSON.stringify(
+          cat,
+        )} on item ${itemId} (saved_at=${s.saved_at}); leaving capture unset for re-pick.`,
+      );
+    }
+  }
+
   return {
     openerRecount: s.opener_recount,
     openerPrepped: s.opener_prepped,
-    overPar:
-      s.over_under_status === "over_prep"
-        ? {
-            reasonCategory: s.over_under_reason_category as OverParCapture["reasonCategory"],
-            directedBy: s.directed_by,
-            freeText: s.over_under_reason_text,
-          }
-        : null,
-    underPar:
-      s.over_under_status === "under_prep"
-        ? {
-            reasonCategory: s.over_under_reason_category as UnderParCapture["reasonCategory"],
-            freeText: s.over_under_reason_text ?? "",
-          }
-        : null,
+    overPar,
+    underPar,
   };
 }
 
@@ -212,7 +260,7 @@ export function OpeningClient({
       map.set(
         item.id,
         saved
-          ? saveStateToFormValue(saved)
+          ? saveStateToFormValue(saved, item.id)
           : { openerRecount: null, openerPrepped: null, overPar: null, underPar: null },
       );
     }

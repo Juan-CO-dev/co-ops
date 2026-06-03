@@ -47,6 +47,22 @@ const REASON_OPTIONS: ReadonlyArray<{
   { value: "other", labelKey: "opening.over_par.reason.other" },
 ];
 
+const OVER_PAR_REASON_VALUES: ReadonlySet<string> = new Set(
+  REASON_OPTIONS.map((o) => o.value),
+);
+
+/**
+ * Runtime guard validating an untyped string (e.g. a persisted
+ * prep_data->phase2 over_under_reason_category) against the canonical reason
+ * vocabulary. Derived from REASON_OPTIONS so the validation set and the
+ * dropdown render from the same single source — no parallel list to drift.
+ */
+export function isOverParReasonCategory(
+  value: string,
+): value is OverParReasonCategory {
+  return OVER_PAR_REASON_VALUES.has(value);
+}
+
 export interface ManagerOption {
   /** users.id */
   id: string;
