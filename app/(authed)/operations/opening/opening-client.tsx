@@ -145,6 +145,37 @@ function readPhase2SaveState(prepData: unknown): OpeningPhase2SaveState | null {
 }
 
 /**
+ * True when a completion is the Phase 2 (prep-beat) row of a dual-membership
+ * item — i.e. its prep_data carries a 'phase2' sub-object. The Phase 1 `values`
+ * seed (Finding D hydration) uses this to EXCLUDE phase2 rows: a spot-check
+ * openingPhase2 item carries both a phase1 row and a phase2 row once prep saves
+ * exist, and only the phase1 row's persisted temp/notes/recount may seed the
+ * verification form.
+ */
+function isPhase2Row(prepData: unknown): boolean {
+  return (
+    prepData != null && typeof prepData === "object" && "phase2" in prepData
+  );
+}
+
+/**
+ * Read the persisted opener_recount out of a completion's prep_data->'phase1'
+ * sub-object (the 8-key spot-check contract written by submit_opening_atomic,
+ * migration 0053). Returns null when the completion carries no phase1 sub-object
+ * — non-spot-check items store prep_data = null and never have a recount. Mirrors
+ * readPhase2SaveState's untyped-boundary discipline: prep_data->phase1 is NOT
+ * modeled by lib/types.ts PrepData, so it's read defensively here.
+ */
+function readPhase1OpenerRecount(prepData: unknown): number | null {
+  if (prepData == null || typeof prepData !== "object") return null;
+  if (!("phase1" in prepData)) return null;
+  const p1 = (prepData as { phase1: unknown }).phase1;
+  if (p1 == null || typeof p1 !== "object") return null;
+  const recount = (p1 as { opener_recount?: unknown }).opener_recount;
+  return typeof recount === "number" ? recount : null;
+}
+
+/**
  * Map a persisted phase2 save onto the controlled form value. The numeric beats
  * (openerRecount, openerPrepped) always hydrate. The over/under capture is
  * reconstructed from over_under_status, but the persisted reason category is an
@@ -298,11 +329,40 @@ export function OpeningClient({
     return { phase1Items: p1, phase2Items: p2 };
   }, [templateItems, closerSnapshotsMap]);
 
-  // Phase 1 form state.
+  // Phase 1 form state — hydrated from persisted phase1 completions so a SECOND
+  // opener on a verification-locked instance SEES opener A's recorded values
+  // (Finding D). The fridge temp reading lives in the top-level countValue
+  // column; the spot-check recount lives in prep_data->phase1.opener_recount;
+  // discrepancy notes/photo live in their top-level columns. None of these can
+  // be derived from verificationLocked the way `ticked` can — they MUST be read
+  // back from the completion, or the second opener faces an empty field and is
+  // forced to re-enter a value that's already once-per-instance committed.
+  //
+  // On an 'open' instance (first opener, pre-submit) there are no phase1
+  // completions, so the seed yields a blank form — unchanged from prior
+  // behavior. The phase2 row of a dual-membership item is excluded via
+  // isPhase2Row so it can never seed this verification map.
   const [values, setValues] = useState<Map<string, OpeningItemFormValue>>(() => {
+    const phase1ByItem = new Map<string, ChecklistCompletion>();
+    for (const c of completions) {
+      if (isPhase2Row(c.prepData)) continue;
+      phase1ByItem.set(c.templateItemId, c);
+    }
     const map = new Map<string, OpeningItemFormValue>();
     for (const item of phase1Items) {
-      map.set(item.id, { countValue: null, photoId: null, notes: null, ticked: false, openerRecount: null });
+      const c = phase1ByItem.get(item.id);
+      map.set(
+        item.id,
+        c
+          ? {
+              countValue: c.countValue,
+              photoId: c.photoId,
+              notes: c.notes,
+              ticked: true,
+              openerRecount: readPhase1OpenerRecount(c.prepData),
+            }
+          : { countValue: null, photoId: null, notes: null, ticked: false, openerRecount: null },
+      );
     }
     return map;
   });

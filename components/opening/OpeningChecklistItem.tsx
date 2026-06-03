@@ -143,6 +143,7 @@ export function OpeningChecklistItem({
                 ariaLabel={t("opening.item.count_input_aria", { item: resolved.label })}
                 required={value.ticked}
                 hasError={hasMissingCountError}
+                disabled={verificationLocked}
               />
               {hasMissingCountError ? (
                 <span className="text-xs text-co-danger">
