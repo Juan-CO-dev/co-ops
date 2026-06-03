@@ -247,6 +247,7 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
         instance={state.instance}
         templateItems={state.templateItems}
         closerSnapshots={closerSnapshots}
+        completions={state.completions}
         managers={managers}
         language={language}
       />

@@ -29,6 +29,7 @@ import { useTranslation } from "@/lib/i18n/provider";
 import type { Language } from "@/lib/i18n/types";
 import type { OpeningCloserCountSnapshotRow } from "@/lib/opening";
 import type {
+  ChecklistCompletion,
   ChecklistInstance,
   ChecklistTemplateItem,
   OpeningNoPriorDataReason,
@@ -41,7 +42,8 @@ import {
   OpeningPrepEntry,
   type OpeningPhase2FormValue,
 } from "@/components/opening/OpeningPrepEntry";
-import type { ManagerOption } from "@/components/opening/OverParModal";
+import type { ManagerOption, OverParCapture } from "@/components/opening/OverParModal";
+import type { UnderParCapture } from "@/components/opening/UnderParModal";
 
 interface OpeningClientProps {
   instance: ChecklistInstance;
@@ -56,6 +58,15 @@ interface OpeningClientProps {
    * internally via useMemo for OpeningPrepEntry consumption.
    */
   closerSnapshots: Record<string, OpeningCloserCountSnapshotRow>;
+  /**
+   * Live (non-superseded, non-revoked) completions for this instance, loaded by
+   * loadOpeningState. Under dual-membership an openingPhase2 item carries TWO
+   * live rows once Phase 2 saves exist — a phase1 row (prep_data ? 'phase1')
+   * and a phase2 row (prep_data ? 'phase2'). The phase2Values seed filters to
+   * the phase2 rows ONLY (see readPhase2SaveState); the phase1 `values` seed
+   * reads no completions, so it can never pick up a phase2 row.
+   */
+  completions: ReadonlyArray<ChecklistCompletion>;
   /** AGM+ at this location for over-par directedBy dropdown. */
   managers: ReadonlyArray<ManagerOption>;
   language: Language;
@@ -67,10 +78,73 @@ interface SubmitState {
   errorMessage?: string;
 }
 
+/**
+ * Shape of a persisted Phase 2 save, as written by save_phase2_item_atomic
+ * (migration 0056) into completions.prep_data->'phase2'. snake_case mirrors the
+ * RPC's jsonb_build_object exactly. NOT modeled by lib/types.ts PrepData (which
+ * only covers the AM-Prep inputs/snapshot shape), so it's defined locally for
+ * the hydration seed. Review Gate #1: this is the persisted-row → form-value
+ * contract Triad A scrutinizes before Lane B.
+ */
+interface OpeningPhase2SaveState {
+  phase: 2;
+  closer_count: number | null;
+  spot_check_status: string | null;
+  opener_recount: number | null;
+  ground_truth_count: number | null;
+  prep_need: number | null;
+  opener_prepped: number | null;
+  delta_vs_prep_need: number | null;
+  over_under_status: "at_par" | "over_prep" | "under_prep";
+  over_under_reason_category: string | null;
+  over_under_reason_text: string | null;
+  directed_by: string | null;
+  saved_at: string;
+  saved_by: string;
+}
+
+/**
+ * Explicit prep_data ? 'phase2' filter. Under dual-membership an openingPhase2
+ * item carries a phase1 row AND a phase2 row once saves exist; this guard
+ * returns non-null ONLY for the phase2 row, so the phase2Values seed can never
+ * incidentally hydrate from a phase1 completion.
+ */
+function readPhase2SaveState(prepData: unknown): OpeningPhase2SaveState | null {
+  if (prepData == null || typeof prepData !== "object") return null;
+  if (!("phase2" in prepData)) return null;
+  const p2 = (prepData as { phase2: unknown }).phase2;
+  if (p2 == null || typeof p2 !== "object") return null;
+  return p2 as OpeningPhase2SaveState;
+}
+
+/** Map a persisted phase2 save 1:1 onto the controlled form value. */
+function saveStateToFormValue(s: OpeningPhase2SaveState): OpeningPhase2FormValue {
+  return {
+    openerRecount: s.opener_recount,
+    openerPrepped: s.opener_prepped,
+    overPar:
+      s.over_under_status === "over_prep"
+        ? {
+            reasonCategory: s.over_under_reason_category as OverParCapture["reasonCategory"],
+            directedBy: s.directed_by,
+            freeText: s.over_under_reason_text,
+          }
+        : null,
+    underPar:
+      s.over_under_status === "under_prep"
+        ? {
+            reasonCategory: s.over_under_reason_category as UnderParCapture["reasonCategory"],
+            freeText: s.over_under_reason_text ?? "",
+          }
+        : null,
+  };
+}
+
 export function OpeningClient({
   instance,
   templateItems,
   closerSnapshots,
+  completions,
   managers,
   language,
 }: OpeningClientProps) {
@@ -121,15 +195,26 @@ export function OpeningClient({
   });
 
   // Phase 2 form state — C.50 redesign: openerRecount replaces openerActual.
+  // Hydrated from persisted phase2 completions so a returning prepper sees their
+  // prior saves (Lane A). The seed filters completions to phase2 rows ONLY via
+  // readPhase2SaveState (explicit prep_data ? 'phase2' guard) — under dual-
+  // membership the same item also carries a phase1 row, which must never seed
+  // this map. Items with no phase2 save start blank.
   const [phase2Values, setPhase2Values] = useState<Map<string, OpeningPhase2FormValue>>(() => {
+    const savedByItem = new Map<string, OpeningPhase2SaveState>();
+    for (const c of completions) {
+      const save = readPhase2SaveState(c.prepData);
+      if (save) savedByItem.set(c.templateItemId, save);
+    }
     const map = new Map<string, OpeningPhase2FormValue>();
     for (const item of phase2Items) {
-      map.set(item.id, {
-        openerRecount: null,
-        openerPrepped: null,
-        overPar: null,
-        underPar: null,
-      });
+      const saved = savedByItem.get(item.id);
+      map.set(
+        item.id,
+        saved
+          ? saveStateToFormValue(saved)
+          : { openerRecount: null, openerPrepped: null, overPar: null, underPar: null },
+      );
     }
     return map;
   });
