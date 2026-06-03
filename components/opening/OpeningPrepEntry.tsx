@@ -35,6 +35,7 @@
 import { useMemo, useState } from "react";
 
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
+import { formatTime } from "@/lib/i18n/format";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { OpeningCloserCountSnapshotRow } from "@/lib/opening";
@@ -62,10 +63,62 @@ export interface OpeningPhase2FormValue {
 
 export type { ManagerOption };
 
+/**
+ * Per-row save lifecycle (C.53 Commit B Lane B). The save-state Map keyed by
+ * templateItemId is the SINGLE SOURCE OF TRUTH for BOTH the per-row badges
+ * rendered here AND the finalize outstanding-count computed in the parent —
+ * the badge and the gate read the same Map so they can never disagree.
+ */
+export type Phase2SaveStatus =
+  | "unsaved"
+  | "incomplete"
+  | "saving"
+  | "saved"
+  | "failed";
+
+/**
+ * Why a blur-save no-op'd because a prerequisite blocks persistence. Drives the
+ * calm, directive "incomplete" badge (distinct from the alarming "failed"
+ * badge): "incomplete" means "you started this row but a prerequisite blocks
+ * the save — here's the next step," NOT "something broke."
+ *   - "needs_ground_truth": section unverified AND no per-item recount, so there
+ *     is no ground-truth count to compute prep_need against.
+ *   - "needs_reason": a non-zero delta_vs_prep_need needs its over/under reason
+ *     captured before the row can persist.
+ */
+export type Phase2IncompleteReason = "needs_ground_truth" | "needs_reason";
+
+export interface Phase2SaveState {
+  status: Phase2SaveStatus;
+  /** users.id of the saver (for "Saved by {name}" attribution); null until saved. */
+  savedById: string | null;
+  /** ISO timestamp of the persisted save; null until saved. */
+  savedAt: string | null;
+  /** Error code from the last failed save (drives inline error copy); null otherwise. */
+  errorCode: string | null;
+  /** Which prerequisite blocks the save; non-null only when status==="incomplete". */
+  incompleteReason: Phase2IncompleteReason | null;
+  /**
+   * Serialized snapshot of the last-persisted values. The dispatcher diffs the
+   * current value's signature against this to skip redundant re-POSTs. null
+   * until first save.
+   */
+  savedSignature: string | null;
+}
+
 interface OpeningPrepEntryProps {
   items: ChecklistTemplateItem[];
   values: Map<string, OpeningPhase2FormValue>;
   onChange: (templateItemId: string, next: OpeningPhase2FormValue) => void;
+  /**
+   * Per-row save state. The ONE Map that drives both the badges here and the
+   * finalize gate in the parent (Juan's single-source pre-commit proof).
+   */
+  saveStates: Map<string, Phase2SaveState>;
+  /** Map<users.id, display name> for save attribution. */
+  saverNames: Record<string, string>;
+  /** Fires a per-row persist for the given item with the value to save. */
+  onSaveItem: (templateItemId: string, value: OpeningPhase2FormValue) => void;
   /** Map<templateItemId, snapshot row> from loadOpeningCloserCountSnapshots (persisted). */
   closerSnapshots: Map<string, OpeningCloserCountSnapshotRow>;
   /** Map<sectionKey, verified-state> in client memory; toggled via OpeningSectionVerify. */
@@ -80,6 +133,9 @@ export function OpeningPrepEntry({
   items,
   values,
   onChange,
+  saveStates,
+  saverNames,
+  onSaveItem,
   closerSnapshots,
   sectionVerifications,
   onSectionVerifyToggle,
@@ -171,6 +227,19 @@ export function OpeningPrepEntry({
                   underPar: null,
                 };
                 const snapshot = closerSnapshots.get(item.id) ?? null;
+                const saveState =
+                  saveStates.get(item.id) ?? {
+                    status: "unsaved" as const,
+                    savedById: null,
+                    savedAt: null,
+                    errorCode: null,
+                    incompleteReason: null,
+                    savedSignature: null,
+                  };
+                const saverName =
+                  saveState.savedById !== null
+                    ? saverNames[saveState.savedById] ?? null
+                    : null;
 
                 return (
                   <PrepEntryRow
@@ -182,7 +251,10 @@ export function OpeningPrepEntry({
                     recountOpen={recountPanelItemId === item.id}
                     language={language}
                     showMissingErrors={showMissingErrors}
+                    saveState={saveState}
+                    saverName={saverName}
                     onChange={(next) => onChange(item.id, next)}
+                    onSave={(next) => onSaveItem(item.id, next)}
                     onOpenOverPar={() => setOverParModalItemId(item.id)}
                     onOpenUnderPar={() => setUnderParModalItemId(item.id)}
                     onOpenRecount={() => setRecountPanelItemId(item.id)}
@@ -209,7 +281,9 @@ export function OpeningPrepEntry({
               overPar: null,
               underPar: null,
             };
-            onChange(overParTarget.id, { ...cur, overPar: capture });
+            const next = { ...cur, overPar: capture };
+            onChange(overParTarget.id, next);
+            onSaveItem(overParTarget.id, next);
             setOverParModalItemId(null);
           }}
           onCancel={() => setOverParModalItemId(null)}
@@ -228,7 +302,9 @@ export function OpeningPrepEntry({
               overPar: null,
               underPar: null,
             };
-            onChange(underParTarget.id, { ...cur, underPar: capture });
+            const next = { ...cur, underPar: capture };
+            onChange(underParTarget.id, next);
+            onSaveItem(underParTarget.id, next);
             setUnderParModalItemId(null);
           }}
           onCancel={() => setUnderParModalItemId(null)}
@@ -250,7 +326,12 @@ interface PrepEntryRowProps {
   recountOpen: boolean;
   language: Language;
   showMissingErrors: boolean;
+  saveState: Phase2SaveState;
+  /** Resolved display name of the saver; null when unsaved or name unknown. */
+  saverName: string | null;
   onChange: (next: OpeningPhase2FormValue) => void;
+  /** Fires a per-row persist with the value to save (blur / modal save). */
+  onSave: (next: OpeningPhase2FormValue) => void;
   onOpenOverPar: () => void;
   onOpenUnderPar: () => void;
   onOpenRecount: () => void;
@@ -266,7 +347,10 @@ function PrepEntryRow({
   recountOpen,
   language,
   showMissingErrors,
+  saveState,
+  saverName,
   onChange,
+  onSave,
   onOpenOverPar,
   onOpenUnderPar,
   onOpenRecount,
@@ -444,6 +528,7 @@ function PrepEntryRow({
         <NumericInput
           value={value.openerPrepped}
           onChange={(next) => onChange({ ...value, openerPrepped: next })}
+          onBlur={() => onSave(value)}
           ariaLabel={t("opening.phase2.input_prepped_aria", { item: resolved.label })}
           hasError={prepAmountMissing}
         />
@@ -505,6 +590,58 @@ function PrepEntryRow({
         </p>
       ) : null}
 
+      {/* Per-row save-state indicator + attribution + retry (C.53 Commit B Lane B).
+       * Reads the same Map entry that feeds the parent's finalize outstanding-count,
+       * so the badge and the gate can never disagree. */}
+      <div className="flex flex-wrap items-center gap-2 text-[11px]">
+        {saveState.status === "saving" ? (
+          <span className="font-bold uppercase tracking-[0.12em] text-co-text-muted">
+            {t("opening.phase2.save.saving")}
+          </span>
+        ) : saveState.status === "saved" ? (
+          <span className="font-medium text-co-success">
+            {saveState.savedAt !== null
+              ? t("opening.phase2.save.saved_by_at", {
+                  name: saverName ?? t("opening.phase2.save.saved_by_unknown"),
+                  time: formatTime(saveState.savedAt, language),
+                })
+              : t("opening.phase2.save.saved")}
+          </span>
+        ) : saveState.status === "failed" ? (
+          <>
+            <span role="alert" className="font-bold text-co-danger">
+              {t("opening.phase2.save.failed")}
+            </span>
+            <button
+              type="button"
+              onClick={() => onSave(value)}
+              aria-label={t("opening.phase2.save.retry_aria", { item: resolved.label })}
+              className="
+                inline-flex min-h-[32px] items-center rounded-full border-2 border-co-danger bg-co-surface px-3 py-1
+                text-[10px] font-bold uppercase tracking-[0.12em] text-co-text
+                transition hover:bg-[#FFE4E4]
+                focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
+              "
+            >
+              {t("opening.phase2.save.retry")}
+            </button>
+          </>
+        ) : saveState.status === "incomplete" ? (
+          // Calm, directive nudge — informational (Brand Blue), NOT an error.
+          // Tells the prepper the next step to make the row savable; deliberately
+          // distinct from the alarming red "failed" badge above.
+          <span className="font-medium text-co-info">
+            {saveState.incompleteReason === "needs_ground_truth"
+              ? t("opening.phase2.save.incomplete_ground_truth")
+              : t("opening.phase2.save.incomplete_reason")}
+          </span>
+        ) : (
+          <span className="font-medium text-co-text-dim">
+            {t("opening.phase2.save.unsaved")}
+          </span>
+        )}
+      </div>
+
       {/* Submit-gate inline error badges — render only when showMissingErrors active */}
       {sectionUnverifiedAndNoRecount ? (
         <p role="alert" className="self-start text-[11px] font-medium text-co-danger">
@@ -532,11 +669,12 @@ function PrepEntryRow({
 interface NumericInputProps {
   value: number | null;
   onChange: (next: number | null) => void;
+  onBlur?: () => void;
   ariaLabel: string;
   hasError?: boolean;
 }
 
-function NumericInput({ value, onChange, ariaLabel, hasError = false }: NumericInputProps) {
+function NumericInput({ value, onChange, onBlur, ariaLabel, hasError = false }: NumericInputProps) {
   const stringValue = value === null ? "" : String(value);
   return (
     <input
@@ -552,6 +690,7 @@ function NumericInput({ value, onChange, ariaLabel, hasError = false }: NumericI
         const parsed = Number(raw);
         if (Number.isFinite(parsed)) onChange(parsed);
       }}
+      onBlur={onBlur}
       aria-label={ariaLabel}
       aria-invalid={hasError}
       className={[

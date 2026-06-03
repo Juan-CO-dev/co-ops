@@ -466,5 +466,18 @@
   "opening.under_par.reason_label": "Why prep less than needed?",
   "opening.under_par.free_text_label": "Notes",
   "opening.under_par.free_text_placeholder": "Required — be specific",
-  "opening.under_par.warning": "This will alert KH+, MoO, and Owner immediately on submit. Be specific about reason."
+  "opening.under_par.warning": "This will alert KH+, MoO, and Owner immediately on submit. Be specific about reason.",
+  "opening.phase2.save.saving": "Saving…",
+  "opening.phase2.save.saved": "Saved",
+  "opening.phase2.save.saved_by_at": "Saved by {name} at {time}",
+  "opening.phase2.save.saved_by_unknown": "someone",
+  "opening.phase2.save.failed": "Save failed",
+  "opening.phase2.save.retry": "Retry",
+  "opening.phase2.save.retry_aria": "Retry saving {item}",
+  "opening.phase2.save.unsaved": "Not saved",
+  "opening.phase2.save.incomplete_ground_truth": "Verify section to save",
+  "opening.phase2.save.incomplete_reason": "Add a reason to save",
+  "opening.finalize.button_label": "Finalize Phase 2",
+  "opening.finalize.button_label_outstanding": "Finalize Phase 2 ({count} outstanding)",
+  "opening.finalize.gate_outstanding": "{count} prep items not yet saved"
 }

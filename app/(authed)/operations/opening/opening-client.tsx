@@ -41,6 +41,8 @@ import type { OpeningItemFormValue } from "@/components/opening/OpeningChecklist
 import {
   OpeningPrepEntry,
   type OpeningPhase2FormValue,
+  type Phase2IncompleteReason,
+  type Phase2SaveState,
 } from "@/components/opening/OpeningPrepEntry";
 import {
   isOverParReasonCategory,
@@ -76,6 +78,12 @@ interface OpeningClientProps {
   completions: ReadonlyArray<ChecklistCompletion>;
   /** AGM+ at this location for over-par directedBy dropdown. */
   managers: ReadonlyArray<ManagerOption>;
+  /**
+   * Map<users.id, display name> for per-row save attribution. Merges
+   * loadOpeningState's persisted-saver authors with the current actor (so a
+   * fresh-session save resolves a name immediately, before any re-load).
+   */
+  saverNames: Record<string, string>;
   language: Language;
 }
 
@@ -188,12 +196,42 @@ function saveStateToFormValue(
   };
 }
 
+/**
+ * Serialize the persistable beats of a Phase 2 form value into a stable string
+ * for value-diff dedup. Mirrors the /api/opening/prep/item route body shape
+ * exactly: openerPrepped + the over/under captures, in the same field order the
+ * route validates. openerRecount is intentionally EXCLUDED — recount is a
+ * Phase 1 (verify-beat) concern, not in the route body, and a recount change
+ * alone must not trigger a Phase 2 save. Used both to seed savedSignature from a
+ * hydrated save and to compute the current signature at dispatch time, so the
+ * two are computed by the identical code path and can be compared safely.
+ */
+function phase2Signature(v: OpeningPhase2FormValue): string {
+  return JSON.stringify({
+    openerPrepped: v.openerPrepped,
+    overPar: v.overPar
+      ? {
+          reasonCategory: v.overPar.reasonCategory,
+          directedBy: v.overPar.directedBy,
+          freeText: v.overPar.freeText,
+        }
+      : null,
+    underPar: v.underPar
+      ? {
+          reasonCategory: v.underPar.reasonCategory,
+          freeText: v.underPar.freeText,
+        }
+      : null,
+  });
+}
+
 export function OpeningClient({
   instance,
   templateItems,
   closerSnapshots,
   completions,
   managers,
+  saverNames,
   language,
 }: OpeningClientProps) {
   const { t } = useTranslation();
@@ -263,6 +301,54 @@ export function OpeningClient({
           ? saveStateToFormValue(saved, item.id)
           : { openerRecount: null, openerPrepped: null, overPar: null, underPar: null },
       );
+    }
+    return map;
+  });
+
+  // Phase 2 template-item lookup — the dispatcher needs the item's section +
+  // snapshot to replicate the row's savability gate before POSTing.
+  const phase2ItemById = useMemo(() => {
+    const map = new Map<string, ChecklistTemplateItem>();
+    for (const item of phase2Items) map.set(item.id, item);
+    return map;
+  }, [phase2Items]);
+
+  // SINGLE SOURCE OF TRUTH for per-row save state (Juan's pre-commit proof).
+  // This ONE Map drives BOTH the per-row badges (passed to OpeningPrepEntry as
+  // `saveStates`) AND the finalize outstanding-count (savedPhase2Count /
+  // outstandingCount below) — the badge and the finalize gate read the same Map
+  // so they can never disagree. Seeded from the SAME phase2 completions the
+  // phase2Values hydration uses (readPhase2SaveState), so a returning prepper's
+  // already-persisted items render "saved" and don't inflate the outstanding
+  // count. Items with no persisted phase2 save start "unsaved".
+  const [saveStates, setSaveStates] = useState<Map<string, Phase2SaveState>>(() => {
+    const savedByItem = new Map<string, OpeningPhase2SaveState>();
+    for (const c of completions) {
+      const save = readPhase2SaveState(c.prepData);
+      if (save) savedByItem.set(c.templateItemId, save);
+    }
+    const map = new Map<string, Phase2SaveState>();
+    for (const item of phase2Items) {
+      const saved = savedByItem.get(item.id);
+      if (saved) {
+        map.set(item.id, {
+          status: "saved",
+          savedById: saved.saved_by,
+          savedAt: saved.saved_at,
+          errorCode: null,
+          incompleteReason: null,
+          savedSignature: phase2Signature(saveStateToFormValue(saved, item.id)),
+        });
+      } else {
+        map.set(item.id, {
+          status: "unsaved",
+          savedById: null,
+          savedAt: null,
+          errorCode: null,
+          incompleteReason: null,
+          savedSignature: null,
+        });
+      }
     }
     return map;
   });
@@ -364,17 +450,20 @@ export function OpeningClient({
     return n;
   }, [phase1Items, values]);
 
-  // Phase 2 counters. Counter shows informational progress (items where
-  // opener_prepped is populated); the full submit gate is computed
-  // separately as phase2Complete.
+  // Phase 2 finalize counters — derived from the SINGLE save-state Map, NOT from
+  // client form-validity. savedPhase2Count counts items whose server-persisted
+  // save state is "saved"; outstandingCount is the gap to the full item set. The
+  // finalize gate reads outstandingCount === 0, so finalize unlocks only once
+  // every prep item is persisted server-side (per locked Sub-decision (c)).
   const totalPhase2Items = phase2Items.length;
-  const filledPhase2Count = useMemo(() => {
+  const savedPhase2Count = useMemo(() => {
     let n = 0;
-    for (const v of phase2Values.values()) {
-      if (typeof v.openerPrepped === "number") n += 1;
+    for (const s of saveStates.values()) {
+      if (s.status === "saved") n += 1;
     }
     return n;
-  }, [phase2Values]);
+  }, [saveStates]);
+  const outstandingCount = totalPhase2Items - savedPhase2Count;
 
   const allTicked = tickedCount === totalTickItems;
   const allTempsFilled = filledTempCount === totalTempItems;
@@ -429,62 +518,12 @@ export function OpeningClient({
 
   const phase1Complete = allTicked && allTempsFilled && spotCheckResolved;
 
-  // Phase 2 submit gate per C.50 §4 — full gate check across all items:
-  //   1. ground_truth resolved (section verified OR opener_recount populated)
-  //   2. opener_prepped always required (universal — par-null items still need it)
-  //   3. when prep_need computable AND delta != 0, reason capture required
-  //      (overPar populated when delta > 0; underPar when delta < 0)
-  // Server is canonical (per §8.3 lock); this client gate prevents wasted
-  // round-trips but doesn't replace server validation.
-  const phase2Complete = useMemo(() => {
-    for (const item of phase2Items) {
-      const value = phase2Values.get(item.id);
-      if (!value) return false;
-      const meta = item.prepMeta as OpeningPhase2Meta | null;
-      const section = meta?.section ?? null;
-      const sectionVerified = section
-        ? (sectionVerifications.get(section) ?? false)
-        : false;
-      const snapshot = closerSnapshotsMap.get(item.id) ?? null;
-      const closerCount = snapshot?.closerCount ?? null;
-      const parValue = snapshot?.parValue ?? null;
-
-      // Gate 1: ground_truth resolved
-      const groundTruth =
-        value.openerRecount !== null
-          ? value.openerRecount
-          : sectionVerified
-            ? closerCount
-            : null;
-      if (groundTruth === null) return false;
-
-      // Gate 2: opener_prepped required (always)
-      if (value.openerPrepped === null) return false;
-
-      // Gate 3: reason capture if delta != 0 (only when prep_need computable)
-      if (parValue !== null) {
-        const prepNeed = Math.max(0, parValue - groundTruth);
-        const delta = value.openerPrepped - prepNeed;
-        if (delta > 0 && value.overPar === null) return false;
-        if (delta < 0 && value.underPar === null) return false;
-      }
-    }
-    return true;
-  }, [phase2Items, phase2Values, sectionVerifications, closerSnapshotsMap]);
-
-  // Under-par freetext check — every phase2Values entry with underPar set
-  // must have non-empty freeText (Step 4 RPC will reject otherwise).
-  const firstUnderParMissingFreetext = useMemo(() => {
-    for (const item of phase2Items) {
-      const v = phase2Values.get(item.id);
-      if (v?.underPar && !v.underPar.freeText.trim()) return item.label;
-    }
-    return null;
-  }, [phase2Items, phase2Values]);
-
   // Phase-aware submit gates per Triad A 2026-05-26 (3c form-split).
   //   - Phase 1 submit: gate on phase1Complete + attestation (if needed).
-  //   - Phase 2 submit: gate on phase2Complete + under-par freetext present.
+  //   - Phase 2 finalize: gate on server-persisted save state — finalize unlocks
+  //     only when outstandingCount === 0 (every prep item persisted). This reads
+  //     the SINGLE save-state Map, NOT client form-validity, so the gate can't
+  //     disagree with the per-row badges (locked Sub-decision (c)).
   // The sticky-footer submit button binds to whichever gate matches activePhase.
   //
   // phase1AlreadySubmitted is the load-bearing double-submit guard. 'open' is
@@ -502,9 +541,7 @@ export function OpeningClient({
     submitState.status !== "submitting" &&
     !phase1AlreadySubmitted;
   const phase2SubmitEnabled =
-    phase2Complete &&
-    firstUnderParMissingFreetext === null &&
-    submitState.status !== "submitting";
+    outstandingCount === 0 && submitState.status !== "submitting";
   const submitEnabled =
     activePhase === "verification" ? phase1SubmitEnabled : phase2SubmitEnabled;
 
@@ -549,6 +586,171 @@ export function OpeningClient({
       updated.set(templateItemId, next);
       return updated;
     });
+  };
+
+  // Per-row save dispatcher (C.53 Commit B Lane B). Fires on openerPrepped blur
+  // and on over/under modal save. Takes the explicit value to persist (avoids a
+  // stale closure over phase2Values). The savability pre-gate IS the coalescing
+  // mechanism: a blur while a required reason is still missing is a no-op, so
+  // the only dispatch that lands is the one that follows the modal save.
+  const handlePhase2ItemSave = async (
+    templateItemId: string,
+    valueToSave: OpeningPhase2FormValue,
+  ) => {
+    const item = phase2ItemById.get(templateItemId);
+    if (!item) return;
+
+    const meta = item.prepMeta as OpeningPhase2Meta | null;
+    const section = meta?.section ?? null;
+    const sectionVerified = section
+      ? (sectionVerifications.get(section) ?? false)
+      : false;
+    const snapshot = closerSnapshotsMap.get(templateItemId) ?? null;
+    const closerCount = snapshot?.closerCount ?? null;
+    const parValue = snapshot?.parValue ?? null;
+
+    // Marks a row "incomplete" — a calm, directive nudge telling the prepper the
+    // prerequisite blocking the save (NOT an error; see Phase2IncompleteReason).
+    // Preserves any prior saved attribution so a saved-then-edited row keeps its
+    // history fields while the badge shows the next step. "incomplete" is NOT
+    // "saved", so it never decrements outstandingCount — the badge/gate
+    // single-Map invariant holds (finalize stays blocked until the row saves).
+    const markIncomplete = (reason: Phase2IncompleteReason) => {
+      setSaveStates((prev) => {
+        const updated = new Map(prev);
+        const prior = prev.get(templateItemId);
+        updated.set(templateItemId, {
+          status: "incomplete",
+          savedById: prior?.savedById ?? null,
+          savedAt: prior?.savedAt ?? null,
+          errorCode: null,
+          incompleteReason: reason,
+          savedSignature: prior?.savedSignature ?? null,
+        });
+        return updated;
+      });
+    };
+
+    // Savability gate — mirror the row's render-time gates. Bail (no-op) until
+    // the row holds a server-acceptable payload, so we never POST something the
+    // RPC would 422/400. An untouched/blank row (no prep amount) stays "unsaved";
+    // a started row blocked on a prerequisite (ground truth / reason) goes
+    // "incomplete" so the prepper isn't left with a mute dead-spot. opener_prepped
+    // is checked FIRST so a genuinely blank row reads "unsaved", not "incomplete".
+    if (valueToSave.openerPrepped === null) return;
+    const groundTruth =
+      valueToSave.openerRecount !== null
+        ? valueToSave.openerRecount
+        : sectionVerified
+          ? closerCount
+          : null;
+    if (groundTruth === null) {
+      markIncomplete("needs_ground_truth");
+      return;
+    }
+    if (parValue !== null) {
+      const prepNeed = Math.max(0, parValue - groundTruth);
+      const delta = valueToSave.openerPrepped - prepNeed;
+      if (delta > 0 && valueToSave.overPar === null) {
+        markIncomplete("needs_reason");
+        return;
+      }
+      if (delta < 0 && valueToSave.underPar === null) {
+        markIncomplete("needs_reason");
+        return;
+      }
+    }
+    if (valueToSave.underPar && !valueToSave.underPar.freeText.trim()) {
+      markIncomplete("needs_reason");
+      return;
+    }
+
+    // Value-diff guard — skip the round-trip when the persisted value is already
+    // current. Reads the same Map the badge renders from.
+    const newSig = phase2Signature(valueToSave);
+    const current = saveStates.get(templateItemId);
+    if (current?.status === "saved" && current.savedSignature === newSig) return;
+
+    // Optimistic "saving" — preserve prior saved attribution so a re-save shows
+    // "saving" without dropping the existing "saved by" line if it fails.
+    setSaveStates((prev) => {
+      const updated = new Map(prev);
+      const prior = prev.get(templateItemId);
+      updated.set(templateItemId, {
+        status: "saving",
+        savedById: prior?.savedById ?? null,
+        savedAt: prior?.savedAt ?? null,
+        errorCode: null,
+        incompleteReason: null,
+        savedSignature: prior?.savedSignature ?? null,
+      });
+      return updated;
+    });
+
+    try {
+      const res = await fetch("/api/opening/prep/item", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          instanceId: instance.id,
+          entry: {
+            templateItemId,
+            openerPrepped: valueToSave.openerPrepped,
+            overPar: valueToSave.overPar,
+            underPar: valueToSave.underPar,
+          },
+        }),
+      });
+
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { code?: string };
+        const errorCode = res.status >= 500 ? "fallback" : (body.code ?? "fallback");
+        setSaveStates((prev) => {
+          const updated = new Map(prev);
+          const prior = prev.get(templateItemId);
+          updated.set(templateItemId, {
+            status: "failed",
+            savedById: prior?.savedById ?? null,
+            savedAt: prior?.savedAt ?? null,
+            errorCode,
+            incompleteReason: null,
+            savedSignature: prior?.savedSignature ?? null,
+          });
+          return updated;
+        });
+        return;
+      }
+
+      const body = (await res.json().catch(() => ({}))) as {
+        completion?: { completedBy?: string; completedAt?: string };
+      };
+      setSaveStates((prev) => {
+        const updated = new Map(prev);
+        updated.set(templateItemId, {
+          status: "saved",
+          savedById: body.completion?.completedBy ?? null,
+          savedAt: body.completion?.completedAt ?? null,
+          errorCode: null,
+          incompleteReason: null,
+          savedSignature: newSig,
+        });
+        return updated;
+      });
+    } catch {
+      setSaveStates((prev) => {
+        const updated = new Map(prev);
+        const prior = prev.get(templateItemId);
+        updated.set(templateItemId, {
+          status: "failed",
+          savedById: prior?.savedById ?? null,
+          savedAt: prior?.savedAt ?? null,
+          errorCode: "network",
+          incompleteReason: null,
+          savedSignature: prior?.savedSignature ?? null,
+        });
+        return updated;
+      });
+    }
   };
 
   const handleTabClick = (target: "verification" | "prep") => {
@@ -954,6 +1156,9 @@ export function OpeningClient({
           items={phase2Items}
           values={phase2Values}
           onChange={handlePhase2ItemChange}
+          saveStates={saveStates}
+          saverNames={saverNames}
+          onSaveItem={handlePhase2ItemSave}
           closerSnapshots={closerSnapshotsMap}
           sectionVerifications={sectionVerifications}
           onSectionVerifyToggle={handleSectionVerifyToggle}
@@ -1021,7 +1226,7 @@ export function OpeningClient({
                   {" · "}
                   <span className="font-bold text-co-text">
                     {t("opening.submit.counter_phase2_entries", {
-                      filled: filledPhase2Count,
+                      filled: savedPhase2Count,
                       total: totalPhase2Items,
                     })}
                   </span>
@@ -1048,15 +1253,11 @@ export function OpeningClient({
                           item: firstMissingTempLabel,
                         })
                       : t("opening.submit.gate_disabled_generic")
-                  : !phase2Complete
-                    ? t("opening.submit.gate_disabled_phase2_remaining", {
-                        remaining: totalPhase2Items - filledPhase2Count,
+                  : outstandingCount > 0
+                    ? t("opening.finalize.gate_outstanding", {
+                        count: outstandingCount,
                       })
-                    : firstUnderParMissingFreetext
-                      ? t("opening.submit.gate_disabled_under_par_freetext", {
-                          item: firstUnderParMissingFreetext,
-                        })
-                      : t("opening.submit.gate_disabled_generic")}
+                    : t("opening.submit.gate_disabled_generic")}
             </p>
           </div>
           <button
@@ -1074,7 +1275,13 @@ export function OpeningClient({
           >
             {submitState.status === "submitting"
               ? t("opening.submit.submitting")
-              : t("opening.submit.button_label")}
+              : activePhase === "verification"
+                ? t("opening.submit.button_label")
+                : outstandingCount > 0
+                  ? t("opening.finalize.button_label_outstanding", {
+                      count: outstandingCount,
+                    })
+                  : t("opening.finalize.button_label")}
           </button>
         </div>
       </footer>

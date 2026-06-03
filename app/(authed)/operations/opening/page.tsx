@@ -249,6 +249,7 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
         closerSnapshots={closerSnapshots}
         completions={state.completions}
         managers={managers}
+        saverNames={{ ...state.authors, [auth.user.id]: auth.user.name }}
         language={language}
       />
       <IdleTimeoutWarning />

@@ -466,5 +466,18 @@
   "opening.under_par.reason_label": "¿Por qué preparar menos del necesario?",
   "opening.under_par.free_text_label": "Notas",
   "opening.under_par.free_text_placeholder": "Requerido — sé específico",
-  "opening.under_par.warning": "Al enviar, los gerentes recibirán una alerta urgente. Sé específico sobre la razón."
+  "opening.under_par.warning": "Al enviar, los gerentes recibirán una alerta urgente. Sé específico sobre la razón.",
+  "opening.phase2.save.saving": "Guardando…",
+  "opening.phase2.save.saved": "Guardado",
+  "opening.phase2.save.saved_by_at": "Guardado por {name} a las {time}",
+  "opening.phase2.save.saved_by_unknown": "alguien",
+  "opening.phase2.save.failed": "Error al guardar",
+  "opening.phase2.save.retry": "Reintentar",
+  "opening.phase2.save.retry_aria": "Reintentar guardar {item}",
+  "opening.phase2.save.unsaved": "Sin guardar",
+  "opening.phase2.save.incomplete_ground_truth": "Verifica la sección para guardar",
+  "opening.phase2.save.incomplete_reason": "Agrega una razón para guardar",
+  "opening.finalize.button_label": "Finalizar Fase 2",
+  "opening.finalize.button_label_outstanding": "Finalizar Fase 2 ({count} pendientes)",
+  "opening.finalize.gate_outstanding": "{count} artículos de prep aún sin guardar"
 }
