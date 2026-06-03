@@ -348,16 +348,46 @@ export function OpeningClient({
   //   - Phase 1 submit: gate on phase1Complete + attestation (if needed).
   //   - Phase 2 submit: gate on phase2Complete + under-par freetext present.
   // The sticky-footer submit button binds to whichever gate matches activePhase.
+  //
+  // phase1AlreadySubmitted is the load-bearing double-submit guard. 'open' is
+  // the ONLY pre-submit instance status (migration 0054 — every other status is
+  // downstream of the Phase 1 submit), so any non-'open' status means Phase 1
+  // has already landed server-side. The guard must be a status-derived gate, not
+  // a spinner reset: router.refresh() re-renders this client component in place
+  // with the new status prop but does NOT reset its useState, so without this
+  // gate the Phase 1 button would re-enable on the still-populated form after a
+  // successful submit (re-submit affordance / wedge).
+  const phase1AlreadySubmitted = instance.status !== "open";
   const phase1SubmitEnabled =
     phase1Complete &&
     (!needsAttestation || attestationReason !== null) &&
-    submitState.status !== "submitting";
+    submitState.status !== "submitting" &&
+    !phase1AlreadySubmitted;
   const phase2SubmitEnabled =
     phase2Complete &&
     firstUnderParMissingFreetext === null &&
     submitState.status !== "submitting";
   const submitEnabled =
     activePhase === "verification" ? phase1SubmitEnabled : phase2SubmitEnabled;
+
+  // Status-driven spinner reset (React "adjust state when a prop changes"
+  // pattern — react.dev/learn/you-might-not-need-an-effect). handlePhase1Submit
+  // intentionally leaves submitState 'submitting' through router.refresh()
+  // (work is in flight); this clears it the moment the refreshed status prop
+  // arrives (open → non-open). Resetting on the arriving status — NOT
+  // synchronously in the success handler — is what prevents a re-enable flicker
+  // during the refresh round-trip: the phase1AlreadySubmitted gate above and
+  // this reset settle in the same render pass, so the button never passes
+  // through an enabled state. Adjusting during render (not in an effect) avoids
+  // a cascading-render commit; on reload of an already-submitted instance the
+  // init makes prevInstanceStatus === status, so this is a no-op.
+  const [prevInstanceStatus, setPrevInstanceStatus] = useState(instance.status);
+  if (instance.status !== prevInstanceStatus) {
+    setPrevInstanceStatus(instance.status);
+    if (phase1AlreadySubmitted && submitState.status === "submitting") {
+      setSubmitState({ status: "idle" });
+    }
+  }
 
   // First missing-temp item label (for the "Temp reading required for [X]"
   // hint when ticked but missing temp).
