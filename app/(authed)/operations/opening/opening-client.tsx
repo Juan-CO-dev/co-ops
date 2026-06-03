@@ -86,22 +86,27 @@ export function OpeningClient({
     [closerSnapshots],
   );
 
-  // Split templateItems by phase. Phase 2 items carry prep_meta.openingPhase2=true;
-  // Phase 1 items have null prep_meta OR prep_meta without the marker.
+  // Split templateItems by phase — dual-membership, NOT mutually exclusive.
+  // Every shift is verify-then-prep: an openingPhase2 item is VERIFIED in Phase 1
+  // (verify beat — establishes ground truth) AND PREPPED in Phase 2 (prep beat —
+  // opening prep against par). Same item, two beats, two coexisting completions.
   //
-  // C.53 §10 restructure: spot-check items (openingPhase2=true AND in the
-  // closer-count-snapshot universe) are absorbed into Phase 1 — the opener
-  // verifies/recounts them on the verification tab, not the prep tab. The
-  // runtime discriminator is closerSnapshotsMap.has(it.id), the same predicate
-  // handlePhase1Submit already uses to serialize spot-check fields.
+  // - phase2Items (prep beat): EVERY openingPhase2 item.
+  // - phase1Items (verify beat): spot-check items (in the closer-count-snapshot
+  //   universe) + all non-openingPhase2 items. closerSnapshotsMap.has(it.id) is
+  //   the same discriminator handlePhase1Submit uses to serialize spot-check
+  //   fields. In practice every openingPhase2 item is snapshot-bearing, so
+  //   phase1Items is identical to the pre-fix set — this revives the prep beat
+  //   without altering Phase 1 behavior.
   const { phase1Items, phase2Items } = useMemo(() => {
     const p1: ChecklistTemplateItem[] = [];
     const p2: ChecklistTemplateItem[] = [];
     for (const it of templateItems) {
       const meta = it.prepMeta as OpeningPhase2Meta | null;
+      const isOpeningPhase2 = meta?.openingPhase2 === true;
       const isSpotCheck = closerSnapshotsMap.has(it.id);
-      if (meta?.openingPhase2 === true && !isSpotCheck) p2.push(it);
-      else p1.push(it);
+      if (isOpeningPhase2) p2.push(it);
+      if (isSpotCheck || !isOpeningPhase2) p1.push(it);
     }
     return { phase1Items: p1, phase2Items: p2 };
   }, [templateItems, closerSnapshotsMap]);
@@ -133,11 +138,11 @@ export function OpeningClient({
   // taps Verify Section to mark all items in section as "ground_truth =
   // closer_count"; per-item recount is the override path.
   //
-  // C.53 §10 (flag A): seed from spot-check sections in phase1Items, NOT the
-  // now-always-empty phase2Items. After Lane A's split, spot-check items live in
-  // phase1Items; iterating phase2Items here would pre-seed nothing. Reads still
-  // default-false (so this is correctness/clarity, not a behavior change), but
-  // an init loop over an always-empty set is stale-looking post-Lane-A.
+  // Section verifications are a Phase 1 (verify-beat) concern: seed from the
+  // spot-check items in phase1Items. Phase 2 (prep beat) now also carries these
+  // items under dual-membership, but section-verify state belongs to the verify
+  // tab, so iterate phase1Items here. Reads default-false, so this is
+  // correctness/clarity rather than a behavior change.
   const [sectionVerifications, setSectionVerifications] = useState<
     Map<string, boolean>
   >(() => {
@@ -678,9 +683,9 @@ export function OpeningClient({
       </div>
 
       {/* Phase tabs — Phase 1 always navigable; Phase 2 hard-gated until
-          Phase 1 complete, then becomes navigable. C.53 §10: when the
-          restructure leaves no Phase 2 items (all spot-check items absorbed
-          into Phase 1), the Phase 2 tab is hidden entirely. */}
+          Phase 1 complete, then becomes navigable. The Phase 2 tab is shown
+          only when phase2Items is non-empty (defensive guard for a template
+          with zero openingPhase2 items). */}
       <div className="flex gap-1.5 border-b-2 border-co-border-2">
         <button
           type="button"
@@ -808,9 +813,9 @@ export function OpeningClient({
         </section>
       ) : null}
 
-      {/* Phase 2: Prep entry surface (C.50 redesign). C.53 §10: also gated on
-          phase2Items.length so an empty Phase 2 never renders even if activePhase
-          were somehow "prep" (defensive — the tab that sets it is hidden too). */}
+      {/* Phase 2: Prep entry surface (C.50 redesign). Gated on phase2Items.length
+          as a defensive guard so a template with zero openingPhase2 items can't
+          render an empty prep surface even if activePhase were "prep". */}
       {activePhase === "prep" && phase2Items.length > 0 ? (
         <OpeningPrepEntry
           items={phase2Items}
