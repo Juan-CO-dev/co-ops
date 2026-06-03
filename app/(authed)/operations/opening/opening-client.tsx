@@ -513,8 +513,18 @@ export function OpeningClient({
   // /api/opening/submit/phase1 body's `openerNoPriorDataAttestation` field.
   // Per Triad A 2026-05-26 ack #3: inline pre-submit surface (not a modal),
   // using Aggie's shipped `opening.phase1.attestation.*` strings.
+  //
+  // Finding D (persisted-value hydration) — seed from the per-instance persisted
+  // attestation (checklist_instances.opener_no_prior_data_reason, C.54 §4) rather
+  // than null. The attestation is a persisted VALUE, not a derivable boolean: once
+  // the Finding D `values` hydration populates openerRecount for a second opener,
+  // needsAttestation flips true and the prompt re-renders on the verification tab —
+  // it must show opener A's recorded reason (read-only via verificationLocked
+  // below), NOT an empty required prompt the second opener can't satisfy. On a
+  // fresh 'open' instance the column is null, so the first opener still starts
+  // unselected.
   const [attestationReason, setAttestationReason] =
-    useState<OpeningNoPriorDataReason | null>(null);
+    useState<OpeningNoPriorDataReason | null>(instance.openerNoPriorDataReason);
 
   // Group Phase 1 items by station — same pattern as closing-client.tsx.
   const stationGroups = useMemo(() => {
@@ -1315,7 +1325,8 @@ export function OpeningClient({
                 value="planned_closure"
                 checked={attestationReason === "planned_closure"}
                 onChange={() => setAttestationReason("planned_closure")}
-                className="h-5 w-5 accent-co-text"
+                disabled={verificationLocked}
+                className="h-5 w-5 accent-co-text disabled:cursor-not-allowed disabled:opacity-70"
               />
               {t("opening.phase1.attestation.option.planned_closure")}
             </label>
@@ -1326,7 +1337,8 @@ export function OpeningClient({
                 value="missed_or_unknown"
                 checked={attestationReason === "missed_or_unknown"}
                 onChange={() => setAttestationReason("missed_or_unknown")}
-                className="h-5 w-5 accent-co-text"
+                disabled={verificationLocked}
+                className="h-5 w-5 accent-co-text disabled:cursor-not-allowed disabled:opacity-70"
               />
               {t("opening.phase1.attestation.option.missed_or_unknown")}
             </label>

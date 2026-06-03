@@ -158,6 +158,7 @@ export function OpeningChecklistItem({
               notes={value.notes}
               onNotesChange={(next) => onChange({ ...value, notes: next })}
               itemLabel={resolved.label}
+              disabled={verificationLocked}
             />
           ) : showAddonButton ? (
             <button
