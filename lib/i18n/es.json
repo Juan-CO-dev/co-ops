@@ -496,5 +496,7 @@
   "opening.phase2.revoke.confirm": "Deshacer entrada",
   "opening.finalize.button_label": "Finalizar Fase 2",
   "opening.finalize.button_label_outstanding": "Finalizar Fase 2 ({count} pendientes)",
-  "opening.finalize.gate_outstanding": "{count} artículos de prep aún sin guardar"
+  "opening.finalize.button_label_finalized": "Fase 2 finalizada",
+  "opening.finalize.gate_outstanding": "{count} artículos de prep aún sin guardar",
+  "opening.finalize.already_finalized": "Fase 2 ya finalizada"
 }

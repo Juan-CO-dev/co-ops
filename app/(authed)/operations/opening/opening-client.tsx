@@ -243,6 +243,27 @@ export function OpeningClient({
   const { t } = useTranslation();
   const router = useRouter();
 
+  // ── Server-truth gates (C.53 Commit B — server-state-is-truth) ─────────────
+  // instance.status is authoritative for phase + verification state; these are
+  // NEVER derived from local form state. 'open' is the SOLE pre-Phase-1 status
+  // (migration 0054), so any non-'open' status means Phase 1 has landed
+  // server-side. Three gates fall out of it, hoisted here so the useState
+  // initializers below (sectionVerifications seed) can read them:
+  //   - phase1AlreadySubmitted: the Phase 1 submit is spent (double-submit
+  //     guard — router.refresh() re-renders this client in place with the new
+  //     status prop but does NOT reset its useState, so the guard must be
+  //     status-derived, not a spinner reset).
+  //   - verificationLocked: the Phase 1 verify beat is once-per-instance. A
+  //     second opener whose form is empty must see it DONE and CANNOT
+  //     re-tick/re-verify (Finding A).
+  //   - phase2AlreadyFinalized: Phase 2 finalize is spent (status past
+  //     phase1_complete) — the finalize button must show "already finalized"
+  //     and MUST NOT fire a doomed /api/opening/submit/phase2 (Finding C).
+  const phase1AlreadySubmitted = instance.status !== "open";
+  const verificationLocked = phase1AlreadySubmitted;
+  const phase2AlreadyFinalized =
+    instance.status !== "open" && instance.status !== "phase1_complete";
+
   // Convert closerSnapshots Record (RSC boundary) to a Map for per-item lookups.
   // Memoized to a stable reference; updates only when the prop changes (Server
   // Component re-render). Relocated above the phase split (C.53 §10) because the
@@ -383,12 +404,26 @@ export function OpeningClient({
     for (const item of phase1Items) {
       if (!closerSnapshotsMap.has(item.id)) continue;
       const meta = item.prepMeta as OpeningPhase2Meta | null;
-      if (meta?.section) map.set(meta.section, false);
+      // Finding A — hydrate from server truth. Once Phase 1 has landed
+      // (verificationLocked), the verify beat is DONE for everyone: seed
+      // verified=true so a second opener's empty form doesn't re-gate the
+      // section. This also feeds Phase 2 ground-truth (handlePhase2ItemSave
+      // reads sectionVerifications), so a returning prepper's saves compute
+      // correctly for captured-closer-count items. KNOWN EDGE: NULL-source
+      // items resolved via a Phase 1 recount (not section-verify) still need
+      // their persisted recount hydrated into phase2Values for ground-truth —
+      // deferred (bigger change); seeding verified=true is harmless for them
+      // (their save path still requires the recount).
+      if (meta?.section) map.set(meta.section, verificationLocked);
     }
     return map;
   });
 
   const handleSectionVerifyToggle = (sectionKey: string) => {
+    // Finding A — the verify beat is once-per-instance. Once Phase 1 has landed
+    // (verificationLocked), section-verify is read-only: a second opener cannot
+    // toggle it. Server truth, not local form state, owns this state.
+    if (verificationLocked) return;
     setSectionVerifications((prev) => {
       const updated = new Map(prev);
       updated.set(sectionKey, !(prev.get(sectionKey) ?? false));
@@ -548,16 +583,9 @@ export function OpeningClient({
   //     the SINGLE save-state Map, NOT client form-validity, so the gate can't
   //     disagree with the per-row badges (locked Sub-decision (c)).
   // The sticky-footer submit button binds to whichever gate matches activePhase.
+  // (phase1AlreadySubmitted / verificationLocked / phase2AlreadyFinalized are
+  // hoisted to the top of the component as the server-truth gates.)
   //
-  // phase1AlreadySubmitted is the load-bearing double-submit guard. 'open' is
-  // the ONLY pre-submit instance status (migration 0054 — every other status is
-  // downstream of the Phase 1 submit), so any non-'open' status means Phase 1
-  // has already landed server-side. The guard must be a status-derived gate, not
-  // a spinner reset: router.refresh() re-renders this client component in place
-  // with the new status prop but does NOT reset its useState, so without this
-  // gate the Phase 1 button would re-enable on the still-populated form after a
-  // successful submit (re-submit affordance / wedge).
-  const phase1AlreadySubmitted = instance.status !== "open";
   // Phase 2 availability is SERVER TRUTH, never local form-validity. Once Phase
   // 1 has landed (status moved off 'open'), the prep tab is open to everyone —
   // a second opener with an empty form must NOT be re-gated behind
@@ -570,8 +598,18 @@ export function OpeningClient({
     (!needsAttestation || attestationReason !== null) &&
     submitState.status !== "submitting" &&
     !phase1AlreadySubmitted;
+  // Finding C — finalize is valid ONLY from server status phase1_complete. On
+  // an already-finalized instance (phase2_complete or beyond) the saved rows
+  // make outstandingCount === 0, which WITHOUT this status gate would re-enable
+  // the button and fire a doomed /submit/phase2 (server returns
+  // phase2_not_eligible). Gating on instance.status === "phase1_complete" is the
+  // exact valid finalize window — 'open' (Phase 1 not done) and post-finalize
+  // statuses both correctly disable it. handlePhase2Submit early-returns on
+  // !phase2SubmitEnabled, so this also closes the doomed-call path.
   const phase2SubmitEnabled =
-    outstandingCount === 0 && submitState.status !== "submitting";
+    instance.status === "phase1_complete" &&
+    outstandingCount === 0 &&
+    submitState.status !== "submitting";
   const submitEnabled =
     activePhase === "verification" ? phase1SubmitEnabled : phase2SubmitEnabled;
 
@@ -1178,6 +1216,7 @@ export function OpeningClient({
               closerSnapshotsMap={closerSnapshotsMap}
               sectionVerifications={sectionVerifications}
               onSectionVerifyToggle={handleSectionVerifyToggle}
+              verificationLocked={verificationLocked}
             />
           ))
         : null}
@@ -1337,11 +1376,13 @@ export function OpeningClient({
                           item: firstMissingTempLabel,
                         })
                       : t("opening.submit.gate_disabled_generic")
-                  : outstandingCount > 0
-                    ? t("opening.finalize.gate_outstanding", {
-                        count: outstandingCount,
-                      })
-                    : t("opening.submit.gate_disabled_generic")}
+                  : phase2AlreadyFinalized
+                    ? t("opening.finalize.already_finalized")
+                    : outstandingCount > 0
+                      ? t("opening.finalize.gate_outstanding", {
+                          count: outstandingCount,
+                        })
+                      : t("opening.submit.gate_disabled_generic")}
             </p>
           </div>
           <button
@@ -1361,11 +1402,13 @@ export function OpeningClient({
               ? t("opening.submit.submitting")
               : activePhase === "verification"
                 ? t("opening.submit.button_label")
-                : outstandingCount > 0
-                  ? t("opening.finalize.button_label_outstanding", {
-                      count: outstandingCount,
-                    })
-                  : t("opening.finalize.button_label")}
+                : phase2AlreadyFinalized
+                  ? t("opening.finalize.button_label_finalized")
+                  : outstandingCount > 0
+                    ? t("opening.finalize.button_label_outstanding", {
+                        count: outstandingCount,
+                      })
+                    : t("opening.finalize.button_label")}
           </button>
         </div>
       </footer>

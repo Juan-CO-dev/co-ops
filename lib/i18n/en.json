@@ -496,5 +496,7 @@
   "opening.phase2.revoke.confirm": "Undo entry",
   "opening.finalize.button_label": "Finalize Phase 2",
   "opening.finalize.button_label_outstanding": "Finalize Phase 2 ({count} outstanding)",
-  "opening.finalize.gate_outstanding": "{count} prep items not yet saved"
+  "opening.finalize.button_label_finalized": "Phase 2 finalized",
+  "opening.finalize.gate_outstanding": "{count} prep items not yet saved",
+  "opening.finalize.already_finalized": "Phase 2 already finalized"
 }

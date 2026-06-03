@@ -239,3 +239,51 @@ evaporate. Neither blocks Commit B; both want their own altitude pass when Phase
 2. **No submitted-✓ confirmation.** The operator gets no explicit success affirmation after Phase 1
    submit beyond the submit button disabling (per the §10 hotfix close-out). Same gap will exist for
    Phase 2 finalize unless designed in. Surface when Phase 2 UX work is on the table.
+
+3. **Expanded Phase 2 revoke vocabulary (Finding B — CAPTURE ONLY, do NOT build yet).** The shipped
+   Lane D revoke vocabulary is `quick_reenter` (silent <60s self-revert sentinel) + `re_enter_count`
+   (structured/post-window recount) + the inherited generic `other`. Smoke surfaced that the
+   operational reality wants a richer set. The proposed expanded vocabulary, with its load-bearing
+   semantic split:
+
+   | Reason | Meaning | Did prep happen? |
+   |---|---|---|
+   | `re_enter_count` | Fix the number — entry is wrong, prep is fine | **YES** (entry wrong) |
+   | `reassigned` | Someone else did it / mis-claimed — prep happened, wrong person | **YES** (wrong person) |
+   | `out_of_stock` | Couldn't complete — missing ingredients | **NO** (prep did not happen) |
+   | `unable_to_complete` | Abandoned mid-task | **NO** (prep did not happen) |
+   | `other` | Free-text catch-all | — (note required) |
+
+   The **"prep happened but the entry is wrong" (`re_enter_count`, `reassigned`) vs "prep did NOT
+   happen" (`out_of_stock`, `unable_to_complete`)** split is operationally meaningful for the audit
+   trail — it tells a reviewer whether the under-par state is a data-entry artifact or a real
+   production shortfall. Implementation when picked up:
+   - Additive migration extending the `checklist_completions_revocation_reason_check` CHECK — **same
+     shape as migration 0057** (single `DO $$` block, atomic DROP-then-ADD, append the new literals
+     to the existing `ARRAY[...]`; do NOT remove `quick_reenter`/`re_enter_count`/closing's three).
+   - en/es i18n per reason (operational tú-form register, per C.37).
+   - Modal options in the revoke reason form (Lane D's `RevokeReasonModal`).
+   - Lib (`revokePhase2Completion`) re-validates `reason` as an OUTPUT after picking the path; the new
+     values join the structured-path vocabulary. `note` required-when-`other` already enforced.
+   (Origin: re-smoke Finding B, 2026-06-03. Document-only by Juan's directive — additive, no behavior
+   change ships in Commit B.)
+
+---
+
+## 8. TEST FIXTURES — REMOVE AT FULL LAUNCH
+
+Seeded 2026-06-03 by Aggie for Commit B Phase 2 collaborative prep smoke. All scoped to
+location `d2cced11` (EM). Durable fixtures per Juan's ruling — disable at full-system launch,
+do NOT delete (preserves audit rows). Known-PIN accounts in prod; the PINs below are the
+non-obvious seed values.
+
+| Name | Email | Role | Level | KH+? | PIN | User ID |
+|---|---|---|---|---|---|---|
+| ZZ_TEST_KH1 | zz_test_kh1@co-ops.test | key_holder | 3 | yes | 4829 | `00b317a8-7041-4369-b8db-8f81f38b15d7` |
+| ZZ_TEST_KH2 | zz_test_kh2@co-ops.test | key_holder | 3 | yes | 7394 | `bcd877c3-54e1-4f2a-ba6d-94ccdc03d097` |
+| ZZ_TEST_PREP | zz_test_prep@co-ops.test | employee | 3 | yes | 1506 | `1a21ef12-6cb1-489f-87c2-0deee2157f54` |
+
+**Cleanup:** set `active = false` or `role = 'trainee'` + `level = 0` at full launch.
+Do NOT hard-delete — audit rows reference these IDs. Created via service_role direct insert;
+audit_log row carries `action: user.create, metadata.reason: "Durable test fixtures for Commit B
+Phase 2 collaborative prep smoke"`.

@@ -59,6 +59,14 @@ interface OpeningChecklistItemProps {
    * outside the snapshot universe without a separate isSpotCheck prop.
    */
   closerCount?: number | null;
+  /**
+   * C.53 Commit B Finding A — server-truth verify lock. True once Phase 1 has
+   * landed (instance.status !== 'open'). When locked, the row's tick indicator
+   * renders DONE for everyone (independent of this browser's local form) and the
+   * recount input is read-only, so a second opener can't re-enter values into a
+   * verification beat that's already once-per-instance committed.
+   */
+  verificationLocked?: boolean;
 }
 
 export function OpeningChecklistItem({
@@ -68,6 +76,7 @@ export function OpeningChecklistItem({
   language,
   hasMissingCountError,
   closerCount,
+  verificationLocked,
 }: OpeningChecklistItemProps) {
   const { t } = useTranslation();
   const [addonOpen, setAddonOpen] = useState<boolean>(
@@ -97,8 +106,11 @@ export function OpeningChecklistItem({
     }
   };
 
-  const tickIcon = value.ticked ? "✓" : "·";
-  const tickClass = value.ticked
+  // Finding A — when the verify beat is locked (Phase 1 already landed), the row
+  // renders DONE regardless of this browser's (possibly empty) local form.
+  const displayTicked = verificationLocked || value.ticked;
+  const tickIcon = displayTicked ? "✓" : "·";
+  const tickClass = displayTicked
     ? "bg-co-gold text-co-text border-co-text"
     : "bg-co-surface text-co-text-dim border-co-border-2";
 
@@ -189,12 +201,14 @@ export function OpeningChecklistItem({
                 inputMode="decimal"
                 value={value.openerRecount === null ? "" : String(value.openerRecount)}
                 onChange={(e) => handleRecountChange(e.target.value)}
+                disabled={verificationLocked}
                 aria-label={`${t("opening.phase2.recount_label")} — ${resolved.label}`}
                 aria-required={isNullSource}
                 className={[
                   "inline-flex h-9 w-20 items-center rounded-md border-2 px-2",
                   "text-base font-semibold text-co-text",
                   "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
+                  verificationLocked ? "cursor-not-allowed opacity-70" : "",
                   isNullSource
                     ? "border-co-danger bg-co-surface hover:border-co-text"
                     : "border-co-border-2 bg-co-surface hover:border-co-text",
