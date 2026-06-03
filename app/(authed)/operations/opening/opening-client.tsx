@@ -13,9 +13,10 @@
  * Phase 1 complete (allTicked && allTempsFilled). Backward navigation
  * always allowed once Phase 2 unlocked.
  *
- * Submit gates on BOTH phases complete. POST /api/opening/submit with
- * combined entries (Phase 1 phase1-shaped + Phase 2 phase2-shaped, single
- * discriminated-union array per the lib's OpeningEntry contract).
+ * Submit is per-phase. Phase 1 POSTs to /api/opening/submit/phase1. Phase 2
+ * uses the SPLIT two-route flow: per-item prep writes persist on blur via
+ * /api/opening/prep/item, then finalize POSTs only { instanceId } to
+ * /api/opening/submit/phase2 (no entries).
  *
  * Form state independence (Q-B refinement): per-station tick changes
  * ONLY the `ticked` field across items in that station. countValue,
@@ -26,7 +27,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
-import type { Language } from "@/lib/i18n/types";
+import type { Language, TranslationKey, TranslationParams } from "@/lib/i18n/types";
 import type { OpeningCloserCountSnapshotRow } from "@/lib/opening";
 import type {
   ChecklistCompletion,
@@ -91,6 +92,9 @@ interface SubmitState {
   status: "idle" | "submitting" | "error";
   errorCode?: string;
   errorMessage?: string;
+  // Interpolation params for the error banner's i18n lookup (e.g. {count} for
+  // opening.error.phase2_incomplete). Undefined for codes without placeholders.
+  errorParams?: TranslationParams;
 }
 
 /**
@@ -796,21 +800,22 @@ export function OpeningClient({
   };
 
   // ---------------------------------------------------------------------------
-  // Submit — split per Triad A 2026-05-26 (3c integration flip)
+  // Submit — two routes, one per phase.
   //
-  // Phase 1 POSTs to the new /api/opening/submit/phase1 (homogeneous Phase 1
-  // payload + openerNoPriorDataAttestation + sectionVerifications). Phase 2
-  // POSTs to the legacy /api/opening/submit (homogeneous Phase 2 payload).
+  // Phase 1 POSTs to /api/opening/submit/phase1 (homogeneous Phase 1 payload +
+  // openerNoPriorDataAttestation + sectionVerifications).
   //
-  // Piece 4 (legacy route defensive branch) intercepts Phase 2 submissions
-  // when the instance is in `phase1_complete` and returns a 200 with
-  // `code: 'phase2_pending_next_release'` — handlePhase2Submit treats that as
-  // a graceful info message (not an error).
+  // Phase 2 uses the SPLIT (Question A) two-route flow: per-item prep writes
+  // already persist on blur via /api/opening/prep/item (handlePhase2ItemSave →
+  // save_phase2_item_atomic). FINALIZE therefore carries NO entries — it POSTs
+  // only { instanceId } to /api/opening/submit/phase2, which reads the persisted
+  // completions back, validates Model Y completeness, recomputes deltas, and
+  // advances phase1_complete → phase2_complete.
   //
-  // 5xx fallback per Triad A 2026-05-26 (fix-pass): any 5xx response from
-  // /phase1 falls to `opening.error.fallback` regardless of the body code
-  // (covers `actor_not_found` and other integrity-violation 500s without
-  // needing dedicated i18n keys per response code).
+  // 5xx fallback per Triad A 2026-05-26 (fix-pass): any 5xx response falls to
+  // `opening.error.fallback` regardless of the body code (covers
+  // `actor_not_found` and other integrity-violation 500s without needing
+  // dedicated i18n keys per response code).
   // ---------------------------------------------------------------------------
 
   const handlePhase1Submit = async () => {
@@ -911,68 +916,36 @@ export function OpeningClient({
 
     setSubmitState({ status: "submitting" });
 
-    // Build Phase 2 entries — homogeneous per-phase payload (no Phase 1 entries).
-    // Posts to the LEGACY /api/opening/submit route, which still dispatches via
-    // submitOpening → submit_opening_atomic for Phase 2 entries. The Phase 2
-    // per-phase RPC + route lands in a future commit; until then, Piece 4's
-    // defensive branch in the legacy route fast-paths the phase1_complete case.
-    const phase2Entries = phase2Items.map((item) => {
-      const v = phase2Values.get(item.id) ?? {
-        openerRecount: null,
-        openerPrepped: null,
-        overPar: null,
-        underPar: null,
-      };
-      return {
-        templateItemId: item.id,
-        phase: "phase2" as const,
-        openerPrepped: v.openerPrepped ?? 0,
-        deltaVsPrepNeed: null,
-        overPar: v.overPar,
-        underPar: v.underPar,
-      };
-    });
-
+    // SPLIT (Question A) finalize — NO entries. Per-item prep writes already
+    // persisted on blur via /api/opening/prep/item; this call carries only the
+    // instance id. The server reads the persisted completions back, validates
+    // Model Y completeness, recomputes deltas, dispatches under-prep
+    // notifications, and advances phase1_complete → phase2_complete.
     try {
-      const res = await fetch("/api/opening/submit", {
+      const res = await fetch("/api/opening/submit/phase2", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          instanceId: instance.id,
-          entries: phase2Entries,
-          // Phase 1 owns section-verifications per C.53; Phase 2 sends empty.
-          sectionVerifications: [],
-        }),
+        body: JSON.stringify({ instanceId: instance.id }),
       });
 
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as {
           code?: string;
           message?: string;
+          missing_count?: number;
         };
         const code = res.status >= 500 ? "fallback" : (body.code ?? "fallback");
         setSubmitState({
           status: "error",
           errorCode: code,
           errorMessage: body.message ?? "Submission failed",
-        });
-        return;
-      }
-
-      // Piece 4 graceful response — `phase2_pending_next_release` is a 200
-      // success-shape with a discriminator. Surface as a user-visible info
-      // message via the existing error banner (re-using `errorCode` slot;
-      // the form's error-banner i18n lookup at opening.error.${errorCode}
-      // would render the wrong key, so we set a custom phase2-pending code
-      // and the banner branch below detects it).
-      const successBody = (await res.json().catch(() => ({}))) as {
-        code?: string;
-      };
-      if (successBody.code === "phase2_pending_next_release") {
-        setSubmitState({
-          status: "error",
-          errorCode: "phase2_pending_next_release",
-          errorMessage: t("opening.phase2.pending_next_release.body"),
+          // phase2_incomplete carries {count} — defense-in-depth race guard
+          // (the finalize button is gated on outstandingCount === 0, so this
+          // only fires if another device un-saved a row mid-flight).
+          errorParams:
+            code === "phase2_incomplete" && body.missing_count !== undefined
+              ? { count: body.missing_count }
+              : undefined,
         });
         return;
       }
@@ -1168,34 +1141,19 @@ export function OpeningClient({
         />
       ) : null}
 
-      {/* Error / info banner — handles three shapes:
-          - phase2_pending_next_release (Piece 4 graceful 200): info styling,
-            renders opening.phase2.pending_next_release.body
-          - generic error codes: error styling, renders opening.error.${code}
-            (5xx codes fall back to opening.error.fallback per Triad A) */}
+      {/* Error banner — renders opening.error.${code} (5xx codes fall back to
+          opening.error.fallback per Triad A). phase2_incomplete carries a
+          {count} param threaded through submitState.errorParams. */}
       {submitState.status === "error" ? (
-        submitState.errorCode === "phase2_pending_next_release" ? (
-          <div
-            role="status"
-            className="rounded-2xl border-2 border-co-text bg-co-gold p-4 text-sm text-co-text"
-          >
-            <p className="font-bold uppercase tracking-[0.12em]">
-              {t("opening.phase2.pending_next_release.title")}
-            </p>
-            <p className="mt-1">
-              {t("opening.phase2.pending_next_release.body")}
-            </p>
-          </div>
-        ) : (
-          <div
-            role="alert"
-            className="rounded-2xl border-2 border-co-danger bg-[#FFE4E4] p-4 text-sm text-co-text"
-          >
-            {t(
-              `opening.error.${submitState.errorCode ?? "fallback"}` as `opening.error.fallback`,
-            )}
-          </div>
-        )
+        <div
+          role="alert"
+          className="rounded-2xl border-2 border-co-danger bg-[#FFE4E4] p-4 text-sm text-co-text"
+        >
+          {t(
+            `opening.error.${submitState.errorCode ?? "fallback"}` as TranslationKey,
+            submitState.errorParams,
+          )}
+        </div>
       ) : null}
 
       {/* Sticky footer — two-counter format per Q-C lock */}
