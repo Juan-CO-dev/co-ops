@@ -205,6 +205,26 @@ export class OpeningRevokeConflictError extends OpeningError {
 }
 
 /**
+ * Structured Phase 2 revoke reached the lib without a reason — the SIGNAL the
+ * client uses to open RevokeReasonModal. Distinct from {@link
+ * OpeningEntryShapeError} (genuinely-malformed request → 400): a no-reason
+ * structured revoke is a WELL-FORMED first step of the two-step structured
+ * flow, not garbage. Maps to 422 `reason_required`. No display i18n key — the
+ * modal opening IS the client's response to this code; the route never renders
+ * it as a message. The silent self-within-window path never reaches here (it
+ * stamps `quick_reenter` internally and 200s without a reason).
+ */
+export class OpeningRevokeReasonRequiredError extends OpeningError {
+  constructor(public readonly completionId: string) {
+    super(
+      `Structured Phase 2 revoke of completion ${completionId} requires a reason ∈ {re_enter_count, other}.`,
+      "reason_required",
+    );
+    this.name = "OpeningRevokeReasonRequiredError";
+  }
+}
+
+/**
  * Defense-in-depth (same lesson as the C.46 audit-column 42703 bug): a
  * revocation_reason that violates the `checklist_completions_revocation_reason_check`
  * CHECK (sqlstate 23514) surfaces as a clean typed error instead of an opaque
@@ -2211,8 +2231,10 @@ export interface Phase2RevokeResult {
  *   - structured → 're_enter_count' | 'other'; note REQUIRED when 'other'
  *
  * Errors: OpeningPhase2NotEligibleError (409 via mapping), OpeningRevokeConflictError
- * (409 — no live row at load OR rowCount-0 UPDATE), OpeningEntryShapeError (422 —
- * non-phase2 target row, missing reason, or missing note), OpeningRevokeNotPermittedError
+ * (409 — no live row at load OR rowCount-0 UPDATE), OpeningRevokeReasonRequiredError
+ * (422 reason_required — structured revoke reached the lib with no reason; the
+ * client's signal to open RevokeReasonModal), OpeningEntryShapeError (400 — non-phase2
+ * target row, or missing note when reason='other'), OpeningRevokeNotPermittedError
  * (403), OpeningRevocationReasonInvalidError (422 — 23514 defense-in-depth).
  */
 export async function revokePhase2Completion(
@@ -2352,9 +2374,7 @@ export async function revokePhase2Completion(
           template_item_id: liveRow.template_item_id,
         },
       });
-      throw new OpeningEntryShapeError(
-        `structured Phase 2 revoke requires reason ∈ {re_enter_count, other}; got ${String(reason)}`,
-      );
+      throw new OpeningRevokeReasonRequiredError(args.completionId);
     }
     const note = args.note?.trim() ?? "";
     if (reason === "other" && note.length === 0) {

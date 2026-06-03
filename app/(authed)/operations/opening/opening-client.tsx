@@ -396,8 +396,17 @@ export function OpeningClient({
     });
   };
 
-  // Active phase (locked Sub-decision (b): always start at "verification").
-  const [activePhase, setActivePhase] = useState<"verification" | "prep">("verification");
+  // Active phase. Initialised from SERVER TRUTH (instance.status), not local
+  // form state: if Phase 1 already landed server-side ('open' is the sole
+  // pre-submit status per migration 0054), EVERY user — including a second
+  // opener whose form is empty — lands on Phase 2 rather than being forced to
+  // re-verify. A still-'open' instance starts at "verification" as before.
+  // (Scope: this handles "instance already phase1_complete → everyone to Phase
+  // 2." The concurrent-mid-Phase-1 case — two users both on an 'open' instance
+  // — is deliberately deferred.)
+  const [activePhase, setActivePhase] = useState<"verification" | "prep">(
+    instance.status === "open" ? "verification" : "prep",
+  );
 
   const [submitState, setSubmitState] = useState<SubmitState>({ status: "idle" });
   const [showMissingCountErrors, setShowMissingCountErrors] = useState(false);
@@ -549,6 +558,13 @@ export function OpeningClient({
   // gate the Phase 1 button would re-enable on the still-populated form after a
   // successful submit (re-submit affordance / wedge).
   const phase1AlreadySubmitted = instance.status !== "open";
+  // Phase 2 availability is SERVER TRUTH, never local form-validity. Once Phase
+  // 1 has landed (status moved off 'open'), the prep tab is open to everyone —
+  // a second opener with an empty form must NOT be re-gated behind
+  // phase1Complete (their browser never ticked Phase 1, but the instance is
+  // past it). phase1Complete stays bound to the Phase 1 *submit* gate below,
+  // where this browser's form-validity is exactly what matters.
+  const phase2Available = phase1AlreadySubmitted;
   const phase1SubmitEnabled =
     phase1Complete &&
     (!needsAttestation || attestationReason !== null) &&
@@ -572,9 +588,17 @@ export function OpeningClient({
   // init makes prevInstanceStatus === status, so this is a no-op.
   const [prevInstanceStatus, setPrevInstanceStatus] = useState(instance.status);
   if (instance.status !== prevInstanceStatus) {
+    const wasOpen = prevInstanceStatus === "open";
     setPrevInstanceStatus(instance.status);
     if (phase1AlreadySubmitted && submitState.status === "submitting") {
       setSubmitState({ status: "idle" });
+    }
+    // On the same-session open → non-open transition (this user just submitted
+    // Phase 1), advance them to Phase 2 in the same render pass the status
+    // arrives — they don't re-click the now-unlocked tab. Server truth, not
+    // form state, drives the advance.
+    if (wasOpen && phase2Available) {
+      setActivePhase("prep");
     }
   }
 
@@ -778,8 +802,9 @@ export function OpeningClient({
   // silent (<60s self-revert, no audit row) vs structured (post-window / KH+,
   // reason required) — the CLIENT never predicts the boundary (clock skew, 60s
   // edge). A silent revoke returns 200 here. A structured revoke with no reason
-  // returns 422 invalid_entry_shape, surfaced as { status: "needs_reason" } so
-  // the row opens the inline reason modal and re-dispatches with reason + note.
+  // returns 422 reason_required — a deliberate SIGNAL (not a malformed-request
+  // error), surfaced as { status: "needs_reason" } so the row opens the reason
+  // modal and re-dispatches with reason + note.
   const handlePhase2ItemRevoke = async (
     templateItemId: string,
     reason?: Phase2RevokeReason | null,
@@ -804,14 +829,12 @@ export function OpeningClient({
 
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { code?: string };
-        // The lib 422s a no-reason structured revoke with invalid_entry_shape.
-        // Only treat that as "open the reason form" when WE sent no reason — a
-        // 422 on a reason-bearing re-POST is a genuine error, not a path signal.
-        if (
-          res.status === 422 &&
-          body.code === "invalid_entry_shape" &&
-          (reason === null || reason === undefined)
-        ) {
+        // 422 reason_required is the lib's unambiguous "structured revoke needs
+        // a reason" signal → open the reason modal. The code is self-sufficient;
+        // we no longer infer the path from field-presence (that was the fragile
+        // part — it conflated a genuine malformed-request 4xx with the path
+        // signal). All other non-ok responses are real errors.
+        if (res.status === 422 && body.code === "reason_required") {
           return { status: "needs_reason" };
         }
         const code = res.status >= 500 ? "fallback" : (body.code ?? "fallback");
@@ -860,7 +883,7 @@ export function OpeningClient({
   };
 
   const handleTabClick = (target: "verification" | "prep") => {
-    if (target === "prep" && !phase1Complete) return;
+    if (target === "prep" && !phase2Available) return;
     setActivePhase(target);
   };
 
@@ -1116,24 +1139,24 @@ export function OpeningClient({
           <button
             type="button"
             onClick={() => handleTabClick("prep")}
-            disabled={!phase1Complete}
-            aria-disabled={!phase1Complete}
+            disabled={!phase2Available}
+            aria-disabled={!phase2Available}
             aria-label={
-              phase1Complete ? undefined : t("opening.phase.tab_phase2_locked_aria")
+              phase2Available ? undefined : t("opening.phase.tab_phase2_locked_aria")
             }
             aria-current={activePhase === "prep" ? "page" : undefined}
             className={[
               "inline-flex items-center px-3 py-2",
               "text-xs font-bold uppercase tracking-[0.14em]",
               "transition focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60",
-              !phase1Complete
+              !phase2Available
                 ? "border-b-2 border-transparent text-co-text-dim cursor-not-allowed opacity-80"
                 : activePhase === "prep"
                   ? "border-b-2 border-co-text text-co-text"
                   : "border-b-2 border-transparent text-co-text-muted hover:text-co-text",
             ].join(" ")}
           >
-            {phase1Complete
+            {phase2Available
               ? t("opening.phase.tab_phase2")
               : t("opening.phase.tab_phase2_locked")}
           </button>

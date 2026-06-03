@@ -28,7 +28,9 @@
  *   - 404 instance_not_found       — instance row missing
  *   - 409 phase2_not_eligible      — instance status ≠ 'phase1_complete'
  *   - 409 revoke_conflict          — no live phase2 completion to revoke (raced/gone)
- *   - 422 invalid_entry_shape      — target isn't a phase2 row, or missing reason/note
+ *   - 422 reason_required          — structured revoke with no reason; the client's
+ *                                    SIGNAL to open RevokeReasonModal (no display string)
+ *   - 400 invalid_entry_shape      — target isn't a phase2 row, or reason='other' with no note
  *   - 422 revocation_reason_invalid — revocation_reason CHECK (23514) defense
  *   - 500 internal_error
  *

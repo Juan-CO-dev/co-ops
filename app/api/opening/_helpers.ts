@@ -18,6 +18,7 @@
  *   409 phase3_not_eligible           — C.53 entry phase mismatch (status≠'phase2_complete')
  *   409 revoke_conflict              — C.53 §8.4 revoke: no live phase2 completion (raced/already gone)
  *   422 phase2_incomplete             — C.53 Phase 2 finalize with unsaved prep items (Model Y universe)
+ *   422 reason_required              — C.53 §8.4 revoke: structured revoke with no reason (client SIGNAL to open RevokeReasonModal; no display i18n key)
  *   422 revocation_reason_invalid    — C.53 §8.4 revoke: revocation_reason CHECK (23514) defense
  *   422 provenance_required           — C.54 reconstructed-morning entries without opener attestation
  *   422 out_of_range_reason_missing   — C.53 Phase 3 out-of-range verification without reason
@@ -49,6 +50,7 @@ import {
   OpeningRevocationReasonInvalidError,
   OpeningRevokeConflictError,
   OpeningRevokeNotPermittedError,
+  OpeningRevokeReasonRequiredError,
   OpeningRoleViolationError,
 } from "@/lib/opening";
 import { jsonError } from "@/lib/api-helpers";
@@ -155,6 +157,17 @@ export function mapOpeningError(err: OpeningError): NextResponse {
     // 409 — no live phase2 completion to revoke (already revoked/superseded or
     // raced between read and write). Client should refetch, not blind-retry.
     return jsonError(409, err.code, {
+      message: err.message,
+      completion_id: err.completionId,
+    });
+  }
+  if (err instanceof OpeningRevokeReasonRequiredError) {
+    // 422 reason_required — structured Phase 2 revoke reached the lib with no
+    // reason. This is a SIGNAL, not a display error: the client catches the
+    // code and opens RevokeReasonModal. No opening.error.reason_required i18n
+    // key exists (and none should) — the modal opening IS the response.
+    // Distinct from the 400 invalid_entry_shape genuinely-malformed path.
+    return jsonError(422, err.code, {
       message: err.message,
       completion_id: err.completionId,
     });
