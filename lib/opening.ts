@@ -165,6 +165,66 @@ export class OpeningEntryShapeError extends OpeningError {
   }
 }
 
+// ─── C.53 §8.4 Phase 2 revoke (Lane D) typed errors ──────────────────────────
+//
+// {@link revokePhase2Completion} owns these. The structured-revoke permission
+// gate is hierarchical: SILENT quick-window revert is self-only; STRUCTURED
+// revert is `isSelf OR isKHPlus`; everything else is denied. The path is decided
+// from (isSelf, elapsed, isKHPlus) ONLY — reason-presence is never a path input.
+
+/**
+ * Revoke denied: actor is neither the original completer nor KH+ (level ≥
+ * OPENING_BASE_LEVEL). Maps to 403. i18n key `opening.error.not_self`.
+ */
+export class OpeningRevokeNotPermittedError extends OpeningError {
+  constructor(public readonly completionId: string) {
+    super(
+      `Revoke denied for completion ${completionId}: actor is neither the completer nor KH+.`,
+      "not_self",
+    );
+    this.name = "OpeningRevokeNotPermittedError";
+  }
+}
+
+/**
+ * No live (non-revoked, non-superseded) phase2 completion matched the target id
+ * — either it never existed, or it was concurrently revoked/superseded between
+ * the client read and this write. Maps to 409 (state conflict; client should
+ * refetch, not blindly retry). Raised both at load time and on a rowCount-0
+ * UPDATE (the Phase-1 silent-denial lesson: UPDATE returning 0 rows is not an
+ * error in Postgres — the lib makes it one).
+ */
+export class OpeningRevokeConflictError extends OpeningError {
+  constructor(public readonly completionId: string) {
+    super(
+      `No live Phase 2 completion ${completionId} to revoke (already revoked/superseded or never existed).`,
+      "revoke_conflict",
+    );
+    this.name = "OpeningRevokeConflictError";
+  }
+}
+
+/**
+ * Defense-in-depth (same lesson as the C.46 audit-column 42703 bug): a
+ * revocation_reason that violates the `checklist_completions_revocation_reason_check`
+ * CHECK (sqlstate 23514) surfaces as a clean typed error instead of an opaque
+ * 500. Should never fire in practice — the lib only ever writes constraint-valid
+ * values — but if migration 0057 were rolled back, or a future caller bypassed
+ * the OUTPUT validation, this names the failure. Maps to 422.
+ */
+export class OpeningRevocationReasonInvalidError extends OpeningError {
+  constructor(
+    public readonly completionId: string,
+    public readonly attemptedReason: string,
+  ) {
+    super(
+      `Revocation reason '${attemptedReason}' for completion ${completionId} violates the revocation_reason CHECK constraint.`,
+      "revocation_reason_invalid",
+    );
+    this.name = "OpeningRevocationReasonInvalidError";
+  }
+}
+
 // ─── C.53 + C.54 typed errors ────────────────────────────────────────────────
 //
 // Phase-eligibility errors fire when the submit dispatcher receives entries
@@ -2099,6 +2159,296 @@ export async function savePhase2Item(
     completionId: rpcResult.completionId,
     deltaVsPrepNeed: rpcResult.deltaVsPrepNeed,
     overUnderStatus: rpcResult.overUnderStatus,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// C.53 §8.4 Phase 2 revoke (Lane D)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Quick-window threshold for the SILENT Phase 2 revert path. A self-revoke
+ * within this window of the save is treated as an immediate "oops, re-enter"
+ * correction: no reason prompt and NO audit row. The completion row still
+ * carries the `quick_reenter` sentinel as its `revocation_reason` (distinct
+ * from closing's `error_tap`, so the audit trail never reads a forensic error
+ * claim for a routine quick self-correction). Matches closing's 60s window.
+ */
+const PHASE2_QUICK_REVOKE_WINDOW_MS = 60_000;
+
+/** Lib-layer result of {@link revokePhase2Completion}. */
+export interface Phase2RevokeResult {
+  completion: ChecklistCompletion;
+  templateItemId: string;
+  instanceId: string;
+  /** Which gate path was taken — drives the client's post-revoke messaging. */
+  path: "silent" | "structured";
+}
+
+/**
+ * Phase 2 per-item §8.4 revoke — OWN thin lib (closing's revoke lib + route are
+ * left untouched). Withdraws a saved Phase 2 prep completion so the operator can
+ * re-enter. Append-only: sets `revoked_*` on the live row, never DELETEs.
+ *
+ * HIERARCHICAL permission gate. The path is decided from (isSelf, elapsed,
+ * isKHPlus) ONLY — reason-presence is NEVER a path-selection input, it is
+ * validated as an OUTPUT after the path is chosen:
+ *
+ *   if (isSelf && elapsed < 60s)  → SILENT     (reason='quick_reenter', NO audit)
+ *   else if (isSelf || isKHPlus)  → STRUCTURED (reason required, audit written)
+ *   else                          → 403 OpeningRevokeNotPermittedError
+ *
+ * Critical invariant: a KH+ actor reverting a CO-opener's item within 60s fails
+ * `isSelf` → lands STRUCTURED → is always audited. There is no silent path for
+ * acting on someone else's work.
+ *
+ * Eligibility: revoke is permitted ONLY while the instance is at
+ * `phase1_complete` (Phase 2 prep open). Once finalized the prep universe is
+ * locked → OpeningPhase2NotEligibleError (reused).
+ *
+ * Reason vocabulary (OUTPUT only):
+ *   - silent     → 'quick_reenter' (sentinel; no note)
+ *   - structured → 're_enter_count' | 'other'; note REQUIRED when 'other'
+ *
+ * Errors: OpeningPhase2NotEligibleError (409 via mapping), OpeningRevokeConflictError
+ * (409 — no live row at load OR rowCount-0 UPDATE), OpeningEntryShapeError (422 —
+ * non-phase2 target row, missing reason, or missing note), OpeningRevokeNotPermittedError
+ * (403), OpeningRevocationReasonInvalidError (422 — 23514 defense-in-depth).
+ */
+export async function revokePhase2Completion(
+  service: SupabaseClient,
+  args: {
+    instanceId: string;
+    completionId: string;
+    actor: OpeningActor;
+    reason?: "re_enter_count" | "other" | null;
+    note?: string | null;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  },
+): Promise<Phase2RevokeResult> {
+  const auditBase = {
+    actorId: args.actor.userId,
+    actorRole: args.actor.role,
+    action: "opening.phase2.revoke" as const,
+    resourceTable: "checklist_completions" as const,
+    resourceId: args.completionId,
+    ipAddress: args.ipAddress ?? null,
+    userAgent: args.userAgent ?? null,
+  };
+
+  // ── Eligibility: instance must be at phase1_complete (Phase 2 prep open). ──
+  const { data: instanceRow, error: instanceErr } = await service
+    .from("checklist_instances")
+    .select("status")
+    .eq("id", args.instanceId)
+    .maybeSingle<{ status: ChecklistStatus }>();
+  if (instanceErr) {
+    throw new Error(
+      `revokePhase2Completion instance load: ${instanceErr.message}`,
+    );
+  }
+  if (!instanceRow) {
+    void audit({
+      ...auditBase,
+      metadata: { outcome: "instance_not_found", instance_id: args.instanceId },
+    });
+    throw new OpeningRevokeConflictError(args.completionId);
+  }
+  if (instanceRow.status !== "phase1_complete") {
+    void audit({
+      ...auditBase,
+      metadata: {
+        outcome: "phase2_not_eligible",
+        instance_id: args.instanceId,
+        current_status: instanceRow.status,
+      },
+    });
+    throw new OpeningPhase2NotEligibleError(args.instanceId, instanceRow.status);
+  }
+
+  // ── Load the live (non-revoked, non-superseded) completion targeted by id. ──
+  const { data: liveRow, error: loadErr } = await service
+    .from("checklist_completions")
+    .select(COMPLETION_COLUMNS)
+    .eq("id", args.completionId)
+    .eq("instance_id", args.instanceId)
+    .is("revoked_at", null)
+    .is("superseded_at", null)
+    .maybeSingle<CompletionRow>();
+  if (loadErr) {
+    throw new Error(
+      `revokePhase2Completion completion load: ${loadErr.message}`,
+    );
+  }
+  if (!liveRow) {
+    void audit({
+      ...auditBase,
+      metadata: { outcome: "revoke_conflict", instance_id: args.instanceId },
+    });
+    throw new OpeningRevokeConflictError(args.completionId);
+  }
+
+  // ── Phase2-row guard: target MUST carry prep_data->phase2 (a Phase 2 prep
+  //    completion), never a Phase 1 spot-check row. Defense against a client
+  //    passing the wrong completionId. ──
+  const prepData = liveRow.prep_data;
+  const isPhase2Row =
+    prepData != null && typeof prepData === "object" && "phase2" in prepData;
+  if (!isPhase2Row) {
+    void audit({
+      ...auditBase,
+      metadata: {
+        outcome: "not_phase2_row",
+        instance_id: args.instanceId,
+        template_item_id: liveRow.template_item_id,
+      },
+    });
+    throw new OpeningEntryShapeError(
+      `completion ${args.completionId} is not a Phase 2 prep row (no prep_data->phase2); refusing to revoke`,
+    );
+  }
+
+  // ── Path selection — decided from (isSelf, elapsed, isKHPlus) ONLY. ──
+  const isSelf = liveRow.completed_by === args.actor.userId;
+  const isKHPlus = args.actor.level >= OPENING_BASE_LEVEL;
+  const elapsedMs = Date.now() - Date.parse(liveRow.completed_at);
+  const inQuickWindow = elapsedMs < PHASE2_QUICK_REVOKE_WINDOW_MS;
+
+  let path: "silent" | "structured";
+  if (isSelf && inQuickWindow) {
+    path = "silent";
+  } else if (isSelf || isKHPlus) {
+    path = "structured";
+  } else {
+    void audit({
+      ...auditBase,
+      metadata: {
+        outcome: "not_permitted",
+        instance_id: args.instanceId,
+        template_item_id: liveRow.template_item_id,
+        is_self: isSelf,
+        is_kh_plus: isKHPlus,
+        elapsed_ms: elapsedMs,
+      },
+    });
+    throw new OpeningRevokeNotPermittedError(args.completionId);
+  }
+
+  // ── Reason as OUTPUT (never a path input). ──
+  let revocationReason: "quick_reenter" | "re_enter_count" | "other";
+  let revocationNote: string | null;
+  if (path === "silent") {
+    revocationReason = "quick_reenter";
+    revocationNote = null;
+  } else {
+    const reason = args.reason ?? null;
+    if (reason !== "re_enter_count" && reason !== "other") {
+      void audit({
+        ...auditBase,
+        metadata: {
+          outcome: "reason_missing",
+          instance_id: args.instanceId,
+          template_item_id: liveRow.template_item_id,
+        },
+      });
+      throw new OpeningEntryShapeError(
+        `structured Phase 2 revoke requires reason ∈ {re_enter_count, other}; got ${String(reason)}`,
+      );
+    }
+    const note = args.note?.trim() ?? "";
+    if (reason === "other" && note.length === 0) {
+      void audit({
+        ...auditBase,
+        metadata: {
+          outcome: "note_missing",
+          instance_id: args.instanceId,
+          template_item_id: liveRow.template_item_id,
+        },
+      });
+      throw new OpeningEntryShapeError(
+        `structured Phase 2 revoke with reason='other' requires a note`,
+      );
+    }
+    revocationReason = reason;
+    revocationNote = reason === "other" ? note : null;
+  }
+
+  // ── Append-only revoke. rowCount 0 ⇒ concurrently revoked/superseded between
+  //    load and write (UPDATE-returns-0-rows is silent in Postgres; the lib
+  //    makes it a conflict). 23514 ⇒ revocation_reason CHECK violation
+  //    (defense-in-depth; should never fire — values are constraint-valid). ──
+  const nowIso = new Date().toISOString();
+  const { data: updatedRows, error: updateErr } = await service
+    .from("checklist_completions")
+    .update({
+      revoked_at: nowIso,
+      revoked_by: args.actor.userId,
+      revocation_reason: revocationReason,
+      revocation_note: revocationNote,
+    })
+    .eq("id", args.completionId)
+    .eq("instance_id", args.instanceId)
+    .is("revoked_at", null)
+    .is("superseded_at", null)
+    .select(COMPLETION_COLUMNS);
+
+  if (updateErr) {
+    if (updateErr.code === "23514") {
+      void audit({
+        ...auditBase,
+        metadata: {
+          outcome: "revocation_reason_invalid",
+          instance_id: args.instanceId,
+          attempted_reason: revocationReason,
+        },
+      });
+      throw new OpeningRevocationReasonInvalidError(
+        args.completionId,
+        revocationReason,
+      );
+    }
+    throw new Error(`revokePhase2Completion update: ${updateErr.message}`);
+  }
+  if (!updatedRows || updatedRows.length === 0) {
+    void audit({
+      ...auditBase,
+      metadata: {
+        outcome: "revoke_conflict",
+        instance_id: args.instanceId,
+        phase: "update",
+      },
+    });
+    throw new OpeningRevokeConflictError(args.completionId);
+  }
+
+  const updatedRow = updatedRows[0] as CompletionRow;
+
+  // ── Audit: STRUCTURED writes a forensic revoke row; SILENT writes NONE
+  //    (routine quick self-correction — the quick_reenter sentinel on the row
+  //    is the only trace). ──
+  if (path === "structured") {
+    void audit({
+      ...auditBase,
+      metadata: {
+        outcome: "success",
+        instance_id: args.instanceId,
+        template_item_id: updatedRow.template_item_id,
+        in_quick_window: false,
+        is_self: isSelf,
+        is_kh_plus: isKHPlus,
+        reason: revocationReason,
+        note: revocationNote,
+        elapsed_ms: elapsedMs,
+      },
+    });
+  }
+
+  return {
+    completion: rowToCompletion(updatedRow),
+    templateItemId: updatedRow.template_item_id,
+    instanceId: args.instanceId,
+    path,
   };
 }
 
