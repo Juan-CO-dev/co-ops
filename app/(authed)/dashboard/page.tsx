@@ -106,7 +106,7 @@ async function loadAccessibleLocations(
   sb: ReturnType<typeof getServiceRoleClient>,
   actor: LocationActor,
 ): Promise<LocationLite[]> {
-  // accessibleLocations returns "all" for level 7+, else the explicit ID list.
+  // accessibleLocations returns "all" for level 9+, else the explicit ID list.
   // For "all" we fetch every active location; for the explicit list we filter.
   const access = accessibleLocations(actor);
   let query = sb
@@ -305,7 +305,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   // Build #3 PR 1 — lazy auto-release trigger. Fires after the response
   // is sent (Next 15+ `after()` keeps the request alive past dispatch),
   // so dashboard render latency is unaffected. Scoped to the user's
-  // accessible locations: level 7+ with `auth.locations === []` means
+  // accessible locations: level 9+ with `auth.locations === []` means
   // all-locations override → pass "all"; otherwise pass the explicit
   // ID list. The helper itself is fire-and-forget-safe — it logs
   // errors and never throws to its caller.
@@ -315,7 +315,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   // verification urgency is low; this seam exists so the path warms
   // up before real ops go live.
   after(async () => {
-    const scope = auth.level >= 7 && auth.locations.length === 0
+    const scope = auth.level >= 9 && auth.locations.length === 0
       ? ("all" as const)
       : auth.locations;
     await evaluateAutoReleaseForUserLocations(sb, { locationIds: scope });
@@ -346,12 +346,12 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         })
       : null;
 
-  const allLocationsBadge = auth.level >= 7 && auth.locations.length === 0;
+  const allLocationsBadge = auth.level >= 9 && auth.locations.length === 0;
 
   // Notification surface (Build #3 PR 3 Step 7) — load unread in-app
   // notifications for the actor. Multi-location filter follows Q6
-  // lock: level 7+ with all-locations override sees everything (no
-  // location filter); sub-7 (and level 7+ with explicit user_locations)
+  // lock: level 9+ with all-locations override sees everything (no
+  // location filter); sub-9 (and level 9+ with explicit user_locations)
   // sees their accessible locations + global (location_id IS NULL).
   const locationContextForNotifications =
     allLocationsBadge ? undefined : auth.locations;

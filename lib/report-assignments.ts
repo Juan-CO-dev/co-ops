@@ -46,24 +46,23 @@ export interface ReportAssignmentActor {
   userId: string;
   role: RoleCode;
   level: number;
-  /** Locations the actor has explicit access to (empty + level >= 7 means all). */
+  /** Locations the actor has explicit access to (empty + level >= 9 means all). */
   locations: string[];
 }
 
 /**
- * Per C.42: KH+ has assignment authority. Reconciled in Build #2 PR 1
- * cleanup commit to level >= 3 (key_holder is level 3 in current
- * implementation per lib/roles.ts) — same convention as the closing
- * finalize gate per C.26 + C.41 reconciliation. The broader level-number
- * restructure remains deferred to Module #2.
+ * Per C.42: KH+ has assignment authority = level >= 4 (key_holder's level
+ * after the 0–10 role-model renumber) — same convention as the closing
+ * finalize gate per C.26 + C.41 reconciliation. The renumber separated
+ * key_holder (4) from employee (3), which is the whole point of the change.
  *
- * Note on the cleanup: this constant was missed during the initial C.41
- * fix because it was introduced in the lib phase carrying forward the
- * (then-current) AM_PREP_BASE_LEVEL = 4 convention. Caught during a
- * follow-up grep sweep (per AGENTS.md "Role-level gate audits must
- * include UI-side gates" durable lesson).
+ * History: this constant was missed during the initial C.41 fix (it was
+ * introduced in the lib phase carrying forward the then-current
+ * AM_PREP_BASE_LEVEL = 4 convention) and caught during a follow-up grep
+ * sweep (per AGENTS.md "Role-level gate audits must include UI-side gates").
+ * The 0–10 renumber moved it from 3 to 4 in lockstep with the other KH+ gates.
  */
-const ASSIGNMENT_BASE_LEVEL = 3;
+const ASSIGNMENT_BASE_LEVEL = 4;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Errors
@@ -190,7 +189,7 @@ function rowToAssignment(r: ReportAssignmentRow): ReportAssignment {
  * Pre-flight validation order:
  *   1. assigner.level >= ASSIGNMENT_BASE_LEVEL (KH+ semantic, SL+ in
  *      implementation per C.41).
- *   2. Location access: level >= 7 OR location in actor.locations.
+ *   2. Location access: level >= 9 OR location in actor.locations.
  *   3. Assignee exists, is active, and assigner.level > assignee.level
  *      (strict-greater per canActOn). Self-assign already blocked at DB
  *      via report_assignments_no_self_assign CHECK.
@@ -222,7 +221,7 @@ export async function createAssignment(
 
   // 2. Location access. Level 7+ has all-locations access; below that,
   //    explicit assignment list.
-  const hasAllLocations = args.assigner.level >= 7;
+  const hasAllLocations = args.assigner.level >= 9;
   if (!hasAllLocations && !args.assigner.locations.includes(args.locationId)) {
     throw new ReportAssignmentLocationAccessError(args.locationId, args.assigner.level);
   }

@@ -9,6 +9,10 @@
  *
  * Auth: requireSession. RLS on checklist_instances enforces
  *   location_id ∈ user_locations AND role_level >= 3 at INSERT time.
+ *   Type guard (Flag #1 Option A): rejects any non-closing templateId with
+ *   403 template_type_forbidden — opening/prep are service-role-only. The
+ *   checklist_instances_insert RLS is also type-aware (Option B backstop):
+ *   >=4 for opening/prep, >=3 for closing.
  *
  * Audit: lib/checklists.ts emits checklist_instance.create on creation.
  *   Route-level audit is intentionally absent — the lib is the source of
@@ -25,7 +29,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { ChecklistError, getOrCreateInstance } from "@/lib/checklists";
 import { extractIp, jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { requireSession, SESSION_COOKIE_NAME } from "@/lib/session";
-import { createAuthedClient } from "@/lib/supabase-server";
+import { createAuthedClient, getServiceRoleClient } from "@/lib/supabase-server";
 
 import { mapChecklistError } from "../_helpers";
 
@@ -67,6 +71,35 @@ export async function POST(req: NextRequest) {
 
   const ctx = await requireSession(req, "/api/checklist/instances");
   if (ctx instanceof Response) return ctx;
+
+  // Flag #1 Option A — type guard. This route's only legitimate job is the
+  // closing UI's get-or-create of today's CLOSING instance. Opening/prep
+  // instances are minted exclusively by service-role paths (opening RPC,
+  // AM-prep loader), never here. Reject any non-closing templateId so an
+  // authed employee (level 3) can't direct-POST a malformed opening/prep row.
+  const svc = getServiceRoleClient();
+  const { data: tmpl, error: tmplErr } = await svc
+    .from("checklist_templates")
+    .select("type")
+    .eq("id", templateId)
+    .maybeSingle<{ type: string }>();
+  if (tmplErr) {
+    console.error("[/api/checklist/instances POST] template type lookup failed:", tmplErr.message);
+    return jsonError(500, "internal_error", { message: "template lookup failed" });
+  }
+  if (!tmpl) {
+    return jsonError(404, "template_not_found", {
+      field: "templateId",
+      message: `Template ${templateId} not found`,
+    });
+  }
+  if (tmpl.type !== "closing") {
+    return jsonError(403, "template_type_forbidden", {
+      field: "templateId",
+      message:
+        "This route only creates closing instances. Opening and prep instances are created by their own service-role flows.",
+    });
+  }
 
   const rawJwt = req.cookies.get(SESSION_COOKIE_NAME)?.value;
   if (!rawJwt) {

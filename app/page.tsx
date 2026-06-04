@@ -4,8 +4,8 @@
  * Login page — Phase 2 Session 4.
  *
  * Two surfaces share this route:
- *   - "tile":    location → role → name → PIN. Level ≤ 6 location-scoped roles.
- *   - "manager": email + password form. Level ≥ 5 (and especially level ≥ 6.5
+ *   - "tile":    location → role → name → PIN. Level ≤ 7 location-scoped roles.
+ *   - "manager": email + password form. Level ≥ 6 (and especially level ≥ 8
  *                MoO/Owner/CGS who aren't location-scoped, so they don't
  *                appear in tile-flow name pickers).
  *

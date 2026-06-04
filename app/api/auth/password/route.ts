@@ -1,5 +1,5 @@
 /**
- * POST /api/auth/password — email + password sign-in (level 5+ only).
+ * POST /api/auth/password — email + password sign-in (level 6+ only).
  *
  * Body: { email: string, password: string }
  *
@@ -7,7 +7,7 @@
  *   1. Validate body shape (400 invalid_payload / invalid_json on bad input).
  *   2. Service-role lookup by lowercased email. Unknown email →
  *      audit + 401 invalid_credentials (no email enumeration).
- *   3. Role must allow email auth (level 5+). Otherwise → 401 invalid_credentials.
+ *   3. Role must allow email auth (level 6+). Otherwise → 401 invalid_credentials.
  *   4. Inactive user → 403 account_inactive.
  *   5. Email not yet verified → 403 email_not_verified.
  *   6. Locked → 423 account_locked with retry_after_seconds.

@@ -6,7 +6,7 @@
  * Triggered when openerPrepped > parValue. Captures:
  *   - reasonCategory dropdown (6 options including 'other')
  *   - directedBy dropdown — visible only when reasonCategory === 'management_directive';
- *     populated with users at level >= 5 (AGM+) at this location
+ *     populated with users at level >= 6 (AGM+) at this location
  *   - freeText textarea — required when reasonCategory === 'other'
  *
  * Save sets local form state on the parent (phase2.overPar); submit-on-form-

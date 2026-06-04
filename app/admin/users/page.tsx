@@ -7,7 +7,7 @@ export default function AdminUsersPage() {
       description="Foundation admin tool. Full CRUD on users with role-aware constraints."
       features={[
         "List + filter active / inactive users",
-        "Add user — role determines required fields (level 5+ needs email)",
+        "Add user — role determines required fields (level 6+ needs email)",
         "Edit user — admins cannot edit users at or above their own level",
         "Reset PIN (step-up required)",
         "Activate / deactivate (step-up required)",

@@ -209,12 +209,12 @@ const isDataCarrying = (payload: ChecklistCompletePayload): boolean =>
 type TFn = (key: TranslationKey, params?: Record<string, string | number>) => string;
 
 const roleBadgeText = (t: TFn, level: number): string => {
-  if (level >= 8) return t("closing.role_badge.cgs_only");
-  if (level >= 7) return t("closing.role_badge.owner_plus_only");
-  if (level >= 6.5) return t("closing.role_badge.moo_plus_only");
-  if (level >= 6) return t("closing.role_badge.gm_plus_only");
-  if (level >= 5) return t("closing.role_badge.agm_plus_only");
-  if (level >= 4) return t("closing.role_badge.shift_lead_plus_only");
+  if (level >= 10) return t("closing.role_badge.cgs_only");
+  if (level >= 9) return t("closing.role_badge.owner_plus_only");
+  if (level >= 8) return t("closing.role_badge.moo_plus_only");
+  if (level >= 7) return t("closing.role_badge.gm_plus_only");
+  if (level >= 6) return t("closing.role_badge.agm_plus_only");
+  if (level >= 5) return t("closing.role_badge.shift_lead_plus_only");
   return t("closing.role_badge.level_plus_only", { level });
 };
 
@@ -393,8 +393,8 @@ export function ChecklistItem({
   // Affordance visibility:
   //   - Undo: visible when row is completed by self AND interactable AND
   //     onRevoke/onRevokeWithReason callbacks wired.
-  //   - Tag actual completer: visible to KH+ (level >= 3, per C.41
-  //     reconciliation) on completed rows authored by anyone other than
+  //   - Tag actual completer: visible to KH+ (level >= 4, key_holder
+  //     post-renumber) on completed rows authored by anyone other than
   //     self, AND interactable AND onTagActualCompleter callback wired.
   //     (Self uses the wrong_user_credited chip from the post-60s Undo
   //     expand, not this affordance.)
@@ -407,7 +407,7 @@ export function ChecklistItem({
   const showTagAffordance =
     isCompleted &&
     !isActorCompletedBy &&
-    actorLevel >= 3 &&
+    actorLevel >= 4 &&
     interactable &&
     !!onTagActualCompleter &&
     !!onLoadPickerCandidates;

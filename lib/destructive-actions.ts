@@ -28,6 +28,14 @@ export const DESTRUCTIVE_ACTIONS = [
   "pars.update",
   "system.config_update",
 
+  // Role-model renumber (Phase 3 — C.41 collision fix, migration 0058).
+  // One-shot 0-10 scale renumber of current_user_role_level() + the
+  // users.role CHECK + every role-level RLS threshold. Destructive because it
+  // alters the authorization semantics of every gated table at once; the
+  // migration-emitted audit row sets destructive=true directly (SQL-side, not
+  // via isDestructive()).
+  "role_model.renumber",
+
   // Vendor lifecycle
   "vendor.create",
   "vendor.activate",

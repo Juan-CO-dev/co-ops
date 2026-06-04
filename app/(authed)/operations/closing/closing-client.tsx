@@ -274,13 +274,12 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
   // complete (the "I'm the last out" signal). Both must hold. See
   // SPEC_AMENDMENTS.md C.26 for the operational rationale.
   //
-  // KH+ in current implementation = level >= 3 (key_holder is level 3 per
-  // lib/roles.ts). The earlier `actor.level >= 4` value contradicted C.26
-  // by excluding KHs (level 3); reconciled in Build #2 PR 1 per the C.41
-  // sub-finding. The broader level-number restructure (renumbering KH=4,
-  // SL=5 per spec C.33 intent) remains deferred to Module #2 user
-  // lifecycle work.
-  const canFinalize = !readOnly && actor.level >= 3 && walkOutVerificationComplete;
+  // KH+ = level >= 4 (key_holder is level 4 post-renumber, per lib/roles.ts).
+  // The role-model renumber (employee 3 / key_holder 4, eliminating the prior
+  // collision where both sat at level 3) landed via migration 0058; this gate
+  // moved 3 → 4 with it so KHs still finalize while plain employees no longer
+  // pass the KH+ security gate. See SPEC_AMENDMENTS.md C.26 / C.41.
+  const canFinalize = !readOnly && actor.level >= 4 && walkOutVerificationComplete;
 
   // Incomplete-required IDs — for the review section's reason inputs.
   const incompleteRequiredIds = useMemo(() => {
@@ -800,7 +799,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
       {/*
        * Finalization UI gated by TWO conditions (SPEC_AMENDMENTS.md C.26):
        *
-       *   1. actor.level >= 3 (KH+, per C.41 reconciliation) — security
+       *   1. actor.level >= 4 (KH+, key_holder post-renumber) — security
        *      gate; only KH+ can lock up
        *   2. walkOutVerificationComplete — operational gate; the "I'm the
        *      last out" signal. All 5 Walk-Out Verification items must have

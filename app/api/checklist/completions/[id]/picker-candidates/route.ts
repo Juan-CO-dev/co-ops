@@ -4,7 +4,7 @@
  * Response: { candidates: Array<{ id, name, role, level }> }
  *
  * Per SPEC_AMENDMENTS.md C.28's picker scope rules. Authorization: KH+
- * (level >= 3, per C.41 reconciliation) OR self when actor === completed_by.
+ * (level >= 4, key_holder post-renumber) OR self when actor === completed_by.
  * Returns the full candidate set (completers ∪ (location-assigned ∩
  * today's sign-ins), filtered by item's min_role_level + active).
  * Self-exclusion for the wrong_user_credited self-correction flow is the

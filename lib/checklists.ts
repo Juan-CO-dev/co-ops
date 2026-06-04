@@ -1632,7 +1632,7 @@ export async function revokeWithReason(
  * append-only tap event); actual_completer_id is the retrospective
  * correction of who actually did the work.
  *
- * Authorization: KH+ (level >= 3, per C.41 reconciliation) OR self when
+ * Authorization: KH+ (level >= 4 (key_holder, post-renumber)) OR self when
  * actor.userId === completion.completed_by (a self "wrong_user_credited"
  * chip flow).
  *
@@ -1641,7 +1641,7 @@ export async function revokeWithReason(
  *   - now - completed_at >= QUICK_WINDOW_MS (else
  *     ChecklistTagWithinQuickWindowError; within the silent window the
  *     actor self-corrects via revokeCompletion's Undo, NOT via tagging).
- *   - actor.level >= 3 OR actor.userId === completion.completed_by.
+ *   - actor.level >= 4 OR actor.userId === completion.completed_by.
  *   - actualCompleterId must be in picker scope for this instance + location
  *     (loadPickerCandidates above), filtered by template_item.min_role_level.
  *     Failures discriminated by reason code on ChecklistInvalidPickerCandidateError.
@@ -1676,15 +1676,15 @@ export async function tagActualCompleter(
   }
 
   // Authorization: KH+ OR self.
-  // KH+ in current implementation = level >= 3 (per C.41 sub-finding;
-  // earlier `< 4` excluded KHs from peer correction). Reconciled in
-  // Build #2 PR 1; broader level renumbering deferred to Module #2.
+  // KH+ = level >= 4 (key_holder, post-renumber). The 0–10 role-model
+  // renumber separated key_holder (4) from employee (3), so the KH+ gate
+  // is level >= 4.
   const isSelf = actor.userId === completion.completed_by;
-  if (!isSelf && actor.level < 3) {
+  if (!isSelf && actor.level < 4) {
     throw new ChecklistRoleViolationError(
-      3,
+      4,
       actor.level,
-      `Tagging actual completer requires KH+ (level >= 3) or self (when actor === completed_by).`,
+      `Tagging actual completer requires KH+ (level >= 4) or self (when actor === completed_by).`,
     );
   }
 
@@ -1824,15 +1824,15 @@ export async function loadPickerCandidatesForCompletion(
 
   const completion = await loadLiveCompletionOrThrow(authed, completionId);
 
-  // KH+ in current implementation = level >= 3 (per C.41 sub-finding;
-  // earlier `< 4` excluded KHs from picker access). Reconciled in
-  // Build #2 PR 1; broader level renumbering deferred to Module #2.
+  // KH+ = level >= 4 (key_holder, post-renumber). The 0–10 role-model
+  // renumber separated key_holder (4) from employee (3), so the KH+ gate
+  // is level >= 4.
   const isSelf = actor.userId === completion.completed_by;
-  if (!isSelf && actor.level < 3) {
+  if (!isSelf && actor.level < 4) {
     throw new ChecklistRoleViolationError(
-      3,
+      4,
       actor.level,
-      `Picker access requires KH+ (level >= 3) or self (when actor === completed_by).`,
+      `Picker access requires KH+ (level >= 4) or self (when actor === completed_by).`,
     );
   }
 
@@ -1855,7 +1855,7 @@ export async function loadPickerCandidatesForCompletion(
  *
  * No DB side effects; just decides whether the actor is allowed to edit the
  * report. canEdit=true ONLY when:
- *   - actor is the original submitter, OR actor.level >= 3 (KH+)
+ *   - actor is the original submitter, OR actor.level >= 4 (KH+)
  *   - AND if actor is sub-KH+ original submitter, closing must NOT be finalized
  *   - AND chain is not at cap (edit_count < 3)
  *
@@ -1872,7 +1872,7 @@ export async function loadPickerCandidatesForCompletion(
  * operational date; treated as "not finalized" for edit access (operationally:
  * AM Prep submitted before closing exists; submitter can still edit).
  *
- * "KH+" (key holder and above) per C.41 reconciliation = level >= 3.
+ * "KH+" (key holder and above) = level >= 4 (key_holder, post-renumber).
  */
 export function canEditReport(args: {
   actor: { userId: string; level: number };
@@ -1880,7 +1880,7 @@ export function canEditReport(args: {
   closingStatus: ChecklistStatus | null;
   currentEditCount: number;
 }): { canEdit: true } | { canEdit: false; reason: string } {
-  const isKH = args.actor.level >= 3;
+  const isKH = args.actor.level >= 4;
   const isOriginal = args.actor.userId === args.originalSubmitterId;
   const closingFinalized =
     args.closingStatus !== null && args.closingStatus !== "open";
