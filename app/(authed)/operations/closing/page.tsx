@@ -55,6 +55,7 @@ import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
+import { getRoleLevel, type RoleCode } from "@/lib/roles";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import {
@@ -317,14 +318,22 @@ export default async function ClosingPage({ searchParams }: PageProps) {
   }
   if (instanceRow.confirmed_by) authorIds.add(instanceRow.confirmed_by);
   const authors: Record<string, string> = {};
+  // C.55 — completer CURRENT level snapshot (userId → role level), resolved
+  // server-side so the cross-user mark-not-done menu can apply its cosmetic
+  // at-or-below gate (actor.level >= completer level). This snapshot is
+  // COSMETIC-ONLY: the real enforcement is markNotDoneByAuthority's
+  // server-side level resolution at action time. Built off the same users
+  // query as authors to avoid a second round-trip.
+  const completerLevels: Record<string, number> = {};
   if (authorIds.size > 0) {
     const { data: userRows, error: userErr } = await sb
       .from("users")
-      .select("id, name")
+      .select("id, name, role")
       .in("id", Array.from(authorIds));
     if (userErr) throw new Error(`load authors: ${userErr.message}`);
-    for (const u of (userRows ?? []) as Array<{ id: string; name: string }>) {
+    for (const u of (userRows ?? []) as Array<{ id: string; name: string; role: RoleCode }>) {
       authors[u.id] = u.name;
+      completerLevels[u.id] = getRoleLevel(u.role);
     }
   }
 
@@ -446,6 +455,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
     templateItems,
     initialCompletions,
     authors,
+    completerLevels,
     actor: { userId: auth.user.id, role: auth.role, level: auth.level },
     readOnly: isReadOnly,
     banner,
