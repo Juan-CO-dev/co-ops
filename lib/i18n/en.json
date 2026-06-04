@@ -353,6 +353,8 @@
   "opening.submit.gate_ready": "Submit ready",
   "opening.submit.gate_disabled_items_remaining": "{remaining} items not yet verified",
   "opening.submit.gate_disabled_temps_required": "Temp reading required for {item}",
+  "opening.submit.gate_disabled_verify_sections": "Verify all sections before submitting",
+  "opening.submit.gate_disabled_template_misconfigured": "Template configuration error — contact a manager",
   "opening.submit.gate_disabled_generic": "Submit disabled",
   "opening.submit.button_label": "Submit Opening",
   "opening.submit.submitting": "Submitting…",

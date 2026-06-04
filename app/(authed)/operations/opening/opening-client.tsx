@@ -185,6 +185,35 @@ function readPhase1OpenerRecount(prepData: unknown): number | null {
 }
 
 /**
+ * C.53 Commit B residual fix — read the PERSISTED Phase 1 ground-truth out of a
+ * completion's prep_data->'phase1' sub-object (the 8-key spot-check contract).
+ * Returns the `ground_truth_count` + `prep_need` the Phase 1 RPC computed and
+ * persisted at submit (migration 0055). Phase 2's delta MUST be computed from
+ * THESE values, not re-derived client-side: the Phase 2 RPC reads prep_need
+ * straight from this sub-object and never recomputes (0056 lines 168-169), so
+ * sourcing the client delta from the same persisted numbers makes client and
+ * server agree BY CONSTRUCTION across all three cases (captured+verify,
+ * recount-on-captured+verify, NULL-source-recount+verify). Returns null when the
+ * completion carries no phase1 sub-object (non-spot-check item, or pre-submit).
+ * Same untyped-boundary discipline as readPhase1OpenerRecount: prep_data->phase1
+ * is not modeled by lib/types.ts PrepData, so each field is read defensively.
+ */
+function readPhase1Resolved(
+  prepData: unknown,
+): { groundTruth: number | null; prepNeed: number | null } | null {
+  if (prepData == null || typeof prepData !== "object") return null;
+  if (!("phase1" in prepData)) return null;
+  const p1 = (prepData as { phase1: unknown }).phase1;
+  if (p1 == null || typeof p1 !== "object") return null;
+  const gt = (p1 as { ground_truth_count?: unknown }).ground_truth_count;
+  const pn = (p1 as { prep_need?: unknown }).prep_need;
+  return {
+    groundTruth: typeof gt === "number" ? gt : null,
+    prepNeed: typeof pn === "number" ? pn : null,
+  };
+}
+
+/**
  * Map a persisted phase2 save onto the controlled form value. The numeric beats
  * (openerRecount, openerPrepped) always hydrate. The over/under capture is
  * reconstructed from over_under_status, but the persisted reason category is an
@@ -417,6 +446,27 @@ export function OpeningClient({
     return map;
   }, [phase2Items]);
 
+  // C.53 Commit B residual fix — persisted Phase 1 ground-truth keyed by
+  // templateItemId. Built from completions carrying a prep_data->'phase1' sub-
+  // object (written by the Phase 1 RPC at submit; present on the verification
+  // completion row, and on completions a second opener loads post-submit). Both
+  // the Phase 2 render (OpeningPrepEntry → PrepEntryRow) AND the save dispatcher
+  // (handlePhase2ItemSave) source ground_truth/prep_need from THIS map so the
+  // client delta matches the server delta by construction. A phase2 row is
+  // skipped here — it carries no phase1 sub-object — but the SAME item's phase1
+  // row supplies the entry, so dual-membership items resolve correctly.
+  const phase1ResolvedByItem = useMemo(() => {
+    const map = new Map<
+      string,
+      { groundTruth: number | null; prepNeed: number | null }
+    >();
+    for (const c of completions) {
+      const resolved = readPhase1Resolved(c.prepData);
+      if (resolved) map.set(c.templateItemId, resolved);
+    }
+    return map;
+  }, [completions]);
+
   // SINGLE SOURCE OF TRUTH for per-row save state (Juan's pre-commit proof).
   // This ONE Map drives BOTH the per-row badges (passed to OpeningPrepEntry as
   // `saveStates`) AND the finalize outstanding-count (savedPhase2Count /
@@ -511,6 +561,15 @@ export function OpeningClient({
       // CAPTURED-ONLY section (no NULL-source items) must NOT read as
       // recount-resolved via `[].every()` (vacuous-true) — such sections can be
       // verified ONLY via path (a), since they have no recount to infer from.
+      //
+      // C.53 Commit B Decision A — unreachable by verify-required gate, retained
+      // as defense. Under verify-required, Phase 1 cannot submit without a
+      // section-verify row, so any post-submit section that resolved also has a
+      // persisted verify row (path a) — path (b) never contributes a `true` that
+      // path (a) wouldn't. Pre-submit, recounts aren't yet persisted into
+      // `values` (they live in prep_data.phase1, hydrated only post-submit), so
+      // this `every()` is false at seed. The branch is kept as a defensive seed
+      // in case the gate ever re-admits a recount-only resolution path.
       const nullSourceItems = items.filter(
         (it) => closerSnapshotsMap.get(it.id)?.closerCount === null,
       );
@@ -666,29 +725,57 @@ export function OpeningClient({
 
   const needsAttestation = nullSourceItemCount > 0;
 
-  // C.53 §10 — Phase 1 spot-check resolution gate. A spot-check item is resolved
-  // when EITHER its section is verified (closer_count accepted as ground truth)
-  // OR the opener entered a recount. NULL-source items have no valid section-
-  // verify path — the RPC enforces null_source_requires_recount; Lane B's
-  // section-verify affordance must disable verification for any section still
-  // holding an unrecounted NULL-source item, keeping this client gate aligned
-  // with the RPC. Until Lane B lands there is no section-verify button in the
-  // station, so spot-check rows resolve via the per-item recount affordance only
-  // (already rendered by OpeningChecklistItem when closerCount !== undefined).
-  const spotCheckResolved = useMemo(() => {
+  // C.53 §10 + Commit B Decision A — Phase 1 spot-check resolution gate.
+  // Decision A: section-verify is REQUIRED to submit Phase 1. The prior gate
+  // accepted EITHER a verified section OR a per-item recount; the recount
+  // disjunct is dropped, so every spot-check section must be section-verified.
+  // NULL-source items still require a per-item recount FIRST — that recount is
+  // what un-disables the section's verify button (sectionHasUnrecountedNull in
+  // OpeningVerificationStation mirrors the RPC's null_source_requires_recount) —
+  // but the recount alone no longer resolves the gate; the section must then be
+  // verified. Lane B HAS landed: OpeningVerificationStation renders
+  // OpeningSectionVerify for spot-check stations, so section-verify is reachable
+  // on the Phase 1 tab (the old "until Lane B lands" note was stale).
+  //
+  // Defensive assertion (non-crashing, Triad A confirmed): a spot-check item
+  // whose prep_meta.section is null has no section key to verify against, so
+  // under verify-required it would wedge submit forever. Rather than crash or
+  // silently wedge, we console.error the offending ids and surface a distinct
+  // template_misconfigured block reason (the footer hint maps it to a
+  // "contact a manager" message). Seed reality has no null-section spot-check
+  // items; this guards a future template-authoring mistake.
+  const { spotCheckResolved, spotCheckBlockReason } = useMemo<{
+    spotCheckResolved: boolean;
+    spotCheckBlockReason: "template_misconfigured" | "verify_sections" | null;
+  }>(() => {
+    const nullSectionItemIds: string[] = [];
+    let allVerified = true;
     for (const item of spotCheckItems) {
       const meta = item.prepMeta as OpeningPhase2Meta | null;
       const section = meta?.section ?? null;
-      const sectionVerified = section
-        ? (sectionVerifications.get(section) ?? false)
-        : false;
-      const v = values.get(item.id);
-      const hasRecount =
-        v?.openerRecount !== null && v?.openerRecount !== undefined;
-      if (!sectionVerified && !hasRecount) return false;
+      if (section === null) {
+        nullSectionItemIds.push(item.id);
+        allVerified = false;
+        continue;
+      }
+      if (!(sectionVerifications.get(section) ?? false)) allVerified = false;
     }
-    return true;
-  }, [spotCheckItems, sectionVerifications, values]);
+    if (nullSectionItemIds.length > 0) {
+      console.error(
+        `[opening] Template misconfiguration: spot-check item(s) with a null ` +
+          `prep_meta.section cannot be section-verified and would wedge Phase 1 ` +
+          `submit under verify-required. Item ids: ${nullSectionItemIds.join(", ")}`,
+      );
+      return {
+        spotCheckResolved: false,
+        spotCheckBlockReason: "template_misconfigured",
+      };
+    }
+    return {
+      spotCheckResolved: allVerified,
+      spotCheckBlockReason: allVerified ? null : "verify_sections",
+    };
+  }, [spotCheckItems, sectionVerifications]);
 
   const phase1Complete = allTicked && allTempsFilled && spotCheckResolved;
 
@@ -831,18 +918,29 @@ export function OpeningClient({
     // "incomplete" so the prepper isn't left with a mute dead-spot. opener_prepped
     // is checked FIRST so a genuinely blank row reads "unsaved", not "incomplete".
     if (valueToSave.openerPrepped === null) return;
+    // C.53 Commit B residual fix — source ground_truth + prep_need from the
+    // PERSISTED Phase 1 contract so this pre-gate's delta matches the server's
+    // delta by construction (the server reads prep_need straight from
+    // prep_data.phase1, never recomputes). Defensive fallback to the old client
+    // derivation only when no phase1 row exists yet. This also closes the
+    // NULL-source finalize wedge: a NULL-source-recounted item has a persisted
+    // non-null ground_truth, so the `needs_ground_truth` bail no longer fires
+    // (closerCount is null but the recount lives in prep_data.phase1), the row
+    // POSTs, and outstandingCount can reach 0.
+    const resolved = phase1ResolvedByItem.get(templateItemId) ?? null;
     const groundTruth =
-      valueToSave.openerRecount !== null
+      resolved?.groundTruth ??
+      (valueToSave.openerRecount !== null
         ? valueToSave.openerRecount
         : sectionVerified
           ? closerCount
-          : null;
+          : null);
     if (groundTruth === null) {
       markIncomplete("needs_ground_truth");
       return;
     }
     if (parValue !== null) {
-      const prepNeed = Math.max(0, parValue - groundTruth);
+      const prepNeed = resolved?.prepNeed ?? Math.max(0, parValue - groundTruth);
       const delta = valueToSave.openerPrepped - prepNeed;
       if (delta > 0 && valueToSave.overPar === null) {
         markIncomplete("needs_reason");
@@ -1416,6 +1514,7 @@ export function OpeningClient({
           onSaveItem={handlePhase2ItemSave}
           onRevokeItem={handlePhase2ItemRevoke}
           closerSnapshots={closerSnapshotsMap}
+          phase1ResolvedByItem={phase1ResolvedByItem}
           sectionVerifications={sectionVerifications}
           onSectionVerifyToggle={handleSectionVerifyToggle}
           managers={managers}
@@ -1493,7 +1592,13 @@ export function OpeningClient({
                       ? t("opening.submit.gate_disabled_temps_required", {
                           item: firstMissingTempLabel,
                         })
-                      : t("opening.submit.gate_disabled_generic")
+                      : !spotCheckResolved
+                        ? spotCheckBlockReason === "template_misconfigured"
+                          ? t(
+                              "opening.submit.gate_disabled_template_misconfigured",
+                            )
+                          : t("opening.submit.gate_disabled_verify_sections")
+                        : t("opening.submit.gate_disabled_generic")
                   : phase2AlreadyFinalized
                     ? t("opening.finalize.already_finalized")
                     : outstandingCount > 0

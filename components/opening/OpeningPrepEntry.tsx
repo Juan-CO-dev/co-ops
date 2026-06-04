@@ -5,22 +5,25 @@
  *
  * Per-section layout per C.50 §4:
  *   - Section header has the verify CTA (OpeningSectionVerify component)
- *   - Per-item rows below show closer_count display + opener_prepped input
- *   - Per-item recount drill-in (OpeningRecountPanel) for exception path
- *   - Live prep_need preview (computed client-side, display-only)
+ *   - Per-item rows below show ground-truth display + opener_prepped input
+ *   - Live prep_need preview (display-only)
  *   - Modal-trigger signal banners for over/under-prep capture
  *
  * **C.50 model shifts captured here:**
- * - openerActual REMOVED from form state. closer_count is canonical when
- *   parent section is verified; opener_recount is the per-item override.
- * - Live prep_need preview = MAX(0, par_value - ground_truth_count).
- *   ground_truth_count derived from opener_recount IF NOT NULL ELSE
- *   closer_count (only if section verified).
+ * - openerActual REMOVED from form state.
+ * - C.53 Commit B residual fix: ground_truth_count + prep_need are sourced
+ *   from the PERSISTED Phase 1 values (prep_data.phase1) via the
+ *   phase1ResolvedByItem prop, so the client delta matches the server delta by
+ *   construction. The old client-side derivation (opener_recount IF NOT NULL
+ *   ELSE closer_count when section verified) survives only as a pre-submit
+ *   defensive fallback.
+ * - C.53 Commit B: the per-item recount drill-in (OpeningRecountPanel) was
+ *   removed as vestigial — recount is a Phase 1 concern; Phase 2 reads the
+ *   persisted ground truth, never re-counts.
  * - Signal banners trigger on delta_vs_prep_need (not delta_vs_par).
  * - NULL closer_count sentinel: section-verify disabled for sections with
- *   any NULL item; opener must per-item recount each NULL item. NULL-reason
- *   badge surfaces operational cause via snapshot row metadata + template
- *   item's references_template_item_id (per Step 11 Lock 3 forward note).
+ *   any NULL item. NULL-reason badge surfaces operational cause via snapshot
+ *   row metadata + template item's references_template_item_id.
  *
  * Form state model (per Lock 2): separate overPar / underPar slots in
  * OpeningPhase2FormValue; UX path-differentiation via delta sign. Modals
@@ -42,7 +45,6 @@ import type { OpeningCloserCountSnapshotRow } from "@/lib/opening";
 import type { ChecklistTemplateItem, OpeningPhase2Meta } from "@/lib/types";
 
 import { OpeningSectionVerify } from "./OpeningSectionVerify";
-import { OpeningRecountPanel } from "./OpeningRecountPanel";
 import {
   OverParModal,
   type ManagerOption,
@@ -151,6 +153,18 @@ interface OpeningPrepEntryProps {
   ) => Promise<Phase2RevokeOutcome>;
   /** Map<templateItemId, snapshot row> from loadOpeningCloserCountSnapshots (persisted). */
   closerSnapshots: Map<string, OpeningCloserCountSnapshotRow>;
+  /**
+   * C.53 Commit B residual fix — persisted Phase 1 ground-truth keyed by
+   * templateItemId (from prep_data.phase1's ground_truth_count + prep_need).
+   * The row's prep_need / delta MUST be computed from these persisted values,
+   * not re-derived client-side, so the client delta matches the server delta by
+   * construction (the Phase 2 RPC reads prep_need straight from prep_data.phase1).
+   * Undefined for an item with no phase1 row yet (pre-submit defensive fallback).
+   */
+  phase1ResolvedByItem: Map<
+    string,
+    { groundTruth: number | null; prepNeed: number | null }
+  >;
   /** Map<sectionKey, verified-state> in client memory; toggled via OpeningSectionVerify. */
   sectionVerifications: Map<string, boolean>;
   onSectionVerifyToggle: (sectionKey: string) => void;
@@ -168,6 +182,7 @@ export function OpeningPrepEntry({
   onSaveItem,
   onRevokeItem,
   closerSnapshots,
+  phase1ResolvedByItem,
   sectionVerifications,
   onSectionVerifyToggle,
   managers,
@@ -178,7 +193,6 @@ export function OpeningPrepEntry({
 
   const [overParModalItemId, setOverParModalItemId] = useState<string | null>(null);
   const [underParModalItemId, setUnderParModalItemId] = useState<string | null>(null);
-  const [recountPanelItemId, setRecountPanelItemId] = useState<string | null>(null);
   // Revoke flow state. `revokingItemId` is the row mid-dispatch (disables its
   // CTA + spinner); `revokeModalItemId` is the row whose structured reason form
   // is open (only set when the SERVER returned "needs_reason").
@@ -303,8 +317,8 @@ export function OpeningPrepEntry({
                     item={item}
                     value={value}
                     snapshot={snapshot}
+                    phase1Resolved={phase1ResolvedByItem.get(item.id) ?? null}
                     sectionVerified={verified}
-                    recountOpen={recountPanelItemId === item.id}
                     language={language}
                     showMissingErrors={showMissingErrors}
                     saveState={saveState}
@@ -316,8 +330,6 @@ export function OpeningPrepEntry({
                     revokeError={revokeErrorItemId === item.id}
                     onOpenOverPar={() => setOverParModalItemId(item.id)}
                     onOpenUnderPar={() => setUnderParModalItemId(item.id)}
-                    onOpenRecount={() => setRecountPanelItemId(item.id)}
-                    onCloseRecount={() => setRecountPanelItemId(null)}
                     t={t}
                   />
                 );
@@ -390,8 +402,15 @@ interface PrepEntryRowProps {
   item: ChecklistTemplateItem;
   value: OpeningPhase2FormValue;
   snapshot: OpeningCloserCountSnapshotRow | null;
+  /**
+   * C.53 Commit B residual fix — persisted Phase 1 ground-truth for this item
+   * (from prep_data.phase1). When present, the row computes prep_need / delta
+   * from these persisted values so the client delta matches the server delta by
+   * construction. null until the phase1 row lands (pre-submit defensive fallback
+   * to the old client-side derivation).
+   */
+  phase1Resolved: { groundTruth: number | null; prepNeed: number | null } | null;
   sectionVerified: boolean;
-  recountOpen: boolean;
   language: Language;
   showMissingErrors: boolean;
   saveState: Phase2SaveState;
@@ -408,8 +427,6 @@ interface PrepEntryRowProps {
   revokeError: boolean;
   onOpenOverPar: () => void;
   onOpenUnderPar: () => void;
-  onOpenRecount: () => void;
-  onCloseRecount: () => void;
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }
 
@@ -417,8 +434,8 @@ function PrepEntryRow({
   item,
   value,
   snapshot,
+  phase1Resolved,
   sectionVerified,
-  recountOpen,
   language,
   showMissingErrors,
   saveState,
@@ -430,8 +447,6 @@ function PrepEntryRow({
   revokeError,
   onOpenOverPar,
   onOpenUnderPar,
-  onOpenRecount,
-  onCloseRecount,
   t,
 }: PrepEntryRowProps) {
   const resolved = resolveTemplateItemContent(item, language);
@@ -441,22 +456,28 @@ function PrepEntryRow({
   const parValue = snapshot?.parValue ?? null;
   const parUnit = snapshot?.parUnit ?? null;
 
-  // ground_truth derivation: opener_recount IF NOT NULL ELSE closer_count
-  // (only if section verified). Without either path resolved, ground_truth
-  // is null and prep_need cannot be computed.
+  // C.53 Commit B residual fix — ground_truth + prep_need are sourced from the
+  // PERSISTED Phase 1 values (prep_data.phase1) when available, so the client
+  // delta matches the server delta by construction (the Phase 2 RPC reads
+  // prep_need straight from prep_data.phase1, never recomputing). The old
+  // client-side derivation (opener_recount IF NOT NULL ELSE closer_count when
+  // section verified) is retained only as a pre-submit defensive fallback for
+  // the window before the phase1 row lands.
   const groundTruth =
-    value.openerRecount !== null
+    phase1Resolved?.groundTruth ??
+    (value.openerRecount !== null
       ? value.openerRecount
       : sectionVerified
         ? closerCount
-        : null;
+        : null);
 
-  // prep_need = MAX(0, par_value - ground_truth_count). Per C.50 §1: if
-  // ground_truth >= par, prep_need is 0 (already at par or above).
+  // prep_need = MAX(0, par_value - ground_truth_count). Persisted value wins;
+  // the MAX(0, ...) fallback only fires before phase1 has been persisted.
   const prepNeed =
-    groundTruth !== null && parValue !== null
+    phase1Resolved?.prepNeed ??
+    (groundTruth !== null && parValue !== null
       ? Math.max(0, parValue - groundTruth)
-      : null;
+      : null);
 
   // delta_vs_prep_need = opener_prepped - prep_need (only when both numeric)
   const delta =
@@ -502,13 +523,12 @@ function PrepEntryRow({
       ? `${parValue}${parUnit ? ` ${parUnit}` : ""}`
       : null;
 
-  // Closer-count display block label: shows "Recount" badge when opener_recount
-  // populated; otherwise shows "Closer count" (the canonical ground_truth source
-  // when section verified).
-  const groundTruthBadgeLabel =
-    value.openerRecount !== null
-      ? t("opening.phase2.recount_label")
-      : t("opening.phase2.closer_estimate_label");
+  // C.53 Commit B — the ground-truth display sources from the persisted Phase 1
+  // value (closer count, or a Phase 1 recount captured at verification time).
+  // The per-item recount panel is vestigial in Phase 2 (removed), so the label
+  // is the stable "closer estimate" key rather than the old recount-vs-closer
+  // branch.
+  const groundTruthBadgeLabel = t("opening.phase2.closer_estimate_label");
 
   return (
     <li className="flex flex-col gap-2 border-t border-co-border py-3 first:border-t-0 first:pt-0">
@@ -521,19 +541,16 @@ function PrepEntryRow({
         ) : null}
       </div>
 
-      {/* Closer-count display + recount affordance */}
+      {/* Ground-truth display — persisted Phase 1 value. The recount affordance
+       * and its drill-in panel were removed in C.53 Commit B (recount is a
+       * Phase 1 concern; Phase 2 reads the persisted ground truth). */}
       <div className="flex flex-wrap items-center gap-2 rounded-md border border-co-border-2 bg-co-bg p-2.5 text-xs">
         <span className="font-bold uppercase tracking-[0.12em] text-co-text-muted">
           {groundTruthBadgeLabel}:
         </span>
-        {value.openerRecount !== null ? (
+        {groundTruth !== null ? (
           <span className="font-semibold text-co-text">
-            {value.openerRecount}
-            {parUnit ? <span className="text-co-text-muted"> {parUnit}</span> : null}
-          </span>
-        ) : closerCount !== null ? (
-          <span className="font-semibold text-co-text">
-            {closerCount}
+            {groundTruth}
             {parUnit ? <span className="text-co-text-muted"> {parUnit}</span> : null}
           </span>
         ) : (
@@ -541,36 +558,7 @@ function PrepEntryRow({
             {nullReasonKey ? t(nullReasonKey) : t("opening.phase2.no_closer_estimate")}
           </span>
         )}
-
-        <button
-          type="button"
-          onClick={onOpenRecount}
-          aria-label={`${t("opening.phase2.recount_cta")} — ${resolved.label}`}
-          className="
-            ml-auto inline-flex min-h-[32px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 py-1
-            text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-muted
-            transition hover:border-co-text hover:text-co-text
-            focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
-          "
-        >
-          {t("opening.phase2.recount_cta")}
-        </button>
       </div>
-
-      {/* Inline recount drill-in panel — collapses when saved or cancelled. */}
-      {recountOpen ? (
-        <OpeningRecountPanel
-          itemId={item.id}
-          itemLabel={resolved.label}
-          initialValue={value.openerRecount}
-          onSave={(next) => {
-            onChange({ ...value, openerRecount: next });
-            onCloseRecount();
-          }}
-          onCancel={onCloseRecount}
-          language={language}
-        />
-      ) : null}
 
       {/* prep_need live preview (computed client-side, display-only).
        * Always renders for visual grammar consistency across items. When

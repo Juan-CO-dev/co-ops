@@ -57,6 +57,43 @@ smoke passes.
 
 ---
 
+## 0.5 Finding-B residual fix + Decision A + assertion + vestigial recount (built 2026-06-03)
+
+A post-shipped follow-up bundle on the same branch (uncommitted at time of writing → committed as the
+next commit). All four pieces ship together; greened tsc/eslint/`next build` all exit 0 (the two
+**untracked** WIP scripts `scripts/fix-test-pins.ts` + `scripts/seed-test-accounts.ts` carry
+pre-existing `noUncheckedIndexedAccess` errors and were moved aside for the green run, then restored —
+they are NOT part of this feature).
+
+- **(A) Residual fix (correctness).** Phase 2 ground-truth + prep_need now source from the PERSISTED
+  Phase 1 values (`prep_data.phase1.ground_truth_count` / `prep_need`) instead of re-deriving
+  client-side. New reader `readPhase1Resolved` + `phase1ResolvedByItem` memo in `opening-client.tsx`;
+  threaded as a prop into `OpeningPrepEntry` → `PrepEntryRow`. The client delta now matches the server
+  delta **by construction** (the Phase 2 RPC 0056 reads `prep_need` straight from `prep_data.phase1`,
+  never recomputing — lines 168–169). Closes the spurious `under_par_reason_missing`, the NULL-source
+  silent finalize-wedge, and the second-opener case. The old client-side derivation survives only as a
+  `??` pre-submit defensive fallback for the window before the phase1 row lands.
+- **(B) Decision A (policy).** Section-verify is now REQUIRED to submit Phase 1 — the `hasRecount`
+  disjunct was dropped from `spotCheckResolved`.
+- **(C) section===null defensive assertion (NON-crashing).** `spotCheckResolved` now returns
+  `{ spotCheckResolved, spotCheckBlockReason }`; a null `prep_meta.section` on a spot-check item
+  `console.error`s the offending item ids and surfaces a distinct `template_misconfigured`
+  disabled-reason instead of crashing. Footer hint branches:
+  `gate_disabled_template_misconfigured` vs `gate_disabled_verify_sections` (new i18n keys, en+es).
+- **(D) Phase-2 recount panel: VESTIGIAL, made non-reachable.** Per Juan's ruling, the per-item
+  recount affordance is a Phase 1 concern; Phase 2 reads the persisted ground truth and never
+  re-counts. Removal was the smaller/safer change than a disable, so it was **removed outright** from
+  `OpeningPrepEntry.tsx`: the `OpeningRecountPanel` import, the `recountPanelItemId` state, the recount
+  CTA button, the inline `OpeningRecountPanel` render, and the `recountOpen`/`onOpenRecount`/
+  `onCloseRecount` props on `PrepEntryRowProps`. `OpeningRecountPanel.tsx` itself is left in the tree
+  (still used by Phase 1); only its Phase-2 reachability was cut. The `allNullSourceResolved` branch in
+  the section-verify seed is kept + commented "unreachable by verify-required gate, retained as
+  defense."
+
+**After this bundle:** the e2e smoke (§0) is still the one pending gate.
+
+---
+
 ### Historical record — the original blocker (resolved by `c689dfd`, kept for forensics)
 
 **Do not write Lane A/B/C/D code.** Review Gate #1 surfaced a hard cross-layer contradiction:
@@ -306,6 +343,9 @@ non-obvious seed values.
 | ZZ_TEST_KH1 | zz_test_kh1@co-ops.test | key_holder | 3 | yes | 4829 | `00b317a8-7041-4369-b8db-8f81f38b15d7` |
 | ZZ_TEST_KH2 | zz_test_kh2@co-ops.test | key_holder | 3 | yes | 7394 | `bcd877c3-54e1-4f2a-ba6d-94ccdc03d097` |
 | ZZ_TEST_PREP | zz_test_prep@co-ops.test | employee | 3 | yes | 1506 | `1a21ef12-6cb1-489f-87c2-0deee2157f54` |
+| ZZ_TEST_KH1_MEP | zz_test_kh1_mep@co-ops.test | key_holder | 3 | yes | 4829 | `1f7e7665-69d9-47fa-a780-a39385f6a674` |
+| ZZ_TEST_KH2_MEP | zz_test_kh2_mep@co-ops.test | key_holder | 3 | yes | 7394 | `9fbdc5f0-31fc-40b4-8458-cc43c6ccab61` |
+| ZZ_TEST_PREP_MEP | zz_test_prep_mep@co-ops.test | employee | 3 | yes | 1506 | `180468f8-cf30-4c2b-a9da-9fc260a46caf` |
 
 **Cleanup:** set `active = false` or `role = 'trainee'` + `level = 0` at full launch.
 Do NOT hard-delete — audit rows reference these IDs. Created via service_role direct insert;
