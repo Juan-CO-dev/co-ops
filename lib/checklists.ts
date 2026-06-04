@@ -323,6 +323,31 @@ export class ChecklistTagHierarchyViolationError extends ChecklistError {
 }
 
 /**
+ * Thrown by markNotDoneByAuthority (C.55) when a KH+ actor attempts a
+ * cross-user mark-not-done on a completer whose CURRENT level is ABOVE
+ * the actor's. The authority bound is AT-OR-BELOW: actor.level must be
+ * >= the completer's current level (peers/laterals INCLUDED — `>=`, not
+ * strict `>`). This is DELIBERATELY different from lib/roles.ts canActOn
+ * (which is strict-greater, admin-cannot-act-on-peer); cross-user
+ * correction authority extends to peers, so it gets its own error class
+ * and its own code rather than reusing tag_hierarchy_violation or
+ * role_level_insufficient.
+ */
+export class ChecklistRevokeHierarchyViolationError extends ChecklistError {
+  constructor(
+    public readonly completionId: string,
+    public readonly actorLevel: number,
+    public readonly completerLevel: number,
+  ) {
+    super(
+      `Cannot mark-not-done completion ${completionId}: actor level ${actorLevel} is below completer current level ${completerLevel}. Cross-user mark-not-done requires actor level >= completer level.`,
+      "revoke_hierarchy_violation",
+    );
+    this.name = "ChecklistRevokeHierarchyViolationError";
+  }
+}
+
+/**
  * Thrown by revokeWithReason when reason='other' but note is empty/missing.
  * Cross-column constraint enforced at lib layer (not Postgres CHECK) per
  * the schema migration's column comment.
@@ -349,7 +374,7 @@ export class ChecklistRevocationNoteRequiredError extends ChecklistError {
 export class ChecklistConcurrentModificationError extends ChecklistError {
   constructor(
     public readonly completionId: string,
-    public readonly operation: "revoke" | "revoke_with_reason" | "tag_actual_completer",
+    public readonly operation: "revoke" | "revoke_with_reason" | "tag_actual_completer" | "revoke_by_authority",
     cause?: string,
   ) {
     super(

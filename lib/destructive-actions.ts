@@ -53,6 +53,15 @@ export const DESTRUCTIVE_ACTIONS = [
   "checklist_completion.revoke",
   "checklist_completion.tag_actual_completer",
 
+  // Cross-user mark-not-done by authority (per SPEC_AMENDMENTS.md C.55)
+  // — a KH+ actor reopening a false completion on someone else's row,
+  // bounded by actor.level >= completer current level (at-or-below,
+  // peers included). Distinct action from checklist_completion.revoke
+  // (C.28's self-only post-60s revoke) so the audit trail separates
+  // self-correction from authority-correction. Auto-derived
+  // destructive=true on the audit row via isDestructive().
+  "checklist_completion.revoke_by_authority",
+
   // Report post-submission update (per SPEC_AMENDMENTS.md C.46 A7)
   // — destructive because it's an additive correction to a submitted
   // report. Audit row is emitted from inside submit_am_prep_atomic RPC
