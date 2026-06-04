@@ -117,6 +117,14 @@ export type ChecklistTagResult =
   | { tagged: true; completion: ChecklistCompletion; replacedPriorTag: boolean }
   | { error: ChecklistApiError };
 
+// C.55 — cross-user mark-not-done by authority. Mirrors the revoke result
+// shape (a successful call reopens the row → removed from the live map), but
+// carries a distinct discriminant so callers can't confuse a soft-revoke
+// (C.28 self path) with an authority reopen (C.55 cross-user path).
+export type ChecklistMarkNotDoneResult =
+  | { reopened: true; completion: ChecklistCompletion }
+  | { error: ChecklistApiError };
+
 export interface PickerCandidateView {
   id: string;
   name: string;
@@ -183,6 +191,27 @@ interface ChecklistItemProps {
    * closes.
    */
   onLoadPickerCandidates?: (completionId: string) => Promise<ChecklistPickerResult>;
+  /**
+   * C.55 — completer's CURRENT role level, resolved server-side and passed as
+   * a row prop (page.tsx `completerLevels` snapshot). Drives the COSMETIC
+   * at-or-below gate for the cross-user mark-not-done affordance
+   * (actor.level >= completerLevel). null when unknown (completer not in the
+   * snapshot) — in that case the affordance is hidden and the action is left
+   * to the authoritative server check in markNotDoneByAuthority.
+   */
+  completerLevel?: number | null;
+  /**
+   * C.55 — async cross-user mark-not-done callback (post-60s, KH+, at-or-below
+   * the completer's current level). Fires
+   * POST /api/checklist/completions/[id]/mark-not-done. Pessimistic — UI
+   * commits on server confirmation, then removes the row from the live map so
+   * it reverts to not-yet-completed and re-completes via the normal flow.
+   * Note is required (captured in the mark-not-done note panel).
+   */
+  onMarkNotDone?: (
+    completionId: string,
+    note: string,
+  ) => Promise<ChecklistMarkNotDoneResult>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -266,7 +295,11 @@ type ChecklistErrorCode =
   | "revocation_note_required"
   | "concurrent_modification"
   | "use_quick_revoke"
-  | "completion_not_found";
+  | "completion_not_found"
+  // C.55 cross-user mark-not-done additions
+  | "revoke_hierarchy_violation"
+  | "use_self_revoke"
+  | "completer_not_found";
 
 const errorMessageFor = (t: TFn, err: ChecklistApiError): string => {
   const code = err.code as ChecklistErrorCode;
@@ -308,6 +341,12 @@ const errorMessageFor = (t: TFn, err: ChecklistApiError): string => {
       return t("closing.error.use_quick_revoke");
     case "completion_not_found":
       return t("closing.error.completion_not_found");
+    case "revoke_hierarchy_violation":
+      return t("closing.error.revoke_hierarchy_violation");
+    case "use_self_revoke":
+      return t("closing.error.use_self_revoke");
+    case "completer_not_found":
+      return t("closing.error.completer_not_found");
     default: {
       const _exhaustive: never = code;
       void _exhaustive;
@@ -320,7 +359,16 @@ const errorMessageFor = (t: TFn, err: ChecklistApiError): string => {
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
-type ExpandMode = "none" | "three_chip" | "picker_self_credit" | "picker_kh_tag" | "note_other";
+type ExpandMode =
+  | "none"
+  | "three_chip"
+  | "picker_self_credit"
+  | "picker_kh_tag"
+  | "note_other"
+  // C.55 cross-user mark-not-done: a correction menu (shown when both Tag and
+  // Mark-not-done are live) and the note-capture panel.
+  | "correction_menu"
+  | "mark_not_done";
 
 export function ChecklistItem({
   templateItem,
@@ -336,6 +384,8 @@ export function ChecklistItem({
   onRevokeWithReason,
   onTagActualCompleter,
   onLoadPickerCandidates,
+  completerLevel = null,
+  onMarkNotDone,
 }: ChecklistItemProps) {
   const { t, language } = useTranslation();
   // Resolve translated display content ONCE per render (per SPEC_AMENDMENTS.md
@@ -363,6 +413,8 @@ export function ChecklistItem({
   // Revoke / tag expand state.
   const [expandMode, setExpandMode] = useState<ExpandMode>("none");
   const [otherNoteDraft, setOtherNoteDraft] = useState<string>("");
+  // C.55 — note captured for the cross-user mark-not-done (required).
+  const [markNotDoneNoteDraft, setMarkNotDoneNoteDraft] = useState<string>("");
   const [pickerCandidates, setPickerCandidates] = useState<PickerCandidateView[] | null>(null);
   const [pickerLoading, setPickerLoading] = useState(false);
 
@@ -377,6 +429,7 @@ export function ChecklistItem({
     setError(null);
     setExpandMode("none");
     setOtherNoteDraft("");
+    setMarkNotDoneNoteDraft("");
     setPickerCandidates(null);
   }
 
@@ -411,6 +464,28 @@ export function ChecklistItem({
     interactable &&
     !!onTagActualCompleter &&
     !!onLoadPickerCandidates;
+  // C.55 cross-user mark-not-done affordance — COSMETIC gate only; the
+  // authoritative check is server-side in markNotDoneByAuthority. Gated by:
+  //   - KH+ (actor.level >= 4)
+  //   - cross-user (not the actor's own row — self uses the C.28 Undo path)
+  //   - at-or-below the completer's CURRENT level (actor.level >= completerLevel;
+  //     completerLevel server-resolved into the row prop). null = hidden.
+  //   - past the 60s quick window (within 60s the completer owns the silent
+  //     undo; cross-user attempts return use_quick_revoke). Computed at render;
+  //     a row that crosses 60s mid-view reveals the affordance on next render.
+  const elapsedSinceCompletion = liveCompletion
+    ? Date.now() - new Date(liveCompletion.completedAt).getTime()
+    : 0;
+  const pastQuickWindow = elapsedSinceCompletion >= QUICK_WINDOW_MS;
+  const showMarkNotDone =
+    isCompleted &&
+    !isActorCompletedBy &&
+    actorLevel >= 4 &&
+    completerLevel !== null &&
+    actorLevel >= completerLevel &&
+    pastQuickWindow &&
+    interactable &&
+    !!onMarkNotDone;
 
   // ─── Save flow (existing completion path, unchanged) ──────────────────────
 
@@ -645,6 +720,55 @@ export function ChecklistItem({
     await loadPickerOnce();
   };
 
+  // C.55 — opens the correction menu (Tag vs Mark-not-done) when both
+  // affordances are live for this row.
+  const handleCorrectionMenuClick = () => {
+    if (!liveCompletion) return;
+    setError(null);
+    setExpandMode("correction_menu");
+  };
+
+  // C.55 — reveals the note-capture panel for cross-user mark-not-done.
+  const handleMarkNotDoneStart = () => {
+    if (!liveCompletion) return;
+    setError(null);
+    setExpandMode("mark_not_done");
+    setMarkNotDoneNoteDraft("");
+  };
+
+  const handleMarkNotDoneSubmit = async () => {
+    if (!liveCompletion || !onMarkNotDone) return;
+    const note = markNotDoneNoteDraft.trim();
+    if (note.length === 0) {
+      setError({
+        code: "revocation_note_required",
+        message: t("closing.error.revocation_note_required"),
+        completion_id: liveCompletion.id,
+      });
+      return;
+    }
+    setError(null);
+    setInFlight(true);
+    try {
+      const result = await onMarkNotDone(liveCompletion.id, note);
+      if ("error" in result) {
+        setError(result.error);
+      } else {
+        // Pessimistic: reopen confirmed server-side → drop from live map.
+        setRevoked(true);
+        setExpandMode("none");
+        setMarkNotDoneNoteDraft("");
+      }
+    } catch (caught) {
+      setError({
+        code: "unknown",
+        message: caught instanceof Error ? caught.message : t("closing.error.fallback"),
+      });
+    } finally {
+      setInFlight(false);
+    }
+  };
+
   const loadPickerOnce = async () => {
     if (!liveCompletion || !onLoadPickerCandidates) return;
     if (pickerCandidates !== null) return; // cached for this expand session
@@ -698,6 +822,7 @@ export function ChecklistItem({
   const handleExpandCancel = () => {
     setExpandMode("none");
     setOtherNoteDraft("");
+    setMarkNotDoneNoteDraft("");
     setPickerCandidates(null);
     setError(null);
   };
@@ -855,12 +980,25 @@ export function ChecklistItem({
           ) : null}
         </button>
 
-        {/* Right-side action affordances (Undo / Tag) — sibling of row button. */}
+        {/* Right-side action affordances (Undo / Tag / Mark-not-done / Correct)
+            — sibling of row button. When both Tag and Mark-not-done are live
+            (KH+ at-or-below the completer, past 60s), a single "Correct…" menu
+            replaces the direct buttons (C.55). */}
         {showUndo ? (
           <UndoButton onClick={handleUndoClick} disabled={inFlight || expandMode !== "none"} />
+        ) : showTagAffordance && showMarkNotDone ? (
+          <CorrectionMenuButton
+            onClick={handleCorrectionMenuClick}
+            disabled={inFlight || expandMode !== "none"}
+          />
         ) : showTagAffordance ? (
           <TagAffordanceButton
             onClick={handleTagAffordanceClick}
+            disabled={inFlight || expandMode !== "none"}
+          />
+        ) : showMarkNotDone ? (
+          <MarkNotDoneButton
+            onClick={handleMarkNotDoneStart}
             disabled={inFlight || expandMode !== "none"}
           />
         ) : null}
@@ -1005,6 +1143,27 @@ export function ChecklistItem({
         />
       ) : null}
 
+      {/* C.55 — correction menu (Tag vs Mark-not-done) shown when both live. */}
+      {expandMode === "correction_menu" ? (
+        <CorrectionMenuExpand
+          onTag={handleTagAffordanceClick}
+          onMarkNotDone={handleMarkNotDoneStart}
+          onCancel={handleExpandCancel}
+          disabled={inFlight}
+        />
+      ) : null}
+
+      {/* C.55 — cross-user mark-not-done note capture (note required). */}
+      {expandMode === "mark_not_done" ? (
+        <MarkNotDoneNotePanel
+          note={markNotDoneNoteDraft}
+          setNote={setMarkNotDoneNoteDraft}
+          onSubmit={handleMarkNotDoneSubmit}
+          onCancel={handleExpandCancel}
+          disabled={inFlight}
+        />
+      ) : null}
+
       {/* Picker (used by both wrong_user_credited self-correction and KH+ tag). */}
       {expandMode === "picker_self_credit" || expandMode === "picker_kh_tag" ? (
         <PickerExpand
@@ -1090,6 +1249,66 @@ function TagAffordanceButton({
       "
     >
       {t("closing.row.tag")}
+    </button>
+  );
+}
+
+// C.55 — direct "Mark not done" button (shown when mark-not-done is live but
+// tag is not — rare, since tag is a superset of mark-not-done's gates).
+function MarkNotDoneButton({
+  onClick,
+  disabled,
+}: {
+  onClick: () => void;
+  disabled: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={t("closing.row.aria_mark_not_done")}
+      className="
+        shrink-0 inline-flex min-h-[48px] min-w-[64px] items-center justify-center rounded-lg
+        border-2 border-co-border bg-co-surface px-3
+        text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-muted
+        transition hover:border-co-cta/60 hover:text-co-cta active:bg-co-surface-2
+        focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
+        disabled:cursor-not-allowed disabled:opacity-50
+      "
+    >
+      {t("closing.row.mark_not_done")}
+    </button>
+  );
+}
+
+// C.55 — "Correct…" menu button (shown when both Tag and Mark-not-done are
+// live). Opens the correction menu rather than dispatching a single action.
+function CorrectionMenuButton({
+  onClick,
+  disabled,
+}: {
+  onClick: () => void;
+  disabled: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={t("closing.row.aria_correct")}
+      className="
+        shrink-0 inline-flex min-h-[48px] min-w-[64px] items-center justify-center rounded-lg
+        border-2 border-co-border bg-co-surface px-3
+        text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-muted
+        transition hover:border-co-gold-deep hover:text-co-text active:bg-co-surface-2
+        focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
+        disabled:cursor-not-allowed disabled:opacity-50
+      "
+    >
+      {t("closing.row.correct")}
     </button>
   );
 }
@@ -1222,6 +1441,133 @@ function OtherNotePanel({
           "
         >
           {disabled ? t("common.saving") : t("closing.note_other.submit")}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={disabled}
+          className="
+            inline-flex min-h-[48px] items-center justify-center rounded-md
+            border-2 border-co-border bg-white px-4 text-sm font-semibold text-co-text-muted
+            transition hover:border-co-border-2
+            focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/40
+            disabled:cursor-not-allowed disabled:opacity-50
+          "
+        >
+          {t("common.cancel")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// C.55 — correction menu: two chips (Tag actual completer / Mark not done).
+function CorrectionMenuExpand({
+  onTag,
+  onMarkNotDone,
+  onCancel,
+  disabled,
+}: {
+  onTag: () => void;
+  onMarkNotDone: () => void;
+  onCancel: () => void;
+  disabled: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div
+      className="mt-1 rounded-lg border border-co-border-2 bg-co-surface-2 p-3"
+      role="region"
+      aria-label={t("closing.correction_menu.heading")}
+    >
+      <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
+        {t("closing.correction_menu.heading")}
+      </div>
+      <div className="mt-2 flex flex-col gap-2">
+        <Chip onClick={onTag} disabled={disabled}>
+          {t("closing.correction_menu.tag")}
+        </Chip>
+        <Chip onClick={onMarkNotDone} disabled={disabled}>
+          {t("closing.correction_menu.mark_not_done")}
+        </Chip>
+      </div>
+      <div className="mt-2 flex">
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={disabled}
+          className="
+            inline-flex min-h-[40px] items-center px-3 text-[11px] font-semibold text-co-text-dim
+            underline-offset-2 hover:text-co-text-muted hover:underline
+            focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/40
+            disabled:cursor-not-allowed disabled:opacity-50
+          "
+        >
+          {t("common.cancel")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// C.55 — cross-user mark-not-done note panel. Note is required; the submit
+// button stays disabled until the note has content. Distinct copy from
+// OtherNotePanel because the operator is reopening SOMEONE ELSE's completion
+// by authority — the note documents why.
+function MarkNotDoneNotePanel({
+  note,
+  setNote,
+  onSubmit,
+  onCancel,
+  disabled,
+}: {
+  note: string;
+  setNote: (s: string) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+  disabled: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div
+      className="mt-1 rounded-lg border border-co-border-2 bg-co-surface-2 p-3"
+      role="region"
+      aria-label={t("closing.mark_not_done.aria_label")}
+    >
+      <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
+        {t("closing.mark_not_done.heading")}
+      </div>
+      <label className="mt-2 block">
+        <span className="block text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
+          {t("closing.mark_not_done.note_label")}
+        </span>
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={2}
+          placeholder={t("closing.mark_not_done.note_placeholder")}
+          className="
+            mt-1 w-full rounded-md border-2 border-co-border bg-white px-3 py-2
+            text-sm text-co-text
+            focus:outline-none focus:border-co-gold focus-visible:ring-4 focus-visible:ring-co-gold/40
+          "
+          autoFocus
+        />
+      </label>
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          onClick={onSubmit}
+          disabled={disabled || note.trim().length === 0}
+          className="
+            inline-flex min-h-[48px] flex-1 items-center justify-center rounded-md
+            bg-co-cta px-4 text-sm font-bold uppercase tracking-[0.12em] text-white
+            transition hover:opacity-90
+            focus:outline-none focus-visible:ring-4 focus-visible:ring-co-cta/50
+            disabled:cursor-not-allowed disabled:opacity-50
+          "
+        >
+          {disabled ? t("common.saving") : t("closing.mark_not_done.submit")}
         </button>
         <button
           type="button"

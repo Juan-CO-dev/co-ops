@@ -56,6 +56,7 @@ import {
   type ChecklistPickerResult,
   type ChecklistRevokeResult,
   type ChecklistTagResult,
+  type ChecklistMarkNotDoneResult,
 } from "@/components/ChecklistItem";
 import { PinConfirmModal } from "@/components/auth/PinConfirmModal";
 import { ReportReferenceItem } from "@/components/ReportReferenceItem";
@@ -93,6 +94,15 @@ export interface ClosingInitialState {
   templateItems: ChecklistTemplateItem[];
   initialCompletions: Record<string, ChecklistCompletion>;
   authors: Record<string, string>;
+  /**
+   * C.55 — completer CURRENT role-level snapshot (userId → level), resolved
+   * server-side in page.tsx off the same users query as `authors`. Drives the
+   * cross-user mark-not-done menu's COSMETIC at-or-below gate
+   * (actor.level >= completer level). Authoritative enforcement is
+   * server-side in markNotDoneByAuthority — this snapshot only decides whether
+   * the affordance renders.
+   */
+  completerLevels: Record<string, number>;
   actor: { userId: string; role: RoleCode; level: number };
   readOnly: boolean;
   banner: StatusBanner | null;
@@ -202,6 +212,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
     templateItems,
     initialCompletions,
     authors,
+    completerLevels,
     actor,
     readOnly: initialReadOnly,
     banner: initialBanner,
@@ -501,6 +512,54 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
   );
 
   /**
+   * C.55 — cross-user mark-not-done by authority (KH+, at-or-below the
+   * completer's current level, post-60s). Pessimistic — UI commits on server
+   * confirmation, then removes the row from the live map so it reverts to
+   * not-yet-completed and re-completes via the normal flow. All authorization
+   * is server-enforced in markNotDoneByAuthority; this just POSTs and reflects
+   * the result.
+   */
+  const handleItemMarkNotDone = useCallback(
+    async (completionId: string, note: string): Promise<ChecklistMarkNotDoneResult> => {
+      try {
+        const res = await fetch(
+          `/api/checklist/completions/${completionId}/mark-not-done`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ note }),
+            redirect: "manual",
+          },
+        );
+        if (res.ok) {
+          const data = (await res.json()) as { reopened: true; completion: ChecklistCompletion };
+          setCompletions((prev) => {
+            const next = new Map(prev);
+            next.delete(data.completion.templateItemId);
+            return next;
+          });
+          return { reopened: true, completion: data.completion };
+        }
+        let body: ChecklistApiError;
+        try {
+          body = (await res.json()) as ChecklistApiError;
+        } catch {
+          body = { code: "unknown", message: "Mark-not-done failed." };
+        }
+        return { error: body };
+      } catch (err) {
+        return {
+          error: {
+            code: "network",
+            message: err instanceof Error ? err.message : "Network error.",
+          },
+        };
+      }
+    },
+    [],
+  );
+
+  /**
    * Loads picker candidates for a specific completion. Component caches the
    * result for the duration of the expand session; we re-fetch each time
    * the picker opens (no parent-side cache).
@@ -777,6 +836,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
               items={items}
               completions={completions}
               authorMap={authorMap}
+              completerLevels={completerLevels}
               actor={actor}
               instanceStatus={instance.status}
               readOnly={readOnly}
@@ -789,6 +849,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
               onRevoke={handleItemRevoke}
               onRevokeWithReason={handleItemRevokeWithReason}
               onTagActualCompleter={handleItemTagActualCompleter}
+              onMarkNotDone={handleItemMarkNotDone}
               onLoadPickerCandidates={handleLoadPickerCandidates}
               setRef={setStationRef(station)}
             />
@@ -967,6 +1028,7 @@ function StationGroup({
   items,
   completions,
   authorMap,
+  completerLevels,
   actor,
   instanceStatus,
   readOnly,
@@ -979,6 +1041,7 @@ function StationGroup({
   onRevoke,
   onRevokeWithReason,
   onTagActualCompleter,
+  onMarkNotDone,
   onLoadPickerCandidates,
   setRef,
 }: {
@@ -989,6 +1052,14 @@ function StationGroup({
   items: ChecklistTemplateItem[];
   completions: Map<string, ChecklistCompletion>;
   authorMap: Map<string, string>;
+  /**
+   * C.55 — completer CURRENT level keyed by user id, server-resolved in the
+   * parent loader. Cosmetic gate input only: ChecklistItem uses it to decide
+   * whether to surface the cross-user mark-not-done affordance. Real
+   * enforcement is the server hierarchy check in markNotDoneByAuthority; the
+   * client never does role lookups.
+   */
+  completerLevels: Record<string, number>;
   actor: { userId: string; role: RoleCode; level: number };
   instanceStatus: ChecklistStatus;
   readOnly: boolean;
@@ -1014,6 +1085,11 @@ function StationGroup({
     completionId: string,
     actualCompleterId: string,
   ) => Promise<ChecklistTagResult>;
+  /** C.55 — cross-user mark-not-done (KH+ reopening a false completion). */
+  onMarkNotDone: (
+    completionId: string,
+    note: string,
+  ) => Promise<ChecklistMarkNotDoneResult>;
   onLoadPickerCandidates: (completionId: string) => Promise<ChecklistPickerResult>;
   setRef: (el: HTMLElement | null) => void;
 }) {
@@ -1125,12 +1201,14 @@ function StationGroup({
                 actualCompleterAuthor={actualCompleterAuthor}
                 actorLevel={actor.level}
                 actorUserId={actor.userId}
+                completerLevel={c ? (completerLevels[c.completedBy] ?? null) : null}
                 instanceStatus={instanceStatus}
                 readOnly={readOnly}
                 onComplete={onComplete}
                 onRevoke={onRevoke}
                 onRevokeWithReason={onRevokeWithReason}
                 onTagActualCompleter={onTagActualCompleter}
+                onMarkNotDone={onMarkNotDone}
                 onLoadPickerCandidates={onLoadPickerCandidates}
               />
             );

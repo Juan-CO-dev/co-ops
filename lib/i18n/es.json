@@ -46,6 +46,10 @@
   "closing.row.aria_at_time": " a las {time}",
   "closing.row.aria_credited_to": ", asignado a {name}",
   "closing.row.credited_to": "→ asignado a {name}",
+  "closing.row.mark_not_done": "Reabrir",
+  "closing.row.aria_mark_not_done": "Marcar como no hecho — reabrir este ítem",
+  "closing.row.correct": "Corregir",
+  "closing.row.aria_correct": "Corregir esta finalización",
 
   "closing.error.instance_closed": "Esta lista ya está confirmada.",
   "closing.error.single_submission_locked": "Esta plantilla se bloquea después del primer envío.",
@@ -68,6 +72,19 @@
   "closing.error.invalid_number": "Pon un número válido.",
   "closing.error.fallback": "Falló al guardar — toca para reintentar.",
   "closing.error.photo_not_wired": "La cámara llegará pronto.",
+  "closing.error.revoke_hierarchy_violation": "No puedes reabrir el ítem de alguien de más rango.",
+  "closing.error.use_self_revoke": "Este es tu propio ítem — usa Deshacer.",
+  "closing.error.completer_not_found": "No se encuentra quién lo completó — recarga.",
+
+  "closing.correction_menu.heading": "Corregir este ítem",
+  "closing.correction_menu.tag": "Asignar a quien lo hizo",
+  "closing.correction_menu.mark_not_done": "Marcar como no hecho (reabrir)",
+
+  "closing.mark_not_done.aria_label": "Marcar ítem como no hecho",
+  "closing.mark_not_done.heading": "Reabrir este ítem",
+  "closing.mark_not_done.note_label": "¿Por qué no está hecho en realidad?",
+  "closing.mark_not_done.note_placeholder": "Obligatorio — explica qué falta",
+  "closing.mark_not_done.submit": "Reabrir ítem",
 
   "closing.three_chip.heading": "¿Qué pasó?",
   "closing.three_chip.wrong_user_credited": "Persona equivocada",

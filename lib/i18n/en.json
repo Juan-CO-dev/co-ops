@@ -46,6 +46,10 @@
   "closing.row.aria_at_time": " at {time}",
   "closing.row.aria_credited_to": ", credited to {name}",
   "closing.row.credited_to": "→ credited to {name}",
+  "closing.row.mark_not_done": "Reopen",
+  "closing.row.aria_mark_not_done": "Mark not done — reopen this item",
+  "closing.row.correct": "Correct",
+  "closing.row.aria_correct": "Correct this completion",
 
   "closing.error.instance_closed": "This checklist is already confirmed.",
   "closing.error.single_submission_locked": "This template is locked after first submission.",
@@ -68,6 +72,19 @@
   "closing.error.invalid_number": "Enter a valid number.",
   "closing.error.fallback": "Save failed — tap to retry.",
   "closing.error.photo_not_wired": "Photo capture coming soon.",
+  "closing.error.revoke_hierarchy_violation": "You can't reopen a more senior person's item.",
+  "closing.error.use_self_revoke": "This is your own item — use Undo.",
+  "closing.error.completer_not_found": "Can't find who completed this — refresh.",
+
+  "closing.correction_menu.heading": "Correct this item",
+  "closing.correction_menu.tag": "Tag actual completer",
+  "closing.correction_menu.mark_not_done": "Mark not done (reopen)",
+
+  "closing.mark_not_done.aria_label": "Mark item not done",
+  "closing.mark_not_done.heading": "Reopen this item",
+  "closing.mark_not_done.note_label": "Why is this not actually done?",
+  "closing.mark_not_done.note_placeholder": "Required — explain what's still pending",
+  "closing.mark_not_done.submit": "Reopen item",
 
   "closing.three_chip.heading": "What happened?",
   "closing.three_chip.wrong_user_credited": "Wrong person credited",
