@@ -39,11 +39,11 @@
  * C.43 (mid-day prep multi-instance — accommodated by triggered_at column;
  * not exercised in this PR).
  *
- * Authorization note (per C.41 reconciliation): "KH+" in C.42 maps to
- * level >= 3 in current implementation (key_holder is level 3 per
- * lib/roles.ts) — same convention as the closing finalize gate per
- * C.26 + the C.41 sub-finding fix. When Module #2 reconciles the
- * broader level-number restructure per C.33, both gates move together.
+ * Authorization note: "KH+" in C.42 maps to level >= 4 (key_holder is
+ * level 4 per lib/roles.ts after the 0–10 role-model renumber) — same
+ * convention as the closing finalize gate per C.26 + the C.41 sub-finding
+ * fix. The renumber moved every KH+ gate from 3 to 4 in lockstep across
+ * lib + RLS, separating key_holder from employee (which stays level 3).
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -89,15 +89,14 @@ export interface PrepActor {
 }
 
 /**
- * Per C.42: AM Prep base-tile-visible at "KH+". Reconciled in Build #2 PR 1
- * to level >= 3 — matches C.26's "KH+ can finalize" intent now that the
- * closing finalize gate is also level >= 3 per the C.41 sub-finding fix.
+ * Per C.42: AM Prep base-tile-visible at "KH+" = level >= 4 (key_holder's
+ * level after the 0–10 role-model renumber). Matches C.26's "KH+ can
+ * finalize" intent — the closing finalize gate sits at the same level.
  * Below this, assignment-down via report_assignments is the path.
  *
- * The broader level-number restructure (renumbering KH=4, SL=5 per spec
- * C.33 intent) remains deferred to Module #2 user lifecycle work; this
- * constant moves with the closing finalize gate when that reconciliation
- * lands.
+ * The 0–10 role-model renumber (KH=4, SL=5 per spec C.33 intent) landed in
+ * this change; this constant moved from 3 to 4 with the closing finalize
+ * gate in lockstep, separating key_holder from employee (which stays 3).
  */
 export const AM_PREP_BASE_LEVEL = 4;
 
