@@ -3,7 +3,7 @@
 /**
  * ManagerLoginForm — Phase 2 Session 4.
  *
- * Email + password sign-in for level 5+ users. Calls POST /api/auth/password.
+ * Email + password sign-in for level 6+ users. Calls POST /api/auth/password.
  *
  * Response handling (Session 3 locked shapes):
  *   200 → onSuccess() (parent navigates to /dashboard)

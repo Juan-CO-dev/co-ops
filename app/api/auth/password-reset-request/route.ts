@@ -14,7 +14,7 @@
  *   metadata.outcome:
  *     "user_not_found"        no users row matches
  *     "user_inactive"         user exists but active=false
- *     "role_not_email_auth"   user.role.hasEmailAuth=false (level <5)
+ *     "role_not_email_auth"   user.role.hasEmailAuth=false (level <6)
  *     "email_not_verified"    user exists but email_verified=false (must verify first)
  *     "email_sent"            token inserted, Resend accepted send
  *     "email_failed"          token inserted, Resend rejected (network/quota/etc.)

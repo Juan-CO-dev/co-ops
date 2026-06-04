@@ -9,7 +9,7 @@ export default function ReportsReviewPage() {
         "Filter by location, date range, artifact type, role",
         "Drill from week → day → individual artifact",
         "Read receipts via report_views",
-        "Export and bulk-correction (level 6+)",
+        "Export and bulk-correction (level 7+)",
       ]}
       shippingIn="Module #4 (Report Review)"
     />

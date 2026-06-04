@@ -4,7 +4,7 @@ export default function AdminLocationsPage() {
   return (
     <PlaceholderCard
       title="Location Management"
-      description="Foundation admin tool. Owner+ only (level 7+)."
+      description="Foundation admin tool. Owner+ only (level 9+)."
       features={[
         "Add / edit / activate / deactivate locations",
         "Type: permanent or dark_kitchen",

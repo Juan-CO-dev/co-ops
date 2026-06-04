@@ -3,7 +3,7 @@
  *
  * Phase 3 wires this up:
  *   - Reads session from cookie
- *   - Blocks if !session or session.role_level < 6.5
+ *   - Blocks if !session or session.role_level < 8
  *   - If session.step_up_unlocked === false, renders <PasswordModal />
  *   - On nav-away or 10-min idle, server clears step_up_unlocked
  *

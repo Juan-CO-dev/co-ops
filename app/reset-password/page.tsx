@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * /reset-password — Password reset (level 5+). Phase 2 Session 4.
+ * /reset-password — Password reset (level 6+). Phase 2 Session 4.
  *
  * Entry: link from the Resend password-reset email containing ?token=<64-hex>.
  *

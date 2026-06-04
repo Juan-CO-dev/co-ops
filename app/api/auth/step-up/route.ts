@@ -8,7 +8,7 @@
  *   1. Validate body shape.
  *   2. requireSession (this route is NOT public — proxy enforces JWT, route
  *      enforces full session validation). On failure, 401 unauthorized.
- *   3. If user.role.hasEmailAuth = false (level <5) OR password_hash IS NULL,
+ *   3. If user.role.hasEmailAuth = false (level <6) OR password_hash IS NULL,
  *      respond 403 step_up_not_available. (PIN-only roles can't step up; they
  *      have no password to verify against.)
  *   4. verifyPassword. Wrong → audit auth_step_up_failure, return 401.

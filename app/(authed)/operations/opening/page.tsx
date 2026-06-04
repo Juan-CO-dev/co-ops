@@ -256,9 +256,9 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
 }
 
 /**
- * Loads users at level >= 5 (AGM+) at this location for the over-par
+ * Loads users at level >= 6 (AGM+) at this location for the over-par
  * `directedBy` dropdown. Per locked Sub-decision (g): AGM+ scope. Includes
- * level-7+ users (Owner) regardless of user_locations membership per the
+ * level-9+ users (Owner) regardless of user_locations membership per the
  * all-locations-override rule.
  */
 async function loadAgmPlusManagers(
@@ -267,7 +267,7 @@ async function loadAgmPlusManagers(
 ): Promise<ManagerOption[]> {
   // Two queries (per AGENTS.md "PostgREST embedded-select" lesson):
   //   1. user_locations rows at this location for AGM+ codes
-  //   2. all level-7+ users (location-unscoped global override)
+  //   2. all level-9+ users (location-unscoped global override)
   const AGM_PLUS_CODES = ["cgs", "owner", "moo", "gm", "agm", "catering_mgr"];
 
   const { data: locScoped, error: locErr } = await sb
@@ -280,7 +280,7 @@ async function loadAgmPlusManagers(
   );
 
   // Combined: users matching role AGM+ AND (in locScopedIds OR role in {owner, cgs}).
-  // Owner+CGS are level >= 7 with all-locations override; others must be
+  // Owner+CGS are level >= 9 with all-locations override; others must be
   // location-scoped.
   const query = sb
     .from("users")

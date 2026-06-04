@@ -4,7 +4,7 @@ export default function AdminAuditPage() {
   return (
     <PlaceholderCard
       title="Audit Log"
-      description="Foundation admin tool. Read-only, level 7+."
+      description="Foundation admin tool. Read-only, level 9+."
       features={[
         "Filter by actor, resource_table, action, time range",
         "Highlight destructive=true entries",
