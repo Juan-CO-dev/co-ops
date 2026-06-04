@@ -1647,6 +1647,162 @@ export async function revokeWithReason(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// markNotDoneByAuthority — C.55 cross-user mark-not-done.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Reopens a false completion on SOMEONE ELSE's checklist row (per
+ * SPEC_AMENDMENTS.md C.55). This is the cross-user extension C.28 left
+ * undecided: C.28 made revoke self-only and KH+ peer-correction tag-only,
+ * but never gave anyone authority to un-tick another user's completion.
+ *
+ * Soft-revoke semantics, identical write-shape to revokeWithReason:
+ * completed_by stays as operational truth (append-only tap event);
+ * revoked_at/revoked_by mark the row reopened. The reopened item
+ * re-completes via the normal flow (no special handling).
+ *
+ * Authorization (six locked dimensions, all server-enforced here — the UI
+ * gate is COSMETIC-ONLY):
+ *   - Cross-user only: actor.userId !== completion.completed_by (self goes
+ *     through revokeWithReason / revokeCompletion → "use_self_revoke").
+ *   - Floor: actor.level >= 4 (KH+, post-renumber). Below KH stays self-only
+ *     unchanged → ChecklistRoleViolationError(4, ...).
+ *   - Window: post-60s only. Within QUICK_WINDOW_MS, cross-user attempts
+ *     return "use_quick_revoke" (the completer's own silent-undo window owns
+ *     that interval).
+ *   - Bound: actor.level >= completer CURRENT level (AT-OR-BELOW, peers
+ *     INCLUDED — `>=`, not strict `>`). DELIBERATELY different from
+ *     lib/roles.ts canActOn (strict-greater). The completer's level is
+ *     resolved server-side at action time (consistency-with-tag; the
+ *     promotion edge is accepted) → ChecklistRevokeHierarchyViolationError.
+ *   - Note: required unconditionally → ChecklistRevocationNoteRequiredError.
+ *   - Reason category fixed = 'not_actually_done'; note stored unconditionally
+ *     in revocation_note (no cross-column CHECK ties note to reason='other').
+ *
+ * Distinct audit action checklist_completion.revoke_by_authority (NOT C.28's
+ * checklist_completion.revoke) so the forensic trail separates self-correction
+ * from authority-correction.
+ */
+export async function markNotDoneByAuthority(
+  authed: SupabaseClient,
+  args: {
+    completionId: string;
+    actor: ChecklistActor;
+    note?: string | null;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  },
+): Promise<{ completion: ChecklistCompletion }> {
+  const { completionId, actor } = args;
+
+  // Note required unconditionally.
+  const note = args.note?.trim() ?? "";
+  if (note.length === 0) {
+    throw new ChecklistRevocationNoteRequiredError(completionId);
+  }
+
+  const completion = await loadLiveCompletionOrThrow(authed, completionId);
+
+  // Cross-user only. Self-correction has its own (C.28) path.
+  if (completion.completed_by === actor.userId) {
+    throw new ChecklistError(
+      `markNotDoneByAuthority is cross-user only; actor is the completer of ${completionId} — use revokeWithReason / revokeCompletion for self-correction.`,
+      "use_self_revoke",
+    );
+  }
+
+  // Floor: KH+ (level >= 4, post-renumber). Below KH stays self-only.
+  if (actor.level < 4) {
+    throw new ChecklistRoleViolationError(
+      4,
+      actor.level,
+      `Cross-user mark-not-done requires KH+ (level >= 4).`,
+    );
+  }
+
+  // Window: post-60s only. The completer's own silent-undo owns the first 60s.
+  const elapsed = elapsedSinceCompleted(completion.completed_at);
+  if (elapsed < QUICK_WINDOW_MS) {
+    throw new ChecklistError(
+      `Completion ${completionId} is still within the completer's silent window (${QUICK_WINDOW_MS - elapsed}ms remaining); cross-user mark-not-done is post-60s only.`,
+      "use_quick_revoke",
+    );
+  }
+
+  // Resolve the completer's CURRENT level server-side (consistency-with-tag).
+  const sb = getServiceRoleClient();
+  const { data: completerUser, error: completerErr } = await sb
+    .from("users")
+    .select("role")
+    .eq("id", completion.completed_by)
+    .maybeSingle<{ role: RoleCode }>();
+  if (completerErr) {
+    throw new Error(`markNotDoneByAuthority completer lookup: ${completerErr.message}`);
+  }
+  if (!completerUser) {
+    // completed_by is a NOT NULL FK to users, so this should be unreachable;
+    // treat a missing completer as a hard error rather than silently
+    // defaulting the level (which would make the at-or-below bound vacuous).
+    throw new ChecklistError(
+      `Completer ${completion.completed_by} of completion ${completionId} not found.`,
+      "completer_not_found",
+    );
+  }
+  const completerLevel = getRoleLevel(completerUser.role);
+
+  // Bound: at-or-below (actor.level >= completer level; peers included).
+  if (actor.level < completerLevel) {
+    throw new ChecklistRevokeHierarchyViolationError(completionId, actor.level, completerLevel);
+  }
+
+  // Soft-revoke UPDATE via service-role (_no_user_update RLS denies everyone).
+  const nowIso = new Date().toISOString();
+  const { data: updatedRows, error: updateErr } = await sb
+    .from("checklist_completions")
+    .update({
+      revoked_at: nowIso,
+      revoked_by: actor.userId,
+      revocation_reason: "not_actually_done",
+      revocation_note: note,
+    })
+    .eq("id", completionId)
+    .is("revoked_at", null)
+    .is("superseded_at", null)
+    .select(COMPLETION_COLUMNS);
+
+  if (updateErr) {
+    throw new Error(`markNotDoneByAuthority update: ${updateErr.message}`);
+  }
+  if (!updatedRows || updatedRows.length === 0) {
+    throw new ChecklistConcurrentModificationError(completionId, "revoke_by_authority");
+  }
+
+  const updatedRow = updatedRows[0] as CompletionRow;
+
+  await audit({
+    actorId: actor.userId,
+    actorRole: actor.role,
+    action: "checklist_completion.revoke_by_authority",
+    resourceTable: "checklist_completions",
+    resourceId: completionId,
+    metadata: {
+      instance_id: completion.instance_id,
+      template_item_id: completion.template_item_id,
+      completed_by: completion.completed_by,
+      completer_level: completerLevel,
+      actor_level: actor.level,
+      reason: "not_actually_done",
+      note,
+      elapsed_ms: elapsed,
+    },
+    ipAddress: args.ipAddress ?? null,
+    userAgent: args.userAgent ?? null,
+  });
+
+  return { completion: rowToCompletion(updatedRow) };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // tagActualCompleter — KH+ peer correction (or self wrong_user_credited).
 // ─────────────────────────────────────────────────────────────────────────────
 
