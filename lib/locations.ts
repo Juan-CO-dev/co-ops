@@ -10,7 +10,7 @@
 
 import { type RoleCode, isRoleAtOrAbove } from "./roles";
 
-const ALL_LOCATIONS_THRESHOLD = 7;
+const ALL_LOCATIONS_THRESHOLD = 9;
 
 /** Minimal shape for any caller — typically derived from the verified JWT. */
 export interface LocationActor {

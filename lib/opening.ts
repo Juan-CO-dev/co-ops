@@ -92,7 +92,7 @@ export interface OpeningActor {
  * KH+ minimum per C.41 reconciliation. All opening template items have
  * min_role_level=3; this base level matches.
  */
-export const OPENING_BASE_LEVEL = 3;
+export const OPENING_BASE_LEVEL = 4;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Typed errors

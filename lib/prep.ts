@@ -99,7 +99,7 @@ export interface PrepActor {
  * constant moves with the closing finalize gate when that reconciliation
  * lands.
  */
-export const AM_PREP_BASE_LEVEL = 3;
+export const AM_PREP_BASE_LEVEL = 4;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Runtime validators (narrowing predicates)

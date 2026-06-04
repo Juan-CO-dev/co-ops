@@ -63,7 +63,7 @@ export interface ReportAssignmentActor {
  * follow-up grep sweep (per AGENTS.md "Role-level gate audits must
  * include UI-side gates" durable lesson).
  */
-const ASSIGNMENT_BASE_LEVEL = 3;
+const ASSIGNMENT_BASE_LEVEL = 4;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Errors
@@ -222,7 +222,7 @@ export async function createAssignment(
 
   // 2. Location access. Level 7+ has all-locations access; below that,
   //    explicit assignment list.
-  const hasAllLocations = args.assigner.level >= 7;
+  const hasAllLocations = args.assigner.level >= 9;
   if (!hasAllLocations && !args.assigner.locations.includes(args.locationId)) {
     throw new ReportAssignmentLocationAccessError(args.locationId, args.assigner.level);
   }
