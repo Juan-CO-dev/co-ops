@@ -17,6 +17,8 @@
  *   403 role_level_insufficient — actor's role level too low for the op
  *       not_self                — silent revoke attempted on someone else's row
  *       tag_hierarchy_violation — KH attempting to override AGM tag, etc.
+ *       revoke_hierarchy_violation — cross-user mark-not-done on an above-level
+ *                                    completer (C.55 at-or-below bound)
  *   409 instance_closed | single_submission_locked — state conflict
  *       outside_quick_window    — silent revoke attempted past 60s
  *       tag_within_quick_window — KH+ tag attempted within 60s self-correction window
@@ -44,6 +46,7 @@ import {
   ChecklistTagWithinQuickWindowError,
   ChecklistInvalidPickerCandidateError,
   ChecklistTagHierarchyViolationError,
+  ChecklistRevokeHierarchyViolationError,
   ChecklistRevocationNoteRequiredError,
   ChecklistConcurrentModificationError,
 } from "@/lib/checklists";
@@ -143,6 +146,14 @@ export function mapChecklistError(err: ChecklistError): NextResponse {
       completion_id: err.completionId,
       current_tagger_level: err.currentTaggerLevel,
       attempted_replacer_level: err.attemptedReplacerLevel,
+    });
+  }
+  if (err instanceof ChecklistRevokeHierarchyViolationError) {
+    return jsonError(403, err.code, {
+      message: err.message,
+      completion_id: err.completionId,
+      actor_level: err.actorLevel,
+      completer_level: err.completerLevel,
     });
   }
   if (err instanceof ChecklistRevocationNoteRequiredError) {
