@@ -115,6 +115,31 @@ hotfix; surface it when Phase 2 UX work is on the table.
 
 ---
 
+## TEST FIXTURES — REMOVE AT FULL LAUNCH
+
+Durable test accounts seeded for Commit B Phase 2 smoke (`scripts/seed-test-accounts.ts`), location
+`d2cced11` (EM). Juan ruled: keep until full-system launch, scrub then (append-only — `active=false`,
+not delete). **Current live 4-digit PINs** (KH1 + PREP were reset during the C.55 smoke; KH2 unchanged):
+
+| Account | Role code | Current PIN | Notes |
+|---|---|---|---|
+| ZZ_TEST_KH1 | `key_holder` | **4417** | reset during C.55 smoke (was 4829) |
+| ZZ_TEST_KH2 | `key_holder` | 7394 | unchanged |
+| ZZ_TEST_PREP | `trainee` | **4413** | reset during C.55 smoke (was 1506) |
+
+**Levels resolve from the role code at runtime — do NOT read a fixed number off this table.** Post-C.41
+renumber (`lib/roles.ts`), `key_holder` = level 4, `trainee` = level 3. The seed script
+(`scripts/seed-test-accounts.ts`) still prints pre-renumber labels (key_holder "level 3", trainee
+"level 2") in its console output — those are stale and should be ignored; the accounts store only the
+role code, so they always resolve to current levels.
+
+**C.55 scratch scripts** (left in `scripts/`, safe to delete anytime — service-role smoke tooling,
+not wired into the app): `c55-diag.ts`, `c55-roles-check.ts`, `c55-smoke-seed.ts`,
+`c55-smoke-survey.ts`, `c55-smoke-check2.ts`, `c55-smoke-check3.ts`, `c55-smoke-cleanup.ts`,
+`c55-seed-now.ts`, `c55-cleanup-orphans.ts`. All write only to test completions / test fixtures.
+
+---
+
 ## 6. Operating context (unchanged)
 
 - **Workflow v5.3 (locked).** You are Tier 0 main coder + sole semantic reviewer of all non-CC
