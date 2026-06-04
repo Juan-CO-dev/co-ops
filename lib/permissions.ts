@@ -51,44 +51,44 @@ export type PermissionKey =
 
 const PERMISSION_MIN_LEVEL: Record<PermissionKey, number> = {
   // Shift overlay
-  "overlay.write.cash":              3,
-  "overlay.write.voids_comps_waste": 4,
-  "overlay.write.customer":          4,
-  "overlay.write.delivery":          4,
-  "overlay.write.staffing":          4,
-  "overlay.write.context":           4,
-  "overlay.write.vendor":            5,
-  "overlay.write.people":            5,
-  "overlay.write.strategic":         6,
-  "overlay.write.executive":         7,
-  "overlay.write.forecast":          8,
-  "overlay.read":                    4,
-  "overlay.correct":                 4,
+  "overlay.write.cash":              3,   // any-staff (unchanged)
+  "overlay.write.voids_comps_waste": 5,   // 4 -> 5
+  "overlay.write.customer":          5,
+  "overlay.write.delivery":          5,
+  "overlay.write.staffing":          5,
+  "overlay.write.context":           5,
+  "overlay.write.vendor":            6,   // 5 -> 6
+  "overlay.write.people":            6,
+  "overlay.write.strategic":         7,   // 6 -> 7
+  "overlay.write.executive":         9,   // 7 -> 9
+  "overlay.write.forecast":          10,  // 8 -> 10
+  "overlay.read":                    5,   // 4 -> 5
+  "overlay.correct":                 5,
   // Checklists
-  "checklist.complete":              3,
-  "checklist.confirm":               3,
-  "checklist.template.write":        6,
-  "checklist.template.enable":       6.5,
+  "checklist.complete":              3,   // any-staff (unchanged)
+  "checklist.confirm":               4,   // ⚠ Task 1 decision (default KH+ -> 4)
+  "checklist.template.write":        7,   // 6 -> 7
+  "checklist.template.enable":       8,   // 6.5 -> 8
   // Written reports & announcements
-  "written_report.write":            3,
-  "announcement.post":               5,
-  "announcement.acknowledge":        3,
+  "written_report.write":            3,   // any-staff (unchanged)
+  "announcement.post":               6,   // 5 -> 6
+  "announcement.acknowledge":        3,   // any-staff (unchanged)
   // Training
-  "training_report.write":           3,
+  "training_report.write":           3,   // any-staff (unchanged)
   // Catering
-  "catering.pipeline.write":         5,
-  "catering.customers.write":        5,
+  "catering.pipeline.write":         6,   // 5 -> 6
+  "catering.customers.write":        6,
   // Vendors
-  "vendor.profile.full_edit":        6,
-  "vendor.profile.trivial_edit":     5,
-  "vendor.lifecycle":                6,
-  "vendor.items.write":              5,
-  "par_levels.write":                6,
+  "vendor.profile.full_edit":        7,   // 6 -> 7
+  "vendor.profile.trivial_edit":     6,   // 5 -> 6
+  "vendor.lifecycle":                7,   // 6 -> 7
+  "vendor.items.write":              6,   // 5 -> 6
+  "par_levels.write":                7,   // 6 -> 7
   // AI / admin
-  "ai.insights.run":                 6,
-  "admin.locations":                 7,
-  "admin.users":                     6.5,
-  "view.all_locations":              7,
+  "ai.insights.run":                 7,   // 6 -> 7
+  "admin.locations":                 9,   // 7 -> 9
+  "admin.users":                     8,   // 6.5 -> 8
+  "view.all_locations":              9,   // 7 -> 9
 };
 
 export function hasPermission(role: RoleCode, key: PermissionKey): boolean {
