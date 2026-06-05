@@ -1041,3 +1041,26 @@ Forward bind: when triaging a smoke report worded as a problem, write the expect
 Same theme family as the Build #3 "check existing patterns before designing net-new" entry, now confirmed three more times in one arc: Phase 1 was already-live-not-dormant (the "next loop is a ~500 LOC activation" handoff was stale — the restructure had shipped); Phase 2 backend was ~70% existing-code adaptation, not net-new; Commit B's UI (`OpeningPrepEntry`) is a rewire of near-complete scaffolding, not a build.
 
 Forward bind: before scoping a CO-OPS surface as greenfield, read the actual current code for adjacent/precursor scaffolding. The default assumption is "some of this already exists"; prove it doesn't before estimating build (not rewire) effort.
+
+---
+
+## Phase 3 — C.41 / C.55 / C.53-Phase-2 arc close-out (2026-06-04)
+
+### Verify against ground truth before acting; verify persistence by reading the destination
+
+The single most valuable durable lesson of the arc — it held SIX times across three nights. Plans, handoffs, and PR descriptions drift from ground truth. **Before authoring against any cited file / migration / contract, re-read it. Before trusting a plan's premise about DB or deploy state, query the live system. After any write meant to persist, READ IT BACK FROM THE DESTINATION** (read the file from the store, fetch from origin, query the live DB/ledger) — a write that "ran" is not a write that landed.
+
+Six evidenced instances where a ground-truth read caught a stale-plan error before it shipped:
+
+1. **Deferred collision** — the C.53 Phase 2 build doc's role-level anchors predated migration 0058; "KH+" had silently shifted `3→4`. Caught by reading the live `current_user_role_level()` CASE, not the doc.
+2. **False duplicate-template** — a template/state assumed from memory; a DB query showed the real shape differed.
+3. **Unrecorded purge list** — smoke artifacts would have been lost; only an explicit launch-purge log (read back) preserved them.
+4. **Local-only handoff** — a handoff that lived only in the worktree nearly vanished; "persisted to origin" required pushing AND confirming on origin.
+5. **Already-applied migrations** — the plan assumed `0056`/`0057` were unapplied; `list_migrations` + `pg_get_functiondef` proved them already live in prod (DB ahead of code), which killed the renumber + apply steps and verified body+signature parity before the calling code went live.
+6. **Would-be ledger desync** — renumbering `0056→0059` per the stale plan would have desynced repo filenames from the live migration ledger; reading the ledger first prevented it.
+
+Pairs with the `confirm-before-authoring` skill and the existing "preserved-from-prior must be re-verified" entry. This is the generalization: not just preserved code — preserved *assumptions* about any external state (DB, ledger, deploy, the persisted write itself) must be re-verified against the live destination.
+
+### Direct-push is fine for pure docs; any commit containing a code file MUST go through CI
+
+A `git push` straight to `main` is acceptable for a **pure-docs** commit (only `.md` / handoff / notes). But **any commit that includes a `.ts` (or other code) file must go through a PR + the CI build gate** — never a direct push. This is exactly what `324f2dd` did wrong: a `docs(C.55)` commit was direct-pushed to main but bundled `scripts/seed-test-accounts.ts` (a `.ts` with `noUncheckedIndexedAccess` type errors), skipping CI and **breaking main's `next build`** until `#49` fixed it. The fix PR (`#49`) deliberately went through CI; the smoke script that accompanied this arc's purge-log was kept local/untracked so the purge-log commit could stay pure-docs. Rule: if `git diff --cached --name-only` shows anything but docs, open a PR.
