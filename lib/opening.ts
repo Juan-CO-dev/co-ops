@@ -165,6 +165,86 @@ export class OpeningEntryShapeError extends OpeningError {
   }
 }
 
+// ─── C.53 §8.4 Phase 2 revoke (Lane D) typed errors ──────────────────────────
+//
+// {@link revokePhase2Completion} owns these. The structured-revoke permission
+// gate is hierarchical: SILENT quick-window revert is self-only; STRUCTURED
+// revert is `isSelf OR isKHPlus`; everything else is denied. The path is decided
+// from (isSelf, elapsed, isKHPlus) ONLY — reason-presence is never a path input.
+
+/**
+ * Revoke denied: actor is neither the original completer nor KH+ (level ≥
+ * OPENING_BASE_LEVEL). Maps to 403. i18n key `opening.error.not_self`.
+ */
+export class OpeningRevokeNotPermittedError extends OpeningError {
+  constructor(public readonly completionId: string) {
+    super(
+      `Revoke denied for completion ${completionId}: actor is neither the completer nor KH+.`,
+      "not_self",
+    );
+    this.name = "OpeningRevokeNotPermittedError";
+  }
+}
+
+/**
+ * No live (non-revoked, non-superseded) phase2 completion matched the target id
+ * — either it never existed, or it was concurrently revoked/superseded between
+ * the client read and this write. Maps to 409 (state conflict; client should
+ * refetch, not blindly retry). Raised both at load time and on a rowCount-0
+ * UPDATE (the Phase-1 silent-denial lesson: UPDATE returning 0 rows is not an
+ * error in Postgres — the lib makes it one).
+ */
+export class OpeningRevokeConflictError extends OpeningError {
+  constructor(public readonly completionId: string) {
+    super(
+      `No live Phase 2 completion ${completionId} to revoke (already revoked/superseded or never existed).`,
+      "revoke_conflict",
+    );
+    this.name = "OpeningRevokeConflictError";
+  }
+}
+
+/**
+ * Structured Phase 2 revoke reached the lib without a reason — the SIGNAL the
+ * client uses to open RevokeReasonModal. Distinct from {@link
+ * OpeningEntryShapeError} (genuinely-malformed request → 400): a no-reason
+ * structured revoke is a WELL-FORMED first step of the two-step structured
+ * flow, not garbage. Maps to 422 `reason_required`. No display i18n key — the
+ * modal opening IS the client's response to this code; the route never renders
+ * it as a message. The silent self-within-window path never reaches here (it
+ * stamps `quick_reenter` internally and 200s without a reason).
+ */
+export class OpeningRevokeReasonRequiredError extends OpeningError {
+  constructor(public readonly completionId: string) {
+    super(
+      `Structured Phase 2 revoke of completion ${completionId} requires a reason ∈ {re_enter_count, other}.`,
+      "reason_required",
+    );
+    this.name = "OpeningRevokeReasonRequiredError";
+  }
+}
+
+/**
+ * Defense-in-depth (same lesson as the C.46 audit-column 42703 bug): a
+ * revocation_reason that violates the `checklist_completions_revocation_reason_check`
+ * CHECK (sqlstate 23514) surfaces as a clean typed error instead of an opaque
+ * 500. Should never fire in practice — the lib only ever writes constraint-valid
+ * values — but if migration 0057 were rolled back, or a future caller bypassed
+ * the OUTPUT validation, this names the failure. Maps to 422.
+ */
+export class OpeningRevocationReasonInvalidError extends OpeningError {
+  constructor(
+    public readonly completionId: string,
+    public readonly attemptedReason: string,
+  ) {
+    super(
+      `Revocation reason '${attemptedReason}' for completion ${completionId} violates the revocation_reason CHECK constraint.`,
+      "revocation_reason_invalid",
+    );
+    this.name = "OpeningRevocationReasonInvalidError";
+  }
+}
+
 // ─── C.53 + C.54 typed errors ────────────────────────────────────────────────
 //
 // Phase-eligibility errors fire when the submit dispatcher receives entries
@@ -381,6 +461,29 @@ export class OpeningPhase3NotEligibleError extends OpeningPhaseError {
       status,
     );
     this.name = "OpeningPhase3NotEligibleError";
+  }
+}
+
+/**
+ * C.53 Phase 2 — finalize (`submit_phase2_atomic`) refuses to advance when one
+ * or more items in the Phase 2 universe (every `openingPhase2` template item)
+ * lack a live (non-superseded, non-revoked) phase2 completion. The opener must
+ * save every prep item before finalize advances the instance to
+ * `phase2_complete`. The RPC raises P0001 with the
+ * `submit_phase2_atomic: phase2_incomplete` prefix; `missingCount` is parsed
+ * from the message for the translated UI hint. i18n key
+ * `opening.error.phase2_incomplete`.
+ */
+export class OpeningPhase2IncompleteError extends OpeningError {
+  constructor(
+    public readonly instanceId: string,
+    public readonly missingCount: number,
+  ) {
+    super(
+      `Phase 2 finalize rejected: instance ${instanceId} has ${missingCount} prep item(s) without a saved completion.`,
+      "phase2_incomplete",
+    );
+    this.name = "OpeningPhase2IncompleteError";
   }
 }
 
@@ -1093,6 +1196,41 @@ export async function loadOpeningCloserCountSnapshots(
   return result;
 }
 
+/**
+ * loadOpeningSectionVerifications — read-back of the section-verify beat
+ * (C.50 §2). The submit RPC (submitOpening) APPENDS one row to
+ * opening_section_verifications per verified=true section; this is the missing
+ * reader that lets a second opener see opener A's persisted verify state
+ * instead of a value derived from instance.status.
+ *
+ * Returns a DISTINCT list of verified section_keys (row-exists IS the verified
+ * signal — the table has no `verified` boolean; migration 0051). The table is
+ * append-only with no unique constraint, so a section can have multiple rows;
+ * we dedupe to a Set and return its keys. Returns [] for instances with no
+ * verify rows (still 'open', or no section was ever verified).
+ *
+ * A plain string[] (not a Map) crosses the RSC→client boundary directly —
+ * section-verify is a set-membership question, not a key→value lookup, and an
+ * array is JSON-serializable without the Record⇄Map dance closerSnapshots needs.
+ */
+export async function loadOpeningSectionVerifications(
+  service: SupabaseClient,
+  instanceId: string,
+): Promise<string[]> {
+  const { data, error } = await service
+    .from("opening_section_verifications")
+    .select("section_key")
+    .eq("opening_instance_id", instanceId);
+  if (error) {
+    throw new Error(`loadOpeningSectionVerifications: ${error.message}`);
+  }
+  const seen = new Set<string>();
+  for (const row of (data ?? []) as Array<{ section_key: string }>) {
+    seen.add(row.section_key);
+  }
+  return [...seen];
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // submitOpening — invoke submit_opening_atomic RPC
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1119,7 +1257,7 @@ interface SubmitRpcResult {
  * Submits an opening Phase 1 instance atomically via submit_opening_atomic.
  *
  * Pre-flight authorization:
- *   - actor.level >= OPENING_BASE_LEVEL (3, KH+)
+ *   - actor.level >= OPENING_BASE_LEVEL (4, KH+)
  *
  * RPC handles atomicity: completions + submission + instance confirm +
  * closing(N-1) auto-complete all in one transaction. Failure at any step
@@ -1610,7 +1748,7 @@ function extractTemplateItemId(msg: string): string | null {
  *      → JSONB Phase1RpcResult.
  *
  * Pre-flight authorization (mirrors submitOpening): actor.level ≥
- * OPENING_BASE_LEVEL (3, KH+). Fails fast with OpeningRoleViolationError before
+ * OPENING_BASE_LEVEL (4, KH+). Fails fast with OpeningRoleViolationError before
  * RPC dispatch.
  *
  * RPC error translation (catches Supabase PostgrestError shape):
@@ -1894,39 +2032,615 @@ export async function submitPhase1Atomic(
 }
 
 /**
- * Type-contract-lock — Phase 2 atomic submit invoker.
- *
- * RPC contract (downstream commit):
- *   `submit_phase2_atomic(p_opening_instance_id, p_actor_id, p_entries,
- *      p_is_update, p_original_submission_id, p_ip_address, p_user_agent)`
- *      → JSONB result with the standard OpeningPhaseSubmitResult fields plus
- *      C.50 counters (at_par_count, over_prep_count, under_prep_count).
- *
- * Pre-flight: instance.status must be `'phase1_complete'`; otherwise raises
- * `OpeningPhase2NotEligibleError`.
- *
- * Per Triad A ruling 2026-05-26, C.54 §2.C attestation moved to Phase 1
- * (NULL-source detection happens there under C.53's restructure, so the
- * per-instance attestation follows detection). Phase 2 READS the persisted
- * attestation from `checklist_instances.opener_no_prior_data_reason` but
- * does NOT capture it.
+ * Result shape returned by `submit_phase2_atomic` RPC (migration 0056).
+ * Mirrors `OpeningPhaseSubmitResult` plus the C.50 over/under counters the
+ * JS-side `opening.phase2.submit` audit consumes. `autoCompleteId` always null
+ * (Phase 3 owns opening→closing auto-complete per C.54 §2.A).
  */
-export async function submitPhase2Atomic(
-  _service: SupabaseClient,
-  _args: {
+interface Phase2RpcResult {
+  instance: InstanceRow;
+  submissionId: string;
+  completionIds: string[];
+  autoCompleteId: string | null;
+  editCount: number;
+  originalSubmissionId: string | null;
+  underParNotificationIds: string[];
+  atParCount: number;
+  overPrepCount: number;
+  underPrepCount: number;
+}
+
+/**
+ * Result shape returned by `save_phase2_item_atomic` RPC (migration 0056) — the
+ * per-item §8.4 write. Carries the written completion row plus the
+ * server-computed delta/status for optimistic local state update.
+ */
+interface Phase2ItemSaveRpcResult {
+  completion: CompletionRow;
+  templateItemId: string;
+  completionId: string;
+  deltaVsPrepNeed: number | null;
+  overUnderStatus: "at_par" | "over_prep" | "under_prep";
+}
+
+/** Lib-layer result of {@link savePhase2Item}. */
+export interface Phase2ItemSaveResult {
+  completion: ChecklistCompletion;
+  templateItemId: string;
+  completionId: string;
+  deltaVsPrepNeed: number | null;
+  overUnderStatus: "at_par" | "over_prep" | "under_prep";
+}
+
+/** Parses the integer count from a `phase2_incomplete` RPC message. */
+function extractMissingCount(msg: string): number {
+  const m = msg.match(/phase2_incomplete — (\d+) /);
+  return m ? Number(m[1]) : 0;
+}
+
+/**
+ * Phase 2 per-item §8.4 save invoker — wires the `save_phase2_item_atomic` RPC
+ * (migration 0056). Writes ONE prep item's phase2 completion in the §8.4
+ * 14-field shape (12 core + saved_at/saved_by), sourcing ground_truth/prep_need
+ * from the item's own `prep_data->phase1`, computing delta/status via the shared
+ * `opening_phase2_compute_delta` helper. Append-only: supersedes the prior live
+ * phase2 row for the item, then INSERTs the new one (D1).
+ *
+ * Pre-flight authorization: actor.level ≥ OPENING_BASE_LEVEL (KH+).
+ *
+ * RPC error translation (P0001 by message prefix):
+ *   - phase2_not_eligible    → OpeningPhase2NotEligibleError(instanceId, currentStatus)
+ *   - phase1_not_resolved    → OpeningGroundTruthUnresolvedError(itemId)
+ *   - opener_prepped_missing
+ *     / over_par_reason_missing
+ *     / under_par_reason_missing
+ *     / under_par_freetext_required → OpeningEntryShapeError(reason)
+ *   - 23503 (actor)          → OpeningActorNotFoundError; other → generic re-throw
+ *
+ * Audit (JS-side): action `opening.phase2.item_saved`, NOT destructive
+ * (append-only per-item save). Outcomes: role_insufficient | phase2_not_eligible
+ * | phase1_not_resolved | invalid_entry_shape | rpc_failed | success.
+ */
+export async function savePhase2Item(
+  service: SupabaseClient,
+  args: {
     instanceId: string;
     actor: OpeningActor;
-    entries: OpeningEntryPhase2[];
+    entry: OpeningEntryPhase2;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  },
+): Promise<Phase2ItemSaveResult> {
+  const auditBase = {
+    actorId: args.actor.userId,
+    actorRole: args.actor.role,
+    action: "opening.phase2.item_saved" as const,
+    resourceTable: "checklist_completions" as const,
+    resourceId: args.instanceId,
+    ipAddress: args.ipAddress ?? null,
+    userAgent: args.userAgent ?? null,
+  };
+
+  if (args.actor.level < OPENING_BASE_LEVEL) {
+    void audit({
+      ...auditBase,
+      metadata: {
+        outcome: "role_insufficient",
+        required_level: OPENING_BASE_LEVEL,
+        actual_level: args.actor.level,
+        template_item_id: args.entry.templateItemId,
+      },
+    });
+    throw new OpeningRoleViolationError(OPENING_BASE_LEVEL, args.actor.level);
+  }
+
+  let rpcResult: Phase2ItemSaveRpcResult;
+  try {
+    const { data, error } = await service.rpc("save_phase2_item_atomic", {
+      p_opening_instance_id: args.instanceId,
+      p_actor_id: args.actor.userId,
+      p_template_item_id: args.entry.templateItemId,
+      p_opener_prepped: args.entry.openerPrepped,
+      p_over_par: args.entry.overPar,
+      p_under_par: args.entry.underPar,
+      p_ip_address: args.ipAddress ?? null,
+      p_user_agent: args.userAgent ?? null,
+    });
+    if (error) {
+      if (error.code === "P0001") {
+        const msg = error.message;
+        if (msg.includes("phase2_not_eligible")) {
+          const { data: row } = await service
+            .from("checklist_instances")
+            .select("status")
+            .eq("id", args.instanceId)
+            .maybeSingle<{ status: ChecklistStatus }>();
+          const status: ChecklistStatus = row?.status ?? "phase1_complete";
+          void audit({ ...auditBase, metadata: { outcome: "phase2_not_eligible", rpc_error: msg, current_status: status, template_item_id: args.entry.templateItemId } });
+          throw new OpeningPhase2NotEligibleError(args.instanceId, status);
+        }
+        if (msg.includes("phase1_not_resolved")) {
+          const itemId = extractTemplateItemId(msg) ?? args.entry.templateItemId;
+          void audit({ ...auditBase, metadata: { outcome: "phase1_not_resolved", rpc_error: msg, template_item_id: itemId } });
+          throw new OpeningGroundTruthUnresolvedError(itemId);
+        }
+        if (
+          msg.includes("opener_prepped_missing") ||
+          msg.includes("over_par_reason_missing") ||
+          msg.includes("under_par_reason_missing") ||
+          msg.includes("under_par_freetext_required")
+        ) {
+          void audit({ ...auditBase, metadata: { outcome: "invalid_entry_shape", rpc_error: msg, template_item_id: args.entry.templateItemId } });
+          throw new OpeningEntryShapeError(msg.replace(/^save_phase2_item_atomic:\s*/, ""));
+        }
+      }
+      if (error.code === "23503" && error.message.includes("actor")) {
+        void audit({ ...auditBase, metadata: { outcome: "actor_not_found", rpc_error: error.message } });
+        throw new OpeningActorNotFoundError(args.actor.userId);
+      }
+      throw new Error(`save_phase2_item_atomic rpc: ${error.message}`);
+    }
+    if (!data || typeof data !== "object") {
+      throw new Error("save_phase2_item_atomic rpc: empty result");
+    }
+    rpcResult = data as Phase2ItemSaveRpcResult;
+  } catch (err) {
+    if (err instanceof OpeningError) throw err;
+    void audit({
+      ...auditBase,
+      metadata: {
+        outcome: "rpc_failed",
+        rpc_error: err instanceof Error ? err.message : String(err),
+        template_item_id: args.entry.templateItemId,
+      },
+    });
+    throw err;
+  }
+
+  void audit({
+    ...auditBase,
+    metadata: {
+      outcome: "success",
+      template_item_id: rpcResult.templateItemId,
+      completion_id: rpcResult.completionId,
+      phase: 2,
+      over_under_status: rpcResult.overUnderStatus,
+    },
+  });
+
+  return {
+    completion: rowToCompletion(rpcResult.completion),
+    templateItemId: rpcResult.templateItemId,
+    completionId: rpcResult.completionId,
+    deltaVsPrepNeed: rpcResult.deltaVsPrepNeed,
+    overUnderStatus: rpcResult.overUnderStatus,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// C.53 §8.4 Phase 2 revoke (Lane D)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Quick-window threshold for the SILENT Phase 2 revert path. A self-revoke
+ * within this window of the save is treated as an immediate "oops, re-enter"
+ * correction: no reason prompt and NO audit row. The completion row still
+ * carries the `quick_reenter` sentinel as its `revocation_reason` (distinct
+ * from closing's `error_tap`, so the audit trail never reads a forensic error
+ * claim for a routine quick self-correction). Matches closing's 60s window.
+ */
+const PHASE2_QUICK_REVOKE_WINDOW_MS = 60_000;
+
+/** Lib-layer result of {@link revokePhase2Completion}. */
+export interface Phase2RevokeResult {
+  completion: ChecklistCompletion;
+  templateItemId: string;
+  instanceId: string;
+  /** Which gate path was taken — drives the client's post-revoke messaging. */
+  path: "silent" | "structured";
+}
+
+/**
+ * Phase 2 per-item §8.4 revoke — OWN thin lib (closing's revoke lib + route are
+ * left untouched). Withdraws a saved Phase 2 prep completion so the operator can
+ * re-enter. Append-only: sets `revoked_*` on the live row, never DELETEs.
+ *
+ * HIERARCHICAL permission gate. The path is decided from (isSelf, elapsed,
+ * isKHPlus) ONLY — reason-presence is NEVER a path-selection input, it is
+ * validated as an OUTPUT after the path is chosen:
+ *
+ *   if (isSelf && elapsed < 60s)  → SILENT     (reason='quick_reenter', NO audit)
+ *   else if (isSelf || isKHPlus)  → STRUCTURED (reason required, audit written)
+ *   else                          → 403 OpeningRevokeNotPermittedError
+ *
+ * Critical invariant: a KH+ actor reverting a CO-opener's item within 60s fails
+ * `isSelf` → lands STRUCTURED → is always audited. There is no silent path for
+ * acting on someone else's work.
+ *
+ * Eligibility: revoke is permitted ONLY while the instance is at
+ * `phase1_complete` (Phase 2 prep open). Once finalized the prep universe is
+ * locked → OpeningPhase2NotEligibleError (reused).
+ *
+ * Reason vocabulary (OUTPUT only):
+ *   - silent     → 'quick_reenter' (sentinel; no note)
+ *   - structured → 're_enter_count' | 'other'; note REQUIRED when 'other'
+ *
+ * Errors: OpeningPhase2NotEligibleError (409 via mapping), OpeningRevokeConflictError
+ * (409 — no live row at load OR rowCount-0 UPDATE), OpeningRevokeReasonRequiredError
+ * (422 reason_required — structured revoke reached the lib with no reason; the
+ * client's signal to open RevokeReasonModal), OpeningEntryShapeError (400 — non-phase2
+ * target row, or missing note when reason='other'), OpeningRevokeNotPermittedError
+ * (403), OpeningRevocationReasonInvalidError (422 — 23514 defense-in-depth).
+ */
+export async function revokePhase2Completion(
+  service: SupabaseClient,
+  args: {
+    instanceId: string;
+    completionId: string;
+    actor: OpeningActor;
+    reason?: "re_enter_count" | "other" | null;
+    note?: string | null;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  },
+): Promise<Phase2RevokeResult> {
+  const auditBase = {
+    actorId: args.actor.userId,
+    actorRole: args.actor.role,
+    action: "opening.phase2.revoke" as const,
+    resourceTable: "checklist_completions" as const,
+    resourceId: args.completionId,
+    ipAddress: args.ipAddress ?? null,
+    userAgent: args.userAgent ?? null,
+  };
+
+  // ── Eligibility: instance must be at phase1_complete (Phase 2 prep open). ──
+  const { data: instanceRow, error: instanceErr } = await service
+    .from("checklist_instances")
+    .select("status")
+    .eq("id", args.instanceId)
+    .maybeSingle<{ status: ChecklistStatus }>();
+  if (instanceErr) {
+    throw new Error(
+      `revokePhase2Completion instance load: ${instanceErr.message}`,
+    );
+  }
+  if (!instanceRow) {
+    void audit({
+      ...auditBase,
+      metadata: { outcome: "instance_not_found", instance_id: args.instanceId },
+    });
+    throw new OpeningRevokeConflictError(args.completionId);
+  }
+  if (instanceRow.status !== "phase1_complete") {
+    void audit({
+      ...auditBase,
+      metadata: {
+        outcome: "phase2_not_eligible",
+        instance_id: args.instanceId,
+        current_status: instanceRow.status,
+      },
+    });
+    throw new OpeningPhase2NotEligibleError(args.instanceId, instanceRow.status);
+  }
+
+  // ── Load the live (non-revoked, non-superseded) completion targeted by id. ──
+  const { data: liveRow, error: loadErr } = await service
+    .from("checklist_completions")
+    .select(COMPLETION_COLUMNS)
+    .eq("id", args.completionId)
+    .eq("instance_id", args.instanceId)
+    .is("revoked_at", null)
+    .is("superseded_at", null)
+    .maybeSingle<CompletionRow>();
+  if (loadErr) {
+    throw new Error(
+      `revokePhase2Completion completion load: ${loadErr.message}`,
+    );
+  }
+  if (!liveRow) {
+    void audit({
+      ...auditBase,
+      metadata: { outcome: "revoke_conflict", instance_id: args.instanceId },
+    });
+    throw new OpeningRevokeConflictError(args.completionId);
+  }
+
+  // ── Phase2-row guard: target MUST carry prep_data->phase2 (a Phase 2 prep
+  //    completion), never a Phase 1 spot-check row. Defense against a client
+  //    passing the wrong completionId. ──
+  const prepData = liveRow.prep_data;
+  const isPhase2Row =
+    prepData != null && typeof prepData === "object" && "phase2" in prepData;
+  if (!isPhase2Row) {
+    void audit({
+      ...auditBase,
+      metadata: {
+        outcome: "not_phase2_row",
+        instance_id: args.instanceId,
+        template_item_id: liveRow.template_item_id,
+      },
+    });
+    throw new OpeningEntryShapeError(
+      `completion ${args.completionId} is not a Phase 2 prep row (no prep_data->phase2); refusing to revoke`,
+    );
+  }
+
+  // ── Path selection — decided from (isSelf, elapsed, isKHPlus) ONLY. ──
+  const isSelf = liveRow.completed_by === args.actor.userId;
+  const isKHPlus = args.actor.level >= OPENING_BASE_LEVEL;
+  const elapsedMs = Date.now() - Date.parse(liveRow.completed_at);
+  const inQuickWindow = elapsedMs < PHASE2_QUICK_REVOKE_WINDOW_MS;
+
+  let path: "silent" | "structured";
+  if (isSelf && inQuickWindow) {
+    path = "silent";
+  } else if (isSelf || isKHPlus) {
+    path = "structured";
+  } else {
+    void audit({
+      ...auditBase,
+      metadata: {
+        outcome: "not_permitted",
+        instance_id: args.instanceId,
+        template_item_id: liveRow.template_item_id,
+        is_self: isSelf,
+        is_kh_plus: isKHPlus,
+        elapsed_ms: elapsedMs,
+      },
+    });
+    throw new OpeningRevokeNotPermittedError(args.completionId);
+  }
+
+  // ── Reason as OUTPUT (never a path input). ──
+  let revocationReason: "quick_reenter" | "re_enter_count" | "other";
+  let revocationNote: string | null;
+  if (path === "silent") {
+    revocationReason = "quick_reenter";
+    revocationNote = null;
+  } else {
+    const reason = args.reason ?? null;
+    if (reason !== "re_enter_count" && reason !== "other") {
+      void audit({
+        ...auditBase,
+        metadata: {
+          outcome: "reason_missing",
+          instance_id: args.instanceId,
+          template_item_id: liveRow.template_item_id,
+        },
+      });
+      throw new OpeningRevokeReasonRequiredError(args.completionId);
+    }
+    const note = args.note?.trim() ?? "";
+    if (reason === "other" && note.length === 0) {
+      void audit({
+        ...auditBase,
+        metadata: {
+          outcome: "note_missing",
+          instance_id: args.instanceId,
+          template_item_id: liveRow.template_item_id,
+        },
+      });
+      throw new OpeningEntryShapeError(
+        `structured Phase 2 revoke with reason='other' requires a note`,
+      );
+    }
+    revocationReason = reason;
+    revocationNote = reason === "other" ? note : null;
+  }
+
+  // ── Append-only revoke. rowCount 0 ⇒ concurrently revoked/superseded between
+  //    load and write (UPDATE-returns-0-rows is silent in Postgres; the lib
+  //    makes it a conflict). 23514 ⇒ revocation_reason CHECK violation
+  //    (defense-in-depth; should never fire — values are constraint-valid). ──
+  const nowIso = new Date().toISOString();
+  const { data: updatedRows, error: updateErr } = await service
+    .from("checklist_completions")
+    .update({
+      revoked_at: nowIso,
+      revoked_by: args.actor.userId,
+      revocation_reason: revocationReason,
+      revocation_note: revocationNote,
+    })
+    .eq("id", args.completionId)
+    .eq("instance_id", args.instanceId)
+    .is("revoked_at", null)
+    .is("superseded_at", null)
+    .select(COMPLETION_COLUMNS);
+
+  if (updateErr) {
+    if (updateErr.code === "23514") {
+      void audit({
+        ...auditBase,
+        metadata: {
+          outcome: "revocation_reason_invalid",
+          instance_id: args.instanceId,
+          attempted_reason: revocationReason,
+        },
+      });
+      throw new OpeningRevocationReasonInvalidError(
+        args.completionId,
+        revocationReason,
+      );
+    }
+    throw new Error(`revokePhase2Completion update: ${updateErr.message}`);
+  }
+  if (!updatedRows || updatedRows.length === 0) {
+    void audit({
+      ...auditBase,
+      metadata: {
+        outcome: "revoke_conflict",
+        instance_id: args.instanceId,
+        phase: "update",
+      },
+    });
+    throw new OpeningRevokeConflictError(args.completionId);
+  }
+
+  const updatedRow = updatedRows[0] as CompletionRow;
+
+  // ── Audit: STRUCTURED writes a forensic revoke row; SILENT writes NONE
+  //    (routine quick self-correction — the quick_reenter sentinel on the row
+  //    is the only trace). ──
+  if (path === "structured") {
+    void audit({
+      ...auditBase,
+      metadata: {
+        outcome: "success",
+        instance_id: args.instanceId,
+        template_item_id: updatedRow.template_item_id,
+        in_quick_window: false,
+        is_self: isSelf,
+        is_kh_plus: isKHPlus,
+        reason: revocationReason,
+        note: revocationNote,
+        elapsed_ms: elapsedMs,
+      },
+    });
+  }
+
+  return {
+    completion: rowToCompletion(updatedRow),
+    templateItemId: updatedRow.template_item_id,
+    instanceId: args.instanceId,
+    path,
+  };
+}
+
+/**
+ * Phase 2 finalize invoker — wires the `submit_phase2_atomic` RPC
+ * (migration 0056). FINALIZE-ONLY (SPLIT — Question A): does NOT write per-item
+ * §8.4 (that's {@link savePhase2Item}); takes NO entries — it reads back the
+ * persisted phase2 completions, validates completeness over the Model Y universe
+ * (every `openingPhase2` item has a live phase2 completion), recomputes deltas
+ * authoritatively via the shared helper sourcing from the FROZEN
+ * `prep_data->phase1` (D4), dispatches under-prep notifications, and advances
+ * `phase1_complete → phase2_complete`. No opening→closing auto-complete (C.54 §2.A).
+ *
+ * Pre-flight authorization: actor.level ≥ OPENING_BASE_LEVEL (KH+).
+ *
+ * RPC error translation (P0001 by message prefix):
+ *   - phase2_not_eligible              → OpeningPhase2NotEligibleError(instanceId, currentStatus)
+ *   - phase2_incomplete                → OpeningPhase2IncompleteError(instanceId, missingCount)
+ *   - phase1_not_resolved              → OpeningGroundTruthUnresolvedError(itemId)
+ *   - phase2_chain_edit_not_implemented → generic re-throw (D3 — inert, no UI trigger)
+ *   - 23503 (actor)                    → OpeningActorNotFoundError; other → generic re-throw
+ *
+ * Audit (JS-side, original path): action `opening.phase2.submit`, NOT destructive.
+ * Outcomes: role_insufficient | phase2_not_eligible | phase2_incomplete |
+ * phase1_not_resolved | actor_not_found | rpc_failed | success.
+ */
+export async function submitPhase2Atomic(
+  service: SupabaseClient,
+  args: {
+    instanceId: string;
+    actor: OpeningActor;
     isUpdate?: boolean;
     originalSubmissionId?: string;
     ipAddress?: string | null;
     userAgent?: string | null;
   },
 ): Promise<OpeningPhaseSubmitResult> {
-  throw new OpeningError(
-    "submit_phase2_atomic RPC not yet implemented (type-contract-lock stub).",
-    "phase2_rpc_not_implemented",
-  );
+  const auditBase = {
+    actorId: args.actor.userId,
+    actorRole: args.actor.role,
+    action: "opening.phase2.submit" as const,
+    resourceTable: "checklist_instances" as const,
+    resourceId: args.instanceId,
+    ipAddress: args.ipAddress ?? null,
+    userAgent: args.userAgent ?? null,
+  };
+
+  if (!args.isUpdate && args.actor.level < OPENING_BASE_LEVEL) {
+    void audit({
+      ...auditBase,
+      metadata: {
+        outcome: "role_insufficient",
+        required_level: OPENING_BASE_LEVEL,
+        actual_level: args.actor.level,
+      },
+    });
+    throw new OpeningRoleViolationError(OPENING_BASE_LEVEL, args.actor.level);
+  }
+
+  let rpcResult: Phase2RpcResult;
+  try {
+    const { data, error } = await service.rpc("submit_phase2_atomic", {
+      p_opening_instance_id: args.instanceId,
+      p_actor_id: args.actor.userId,
+      p_is_update: args.isUpdate ?? false,
+      p_original_submission_id: args.originalSubmissionId ?? null,
+      p_ip_address: args.ipAddress ?? null,
+      p_user_agent: args.userAgent ?? null,
+    });
+    if (error) {
+      if (error.code === "P0001") {
+        const msg = error.message;
+        if (msg.includes("phase2_not_eligible")) {
+          const { data: row } = await service
+            .from("checklist_instances")
+            .select("status")
+            .eq("id", args.instanceId)
+            .maybeSingle<{ status: ChecklistStatus }>();
+          const status: ChecklistStatus = row?.status ?? "phase1_complete";
+          void audit({ ...auditBase, metadata: { outcome: "phase2_not_eligible", rpc_error: msg, current_status: status } });
+          throw new OpeningPhase2NotEligibleError(args.instanceId, status);
+        }
+        if (msg.includes("phase2_incomplete")) {
+          const missing = extractMissingCount(msg);
+          void audit({ ...auditBase, metadata: { outcome: "phase2_incomplete", rpc_error: msg, missing_count: missing } });
+          throw new OpeningPhase2IncompleteError(args.instanceId, missing);
+        }
+        if (msg.includes("phase1_not_resolved")) {
+          const itemId = extractTemplateItemId(msg) ?? "<unknown>";
+          void audit({ ...auditBase, metadata: { outcome: "phase1_not_resolved", rpc_error: msg, template_item_id: itemId } });
+          throw new OpeningGroundTruthUnresolvedError(itemId);
+        }
+        // phase2_chain_edit_not_implemented (D3 — inert) falls through to generic.
+      }
+      if (error.code === "23503" && error.message.includes("actor")) {
+        void audit({ ...auditBase, metadata: { outcome: "actor_not_found", rpc_error: error.message } });
+        throw new OpeningActorNotFoundError(args.actor.userId);
+      }
+      throw new Error(`submit_phase2_atomic rpc: ${error.message}`);
+    }
+    if (!data || typeof data !== "object") {
+      throw new Error("submit_phase2_atomic rpc: empty result");
+    }
+    rpcResult = data as Phase2RpcResult;
+  } catch (err) {
+    if (err instanceof OpeningError) throw err;
+    void audit({
+      ...auditBase,
+      metadata: {
+        outcome: "rpc_failed",
+        rpc_error: err instanceof Error ? err.message : String(err),
+      },
+    });
+    throw err;
+  }
+
+  void audit({
+    ...auditBase,
+    metadata: {
+      outcome: "success",
+      submission_id: rpcResult.submissionId,
+      completion_count: rpcResult.completionIds.length,
+      at_par_count: rpcResult.atParCount,
+      over_prep_count: rpcResult.overPrepCount,
+      under_prep_count: rpcResult.underPrepCount,
+      under_par_notification_count: rpcResult.underParNotificationIds.length,
+    },
+  });
+
+  return {
+    instance: rowToInstance(rpcResult.instance),
+    submittedCompletionIds: rpcResult.completionIds,
+    closingAutoCompleteId: rpcResult.autoCompleteId, // always null per 0056
+    editCount: rpcResult.editCount,
+    originalSubmissionId: rpcResult.originalSubmissionId,
+    underParNotificationIds: rpcResult.underParNotificationIds ?? [],
+  };
 }
 
 /**
@@ -2024,10 +2738,12 @@ export async function submitOpeningByPhase(
     });
   }
   if (phase === 2) {
+    // SPLIT (Question A): Phase 2 finalize is entries-less — per-item §8.4 writes
+    // land via savePhase2Item beforehand; finalize reads the persisted rows back.
+    // The dispatcher's `args.entries` are ignored on this branch.
     return submitPhase2Atomic(service, {
       instanceId: args.instanceId,
       actor: args.actor,
-      entries: args.entries as OpeningEntryPhase2[],
       isUpdate: args.isUpdate,
       originalSubmissionId: args.originalSubmissionId,
       ipAddress: args.ipAddress ?? null,

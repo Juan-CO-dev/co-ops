@@ -62,6 +62,16 @@ export const DESTRUCTIVE_ACTIONS = [
   // destructive=true on the audit row via isDestructive().
   "checklist_completion.revoke_by_authority",
 
+  // Opening Phase 2 per-item prep revoke (C.53 §8.4 Lane D).
+  // — destructive because it withdraws a saved prep completion from the
+  // operational/accountability record. Distinct from closing's
+  // "checklist_completion.revoke": Phase 2 owns its own thin revoke lib
+  // (revokePhase2Completion) with a hierarchical permission gate and a
+  // prep-specific reason vocabulary (quick_reenter / re_enter_count / other,
+  // per migration 0057). The SILENT quick-window self-revert writes NO audit
+  // row — only the STRUCTURED path emits this action.
+  "opening.phase2.revoke",
+
   // Report post-submission update (per SPEC_AMENDMENTS.md C.46 A7)
   // — destructive because it's an additive correction to a submitted
   // report. Audit row is emitted from inside submit_am_prep_atomic RPC

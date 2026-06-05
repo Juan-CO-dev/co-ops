@@ -823,7 +823,7 @@ export interface OpeningEntryPhase1 {
  *     only the derived prep_need from Phase 1)
  *   - KEPT `openerPrepped` (required) + `overPar` / `underPar` reason captures
  *   - ADDED `deltaVsPrepNeed` for client-derived delta capture; server
- *     authoritative (Phase 5 RPC recomputes from persisted Phase 1 ground_truth)
+ *     authoritative (Phase 2 RPC recomputes from persisted Phase 1 ground_truth)
  *
  * Reason categories unchanged from C.50. Under-prep `freeText` REQUIRED;
  * over-prep `freeText` required when `reasonCategory='other'`; over-prep

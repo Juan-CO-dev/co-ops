@@ -27,6 +27,7 @@ import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
 import {
   loadOpeningCloserCountSnapshots,
+  loadOpeningSectionVerifications,
   loadOpeningState,
   type OpeningCloserCountSnapshotRow,
 } from "@/lib/opening";
@@ -238,6 +239,14 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
   const closerSnapshots: Record<string, OpeningCloserCountSnapshotRow> =
     Object.fromEntries(snapshotMap);
 
+  // Fix #7 — read-back of opener A's persisted section-verify state so a second
+  // opener's sectionVerifications seed comes from server truth, not derivation.
+  // string[] crosses the RSC→client boundary directly (set-membership, not a Map).
+  const verifiedSections = await loadOpeningSectionVerifications(
+    sb,
+    state.instance.id,
+  );
+
   const managers = await loadAgmPlusManagers(sb, selectedLocation.id);
 
   // status='open' — render the form.
@@ -247,7 +256,10 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
         instance={state.instance}
         templateItems={state.templateItems}
         closerSnapshots={closerSnapshots}
+        verifiedSections={verifiedSections}
+        completions={state.completions}
         managers={managers}
+        saverNames={{ ...state.authors, [auth.user.id]: auth.user.name }}
         language={language}
       />
       <IdleTimeoutWarning />
