@@ -100,6 +100,14 @@ async function main() {
       continue;
     }
 
+    if (!row) {
+      // maybeSingle() returns null (no error) when the insert's RETURNING
+      // select matched no row. Guard so the row.id reads below (console +
+      // user_locations + audit_log) are type-safe under noUncheckedIndexedAccess.
+      console.error(`FAIL ${acct.name}: users insert returned no row`);
+      continue;
+    }
+
     console.log(`CREATED ${acct.name}: id=${row.id}, role=${acct.role}, level=${acct.level}, pin=${acct.pin}`);
 
     // Location assignment
