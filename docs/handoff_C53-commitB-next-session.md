@@ -138,6 +138,28 @@ not wired into the app): `c55-diag.ts`, `c55-roles-check.ts`, `c55-smoke-seed.ts
 `c55-smoke-survey.ts`, `c55-smoke-check2.ts`, `c55-smoke-check3.ts`, `c55-smoke-cleanup.ts`,
 `c55-seed-now.ts`, `c55-cleanup-orphans.ts`. All write only to test completions / test fixtures.
 
+### C.53 Phase 2 e2e smoke artifacts (2026-06-04) — LAUNCH-PURGE DEBT
+
+The C.53 Phase 2 multi-actor e2e smoke (`scripts/c53-phase2-smoke.ts`, **11/11 pass**) ran on a
+dedicated throwaway sentinel-date instance so no real ops opening was mutated. Finalize permanently
+advanced it to `phase2_complete` (append-only, irreversible) — so it's purge debt, not cleanable:
+
+- **Sentinel test instance `f66e0668-cad7-4382-aefa-f11424d8542f`** — EM (`d2cced11`), **date
+  `2099-12-31`** (sentinel — findable + distinct from any real opening), status `phase2_complete`.
+  Carries 78 Phase-1 completions (34 spot-check contract + 44 plain) + 34 closer-count snapshots +
+  39 Phase-2 completions (**all soft-revoked** post-smoke; 0 live).
+- **2 `under_par_alert` notifications** + recipient rows (two finalize runs; first-run instance
+  `c5ebbeb1` was hard-deleted on re-run, leaving one orphan notification → harmless).
+- **Pre-existing (NOT this smoke):** 8 ZZ_TEST Phase-2 completions on real instance `dde30257`
+  (2026-06-03, Commit B dev "synthetic+guard verified" testing). Predate this session; noted for
+  completeness.
+- **Scratch script** `scripts/c53-phase2-smoke.ts` (kept local/untracked like the C.55 scripts).
+- **PIN note:** the smoke reset ZZ_TEST PINs to **KH1=1471, KH2=2582, PREP=3693** (supersedes the
+  C.55 values in the table above). Throwaway; reset/disable at launch.
+
+**Purge at launch:** `checklist_instances.date = '2099-12-31'` → cascade its completions/snapshots;
+the ZZ_TEST accounts above; the smoke `under_par_alert` notifications.
+
 ---
 
 ## 6. Operating context (unchanged)
