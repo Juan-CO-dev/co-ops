@@ -62,6 +62,13 @@ interface OpeningVerificationStationProps {
    */
   sectionVerifications: Map<string, boolean>;
   onSectionVerifyToggle: (sectionKey: string) => void;
+  /**
+   * C.53 Commit B Finding A — server-truth verify lock. True once Phase 1 has
+   * landed (instance.status !== 'open'). The verify beat is once-per-instance:
+   * when locked, every tick + section-verify renders DONE and is read-only, so
+   * a second opener (whose local form is empty) can't re-tick or re-verify.
+   */
+  verificationLocked: boolean;
 }
 
 export function OpeningVerificationStation({
@@ -75,11 +82,15 @@ export function OpeningVerificationStation({
   closerSnapshotsMap,
   sectionVerifications,
   onSectionVerifyToggle,
+  verificationLocked,
 }: OpeningVerificationStationProps) {
   const { t } = useTranslation();
 
   // Tick state derived from items: station is "ticked" iff every item ticked.
   const allTicked = items.every((it) => values.get(it.id)?.ticked === true);
+  // Finding A — when the verify beat is locked (Phase 1 already landed), render
+  // ticked + read-only regardless of this browser's (possibly empty) local form.
+  const displayTicked = verificationLocked || allTicked;
 
   // Header display from first item's translation (all items in a station
   // share the same station header translation).
@@ -133,10 +144,16 @@ export function OpeningVerificationStation({
         {hasTickItems ? (
           <button
             type="button"
-            onClick={() => onStationTickChange(items, !allTicked)}
-            aria-pressed={allTicked}
+            onClick={
+              verificationLocked
+                ? undefined
+                : () => onStationTickChange(items, !allTicked)
+            }
+            disabled={verificationLocked}
+            aria-pressed={displayTicked}
+            aria-disabled={verificationLocked || undefined}
             aria-label={
-              allTicked
+              displayTicked
                 ? t("opening.station.untick_aria", { station: stationDisplay })
                 : t("opening.station.tick_aria", { station: stationDisplay })
             }
@@ -144,13 +161,15 @@ export function OpeningVerificationStation({
               "inline-flex min-h-[40px] items-center gap-1.5 rounded-full px-3",
               "text-xs font-bold uppercase tracking-[0.12em]",
               "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
-              allTicked
-                ? "border-2 border-co-text bg-co-gold text-co-text hover:bg-co-gold-deep"
-                : "border-2 border-co-border-2 bg-co-surface text-co-text hover:border-co-text",
+              verificationLocked
+                ? "cursor-not-allowed border-2 border-co-text bg-co-gold text-co-text opacity-70"
+                : displayTicked
+                  ? "border-2 border-co-text bg-co-gold text-co-text hover:bg-co-gold-deep"
+                  : "border-2 border-co-border-2 bg-co-surface text-co-text hover:border-co-text",
             ].join(" ")}
           >
-            <span aria-hidden>{allTicked ? "✓" : "○"}</span>
-            {allTicked ? t("opening.station.ticked_button") : t("opening.station.tick_button")}
+            <span aria-hidden>{displayTicked ? "✓" : "○"}</span>
+            {displayTicked ? t("opening.station.ticked_button") : t("opening.station.tick_button")}
           </button>
         ) : null}
         {hasSpotCheckItems ? (
@@ -158,7 +177,7 @@ export function OpeningVerificationStation({
             sectionKey={sectionKey}
             sectionDisplay={stationDisplay}
             verified={sectionVerified}
-            disabled={sectionHasUnrecountedNull}
+            disabled={sectionHasUnrecountedNull || verificationLocked}
             disabledReason={sectionHasUnrecountedNull ? "null_items_unrecounted" : null}
             onToggleVerified={() => onSectionVerifyToggle(sectionKey)}
             language={language}
@@ -197,6 +216,7 @@ export function OpeningVerificationStation({
               language={language}
               hasMissingCountError={hasMissingCountError}
               closerCount={closerCount}
+              verificationLocked={verificationLocked}
             />
           );
         })}

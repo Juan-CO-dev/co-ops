@@ -24,12 +24,20 @@ interface OpeningItemAddonProps {
   notes: string | null;
   onNotesChange: (next: string | null) => void;
   itemLabel: string;
+  /**
+   * C.53 Finding D — when the verify beat is locked (Phase 1 already landed),
+   * the discrepancy comment is a persisted value shown read-only: a second
+   * opener sees opener A's note but can't edit a once-per-instance-committed
+   * field. The photo button is already a Phase 6 disabled stub.
+   */
+  disabled?: boolean;
 }
 
 export function OpeningItemAddon({
   notes,
   onNotesChange,
   itemLabel,
+  disabled = false,
 }: OpeningItemAddonProps) {
   const { t } = useTranslation();
 
@@ -51,10 +59,12 @@ export function OpeningItemAddon({
           placeholder={t("opening.item.comment_placeholder")}
           aria-label={t("opening.item.comment_aria", { item: itemLabel })}
           rows={2}
+          disabled={disabled}
           className="
             min-h-[64px] w-full rounded-md border-2 border-co-border-2 bg-co-surface
             px-3 py-2 text-sm text-co-text
             transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
+            disabled:cursor-not-allowed disabled:opacity-70
           "
         />
       </label>

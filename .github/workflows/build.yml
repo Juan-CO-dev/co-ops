@@ -28,5 +28,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Phase 2 discipline check (C.53 §5 — no auto-complete branch; §8.4 contract)
+        run: bash scripts/phase2-discipline-check.sh
+
       - name: Build
         run: npm run build
