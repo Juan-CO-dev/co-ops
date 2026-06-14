@@ -22,6 +22,8 @@ import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { ChecklistTemplateItem } from "@/lib/types";
 
+import { MidDayPhase1Form } from "@/components/MidDayPhase1Form";
+
 interface PageProps {
   searchParams: Promise<{ instance?: string }>;
 }
@@ -82,38 +84,53 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
       </p>
       <h1 className="mt-1 text-lg font-bold text-co-text">{phaseHeading}</h1>
 
-      <p className="mt-3 rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2 text-[11px] italic leading-snug text-co-text-muted">
-        {serverT(lang, "mid_day_prep.page.forms_pending")}
-      </p>
+      {state.instance.status === "open" ? (
+        <MidDayPhase1Form
+          instanceId={state.instance.id}
+          items={state.templateItems.map((item) => ({
+            id: item.id,
+            label: item.label,
+            section: item.prepMeta?.section ?? item.station ?? "Misc",
+            parValue: item.prepMeta?.parValue ?? null,
+            parUnit: item.prepMeta?.parUnit ?? null,
+          }))}
+        />
+      ) : (
+        <>
+          <p className="mt-3 rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2 text-[11px] italic leading-snug text-co-text-muted">
+            {serverT(lang, "mid_day_prep.page.forms_pending")}
+          </p>
 
-      <div className="mt-4 flex flex-col gap-5">
-        {groups.map((g) => (
-          <section key={g.section}>
-            <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
-              {g.section}
-            </h2>
-            <ul className="mt-2 flex flex-col gap-1">
-              {g.items.map((item) => {
-                const par = item.prepMeta?.parValue;
-                return (
-                  <li
-                    key={item.id}
-                    className="flex items-center justify-between gap-3 rounded-md border-2 border-co-border bg-co-surface px-3 py-2 text-sm"
-                  >
-                    <span className="font-semibold text-co-text">{item.label}</span>
-                    {par !== null && par !== undefined ? (
-                      <span className="shrink-0 text-xs font-bold uppercase tracking-[0.1em] text-co-text-muted">
-                        {serverT(lang, "mid_day_prep.page.section_par")} {par}
-                        {item.prepMeta?.parUnit ? ` ${item.prepMeta.parUnit}` : ""}
-                      </span>
-                    ) : null}
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
-        ))}
-      </div>
+          <div className="mt-4 flex flex-col gap-5">
+            {groups.map((g) => (
+              <section key={g.section}>
+                <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
+                  {g.section}
+                </h2>
+                <ul className="mt-2 flex flex-col gap-1">
+                  {g.items.map((item) => {
+                    const par = item.prepMeta?.parValue;
+                    return (
+                      <li
+                        key={item.id}
+                        className="flex items-center justify-between gap-3 rounded-md border-2 border-co-border bg-co-surface px-3 py-2 text-sm"
+                      >
+                        <span className="font-semibold text-co-text">{item.label}</span>
+                        {par !== null && par !== undefined ? (
+                          <span className="shrink-0 text-xs font-bold uppercase tracking-[0.1em] text-co-text-muted">
+                            {serverT(lang, "mid_day_prep.page.section_par")} {par}
+                            {item.prepMeta?.parUnit ? ` ${item.prepMeta.parUnit}` : ""}
+                          </span>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            ))}
+          </div>
+        </>
+      )}
     </main>
   );
 }

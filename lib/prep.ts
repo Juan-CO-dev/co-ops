@@ -981,6 +981,82 @@ export async function loadMidDayPrepDashboardState(
   return { isVisibleToActor: true, hasTemplate: true, templateId: template.id, instances };
 }
 
+/** Result of submitMidDayPhase1 — discriminated so the route maps to HTTP without error-class coupling. */
+export type MidDayPhase1Result =
+  | { ok: true; instance: ChecklistInstance }
+  | { ok: false; reason: "not_found" | "not_open" | "bad_item"; detail?: string };
+
+/**
+ * submitMidDayPhase1 — count-to-par submission (C.43 Phase 1). Builds C.44
+ * snapshots from the live template, writes one completion per counted item +
+ * transitions open → phase1_complete atomically via submit_mid_day_phase1_atomic
+ * (migration 0060). Single-submit, single-author. Returns a discriminated
+ * result; throws only on unexpected DB errors.
+ */
+export async function submitMidDayPhase1(
+  service: SupabaseClient,
+  args: {
+    instanceId: string;
+    actor: PrepActor;
+    entries: Array<{ templateItemId: string; inputs: PrepInputs }>;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  },
+): Promise<MidDayPhase1Result> {
+  const state = await loadMidDayPrepState(service, { instanceId: args.instanceId });
+  if (!state) return { ok: false, reason: "not_found" };
+  if (state.instance.status !== "open") return { ok: false, reason: "not_open" };
+
+  const itemsById = new Map(state.templateItems.map((it) => [it.id, it]));
+  const rpcEntries: Array<{ templateItemId: string; inputs: PrepInputs; snapshot: PrepSnapshot }> = [];
+  for (const entry of args.entries) {
+    const item = itemsById.get(entry.templateItemId);
+    if (!item || !item.prepMeta) {
+      return { ok: false, reason: "bad_item", detail: entry.templateItemId };
+    }
+    rpcEntries.push({
+      templateItemId: entry.templateItemId,
+      inputs: entry.inputs,
+      snapshot: {
+        section: item.prepMeta.section,
+        itemName: item.label,
+        parValue: item.prepMeta.parValue,
+        parUnit: item.prepMeta.parUnit,
+        specialInstruction: item.prepMeta.specialInstruction,
+      },
+    });
+  }
+
+  const { data, error } = await service.rpc("submit_mid_day_phase1_atomic", {
+    p_instance_id: args.instanceId,
+    p_actor_id: args.actor.userId,
+    p_entries: rpcEntries,
+  });
+  if (error) {
+    if (error.code === "23514") return { ok: false, reason: "not_open" }; // check_violation
+    throw new Error(`submitMidDayPhase1: ${error.message}`);
+  }
+
+  void audit({
+    actorId: args.actor.userId,
+    actorRole: args.actor.role,
+    action: "prep.submit",
+    resourceTable: "checklist_instances",
+    resourceId: args.instanceId,
+    metadata: {
+      outcome: "success",
+      phase: "mid_day_phase1",
+      prep_subtype: "mid_day_prep",
+      item_count: rpcEntries.length,
+    },
+    ipAddress: args.ipAddress ?? null,
+    userAgent: args.userAgent ?? null,
+  });
+
+  const instance = rowToInstance((data as { instance: InstanceRow }).instance);
+  return { ok: true, instance };
+}
+
 /**
  * Slim-shape lookup for the dashboard tile: returns the active assignment
  * for (assignee=user, reportType, location, date) if one exists. Used to

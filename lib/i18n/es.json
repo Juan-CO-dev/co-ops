@@ -32,6 +32,10 @@
   "mid_day_prep.page.phase2_heading": "Fase 2 — preparación",
   "mid_day_prep.page.section_par": "Par",
   "mid_day_prep.page.forms_pending": "Los formularios interactivos de conteo y preparación llegan en la próxima versión. Los artículos abajo son la plantilla de esta preparación de mediodía.",
+  "mid_day_prep.phase1.on_hand": "En mano",
+  "mid_day_prep.phase1.need": "Falta:",
+  "mid_day_prep.phase1.submit": "Enviar conteo → Fase 2",
+  "mid_day_prep.phase1.submitting": "Enviando…",
 
   "closing.role_badge.cgs_only": "Solo CGS",
   "closing.role_badge.owner_plus_only": "Solo Owner+",
