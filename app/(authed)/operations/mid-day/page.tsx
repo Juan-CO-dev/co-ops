@@ -24,6 +24,7 @@ import type { ChecklistTemplateItem } from "@/lib/types";
 
 import { MidDayPhase1Form } from "@/components/MidDayPhase1Form";
 import { MidDayPhase2Form, type MidDayPhase2Item } from "@/components/MidDayPhase2Form";
+import { DashboardBackLink } from "@/components/DashboardBackLink";
 
 interface PageProps {
   searchParams: Promise<{ instance?: string }>;
@@ -92,19 +93,7 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
   return (
     <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3">
-        <a
-          href="/dashboard"
-          aria-label={serverT(lang, "mid_day_prep.page.dashboard_back_aria")}
-          className="
-            -ml-2 inline-flex min-h-[44px] items-center gap-1.5 rounded-md px-2 py-2
-            text-xs font-bold uppercase tracking-[0.14em] text-co-text-muted
-            transition hover:text-co-text
-            focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
-          "
-        >
-          <span aria-hidden>←</span>
-          <span>{serverT(lang, "mid_day_prep.page.dashboard_back")}</span>
-        </a>
+        <DashboardBackLink />
       </div>
 
       <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">

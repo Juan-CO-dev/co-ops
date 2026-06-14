@@ -37,6 +37,8 @@ import type { OpeningPhase2Meta } from "@/lib/types";
 
 import type { ManagerOption } from "@/components/opening/OverParModal";
 
+import { DashboardBackLink } from "@/components/DashboardBackLink";
+
 import { OpeningClient } from "./opening-client";
 
 const OPERATIONAL_TZ = "America/New_York";
@@ -325,6 +327,7 @@ async function loadAgmPlusManagers(
 function ScaffoldHeader({ language }: { language: Language }) {
   return (
     <div className="mb-4">
+      <DashboardBackLink />
       <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
         {serverT(language, "opening.page.label")}
       </p>
