@@ -2,17 +2,29 @@
 
 /**
  * MidDayPhase2Form — Phase 2 collaborative prep for mid-day (C.43). Per-item
- * "prepped" input + per-item Save (realtime-lite: each save POSTs independently,
- * append-only; other cooks' saves reconcile on reload). When prepped differs from
- * the back-to-par need, an inline reason field appears (over/under-prep — stored
- * as inputs.freeText, like opening Phase 2's over/under capture). Finalize closes
- * the instance (phase1_complete → phase2_complete).
+ * "prepped" input + per-item Save (realtime-lite: append-only, reconcile on
+ * reload). When prepped is off the back-to-par need, a STRUCTURED over/under
+ * reason is required — reusing the opening Phase 2 OverParModal / UnderParModal
+ * (reason category + directedBy + free text), stored as prep_data.overUnder.
+ * Finalize closes the instance (phase1_complete → phase2_complete).
  */
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
+import type { MidDayOverUnder } from "@/lib/prep";
+import {
+  OverParModal,
+  type ManagerOption,
+  type OverParCapture,
+  type OverParReasonCategory,
+} from "@/components/opening/OverParModal";
+import {
+  UnderParModal,
+  type UnderParCapture,
+  type UnderParReasonCategory,
+} from "@/components/opening/UnderParModal";
 
 export interface MidDayPhase2Item {
   id: string;
@@ -20,32 +32,58 @@ export interface MidDayPhase2Item {
   section: string;
   parValue: number | null;
   parUnit: string | null;
-  /** max(par - phase1 onHand, 0); the back-to-par target. */
   need: number | null;
-  /** Prepped amount already saved (this instance), or null. */
   initialPrepped: number | null;
-  /** Name of whoever saved it (null = saved by you / not yet saved). */
   initialSavedBy: string | null;
-  /** Over/under-prep reason already saved (inputs.freeText), or null. */
-  initialReason: string | null;
+  /** Structured over/under capture already saved (prep_data.overUnder), or null. */
+  initialOverUnder: MidDayOverUnder | null;
 }
 
 interface SaveState {
   value: string;
-  reason: string;
+  overUnder: MidDayOverUnder | null;
+  modalOpen: boolean;
   status: "idle" | "saving" | "saved" | "error";
   savedBy: string | null;
   error: string | null;
 }
 
-const EMPTY: SaveState = { value: "", reason: "", status: "idle", savedBy: null, error: null };
+const EMPTY: SaveState = {
+  value: "",
+  overUnder: null,
+  modalOpen: false,
+  status: "idle",
+  savedBy: null,
+  error: null,
+};
+
+function overToOU(c: OverParCapture): MidDayOverUnder {
+  return { kind: "over", reasonCategory: c.reasonCategory, directedBy: c.directedBy, freeText: c.freeText };
+}
+function underToOU(c: UnderParCapture): MidDayOverUnder {
+  return { kind: "under", reasonCategory: c.reasonCategory, directedBy: null, freeText: c.freeText };
+}
+function ouToOverInitial(ou: MidDayOverUnder | null): OverParCapture | null {
+  if (!ou || ou.kind !== "over") return null;
+  return {
+    reasonCategory: ou.reasonCategory as OverParReasonCategory,
+    directedBy: ou.directedBy,
+    freeText: ou.freeText,
+  };
+}
+function ouToUnderInitial(ou: MidDayOverUnder | null): UnderParCapture | null {
+  if (!ou || ou.kind !== "under") return null;
+  return { reasonCategory: ou.reasonCategory as UnderParReasonCategory, freeText: ou.freeText ?? "" };
+}
 
 export function MidDayPhase2Form({
   instanceId,
   items,
+  managers,
 }: {
   instanceId: string;
   items: MidDayPhase2Item[];
+  managers: ManagerOption[];
 }) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -54,7 +92,8 @@ export function MidDayPhase2Form({
     for (const it of items) {
       init[it.id] = {
         value: it.initialPrepped !== null ? String(it.initialPrepped) : "",
-        reason: it.initialReason ?? "",
+        overUnder: it.initialOverUnder,
+        modalOpen: false,
         status: it.initialPrepped !== null ? "saved" : "idle",
         savedBy: it.initialSavedBy,
         error: null,
@@ -83,30 +122,35 @@ export function MidDayPhase2Form({
   const patch = (id: string, p: Partial<SaveState>) =>
     setStates((s) => ({ ...s, [id]: { ...(s[id] ?? EMPTY), ...p } }));
 
-  const onSave = async (id: string) => {
-    const st = states[id] ?? EMPTY;
+  const onSave = async (it: MidDayPhase2Item) => {
+    const st = states[it.id] ?? EMPTY;
     if (st.status === "saving") return;
     const raw = st.value.trim();
     const prepped = raw === "" ? NaN : Number(raw);
     if (!Number.isFinite(prepped) || prepped < 0) {
-      patch(id, { status: "error", error: t("mid_day_prep.phase2.required") });
+      patch(it.id, { status: "error", error: t("mid_day_prep.phase2.required") });
       return;
     }
-    patch(id, { status: "saving", error: null });
+    const offPar = it.need !== null && prepped !== it.need;
+    if (offPar && !st.overUnder) {
+      patch(it.id, { status: "error", error: t("mid_day_prep.phase2.reason_required") });
+      return;
+    }
+    patch(it.id, { status: "saving", error: null });
     try {
       const res = await fetch("/api/prep/mid-day/phase2/item", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           instanceId,
-          templateItemId: id,
+          templateItemId: it.id,
           prepped,
-          reason: st.reason.trim() || null,
+          overUnder: offPar ? st.overUnder : null,
         }),
         redirect: "manual",
       });
       if (res.ok) {
-        patch(id, { status: "saved", savedBy: null, error: null });
+        patch(it.id, { status: "saved", savedBy: null, error: null });
         return;
       }
       let msg = "Save failed.";
@@ -116,9 +160,9 @@ export function MidDayPhase2Form({
       } catch {
         // keep generic
       }
-      patch(id, { status: "error", error: msg });
+      patch(it.id, { status: "error", error: msg });
     } catch (e) {
-      patch(id, { status: "error", error: e instanceof Error ? e.message : "Network error." });
+      patch(it.id, { status: "error", error: e instanceof Error ? e.message : "Network error." });
     }
   };
 
@@ -163,12 +207,12 @@ export function MidDayPhase2Form({
             {g.items.map((it) => {
               const st = states[it.id] ?? EMPTY;
               const preppedNum = st.value.trim() === "" ? null : Number(st.value);
-              const showReason =
+              const offPar =
                 it.need !== null &&
                 preppedNum !== null &&
                 Number.isFinite(preppedNum) &&
                 preppedNum !== it.need;
-              const over = showReason && preppedNum! > (it.need ?? 0);
+              const over = offPar && preppedNum! > (it.need ?? 0);
               return (
                 <li
                   key={it.id}
@@ -200,7 +244,7 @@ export function MidDayPhase2Form({
                     />
                     <button
                       type="button"
-                      onClick={() => void onSave(it.id)}
+                      onClick={() => void onSave(it)}
                       disabled={st.status === "saving"}
                       className="
                         inline-flex h-10 shrink-0 items-center rounded-md border-2 border-co-text
@@ -214,19 +258,21 @@ export function MidDayPhase2Form({
                     </button>
                   </div>
 
-                  {showReason ? (
-                    <input
-                      type="text"
-                      value={st.reason}
-                      onChange={(e) => patch(it.id, { reason: e.target.value, status: "idle" })}
-                      aria-label={over ? t("mid_day_prep.phase2.over_reason") : t("mid_day_prep.phase2.under_reason")}
-                      placeholder={over ? t("mid_day_prep.phase2.over_reason") : t("mid_day_prep.phase2.under_reason")}
+                  {offPar ? (
+                    <button
+                      type="button"
+                      onClick={() => patch(it.id, { modalOpen: true, status: "idle", error: null })}
                       className="
-                        w-full rounded-md border-2 border-co-gold-deep bg-co-surface px-2 py-1.5
-                        text-xs text-co-text focus:outline-none
-                        focus-visible:ring-4 focus-visible:ring-co-gold/60
+                        inline-flex min-h-[36px] items-center self-start rounded-md border-2
+                        border-co-gold-deep bg-co-surface px-2 text-[11px] font-bold uppercase
+                        tracking-[0.1em] text-co-text transition hover:bg-co-surface-2
+                        focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
                       "
-                    />
+                    >
+                      {st.overUnder
+                        ? t("mid_day_prep.phase2.edit_reason")
+                        : t("mid_day_prep.phase2.add_reason")}
+                    </button>
                   ) : null}
 
                   {st.status === "saved" ? (
@@ -238,6 +284,26 @@ export function MidDayPhase2Form({
                   ) : null}
                   {st.status === "error" && st.error ? (
                     <p className="text-[10px] text-co-cta">{st.error}</p>
+                  ) : null}
+
+                  {st.modalOpen && over ? (
+                    <OverParModal
+                      open
+                      itemLabel={it.label}
+                      initial={ouToOverInitial(st.overUnder)}
+                      managers={managers}
+                      onSave={(c) => patch(it.id, { overUnder: overToOU(c), modalOpen: false })}
+                      onCancel={() => patch(it.id, { modalOpen: false })}
+                    />
+                  ) : null}
+                  {st.modalOpen && offPar && !over ? (
+                    <UnderParModal
+                      open
+                      itemLabel={it.label}
+                      initial={ouToUnderInitial(st.overUnder)}
+                      onSave={(c) => patch(it.id, { overUnder: underToOU(c), modalOpen: false })}
+                      onCancel={() => patch(it.id, { modalOpen: false })}
+                    />
                   ) : null}
                 </li>
               );

@@ -11,7 +11,7 @@ import { type NextRequest } from "next/server";
 
 import { extractIp, jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { lockLocationContext } from "@/lib/locations";
-import { AM_PREP_BASE_LEVEL, saveMidDayPhase2Item } from "@/lib/prep";
+import { AM_PREP_BASE_LEVEL, saveMidDayPhase2Item, type MidDayOverUnder } from "@/lib/prep";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
@@ -21,7 +21,20 @@ interface ItemBody {
   instanceId: string;
   templateItemId: string;
   prepped: number;
-  reason?: string;
+  overUnder?: MidDayOverUnder | null;
+}
+
+function parseOverUnder(v: unknown): MidDayOverUnder | null {
+  if (v === null || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  if (o.kind !== "over" && o.kind !== "under") return null;
+  if (typeof o.reasonCategory !== "string") return null;
+  return {
+    kind: o.kind,
+    reasonCategory: o.reasonCategory,
+    directedBy: typeof o.directedBy === "string" ? o.directedBy : null,
+    freeText: typeof o.freeText === "string" ? o.freeText : null,
+  };
 }
 
 function validateBody(
@@ -38,10 +51,10 @@ function validateBody(
   if (typeof r.prepped !== "number" || !Number.isFinite(r.prepped) || r.prepped < 0) {
     return { ok: false, field: "prepped" };
   }
-  const reason = typeof r.reason === "string" ? r.reason : undefined;
+  const overUnder = parseOverUnder(r.overUnder);
   return {
     ok: true,
-    body: { instanceId: r.instanceId, templateItemId: r.templateItemId, prepped: r.prepped, reason },
+    body: { instanceId: r.instanceId, templateItemId: r.templateItemId, prepped: r.prepped, overUnder },
   };
 }
 
@@ -91,7 +104,7 @@ export async function POST(req: NextRequest) {
       instanceId: body.instanceId,
       templateItemId: body.templateItemId,
       prepped: body.prepped,
-      reason: body.reason ?? null,
+      overUnder: body.overUnder ?? null,
       actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level },
       ipAddress: extractIp(req),
       userAgent: req.headers.get("user-agent"),

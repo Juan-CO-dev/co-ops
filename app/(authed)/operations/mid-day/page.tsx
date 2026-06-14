@@ -17,7 +17,7 @@ import { redirect } from "next/navigation";
 
 import { serverT } from "@/lib/i18n/server";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
-import { loadMidDayPrepState } from "@/lib/prep";
+import { loadMidDayPrepState, type MidDayOverUnder } from "@/lib/prep";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { ChecklistTemplateItem } from "@/lib/types";
@@ -25,9 +25,36 @@ import type { ChecklistTemplateItem } from "@/lib/types";
 import { MidDayPhase1Form } from "@/components/MidDayPhase1Form";
 import { MidDayPhase2Form, type MidDayPhase2Item } from "@/components/MidDayPhase2Form";
 import { DashboardBackLink } from "@/components/DashboardBackLink";
+import type { ManagerOption } from "@/components/opening/OverParModal";
 
 interface PageProps {
   searchParams: Promise<{ instance?: string }>;
+}
+
+async function loadAgmPlusManagers(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+): Promise<ManagerOption[]> {
+  const AGM_PLUS_CODES = ["cgs", "owner", "moo", "gm", "agm", "catering_mgr"];
+  const { data: locScoped, error: locErr } = await sb
+    .from("user_locations")
+    .select("user_id")
+    .eq("location_id", locationId);
+  if (locErr) throw new Error(`loadAgmPlusManagers: location ids: ${locErr.message}`);
+  const locScopedIds = ((locScoped ?? []) as Array<{ user_id: string }>).map((r) => r.user_id);
+  const { data: candidates, error: usersErr } = await sb
+    .from("users")
+    .select("id, name, role")
+    .eq("active", true)
+    .in("role", AGM_PLUS_CODES)
+    .order("name", { ascending: true });
+  if (usersErr) throw new Error(`loadAgmPlusManagers: users: ${usersErr.message}`);
+  const result: ManagerOption[] = [];
+  for (const u of (candidates ?? []) as Array<{ id: string; name: string; role: string }>) {
+    const isGlobal = u.role === "cgs" || u.role === "owner";
+    if (isGlobal || locScopedIds.includes(u.id)) result.push({ id: u.id, name: u.name, role: u.role });
+  }
+  return result;
 }
 
 export default async function MidDayPrepPage({ searchParams }: PageProps) {
@@ -86,9 +113,12 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
       need,
       initialPrepped: prepped,
       initialSavedBy: savedBy,
-      initialReason: comp?.prepData?.inputs.freeText ?? null,
+      initialOverUnder:
+        (comp?.prepData as { overUnder?: MidDayOverUnder | null } | undefined)?.overUnder ?? null,
     };
   });
+
+  const managers = await loadAgmPlusManagers(sb, state.instance.locationId);
 
   return (
     <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
@@ -113,7 +143,11 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
           }))}
         />
       ) : state.instance.status === "phase1_complete" ? (
-        <MidDayPhase2Form instanceId={state.instance.id} items={phase2Items} />
+        <MidDayPhase2Form
+          instanceId={state.instance.id}
+          items={phase2Items}
+          managers={managers}
+        />
       ) : (
         <>
           <p className="mt-3 rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2 text-[11px] italic leading-snug text-co-text-muted">

@@ -50,8 +50,9 @@
   "mid_day_prep.phase2.required": "Enter amount",
   "mid_day_prep.phase2.finalize": "Finalize prep",
   "mid_day_prep.phase2.finalizing": "Finalizing…",
-  "mid_day_prep.phase2.over_reason": "Why over par? (optional)",
-  "mid_day_prep.phase2.under_reason": "Why under par? (optional)",
+  "mid_day_prep.phase2.add_reason": "Add over/under reason",
+  "mid_day_prep.phase2.edit_reason": "Edit reason ✓",
+  "mid_day_prep.phase2.reason_required": "Add an over/under reason first",
 
   "closing.role_badge.cgs_only": "CGS only",
   "closing.role_badge.owner_plus_only": "Owner+ only",
