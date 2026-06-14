@@ -1263,12 +1263,16 @@ export async function loadAmPrepDashboardState(
   /** C.46: today's closing instance status at this location, null if no closing instance exists. */
   closingStatus: ChecklistInstance["status"] | null;
 }> {
-  // Resolve active prep template for this location.
+  // Resolve active AM Prep template for this location.
+  // C.43: scope to prep_subtype='am_prep' — without it this resolves the
+  // most-recent-active prep template (now Mid-day Prep, seeded later), binding
+  // the AM Prep tile to mid-day instances. Sibling of loadAmPrepState's filter.
   const { data: tmplRow, error: tmplErr } = await service
     .from("checklist_templates")
     .select("id")
     .eq("location_id", args.locationId)
     .eq("type", "prep")
+    .eq("prep_subtype", "am_prep")
     .eq("active", true)
     .order("created_at", { ascending: false })
     .limit(1)
