@@ -1,3 +1,5 @@
+> **⚠ SUPERSEDED — 2026-06-13.** The work this doc planned has SHIPPED: C.53 §10 Phase 1 restructure landed (`899061f` + `42562d3`), and the FT.2 i18n re-namespace it queued is now done (`opening.section_verify.*` / `opening.recount.*`). Retained for historical context only — do not execute its build steps. Current state + remaining scope: `docs/REMAINING_SCOPE.md`.
+
 # C.53 §10 Phase 3 — Phase 1 component restructure (spot-check absorbed)
 
 **Status:** plan gate (surfacing to Triad A)

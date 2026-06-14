@@ -1,3 +1,5 @@
+> **⚠ SUPERSEDED — 2026-06-13.** The Phase 2 RPC (migration 0056) and the whole C.53/C.54/C.55 opening-report arc this doc planned are SHIPPED and live in prod. Retained for historical context only — do not execute its build steps. Current state + remaining scope: `docs/REMAINING_SCOPE.md`.
+
 # Handoff — C.53 next session (written 2026-05-30)
 
 Cold-you: you've been through compaction. You remember nothing reliable. **Do not trust this

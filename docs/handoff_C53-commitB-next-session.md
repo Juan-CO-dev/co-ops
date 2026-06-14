@@ -1,3 +1,5 @@
+> **⚠ SUPERSEDED — 2026-06-13.** The work this doc planned has SHIPPED: C.53 Phase 2 / Commit B landed via PR #50 (`7a4ef2e`); the C.53/C.54/C.55 opening-report arc is live in prod. Retained for historical context only — do not execute its build steps. Current state + remaining scope: `docs/REMAINING_SCOPE.md`.
+
 # Handoff — C.53 Commit B next session (written 2026-06-03)
 
 Cold-you: you've been through compaction. You remember nothing reliable. **Do not trust this
