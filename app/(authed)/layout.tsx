@@ -5,13 +5,16 @@
  *   - requireSessionFromHeaders() — auth boundary
  *   - TranslationProvider — i18n context for all authenticated client components
  *   - UserMenu — floating top-right (fixed top-4 right-4 z-30)
+ *   - BackToDashboard — floating top-left (fixed top-4 left-4 z-30),
+ *     auto-hidden on /dashboard. Fixes the dead-end-page class where
+ *     operations surfaces had no global way back to the dashboard.
  *
- * Architectural constraint for future authenticated pages: top-right
- * corner real estate is reserved for UserMenu (and future floating
- * elements like notification bell, breadcrumbs, etc.). Pages render
- * their own structural chrome (headers, banners, etc.) but must NOT
- * place critical interactive content in the top-right corner where
- * UserMenu's avatar (40×40) and its dropdown panel would overlap.
+ * Architectural constraint for future authenticated pages: the top-right
+ * (UserMenu) AND top-left (BackToDashboard) corner real estate is reserved
+ * for floating chrome (and future elements like a notification bell). Pages
+ * render their own structural chrome (headers, banners, etc.) but must NOT
+ * place critical interactive content in either top corner where the floating
+ * affordances (40×40 / pill) and UserMenu's dropdown panel would overlap.
  *
  * Page-level requireSessionFromHeaders calls are KEPT for typed auth
  * access (locations, level, role for page logic). The ~5ms duplicate
@@ -24,6 +27,7 @@
 
 import type { ReactNode } from "react";
 
+import { BackToDashboard } from "@/components/BackToDashboard";
 import { UserMenu } from "@/components/UserMenu";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import { requireSessionFromHeaders } from "@/lib/session";
@@ -46,6 +50,10 @@ export default async function AuthedLayout({ children }: { children: ReactNode }
         cover it when they open, which is correct: modal-mode owns the
         full screen).
       */}
+      {/* Top-left: back-to-dashboard (auto-hidden on /dashboard). */}
+      <div className="fixed top-4 left-4 z-30">
+        <BackToDashboard />
+      </div>
       <div className="fixed top-4 right-4 z-30">
         <UserMenu userName={auth.user.name} userEmail={auth.user.email} />
       </div>

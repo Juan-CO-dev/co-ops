@@ -196,7 +196,7 @@ export function OpeningChecklistItem({
                   isNullSource ? "text-co-danger" : "text-co-text-muted",
                 ].join(" ")}
               >
-                {t("opening.phase2.recount_label")}
+                {t("opening.recount.label")}
               </span>
               <input
                 type="number"
@@ -204,7 +204,7 @@ export function OpeningChecklistItem({
                 value={value.openerRecount === null ? "" : String(value.openerRecount)}
                 onChange={(e) => handleRecountChange(e.target.value)}
                 disabled={verificationLocked}
-                aria-label={`${t("opening.phase2.recount_label")} — ${resolved.label}`}
+                aria-label={`${t("opening.recount.label")} — ${resolved.label}`}
                 aria-required={isNullSource}
                 className={[
                   "inline-flex h-9 w-20 items-center rounded-md border-2 px-2",

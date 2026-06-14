@@ -47,6 +47,13 @@ yarn-error.log*
 # Flash orchestration run-state (regenerated per run, not infra)
 scripts/.flash-batch-results.json
 
+# Local smoke/scratch scripts — untracked by design, tsc-red, never ship.
+# Delete at launch (see docs/LAUNCH_PURGE_MANIFEST.md). Ignored here so they
+# can't be accidentally committed and break main's build (cf. commit 324f2dd).
+scripts/c55-*.ts
+scripts/c53-phase2-smoke.ts
+scripts/fix-test-pins.ts
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

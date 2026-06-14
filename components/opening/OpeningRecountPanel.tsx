@@ -1,7 +1,10 @@
 "use client";
 
 /**
- * OpeningRecountPanel — Phase 2 per-item drill-in for opener_recount input.
+ * OpeningRecountPanel — Phase 1 per-item drill-in for opener_recount input.
+ * (Recount drill-in was absorbed into Phase 1 per C.53 §10; authored as Phase 2
+ * pre-§10, hence the C.50 references below. i18n keys re-namespaced to
+ * opening.recount.* per FT.2.)
  *
  * Per C.50 §1: when opener spots an item that looks off within a section,
  * they tap into the item to expand a recount input. Opener enters the
@@ -77,12 +80,12 @@ export function OpeningRecountPanel({
   return (
     <div
       role="region"
-      aria-label={`${t("opening.phase2.recount_label")} — ${itemLabel}`}
+      aria-label={`${t("opening.recount.label")} — ${itemLabel}`}
       className="mt-2 flex flex-col gap-3 rounded-md border-2 border-co-border-2 bg-co-bg p-3"
     >
       <label className="flex flex-col gap-1.5">
         <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-muted">
-          {t("opening.phase2.recount_label")}
+          {t("opening.recount.label")}
         </span>
         <input
           ref={inputRef}
@@ -99,7 +102,7 @@ export function OpeningRecountPanel({
               onCancel();
             }
           }}
-          aria-label={`${t("opening.phase2.recount_label")} — ${itemLabel}`}
+          aria-label={`${t("opening.recount.label")} — ${itemLabel}`}
           className={[
             "inline-flex h-11 w-24 items-center rounded-md border-2 px-3",
             "text-base font-semibold text-co-text",
@@ -120,7 +123,7 @@ export function OpeningRecountPanel({
             focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
           "
         >
-          {t("opening.phase2.recount_save")}
+          {t("opening.recount.save")}
         </button>
         <button
           type="button"
@@ -132,7 +135,7 @@ export function OpeningRecountPanel({
             focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
           "
         >
-          {t("opening.phase2.recount_cancel")}
+          {t("opening.recount.cancel")}
         </button>
       </div>
     </div>
