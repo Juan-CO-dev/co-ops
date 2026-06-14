@@ -590,6 +590,7 @@ async function seedForLocation(
     .insert({
       location_id: locationId,
       type: "prep",
+      prep_subtype: "am_prep", // migration 0059 CHECK requires non-null prep_subtype for type='prep'.
       name: TEMPLATE_NAME,
       description: TEMPLATE_DESCRIPTION,
       active: true,

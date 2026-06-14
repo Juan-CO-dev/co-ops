@@ -1,8 +1,11 @@
 "use client";
 
 /**
- * OpeningSectionVerify — Phase 2 section-header verify CTA + verified-state
+ * OpeningSectionVerify — Phase 1 section-header verify CTA + verified-state
  * indicator + section-disabled guard for NULL-closer-count items.
+ * (Section-verify was absorbed into Phase 1 per C.53 §10; authored as Phase 2
+ * pre-§10, hence the C.50 references below. i18n keys re-namespaced to
+ * opening.section_verify.* per FT.2.)
  *
  * Per C.50 §1 + §4: opener verifies a section as a whole when all items in
  * the section have closer counts that look consistent with what the closer
@@ -67,16 +70,16 @@ export function OpeningSectionVerify({
   const { t } = useTranslation();
 
   const buttonLabel = verified
-    ? t("opening.phase2.section_verified_button")
-    : t("opening.phase2.section_verify_cta");
+    ? t("opening.section_verify.verified_button")
+    : t("opening.section_verify.cta");
 
   const ariaLabel = verified
-    ? `${t("opening.phase2.section_verified_button")} — ${sectionDisplay}`
-    : `${t("opening.phase2.section_verify_cta")} — ${sectionDisplay}`;
+    ? `${t("opening.section_verify.verified_button")} — ${sectionDisplay}`
+    : `${t("opening.section_verify.cta")} — ${sectionDisplay}`;
 
   const disabledMessage =
     disabled && disabledReason === "null_items_unrecounted"
-      ? t("opening.phase2.section_disabled_null_items")
+      ? t("opening.section_verify.disabled_null_items")
       : null;
 
   return (

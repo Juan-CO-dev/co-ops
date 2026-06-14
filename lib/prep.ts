@@ -618,15 +618,17 @@ export async function loadAmPrepState(
   // most-recently-created prep template across ALL locations. See sibling pattern
   // in `lib/opening.ts loadOpeningState`.
   //
-  // C.43 sub-finding: this single-prep-template assumption refines when Mid-day
-  // Prep ships — both AM Prep and Mid-day Prep will be `type='prep'`. Resolution
-  // path TBD at that build time (name pattern filter, discriminator column, or
-  // CHECK constraint split). Captured in AGENTS.md.
+  // C.43 (migration 0059): AM Prep and Mid-day Prep are both type='prep',
+  // disambiguated by prep_subtype. This loader is AM-prep-only — the
+  // `.eq("prep_subtype", "am_prep")` filter below is load-bearing. Mid-day uses
+  // loadMidDayPrepState. AM prep stays single-per-day (allows_multiple_per_day
+  // defaults false), so the existing get-or-create + 23505 race path is unchanged.
   const { data: tmplRow, error: tmplErr } = await service
     .from("checklist_templates")
     .select("id, name")
     .eq("location_id", args.locationId)
     .eq("type", "prep")
+    .eq("prep_subtype", "am_prep")
     .eq("active", true)
     .order("created_at", { ascending: false })
     .limit(1)
@@ -762,6 +764,533 @@ export async function loadAmPrepState(
 }
 
 /**
+ * loadMidDayPrepState — load one mid-day prep instance (by id) + its template
+ * items + completions + authors. Unlike loadAmPrepState, mid-day is multi-
+ * instance per day (C.43) — instances are created explicitly via
+ * createMidDayPrepInstance (the "+ New mid-day prep" trigger), not get-or-
+ * created by date. This loader reads an already-resolved instance id.
+ */
+export async function loadMidDayPrepState(
+  service: SupabaseClient,
+  args: { instanceId: string },
+): Promise<{
+  template: { id: string; name: string };
+  templateItems: ChecklistTemplateItem[];
+  instance: ChecklistInstance;
+  completions: ChecklistCompletion[];
+  authors: Record<string, string>;
+} | null> {
+  const { data: instanceRow, error: instErr } = await service
+    .from("checklist_instances")
+    .select(INSTANCE_COLUMNS)
+    .eq("id", args.instanceId)
+    .maybeSingle<InstanceRow>();
+  if (instErr) throw new Error(`loadMidDayPrepState: read instance: ${instErr.message}`);
+  if (!instanceRow) return null;
+
+  // The instance's template must be a mid-day prep template. Guards against an
+  // id that points at an AM-prep / opening / closing instance.
+  const { data: tmplRow, error: tmplErr } = await service
+    .from("checklist_templates")
+    .select("id, name")
+    .eq("id", instanceRow.template_id)
+    .eq("type", "prep")
+    .eq("prep_subtype", "mid_day_prep")
+    .maybeSingle<{ id: string; name: string }>();
+  if (tmplErr) throw new Error(`loadMidDayPrepState: load template: ${tmplErr.message}`);
+  if (!tmplRow) return null;
+
+  const { data: itemsRows, error: itemsErr } = await service
+    .from("checklist_template_items")
+    .select(TEMPLATE_ITEM_COLUMNS)
+    .eq("template_id", tmplRow.id)
+    .eq("active", true)
+    .order("display_order", { ascending: true });
+  if (itemsErr) throw new Error(`loadMidDayPrepState: load items: ${itemsErr.message}`);
+  const templateItems = ((itemsRows ?? []) as TemplateItemRow[])
+    .map(rowToTemplateItem)
+    .map(narrowPrepTemplateItem);
+
+  const { data: completionRows, error: compErr } = await service
+    .from("checklist_completions")
+    .select(COMPLETION_COLUMNS)
+    .eq("instance_id", instanceRow.id)
+    .is("superseded_at", null)
+    .is("revoked_at", null);
+  if (compErr) throw new Error(`loadMidDayPrepState: load completions: ${compErr.message}`);
+  const completions = ((completionRows ?? []) as CompletionRow[])
+    .map(rowToCompletion)
+    .map(narrowPrepCompletion);
+
+  const authorIds = new Set<string>();
+  for (const c of completions) authorIds.add(c.completedBy);
+  if (instanceRow.confirmed_by) authorIds.add(instanceRow.confirmed_by);
+  if (instanceRow.triggered_by_user_id) authorIds.add(instanceRow.triggered_by_user_id);
+  const authors: Record<string, string> = {};
+  if (authorIds.size > 0) {
+    const { data: userRows, error: userErr } = await service
+      .from("users")
+      .select("id, name")
+      .in("id", Array.from(authorIds));
+    if (userErr) throw new Error(`loadMidDayPrepState: load authors: ${userErr.message}`);
+    for (const u of (userRows ?? []) as Array<{ id: string; name: string }>) {
+      authors[u.id] = u.name;
+    }
+  }
+
+  return {
+    template: tmplRow,
+    templateItems,
+    instance: rowToInstance(instanceRow),
+    completions,
+    authors,
+  };
+}
+
+/**
+ * createMidDayPrepInstance — explicit "+ New mid-day prep" trigger (C.43).
+ * Always inserts a NEW instance (allows_multiple_per_day = true bypasses the
+ * single-per-day partial unique index from migration 0059), stamped with
+ * triggered_at / triggered_by_user_id (C.18). Returns the new instance id.
+ * L3+ authorization is enforced by the calling route + RLS, not here.
+ */
+export async function createMidDayPrepInstance(
+  service: SupabaseClient,
+  args: { templateId: string; locationId: string; date: string; actor: PrepActor },
+): Promise<string> {
+  const triggerTimestamp = new Date().toISOString();
+  const { data: inserted, error: insertErr } = await service
+    .from("checklist_instances")
+    .insert({
+      template_id: args.templateId,
+      location_id: args.locationId,
+      date: args.date,
+      shift_start_at: triggerTimestamp,
+      status: "open",
+      triggered_by_user_id: args.actor.userId,
+      triggered_at: triggerTimestamp,
+      allows_multiple_per_day: true,
+    })
+    .select("id")
+    .maybeSingle<{ id: string }>();
+  if (insertErr) throw new Error(`createMidDayPrepInstance: insert: ${insertErr.message}`);
+  if (!inserted) throw new Error(`createMidDayPrepInstance: insert returned no row`);
+
+  void audit({
+    actorId: args.actor.userId,
+    actorRole: args.actor.role,
+    action: "checklist_instance.create",
+    resourceTable: "checklist_instances",
+    resourceId: inserted.id,
+    metadata: {
+      template_id: args.templateId,
+      location_id: args.locationId,
+      date: args.date,
+      template_type: "prep",
+      prep_subtype: "mid_day_prep",
+      trigger: "manual_mid_day",
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+  return inserted.id;
+}
+
+/**
+ * resolveMidDayPrepTemplate — the active mid-day prep template for a location
+ * (C.43). Per-location scoping is load-bearing (prep templates exist per
+ * location). Returns null when no mid-day template is seeded for the location
+ * yet (Slice E seed pending). Reused by the trigger route + the dashboard tile.
+ */
+export async function resolveMidDayPrepTemplate(
+  service: SupabaseClient,
+  locationId: string,
+): Promise<{ id: string; name: string } | null> {
+  const { data, error } = await service
+    .from("checklist_templates")
+    .select("id, name")
+    .eq("location_id", locationId)
+    .eq("type", "prep")
+    .eq("prep_subtype", "mid_day_prep")
+    .eq("active", true)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ id: string; name: string }>();
+  if (error) throw new Error(`resolveMidDayPrepTemplate: ${error.message}`);
+  return data ?? null;
+}
+
+/** One of today's mid-day prep instances, numbered for the dashboard tile (C.43). */
+export interface MidDayPrepInstanceLite {
+  instanceId: string;
+  /** 1-based number for the day, ordered by triggered_at ascending. */
+  number: number;
+  status: string;
+  triggeredAt: string | null;
+}
+
+/** Dashboard-tile state for mid-day prep (C.43). */
+export interface MidDayPrepDashboardState {
+  /** Shift staff (level >= AM_PREP_BASE_LEVEL) see the tile; others don't. */
+  isVisibleToActor: boolean;
+  /** False when no mid-day template is seeded for the location yet. */
+  hasTemplate: boolean;
+  templateId: string | null;
+  /** Today's instances, numbered by triggered_at ascending. */
+  instances: MidDayPrepInstanceLite[];
+}
+
+/**
+ * loadMidDayPrepDashboardState — slim tile state: today's numbered mid-day
+ * instances for a location + whether a template exists. Multi-instance (C.43),
+ * so this returns a LIST (vs AM prep's single get-or-create). Service-role
+ * query (dashboard uses service-role per C.24).
+ */
+export async function loadMidDayPrepDashboardState(
+  service: SupabaseClient,
+  args: { locationId: string; date: string; actor: PrepActor },
+): Promise<MidDayPrepDashboardState> {
+  const isVisibleToActor = args.actor.level >= AM_PREP_BASE_LEVEL;
+  if (!isVisibleToActor) {
+    return { isVisibleToActor: false, hasTemplate: false, templateId: null, instances: [] };
+  }
+
+  const template = await resolveMidDayPrepTemplate(service, args.locationId);
+  if (!template) {
+    return { isVisibleToActor: true, hasTemplate: false, templateId: null, instances: [] };
+  }
+
+  const { data: rows, error } = await service
+    .from("checklist_instances")
+    .select("id, status, triggered_at")
+    .eq("template_id", template.id)
+    .eq("location_id", args.locationId)
+    .eq("date", args.date)
+    .order("triggered_at", { ascending: true });
+  if (error) throw new Error(`loadMidDayPrepDashboardState: ${error.message}`);
+
+  const instances: MidDayPrepInstanceLite[] = (
+    (rows ?? []) as Array<{ id: string; status: string; triggered_at: string | null }>
+  ).map((r, i) => ({
+    instanceId: r.id,
+    number: i + 1,
+    status: r.status,
+    triggeredAt: r.triggered_at,
+  }));
+
+  return { isVisibleToActor: true, hasTemplate: true, templateId: template.id, instances };
+}
+
+/** Result of submitMidDayPhase1 — discriminated so the route maps to HTTP without error-class coupling. */
+export type MidDayPhase1Result =
+  | { ok: true; instance: ChecklistInstance }
+  | { ok: false; reason: "not_found" | "not_open" | "bad_item"; detail?: string };
+
+/**
+ * submitMidDayPhase1 — count-to-par submission (C.43 Phase 1). Builds C.44
+ * snapshots from the live template, writes one completion per counted item +
+ * transitions open → phase1_complete atomically via submit_mid_day_phase1_atomic
+ * (migration 0060). Single-submit, single-author. Returns a discriminated
+ * result; throws only on unexpected DB errors.
+ */
+export async function submitMidDayPhase1(
+  service: SupabaseClient,
+  args: {
+    instanceId: string;
+    actor: PrepActor;
+    entries: Array<{ templateItemId: string; inputs: PrepInputs }>;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  },
+): Promise<MidDayPhase1Result> {
+  const state = await loadMidDayPrepState(service, { instanceId: args.instanceId });
+  if (!state) return { ok: false, reason: "not_found" };
+  if (state.instance.status !== "open") return { ok: false, reason: "not_open" };
+
+  const itemsById = new Map(state.templateItems.map((it) => [it.id, it]));
+  const rpcEntries: Array<{ templateItemId: string; inputs: PrepInputs; snapshot: PrepSnapshot }> = [];
+  for (const entry of args.entries) {
+    const item = itemsById.get(entry.templateItemId);
+    if (!item || !item.prepMeta) {
+      return { ok: false, reason: "bad_item", detail: entry.templateItemId };
+    }
+    rpcEntries.push({
+      templateItemId: entry.templateItemId,
+      inputs: entry.inputs,
+      snapshot: {
+        section: item.prepMeta.section,
+        itemName: item.label,
+        parValue: item.prepMeta.parValue,
+        parUnit: item.prepMeta.parUnit,
+        specialInstruction: item.prepMeta.specialInstruction,
+      },
+    });
+  }
+
+  const { data, error } = await service.rpc("submit_mid_day_phase1_atomic", {
+    p_instance_id: args.instanceId,
+    p_actor_id: args.actor.userId,
+    p_entries: rpcEntries,
+  });
+  if (error) {
+    if (error.code === "23514") return { ok: false, reason: "not_open" }; // check_violation
+    throw new Error(`submitMidDayPhase1: ${error.message}`);
+  }
+
+  void audit({
+    actorId: args.actor.userId,
+    actorRole: args.actor.role,
+    action: "prep.submit",
+    resourceTable: "checklist_instances",
+    resourceId: args.instanceId,
+    metadata: {
+      outcome: "success",
+      phase: "mid_day_phase1",
+      prep_subtype: "mid_day_prep",
+      item_count: rpcEntries.length,
+    },
+    ipAddress: args.ipAddress ?? null,
+    userAgent: args.userAgent ?? null,
+  });
+
+  const instance = rowToInstance((data as { instance: InstanceRow }).instance);
+  return { ok: true, instance };
+}
+
+/** Result of saveMidDayPhase2Item. */
+export type MidDayPhase2SaveResult =
+  | { ok: true; completionId: string; savedAt: string }
+  | { ok: false; reason: "not_found" | "not_in_phase2" | "bad_item" };
+
+/**
+ * Structured over/under-prep capture (C.43 Phase 2), mirroring opening's
+ * OverParCapture / UnderParCapture. Stored as prep_data.overUnder.
+ * `directedBy` is a manager users.id (over + management_directive only).
+ */
+export interface MidDayOverUnder {
+  kind: "over" | "under";
+  reasonCategory: string;
+  directedBy: string | null;
+  freeText: string | null;
+}
+
+/**
+ * saveMidDayPhase2Item — Phase 2 collaborative per-item save (C.43). Records the
+ * prepped amount for one item via save_mid_day_phase2_item_atomic (migration
+ * 0061): append-only supersede carrying the Phase-1 onHand forward + total =
+ * prepped + completed_by = the saver. Any clocked-in cook; window = phase1_complete.
+ */
+export async function saveMidDayPhase2Item(
+  service: SupabaseClient,
+  args: {
+    instanceId: string;
+    templateItemId: string;
+    prepped: number;
+    /** Structured over/under-prep capture (stored as prep_data.overUnder). */
+    overUnder?: MidDayOverUnder | null;
+    actor: PrepActor;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  },
+): Promise<MidDayPhase2SaveResult> {
+  const state = await loadMidDayPrepState(service, { instanceId: args.instanceId });
+  if (!state) return { ok: false, reason: "not_found" };
+  if (state.instance.status !== "phase1_complete") return { ok: false, reason: "not_in_phase2" };
+
+  const item = state.templateItems.find((it) => it.id === args.templateItemId);
+  if (!item || !item.prepMeta) return { ok: false, reason: "bad_item" };
+
+  const snapshot: PrepSnapshot = {
+    section: item.prepMeta.section,
+    itemName: item.label,
+    parValue: item.prepMeta.parValue,
+    parUnit: item.prepMeta.parUnit,
+    specialInstruction: item.prepMeta.specialInstruction,
+  };
+
+  const { data, error } = await service.rpc("save_mid_day_phase2_item_atomic", {
+    p_instance_id: args.instanceId,
+    p_template_item_id: args.templateItemId,
+    p_actor_id: args.actor.userId,
+    p_prepped: args.prepped,
+    p_snapshot: snapshot,
+    p_over_under: args.overUnder ?? null,
+  });
+  if (error) {
+    if (error.code === "23514") return { ok: false, reason: "not_in_phase2" };
+    throw new Error(`saveMidDayPhase2Item: ${error.message}`);
+  }
+
+  void audit({
+    actorId: args.actor.userId,
+    actorRole: args.actor.role,
+    action: "prep.mid_day.item_saved",
+    resourceTable: "checklist_completions",
+    resourceId: (data as { completionId: string }).completionId,
+    metadata: {
+      instance_id: args.instanceId,
+      template_item_id: args.templateItemId,
+      prepped: args.prepped,
+      over_under: args.overUnder ?? null,
+      phase: "mid_day_phase2",
+    },
+    ipAddress: args.ipAddress ?? null,
+    userAgent: args.userAgent ?? null,
+  });
+
+  const d = data as { completionId: string; savedAt: string };
+  return { ok: true, completionId: d.completionId, savedAt: d.savedAt };
+}
+
+/** Result of finalizeMidDayPhase2. */
+export type MidDayFinalizeResult =
+  | { ok: true; instance: ChecklistInstance }
+  | { ok: false; reason: "not_found" | "not_in_phase2" };
+
+/**
+ * finalizeMidDayPhase2 — close out a mid-day prep instance (C.43): pessimistic
+ * transition phase1_complete → phase2_complete + confirmed_at/by stamp. The
+ * UPDATE's status filter is the gate (silent 0-row → not in phase2).
+ */
+export async function finalizeMidDayPhase2(
+  service: SupabaseClient,
+  args: { instanceId: string; actor: PrepActor; ipAddress?: string | null; userAgent?: string | null },
+): Promise<MidDayFinalizeResult> {
+  const nowIso = new Date().toISOString();
+  const { data, error } = await service
+    .from("checklist_instances")
+    .update({ status: "phase2_complete", confirmed_at: nowIso, confirmed_by: args.actor.userId })
+    .eq("id", args.instanceId)
+    .eq("status", "phase1_complete")
+    .select(INSTANCE_COLUMNS)
+    .maybeSingle<InstanceRow>();
+  if (error) throw new Error(`finalizeMidDayPhase2: ${error.message}`);
+  if (!data) {
+    const { data: exists } = await service
+      .from("checklist_instances")
+      .select("id")
+      .eq("id", args.instanceId)
+      .maybeSingle<{ id: string }>();
+    return { ok: false, reason: exists ? "not_in_phase2" : "not_found" };
+  }
+
+  void audit({
+    actorId: args.actor.userId,
+    actorRole: args.actor.role,
+    action: "prep.submit",
+    resourceTable: "checklist_instances",
+    resourceId: args.instanceId,
+    metadata: { outcome: "success", phase: "mid_day_phase2_finalize", prep_subtype: "mid_day_prep" },
+    ipAddress: args.ipAddress ?? null,
+    userAgent: args.userAgent ?? null,
+  });
+
+  // C.42/C.43 — auto-complete (with count) the closing's Mid-day Prep ref item.
+  // Fire-and-forget: must not fail the finalize. Graceful no-op if today's
+  // closing instance doesn't exist yet.
+  void autoCompleteClosingMidDayRef(service, {
+    locationId: data.location_id,
+    date: data.date,
+    midDayInstanceId: args.instanceId,
+    actor: args.actor,
+  }).catch((e) => console.error("autoCompleteClosingMidDayRef failed:", e));
+
+  return { ok: true, instance: rowToInstance(data) };
+}
+
+/**
+ * autoCompleteClosingMidDayRef — auto-completes the closing's "Mid-day Prep"
+ * report-reference item (C.42) when a mid-day prep finalizes, carrying a COUNT
+ * of finalized mid-day instances for the day (C.43 multi-instance). Supersedes
+ * the prior auto-complete completion so the count updates each finalize. No-op
+ * when the ref item isn't seeded or today's closing instance doesn't exist yet.
+ */
+export async function autoCompleteClosingMidDayRef(
+  service: SupabaseClient,
+  args: { locationId: string; date: string; midDayInstanceId: string; actor: PrepActor },
+): Promise<void> {
+  const refItemId = await resolveClosingReportRefItemId(service, {
+    locationId: args.locationId,
+    reportType: "mid_day_prep",
+  });
+  if (!refItemId) return;
+
+  const { data: cTmpl, error: ctErr } = await service
+    .from("checklist_templates")
+    .select("id")
+    .eq("location_id", args.locationId)
+    .eq("type", "closing")
+    .eq("active", true)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ id: string }>();
+  if (ctErr) throw new Error(`autoCompleteClosingMidDayRef: closing template: ${ctErr.message}`);
+  if (!cTmpl) return;
+
+  const { data: cInst, error: ciErr } = await service
+    .from("checklist_instances")
+    .select("id")
+    .eq("template_id", cTmpl.id)
+    .eq("location_id", args.locationId)
+    .eq("date", args.date)
+    .maybeSingle<{ id: string }>();
+  if (ciErr) throw new Error(`autoCompleteClosingMidDayRef: closing instance: ${ciErr.message}`);
+  if (!cInst) return; // closing not opened yet — graceful skip
+
+  const mTmpl = await resolveMidDayPrepTemplate(service, args.locationId);
+  if (!mTmpl) return;
+  const { data: finalized, error: fErr } = await service
+    .from("checklist_instances")
+    .select("id, triggered_at")
+    .eq("template_id", mTmpl.id)
+    .eq("location_id", args.locationId)
+    .eq("date", args.date)
+    .eq("status", "phase2_complete")
+    .order("triggered_at", { ascending: true });
+  if (fErr) throw new Error(`autoCompleteClosingMidDayRef: count: ${fErr.message}`);
+  const reportInstanceIds = ((finalized ?? []) as Array<{ id: string }>).map((r) => r.id);
+  const count = reportInstanceIds.length;
+
+  const nowIso = new Date().toISOString();
+  const meta = {
+    reportType: "mid_day_prep" as const,
+    reportInstanceId: args.midDayInstanceId,
+    reportSubmittedAt: nowIso,
+    count,
+    reportInstanceIds,
+  };
+
+  const { data: prior } = await service
+    .from("checklist_completions")
+    .select("id")
+    .eq("instance_id", cInst.id)
+    .eq("template_item_id", refItemId)
+    .is("superseded_at", null)
+    .is("revoked_at", null)
+    .maybeSingle<{ id: string }>();
+
+  const { data: inserted, error: insErr } = await service
+    .from("checklist_completions")
+    .insert({
+      instance_id: cInst.id,
+      template_item_id: refItemId,
+      completed_by: args.actor.userId,
+      completed_at: nowIso,
+      auto_complete_meta: meta,
+    })
+    .select("id")
+    .maybeSingle<{ id: string }>();
+  if (insErr) throw new Error(`autoCompleteClosingMidDayRef: insert: ${insErr.message}`);
+
+  if (prior && inserted) {
+    await service
+      .from("checklist_completions")
+      .update({ superseded_at: nowIso, superseded_by: inserted.id })
+      .eq("id", prior.id);
+  }
+}
+
+/**
  * Slim-shape lookup for the dashboard tile: returns the active assignment
  * for (assignee=user, reportType, location, date) if one exists. Used to
  * surface the AM Prep tile to a sub-KH user when an assignment exists.
@@ -852,12 +1381,16 @@ export async function loadAmPrepDashboardState(
   /** C.46: today's closing instance status at this location, null if no closing instance exists. */
   closingStatus: ChecklistInstance["status"] | null;
 }> {
-  // Resolve active prep template for this location.
+  // Resolve active AM Prep template for this location.
+  // C.43: scope to prep_subtype='am_prep' — without it this resolves the
+  // most-recent-active prep template (now Mid-day Prep, seeded later), binding
+  // the AM Prep tile to mid-day instances. Sibling of loadAmPrepState's filter.
   const { data: tmplRow, error: tmplErr } = await service
     .from("checklist_templates")
     .select("id")
     .eq("location_id", args.locationId)
     .eq("type", "prep")
+    .eq("prep_subtype", "am_prep")
     .eq("active", true)
     .order("created_at", { ascending: false })
     .limit(1)

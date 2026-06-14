@@ -973,13 +973,16 @@ async function materializeCloserCountSnapshots(
   if (amPrepIds.size === 0) return result;
 
   // Step 2: resolve active AM Prep template at this location.
-  // Single-prep-template assumption per C.43 sub-finding (lib/prep.ts loadAmPrepState
-  // uses the same most-recent-active picker; refine alongside Mid-day Prep landing).
+  // C.43 (migration 0059): scope to prep_subtype='am_prep'. Mid-day Prep is also
+  // type='prep'; without this filter the most-recent-active picker resolves the
+  // mid-day template, so opening's closer-count snapshots would match against the
+  // wrong items (mid-day items don't carry the opening references_template_item_id).
   const { data: amPrepTmpl, error: tmplErr } = await service
     .from("checklist_templates")
     .select("id")
     .eq("location_id", args.locationId)
     .eq("type", "prep")
+    .eq("prep_subtype", "am_prep")
     .eq("active", true)
     .order("created_at", { ascending: false })
     .limit(1)

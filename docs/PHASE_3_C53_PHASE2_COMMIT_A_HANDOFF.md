@@ -1,3 +1,5 @@
+> **⚠ SUPERSEDED — 2026-06-13.** Commit A merged into main as part of C.53 Phase 2 / Commit B via PR #50 (`7a4ef2e`); the feature branch `claude/c53-phase2-commit-a` is historical. Retained for context only — do not execute its build steps. Current state + remaining scope: `docs/REMAINING_SCOPE.md`.
+
 # Handoff — C.53 Phase 2 §8.4 SAVE + FINALIZE (Commit A)
 
 **Status:** Commit A committed to feature branch `claude/c53-phase2-commit-a` @ `7709df0`.

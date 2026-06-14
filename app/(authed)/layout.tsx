@@ -6,12 +6,15 @@
  *   - TranslationProvider — i18n context for all authenticated client components
  *   - UserMenu — floating top-right (fixed top-4 right-4 z-30)
  *
- * Architectural constraint for future authenticated pages: top-right
- * corner real estate is reserved for UserMenu (and future floating
- * elements like notification bell, breadcrumbs, etc.). Pages render
- * their own structural chrome (headers, banners, etc.) but must NOT
- * place critical interactive content in the top-right corner where
- * UserMenu's avatar (40×40) and its dropdown panel would overlap.
+ * Back-to-dashboard is an IN-FLOW per-page affordance (components/
+ * DashboardBackLink), not global chrome — Juan preferred the in-flow muted
+ * ChevronLeft style over a floating pill. UserMenu also carries a Dashboard item.
+ *
+ * Architectural constraint for future authenticated pages: top-right corner
+ * real estate is reserved for UserMenu (and future floating elements like a
+ * notification bell). Pages render their own structural chrome (headers,
+ * banners, etc.) but must NOT place critical interactive content in the
+ * top-right corner where UserMenu's avatar + dropdown panel would overlap.
  *
  * Page-level requireSessionFromHeaders calls are KEPT for typed auth
  * access (locations, level, role for page logic). The ~5ms duplicate
