@@ -920,6 +920,67 @@ export async function resolveMidDayPrepTemplate(
   return data ?? null;
 }
 
+/** One of today's mid-day prep instances, numbered for the dashboard tile (C.43). */
+export interface MidDayPrepInstanceLite {
+  instanceId: string;
+  /** 1-based number for the day, ordered by triggered_at ascending. */
+  number: number;
+  status: string;
+  triggeredAt: string | null;
+}
+
+/** Dashboard-tile state for mid-day prep (C.43). */
+export interface MidDayPrepDashboardState {
+  /** Shift staff (level >= AM_PREP_BASE_LEVEL) see the tile; others don't. */
+  isVisibleToActor: boolean;
+  /** False when no mid-day template is seeded for the location yet. */
+  hasTemplate: boolean;
+  templateId: string | null;
+  /** Today's instances, numbered by triggered_at ascending. */
+  instances: MidDayPrepInstanceLite[];
+}
+
+/**
+ * loadMidDayPrepDashboardState — slim tile state: today's numbered mid-day
+ * instances for a location + whether a template exists. Multi-instance (C.43),
+ * so this returns a LIST (vs AM prep's single get-or-create). Service-role
+ * query (dashboard uses service-role per C.24).
+ */
+export async function loadMidDayPrepDashboardState(
+  service: SupabaseClient,
+  args: { locationId: string; date: string; actor: PrepActor },
+): Promise<MidDayPrepDashboardState> {
+  const isVisibleToActor = args.actor.level >= AM_PREP_BASE_LEVEL;
+  if (!isVisibleToActor) {
+    return { isVisibleToActor: false, hasTemplate: false, templateId: null, instances: [] };
+  }
+
+  const template = await resolveMidDayPrepTemplate(service, args.locationId);
+  if (!template) {
+    return { isVisibleToActor: true, hasTemplate: false, templateId: null, instances: [] };
+  }
+
+  const { data: rows, error } = await service
+    .from("checklist_instances")
+    .select("id, status, triggered_at")
+    .eq("template_id", template.id)
+    .eq("location_id", args.locationId)
+    .eq("date", args.date)
+    .order("triggered_at", { ascending: true });
+  if (error) throw new Error(`loadMidDayPrepDashboardState: ${error.message}`);
+
+  const instances: MidDayPrepInstanceLite[] = (
+    (rows ?? []) as Array<{ id: string; status: string; triggered_at: string | null }>
+  ).map((r, i) => ({
+    instanceId: r.id,
+    number: i + 1,
+    status: r.status,
+    triggeredAt: r.triggered_at,
+  }));
+
+  return { isVisibleToActor: true, hasTemplate: true, templateId: template.id, instances };
+}
+
 /**
  * Slim-shape lookup for the dashboard tile: returns the active assignment
  * for (assignee=user, reportType, location, date) if one exists. Used to

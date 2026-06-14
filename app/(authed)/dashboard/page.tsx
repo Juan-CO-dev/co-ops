@@ -36,7 +36,9 @@ import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { loadUnreadForUser } from "@/lib/notifications";
-import { loadAmPrepDashboardState } from "@/lib/prep";
+import { loadAmPrepDashboardState, loadMidDayPrepDashboardState } from "@/lib/prep";
+
+import { MidDayPrepTile } from "@/components/MidDayPrepTile";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { ChecklistInstance } from "@/lib/types";
@@ -346,6 +348,17 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         })
       : null;
 
+  // Mid-day prep tile state (C.43) — multi-instance; lists today's numbered
+  // instances + a trigger. Visibility gates on shift-staff level internally.
+  const midDayPrepDashboard =
+    selectedLocation && operational
+      ? await loadMidDayPrepDashboardState(sb, {
+          locationId: selectedLocation.id,
+          date: operational.todayDate,
+          actor: { userId: auth.user.id, role: auth.role, level: auth.level },
+        })
+      : null;
+
   const allLocationsBadge = auth.level >= 9 && auth.locations.length === 0;
 
   // Notification surface (Build #3 PR 3 Step 7) — load unread in-app
@@ -493,28 +506,40 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
          * (no empty placeholder). Future tiles (Mid-day Prep, Cash report,
          * Opening report, Special, Training) plug into the same section
          * under their own visibility predicates. */}
-        {selectedLocation && amPrepDashboard?.isVisibleToActor ? (
+        {selectedLocation &&
+        operational &&
+        (amPrepDashboard?.isVisibleToActor || midDayPrepDashboard?.isVisibleToActor) ? (
           <ReportsSection language={language}>
-            <AmPrepTile
-              location={selectedLocation}
-              state={amPrepDashboard}
-              language={language}
-              showEditAffordance={
-                // C.46 A2 — dashboard tile edit affordance only fires for the
-                // original submitter (per-A2 "tile is action-oriented"; KH+
-                // non-submitters see Edit on the closing report-ref item, not
-                // the tile). canEditReport gates cap + closing-finalized
-                // for sub-KH+ submitters.
-                amPrepDashboard.todayInstance?.confirmedBy === auth.user.id &&
-                amPrepDashboard.originalSubmissionId !== null &&
-                canEditReport({
-                  actor: { userId: auth.user.id, level: auth.level },
-                  originalSubmitterId: amPrepDashboard.todayInstance.confirmedBy,
-                  closingStatus: amPrepDashboard.closingStatus,
-                  currentEditCount: amPrepDashboard.chainEditCount,
-                }).canEdit
-              }
-            />
+            {amPrepDashboard?.isVisibleToActor ? (
+              <AmPrepTile
+                location={selectedLocation}
+                state={amPrepDashboard}
+                language={language}
+                showEditAffordance={
+                  // C.46 A2 — dashboard tile edit affordance only fires for the
+                  // original submitter (per-A2 "tile is action-oriented"; KH+
+                  // non-submitters see Edit on the closing report-ref item, not
+                  // the tile). canEditReport gates cap + closing-finalized
+                  // for sub-KH+ submitters.
+                  amPrepDashboard.todayInstance?.confirmedBy === auth.user.id &&
+                  amPrepDashboard.originalSubmissionId !== null &&
+                  canEditReport({
+                    actor: { userId: auth.user.id, level: auth.level },
+                    originalSubmitterId: amPrepDashboard.todayInstance.confirmedBy,
+                    closingStatus: amPrepDashboard.closingStatus,
+                    currentEditCount: amPrepDashboard.chainEditCount,
+                  }).canEdit
+                }
+              />
+            ) : null}
+            {midDayPrepDashboard?.isVisibleToActor ? (
+              <MidDayPrepTile
+                state={midDayPrepDashboard}
+                language={language}
+                locationId={selectedLocation.id}
+                date={operational.todayDate}
+              />
+            ) : null}
           </ReportsSection>
         ) : null}
 
