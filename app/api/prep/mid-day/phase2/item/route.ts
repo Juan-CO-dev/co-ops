@@ -21,6 +21,7 @@ interface ItemBody {
   instanceId: string;
   templateItemId: string;
   prepped: number;
+  reason?: string;
 }
 
 function validateBody(
@@ -37,9 +38,10 @@ function validateBody(
   if (typeof r.prepped !== "number" || !Number.isFinite(r.prepped) || r.prepped < 0) {
     return { ok: false, field: "prepped" };
   }
+  const reason = typeof r.reason === "string" ? r.reason : undefined;
   return {
     ok: true,
-    body: { instanceId: r.instanceId, templateItemId: r.templateItemId, prepped: r.prepped },
+    body: { instanceId: r.instanceId, templateItemId: r.templateItemId, prepped: r.prepped, reason },
   };
 }
 
@@ -89,6 +91,7 @@ export async function POST(req: NextRequest) {
       instanceId: body.instanceId,
       templateItemId: body.templateItemId,
       prepped: body.prepped,
+      reason: body.reason ?? null,
       actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level },
       ipAddress: extractIp(req),
       userAgent: req.headers.get("user-agent"),

@@ -85,6 +85,7 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
       need,
       initialPrepped: prepped,
       initialSavedBy: savedBy,
+      initialReason: comp?.prepData?.inputs.freeText ?? null,
     };
   });
 

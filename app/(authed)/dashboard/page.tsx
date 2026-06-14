@@ -39,6 +39,7 @@ import { loadUnreadForUser } from "@/lib/notifications";
 import { loadAmPrepDashboardState, loadMidDayPrepDashboardState } from "@/lib/prep";
 
 import { MidDayPrepTile } from "@/components/MidDayPrepTile";
+import { OpeningTile } from "@/components/OpeningTile";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { ChecklistInstance } from "@/lib/types";
@@ -359,6 +360,44 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         })
       : null;
 
+  // Opening Report tile state (C.53) — resolve template + today's status inline
+  // (the /operations/opening page owns the gate + 3-phase flow). Visible to
+  // shift staff (level >= 3).
+  let openingDashboard:
+    | { isVisibleToActor: boolean; hasTemplate: boolean; status: string | null }
+    | null = null;
+  if (selectedLocation && operational) {
+    if (auth.level < 3) {
+      openingDashboard = { isVisibleToActor: false, hasTemplate: false, status: null };
+    } else {
+      const { data: oTmpl } = await sb
+        .from("checklist_templates")
+        .select("id")
+        .eq("location_id", selectedLocation.id)
+        .eq("type", "opening")
+        .eq("active", true)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle<{ id: string }>();
+      if (!oTmpl) {
+        openingDashboard = { isVisibleToActor: true, hasTemplate: false, status: null };
+      } else {
+        const { data: oInst } = await sb
+          .from("checklist_instances")
+          .select("status")
+          .eq("template_id", oTmpl.id)
+          .eq("location_id", selectedLocation.id)
+          .eq("date", operational.todayDate)
+          .maybeSingle<{ status: string }>();
+        openingDashboard = {
+          isVisibleToActor: true,
+          hasTemplate: true,
+          status: oInst?.status ?? null,
+        };
+      }
+    }
+  }
+
   const allLocationsBadge = auth.level >= 9 && auth.locations.length === 0;
 
   // Notification surface (Build #3 PR 3 Step 7) — load unread in-app
@@ -508,8 +547,18 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
          * under their own visibility predicates. */}
         {selectedLocation &&
         operational &&
-        (amPrepDashboard?.isVisibleToActor || midDayPrepDashboard?.isVisibleToActor) ? (
+        (openingDashboard?.isVisibleToActor ||
+          amPrepDashboard?.isVisibleToActor ||
+          midDayPrepDashboard?.isVisibleToActor) ? (
           <ReportsSection language={language}>
+            {openingDashboard?.isVisibleToActor ? (
+              <OpeningTile
+                locationId={selectedLocation.id}
+                hasTemplate={openingDashboard.hasTemplate}
+                status={openingDashboard.status}
+                language={language}
+              />
+            ) : null}
             {amPrepDashboard?.isVisibleToActor ? (
               <AmPrepTile
                 location={selectedLocation}

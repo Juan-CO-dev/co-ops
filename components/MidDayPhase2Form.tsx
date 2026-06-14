@@ -3,9 +3,10 @@
 /**
  * MidDayPhase2Form — Phase 2 collaborative prep for mid-day (C.43). Per-item
  * "prepped" input + per-item Save (realtime-lite: each save POSTs independently,
- * append-only; other cooks' saves reconcile on reload). Finalize closes the
- * instance (phase1_complete → phase2_complete). Multi-author by construction —
- * any clocked-in cook claims items.
+ * append-only; other cooks' saves reconcile on reload). When prepped differs from
+ * the back-to-par need, an inline reason field appears (over/under-prep — stored
+ * as inputs.freeText, like opening Phase 2's over/under capture). Finalize closes
+ * the instance (phase1_complete → phase2_complete).
  */
 
 import { useMemo, useState } from "react";
@@ -25,14 +26,19 @@ export interface MidDayPhase2Item {
   initialPrepped: number | null;
   /** Name of whoever saved it (null = saved by you / not yet saved). */
   initialSavedBy: string | null;
+  /** Over/under-prep reason already saved (inputs.freeText), or null. */
+  initialReason: string | null;
 }
 
 interface SaveState {
   value: string;
+  reason: string;
   status: "idle" | "saving" | "saved" | "error";
   savedBy: string | null;
   error: string | null;
 }
+
+const EMPTY: SaveState = { value: "", reason: "", status: "idle", savedBy: null, error: null };
 
 export function MidDayPhase2Form({
   instanceId,
@@ -48,6 +54,7 @@ export function MidDayPhase2Form({
     for (const it of items) {
       init[it.id] = {
         value: it.initialPrepped !== null ? String(it.initialPrepped) : "",
+        reason: it.initialReason ?? "",
         status: it.initialPrepped !== null ? "saved" : "idle",
         savedBy: it.initialSavedBy,
         error: null,
@@ -74,11 +81,11 @@ export function MidDayPhase2Form({
   }, [items]);
 
   const patch = (id: string, p: Partial<SaveState>) =>
-    setStates((s) => ({ ...s, [id]: { ...(s[id] ?? { value: "", status: "idle", savedBy: null, error: null }), ...p } }));
+    setStates((s) => ({ ...s, [id]: { ...(s[id] ?? EMPTY), ...p } }));
 
   const onSave = async (id: string) => {
-    const st = states[id];
-    if (!st || st.status === "saving") return;
+    const st = states[id] ?? EMPTY;
+    if (st.status === "saving") return;
     const raw = st.value.trim();
     const prepped = raw === "" ? NaN : Number(raw);
     if (!Number.isFinite(prepped) || prepped < 0) {
@@ -90,7 +97,12 @@ export function MidDayPhase2Form({
       const res = await fetch("/api/prep/mid-day/phase2/item", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instanceId, templateItemId: id, prepped }),
+        body: JSON.stringify({
+          instanceId,
+          templateItemId: id,
+          prepped,
+          reason: st.reason.trim() || null,
+        }),
         redirect: "manual",
       });
       if (res.ok) {
@@ -149,11 +161,18 @@ export function MidDayPhase2Form({
           </h2>
           <ul className="mt-2 flex flex-col gap-1.5">
             {g.items.map((it) => {
-              const st = states[it.id] ?? { value: "", status: "idle" as const, savedBy: null, error: null };
+              const st = states[it.id] ?? EMPTY;
+              const preppedNum = st.value.trim() === "" ? null : Number(st.value);
+              const showReason =
+                it.need !== null &&
+                preppedNum !== null &&
+                Number.isFinite(preppedNum) &&
+                preppedNum !== it.need;
+              const over = showReason && preppedNum! > (it.need ?? 0);
               return (
                 <li
                   key={it.id}
-                  className="flex flex-col gap-1 rounded-md border-2 border-co-border bg-co-surface px-3 py-2"
+                  className="flex flex-col gap-1.5 rounded-md border-2 border-co-border bg-co-surface px-3 py-2"
                 >
                   <div className="flex items-center gap-3">
                     <div className="min-w-0 flex-1">
@@ -194,6 +213,22 @@ export function MidDayPhase2Form({
                       {st.status === "saving" ? t("mid_day_prep.phase2.saving") : t("mid_day_prep.phase2.save")}
                     </button>
                   </div>
+
+                  {showReason ? (
+                    <input
+                      type="text"
+                      value={st.reason}
+                      onChange={(e) => patch(it.id, { reason: e.target.value, status: "idle" })}
+                      aria-label={over ? t("mid_day_prep.phase2.over_reason") : t("mid_day_prep.phase2.under_reason")}
+                      placeholder={over ? t("mid_day_prep.phase2.over_reason") : t("mid_day_prep.phase2.under_reason")}
+                      className="
+                        w-full rounded-md border-2 border-co-gold-deep bg-co-surface px-2 py-1.5
+                        text-xs text-co-text focus:outline-none
+                        focus-visible:ring-4 focus-visible:ring-co-gold/60
+                      "
+                    />
+                  ) : null}
+
                   {st.status === "saved" ? (
                     <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-success">
                       {st.savedBy

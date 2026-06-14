@@ -1074,6 +1074,8 @@ export async function saveMidDayPhase2Item(
     instanceId: string;
     templateItemId: string;
     prepped: number;
+    /** Optional over/under-prep reason (stored as inputs.freeText). */
+    reason?: string | null;
     actor: PrepActor;
     ipAddress?: string | null;
     userAgent?: string | null;
@@ -1100,6 +1102,7 @@ export async function saveMidDayPhase2Item(
     p_actor_id: args.actor.userId,
     p_prepped: args.prepped,
     p_snapshot: snapshot,
+    p_reason: args.reason ?? null,
   });
   if (error) {
     if (error.code === "23514") return { ok: false, reason: "not_in_phase2" };
@@ -1116,6 +1119,7 @@ export async function saveMidDayPhase2Item(
       instance_id: args.instanceId,
       template_item_id: args.templateItemId,
       prepped: args.prepped,
+      reason: args.reason ?? null,
       phase: "mid_day_phase2",
     },
     ipAddress: args.ipAddress ?? null,
