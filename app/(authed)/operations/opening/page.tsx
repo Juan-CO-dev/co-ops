@@ -251,9 +251,11 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
 
   const managers = await loadAgmPlusManagers(sb, selectedLocation.id);
 
-  // status='open' — render the form.
+  // status='open' — render the form. (This branch renders OpeningClient
+  // directly without ScaffoldHeader, so the back link is added explicitly.)
   return (
     <AuthShell>
+      <DashboardBackLink />
       <OpeningClient
         instance={state.instance}
         templateItems={state.templateItems}
