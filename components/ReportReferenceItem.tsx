@@ -84,6 +84,9 @@ function reportRoute(
   switch (reportType) {
     case "opening_report":
       return "/operations/opening";
+    case "mid_day_prep":
+      // Multi-instance; no single page by location — send to the dashboard tile.
+      return "/dashboard";
     case "am_prep":
     default:
       return "/operations/am-prep";
@@ -177,6 +180,9 @@ export function ReportReferenceItem({
         <span className="flex flex-1 flex-col items-start gap-0.5 min-w-0">
           <span className="text-sm font-semibold leading-tight text-co-text-muted">
             {resolved.label}
+            {typeof completion.autoCompleteMeta?.count === "number"
+              ? ` ×${completion.autoCompleteMeta.count}`
+              : ""}
           </span>
           <span className="text-[11px] text-co-text-dim">{attribution}</span>
         </span>

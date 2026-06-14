@@ -350,6 +350,14 @@ export interface AutoCompleteMeta {
   reportInstanceId: string;
   /** ISO timestamp — when the source report was submitted. */
   reportSubmittedAt: string;
+  /**
+   * Count of completed reports of this type for the day. Set for multi-instance
+   * reports (Mid-day Prep, C.43) where several reports auto-tick one closing
+   * reference item; undefined for single-instance reports (AM Prep, Opening).
+   */
+  count?: number;
+  /** Instance ids of the counted reports (multi-instance only). */
+  reportInstanceIds?: string[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

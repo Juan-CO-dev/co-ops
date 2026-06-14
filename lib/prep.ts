@@ -1185,7 +1185,109 @@ export async function finalizeMidDayPhase2(
     userAgent: args.userAgent ?? null,
   });
 
+  // C.42/C.43 — auto-complete (with count) the closing's Mid-day Prep ref item.
+  // Fire-and-forget: must not fail the finalize. Graceful no-op if today's
+  // closing instance doesn't exist yet.
+  void autoCompleteClosingMidDayRef(service, {
+    locationId: data.location_id,
+    date: data.date,
+    midDayInstanceId: args.instanceId,
+    actor: args.actor,
+  }).catch((e) => console.error("autoCompleteClosingMidDayRef failed:", e));
+
   return { ok: true, instance: rowToInstance(data) };
+}
+
+/**
+ * autoCompleteClosingMidDayRef — auto-completes the closing's "Mid-day Prep"
+ * report-reference item (C.42) when a mid-day prep finalizes, carrying a COUNT
+ * of finalized mid-day instances for the day (C.43 multi-instance). Supersedes
+ * the prior auto-complete completion so the count updates each finalize. No-op
+ * when the ref item isn't seeded or today's closing instance doesn't exist yet.
+ */
+export async function autoCompleteClosingMidDayRef(
+  service: SupabaseClient,
+  args: { locationId: string; date: string; midDayInstanceId: string; actor: PrepActor },
+): Promise<void> {
+  const refItemId = await resolveClosingReportRefItemId(service, {
+    locationId: args.locationId,
+    reportType: "mid_day_prep",
+  });
+  if (!refItemId) return;
+
+  const { data: cTmpl, error: ctErr } = await service
+    .from("checklist_templates")
+    .select("id")
+    .eq("location_id", args.locationId)
+    .eq("type", "closing")
+    .eq("active", true)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ id: string }>();
+  if (ctErr) throw new Error(`autoCompleteClosingMidDayRef: closing template: ${ctErr.message}`);
+  if (!cTmpl) return;
+
+  const { data: cInst, error: ciErr } = await service
+    .from("checklist_instances")
+    .select("id")
+    .eq("template_id", cTmpl.id)
+    .eq("location_id", args.locationId)
+    .eq("date", args.date)
+    .maybeSingle<{ id: string }>();
+  if (ciErr) throw new Error(`autoCompleteClosingMidDayRef: closing instance: ${ciErr.message}`);
+  if (!cInst) return; // closing not opened yet — graceful skip
+
+  const mTmpl = await resolveMidDayPrepTemplate(service, args.locationId);
+  if (!mTmpl) return;
+  const { data: finalized, error: fErr } = await service
+    .from("checklist_instances")
+    .select("id, triggered_at")
+    .eq("template_id", mTmpl.id)
+    .eq("location_id", args.locationId)
+    .eq("date", args.date)
+    .eq("status", "phase2_complete")
+    .order("triggered_at", { ascending: true });
+  if (fErr) throw new Error(`autoCompleteClosingMidDayRef: count: ${fErr.message}`);
+  const reportInstanceIds = ((finalized ?? []) as Array<{ id: string }>).map((r) => r.id);
+  const count = reportInstanceIds.length;
+
+  const nowIso = new Date().toISOString();
+  const meta = {
+    reportType: "mid_day_prep" as const,
+    reportInstanceId: args.midDayInstanceId,
+    reportSubmittedAt: nowIso,
+    count,
+    reportInstanceIds,
+  };
+
+  const { data: prior } = await service
+    .from("checklist_completions")
+    .select("id")
+    .eq("instance_id", cInst.id)
+    .eq("template_item_id", refItemId)
+    .is("superseded_at", null)
+    .is("revoked_at", null)
+    .maybeSingle<{ id: string }>();
+
+  const { data: inserted, error: insErr } = await service
+    .from("checklist_completions")
+    .insert({
+      instance_id: cInst.id,
+      template_item_id: refItemId,
+      completed_by: args.actor.userId,
+      completed_at: nowIso,
+      auto_complete_meta: meta,
+    })
+    .select("id")
+    .maybeSingle<{ id: string }>();
+  if (insErr) throw new Error(`autoCompleteClosingMidDayRef: insert: ${insErr.message}`);
+
+  if (prior && inserted) {
+    await service
+      .from("checklist_completions")
+      .update({ superseded_at: nowIso, superseded_by: inserted.id })
+      .eq("id", prior.id);
+  }
 }
 
 /**
