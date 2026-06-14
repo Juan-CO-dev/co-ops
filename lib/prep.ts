@@ -618,15 +618,17 @@ export async function loadAmPrepState(
   // most-recently-created prep template across ALL locations. See sibling pattern
   // in `lib/opening.ts loadOpeningState`.
   //
-  // C.43 sub-finding: this single-prep-template assumption refines when Mid-day
-  // Prep ships — both AM Prep and Mid-day Prep will be `type='prep'`. Resolution
-  // path TBD at that build time (name pattern filter, discriminator column, or
-  // CHECK constraint split). Captured in AGENTS.md.
+  // C.43 (migration 0059): AM Prep and Mid-day Prep are both type='prep',
+  // disambiguated by prep_subtype. This loader is AM-prep-only — the
+  // `.eq("prep_subtype", "am_prep")` filter below is load-bearing. Mid-day uses
+  // loadMidDayPrepState. AM prep stays single-per-day (allows_multiple_per_day
+  // defaults false), so the existing get-or-create + 23505 race path is unchanged.
   const { data: tmplRow, error: tmplErr } = await service
     .from("checklist_templates")
     .select("id, name")
     .eq("location_id", args.locationId)
     .eq("type", "prep")
+    .eq("prep_subtype", "am_prep")
     .eq("active", true)
     .order("created_at", { ascending: false })
     .limit(1)
@@ -759,6 +761,163 @@ export async function loadAmPrepState(
     completions,
     authors,
   };
+}
+
+/**
+ * loadMidDayPrepState — load one mid-day prep instance (by id) + its template
+ * items + completions + authors. Unlike loadAmPrepState, mid-day is multi-
+ * instance per day (C.43) — instances are created explicitly via
+ * createMidDayPrepInstance (the "+ New mid-day prep" trigger), not get-or-
+ * created by date. This loader reads an already-resolved instance id.
+ */
+export async function loadMidDayPrepState(
+  service: SupabaseClient,
+  args: { instanceId: string },
+): Promise<{
+  template: { id: string; name: string };
+  templateItems: ChecklistTemplateItem[];
+  instance: ChecklistInstance;
+  completions: ChecklistCompletion[];
+  authors: Record<string, string>;
+} | null> {
+  const { data: instanceRow, error: instErr } = await service
+    .from("checklist_instances")
+    .select(INSTANCE_COLUMNS)
+    .eq("id", args.instanceId)
+    .maybeSingle<InstanceRow>();
+  if (instErr) throw new Error(`loadMidDayPrepState: read instance: ${instErr.message}`);
+  if (!instanceRow) return null;
+
+  // The instance's template must be a mid-day prep template. Guards against an
+  // id that points at an AM-prep / opening / closing instance.
+  const { data: tmplRow, error: tmplErr } = await service
+    .from("checklist_templates")
+    .select("id, name")
+    .eq("id", instanceRow.template_id)
+    .eq("type", "prep")
+    .eq("prep_subtype", "mid_day_prep")
+    .maybeSingle<{ id: string; name: string }>();
+  if (tmplErr) throw new Error(`loadMidDayPrepState: load template: ${tmplErr.message}`);
+  if (!tmplRow) return null;
+
+  const { data: itemsRows, error: itemsErr } = await service
+    .from("checklist_template_items")
+    .select(TEMPLATE_ITEM_COLUMNS)
+    .eq("template_id", tmplRow.id)
+    .eq("active", true)
+    .order("display_order", { ascending: true });
+  if (itemsErr) throw new Error(`loadMidDayPrepState: load items: ${itemsErr.message}`);
+  const templateItems = ((itemsRows ?? []) as TemplateItemRow[])
+    .map(rowToTemplateItem)
+    .map(narrowPrepTemplateItem);
+
+  const { data: completionRows, error: compErr } = await service
+    .from("checklist_completions")
+    .select(COMPLETION_COLUMNS)
+    .eq("instance_id", instanceRow.id)
+    .is("superseded_at", null)
+    .is("revoked_at", null);
+  if (compErr) throw new Error(`loadMidDayPrepState: load completions: ${compErr.message}`);
+  const completions = ((completionRows ?? []) as CompletionRow[])
+    .map(rowToCompletion)
+    .map(narrowPrepCompletion);
+
+  const authorIds = new Set<string>();
+  for (const c of completions) authorIds.add(c.completedBy);
+  if (instanceRow.confirmed_by) authorIds.add(instanceRow.confirmed_by);
+  if (instanceRow.triggered_by_user_id) authorIds.add(instanceRow.triggered_by_user_id);
+  const authors: Record<string, string> = {};
+  if (authorIds.size > 0) {
+    const { data: userRows, error: userErr } = await service
+      .from("users")
+      .select("id, name")
+      .in("id", Array.from(authorIds));
+    if (userErr) throw new Error(`loadMidDayPrepState: load authors: ${userErr.message}`);
+    for (const u of (userRows ?? []) as Array<{ id: string; name: string }>) {
+      authors[u.id] = u.name;
+    }
+  }
+
+  return {
+    template: tmplRow,
+    templateItems,
+    instance: rowToInstance(instanceRow),
+    completions,
+    authors,
+  };
+}
+
+/**
+ * createMidDayPrepInstance — explicit "+ New mid-day prep" trigger (C.43).
+ * Always inserts a NEW instance (allows_multiple_per_day = true bypasses the
+ * single-per-day partial unique index from migration 0059), stamped with
+ * triggered_at / triggered_by_user_id (C.18). Returns the new instance id.
+ * L3+ authorization is enforced by the calling route + RLS, not here.
+ */
+export async function createMidDayPrepInstance(
+  service: SupabaseClient,
+  args: { templateId: string; locationId: string; date: string; actor: PrepActor },
+): Promise<string> {
+  const triggerTimestamp = new Date().toISOString();
+  const { data: inserted, error: insertErr } = await service
+    .from("checklist_instances")
+    .insert({
+      template_id: args.templateId,
+      location_id: args.locationId,
+      date: args.date,
+      shift_start_at: triggerTimestamp,
+      status: "open",
+      triggered_by_user_id: args.actor.userId,
+      triggered_at: triggerTimestamp,
+      allows_multiple_per_day: true,
+    })
+    .select("id")
+    .maybeSingle<{ id: string }>();
+  if (insertErr) throw new Error(`createMidDayPrepInstance: insert: ${insertErr.message}`);
+  if (!inserted) throw new Error(`createMidDayPrepInstance: insert returned no row`);
+
+  void audit({
+    actorId: args.actor.userId,
+    actorRole: args.actor.role,
+    action: "checklist_instance.create",
+    resourceTable: "checklist_instances",
+    resourceId: inserted.id,
+    metadata: {
+      template_id: args.templateId,
+      location_id: args.locationId,
+      date: args.date,
+      template_type: "prep",
+      prep_subtype: "mid_day_prep",
+      trigger: "manual_mid_day",
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+  return inserted.id;
+}
+
+/**
+ * resolveMidDayPrepTemplate — the active mid-day prep template for a location
+ * (C.43). Per-location scoping is load-bearing (prep templates exist per
+ * location). Returns null when no mid-day template is seeded for the location
+ * yet (Slice E seed pending). Reused by the trigger route + the dashboard tile.
+ */
+export async function resolveMidDayPrepTemplate(
+  service: SupabaseClient,
+  locationId: string,
+): Promise<{ id: string; name: string } | null> {
+  const { data, error } = await service
+    .from("checklist_templates")
+    .select("id, name")
+    .eq("location_id", locationId)
+    .eq("type", "prep")
+    .eq("prep_subtype", "mid_day_prep")
+    .eq("active", true)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ id: string; name: string }>();
+  if (error) throw new Error(`resolveMidDayPrepTemplate: ${error.message}`);
+  return data ?? null;
 }
 
 /**
