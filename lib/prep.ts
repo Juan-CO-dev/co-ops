@@ -1057,6 +1057,121 @@ export async function submitMidDayPhase1(
   return { ok: true, instance };
 }
 
+/** Result of saveMidDayPhase2Item. */
+export type MidDayPhase2SaveResult =
+  | { ok: true; completionId: string; savedAt: string }
+  | { ok: false; reason: "not_found" | "not_in_phase2" | "bad_item" };
+
+/**
+ * saveMidDayPhase2Item — Phase 2 collaborative per-item save (C.43). Records the
+ * prepped amount for one item via save_mid_day_phase2_item_atomic (migration
+ * 0061): append-only supersede carrying the Phase-1 onHand forward + total =
+ * prepped + completed_by = the saver. Any clocked-in cook; window = phase1_complete.
+ */
+export async function saveMidDayPhase2Item(
+  service: SupabaseClient,
+  args: {
+    instanceId: string;
+    templateItemId: string;
+    prepped: number;
+    actor: PrepActor;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  },
+): Promise<MidDayPhase2SaveResult> {
+  const state = await loadMidDayPrepState(service, { instanceId: args.instanceId });
+  if (!state) return { ok: false, reason: "not_found" };
+  if (state.instance.status !== "phase1_complete") return { ok: false, reason: "not_in_phase2" };
+
+  const item = state.templateItems.find((it) => it.id === args.templateItemId);
+  if (!item || !item.prepMeta) return { ok: false, reason: "bad_item" };
+
+  const snapshot: PrepSnapshot = {
+    section: item.prepMeta.section,
+    itemName: item.label,
+    parValue: item.prepMeta.parValue,
+    parUnit: item.prepMeta.parUnit,
+    specialInstruction: item.prepMeta.specialInstruction,
+  };
+
+  const { data, error } = await service.rpc("save_mid_day_phase2_item_atomic", {
+    p_instance_id: args.instanceId,
+    p_template_item_id: args.templateItemId,
+    p_actor_id: args.actor.userId,
+    p_prepped: args.prepped,
+    p_snapshot: snapshot,
+  });
+  if (error) {
+    if (error.code === "23514") return { ok: false, reason: "not_in_phase2" };
+    throw new Error(`saveMidDayPhase2Item: ${error.message}`);
+  }
+
+  void audit({
+    actorId: args.actor.userId,
+    actorRole: args.actor.role,
+    action: "prep.mid_day.item_saved",
+    resourceTable: "checklist_completions",
+    resourceId: (data as { completionId: string }).completionId,
+    metadata: {
+      instance_id: args.instanceId,
+      template_item_id: args.templateItemId,
+      prepped: args.prepped,
+      phase: "mid_day_phase2",
+    },
+    ipAddress: args.ipAddress ?? null,
+    userAgent: args.userAgent ?? null,
+  });
+
+  const d = data as { completionId: string; savedAt: string };
+  return { ok: true, completionId: d.completionId, savedAt: d.savedAt };
+}
+
+/** Result of finalizeMidDayPhase2. */
+export type MidDayFinalizeResult =
+  | { ok: true; instance: ChecklistInstance }
+  | { ok: false; reason: "not_found" | "not_in_phase2" };
+
+/**
+ * finalizeMidDayPhase2 — close out a mid-day prep instance (C.43): pessimistic
+ * transition phase1_complete → phase2_complete + confirmed_at/by stamp. The
+ * UPDATE's status filter is the gate (silent 0-row → not in phase2).
+ */
+export async function finalizeMidDayPhase2(
+  service: SupabaseClient,
+  args: { instanceId: string; actor: PrepActor; ipAddress?: string | null; userAgent?: string | null },
+): Promise<MidDayFinalizeResult> {
+  const nowIso = new Date().toISOString();
+  const { data, error } = await service
+    .from("checklist_instances")
+    .update({ status: "phase2_complete", confirmed_at: nowIso, confirmed_by: args.actor.userId })
+    .eq("id", args.instanceId)
+    .eq("status", "phase1_complete")
+    .select(INSTANCE_COLUMNS)
+    .maybeSingle<InstanceRow>();
+  if (error) throw new Error(`finalizeMidDayPhase2: ${error.message}`);
+  if (!data) {
+    const { data: exists } = await service
+      .from("checklist_instances")
+      .select("id")
+      .eq("id", args.instanceId)
+      .maybeSingle<{ id: string }>();
+    return { ok: false, reason: exists ? "not_in_phase2" : "not_found" };
+  }
+
+  void audit({
+    actorId: args.actor.userId,
+    actorRole: args.actor.role,
+    action: "prep.submit",
+    resourceTable: "checklist_instances",
+    resourceId: args.instanceId,
+    metadata: { outcome: "success", phase: "mid_day_phase2_finalize", prep_subtype: "mid_day_prep" },
+    ipAddress: args.ipAddress ?? null,
+    userAgent: args.userAgent ?? null,
+  });
+
+  return { ok: true, instance: rowToInstance(data) };
+}
+
 /**
  * Slim-shape lookup for the dashboard tile: returns the active assignment
  * for (assignee=user, reportType, location, date) if one exists. Used to

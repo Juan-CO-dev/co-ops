@@ -23,6 +23,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { ChecklistTemplateItem } from "@/lib/types";
 
 import { MidDayPhase1Form } from "@/components/MidDayPhase1Form";
+import { MidDayPhase2Form, type MidDayPhase2Item } from "@/components/MidDayPhase2Form";
 
 interface PageProps {
   searchParams: Promise<{ instance?: string }>;
@@ -61,6 +62,32 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
       ? serverT(lang, "mid_day_prep.page.phase1_heading")
       : serverT(lang, "mid_day_prep.page.phase2_heading");
 
+  // Phase 2 per-item reconcile-on-load state: latest live completion per item
+  // (Phase 1 wrote onHand; a Phase 2 save adds total + the saver as completedBy).
+  const compByItem = new Map<string, (typeof state.completions)[number]>();
+  for (const c of state.completions) {
+    const prev = compByItem.get(c.templateItemId);
+    if (!prev || c.completedAt > prev.completedAt) compByItem.set(c.templateItemId, c);
+  }
+  const phase2Items: MidDayPhase2Item[] = state.templateItems.map((item) => {
+    const comp = compByItem.get(item.id);
+    const onHand = comp?.prepData?.inputs.onHand ?? null;
+    const prepped = comp?.prepData?.inputs.total ?? null;
+    const par = item.prepMeta?.parValue ?? null;
+    const need = par !== null && onHand !== null ? Math.max(par - onHand, 0) : null;
+    const savedBy = prepped !== null && comp ? (state.authors[comp.completedBy] ?? null) : null;
+    return {
+      id: item.id,
+      label: item.label,
+      section: item.prepMeta?.section ?? item.station ?? "Misc",
+      parValue: par,
+      parUnit: item.prepMeta?.parUnit ?? null,
+      need,
+      initialPrepped: prepped,
+      initialSavedBy: savedBy,
+    };
+  });
+
   return (
     <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3">
@@ -95,6 +122,8 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
             parUnit: item.prepMeta?.parUnit ?? null,
           }))}
         />
+      ) : state.instance.status === "phase1_complete" ? (
+        <MidDayPhase2Form instanceId={state.instance.id} items={phase2Items} />
       ) : (
         <>
           <p className="mt-3 rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2 text-[11px] italic leading-snug text-co-text-muted">
