@@ -91,9 +91,19 @@ for shift accountability, cost tracking, or inventory.
 - **C.22** — ✅ SHIPPED in Build #1 (notes-edit = re-completion event). Not pending.
 - **C.24** — documented *intentional deviation* (service-role page reads; hardening pass planned in v1.3). Not an unbuilt feature.
 - **C.25 / C.45** — DEFERRED to Module #2 user lifecycle (C.45 supersedes C.25's framing).
-- **C.43** — LOCKED, awaiting build → **this is the next module**.
-- **C.44** — admin tooling **partially shipped** (CC git check found `app/admin/checklist-templates/*`, `app/admin/pars/*`, `app/api/admin/checklist-templates/[id]/items`). Verify functional-vs-stub before relying.
+- **C.43** — ✅ SHIPPED (2026-06-14, merged `03be60c`) — full two-phase Mid-day Prep module + closing auto-tick.
+- **C.44** — admin **API backend built** (`/api/admin/checklist-templates[/id]/items`, `/pars`, `/users`, `/vendors[/id]/items`, `/locations`) but every admin **page is a PlaceholderCard stub** → the admin **UI is unbuilt** (that's the C.44 build target).
 - **C.51** — DEFERRED stub (Status: Deferred — slot reserved).
 - **C.52** — CLOSED (realtime-lite shipped via Commit B; live-sync residual deferred by Juan). A phase of Opening Report, not a standalone module.
 
-> **⚠ Caveat (load-bearing):** this map's Wave 4–7 "pending" counts were reconstructed from spec docs. CC's C.44 check already found a shipped admin suite (templates/pars/users/vendors/locations/audit) the spec-only map missed — so the "~8 admin surfaces pending" figure **overcounts remaining work**. Before planning any wave, do a **git-grounded status recount**, not just a spec read. (This is the exact "verify against ground truth" lesson from AGENTS.md.)
+## 6. Git-grounded recount — verified by reading the actual `page.tsx` files (2026-06-14)
+
+| State | Routes |
+|---|---|
+| **REAL (shipped feature pages)** | `dashboard` · Opening Report · AM Prep · **Mid-day Prep** · Closing v2 · auth (login / verify / reset-password) |
+| **STUB (`PlaceholderCard`, ~17 lines — unbuilt)** | `operations/prep`(sheet) · `operations/overlay` · `operations/synthesis` · `reports` · `ordering` · `recipes` · `rollups` · `tips` · `training` · `comms` · `cash` · `catering/customers` · `catering/pipeline` · `lto` · `maintenance` · `feedback` · `ai` · `announcements` · `written-reports` · `deep-cleaning` |
+| **PARTIAL** | **admin (C.44)** — API backend built, all admin pages are stubs (UI unbuilt) |
+
+Each stub is a ready-to-replace scaffold. **Rich shared backend already exists** for new report modules to lean on: `/api/checklist/*` (completions, submissions, confirm, revoke, mark-not-done, tag-actual-completer, instances, `prep/generate`), `/api/photos`, `/api/notifications`, `/api/toast`, `/api/shifts`, `/api/sms/process-queue`.
+
+> **Net:** the spec map's "pending" is **accurate** — those Wave 2–8 routes are stubs, not hidden shipped work. (This corrects an earlier CC over-claim that the map "undercounts shipped work" — that came from seeing route *names* in `next build` output without reading the pages. Verify-against-ground-truth, applied to CC's own prior claim.)
