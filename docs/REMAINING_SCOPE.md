@@ -10,6 +10,21 @@ Supersedes the scattered "C.54-ish?" mental model. This is the board we plan fro
 
 ---
 
+## 0. Scope posture + build order (Juan, 2026-06-15) — READ FIRST
+
+**CO-OPS is being finished LIGHTER but robust.** Pete and Juan didn't reach a pay agreement, so Juan is trimming CO-OPS to a lean-but-solid daily-operations ledger and shifting more time to BLOC OS. **Wave 2 (daily report surfaces) gets built for real; Waves 3–8 (vendor/inventory, comms, training, customer-facing, AI, time clock) are now MAYBE — build only if a clear need surfaces.** Don't plan as if the full 7-wave roadmap is committed.
+
+**Build order (CC's recommendation — build in this order unless Juan re-prioritizes):**
+1. **Cash Deposit Confirmation** — completes the daily-capture set (opening / am-prep / mid-day / closing already built). **Operational flow (Juan, 2026-06-15):** at end of day — count the register + verify it's correct → count the tips → write out the names of everyone on shift → deposit the money in the office safe. So the capture artifact = register count + verification, tip total, on-shift staff list, deposit confirmation. (`/cash` stub; `/api/photos` available if a photo of the count/deposit is wanted, but it's primarily counts + names, not photo-driven.)
+2. **Maintenance Log** — cheap read surface over equipment-tagged completions across opening / closing / mid-day. Surfaces already-captured data. (`/maintenance` stub.)
+3. **PM / Mid-Shift Report** — read surface aggregating the day's reports. (Net-new route.)
+4. **Reports Hub** — browse/search across all report types; do AFTER 2–3 report types exist. (`/reports` stub.)
+5. **Admin UI (C.44)** — robustness/maintainability: edit templates / pars / users without re-seeding. API backend already exists (§6); this is the UI. The "finish it right" capstone so CO staff can run it without a dev.
+
+Each module: brainstorm fresh, reuse the rich shared backend (§6), one captured migration per DB change, smoke each.
+
+---
+
 ## 1. Where we are (the C.5x opening-report arc is DONE)
 
 Production is live at `co-ops-ashy.vercel.app`. `main` is clean — **0 open PRs, 0 open issues.**
