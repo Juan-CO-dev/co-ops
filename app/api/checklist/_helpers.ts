@@ -49,6 +49,7 @@ import {
   ChecklistRevokeHierarchyViolationError,
   ChecklistRevocationNoteRequiredError,
   ChecklistConcurrentModificationError,
+  ChecklistCashDepositRequiredError,
 } from "@/lib/checklists";
 import { jsonError } from "@/lib/api-helpers";
 import type { NextResponse } from "next/server";
@@ -169,6 +170,12 @@ export function mapChecklistError(err: ChecklistError): NextResponse {
       completion_id: err.completionId,
       operation: err.operation,
     });
+  }
+  // Cash deposit HARD gate — 422 Unprocessable Entity (business-rule precondition,
+  // not a caller-input error). The code "cash_deposit_required" is the stable
+  // discriminator; PinConfirmModal switches on it to show the cash-required banner.
+  if (err instanceof ChecklistCashDepositRequiredError) {
+    return jsonError(422, err.code, { message: err.message });
   }
   // Generic ChecklistError with an in-band code (empty_batch,
   // completion_not_found, completion_wrong_instance, completion_wrong_author,

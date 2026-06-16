@@ -75,9 +75,37 @@ export default async function CashPage({ searchParams }: PageProps) {
 
   const report = await loadCashReport(sb, { locationId: locationParam, date: today });
 
+  // Up-front lock: when no report exists but today's closing is already finalized,
+  // show a locked state instead of the entry form. Mirrors the edit-window gate
+  // in lib/cash.ts submitCashReport (lines 127–137).
+  let closingFinalized = false;
+  if (!report) {
+    const { data: cTmpl } = await sb
+      .from("checklist_templates")
+      .select("id")
+      .eq("location_id", locationParam)
+      .eq("type", "closing")
+      .eq("active", true)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<{ id: string }>();
+    if (cTmpl) {
+      const { data: cInst } = await sb
+        .from("checklist_instances")
+        .select("status")
+        .eq("template_id", cTmpl.id)
+        .eq("location_id", locationParam)
+        .eq("date", today)
+        .maybeSingle<{ status: string }>();
+      if (cInst && (cInst.status === "confirmed" || cInst.status === "incomplete_confirmed")) {
+        closingFinalized = true;
+      }
+    }
+  }
+
   // When no report exists, load active users at this location before the return.
   let users: { id: string; name: string }[] = [];
-  if (!report) {
+  if (!report && !closingFinalized) {
     const { data: locScoped, error: locErr } = await sb
       .from("user_locations")
       .select("user_id")
@@ -106,7 +134,14 @@ export default async function CashPage({ searchParams }: PageProps) {
         {serverT(lang, "cash.page.title")}
       </h1>
 
-      {report ? (
+      {closingFinalized && !report ? (
+        /* Up-front lock: closing finalized, no cash report submitted. The entry
+         * window is closed — show a clear banner instead of a confusing form
+         * that would 409 on submit. */
+        <p className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-3 text-sm font-semibold text-co-text">
+          {serverT(lang, "cash.locked.closing_finalized")}
+        </p>
+      ) : report ? (
         <section className="flex flex-col gap-3">
           {/* Signed-off banner */}
           <p className="rounded-lg border-2 border-co-success bg-[#E6F4E6] px-3 py-2 text-sm font-semibold text-co-text">
