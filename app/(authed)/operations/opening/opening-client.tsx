@@ -1520,6 +1520,7 @@ export function OpeningClient({
           managers={managers}
           language={language}
           showMissingErrors={showMissingPhase2Errors}
+          readOnly={phase2AlreadyFinalized}
         />
       ) : null}
 
