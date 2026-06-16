@@ -11,6 +11,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
+import { ActionButton } from "./ActionButton";
 
 export function NewMidDayPrepButton({
   locationId,
@@ -60,20 +61,9 @@ export function NewMidDayPrepButton({
 
   return (
     <div className="flex flex-col gap-1">
-      <button
-        type="button"
-        onClick={() => void onClick()}
-        disabled={creating}
-        className="
-          inline-flex min-h-[48px] items-center justify-center rounded-xl
-          border-2 border-co-text bg-co-gold px-4 text-sm font-bold uppercase
-          tracking-[0.1em] text-co-text transition hover:bg-co-gold-deep
-          focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
-          disabled:cursor-not-allowed disabled:opacity-50
-        "
-      >
+      <ActionButton onClick={() => void onClick()} disabled={creating} className="w-full sm:w-auto">
         {creating ? t("dashboard.mid_day_prep.creating") : t("dashboard.mid_day_prep.new_cta")}
-      </button>
+      </ActionButton>
       {error ? <p className="px-1 text-[11px] text-co-cta">{error}</p> : null}
     </div>
   );

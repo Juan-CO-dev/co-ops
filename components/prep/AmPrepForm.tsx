@@ -58,6 +58,7 @@ import type { ChecklistChainEntry } from "@/lib/checklists";
 import { formatChainAttribution, formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language, TranslationKey, TranslationParams } from "@/lib/i18n/types";
+import { ActionButton } from "@/components/ActionButton";
 import type {
   ChecklistInstance,
   ChecklistTemplateItem,
@@ -796,22 +797,15 @@ export function AmPrepForm({
           interactive footer). */}
       {!isReadOnly ? (
         <div className="flex flex-col gap-2 mt-2">
-          <button
-            type="button"
+          <ActionButton
             onClick={handleSubmit}
             disabled={submitDisabled}
             aria-disabled={submitDisabled}
-            className={[
-              "inline-flex min-h-[64px] w-full items-center justify-center rounded-xl",
-              "px-5 text-base font-bold uppercase tracking-[0.12em]",
-              "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
-              submitDisabled
-                ? "border-2 border-co-border-2 bg-co-surface text-co-text-faint cursor-not-allowed"
-                : "border-2 border-co-text bg-co-gold text-co-text hover:bg-co-gold-deep",
-            ].join(" ")}
+            size="lg"
+            className="w-full"
           >
             {submitButtonText}
-          </button>
+          </ActionButton>
 
           {/* Discard-changes affordance — visible only when dirty (the
               !isReadOnly outer guard already excludes in-flight + success

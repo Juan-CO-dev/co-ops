@@ -58,6 +58,7 @@ import {
   type ChecklistTagResult,
   type ChecklistMarkNotDoneResult,
 } from "@/components/ChecklistItem";
+import { ActionButton } from "@/components/ActionButton";
 import { PinConfirmModal } from "@/components/auth/PinConfirmModal";
 import { ReportReferenceItem } from "@/components/ReportReferenceItem";
 import type { ChecklistChainEntry } from "@/lib/checklists";
@@ -889,24 +890,18 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
         <>
           {/* Inline submit at end of list */}
           <div className="mt-8 flex flex-col gap-2">
-            <button
-              type="button"
+            <ActionButton
               onClick={handleReviewToggle}
-              className={[
-                "inline-flex min-h-[64px] w-full items-center justify-center rounded-xl",
-                "px-5 text-base font-bold uppercase tracking-[0.12em]",
-                "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
-                allRequiredDone
-                  ? "border-2 border-co-text bg-co-gold text-co-text hover:bg-co-gold-deep"
-                  : "border-2 border-co-border-2 bg-co-surface text-co-text hover:border-co-text",
-              ].join(" ")}
+              variant={allRequiredDone ? "primary" : "secondary"}
+              size="lg"
+              className="w-full"
             >
               {reviewOpen
                 ? t("closing.review.button_hide")
                 : allRequiredDone
                 ? t("closing.review.button_complete")
                 : t("closing.review.button_incomplete")}
-            </button>
+            </ActionButton>
             <p className="text-center text-[11px] text-co-text-muted">
               {t("closing.station.progress_required", {
                 completed: totalCount.completed,
@@ -1314,21 +1309,14 @@ function ReviewSection({
       ) : null}
 
       {/* Continue */}
-      <button
-        type="button"
+      <ActionButton
         onClick={onContinue}
         disabled={!reasonsReady}
-        className={[
-          "mt-5 inline-flex min-h-[56px] w-full items-center justify-center rounded-xl",
-          "px-5 text-base font-bold uppercase tracking-[0.12em]",
-          "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
-          reasonsReady
-            ? "border-2 border-co-text bg-co-gold text-co-text hover:bg-co-gold-deep"
-            : "border-2 border-co-border-2 bg-co-surface text-co-text-faint cursor-not-allowed",
-        ].join(" ")}
+        size="lg"
+        className="mt-5 w-full"
       >
         {t("closing.review.continue")}
-      </button>
+      </ActionButton>
     </section>
   );
 }

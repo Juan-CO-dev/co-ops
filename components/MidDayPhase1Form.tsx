@@ -13,6 +13,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
+import { ActionButton } from "@/components/ActionButton";
 
 export interface MidDayPhase1Item {
   id: string;
@@ -138,20 +139,9 @@ export function MidDayPhase1Form({
 
       {error ? <p className="px-1 text-[11px] text-co-cta">{error}</p> : null}
 
-      <button
-        type="button"
-        onClick={() => void onSubmit()}
-        disabled={submitting}
-        className="
-          inline-flex min-h-[52px] items-center justify-center rounded-xl border-2
-          border-co-text bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em]
-          text-co-text transition hover:bg-co-gold-deep focus:outline-none
-          focus-visible:ring-4 focus-visible:ring-co-gold/60
-          disabled:cursor-not-allowed disabled:opacity-50
-        "
-      >
+      <ActionButton onClick={() => void onSubmit()} disabled={submitting} className="w-full">
         {submitting ? t("mid_day_prep.phase1.submitting") : t("mid_day_prep.phase1.submit")}
-      </button>
+      </ActionButton>
     </div>
   );
 }

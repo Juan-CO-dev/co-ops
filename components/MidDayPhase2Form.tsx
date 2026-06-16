@@ -14,6 +14,7 @@ import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import type { MidDayOverUnder } from "@/lib/prep";
+import { ActionButton } from "@/components/ActionButton";
 import {
   OverParModal,
   type ManagerOption,
@@ -314,20 +315,9 @@ export function MidDayPhase2Form({
 
       {finalizeError ? <p className="px-1 text-[11px] text-co-cta">{finalizeError}</p> : null}
 
-      <button
-        type="button"
-        onClick={() => void onFinalize()}
-        disabled={finalizing}
-        className="
-          inline-flex min-h-[52px] items-center justify-center rounded-xl border-2
-          border-co-text bg-co-cta px-4 text-sm font-bold uppercase tracking-[0.1em]
-          text-co-surface transition hover:opacity-90 focus:outline-none
-          focus-visible:ring-4 focus-visible:ring-co-gold/60
-          disabled:cursor-not-allowed disabled:opacity-50
-        "
-      >
+      <ActionButton onClick={() => void onFinalize()} disabled={finalizing} className="w-full">
         {finalizing ? t("mid_day_prep.phase2.finalizing") : t("mid_day_prep.phase2.finalize")}
-      </button>
+      </ActionButton>
     </div>
   );
 }
