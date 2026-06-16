@@ -161,3 +161,16 @@ export function formatChainAttribution(
   });
   return segments.join(", ");
 }
+
+/**
+ * Integer cents → localized currency string. Mirrors the language-locale
+ * convention of formatTime/formatDateLabel (es → es-US, else en-US). Always
+ * 2 decimals; negative renders with a leading minus (caller decides
+ * short/over framing).
+ */
+export function formatCents(cents: number, language: Language): string {
+  return new Intl.NumberFormat(language === "es" ? "es-US" : "en-US", {
+    style: "currency",
+    currency: "USD",
+  }).format(cents / 100);
+}
