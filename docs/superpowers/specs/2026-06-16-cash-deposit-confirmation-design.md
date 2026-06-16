@@ -103,7 +103,7 @@ cash_reports
   1. **Cash** — Projected (number input; "Pull from Toast" seam, inert until `TOAST_ENABLED`). Count method toggle: **Enter total** (one register input) vs **Count by denomination** (bill/coin rows → live sum + **register-vs-$200** indicator). Live readout: deposit, over/short (color-coded), `over_short_note` shown when ≠ 0.
   2. **Tips** — cash tips counted (number input).
   3. **On shift** — multi-select of the location's active users + a free-text "add name" for non-users → builds `on_shift`.
-- **Submit → PinConfirmModal** (the existing scaffold; wire `POST /api/auth/pin-confirm` — note this route is currently a Phase-4 TODO stub per AGENTS.md, so the plan must include wiring it OR confirming an existing confirm path). On success the API writes the row with `signed_by`/`signed_at` = the confirmer + now.
+- **Submit → PinConfirmModal** (the existing scaffold). **This module builds the `POST /api/auth/pin-confirm` endpoint** (currently a Phase-4 TODO stub per AGENTS.md — the modal exists, the route does not) — confirmed by Juan 2026-06-16 that the PIN signature ships with this module. The endpoint verifies the authenticated closer's PIN (reusing the `lib/auth.ts` PIN-verify primitive + the lockout-counter discipline) and, on success, the cash API writes the row with `signed_by`/`signed_at` = the confirmer + now. A failed PIN does not write the deposit.
 - **Read-only after submit;** unlock only via the KH+ supersede-edit path.
 - **Dashboard `CashDepositTile`** in the Reports section: not-started / submitted ("Finalized at {time} by {name}", consistent with the opening/am-prep/mid-day tiles). Built with the unified `ActionButton`/`ActionLink` (from the button-uniformity PR).
 
@@ -128,9 +128,9 @@ cash_reports
 - **Language-aware time/date** via the canonical `lib/i18n/format` helpers.
 - **Audit:** `cash_report.submit` (and `cash_report.supersede` for edits) audit rows via `lib/audit.ts`, with `over_short_cents`/`deposit_cents` in metadata for forensic visibility. New action codes added to the audit vocabulary.
 
-## 9. Assumptions (flag-and-proceed; confirm in spec review)
+## 9. Assumptions
 
-- **Edit window:** KH+ may supersede-edit a submitted cash report **until today's closing is finalized** (after that it's locked, matching the report-lifecycle pattern). If Juan wants a stricter/looser rule, adjust.
+- **Edit window (CONFIRMED, Juan 2026-06-16):** KH+ may supersede-edit a submitted cash report **until today's closing is finalized**; after that it locks (matching the report-lifecycle pattern).
 - **`register_count` semantics:** the closer counts the register *after* setting the projected deposit aside (Juan's method). The denomination counter sums whatever they enter; the math (`over_short = register − 200`) holds regardless of how they physically separate the cash.
 - **Multi-tenant flag (not built):** `register_target_cents` is per-report (not hardcoded), and the location is explicit — no new single-tenant assumptions added. The $200 default is the only CO-specific constant, and it's overridable on the row.
 
