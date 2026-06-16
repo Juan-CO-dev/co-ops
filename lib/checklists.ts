@@ -385,6 +385,23 @@ export class ChecklistConcurrentModificationError extends ChecklistError {
   }
 }
 
+/**
+ * Thrown by confirmInstance when the closing template has a cash-deposit
+ * report-reference item that is not yet live-completed. This is a HARD gate
+ * (no reason-override path) — the cash deposit report must be submitted
+ * before the closing can be finalized. Defense-in-depth: the client also
+ * gates this, but a direct API call must be blocked at the server layer too.
+ */
+export class ChecklistCashDepositRequiredError extends ChecklistError {
+  constructor() {
+    super(
+      "Cash deposit report must be submitted before the closing can be finalized.",
+      "cash_deposit_required",
+    );
+    this.name = "ChecklistCashDepositRequiredError";
+  }
+}
+
 // ─── Build #3 PR 1 — gate predicate + assignment errors ────────────────────
 
 /**
@@ -1076,7 +1093,7 @@ export async function confirmInstance(
   // Required template items for this template.
   const { data: items, error: itemsErr } = await authed
     .from("checklist_template_items")
-    .select("id, min_role_level, required, active")
+    .select("id, min_role_level, required, active, report_reference_type")
     .eq("template_id", instance.template_id)
     .eq("active", true);
   if (itemsErr) throw new Error(`confirmInstance load template items: ${itemsErr.message}`);
@@ -1085,7 +1102,31 @@ export async function confirmInstance(
     min_role_level: number;
     required: boolean;
     active: boolean;
+    report_reference_type: string | null;
   }>;
+
+  // Cash deposit HARD gate — no reason-override path, always required.
+  // The closing cannot finalize unless the cash report-reference item is
+  // live-completed (meaning a cash deposit report has been submitted and the
+  // reconcileClosingReportRefs auto-tick has fired). Defense-in-depth: the
+  // client also gates this (closing-client.tsx cashDeposited memo), but a
+  // direct API call must be blocked at the server layer too.
+  // Vacuously passes if the template has no cash_report ref item (graceful —
+  // non-closing templates or templates without cash items are unaffected).
+  const cashRefItem = allItems.find((it) => it.report_reference_type === "cash_report");
+  if (cashRefItem && !completedItemIds.has(cashRefItem.id)) {
+    void audit({
+      actorId: actor.userId,
+      actorRole: actor.role,
+      action: "checklist.confirm",
+      resourceTable: "checklist_instances",
+      resourceId: instanceId,
+      metadata: { outcome: "cash_deposit_required", instance_id: instanceId },
+      ipAddress: args.ipAddress ?? null,
+      userAgent: args.userAgent ?? null,
+    });
+    throw new ChecklistCashDepositRequiredError();
+  }
 
   // Highest min_role_level among completed items — drives the role-sufficiency
   // gate per spec §6.1.

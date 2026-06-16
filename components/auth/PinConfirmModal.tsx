@@ -206,6 +206,11 @@ export function PinConfirmModal({
             onError(body);
             return;
 
+          case "cash_deposit_required":
+            triggerError(t("auth.pin_modal.error_cash_required"));
+            onError(body);
+            return;
+
           default:
             triggerError(t("auth.pin_modal.error_unknown"));
             return;

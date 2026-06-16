@@ -58,7 +58,7 @@ import {
   type ChecklistTagResult,
   type ChecklistMarkNotDoneResult,
 } from "@/components/ChecklistItem";
-import { ActionButton } from "@/components/ActionButton";
+import { ActionButton, ActionLink } from "@/components/ActionButton";
 import { PinConfirmModal } from "@/components/auth/PinConfirmModal";
 import { ReportReferenceItem } from "@/components/ReportReferenceItem";
 import type { ChecklistChainEntry } from "@/lib/checklists";
@@ -282,16 +282,31 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
     return walkOutItems.every((it) => completions.has(it.id));
   }, [templateItems, completions]);
 
+  // Cash deposit HARD gate — every cash report-ref item must be live-completed
+  // (meaning a cash deposit report has been submitted and the
+  // reconcileClosingReportRefs auto-tick has fired). Vacuously true when the
+  // template has no cash_report ref item (graceful — non-closing templates or
+  // future templates without cash items are unaffected).
+  // SYSTEM-KEY DISCIPLINE (per SPEC_AMENDMENTS.md C.38): matching on
+  // `it.reportReferenceType` (schema-level discriminator), not on a translated
+  // display string.
+  const cashDeposited = useMemo(() => {
+    const cashItems = templateItems.filter((it) => it.reportReferenceType === "cash_report");
+    return cashItems.every((it) => completions.has(it.id));
+  }, [templateItems, completions]);
+
   // Finalize gate: KH+ (security gate for lock-up) AND Walk-Out Verification
-  // complete (the "I'm the last out" signal). Both must hold. See
-  // SPEC_AMENDMENTS.md C.26 for the operational rationale.
+  // complete (the "I'm the last out" signal) AND cash deposit submitted (HARD
+  // gate — no reason-override). All three must hold. See SPEC_AMENDMENTS.md
+  // C.26 for the operational rationale; cash gate added per closing-requires-
+  // cash-deposit feature.
   //
   // KH+ = level >= 4 (key_holder is level 4 post-renumber, per lib/roles.ts).
   // The role-model renumber (employee 3 / key_holder 4, eliminating the prior
   // collision where both sat at level 3) landed via migration 0058; this gate
   // moved 3 → 4 with it so KHs still finalize while plain employees no longer
   // pass the KH+ security gate. See SPEC_AMENDMENTS.md C.26 / C.41.
-  const canFinalize = !readOnly && actor.level >= 4 && walkOutVerificationComplete;
+  const canFinalize = !readOnly && actor.level >= 4 && walkOutVerificationComplete && cashDeposited;
 
   // Incomplete-required IDs — for the review section's reason inputs.
   const incompleteRequiredIds = useMemo(() => {
@@ -886,6 +901,27 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
        * depth so any future code path that tries to setPinOpen(true) for
        * a non-finalizing actor finds no modal to open.
        */}
+
+      {/* Cash deposit required banner — shown when the closer is KH+, Walk-Out
+        * Verification is complete, but the cash deposit hasn't been submitted yet.
+        * This is the ONLY remaining blocker at that point, so give the closer a
+        * clear prompt + one-tap CTA to the cash page.
+        * Hidden once cashDeposited is true (canFinalize's banner takes over). */}
+      {!readOnly && actor.level >= 4 && walkOutVerificationComplete && !cashDeposited ? (
+        <div className="mt-6 rounded-2xl border-2 border-co-cta bg-[#FFE4E4] p-4">
+          <p className="text-sm font-bold text-co-text">{t("closing.cash_required.banner")}</p>
+          <div className="mt-3">
+            <ActionLink
+              href={`/cash?location=${instance.locationId}`}
+              variant="primary"
+              size="default"
+            >
+              {t("closing.cash_required.cta")}
+            </ActionLink>
+          </div>
+        </div>
+      ) : null}
+
       {canFinalize ? (
         <>
           {/* Inline submit at end of list */}

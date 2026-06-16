@@ -63,6 +63,7 @@
   "cash.error.pin_invalid": "PIN incorrecto.",
   "cash.error.closing_finalized": "El cierre de hoy está finalizado — el depósito está bloqueado.",
   "cash.error.generic": "No se pudo enviar. Intenta de nuevo.",
+  "cash.locked.closing_finalized": "El cierre de hoy ya está finalizado — el depósito de efectivo está bloqueado.",
   "cash.read_only.banner": "Depositado {amount} · firmado por {name} a las {time}",
 
   "mid_day_prep.page.title": "Preparación de mediodía",
@@ -218,6 +219,8 @@
   "closing.review.reason_placeholder": "¿Por qué no se completó?",
   "closing.review.continue": "Continuar",
   "closing.review.station_label_separator": " · ",
+  "closing.cash_required.banner": "Se requiere el depósito de efectivo antes de finalizar el cierre.",
+  "closing.cash_required.cta": "Hacer el depósito de efectivo",
   "closing.review.cannot_finalize_yet": "Falta verificar la salida — se podrá finalizar cuando los 5 ítems de salida estén listos.",
   "closing.review.role_too_low": "Solo Key Holder o superior puede finalizar el cierre.",
 
@@ -249,6 +252,7 @@
   "auth.pin_modal.error_partial_save": "Guardado parcial. Recarga e intenta de nuevo.",
   "auth.pin_modal.error_unknown": "No se pudo confirmar. Intenta de nuevo.",
   "auth.pin_modal.error_network": "Error de red. Intenta de nuevo.",
+  "auth.pin_modal.error_cash_required": "Envía el depósito de efectivo antes de finalizar.",
 
   "dashboard.header.label": "Panel",
   "dashboard.header.greeting": "Hola, {name}.",

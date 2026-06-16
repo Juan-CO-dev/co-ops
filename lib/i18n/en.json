@@ -63,6 +63,7 @@
   "cash.error.pin_invalid": "Incorrect PIN.",
   "cash.error.closing_finalized": "Today's closing is finalized — the deposit is locked.",
   "cash.error.generic": "Could not submit. Try again.",
+  "cash.locked.closing_finalized": "Today's closing is already finalized — the cash deposit is locked.",
   "cash.read_only.banner": "Deposited {amount} · signed by {name} at {time}",
 
   "mid_day_prep.page.title": "Mid-day Prep",
@@ -218,6 +219,8 @@
   "closing.review.reason_placeholder": "Why couldn't this be completed?",
   "closing.review.continue": "Continue",
   "closing.review.station_label_separator": " · ",
+  "closing.cash_required.banner": "Cash deposit required before you can finalize the closing.",
+  "closing.cash_required.cta": "Do the cash deposit",
   "closing.review.cannot_finalize_yet": "Walk-Out Verification not complete — finalize unlocks once all 5 walk-out items are checked off.",
   "closing.review.role_too_low": "Only Key Holder or higher can finalize the closing.",
 
@@ -249,6 +252,7 @@
   "auth.pin_modal.error_partial_save": "Save partially failed. Please reload and try again.",
   "auth.pin_modal.error_unknown": "Unable to confirm. Please try again.",
   "auth.pin_modal.error_network": "Network error. Try again.",
+  "auth.pin_modal.error_cash_required": "Submit the cash deposit before finalizing.",
 
   "dashboard.header.label": "Dashboard",
   "dashboard.header.greeting": "Hi, {name}.",
