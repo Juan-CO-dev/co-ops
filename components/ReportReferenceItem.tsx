@@ -85,8 +85,9 @@ function reportRoute(
     case "opening_report":
       return "/operations/opening";
     case "mid_day_prep":
-      // Multi-instance; no single page by location — send to the dashboard tile.
-      return "/dashboard";
+      // Multi-instance; the page resolves ?location → smart-routes (1 instance
+      // redirects straight to it; 2+ shows the day's list; 0 shows list + New).
+      return "/operations/mid-day";
     case "am_prep":
     default:
       return "/operations/am-prep";

@@ -854,10 +854,34 @@ export async function loadMidDayPrepState(
  * triggered_at / triggered_by_user_id (C.18). Returns the new instance id.
  * L3+ authorization is enforced by the calling route + RLS, not here.
  */
+/**
+ * Max mid-day prep instances per location per day (Juan 2026-06-16). Two
+ * windows cover the operational need: one on-demand mid-shift top-up + one
+ * "leave the closing/next-opener with prepped items" pass. A 3rd is blocked so
+ * the day's mid-day surface stays bounded.
+ */
+export const MAX_MID_DAY_PREP_PER_DAY = 2;
+
 export async function createMidDayPrepInstance(
   service: SupabaseClient,
   args: { templateId: string; locationId: string; date: string; actor: PrepActor },
-): Promise<string> {
+): Promise<
+  | { ok: true; id: string }
+  | { ok: false; reason: "cap_reached"; cap: number }
+> {
+  // Cap enforcement (server-side authority; the tile also hides the New button
+  // at cap, but a direct API caller must be blocked too).
+  const { count, error: countErr } = await service
+    .from("checklist_instances")
+    .select("id", { count: "exact", head: true })
+    .eq("template_id", args.templateId)
+    .eq("location_id", args.locationId)
+    .eq("date", args.date);
+  if (countErr) throw new Error(`createMidDayPrepInstance: count: ${countErr.message}`);
+  if ((count ?? 0) >= MAX_MID_DAY_PREP_PER_DAY) {
+    return { ok: false, reason: "cap_reached", cap: MAX_MID_DAY_PREP_PER_DAY };
+  }
+
   const triggerTimestamp = new Date().toISOString();
   const { data: inserted, error: insertErr } = await service
     .from("checklist_instances")
@@ -893,7 +917,7 @@ export async function createMidDayPrepInstance(
     ipAddress: null,
     userAgent: null,
   });
-  return inserted.id;
+  return { ok: true, id: inserted.id };
 }
 
 /**
@@ -927,6 +951,9 @@ export interface MidDayPrepInstanceLite {
   number: number;
   status: string;
   triggeredAt: string | null;
+  /** Finalize provenance (set at phase2_complete via finalizeMidDayPhase2). */
+  confirmedAt: string | null;
+  confirmedByName: string | null;
 }
 
 /** Dashboard-tile state for mid-day prep (C.43). */
@@ -962,20 +989,40 @@ export async function loadMidDayPrepDashboardState(
 
   const { data: rows, error } = await service
     .from("checklist_instances")
-    .select("id, status, triggered_at")
+    .select("id, status, triggered_at, confirmed_at, confirmed_by")
     .eq("template_id", template.id)
     .eq("location_id", args.locationId)
     .eq("date", args.date)
     .order("triggered_at", { ascending: true });
   if (error) throw new Error(`loadMidDayPrepDashboardState: ${error.message}`);
 
-  const instances: MidDayPrepInstanceLite[] = (
-    (rows ?? []) as Array<{ id: string; status: string; triggered_at: string | null }>
-  ).map((r, i) => ({
+  const rawRows = (rows ?? []) as Array<{
+    id: string;
+    status: string;
+    triggered_at: string | null;
+    confirmed_at: string | null;
+    confirmed_by: string | null;
+  }>;
+
+  // Resolve confirmer names in one query (finalized instances only).
+  const confirmerIds = [...new Set(rawRows.map((r) => r.confirmed_by).filter((v): v is string => !!v))];
+  const nameById = new Map<string, string>();
+  if (confirmerIds.length > 0) {
+    const { data: users, error: uErr } = await service
+      .from("users")
+      .select("id, name")
+      .in("id", confirmerIds);
+    if (uErr) throw new Error(`loadMidDayPrepDashboardState: confirmer names: ${uErr.message}`);
+    for (const u of (users ?? []) as Array<{ id: string; name: string }>) nameById.set(u.id, u.name);
+  }
+
+  const instances: MidDayPrepInstanceLite[] = rawRows.map((r, i) => ({
     instanceId: r.id,
     number: i + 1,
     status: r.status,
     triggeredAt: r.triggered_at,
+    confirmedAt: r.confirmed_at,
+    confirmedByName: r.confirmed_by ? (nameById.get(r.confirmed_by) ?? null) : null,
   }));
 
   return { isVisibleToActor: true, hasTemplate: true, templateId: template.id, instances };
