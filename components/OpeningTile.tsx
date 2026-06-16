@@ -1,8 +1,8 @@
-import Link from "next/link";
-
 import { formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
+
+import { ActionLink } from "./ActionButton";
 
 /**
  * OpeningTile — dashboard tile for the Opening Report (C.53). Direct path to
@@ -64,17 +64,9 @@ export function OpeningTile({
         <>
           <p className="mt-1 text-sm font-semibold text-co-text">{statusLine}</p>
           <div className="mt-3">
-            <Link
-              href={`/operations/opening?location=${locationId}`}
-              className="
-                inline-flex min-h-[48px] items-center justify-center rounded-xl
-                border-2 border-co-text bg-co-gold px-4 text-sm font-bold uppercase
-                tracking-[0.1em] text-co-text transition hover:bg-co-gold-deep
-                focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
-              "
-            >
+            <ActionLink href={`/operations/opening?location=${locationId}`} className="w-full sm:w-auto">
               {serverT(language, "dashboard.opening.cta")}
-            </Link>
+            </ActionLink>
           </div>
         </>
       )}

@@ -37,6 +37,7 @@ import type {
   OpeningPhase2Meta,
 } from "@/lib/types";
 
+import { ActionButton } from "@/components/ActionButton";
 import { OpeningVerificationStation } from "@/components/opening/OpeningVerificationStation";
 import type { OpeningItemFormValue } from "@/components/opening/OpeningChecklistItem";
 import {
@@ -1609,19 +1610,7 @@ export function OpeningClient({
                       : t("opening.submit.gate_disabled_generic")}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={handleSubmit}
-            disabled={!submitEnabled}
-            className={[
-              "inline-flex min-h-[48px] items-center justify-center rounded-md px-6",
-              "text-sm font-bold uppercase tracking-[0.12em]",
-              "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
-              submitEnabled
-                ? "border-2 border-co-text bg-co-gold text-co-text hover:bg-co-gold-deep"
-                : "border-2 border-co-border-2 bg-co-surface text-co-text-faint cursor-not-allowed",
-            ].join(" ")}
-          >
+          <ActionButton onClick={handleSubmit} disabled={!submitEnabled}>
             {submitState.status === "submitting"
               ? t("opening.submit.submitting")
               : activePhase === "verification"
@@ -1633,7 +1622,7 @@ export function OpeningClient({
                         count: outstandingCount,
                       })
                     : t("opening.finalize.button_label")}
-          </button>
+          </ActionButton>
         </div>
       </footer>
     </div>
