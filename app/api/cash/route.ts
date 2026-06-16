@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
   if (!isCents(b.cashTipsCents)) return jsonError(400, "invalid_payload", { field: "cashTipsCents" });
   if (b.countMethod !== "hand" && b.countMethod !== "denomination") return jsonError(400, "invalid_payload", { field: "countMethod" });
 
-  let registerCountCents: number;
+  let drawerTotalCents: number;
   let denominations: Denominations | null = null;
   if (b.countMethod === "denomination") {
     const d = b.denominations as Denominations | undefined;
@@ -34,12 +34,12 @@ export async function POST(req: NextRequest) {
       const q = d[String(unit)];
       if (typeof q === "number" && Number.isInteger(q) && q > 0) denominations[String(unit)] = q;
     }
-    registerCountCents = sumDenominations(denominations);
+    drawerTotalCents = sumDenominations(denominations);
   } else {
-    if (!isCents(b.registerCountCents)) return jsonError(400, "invalid_payload", { field: "registerCountCents" });
-    registerCountCents = b.registerCountCents as number;
+    if (!isCents(b.drawerTotalCents)) return jsonError(400, "invalid_payload", { field: "drawerTotalCents" });
+    drawerTotalCents = b.drawerTotalCents as number;
   }
-  const registerTargetCents = isCents(b.registerTargetCents) ? (b.registerTargetCents as number) : 20000;
+  const floatCents = isCents(b.floatCents) ? (b.floatCents as number) : 20000;
   const onShift = Array.isArray(b.onShift)
     ? (b.onShift as unknown[]).filter((e): e is OnShiftEntry => typeof e === "object" && e !== null && typeof (e as OnShiftEntry).name === "string")
     : [];
@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
     const result = await submitCashReport(service, {
       locationId: b.locationId as string, date: b.date as string,
       actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level },
-      projectedCents: b.projectedCents as number, registerCountCents, registerTargetCents,
+      projectedCents: b.projectedCents as number, drawerTotalCents, floatCents,
       countMethod: b.countMethod as "hand" | "denomination", denominations, cashTipsCents: b.cashTipsCents as number, onShift, overShortNote,
     });
     if (!result.ok && result.reason === "closing_finalized") {

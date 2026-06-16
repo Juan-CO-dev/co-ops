@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 
 import {
   computeCashTotals,
-  DEFAULT_REGISTER_TARGET_CENTS,
+  DEFAULT_FLOAT_CENTS,
   sumDenominations,
   type Denominations,
   type OnShiftEntry,
@@ -52,10 +52,10 @@ export function CashClient({
   const [pinOpen, setPinOpen] = useState(false);
 
   const projectedCents = toCents(projected);
-  const registerCountCents = mode === "denomination" ? sumDenominations(denoms) : toCents(handTotal);
+  const drawerTotalCents = mode === "denomination" ? sumDenominations(denoms) : toCents(handTotal);
   const { overShortCents, depositCents } = useMemo(
-    () => computeCashTotals({ projectedCents, registerCountCents, registerTargetCents: DEFAULT_REGISTER_TARGET_CENTS }),
-    [projectedCents, registerCountCents],
+    () => computeCashTotals({ projectedCents, drawerTotalCents, floatCents: DEFAULT_FLOAT_CENTS }),
+    [projectedCents, drawerTotalCents],
   );
 
   const onShift: OnShiftEntry[] = [
@@ -77,9 +77,9 @@ export function CashClient({
           pin,
           projectedCents,
           countMethod: mode,
-          registerCountCents: mode === "hand" ? registerCountCents : undefined,
+          drawerTotalCents: mode === "hand" ? drawerTotalCents : undefined,
           denominations: mode === "denomination" ? denoms : undefined,
-          registerTargetCents: DEFAULT_REGISTER_TARGET_CENTS,
+          floatCents: DEFAULT_FLOAT_CENTS,
           cashTipsCents: toCents(tips),
           onShift,
           overShortNote: note.trim() || null,
@@ -165,7 +165,7 @@ export function CashClient({
           {/* Count input — hand or denomination */}
           {mode === "hand" ? (
             <label className="flex flex-col gap-1">
-              <span className="text-sm font-semibold text-co-text">{t("cash.field.register_count")}</span>
+              <span className="text-sm font-semibold text-co-text">{t("cash.field.drawer_total")}</span>
               <input
                 type="number"
                 inputMode="decimal"
@@ -184,10 +184,11 @@ export function CashClient({
             <DenominationCounter
               value={denoms}
               onChange={setDenoms}
-              targetCents={DEFAULT_REGISTER_TARGET_CENTS}
               language={language}
             />
           )}
+          {/* Muted reminder: $200 float stays in the register */}
+          <p className="text-xs text-co-text-muted">{t("cash.hint.float")}</p>
 
           {/* Live deposit readout */}
           <p className="text-sm font-semibold text-co-text">

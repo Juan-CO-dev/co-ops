@@ -12,18 +12,14 @@ function unitLabel(cents: number): string {
 export function DenominationCounter({
   value,
   onChange,
-  targetCents,
   language,
 }: {
   value: Denominations;
   onChange: (next: Denominations) => void;
-  targetCents: number;
   language: Language;
 }) {
   const { t } = useTranslation();
   const total = sumDenominations(value);
-  const delta = total - targetCents;
-  const atTarget = delta === 0;
 
   return (
     <div className="flex flex-col gap-2">
@@ -57,13 +53,9 @@ export function DenominationCounter({
           </li>
         ))}
       </ul>
-      <p className={`text-sm font-bold ${atTarget ? "text-co-success" : "text-co-cta"}`}>
-        {atTarget
-          ? t("cash.count.register_ok", { target: formatCents(targetCents, language) })
-          : t(delta > 0 ? "cash.count.register_over" : "cash.count.register_short", {
-              amount: formatCents(total, language),
-              delta: formatCents(Math.abs(delta), language),
-            })}
+      {/* Live drawer total — deposit/over-short readout lives in the parent form (which has projected). */}
+      <p className="text-sm font-bold text-co-text">
+        {t("cash.count.drawer_total", { amount: formatCents(total, language) })}
       </p>
     </div>
   );

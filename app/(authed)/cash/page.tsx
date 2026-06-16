@@ -125,8 +125,8 @@ export default async function CashPage({ searchParams }: PageProps) {
               lang={lang}
             />
             <ReadOnlyRow
-              labelKey="cash.field.register_count"
-              value={formatCents(report.registerCountCents, lang)}
+              labelKey="cash.field.drawer_total"
+              value={formatCents(report.drawerTotalCents, lang)}
               lang={lang}
             />
             {/* Over/short — use readout keys which encode the sign */}

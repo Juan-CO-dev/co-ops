@@ -5,7 +5,7 @@ import type { RoleCode } from "@/lib/roles";
 /** KH+ — matches the closing-finalize gate (the closer deposits). */
 export const CASH_REPORT_BASE_LEVEL = 4;
 /** $200 float kept in the register. */
-export const DEFAULT_REGISTER_TARGET_CENTS = 20000;
+export const DEFAULT_FLOAT_CENTS = 20000;
 
 /** US denomination units in cents, largest first (bills then coins). */
 export const DENOMINATION_UNITS_CENTS = [10000, 5000, 2000, 1000, 500, 100, 25, 10, 5, 1] as const;
@@ -18,17 +18,17 @@ export interface CashActor { userId: string; role: RoleCode; level: number }
 export interface CashTotals { overShortCents: number; depositCents: number }
 
 /**
- * The one money rule (spec §2). over/short = register − target; deposit =
- * projected + over/short. Pure + total; the server recomputes with this at
- * write time and never trusts client-sent totals.
+ * The one money rule. deposit = drawer − float; over/short = deposit − projected
+ * (negative = short, positive = over). Pure + total; the server recomputes with
+ * this at write time and never trusts client-sent totals.
  */
 export function computeCashTotals(input: {
   projectedCents: number;
-  registerCountCents: number;
-  registerTargetCents: number;
+  drawerTotalCents: number;
+  floatCents: number;
 }): CashTotals {
-  const overShortCents = input.registerCountCents - input.registerTargetCents;
-  const depositCents = input.projectedCents + overShortCents;
+  const depositCents = input.drawerTotalCents - input.floatCents; // actual deposit (drawer minus float)
+  const overShortCents = depositCents - input.projectedCents;     // over/short = actual − projected
   return { overShortCents, depositCents };
 }
 
@@ -49,8 +49,8 @@ export interface CashReport {
   locationId: string;
   reportDate: string;
   projectedCents: number;
-  registerCountCents: number;
-  registerTargetCents: number;
+  drawerTotalCents: number;
+  floatCents: number;
   countMethod: "hand" | "denomination";
   denominations: Denominations | null;
   cashTipsCents: number;
@@ -64,13 +64,13 @@ export interface CashReport {
   createdAt: string;
 }
 
-const ROW = "id, location_id, report_date, projected_cents, register_count_cents, register_target_cents, count_method, denominations, cash_tips_cents, on_shift, over_short_cents, deposit_cents, over_short_note, signed_by, signed_at, created_at";
+const ROW = "id, location_id, report_date, projected_cents, drawer_total_cents, float_cents, count_method, denominations, cash_tips_cents, on_shift, over_short_cents, deposit_cents, over_short_note, signed_by, signed_at, created_at";
 
 function rowToCashReport(r: Record<string, unknown>, signedByName: string | null): CashReport {
   return {
     id: r.id as string, locationId: r.location_id as string, reportDate: r.report_date as string,
-    projectedCents: r.projected_cents as number, registerCountCents: r.register_count_cents as number,
-    registerTargetCents: r.register_target_cents as number, countMethod: r.count_method as "hand" | "denomination",
+    projectedCents: r.projected_cents as number, drawerTotalCents: r.drawer_total_cents as number,
+    floatCents: r.float_cents as number, countMethod: r.count_method as "hand" | "denomination",
     denominations: (r.denominations as Denominations | null) ?? null, cashTipsCents: r.cash_tips_cents as number,
     onShift: (r.on_shift as OnShiftEntry[]) ?? [], overShortCents: r.over_short_cents as number,
     depositCents: r.deposit_cents as number, overShortNote: (r.over_short_note as string | null) ?? null,
@@ -118,7 +118,7 @@ export async function submitCashReport(
   service: SupabaseClient,
   args: {
     locationId: string; date: string; actor: CashActor;
-    projectedCents: number; registerCountCents: number; registerTargetCents: number;
+    projectedCents: number; drawerTotalCents: number; floatCents: number;
     countMethod: "hand" | "denomination"; denominations: Denominations | null;
     cashTipsCents: number; onShift: OnShiftEntry[]; overShortNote: string | null;
   },
@@ -136,7 +136,11 @@ export async function submitCashReport(
     }
   }
 
-  const { overShortCents, depositCents } = computeCashTotals(args);
+  const { overShortCents, depositCents } = computeCashTotals({
+    projectedCents: args.projectedCents,
+    drawerTotalCents: args.drawerTotalCents,
+    floatCents: args.floatCents,
+  });
   const nowIso = new Date().toISOString();
 
   const { data: prior } = await service.from("cash_reports").select("id")
@@ -154,8 +158,8 @@ export async function submitCashReport(
 
   const { data: inserted, error: insErr } = await service.from("cash_reports").insert({
     location_id: args.locationId, report_date: args.date,
-    projected_cents: args.projectedCents, register_count_cents: args.registerCountCents,
-    register_target_cents: args.registerTargetCents, count_method: args.countMethod,
+    projected_cents: args.projectedCents, drawer_total_cents: args.drawerTotalCents,
+    float_cents: args.floatCents, count_method: args.countMethod,
     denominations: args.countMethod === "denomination" ? args.denominations : null,
     cash_tips_cents: args.cashTipsCents, on_shift: args.onShift,
     over_short_cents: overShortCents, deposit_cents: depositCents,
