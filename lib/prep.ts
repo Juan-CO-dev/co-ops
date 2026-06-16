@@ -1583,6 +1583,32 @@ export async function reconcileClosingReportRefs(
     }
   }
 
+  // ── Cash deposit (same-day; done = a live cash_report exists) ──
+  const cashRefId = await resolveClosingReportRefItemId(service, {
+    locationId: args.locationId,
+    reportType: "cash_report",
+  });
+  if (cashRefId) {
+    const { data: cash, error: cashErr } = await service
+      .from("cash_reports")
+      .select("id, signed_at")
+      .eq("location_id", args.locationId)
+      .eq("report_date", args.date)
+      .is("superseded_at", null)
+      .maybeSingle<{ id: string; signed_at: string }>();
+    if (cashErr) throw new Error(`reconcileClosingReportRefs: cash: ${cashErr.message}`);
+    if (cash) {
+      bump(
+        await ensureClosingRefCompletion(service, {
+          closingInstanceId: args.closingInstanceId,
+          refItemId: cashRefId,
+          actor: args.actor,
+          meta: { reportType: "cash_report", reportInstanceId: cash.id, reportSubmittedAt: cash.signed_at },
+        }),
+      );
+    }
+  }
+
   return { ticked };
 }
 

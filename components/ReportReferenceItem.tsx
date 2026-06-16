@@ -88,6 +88,8 @@ function reportRoute(
       // Multi-instance; the page resolves ?location → smart-routes (1 instance
       // redirects straight to it; 2+ shows the day's list; 0 shows list + New).
       return "/operations/mid-day";
+    case "cash_report":
+      return "/cash";
     case "am_prep":
     default:
       return "/operations/am-prep";
