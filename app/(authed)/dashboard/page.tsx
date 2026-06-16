@@ -364,11 +364,17 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   // (the /operations/opening page owns the gate + 3-phase flow). Visible to
   // shift staff (level >= 3).
   let openingDashboard:
-    | { isVisibleToActor: boolean; hasTemplate: boolean; status: string | null }
+    | {
+        isVisibleToActor: boolean;
+        hasTemplate: boolean;
+        status: string | null;
+        finalizedAt: string | null;
+        finalizedByName: string | null;
+      }
     | null = null;
   if (selectedLocation && operational) {
     if (auth.level < 3) {
-      openingDashboard = { isVisibleToActor: false, hasTemplate: false, status: null };
+      openingDashboard = { isVisibleToActor: false, hasTemplate: false, status: null, finalizedAt: null, finalizedByName: null };
     } else {
       const { data: oTmpl } = await sb
         .from("checklist_templates")
@@ -380,19 +386,30 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         .limit(1)
         .maybeSingle<{ id: string }>();
       if (!oTmpl) {
-        openingDashboard = { isVisibleToActor: true, hasTemplate: false, status: null };
+        openingDashboard = { isVisibleToActor: true, hasTemplate: false, status: null, finalizedAt: null, finalizedByName: null };
       } else {
         const { data: oInst } = await sb
           .from("checklist_instances")
-          .select("status")
+          .select("status, confirmed_at, confirmed_by")
           .eq("template_id", oTmpl.id)
           .eq("location_id", selectedLocation.id)
           .eq("date", operational.todayDate)
-          .maybeSingle<{ status: string }>();
+          .maybeSingle<{ status: string; confirmed_at: string | null; confirmed_by: string | null }>();
+        let finalizedByName: string | null = null;
+        if (oInst?.confirmed_by) {
+          const { data: u } = await sb
+            .from("users")
+            .select("name")
+            .eq("id", oInst.confirmed_by)
+            .maybeSingle<{ name: string }>();
+          finalizedByName = u?.name ?? null;
+        }
         openingDashboard = {
           isVisibleToActor: true,
           hasTemplate: true,
           status: oInst?.status ?? null,
+          finalizedAt: oInst?.confirmed_at ?? null,
+          finalizedByName,
         };
       }
     }
@@ -556,6 +573,8 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                 locationId={selectedLocation.id}
                 hasTemplate={openingDashboard.hasTemplate}
                 status={openingDashboard.status}
+                finalizedAt={openingDashboard.finalizedAt}
+                finalizedByName={openingDashboard.finalizedByName}
                 language={language}
               />
             ) : null}

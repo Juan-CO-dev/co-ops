@@ -105,15 +105,21 @@ export async function POST(req: NextRequest) {
     });
   }
 
-  // 6. Create the new instance.
+  // 6. Create the new instance (capped at MAX_MID_DAY_PREP_PER_DAY/day).
   try {
-    const instanceId = await createMidDayPrepInstance(service, {
+    const result = await createMidDayPrepInstance(service, {
       templateId: template.id,
       locationId: body.locationId,
       date: body.date,
       actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level },
     });
-    return jsonOk({ instanceId });
+    if (!result.ok) {
+      return jsonError(409, "midday_cap_reached", {
+        message: `Mid-day prep is limited to ${result.cap} per day. Open an existing one to continue.`,
+        cap: result.cap,
+      });
+    }
+    return jsonOk({ instanceId: result.id });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[/api/prep/mid-day] create failed:`, msg);

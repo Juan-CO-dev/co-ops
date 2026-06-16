@@ -17,18 +17,34 @@ import { redirect } from "next/navigation";
 
 import { serverT } from "@/lib/i18n/server";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
-import { loadMidDayPrepState, type MidDayOverUnder } from "@/lib/prep";
+import {
+  loadMidDayPrepDashboardState,
+  loadMidDayPrepState,
+  type MidDayOverUnder,
+} from "@/lib/prep";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { ChecklistTemplateItem } from "@/lib/types";
 
 import { MidDayPhase1Form } from "@/components/MidDayPhase1Form";
 import { MidDayPhase2Form, type MidDayPhase2Item } from "@/components/MidDayPhase2Form";
+import { MidDayPrepTile } from "@/components/MidDayPrepTile";
 import { DashboardBackLink } from "@/components/DashboardBackLink";
 import type { ManagerOption } from "@/components/opening/OverParModal";
 
+const OPERATIONAL_TZ = "America/New_York";
+
+function nyDateString(d: Date): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: OPERATIONAL_TZ,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(d);
+}
+
 interface PageProps {
-  searchParams: Promise<{ instance?: string }>;
+  searchParams: Promise<{ instance?: string; location?: string }>;
 }
 
 async function loadAgmPlusManagers(
@@ -59,10 +75,48 @@ async function loadAgmPlusManagers(
 
 export default async function MidDayPrepPage({ searchParams }: PageProps) {
   const auth = await requireSessionFromHeaders("/operations/mid-day");
-  const { instance: instanceId } = await searchParams;
-  if (!instanceId) redirect("/dashboard");
+  const { instance: instanceId, location: locationParam } = await searchParams;
 
   const sb = getServiceRoleClient();
+
+  // List mode — entered from the closing checklist's Mid-day Prep ref (?location,
+  // no ?instance). Smart-route: exactly 1 instance → straight to it (skip the
+  // list per Juan); 0 or 2+ → render the day's list (with a New button under cap).
+  if (!instanceId) {
+    if (!locationParam) redirect("/dashboard");
+    const locActor: LocationActor = { role: auth.role, locations: auth.locations };
+    if (!lockLocationContext(locActor, locationParam)) redirect("/dashboard");
+
+    const lang = auth.user.language;
+    const today = nyDateString(new Date());
+    const dashState = await loadMidDayPrepDashboardState(sb, {
+      locationId: locationParam,
+      date: today,
+      actor: { userId: auth.user.id, role: auth.role, level: auth.level },
+    });
+
+    if (dashState.instances.length === 1) {
+      redirect(`/operations/mid-day?instance=${dashState.instances[0]!.instanceId}`);
+    }
+
+    return (
+      <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
+        <div className="mb-3">
+          <DashboardBackLink />
+        </div>
+        <h1 className="mb-3 text-lg font-bold text-co-text">
+          {serverT(lang, "mid_day_prep.page.title")}
+        </h1>
+        <MidDayPrepTile
+          state={dashState}
+          language={lang}
+          locationId={locationParam}
+          date={today}
+        />
+      </main>
+    );
+  }
+
   const state = await loadMidDayPrepState(sb, { instanceId });
   if (!state) redirect("/dashboard"); // not a mid-day instance, or not found
 
