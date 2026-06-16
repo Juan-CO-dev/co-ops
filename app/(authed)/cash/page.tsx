@@ -16,7 +16,7 @@ import { redirect } from "next/navigation";
 import { CASH_REPORT_BASE_LEVEL, loadCashReport } from "@/lib/cash";
 import { formatCents, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
-import type { TranslationKey } from "@/lib/i18n/types";
+import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -25,6 +25,26 @@ import { DashboardBackLink } from "@/components/DashboardBackLink";
 import { CashClient } from "./cash-client";
 
 const OPERATIONAL_TZ = "America/New_York";
+
+// Labeled row for the read-only summary view. Declared at module scope to
+// satisfy the react-hooks/static-components lint rule (no nested component
+// declarations inside render functions).
+function ReadOnlyRow({
+  labelKey,
+  value,
+  lang,
+}: {
+  labelKey: TranslationKey;
+  value: string;
+  lang: Language;
+}) {
+  return (
+    <li className="flex items-center justify-between gap-3 rounded-md border-2 border-co-border bg-co-surface px-3 py-2 text-sm">
+      <span className="font-semibold text-co-text">{serverT(lang, labelKey)}</span>
+      <span className="shrink-0 font-bold text-co-text">{value}</span>
+    </li>
+  );
+}
 
 function nyDateString(d: Date): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -77,16 +97,6 @@ export default async function CashPage({ searchParams }: PageProps) {
     }
   }
 
-  // Labeled row helper for the read-only summary.
-  function ReadOnlyRow({ labelKey, value }: { labelKey: TranslationKey; value: string }) {
-    return (
-      <li className="flex items-center justify-between gap-3 rounded-md border-2 border-co-border bg-co-surface px-3 py-2 text-sm">
-        <span className="font-semibold text-co-text">{serverT(lang, labelKey)}</span>
-        <span className="shrink-0 font-bold text-co-text">{value}</span>
-      </li>
-    );
-  }
-
   return (
     <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3">
@@ -112,10 +122,12 @@ export default async function CashPage({ searchParams }: PageProps) {
             <ReadOnlyRow
               labelKey="cash.field.projected"
               value={formatCents(report.projectedCents, lang)}
+              lang={lang}
             />
             <ReadOnlyRow
               labelKey="cash.field.register_count"
               value={formatCents(report.registerCountCents, lang)}
+              lang={lang}
             />
             {/* Over/short — use readout keys which encode the sign */}
             <li className="flex items-center justify-between gap-3 rounded-md border-2 border-co-border bg-co-surface px-3 py-2 text-sm">
@@ -146,6 +158,7 @@ export default async function CashPage({ searchParams }: PageProps) {
             <ReadOnlyRow
               labelKey="cash.field.cash_tips"
               value={formatCents(report.cashTipsCents, lang)}
+              lang={lang}
             />
           </ul>
 
