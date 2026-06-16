@@ -23,6 +23,7 @@
  */
 
 import { audit } from "./audit";
+import { verifyPin } from "./auth";
 import { createSession, type AuthMethod, type CreateSessionResult } from "./session";
 import { getServiceRoleClient } from "./supabase-server";
 import type { RoleCode } from "./roles";
@@ -237,4 +238,21 @@ export async function recordSuccessfulAuth(
   });
 
   return session;
+}
+
+/**
+ * Verifies a PIN against the given user's pin_hash. Used by /api/auth/pin-confirm
+ * and the cash deposit signature gate. NO lockout — the actor is already
+ * authenticated (mirrors the step-up modal philosophy, AGENTS.md).
+ */
+export async function verifyActorPin(userId: string, pin: string): Promise<boolean> {
+  if (!/^\d{4}$/.test(pin)) return false; // 4-digit PINs only
+  const sb = getServiceRoleClient();
+  const { data, error } = await sb
+    .from("users")
+    .select("pin_hash")
+    .eq("id", userId)
+    .maybeSingle<{ pin_hash: string | null }>();
+  if (error || !data?.pin_hash) return false;
+  return verifyPin(pin, data.pin_hash);
 }
