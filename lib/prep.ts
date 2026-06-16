@@ -1290,6 +1290,255 @@ export async function autoCompleteClosingMidDayRef(
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Closing report-reference reconcile (pull-based; order-independent)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Idempotent upsert of one closing report-reference auto-completion.
+ *
+ * Inspects the supersession HEAD (the live, non-superseded row) for
+ * (closingInstance, refItem) and decides:
+ *   - head is live (not revoked)            → already ticked. Skip, UNLESS a
+ *                                              countForSupersedeCheck is given
+ *                                              and the head's meta.count differs
+ *                                              (mid-day multi-instance: supersede
+ *                                              to bump the count).
+ *   - head is revoked (C.55 mark-not-done)  → a manager deliberately reopened
+ *                                              this. Skip — never re-tick over a
+ *                                              reopen.
+ *   - no head                               → insert.
+ *
+ * This is the per-load-safe sibling of autoCompleteClosingMidDayRef (which
+ * inserts unconditionally as a one-shot finalize-time push). Reconcile runs on
+ * every closing page load, so it MUST pre-check to avoid growing a supersede
+ * chain on each refresh.
+ */
+async function ensureClosingRefCompletion(
+  service: SupabaseClient,
+  args: {
+    closingInstanceId: string;
+    refItemId: string;
+    actor: PrepActor;
+    meta: Record<string, unknown>;
+    /** Mid-day only: supersede an existing live tick whose meta.count differs. */
+    countForSupersedeCheck?: number;
+  },
+): Promise<"inserted" | "superseded" | "skipped"> {
+  const { data: head, error: headErr } = await service
+    .from("checklist_completions")
+    .select("id, revoked_at, auto_complete_meta")
+    .eq("instance_id", args.closingInstanceId)
+    .eq("template_item_id", args.refItemId)
+    .is("superseded_at", null)
+    .maybeSingle<{
+      id: string;
+      revoked_at: string | null;
+      auto_complete_meta: { count?: number } | null;
+    }>();
+  if (headErr) throw new Error(`ensureClosingRefCompletion: head lookup: ${headErr.message}`);
+
+  if (head) {
+    if (head.revoked_at) return "skipped"; // respect C.55 reopen — never re-tick
+    if (args.countForSupersedeCheck === undefined) return "skipped"; // already live
+    const headCount = head.auto_complete_meta?.count ?? null;
+    if (headCount === args.countForSupersedeCheck) return "skipped"; // count unchanged
+    // count changed → fall through to insert + supersede
+  }
+
+  const nowIso = new Date().toISOString();
+  const { data: inserted, error: insErr } = await service
+    .from("checklist_completions")
+    .insert({
+      instance_id: args.closingInstanceId,
+      template_item_id: args.refItemId,
+      completed_by: args.actor.userId,
+      completed_at: nowIso,
+      auto_complete_meta: args.meta,
+    })
+    .select("id")
+    .maybeSingle<{ id: string }>();
+  if (insErr) throw new Error(`ensureClosingRefCompletion: insert: ${insErr.message}`);
+
+  if (head && inserted) {
+    const { error: supErr } = await service
+      .from("checklist_completions")
+      .update({ superseded_at: nowIso, superseded_by: inserted.id })
+      .eq("id", head.id);
+    if (supErr) throw new Error(`ensureClosingRefCompletion: supersede: ${supErr.message}`);
+    return "superseded";
+  }
+  return "inserted";
+}
+
+/**
+ * reconcileClosingReportRefs — pull-based auto-tick of the closing checklist's
+ * report-reference items against TODAY's finalized reports.
+ *
+ * Called at closing-instance load (page.tsx, today path only). Fixes the
+ * dominant failure: the finalize-time push (autoCompleteClosingMidDayRef +
+ * the in-RPC am-prep/opening pushes) silently no-ops when today's closing
+ * instance doesn't exist yet — which is the NATURAL operational order, since
+ * the closing checklist is opened last (EOD), after opening / AM prep /
+ * mid-day already finalized hours earlier. Reconcile asks the question at the
+ * moment the closing checklist actually needs the answer, so order doesn't
+ * matter.
+ *
+ * Same-day semantics for all three (per Juan 2026-06-16: "opening report is
+ * part of that same day's closing checklist, not the prior"):
+ *   - opening_report → opening instance, status IN ('phase2_complete','confirmed')
+ *                      (live per-phase path tops out at phase2_complete since
+ *                      submitPhase3Atomic is an unwired stub; 'confirmed' covers
+ *                      legacy submit_opening_atomic instances)
+ *   - am_prep        → am-prep instance, status 'confirmed'
+ *   - mid_day_prep   → mid-day instances, status 'phase2_complete', with a COUNT
+ *                      of finalized instances/day (multi-instance per C.43)
+ *
+ * Idempotent (safe to run every load) and reopen-aware (never re-ticks over a
+ * C.55 revoke). Throws only on unexpected DB errors; callers wrap in try/catch
+ * so a reconcile hiccup never blocks the closing render.
+ */
+export async function reconcileClosingReportRefs(
+  service: SupabaseClient,
+  args: { locationId: string; date: string; closingInstanceId: string; actor: PrepActor },
+): Promise<{ ticked: number }> {
+  let ticked = 0;
+  const bump = (r: "inserted" | "superseded" | "skipped") => {
+    if (r !== "skipped") ticked += 1;
+  };
+
+  // ── Opening report (same-day; done = phase2_complete | confirmed) ──
+  const openingRefId = await resolveClosingReportRefItemId(service, {
+    locationId: args.locationId,
+    reportType: "opening_report",
+  });
+  if (openingRefId) {
+    const { data: oTmpl, error: oTmplErr } = await service
+      .from("checklist_templates")
+      .select("id")
+      .eq("location_id", args.locationId)
+      .eq("type", "opening")
+      .eq("active", true)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<{ id: string }>();
+    if (oTmplErr) throw new Error(`reconcileClosingReportRefs: opening template: ${oTmplErr.message}`);
+    if (oTmpl) {
+      const { data: oInst, error: oErr } = await service
+        .from("checklist_instances")
+        .select("id, confirmed_at")
+        .eq("template_id", oTmpl.id)
+        .eq("location_id", args.locationId)
+        .eq("date", args.date)
+        .in("status", ["phase2_complete", "confirmed"])
+        .order("confirmed_at", { ascending: false, nullsFirst: false })
+        .limit(1)
+        .maybeSingle<{ id: string; confirmed_at: string | null }>();
+      if (oErr) throw new Error(`reconcileClosingReportRefs: opening instance: ${oErr.message}`);
+      if (oInst) {
+        bump(
+          await ensureClosingRefCompletion(service, {
+            closingInstanceId: args.closingInstanceId,
+            refItemId: openingRefId,
+            actor: args.actor,
+            meta: {
+              reportType: "opening_report",
+              reportInstanceId: oInst.id,
+              reportSubmittedAt: oInst.confirmed_at ?? new Date().toISOString(),
+            },
+          }),
+        );
+      }
+    }
+  }
+
+  // ── AM prep (same-day; done = confirmed) ──
+  const amRefId = await resolveClosingReportRefItemId(service, {
+    locationId: args.locationId,
+    reportType: "am_prep",
+  });
+  if (amRefId) {
+    const { data: amTmpl, error: amTmplErr } = await service
+      .from("checklist_templates")
+      .select("id")
+      .eq("location_id", args.locationId)
+      .eq("type", "prep")
+      .eq("prep_subtype", "am_prep")
+      .eq("active", true)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<{ id: string }>();
+    if (amTmplErr) throw new Error(`reconcileClosingReportRefs: am-prep template: ${amTmplErr.message}`);
+    if (amTmpl) {
+      const { data: amInst, error: amErr } = await service
+        .from("checklist_instances")
+        .select("id, confirmed_at")
+        .eq("template_id", amTmpl.id)
+        .eq("location_id", args.locationId)
+        .eq("date", args.date)
+        .eq("status", "confirmed")
+        .order("confirmed_at", { ascending: false, nullsFirst: false })
+        .limit(1)
+        .maybeSingle<{ id: string; confirmed_at: string | null }>();
+      if (amErr) throw new Error(`reconcileClosingReportRefs: am-prep instance: ${amErr.message}`);
+      if (amInst) {
+        bump(
+          await ensureClosingRefCompletion(service, {
+            closingInstanceId: args.closingInstanceId,
+            refItemId: amRefId,
+            actor: args.actor,
+            meta: {
+              reportType: "am_prep",
+              reportInstanceId: amInst.id,
+              reportSubmittedAt: amInst.confirmed_at ?? new Date().toISOString(),
+            },
+          }),
+        );
+      }
+    }
+  }
+
+  // ── Mid-day prep (same-day; done = phase2_complete; COUNT of instances) ──
+  const midRefId = await resolveClosingReportRefItemId(service, {
+    locationId: args.locationId,
+    reportType: "mid_day_prep",
+  });
+  if (midRefId) {
+    const mTmpl = await resolveMidDayPrepTemplate(service, args.locationId);
+    if (mTmpl) {
+      const { data: finalized, error: fErr } = await service
+        .from("checklist_instances")
+        .select("id, triggered_at")
+        .eq("template_id", mTmpl.id)
+        .eq("location_id", args.locationId)
+        .eq("date", args.date)
+        .eq("status", "phase2_complete")
+        .order("triggered_at", { ascending: true });
+      if (fErr) throw new Error(`reconcileClosingReportRefs: mid-day instances: ${fErr.message}`);
+      const ids = ((finalized ?? []) as Array<{ id: string }>).map((r) => r.id);
+      if (ids.length > 0) {
+        bump(
+          await ensureClosingRefCompletion(service, {
+            closingInstanceId: args.closingInstanceId,
+            refItemId: midRefId,
+            actor: args.actor,
+            meta: {
+              reportType: "mid_day_prep",
+              reportInstanceId: ids[ids.length - 1]!,
+              reportSubmittedAt: new Date().toISOString(),
+              count: ids.length,
+              reportInstanceIds: ids,
+            },
+            countForSupersedeCheck: ids.length,
+          }),
+        );
+      }
+    }
+  }
+
+  return { ticked };
+}
+
 /**
  * Slim-shape lookup for the dashboard tile: returns the active assignment
  * for (assignee=user, reportType, location, date) if one exists. Used to

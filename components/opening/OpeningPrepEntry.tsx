@@ -171,6 +171,15 @@ interface OpeningPrepEntryProps {
   managers: ReadonlyArray<ManagerOption>;
   language: Language;
   showMissingErrors: boolean;
+  /**
+   * Locked (read-only) — Phase 2 has been finalized (instance.status past
+   * 'phase1_complete'). Renders the prepped values as a static, locked view:
+   * inputs disabled, save/revoke/retry hidden, section-verify + over/under
+   * triggers inert. Defaults to false (editable) so the live phase1_complete
+   * prep flow is unaffected. Unlock is via the report lifecycle (a future
+   * edit/reopen path), never by editing a finalized report in place.
+   */
+  readOnly?: boolean;
 }
 
 export function OpeningPrepEntry({
@@ -188,6 +197,7 @@ export function OpeningPrepEntry({
   managers,
   language,
   showMissingErrors,
+  readOnly = false,
 }: OpeningPrepEntryProps) {
   const { t } = useTranslation();
 
@@ -280,7 +290,7 @@ export function OpeningPrepEntry({
                 sectionKey={sectionKey}
                 sectionDisplay={sectionDisplay}
                 verified={verified}
-                disabled={disabled}
+                disabled={disabled || readOnly}
                 disabledReason={disabled ? "null_items_unrecounted" : null}
                 onToggleVerified={() => onSectionVerifyToggle(sectionKey)}
                 language={language}
@@ -330,6 +340,7 @@ export function OpeningPrepEntry({
                     revokeError={revokeErrorItemId === item.id}
                     onOpenOverPar={() => setOverParModalItemId(item.id)}
                     onOpenUnderPar={() => setUnderParModalItemId(item.id)}
+                    readOnly={readOnly}
                     t={t}
                   />
                 );
@@ -427,6 +438,8 @@ interface PrepEntryRowProps {
   revokeError: boolean;
   onOpenOverPar: () => void;
   onOpenUnderPar: () => void;
+  /** Locked (read-only) — Phase 2 finalized. Inputs disabled; save/revoke/retry hidden. */
+  readOnly: boolean;
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }
 
@@ -447,6 +460,7 @@ function PrepEntryRow({
   revokeError,
   onOpenOverPar,
   onOpenUnderPar,
+  readOnly,
   t,
 }: PrepEntryRowProps) {
   const resolved = resolveTemplateItemContent(item, language);
@@ -593,9 +607,10 @@ function PrepEntryRow({
         <NumericInput
           value={value.openerPrepped}
           onChange={(next) => onChange({ ...value, openerPrepped: next })}
-          onBlur={() => onSave(value)}
+          onBlur={readOnly ? undefined : () => onSave(value)}
           ariaLabel={t("opening.phase2.input_prepped_aria", { item: resolved.label })}
-          hasError={prepAmountMissing}
+          hasError={!readOnly && prepAmountMissing}
+          disabled={readOnly}
         />
       </div>
 
@@ -604,6 +619,7 @@ function PrepEntryRow({
         <button
           type="button"
           onClick={onOpenOverPar}
+          disabled={readOnly}
           aria-label={
             value.overPar
               ? t("opening.phase2.signal.over_prep_recorded")
@@ -613,6 +629,7 @@ function PrepEntryRow({
             "self-start inline-flex min-h-[36px] items-center gap-2 rounded-md px-3 py-1",
             "text-xs font-bold uppercase tracking-[0.12em]",
             "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
+            readOnly ? "cursor-not-allowed" : "",
             value.overPar
               ? "border-2 border-co-success bg-[#E6F4E6] text-co-text"
               : "border-2 border-co-gold-deep bg-[#FFF4D0] text-co-text hover:bg-co-gold/30",
@@ -628,6 +645,7 @@ function PrepEntryRow({
         <button
           type="button"
           onClick={onOpenUnderPar}
+          disabled={readOnly}
           aria-label={
             value.underPar
               ? t("opening.phase2.signal.under_prep_recorded")
@@ -637,6 +655,7 @@ function PrepEntryRow({
             "self-start inline-flex min-h-[36px] items-center gap-2 rounded-md px-3 py-1",
             "text-xs font-bold uppercase tracking-[0.12em]",
             "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
+            readOnly ? "cursor-not-allowed" : "",
             value.underPar
               ? "border-2 border-co-success bg-[#E6F4E6] text-co-text"
               : "border-2 border-co-danger bg-[#FFE4E4] text-co-text hover:bg-[#FFD0D0]",
@@ -674,24 +693,27 @@ function PrepEntryRow({
                 : t("opening.phase2.save.saved")}
             </span>
             {/* §8.4 revoke CTA — server decides silent vs structured; the client
-                never predicts the 60s window. */}
-            <button
-              type="button"
-              onClick={onRevoke}
-              disabled={revoking}
-              aria-label={t("opening.phase2.revoke.cta_aria", { item: resolved.label })}
-              className="
-                inline-flex min-h-[32px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 py-1
-                text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-muted
-                transition hover:border-co-danger hover:text-co-danger
-                focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
-                disabled:cursor-not-allowed disabled:opacity-60
-              "
-            >
-              {revoking
-                ? t("opening.phase2.revoke.cta_pending")
-                : t("opening.phase2.revoke.cta")}
-            </button>
+                never predicts the 60s window. Hidden once Phase 2 is finalized
+                (read-only): a locked report has no per-row self-revoke. */}
+            {!readOnly ? (
+              <button
+                type="button"
+                onClick={onRevoke}
+                disabled={revoking}
+                aria-label={t("opening.phase2.revoke.cta_aria", { item: resolved.label })}
+                className="
+                  inline-flex min-h-[32px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 py-1
+                  text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-muted
+                  transition hover:border-co-danger hover:text-co-danger
+                  focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
+                  disabled:cursor-not-allowed disabled:opacity-60
+                "
+              >
+                {revoking
+                  ? t("opening.phase2.revoke.cta_pending")
+                  : t("opening.phase2.revoke.cta")}
+              </button>
+            ) : null}
             {revokeError ? (
               <span role="alert" className="font-bold text-co-danger">
                 {t("opening.phase2.revoke.error")}
@@ -703,19 +725,21 @@ function PrepEntryRow({
             <span role="alert" className="font-bold text-co-danger">
               {t("opening.phase2.save.failed")}
             </span>
-            <button
-              type="button"
-              onClick={() => onSave(value)}
-              aria-label={t("opening.phase2.save.retry_aria", { item: resolved.label })}
-              className="
-                inline-flex min-h-[32px] items-center rounded-full border-2 border-co-danger bg-co-surface px-3 py-1
-                text-[10px] font-bold uppercase tracking-[0.12em] text-co-text
-                transition hover:bg-[#FFE4E4]
-                focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
-              "
-            >
-              {t("opening.phase2.save.retry")}
-            </button>
+            {!readOnly ? (
+              <button
+                type="button"
+                onClick={() => onSave(value)}
+                aria-label={t("opening.phase2.save.retry_aria", { item: resolved.label })}
+                className="
+                  inline-flex min-h-[32px] items-center rounded-full border-2 border-co-danger bg-co-surface px-3 py-1
+                  text-[10px] font-bold uppercase tracking-[0.12em] text-co-text
+                  transition hover:bg-[#FFE4E4]
+                  focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
+                "
+              >
+                {t("opening.phase2.save.retry")}
+              </button>
+            ) : null}
           </>
         ) : saveState.status === "incomplete" ? (
           // Calm, directive nudge — informational (Brand Blue), NOT an error.
@@ -763,15 +787,25 @@ interface NumericInputProps {
   onBlur?: () => void;
   ariaLabel: string;
   hasError?: boolean;
+  /** Locked (read-only) — the input renders its value but cannot be edited. */
+  disabled?: boolean;
 }
 
-function NumericInput({ value, onChange, onBlur, ariaLabel, hasError = false }: NumericInputProps) {
+function NumericInput({
+  value,
+  onChange,
+  onBlur,
+  ariaLabel,
+  hasError = false,
+  disabled = false,
+}: NumericInputProps) {
   const stringValue = value === null ? "" : String(value);
   return (
     <input
       type="text"
       inputMode="decimal"
       value={stringValue}
+      disabled={disabled}
       onChange={(e) => {
         const raw = e.target.value.trim();
         if (raw === "") {
@@ -788,9 +822,11 @@ function NumericInput({ value, onChange, onBlur, ariaLabel, hasError = false }: 
         "inline-flex h-11 w-20 items-center rounded-md border-2 px-3",
         "text-base font-semibold text-co-text",
         "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
-        hasError
-          ? "border-co-danger bg-co-surface"
-          : "border-co-border-2 bg-co-surface hover:border-co-text",
+        disabled
+          ? "border-co-border-2 bg-co-bg/40 text-co-text-muted cursor-not-allowed"
+          : hasError
+            ? "border-co-danger bg-co-surface"
+            : "border-co-border-2 bg-co-surface hover:border-co-text",
       ].join(" ")}
     />
   );

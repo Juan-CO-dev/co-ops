@@ -52,6 +52,7 @@ import {
   rowToInstance,
 } from "@/lib/checklist-rows";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
+import { reconcileClosingReportRefs } from "@/lib/prep";
 import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
@@ -282,6 +283,25 @@ export default async function ClosingPage({ searchParams }: PageProps) {
       dropped_by: result.instance.droppedBy,
       dropped_reason: result.instance.droppedReason,
     };
+
+    // Reconcile the closing's report-reference ticks against today's finalized
+    // reports (opening / AM prep / mid-day). Pull-based + order-independent:
+    // the finalize-time push silently no-ops when the closing instance doesn't
+    // exist yet — which is the natural EOD flow (closing opened last). This
+    // catches up the ticks at the moment the closing checklist loads. AWAITED
+    // (not fire-and-forget) so the freshly-ticked rows are visible to the
+    // completions query below in this same render. Graceful: a reconcile hiccup
+    // must never block the closing surface.
+    try {
+      await reconcileClosingReportRefs(sb, {
+        locationId: locationParam,
+        date: today,
+        closingInstanceId: instanceRow.id,
+        actor: { userId: auth.user.id, role: auth.role, level: auth.level },
+      });
+    } catch (e) {
+      console.error("reconcileClosingReportRefs failed:", e);
+    }
   }
 
   // Load template items (active only, ordered).
