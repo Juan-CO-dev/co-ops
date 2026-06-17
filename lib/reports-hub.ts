@@ -1,6 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isPrepData } from "@/lib/prep";
 import { FRIDGE_DEFAULT_SAFE_MAX_F } from "@/lib/maintenance";
+import { loadShiftWrapUp } from "@/lib/pm-report";
+import type { ShiftWrapUpRow } from "@/lib/pm-report";
+import { loadReportStatuses } from "@/lib/midshift";
+import type { ReportKey, ReportProgress } from "@/lib/midshift";
+import type { RoleCode } from "@/lib/roles";
 
 export const REPORTS_HUB_CASH_LEVEL = 4; // cash visible KH+
 export const REPORTS_HUB_NOTES_LEVEL = 5; // notes visible SL+
@@ -72,8 +77,8 @@ function checklistReportType(type: string, prepSubtype: string | null): ReportTy
   return null;
 }
 
-/** Internal type carries submitterId for the name-resolution pass; stripped before return. */
-type ReportListItemInternal = ReportListItem & { submitterId: string | null };
+/** Internal type carries submitterId + submittedAt for sort; both stripped before return. */
+type ReportListItemInternal = ReportListItem & { submitterId: string | null; submittedAt: string | null };
 
 export async function listReports(service: SupabaseClient, f: ListFilters): Promise<ReportListItem[]> {
   const want = (t: ReportTypeKey) => !f.types || f.types.includes(t);
@@ -83,7 +88,7 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
   if (want("opening") || want("closing") || want("am_prep") || want("mid_day")) {
     const { data: insts } = await service
       .from("checklist_instances")
-      .select("id, location_id, date, status, confirmed_by, template_id")
+      .select("id, location_id, date, status, confirmed_by, confirmed_at, template_id")
       .eq("location_id", f.locationId)
       .gte("date", f.dateFrom)
       .lte("date", f.dateTo);
@@ -93,6 +98,7 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
       date: string;
       status: string;
       confirmed_by: string | null;
+      confirmed_at: string | null;
       template_id: string;
     }>;
     const tmplIds = [...new Set(rows.map((r) => r.template_id))];
@@ -118,6 +124,7 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
         submitterName: null,
         status: r.status,
         submitterId: r.confirmed_by,
+        submittedAt: r.confirmed_at,
       });
     }
   }
@@ -126,12 +133,12 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
   if (want("cash") && f.viewer.level >= REPORTS_HUB_CASH_LEVEL) {
     const { data: cash } = await service
       .from("cash_reports")
-      .select("id, location_id, report_date, signed_by")
+      .select("id, location_id, report_date, signed_by, signed_at")
       .eq("location_id", f.locationId)
       .gte("report_date", f.dateFrom)
       .lte("report_date", f.dateTo)
       .is("superseded_at", null);
-    for (const r of (cash ?? []) as Array<{ id: string; location_id: string; report_date: string; signed_by: string }>) {
+    for (const r of (cash ?? []) as Array<{ id: string; location_id: string; report_date: string; signed_by: string; signed_at: string | null }>) {
       items.push({
         type: "cash",
         id: r.id,
@@ -140,6 +147,7 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
         submitterName: null,
         status: "submitted",
         submitterId: r.signed_by,
+        submittedAt: r.signed_at ?? null,
       });
     }
   }
@@ -148,7 +156,7 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
   if (want("pm")) {
     const { data: pm } = await service
       .from("pm_reports")
-      .select("id, location_id, report_date, status, submitted_by")
+      .select("id, location_id, report_date, status, submitted_by, submitted_at")
       .eq("location_id", f.locationId)
       .gte("report_date", f.dateFrom)
       .lte("report_date", f.dateTo)
@@ -160,6 +168,7 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
       report_date: string;
       status: string;
       submitted_by: string | null;
+      submitted_at: string | null;
     }>;
     if (f.viewer.level < REPORTS_HUB_CASH_LEVEL) {
       // employee: keep only reports that contain an eval about them
@@ -185,6 +194,7 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
         submitterName: null,
         status: r.status,
         submitterId: r.submitted_by,
+        submittedAt: r.submitted_at ?? null,
       });
     }
   }
@@ -202,8 +212,22 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
       .in("id", [...submitterIds]);
     for (const u of (users ?? []) as Array<{ id: string; name: string }>) nameById.set(u.id, u.name);
   }
-  // Set submitterName from the captured submitterId; strip submitterId before returning.
-  const baseItems: ReportListItem[] = items.map(({ submitterId, ...rest }) => ({
+  // Sort internal items: submittedAt desc (nulls last) then date desc — BEFORE stripping internal fields.
+  items.sort((a, b) => {
+    if (a.submittedAt !== null && b.submittedAt !== null) {
+      if (a.submittedAt > b.submittedAt) return -1;
+      if (a.submittedAt < b.submittedAt) return 1;
+    } else if (a.submittedAt !== null) {
+      return -1; // a has submittedAt, b doesn't → a first
+    } else if (b.submittedAt !== null) {
+      return 1; // b has submittedAt, a doesn't → b first
+    }
+    // Both null: fall through to date sort
+    return a.date < b.date ? 1 : a.date > b.date ? -1 : 0;
+  });
+
+  // Set submitterName from the captured submitterId; strip submitterId + submittedAt before returning.
+  const baseItems: ReportListItem[] = items.map(({ submitterId, submittedAt: _sa, ...rest }) => ({
     ...rest,
     submitterName: submitterId ? (nameById.get(submitterId) ?? null) : null,
   }));
@@ -253,8 +277,7 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
       })
     : withSignals;
 
-  // newest first
-  return result.sort((a, b) => (a.date < b.date ? 1 : -1));
+  return result;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -268,6 +291,7 @@ export interface ChecklistDetailItem {
   byName: string | null;
   countValue: number | null;
   note: string | null; // null unless viewer.level >= REPORTS_HUB_NOTES_LEVEL
+  isTempFlag: boolean; // true when item is in location's tempItemIds AND count_value > FRIDGE_DEFAULT_SAFE_MAX_F
 }
 
 export interface ChecklistReportDetail {
@@ -352,13 +376,17 @@ async function loadChecklistDetail(
     (titems ?? []) as Array<{ id: string; station: string; label: string }>
   ).map((ti) => {
     const c = compByItem.get(ti.id);
+    const countValue = c?.count_value ?? null;
     return {
       station: ti.station,
       label: ti.label,
       done: !!c,
       byName: c?.completed_by ? (nameById.get(c.completed_by) ?? null) : null,
-      countValue: c?.count_value ?? null,
+      countValue,
       note: showNotes ? c?.notes ?? null : null, // REDACTED below L5
+      // isTempFlag: item is in the location's fridge temp registry AND its count exceeds the safe max.
+      // tempItemIds already loaded above (after the IDOR guard).
+      isTempFlag: tempItemIds.has(ti.id) && countValue !== null && countValue > FRIDGE_DEFAULT_SAFE_MAX_F,
     };
   });
 
@@ -496,6 +524,14 @@ export interface PmReportDetail {
   evals: PmEvalDetail[];
   /** Per-dimension gradient tally, computed from evals visible to this viewer (own-eval for employees, all evals for L4+). */
   gradientTally: GradientTallyEntry[];
+  /**
+   * Shift activity (L4+ only; empty arrays for employees < L4).
+   * wrapUp: per-employee items completed + reports submitted on the report's date.
+   * reportProgress: per-report-type progress snapshot for that date.
+   * overdue is intentionally OMITTED — a live overdue flag is misleading when viewing a historical report.
+   */
+  wrapUp: ShiftWrapUpRow[];
+  reportProgress: { key: ReportKey; progress: ReportProgress; doneAt: string | null }[];
 }
 
 async function loadPmDetail(
@@ -625,6 +661,25 @@ async function loadPmDetail(
     return { dimension: key, great, good, needsWork };
   });
 
+  // Shift activity — managers only; empty arrays for employees (< L4).
+  // overdue intentionally omitted: a live overdue flag is misleading when viewing a historical report.
+  let wrapUp: ShiftWrapUpRow[] = [];
+  let reportProgress: { key: ReportKey; progress: ReportProgress; doneAt: string | null }[] = [];
+  if (isManager) {
+    wrapUp = await loadShiftWrapUp(service, { locationId: report.location_id, date: report.report_date });
+    const actor = {
+      userId: args.viewer.userId,
+      role: "key_holder" as RoleCode,
+      level: args.viewer.level,
+    };
+    const { rows: statusRows } = await loadReportStatuses(service, {
+      locationId: report.location_id,
+      date: report.report_date,
+      actor,
+    });
+    reportProgress = statusRows.map((r) => ({ key: r.key, progress: r.progress, doneAt: r.doneAt }));
+  }
+
   return {
     kind: "pm",
     date: report.report_date,
@@ -637,6 +692,8 @@ async function loadPmDetail(
     mvpNote: isManager ? (report.mvp_note ?? null) : null,
     evals,
     gradientTally,
+    wrapUp,
+    reportProgress,
   };
 }
 
@@ -820,12 +877,15 @@ export async function computeReportSignals(
       const par = r.prep_data.snapshot.parValue; // number | null
       const totalVal = r.prep_data.inputs.total ?? null; // number | undefined → number | null
       const onHand = r.prep_data.inputs.onHand ?? null; // number | undefined → number | null
+      // FIX 1 — mid-day par: AM prep always has `total`; mid-day prep may only have `onHand`.
+      // Use `total` when present (AM prep), fall back to `onHand` (mid-day), then null (no data).
+      const have = totalVal ?? onHand ?? null;
       let parStatus: PrepValueRow["parStatus"] = "na";
-      if (par !== null && totalVal !== null) {
-        if (totalVal < par) {
+      if (par !== null && have !== null) {
+        if (have < par) {
           underPar++;
           parStatus = "under";
-        } else if (totalVal > par) {
+        } else if (have > par) {
           overPar++;
           parStatus = "over";
         } else {

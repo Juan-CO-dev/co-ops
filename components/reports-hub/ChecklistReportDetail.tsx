@@ -158,6 +158,34 @@ export function ChecklistReportDetailView({ detail, language }: Props) {
         </div>
       )}
 
+      {/* Counts & readings — items with a count_value, for opening/closing types (or when no prep values).
+          Rendered ABOVE the station body so temperature/count readings surface first. */}
+      {(() => {
+        const countItems = detail.items.filter((i) => i.countValue !== null);
+        const showReadings =
+          countItems.length > 0 &&
+          ((detail.type !== "am_prep" && detail.type !== "mid_day") || prepValues.length === 0);
+        if (!showReadings) return null;
+        return (
+          <div className="rounded-lg border border-co-border bg-co-surface px-3 py-2">
+            <h2 className="mb-1 px-1 text-xs font-bold uppercase tracking-wide text-co-text-muted">
+              {t("reports.readings.heading")}
+            </h2>
+            <ul className="flex flex-col gap-1">
+              {countItems.map((item, idx) => (
+                <li
+                  key={idx}
+                  className={`flex items-center justify-between gap-2 text-xs${item.isTempFlag ? " text-co-cta" : " text-co-text"}`}
+                >
+                  <span className="font-medium">{item.label}</span>
+                  <span>{item.countValue}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        );
+      })()}
+
       {/* Station groups */}
       {stationOrder.map((station) => {
         const stationItems = byStation.get(station) ?? [];

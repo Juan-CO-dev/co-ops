@@ -796,5 +796,8 @@
   "reports.filter.cash_short": "Efectivo de menos",
 
   "reports.badge.under_par": "{count} bajo par",
-  "reports.badge.temp": "{count} marca de temp"
+  "reports.badge.temp": "{count} marca de temp",
+
+  "reports.readings.heading": "Conteos y lecturas",
+  "reports.pm.shift_activity": "Actividad del turno"
 }

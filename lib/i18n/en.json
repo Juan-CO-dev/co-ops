@@ -796,5 +796,8 @@
   "reports.filter.cash_short": "Cash short",
 
   "reports.badge.under_par": "{count} under par",
-  "reports.badge.temp": "{count} temp flag"
+  "reports.badge.temp": "{count} temp flag",
+
+  "reports.readings.heading": "Counts & readings",
+  "reports.pm.shift_activity": "Shift activity"
 }
