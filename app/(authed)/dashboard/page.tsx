@@ -38,6 +38,7 @@ import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { loadUnreadForUser } from "@/lib/notifications";
 import { loadAmPrepDashboardState, loadMidDayPrepDashboardState } from "@/lib/prep";
 import { loadCashDashboardState } from "@/lib/cash";
+import { MAINTENANCE_BASE_LEVEL } from "@/lib/maintenance";
 
 import { ActionLink } from "@/components/ActionButton";
 import { CashDepositTile } from "@/components/CashDepositTile";
@@ -629,6 +630,22 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
               />
             ) : null}
           </ReportsSection>
+        ) : null}
+
+        {/* Maintenance Log nav entry — utility surface, not a daily-status tile.
+         * Always available for level >= MAINTENANCE_BASE_LEVEL (3 = Shift Lead+).
+         * Requires a selected location because the page redirects to /dashboard
+         * without the `location` query param. */}
+        {selectedLocation && auth.level >= MAINTENANCE_BASE_LEVEL ? (
+          <div className="flex flex-col gap-2">
+            <ActionLink
+              href={`/maintenance?location=${selectedLocation.id}`}
+              variant="secondary"
+              className="w-full"
+            >
+              {serverT(language, "maintenance.nav_label")}
+            </ActionLink>
+          </div>
         ) : null}
 
         <div className="flex justify-center">
