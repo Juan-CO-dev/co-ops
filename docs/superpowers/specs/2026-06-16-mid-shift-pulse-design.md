@@ -16,7 +16,7 @@ A **read-only operational pulse** for KH+ managers to glance at mid-service and 
 
 ## Sections (top → bottom)
 
-1. **Attention banner** — the payoff, surfaced first, in priority order: overdue reports → out-of-range fridge temps (>41°F today) → under-par AM-prep items → open maintenance notes (today). If none: a calm "All clear."
+1. **Attention banner** — the payoff, surfaced first, in priority order: overdue reports → out-of-range fridge temps (>41°F today) → maintenance notes logged today. (AM-prep under-par is **deferred to v1.1**: the dashboard-state loaders don't expose under-par counts, and sourcing it cleanly needs the prep-counts model — its own small dive. Noted so v1 stays a pure compose-what-exists read surface.) If none: a calm "All clear."
 2. **Report statuses** — Opening · AM Prep · Mid-day Prep(s) · Cash · Closing. Each row: status (done / in-progress / not-started), who + when if done, and an **overdue** flag per the model below.
 3. **Fridge temps** — latest reading per fridge from the maintenance registry, >41°F flagged; links into `/maintenance`.
 4. **Active today** — staff who've completed/submitted any report today (proxy for "on shift"), with what they touched. Labeled honestly as "active today," not "scheduled." Upgrades to a true roster when 7shifts is integrated.
