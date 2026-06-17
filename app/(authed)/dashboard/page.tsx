@@ -39,9 +39,11 @@ import { loadUnreadForUser } from "@/lib/notifications";
 import { loadAmPrepDashboardState, loadMidDayPrepDashboardState } from "@/lib/prep";
 import { loadCashDashboardState } from "@/lib/cash";
 import { MAINTENANCE_BASE_LEVEL } from "@/lib/maintenance";
+import { loadPmDashboardState } from "@/lib/pm-report";
 
 import { ActionLink } from "@/components/ActionButton";
 import { CashDepositTile } from "@/components/CashDepositTile";
+import { PmReportTile } from "@/components/PmReportTile";
 import { DashboardNav } from "@/components/DashboardNav";
 import { MidDayPrepTile } from "@/components/MidDayPrepTile";
 import { OpeningTile } from "@/components/OpeningTile";
@@ -374,6 +376,15 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         })
       : null;
 
+  const pmDashboard =
+    selectedLocation && operational
+      ? await loadPmDashboardState(sb, {
+          locationId: selectedLocation.id,
+          date: operational.todayDate,
+          actor: { userId: auth.user.id, role: auth.role, level: auth.level },
+        })
+      : null;
+
   // Opening Report tile state (C.53) — resolve template + today's status inline
   // (the /operations/opening page owns the gate + 3-phase flow). Visible to
   // shift staff (level >= 3).
@@ -590,7 +601,8 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         (openingDashboard?.isVisibleToActor ||
           amPrepDashboard?.isVisibleToActor ||
           midDayPrepDashboard?.isVisibleToActor ||
-          cashDashboard?.isVisibleToActor) ? (
+          cashDashboard?.isVisibleToActor ||
+          pmDashboard?.isVisibleToActor) ? (
           <ReportsSection language={language}>
             {openingDashboard?.isVisibleToActor ? (
               <OpeningTile
@@ -636,6 +648,13 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
               <CashDepositTile
                 locationId={selectedLocation.id}
                 report={cashDashboard.report}
+                language={language}
+              />
+            ) : null}
+            {pmDashboard?.isVisibleToActor ? (
+              <PmReportTile
+                locationId={selectedLocation.id}
+                state={pmDashboard}
                 language={language}
               />
             ) : null}
