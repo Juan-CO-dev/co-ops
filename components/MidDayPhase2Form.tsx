@@ -234,7 +234,13 @@ export function MidDayPhase2Form({
                       inputMode="decimal"
                       min={0}
                       value={st.value}
-                      onChange={(e) => patch(it.id, { value: e.target.value, status: "idle", error: null })}
+                      onChange={(e) =>
+                        // Prepped counts are >= 0 — strip any "-" so a
+                        // negative can't be typed and the live offPar/preview
+                        // never computes from a negative. onSave still rejects
+                        // prepped < 0 (defense in depth).
+                        patch(it.id, { value: e.target.value.replace(/-/g, ""), status: "idle", error: null })
+                      }
                       aria-label={`${it.label} — ${t("mid_day_prep.phase2.prepped")}`}
                       placeholder={t("mid_day_prep.phase2.prepped")}
                       className="

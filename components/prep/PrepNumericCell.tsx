@@ -87,7 +87,10 @@ export function PrepNumericCell({
       type="text"
       inputMode="decimal"
       value={value}
-      onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
+      // Counts/quantities are >= 0 — strip any "-" so a negative can't be
+      // typed. Live value/preview never goes negative; AmPrepForm's
+      // validateRawValues still rejects parsed < 0 at submit (defense in depth).
+      onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(e.target.value.replace(/-/g, ""))}
       aria-label={ariaLabel}
       placeholder={placeholder}
       disabled={disabled}
