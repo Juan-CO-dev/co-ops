@@ -111,6 +111,7 @@ const REPORT_TYPE_VALUES: readonly ReportType[] = [
   "opening_report",
   "training_report",
   "special_report",
+  "pm_report",
 ];
 
 const PREP_SECTION_VALUES: readonly PrepSection[] = [
@@ -1604,6 +1605,38 @@ export async function reconcileClosingReportRefs(
           refItemId: cashRefId,
           actor: args.actor,
           meta: { reportType: "cash_report", reportInstanceId: cash.id, reportSubmittedAt: cash.signed_at },
+        }),
+      );
+    }
+  }
+
+  // ── PM Report (same-day; done = submitted | incomplete_confirmed | auto_finalized,
+  //    not open/draft — open draft must NOT tick the ref) ──
+  const pmRefId = await resolveClosingReportRefItemId(service, {
+    locationId: args.locationId,
+    reportType: "pm_report",
+  });
+  if (pmRefId) {
+    const { data: pm, error: pmErr } = await service
+      .from("pm_reports")
+      .select("id, submitted_at")
+      .eq("location_id", args.locationId)
+      .eq("report_date", args.date)
+      .in("status", ["submitted", "incomplete_confirmed", "auto_finalized"])
+      .is("superseded_at", null)
+      .maybeSingle<{ id: string; submitted_at: string | null }>();
+    if (pmErr) throw new Error(`reconcileClosingReportRefs: pm_report: ${pmErr.message}`);
+    if (pm) {
+      bump(
+        await ensureClosingRefCompletion(service, {
+          closingInstanceId: args.closingInstanceId,
+          refItemId: pmRefId,
+          actor: args.actor,
+          meta: {
+            reportType: "pm_report",
+            reportInstanceId: pm.id,
+            reportSubmittedAt: pm.submitted_at ?? new Date().toISOString(),
+          },
         }),
       );
     }
