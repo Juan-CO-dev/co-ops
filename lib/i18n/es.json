@@ -762,8 +762,12 @@
   "reports.detail.note": "Nota",
   "reports.status.open": "Abierto",
   "reports.status.in_progress": "En progreso",
+  "reports.status.phase1_complete": "Verificación lista",
+  "reports.status.phase2_complete": "Prep lista",
   "reports.status.submitted": "Enviado",
   "reports.status.confirmed": "Confirmado",
+  "reports.status.incomplete_confirmed": "Confirmado (incompleto)",
+  "reports.status.auto_finalized": "Auto-finalizado",
 
   "reports.cash.projected": "Proyectado",
   "reports.cash.drawer": "Total del cajón",
@@ -803,5 +807,21 @@
   "reports.readings.heading": "Conteos y lecturas",
   "reports.pm.shift_activity": "Actividad del turno",
 
-  "reports.verify.against": "Verificando: cierre {closer} · par {par}"
+  "reports.verify.against": "Verificando: cierre {closer} · par {par}",
+
+  "reports.opening.no_prior_submission.title": "Reconteo — sin envío del día anterior",
+  "reports.opening.no_prior_submission.body": "No hubo envío de Prep AM del día anterior para verificar, así que quien abrió estableció los conteos con un reconteo.",
+  "reports.opening.no_prior_submission.body_with_reason": "No hubo envío de Prep AM del día anterior para verificar — quien abrió reconteó para establecer los conteos. Motivo: {reason}.",
+  "reports.opening.no_prior_reason.planned_closure": "cierre planeado",
+  "reports.opening.no_prior_reason.missed_or_unknown": "olvidado o desconocido",
+  "reports.opening.resolution.section_verify": "Verificado contra la base",
+  "reports.opening.resolution.recount": "Reconteado",
+  "reports.opening.resolution.recount_no_prior": "Reconteo — sin envío anterior",
+  "reports.opening.baseline.closer": "Base (conteo del cierre): {closer}",
+  "reports.opening.baseline.none": "Sin base del día anterior",
+  "reports.opening.baseline.par": "par {par}",
+  "reports.opening.recount_value": "Reconteo: {value}",
+  "reports.opening.ground_truth": "Valor real: {value}",
+  "reports.opening.prep_need": "necesario {value}",
+  "reports.opening.temp_reading": "Temp {value}°"
 }
