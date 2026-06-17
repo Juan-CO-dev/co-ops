@@ -131,6 +131,14 @@ interface NewItemSpec {
   reportReferenceType: "opening_report" | null;
 }
 
+// ⚠ STALE FRIDGE-TEMP LABELS: migration 0071 standardized the live fridge temp
+// labels to "<Fridge Name> temp (≤41°F)" (EN + ES) for cross-report naming
+// consistency (Wave 2 Maintenance Log). The label/labelEs constants below for the
+// fridge temp items (and the Walk-In rename target above) are PRE-0071 and would
+// REVERT the standardization on re-run. Before any re-run, update them to the 0071
+// canonical labels AND verify this script's idempotency match key (it must not
+// re-INSERT duplicates once the live labels differ from these constants).
+// See supabase/migrations/0071_standardize_fridge_temp_labels.sql.
 const NEW_ITEMS: NewItemSpec[] = [
   {
     station: STATION_CRUNCHY_BOI,
