@@ -636,5 +636,7 @@
   "maintenance.degrees": "{value}°F",
   "maintenance.note.attribution": "{name} · {time}",
   "maintenance.note.checklist_source": "del checklist",
-  "maintenance.error.generic": "No se pudo guardar. Intenta de nuevo."
+  "maintenance.error.generic": "No se pudo guardar. Intenta de nuevo.",
+  "maintenance.not_available": "El Registro de mantenimiento no está disponible para tu rol.",
+  "maintenance.not_found": "Equipo no encontrado."
 }
