@@ -115,6 +115,8 @@ export interface PmReportForEdit {
   status: string;
   mvpUserId: string | null;
   mvpNote: string | null;
+  submittedAt: string | null;
+  submittedByName: string | null;
   evals: EmployeeEval[]; // WITH notes — KH+ surface only
   wrapUp: ShiftWrapUpRow[];
 }
@@ -126,13 +128,19 @@ export async function loadPmReportForEdit(
 ): Promise<PmReportForEdit | null> {
   const { data: report } = await service
     .from("pm_reports")
-    .select("id, status, mvp_user_id, mvp_note")
+    .select("id, status, mvp_user_id, mvp_note, submitted_at, submitted_by")
     .eq("location_id", args.locationId)
     .eq("report_date", args.date)
     .is("superseded_at", null)
-    .maybeSingle<{ id: string; status: string; mvp_user_id: string | null; mvp_note: string | null }>();
+    .maybeSingle<{ id: string; status: string; mvp_user_id: string | null; mvp_note: string | null; submitted_at: string | null; submitted_by: string | null }>();
   const wrapUp = await loadShiftWrapUp(service, args);
   if (!report) return null;
+
+  let submittedByName: string | null = null;
+  if (report.submitted_by) {
+    const { data: sb } = await service.from("users").select("name").eq("id", report.submitted_by).maybeSingle<{ name: string }>();
+    submittedByName = sb?.name ?? null;
+  }
 
   const { data: evalRows } = await service
     .from("pm_employee_evals")
@@ -150,7 +158,7 @@ export async function loadPmReportForEdit(
     id: r.id, employeeId: r.employee_id, employeeName: nameById.get(r.employee_id) ?? null,
     onTime: r.on_time, attitude: r.attitude, areaToImprove: r.area_to_improve, note: r.note,
   }));
-  return { id: report.id, status: report.status, mvpUserId: report.mvp_user_id, mvpNote: report.mvp_note, evals, wrapUp };
+  return { id: report.id, status: report.status, mvpUserId: report.mvp_user_id, mvpNote: report.mvp_note, submittedAt: report.submitted_at, submittedByName, evals, wrapUp };
 }
 
 export interface MyFeedbackItem {

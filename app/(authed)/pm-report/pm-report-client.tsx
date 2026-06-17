@@ -355,10 +355,11 @@ export function PmReportClient({
   );
 
   // ── Submitted banner ──
-  // Note: PmReportForEdit doesn't carry submittedAt/submittedByName (those live
-  // in PmDashboardState for the tile). The banner shows submitted status only.
   if (submitted && report) {
-    const bannerText = t("pm.submitted_banner", { time: "—", name: "—" });
+    const bannerText = t("pm.submitted_banner", {
+      time: report.submittedAt ? formatTime(report.submittedAt, language) : "—",
+      name: report.submittedByName ?? "—",
+    });
 
     return (
       <div className="flex flex-col gap-4">
