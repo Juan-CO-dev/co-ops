@@ -772,5 +772,34 @@
   "reports.cash.signed_by": "Firmado por",
   "reports.cash.on_shift": "En turno",
 
-  "reports.pm.submitted_by": "Enviado por"
+  "reports.pm.submitted_by": "Enviado por",
+  "reports.pm.gradient_tally": "Resumen de evaluación",
+
+  "reports.signal.completion": "{done}/{total} hechos · {skipped} omitidos",
+  "reports.signal.par": "{underPar} bajo par · {overPar} sobre par",
+  "reports.signal.temp_flag": "{n} temp fuera de rango",
+  "reports.signal.cash_over": "{amount} de más",
+  "reports.signal.cash_short": "{amount} de menos",
+  "reports.signal.cash_even": "exacto",
+
+  "reports.values.heading": "Valores de prep",
+  "reports.values.par": "Par",
+  "reports.values.on_hand": "En mano",
+  "reports.values.total": "Total",
+
+  "reports.filter.signals_heading": "Filtros de señal",
+  "reports.filter.under_par": "Bajo par",
+  "reports.filter.over_par": "Sobre par",
+  "reports.filter.skipped": "Ítems omitidos",
+  "reports.filter.temp_flag": "Temp fuera de rango",
+  "reports.filter.cash_over": "Efectivo de más",
+  "reports.filter.cash_short": "Efectivo de menos",
+
+  "reports.badge.under_par": "{count} bajo par",
+  "reports.badge.temp": "{count} marca de temp",
+
+  "reports.readings.heading": "Conteos y lecturas",
+  "reports.pm.shift_activity": "Actividad del turno",
+
+  "reports.verify.against": "Verificando: cierre {closer} · par {par}"
 }

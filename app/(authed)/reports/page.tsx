@@ -12,7 +12,7 @@ import { redirect } from "next/navigation";
 import { serverT } from "@/lib/i18n/server";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift";
-import { REPORTS_HUB_CASH_LEVEL, listReports, type ReportTypeKey, type Viewer } from "@/lib/reports-hub";
+import { REPORTS_HUB_CASH_LEVEL, listReports, type ReportTypeKey, type SignalFilters, type Viewer } from "@/lib/reports-hub";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
@@ -28,12 +28,30 @@ interface PageProps {
     type?: string;
     from?: string;
     to?: string;
+    // Signal filter toggles (checkbox GET params — present = "true" string)
+    sf_underPar?: string;
+    sf_overPar?: string;
+    sf_skipped?: string;
+    sf_tempFlag?: string;
+    sf_cashOver?: string;
+    sf_cashShort?: string;
   }>;
 }
 
 export default async function ReportsPage({ searchParams }: PageProps) {
   const auth = await requireSessionFromHeaders("/reports");
-  const { location: locationParam, type: typeParam, from: fromParam, to: toParam } = await searchParams;
+  const {
+    location: locationParam,
+    type: typeParam,
+    from: fromParam,
+    to: toParam,
+    sf_underPar,
+    sf_overPar,
+    sf_skipped,
+    sf_tempFlag,
+    sf_cashOver,
+    sf_cashShort,
+  } = await searchParams;
 
   if (!locationParam) redirect("/dashboard");
 
@@ -68,6 +86,18 @@ export default async function ReportsPage({ searchParams }: PageProps) {
 
   const viewer: Viewer = { userId: auth.user.id, level: viewerLevel };
 
+  // ── Signal filters (derived toggles from GET params) ──
+  // Cash toggles only respected when viewer is L4+ (cash-visible tier).
+  const signalFilters: SignalFilters = {
+    ...(sf_underPar === "true" ? { underPar: true } : {}),
+    ...(sf_overPar === "true" ? { overPar: true } : {}),
+    ...(sf_skipped === "true" ? { skipped: true } : {}),
+    ...(sf_tempFlag === "true" ? { tempFlag: true } : {}),
+    ...(sf_cashOver === "true" && viewerLevel >= REPORTS_HUB_CASH_LEVEL ? { cashOver: true } : {}),
+    ...(sf_cashShort === "true" && viewerLevel >= REPORTS_HUB_CASH_LEVEL ? { cashShort: true } : {}),
+  };
+  const hasSignalFilters = Object.keys(signalFilters).length > 0;
+
   const sb = getServiceRoleClient();
   const items = await listReports(sb, {
     viewer,
@@ -75,6 +105,7 @@ export default async function ReportsPage({ searchParams }: PageProps) {
     dateFrom,
     dateTo,
     types: selectedTypes,
+    signalFilters: hasSignalFilters ? signalFilters : undefined,
   });
 
   return (
@@ -93,6 +124,8 @@ export default async function ReportsPage({ searchParams }: PageProps) {
         selectedType={typeParam ?? "all"}
         allowedTypes={allowedTypes}
         language={lang}
+        viewerLevel={viewerLevel}
+        activeSignalFilters={signalFilters}
       />
 
       <div className="mt-4">
@@ -100,6 +133,7 @@ export default async function ReportsPage({ searchParams }: PageProps) {
           items={items}
           locationId={locationId}
           language={lang}
+          viewerLevel={viewerLevel}
         />
       </div>
     </main>

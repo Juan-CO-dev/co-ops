@@ -1,4 +1,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { isPrepData } from "@/lib/prep";
+import { FRIDGE_DEFAULT_SAFE_MAX_F } from "@/lib/maintenance";
+import { loadShiftWrapUp } from "@/lib/pm-report";
+import type { ShiftWrapUpRow } from "@/lib/pm-report";
+import { loadReportStatuses } from "@/lib/midshift";
+import type { ReportKey, ReportProgress } from "@/lib/midshift";
+import type { RoleCode } from "@/lib/roles";
+import { loadOpeningCloserCountSnapshots } from "@/lib/opening";
 
 export const REPORTS_HUB_CASH_LEVEL = 4; // cash visible KH+
 export const REPORTS_HUB_NOTES_LEVEL = 5; // notes visible SL+
@@ -10,6 +18,14 @@ export interface Viewer {
   level: number;
 }
 
+export interface SignalSummary {
+  underPar: number;
+  overPar: number;
+  skipped: number;
+  tempFlags: number;
+  cashOverShortCents: number | null;
+}
+
 export interface ReportListItem {
   type: ReportTypeKey;
   id: string; // checklist_instances.id | cash_reports.id | pm_reports.id
@@ -17,6 +33,21 @@ export interface ReportListItem {
   locationId: string;
   submitterName: string | null;
   status: string;
+  /**
+   * Derived signal summary — compute-on-read from already-authorized data.
+   * CO report volumes are small (tens per date window); a materialized signal
+   * column is the future optimization when volume grows.
+   */
+  signalSummary?: SignalSummary;
+}
+
+export interface SignalFilters {
+  underPar?: boolean;
+  overPar?: boolean;
+  skipped?: boolean;
+  tempFlag?: boolean;
+  cashOver?: boolean;
+  cashShort?: boolean;
 }
 
 export interface ListFilters {
@@ -25,6 +56,11 @@ export interface ListFilters {
   dateFrom: string; // YYYY-MM-DD inclusive
   dateTo: string; // YYYY-MM-DD inclusive
   types?: ReportTypeKey[]; // optional; default = all the viewer may see
+  /**
+   * Derived signal filters — applied after base list-visibility gates (cash
+   * KH+, PM own-for-employees). All base visibility invariants are untouched.
+   */
+  signalFilters?: SignalFilters;
 }
 
 /**
@@ -42,8 +78,8 @@ function checklistReportType(type: string, prepSubtype: string | null): ReportTy
   return null;
 }
 
-/** Internal type carries submitterId for the name-resolution pass; stripped before return. */
-type ReportListItemInternal = ReportListItem & { submitterId: string | null };
+/** Internal type carries submitterId + submittedAt for sort; both stripped before return. */
+type ReportListItemInternal = ReportListItem & { submitterId: string | null; submittedAt: string | null };
 
 export async function listReports(service: SupabaseClient, f: ListFilters): Promise<ReportListItem[]> {
   const want = (t: ReportTypeKey) => !f.types || f.types.includes(t);
@@ -53,7 +89,7 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
   if (want("opening") || want("closing") || want("am_prep") || want("mid_day")) {
     const { data: insts } = await service
       .from("checklist_instances")
-      .select("id, location_id, date, status, confirmed_by, template_id")
+      .select("id, location_id, date, status, confirmed_by, confirmed_at, template_id")
       .eq("location_id", f.locationId)
       .gte("date", f.dateFrom)
       .lte("date", f.dateTo);
@@ -63,6 +99,7 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
       date: string;
       status: string;
       confirmed_by: string | null;
+      confirmed_at: string | null;
       template_id: string;
     }>;
     const tmplIds = [...new Set(rows.map((r) => r.template_id))];
@@ -88,6 +125,7 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
         submitterName: null,
         status: r.status,
         submitterId: r.confirmed_by,
+        submittedAt: r.confirmed_at,
       });
     }
   }
@@ -96,12 +134,12 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
   if (want("cash") && f.viewer.level >= REPORTS_HUB_CASH_LEVEL) {
     const { data: cash } = await service
       .from("cash_reports")
-      .select("id, location_id, report_date, signed_by")
+      .select("id, location_id, report_date, signed_by, signed_at")
       .eq("location_id", f.locationId)
       .gte("report_date", f.dateFrom)
       .lte("report_date", f.dateTo)
       .is("superseded_at", null);
-    for (const r of (cash ?? []) as Array<{ id: string; location_id: string; report_date: string; signed_by: string }>) {
+    for (const r of (cash ?? []) as Array<{ id: string; location_id: string; report_date: string; signed_by: string; signed_at: string | null }>) {
       items.push({
         type: "cash",
         id: r.id,
@@ -110,6 +148,7 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
         submitterName: null,
         status: "submitted",
         submitterId: r.signed_by,
+        submittedAt: r.signed_at ?? null,
       });
     }
   }
@@ -118,7 +157,7 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
   if (want("pm")) {
     const { data: pm } = await service
       .from("pm_reports")
-      .select("id, location_id, report_date, status, submitted_by")
+      .select("id, location_id, report_date, status, submitted_by, submitted_at")
       .eq("location_id", f.locationId)
       .gte("report_date", f.dateFrom)
       .lte("report_date", f.dateTo)
@@ -130,6 +169,7 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
       report_date: string;
       status: string;
       submitted_by: string | null;
+      submitted_at: string | null;
     }>;
     if (f.viewer.level < REPORTS_HUB_CASH_LEVEL) {
       // employee: keep only reports that contain an eval about them
@@ -155,6 +195,7 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
         submitterName: null,
         status: r.status,
         submitterId: r.submitted_by,
+        submittedAt: r.submitted_at ?? null,
       });
     }
   }
@@ -172,14 +213,72 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
       .in("id", [...submitterIds]);
     for (const u of (users ?? []) as Array<{ id: string; name: string }>) nameById.set(u.id, u.name);
   }
-  // Set submitterName from the captured submitterId; strip submitterId before returning.
-  const result: ReportListItem[] = items.map(({ submitterId, ...rest }) => ({
+  // Sort internal items: submittedAt desc (nulls last) then date desc — BEFORE stripping internal fields.
+  items.sort((a, b) => {
+    if (a.submittedAt !== null && b.submittedAt !== null) {
+      if (a.submittedAt > b.submittedAt) return -1;
+      if (a.submittedAt < b.submittedAt) return 1;
+    } else if (a.submittedAt !== null) {
+      return -1; // a has submittedAt, b doesn't → a first
+    } else if (b.submittedAt !== null) {
+      return 1; // b has submittedAt, a doesn't → b first
+    }
+    // Both null: fall through to date sort
+    return a.date < b.date ? 1 : a.date > b.date ? -1 : 0;
+  });
+
+  // Set submitterName from the captured submitterId; strip submitterId + submittedAt before returning.
+  const baseItems: ReportListItem[] = items.map(({ submitterId, submittedAt: _sa, ...rest }) => ({
     ...rest,
     submitterName: submitterId ? (nameById.get(submitterId) ?? null) : null,
   }));
 
-  // newest first
-  return result.sort((a, b) => (a.date < b.date ? 1 : -1));
+  // ── Derived signal summary + optional signal filters ──
+  // Compute-on-read from already-authorized data; base list-visibility gates
+  // (cash KH+, PM own-for-employees) are applied above and are untouched here.
+  // CO report volumes are small (tens per date window); a materialized signal
+  // column is the future optimization when volume grows.
+  const sf = f.signalFilters;
+  const hasSf = sf &&
+    (sf.underPar || sf.overPar || sf.skipped || sf.tempFlag || sf.cashOver || sf.cashShort);
+
+  // Always load temp-item ids once and compute signalSummary for every item
+  // (badges need it even when no signal filters are active).
+  const tempItemIds = await loadLocationTempItemIds(service, f.locationId);
+
+  const withSignals: ReportListItem[] = await Promise.all(
+    baseItems.map(async (item) => {
+      const { signals } = await computeReportSignals(service, {
+        type: item.type,
+        id: item.id,
+        tempItemIds,
+      });
+      const summary: SignalSummary = {
+        underPar: signals.underPar,
+        overPar: signals.overPar,
+        skipped: signals.skipped,
+        tempFlags: signals.tempFlags,
+        cashOverShortCents: signals.cashOverShortCents,
+      };
+      return { ...item, signalSummary: summary };
+    }),
+  );
+
+  // Apply signal filters (all base visibility invariants remain untouched above).
+  const result = hasSf
+    ? withSignals.filter((item) => {
+        const s = item.signalSummary!;
+        if (sf!.underPar && s.underPar <= 0) return false;
+        if (sf!.overPar && s.overPar <= 0) return false;
+        if (sf!.skipped && s.skipped <= 0) return false;
+        if (sf!.tempFlag && s.tempFlags <= 0) return false;
+        if (sf!.cashOver && (s.cashOverShortCents === null || s.cashOverShortCents <= 0)) return false;
+        if (sf!.cashShort && (s.cashOverShortCents === null || s.cashOverShortCents >= 0)) return false;
+        return true;
+      })
+    : withSignals;
+
+  return result;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -193,6 +292,14 @@ export interface ChecklistDetailItem {
   byName: string | null;
   countValue: number | null;
   note: string | null; // null unless viewer.level >= REPORTS_HUB_NOTES_LEVEL
+  isTempFlag: boolean; // true when item is in location's tempItemIds AND count_value > FRIDGE_DEFAULT_SAFE_MAX_F
+  /**
+   * Opening only: the closer-count baseline + par this item verifies against.
+   * Null when: (a) type is not "opening", (b) no snapshot row exists for this
+   * template item, or (c) the snapshot's closerCount is null (no prior AM Prep
+   * baseline — Option A: treat as no-baseline, leave null).
+   */
+  verifyExpected: { closerCount: number; par: number | null } | null;
 }
 
 export interface ChecklistReportDetail {
@@ -201,6 +308,8 @@ export interface ChecklistReportDetail {
   date: string;
   status: string;
   items: ChecklistDetailItem[];
+  signals: ReportSignals;
+  prepValues: PrepValueRow[];
 }
 
 async function loadChecklistDetail(
@@ -219,7 +328,24 @@ async function loadChecklistDetail(
   // report by id while passing a location you DO have access to).
   if (inst.location_id !== args.locationId) return null;
 
+  // AFTER the IDOR guard: load temp-item ids and compute signals (derived from
+  // already-authorized data — does not bypass cash gate, IDOR guard, or notes redaction).
+  const tempItemIds = await loadLocationTempItemIds(service, inst.location_id);
+  const { signals, prepValues } = await computeReportSignals(service, {
+    type: args.type,
+    id: args.instanceId,
+    tempItemIds,
+  });
+
   const showNotes = args.viewer.level >= REPORTS_HUB_NOTES_LEVEL;
+
+  // Opening only: load closer-count snapshots to populate verifyExpected.
+  // Only called for type === "opening" to avoid unnecessary queries for other types.
+  // IDOR guard above already confirmed inst.location_id === args.locationId.
+  const closerCountSnapshots =
+    args.type === "opening"
+      ? await loadOpeningCloserCountSnapshots(service, args.instanceId)
+      : new Map<string, import("@/lib/opening").OpeningCloserCountSnapshotRow>();
 
   const { data: titems } = await service
     .from("checklist_template_items")
@@ -266,17 +392,30 @@ async function loadChecklistDetail(
     (titems ?? []) as Array<{ id: string; station: string; label: string }>
   ).map((ti) => {
     const c = compByItem.get(ti.id);
+    const countValue = c?.count_value ?? null;
+    // Opening only: populate verifyExpected from the persisted closer-count snapshot.
+    // Option A: null closerCount = no prior AM Prep baseline → leave verifyExpected null.
+    // IDOR guard + L5 notes redaction are unaffected — this reads already-loaded snapshot data.
+    const snap = closerCountSnapshots.get(ti.id);
+    const verifyExpected: ChecklistDetailItem["verifyExpected"] =
+      snap !== undefined && snap.closerCount !== null
+        ? { closerCount: snap.closerCount, par: snap.parValue }
+        : null;
     return {
       station: ti.station,
       label: ti.label,
       done: !!c,
       byName: c?.completed_by ? (nameById.get(c.completed_by) ?? null) : null,
-      countValue: c?.count_value ?? null,
+      countValue,
       note: showNotes ? c?.notes ?? null : null, // REDACTED below L5
+      // isTempFlag: item is in the location's fridge temp registry AND its count exceeds the safe max.
+      // tempItemIds already loaded above (after the IDOR guard).
+      isTempFlag: tempItemIds.has(ti.id) && countValue !== null && countValue > FRIDGE_DEFAULT_SAFE_MAX_F,
+      verifyExpected,
     };
   });
 
-  return { kind: "checklist", type: args.type, date: inst.date, status: inst.status, items };
+  return { kind: "checklist", type: args.type, date: inst.date, status: inst.status, items, signals, prepValues };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -304,6 +443,7 @@ export interface CashReportDetail {
   signedAt: string;
   /** null unless viewer.level >= REPORTS_HUB_NOTES_LEVEL (5) — REDACTED below L5 */
   overShortNote: string | null;
+  signals: ReportSignals;
 }
 
 const CASH_ROW =
@@ -325,6 +465,15 @@ async function loadCashDetail(
   if (!data) return null;
   // SECURITY: record must belong to the caller's authorized location (cross-location IDOR guard).
   if ((data.location_id as string) !== args.locationId) return null;
+
+  // AFTER the IDOR guard: compute signals (derived from already-authorized data —
+  // does not bypass the L4+ cash gate, which is checked above; does not expose notes).
+  // tempItemIds is empty for cash but required by the shared computeReportSignals signature.
+  const { signals } = await computeReportSignals(service, {
+    type: "cash",
+    id: args.id,
+    tempItemIds: new Set<string>(),
+  });
 
   // Resolve signer name
   let signedByName: string | null = null;
@@ -356,6 +505,7 @@ async function loadCashDetail(
     signedAt: data.signed_at as string,
     // SECURITY: overShortNote ONLY if viewer.level >= REPORTS_HUB_NOTES_LEVEL (5)
     overShortNote: showNote ? ((data.over_short_note as string | null) ?? null) : null,
+    signals,
   };
 }
 
@@ -364,6 +514,14 @@ async function loadCashDetail(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type Gradient = "great" | "good" | "needs_work";
+
+/** Per-dimension gradient tally for a PM report (summed across all visible evals). */
+export interface GradientTallyEntry {
+  dimension: "arrivedReady" | "attitude" | "production" | "teamPlayer";
+  great: number;
+  good: number;
+  needsWork: number;
+}
 
 export interface PmEvalDetail {
   id: string;
@@ -389,6 +547,16 @@ export interface PmReportDetail {
   mvpName: string | null;
   mvpNote: string | null;
   evals: PmEvalDetail[];
+  /** Per-dimension gradient tally, computed from evals visible to this viewer (own-eval for employees, all evals for L4+). */
+  gradientTally: GradientTallyEntry[];
+  /**
+   * Shift activity (L4+ only; empty arrays for employees < L4).
+   * wrapUp: per-employee items completed + reports submitted on the report's date.
+   * reportProgress: per-report-type progress snapshot for that date.
+   * overdue is intentionally OMITTED — a live overdue flag is misleading when viewing a historical report.
+   */
+  wrapUp: ShiftWrapUpRow[];
+  reportProgress: { key: ReportKey; progress: ReportProgress; doneAt: string | null }[];
 }
 
 async function loadPmDetail(
@@ -493,6 +661,50 @@ async function loadPmDetail(
     note: isManager ? (showNotes ? (r.note ?? null) : null) : null,
   }));
 
+  // Compute gradient tally from the already-loaded (and tier-gated) rows.
+  // Employees see only their own eval; managers see all — the tally reflects
+  // exactly what this viewer can see. No new data exposure.
+  const dimensions: Array<{
+    key: "arrivedReady" | "attitude" | "production" | "teamPlayer";
+    field: keyof EvalRow;
+  }> = [
+    { key: "arrivedReady", field: "arrived_ready" },
+    { key: "attitude", field: "attitude" },
+    { key: "production", field: "production" },
+    { key: "teamPlayer", field: "team_player" },
+  ];
+  const gradientTally: GradientTallyEntry[] = dimensions.map(({ key, field }) => {
+    let great = 0;
+    let good = 0;
+    let needsWork = 0;
+    for (const r of rows) {
+      const val = r[field] as Gradient;
+      if (val === "great") great++;
+      else if (val === "good") good++;
+      else if (val === "needs_work") needsWork++;
+    }
+    return { dimension: key, great, good, needsWork };
+  });
+
+  // Shift activity — managers only; empty arrays for employees (< L4).
+  // overdue intentionally omitted: a live overdue flag is misleading when viewing a historical report.
+  let wrapUp: ShiftWrapUpRow[] = [];
+  let reportProgress: { key: ReportKey; progress: ReportProgress; doneAt: string | null }[] = [];
+  if (isManager) {
+    wrapUp = await loadShiftWrapUp(service, { locationId: report.location_id, date: report.report_date });
+    const actor = {
+      userId: args.viewer.userId,
+      role: "key_holder" as RoleCode,
+      level: args.viewer.level,
+    };
+    const { rows: statusRows } = await loadReportStatuses(service, {
+      locationId: report.location_id,
+      date: report.report_date,
+      actor,
+    });
+    reportProgress = statusRows.map((r) => ({ key: r.key, progress: r.progress, doneAt: r.doneAt }));
+  }
+
   return {
     kind: "pm",
     date: report.report_date,
@@ -504,6 +716,9 @@ async function loadPmDetail(
     mvpName,
     mvpNote: isManager ? (report.mvp_note ?? null) : null,
     evals,
+    gradientTally,
+    wrapUp,
+    reportProgress,
   };
 }
 
@@ -532,4 +747,200 @@ export async function loadReportDetail(
     return loadPmDetail(service, { viewer: args.viewer, id: args.id, locationId: args.locationId });
   }
   return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Task 1: computeReportSignals + temp-item id loader
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ReportSignals {
+  done: number;
+  total: number; // required template items (checklist); 1 for cash
+  skipped: number; // required items with no live completion
+  underPar: number; // prep: items with total < par
+  overPar: number; // prep: items with total > par
+  tempFlags: number; // completions on temp items with count_value > 41
+  cashOverShortCents: number | null; // cash only
+}
+
+export interface PrepValueRow {
+  label: string;
+  par: number | null;
+  onHand: number | null;
+  total: number | null;
+  parStatus: "under" | "over" | "at" | "na";
+}
+
+/**
+ * Temp-item template-item ids for a location, from the maintenance registry.
+ * Returns a Set of checklist_template_item UUIDs whose completions represent
+ * fridge temperature readings. Used to gate tempFlags counting — only
+ * completions on these items are considered, never "any count_value > 41"
+ * (prep totals can exceed 41 and would false-positive).
+ */
+export async function loadLocationTempItemIds(
+  service: SupabaseClient,
+  locationId: string,
+): Promise<Set<string>> {
+  const { data } = await service
+    .from("maintenance_equipment")
+    .select("opening_temp_item_id, closing_temp_item_id")
+    .eq("location_id", locationId)
+    .eq("kind", "fridge");
+  const ids = new Set<string>();
+  for (const r of (data ?? []) as Array<{
+    opening_temp_item_id: string | null;
+    closing_temp_item_id: string | null;
+  }>) {
+    if (r.opening_temp_item_id) ids.add(r.opening_temp_item_id);
+    if (r.closing_temp_item_id) ids.add(r.closing_temp_item_id);
+  }
+  return ids;
+}
+
+/**
+ * Per-report derived signals. For checklist instances it loads template items
+ * + live completions (incl. prep_data). `tempItemIds` is the location's temp
+ * item id set — load once via loadLocationTempItemIds and pass in so callers
+ * can reuse across multiple reports. For cash it reads over_short_cents.
+ * Returns signals + (prep) the per-item value rows.
+ *
+ * SECURITY: reads only data already authorised for the caller; no new
+ * exposure — the cash KH+ gate and cross-location IDOR guard are upstream.
+ * prep_data is always narrowed via isPrepData, never trusted as raw JSONB.
+ */
+export async function computeReportSignals(
+  service: SupabaseClient,
+  args: { type: ReportTypeKey; id: string; tempItemIds: Set<string> },
+): Promise<{ signals: ReportSignals; prepValues: PrepValueRow[] }> {
+  const empty: ReportSignals = {
+    done: 0,
+    total: 0,
+    skipped: 0,
+    underPar: 0,
+    overPar: 0,
+    tempFlags: 0,
+    cashOverShortCents: null,
+  };
+
+  if (args.type === "cash") {
+    const { data } = await service
+      .from("cash_reports")
+      .select("over_short_cents")
+      .eq("id", args.id)
+      .is("superseded_at", null)
+      .maybeSingle<{ over_short_cents: number | null }>();
+    return {
+      signals: {
+        ...empty,
+        total: 1,
+        done: 1,
+        cashOverShortCents: data?.over_short_cents ?? null,
+      },
+      prepValues: [],
+    };
+  }
+
+  if (args.type === "pm") {
+    // pm uses its own gradient tally in the detail loader (Task 2)
+    return { signals: empty, prepValues: [] };
+  }
+
+  // checklist types: opening / closing / am_prep / mid_day
+  const { data: inst } = await service
+    .from("checklist_instances")
+    .select("template_id")
+    .eq("id", args.id)
+    .maybeSingle<{ template_id: string }>();
+  if (!inst) return { signals: empty, prepValues: [] };
+
+  const { data: titems } = await service
+    .from("checklist_template_items")
+    .select("id, label, required")
+    .eq("template_id", inst.template_id)
+    .eq("active", true);
+  const items = (titems ?? []) as Array<{ id: string; label: string; required: boolean }>;
+  const labelById = new Map(items.map((i) => [i.id, i.label]));
+
+  const { data: comps } = await service
+    .from("checklist_completions")
+    .select("template_item_id, count_value, prep_data")
+    .eq("instance_id", args.id)
+    .is("superseded_at", null)
+    .is("revoked_at", null);
+  const rows = (comps ?? []) as Array<{
+    template_item_id: string;
+    count_value: number | null;
+    prep_data: unknown;
+  }>;
+  const completedIds = new Set(rows.map((r) => r.template_item_id));
+
+  const requiredItems = items.filter((i) => i.required);
+  const done = requiredItems.filter((i) => completedIds.has(i.id)).length;
+  const total = requiredItems.length;
+  const skipped = total - done;
+
+  let tempFlags = 0;
+  let underPar = 0;
+  let overPar = 0;
+  const prepValues: PrepValueRow[] = [];
+
+  for (const r of rows) {
+    // Temp-flag: ONLY on completions whose template_item_id is in the registry
+    // tempItemIds set AND count_value > 41. Never "any count_value > 41" —
+    // prep totals can exceed 41 and would false-positive.
+    if (
+      args.tempItemIds.has(r.template_item_id) &&
+      r.count_value !== null &&
+      r.count_value > FRIDGE_DEFAULT_SAFE_MAX_F
+    ) {
+      tempFlags++;
+    }
+
+    // Prep values: only completions that carry valid prep_data
+    if (isPrepData(r.prep_data)) {
+      const par = r.prep_data.snapshot.parValue; // number | null
+      const totalVal = r.prep_data.inputs.total ?? null; // number | undefined → number | null
+      const onHand = r.prep_data.inputs.onHand ?? null; // number | undefined → number | null
+      // The `total` field means DIFFERENT things per report type (same field name):
+      //   - AM prep: inputs.total is the FINAL amount (count incl. prep) → have = total ?? onHand.
+      //   - Mid-day: inputs.total is the PREPPED DELTA added on top of onHand → final = onHand + delta;
+      //     reached par ⟺ onHand + delta === par (see MidDayPhase2Form: offPar = prepped !== par-onHand).
+      // Getting this wrong reports a reached-par mid-day item as "under". `displayTotal` is the
+      // true final on-hand shown in the values table for both types.
+      let have: number | null;
+      let displayTotal: number | null;
+      if (args.type === "mid_day") {
+        have = onHand === null && totalVal === null ? null : (onHand ?? 0) + (totalVal ?? 0);
+        displayTotal = have;
+      } else {
+        have = totalVal ?? onHand ?? null;
+        displayTotal = totalVal;
+      }
+      let parStatus: PrepValueRow["parStatus"] = "na";
+      if (par !== null && have !== null) {
+        if (have < par) {
+          underPar++;
+          parStatus = "under";
+        } else if (have > par) {
+          overPar++;
+          parStatus = "over";
+        } else {
+          parStatus = "at";
+        }
+      }
+      prepValues.push({
+        label: labelById.get(r.template_item_id) ?? "—",
+        par,
+        onHand,
+        total: displayTotal,
+        parStatus,
+      });
+    }
+  }
+
+  return {
+    signals: { done, total, skipped, underPar, overPar, tempFlags, cashOverShortCents: null },
+    prepValues,
+  };
 }

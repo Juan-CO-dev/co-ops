@@ -6,6 +6,8 @@
  *
  * Security: all redaction is in loadCashDetail; this component only renders
  * what it receives.
+ *
+ * Highlights card: over/short readout from signals.cashOverShortCents.
  */
 
 import { formatDateLabel } from "@/lib/i18n/format";
@@ -33,8 +35,11 @@ interface Props {
 }
 
 export function CashReportDetailView({ detail, language }: Props) {
-  const t = (key: TranslationKey) => serverT(language, key);
+  const t = (key: TranslationKey, params?: Record<string, string | number>) =>
+    serverT(language, key, params);
   const dateLabel = formatDateLabel(detail.date, language);
+
+  const overShortCents = detail.signals.cashOverShortCents;
 
   const rows: Array<{ label: TranslationKey; value: string }> = [
     { label: "reports.cash.projected", value: centsToPositiveDisplay(detail.projectedCents) },
@@ -59,6 +64,26 @@ export function CashReportDetailView({ detail, language }: Props) {
           </span>
         )}
       </div>
+
+      {/* Highlights card — over/short signal from signals.cashOverShortCents */}
+      {overShortCents !== null && (
+        <div
+          className={[
+            "flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold",
+            overShortCents > 0
+              ? "border-co-border bg-co-surface text-co-success"
+              : overShortCents < 0
+                ? "border-co-border bg-co-surface text-co-danger"
+                : "border-co-border bg-co-surface text-co-text-muted",
+          ].join(" ")}
+        >
+          {overShortCents > 0
+            ? t("reports.signal.cash_over", { amount: centsToDisplay(overShortCents) })
+            : overShortCents < 0
+              ? t("reports.signal.cash_short", { amount: centsToDisplay(overShortCents) })
+              : t("reports.signal.cash_even")}
+        </div>
+      )}
 
       {/* Money summary */}
       <section>
