@@ -772,5 +772,18 @@
   "reports.cash.signed_by": "Firmado por",
   "reports.cash.on_shift": "En turno",
 
-  "reports.pm.submitted_by": "Enviado por"
+  "reports.pm.submitted_by": "Enviado por",
+  "reports.pm.gradient_tally": "Resumen de evaluación",
+
+  "reports.signal.completion": "{done}/{total} hechos · {skipped} omitidos",
+  "reports.signal.par": "{underPar} bajo par · {overPar} sobre par",
+  "reports.signal.temp_flag": "{n} temp fuera de rango",
+  "reports.signal.cash_over": "{amount} de más",
+  "reports.signal.cash_short": "{amount} de menos",
+  "reports.signal.cash_even": "exacto",
+
+  "reports.values.heading": "Valores de prep",
+  "reports.values.par": "Par",
+  "reports.values.on_hand": "En mano",
+  "reports.values.total": "Total"
 }

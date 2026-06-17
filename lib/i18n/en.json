@@ -772,5 +772,18 @@
   "reports.cash.signed_by": "Signed by",
   "reports.cash.on_shift": "On shift",
 
-  "reports.pm.submitted_by": "Submitted by"
+  "reports.pm.submitted_by": "Submitted by",
+  "reports.pm.gradient_tally": "Gradient tally",
+
+  "reports.signal.completion": "{done}/{total} done · {skipped} skipped",
+  "reports.signal.par": "{underPar} under par · {overPar} over par",
+  "reports.signal.temp_flag": "{n} temp out of range",
+  "reports.signal.cash_over": "{amount} over",
+  "reports.signal.cash_short": "{amount} short",
+  "reports.signal.cash_even": "even",
+
+  "reports.values.heading": "Prep values",
+  "reports.values.par": "Par",
+  "reports.values.on_hand": "On hand",
+  "reports.values.total": "Total"
 }

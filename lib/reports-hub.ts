@@ -203,6 +203,8 @@ export interface ChecklistReportDetail {
   date: string;
   status: string;
   items: ChecklistDetailItem[];
+  signals: ReportSignals;
+  prepValues: PrepValueRow[];
 }
 
 async function loadChecklistDetail(
@@ -220,6 +222,15 @@ async function loadChecklistDetail(
   // resource to it prevents a cross-location IDOR (loading another store's
   // report by id while passing a location you DO have access to).
   if (inst.location_id !== args.locationId) return null;
+
+  // AFTER the IDOR guard: load temp-item ids and compute signals (derived from
+  // already-authorized data — does not bypass cash gate, IDOR guard, or notes redaction).
+  const tempItemIds = await loadLocationTempItemIds(service, inst.location_id);
+  const { signals, prepValues } = await computeReportSignals(service, {
+    type: args.type,
+    id: args.instanceId,
+    tempItemIds,
+  });
 
   const showNotes = args.viewer.level >= REPORTS_HUB_NOTES_LEVEL;
 
@@ -278,7 +289,7 @@ async function loadChecklistDetail(
     };
   });
 
-  return { kind: "checklist", type: args.type, date: inst.date, status: inst.status, items };
+  return { kind: "checklist", type: args.type, date: inst.date, status: inst.status, items, signals, prepValues };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -306,6 +317,7 @@ export interface CashReportDetail {
   signedAt: string;
   /** null unless viewer.level >= REPORTS_HUB_NOTES_LEVEL (5) — REDACTED below L5 */
   overShortNote: string | null;
+  signals: ReportSignals;
 }
 
 const CASH_ROW =
@@ -327,6 +339,15 @@ async function loadCashDetail(
   if (!data) return null;
   // SECURITY: record must belong to the caller's authorized location (cross-location IDOR guard).
   if ((data.location_id as string) !== args.locationId) return null;
+
+  // AFTER the IDOR guard: compute signals (derived from already-authorized data —
+  // does not bypass the L4+ cash gate, which is checked above; does not expose notes).
+  // tempItemIds is empty for cash but required by the shared computeReportSignals signature.
+  const { signals } = await computeReportSignals(service, {
+    type: "cash",
+    id: args.id,
+    tempItemIds: new Set<string>(),
+  });
 
   // Resolve signer name
   let signedByName: string | null = null;
@@ -358,6 +379,7 @@ async function loadCashDetail(
     signedAt: data.signed_at as string,
     // SECURITY: overShortNote ONLY if viewer.level >= REPORTS_HUB_NOTES_LEVEL (5)
     overShortNote: showNote ? ((data.over_short_note as string | null) ?? null) : null,
+    signals,
   };
 }
 
@@ -366,6 +388,14 @@ async function loadCashDetail(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type Gradient = "great" | "good" | "needs_work";
+
+/** Per-dimension gradient tally for a PM report (summed across all visible evals). */
+export interface GradientTallyEntry {
+  dimension: "arrivedReady" | "attitude" | "production" | "teamPlayer";
+  great: number;
+  good: number;
+  needsWork: number;
+}
 
 export interface PmEvalDetail {
   id: string;
@@ -391,6 +421,8 @@ export interface PmReportDetail {
   mvpName: string | null;
   mvpNote: string | null;
   evals: PmEvalDetail[];
+  /** Per-dimension gradient tally, computed from evals visible to this viewer (own-eval for employees, all evals for L4+). */
+  gradientTally: GradientTallyEntry[];
 }
 
 async function loadPmDetail(
@@ -495,6 +527,31 @@ async function loadPmDetail(
     note: isManager ? (showNotes ? (r.note ?? null) : null) : null,
   }));
 
+  // Compute gradient tally from the already-loaded (and tier-gated) rows.
+  // Employees see only their own eval; managers see all — the tally reflects
+  // exactly what this viewer can see. No new data exposure.
+  const dimensions: Array<{
+    key: "arrivedReady" | "attitude" | "production" | "teamPlayer";
+    field: keyof EvalRow;
+  }> = [
+    { key: "arrivedReady", field: "arrived_ready" },
+    { key: "attitude", field: "attitude" },
+    { key: "production", field: "production" },
+    { key: "teamPlayer", field: "team_player" },
+  ];
+  const gradientTally: GradientTallyEntry[] = dimensions.map(({ key, field }) => {
+    let great = 0;
+    let good = 0;
+    let needsWork = 0;
+    for (const r of rows) {
+      const val = r[field] as Gradient;
+      if (val === "great") great++;
+      else if (val === "good") good++;
+      else if (val === "needs_work") needsWork++;
+    }
+    return { dimension: key, great, good, needsWork };
+  });
+
   return {
     kind: "pm",
     date: report.report_date,
@@ -506,6 +563,7 @@ async function loadPmDetail(
     mvpName,
     mvpNote: isManager ? (report.mvp_note ?? null) : null,
     evals,
+    gradientTally,
   };
 }
 

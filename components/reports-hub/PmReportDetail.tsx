@@ -6,18 +6,67 @@
  * only renders what it receives — never renders a field the loader set to null.
  *
  * Security: all tier gates are in loadPmDetail; this component is a pure view.
+ *
+ * Gradient tally card: per-dimension great/good/needs_work counts (reflects
+ * only the evals the viewer could already see — no new exposure).
  */
 
 import { formatDateLabel } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
-import type { Gradient, PmEvalDetail, PmReportDetail } from "@/lib/reports-hub";
+import type { Gradient, GradientTallyEntry, PmEvalDetail, PmReportDetail } from "@/lib/reports-hub";
 
 const GRADIENT_KEY: Record<Gradient, TranslationKey> = {
   great: "pm.attitude.great",
   good: "pm.attitude.good",
   needs_work: "pm.attitude.needs_work",
 };
+
+const DIMENSION_LABEL_KEY: Record<GradientTallyEntry["dimension"], TranslationKey> = {
+  arrivedReady: "pm.eval.arrived_ready",
+  attitude: "pm.eval.attitude",
+  production: "pm.eval.production",
+  teamPlayer: "pm.eval.team_player",
+};
+
+interface GradientTallyCardProps {
+  tally: GradientTallyEntry[];
+  t: (key: TranslationKey) => string;
+}
+
+function GradientTallyCard({ tally, t }: GradientTallyCardProps) {
+  // Only render when there is at least one eval
+  const hasData = tally.some((e) => e.great + e.good + e.needsWork > 0);
+  if (!hasData) return null;
+
+  return (
+    <section>
+      <h2 className="mb-1 px-1 text-xs font-bold uppercase tracking-wide text-co-text-muted">
+        {t("reports.pm.gradient_tally")}
+      </h2>
+      <div className="rounded-lg border border-co-border bg-co-surface px-3 py-2">
+        <ul className="flex flex-col gap-1">
+          {tally.map((entry) => (
+            <li key={entry.dimension} className="flex items-center justify-between gap-2 text-xs">
+              <span className="text-co-text-muted">{t(DIMENSION_LABEL_KEY[entry.dimension])}</span>
+              <span className="flex gap-3">
+                <span className="font-semibold text-co-success">
+                  {t("pm.attitude.great")} {entry.great}
+                </span>
+                <span className="font-semibold text-co-text">
+                  {t("pm.attitude.good")} {entry.good}
+                </span>
+                <span className="font-semibold text-co-danger">
+                  {t("pm.attitude.needs_work")} {entry.needsWork}
+                </span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </section>
+  );
+}
 
 interface EvalCardProps {
   ev: PmEvalDetail;
@@ -110,6 +159,9 @@ export function PmReportDetailView({ detail, language }: Props) {
           )}
         </div>
       )}
+
+      {/* Gradient tally card — reflects only evals visible to this viewer (no new exposure) */}
+      <GradientTallyCard tally={detail.gradientTally} t={t} />
 
       {/* Evals */}
       {detail.evals.length > 0 && (
