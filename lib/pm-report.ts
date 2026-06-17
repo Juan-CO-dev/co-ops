@@ -203,3 +203,107 @@ export async function loadMyFeedback(
     .filter((v): v is MyFeedbackItem => v !== null)
     .sort((a, b) => (a.date < b.date ? 1 : -1));
 }
+
+import { audit } from "@/lib/audit";
+import { enqueueNotification, NOTIFICATION_TYPES } from "@/lib/notifications";
+
+export async function getOrCreatePmReport(
+  service: SupabaseClient,
+  args: { locationId: string; date: string; actor: PmActor },
+): Promise<{ id: string }> {
+  const { data: existing } = await service
+    .from("pm_reports")
+    .select("id")
+    .eq("location_id", args.locationId)
+    .eq("report_date", args.date)
+    .is("superseded_at", null)
+    .maybeSingle<{ id: string }>();
+  if (existing) return { id: existing.id };
+  const { data, error } = await service
+    .from("pm_reports")
+    .insert({ location_id: args.locationId, report_date: args.date, status: "open", created_by: args.actor.userId })
+    .select("id")
+    .single<{ id: string }>();
+  if (error) throw new Error(`getOrCreatePmReport: ${error.message}`);
+  return { id: data.id };
+}
+
+export async function saveEmployeeEval(
+  service: SupabaseClient,
+  args: {
+    pmReportId: string; locationId: string; employeeId: string;
+    onTime: boolean; attitude: Attitude; areaToImprove: string | null; note: string | null;
+    actor: PmActor;
+  },
+): Promise<{ id: string }> {
+  // Supersede any live eval for this (report, employee), then insert the new one.
+  await service
+    .from("pm_employee_evals")
+    .update({ superseded_at: new Date().toISOString() })
+    .eq("pm_report_id", args.pmReportId)
+    .eq("employee_id", args.employeeId)
+    .is("superseded_at", null);
+  const { data, error } = await service
+    .from("pm_employee_evals")
+    .insert({
+      pm_report_id: args.pmReportId, location_id: args.locationId, employee_id: args.employeeId,
+      on_time: args.onTime, attitude: args.attitude, area_to_improve: args.areaToImprove,
+      note: args.note, author_id: args.actor.userId,
+    })
+    .select("id")
+    .single<{ id: string }>();
+  if (error) throw new Error(`saveEmployeeEval: ${error.message}`);
+  return { id: data.id };
+}
+
+export async function setMvp(
+  service: SupabaseClient,
+  args: { pmReportId: string; mvpUserId: string | null; mvpNote: string | null },
+): Promise<void> {
+  const { error } = await service
+    .from("pm_reports")
+    .update({ mvp_user_id: args.mvpUserId, mvp_note: args.mvpNote })
+    .eq("id", args.pmReportId)
+    .is("superseded_at", null);
+  if (error) throw new Error(`setMvp: ${error.message}`);
+}
+
+export async function submitPmReport(
+  service: SupabaseClient,
+  args: { pmReportId: string; locationId: string; actor: PmActor },
+): Promise<{ notified: number }> {
+  const { error } = await service
+    .from("pm_reports")
+    .update({ status: "submitted", submitted_at: new Date().toISOString(), submitted_by: args.actor.userId })
+    .eq("id", args.pmReportId)
+    .is("superseded_at", null);
+  if (error) throw new Error(`submitPmReport: ${error.message}`);
+
+  // Notify each evaluated employee (one notification, recipients = the evaluated set).
+  const { data: evalRows } = await service
+    .from("pm_employee_evals")
+    .select("employee_id")
+    .eq("pm_report_id", args.pmReportId)
+    .is("superseded_at", null);
+  const employeeIds = [...new Set(((evalRows ?? []) as { employee_id: string }[]).map((r) => r.employee_id))];
+  if (employeeIds.length > 0) {
+    await enqueueNotification(service, {
+      type: NOTIFICATION_TYPES.SHIFT_FEEDBACK,
+      priority: "info",
+      titleKey: "notif.shift_feedback.title",
+      bodyKey: "notif.shift_feedback.body",
+      relatedTable: "pm_reports",
+      relatedId: args.pmReportId,
+      locationId: args.locationId,
+      createdBy: args.actor.userId,
+      recipients: employeeIds.map((userId) => ({ userId })),
+    });
+  }
+
+  void audit({
+    actorId: args.actor.userId, actorRole: args.actor.role, action: "pm_report.submit",
+    resourceTable: "pm_reports", resourceId: args.pmReportId,
+    metadata: { notified: employeeIds.length }, ipAddress: null, userAgent: null,
+  });
+  return { notified: employeeIds.length };
+}

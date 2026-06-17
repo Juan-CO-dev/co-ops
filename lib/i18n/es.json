@@ -687,5 +687,8 @@
   "maintenance.note.checklist_source": "del checklist",
   "maintenance.error.generic": "No se pudo guardar. Intenta de nuevo.",
   "maintenance.not_available": "El Registro de mantenimiento no está disponible para tu rol.",
-  "maintenance.not_found": "Equipo no encontrado."
+  "maintenance.not_found": "Equipo no encontrado.",
+
+  "notif.shift_feedback.title": "Nuevo comentario de turno",
+  "notif.shift_feedback.body": "Un gerente dejó comentarios sobre tu turno."
 }
