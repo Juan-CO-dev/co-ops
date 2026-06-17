@@ -267,9 +267,12 @@ const roleBadgeShort = (t: TFn, role: RoleCode): string => {
       return t("closing.role_short.key_holder");
     case "trainer":
       return t("closing.role_short.trainer");
-    // Note: `employee` (level 3) and `trainee` (level 2) role codes land in
-    // Build #1.5 PR 6 per SPEC_AMENDMENTS.md C.32. Default returns the raw
-    // role code for any future RoleCode value not yet wired in this switch.
+    case "employee":
+      return t("closing.role_short.employee");
+    case "trainee":
+      return t("closing.role_short.trainee");
+    // Default returns the raw role code for any future RoleCode value not yet
+    // wired in this switch.
     default:
       return role;
   }

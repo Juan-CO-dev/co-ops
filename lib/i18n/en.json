@@ -151,6 +151,7 @@
   "cash.readout.short": "{amount} short",
   "cash.readout.even": "Even",
   "cash.staff.add_placeholder": "Add a name (not a user)",
+  "cash.staff.add": "+ Add",
   "cash.submit.button": "Sign & submit deposit",
   "cash.submit.submitting": "Submitting…",
   "cash.error.pin_invalid": "Incorrect PIN.",
@@ -323,6 +324,7 @@
   "closing.no_template.heading": "Closing checklist",
   "closing.no_template.body": "No closing template configured for this location. An admin needs to seed a closing template before you can open a closing here.",
   "closing.no_template.return_dashboard": "Return to dashboard",
+  "closing.no_instance.body": "No closing was filed for {date} at this location.",
 
   "auth.pin_modal.title": "Confirm with your PIN",
   "auth.pin_modal.subtitle": "Enter your 4-digit PIN to confirm this action.",

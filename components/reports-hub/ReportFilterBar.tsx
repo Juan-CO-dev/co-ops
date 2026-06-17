@@ -18,6 +18,8 @@ import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { REPORTS_HUB_CASH_LEVEL, type ReportTypeKey } from "@/lib/reports-hub";
 
+import { ActionButton } from "@/components/ActionButton";
+
 const TYPE_KEYS: Record<ReportTypeKey, TranslationKey> = {
   opening: "reports.type.opening",
   closing: "reports.type.closing",
@@ -103,7 +105,7 @@ export function ReportFilterBar({
             id="rpt-type"
             name="type"
             defaultValue={selectedType}
-            className="rounded border border-co-border bg-co-bg px-2 py-1 text-sm text-co-text"
+            className="h-10 rounded-md border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text focus:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
           >
             <option value="all">{t("reports.filter.all_types")}</option>
             {allowedTypes.map((typeKey) => (
@@ -116,12 +118,9 @@ export function ReportFilterBar({
 
         {/* Submit */}
         <div className="flex items-end">
-          <button
-            type="submit"
-            className="rounded-full border-2 border-co-border bg-co-surface px-4 py-1.5 text-sm font-semibold text-co-text hover:opacity-90"
-          >
+          <ActionButton type="submit" variant="secondary">
             {t("reports.filter.apply")}
-          </button>
+          </ActionButton>
         </div>
       </div>
 
