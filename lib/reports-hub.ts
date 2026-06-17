@@ -902,9 +902,21 @@ export async function computeReportSignals(
       const par = r.prep_data.snapshot.parValue; // number | null
       const totalVal = r.prep_data.inputs.total ?? null; // number | undefined → number | null
       const onHand = r.prep_data.inputs.onHand ?? null; // number | undefined → number | null
-      // FIX 1 — mid-day par: AM prep always has `total`; mid-day prep may only have `onHand`.
-      // Use `total` when present (AM prep), fall back to `onHand` (mid-day), then null (no data).
-      const have = totalVal ?? onHand ?? null;
+      // The `total` field means DIFFERENT things per report type (same field name):
+      //   - AM prep: inputs.total is the FINAL amount (count incl. prep) → have = total ?? onHand.
+      //   - Mid-day: inputs.total is the PREPPED DELTA added on top of onHand → final = onHand + delta;
+      //     reached par ⟺ onHand + delta === par (see MidDayPhase2Form: offPar = prepped !== par-onHand).
+      // Getting this wrong reports a reached-par mid-day item as "under". `displayTotal` is the
+      // true final on-hand shown in the values table for both types.
+      let have: number | null;
+      let displayTotal: number | null;
+      if (args.type === "mid_day") {
+        have = onHand === null && totalVal === null ? null : (onHand ?? 0) + (totalVal ?? 0);
+        displayTotal = have;
+      } else {
+        have = totalVal ?? onHand ?? null;
+        displayTotal = totalVal;
+      }
       let parStatus: PrepValueRow["parStatus"] = "na";
       if (par !== null && have !== null) {
         if (have < par) {
@@ -921,7 +933,7 @@ export async function computeReportSignals(
         label: labelById.get(r.template_item_id) ?? "—",
         par,
         onHand,
-        total: totalVal,
+        total: displayTotal,
         parStatus,
       });
     }
