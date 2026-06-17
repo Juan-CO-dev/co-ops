@@ -12,7 +12,7 @@ import type {
   PmReportForEdit,
   ShiftWrapUpRow,
 } from "@/lib/pm-report";
-import type { OverdueState, ReportKey, ReportStatusRow } from "@/lib/midshift";
+import type { ReportKey, ReportProgress, ReportStatusRow } from "@/lib/midshift";
 import { ActionButton } from "@/components/ActionButton";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -41,10 +41,13 @@ const GRADIENT_VALUES: Gradient[] = ["great", "good", "needs_work"];
 
 // ─── Timeliness badge ─────────────────────────────────────────────────────────
 
-const OVERDUE_KEY: Record<OverdueState, TranslationKey> = {
-  ok: "midshift.progress.done",
-  overdue: "midshift.overdue.badge",
-  not_due_yet: "midshift.overdue.not_due_yet",
+// Status label is driven by PROGRESS (done / in_progress / not_started).
+// Overdue / not-due are separate flags layered on top — a report that simply
+// isn't overdue yet is NOT "done".
+const PROGRESS_KEY: Record<ReportProgress, TranslationKey> = {
+  done: "midshift.progress.done",
+  in_progress: "midshift.progress.in_progress",
+  not_started: "midshift.progress.not_started",
 };
 
 const REPORT_LABEL_KEY: Record<ReportKey, TranslationKey> = {
@@ -603,13 +606,24 @@ function WrapUpSection({
       {timeliness.length > 0 && (
         <ul className="flex flex-col gap-1.5">
           {timeliness.map((row) => {
-            const overdueKey = OVERDUE_KEY[row.overdue];
-            const badgeClasses =
-              row.overdue === "overdue"
-                ? "text-co-cta font-bold"
-                : row.overdue === "ok" || row.progress === "done"
-                  ? "text-co-success font-semibold"
-                  : "text-co-text-muted";
+            // Primary status = progress. Overdue/not-due are layered flags;
+            // "not overdue yet" must never read as "done".
+            let label: string;
+            let badgeClasses: string;
+            if (row.progress === "done") {
+              label = row.doneAt ? formatTime(row.doneAt, language) : t("midshift.progress.done");
+              badgeClasses = "text-co-success font-semibold";
+            } else if (row.overdue === "overdue") {
+              label = t("midshift.overdue.badge");
+              badgeClasses = "text-co-cta font-bold";
+            } else if (row.overdue === "not_due_yet") {
+              label = t("midshift.overdue.not_due_yet");
+              badgeClasses = "text-co-text-muted";
+            } else {
+              // in_progress or not_started, not overdue
+              label = t(PROGRESS_KEY[row.progress]);
+              badgeClasses = "text-co-text-muted";
+            }
 
             return (
               <li
@@ -619,11 +633,7 @@ function WrapUpSection({
                 <span className="font-semibold text-co-text">
                   {t(REPORT_LABEL_KEY[row.key])}
                 </span>
-                <span className={`shrink-0 text-xs ${badgeClasses}`}>
-                  {row.progress === "done" && row.doneAt
-                    ? formatTime(row.doneAt, language)
-                    : t(overdueKey)}
-                </span>
+                <span className={`shrink-0 text-xs ${badgeClasses}`}>{label}</span>
               </li>
             );
           })}
