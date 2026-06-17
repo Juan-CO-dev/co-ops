@@ -186,7 +186,7 @@ export function OpeningChecklistItem({
               className={[
                 "mt-1 flex items-center gap-3 rounded-md border-2 px-3 py-2 text-sm",
                 isNullSource
-                  ? "border-co-danger bg-[#FFE4E4]"
+                  ? "border-co-danger bg-co-danger-surface"
                   : "border-co-border-2 bg-co-bg",
               ].join(" ")}
             >

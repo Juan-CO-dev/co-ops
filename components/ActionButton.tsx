@@ -24,7 +24,8 @@ export type ActionSize = "default" | "lg";
 
 const BASE =
   "inline-flex items-center justify-center gap-2 rounded-xl border-2 " +
-  "font-bold uppercase tracking-[0.1em] transition " +
+  "font-bold uppercase tracking-[0.1em] " +
+  "transition-[opacity,background-color,border-color,color] duration-150 active:opacity-80 " +
   "focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 " +
   "disabled:cursor-not-allowed disabled:opacity-50";
 
@@ -36,7 +37,7 @@ const SIZE: Record<ActionSize, string> = {
 const VARIANT: Record<ActionVariant, string> = {
   primary: "border-co-text bg-co-gold text-co-text hover:bg-co-gold-deep",
   secondary: "border-co-border-2 bg-co-surface text-co-text hover:border-co-text",
-  danger: "border-co-cta bg-co-surface text-co-cta hover:bg-[#FFE4E4]",
+  danger: "border-co-cta bg-co-surface text-co-cta hover:bg-co-danger-surface",
 };
 
 export function actionButtonClass(

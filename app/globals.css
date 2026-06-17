@@ -42,6 +42,14 @@
   --co-danger: #FF3A44;      /* Brand Red */
   --co-info: #3F73B9;        /* Brand Blue */
 
+  /* Status surfaces — pale tints for status banners/cards on the Mayo bg.
+   * Centralizes the scattered bg-[#...] hex tints that drifted across the
+   * operational surfaces (opening/closing/cash/prep/pm). Values match the
+   * prior literals; near-identical tints consolidated to one each. */
+  --co-success-surface: #E8F7EE;  /* pale green (was #E6F4E6 / #E8F7EE) */
+  --co-warning-surface: #FFF4D0;  /* pale gold (same value as --co-surface-2) */
+  --co-danger-surface: #FFE4E4;   /* pale red (was #FFE4E4 / #FFE8E9) */
+
   /* Role colors (Section 7.1) */
   --role-cgs:          #D4A843;
   --role-owner:        #6B7280;
@@ -78,6 +86,11 @@
   --color-co-warning: var(--co-warning);
   --color-co-danger: var(--co-danger);
   --color-co-info: var(--co-info);
+
+  /* Status surfaces */
+  --color-co-success-surface: var(--co-success-surface);
+  --color-co-warning-surface: var(--co-warning-surface);
+  --color-co-danger-surface: var(--co-danger-surface);
 
   /* Roles */
   --color-role-cgs: var(--role-cgs);

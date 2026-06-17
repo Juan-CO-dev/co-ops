@@ -195,7 +195,7 @@ export function RevokeReasonModal({
               "text-sm font-bold uppercase tracking-[0.12em]",
               "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
               canSubmit
-                ? "border-2 border-co-danger bg-co-surface text-co-text hover:bg-[#FFE4E4]"
+                ? "border-2 border-co-danger bg-co-surface text-co-text hover:bg-co-danger-surface"
                 : "border-2 border-co-border-2 bg-co-surface text-co-text-faint cursor-not-allowed",
             ].join(" ")}
           >

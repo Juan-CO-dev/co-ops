@@ -56,7 +56,8 @@ const NAV_LINKS: NavLink[] = [
 ];
 
 const CHIP_CLASS =
-  "rounded-full border-2 border-co-border bg-co-surface px-3 py-1.5 text-sm font-semibold text-co-text hover:opacity-90";
+  "rounded-full border-2 border-co-border bg-co-surface px-3 py-1.5 text-sm font-semibold text-co-text " +
+  "transition-[opacity,border-color,background-color] duration-150 hover:opacity-90 active:opacity-80";
 
 /** Append the active location to scoped destinations when one is selected. */
 function chipHref(href: string, scoped: boolean, locationId: string | null): string {

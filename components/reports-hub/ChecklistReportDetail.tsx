@@ -128,7 +128,7 @@ export function ChecklistReportDetailView({ detail, language }: Props) {
       </div>
 
       {/* Highlights card — completion signal + par (prep only) + temp flag */}
-      <div className="flex flex-wrap gap-2 rounded-lg border border-co-border bg-co-surface px-3 py-2 text-xs text-co-text-muted">
+      <div className="flex flex-wrap gap-2 rounded-lg border-2 border-co-border bg-co-surface px-3 py-2 text-xs text-co-text-muted">
         <span>
           {t("reports.signal.completion", {
             done: signals.done,
@@ -153,7 +153,7 @@ export function ChecklistReportDetailView({ detail, language }: Props) {
 
       {/* Prep values table — only when this report has prep items */}
       {hasPrepValues && (
-        <div className="rounded-lg border border-co-border bg-co-surface px-3 py-2">
+        <div className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-2">
           <PrepValuesTable rows={prepValues} t={t} />
         </div>
       )}
@@ -167,7 +167,7 @@ export function ChecklistReportDetailView({ detail, language }: Props) {
           ((detail.type !== "am_prep" && detail.type !== "mid_day") || prepValues.length === 0);
         if (!showReadings) return null;
         return (
-          <div className="rounded-lg border border-co-border bg-co-surface px-3 py-2">
+          <div className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-2">
             <h2 className="mb-1 px-1 text-xs font-bold uppercase tracking-wide text-co-text-muted">
               {t("reports.readings.heading")}
             </h2>
@@ -198,7 +198,7 @@ export function ChecklistReportDetailView({ detail, language }: Props) {
               {stationItems.map((item, idx) => (
                 <li
                   key={`${station}-${idx}`}
-                  className="rounded-lg border border-co-border bg-co-surface px-3 py-2 text-sm"
+                  className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-2 text-sm"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <span className="font-medium text-co-text">{item.label}</span>

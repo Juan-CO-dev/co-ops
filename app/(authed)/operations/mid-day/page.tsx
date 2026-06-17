@@ -104,7 +104,7 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
         <div className="mb-3">
           <DashboardBackLink />
         </div>
-        <h1 className="mb-3 text-lg font-bold text-co-text">
+        <h1 className="mb-4 text-lg font-bold text-co-text">
           {serverT(lang, "mid_day_prep.page.title")}
         </h1>
         <MidDayPrepTile

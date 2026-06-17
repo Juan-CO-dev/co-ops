@@ -69,7 +69,7 @@ export function CashReportDetailView({ detail, language }: Props) {
       {overShortCents !== null && (
         <div
           className={[
-            "flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-semibold",
+            "flex items-center gap-2 rounded-lg border-2 px-3 py-2 text-xs font-semibold",
             overShortCents > 0
               ? "border-co-border bg-co-surface text-co-success"
               : overShortCents < 0
@@ -91,7 +91,7 @@ export function CashReportDetailView({ detail, language }: Props) {
           {rows.map(({ label, value }) => (
             <li
               key={label}
-              className="flex items-center justify-between rounded-lg border border-co-border bg-co-surface px-3 py-2 text-sm"
+              className="flex items-center justify-between rounded-lg border-2 border-co-border bg-co-surface px-3 py-2 text-sm"
             >
               <span className="text-co-text-muted">{t(label)}</span>
               <span
@@ -114,7 +114,7 @@ export function CashReportDetailView({ detail, language }: Props) {
 
       {/* Over/short note — only rendered when non-null (loader already redacted below L5) */}
       {detail.overShortNote !== null && (
-        <div className="rounded-lg border border-co-border bg-co-surface px-3 py-2 text-sm">
+        <div className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-2 text-sm">
           <span className="font-semibold text-co-text-muted">{t("reports.detail.note")}: </span>
           <span className="text-co-text">{detail.overShortNote}</span>
         </div>
@@ -130,7 +130,7 @@ export function CashReportDetailView({ detail, language }: Props) {
             {detail.onShift.map((entry, idx) => (
               <li
                 key={entry.userId ?? idx}
-                className="rounded-lg border border-co-border bg-co-surface px-3 py-2 text-sm text-co-text"
+                className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-2 text-sm text-co-text"
               >
                 {entry.name}
               </li>

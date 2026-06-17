@@ -1452,7 +1452,7 @@ export function OpeningClient({
         <section
           role="region"
           aria-label={t("opening.phase1.attestation.title")}
-          className="rounded-2xl border-2 border-co-danger bg-[#FFE4E4] p-4 sm:p-5"
+          className="rounded-2xl border-2 border-co-danger bg-co-danger-surface p-4 sm:p-5"
         >
           <h3 className="text-base font-extrabold uppercase tracking-[0.14em] text-co-text">
             {t("opening.phase1.attestation.title")}
@@ -1531,7 +1531,7 @@ export function OpeningClient({
       {submitState.status === "error" ? (
         <div
           role="alert"
-          className="rounded-2xl border-2 border-co-danger bg-[#FFE4E4] p-4 text-sm text-co-text"
+          className="rounded-2xl border-2 border-co-danger bg-co-danger-surface p-4 text-sm text-co-text"
         >
           {t(
             `opening.error.${submitState.errorCode ?? "fallback"}` as TranslationKey,
