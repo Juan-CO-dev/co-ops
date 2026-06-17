@@ -82,7 +82,7 @@ export default async function ReportDetailPage({ params, searchParams }: PagePro
   }
 
   const sb = getServiceRoleClient();
-  const detail: ReportDetail | null = await loadReportDetail(sb, { viewer, type, id });
+  const detail: ReportDetail | null = await loadReportDetail(sb, { viewer, type, id, locationId: locationParam });
 
   if (!detail) {
     return (

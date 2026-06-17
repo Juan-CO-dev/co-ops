@@ -205,14 +205,19 @@ export interface ChecklistReportDetail {
 
 async function loadChecklistDetail(
   service: SupabaseClient,
-  args: { viewer: Viewer; instanceId: string; type: ReportTypeKey },
+  args: { viewer: Viewer; instanceId: string; locationId: string; type: ReportTypeKey },
 ): Promise<ChecklistReportDetail | null> {
   const { data: inst } = await service
     .from("checklist_instances")
-    .select("id, template_id, date, status")
+    .select("id, template_id, date, status, location_id")
     .eq("id", args.instanceId)
-    .maybeSingle<{ id: string; template_id: string; date: string; status: string }>();
+    .maybeSingle<{ id: string; template_id: string; date: string; status: string; location_id: string }>();
   if (!inst) return null;
+  // SECURITY: the record must belong to the caller's authorized location.
+  // The page validated args.locationId via lockLocationContext; binding the
+  // resource to it prevents a cross-location IDOR (loading another store's
+  // report by id while passing a location you DO have access to).
+  if (inst.location_id !== args.locationId) return null;
 
   const showNotes = args.viewer.level >= REPORTS_HUB_NOTES_LEVEL;
 
@@ -306,7 +311,7 @@ const CASH_ROW =
 
 async function loadCashDetail(
   service: SupabaseClient,
-  args: { viewer: Viewer; id: string },
+  args: { viewer: Viewer; id: string; locationId: string },
 ): Promise<CashReportDetail | null> {
   // SECURITY: L4+ only
   if (args.viewer.level < REPORTS_HUB_CASH_LEVEL) return null;
@@ -318,6 +323,8 @@ async function loadCashDetail(
     .is("superseded_at", null)
     .maybeSingle<Record<string, unknown>>();
   if (!data) return null;
+  // SECURITY: record must belong to the caller's authorized location (cross-location IDOR guard).
+  if ((data.location_id as string) !== args.locationId) return null;
 
   // Resolve signer name
   let signedByName: string | null = null;
@@ -386,7 +393,7 @@ export interface PmReportDetail {
 
 async function loadPmDetail(
   service: SupabaseClient,
-  args: { viewer: Viewer; id: string },
+  args: { viewer: Viewer; id: string; locationId: string },
 ): Promise<PmReportDetail | null> {
   const { data: report } = await service
     .from("pm_reports")
@@ -404,6 +411,8 @@ async function loadPmDetail(
       submitted_by: string | null;
     }>();
   if (!report) return null;
+  // SECURITY: record must belong to the caller's authorized location (cross-location IDOR guard).
+  if (report.location_id !== args.locationId) return null;
 
   // Tier logic: L4+ see all evals; L3- see only their own eval (or null if none)
   const isManager = args.viewer.level >= REPORTS_HUB_CASH_LEVEL; // L4+
@@ -506,7 +515,7 @@ export type ReportDetail = ChecklistReportDetail | CashReportDetail | PmReportDe
 
 export async function loadReportDetail(
   service: SupabaseClient,
-  args: { viewer: Viewer; type: ReportTypeKey; id: string },
+  args: { viewer: Viewer; type: ReportTypeKey; id: string; locationId: string },
 ): Promise<ReportDetail | null> {
   if (
     args.type === "opening" ||
@@ -514,13 +523,13 @@ export async function loadReportDetail(
     args.type === "am_prep" ||
     args.type === "mid_day"
   ) {
-    return loadChecklistDetail(service, { viewer: args.viewer, instanceId: args.id, type: args.type });
+    return loadChecklistDetail(service, { viewer: args.viewer, instanceId: args.id, locationId: args.locationId, type: args.type });
   }
   if (args.type === "cash") {
-    return loadCashDetail(service, { viewer: args.viewer, id: args.id });
+    return loadCashDetail(service, { viewer: args.viewer, id: args.id, locationId: args.locationId });
   }
   if (args.type === "pm") {
-    return loadPmDetail(service, { viewer: args.viewer, id: args.id });
+    return loadPmDetail(service, { viewer: args.viewer, id: args.id, locationId: args.locationId });
   }
   return null;
 }
