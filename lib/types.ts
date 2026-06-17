@@ -162,7 +162,8 @@ export type ReportType =
   | "cash_report"
   | "opening_report"
   | "training_report"
-  | "special_report";
+  | "special_report"
+  | "pm_report";
 
 /**
  * Generic assignment-down record per SPEC_AMENDMENTS.md C.42. One table

@@ -7,7 +7,7 @@ import { formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import type {
-  Attitude,
+  Gradient,
   EmployeeEval,
   PmReportForEdit,
   ShiftWrapUpRow,
@@ -29,15 +29,15 @@ interface Props {
 // Per-card save state.
 type SaveState = "idle" | "saving" | "saved" | "error";
 
-// ─── Attitude i18n map — Record<Attitude, TranslationKey> avoids string-concat casts ──
+// ─── Gradient i18n map — Record<Gradient, TranslationKey> avoids string-concat casts ──
 
-const ATTITUDE_LABEL: Record<Attitude, TranslationKey> = {
+const GRADIENT_LABEL: Record<Gradient, TranslationKey> = {
   great: "pm.attitude.great",
   good: "pm.attitude.good",
   needs_work: "pm.attitude.needs_work",
 };
 
-const ATTITUDE_VALUES: Attitude[] = ["great", "good", "needs_work"];
+const GRADIENT_VALUES: Gradient[] = ["great", "good", "needs_work"];
 
 // ─── Timeliness badge ─────────────────────────────────────────────────────────
 
@@ -73,8 +73,10 @@ function EmployeeEvalCard({
   readOnly: boolean;
 }) {
   const { t } = useTranslation();
-  const [onTime, setOnTime] = useState<boolean>(existing?.onTime ?? true);
-  const [attitude, setAttitude] = useState<Attitude>(existing?.attitude ?? "good");
+  const [arrivedReady, setArrivedReady] = useState<Gradient>(existing?.arrivedReady ?? "good");
+  const [attitude, setAttitude] = useState<Gradient>(existing?.attitude ?? "good");
+  const [production, setProduction] = useState<Gradient>(existing?.production ?? "good");
+  const [teamPlayer, setTeamPlayer] = useState<Gradient>(existing?.teamPlayer ?? "good");
   const [area, setArea] = useState(existing?.areaToImprove ?? "");
   const [note, setNote] = useState(existing?.note ?? "");
   const [saveState, setSaveState] = useState<SaveState>("idle");
@@ -92,8 +94,10 @@ function EmployeeEvalCard({
           action: "save_eval",
           locationId,
           employeeId,
-          onTime,
+          arrivedReady,
           attitude,
+          production,
+          teamPlayer,
           areaToImprove: area.trim() || null,
           note: note.trim() || null,
         }),
@@ -123,28 +127,28 @@ function EmployeeEvalCard({
     <div className="rounded-xl border-2 border-co-border bg-co-surface p-4">
       <p className="mb-3 text-sm font-bold text-co-text">{employeeName}</p>
 
-      {/* On-time toggle */}
+      {/* Arrived ready 3-way */}
       <div className="mb-3">
         <p className="mb-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-co-text-dim">
-          {t("pm.eval.on_time")}
+          {t("pm.eval.arrived_ready")}
         </p>
         <div className="flex gap-2">
-          {([true, false] as const).map((v) => (
+          {GRADIENT_VALUES.map((g) => (
             <button
-              key={String(v)}
+              key={g}
               type="button"
               disabled={readOnly}
-              onClick={() => !readOnly && setOnTime(v)}
+              onClick={() => !readOnly && setArrivedReady(g)}
               className={`
-                flex-1 rounded-md border-2 px-3 py-2 text-sm font-semibold transition
+                flex-1 rounded-md border-2 px-2 py-2 text-sm font-semibold transition
                 focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
                 disabled:cursor-not-allowed disabled:opacity-60
-                ${onTime === v
+                ${arrivedReady === g
                   ? "border-co-text bg-co-gold text-co-text"
                   : "border-co-border-2 bg-co-surface text-co-text-muted hover:border-co-text hover:text-co-text"}
               `}
             >
-              {v ? t("pm.my_feedback.on_time_yes") : t("pm.my_feedback.on_time_no")}
+              {t(GRADIENT_LABEL[g])}
             </button>
           ))}
         </div>
@@ -156,22 +160,76 @@ function EmployeeEvalCard({
           {t("pm.eval.attitude")}
         </p>
         <div className="flex gap-2">
-          {ATTITUDE_VALUES.map((a) => (
+          {GRADIENT_VALUES.map((g) => (
             <button
-              key={a}
+              key={g}
               type="button"
               disabled={readOnly}
-              onClick={() => !readOnly && setAttitude(a)}
+              onClick={() => !readOnly && setAttitude(g)}
               className={`
                 flex-1 rounded-md border-2 px-2 py-2 text-sm font-semibold transition
                 focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
                 disabled:cursor-not-allowed disabled:opacity-60
-                ${attitude === a
+                ${attitude === g
                   ? "border-co-text bg-co-gold text-co-text"
                   : "border-co-border-2 bg-co-surface text-co-text-muted hover:border-co-text hover:text-co-text"}
               `}
             >
-              {t(ATTITUDE_LABEL[a])}
+              {t(GRADIENT_LABEL[g])}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Production 3-way */}
+      <div className="mb-3">
+        <p className="mb-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-co-text-dim">
+          {t("pm.eval.production")}
+        </p>
+        <div className="flex gap-2">
+          {GRADIENT_VALUES.map((g) => (
+            <button
+              key={g}
+              type="button"
+              disabled={readOnly}
+              onClick={() => !readOnly && setProduction(g)}
+              className={`
+                flex-1 rounded-md border-2 px-2 py-2 text-sm font-semibold transition
+                focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
+                disabled:cursor-not-allowed disabled:opacity-60
+                ${production === g
+                  ? "border-co-text bg-co-gold text-co-text"
+                  : "border-co-border-2 bg-co-surface text-co-text-muted hover:border-co-text hover:text-co-text"}
+              `}
+            >
+              {t(GRADIENT_LABEL[g])}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Team player 3-way */}
+      <div className="mb-3">
+        <p className="mb-1.5 text-xs font-semibold uppercase tracking-[0.12em] text-co-text-dim">
+          {t("pm.eval.team_player")}
+        </p>
+        <div className="flex gap-2">
+          {GRADIENT_VALUES.map((g) => (
+            <button
+              key={g}
+              type="button"
+              disabled={readOnly}
+              onClick={() => !readOnly && setTeamPlayer(g)}
+              className={`
+                flex-1 rounded-md border-2 px-2 py-2 text-sm font-semibold transition
+                focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
+                disabled:cursor-not-allowed disabled:opacity-60
+                ${teamPlayer === g
+                  ? "border-co-text bg-co-gold text-co-text"
+                  : "border-co-border-2 bg-co-surface text-co-text-muted hover:border-co-text hover:text-co-text"}
+              `}
+            >
+              {t(GRADIENT_LABEL[g])}
             </button>
           ))}
         </div>

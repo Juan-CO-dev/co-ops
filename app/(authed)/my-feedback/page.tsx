@@ -15,7 +15,7 @@
  */
 
 import { serverT } from "@/lib/i18n/server";
-import type { Attitude } from "@/lib/pm-report";
+import type { Gradient } from "@/lib/pm-report";
 import { loadMyFeedback } from "@/lib/pm-report";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { formatDateLabel } from "@/lib/i18n/format";
@@ -24,8 +24,8 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 
 import { DashboardBackLink } from "@/components/DashboardBackLink";
 
-/** Maps each Attitude value to its pm.attitude.* translation key. */
-const ATTITUDE_KEY: Record<Attitude, TranslationKey> = {
+/** Maps each Gradient value to its pm.attitude.* translation key. */
+const GRADIENT_KEY: Record<Gradient, TranslationKey> = {
   great: "pm.attitude.great",
   good: "pm.attitude.good",
   needs_work: "pm.attitude.needs_work",
@@ -86,23 +86,24 @@ export default async function MyFeedbackPage() {
                 </p>
 
                 <div className="flex flex-wrap items-center gap-2">
-                  {/* On-time status */}
-                  <span
-                    className={[
-                      "rounded-full border-2 px-3 py-0.5 text-sm font-semibold",
-                      item.onTime
-                        ? "border-co-success bg-co-success/10 text-co-success"
-                        : "border-co-danger bg-co-danger/10 text-co-danger",
-                    ].join(" ")}
-                  >
-                    {item.onTime
-                      ? serverT(lang, "pm.my_feedback.on_time_yes")
-                      : serverT(lang, "pm.my_feedback.on_time_no")}
+                  {/* Arrived ready */}
+                  <span className="rounded-full border-2 border-co-border bg-co-bg px-3 py-0.5 text-sm font-semibold text-co-text">
+                    {serverT(lang, "pm.eval.arrived_ready")}: {serverT(lang, GRADIENT_KEY[item.arrivedReady])}
                   </span>
 
                   {/* Attitude */}
                   <span className="rounded-full border-2 border-co-border bg-co-bg px-3 py-0.5 text-sm font-semibold text-co-text">
-                    {serverT(lang, ATTITUDE_KEY[item.attitude])}
+                    {serverT(lang, "pm.eval.attitude")}: {serverT(lang, GRADIENT_KEY[item.attitude])}
+                  </span>
+
+                  {/* Production */}
+                  <span className="rounded-full border-2 border-co-border bg-co-bg px-3 py-0.5 text-sm font-semibold text-co-text">
+                    {serverT(lang, "pm.eval.production")}: {serverT(lang, GRADIENT_KEY[item.production])}
+                  </span>
+
+                  {/* Team player */}
+                  <span className="rounded-full border-2 border-co-border bg-co-bg px-3 py-0.5 text-sm font-semibold text-co-text">
+                    {serverT(lang, "pm.eval.team_player")}: {serverT(lang, GRADIENT_KEY[item.teamPlayer])}
                   </span>
 
                   {/* MVP badge */}

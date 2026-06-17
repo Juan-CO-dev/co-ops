@@ -9,14 +9,16 @@ export interface PmActor {
   level: number;
 }
 
-export type Attitude = "great" | "good" | "needs_work";
+export type Gradient = "great" | "good" | "needs_work";
 
 export interface EmployeeEval {
   id: string;
   employeeId: string;
   employeeName: string | null;
-  onTime: boolean;
-  attitude: Attitude;
+  arrivedReady: Gradient;
+  attitude: Gradient;
+  production: Gradient;
+  teamPlayer: Gradient;
   areaToImprove: string | null;
   note: string | null; // present ONLY in KH+ loaders; null/omitted for employee surface
 }
@@ -144,10 +146,10 @@ export async function loadPmReportForEdit(
 
   const { data: evalRows } = await service
     .from("pm_employee_evals")
-    .select("id, employee_id, on_time, attitude, area_to_improve, note")
+    .select("id, employee_id, arrived_ready, attitude, production, team_player, area_to_improve, note")
     .eq("pm_report_id", report.id)
     .is("superseded_at", null);
-  const rows = (evalRows ?? []) as Array<{ id: string; employee_id: string; on_time: boolean; attitude: Attitude; area_to_improve: string | null; note: string | null }>;
+  const rows = (evalRows ?? []) as Array<{ id: string; employee_id: string; arrived_ready: Gradient; attitude: Gradient; production: Gradient; team_player: Gradient; area_to_improve: string | null; note: string | null }>;
   const ids = [...new Set(rows.map((r) => r.employee_id))];
   const nameById = new Map<string, string>();
   if (ids.length) {
@@ -156,7 +158,8 @@ export async function loadPmReportForEdit(
   }
   const evals: EmployeeEval[] = rows.map((r) => ({
     id: r.id, employeeId: r.employee_id, employeeName: nameById.get(r.employee_id) ?? null,
-    onTime: r.on_time, attitude: r.attitude, areaToImprove: r.area_to_improve, note: r.note,
+    arrivedReady: r.arrived_ready, attitude: r.attitude, production: r.production, teamPlayer: r.team_player,
+    areaToImprove: r.area_to_improve, note: r.note,
   }));
   return { id: report.id, status: report.status, mvpUserId: report.mvp_user_id, mvpNote: report.mvp_note, submittedAt: report.submitted_at, submittedByName, evals, wrapUp };
 }
@@ -165,8 +168,10 @@ export interface MyFeedbackItem {
   id: string;
   date: string;
   locationId: string;
-  onTime: boolean;
-  attitude: Attitude;
+  arrivedReady: Gradient;
+  attitude: Gradient;
+  production: Gradient;
+  teamPlayer: Gradient;
   areaToImprove: string | null;
   wasMvp: boolean;
 }
@@ -181,10 +186,10 @@ export async function loadMyFeedback(
 ): Promise<MyFeedbackItem[]> {
   const { data: rows } = await service
     .from("pm_employee_evals")
-    .select("id, pm_report_id, location_id, on_time, attitude, area_to_improve") // NOTE: no `note`
+    .select("id, pm_report_id, location_id, arrived_ready, attitude, production, team_player, area_to_improve") // NOTE: no `note`
     .eq("employee_id", args.userId)
     .is("superseded_at", null);
-  const evalRows = (rows ?? []) as Array<{ id: string; pm_report_id: string; location_id: string; on_time: boolean; attitude: Attitude; area_to_improve: string | null }>;
+  const evalRows = (rows ?? []) as Array<{ id: string; pm_report_id: string; location_id: string; arrived_ready: Gradient; attitude: Gradient; production: Gradient; team_player: Gradient; area_to_improve: string | null }>;
   if (evalRows.length === 0) return [];
 
   // Only surface evals whose parent report is submitted; pull date + mvp.
@@ -204,7 +209,8 @@ export async function loadMyFeedback(
       if (!rep || rep.status === "open") return null; // hide unsubmitted
       return {
         id: r.id, date: rep.report_date, locationId: r.location_id,
-        onTime: r.on_time, attitude: r.attitude, areaToImprove: r.area_to_improve,
+        arrivedReady: r.arrived_ready, attitude: r.attitude, production: r.production, teamPlayer: r.team_player,
+        areaToImprove: r.area_to_improve,
         wasMvp: rep.mvp_user_id === args.userId,
       } satisfies MyFeedbackItem;
     })
@@ -240,7 +246,8 @@ export async function saveEmployeeEval(
   service: SupabaseClient,
   args: {
     pmReportId: string; locationId: string; employeeId: string;
-    onTime: boolean; attitude: Attitude; areaToImprove: string | null; note: string | null;
+    arrivedReady: Gradient; attitude: Gradient; production: Gradient; teamPlayer: Gradient;
+    areaToImprove: string | null; note: string | null;
     actor: PmActor;
   },
 ): Promise<{ id: string }> {
@@ -255,7 +262,8 @@ export async function saveEmployeeEval(
     .from("pm_employee_evals")
     .insert({
       pm_report_id: args.pmReportId, location_id: args.locationId, employee_id: args.employeeId,
-      on_time: args.onTime, attitude: args.attitude, area_to_improve: args.areaToImprove,
+      arrived_ready: args.arrivedReady, attitude: args.attitude, production: args.production,
+      team_player: args.teamPlayer, area_to_improve: args.areaToImprove,
       note: args.note, author_id: args.actor.userId,
     })
     .select("id")

@@ -10,19 +10,19 @@ import {
   saveEmployeeEval,
   setMvp,
   submitPmReport,
-  type Attitude,
+  type Gradient,
 } from "@/lib/pm-report";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const ATTITUDE_VALUES: Attitude[] = ["great", "good", "needs_work"];
+const GRADIENT_VALUES: Gradient[] = ["great", "good", "needs_work"];
 const MAX_TEXT = 2000;
 
 function isUuid(v: unknown): v is string {
   return typeof v === "string" && UUID_RE.test(v);
 }
 
-function isAttitude(v: unknown): v is Attitude {
-  return typeof v === "string" && (ATTITUDE_VALUES as string[]).includes(v);
+function isGradient(v: unknown): v is Gradient {
+  return typeof v === "string" && (GRADIENT_VALUES as string[]).includes(v);
 }
 
 function isNullableString(v: unknown, maxLen: number): v is string | null {
@@ -59,8 +59,10 @@ export async function POST(req: NextRequest) {
   // --- action dispatch ---
   if (b.action === "save_eval") {
     if (!isUuid(b.employeeId)) return jsonError(400, "invalid_payload", { field: "employeeId" });
-    if (typeof b.onTime !== "boolean") return jsonError(400, "invalid_payload", { field: "onTime" });
-    if (!isAttitude(b.attitude)) return jsonError(400, "invalid_payload", { field: "attitude" });
+    if (!isGradient(b.arrivedReady)) return jsonError(400, "invalid_payload", { field: "arrivedReady" });
+    if (!isGradient(b.attitude)) return jsonError(400, "invalid_payload", { field: "attitude" });
+    if (!isGradient(b.production)) return jsonError(400, "invalid_payload", { field: "production" });
+    if (!isGradient(b.teamPlayer)) return jsonError(400, "invalid_payload", { field: "teamPlayer" });
     if (!isNullableString(b.areaToImprove, MAX_TEXT)) return jsonError(400, "invalid_payload", { field: "areaToImprove" });
     if (!isNullableString(b.note, MAX_TEXT)) return jsonError(400, "invalid_payload", { field: "note" });
 
@@ -70,8 +72,10 @@ export async function POST(req: NextRequest) {
         pmReportId,
         locationId,
         employeeId: b.employeeId,
-        onTime: b.onTime,
+        arrivedReady: b.arrivedReady,
         attitude: b.attitude,
+        production: b.production,
+        teamPlayer: b.teamPlayer,
         areaToImprove: typeof b.areaToImprove === "string" ? b.areaToImprove : null,
         note: typeof b.note === "string" ? b.note : null,
         actor,
