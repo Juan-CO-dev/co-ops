@@ -51,6 +51,8 @@ const NAV_LINKS: NavLink[] = [
   { key: "nav.comms", href: "/comms", scoped: false },
   { key: "nav.profile", href: "/profile", scoped: false },
   { key: "nav.settings", href: "/settings", scoped: false },
+  // My Feedback — unified (per-user, all levels; no ?location= suffix).
+  { key: "nav.my_feedback", href: "/my-feedback", scoped: false },
 ];
 
 const CHIP_CLASS =
