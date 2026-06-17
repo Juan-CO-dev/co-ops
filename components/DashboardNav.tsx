@@ -34,7 +34,8 @@ interface NavLink {
     | "nav.written_reports"
     | "nav.catering"
     | "nav.profile"
-    | "nav.settings";
+    | "nav.settings"
+    | "nav.mid_shift";
   href: string;
 }
 
@@ -67,6 +68,11 @@ export function DashboardNav({ language, actorLevel }: DashboardNavProps) {
         {serverT(language, "nav.section_label")}
       </p>
       <div className="flex flex-wrap gap-2">
+        {actorLevel >= 4 ? (
+          <a href="/mid-shift" className={CHIP_CLASS}>
+            {serverT(language, "nav.mid_shift")}
+          </a>
+        ) : null}
         {NAV_LINKS.map(({ key, href }) => (
           <a key={href} href={href} className={CHIP_CLASS}>
             {serverT(language, key)}
