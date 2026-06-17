@@ -27,6 +27,16 @@ const TYPE_LABEL_KEYS: Record<ReportTypeKey, TranslationKey> = {
   pm: "reports.type.pm",
 };
 
+// Map DB status enum → translation key. Mirrors ChecklistReportDetail's
+// STATUS_LABEL_KEYS; partial because status values outside this set
+// (e.g. incomplete_confirmed, auto_finalized) fall back to the raw string.
+const STATUS_LABEL_KEYS: Partial<Record<string, TranslationKey>> = {
+  open: "reports.status.open",
+  in_progress: "reports.status.in_progress",
+  submitted: "reports.status.submitted",
+  confirmed: "reports.status.confirmed",
+};
+
 /** Format cents as a dollar string, e.g. 150 → "$1.50". */
 function formatCents(cents: number): string {
   return `$${(Math.abs(cents) / 100).toFixed(2)}`;
@@ -57,6 +67,8 @@ export function ReportList({ items, locationId, language, viewerLevel }: ReportL
         const href = `/reports/${item.type}/${item.id}?location=${locationId}`;
         const dateLabel = formatDateLabel(item.date, language);
         const typeLabel = t(TYPE_LABEL_KEYS[item.type]);
+        const statusKey = STATUS_LABEL_KEYS[item.status];
+        const statusLabel = statusKey ? t(statusKey) : item.status;
         const s = item.signalSummary;
 
         return (
@@ -78,7 +90,7 @@ export function ReportList({ items, locationId, language, viewerLevel }: ReportL
                   </span>
                 ) : null}
                 <span>
-                  {t("reports.col.status")}: {item.status}
+                  {t("reports.col.status")}: {statusLabel}
                 </span>
               </div>
 

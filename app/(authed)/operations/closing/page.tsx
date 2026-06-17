@@ -71,6 +71,8 @@ import type {
   ChecklistTemplateItem,
 } from "@/lib/types";
 
+import { ActionLink } from "@/components/ActionButton";
+
 import { ClosingClient, type ClosingInitialState, type StatusBanner } from "./closing-client";
 
 const OPERATIONAL_TZ = "America/New_York";
@@ -251,6 +253,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
         <NoInstanceView
           locationLabel={`${locationRow.code} · ${locationRow.name}`}
           dateLabel={formatDateLabel(targetDate, auth.user.language)}
+          language={auth.user.language}
         />
       );
     }
@@ -502,17 +505,9 @@ function NoTemplateView({ locationLabel, language }: { locationLabel: string; la
         <p className="text-sm text-co-text-muted">
           {serverT(language, "closing.no_template.body")}
         </p>
-        <a
-          href="/dashboard"
-          className="
-            mt-4 inline-flex min-h-[48px] items-center justify-center rounded-md
-            border-2 border-co-text bg-co-surface px-4 text-sm font-bold uppercase tracking-[0.12em] text-co-text
-            transition hover:bg-co-surface-2
-            focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
-          "
-        >
+        <ActionLink href="/dashboard" variant="secondary" className="mt-4">
           {serverT(language, "closing.no_template.return_dashboard")}
-        </a>
+        </ActionLink>
       </section>
     </main>
   );
@@ -521,31 +516,25 @@ function NoTemplateView({ locationLabel, language }: { locationLabel: string; la
 function NoInstanceView({
   locationLabel,
   dateLabel,
+  language,
 }: {
   locationLabel: string;
   dateLabel: string;
+  language: Language;
 }) {
   return (
     <main className="mx-auto max-w-2xl p-4 sm:p-6">
       <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
-        Closing checklist
+        {serverT(language, "closing.no_template.heading")}
       </p>
       <h1 className="mt-1 text-2xl font-extrabold text-co-text">{locationLabel}</h1>
       <section className="mt-6 rounded-2xl border-2 border-co-border bg-co-surface p-5 text-center sm:p-6">
         <p className="text-sm text-co-text-muted">
-          No closing was filed for {dateLabel} at this location.
+          {serverT(language, "closing.no_instance.body", { date: dateLabel })}
         </p>
-        <a
-          href="/dashboard"
-          className="
-            mt-4 inline-flex min-h-[48px] items-center justify-center rounded-md
-            border-2 border-co-text bg-co-surface px-4 text-sm font-bold uppercase tracking-[0.12em] text-co-text
-            transition hover:bg-co-surface-2
-            focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
-          "
-        >
-          Return to dashboard
-        </a>
+        <ActionLink href="/dashboard" variant="secondary" className="mt-4">
+          {serverT(language, "closing.no_template.return_dashboard")}
+        </ActionLink>
       </section>
     </main>
   );

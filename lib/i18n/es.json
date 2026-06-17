@@ -151,6 +151,7 @@
   "cash.readout.short": "{amount} de falta",
   "cash.readout.even": "Exacto",
   "cash.staff.add_placeholder": "Agregar un nombre (no usuario)",
+  "cash.staff.add": "+ Agregar",
   "cash.submit.button": "Firmar y enviar depósito",
   "cash.submit.submitting": "Enviando…",
   "cash.error.pin_invalid": "PIN incorrecto.",
@@ -323,6 +324,7 @@
   "closing.no_template.heading": "Lista de cierre",
   "closing.no_template.body": "No hay plantilla de cierre configurada para esta ubicación. Un administrador debe crear una antes de abrir un cierre aquí.",
   "closing.no_template.return_dashboard": "Volver al inicio",
+  "closing.no_instance.body": "No se registró ningún cierre para {date} en esta ubicación.",
 
   "auth.pin_modal.title": "Confirma con tu PIN",
   "auth.pin_modal.subtitle": "Pon tu PIN de 4 dígitos para confirmar.",

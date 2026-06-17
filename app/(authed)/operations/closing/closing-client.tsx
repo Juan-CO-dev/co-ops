@@ -59,6 +59,7 @@ import {
   type ChecklistMarkNotDoneResult,
 } from "@/components/ChecklistItem";
 import { ActionButton, ActionLink } from "@/components/ActionButton";
+import { DashboardBackLink } from "@/components/DashboardBackLink";
 import { PinConfirmModal } from "@/components/auth/PinConfirmModal";
 import { ReportReferenceItem } from "@/components/ReportReferenceItem";
 import type { ChecklistChainEntry } from "@/lib/checklists";
@@ -776,20 +777,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
           SPEC_AMENDMENTS.md C.39); reserved zone has min-h sized so this
           back-link doesn't collide. */}
       <div className="mb-3">
-        <a
-          href="/dashboard"
-          aria-label={t("closing.page.dashboard_back_aria")}
-          className="
-            inline-flex min-h-[44px] items-center gap-1.5 -ml-2 px-2 py-2
-            text-xs font-bold uppercase tracking-[0.14em] text-co-text-muted
-            transition hover:text-co-text
-            focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
-            rounded-md
-          "
-        >
-          <ChevronLeftIcon />
-          <span>{t("closing.page.dashboard_back")}</span>
-        </a>
+        <DashboardBackLink />
       </div>
 
       {/* Header */}
@@ -1468,10 +1456,3 @@ function ChevronUpIcon() {
   );
 }
 
-function ChevronLeftIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path d="M10 3L5 8L10 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}

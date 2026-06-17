@@ -315,7 +315,7 @@ export function CashClient({
             onClick={() => setExtraNames([...extraNames, ""])}
             className="self-start rounded-md border-2 border-co-border-2 bg-co-surface px-3 py-1.5 text-sm font-semibold text-co-text-muted hover:border-co-text hover:text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
           >
-            + add
+            {t("cash.staff.add")}
           </button>
         </div>
       </section>
