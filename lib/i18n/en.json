@@ -761,5 +761,16 @@
   "reports.status.open": "Open",
   "reports.status.in_progress": "In progress",
   "reports.status.submitted": "Submitted",
-  "reports.status.confirmed": "Confirmed"
+  "reports.status.confirmed": "Confirmed",
+
+  "reports.cash.projected": "Projected",
+  "reports.cash.drawer": "Drawer total",
+  "reports.cash.float": "Float",
+  "reports.cash.deposit": "Deposit",
+  "reports.cash.over_short": "Over / short",
+  "reports.cash.tips": "Cash tips",
+  "reports.cash.signed_by": "Signed by",
+  "reports.cash.on_shift": "On shift",
+
+  "reports.pm.submitted_by": "Submitted by"
 }

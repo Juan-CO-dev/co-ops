@@ -274,7 +274,235 @@ async function loadChecklistDetail(
   return { kind: "checklist", type: args.type, date: inst.date, status: inst.status, items };
 }
 
-export type ReportDetail = ChecklistReportDetail; // cash + pm variants added in Task 4
+// ─────────────────────────────────────────────────────────────────────────────
+// Task 4: Cash detail loader
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface OnShiftEntry {
+  userId: string | null;
+  name: string;
+}
+
+export interface CashReportDetail {
+  kind: "cash";
+  date: string;
+  locationId: string;
+  projectedCents: number;
+  drawerTotalCents: number;
+  floatCents: number;
+  depositCents: number;
+  overShortCents: number;
+  cashTipsCents: number;
+  countMethod: "hand" | "denomination";
+  onShift: OnShiftEntry[];
+  signedByName: string | null;
+  signedAt: string;
+  /** null unless viewer.level >= REPORTS_HUB_NOTES_LEVEL (5) — REDACTED below L5 */
+  overShortNote: string | null;
+}
+
+const CASH_ROW =
+  "id, location_id, report_date, projected_cents, drawer_total_cents, float_cents, deposit_cents, over_short_cents, cash_tips_cents, count_method, on_shift, over_short_note, signed_by, signed_at";
+
+async function loadCashDetail(
+  service: SupabaseClient,
+  args: { viewer: Viewer; id: string },
+): Promise<CashReportDetail | null> {
+  // SECURITY: L4+ only
+  if (args.viewer.level < REPORTS_HUB_CASH_LEVEL) return null;
+
+  const { data } = await service
+    .from("cash_reports")
+    .select(CASH_ROW)
+    .eq("id", args.id)
+    .is("superseded_at", null)
+    .maybeSingle<Record<string, unknown>>();
+  if (!data) return null;
+
+  // Resolve signer name
+  let signedByName: string | null = null;
+  const signedBy = data.signed_by as string | null;
+  if (signedBy) {
+    const { data: u } = await service
+      .from("users")
+      .select("name")
+      .eq("id", signedBy)
+      .maybeSingle<{ name: string }>();
+    signedByName = u?.name ?? null;
+  }
+
+  const showNote = args.viewer.level >= REPORTS_HUB_NOTES_LEVEL;
+
+  return {
+    kind: "cash",
+    date: data.report_date as string,
+    locationId: data.location_id as string,
+    projectedCents: data.projected_cents as number,
+    drawerTotalCents: data.drawer_total_cents as number,
+    floatCents: data.float_cents as number,
+    depositCents: data.deposit_cents as number,
+    overShortCents: data.over_short_cents as number,
+    cashTipsCents: data.cash_tips_cents as number,
+    countMethod: data.count_method as "hand" | "denomination",
+    onShift: (data.on_shift as OnShiftEntry[]) ?? [],
+    signedByName,
+    signedAt: data.signed_at as string,
+    // SECURITY: overShortNote ONLY if viewer.level >= REPORTS_HUB_NOTES_LEVEL (5)
+    overShortNote: showNote ? ((data.over_short_note as string | null) ?? null) : null,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Task 4: PM detail loader
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type Gradient = "great" | "good" | "needs_work";
+
+export interface PmEvalDetail {
+  id: string;
+  employeeId: string;
+  employeeName: string | null;
+  arrivedReady: Gradient;
+  attitude: Gradient;
+  production: Gradient;
+  teamPlayer: Gradient;
+  areaToImprove: string | null;
+  /** null unless viewer.level >= REPORTS_HUB_NOTES_LEVEL (5) — REDACTED below L5 */
+  note: string | null;
+}
+
+export interface PmReportDetail {
+  kind: "pm";
+  date: string;
+  locationId: string;
+  status: string;
+  submittedByName: string | null;
+  submittedAt: string | null;
+  mvpUserId: string | null;
+  mvpName: string | null;
+  mvpNote: string | null;
+  evals: PmEvalDetail[];
+}
+
+async function loadPmDetail(
+  service: SupabaseClient,
+  args: { viewer: Viewer; id: string },
+): Promise<PmReportDetail | null> {
+  const { data: report } = await service
+    .from("pm_reports")
+    .select("id, location_id, report_date, status, mvp_user_id, mvp_note, submitted_at, submitted_by")
+    .eq("id", args.id)
+    .is("superseded_at", null)
+    .maybeSingle<{
+      id: string;
+      location_id: string;
+      report_date: string;
+      status: string;
+      mvp_user_id: string | null;
+      mvp_note: string | null;
+      submitted_at: string | null;
+      submitted_by: string | null;
+    }>();
+  if (!report) return null;
+
+  // Tier logic: L4+ see all evals; L3- see only their own eval (or null if none)
+  const isManager = args.viewer.level >= REPORTS_HUB_CASH_LEVEL; // L4+
+  const showNotes = args.viewer.level >= REPORTS_HUB_NOTES_LEVEL; // L5+
+
+  // Load evals — always select note (service-role bypasses RLS); app-layer
+  // redaction below sets note to null for employees and for managers below L5.
+  // SECURITY: employee (< L4) sees ONLY their own eval via the .eq() filter.
+  const evalCols = "id, employee_id, arrived_ready, attitude, production, team_player, area_to_improve, note";
+  let evalQuery = service
+    .from("pm_employee_evals")
+    .select(evalCols)
+    .eq("pm_report_id", report.id)
+    .is("superseded_at", null);
+
+  // SECURITY: employee (< L4) sees ONLY their own eval
+  if (!isManager) {
+    evalQuery = evalQuery.eq("employee_id", args.viewer.userId);
+  }
+
+  const { data: evalRows } = await evalQuery;
+  type EvalRow = {
+    id: string;
+    employee_id: string;
+    arrived_ready: Gradient;
+    attitude: Gradient;
+    production: Gradient;
+    team_player: Gradient;
+    area_to_improve: string | null;
+    note: string | null;
+  };
+  const rows = (evalRows ?? []) as unknown as EvalRow[];
+
+  // SECURITY: employee (< L4) with no eval in this report → return null
+  if (!isManager && rows.length === 0) return null;
+
+  // Resolve employee names
+  const empIds = [...new Set(rows.map((r) => r.employee_id))];
+  const nameById = new Map<string, string>();
+  if (empIds.length) {
+    const { data: users } = await service.from("users").select("id, name").in("id", empIds);
+    for (const u of (users ?? []) as Array<{ id: string; name: string }>) nameById.set(u.id, u.name);
+  }
+
+  // Resolve submitted-by name
+  let submittedByName: string | null = null;
+  if (report.submitted_by) {
+    const { data: sb } = await service
+      .from("users")
+      .select("name")
+      .eq("id", report.submitted_by)
+      .maybeSingle<{ name: string }>();
+    submittedByName = sb?.name ?? null;
+  }
+
+  // Resolve MVP name
+  let mvpName: string | null = null;
+  if (report.mvp_user_id) {
+    const { data: mv } = await service
+      .from("users")
+      .select("name")
+      .eq("id", report.mvp_user_id)
+      .maybeSingle<{ name: string }>();
+    mvpName = mv?.name ?? null;
+  }
+
+  const evals: PmEvalDetail[] = rows.map((r) => ({
+    id: r.id,
+    employeeId: r.employee_id,
+    employeeName: nameById.get(r.employee_id) ?? null,
+    arrivedReady: r.arrived_ready,
+    attitude: r.attitude,
+    production: r.production,
+    teamPlayer: r.team_player,
+    areaToImprove: r.area_to_improve ?? null,
+    // SECURITY: note is present ONLY if manager (isManager); further redacted below L5
+    // Employees never get note (not even selected in the query above)
+    note: isManager ? (showNotes ? (r.note ?? null) : null) : null,
+  }));
+
+  return {
+    kind: "pm",
+    date: report.report_date,
+    locationId: report.location_id,
+    status: report.status,
+    submittedByName,
+    submittedAt: report.submitted_at ?? null,
+    mvpUserId: report.mvp_user_id ?? null,
+    mvpName,
+    mvpNote: isManager ? (report.mvp_note ?? null) : null,
+    evals,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ReportDetail union + dispatcher
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ReportDetail = ChecklistReportDetail | CashReportDetail | PmReportDetail;
 
 export async function loadReportDetail(
   service: SupabaseClient,
@@ -288,5 +516,11 @@ export async function loadReportDetail(
   ) {
     return loadChecklistDetail(service, { viewer: args.viewer, instanceId: args.id, type: args.type });
   }
-  return null; // cash + pm in Task 4
+  if (args.type === "cash") {
+    return loadCashDetail(service, { viewer: args.viewer, id: args.id });
+  }
+  if (args.type === "pm") {
+    return loadPmDetail(service, { viewer: args.viewer, id: args.id });
+  }
+  return null;
 }

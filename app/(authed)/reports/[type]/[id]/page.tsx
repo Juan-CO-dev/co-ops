@@ -19,7 +19,9 @@ import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import {
   REPORTS_HUB_CASH_LEVEL,
   loadReportDetail,
+  type CashReportDetail,
   type ChecklistReportDetail,
+  type PmReportDetail,
   type ReportDetail,
   type ReportTypeKey,
   type Viewer,
@@ -27,7 +29,9 @@ import {
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
+import { CashReportDetailView } from "@/components/reports-hub/CashReportDetail";
 import { ChecklistReportDetailView } from "@/components/reports-hub/ChecklistReportDetail";
+import { PmReportDetailView } from "@/components/reports-hub/PmReportDetail";
 
 const VALID_TYPES: ReportTypeKey[] = ["opening", "closing", "am_prep", "mid_day", "cash", "pm"];
 
@@ -104,7 +108,15 @@ export default async function ReportDetailPage({ params, searchParams }: PagePro
         <ChecklistReportDetailView detail={detail as ChecklistReportDetail} language={lang} />
       ) : null}
 
-      {/* Task 4: cash + pm branches added here */}
+      {/* Task 4: cash detail view */}
+      {detail.kind === "cash" ? (
+        <CashReportDetailView detail={detail as CashReportDetail} language={lang} />
+      ) : null}
+
+      {/* Task 4: PM detail view */}
+      {detail.kind === "pm" ? (
+        <PmReportDetailView detail={detail as PmReportDetail} language={lang} />
+      ) : null}
     </main>
   );
 }
