@@ -1,4 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { isPrepData } from "@/lib/prep";
+import { FRIDGE_DEFAULT_SAFE_MAX_F } from "@/lib/maintenance";
 
 export const REPORTS_HUB_CASH_LEVEL = 4; // cash visible KH+
 export const REPORTS_HUB_NOTES_LEVEL = 5; // notes visible SL+
@@ -532,4 +534,185 @@ export async function loadReportDetail(
     return loadPmDetail(service, { viewer: args.viewer, id: args.id, locationId: args.locationId });
   }
   return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Task 1: computeReportSignals + temp-item id loader
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ReportSignals {
+  done: number;
+  total: number; // required template items (checklist); 1 for cash
+  skipped: number; // required items with no live completion
+  underPar: number; // prep: items with total < par
+  overPar: number; // prep: items with total > par
+  tempFlags: number; // completions on temp items with count_value > 41
+  cashOverShortCents: number | null; // cash only
+}
+
+export interface PrepValueRow {
+  label: string;
+  par: number | null;
+  onHand: number | null;
+  total: number | null;
+  parStatus: "under" | "over" | "at" | "na";
+}
+
+/**
+ * Temp-item template-item ids for a location, from the maintenance registry.
+ * Returns a Set of checklist_template_item UUIDs whose completions represent
+ * fridge temperature readings. Used to gate tempFlags counting — only
+ * completions on these items are considered, never "any count_value > 41"
+ * (prep totals can exceed 41 and would false-positive).
+ */
+export async function loadLocationTempItemIds(
+  service: SupabaseClient,
+  locationId: string,
+): Promise<Set<string>> {
+  const { data } = await service
+    .from("maintenance_equipment")
+    .select("opening_temp_item_id, closing_temp_item_id")
+    .eq("location_id", locationId)
+    .eq("kind", "fridge");
+  const ids = new Set<string>();
+  for (const r of (data ?? []) as Array<{
+    opening_temp_item_id: string | null;
+    closing_temp_item_id: string | null;
+  }>) {
+    if (r.opening_temp_item_id) ids.add(r.opening_temp_item_id);
+    if (r.closing_temp_item_id) ids.add(r.closing_temp_item_id);
+  }
+  return ids;
+}
+
+/**
+ * Per-report derived signals. For checklist instances it loads template items
+ * + live completions (incl. prep_data). `tempItemIds` is the location's temp
+ * item id set — load once via loadLocationTempItemIds and pass in so callers
+ * can reuse across multiple reports. For cash it reads over_short_cents.
+ * Returns signals + (prep) the per-item value rows.
+ *
+ * SECURITY: reads only data already authorised for the caller; no new
+ * exposure — the cash KH+ gate and cross-location IDOR guard are upstream.
+ * prep_data is always narrowed via isPrepData, never trusted as raw JSONB.
+ */
+export async function computeReportSignals(
+  service: SupabaseClient,
+  args: { type: ReportTypeKey; id: string; tempItemIds: Set<string> },
+): Promise<{ signals: ReportSignals; prepValues: PrepValueRow[] }> {
+  const empty: ReportSignals = {
+    done: 0,
+    total: 0,
+    skipped: 0,
+    underPar: 0,
+    overPar: 0,
+    tempFlags: 0,
+    cashOverShortCents: null,
+  };
+
+  if (args.type === "cash") {
+    const { data } = await service
+      .from("cash_reports")
+      .select("over_short_cents")
+      .eq("id", args.id)
+      .is("superseded_at", null)
+      .maybeSingle<{ over_short_cents: number | null }>();
+    return {
+      signals: {
+        ...empty,
+        total: 1,
+        done: 1,
+        cashOverShortCents: data?.over_short_cents ?? null,
+      },
+      prepValues: [],
+    };
+  }
+
+  if (args.type === "pm") {
+    // pm uses its own gradient tally in the detail loader (Task 2)
+    return { signals: empty, prepValues: [] };
+  }
+
+  // checklist types: opening / closing / am_prep / mid_day
+  const { data: inst } = await service
+    .from("checklist_instances")
+    .select("template_id")
+    .eq("id", args.id)
+    .maybeSingle<{ template_id: string }>();
+  if (!inst) return { signals: empty, prepValues: [] };
+
+  const { data: titems } = await service
+    .from("checklist_template_items")
+    .select("id, label, required")
+    .eq("template_id", inst.template_id)
+    .eq("active", true);
+  const items = (titems ?? []) as Array<{ id: string; label: string; required: boolean }>;
+  const labelById = new Map(items.map((i) => [i.id, i.label]));
+
+  const { data: comps } = await service
+    .from("checklist_completions")
+    .select("template_item_id, count_value, prep_data")
+    .eq("instance_id", args.id)
+    .is("superseded_at", null)
+    .is("revoked_at", null);
+  const rows = (comps ?? []) as Array<{
+    template_item_id: string;
+    count_value: number | null;
+    prep_data: unknown;
+  }>;
+  const completedIds = new Set(rows.map((r) => r.template_item_id));
+
+  const requiredItems = items.filter((i) => i.required);
+  const done = requiredItems.filter((i) => completedIds.has(i.id)).length;
+  const total = requiredItems.length;
+  const skipped = total - done;
+
+  let tempFlags = 0;
+  let underPar = 0;
+  let overPar = 0;
+  const prepValues: PrepValueRow[] = [];
+
+  for (const r of rows) {
+    // Temp-flag: ONLY on completions whose template_item_id is in the registry
+    // tempItemIds set AND count_value > 41. Never "any count_value > 41" —
+    // prep totals can exceed 41 and would false-positive.
+    if (
+      args.tempItemIds.has(r.template_item_id) &&
+      r.count_value !== null &&
+      r.count_value > FRIDGE_DEFAULT_SAFE_MAX_F
+    ) {
+      tempFlags++;
+    }
+
+    // Prep values: only completions that carry valid prep_data
+    if (isPrepData(r.prep_data)) {
+      const par = r.prep_data.snapshot.parValue; // number | null
+      const totalVal = r.prep_data.inputs.total ?? null; // number | undefined → number | null
+      const onHand = r.prep_data.inputs.onHand ?? null; // number | undefined → number | null
+      let parStatus: PrepValueRow["parStatus"] = "na";
+      if (par !== null && totalVal !== null) {
+        if (totalVal < par) {
+          underPar++;
+          parStatus = "under";
+        } else if (totalVal > par) {
+          overPar++;
+          parStatus = "over";
+        } else {
+          parStatus = "at";
+        }
+      }
+      prepValues.push({
+        label: labelById.get(r.template_item_id) ?? "—",
+        par,
+        onHand,
+        total: totalVal,
+        parStatus,
+      });
+    }
+  }
+
+  return {
+    signals: { done, total, skipped, underPar, overPar, tempFlags, cashOverShortCents: null },
+    prepValues,
+  };
 }
