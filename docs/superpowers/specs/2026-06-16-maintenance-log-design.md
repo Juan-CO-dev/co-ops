@@ -76,18 +76,27 @@ maintenance_notes
 
 ## 6. `/maintenance` read view (replaces the stub)
 
-Server Component loader (service-role per C.24) aggregates per equipment:
+Two levels: an at-a-glance **overview** of all equipment, and a **rich per-equipment detail** you drill into. Server Component loader (service-role per C.24).
 
-- **Fridges:** pull `count_value` + `completed_at` from the live completions of the fridge's `opening_temp_item_id` **and** `closing_temp_item_id` (across instances/dates) → a single per-fridge timeline:
-  - **Today:** the AM (opening) + PM (closing) reading.
-  - **Trend:** last N days (default 14), each AM/PM reading.
-  - **Out-of-range:** any reading `> safe_max_f` flagged (color + icon).
-  - Latest reading + a simple status (OK / out-of-range / no reading today).
-  - Completion `notes` surfaced inline.
-- **Per equipment (all kinds):** the `maintenance_notes` for it + the checklist `notes` left on its items, merged into one time-ordered stream.
+### 6a. Overview — the equipment health board
+A card/row per equipment (grouped fridges first, then other equipment):
+- **Fridges:** latest reading + status chip (**OK** / **out-of-range >41°F** / **no reading today**), a compact today AM→PM delta, and a mini-sparkline of the last several readings.
+- **Other equipment:** last maintenance note + date (or "no issues logged").
 - **Filters:** equipment · date range · "out-of-range only."
+- Out-of-range fridges sort/flag to the top — the health board surfaces problems first.
 
-Money/temps are read-only here; no writes except the maintenance note.
+### 6b. Rich equipment detail (drill-in) — the requested rich view
+Tap any equipment → a full per-equipment surface (`/maintenance?equipment=<id>`):
+- **Header:** canonical name, kind, current status, safe range (fridges), location.
+- **Fridges — temperature section:**
+  - Full **timeline** of readings (last N days, default 14), each labeled AM (opening) / PM (closing), in/out of range color-coded.
+  - **Trend chart** (a lightweight inline SVG line/bar — no chart lib) of the readings so the shape of performance is visible at a glance.
+  - **Summary stats:** latest, today's AM→PM swing, min / max / avg over the window, and a count of out-of-range readings (the "is this fridge degrading?" signal).
+  - The completion `notes` attached to those readings, inline on the relevant day.
+- **Maintenance history (all equipment):** the full chronological stream of `maintenance_notes` for this equipment **+** the checklist `notes` left on its items, merged — who, when, what.
+- The detail view is the "rich view of the equipment" Juan asked for: temps, trend, stats, and the complete note/maintenance history in one place.
+
+The per-fridge temp aggregation (pull `count_value` + `completed_at` from the live completions of the fridge's `opening_temp_item_id` **and** `closing_temp_item_id` across dates) feeds both levels. Read-only; the only write on these pages is the maintenance note.
 
 ## 7. Dashboard access (nav)
 
@@ -119,8 +128,11 @@ View `/maintenance` + add a maintenance note: **any authenticated shift staff at
 - `scripts/seed-maintenance-equipment.ts` — resolves opening/closing temp item ids per location + inserts the registry (fridges + non-temp equipment).
 - `lib/maintenance.ts` — types (`Equipment`, `FridgeTimeline`, `TempReading`, `MaintenanceNote`), loaders (`loadMaintenanceView`, `loadEquipment`), `addMaintenanceNote` (append-only + audit).
 - `app/api/maintenance/note/route.ts` — POST a maintenance note (gate ≥3, location).
-- `app/(authed)/maintenance/page.tsx` — server loader + read view; `maintenance-client.tsx` — filters + the "add note" form (uses `ActionButton`).
-- `components/maintenance/FridgeTimeline.tsx` — per-fridge temp timeline + out-of-range.
+- `app/(authed)/maintenance/page.tsx` — server loader; routes by `?equipment=<id>` (detail) vs none (overview).
+- `app/(authed)/maintenance/maintenance-client.tsx` — overview filters + the "add note" form (uses `ActionButton`).
+- `components/maintenance/EquipmentOverview.tsx` — the health-board cards (status chip + mini-sparkline).
+- `components/maintenance/EquipmentDetail.tsx` — the rich drill-in (timeline + stats + note history).
+- `components/maintenance/TempTrendChart.tsx` — lightweight inline-SVG trend (no chart library).
 - `app/(authed)/dashboard/page.tsx` — add the Maintenance nav entry.
 - `lib/i18n/{en,es}.json` — `maintenance.*` keys + the standardized equipment labels.
 
