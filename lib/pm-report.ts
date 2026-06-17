@@ -76,23 +76,28 @@ export async function loadShiftWrapUp(
     .select("id, confirmed_by")
     .eq("location_id", args.locationId)
     .eq("date", args.date);
-  const instIds = new Set((insts ?? []).map((r) => (r as { id: string }).id));
+  const instIdList = (insts ?? []).map((r) => (r as { id: string }).id);
   const submittedByUser = new Map<string, number>();
   for (const r of (insts ?? []) as { confirmed_by: string | null }[]) {
     if (r.confirmed_by) submittedByUser.set(r.confirmed_by, (submittedByUser.get(r.confirmed_by) ?? 0) + 1);
   }
 
   // Completions on today's instances, counted per completer.
-  const { data: comps } = await service
-    .from("checklist_completions")
-    .select("completed_by, instance_id")
-    .is("superseded_at", null)
-    .is("revoked_at", null)
-    .limit(5000);
+  // BUG 3 fix: scope the query by today's instance ids instead of a global
+  // `.limit(5000)` scan + JS filter — the unscoped scan truncates once live
+  // completions exceed the limit, undercounting. No instances → no completions.
   const itemsByUser = new Map<string, number>();
-  for (const r of (comps ?? []) as { completed_by: string | null; instance_id: string }[]) {
-    if (r.completed_by && instIds.has(r.instance_id)) {
-      itemsByUser.set(r.completed_by, (itemsByUser.get(r.completed_by) ?? 0) + 1);
+  if (instIdList.length > 0) {
+    const { data: comps } = await service
+      .from("checklist_completions")
+      .select("completed_by, instance_id")
+      .in("instance_id", instIdList)
+      .is("superseded_at", null)
+      .is("revoked_at", null);
+    for (const r of (comps ?? []) as { completed_by: string | null; instance_id: string }[]) {
+      if (r.completed_by) {
+        itemsByUser.set(r.completed_by, (itemsByUser.get(r.completed_by) ?? 0) + 1);
+      }
     }
   }
 
@@ -252,12 +257,16 @@ export async function saveEmployeeEval(
   },
 ): Promise<{ id: string }> {
   // Supersede any live eval for this (report, employee), then insert the new one.
-  await service
+  // BUG 2 fix: check the supersede error. There is no DB uniqueness backstop on
+  // live evals — if the supersede fails silently, the INSERT below creates a 2nd
+  // live eval (duplicate). Throw so the caller never lands a duplicate.
+  const { error: supersedeErr } = await service
     .from("pm_employee_evals")
     .update({ superseded_at: new Date().toISOString() })
     .eq("pm_report_id", args.pmReportId)
     .eq("employee_id", args.employeeId)
     .is("superseded_at", null);
+  if (supersedeErr) throw new Error(`saveEmployeeEval: supersede: ${supersedeErr.message}`);
   const { data, error } = await service
     .from("pm_employee_evals")
     .insert({
