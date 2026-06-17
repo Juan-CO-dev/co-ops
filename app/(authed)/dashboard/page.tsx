@@ -466,7 +466,11 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         {/* Primary navigation — non-report destinations. Report tiles below
          * stay as-is; this nav surfaces the rest of the app above them.
          * actorLevel >= 6 (GM+) also gets the Admin chip. */}
-        <DashboardNav language={language} actorLevel={auth.level} />
+        <DashboardNav
+          language={language}
+          actorLevel={auth.level}
+          selectedLocationId={selectedLocation?.id ?? null}
+        />
 
         {/* Role badge — user identity, not location. Stays separate from
          * the location chrome below. NotificationBell shares this header
