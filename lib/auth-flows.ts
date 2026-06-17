@@ -121,23 +121,49 @@ export async function recordFailedAttempt(
     const sb = getServiceRoleClient();
 
     if (COUNTABLE_FAILURE_REASONS.has(reason)) {
+      // Read role for the audit row (best-effort; not part of the atomic path).
       const { data: cur } = await sb
         .from("users")
-        .select("failed_login_count, role")
+        .select("role")
         .eq("id", userId)
-        .maybeSingle<{ failed_login_count: number | null; role: RoleCode }>();
-      const currentCount = cur?.failed_login_count ?? 0;
+        .maybeSingle<{ role: RoleCode }>();
       userRole = cur?.role ?? null;
-      newCount = currentCount + 1;
 
-      const update: Record<string, unknown> = { failed_login_count: newCount };
+      // Atomic increment via RPC (BUG 1 fix). The prior read-modify-write was
+      // non-atomic — concurrent failed attempts both read N and wrote N+1,
+      // undercounting toward lockout. The RPC does a single UPDATE ... RETURNING
+      // so the post-increment count is authoritative even under concurrency.
+      // Audit-log-and-continue semantics (per lib/audit.ts philosophy): on RPC
+      // error we log and proceed with the failure audit rather than throwing,
+      // but we do NOT silently miss the error.
+      const { data: rpcCount, error: rpcErr } = await sb.rpc("increment_failed_login", {
+        p_user_id: userId,
+      });
+      if (rpcErr) {
+        console.error(
+          `[auth-flows] increment_failed_login failed for user ${userId}: ${rpcErr.message}`,
+        );
+        // Counter did not advance; treat this attempt as non-threshold-crossing.
+        newCount = 0;
+      } else {
+        newCount = typeof rpcCount === "number" ? rpcCount : 0;
+      }
+
+      // Derive the lock decision from the RPC's returned count.
       if (newCount >= FAILURE_LIMIT) {
         const until = new Date(Date.now() + LOCKOUT_MINUTES * 60 * 1000);
         lockedUntilIso = until.toISOString();
-        update.locked_until = lockedUntilIso;
         lockedThisAttempt = true;
+        const { error: lockErr } = await sb
+          .from("users")
+          .update({ locked_until: lockedUntilIso })
+          .eq("id", userId);
+        if (lockErr) {
+          console.error(
+            `[auth-flows] set locked_until failed for user ${userId}: ${lockErr.message}`,
+          );
+        }
       }
-      await sb.from("users").update(update).eq("id", userId);
 
       if (lockedThisAttempt) {
         await audit({

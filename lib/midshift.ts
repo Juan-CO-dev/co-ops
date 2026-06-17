@@ -255,12 +255,6 @@ async function loadActiveToday(
     .eq("location_id", args.locationId)
     .eq("date", args.date)
     .not("confirmed_by", "is", null);
-  const { data: comps } = await service
-    .from("checklist_completions")
-    .select("completed_by, instance_id")
-    .is("superseded_at", null)
-    .is("revoked_at", null)
-    .limit(2000); // scoped further below via instance date join is overkill; filter in JS by today's instances
   const { data: cash } = await service
     .from("cash_reports")
     .select("signed_by")
@@ -274,12 +268,26 @@ async function loadActiveToday(
     .select("id")
     .eq("location_id", args.locationId)
     .eq("date", args.date);
-  const todayInstanceIds = new Set((todayInstances ?? []).map((r) => (r as { id: string }).id));
+  const todayInstanceIdList = (todayInstances ?? []).map((r) => (r as { id: string }).id);
+
+  // Completions on today's instances, scoped by instance_id (BUG 3 fix). The
+  // prior `.limit(2000)` global scan + JS filter truncated once live
+  // completions exceeded the limit, undercounting active staff.
+  let comps: { completed_by: string | null; instance_id: string }[] = [];
+  if (todayInstanceIdList.length > 0) {
+    const { data } = await service
+      .from("checklist_completions")
+      .select("completed_by, instance_id")
+      .in("instance_id", todayInstanceIdList)
+      .is("superseded_at", null)
+      .is("revoked_at", null);
+    comps = (data ?? []) as { completed_by: string | null; instance_id: string }[];
+  }
 
   const userIds = new Set<string>();
   for (const r of (insts ?? []) as { confirmed_by: string | null }[]) if (r.confirmed_by) userIds.add(r.confirmed_by);
-  for (const r of (comps ?? []) as { completed_by: string | null; instance_id: string }[]) {
-    if (r.completed_by && todayInstanceIds.has(r.instance_id)) userIds.add(r.completed_by);
+  for (const r of comps) {
+    if (r.completed_by) userIds.add(r.completed_by);
   }
   for (const r of (cash ?? []) as { signed_by: string | null }[]) if (r.signed_by) userIds.add(r.signed_by);
 

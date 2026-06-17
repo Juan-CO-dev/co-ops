@@ -153,7 +153,11 @@ export async function submitCashReport(
   // We temporarily write a sentinel superseded_at; after insert we overwrite
   // with the canonical (nowIso, new row id) pair.
   if (prior) {
-    await service.from("cash_reports").update({ superseded_at: nowIso }).eq("id", prior.id);
+    // BUG 4 fix: surface the supersede error (the insert has a partial-unique
+    // backstop, so this is diagnostic clarity — match the file's discipline).
+    const { error: supersedeErr } = await service
+      .from("cash_reports").update({ superseded_at: nowIso }).eq("id", prior.id);
+    if (supersedeErr) throw new Error(`submitCashReport: supersede: ${supersedeErr.message}`);
   }
 
   const { data: inserted, error: insErr } = await service.from("cash_reports").insert({
@@ -169,14 +173,31 @@ export async function submitCashReport(
   if (insErr) {
     // Attempt to undo the supersede so the prior row remains live.
     if (prior) {
-      await service.from("cash_reports").update({ superseded_at: null }).eq("id", prior.id);
+      // BUG 4 fix: log a failed rollback — if this errors the prior row stays
+      // superseded with no live row, so surface it for diagnosis (we still
+      // throw the original insert error as the primary failure).
+      const { error: rollbackErr } = await service
+        .from("cash_reports").update({ superseded_at: null }).eq("id", prior.id);
+      if (rollbackErr) {
+        console.error(
+          `[cash] submitCashReport rollback of supersede failed for prior ${prior.id}: ${rollbackErr.message}`,
+        );
+      }
     }
     throw new Error(`submitCashReport: insert: ${insErr.message}`);
   }
 
   // Now fill in the back-pointer on the prior row.
   if (prior) {
-    await service.from("cash_reports").update({ superseded_by: inserted.id }).eq("id", prior.id);
+    // BUG 4 fix: log a failed back-pointer write (non-fatal — the insert already
+    // succeeded and the supersede already committed; the chain link is forensic).
+    const { error: backPtrErr } = await service
+      .from("cash_reports").update({ superseded_by: inserted.id }).eq("id", prior.id);
+    if (backPtrErr) {
+      console.error(
+        `[cash] submitCashReport back-pointer write failed for prior ${prior.id}: ${backPtrErr.message}`,
+      );
+    }
   }
 
   void audit({
