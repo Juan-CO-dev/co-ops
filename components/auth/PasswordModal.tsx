@@ -33,6 +33,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useTranslation } from "@/lib/i18n/provider";
+
 export interface PasswordModalProps {
   open: boolean;
   onConfirm: () => Promise<void> | void;
@@ -53,6 +55,7 @@ function formatRemaining(seconds: number): string {
 }
 
 export function PasswordModal({ open, onConfirm, onCancel }: PasswordModalProps) {
+  const { t } = useTranslation();
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<ModalError | null>(null);
@@ -100,7 +103,7 @@ export function PasswordModal({ open, onConfirm, onCancel }: PasswordModalProps)
       e.preventDefault();
       if (submitting || retryRemaining !== null) return;
       if (!password) {
-        setError({ kind: "transient", message: "Password required." });
+        setError({ kind: "transient", message: t("auth.step_up.error_password_required") });
         return;
       }
       setSubmitting(true);
@@ -133,7 +136,7 @@ export function PasswordModal({ open, onConfirm, onCancel }: PasswordModalProps)
         if (res.status === 403 && body.code === "step_up_not_available") {
           setError({
             kind: "not_available",
-            message: body.message ?? "Step-up not available for your role.",
+            message: body.message ?? t("auth.step_up.error_not_available"),
           });
           return;
         }
@@ -143,14 +146,14 @@ export function PasswordModal({ open, onConfirm, onCancel }: PasswordModalProps)
           setRetryRemaining(seconds);
           return;
         }
-        setError({ kind: "transient", message: "Something went wrong. Try again." });
+        setError({ kind: "transient", message: t("auth.step_up.error_generic") });
       } catch {
-        setError({ kind: "transient", message: "Network error. Try again." });
+        setError({ kind: "transient", message: t("auth.step_up.error_network") });
       } finally {
         setSubmitting(false);
       }
     },
-    [password, submitting, retryRemaining, onConfirm, onCancel],
+    [password, submitting, retryRemaining, onConfirm, onCancel, t],
   );
 
   const handleKeyDown = useCallback(
@@ -177,10 +180,10 @@ export function PasswordModal({ open, onConfirm, onCancel }: PasswordModalProps)
     >
       <div className="w-full max-w-sm rounded-2xl border-2 border-co-border bg-co-surface p-6 shadow-2xl">
         <h2 id="step-up-title" className="text-xl font-extrabold leading-tight text-co-text">
-          Confirm your password
+          {t("auth.step_up.title")}
         </h2>
         <p className="mt-2 text-sm text-co-text-muted">
-          Re-enter your password to confirm this action.
+          {t("auth.step_up.subtitle")}
         </p>
 
         <form onSubmit={handleSubmit} noValidate className="mt-5 flex flex-col gap-4">
@@ -189,7 +192,7 @@ export function PasswordModal({ open, onConfirm, onCancel }: PasswordModalProps)
               htmlFor="step-up-password"
               className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim"
             >
-              Password
+              {t("auth.step_up.password_label")}
             </label>
             <input
               ref={inputRef}
@@ -215,7 +218,7 @@ export function PasswordModal({ open, onConfirm, onCancel }: PasswordModalProps)
             />
             {error && error.kind === "wrong_password" && (
               <p role="alert" className="text-sm font-semibold text-co-cta">
-                Wrong password.
+                {t("auth.step_up.error_wrong_password")}
               </p>
             )}
             {error && error.kind === "not_available" && (
@@ -236,13 +239,13 @@ export function PasswordModal({ open, onConfirm, onCancel }: PasswordModalProps)
               className="rounded-xl border-2 border-co-cta bg-co-cta/10 px-4 py-3 text-center"
             >
               <p className="text-sm font-bold uppercase tracking-wide text-co-cta">
-                Account locked
+                {t("auth.step_up.locked_title")}
               </p>
               <p className="mt-1 text-2xl font-extrabold tabular-nums text-co-text">
                 {formatRemaining(retryRemaining)}
               </p>
               <p className="mt-1 text-xs text-co-text-muted">
-                Try again in {formatRemaining(retryRemaining)}.
+                {t("auth.step_up.locked_body", { time: formatRemaining(retryRemaining) })}
               </p>
             </div>
           )}
@@ -261,7 +264,7 @@ export function PasswordModal({ open, onConfirm, onCancel }: PasswordModalProps)
                 disabled:cursor-not-allowed disabled:opacity-50
               "
             >
-              {submitting ? "Confirming…" : "Confirm"}
+              {submitting ? t("auth.step_up.confirming") : t("auth.step_up.confirm")}
             </button>
             <button
               type="button"
@@ -276,7 +279,7 @@ export function PasswordModal({ open, onConfirm, onCancel }: PasswordModalProps)
                 disabled:cursor-not-allowed disabled:opacity-50
               "
             >
-              Cancel
+              {t("auth.step_up.cancel")}
             </button>
           </div>
         </form>
