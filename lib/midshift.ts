@@ -236,3 +236,124 @@ export async function loadReportStatuses(
 
   return { rows, closingDone, midDayDoneCount };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Task 3: fridges, active-today, attention, loadMidShiftPulse
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { loadMaintenanceOverview } from "@/lib/maintenance";
+
+/** Staff who completed/submitted any report today (proxy for on-shift). */
+async function loadActiveToday(
+  service: SupabaseClient,
+  args: { locationId: string; date: string },
+): Promise<ActiveStaff[]> {
+  // Report-instance confirmers for today (opening/closing/am/mid-day) + cash signer.
+  const { data: insts } = await service
+    .from("checklist_instances")
+    .select("confirmed_by, template_id")
+    .eq("location_id", args.locationId)
+    .eq("date", args.date)
+    .not("confirmed_by", "is", null);
+  const { data: comps } = await service
+    .from("checklist_completions")
+    .select("completed_by, instance_id")
+    .is("superseded_at", null)
+    .is("revoked_at", null)
+    .limit(2000); // scoped further below via instance date join is overkill; filter in JS by today's instances
+  const { data: cash } = await service
+    .from("cash_reports")
+    .select("signed_by")
+    .eq("location_id", args.locationId)
+    .eq("report_date", args.date)
+    .is("superseded_at", null);
+
+  // Build the set of today's instance ids for this location to scope completions.
+  const { data: todayInstances } = await service
+    .from("checklist_instances")
+    .select("id")
+    .eq("location_id", args.locationId)
+    .eq("date", args.date);
+  const todayInstanceIds = new Set((todayInstances ?? []).map((r) => (r as { id: string }).id));
+
+  const userIds = new Set<string>();
+  for (const r of (insts ?? []) as { confirmed_by: string | null }[]) if (r.confirmed_by) userIds.add(r.confirmed_by);
+  for (const r of (comps ?? []) as { completed_by: string | null; instance_id: string }[]) {
+    if (r.completed_by && todayInstanceIds.has(r.instance_id)) userIds.add(r.completed_by);
+  }
+  for (const r of (cash ?? []) as { signed_by: string | null }[]) if (r.signed_by) userIds.add(r.signed_by);
+
+  if (userIds.size === 0) return [];
+  const { data: users } = await service.from("users").select("id, name").in("id", [...userIds]);
+  const nameById = new Map<string, string>();
+  for (const u of (users ?? []) as { id: string; name: string }[]) nameById.set(u.id, u.name);
+
+  // v1: list names + a generic "report" tag (per-report attribution is a v1.1 refinement;
+  // keep the query cheap — the proxy's value is "who's been active," not exact report breakdown).
+  return [...userIds].map((id) => ({ userId: id, name: nameById.get(id) ?? "—", reports: [] as ReportKey[] }));
+}
+
+export async function loadMidShiftPulse(
+  service: SupabaseClient,
+  args: { locationId: string; date: string; now: Date; actor: MidShiftActor },
+): Promise<MidShiftPulse> {
+  const { minutesOfDay } = operationalNow(args.now);
+
+  const { rows, closingDone, midDayDoneCount } = await loadReportStatuses(service, {
+    locationId: args.locationId,
+    date: args.date,
+    actor: args.actor,
+  });
+
+  const reports: ReportStatusRow[] = rows.map((r) => ({
+    ...r,
+    overdue: computeOverdue({
+      key: r.key,
+      done: r.progress === "done",
+      minutesOfDay,
+      closingDone,
+      midDayDoneCount,
+    }),
+  }));
+
+  // Fridges + flags from the maintenance overview (sinceDate = today; we only need today's status).
+  const overview = await loadMaintenanceOverview(service, {
+    locationId: args.locationId,
+    today: args.date,
+    sinceDate: args.date,
+  });
+  const fridges: PulseFridge[] = overview.fridges.map((f) => ({
+    name: f.equip.name,
+    latestF: f.latest?.valueF ?? null,
+    outOfRange: f.status === "out_of_range",
+  }));
+  const fridgeFlagCount = fridges.filter((f) => f.outOfRange).length;
+
+  // Maintenance notes logged today.
+  const { count: notesCount } = await service
+    .from("maintenance_notes")
+    .select("id", { count: "exact", head: true })
+    .eq("location_id", args.locationId)
+    .gte("created_at", `${args.date}T00:00:00`)
+    .lte("created_at", `${args.date}T23:59:59`);
+  const maintenanceNotesToday = notesCount ?? 0;
+
+  const activeToday = await loadActiveToday(service, { locationId: args.locationId, date: args.date });
+
+  // Attention items, priority order: overdue → fridge → maintenance notes.
+  const attention: AttentionItem[] = [];
+  for (const r of reports) if (r.overdue === "overdue") attention.push({ kind: "overdue", reportKey: r.key });
+  for (const f of fridges) if (f.outOfRange) attention.push({ kind: "fridge", fridgeName: f.name });
+  if (maintenanceNotesToday > 0) attention.push({ kind: "maintenance_note", count: maintenanceNotesToday });
+
+  return {
+    locationId: args.locationId,
+    today: args.date,
+    reports,
+    fridges,
+    fridgeFlagCount,
+    maintenanceNotesToday,
+    activeToday,
+    attention,
+  };
+}
