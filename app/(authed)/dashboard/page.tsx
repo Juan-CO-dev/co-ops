@@ -42,6 +42,7 @@ import { MAINTENANCE_BASE_LEVEL } from "@/lib/maintenance";
 
 import { ActionLink } from "@/components/ActionButton";
 import { CashDepositTile } from "@/components/CashDepositTile";
+import { DashboardNav } from "@/components/DashboardNav";
 import { MidDayPrepTile } from "@/components/MidDayPrepTile";
 import { OpeningTile } from "@/components/OpeningTile";
 import { requireSessionFromHeaders } from "@/lib/session";
@@ -461,6 +462,11 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
             {serverT(language, "dashboard.header.greeting", { name: auth.user.name })}
           </h2>
         </div>
+
+        {/* Primary navigation — non-report destinations. Report tiles below
+         * stay as-is; this nav surfaces the rest of the app above them.
+         * actorLevel >= 6 (GM+) also gets the Admin chip. */}
+        <DashboardNav language={language} actorLevel={auth.level} />
 
         {/* Role badge — user identity, not location. Stays separate from
          * the location chrome below. NotificationBell shares this header
