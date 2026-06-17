@@ -785,5 +785,16 @@
   "reports.values.heading": "Valores de prep",
   "reports.values.par": "Par",
   "reports.values.on_hand": "En mano",
-  "reports.values.total": "Total"
+  "reports.values.total": "Total",
+
+  "reports.filter.signals_heading": "Filtros de señal",
+  "reports.filter.under_par": "Bajo par",
+  "reports.filter.over_par": "Sobre par",
+  "reports.filter.skipped": "Ítems omitidos",
+  "reports.filter.temp_flag": "Temp fuera de rango",
+  "reports.filter.cash_over": "Efectivo de más",
+  "reports.filter.cash_short": "Efectivo de menos",
+
+  "reports.badge.under_par": "{count} bajo par",
+  "reports.badge.temp": "{count} marca de temp"
 }

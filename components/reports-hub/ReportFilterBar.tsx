@@ -8,12 +8,15 @@
  * Cash type shown only when the viewer's level permits (filtered by the
  * page before passing `allowedTypes` here).
  *
+ * Cash signal toggles (cashOver / cashShort) only render when viewerLevel >= 4
+ * (REPORTS_HUB_CASH_LEVEL) — mirrors the base list-visibility gate.
+ *
  * No client JS required — GET form updates the URL on submit.
  */
 
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
-import type { ReportTypeKey } from "@/lib/reports-hub";
+import { REPORTS_HUB_CASH_LEVEL, type ReportTypeKey } from "@/lib/reports-hub";
 
 const TYPE_KEYS: Record<ReportTypeKey, TranslationKey> = {
   opening: "reports.type.opening",
@@ -24,6 +27,15 @@ const TYPE_KEYS: Record<ReportTypeKey, TranslationKey> = {
   pm: "reports.type.pm",
 };
 
+interface ActiveSignalFilters {
+  underPar?: boolean;
+  overPar?: boolean;
+  skipped?: boolean;
+  tempFlag?: boolean;
+  cashOver?: boolean;
+  cashShort?: boolean;
+}
+
 interface ReportFilterBarProps {
   locationId: string;
   dateFrom: string; // YYYY-MM-DD
@@ -31,6 +43,8 @@ interface ReportFilterBarProps {
   selectedType: string; // "all" or a ReportTypeKey
   allowedTypes: ReportTypeKey[];
   language: Language;
+  viewerLevel: number;
+  activeSignalFilters?: ActiveSignalFilters;
 }
 
 export function ReportFilterBar({
@@ -40,8 +54,11 @@ export function ReportFilterBar({
   selectedType,
   allowedTypes,
   language,
+  viewerLevel,
+  activeSignalFilters = {},
 }: ReportFilterBarProps) {
   const t = (key: TranslationKey) => serverT(language, key);
+  const canSeeCash = viewerLevel >= REPORTS_HUB_CASH_LEVEL;
 
   return (
     <form method="get" className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-3">
@@ -106,6 +123,80 @@ export function ReportFilterBar({
             {t("reports.filter.apply")}
           </button>
         </div>
+      </div>
+
+      {/* Derived signal filter toggles — checkboxes submitted as "true" when checked */}
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 border-t border-co-border pt-3">
+        <span className="w-full text-xs font-bold uppercase tracking-[0.12em] text-co-text-muted">
+          {t("reports.filter.signals_heading")}
+        </span>
+
+        <label className="flex cursor-pointer items-center gap-1.5 text-sm text-co-text">
+          <input
+            type="checkbox"
+            name="sf_underPar"
+            value="true"
+            defaultChecked={activeSignalFilters.underPar === true}
+            className="accent-co-cta"
+          />
+          {t("reports.filter.under_par")}
+        </label>
+
+        <label className="flex cursor-pointer items-center gap-1.5 text-sm text-co-text">
+          <input
+            type="checkbox"
+            name="sf_overPar"
+            value="true"
+            defaultChecked={activeSignalFilters.overPar === true}
+            className="accent-co-gold"
+          />
+          {t("reports.filter.over_par")}
+        </label>
+
+        <label className="flex cursor-pointer items-center gap-1.5 text-sm text-co-text">
+          <input
+            type="checkbox"
+            name="sf_skipped"
+            value="true"
+            defaultChecked={activeSignalFilters.skipped === true}
+          />
+          {t("reports.filter.skipped")}
+        </label>
+
+        <label className="flex cursor-pointer items-center gap-1.5 text-sm text-co-text">
+          <input
+            type="checkbox"
+            name="sf_tempFlag"
+            value="true"
+            defaultChecked={activeSignalFilters.tempFlag === true}
+          />
+          {t("reports.filter.temp_flag")}
+        </label>
+
+        {/* Cash toggles — only render for L4+ viewers (mirrors cash list-visibility gate) */}
+        {canSeeCash ? (
+          <>
+            <label className="flex cursor-pointer items-center gap-1.5 text-sm text-co-text">
+              <input
+                type="checkbox"
+                name="sf_cashOver"
+                value="true"
+                defaultChecked={activeSignalFilters.cashOver === true}
+              />
+              {t("reports.filter.cash_over")}
+            </label>
+
+            <label className="flex cursor-pointer items-center gap-1.5 text-sm text-co-text">
+              <input
+                type="checkbox"
+                name="sf_cashShort"
+                value="true"
+                defaultChecked={activeSignalFilters.cashShort === true}
+              />
+              {t("reports.filter.cash_short")}
+            </label>
+          </>
+        ) : null}
       </div>
     </form>
   );

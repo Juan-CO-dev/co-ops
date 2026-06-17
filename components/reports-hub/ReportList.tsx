@@ -2,9 +2,13 @@
  * ReportList — server component.
  *
  * Renders the list of ReportListItem rows returned by listReports.
- * Each row: date label · type label · submitter · status.
+ * Each row: date label · type label · submitter · status · signal badges.
  * Each row links to /reports/<type>/<id>?location=<locationId>.
  * Empty list → reports.empty message.
+ *
+ * Signal badges (under-par count, temp flags, cash over/short) are rendered
+ * from item.signalSummary when present. Cash badge only shown for L4+ viewers
+ * (mirrors the base cash list-visibility gate).
  *
  * Mirrors maintenance card token styling.
  */
@@ -12,7 +16,7 @@
 import { formatDateLabel } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
-import type { ReportListItem, ReportTypeKey } from "@/lib/reports-hub";
+import { REPORTS_HUB_CASH_LEVEL, type ReportListItem, type ReportTypeKey } from "@/lib/reports-hub";
 
 const TYPE_LABEL_KEYS: Record<ReportTypeKey, TranslationKey> = {
   opening: "reports.type.opening",
@@ -23,14 +27,21 @@ const TYPE_LABEL_KEYS: Record<ReportTypeKey, TranslationKey> = {
   pm: "reports.type.pm",
 };
 
+/** Format cents as a dollar string, e.g. 150 → "$1.50". */
+function formatCents(cents: number): string {
+  return `$${(Math.abs(cents) / 100).toFixed(2)}`;
+}
+
 interface ReportListProps {
   items: ReportListItem[];
   locationId: string;
   language: Language;
+  viewerLevel: number;
 }
 
-export function ReportList({ items, locationId, language }: ReportListProps) {
+export function ReportList({ items, locationId, language, viewerLevel }: ReportListProps) {
   const t = (key: TranslationKey) => serverT(language, key);
+  const canSeeCash = viewerLevel >= REPORTS_HUB_CASH_LEVEL;
 
   if (items.length === 0) {
     return (
@@ -46,6 +57,7 @@ export function ReportList({ items, locationId, language }: ReportListProps) {
         const href = `/reports/${item.type}/${item.id}?location=${locationId}`;
         const dateLabel = formatDateLabel(item.date, language);
         const typeLabel = t(TYPE_LABEL_KEYS[item.type]);
+        const s = item.signalSummary;
 
         return (
           <li key={item.id}>
@@ -69,6 +81,32 @@ export function ReportList({ items, locationId, language }: ReportListProps) {
                   {t("reports.col.status")}: {item.status}
                 </span>
               </div>
+
+              {/* Signal badges — derived from signalSummary, always attached by listReports */}
+              {s ? (
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  {s.underPar > 0 ? (
+                    <span className="rounded-full border border-co-cta/30 bg-co-cta/10 px-2 py-0.5 text-xs font-semibold text-co-cta">
+                      {t("reports.badge.under_par").replace("{count}", String(s.underPar))}
+                    </span>
+                  ) : null}
+                  {s.tempFlags > 0 ? (
+                    <span className="rounded-full border border-co-border bg-co-gold/20 px-2 py-0.5 text-xs font-semibold text-co-text">
+                      {t("reports.badge.temp").replace("{count}", String(s.tempFlags))}
+                    </span>
+                  ) : null}
+                  {canSeeCash && s.cashOverShortCents !== null && s.cashOverShortCents > 0 ? (
+                    <span className="rounded-full border border-co-border bg-co-surface px-2 py-0.5 text-xs font-semibold text-co-text-muted">
+                      {t("reports.signal.cash_over").replace("{amount}", formatCents(s.cashOverShortCents))}
+                    </span>
+                  ) : null}
+                  {canSeeCash && s.cashOverShortCents !== null && s.cashOverShortCents < 0 ? (
+                    <span className="rounded-full border border-co-cta/30 bg-co-cta/10 px-2 py-0.5 text-xs font-semibold text-co-cta">
+                      {t("reports.signal.cash_short").replace("{amount}", formatCents(s.cashOverShortCents))}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
             </a>
           </li>
         );

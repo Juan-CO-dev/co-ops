@@ -785,5 +785,16 @@
   "reports.values.heading": "Prep values",
   "reports.values.par": "Par",
   "reports.values.on_hand": "On hand",
-  "reports.values.total": "Total"
+  "reports.values.total": "Total",
+
+  "reports.filter.signals_heading": "Signal filters",
+  "reports.filter.under_par": "Under par",
+  "reports.filter.over_par": "Over par",
+  "reports.filter.skipped": "Skipped items",
+  "reports.filter.temp_flag": "Temp out of range",
+  "reports.filter.cash_over": "Cash over",
+  "reports.filter.cash_short": "Cash short",
+
+  "reports.badge.under_par": "{count} under par",
+  "reports.badge.temp": "{count} temp flag"
 }

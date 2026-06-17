@@ -12,6 +12,14 @@ export interface Viewer {
   level: number;
 }
 
+export interface SignalSummary {
+  underPar: number;
+  overPar: number;
+  skipped: number;
+  tempFlags: number;
+  cashOverShortCents: number | null;
+}
+
 export interface ReportListItem {
   type: ReportTypeKey;
   id: string; // checklist_instances.id | cash_reports.id | pm_reports.id
@@ -19,6 +27,21 @@ export interface ReportListItem {
   locationId: string;
   submitterName: string | null;
   status: string;
+  /**
+   * Derived signal summary — compute-on-read from already-authorized data.
+   * CO report volumes are small (tens per date window); a materialized signal
+   * column is the future optimization when volume grows.
+   */
+  signalSummary?: SignalSummary;
+}
+
+export interface SignalFilters {
+  underPar?: boolean;
+  overPar?: boolean;
+  skipped?: boolean;
+  tempFlag?: boolean;
+  cashOver?: boolean;
+  cashShort?: boolean;
 }
 
 export interface ListFilters {
@@ -27,6 +50,11 @@ export interface ListFilters {
   dateFrom: string; // YYYY-MM-DD inclusive
   dateTo: string; // YYYY-MM-DD inclusive
   types?: ReportTypeKey[]; // optional; default = all the viewer may see
+  /**
+   * Derived signal filters — applied after base list-visibility gates (cash
+   * KH+, PM own-for-employees). All base visibility invariants are untouched.
+   */
+  signalFilters?: SignalFilters;
 }
 
 /**
@@ -175,10 +203,55 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
     for (const u of (users ?? []) as Array<{ id: string; name: string }>) nameById.set(u.id, u.name);
   }
   // Set submitterName from the captured submitterId; strip submitterId before returning.
-  const result: ReportListItem[] = items.map(({ submitterId, ...rest }) => ({
+  const baseItems: ReportListItem[] = items.map(({ submitterId, ...rest }) => ({
     ...rest,
     submitterName: submitterId ? (nameById.get(submitterId) ?? null) : null,
   }));
+
+  // ── Derived signal summary + optional signal filters ──
+  // Compute-on-read from already-authorized data; base list-visibility gates
+  // (cash KH+, PM own-for-employees) are applied above and are untouched here.
+  // CO report volumes are small (tens per date window); a materialized signal
+  // column is the future optimization when volume grows.
+  const sf = f.signalFilters;
+  const hasSf = sf &&
+    (sf.underPar || sf.overPar || sf.skipped || sf.tempFlag || sf.cashOver || sf.cashShort);
+
+  // Always load temp-item ids once and compute signalSummary for every item
+  // (badges need it even when no signal filters are active).
+  const tempItemIds = await loadLocationTempItemIds(service, f.locationId);
+
+  const withSignals: ReportListItem[] = await Promise.all(
+    baseItems.map(async (item) => {
+      const { signals } = await computeReportSignals(service, {
+        type: item.type,
+        id: item.id,
+        tempItemIds,
+      });
+      const summary: SignalSummary = {
+        underPar: signals.underPar,
+        overPar: signals.overPar,
+        skipped: signals.skipped,
+        tempFlags: signals.tempFlags,
+        cashOverShortCents: signals.cashOverShortCents,
+      };
+      return { ...item, signalSummary: summary };
+    }),
+  );
+
+  // Apply signal filters (all base visibility invariants remain untouched above).
+  const result = hasSf
+    ? withSignals.filter((item) => {
+        const s = item.signalSummary!;
+        if (sf!.underPar && s.underPar <= 0) return false;
+        if (sf!.overPar && s.overPar <= 0) return false;
+        if (sf!.skipped && s.skipped <= 0) return false;
+        if (sf!.tempFlag && s.tempFlags <= 0) return false;
+        if (sf!.cashOver && (s.cashOverShortCents === null || s.cashOverShortCents <= 0)) return false;
+        if (sf!.cashShort && (s.cashOverShortCents === null || s.cashOverShortCents >= 0)) return false;
+        return true;
+      })
+    : withSignals;
 
   // newest first
   return result.sort((a, b) => (a.date < b.date ? 1 : -1));
