@@ -110,6 +110,13 @@ const STATION_ES: Record<string, string> = {
 // ---------------------------------------------------------------------------
 // OPENING_ITEMS — 44 items, ordered for display_order assignment by index.
 // ---------------------------------------------------------------------------
+// ⚠ STALE FRIDGE-TEMP LABELS: migration 0071 standardized the 8 fridge temp
+// items' live labels to "<Fridge Name> temp (≤41°F)" (EN + ES) for cross-report
+// naming consistency (Wave 2 Maintenance Log). The label/labelEs constants below
+// for those 8 items are PRE-0071 and will REVERT the standardization if this
+// seed is re-run (items match by display_order, so a re-run WILL overwrite the
+// labels). Before any re-run, update the 8 fridge temp items to the 0071
+// canonical labels. See supabase/migrations/0071_standardize_fridge_temp_labels.sql.
 
 interface OpeningSeedItem {
   station: string;
