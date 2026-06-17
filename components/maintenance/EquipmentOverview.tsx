@@ -101,17 +101,17 @@ export function EquipmentOverview({
           <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
             {serverT(language, "maintenance.overview.equipment_heading")}
           </h2>
-          <ul className="flex flex-col gap-1.5">
+          <ul className="grid grid-cols-2 gap-2">
             {overview.equipment.map(({ equip, lastNote }) => (
               <li key={equip.id}>
                 <a
                   href={`/maintenance?location=${locationId}&equipment=${equip.id}`}
-                  className="flex items-center justify-between gap-2 rounded-lg border-2 border-co-border bg-co-surface px-3 py-2 hover:opacity-90"
+                  className="flex h-full flex-col rounded-lg border-2 border-co-border bg-co-surface px-3 py-3 hover:opacity-90"
                 >
-                  <span className="text-sm font-semibold text-co-text">
+                  <span className="text-sm font-bold text-co-text">
                     {equip.name}
                   </span>
-                  <span className="text-xs text-co-text-muted">
+                  <span className="mt-1 text-xs text-co-text-muted">
                     {lastNote
                       ? serverT(language, "maintenance.last_note", {
                           note: lastNote.note,
