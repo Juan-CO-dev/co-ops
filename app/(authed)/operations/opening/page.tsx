@@ -405,7 +405,7 @@ function GateBlockedBanner({
       aria-label={serverT(language, "opening.gate.aria")}
       className="
         flex flex-col gap-3 rounded-2xl
-        border-2 border-co-gold-deep bg-[#FFF4D0]
+        border-2 border-co-gold-deep bg-co-warning-surface
         p-4 sm:p-5
       "
     >

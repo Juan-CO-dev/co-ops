@@ -44,7 +44,7 @@ function GradientTallyCard({ tally, t }: GradientTallyCardProps) {
       <h2 className="mb-1 px-1 text-xs font-bold uppercase tracking-wide text-co-text-muted">
         {t("reports.pm.gradient_tally")}
       </h2>
-      <div className="rounded-lg border border-co-border bg-co-surface px-3 py-2">
+      <div className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-2">
         <ul className="flex flex-col gap-1">
           {tally.map((entry) => (
             <li key={entry.dimension} className="flex items-center justify-between gap-2 text-xs">
@@ -82,7 +82,7 @@ function EvalCard({ ev, t }: EvalCardProps) {
   ];
 
   return (
-    <li className="rounded-lg border border-co-border bg-co-surface px-3 py-3 text-sm">
+    <li className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-3 text-sm">
       {/* Employee name */}
       <div className="mb-2 font-bold text-co-text">{ev.employeeName ?? ev.employeeId}</div>
 
@@ -151,7 +151,7 @@ export function PmReportDetailView({ detail, language }: Props) {
 
       {/* MVP — only rendered when mvpUserId is non-null (present for managers only) */}
       {detail.mvpUserId !== null && (
-        <div className="rounded-lg border border-co-border bg-co-surface px-3 py-2 text-sm">
+        <div className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-2 text-sm">
           <span className="font-semibold text-co-text-muted">{t("pm.mvp.heading")}: </span>
           <span className="font-bold text-co-text">{detail.mvpName ?? detail.mvpUserId}</span>
           {detail.mvpNote !== null && (
@@ -180,7 +180,7 @@ export function PmReportDetailView({ detail, language }: Props) {
           <h2 className="mb-1 px-1 text-xs font-bold uppercase tracking-wide text-co-text-muted">
             {t("reports.pm.shift_activity")}
           </h2>
-          <div className="rounded-lg border border-co-border bg-co-surface px-3 py-2">
+          <div className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-2">
             {/* Per-employee summary: {name}: {itemsCompleted} items · {reportsSubmitted} reports */}
             {detail.wrapUp.length > 0 && (
               <ul className="mb-2 flex flex-col gap-1 text-xs text-co-text">

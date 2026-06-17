@@ -896,7 +896,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
         * clear prompt + one-tap CTA to the cash page.
         * Hidden once cashDeposited is true (canFinalize's banner takes over). */}
       {!readOnly && actor.level >= 4 && walkOutVerificationComplete && !cashDeposited ? (
-        <div className="mt-6 rounded-2xl border-2 border-co-cta bg-[#FFE4E4] p-4">
+        <div className="mt-6 rounded-2xl border-2 border-co-cta bg-co-danger-surface p-4">
           <p className="text-sm font-bold text-co-text">{t("closing.cash_required.banner")}</p>
           <div className="mt-3">
             <ActionLink
@@ -1003,17 +1003,17 @@ function BannerView({ banner }: { banner: StatusBanner }) {
     "mt-4 flex items-start gap-3 rounded-2xl border-2 p-4 sm:p-5";
   const styles: Record<StatusBannerTone, { container: string; iconBg: string; icon: ReactNode }> = {
     confirmed: {
-      container: "border-co-success/60 bg-[#E8F7EE]",
+      container: "border-co-success/60 bg-co-success-surface",
       iconBg: "bg-co-success text-white",
       icon: <CheckMarkIcon />,
     },
     incomplete_confirmed: {
-      container: "border-co-warning/60 bg-[#FFF4D0]",
+      container: "border-co-warning/60 bg-co-warning-surface",
       iconBg: "bg-co-warning text-co-text",
       icon: <WarningIcon />,
     },
     yesterday_unconfirmed: {
-      container: "border-co-gold-deep bg-[#FFF4D0]",
+      container: "border-co-gold-deep bg-co-warning-surface",
       iconBg: "bg-co-gold-deep text-co-text",
       icon: <WarningIcon />,
     },

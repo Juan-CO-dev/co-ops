@@ -264,7 +264,7 @@ export function MidDayPhase2Form({
                       type="button"
                       onClick={() => patch(it.id, { modalOpen: true, status: "idle", error: null })}
                       className="
-                        inline-flex min-h-[36px] items-center self-start rounded-md border-2
+                        inline-flex min-h-[44px] items-center self-start rounded-md border-2
                         border-co-gold-deep bg-co-surface px-2 text-[11px] font-bold uppercase
                         tracking-[0.1em] text-co-text transition hover:bg-co-surface-2
                         focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60

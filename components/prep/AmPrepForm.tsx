@@ -708,7 +708,7 @@ export function AmPrepForm({
           role="status"
           aria-live="polite"
           className="
-            rounded-2xl border-2 border-co-success/60 bg-[#E8F7EE]
+            rounded-2xl border-2 border-co-success/60 bg-co-success-surface
             p-4 sm:p-5 text-sm font-semibold text-co-text
           "
         >
@@ -722,7 +722,7 @@ export function AmPrepForm({
           role="alert"
           aria-live="assertive"
           className="
-            rounded-2xl border-2 border-co-cta/60 bg-[#FFE8E9]
+            rounded-2xl border-2 border-co-cta/60 bg-co-danger-surface
             p-4 sm:p-5 text-sm font-semibold text-co-text
           "
         >
@@ -782,7 +782,7 @@ export function AmPrepForm({
           role="alert"
           aria-live="polite"
           className="
-            rounded-2xl border-2 border-co-cta/60 bg-[#FFE8E9]
+            rounded-2xl border-2 border-co-cta/60 bg-co-danger-surface
             p-4 sm:p-5 text-sm font-semibold text-co-text
           "
         >

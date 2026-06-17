@@ -144,7 +144,7 @@ export default async function CashPage({ searchParams }: PageProps) {
       ) : report ? (
         <section className="flex flex-col gap-3">
           {/* Signed-off banner */}
-          <p className="rounded-lg border-2 border-co-success bg-[#E6F4E6] px-3 py-2 text-sm font-semibold text-co-text">
+          <p className="rounded-lg border-2 border-co-success bg-co-success-surface px-3 py-2 text-sm font-semibold text-co-text">
             {serverT(lang, "cash.read_only.banner", {
               amount: formatCents(report.depositCents, lang),
               name: report.signedByName ?? "—",

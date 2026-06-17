@@ -146,7 +146,7 @@ export function UnderParModal({
 
         <p
           role="alert"
-          className="mt-3 rounded-md border-2 border-co-danger bg-[#FFE4E4] p-3 text-xs font-medium leading-snug text-co-text"
+          className="mt-3 rounded-md border-2 border-co-danger bg-co-danger-surface p-3 text-xs font-medium leading-snug text-co-text"
         >
           {t("opening.under_par.warning")}
         </p>

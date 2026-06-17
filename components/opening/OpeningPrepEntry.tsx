@@ -626,13 +626,13 @@ function PrepEntryRow({
               : t("opening.phase2.signal.over_prep", { delta: overDelta })
           }
           className={[
-            "self-start inline-flex min-h-[36px] items-center gap-2 rounded-md px-3 py-1",
+            "self-start inline-flex min-h-[44px] items-center gap-2 rounded-md px-3 py-1",
             "text-xs font-bold uppercase tracking-[0.12em]",
             "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
             readOnly ? "cursor-not-allowed" : "",
             value.overPar
-              ? "border-2 border-co-success bg-[#E6F4E6] text-co-text"
-              : "border-2 border-co-gold-deep bg-[#FFF4D0] text-co-text hover:bg-co-gold/30",
+              ? "border-2 border-co-success bg-co-success-surface text-co-text"
+              : "border-2 border-co-gold-deep bg-co-warning-surface text-co-text hover:bg-co-gold/30",
           ].join(" ")}
         >
           {value.overPar
@@ -652,13 +652,13 @@ function PrepEntryRow({
               : t("opening.phase2.signal.under_prep", { delta: underDelta })
           }
           className={[
-            "self-start inline-flex min-h-[36px] items-center gap-2 rounded-md px-3 py-1",
+            "self-start inline-flex min-h-[44px] items-center gap-2 rounded-md px-3 py-1",
             "text-xs font-bold uppercase tracking-[0.12em]",
             "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
             readOnly ? "cursor-not-allowed" : "",
             value.underPar
-              ? "border-2 border-co-success bg-[#E6F4E6] text-co-text"
-              : "border-2 border-co-danger bg-[#FFE4E4] text-co-text hover:bg-[#FFD0D0]",
+              ? "border-2 border-co-success bg-co-success-surface text-co-text"
+              : "border-2 border-co-danger bg-co-danger-surface text-co-text hover:bg-[#FFD0D0]",
           ].join(" ")}
         >
           {value.underPar
@@ -702,7 +702,7 @@ function PrepEntryRow({
                 disabled={revoking}
                 aria-label={t("opening.phase2.revoke.cta_aria", { item: resolved.label })}
                 className="
-                  inline-flex min-h-[32px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 py-1
+                  inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 py-1
                   text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-muted
                   transition hover:border-co-danger hover:text-co-danger
                   focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
@@ -731,9 +731,9 @@ function PrepEntryRow({
                 onClick={() => onSave(value)}
                 aria-label={t("opening.phase2.save.retry_aria", { item: resolved.label })}
                 className="
-                  inline-flex min-h-[32px] items-center rounded-full border-2 border-co-danger bg-co-surface px-3 py-1
+                  inline-flex min-h-[44px] items-center rounded-full border-2 border-co-danger bg-co-surface px-3 py-1
                   text-[10px] font-bold uppercase tracking-[0.12em] text-co-text
-                  transition hover:bg-[#FFE4E4]
+                  transition hover:bg-co-danger-surface
                   focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
                 "
               >
