@@ -753,5 +753,13 @@
   "reports.col.type": "Type",
   "reports.col.by": "By",
   "reports.col.status": "Status",
-  "reports.not_available": "This report is not available for your role."
+  "reports.not_available": "This report is not available for your role.",
+  "reports.detail.back": "Back to reports",
+  "reports.detail.done": "✓",
+  "reports.detail.not_done": "—",
+  "reports.detail.note": "Note",
+  "reports.status.open": "Open",
+  "reports.status.in_progress": "In progress",
+  "reports.status.submitted": "Submitted",
+  "reports.status.confirmed": "Confirmed"
 }

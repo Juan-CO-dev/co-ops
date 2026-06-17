@@ -753,5 +753,13 @@
   "reports.col.type": "Tipo",
   "reports.col.by": "Por",
   "reports.col.status": "Estado",
-  "reports.not_available": "Este reporte no está disponible para tu rol."
+  "reports.not_available": "Este reporte no está disponible para tu rol.",
+  "reports.detail.back": "Volver a reportes",
+  "reports.detail.done": "✓",
+  "reports.detail.not_done": "—",
+  "reports.detail.note": "Nota",
+  "reports.status.open": "Abierto",
+  "reports.status.in_progress": "En progreso",
+  "reports.status.submitted": "Enviado",
+  "reports.status.confirmed": "Confirmado"
 }
