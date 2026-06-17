@@ -799,5 +799,7 @@
   "reports.badge.temp": "{count} temp flag",
 
   "reports.readings.heading": "Counts & readings",
-  "reports.pm.shift_activity": "Shift activity"
+  "reports.pm.shift_activity": "Shift activity",
+
+  "reports.verify.against": "Verifying: closer {closer} · par {par}"
 }

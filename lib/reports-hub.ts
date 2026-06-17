@@ -6,6 +6,7 @@ import type { ShiftWrapUpRow } from "@/lib/pm-report";
 import { loadReportStatuses } from "@/lib/midshift";
 import type { ReportKey, ReportProgress } from "@/lib/midshift";
 import type { RoleCode } from "@/lib/roles";
+import { loadOpeningCloserCountSnapshots } from "@/lib/opening";
 
 export const REPORTS_HUB_CASH_LEVEL = 4; // cash visible KH+
 export const REPORTS_HUB_NOTES_LEVEL = 5; // notes visible SL+
@@ -292,6 +293,13 @@ export interface ChecklistDetailItem {
   countValue: number | null;
   note: string | null; // null unless viewer.level >= REPORTS_HUB_NOTES_LEVEL
   isTempFlag: boolean; // true when item is in location's tempItemIds AND count_value > FRIDGE_DEFAULT_SAFE_MAX_F
+  /**
+   * Opening only: the closer-count baseline + par this item verifies against.
+   * Null when: (a) type is not "opening", (b) no snapshot row exists for this
+   * template item, or (c) the snapshot's closerCount is null (no prior AM Prep
+   * baseline — Option A: treat as no-baseline, leave null).
+   */
+  verifyExpected: { closerCount: number; par: number | null } | null;
 }
 
 export interface ChecklistReportDetail {
@@ -330,6 +338,14 @@ async function loadChecklistDetail(
   });
 
   const showNotes = args.viewer.level >= REPORTS_HUB_NOTES_LEVEL;
+
+  // Opening only: load closer-count snapshots to populate verifyExpected.
+  // Only called for type === "opening" to avoid unnecessary queries for other types.
+  // IDOR guard above already confirmed inst.location_id === args.locationId.
+  const closerCountSnapshots =
+    args.type === "opening"
+      ? await loadOpeningCloserCountSnapshots(service, args.instanceId)
+      : new Map<string, import("@/lib/opening").OpeningCloserCountSnapshotRow>();
 
   const { data: titems } = await service
     .from("checklist_template_items")
@@ -377,6 +393,14 @@ async function loadChecklistDetail(
   ).map((ti) => {
     const c = compByItem.get(ti.id);
     const countValue = c?.count_value ?? null;
+    // Opening only: populate verifyExpected from the persisted closer-count snapshot.
+    // Option A: null closerCount = no prior AM Prep baseline → leave verifyExpected null.
+    // IDOR guard + L5 notes redaction are unaffected — this reads already-loaded snapshot data.
+    const snap = closerCountSnapshots.get(ti.id);
+    const verifyExpected: ChecklistDetailItem["verifyExpected"] =
+      snap !== undefined && snap.closerCount !== null
+        ? { closerCount: snap.closerCount, par: snap.parValue }
+        : null;
     return {
       station: ti.station,
       label: ti.label,
@@ -387,6 +411,7 @@ async function loadChecklistDetail(
       // isTempFlag: item is in the location's fridge temp registry AND its count exceeds the safe max.
       // tempItemIds already loaded above (after the IDOR guard).
       isTempFlag: tempItemIds.has(ti.id) && countValue !== null && countValue > FRIDGE_DEFAULT_SAFE_MAX_F,
+      verifyExpected,
     };
   });
 

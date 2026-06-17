@@ -799,5 +799,7 @@
   "reports.badge.temp": "{count} marca de temp",
 
   "reports.readings.heading": "Conteos y lecturas",
-  "reports.pm.shift_activity": "Actividad del turno"
+  "reports.pm.shift_activity": "Actividad del turno",
+
+  "reports.verify.against": "Verificando: cierre {closer} · par {par}"
 }
