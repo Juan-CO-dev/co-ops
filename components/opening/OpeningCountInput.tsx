@@ -45,14 +45,19 @@ export function OpeningCountInput({
       inputMode="decimal"
       value={stringValue}
       onChange={(e) => {
-        const raw = e.target.value.trim();
+        // Counts/temperatures are >= 0 — strip any "-" so a negative can't
+        // be typed (input-level block), then parse. Defense in depth: the
+        // parse path below also rejects negatives.
+        const raw = e.target.value.replace(/-/g, "").trim();
         if (raw === "") {
           onChange(null);
           return;
         }
-        // Permit "-" mid-typing; only commit numeric values.
+        // Only commit finite, non-negative numeric values. A negative (or
+        // NaN) is treated as invalid — leave state unchanged (matches the
+        // form's "invalid → no commit" expectation).
         const parsed = Number(raw);
-        if (Number.isFinite(parsed)) {
+        if (Number.isFinite(parsed) && parsed >= 0) {
           onChange(parsed);
         }
       }}

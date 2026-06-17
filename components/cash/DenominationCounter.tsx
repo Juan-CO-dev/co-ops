@@ -36,7 +36,9 @@ export function DenominationCounter({
               min={0}
               value={value[String(unit)] ?? ""}
               onChange={(e) => {
-                const trimmed = e.target.value.trim();
+                // Denomination counts are >= 0 — strip any "-" at input level;
+                // the parse below also clamps via Math.max(0, ...) (defense in depth).
+                const trimmed = e.target.value.replace(/-/g, "").trim();
                 const next = { ...value };
                 if (trimmed === "") {
                   delete next[String(unit)];

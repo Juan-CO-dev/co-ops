@@ -122,7 +122,7 @@ export function CashClient({
               inputMode="decimal"
               min={0}
               value={projected}
-              onChange={(e) => setProjected(e.target.value)}
+              onChange={(e) => setProjected(e.target.value.replace(/-/g, ""))}
               placeholder="0.00"
               className="
                 h-10 w-full rounded-md border-2 border-co-border-2 bg-co-surface
@@ -171,7 +171,7 @@ export function CashClient({
                 inputMode="decimal"
                 min={0}
                 value={handTotal}
-                onChange={(e) => setHandTotal(e.target.value)}
+                onChange={(e) => setHandTotal(e.target.value.replace(/-/g, ""))}
                 placeholder="0.00"
                 className="
                   h-10 w-full rounded-md border-2 border-co-border-2 bg-co-surface
@@ -238,7 +238,7 @@ export function CashClient({
               inputMode="decimal"
               min={0}
               value={tips}
-              onChange={(e) => setTips(e.target.value)}
+              onChange={(e) => setTips(e.target.value.replace(/-/g, ""))}
               placeholder="0.00"
               className="
                 h-10 w-full rounded-md border-2 border-co-border-2 bg-co-surface
