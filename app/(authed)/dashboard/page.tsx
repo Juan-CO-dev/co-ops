@@ -42,6 +42,8 @@ import { MAINTENANCE_BASE_LEVEL } from "@/lib/maintenance";
 import { loadPmDashboardState } from "@/lib/pm-report";
 import { loadTrendSeries } from "@/lib/reports-trends";
 import { TrendsWidget } from "@/components/trends/TrendsWidget";
+import { loadTeamOperatingHealth, TEAM_VIEW_LEVEL } from "@/lib/team-metrics";
+import { TeamRosterTable } from "@/components/team/TeamRosterTable";
 
 import { ActionLink } from "@/components/ActionButton";
 import { CashDepositTile } from "@/components/CashDepositTile";
@@ -402,6 +404,18 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         })
       : null;
 
+  // Team operating-health widget — AGM+ only (level >= TEAM_VIEW_LEVEL).
+  const teamHealth =
+    selectedLocation && operational && auth.level >= TEAM_VIEW_LEVEL
+      ? await loadTeamOperatingHealth(sb, {
+          viewer: { userId: auth.user.id, level: auth.level },
+          locationId: selectedLocation.id,
+          granularity: "day",
+          compare: false,
+          today: operational.todayDate,
+        })
+      : null;
+
   // Opening Report tile state (C.53) — resolve template + today's status inline
   // (the /operations/opening page owns the gate + 3-phase flow). Visible to
   // shift staff (level >= 3).
@@ -680,6 +694,10 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 
         {selectedLocation && trendsSeries ? (
           <TrendsWidget series={trendsSeries} locationId={selectedLocation.id} language={language} />
+        ) : null}
+
+        {selectedLocation && teamHealth ? (
+          <TeamRosterTable health={teamHealth} locationId={selectedLocation.id} language={language} />
         ) : null}
 
         {/* Maintenance Log nav entry — utility surface, not a daily-status tile.
