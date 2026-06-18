@@ -12,7 +12,7 @@ import { redirect } from "next/navigation";
 
 import { serverT } from "@/lib/i18n/server";
 import type { TranslationKey } from "@/lib/i18n/types";
-import { matchesReportQuery } from "@/lib/reports-search";
+import { buildSearchCorpus, searchReport, type SearchSnippet } from "@/lib/reports-search";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift";
 import { REPORTS_HUB_CASH_LEVEL, listReports, type ReportTypeKey, type SignalFilters, type Viewer } from "@/lib/reports-hub";
@@ -113,15 +113,27 @@ export default async function ReportsPage({ searchParams }: PageProps) {
     signalFilters: hasSignalFilters ? signalFilters : undefined,
   });
 
-  // ── Phase-1 quick-find: filter the already-authorized list by submitter name
-  // + localized report-type label + raw type key. AND-composed with the filters
-  // above; operates only on fields already visible on each row (no new disclosure).
+  // Phase-2 deep search: when q is present, build the viewer-authorized corpus
+  // for the listed reports and match q over name/type + authorized deep fields.
+  // The corpus is redacted to the viewer BEFORE matching, so a match/snippet can
+  // never disclose a field the viewer can't see. Built ONLY when q is non-empty.
   const query = (qParam ?? "").trim();
-  const filteredItems = query
-    ? items.filter((it) =>
-        matchesReportQuery(it, query, serverT(lang, `reports.type.${it.type}` as TranslationKey)),
-      )
-    : items;
+  let filteredItems = items;
+  const snippets = new Map<string, SearchSnippet>();
+  if (query) {
+    const corpus = await buildSearchCorpus(sb, { viewer, locationId, items });
+    filteredItems = items.filter((it) => {
+      const typeLabel = serverT(lang, `reports.type.${it.type}` as TranslationKey);
+      const res = searchReport(
+        { submitterName: it.submitterName, type: it.type },
+        typeLabel,
+        corpus.get(`${it.type}:${it.id}`),
+        query,
+      );
+      if (res.matched && res.snippet) snippets.set(`${it.type}:${it.id}`, res.snippet);
+      return res.matched;
+    });
+  }
 
   return (
     <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
@@ -159,6 +171,7 @@ export default async function ReportsPage({ searchParams }: PageProps) {
           language={lang}
           viewerLevel={viewerLevel}
           searchQuery={qParam ?? ""}
+          snippets={snippets}
         />
       </div>
     </main>
