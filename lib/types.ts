@@ -33,6 +33,8 @@ export interface User {
   lockedUntil: string | null;
   /** UI language preference per SPEC_AMENDMENTS.md C.31. */
   language: "en" | "es";
+  /** AGM+-editable "about me" blurb (≤500 chars) per the profile-blurb design. Null = unset. */
+  profileBlurb: string | null;
 }
 
 export interface Location {

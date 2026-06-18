@@ -93,6 +93,7 @@ interface UserRow {
   failed_login_count: number;
   locked_until: string | null;
   language: "en" | "es";
+  profile_blurb: string | null;
 }
 
 interface SessionRow {
@@ -128,6 +129,7 @@ function mapUser(r: UserRow): User {
     failedLoginCount: r.failed_login_count,
     lockedUntil: r.locked_until,
     language: r.language,
+    profileBlurb: r.profile_blurb,
   };
 }
 
