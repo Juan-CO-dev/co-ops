@@ -9,6 +9,7 @@ import { loadPublicProfile } from "@/lib/profiles";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
+import { LeadershipCard } from "@/components/profile/LeadershipCard";
 import { PublicProfileCard } from "@/components/profile/PublicProfileCard";
 
 interface PageProps { params: Promise<{ userId: string }>; }
@@ -37,7 +38,14 @@ export default async function PublicProfilePage({ params }: PageProps) {
           ← {serverT(lang, "profile.back")}
         </Link>
       </div>
-      <PublicProfileCard profile={profile} language={lang} isSelf={profile.userId === auth.user.id} />
+      {profile.cardKind === "leadership" ? (
+        <div className="flex flex-col gap-4">
+          <LeadershipCard profile={profile} language={lang} />
+          <PublicProfileCard profile={profile} language={lang} isSelf={profile.userId === auth.user.id} />
+        </div>
+      ) : (
+        <PublicProfileCard profile={profile} language={lang} isSelf={profile.userId === auth.user.id} />
+      )}
     </main>
   );
 }
