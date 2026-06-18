@@ -221,16 +221,6 @@ export function ChecklistReportDetailView({ detail, language }: Props) {
                     </div>
                   )}
 
-                  {/* Opening verification baseline — closer-count + par (when present) */}
-                  {item.verifyExpected !== null && (
-                    <div className="mt-0.5 text-xs text-co-text-muted">
-                      {t("reports.verify.against", {
-                        closer: item.verifyExpected.closerCount,
-                        par: item.verifyExpected.par !== null ? item.verifyExpected.par : "—",
-                      })}
-                    </div>
-                  )}
-
                   {/* Note — only rendered when non-null (loader already redacted below L5) */}
                   {item.note !== null && (
                     <div className="mt-1 rounded bg-co-bg px-2 py-1 text-xs text-co-text">

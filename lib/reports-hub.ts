@@ -7,6 +7,7 @@ import { loadReportStatuses } from "@/lib/midshift";
 import type { ReportKey, ReportProgress } from "@/lib/midshift";
 import type { RoleCode } from "@/lib/roles";
 import { loadOpeningCloserCountSnapshots } from "@/lib/opening";
+import type { OpeningNoPriorDataReason } from "@/lib/types";
 
 export const REPORTS_HUB_CASH_LEVEL = 4; // cash visible KH+
 export const REPORTS_HUB_NOTES_LEVEL = 5; // notes visible SL+
@@ -293,13 +294,6 @@ export interface ChecklistDetailItem {
   countValue: number | null;
   note: string | null; // null unless viewer.level >= REPORTS_HUB_NOTES_LEVEL
   isTempFlag: boolean; // true when item is in location's tempItemIds AND count_value > FRIDGE_DEFAULT_SAFE_MAX_F
-  /**
-   * Opening only: the closer-count baseline + par this item verifies against.
-   * Null when: (a) type is not "opening", (b) no snapshot row exists for this
-   * template item, or (c) the snapshot's closerCount is null (no prior AM Prep
-   * baseline — Option A: treat as no-baseline, leave null).
-   */
-  verifyExpected: { closerCount: number; par: number | null } | null;
 }
 
 export interface ChecklistReportDetail {
@@ -338,14 +332,6 @@ async function loadChecklistDetail(
   });
 
   const showNotes = args.viewer.level >= REPORTS_HUB_NOTES_LEVEL;
-
-  // Opening only: load closer-count snapshots to populate verifyExpected.
-  // Only called for type === "opening" to avoid unnecessary queries for other types.
-  // IDOR guard above already confirmed inst.location_id === args.locationId.
-  const closerCountSnapshots =
-    args.type === "opening"
-      ? await loadOpeningCloserCountSnapshots(service, args.instanceId)
-      : new Map<string, import("@/lib/opening").OpeningCloserCountSnapshotRow>();
 
   const { data: titems } = await service
     .from("checklist_template_items")
@@ -393,14 +379,6 @@ async function loadChecklistDetail(
   ).map((ti) => {
     const c = compByItem.get(ti.id);
     const countValue = c?.count_value ?? null;
-    // Opening only: populate verifyExpected from the persisted closer-count snapshot.
-    // Option A: null closerCount = no prior AM Prep baseline → leave verifyExpected null.
-    // IDOR guard + L5 notes redaction are unaffected — this reads already-loaded snapshot data.
-    const snap = closerCountSnapshots.get(ti.id);
-    const verifyExpected: ChecklistDetailItem["verifyExpected"] =
-      snap !== undefined && snap.closerCount !== null
-        ? { closerCount: snap.closerCount, par: snap.parValue }
-        : null;
     return {
       station: ti.station,
       label: ti.label,
@@ -411,11 +389,245 @@ async function loadChecklistDetail(
       // isTempFlag: item is in the location's fridge temp registry AND its count exceeds the safe max.
       // tempItemIds already loaded above (after the IDOR guard).
       isTempFlag: tempItemIds.has(ti.id) && countValue !== null && countValue > FRIDGE_DEFAULT_SAFE_MAX_F,
-      verifyExpected,
     };
   });
 
   return { kind: "checklist", type: args.type, date: inst.date, status: inst.status, items, signals, prepValues };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Opening detail loader — surfaces the Phase 1 verification / recount truth.
+//
+// The generic loadChecklistDetail reads only the top-level completion columns
+// (count_value, notes), so for an opening report it shows the fridge-temp
+// reading but NEVER the spot-check recount — the recount lives in
+// prep_data->phase1.opener_recount, with the resolved ground_truth_count +
+// prep_need beside it, and the closer-count BASELINE the opener verified
+// against lives in opening_closer_count_snapshots (NULL = no prior-day AM-Prep
+// submission → the opener established truth by recount).
+//
+// The old "Option A" (skip verifyExpected when closerCount is null) hid exactly
+// the recount-because-no-prior-submission case. This loader renders that case
+// instead: the recount value plus a "no prior-day submission" baseline label,
+// and an instance-level NULL-sentinel flag for the detail header.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * How a spot-check item resolved its ground truth, for read-only display.
+ *   - "section_verify" → opener verified the closer-count baseline as correct
+ *   - "recount"        → opener recounted (closer-count baseline present but
+ *                         flagged, OR — the NULL-sentinel case — no baseline at all)
+ *   - null             → not a spot-check item (cleanliness tick / temp reading)
+ */
+export type OpeningResolution = "section_verify" | "recount" | null;
+
+export interface OpeningDetailItem {
+  station: string;
+  label: string;
+  done: boolean;
+  byName: string | null;
+  /** Fridge temp reading (top-level count_value); null on non-temp items. */
+  countValue: number | null;
+  note: string | null; // null unless viewer.level >= REPORTS_HUB_NOTES_LEVEL
+  isTempFlag: boolean;
+  /**
+   * Spot-check item only. The closer-count BASELINE this item verified against:
+   *   - closerCount: number → captured prior-day closer count
+   *   - closerCount: null   → NO prior-day submission (recount established truth)
+   * `null` for the whole field means this is not a spot-check item.
+   */
+  baseline: { closerCount: number | null; par: number | null } | null;
+  /** Opener's recount value (prep_data->phase1.opener_recount); null when none. */
+  openerRecount: number | null;
+  /** Resolved ground truth (prep_data->phase1.ground_truth_count); null when none. */
+  groundTruth: number | null;
+  /** Derived prep need (prep_data->phase1.prep_need); null when none. */
+  prepNeed: number | null;
+  /** How this spot-check resolved; null for non-spot-check items. */
+  resolution: OpeningResolution;
+}
+
+export interface OpeningReportDetail {
+  kind: "opening";
+  date: string;
+  status: string;
+  items: OpeningDetailItem[];
+  signals: ReportSignals;
+  /**
+   * Report-level NULL-sentinel indicator. True when the opening was a
+   * recount-because-no-prior-day-submission: surfaced when the instance carries
+   * `opener_no_prior_data_reason`, OR (defensive) when every spot-check snapshot
+   * baseline is NULL. Drives the prominent header banner.
+   */
+  isRecountNoPriorSubmission: boolean;
+  /** The opener's attestation reason when NULL-sentinel engaged; else null. */
+  noPriorDataReason: OpeningNoPriorDataReason | null;
+}
+
+/** Reads prep_data->phase1 spot-check fields defensively (untyped JSONB boundary). */
+function readPhase1SpotCheck(prepData: unknown): {
+  openerRecount: number | null;
+  groundTruth: number | null;
+  prepNeed: number | null;
+  spotCheckStatus: string | null;
+} | null {
+  if (prepData == null || typeof prepData !== "object") return null;
+  if (!("phase1" in prepData)) return null;
+  const p1 = (prepData as { phase1: unknown }).phase1;
+  if (p1 == null || typeof p1 !== "object") return null;
+  const rec = (p1 as { opener_recount?: unknown }).opener_recount;
+  const gt = (p1 as { ground_truth_count?: unknown }).ground_truth_count;
+  const pn = (p1 as { prep_need?: unknown }).prep_need;
+  const st = (p1 as { spot_check_status?: unknown }).spot_check_status;
+  return {
+    openerRecount: typeof rec === "number" ? rec : null,
+    groundTruth: typeof gt === "number" ? gt : null,
+    prepNeed: typeof pn === "number" ? pn : null,
+    spotCheckStatus: typeof st === "string" ? st : null,
+  };
+}
+
+async function loadOpeningDetail(
+  service: SupabaseClient,
+  args: { viewer: Viewer; instanceId: string; locationId: string },
+): Promise<OpeningReportDetail | null> {
+  const { data: inst } = await service
+    .from("checklist_instances")
+    .select("id, template_id, date, status, location_id, opener_no_prior_data_reason")
+    .eq("id", args.instanceId)
+    .maybeSingle<{
+      id: string;
+      template_id: string;
+      date: string;
+      status: string;
+      location_id: string;
+      opener_no_prior_data_reason: OpeningNoPriorDataReason | null;
+    }>();
+  if (!inst) return null;
+  // SECURITY: cross-location IDOR guard — the record must belong to the caller's
+  // authorized location (page validated args.locationId via lockLocationContext).
+  if (inst.location_id !== args.locationId) return null;
+
+  // AFTER the IDOR guard: signals + temp-item ids (derived from already-authorized data).
+  const tempItemIds = await loadLocationTempItemIds(service, inst.location_id);
+  const { signals } = await computeReportSignals(service, {
+    type: "opening",
+    id: args.instanceId,
+    tempItemIds,
+  });
+
+  const showNotes = args.viewer.level >= REPORTS_HUB_NOTES_LEVEL; // SL+ (L5)
+
+  // Reuse the canonical opening read path for the closer-count baselines
+  // (the same loader loadOpeningState materializes + reads from).
+  const closerSnapshots = await loadOpeningCloserCountSnapshots(service, args.instanceId);
+
+  const { data: titems } = await service
+    .from("checklist_template_items")
+    .select("id, station, label, display_order")
+    .eq("template_id", inst.template_id)
+    .eq("active", true)
+    .order("display_order", { ascending: true });
+
+  // Read prep_data so the recount / ground_truth / prep_need surface — the
+  // generic loader never selects this, which is why the recount was invisible.
+  const { data: comps } = await service
+    .from("checklist_completions")
+    .select("template_item_id, completed_by, count_value, notes, prep_data")
+    .eq("instance_id", args.instanceId)
+    .is("superseded_at", null)
+    .is("revoked_at", null);
+
+  // Spot-check phase1 fields live on the phase1 row; under dual-membership an
+  // openingPhase2 item also has a phase2 row — phase1 fields are absent there,
+  // so the phase1 row is preferred when both exist for one item.
+  const compByItem = new Map<
+    string,
+    { completed_by: string | null; count_value: number | null; notes: string | null; prep_data: unknown }
+  >();
+  for (const c of (comps ?? []) as Array<{
+    template_item_id: string;
+    completed_by: string | null;
+    count_value: number | null;
+    notes: string | null;
+    prep_data: unknown;
+  }>) {
+    const existing = compByItem.get(c.template_item_id);
+    const isPhase1 =
+      c.prep_data != null && typeof c.prep_data === "object" && "phase1" in c.prep_data;
+    if (!existing || isPhase1) compByItem.set(c.template_item_id, c);
+  }
+
+  const byIds = [
+    ...new Set(
+      [...compByItem.values()].map((c) => c.completed_by).filter((v): v is string => !!v),
+    ),
+  ];
+  const nameById = new Map<string, string>();
+  if (byIds.length) {
+    const { data: users } = await service.from("users").select("id, name").in("id", byIds);
+    for (const u of (users ?? []) as Array<{ id: string; name: string }>) nameById.set(u.id, u.name);
+  }
+
+  let spotCheckCount = 0;
+  let nullBaselineCount = 0;
+
+  const items: OpeningDetailItem[] = (
+    (titems ?? []) as Array<{ id: string; station: string; label: string }>
+  ).map((ti) => {
+    const c = compByItem.get(ti.id);
+    const countValue = c?.count_value ?? null;
+    const snap = closerSnapshots.get(ti.id);
+    const isSpotCheck = snap !== undefined;
+    const p1 = readPhase1SpotCheck(c?.prep_data ?? null);
+
+    if (isSpotCheck) {
+      spotCheckCount += 1;
+      if (snap.closerCount === null) nullBaselineCount += 1;
+    }
+
+    // Resolution: trust the persisted spot_check_status when present; otherwise
+    // derive (recount present → recount; baseline present + verified → section).
+    let resolution: OpeningResolution = null;
+    if (isSpotCheck) {
+      if (p1?.spotCheckStatus === "flagged_recount") resolution = "recount";
+      else if (p1?.spotCheckStatus === "matched_via_section_verify") resolution = "section_verify";
+      else if ((p1?.openerRecount ?? null) !== null) resolution = "recount";
+      else resolution = "section_verify";
+    }
+
+    return {
+      station: ti.station,
+      label: ti.label,
+      done: !!c,
+      byName: c?.completed_by ? (nameById.get(c.completed_by) ?? null) : null,
+      countValue,
+      note: showNotes ? (c?.notes ?? null) : null, // REDACTED below L5
+      isTempFlag:
+        tempItemIds.has(ti.id) && countValue !== null && countValue > FRIDGE_DEFAULT_SAFE_MAX_F,
+      baseline: isSpotCheck ? { closerCount: snap.closerCount, par: snap.parValue } : null,
+      openerRecount: p1?.openerRecount ?? null,
+      groundTruth: p1?.groundTruth ?? null,
+      prepNeed: p1?.prepNeed ?? null,
+      resolution,
+    };
+  });
+
+  // NULL-sentinel: the instance attestation is the authoritative signal; the
+  // all-null-baseline check is a defensive fallback for pre-attestation rows.
+  const isRecountNoPriorSubmission =
+    inst.opener_no_prior_data_reason !== null ||
+    (spotCheckCount > 0 && nullBaselineCount === spotCheckCount);
+
+  return {
+    kind: "opening",
+    date: inst.date,
+    status: inst.status,
+    items,
+    signals,
+    isRecountNoPriorSubmission,
+    noPriorDataReason: inst.opener_no_prior_data_reason,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -726,14 +938,20 @@ async function loadPmDetail(
 // ReportDetail union + dispatcher
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type ReportDetail = ChecklistReportDetail | CashReportDetail | PmReportDetail;
+export type ReportDetail =
+  | ChecklistReportDetail
+  | OpeningReportDetail
+  | CashReportDetail
+  | PmReportDetail;
 
 export async function loadReportDetail(
   service: SupabaseClient,
   args: { viewer: Viewer; type: ReportTypeKey; id: string; locationId: string },
 ): Promise<ReportDetail | null> {
+  if (args.type === "opening") {
+    return loadOpeningDetail(service, { viewer: args.viewer, instanceId: args.id, locationId: args.locationId });
+  }
   if (
-    args.type === "opening" ||
     args.type === "closing" ||
     args.type === "am_prep" ||
     args.type === "mid_day"

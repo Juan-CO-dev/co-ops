@@ -21,6 +21,7 @@ import {
   loadReportDetail,
   type CashReportDetail,
   type ChecklistReportDetail,
+  type OpeningReportDetail,
   type PmReportDetail,
   type ReportDetail,
   type ReportTypeKey,
@@ -32,6 +33,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { DashboardBackLink } from "@/components/DashboardBackLink";
 import { CashReportDetailView } from "@/components/reports-hub/CashReportDetail";
 import { ChecklistReportDetailView } from "@/components/reports-hub/ChecklistReportDetail";
+import { OpeningReportDetailView } from "@/components/reports-hub/OpeningReportDetail";
 import { PmReportDetailView } from "@/components/reports-hub/PmReportDetail";
 
 const VALID_TYPES: ReportTypeKey[] = ["opening", "closing", "am_prep", "mid_day", "cash", "pm"];
@@ -107,7 +109,12 @@ export default async function ReportDetailPage({ params, searchParams }: PagePro
         {t("reports.detail.back")}
       </a>
 
-      {/* Task 3: checklist detail view */}
+      {/* Opening detail view — surfaces recount numbers + NULL-sentinel indicator */}
+      {detail.kind === "opening" ? (
+        <OpeningReportDetailView detail={detail as OpeningReportDetail} language={lang} />
+      ) : null}
+
+      {/* Task 3: checklist detail view (closing / am_prep / mid_day) */}
       {detail.kind === "checklist" ? (
         <ChecklistReportDetailView detail={detail as ChecklistReportDetail} language={lang} />
       ) : null}
