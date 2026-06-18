@@ -1,13 +1,14 @@
 /** /profile/[userId] — a teammate's positive public profile (shared-location gated). */
 import { redirect } from "next/navigation";
+import Link from "next/link";
 
+import { serverT } from "@/lib/i18n/server";
 import { accessibleLocations, type LocationActor } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift";
 import { loadPublicProfile } from "@/lib/profiles";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
-import { DashboardBackLink } from "@/components/DashboardBackLink";
 import { PublicProfileCard } from "@/components/profile/PublicProfileCard";
 
 interface PageProps { params: Promise<{ userId: string }>; }
@@ -28,7 +29,14 @@ export default async function PublicProfilePage({ params }: PageProps) {
 
   return (
     <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
-      <div className="mb-3"><DashboardBackLink /></div>
+      <div className="mb-3">
+        <Link
+          href="/profile"
+          className="inline-flex items-center gap-1 text-xs font-semibold text-co-text-muted transition hover:text-co-text"
+        >
+          ← {serverT(lang, "profile.back")}
+        </Link>
+      </div>
       <PublicProfileCard profile={profile} language={lang} isSelf={profile.userId === auth.user.id} />
     </main>
   );
