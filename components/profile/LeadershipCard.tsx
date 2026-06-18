@@ -57,6 +57,13 @@ export function LeadershipCard({
       {/* Location scope */}
       <p className="mt-1 text-xs text-co-text-muted">📍 {scope}</p>
 
+      {/* About-me blurb (loader gates on owner level >= 6; leadership is always >= 8) */}
+      {profile.blurb ? (
+        <blockquote className="mt-3 border-l-2 border-co-gold pl-3 text-sm italic text-co-text-muted">
+          {profile.blurb}
+        </blockquote>
+      ) : null}
+
       {/* Contact block */}
       {(email || phone) && (
         <div className="mt-4">

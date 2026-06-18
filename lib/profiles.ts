@@ -35,6 +35,8 @@ export interface PublicProfile {
   cardKind: "staff" | "leadership";
   contact?: { email: string | null; phone: string | null };
   locationScope?: "all" | string[];
+  /** AGM+ "about me" blurb. Null unless the OWNER is level >= 6 (gated at the loader). */
+  blurb: string | null;
 }
 
 export interface DirectoryEntry {
@@ -116,8 +118,8 @@ export async function loadPublicProfile(
   args: { viewerUserId: string; viewerLocations: string[] | "all"; targetUserId: string; today: string },
 ): Promise<PublicProfile | null> {
   const { data: u } = await service
-    .from("users").select("id, name, role, created_at, active, email, phone").eq("id", args.targetUserId)
-    .maybeSingle<{ id: string; name: string; role: RoleCode; created_at: string; active: boolean; email: string | null; phone: string | null }>();
+    .from("users").select("id, name, role, created_at, active, email, phone, profile_blurb").eq("id", args.targetUserId)
+    .maybeSingle<{ id: string; name: string; role: RoleCode; created_at: string; active: boolean; email: string | null; phone: string | null; profile_blurb: string | null }>();
   if (!u || !u.active) return null;
 
   const level = ROLES[u.role]?.level ?? 0;
@@ -186,5 +188,6 @@ export async function loadPublicProfile(
     userId: u.id, name: u.name, role: u.role, locationCodes, tenureDays,
     mvpWins, tasksAllTime, gradient: { great, good }, streaks, velocity,
     cardKind, contact, locationScope,
+    blurb: level >= 6 ? (u.profile_blurb ?? null) : null,
   };
 }
