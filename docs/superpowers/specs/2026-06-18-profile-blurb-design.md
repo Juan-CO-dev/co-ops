@@ -14,7 +14,7 @@ Let an **AGM+ (role level ≥ 6)** write a short free-text blurb — a favorite 
 ## Decisions (locked with Juan, 2026-06-18)
 
 - **Who can set:** AGM+ only (`ROLES[role].level >= 6`). Lower staff get no edit affordance.
-- **Who sees:** everyone who can already view that profile (the blurb rides the profile's existing visibility gate — shared-location for staff cards, company-wide for leadership cards). No separate visibility logic.
+- **Who sees:** everyone who can already view that profile (the blurb rides the profile's existing visibility gate — shared-location for staff cards, company-wide for leadership cards), **but only while the profile's owner is still AGM+**. The blurb is an AGM+ feature in both directions: gated by `level >= 6` on **set** AND on **display**. Demote below 6 → the blurb stops showing (and can't be edited). No separate per-viewer visibility logic beyond the existing profile gate + this owner-level gate.
 - **Edit surface:** the **UserMenu** dropdown (the documented growth path for account settings — the component was named generically in C.31 "as foundation for future expansion: password change, notification prefs, etc."). The blurb editor section renders only when the actor is AGM+.
 - **Length & format:** **500 characters max, plain text** (no HTML, no markdown — rendered as text). Whitespace-only is treated as "no blurb" (stored `NULL`).
 - **Audit:** **none** — mirrors `language` / `phone` / `sms_consent` self-updates (routine UI/profile preference, not an authorization or security event; per AGENTS.md Phase 2 column-level-enforcement notes).
@@ -70,7 +70,7 @@ Flow (exact `language` route shape):
 
 ## Display on the profile cards
 
-- `lib/profiles.ts` `loadPublicProfile`: add `profile_blurb` to the `users` select; add `blurb: string | null` to the `PublicProfile` type (present for **both** `cardKind` values). No gate change — the blurb is shown whenever the profile itself is viewable.
+- `lib/profiles.ts` `loadPublicProfile`: add `profile_blurb` to the `users` select; add `blurb: string | null` to the `PublicProfile` type (present for **both** `cardKind` values). **Owner-level gate at the loader:** `blurb: targetLevel >= 6 ? (row.profile_blurb ?? null) : null` — `targetLevel` is already derived for `cardKind` (`ROLES[targetRole].level`). A demoted owner's stored blurb is **never emitted** in the contract, so no card can display it. (The row keeps the text; only the projection hides it — re-promotion restores display with no re-entry.)
 - **`PublicProfileCard`** (staff, level < 8 — this is where an **AGM/GM**'s blurb shows, levels 6–7): render the blurb as a quote-styled block (italic, subtle quote mark, `text-co-text-muted`) directly under the header, before the highlight tiles. Only when `profile.blurb` is non-null.
 - **`LeadershipCard`** (level ≥ 8 — MoO/owner/CGS): render the blurb in the same quote style, below the role/oversees line (near the contact block). Only when non-null.
 - **Directory** (`ProfileDirectory`): unchanged — no blurb on directory cards (kept minimal: headline highlight only).
@@ -82,7 +82,7 @@ Flow (exact `language` route shape):
 - **Field whitelist:** the route updates only `profile_blurb`; no other column is touchable through it.
 - **Length** bounded at the route (400) and the DB (`CHECK`) — two layers.
 - **Display visibility = the profile's existing visibility.** No new exposure surface: a viewer who can't load the profile can't see the blurb. Leadership blurbs are company-wide-visible (same as the rest of the leadership card, by design).
-- **Demotion edge (documented, accepted):** if an AGM+ sets a blurb and is later demoted below 6, the blurb keeps displaying but they can no longer edit it. Acceptable — the blurb is benign self-authored content and demotions are rare; no scrub step.
+- **Demotion behavior (locked):** if an AGM+ sets a blurb and is later demoted below 6, the blurb **stops displaying** (loader emits `blurb: null` for any owner with `level < 6`) AND they lose the editor (UserMenu section hidden). The stored text is retained but inert; re-promotion to ≥6 restores display with no re-entry. The blurb is fully an AGM+-and-up affordance.
 - Plain text only; no markup injection path.
 
 ## Verification (no test framework)
@@ -94,7 +94,8 @@ Flow (exact `language` route shape):
 3. **Gate holds:** simulate the route's gate decision for a level-5 (shift_lead) actor → 403, no write (verify the row's `profile_blurb` is unchanged/NULL).
 4. **Clear:** sending whitespace-only stores `NULL`; `loadPublicProfile.blurb` is `null`.
 5. **Over-length rejected:** a 501-char string is rejected by the route's length check (400) and, independently, the DB CHECK rejects a direct insert of 501 chars.
-6. **No banned keys regression:** `loadPublicProfile` still exposes no `score`/`needsWork`/`areaToImprove`/`note` keys (the blurb addition didn't widen the positive-only contract).
+6. **Display gates on owner level:** with a non-null `profile_blurb` stored on a row, `loadPublicProfile` returns `blurb` non-null when the target is level ≥ 6 and `blurb: null` when the target is level < 6 (demotion case) — the stored text stays in the row but is suppressed in the projection.
+7. **No banned keys regression:** `loadPublicProfile` still exposes no `score`/`needsWork`/`areaToImprove`/`note` keys (the blurb addition didn't widen the positive-only contract).
 
 ## Deferred (tracked)
 
