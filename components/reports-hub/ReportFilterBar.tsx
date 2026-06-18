@@ -47,6 +47,7 @@ interface ReportFilterBarProps {
   language: Language;
   viewerLevel: number;
   activeSignalFilters?: ActiveSignalFilters;
+  query?: string; // current free-text quick-find value
 }
 
 export function ReportFilterBar({
@@ -58,6 +59,7 @@ export function ReportFilterBar({
   language,
   viewerLevel,
   activeSignalFilters = {},
+  query = "",
 }: ReportFilterBarProps) {
   const t = (key: TranslationKey) => serverT(language, key);
   const canSeeCash = viewerLevel >= REPORTS_HUB_CASH_LEVEL;
@@ -68,6 +70,22 @@ export function ReportFilterBar({
       <input type="hidden" name="location" value={locationId} />
 
       <div className="flex flex-wrap gap-3">
+        {/* Free-text quick-find — matches submitter name + report type */}
+        <div className="flex flex-col gap-1">
+          <label htmlFor="rpt-q" className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-muted">
+            {t("reports.search.label")}
+          </label>
+          <input
+            id="rpt-q"
+            type="search"
+            name="q"
+            defaultValue={query}
+            placeholder={t("reports.search.placeholder")}
+            aria-label={t("reports.search.aria")}
+            className="rounded border border-co-border bg-co-bg px-2 py-1 text-sm text-co-text"
+          />
+        </div>
+
         {/* Date from */}
         <div className="flex flex-col gap-1">
           <label htmlFor="rpt-from" className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-muted">

@@ -47,16 +47,20 @@ interface ReportListProps {
   locationId: string;
   language: Language;
   viewerLevel: number;
+  /** Active quick-find query; when set + no matches, shows the search-empty message. */
+  searchQuery?: string;
 }
 
-export function ReportList({ items, locationId, language, viewerLevel }: ReportListProps) {
+export function ReportList({ items, locationId, language, viewerLevel, searchQuery }: ReportListProps) {
   const t = (key: TranslationKey) => serverT(language, key);
   const canSeeCash = viewerLevel >= REPORTS_HUB_CASH_LEVEL;
 
   if (items.length === 0) {
+    const q = searchQuery?.trim();
+    const message = q ? serverT(language, "reports.search.empty", { q }) : t("reports.empty");
     return (
       <p className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-3 text-sm font-semibold text-co-text">
-        {t("reports.empty")}
+        {message}
       </p>
     );
   }
