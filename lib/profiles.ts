@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import type { RoleCode } from "@/lib/roles";
+import { ROLES, type RoleCode } from "@/lib/roles";
 import { activeDayStreak, longestStreak, personalBest } from "@/lib/team-scoring";
 import { selectAllRows } from "@/lib/supabase-paginate";
 
@@ -32,6 +32,9 @@ export interface PublicProfile {
   streaks: { current: number; longest: number; personalBest: number };
   /** Recent daily task counts, oldest→newest, length VELOCITY_DAYS. */
   velocity: number[];
+  cardKind: "staff" | "leadership";
+  contact?: { email: string | null; phone: string | null };
+  locationScope?: "all" | string[];
 }
 
 export interface DirectoryEntry {
@@ -88,14 +91,17 @@ export async function loadPublicProfile(
   args: { viewerUserId: string; viewerLocations: string[] | "all"; targetUserId: string; today: string },
 ): Promise<PublicProfile | null> {
   const { data: u } = await service
-    .from("users").select("id, name, role, created_at, active").eq("id", args.targetUserId)
-    .maybeSingle<{ id: string; name: string; role: RoleCode; created_at: string; active: boolean }>();
+    .from("users").select("id, name, role, created_at, active, email, phone").eq("id", args.targetUserId)
+    .maybeSingle<{ id: string; name: string; role: RoleCode; created_at: string; active: boolean; email: string | null; phone: string | null }>();
   if (!u || !u.active) return null;
+
+  const level = ROLES[u.role]?.level ?? 0;
+  const cardKind: "staff" | "leadership" = level >= 8 ? "leadership" : "staff";
 
   // Visibility gate: viewer shares ≥1 location with target (unless all-locations).
   const { data: tul } = await service.from("user_locations").select("location_id").eq("user_id", args.targetUserId);
   const targetLocationIds = (tul ?? []).map((r) => (r as { location_id: string }).location_id);
-  if (args.viewerLocations !== "all") {
+  if (cardKind === "staff" && args.viewerLocations !== "all") {
     const shared = targetLocationIds.some((l) => args.viewerLocations.includes(l));
     if (!shared) return null;
   }
@@ -105,6 +111,10 @@ export async function loadPublicProfile(
     const { data: locs } = await service.from("locations").select("code").in("id", targetLocationIds);
     locationCodes = (locs ?? []).map((r) => (r as { code: string }).code);
   }
+
+  const contact = cardKind === "leadership" ? { email: u.email ?? null, phone: u.phone ?? null } : undefined;
+  const locationScope: "all" | string[] | undefined =
+    cardKind === "leadership" ? (level >= 9 || targetLocationIds.length === 0 ? "all" : locationCodes) : undefined;
 
   const comps = await selectAllRows<{ completed_at: string }>(
     (from, to) => service.from("checklist_completions").select("completed_at")
@@ -150,5 +160,6 @@ export async function loadPublicProfile(
   return {
     userId: u.id, name: u.name, role: u.role, locationCodes, tenureDays,
     mvpWins, tasksAllTime, gradient: { great, good }, streaks, velocity,
+    cardKind, contact, locationScope,
   };
 }
