@@ -1,128 +1,118 @@
 /**
- * /my-feedback — Employee's own structured shift feedback.
+ * /my-feedback — "My Performance" (employee self-view).
  *
- * Per-user, all levels (no location gate). Employees see their own
- * structured evals from SUBMITTED PM Reports — date, location code,
- * on-time status, attitude, area-to-improve if present, and an MVP
- * badge if they were selected.
- *
- * Security invariant: NEVER renders a note. The loader (`loadMyFeedback`)
- * never selects the `note` column from pm_employee_evals, and
- * `MyFeedbackItem` has no `note` field. This is the app-layer column
- * boundary described in the PM Report architecture.
- *
- * Server Component. Reads session via requireSessionFromHeaders.
+ * Route kept (the PM `shift_feedback` notification deep-links here); the label
+ * is "My Performance". Own data only, per-location switcher, positive framing
+ * (no rank, no needs-attention). Absorbs the prior eval list as the Feedback
+ * section. Security: loadMyPerformance derives the person from the session
+ * (never a param); manager notes are never selected.
  */
 
+import { redirect } from "next/navigation";
+import Link from "next/link";
+
 import { serverT } from "@/lib/i18n/server";
-import type { Gradient } from "@/lib/pm-report";
+import type { Language } from "@/lib/i18n/types";
+import { accessibleLocations, type LocationActor } from "@/lib/locations";
+import { operationalNow } from "@/lib/midshift";
 import { loadMyFeedback } from "@/lib/pm-report";
-import type { TranslationKey } from "@/lib/i18n/types";
-import { formatDateLabel } from "@/lib/i18n/format";
+import { loadMyPerformance } from "@/lib/team-metrics";
+import type { TrendGranularity } from "@/lib/reports-trends";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
 import { DashboardBackLink } from "@/components/DashboardBackLink";
+import { TrendControls } from "@/components/trends/TrendControls";
+import { MyPerformance } from "@/components/me/MyPerformance";
 
-/** Maps each Gradient value to its pm.attitude.* translation key. */
-const GRADIENT_KEY: Record<Gradient, TranslationKey> = {
-  great: "pm.attitude.great",
-  good: "pm.attitude.good",
-  needs_work: "pm.attitude.needs_work",
-};
+interface PageProps {
+  searchParams: Promise<{ loc?: string; location?: string; g?: string; cmp?: string }>;
+}
 
-export default async function MyFeedbackPage() {
+function parseGranularity(g: string | undefined): TrendGranularity {
+  return g === "week" || g === "month" ? g : "day";
+}
+
+interface LocLite { id: string; code: string }
+
+export default async function MyPerformancePage({ searchParams }: PageProps) {
   const auth = await requireSessionFromHeaders("/my-feedback");
-  const lang = auth.user.language;
-  const service = getServiceRoleClient();
+  const language: Language = auth.user.language;
+  const { loc, location, g, cmp } = await searchParams;
+  const selectedParam = loc ?? location; // switcher uses ?loc=, TrendControls uses ?location=
+  const sb = getServiceRoleClient();
 
-  // Load the employee's own feedback (loader never selects `note`).
-  const items = await loadMyFeedback(service, { userId: auth.user.id });
+  const actor: LocationActor = { role: auth.role, locations: auth.locations };
+  const access = accessibleLocations(actor);
+  let locQuery = sb.from("locations").select("id, code").eq("active", true).order("code", { ascending: true });
+  if (access !== "all") {
+    if (access.length === 0) return <EmptyShell language={language} />;
+    locQuery = locQuery.in("id", access);
+  }
+  const { data: locRows } = await locQuery;
+  const locations = (locRows ?? []) as LocLite[];
+  if (locations.length === 0) return <EmptyShell language={language} />;
 
-  // Build a location-id → code map for display.
-  // Fetch all active locations so we cover locations the employee
-  // may no longer be assigned to (historical evals remain visible).
-  const { data: locationRows } = await service
-    .from("locations")
-    .select("id, code")
-    .eq("active", true);
-  const locationCodes: Record<string, string> = Object.fromEntries(
-    ((locationRows ?? []) as { id: string; code: string }[]).map((l) => [
-      l.id,
-      l.code,
-    ]),
-  );
+  const selected = (selectedParam ? locations.find((l) => l.id === selectedParam) : null) ?? locations[0]!;
+  const granularity = parseGranularity(g);
+  const compare = cmp === "1";
+  const today = operationalNow(new Date()).date;
+
+  const data = await loadMyPerformance(sb, {
+    viewer: { userId: auth.user.id, level: auth.level },
+    locationId: selected.id, granularity, compare, today,
+  });
+
+  const allFeedback = await loadMyFeedback(sb, { userId: auth.user.id });
+  const feedback = allFeedback.filter((f) => f.locationId === selected.id);
 
   return (
     <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
-      <div className="mb-3">
-        <DashboardBackLink />
+      <div className="mb-3"><DashboardBackLink /></div>
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <h1 className="text-lg font-bold text-co-text">{serverT(language, "me.title")}</h1>
+        {locations.length > 1 ? (
+          <nav aria-label={serverT(language, "me.location_aria")} className="flex flex-wrap gap-1.5">
+            {locations.map((l) => {
+              const on = l.id === selected.id;
+              const href = `/my-feedback?loc=${l.id}&g=${granularity}${compare ? "&cmp=1" : ""}`;
+              return (
+                <Link key={l.id} href={href} scroll={false} aria-current={on ? "page" : undefined}
+                  className={[
+                    "inline-flex min-h-[36px] items-center rounded-full px-3 text-xs font-bold uppercase tracking-[0.1em] transition",
+                    on ? "border-2 border-co-text bg-co-gold text-co-text" : "border-2 border-co-border-2 bg-co-surface text-co-text-muted hover:border-co-text",
+                  ].join(" ")}>
+                  {l.code}
+                </Link>
+              );
+            })}
+          </nav>
+        ) : null}
       </div>
 
-      <h1 className="mb-4 text-lg font-bold text-co-text">
-        {serverT(lang, "pm.my_feedback.title")}
-      </h1>
+      <div className="mb-4">
+        <TrendControls locationId={selected.id} granularity={granularity} compare={compare} language={language} basePath="/my-feedback" />
+      </div>
 
-      {items.length === 0 ? (
-        <p className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-3 text-sm font-semibold text-co-text">
-          {serverT(lang, "pm.my_feedback.empty")}
-        </p>
+      {data ? (
+        <MyPerformance data={data} feedback={feedback} language={language} />
       ) : (
-        <ul className="flex flex-col gap-3">
-          {items.map((item) => {
-            const locationCode = locationCodes[item.locationId] ?? item.locationId;
-            const dateLabel = formatDateLabel(item.date, lang);
-            return (
-              <li
-                key={item.id}
-                className="rounded-lg border-2 border-co-border bg-co-surface px-4 py-3"
-              >
-                {/* Date · Location */}
-                <p className="mb-2 text-xs font-bold uppercase tracking-[0.12em] text-co-text-muted">
-                  {serverT(lang, "pm.my_feedback.date_at", {
-                    date: dateLabel,
-                    location: locationCode,
-                  })}
-                </p>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  {/* Arrived ready */}
-                  <span className="rounded-full border-2 border-co-border bg-co-bg px-3 py-0.5 text-sm font-semibold text-co-text">
-                    {serverT(lang, "pm.eval.arrived_ready")}: {serverT(lang, GRADIENT_KEY[item.arrivedReady])}
-                  </span>
-
-                  {/* Attitude */}
-                  <span className="rounded-full border-2 border-co-border bg-co-bg px-3 py-0.5 text-sm font-semibold text-co-text">
-                    {serverT(lang, "pm.eval.attitude")}: {serverT(lang, GRADIENT_KEY[item.attitude])}
-                  </span>
-
-                  {/* Production */}
-                  <span className="rounded-full border-2 border-co-border bg-co-bg px-3 py-0.5 text-sm font-semibold text-co-text">
-                    {serverT(lang, "pm.eval.production")}: {serverT(lang, GRADIENT_KEY[item.production])}
-                  </span>
-
-                  {/* Team player */}
-                  <span className="rounded-full border-2 border-co-border bg-co-bg px-3 py-0.5 text-sm font-semibold text-co-text">
-                    {serverT(lang, "pm.eval.team_player")}: {serverT(lang, GRADIENT_KEY[item.teamPlayer])}
-                  </span>
-
-                  {/* MVP badge */}
-                  {item.wasMvp ? (
-                    <span className="rounded-full border-2 border-co-gold bg-co-gold/10 px-3 py-0.5 text-sm font-semibold text-co-text">
-                      {serverT(lang, "pm.my_feedback.mvp")}
-                    </span>
-                  ) : null}
-                </div>
-
-                {/* Area to improve — only if present */}
-                {item.areaToImprove ? (
-                  <p className="mt-2 text-sm text-co-text-muted">{item.areaToImprove}</p>
-                ) : null}
-              </li>
-            );
-          })}
-        </ul>
+        <p className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-3 text-sm font-semibold text-co-text">
+          {serverT(language, "me.empty")}
+        </p>
       )}
+    </main>
+  );
+}
+
+function EmptyShell({ language }: { language: Language }) {
+  return (
+    <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
+      <div className="mb-3"><DashboardBackLink /></div>
+      <h1 className="mb-4 text-lg font-bold text-co-text">{serverT(language, "me.title")}</h1>
+      <p className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-3 text-sm font-semibold text-co-text">
+        {serverT(language, "me.empty")}
+      </p>
     </main>
   );
 }
