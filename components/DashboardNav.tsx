@@ -35,6 +35,7 @@ interface NavLink {
 
 const NAV_LINKS: NavLink[] = [
   { key: "nav.reports_hub", href: "/reports", scoped: true },
+  { key: "nav.trends", href: "/reports/trends", scoped: true },
   { key: "nav.announcements", href: "/announcements", scoped: true },
   { key: "nav.ordering", href: "/ordering", scoped: true },
   { key: "nav.tips", href: "/tips", scoped: true },

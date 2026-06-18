@@ -38,6 +38,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# superpowers brainstorm artifacts (mockups, server state) — local only
+.superpowers/
+
 # Claude Code session metadata
 .claude/
 
