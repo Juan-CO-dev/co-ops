@@ -81,6 +81,13 @@ export function PublicProfileCard({
         </div>
       </div>
 
+      {/* About-me blurb (AGM+ only; loader already gates on owner level) */}
+      {profile.blurb ? (
+        <blockquote className="mb-4 border-l-2 border-co-gold pl-3 text-sm italic text-co-text-muted">
+          {profile.blurb}
+        </blockquote>
+      ) : null}
+
       {/* Highlight tiles */}
       <div className="flex flex-wrap gap-2">
         <Tile value={`⭐ ${profile.mvpWins}`} label={t("profile.mvp_wins")} />

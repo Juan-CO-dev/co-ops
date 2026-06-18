@@ -29,9 +29,13 @@ interface UserMenuProps {
   userName: string;
   /** User's email — shown in the menu header for context. */
   userEmail?: string | null;
+  /** Actor's role level — the blurb editor renders only when >= 6 (AGM+). */
+  actorLevel: number;
+  /** Current saved blurb (null = unset) — seeds the editor. */
+  initialBlurb: string | null;
 }
 
-export function UserMenu({ userName, userEmail }: UserMenuProps) {
+export function UserMenu({ userName, userEmail, actorLevel, initialBlurb }: UserMenuProps) {
   const { language, t, setLanguage } = useTranslation();
   const [open, setOpen] = useState(false);
   const [updating, setUpdating] = useState(false);
@@ -41,6 +45,10 @@ export function UserMenu({ userName, userEmail }: UserMenuProps) {
   const router = useRouter();
   const pathname = usePathname();
   const [signingOut, setSigningOut] = useState(false);
+  const [blurb, setBlurb] = useState(initialBlurb ?? "");
+  const [savedBlurb, setSavedBlurb] = useState(initialBlurb ?? "");
+  const [blurbSaving, setBlurbSaving] = useState(false);
+  const [blurbStatus, setBlurbStatus] = useState<"idle" | "saved" | "error">("idle");
 
   // Mirrors LogoutButton: POST /api/auth/logout (idempotent, public path —
   // server clears the cookie regardless of session state), then navigate to
@@ -99,6 +107,34 @@ export function UserMenu({ userName, userEmail }: UserMenuProps) {
     }
   };
 
+  const handleBlurbSave = async () => {
+    const next = blurb.trim();
+    if (blurbSaving || next === savedBlurb.trim()) return;
+    setBlurbSaving(true);
+    setBlurbStatus("idle");
+    try {
+      const res = await fetch("/api/users/me/profile-blurb", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ blurb: next }),
+        redirect: "manual",
+      });
+      if (res.ok) {
+        const body = (await res.json()) as { blurb: string | null };
+        const saved = body.blurb ?? "";
+        setSavedBlurb(saved);
+        setBlurb(saved);
+        setBlurbStatus("saved");
+      } else {
+        setBlurbStatus("error");
+      }
+    } catch {
+      setBlurbStatus("error");
+    } finally {
+      setBlurbSaving(false);
+    }
+  };
+
   return (
     <div ref={containerRef} className="relative">
       <button
@@ -122,7 +158,7 @@ export function UserMenu({ userName, userEmail }: UserMenuProps) {
         <div
           role="menu"
           className="
-            absolute right-0 top-12 z-30 w-64 rounded-xl border-2 border-co-border
+            absolute right-0 top-12 z-30 w-72 rounded-xl border-2 border-co-border
             bg-co-surface p-3 shadow-lg
           "
         >
@@ -167,6 +203,53 @@ export function UserMenu({ userName, userEmail }: UserMenuProps) {
               <div className="mt-2 px-1 text-[11px] text-co-cta">{error}</div>
             ) : null}
           </div>
+
+          {actorLevel >= 6 ? (
+            <div className="mt-3 border-t border-co-border-2 pt-3">
+              <div className="px-1 text-[10px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
+                {t("user_menu.blurb.label")}
+              </div>
+              <textarea
+                value={blurb}
+                onChange={(e) => {
+                  setBlurb(e.target.value.slice(0, 500));
+                  setBlurbStatus("idle");
+                }}
+                maxLength={500}
+                rows={3}
+                placeholder={t("user_menu.blurb.placeholder")}
+                className="
+                  mt-2 w-full resize-none rounded-lg border-2 border-co-border bg-co-surface
+                  px-2 py-1.5 text-sm text-co-text
+                  focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
+                "
+              />
+              <div className="mt-1 flex items-center justify-between px-1">
+                <span className="text-[11px] text-co-text-dim">
+                  {t("user_menu.blurb.counter", { n: blurb.trim().length })}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void handleBlurbSave()}
+                  disabled={blurbSaving || blurb.trim() === savedBlurb.trim()}
+                  className="
+                    inline-flex min-h-[36px] items-center rounded-lg border-2 border-co-gold-deep
+                    bg-co-gold px-3 text-sm font-bold uppercase tracking-[0.1em] text-co-text
+                    transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
+                    disabled:cursor-not-allowed disabled:opacity-50
+                  "
+                >
+                  {blurbSaving ? t("user_menu.blurb.saving") : t("user_menu.blurb.save")}
+                </button>
+              </div>
+              {blurbStatus === "saved" ? (
+                <div className="mt-1 px-1 text-[11px] text-co-text-dim">{t("user_menu.blurb.saved")}</div>
+              ) : null}
+              {blurbStatus === "error" ? (
+                <div className="mt-1 px-1 text-[11px] text-co-cta">{t("user_menu.blurb.error")}</div>
+              ) : null}
+            </div>
+          ) : null}
 
           {/* Navigation + session actions — fixes the dead-end-page class. */}
           <div className="mt-3 flex flex-col gap-1 border-t border-co-border-2 pt-3">
