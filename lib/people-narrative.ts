@@ -52,3 +52,26 @@ export function teamBannerNarrative(s: { onTrack: number; needsAttention: number
     params: { onTrack: s.onTrack, needs: s.needsAttention, names: s.attentionNames.join(", ") },
   };
 }
+
+export interface MyPerformanceReadInput {
+  role: RoleCode;
+  scoreDeltaPct: number | null;
+  onTimePct: number | null;
+  activeDayStreak: number;
+  mvpAwards: number;
+  gradient: { great: number; good: number; needsWork: number };
+}
+
+/**
+ * Positive-only "read" for the employee self-view. NEVER returns a
+ * needs-attention key — picks the strongest positive signal, falling back to a
+ * neutral-encouraging steady line. (A quiet period reads as "steady", not a flag.)
+ */
+export function myPerformanceRead(p: MyPerformanceReadInput): NarrativeLine {
+  if (p.mvpAwards > 0) return { key: "me.read.mvp", params: { n: p.mvpAwards } };
+  if (p.activeDayStreak >= 5) return { key: "me.read.streak", params: { n: p.activeDayStreak } };
+  if (p.scoreDeltaPct !== null && p.scoreDeltaPct > 0) return { key: "me.read.up", params: { pct: p.scoreDeltaPct } };
+  if (p.onTimePct !== null && p.onTimePct >= 90) return { key: "me.read.reliable", params: { ontime: p.onTimePct } };
+  if (p.gradient.great >= p.gradient.good + p.gradient.needsWork && p.gradient.great > 0) return { key: "me.read.strong_gradients" };
+  return { key: "me.read.steady" };
+}
