@@ -124,9 +124,13 @@ export async function loadTeamOperatingHealth(
   };
 
   // location instance ids (for completion attribution + finalizations)
-  const { data: instRows } = await service
-    .from("checklist_instances").select("id, confirmed_by, confirmed_at").eq("location_id", args.locationId);
-  const locInstanceIds = new Set((instRows ?? []).map((r) => (r as { id: string }).id));
+  const instRows = await selectAllRows<{ id: string; confirmed_by: string | null; confirmed_at: string | null }>(
+    (from, to) => service
+      .from("checklist_instances").select("id, confirmed_by, confirmed_at")
+      .eq("location_id", args.locationId)
+      .order("id", { ascending: true }).range(from, to),
+  );
+  const locInstanceIds = new Set(instRows.map((r) => r.id));
 
   // 1. TASKS + NOTES (completions: completed_at in span, live, instance at location)
   if (locInstanceIds.size) {
@@ -147,7 +151,7 @@ export async function loadTeamOperatingHealth(
   }
 
   // 2. FINALIZATIONS
-  for (const i of (instRows ?? []) as Array<{ confirmed_by: string | null; confirmed_at: string | null }>) {
+  for (const i of instRows) {
     if (i.confirmed_by && i.confirmed_at) place(i.confirmed_by, i.confirmed_at, "finalizations");
   }
   const { data: cashRows } = await service
@@ -177,10 +181,13 @@ export async function loadTeamOperatingHealth(
     return [row.id, row] as const;
   }));
   if (pmReportById.size) {
-    const { data: evalRows } = await service
-      .from("pm_employee_evals").select("pm_report_id, area_to_improve, note")
-      .in("pm_report_id", [...pmReportById.keys()]).is("superseded_at", null);
-    for (const e of (evalRows ?? []) as Array<{ pm_report_id: string; area_to_improve: string | null; note: string | null }>) {
+    const evalRows = await selectAllRows<{ pm_report_id: string; area_to_improve: string | null; note: string | null }>(
+      (from, to) => service
+        .from("pm_employee_evals").select("pm_report_id, area_to_improve, note")
+        .in("pm_report_id", [...pmReportById.keys()]).is("superseded_at", null)
+        .order("pm_report_id", { ascending: true }).range(from, to),
+    );
+    for (const e of evalRows) {
       const rep = pmReportById.get(e.pm_report_id);
       if (rep?.submitted_by && rep.submitted_at && ((e.area_to_improve && e.area_to_improve.trim()) || (e.note && e.note.trim()))) {
         place(rep.submitted_by, rep.submitted_at, "notes");
@@ -312,9 +319,12 @@ export async function loadPersonDetail(
   let lastActive: string | null = null;
   const touch = (d: string) => { if (!lastActive || d > lastActive) lastActive = d; activeDates.add(d); };
 
-  const { data: instAll } = await service
-    .from("checklist_instances").select("id").eq("location_id", args.locationId);
-  const locInstanceIds = (instAll ?? []).map((r) => (r as { id: string }).id);
+  const instAll = await selectAllRows<{ id: string }>(
+    (from, to) => service
+      .from("checklist_instances").select("id").eq("location_id", args.locationId)
+      .order("id", { ascending: true }).range(from, to),
+  );
+  const locInstanceIds = instAll.map((r) => r.id);
 
   // TASKS + NOTES
   if (locInstanceIds.length) {
