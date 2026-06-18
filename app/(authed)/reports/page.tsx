@@ -7,6 +7,7 @@
  * Auth → location guard → listReports → filter bar + list.
  */
 
+import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { serverT } from "@/lib/i18n/server";
@@ -113,9 +114,17 @@ export default async function ReportsPage({ searchParams }: PageProps) {
       <div className="mb-3">
         <DashboardBackLink />
       </div>
-      <h1 className="mb-4 text-lg font-bold text-co-text">
-        {serverT(lang, "reports.page.title")}
-      </h1>
+      <div className="mb-4 flex items-center justify-between">
+        <h1 className="text-lg font-bold text-co-text">
+          {serverT(lang, "reports.page.title")}
+        </h1>
+        <Link
+          href={`/reports/trends?location=${locationId}`}
+          className="inline-flex min-h-[40px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-4 text-xs font-bold uppercase tracking-[0.1em] text-co-text-muted transition hover:border-co-text hover:text-co-text"
+        >
+          {serverT(lang, "reports.trends.nav_label")}
+        </Link>
+      </div>
 
       <ReportFilterBar
         locationId={locationId}
