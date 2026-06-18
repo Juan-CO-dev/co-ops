@@ -40,6 +40,8 @@ import { loadAmPrepDashboardState, loadMidDayPrepDashboardState } from "@/lib/pr
 import { loadCashDashboardState } from "@/lib/cash";
 import { MAINTENANCE_BASE_LEVEL } from "@/lib/maintenance";
 import { loadPmDashboardState } from "@/lib/pm-report";
+import { loadTrendSeries } from "@/lib/reports-trends";
+import { TrendsWidget } from "@/components/trends/TrendsWidget";
 
 import { ActionLink } from "@/components/ActionButton";
 import { CashDepositTile } from "@/components/CashDepositTile";
@@ -385,6 +387,21 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         })
       : null;
 
+  // Trends widget series — compact day/last-30/no-compare read over the same
+  // loadTrendSeries used by /reports/trends. Reuses operational.todayDate
+  // (operational-TZ "today" already computed for the dashboard). cashVisible
+  // gates the cash mini-card inside the widget by viewer level.
+  const trendsSeries =
+    selectedLocation && operational
+      ? await loadTrendSeries(sb, {
+          viewer: { userId: auth.user.id, level: auth.level },
+          locationId: selectedLocation.id,
+          granularity: "day",
+          compare: false,
+          today: operational.todayDate,
+        })
+      : null;
+
   // Opening Report tile state (C.53) — resolve template + today's status inline
   // (the /operations/opening page owns the gate + 3-phase flow). Visible to
   // shift staff (level >= 3).
@@ -659,6 +676,10 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
               />
             ) : null}
           </ReportsSection>
+        ) : null}
+
+        {selectedLocation && trendsSeries ? (
+          <TrendsWidget series={trendsSeries} locationId={selectedLocation.id} language={language} />
         ) : null}
 
         {/* Maintenance Log nav entry — utility surface, not a daily-status tile.
