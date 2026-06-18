@@ -955,6 +955,7 @@
   "reports.trends.completion_title": "Cumplimiento de Lista",
   "reports.trends.completion_explain": "Porcentaje de artículos requeridos completados, por {grouping}.",
   "reports.trends.completion_how_to_read": "Más es mejor. 100% significa que se hizo cada artículo requerido; una línea hacia arriba significa menos tareas saltadas.",
+  "reports.trends.back": "Volver a tendencias",
   "reports.trends.delta_up": "▲ {n}",
   "reports.trends.delta_down": "▼ {n}",
   "reports.trends.grouping_day": "día",

@@ -955,6 +955,7 @@
   "reports.trends.completion_title": "Checklist Completion",
   "reports.trends.completion_explain": "Share of required checklist items completed, per {grouping}.",
   "reports.trends.completion_how_to_read": "Higher is better. 100% means every required item got done; a line trending up means fewer skipped tasks.",
+  "reports.trends.back": "Back to trends",
   "reports.trends.delta_up": "▲ {n}",
   "reports.trends.delta_down": "▼ {n}",
   "reports.trends.grouping_day": "day",

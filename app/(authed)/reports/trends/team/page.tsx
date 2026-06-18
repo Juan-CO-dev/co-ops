@@ -9,7 +9,7 @@ import { loadTeamOperatingHealth, TEAM_VIEW_LEVEL } from "@/lib/team-metrics";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
-import { DashboardBackLink } from "@/components/DashboardBackLink";
+import { BackToTrendsLink } from "@/components/trends/BackToTrendsLink";
 import { TrendControls } from "@/components/trends/TrendControls";
 import { TeamRosterCard } from "@/components/team/TeamRosterCard";
 
@@ -42,7 +42,7 @@ export default async function TeamRosterPage({ searchParams }: PageProps) {
 
   return (
     <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
-      <div className="mb-3"><DashboardBackLink /></div>
+      <div className="mb-3"><BackToTrendsLink locationId={locationParam} language={language} /></div>
       <h1 className="text-lg font-bold text-co-text">{serverT(language, "reports.trends.team.title")}</h1>
       <p className="mb-4 text-xs text-co-text-muted">{serverT(language, "reports.trends.team.subtitle")}</p>
 
