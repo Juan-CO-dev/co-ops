@@ -11,6 +11,8 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { serverT } from "@/lib/i18n/server";
+import type { TranslationKey } from "@/lib/i18n/types";
+import { matchesReportQuery } from "@/lib/reports-search";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { operationalNow } from "@/lib/midshift";
 import { REPORTS_HUB_CASH_LEVEL, listReports, type ReportTypeKey, type SignalFilters, type Viewer } from "@/lib/reports-hub";
@@ -36,6 +38,7 @@ interface PageProps {
     sf_tempFlag?: string;
     sf_cashOver?: string;
     sf_cashShort?: string;
+    q?: string; // free-text quick-find
   }>;
 }
 
@@ -52,6 +55,7 @@ export default async function ReportsPage({ searchParams }: PageProps) {
     sf_tempFlag,
     sf_cashOver,
     sf_cashShort,
+    q: qParam,
   } = await searchParams;
 
   if (!locationParam) redirect("/dashboard");
@@ -109,6 +113,16 @@ export default async function ReportsPage({ searchParams }: PageProps) {
     signalFilters: hasSignalFilters ? signalFilters : undefined,
   });
 
+  // ── Phase-1 quick-find: filter the already-authorized list by submitter name
+  // + localized report-type label + raw type key. AND-composed with the filters
+  // above; operates only on fields already visible on each row (no new disclosure).
+  const query = (qParam ?? "").trim();
+  const filteredItems = query
+    ? items.filter((it) =>
+        matchesReportQuery(it, query, serverT(lang, `reports.type.${it.type}` as TranslationKey)),
+      )
+    : items;
+
   return (
     <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3">
@@ -135,14 +149,16 @@ export default async function ReportsPage({ searchParams }: PageProps) {
         language={lang}
         viewerLevel={viewerLevel}
         activeSignalFilters={signalFilters}
+        query={qParam ?? ""}
       />
 
       <div className="mt-4">
         <ReportList
-          items={items}
+          items={filteredItems}
           locationId={locationId}
           language={lang}
           viewerLevel={viewerLevel}
+          searchQuery={qParam ?? ""}
         />
       </div>
     </main>
