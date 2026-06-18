@@ -29,6 +29,7 @@ import type { ReactNode } from "react";
 
 import { UserMenu } from "@/components/UserMenu";
 import { TranslationProvider } from "@/lib/i18n/provider";
+import { ROLES } from "@/lib/roles";
 import { requireSessionFromHeaders } from "@/lib/session";
 
 export default async function AuthedLayout({ children }: { children: ReactNode }) {
@@ -50,7 +51,12 @@ export default async function AuthedLayout({ children }: { children: ReactNode }
         full screen).
       */}
       <div className="fixed top-4 right-4 z-30">
-        <UserMenu userName={auth.user.name} userEmail={auth.user.email} />
+        <UserMenu
+          userName={auth.user.name}
+          userEmail={auth.user.email}
+          actorLevel={ROLES[auth.user.role].level}
+          initialBlurb={auth.user.profileBlurb}
+        />
       </div>
       {children}
     </TranslationProvider>
