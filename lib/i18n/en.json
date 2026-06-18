@@ -1087,5 +1087,14 @@
   "profile.reassure": "Profiles show positive highlights only — never scores, notes, or areas to improve.",
   "profile.toast_note": "Early-clock-in streaks unlock when Toast connects.",
   "profile.not_found": "That profile isn't available.",
-  "profile.back": "Back to profiles"
+  "profile.back": "Back to profiles",
+  "profile.leadership.section": "Leadership",
+  "profile.leadership.tag": "Leadership",
+  "profile.leadership.all_locations": "All locations",
+  "profile.leadership.contact": "Contact",
+  "profile.leadership.email": "Email",
+  "profile.leadership.phone": "Phone",
+  "profile.leadership.oversees.moo": "Oversees all store operations",
+  "profile.leadership.oversees.owner": "Owner",
+  "profile.leadership.oversees.cgs": "Growth & strategy"
 }

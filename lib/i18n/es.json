@@ -1087,5 +1087,14 @@
   "profile.reassure": "Los perfiles muestran solo aspectos positivos — nunca puntajes, notas ni áreas para mejorar.",
   "profile.toast_note": "Las rachas de reloj de entrada se activan cuando se conecte Toast.",
   "profile.not_found": "Ese perfil no está disponible.",
-  "profile.back": "Volver a perfiles"
+  "profile.back": "Volver a perfiles",
+  "profile.leadership.section": "Liderazgo",
+  "profile.leadership.tag": "Liderazgo",
+  "profile.leadership.all_locations": "Todas las ubicaciones",
+  "profile.leadership.contact": "Contacto",
+  "profile.leadership.email": "Correo",
+  "profile.leadership.phone": "Teléfono",
+  "profile.leadership.oversees.moo": "Supervisa todas las operaciones",
+  "profile.leadership.oversees.owner": "Propietario",
+  "profile.leadership.oversees.cgs": "Crecimiento y estrategia"
 }
