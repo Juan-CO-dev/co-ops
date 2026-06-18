@@ -44,6 +44,17 @@ export interface DirectoryEntry {
   mvpWins: number;
 }
 
+export interface LeadershipDirectoryEntry {
+  userId: string;
+  name: string;
+  role: RoleCode;
+}
+
+export interface ProfileDirectoryResult {
+  staff: DirectoryEntry[];
+  leadership: LeadershipDirectoryEntry[];
+}
+
 /** Active user ids the viewer may see: shares ≥1 location, or all (viewerLocations === "all"). */
 async function viewableUserIds(
   service: SupabaseClient,
@@ -67,23 +78,37 @@ async function viewableUserIds(
 export async function loadProfileDirectory(
   service: SupabaseClient,
   args: { viewer: { userId: string; locations: string[] | "all" } },
-): Promise<DirectoryEntry[]> {
+): Promise<ProfileDirectoryResult> {
+  // Staff: shared-location, active, excluding leadership (level >= 8). May be empty
+  // (no viewable ids) — leadership is location-independent and still computed below.
   const ids = await viewableUserIds(service, args.viewer.locations);
-  if (ids.length === 0) return [];
-  const { data: users } = await service.from("users").select("id, name, role").in("id", ids);
-  const userRows = (users ?? []) as Array<{ id: string; name: string; role: RoleCode }>;
+  let staff: DirectoryEntry[] = [];
+  if (ids.length > 0) {
+    const { data: users } = await service.from("users").select("id, name, role").in("id", ids);
+    const userRows = (users ?? []) as Array<{ id: string; name: string; role: RoleCode }>;
 
-  const mvpByUser = new Map<string, number>();
-  const mvp = await selectAllRows<{ mvp_user_id: string | null }>(
-    (from, to) => service.from("pm_reports").select("mvp_user_id")
-      .in("mvp_user_id", ids).is("superseded_at", null)
-      .order("mvp_user_id", { ascending: true }).range(from, to),
-  );
-  for (const r of mvp) if (r.mvp_user_id) mvpByUser.set(r.mvp_user_id, (mvpByUser.get(r.mvp_user_id) ?? 0) + 1);
+    const mvpByUser = new Map<string, number>();
+    const mvp = await selectAllRows<{ mvp_user_id: string | null }>(
+      (from, to) => service.from("pm_reports").select("mvp_user_id")
+        .in("mvp_user_id", ids).is("superseded_at", null)
+        .order("mvp_user_id", { ascending: true }).range(from, to),
+    );
+    for (const r of mvp) if (r.mvp_user_id) mvpByUser.set(r.mvp_user_id, (mvpByUser.get(r.mvp_user_id) ?? 0) + 1);
 
-  return userRows
-    .map((u) => ({ userId: u.id, name: u.name, role: u.role, mvpWins: mvpByUser.get(u.id) ?? 0 }))
-    .sort((a, b) => b.mvpWins - a.mvpWins || a.name.localeCompare(b.name));
+    staff = userRows
+      .filter((u) => (ROLES[u.role]?.level ?? 0) < 8)
+      .map((u) => ({ userId: u.id, name: u.name, role: u.role, mvpWins: mvpByUser.get(u.id) ?? 0 }))
+      .sort((a, b) => b.mvpWins - a.mvpWins || a.name.localeCompare(b.name));
+  }
+
+  // Leadership: all active leadership-role users company-wide (location-independent).
+  const LEADERSHIP_ROLES = (Object.keys(ROLES) as RoleCode[]).filter((r) => (ROLES[r]?.level ?? 0) >= 8);
+  const { data: leaders } = await service.from("users").select("id, name, role").eq("active", true).in("role", LEADERSHIP_ROLES);
+  const leadership: LeadershipDirectoryEntry[] = ((leaders ?? []) as Array<{ id: string; name: string; role: RoleCode }>)
+    .map((u) => ({ userId: u.id, name: u.name, role: u.role }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  return { staff, leadership };
 }
 
 export async function loadPublicProfile(

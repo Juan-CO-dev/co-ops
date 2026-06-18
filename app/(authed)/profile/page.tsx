@@ -13,7 +13,7 @@ export default async function ProfilePage() {
   const lang = auth.user.language;
   const sb = getServiceRoleClient();
   const actor: LocationActor = { role: auth.role, locations: auth.locations };
-  const entries = await loadProfileDirectory(sb, {
+  const { staff, leadership } = await loadProfileDirectory(sb, {
     viewer: { userId: auth.user.id, locations: accessibleLocations(actor) },
   });
   return (
@@ -21,7 +21,7 @@ export default async function ProfilePage() {
       <div className="mb-3"><DashboardBackLink /></div>
       <h1 className="text-lg font-bold text-co-text">{serverT(lang, "profile.directory_title")}</h1>
       <p className="mb-4 text-xs text-co-text-muted">{serverT(lang, "profile.directory_sub")}</p>
-      <ProfileDirectory entries={entries} viewerUserId={auth.user.id} language={lang} />
+      <ProfileDirectory staff={staff} leadership={leadership} viewerUserId={auth.user.id} language={lang} />
     </main>
   );
 }
