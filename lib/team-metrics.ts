@@ -6,7 +6,7 @@ import {
   scoreFromCounts, healthFromCounts, type Health,
   activeDayStreak, onTimeStreak, personalBest,
 } from "@/lib/team-scoring";
-import { personCardLine, personReadNarrative, teamBannerNarrative, type NarrativeLine } from "@/lib/people-narrative";
+import { personCardLine, personReadNarrative, teamBannerNarrative, myPerformanceRead, type NarrativeLine } from "@/lib/people-narrative";
 import { computeWindows, bucketStart, type TrendGranularity } from "@/lib/reports-trends";
 
 export const TEAM_VIEW_LEVEL = 6; // AGM+
@@ -486,6 +486,73 @@ export async function loadPersonDetail(
     userId: u.id, name: u.name, role: u.role, level,
     score: m.score, previousScore: m.previousScore, counts: m.counts, health, reasons,
     read, aiInsight: null, bucketKeys: m.bucketKeys, contribution: m.contribution, onTime: m.onTime,
+    gradientTally: m.gradientTally, streaks: m.streaks, signals: m.signals,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// loadMyPerformance — the employee self-view. Own data only (personId is ALWAYS
+// the session user; the loader never accepts an arbitrary id). Positive framing:
+// returns score + a positive read + wins, but NO health/reasons/rank fields.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface MyWins {
+  activeDayStreak: number;
+  mvpAwards: number;
+  personalBest: number;
+  onTimePct: number | null;
+}
+
+export interface MyPerformanceData {
+  userId: string;
+  name: string;
+  role: RoleCode;
+  score: number;
+  previousScore: number | null;
+  scoreDeltaPct: number | null;
+  read: NarrativeLine;
+  wins: MyWins;
+  bucketKeys: string[];
+  contribution: (number | null)[];
+  onTime: (number | null)[];
+  gradientTally: { great: number; good: number; needsWork: number };
+  streaks: PersonStreaks;
+  signals: PersonSignals;
+  // NOTE: deliberately NO health / reasons / rank — this is the positive self-view.
+}
+
+export async function loadMyPerformance(
+  service: SupabaseClient,
+  args: { viewer: Viewer; locationId: string; granularity: TrendGranularity; compare: boolean; today: string },
+): Promise<MyPerformanceData | null> {
+  // SECURITY: self only — person is ALWAYS the session user, never a param.
+  // IDOR: the viewer must be assigned to the location they're viewing.
+  const { data: ul } = await service
+    .from("user_locations").select("user_id").eq("location_id", args.locationId).eq("user_id", args.viewer.userId).maybeSingle();
+  if (!ul) return null;
+  const { data: u } = await service
+    .from("users").select("id, name, role, active, created_at").eq("id", args.viewer.userId)
+    .maybeSingle<{ id: string; name: string; role: RoleCode; active: boolean; created_at: string }>();
+  if (!u || !u.active) return null;
+
+  const m = await computePersonMetrics(service, {
+    personId: u.id, role: u.role, createdAt: u.created_at,
+    locationId: args.locationId, granularity: args.granularity, compare: args.compare, today: args.today,
+  });
+
+  const read = myPerformanceRead({
+    role: u.role, scoreDeltaPct: m.scoreDeltaPct, onTimePct: m.overallOnTime,
+    activeDayStreak: m.streaks.activeDays, mvpAwards: m.signals.mvpAwards, gradient: m.gradientTally,
+  });
+  const wins: MyWins = {
+    activeDayStreak: m.streaks.activeDays, mvpAwards: m.signals.mvpAwards,
+    personalBest: m.streaks.personalBest, onTimePct: m.overallOnTime,
+  };
+
+  return {
+    userId: u.id, name: u.name, role: u.role,
+    score: m.score, previousScore: m.previousScore, scoreDeltaPct: m.scoreDeltaPct,
+    read, wins, bucketKeys: m.bucketKeys, contribution: m.contribution, onTime: m.onTime,
     gradientTally: m.gradientTally, streaks: m.streaks, signals: m.signals,
   };
 }
