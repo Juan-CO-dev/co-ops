@@ -14,14 +14,16 @@ export function TrendControls({
   granularity,
   compare,
   language,
+  basePath = "/reports/trends/ops",
 }: {
   locationId: string;
   granularity: TrendGranularity;
   compare: boolean;
   language: Language;
+  basePath?: string;
 }) {
   const href = (g: TrendGranularity, c: boolean) =>
-    `/reports/trends?location=${locationId}&g=${g}${c ? "&cmp=1" : ""}`;
+    `${basePath}?location=${locationId}&g=${g}${c ? "&cmp=1" : ""}`;
 
   const grans: { g: TrendGranularity; key: TranslationKey }[] = [
     { g: "day", key: "reports.trends.gran_day" },
