@@ -1,3 +1,7 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { selectAllRows } from "@/lib/supabase-paginate";
+import { REPORTS_HUB_CASH_LEVEL, REPORTS_HUB_NOTES_LEVEL, type ReportListItem } from "@/lib/reports-hub";
+
 /**
  * Reports Hub quick-find (Phase 1). Pure case-insensitive substring match over
  * the fields already on an authorized list row — submitter name + report type.
@@ -70,4 +74,134 @@ export function searchReport(
   // 2. Fall back to Phase-1 name/type (no snippet — those fields are already on the row).
   if (matchesReportQuery(base, q, typeLabel)) return { matched: true };
   return { matched: false };
+}
+
+/**
+ * Build the viewer-authorized searchable corpus for a set of already-authorized
+ * report list items. Applies the EXACT detail-loader gates BEFORE returning any
+ * text, so a later match/snippet can never disclose a field the viewer can't see:
+ *   - item labels / stations / completer names → all viewers
+ *   - completion notes + cash over/short note   → L5+ (REPORTS_HUB_NOTES_LEVEL)
+ *   - PM area_to_improve → managers (L4+) all evals; employees own only
+ *   - PM note / mvp_note → L4+ (note further L5+)
+ * Bulk-loaded + paginated (selectAllRows) over the in-window report ids, bound to
+ * locationId. Keyed `${type}:${id}`. Build ONLY when q is non-empty (caller gates).
+ */
+export async function buildSearchCorpus(
+  service: SupabaseClient,
+  args: { viewer: { userId: string; level: number }; locationId: string; items: ReportListItem[] },
+): Promise<Map<string, SearchCorpusEntry>> {
+  const corpus = new Map<string, SearchCorpusEntry>();
+  const push = (key: string, fieldKey: SearchCorpusField["fieldKey"], text: string | null | undefined) => {
+    if (!text || !text.trim()) return;
+    let e = corpus.get(key);
+    if (!e) { e = { fields: [] }; corpus.set(key, e); }
+    e.fields.push({ fieldKey, text });
+  };
+  const showNotes = args.viewer.level >= REPORTS_HUB_NOTES_LEVEL;
+  const isManager = args.viewer.level >= REPORTS_HUB_CASH_LEVEL;
+
+  // ── Checklist reports (opening/closing/am_prep/mid_day) ──
+  const checklistItems = args.items.filter((it) => it.type !== "cash" && it.type !== "pm");
+  const instanceIds = checklistItems.map((it) => it.id);
+  const keyByInstance = new Map(checklistItems.map((it) => [it.id, `${it.type}:${it.id}`] as const));
+  if (instanceIds.length) {
+    const insts = await selectAllRows<{ id: string; template_id: string }>(
+      (from, to) => service.from("checklist_instances").select("id, template_id")
+        .eq("location_id", args.locationId).in("id", instanceIds)
+        .order("id", { ascending: true }).range(from, to),
+    );
+    // SECURITY: only the instances that actually belong to the authorized
+    // location survive the query above. Bind every downstream read (completions
+    // → completer names + notes) to THIS set, not the caller-supplied
+    // instanceIds — otherwise a cross-location id smuggled into `items` would
+    // still leak its completer names + notes (the location filter lives on the
+    // instance row, not on checklist_completions).
+    const authorizedInstanceIds = insts.map((r) => r.id);
+    const templateIds = [...new Set(insts.map((r) => r.template_id))];
+
+    const titemsByTemplate = new Map<string, { label: string; station: string }[]>();
+    if (templateIds.length) {
+      const titems = await selectAllRows<{ template_id: string; label: string; station: string }>(
+        (from, to) => service.from("checklist_template_items").select("template_id, label, station")
+          .in("template_id", templateIds).eq("active", true)
+          .order("template_id", { ascending: true }).range(from, to),
+      );
+      for (const ti of titems) {
+        const arr = titemsByTemplate.get(ti.template_id) ?? [];
+        arr.push({ label: ti.label, station: ti.station });
+        titemsByTemplate.set(ti.template_id, arr);
+      }
+    }
+    for (const inst of insts) {
+      const key = keyByInstance.get(inst.id);
+      if (!key) continue;
+      for (const ti of titemsByTemplate.get(inst.template_id) ?? []) {
+        push(key, "item", ti.label);
+        push(key, "station", ti.station);
+      }
+    }
+
+    const comps = authorizedInstanceIds.length
+      ? await selectAllRows<{ instance_id: string; completed_by: string | null; notes: string | null }>(
+          (from, to) => service.from("checklist_completions").select("instance_id, completed_by, notes")
+            .in("instance_id", authorizedInstanceIds).is("superseded_at", null).is("revoked_at", null)
+            .order("instance_id", { ascending: true }).range(from, to),
+        )
+      : [];
+    const completerIds = [...new Set(comps.map((c) => c.completed_by).filter((v): v is string => !!v))];
+    const nameById = new Map<string, string>();
+    if (completerIds.length) {
+      const { data: users } = await service.from("users").select("id, name").in("id", completerIds);
+      for (const u of (users ?? []) as Array<{ id: string; name: string }>) nameById.set(u.id, u.name);
+    }
+    for (const c of comps) {
+      const key = keyByInstance.get(c.instance_id);
+      if (!key) continue;
+      if (c.completed_by) push(key, "completer", nameById.get(c.completed_by));
+      if (showNotes) push(key, "note", c.notes);
+    }
+  }
+
+  // ── Cash reports (over/short note, L5+ only) ──
+  if (showNotes) {
+    const cashIds = args.items.filter((it) => it.type === "cash").map((it) => it.id);
+    if (cashIds.length) {
+      const { data: cash } = await service.from("cash_reports").select("id, over_short_note")
+        .eq("location_id", args.locationId).in("id", cashIds).is("superseded_at", null);
+      for (const r of (cash ?? []) as Array<{ id: string; over_short_note: string | null }>) {
+        push(`cash:${r.id}`, "cash_note", r.over_short_note);
+      }
+    }
+  }
+
+  // ── PM reports (area_to_improve / note / mvp_note, gated) ──
+  const pmIds = args.items.filter((it) => it.type === "pm").map((it) => it.id);
+  if (pmIds.length) {
+    // SECURITY: resolve the location-authorized pm report ids FIRST, then key
+    // every downstream read (mvp_note + evals' area_to_improve/note) off this
+    // set — pm_employee_evals carries no location column, so binding the evals
+    // query to caller-supplied pmIds alone would leak another store's eval text.
+    const { data: reps } = await service.from("pm_reports").select("id, mvp_note")
+      .eq("location_id", args.locationId).in("id", pmIds).is("superseded_at", null);
+    const repRows = (reps ?? []) as Array<{ id: string; mvp_note: string | null }>;
+    const authorizedPmIds = repRows.map((r) => r.id);
+    if (isManager) {
+      for (const r of repRows) {
+        push(`pm:${r.id}`, "mvp_note", r.mvp_note);
+      }
+    }
+    if (authorizedPmIds.length) {
+      let evalQuery = service.from("pm_employee_evals").select("pm_report_id, area_to_improve, note")
+        .in("pm_report_id", authorizedPmIds).is("superseded_at", null);
+      if (!isManager) evalQuery = evalQuery.eq("employee_id", args.viewer.userId); // own only
+      const { data: evals } = await evalQuery;
+      for (const e of (evals ?? []) as Array<{ pm_report_id: string; area_to_improve: string | null; note: string | null }>) {
+        push(`pm:${e.pm_report_id}`, "area_to_improve", e.area_to_improve);
+        if (isManager && showNotes) push(`pm:${e.pm_report_id}`, "pm_note", e.note);
+      }
+    }
+  }
+
+  return corpus;
 }
