@@ -8,7 +8,6 @@
  * (never a param); manager notes are never selected.
  */
 
-import { redirect } from "next/navigation";
 import Link from "next/link";
 
 import { serverT } from "@/lib/i18n/server";
