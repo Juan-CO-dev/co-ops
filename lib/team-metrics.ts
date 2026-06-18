@@ -278,23 +278,30 @@ export interface PersonDetail {
 
 const WEEKDAYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
 
-export async function loadPersonDetail(
+/** Raw per-person metric bundle shared by loadPersonDetail (manager) and
+ *  loadMyPerformance (self). No health/read/rank — callers layer those on. */
+export interface PersonMetrics {
+  counts: CategoryCounts;
+  score: number;
+  previousScore: number | null;
+  scoreDeltaPct: number | null;
+  bucketKeys: string[];
+  contribution: (number | null)[];
+  onTime: (number | null)[];
+  overallOnTime: number | null;
+  gradientTally: { great: number; good: number; needsWork: number };
+  streaks: PersonStreaks;
+  signals: PersonSignals;
+}
+
+/**
+ * Core per-person metric computation over a window at one location. Pure of
+ * gating/framing — the caller fetches the user + decides access and narrative.
+ */
+async function computePersonMetrics(
   service: SupabaseClient,
-  args: { viewer: Viewer; personId: string; locationId: string; granularity: TrendGranularity; compare: boolean; today: string },
-): Promise<PersonDetail | null> {
-  if (args.viewer.level < TEAM_VIEW_LEVEL) return null;
-
-  // IDOR: person must be assigned to this location, active, and rankable (< MoO).
-  const { data: ul } = await service
-    .from("user_locations").select("user_id").eq("location_id", args.locationId).eq("user_id", args.personId).maybeSingle();
-  if (!ul) return null;
-  const { data: u } = await service
-    .from("users").select("id, name, role, active, created_at").eq("id", args.personId)
-    .maybeSingle<{ id: string; name: string; role: RoleCode; active: boolean; created_at: string }>();
-  if (!u || !u.active) return null;
-  const level = ROLES[u.role]?.level ?? 0;
-  if (level >= RANKED_MAX_LEVEL) return null;
-
+  args: { personId: string; role: RoleCode; createdAt: string; locationId: string; granularity: TrendGranularity; compare: boolean; today: string },
+): Promise<PersonMetrics> {
   const { currentKeys, previousKeys, loadFrom } = computeWindows(args.today, args.granularity, args.compare);
   const curSet = new Set(currentKeys);
   const prevSet = new Set(previousKeys ?? []);
@@ -326,7 +333,6 @@ export async function loadPersonDetail(
   );
   const locInstanceIds = instAll.map((r) => r.id);
 
-  // TASKS + NOTES
   if (locInstanceIds.length) {
     const comps = await selectAllRows<{ completed_at: string; notes: string | null }>(
       (from, to) => service
@@ -351,7 +357,6 @@ export async function loadPersonDetail(
     }
   }
 
-  // FINALIZATIONS (+ on-time: finalized on its own operational date = in-window)
   const finalsChrono: { at: string; inWindow: boolean }[] = [];
   const { data: finInst } = await service
     .from("checklist_instances").select("date, confirmed_at")
@@ -392,19 +397,15 @@ export async function loadPersonDetail(
     }
   }
 
-  // OVERSIGHT
   const { data: auditRows } = await service
     .from("audit_log").select("occurred_at").eq("actor_id", args.personId).in("action", OVERSIGHT_ACTIONS)
     .gte("occurred_at", `${loadFrom}T00:00:00Z`).lte("occurred_at", `${toIncl}T23:59:59Z`);
   for (const a of (auditRows ?? []) as Array<{ occurred_at: string }>) add(a.occurred_at, "oversight");
 
-  // SCORE + HEALTH (true role-scoped, consistent with the roster)
-  const score = scoreFromCounts(u.role, current);
-  const previousScore = args.compare ? scoreFromCounts(u.role, previous) : null;
-  const { health, reasons } = healthFromCounts(u.role, current, score, previousScore);
+  const score = scoreFromCounts(args.role, current);
+  const previousScore = args.compare ? scoreFromCounts(args.role, previous) : null;
   const scoreDeltaPct = previousScore && previousScore > 0 ? Math.round(((score - previousScore) / previousScore) * 100) : null;
 
-  // ON-TIME series + overall
   finalsChrono.sort((a, b) => (a.at < b.at ? -1 : 1));
   const onTimeByBucket = new Map<string, { hit: number; total: number }>();
   for (const f of finalsChrono) {
@@ -417,7 +418,6 @@ export async function loadPersonDetail(
   for (const e of onTimeByBucket.values()) { oh += e.hit; ot += e.total; }
   const overallOnTime = ot > 0 ? Math.round((oh / ot) * 100) : null;
 
-  // PM GRADIENTS about this person + flagged-to-improve
   const { data: pmInLoc } = await service
     .from("pm_reports").select("id").eq("location_id", args.locationId).is("superseded_at", null)
     .gte("report_date", loadFrom).lte("report_date", toIncl);
@@ -439,7 +439,6 @@ export async function loadPersonDetail(
     .gte("report_date", loadFrom).lte("report_date", toIncl);
   const mvpAwards = (mvp ?? []).length;
 
-  // ASSEMBLE
   const contribution = currentKeys.map((k) => (contribBucket.has(k) ? contribBucket.get(k)! : null));
   const onTime = currentKeys.map((k) => { const e = onTimeByBucket.get(k); return e && e.total > 0 ? Math.round((e.hit / e.total) * 100) : null; });
   const streaks: PersonStreaks = {
@@ -449,13 +448,44 @@ export async function loadPersonDetail(
   };
   let mostActiveDay: string | null = null; let mx = -1;
   for (const [wd, n] of weekdayCounts) if (n > mx) { mx = n; mostActiveDay = wd; }
-  const tenureDays = Math.max(0, Math.round((Date.parse(`${args.today}T00:00:00Z`) - Date.parse(u.created_at)) / 86400000));
-  const read = personReadNarrative({ rank: 0, role: u.role, health, reasons, scoreDeltaPct, onTimePct: overallOnTime });
+  const tenureDays = Math.max(0, Math.round((Date.parse(`${args.today}T00:00:00Z`) - Date.parse(args.createdAt)) / 86400000));
 
   return {
-    userId: u.id, name: u.name, role: u.role, level, score, previousScore, counts: current, health, reasons,
-    read, aiInsight: null, bucketKeys: currentKeys, contribution, onTime,
+    counts: current, score, previousScore, scoreDeltaPct,
+    bucketKeys: currentKeys, contribution, onTime, overallOnTime,
     gradientTally: { great, good, needsWork }, streaks,
     signals: { mvpAwards, flaggedToImprove, mostActiveDay, tenureDays, lastActive },
+  };
+}
+
+export async function loadPersonDetail(
+  service: SupabaseClient,
+  args: { viewer: Viewer; personId: string; locationId: string; granularity: TrendGranularity; compare: boolean; today: string },
+): Promise<PersonDetail | null> {
+  if (args.viewer.level < TEAM_VIEW_LEVEL) return null;
+
+  // IDOR: person must be assigned to this location, active, and rankable (< MoO).
+  const { data: ul } = await service
+    .from("user_locations").select("user_id").eq("location_id", args.locationId).eq("user_id", args.personId).maybeSingle();
+  if (!ul) return null;
+  const { data: u } = await service
+    .from("users").select("id, name, role, active, created_at").eq("id", args.personId)
+    .maybeSingle<{ id: string; name: string; role: RoleCode; active: boolean; created_at: string }>();
+  if (!u || !u.active) return null;
+  const level = ROLES[u.role]?.level ?? 0;
+  if (level >= RANKED_MAX_LEVEL) return null;
+
+  const m = await computePersonMetrics(service, {
+    personId: u.id, role: u.role, createdAt: u.created_at,
+    locationId: args.locationId, granularity: args.granularity, compare: args.compare, today: args.today,
+  });
+  const { health, reasons } = healthFromCounts(u.role, m.counts, m.score, m.previousScore);
+  const read = personReadNarrative({ rank: 0, role: u.role, health, reasons, scoreDeltaPct: m.scoreDeltaPct, onTimePct: m.overallOnTime });
+
+  return {
+    userId: u.id, name: u.name, role: u.role, level,
+    score: m.score, previousScore: m.previousScore, counts: m.counts, health, reasons,
+    read, aiInsight: null, bucketKeys: m.bucketKeys, contribution: m.contribution, onTime: m.onTime,
+    gradientTally: m.gradientTally, streaks: m.streaks, signals: m.signals,
   };
 }
