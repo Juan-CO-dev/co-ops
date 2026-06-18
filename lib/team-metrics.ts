@@ -8,6 +8,7 @@ import {
 } from "@/lib/team-scoring";
 import { personCardLine, personReadNarrative, teamBannerNarrative, myPerformanceRead, type NarrativeLine } from "@/lib/people-narrative";
 import { computeWindows, bucketStart, type TrendGranularity } from "@/lib/reports-trends";
+import { selectAllRows } from "@/lib/supabase-paginate";
 
 export const TEAM_VIEW_LEVEL = 6; // AGM+
 export const RANKED_MAX_LEVEL = 8; // roster excludes level >= 8 (MoO+)
@@ -29,27 +30,6 @@ function opDate(tstz: string): string {
 }
 
 export interface Viewer { userId: string; level: number; }
-
-/**
- * Page through a PostgREST query so the default 1000-row cap can't silently
- * truncate a scan. `build(from, to)` must return a query with `.range(from, to)`
- * already applied (and any filters/select). Stops when a short page returns.
- * Without this, an all-users completions scan over a busy location truncates and
- * every member's task count comes back low (caught: roster vs detail score mismatch).
- */
-async function selectAllRows<T>(
-  build: (from: number, to: number) => PromiseLike<{ data: T[] | null }>,
-  pageSize = 1000,
-): Promise<T[]> {
-  const out: T[] = [];
-  for (let from = 0; ; from += pageSize) {
-    const { data } = await build(from, from + pageSize - 1);
-    const rows = data ?? [];
-    out.push(...rows);
-    if (rows.length < pageSize) break;
-  }
-  return out;
-}
 
 export interface TeamMember {
   userId: string;
