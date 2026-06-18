@@ -111,29 +111,31 @@ export function PublicProfileCard({
         </Section>
       </div>
 
-      {/* Ratings card */}
-      <div className="mt-3">
-        <Section title={t("profile.ratings_title")}>
-          {total === 0 ? (
-            <div className="text-xs text-co-text-muted">{t("profile.ratings_none")}</div>
-          ) : (
-            <>
-              <div className="flex h-3.5 overflow-hidden rounded">
-                <div
-                  style={{ flex: profile.gradient.great, background: "var(--co-success)" }}
-                />
-                <div style={{ flex: profile.gradient.good, background: "#9ccc9c" }} />
-              </div>
-              <div className="mt-1 text-[10px] text-co-text-dim">
-                {t("profile.ratings_note", {
-                  great: Math.round((profile.gradient.great / total) * 100),
-                  good: Math.round((profile.gradient.good / total) * 100),
-                })}
-              </div>
-            </>
-          )}
-        </Section>
-      </div>
+      {/* Ratings card — hidden for leadership (MoO+ aren't rated by managers) */}
+      {profile.cardKind !== "leadership" ? (
+        <div className="mt-3">
+          <Section title={t("profile.ratings_title")}>
+            {total === 0 ? (
+              <div className="text-xs text-co-text-muted">{t("profile.ratings_none")}</div>
+            ) : (
+              <>
+                <div className="flex h-3.5 overflow-hidden rounded">
+                  <div
+                    style={{ flex: profile.gradient.great, background: "var(--co-success)" }}
+                  />
+                  <div style={{ flex: profile.gradient.good, background: "#9ccc9c" }} />
+                </div>
+                <div className="mt-1 text-[10px] text-co-text-dim">
+                  {t("profile.ratings_note", {
+                    great: Math.round((profile.gradient.great / total) * 100),
+                    good: Math.round((profile.gradient.good / total) * 100),
+                  })}
+                </div>
+              </>
+            )}
+          </Section>
+        </div>
+      ) : null}
 
       {/* Footnotes */}
       <div className="mt-4 text-[10px] italic text-co-text-dim">{t("profile.toast_note")}</div>
