@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isPrepData } from "@/lib/prep";
 import { FRIDGE_DEFAULT_SAFE_MAX_F } from "@/lib/maintenance";
+import { derivePrepHave, parStatusFromHave, isOutOfRangeTemp } from "@/lib/report-signals";
 import { loadShiftWrapUp } from "@/lib/pm-report";
 import type { ShiftWrapUpRow } from "@/lib/pm-report";
 import { loadReportStatuses } from "@/lib/midshift";
@@ -69,7 +70,7 @@ export interface ListFilters {
  * Uses prep_subtype column (schema-enforced: 'am_prep' | 'mid_day_prep') for prep
  * discrimination — NOT name regex, which breaks on template renames.
  */
-function checklistReportType(type: string, prepSubtype: string | null): ReportTypeKey | null {
+export function checklistReportType(type: string, prepSubtype: string | null): ReportTypeKey | null {
   if (type === "opening") return "opening";
   if (type === "closing") return "closing";
   if (type === "prep") {
@@ -1107,46 +1108,22 @@ export async function computeReportSignals(
     // Temp-flag: ONLY on completions whose template_item_id is in the registry
     // tempItemIds set AND count_value > 41. Never "any count_value > 41" —
     // prep totals can exceed 41 and would false-positive.
-    if (
-      args.tempItemIds.has(r.template_item_id) &&
-      r.count_value !== null &&
-      r.count_value > FRIDGE_DEFAULT_SAFE_MAX_F
-    ) {
+    if (args.tempItemIds.has(r.template_item_id) && isOutOfRangeTemp(r.count_value)) {
       tempFlags++;
     }
 
     // Prep values: only completions that carry valid prep_data
     if (isPrepData(r.prep_data)) {
       const par = r.prep_data.snapshot.parValue; // number | null
-      const totalVal = r.prep_data.inputs.total ?? null; // number | undefined → number | null
-      const onHand = r.prep_data.inputs.onHand ?? null; // number | undefined → number | null
-      // The `total` field means DIFFERENT things per report type (same field name):
-      //   - AM prep: inputs.total is the FINAL amount (count incl. prep) → have = total ?? onHand.
-      //   - Mid-day: inputs.total is the PREPPED DELTA added on top of onHand → final = onHand + delta;
-      //     reached par ⟺ onHand + delta === par (see MidDayPhase2Form: offPar = prepped !== par-onHand).
-      // Getting this wrong reports a reached-par mid-day item as "under". `displayTotal` is the
-      // true final on-hand shown in the values table for both types.
-      let have: number | null;
-      let displayTotal: number | null;
-      if (args.type === "mid_day") {
-        have = onHand === null && totalVal === null ? null : (onHand ?? 0) + (totalVal ?? 0);
-        displayTotal = have;
-      } else {
-        have = totalVal ?? onHand ?? null;
-        displayTotal = totalVal;
-      }
-      let parStatus: PrepValueRow["parStatus"] = "na";
-      if (par !== null && have !== null) {
-        if (have < par) {
-          underPar++;
-          parStatus = "under";
-        } else if (have > par) {
-          overPar++;
-          parStatus = "over";
-        } else {
-          parStatus = "at";
-        }
-      }
+      const totalVal = r.prep_data.inputs.total ?? null;
+      const onHand = r.prep_data.inputs.onHand ?? null;
+      const isMidDay = args.type === "mid_day";
+      // Shared derivation — mid_day total is a DELTA, am_prep total is FINAL.
+      const have = derivePrepHave({ isMidDay, onHand, total: totalVal });
+      const displayTotal = isMidDay ? have : totalVal;
+      const parStatus = parStatusFromHave(par, have);
+      if (parStatus === "under") underPar++;
+      else if (parStatus === "over") overPar++;
       prepValues.push({
         label: labelById.get(r.template_item_id) ?? "—",
         par,
