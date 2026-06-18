@@ -7,6 +7,8 @@
  * focus / hover.
  */
 
+import { useTranslation } from "@/lib/i18n/provider";
+
 interface LocationTileProps {
   name: string;
   code: string;
@@ -15,12 +17,13 @@ interface LocationTileProps {
 }
 
 export function LocationTile({ name, code, onSelect, disabled = false }: LocationTileProps) {
+  const { t } = useTranslation();
   return (
     <button
       type="button"
       onClick={onSelect}
       disabled={disabled}
-      aria-label={`Select location ${name}`}
+      aria-label={t("auth.tiles.select_location", { name })}
       className="
         group relative flex min-h-[120px] w-full flex-col items-center justify-center
         gap-2 rounded-2xl border-2 border-co-border bg-co-surface px-4 py-6

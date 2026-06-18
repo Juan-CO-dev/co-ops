@@ -22,19 +22,25 @@ import Link from "next/link";
 
 import { AuthShell } from "@/components/auth/AuthShell";
 import { SetPasswordForm, type SetPasswordResult } from "@/components/auth/SetPasswordForm";
+import { TranslationProvider, useTranslation } from "@/lib/i18n/provider";
 
 const HEX_TOKEN_RE = /^[0-9a-f]{64}$/i;
 
 export default function VerifyPage() {
   // Suspense required by Next 16 — VerifyPageContent reads useSearchParams().
+  // TranslationProvider wraps here (default EN, no toggle yet) because this
+  // pre-auth page is outside the (authed) group that normally supplies it.
   return (
     <Suspense fallback={null}>
-      <VerifyPageContent />
+      <TranslationProvider initialLanguage="en">
+        <VerifyPageContent />
+      </TranslationProvider>
     </Suspense>
   );
 }
 
 function VerifyPageContent() {
+  const { t } = useTranslation();
   const router = useRouter();
   const searchParams = useSearchParams();
   const tokenParam = searchParams?.get("token") ?? "";
@@ -72,21 +78,21 @@ function VerifyPageContent() {
           return { ok: false, kind: "invalid_token" };
         }
         if (res.status === 400 && body.code === "invalid_payload" && body.field === "password") {
-          return { ok: false, kind: "validation", message: body.message ?? "Password too short." };
+          return { ok: false, kind: "validation", message: body.message ?? t("auth.verify.error_password_short") };
         }
         if (res.status === 403 && body.code === "account_inactive") {
           return {
             ok: false,
             kind: "validation",
-            message: "This account is inactive. Contact your manager.",
+            message: t("auth.verify.error_account_inactive"),
           };
         }
-        return { ok: false, kind: "transient", message: "Something went wrong. Try again." };
+        return { ok: false, kind: "transient", message: t("auth.verify.error_generic") };
       } catch {
-        return { ok: false, kind: "transient", message: "Network error. Check your connection." };
+        return { ok: false, kind: "transient", message: t("auth.verify.error_network") };
       }
     },
-    [tokenParam, router],
+    [tokenParam, router, t],
   );
 
   return (
@@ -101,24 +107,24 @@ function VerifyPageContent() {
 
       {deadEnd ? (
         <DeadEndCard
-          title="Link not valid"
+          title={t("auth.verify.deadend_title")}
           message={
             deadEnd === "missing"
-              ? "This page expects a verification link from your invitation email. Open the link from the email."
-              : "This verification link is invalid or has already been used. Contact your manager."
+              ? t("auth.verify.deadend_missing")
+              : t("auth.verify.deadend_invalid")
           }
         />
       ) : (
         <div className="mt-2">
           <h2 className="mb-1 mt-2 text-center text-2xl font-extrabold leading-tight text-co-text">
-            Set your password
+            {t("auth.verify.heading")}
           </h2>
           <p className="mb-5 text-center text-sm text-co-text-muted">
-            Once your password is set, you&apos;ll be signed in automatically.
+            {t("auth.verify.subtitle")}
           </p>
           <div className="rounded-2xl border-2 border-co-border bg-co-surface p-5 shadow-sm sm:p-6">
             <SetPasswordForm
-              submitLabel="Set password & sign in"
+              submitLabel={t("auth.verify.submit")}
               onSubmit={handleSubmit}
               onInvalidToken={() => setDeadEnd("invalid")}
               onTransientError={showToast}
@@ -131,6 +137,7 @@ function VerifyPageContent() {
 }
 
 function DeadEndCard({ title, message }: { title: string; message: string }) {
+  const { t } = useTranslation();
   return (
     <div className="mt-4 rounded-2xl border-2 border-co-border bg-co-surface p-6 shadow-sm">
       <h2 className="text-xl font-extrabold leading-tight text-co-text">{title}</h2>
@@ -142,7 +149,7 @@ function DeadEndCard({ title, message }: { title: string; message: string }) {
           underline-offset-2 hover:underline
         "
       >
-        <span aria-hidden>←</span> Back to sign in
+        <span aria-hidden>←</span> {t("auth.verify.back_to_signin")}
       </Link>
     </div>
   );

@@ -8,6 +8,8 @@
  */
 
 import { ROLES, type RoleCode } from "@/lib/roles";
+import { useTranslation } from "@/lib/i18n/provider";
+import type { TranslationKey } from "@/lib/i18n/types";
 
 interface RoleTileProps {
   role: RoleCode;
@@ -16,13 +18,15 @@ interface RoleTileProps {
 }
 
 export function RoleTile({ role, onSelect, disabled = false }: RoleTileProps) {
+  const { t } = useTranslation();
   const def = ROLES[role];
+  const roleLabel = t(`role.${role}` as TranslationKey);
   return (
     <button
       type="button"
       onClick={onSelect}
       disabled={disabled}
-      aria-label={`Select role ${def.label}`}
+      aria-label={t("auth.tiles.select_role", { role: roleLabel })}
       className="
         group relative flex min-h-[120px] w-full flex-col items-center justify-center
         gap-2 overflow-hidden rounded-2xl border-2 border-co-border bg-co-surface
@@ -41,7 +45,7 @@ export function RoleTile({ role, onSelect, disabled = false }: RoleTileProps) {
       <span className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
         {def.shortLabel}
       </span>
-      <span className="text-lg font-bold leading-tight text-co-text">{def.label}</span>
+      <span className="text-lg font-bold leading-tight text-co-text">{roleLabel}</span>
     </button>
   );
 }

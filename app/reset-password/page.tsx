@@ -18,19 +18,25 @@ import { useSearchParams } from "next/navigation";
 
 import { AuthShell } from "@/components/auth/AuthShell";
 import { SetPasswordForm, type SetPasswordResult } from "@/components/auth/SetPasswordForm";
+import { TranslationProvider, useTranslation } from "@/lib/i18n/provider";
 
 const HEX_TOKEN_RE = /^[0-9a-f]{64}$/i;
 
 export default function ResetPasswordPage() {
   // Suspense required by Next 16 — ResetPasswordPageContent reads useSearchParams().
+  // TranslationProvider wraps here (default EN, no toggle yet) because this
+  // pre-auth page is outside the (authed) group that normally supplies it.
   return (
     <Suspense fallback={null}>
-      <ResetPasswordPageContent />
+      <TranslationProvider initialLanguage="en">
+        <ResetPasswordPageContent />
+      </TranslationProvider>
     </Suspense>
   );
 }
 
 function ResetPasswordPageContent() {
+  const { t } = useTranslation();
   const searchParams = useSearchParams();
   const tokenParam = searchParams?.get("token") ?? "";
   const tokenValid = HEX_TOKEN_RE.test(tokenParam);
@@ -67,14 +73,14 @@ function ResetPasswordPageContent() {
           return { ok: false, kind: "invalid_token" };
         }
         if (res.status === 400 && body.code === "invalid_payload" && body.field === "password") {
-          return { ok: false, kind: "validation", message: body.message ?? "Password too short." };
+          return { ok: false, kind: "validation", message: body.message ?? t("auth.reset.error_password_short") };
         }
-        return { ok: false, kind: "transient", message: "Something went wrong. Try again." };
+        return { ok: false, kind: "transient", message: t("auth.reset.error_generic") };
       } catch {
-        return { ok: false, kind: "transient", message: "Network error. Check your connection." };
+        return { ok: false, kind: "transient", message: t("auth.reset.error_network") };
       }
     },
-    [tokenParam],
+    [tokenParam, t],
   );
 
   return (
@@ -90,14 +96,14 @@ function ResetPasswordPageContent() {
       {phase === "form" && (
         <div className="mt-2">
           <h2 className="mb-1 mt-2 text-center text-2xl font-extrabold leading-tight text-co-text">
-            Reset password
+            {t("auth.reset.heading")}
           </h2>
           <p className="mb-5 text-center text-sm text-co-text-muted">
-            Choose a new password. You&apos;ll sign in with it next.
+            {t("auth.reset.subtitle")}
           </p>
           <div className="rounded-2xl border-2 border-co-border bg-co-surface p-5 shadow-sm sm:p-6">
             <SetPasswordForm
-              submitLabel="Update password"
+              submitLabel={t("auth.reset.submit")}
               onSubmit={handleSubmit}
               onInvalidToken={() => setPhase("invalid")}
               onTransientError={showToast}
@@ -108,9 +114,9 @@ function ResetPasswordPageContent() {
 
       {phase === "success" && (
         <div className="mt-4 rounded-2xl border-2 border-co-border bg-co-surface p-6 shadow-sm">
-          <h2 className="text-xl font-extrabold leading-tight text-co-text">Password updated</h2>
+          <h2 className="text-xl font-extrabold leading-tight text-co-text">{t("auth.reset.success_title")}</h2>
           <p className="mt-3 text-sm text-co-text-muted">
-            Your password has been updated. Any active sessions have been signed out for security.
+            {t("auth.reset.success_body")}
           </p>
           <Link
             href="/"
@@ -121,18 +127,18 @@ function ResetPasswordPageContent() {
               hover:bg-co-text/90 hover:shadow-md
             "
           >
-            Sign in
+            {t("auth.reset.success_sign_in")}
           </Link>
         </div>
       )}
 
       {(phase === "missing" || phase === "invalid") && (
         <DeadEndCard
-          title="Link not valid"
+          title={t("auth.reset.deadend_title")}
           message={
             phase === "missing"
-              ? "This page expects a reset link from your password-reset email. Open the link from the email."
-              : "This reset link is invalid or has expired. Request a new one from the sign-in page."
+              ? t("auth.reset.deadend_missing")
+              : t("auth.reset.deadend_invalid")
           }
         />
       )}
@@ -141,6 +147,7 @@ function ResetPasswordPageContent() {
 }
 
 function DeadEndCard({ title, message }: { title: string; message: string }) {
+  const { t } = useTranslation();
   return (
     <div className="mt-4 rounded-2xl border-2 border-co-border bg-co-surface p-6 shadow-sm">
       <h2 className="text-xl font-extrabold leading-tight text-co-text">{title}</h2>
@@ -152,7 +159,7 @@ function DeadEndCard({ title, message }: { title: string; message: string }) {
           underline-offset-2 hover:underline
         "
       >
-        <span aria-hidden>←</span> Back to sign in
+        <span aria-hidden>←</span> {t("auth.reset.back_to_signin")}
       </Link>
     </div>
   );

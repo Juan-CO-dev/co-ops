@@ -14,6 +14,8 @@
 
 import { useCallback, useState } from "react";
 
+import { useTranslation } from "@/lib/i18n/provider";
+
 const CLIENT_MIN_PASSWORD_LENGTH = 8;
 
 export type SetPasswordResult =
@@ -37,6 +39,7 @@ export function SetPasswordForm({
   onInvalidToken,
   onTransientError,
 }: SetPasswordFormProps) {
+  const { t } = useTranslation();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -49,18 +52,18 @@ export function SetPasswordForm({
       setFieldError(null);
 
       if (!password) {
-        setFieldError({ field: "password", message: "Password required." });
+        setFieldError({ field: "password", message: t("auth.set_password.error_required") });
         return;
       }
       if (password.length < CLIENT_MIN_PASSWORD_LENGTH) {
         setFieldError({
           field: "password",
-          message: `Password must be at least ${CLIENT_MIN_PASSWORD_LENGTH} characters.`,
+          message: t("auth.set_password.error_min", { min: CLIENT_MIN_PASSWORD_LENGTH }),
         });
         return;
       }
       if (password !== confirm) {
-        setFieldError({ field: "confirm", message: "Passwords don't match." });
+        setFieldError({ field: "confirm", message: t("auth.set_password.error_mismatch") });
         return;
       }
 
@@ -78,19 +81,19 @@ export function SetPasswordForm({
         }
         onTransientError(result.message);
       } catch {
-        onTransientError("Network error. Check your connection and try again.");
+        onTransientError(t("auth.set_password.error_network"));
       } finally {
         setSubmitting(false);
       }
     },
-    [password, confirm, submitting, onSubmit, onInvalidToken, onTransientError],
+    [password, confirm, submitting, onSubmit, onInvalidToken, onTransientError, t],
   );
 
   return (
     <form onSubmit={submit} noValidate className="flex flex-col gap-5">
       <div className="flex flex-col gap-1.5">
         <label htmlFor="new-password" className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
-          New password
+          {t("auth.set_password.new_label")}
         </label>
         <input
           id="new-password"
@@ -120,14 +123,14 @@ export function SetPasswordForm({
           </p>
         ) : (
           <p id="new-password-hint" className="text-xs text-co-text-dim">
-            At least {CLIENT_MIN_PASSWORD_LENGTH} characters.
+            {t("auth.set_password.hint_min", { min: CLIENT_MIN_PASSWORD_LENGTH })}
           </p>
         )}
       </div>
 
       <div className="flex flex-col gap-1.5">
         <label htmlFor="confirm-password" className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
-          Confirm password
+          {t("auth.set_password.confirm_label")}
         </label>
         <input
           id="confirm-password"
@@ -178,9 +181,10 @@ export function SetPasswordForm({
 }
 
 function Spinner() {
+  const { t } = useTranslation();
   return (
     <span
-      aria-label="Loading"
+      aria-label={t("auth.set_password.loading_aria")}
       className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-co-cta/40 border-t-co-cta"
     />
   );

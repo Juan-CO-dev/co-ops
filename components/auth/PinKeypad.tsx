@@ -27,6 +27,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ROLES, type RoleCode } from "@/lib/roles";
+import { useTranslation } from "@/lib/i18n/provider";
+import type { TranslationKey } from "@/lib/i18n/types";
 
 const PIN_LENGTH = 4;
 
@@ -62,7 +64,9 @@ function formatRetryAfter(seconds: number): string {
 }
 
 export function PinKeypad({ userName, role, onSubmit, onBack }: PinKeypadProps) {
+  const { t } = useTranslation();
   const def = ROLES[role];
+  const roleLabel = t(`role.${role}` as TranslationKey);
   const [pin, setPin] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<PinKeypadError | null>(null);
@@ -110,12 +114,12 @@ export function PinKeypad({ userName, role, onSubmit, onBack }: PinKeypadProps) 
         const result = await onSubmit(full);
         if (!result.ok) triggerError(result.error);
       } catch {
-        triggerError({ kind: "network", message: "Network error. Try again." });
+        triggerError({ kind: "network", message: t("auth.pin.error_network") });
       } finally {
         setSubmitting(false);
       }
     },
-    [onSubmit, triggerError],
+    [onSubmit, triggerError, t],
   );
 
   const handleDigit = useCallback(
@@ -186,14 +190,14 @@ export function PinKeypad({ userName, role, onSubmit, onBack }: PinKeypadProps) 
             className="rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.18em] text-co-text"
             style={{ background: def.color + "33", border: `1px solid ${def.color}` }}
           >
-            {def.label}
+            {roleLabel}
           </span>
           <h2 className="mt-2 text-3xl font-extrabold leading-tight text-co-text">{userName}</h2>
-          <p className="text-sm text-co-text-dim">Enter your 4-digit PIN</p>
+          <p className="text-sm text-co-text-dim">{t("auth.pin.prompt")}</p>
         </div>
 
         <div
-          aria-label={`PIN entry: ${pin.length} of ${PIN_LENGTH} digits entered`}
+          aria-label={t("auth.pin.entry_aria", { entered: pin.length, total: PIN_LENGTH })}
           className={`flex items-center gap-4 ${shake ? "co-shake" : ""}`}
         >
           {dots.map((filled, i) => (
@@ -210,9 +214,9 @@ export function PinKeypad({ userName, role, onSubmit, onBack }: PinKeypadProps) 
 
         {error && error.kind !== "locked" && (
           <p className="text-center text-sm font-semibold text-co-cta" role="alert">
-            {error.kind === "invalid" && (error.message ?? "Wrong PIN. Try again.")}
-            {error.kind === "inactive" && "This account is inactive. Ask an admin."}
-            {error.kind === "network" && (error.message ?? "Network error. Try again.")}
+            {error.kind === "invalid" && (error.message ?? t("auth.pin.error_invalid"))}
+            {error.kind === "inactive" && t("auth.pin.error_inactive")}
+            {error.kind === "network" && (error.message ?? t("auth.pin.error_network"))}
           </p>
         )}
 
@@ -221,12 +225,12 @@ export function PinKeypad({ userName, role, onSubmit, onBack }: PinKeypadProps) 
             role="alert"
             className="w-full rounded-xl border-2 border-co-cta bg-co-cta/10 px-4 py-3 text-center"
           >
-            <p className="text-sm font-bold uppercase tracking-wide text-co-cta">Account locked</p>
+            <p className="text-sm font-bold uppercase tracking-wide text-co-cta">{t("auth.pin.locked_title")}</p>
             <p className="mt-1 text-2xl font-extrabold tabular-nums text-co-text">
               {formatRetryAfter(retryRemaining)}
             </p>
             <p className="mt-1 text-xs text-co-text-muted">
-              Too many failed attempts. Try again in {formatRetryAfter(retryRemaining)}.
+              {t("auth.pin.locked_body", { time: formatRetryAfter(retryRemaining) })}
             </p>
           </div>
         )}
@@ -234,14 +238,14 @@ export function PinKeypad({ userName, role, onSubmit, onBack }: PinKeypadProps) 
 
       {/* Keypad — bottom ~60% */}
       {!useSystemKeyboard ? (
-        <div className="grid grid-cols-3 gap-3" aria-label="PIN keypad">
+        <div className="grid grid-cols-3 gap-3" aria-label={t("auth.pin.keypad_aria")}>
           {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
             <KeypadButton key={d} onClick={() => handleDigit(d)} disabled={submitting || isLocked}>
               {d}
             </KeypadButton>
           ))}
           <KeypadButton variant="ghost" onClick={handleClear} disabled={submitting || isLocked}>
-            Clear
+            {t("auth.pin.clear")}
           </KeypadButton>
           <KeypadButton onClick={() => handleDigit("0")} disabled={submitting || isLocked}>
             0
@@ -262,7 +266,7 @@ export function PinKeypad({ userName, role, onSubmit, onBack }: PinKeypadProps) 
             value={pin}
             disabled={submitting || isLocked}
             onChange={(e) => handleSystemInput(e.target.value)}
-            aria-label="PIN"
+            aria-label={t("auth.pin.pin_label")}
             className="
               w-full max-w-[280px] rounded-xl border-2 border-co-border-2
               bg-co-surface px-4 py-3 text-center text-3xl font-extrabold
@@ -287,7 +291,7 @@ export function PinKeypad({ userName, role, onSubmit, onBack }: PinKeypadProps) 
             disabled:opacity-50
           "
         >
-          <span aria-hidden>←</span> Back
+          <span aria-hidden>←</span> {t("auth.pin.back")}
         </button>
         <button
           type="button"
@@ -299,7 +303,7 @@ export function PinKeypad({ userName, role, onSubmit, onBack }: PinKeypadProps) 
             disabled:opacity-50
           "
         >
-          {useSystemKeyboard ? "Use on-screen keypad" : "Use system keyboard"}
+          {useSystemKeyboard ? t("auth.pin.use_keypad") : t("auth.pin.use_system_keyboard")}
         </button>
       </div>
     </div>
@@ -333,9 +337,10 @@ function KeypadButton({
 }
 
 function Spinner() {
+  const { t } = useTranslation();
   return (
     <span
-      aria-label="Loading"
+      aria-label={t("auth.pin.loading_aria")}
       className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-co-text/30 border-t-co-text"
     />
   );

@@ -32,7 +32,9 @@ import { RoleTile } from "@/components/auth/RoleTile";
 import { NameTile } from "@/components/auth/NameTile";
 import { PinKeypad, type PinKeypadError } from "@/components/auth/PinKeypad";
 import { ManagerLoginForm } from "@/components/auth/ManagerLoginForm";
-import { ROLES, type RoleCode } from "@/lib/roles";
+import type { RoleCode } from "@/lib/roles";
+import { TranslationProvider, useTranslation } from "@/lib/i18n/provider";
+import type { TranslationKey } from "@/lib/i18n/types";
 
 interface LocationLite {
   id: string;
@@ -85,14 +87,20 @@ export default function LoginPage() {
   // useSearchParams() — the static prerender pass bails to client-side render
   // for that subtree, then hydrates the live URL on mount. AuthShell visual
   // frame renders inside the content tree, so a null fallback is fine here.
+  // Pre-auth surface lives outside the (authed) group, so there's no ancestor
+  // TranslationProvider. Wrap the page tree here (default EN — no toggle yet,
+  // per Juan) so every auth component below can call useTranslation().
   return (
     <Suspense fallback={null}>
-      <LoginPageContent />
+      <TranslationProvider initialLanguage="en">
+        <LoginPageContent />
+      </TranslationProvider>
     </Suspense>
   );
 }
 
 function LoginPageContent() {
+  const { t } = useTranslation();
   const router = useRouter();
   const searchParams = useSearchParams();
   const idleReason = searchParams?.get("reason") === "idle";
@@ -133,13 +141,13 @@ function LoginPageContent() {
         const body = (await res.json()) as { locations: LocationLite[] };
         if (!cancelled) setLocations(body.locations);
       } catch {
-        if (!cancelled) setLocationsError("Couldn't load locations. Check your connection.");
+        if (!cancelled) setLocationsError(t("auth.login.error_load_locations"));
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [t]);
 
   // Reset the user list on step change via render-phase compare. The synchronous
   // setUsers(null)/setUsersError(null) used to live in the load effect below,
@@ -168,13 +176,13 @@ function LoginPageContent() {
         const body = (await res.json()) as { users: UserLite[] };
         if (!cancelled) setUsers(body.users);
       } catch {
-        if (!cancelled) setUsersError("Couldn't load users. Check your connection.");
+        if (!cancelled) setUsersError(t("auth.login.error_load_users"));
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [step]);
+  }, [step, t]);
 
   const handlePinSubmit = useCallback(
     async (pin: string): Promise<{ ok: true } | { ok: false; error: PinKeypadError }> => {
@@ -214,15 +222,15 @@ function LoginPageContent() {
   const stepHeading = useMemo(() => {
     switch (step.kind) {
       case "location":
-        return "Where are you?";
+        return t("auth.login.heading_location");
       case "role":
-        return "What's your role?";
+        return t("auth.login.heading_role");
       case "name":
-        return "Who are you?";
+        return t("auth.login.heading_name");
       case "pin":
         return "";
     }
-  }, [step.kind]);
+  }, [step.kind, t]);
 
   return (
     <main className="flex min-h-screen flex-col bg-co-bg">
@@ -238,7 +246,7 @@ function LoginPageContent() {
           Compliments Only
         </h1>
         <p className="mt-1 text-center text-[10px] font-bold uppercase tracking-[0.32em] text-co-text/70">
-          Operations
+          {t("auth.brand.tagline")}
         </p>
       </header>
 
@@ -252,7 +260,7 @@ function LoginPageContent() {
             focus-visible:ring-2 focus-visible:ring-co-gold
           "
         >
-          {surface === "tile" ? "Manager login →" : "Use tile login →"}
+          {surface === "tile" ? t("auth.login.surface_to_manager") : t("auth.login.surface_to_tile")}
         </button>
       </div>
 
@@ -273,7 +281,7 @@ function LoginPageContent() {
               text-center text-sm font-medium text-co-text-muted
             "
           >
-            You were signed out after 10 minutes of inactivity.
+            {t("auth.login.idle_signed_out")}
           </div>
         )}
 
@@ -329,7 +337,7 @@ function LoginPageContent() {
             {step.kind === "name" && (
               <>
                 <Crumb
-                  label={`${step.locationCode} · ${step.locationName} · ${ROLES[step.role].label}`}
+                  label={`${step.locationCode} · ${step.locationName} · ${t(`role.${step.role}` as TranslationKey)}`}
                 />
                 <NameStep
                   users={users}
@@ -389,13 +397,14 @@ function ManagerSurface({
   onSuccess: () => void;
   onTransientError: (m: string) => void;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="mt-2">
       <h2 className="mb-1 mt-2 text-center text-2xl font-extrabold leading-tight text-co-text">
-        Manager login
+        {t("auth.manager.heading")}
       </h2>
       <p className="mb-5 text-center text-sm text-co-text-muted">
-        Email + password for AGM and above.
+        {t("auth.manager.subtitle")}
       </p>
       <div
         className="
@@ -418,6 +427,7 @@ function Crumb({ label }: { label: string }) {
 }
 
 function BackButton({ onClick }: { onClick: () => void }) {
+  const { t } = useTranslation();
   return (
     <div className="mt-6 flex justify-center">
       <button
@@ -428,7 +438,7 @@ function BackButton({ onClick }: { onClick: () => void }) {
           hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold
         "
       >
-        <span aria-hidden>←</span> Back
+        <span aria-hidden>←</span> {t("auth.login.back")}
       </button>
     </div>
   );
@@ -443,6 +453,7 @@ function LocationStep({
   error: string | null;
   onSelect: (loc: LocationLite) => void;
 }) {
+  const { t } = useTranslation();
   if (error) {
     return (
       <div
@@ -468,7 +479,7 @@ function LocationStep({
   if (locations.length === 0) {
     return (
       <p className="text-center text-sm text-co-text-muted">
-        No active locations. Ask an admin to enable one.
+        {t("auth.login.no_locations")}
       </p>
     );
   }
@@ -495,6 +506,7 @@ function NameStep({
   error: string | null;
   onSelect: (u: UserLite) => void;
 }) {
+  const { t } = useTranslation();
   if (error) {
     return (
       <div
@@ -520,7 +532,7 @@ function NameStep({
   if (users.length === 0) {
     return (
       <p className="mt-6 text-center text-sm text-co-text-muted">
-        No active users for this role at this location.
+        {t("auth.login.no_users")}
       </p>
     );
   }

@@ -7,6 +7,8 @@
  * the PIN keypad with the user_id pre-bound for the /api/auth/pin call.
  */
 
+import { useTranslation } from "@/lib/i18n/provider";
+
 interface NameTileProps {
   name: string;
   onSelect: () => void;
@@ -21,12 +23,13 @@ function initials(name: string): string {
 }
 
 export function NameTile({ name, onSelect, disabled = false }: NameTileProps) {
+  const { t } = useTranslation();
   return (
     <button
       type="button"
       onClick={onSelect}
       disabled={disabled}
-      aria-label={`Select user ${name}`}
+      aria-label={t("auth.tiles.select_user", { name })}
       className="
         group relative flex min-h-[120px] w-full flex-col items-center justify-center
         gap-3 rounded-2xl border-2 border-co-border bg-co-surface px-4 py-6

@@ -22,6 +22,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { useTranslation } from "@/lib/i18n/provider";
+
 const MIN_PASSWORD_LENGTH = 8;
 
 export interface ManagerLoginFormProps {
@@ -45,6 +47,7 @@ function formatRemaining(seconds: number): string {
 }
 
 export function ManagerLoginForm({ onSuccess, onTransientError }: ManagerLoginFormProps) {
+  const { t } = useTranslation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -77,21 +80,21 @@ export function ManagerLoginForm({ onSuccess, onTransientError }: ManagerLoginFo
       setResetSent(false);
 
       if (!email.trim()) {
-        setFieldError({ field: "email", message: "Email required." });
+        setFieldError({ field: "email", message: t("auth.manager.error_email_required") });
         return;
       }
       if (!isValidEmail(email)) {
-        setFieldError({ field: "email", message: "Enter a valid email address." });
+        setFieldError({ field: "email", message: t("auth.manager.error_email_invalid") });
         return;
       }
       if (!password) {
-        setFieldError({ field: "password", message: "Password required." });
+        setFieldError({ field: "password", message: t("auth.manager.error_password_required") });
         return;
       }
       if (password.length < MIN_PASSWORD_LENGTH) {
         setFieldError({
           field: "password",
-          message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`,
+          message: t("auth.manager.error_password_min", { min: MIN_PASSWORD_LENGTH }),
         });
         return;
       }
@@ -120,39 +123,39 @@ export function ManagerLoginForm({ onSuccess, onTransientError }: ManagerLoginFo
         if (res.status === 403 && body.code === "email_not_verified") {
           setFieldError({
             field: "email",
-            message: "Email not verified yet. Check your inbox for the verification link.",
+            message: t("auth.manager.error_email_not_verified"),
           });
           return;
         }
         if (res.status === 403 && body.code === "account_inactive") {
           setFieldError({
             field: "password",
-            message: "This account is inactive. Ask an admin.",
+            message: t("auth.manager.error_account_inactive"),
           });
           return;
         }
         if (res.status === 401) {
           setFieldError({
             field: "password",
-            message: "Wrong email or password.",
+            message: t("auth.manager.error_wrong_credentials"),
           });
           return;
         }
-        onTransientError("Something went wrong. Try again.");
+        onTransientError(t("auth.manager.error_generic"));
       } catch {
-        onTransientError("Network error. Check your connection and try again.");
+        onTransientError(t("auth.manager.error_network"));
       } finally {
         setSubmitting(false);
       }
     },
-    [email, password, submitting, lock, onSuccess, onTransientError],
+    [email, password, submitting, lock, onSuccess, onTransientError, t],
   );
 
   const requestReset = useCallback(async () => {
     if (resetRequesting || lock) return;
     setFieldError(null);
     if (!email.trim() || !isValidEmail(email)) {
-      setFieldError({ field: "email", message: "Enter your email above first." });
+      setFieldError({ field: "email", message: t("auth.manager.reset_need_email") });
       return;
     }
     setResetRequesting(true);
@@ -166,14 +169,14 @@ export function ManagerLoginForm({ onSuccess, onTransientError }: ManagerLoginFo
       if (res.ok) {
         setResetSent(true);
       } else {
-        onTransientError("Couldn't send reset link. Try again.");
+        onTransientError(t("auth.manager.reset_error"));
       }
     } catch {
-      onTransientError("Network error. Check your connection and try again.");
+      onTransientError(t("auth.manager.error_network"));
     } finally {
       setResetRequesting(false);
     }
-  }, [email, resetRequesting, lock, onTransientError]);
+  }, [email, resetRequesting, lock, onTransientError, t]);
 
   const isLocked = lock !== null;
 
@@ -181,7 +184,7 @@ export function ManagerLoginForm({ onSuccess, onTransientError }: ManagerLoginFo
     <form onSubmit={submit} noValidate className="flex flex-col gap-5">
       <div className="flex flex-col gap-1.5">
         <label htmlFor="manager-email" className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
-          Email
+          {t("auth.manager.email_label")}
         </label>
         <input
           id="manager-email"
@@ -208,7 +211,7 @@ export function ManagerLoginForm({ onSuccess, onTransientError }: ManagerLoginFo
             disabled:opacity-50
             ${fieldError?.field === "email" ? "border-co-cta" : "border-co-border-2"}
           `}
-          placeholder="you@complimentsonlysubs.com"
+          placeholder={t("auth.manager.email_placeholder")}
         />
         {fieldError?.field === "email" && (
           <p id="manager-email-error" role="alert" className="text-sm font-semibold text-co-cta">
@@ -219,7 +222,7 @@ export function ManagerLoginForm({ onSuccess, onTransientError }: ManagerLoginFo
 
       <div className="flex flex-col gap-1.5">
         <label htmlFor="manager-password" className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
-          Password
+          {t("auth.manager.password_label")}
         </label>
         <input
           id="manager-password"
@@ -256,13 +259,13 @@ export function ManagerLoginForm({ onSuccess, onTransientError }: ManagerLoginFo
           className="rounded-xl border-2 border-co-cta bg-co-cta/10 px-4 py-3 text-center"
         >
           <p className="text-sm font-bold uppercase tracking-wide text-co-cta">
-            Account locked
+            {t("auth.manager.locked_title")}
           </p>
           <p className="mt-1 text-2xl font-extrabold tabular-nums text-co-text">
             {formatRemaining(lock.remaining)}
           </p>
           <p className="mt-1 text-xs text-co-text-muted">
-            Too many failed attempts. Try again in {formatRemaining(lock.remaining)}.
+            {t("auth.manager.locked_body", { time: formatRemaining(lock.remaining) })}
           </p>
         </div>
       )}
@@ -272,7 +275,7 @@ export function ManagerLoginForm({ onSuccess, onTransientError }: ManagerLoginFo
           role="status"
           className="rounded-xl border-2 border-co-border-2 bg-co-surface-2 px-4 py-3 text-sm text-co-text"
         >
-          If an account exists for this email, a reset link has been sent.
+          {t("auth.manager.reset_sent")}
         </div>
       )}
 
@@ -289,7 +292,7 @@ export function ManagerLoginForm({ onSuccess, onTransientError }: ManagerLoginFo
           disabled:cursor-not-allowed disabled:opacity-50
         "
       >
-        {submitting ? <Spinner /> : "Sign in"}
+        {submitting ? <Spinner /> : t("auth.manager.sign_in")}
       </button>
 
       <button
@@ -303,16 +306,17 @@ export function ManagerLoginForm({ onSuccess, onTransientError }: ManagerLoginFo
           disabled:opacity-50
         "
       >
-        {resetRequesting ? "Sending…" : "Forgot password?"}
+        {resetRequesting ? t("auth.manager.sending") : t("auth.manager.forgot_password")}
       </button>
     </form>
   );
 }
 
 function Spinner() {
+  const { t } = useTranslation();
   return (
     <span
-      aria-label="Loading"
+      aria-label={t("auth.pin.loading_aria")}
       className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-co-cta/40 border-t-co-cta"
     />
   );
