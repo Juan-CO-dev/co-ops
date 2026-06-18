@@ -97,6 +97,20 @@ export function personalBest(dayCounts: number[]): number {
   return dayCounts.length ? Math.max(...dayCounts) : 0;
 }
 
+/** Longest run of consecutive calendar days present in the set. */
+export function longestStreak(dates: string[]): number {
+  const set = new Set(dates);
+  let best = 0;
+  for (const d of set) {
+    if (set.has(shiftDay(d, -1))) continue; // only count from a run start
+    let len = 1;
+    let cur = d;
+    while (set.has(shiftDay(cur, 1))) { len++; cur = shiftDay(cur, 1); }
+    if (len > best) best = len;
+  }
+  return best;
+}
+
 function shiftDay(yyyymmdd: string, delta: number): string {
   const d = new Date(`${yyyymmdd}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + delta);
