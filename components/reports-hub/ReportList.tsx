@@ -17,6 +17,7 @@ import { formatDateLabel } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { REPORTS_HUB_CASH_LEVEL, type ReportListItem, type ReportTypeKey } from "@/lib/reports-hub";
+import type { SearchSnippet } from "@/lib/reports-search";
 
 const TYPE_LABEL_KEYS: Record<ReportTypeKey, TranslationKey> = {
   opening: "reports.type.opening",
@@ -49,9 +50,11 @@ interface ReportListProps {
   viewerLevel: number;
   /** Active quick-find query; when set + no matches, shows the search-empty message. */
   searchQuery?: string;
+  /** Per-row "where it matched" snippet, keyed `${type}:${id}`. */
+  snippets?: Map<string, SearchSnippet>;
 }
 
-export function ReportList({ items, locationId, language, viewerLevel, searchQuery }: ReportListProps) {
+export function ReportList({ items, locationId, language, viewerLevel, searchQuery, snippets }: ReportListProps) {
   const t = (key: TranslationKey) => serverT(language, key);
   const canSeeCash = viewerLevel >= REPORTS_HUB_CASH_LEVEL;
 
@@ -74,6 +77,7 @@ export function ReportList({ items, locationId, language, viewerLevel, searchQue
         const statusKey = STATUS_LABEL_KEYS[item.status];
         const statusLabel = statusKey ? t(statusKey) : item.status;
         const s = item.signalSummary;
+        const snip = snippets?.get(`${item.type}:${item.id}`);
 
         return (
           <li key={item.id}>
@@ -124,6 +128,14 @@ export function ReportList({ items, locationId, language, viewerLevel, searchQue
                 </div>
               ) : null}
             </a>
+            {snip ? (
+              <p className="mt-1 px-1 text-xs text-co-text-muted">
+                <span className="font-semibold text-co-text-dim">
+                  {serverT(language, `reports.search.snippet_field.${snip.fieldKey}` as TranslationKey)}:
+                </span>{" "}
+                <span className="italic">“{snip.text}”</span>
+              </p>
+            ) : null}
           </li>
         );
       })}
