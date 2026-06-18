@@ -30,11 +30,13 @@ export function TrendsLanding({
 
   return (
     <div className="mx-auto flex max-w-2xl flex-col gap-5">
-      {/* Entry cards */}
+      {/* Entry cards — equal-weight tappable links into the dedicated views.
+       * Neither is pre-highlighted (this is a hub, not a current-page state):
+       * both use the same border/surface + a hover cue + a small tap hint. */}
       <div className="flex gap-2">
         <Link
           href={opsHref}
-          className="flex-1 rounded-2xl border-2 border-co-text bg-co-warning-surface p-4"
+          className="flex flex-1 flex-col rounded-2xl border-2 border-co-border bg-co-surface p-4 transition hover:border-co-text"
         >
           <p className="font-extrabold text-co-text">
             {serverT(language, "reports.trends.landing.ops_card")}
@@ -42,17 +44,23 @@ export function TrendsLanding({
           <p className="text-[11px] text-co-text-muted">
             {serverT(language, "reports.trends.landing.ops_desc")}
           </p>
+          <p className="mt-2 text-[10px] font-bold uppercase tracking-[0.08em] text-co-gold-deep">
+            {serverT(language, "reports.trends.landing.tap_hint")} →
+          </p>
         </Link>
         {canSeeTeam ? (
           <Link
             href={teamHref}
-            className="flex-1 rounded-2xl border-2 border-co-text bg-co-surface p-4"
+            className="flex flex-1 flex-col rounded-2xl border-2 border-co-border bg-co-surface p-4 transition hover:border-co-text"
           >
             <p className="font-extrabold text-co-text">
               {serverT(language, "reports.trends.landing.team_card")}
             </p>
             <p className="text-[11px] text-co-text-muted">
               {serverT(language, "reports.trends.landing.team_desc")}
+            </p>
+            <p className="mt-2 text-[10px] font-bold uppercase tracking-[0.08em] text-co-gold-deep">
+              {serverT(language, "reports.trends.landing.tap_hint")} →
             </p>
           </Link>
         ) : null}

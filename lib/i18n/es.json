@@ -968,6 +968,7 @@
   "reports.trends.landing.ops_desc": "Par · temperaturas · efectivo · cumplimiento con el tiempo",
   "reports.trends.landing.team_card": "Equipo",
   "reports.trends.landing.team_desc": "Salud operativa (gerentes)",
+  "reports.trends.landing.tap_hint": "Toca para ver a detalle",
   "reports.trends.landing.relevant_now": "Relevante ahora",
   "reports.trends.landing.ops_snapshot": "Resumen de operación",
   "reports.trends.landing.team_snapshot": "Resumen del equipo",

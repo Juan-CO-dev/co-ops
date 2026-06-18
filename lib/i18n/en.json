@@ -968,6 +968,7 @@
   "reports.trends.landing.ops_desc": "Par · temps · cash · completion over time",
   "reports.trends.landing.team_card": "Team",
   "reports.trends.landing.team_desc": "Operating health (managers)",
+  "reports.trends.landing.tap_hint": "Tap for the full view",
   "reports.trends.landing.relevant_now": "Relevant right now",
   "reports.trends.landing.ops_snapshot": "Ops snapshot",
   "reports.trends.landing.team_snapshot": "Team snapshot",
