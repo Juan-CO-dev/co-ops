@@ -24,7 +24,7 @@ export function matchesReportQuery(
 /** A field of authorized searchable text for one report. `fieldKey` selects
  *  the snippet label (reports.search.snippet_field.<fieldKey>). */
 export interface SearchCorpusField {
-  fieldKey: "item" | "station" | "completer" | "note" | "cash_note" | "area_to_improve" | "pm_note" | "mvp_note";
+  fieldKey: "item" | "station" | "completer" | "note" | "cash_note" | "area_to_improve" | "pm_note" | "mvp_note" | "equipment" | "maintenance_note";
   text: string;
 }
 
@@ -200,6 +200,34 @@ export async function buildSearchCorpus(
         push(`pm:${e.pm_report_id}`, "area_to_improve", e.area_to_improve);
         if (isManager && showNotes) push(`pm:${e.pm_report_id}`, "pm_note", e.note);
       }
+    }
+  }
+
+  // ── Maintenance (ad-hoc equipment notes; L3+, location-bound) ──
+  // Fridge temp-item notes are already searchable under opening/closing, so
+  // only maintenance_notes are indexed here. All maintenance content is L3+
+  // (no redaction gate); reads are bound to args.locationId.
+  const maintItems = args.items.filter((it) => it.type === "maintenance");
+  if (maintItems.length) {
+    const equip = await selectAllRows<{ id: string; name: string }>((from, to) =>
+      service.from("maintenance_equipment").select("id, name")
+        .eq("location_id", args.locationId).eq("active", true)
+        .order("id", { ascending: true }).range(from, to),
+    );
+    const labelById = new Map(equip.map((e) => [e.id, e.name] as const));
+    const notes = await selectAllRows<{ note: string; created_at: string; equipment_id: string | null; other_label: string | null }>((from, to) =>
+      service.from("maintenance_notes").select("note, created_at, equipment_id, other_label")
+        .eq("location_id", args.locationId)
+        .order("created_at", { ascending: true }).range(from, to),
+    );
+    const wantDate = new Set(maintItems.map((it) => it.date));
+    for (const n of notes) {
+      const date = n.created_at.slice(0, 10);
+      if (!wantDate.has(date)) continue;
+      const key = `maintenance:${args.locationId}:${date}`;
+      const label = n.equipment_id ? (labelById.get(n.equipment_id) ?? null) : n.other_label;
+      push(key, "equipment", label);
+      push(key, "maintenance_note", n.note);
     }
   }
 
