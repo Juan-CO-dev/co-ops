@@ -23,6 +23,7 @@ const TYPE_LABEL_KEYS: Record<ReportTypeKey, TranslationKey> = {
   mid_day: "reports.type.mid_day",
   cash: "reports.type.cash",
   pm: "reports.type.pm",
+  maintenance: "reports.type.maintenance",
 };
 
 const STATUS_LABEL_KEYS: Partial<Record<string, TranslationKey>> = {

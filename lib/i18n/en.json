@@ -790,6 +790,7 @@
   "reports.type.mid_day": "Mid-Day Prep",
   "reports.type.cash": "Cash",
   "reports.type.pm": "PM Report",
+  "reports.type.maintenance": "Maintenance",
   "reports.empty": "No reports found for this date range.",
   "reports.search.placeholder": "Search name or type",
   "reports.search.aria": "Search reports by name or type",

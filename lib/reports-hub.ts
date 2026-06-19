@@ -1,6 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isPrepData } from "@/lib/prep";
-import { FRIDGE_DEFAULT_SAFE_MAX_F } from "@/lib/maintenance";
+import {
+  FRIDGE_DEFAULT_SAFE_MAX_F,
+  listMaintenanceReportDates,
+  loadMaintenanceReportDetail,
+  type MaintenanceReportDetail,
+} from "@/lib/maintenance";
 import { derivePrepHave, parStatusFromHave, isOutOfRangeTemp } from "@/lib/report-signals";
 import { loadShiftWrapUp } from "@/lib/pm-report";
 import type { ShiftWrapUpRow } from "@/lib/pm-report";
@@ -13,7 +18,7 @@ import type { OpeningNoPriorDataReason } from "@/lib/types";
 export const REPORTS_HUB_CASH_LEVEL = 4; // cash visible KH+
 export const REPORTS_HUB_NOTES_LEVEL = 5; // notes visible SL+
 
-export type ReportTypeKey = "opening" | "closing" | "am_prep" | "mid_day" | "cash" | "pm";
+export type ReportTypeKey = "opening" | "closing" | "am_prep" | "mid_day" | "cash" | "pm" | "maintenance";
 
 export interface Viewer {
   userId: string;
@@ -280,7 +285,44 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
       })
     : withSignals;
 
-  return result;
+  // ── Maintenance (synthesized per-(location,date) digest; L3+ for all) ──
+  // Built AFTER the computeReportSignals pipeline above, NOT pushed into the
+  // checklist/cash/pm `items` array: maintenance ids are synthetic
+  // ("maintenance:{loc}:{date}") and would not resolve in computeReportSignals
+  // (its checklist branch queries checklist_instances by id → no match →
+  // empty signals → the synthesized tempFlags would be clobbered to 0).
+  // Maintenance therefore carries its own signalSummary and applies its own
+  // (temp-only) signal-filter logic here.
+  const maintItems: ReportListItem[] = [];
+  if (want("maintenance")) {
+    const dates = await listMaintenanceReportDates(service, f.locationId, f.dateFrom, f.dateTo);
+    // Maintenance only carries temp-flag signals; if a non-temp signal filter
+    // is active, maintenance rows can't satisfy it → emit none.
+    const nonTempSignalActive = !!sf && (sf.underPar || sf.overPar || sf.skipped || sf.cashOver || sf.cashShort);
+    if (!nonTempSignalActive) {
+      for (const d of dates) {
+        if (sf?.tempFlag && d.tempFlags === 0) continue; // temp-flag filter on → only flagged days
+        maintItems.push({
+          type: "maintenance",
+          id: `maintenance:${f.locationId}:${d.date}`,
+          date: d.date,
+          locationId: f.locationId,
+          submitterName: null,
+          status: d.tempFlags > 0 ? "flags" : "ok",
+          signalSummary: { underPar: 0, overPar: 0, skipped: 0, tempFlags: d.tempFlags, cashOverShortCents: null },
+        });
+      }
+    }
+  }
+
+  if (maintItems.length === 0) return result;
+
+  // Merge maintenance rows into the result, preserving the established ordering
+  // (submittedAt desc then date desc). Maintenance rows have no submittedAt, so
+  // they sort after submitted reports; among null-submittedAt rows, by date desc.
+  const combined = [...result, ...maintItems];
+  combined.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  return combined;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -943,7 +985,8 @@ export type ReportDetail =
   | ChecklistReportDetail
   | OpeningReportDetail
   | CashReportDetail
-  | PmReportDetail;
+  | PmReportDetail
+  | MaintenanceReportDetail;
 
 export async function loadReportDetail(
   service: SupabaseClient,
@@ -964,6 +1007,19 @@ export async function loadReportDetail(
   }
   if (args.type === "pm") {
     return loadPmDetail(service, { viewer: args.viewer, id: args.id, locationId: args.locationId });
+  }
+  if (args.type === "maintenance") {
+    // id shape: "maintenance:{locationId}:{date}". Re-verify the embedded
+    // location matches the authorized location (defense in depth), then load.
+    const parts = args.id.split(":");
+    const embeddedLoc = parts[1];
+    const date = parts[2];
+    if (parts.length !== 3 || parts[0] !== "maintenance" || embeddedLoc === undefined || date === undefined) {
+      return null;
+    }
+    if (embeddedLoc !== args.locationId) return null;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+    return loadMaintenanceReportDetail(service, args.locationId, date);
   }
   return null;
 }

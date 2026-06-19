@@ -26,6 +26,7 @@ const TYPE_LABEL_KEYS: Record<ReportTypeKey, TranslationKey> = {
   mid_day: "reports.type.mid_day",
   cash: "reports.type.cash",
   pm: "reports.type.pm",
+  maintenance: "reports.type.maintenance",
 };
 
 // Map DB status enum → translation key. Mirrors ChecklistReportDetail's

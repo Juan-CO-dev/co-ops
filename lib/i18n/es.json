@@ -790,6 +790,7 @@
   "reports.type.mid_day": "Prep de Mediodía",
   "reports.type.cash": "Efectivo",
   "reports.type.pm": "Reporte PM",
+  "reports.type.maintenance": "Mantenimiento",
   "reports.empty": "No se encontraron reportes para este rango de fechas.",
   "reports.search.placeholder": "Buscar nombre o tipo",
   "reports.search.aria": "Buscar reportes por nombre o tipo",
