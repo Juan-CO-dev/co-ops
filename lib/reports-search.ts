@@ -2,6 +2,15 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { REPORTS_HUB_CASH_LEVEL, REPORTS_HUB_NOTES_LEVEL, type ReportListItem } from "@/lib/reports-hub";
 
+const OPERATIONAL_TZ = "America/New_York";
+function opDate(tstz: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: OPERATIONAL_TZ, year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date(tstz));
+  const g = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${g("year")}-${g("month")}-${g("day")}`;
+}
+
 /**
  * Reports Hub quick-find (Phase 1). Pure case-insensitive substring match over
  * the fields already on an authorized list row — submitter name + report type.
@@ -205,10 +214,11 @@ export async function buildSearchCorpus(
 
   // ── Maintenance (ad-hoc equipment notes; L3+, location-bound) ──
   // Fridge temp-item notes are already searchable under opening/closing, so
-  // only maintenance_notes are indexed here. All maintenance content is L3+
-  // (no redaction gate); reads are bound to args.locationId.
+  // only maintenance_notes are indexed here. Corpus keyed `${type}:${id}` to
+  // match the page's lookup; note dates use the operational TZ.
   const maintItems = args.items.filter((it) => it.type === "maintenance");
   if (maintItems.length) {
+    const idByDate = new Map(maintItems.map((it) => [it.date, it.id] as const));
     const equip = await selectAllRows<{ id: string; name: string }>((from, to) =>
       service.from("maintenance_equipment").select("id, name")
         .eq("location_id", args.locationId).eq("active", true)
@@ -220,11 +230,11 @@ export async function buildSearchCorpus(
         .eq("location_id", args.locationId)
         .order("created_at", { ascending: true }).range(from, to),
     );
-    const wantDate = new Set(maintItems.map((it) => it.date));
     for (const n of notes) {
-      const date = n.created_at.slice(0, 10);
-      if (!wantDate.has(date)) continue;
-      const key = `maintenance:${args.locationId}:${date}`;
+      const date = opDate(n.created_at);
+      const itemId = idByDate.get(date);
+      if (!itemId) continue;
+      const key = `maintenance:${itemId}`; // == `${it.type}:${it.id}`
       const label = n.equipment_id ? (labelById.get(n.equipment_id) ?? null) : n.other_label;
       push(key, "equipment", label);
       push(key, "maintenance_note", n.note);

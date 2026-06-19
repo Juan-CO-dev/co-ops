@@ -222,16 +222,17 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
   }
   // ── Maintenance internal rows (synthesized per-(location,date) digest; L3+
   // for all). Built as internal rows that carry their OWN signalSummary and
-  // SKIP computeReportSignals — the synthetic id "maintenance:{loc}:{date}"
+  // SKIP computeReportSignals — the synthetic id "maintenance-{date}"
   // doesn't resolve there (its checklist branch would query checklist_instances
-  // by that id, find nothing, and clobber tempFlags to 0). ──
+  // by that id, find nothing, and clobber tempFlags to 0). The id is colon-free
+  // so it round-trips safely through the detail-page URL. ──
   const maintInternal: ReportListItemInternal[] = [];
   if (want("maintenance")) {
     const dates = await listMaintenanceReportDates(service, f.locationId, f.dateFrom, f.dateTo);
     for (const d of dates) {
       maintInternal.push({
         type: "maintenance",
-        id: `maintenance:${f.locationId}:${d.date}`,
+        id: `maintenance-${d.date}`,
         date: d.date,
         locationId: f.locationId,
         submitterName: null,
@@ -992,15 +993,12 @@ export async function loadReportDetail(
     return loadPmDetail(service, { viewer: args.viewer, id: args.id, locationId: args.locationId });
   }
   if (args.type === "maintenance") {
-    // id shape: "maintenance:{locationId}:{date}". Re-verify the embedded
-    // location matches the authorized location (defense in depth), then load.
-    const parts = args.id.split(":");
-    const embeddedLoc = parts[1];
-    const date = parts[2];
-    if (parts.length !== 3 || parts[0] !== "maintenance" || embeddedLoc === undefined || date === undefined) {
-      return null;
-    }
-    if (embeddedLoc !== args.locationId) return null;
+    // id shape: "maintenance-{date}". The location is already authorized by the
+    // caller (lockLocationContext on the detail page, passed as args.locationId);
+    // parse + validate the operational date.
+    const prefix = "maintenance-";
+    if (!args.id.startsWith(prefix)) return null;
+    const date = args.id.slice(prefix.length);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
     return loadMaintenanceReportDetail(service, args.locationId, date);
   }

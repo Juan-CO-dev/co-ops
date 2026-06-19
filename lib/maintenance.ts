@@ -3,6 +3,17 @@ import type { RoleCode } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import { selectAllRows } from "@/lib/supabase-paginate";
 
+const OPERATIONAL_TZ = "America/New_York";
+/** Operational-TZ date (YYYY-MM-DD) from a timestamptz string. Local copy to
+ * avoid a circular import with lib/midshift (which imports this module). */
+function opDate(tstz: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: OPERATIONAL_TZ, year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date(tstz));
+  const g = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${g("year")}-${g("month")}-${g("day")}`;
+}
+
 export const MAINTENANCE_BASE_LEVEL = 3;
 export const FRIDGE_DEFAULT_SAFE_MAX_F = 41;
 
@@ -383,7 +394,7 @@ export async function listMaintenanceReportDates(
       .order("created_at", { ascending: true }).range(from, to),
   );
   for (const n of notes) {
-    const date = n.created_at.slice(0, 10);
+    const date = opDate(n.created_at);
     if (date < dateFrom || date > dateTo) continue;
     if (!byDate.has(date)) byDate.set(date, new Map());
   }
@@ -417,15 +428,15 @@ export async function loadMaintenanceReportDetail(
 ): Promise<MaintenanceReportDetail> {
   const equipment = await loadEquipment(service, locationId);
 
-  const noteRows = await selectAllRows<{
+  const allNoteRows = await selectAllRows<{
     id: string; note: string; created_by: string; created_at: string; equipment_id: string | null; other_label: string | null;
   }>((from, to) =>
     service.from("maintenance_notes")
       .select("id, note, created_by, created_at, equipment_id, other_label")
       .eq("location_id", locationId)
-      .gte("created_at", `${date}T00:00:00`).lte("created_at", `${date}T23:59:59.999`)
       .order("created_at", { ascending: false }).range(from, to),
   );
+  const noteRows = allNoteRows.filter((n) => opDate(n.created_at) === date);
   const authorIds = [...new Set(noteRows.map((n) => n.created_by))];
   const nameById = new Map<string, string>();
   if (authorIds.length) {
