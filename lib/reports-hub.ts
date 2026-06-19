@@ -220,109 +220,92 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
       .in("id", [...submitterIds]);
     for (const u of (users ?? []) as Array<{ id: string; name: string }>) nameById.set(u.id, u.name);
   }
-  // Sort internal items: submittedAt desc (nulls last) then date desc — BEFORE stripping internal fields.
-  items.sort((a, b) => {
-    if (a.submittedAt !== null && b.submittedAt !== null) {
-      if (a.submittedAt > b.submittedAt) return -1;
-      if (a.submittedAt < b.submittedAt) return 1;
-    } else if (a.submittedAt !== null) {
-      return -1; // a has submittedAt, b doesn't → a first
-    } else if (b.submittedAt !== null) {
-      return 1; // b has submittedAt, a doesn't → b first
+  // ── Maintenance internal rows (synthesized per-(location,date) digest; L3+
+  // for all). Built as internal rows that carry their OWN signalSummary and
+  // SKIP computeReportSignals — the synthetic id "maintenance:{loc}:{date}"
+  // doesn't resolve there (its checklist branch would query checklist_instances
+  // by that id, find nothing, and clobber tempFlags to 0). ──
+  const maintInternal: ReportListItemInternal[] = [];
+  if (want("maintenance")) {
+    const dates = await listMaintenanceReportDates(service, f.locationId, f.dateFrom, f.dateTo);
+    for (const d of dates) {
+      maintInternal.push({
+        type: "maintenance",
+        id: `maintenance:${f.locationId}:${d.date}`,
+        date: d.date,
+        locationId: f.locationId,
+        submitterName: null,
+        submitterId: null,
+        submittedAt: null,
+        status: d.tempFlags > 0 ? "flags" : "ok",
+        signalSummary: { underPar: 0, overPar: 0, skipped: 0, tempFlags: d.tempFlags, cashOverShortCents: null },
+      });
     }
-    // Both null: fall through to date sort
-    return a.date < b.date ? 1 : a.date > b.date ? -1 : 0;
-  });
+  }
 
-  // Set submitterName from the captured submitterId; strip submitterId + submittedAt before returning.
-  const baseItems: ReportListItem[] = items.map(({ submitterId, submittedAt: _sa, ...rest }) => ({
-    ...rest,
-    submitterName: submitterId ? (nameById.get(submitterId) ?? null) : null,
-  }));
-
-  // ── Derived signal summary + optional signal filters ──
-  // Compute-on-read from already-authorized data; base list-visibility gates
-  // (cash KH+, PM own-for-employees) are applied above and are untouched here.
-  // CO report volumes are small (tens per date window); a materialized signal
-  // column is the future optimization when volume grows.
+  // Compute signals for the non-maintenance items (maintenance carries its own).
   const sf = f.signalFilters;
   const hasSf = sf &&
     (sf.underPar || sf.overPar || sf.skipped || sf.tempFlag || sf.cashOver || sf.cashShort);
-
-  // Always load temp-item ids once and compute signalSummary for every item
-  // (badges need it even when no signal filters are active).
   const tempItemIds = await loadLocationTempItemIds(service, f.locationId);
-
-  const withSignals: ReportListItem[] = await Promise.all(
-    baseItems.map(async (item) => {
+  const itemsWithSignals: ReportListItemInternal[] = await Promise.all(
+    items.map(async (item) => {
       const { signals } = await computeReportSignals(service, {
         type: item.type,
         id: item.id,
         tempItemIds,
       });
-      const summary: SignalSummary = {
-        underPar: signals.underPar,
-        overPar: signals.overPar,
-        skipped: signals.skipped,
-        tempFlags: signals.tempFlags,
-        cashOverShortCents: signals.cashOverShortCents,
+      return {
+        ...item,
+        signalSummary: {
+          underPar: signals.underPar,
+          overPar: signals.overPar,
+          skipped: signals.skipped,
+          tempFlags: signals.tempFlags,
+          cashOverShortCents: signals.cashOverShortCents,
+        },
       };
-      return { ...item, signalSummary: summary };
     }),
   );
 
-  // Apply signal filters (all base visibility invariants remain untouched above).
-  const result = hasSf
-    ? withSignals.filter((item) => {
-        const s = item.signalSummary!;
-        if (sf!.underPar && s.underPar <= 0) return false;
-        if (sf!.overPar && s.overPar <= 0) return false;
-        if (sf!.skipped && s.skipped <= 0) return false;
-        if (sf!.tempFlag && s.tempFlags <= 0) return false;
-        if (sf!.cashOver && (s.cashOverShortCents === null || s.cashOverShortCents <= 0)) return false;
-        if (sf!.cashShort && (s.cashOverShortCents === null || s.cashOverShortCents >= 0)) return false;
-        return true;
-      })
-    : withSignals;
-
-  // ── Maintenance (synthesized per-(location,date) digest; L3+ for all) ──
-  // Built AFTER the computeReportSignals pipeline above, NOT pushed into the
-  // checklist/cash/pm `items` array: maintenance ids are synthetic
-  // ("maintenance:{loc}:{date}") and would not resolve in computeReportSignals
-  // (its checklist branch queries checklist_instances by id → no match →
-  // empty signals → the synthesized tempFlags would be clobbered to 0).
-  // Maintenance therefore carries its own signalSummary and applies its own
-  // (temp-only) signal-filter logic here.
-  const maintItems: ReportListItem[] = [];
-  if (want("maintenance")) {
-    const dates = await listMaintenanceReportDates(service, f.locationId, f.dateFrom, f.dateTo);
-    // Maintenance only carries temp-flag signals; if a non-temp signal filter
-    // is active, maintenance rows can't satisfy it → emit none.
-    const nonTempSignalActive = !!sf && (sf.underPar || sf.overPar || sf.skipped || sf.cashOver || sf.cashShort);
-    if (!nonTempSignalActive) {
-      for (const d of dates) {
-        if (sf?.tempFlag && d.tempFlags === 0) continue; // temp-flag filter on → only flagged days
-        maintItems.push({
-          type: "maintenance",
-          id: `maintenance:${f.locationId}:${d.date}`,
-          date: d.date,
-          locationId: f.locationId,
-          submitterName: null,
-          status: d.tempFlags > 0 ? "flags" : "ok",
-          signalSummary: { underPar: 0, overPar: 0, skipped: 0, tempFlags: d.tempFlags, cashOverShortCents: null },
-        });
-      }
-    }
+  // Merge maintenance + non-maintenance, then apply signal filters uniformly.
+  // The standard filter already yields the right maintenance behavior: a
+  // non-temp filter (underPar/overPar/skipped/cash*) excludes maintenance (its
+  // non-temp signals are 0); the tempFlag filter keeps only flagged days.
+  let combined: ReportListItemInternal[] = [...itemsWithSignals, ...maintInternal];
+  if (hasSf) {
+    combined = combined.filter((item) => {
+      const s = item.signalSummary!;
+      if (sf!.underPar && s.underPar <= 0) return false;
+      if (sf!.overPar && s.overPar <= 0) return false;
+      if (sf!.skipped && s.skipped <= 0) return false;
+      if (sf!.tempFlag && s.tempFlags <= 0) return false;
+      if (sf!.cashOver && (s.cashOverShortCents === null || s.cashOverShortCents <= 0)) return false;
+      if (sf!.cashShort && (s.cashOverShortCents === null || s.cashOverShortCents >= 0)) return false;
+      return true;
+    });
   }
 
-  if (maintItems.length === 0) return result;
+  // Sort ONCE with the established comparator: submittedAt desc (nulls last)
+  // then date desc. Maintenance rows (submittedAt null) sort among the
+  // null-submittedAt tail by date desc — established ordering preserved.
+  combined.sort((a, b) => {
+    if (a.submittedAt !== null && b.submittedAt !== null) {
+      if (a.submittedAt > b.submittedAt) return -1;
+      if (a.submittedAt < b.submittedAt) return 1;
+    } else if (a.submittedAt !== null) {
+      return -1;
+    } else if (b.submittedAt !== null) {
+      return 1;
+    }
+    return a.date < b.date ? 1 : a.date > b.date ? -1 : 0;
+  });
 
-  // Merge maintenance rows into the result, preserving the established ordering
-  // (submittedAt desc then date desc). Maintenance rows have no submittedAt, so
-  // they sort after submitted reports; among null-submittedAt rows, by date desc.
-  const combined = [...result, ...maintItems];
-  combined.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-  return combined;
+  // Strip internal fields; resolve submitterName from submitterId.
+  return combined.map(({ submitterId, submittedAt: _sa, ...rest }) => ({
+    ...rest,
+    submitterName: submitterId ? (nameById.get(submitterId) ?? null) : rest.submitterName ?? null,
+  }));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
