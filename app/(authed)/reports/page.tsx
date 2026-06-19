@@ -18,10 +18,13 @@ import { operationalNow } from "@/lib/midshift";
 import { REPORTS_HUB_CASH_LEVEL, listReports, type ReportTypeKey, type SignalFilters, type Viewer } from "@/lib/reports-hub";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { loadProfileDirectory } from "@/lib/profiles";
+import { matchPeople, matchPages, type PageResult, type PersonResult } from "@/lib/unified-search";
 
 import { DashboardBackLink } from "@/components/DashboardBackLink";
 import { ReportFilterBar } from "@/components/reports-hub/ReportFilterBar";
 import { ReportList } from "@/components/reports-hub/ReportList";
+import { UnifiedSearchResults } from "@/components/reports-hub/UnifiedSearchResults";
 
 const ALL_TYPES: ReportTypeKey[] = ["opening", "closing", "am_prep", "mid_day", "cash", "pm", "maintenance"];
 
@@ -135,6 +138,23 @@ export default async function ReportsPage({ searchParams }: PageProps) {
     });
   }
 
+  // Unified search: People + Pages, only when searching. Each source is its
+  // own authorized loader — the matchers filter an already-authorized set.
+  let people: PersonResult[] = [];
+  let peopleHasMore = false;
+  let pages: PageResult[] = [];
+  if (query) {
+    const directory = await loadProfileDirectory(sb, {
+      viewer: { userId: auth.user.id, locations: auth.locations },
+    });
+    const pm = matchPeople(directory, query, (role) => serverT(lang, `role.${role}` as TranslationKey));
+    people = pm.people;
+    peopleHasMore = pm.hasMore;
+    pages = matchPages(viewerLevel, query, (key) => serverT(lang, key));
+  }
+  const nothingMatched =
+    query.length > 0 && people.length === 0 && pages.length === 0 && filteredItems.length === 0;
+
   return (
     <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3">
@@ -164,16 +184,34 @@ export default async function ReportsPage({ searchParams }: PageProps) {
         query={qParam ?? ""}
       />
 
-      <div className="mt-4">
-        <ReportList
-          items={filteredItems}
-          locationId={locationId}
-          language={lang}
-          viewerLevel={viewerLevel}
-          searchQuery={qParam ?? ""}
-          snippets={snippets}
-        />
-      </div>
+      {query ? (
+        <div className="mt-4">
+          <UnifiedSearchResults
+            people={people}
+            peopleHasMore={peopleHasMore}
+            pages={pages}
+            locationId={locationId}
+            language={lang}
+          />
+        </div>
+      ) : null}
+
+      {nothingMatched ? (
+        <p className="mt-4 rounded-lg border-2 border-co-border bg-co-surface px-3 py-3 text-sm font-semibold text-co-text">
+          {serverT(lang, "reports.search.no_matches", { q: query })}
+        </p>
+      ) : (
+        <div className="mt-4">
+          <ReportList
+            items={filteredItems}
+            locationId={locationId}
+            language={lang}
+            viewerLevel={viewerLevel}
+            searchQuery={qParam ?? ""}
+            snippets={snippets}
+          />
+        </div>
+      )}
     </main>
   );
 }
