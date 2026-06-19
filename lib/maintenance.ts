@@ -1,6 +1,18 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { RoleCode } from "@/lib/roles";
 import { audit } from "@/lib/audit";
+import { selectAllRows } from "@/lib/supabase-paginate";
+
+const OPERATIONAL_TZ = "America/New_York";
+/** Operational-TZ date (YYYY-MM-DD) from a timestamptz string. Local copy to
+ * avoid a circular import with lib/midshift (which imports this module). */
+function opDate(tstz: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: OPERATIONAL_TZ, year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date(tstz));
+  const g = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${g("year")}-${g("month")}-${g("day")}`;
+}
 
 export const MAINTENANCE_BASE_LEVEL = 3;
 export const FRIDGE_DEFAULT_SAFE_MAX_F = 41;
@@ -296,4 +308,161 @@ export async function addMaintenanceNote(
     userAgent: null,
   });
   return { id: data.id };
+}
+
+export interface MaintenanceReportEquip {
+  equipmentId: string;
+  label: string;
+  kind: "fridge" | "equipment";
+  safeMaxF: number | null;
+  status: FridgeStatus;        // meaningful for fridges; "no_reading_today" for non-fridge
+  readings: TempReading[];     // that date's readings (AM/PM), chronological
+  notes: MaintenanceNote[];    // maintenance_notes for this equip on this date, newest first
+}
+export interface MaintenanceReportDetail {
+  kind: "maintenance";
+  type: "maintenance";
+  date: string;
+  locationId: string;
+  equipment: MaintenanceReportEquip[];
+  flagCount: number;           // out-of-range fridge count (== list tempFlags)
+}
+
+/**
+ * Hub list helper: every operational date in [dateFrom, dateTo] at the location
+ * that has ≥1 fridge reading OR a maintenance note, with that date's
+ * out-of-range fridge count. Newest first. One paginated completions scan
+ * (avoids per-fridge N+1 and the 1000-row cap on wide windows).
+ */
+export async function listMaintenanceReportDates(
+  service: SupabaseClient,
+  locationId: string,
+  dateFrom: string,
+  dateTo: string,
+): Promise<Array<{ date: string; tempFlags: number }>> {
+  const equipment = await loadEquipment(service, locationId);
+  const fridges = equipment.filter((e) => e.kind === "fridge");
+
+  const fridgeByItem = new Map<string, Equipment>();
+  for (const f of fridges) {
+    if (f.openingTempItemId) fridgeByItem.set(f.openingTempItemId, f);
+    if (f.closingTempItemId) fridgeByItem.set(f.closingTempItemId, f);
+  }
+  const itemIds = [...fridgeByItem.keys()];
+
+  const byDate = new Map<string, Map<string, TempReading[]>>();
+
+  if (itemIds.length) {
+    const comps = await selectAllRows<{
+      template_item_id: string; instance_id: string; count_value: number | null;
+    }>((from, to) =>
+      service.from("checklist_completions")
+        .select("template_item_id, instance_id, count_value")
+        .in("template_item_id", itemIds)
+        .is("superseded_at", null).is("revoked_at", null)
+        .order("instance_id", { ascending: true }).range(from, to),
+    );
+    const instIds = [...new Set(comps.map((c) => c.instance_id))];
+    const dateById = new Map<string, string>();
+    if (instIds.length) {
+      const insts = await selectAllRows<{ id: string; date: string }>((from, to) =>
+        service.from("checklist_instances").select("id, date")
+          .eq("location_id", locationId).in("id", instIds)
+          .gte("date", dateFrom).lte("date", dateTo)
+          .order("id", { ascending: true }).range(from, to),
+      );
+      for (const i of insts) dateById.set(i.id, i.date);
+    }
+    for (const c of comps) {
+      if (c.count_value === null) continue;
+      const date = dateById.get(c.instance_id);
+      if (!date) continue;
+      const f = fridgeByItem.get(c.template_item_id);
+      if (!f) continue;
+      const phase: "AM" | "PM" = c.template_item_id === f.openingTempItemId ? "AM" : "PM";
+      const dm = byDate.get(date) ?? new Map<string, TempReading[]>();
+      const arr = dm.get(f.id) ?? [];
+      arr.push({ date, phase, valueF: c.count_value, at: date, note: null });
+      dm.set(f.id, arr);
+      byDate.set(date, dm);
+    }
+  }
+
+  const notes = await selectAllRows<{ created_at: string }>((from, to) =>
+    service.from("maintenance_notes").select("created_at")
+      .eq("location_id", locationId)
+      .order("created_at", { ascending: true }).range(from, to),
+  );
+  for (const n of notes) {
+    const date = opDate(n.created_at);
+    if (date < dateFrom || date > dateTo) continue;
+    if (!byDate.has(date)) byDate.set(date, new Map());
+  }
+
+  const safeOf = (f: Equipment) => f.safeMaxF ?? FRIDGE_DEFAULT_SAFE_MAX_F;
+  const fridgeById = new Map(fridges.map((f) => [f.id, f] as const));
+  const out: Array<{ date: string; tempFlags: number }> = [];
+  for (const [date, perFridge] of byDate) {
+    let flags = 0;
+    for (const [fid, readings] of perFridge) {
+      const f = fridgeById.get(fid);
+      if (!f) continue;
+      if (computeFridgeStatus(readings, safeOf(f)) === "out_of_range") flags++;
+    }
+    out.push({ date, tempFlags: flags });
+  }
+  out.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  return out;
+}
+
+/**
+ * Hub detail: one date's per-equipment snapshot at a location — each piece of
+ * equipment with that date's readings, status, and that date's maintenance
+ * notes. (Fridge temp-item notes already appear under opening/closing; not
+ * duplicated here.)
+ */
+export async function loadMaintenanceReportDetail(
+  service: SupabaseClient,
+  locationId: string,
+  date: string,
+): Promise<MaintenanceReportDetail> {
+  const equipment = await loadEquipment(service, locationId);
+
+  const allNoteRows = await selectAllRows<{
+    id: string; note: string; created_by: string; created_at: string; equipment_id: string | null; other_label: string | null;
+  }>((from, to) =>
+    service.from("maintenance_notes")
+      .select("id, note, created_by, created_at, equipment_id, other_label")
+      .eq("location_id", locationId)
+      .order("created_at", { ascending: false }).range(from, to),
+  );
+  const noteRows = allNoteRows.filter((n) => opDate(n.created_at) === date);
+  const authorIds = [...new Set(noteRows.map((n) => n.created_by))];
+  const nameById = new Map<string, string>();
+  if (authorIds.length) {
+    const { data: us } = await service.from("users").select("id, name").in("id", authorIds);
+    for (const u of (us ?? []) as Array<{ id: string; name: string }>) nameById.set(u.id, u.name);
+  }
+  const notesByEquip = new Map<string, MaintenanceNote[]>();
+  for (const n of noteRows) {
+    const key = n.equipment_id ?? "__other__";
+    const arr = notesByEquip.get(key) ?? [];
+    arr.push({ id: n.id, equipmentId: n.equipment_id, otherLabel: n.other_label, note: n.note, byName: nameById.get(n.created_by) ?? null, at: n.created_at });
+    notesByEquip.set(key, arr);
+  }
+
+  const out: MaintenanceReportEquip[] = [];
+  let flagCount = 0;
+  for (const e of equipment) {
+    const all = e.kind === "fridge" ? await loadFridgeReadings(service, e, date) : [];
+    const readings = all.filter((r) => r.date === date);
+    const safe = e.safeMaxF ?? FRIDGE_DEFAULT_SAFE_MAX_F;
+    const status = e.kind === "fridge" ? computeFridgeStatus(readings, safe) : "no_reading_today";
+    if (status === "out_of_range") flagCount++;
+    out.push({
+      equipmentId: e.id, label: e.name, kind: e.kind, safeMaxF: e.safeMaxF,
+      status, readings, notes: notesByEquip.get(e.id) ?? [],
+    });
+  }
+  return { kind: "maintenance", type: "maintenance", date, locationId, equipment: out, flagCount };
 }

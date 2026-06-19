@@ -23,7 +23,7 @@ import { DashboardBackLink } from "@/components/DashboardBackLink";
 import { ReportFilterBar } from "@/components/reports-hub/ReportFilterBar";
 import { ReportList } from "@/components/reports-hub/ReportList";
 
-const ALL_TYPES: ReportTypeKey[] = ["opening", "closing", "am_prep", "mid_day", "cash", "pm"];
+const ALL_TYPES: ReportTypeKey[] = ["opening", "closing", "am_prep", "mid_day", "cash", "pm", "maintenance"];
 
 interface PageProps {
   searchParams: Promise<{

@@ -1,6 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isPrepData } from "@/lib/prep";
-import { FRIDGE_DEFAULT_SAFE_MAX_F } from "@/lib/maintenance";
+import {
+  FRIDGE_DEFAULT_SAFE_MAX_F,
+  listMaintenanceReportDates,
+  loadMaintenanceReportDetail,
+  type MaintenanceReportDetail,
+} from "@/lib/maintenance";
 import { derivePrepHave, parStatusFromHave, isOutOfRangeTemp } from "@/lib/report-signals";
 import { loadShiftWrapUp } from "@/lib/pm-report";
 import type { ShiftWrapUpRow } from "@/lib/pm-report";
@@ -13,7 +18,7 @@ import type { OpeningNoPriorDataReason } from "@/lib/types";
 export const REPORTS_HUB_CASH_LEVEL = 4; // cash visible KH+
 export const REPORTS_HUB_NOTES_LEVEL = 5; // notes visible SL+
 
-export type ReportTypeKey = "opening" | "closing" | "am_prep" | "mid_day" | "cash" | "pm";
+export type ReportTypeKey = "opening" | "closing" | "am_prep" | "mid_day" | "cash" | "pm" | "maintenance";
 
 export interface Viewer {
   userId: string;
@@ -215,72 +220,93 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
       .in("id", [...submitterIds]);
     for (const u of (users ?? []) as Array<{ id: string; name: string }>) nameById.set(u.id, u.name);
   }
-  // Sort internal items: submittedAt desc (nulls last) then date desc — BEFORE stripping internal fields.
-  items.sort((a, b) => {
-    if (a.submittedAt !== null && b.submittedAt !== null) {
-      if (a.submittedAt > b.submittedAt) return -1;
-      if (a.submittedAt < b.submittedAt) return 1;
-    } else if (a.submittedAt !== null) {
-      return -1; // a has submittedAt, b doesn't → a first
-    } else if (b.submittedAt !== null) {
-      return 1; // b has submittedAt, a doesn't → b first
+  // ── Maintenance internal rows (synthesized per-(location,date) digest; L3+
+  // for all). Built as internal rows that carry their OWN signalSummary and
+  // SKIP computeReportSignals — the synthetic id "maintenance-{date}"
+  // doesn't resolve there (its checklist branch would query checklist_instances
+  // by that id, find nothing, and clobber tempFlags to 0). The id is colon-free
+  // so it round-trips safely through the detail-page URL. ──
+  const maintInternal: ReportListItemInternal[] = [];
+  if (want("maintenance")) {
+    const dates = await listMaintenanceReportDates(service, f.locationId, f.dateFrom, f.dateTo);
+    for (const d of dates) {
+      maintInternal.push({
+        type: "maintenance",
+        id: `maintenance-${d.date}`,
+        date: d.date,
+        locationId: f.locationId,
+        submitterName: null,
+        submitterId: null,
+        submittedAt: null,
+        status: d.tempFlags > 0 ? "flags" : "ok",
+        signalSummary: { underPar: 0, overPar: 0, skipped: 0, tempFlags: d.tempFlags, cashOverShortCents: null },
+      });
     }
-    // Both null: fall through to date sort
-    return a.date < b.date ? 1 : a.date > b.date ? -1 : 0;
-  });
+  }
 
-  // Set submitterName from the captured submitterId; strip submitterId + submittedAt before returning.
-  const baseItems: ReportListItem[] = items.map(({ submitterId, submittedAt: _sa, ...rest }) => ({
-    ...rest,
-    submitterName: submitterId ? (nameById.get(submitterId) ?? null) : null,
-  }));
-
-  // ── Derived signal summary + optional signal filters ──
-  // Compute-on-read from already-authorized data; base list-visibility gates
-  // (cash KH+, PM own-for-employees) are applied above and are untouched here.
-  // CO report volumes are small (tens per date window); a materialized signal
-  // column is the future optimization when volume grows.
+  // Compute signals for the non-maintenance items (maintenance carries its own).
   const sf = f.signalFilters;
   const hasSf = sf &&
     (sf.underPar || sf.overPar || sf.skipped || sf.tempFlag || sf.cashOver || sf.cashShort);
-
-  // Always load temp-item ids once and compute signalSummary for every item
-  // (badges need it even when no signal filters are active).
   const tempItemIds = await loadLocationTempItemIds(service, f.locationId);
-
-  const withSignals: ReportListItem[] = await Promise.all(
-    baseItems.map(async (item) => {
+  const itemsWithSignals: ReportListItemInternal[] = await Promise.all(
+    items.map(async (item) => {
       const { signals } = await computeReportSignals(service, {
         type: item.type,
         id: item.id,
         tempItemIds,
       });
-      const summary: SignalSummary = {
-        underPar: signals.underPar,
-        overPar: signals.overPar,
-        skipped: signals.skipped,
-        tempFlags: signals.tempFlags,
-        cashOverShortCents: signals.cashOverShortCents,
+      return {
+        ...item,
+        signalSummary: {
+          underPar: signals.underPar,
+          overPar: signals.overPar,
+          skipped: signals.skipped,
+          tempFlags: signals.tempFlags,
+          cashOverShortCents: signals.cashOverShortCents,
+        },
       };
-      return { ...item, signalSummary: summary };
     }),
   );
 
-  // Apply signal filters (all base visibility invariants remain untouched above).
-  const result = hasSf
-    ? withSignals.filter((item) => {
-        const s = item.signalSummary!;
-        if (sf!.underPar && s.underPar <= 0) return false;
-        if (sf!.overPar && s.overPar <= 0) return false;
-        if (sf!.skipped && s.skipped <= 0) return false;
-        if (sf!.tempFlag && s.tempFlags <= 0) return false;
-        if (sf!.cashOver && (s.cashOverShortCents === null || s.cashOverShortCents <= 0)) return false;
-        if (sf!.cashShort && (s.cashOverShortCents === null || s.cashOverShortCents >= 0)) return false;
-        return true;
-      })
-    : withSignals;
+  // Merge maintenance + non-maintenance, then apply signal filters uniformly.
+  // The standard filter already yields the right maintenance behavior: a
+  // non-temp filter (underPar/overPar/skipped/cash*) excludes maintenance (its
+  // non-temp signals are 0); the tempFlag filter keeps only flagged days.
+  let combined: ReportListItemInternal[] = [...itemsWithSignals, ...maintInternal];
+  if (hasSf) {
+    combined = combined.filter((item) => {
+      const s = item.signalSummary!;
+      if (sf!.underPar && s.underPar <= 0) return false;
+      if (sf!.overPar && s.overPar <= 0) return false;
+      if (sf!.skipped && s.skipped <= 0) return false;
+      if (sf!.tempFlag && s.tempFlags <= 0) return false;
+      if (sf!.cashOver && (s.cashOverShortCents === null || s.cashOverShortCents <= 0)) return false;
+      if (sf!.cashShort && (s.cashOverShortCents === null || s.cashOverShortCents >= 0)) return false;
+      return true;
+    });
+  }
 
-  return result;
+  // Sort ONCE with the established comparator: submittedAt desc (nulls last)
+  // then date desc. Maintenance rows (submittedAt null) sort among the
+  // null-submittedAt tail by date desc — established ordering preserved.
+  combined.sort((a, b) => {
+    if (a.submittedAt !== null && b.submittedAt !== null) {
+      if (a.submittedAt > b.submittedAt) return -1;
+      if (a.submittedAt < b.submittedAt) return 1;
+    } else if (a.submittedAt !== null) {
+      return -1;
+    } else if (b.submittedAt !== null) {
+      return 1;
+    }
+    return a.date < b.date ? 1 : a.date > b.date ? -1 : 0;
+  });
+
+  // Strip internal fields; resolve submitterName from submitterId.
+  return combined.map(({ submitterId, submittedAt: _sa, ...rest }) => ({
+    ...rest,
+    submitterName: submitterId ? (nameById.get(submitterId) ?? null) : rest.submitterName ?? null,
+  }));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -943,7 +969,8 @@ export type ReportDetail =
   | ChecklistReportDetail
   | OpeningReportDetail
   | CashReportDetail
-  | PmReportDetail;
+  | PmReportDetail
+  | MaintenanceReportDetail;
 
 export async function loadReportDetail(
   service: SupabaseClient,
@@ -964,6 +991,16 @@ export async function loadReportDetail(
   }
   if (args.type === "pm") {
     return loadPmDetail(service, { viewer: args.viewer, id: args.id, locationId: args.locationId });
+  }
+  if (args.type === "maintenance") {
+    // id shape: "maintenance-{date}". The location is already authorized by the
+    // caller (lockLocationContext on the detail page, passed as args.locationId);
+    // parse + validate the operational date.
+    const prefix = "maintenance-";
+    if (!args.id.startsWith(prefix)) return null;
+    const date = args.id.slice(prefix.length);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+    return loadMaintenanceReportDetail(service, args.locationId, date);
   }
   return null;
 }
