@@ -37,6 +37,11 @@ const STATUS_LABEL_KEYS: Partial<Record<string, TranslationKey>> = {
   in_progress: "reports.status.in_progress",
   submitted: "reports.status.submitted",
   confirmed: "reports.status.confirmed",
+  // Maintenance synthetic digest rows carry status "flags" | "ok"; the
+  // out-of-range count is already surfaced in the temp signal badge, so these
+  // map through the param-less status convention like the other types.
+  flags: "reports.maint_status_row.flags",
+  ok: "reports.maint_status_row.ok",
 };
 
 /** Format cents as a dollar string, e.g. 150 → "$1.50". */

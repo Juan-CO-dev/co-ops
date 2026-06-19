@@ -16,6 +16,7 @@ import { redirect } from "next/navigation";
 import { serverT } from "@/lib/i18n/server";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
+import type { MaintenanceReportDetail } from "@/lib/maintenance";
 import {
   REPORTS_HUB_CASH_LEVEL,
   loadReportDetail,
@@ -33,10 +34,11 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { DashboardBackLink } from "@/components/DashboardBackLink";
 import { CashReportDetailView } from "@/components/reports-hub/CashReportDetail";
 import { ChecklistReportDetailView } from "@/components/reports-hub/ChecklistReportDetail";
+import { MaintenanceReportDetailView } from "@/components/reports-hub/MaintenanceReportDetail";
 import { OpeningReportDetailView } from "@/components/reports-hub/OpeningReportDetail";
 import { PmReportDetailView } from "@/components/reports-hub/PmReportDetail";
 
-const VALID_TYPES: ReportTypeKey[] = ["opening", "closing", "am_prep", "mid_day", "cash", "pm"];
+const VALID_TYPES: ReportTypeKey[] = ["opening", "closing", "am_prep", "mid_day", "cash", "pm", "maintenance"];
 
 function isReportTypeKey(v: string): v is ReportTypeKey {
   return (VALID_TYPES as string[]).includes(v);
@@ -127,6 +129,11 @@ export default async function ReportDetailPage({ params, searchParams }: PagePro
       {/* Task 4: PM detail view */}
       {detail.kind === "pm" ? (
         <PmReportDetailView detail={detail as PmReportDetail} language={lang} />
+      ) : null}
+
+      {/* Maintenance detail view — per-equipment readings, status, notes */}
+      {detail.kind === "maintenance" ? (
+        <MaintenanceReportDetailView detail={detail as MaintenanceReportDetail} language={lang} />
       ) : null}
     </main>
   );
