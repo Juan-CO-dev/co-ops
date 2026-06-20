@@ -33,7 +33,13 @@ export interface RoleDefinition {
   color: string;
   /** Level 5+ uses email+password as a secondary auth path. */
   hasEmailAuth: boolean;
-  /** Whether this role can land in `/admin/*`. Note: `admin.users` is 6.5+, `admin.locations` is 7+ — see permissions.ts for fine-grained gates. */
+  /**
+   * Legacy coarse flag. NOT read anywhere as of C.44 Module 1 (the admin
+   * gates are the per-permission-key levels in lib/permissions.ts). Post-C.41
+   * integer scale: admin.users 8, admin.locations 9, checklist.template.write
+   * 7, par_levels.write 7, vendor.* 6–7. Outer /admin reachability gate is
+   * level >= 6 (app/admin/layout.tsx). Values left as-is for documentation.
+   */
   canAdmin: boolean;
 }
 
