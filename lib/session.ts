@@ -228,13 +228,25 @@ export async function createSession(
 
 /**
  * True when the served path is within the /admin surface — the hub root
- * ("/admin", exact) OR any child ("/admin/..."). The step-up auto-clear uses
- * this so step_up_unlocked survives navigation WITHIN admin (incl. the hub
- * root, which the admin layout passes as the literal "/admin") and clears only
- * when the actor actually leaves the admin surface.
+ * ("/admin", exact) OR any page child ("/admin/...") OR any admin API route
+ * ("/api/admin", "/api/admin/..."). The step-up auto-clear uses this so
+ * step_up_unlocked survives WITHIN the admin surface and clears only when the
+ * actor actually leaves it.
+ *
+ * The /api/admin/* arm is load-bearing: admin action routes call
+ * requireSession with their own "/api/admin/users/[id]/..." path. Without it,
+ * an action route's own requireSession would clear the step-up flag (set by
+ * the immediately-preceding POST /api/auth/step-up) before assertStepUp reads
+ * it — breaking every step-up-gated admin mutation. The admin API surface is
+ * INSIDE admin; calling it is not "leaving."
  */
 export function isAdminPath(currentPath: string): boolean {
-  return currentPath === "/admin" || currentPath.startsWith("/admin/");
+  return (
+    currentPath === "/admin" ||
+    currentPath.startsWith("/admin/") ||
+    currentPath === "/api/admin" ||
+    currentPath.startsWith("/api/admin/")
+  );
 }
 
 /**
