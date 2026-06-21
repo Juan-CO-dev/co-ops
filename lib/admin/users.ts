@@ -9,7 +9,10 @@
  */
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { type RoleCode, getRoleLevel, canActOn } from "@/lib/roles";
+import { type RoleCode, getRoleLevel, canActOn, ROLES } from "@/lib/roles";
+import { hashPin, hashPassword } from "@/lib/auth";
+import { audit } from "@/lib/audit";
+import { isAllLocationsAccess } from "@/lib/locations";
 import type { AuthContext } from "@/lib/session";
 
 export interface AdminUserListItem {
@@ -136,4 +139,105 @@ export async function loadActionableTarget(actor: AuthContext, id: string): Prom
     throw new AdminUserError(403, "forbidden", "Cannot act on a peer or senior");
   }
   return target;
+}
+
+export const ADMIN_MIN_LEVEL = 8;
+const ALL_LOCATIONS_THRESHOLD = 9; // keep in sync with lib/locations.ts
+
+export interface CreateUserInput {
+  name: string;
+  role: RoleCode;
+  email: string | null;
+  tempPin: string;
+  tempPassword: string | null;
+  locationIds: string[];
+}
+
+function assertValidPin(pin: string): void {
+  if (!/^\d{4}$/.test(pin)) throw new AdminUserError(400, "invalid_pin", "PIN must be exactly 4 digits");
+}
+
+export async function createUser(actor: AuthContext, input: CreateUserInput): Promise<{ userId: string }> {
+  const sb = getServiceRoleClient();
+  const role = input.role;
+
+  if (!canActOn(actor.user.role, role)) {
+    throw new AdminUserError(403, "forbidden", "Cannot create a user at or above your level");
+  }
+  const name = input.name.trim();
+  if (!name) throw new AdminUserError(400, "invalid_name", "Name is required");
+
+  assertValidPin(input.tempPin);
+
+  const level = getRoleLevel(role);
+  const emailAuth = ROLES[role].hasEmailAuth;
+  let email: string | null = null;
+  if (emailAuth) {
+    if (!input.email || !input.email.trim()) {
+      throw new AdminUserError(400, "email_required", "Email is required for this role");
+    }
+    email = input.email.trim().toLowerCase();
+    if (!input.tempPassword || input.tempPassword.length < 8) {
+      throw new AdminUserError(400, "password_required", "Temp password (>=8 chars) is required for this role");
+    }
+  } else if (input.email && input.email.trim()) {
+    email = input.email.trim().toLowerCase();
+  }
+
+  let locationIds: string[] = [];
+  if (level < ALL_LOCATIONS_THRESHOLD) {
+    locationIds = [...new Set(input.locationIds)];
+    if (locationIds.length === 0) {
+      throw new AdminUserError(400, "locations_required", "Assign at least one location for this role");
+    }
+    const actorAll = isAllLocationsAccess({ role: actor.user.role, locations: actor.locations });
+    if (!actorAll) {
+      const allowed = new Set(actor.locations);
+      if (!locationIds.every((l) => allowed.has(l))) {
+        throw new AdminUserError(403, "forbidden", "Location not in your accessible set");
+      }
+    }
+  }
+
+  if (email) {
+    const { data: existing, error: exErr } = await sb
+      .from("users").select("id").ilike("email", email).maybeSingle();
+    if (exErr) throw new Error(`createUser email pre-flight failed: ${exErr.message}`);
+    if (existing) throw new AdminUserError(409, "email_taken", "Email already in use");
+  }
+
+  const pinHash = await hashPin(input.tempPin);
+  const passwordHash = emailAuth ? await hashPassword(input.tempPassword as string) : null;
+
+  const { data: row, error: insErr } = await sb
+    .from("users")
+    .insert({
+      name, email, role, active: true,
+      email_verified: emailAuth,
+      email_verified_at: emailAuth ? new Date().toISOString() : null,
+      pin_hash: pinHash, password_hash: passwordHash,
+      created_by: actor.user.id,
+    })
+    .select("id").maybeSingle<{ id: string }>();
+  if (insErr) throw new Error(`createUser insert failed: ${insErr.message}`);
+  if (!row) throw new Error("createUser insert returned no row");
+
+  if (locationIds.length > 0) {
+    const { error: locErr } = await sb.from("user_locations").insert(
+      locationIds.map((location_id) => ({ user_id: row.id, location_id, assigned_by: actor.user.id, active: true })),
+    );
+    if (locErr) throw new Error(`createUser user_locations insert failed: ${locErr.message}`);
+  }
+
+  await audit({
+    actorId: actor.user.id, actorRole: actor.user.role, action: "user.create",
+    resourceTable: "users", resourceId: row.id,
+    metadata: {
+      creation_method: "admin_ui", created_role: role, created_role_level: level,
+      created_locations: locationIds, email_pipeline_used: false,
+    },
+    ipAddress: null, userAgent: null,
+  });
+
+  return { userId: row.id };
 }
