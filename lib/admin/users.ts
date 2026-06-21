@@ -13,6 +13,7 @@ import { type RoleCode, getRoleLevel, canActOn, ROLES } from "@/lib/roles";
 import { hashPin, hashPassword } from "@/lib/auth";
 import { audit } from "@/lib/audit";
 import { isAllLocationsAccess } from "@/lib/locations";
+import { revokeAllUserSessions } from "@/lib/session";
 import type { AuthContext } from "@/lib/session";
 
 export interface AdminUserListItem {
@@ -240,4 +241,125 @@ export async function createUser(actor: AuthContext, input: CreateUserInput): Pr
   });
 
   return { userId: row.id };
+}
+
+export async function updateUserProfile(
+  actor: AuthContext, id: string,
+  patch: { name?: string; phone?: string | null; email?: string | null },
+): Promise<void> {
+  const target = await loadActionableTarget(actor, id);
+  const sb = getServiceRoleClient();
+  const update: Record<string, unknown> = {};
+  let emailChanged = false;
+  if (patch.name !== undefined) {
+    const n = patch.name.trim();
+    if (!n) throw new AdminUserError(400, "invalid_name", "Name cannot be empty");
+    update.name = n;
+  }
+  if (patch.phone !== undefined) update.phone = patch.phone?.trim() || null;
+  if (patch.email !== undefined) {
+    const e = patch.email?.trim() ? patch.email.trim().toLowerCase() : null;
+    if (e && e !== target.email) {
+      const { data: ex } = await sb.from("users").select("id").ilike("email", e).neq("id", id).maybeSingle();
+      if (ex) throw new AdminUserError(409, "email_taken", "Email already in use");
+    }
+    update.email = e; emailChanged = e !== target.email;
+  }
+  if (Object.keys(update).length === 0) return;
+  const { error } = await sb.from("users").update(update).eq("id", id);
+  if (error) throw new Error(`updateUserProfile failed: ${error.message}`);
+  if (emailChanged) {
+    await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "user.change_email",
+      resourceTable: "users", resourceId: id, metadata: { fields: Object.keys(update) }, ipAddress: null, userAgent: null });
+  }
+}
+
+async function setCredential(
+  actor: AuthContext, id: string, kind: "pin" | "password", value: string,
+): Promise<void> {
+  await loadActionableTarget(actor, id);
+  const sb = getServiceRoleClient();
+  if (kind === "pin") {
+    if (!/^\d{4}$/.test(value)) throw new AdminUserError(400, "invalid_pin", "PIN must be 4 digits");
+    const { error } = await sb.from("users").update({ pin_hash: await hashPin(value) }).eq("id", id);
+    if (error) throw new Error(`resetPin failed: ${error.message}`);
+  } else {
+    if (value.length < 8) throw new AdminUserError(400, "invalid_password", "Password must be >=8 chars");
+    const { error } = await sb.from("users").update({ password_hash: await hashPassword(value) }).eq("id", id);
+    if (error) throw new Error(`setPassword failed: ${error.message}`);
+  }
+  const { count } = await revokeAllUserSessions(id);
+  await audit({ actorId: actor.user.id, actorRole: actor.user.role,
+    action: kind === "pin" ? "user.reset_pin" : "user.reset_password",
+    resourceTable: "users", resourceId: id, metadata: { sessions_revoked: count }, ipAddress: null, userAgent: null });
+}
+
+export const resetPin = (actor: AuthContext, id: string, pin: string) => setCredential(actor, id, "pin", pin);
+export const setPassword = (actor: AuthContext, id: string, pw: string) => setCredential(actor, id, "password", pw);
+
+export async function changeRole(actor: AuthContext, id: string, newRole: RoleCode): Promise<void> {
+  const target = await loadActionableTarget(actor, id);
+  if (!canActOn(actor.user.role, newRole)) {
+    throw new AdminUserError(403, "forbidden", "Cannot assign a role at or above your level");
+  }
+  if (newRole === target.role) return;
+  const sb = getServiceRoleClient();
+  const { error } = await sb.from("users").update({ role: newRole }).eq("id", id);
+  if (error) throw new Error(`changeRole failed: ${error.message}`);
+  const promote = getRoleLevel(newRole) > getRoleLevel(target.role);
+  const { count } = await revokeAllUserSessions(id);
+  await audit({ actorId: actor.user.id, actorRole: actor.user.role,
+    action: promote ? "user.promote" : "user.demote", resourceTable: "users", resourceId: id,
+    metadata: { from_role: target.role, to_role: newRole, sessions_revoked: count }, ipAddress: null, userAgent: null });
+}
+
+export async function setLocations(actor: AuthContext, id: string, locationIds: string[]): Promise<void> {
+  await loadActionableTarget(actor, id);
+  const sb = getServiceRoleClient();
+  const desired = new Set(locationIds);
+  const actorAll = isAllLocationsAccess({ role: actor.user.role, locations: actor.locations });
+  if (!actorAll) {
+    const allowed = new Set(actor.locations);
+    if (![...desired].every((l) => allowed.has(l))) {
+      throw new AdminUserError(403, "forbidden", "Location not in your accessible set");
+    }
+  }
+  const { data: rows, error: rErr } = await sb.from("user_locations").select("location_id, active").eq("user_id", id);
+  if (rErr) throw new Error(`setLocations read failed: ${rErr.message}`);
+  const current = new Map((rows ?? []).map((r) => [(r as any).location_id as string, (r as any).active as boolean]));
+
+  for (const locId of desired) {
+    if (!current.has(locId)) {
+      const { error } = await sb.from("user_locations").insert({ user_id: id, location_id: locId, assigned_by: actor.user.id, active: true });
+      if (error) throw new Error(`setLocations insert failed: ${error.message}`);
+    } else if (current.get(locId) === false) {
+      const { error } = await sb.from("user_locations").update({ active: true, assigned_by: actor.user.id }).eq("user_id", id).eq("location_id", locId);
+      if (error) throw new Error(`setLocations reactivate failed: ${error.message}`);
+    }
+  }
+  for (const [locId, active] of current) {
+    if (active && !desired.has(locId)) {
+      if (!actorAll && !actor.locations.includes(locId)) continue;
+      const { error } = await sb.from("user_locations").update({ active: false }).eq("user_id", id).eq("location_id", locId);
+      if (error) throw new Error(`setLocations deactivate failed: ${error.message}`);
+    }
+  }
+  const { count } = await revokeAllUserSessions(id);
+  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "user.change_locations",
+    resourceTable: "users", resourceId: id, metadata: { locations: [...desired], sessions_revoked: count }, ipAddress: null, userAgent: null });
+}
+
+export async function setActive(actor: AuthContext, id: string, active: boolean): Promise<void> {
+  await loadActionableTarget(actor, id);
+  const sb = getServiceRoleClient();
+  const { error } = await sb.from("users").update({ active }).eq("id", id);
+  if (error) throw new Error(`setActive failed: ${error.message}`);
+  if (!active) {
+    const { count } = await revokeAllUserSessions(id);
+    await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "user.deactivate",
+      resourceTable: "users", resourceId: id, metadata: { sessions_revoked: count }, ipAddress: null, userAgent: null });
+  } else {
+    await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "user.activate",
+      resourceTable: "users", resourceId: id, metadata: {}, ipAddress: null, userAgent: null });
+  }
 }
