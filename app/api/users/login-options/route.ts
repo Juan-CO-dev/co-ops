@@ -65,7 +65,8 @@ export async function GET(req: NextRequest) {
   const { data: assignments, error: assignErr } = await sb
     .from("user_locations")
     .select("user_id")
-    .eq("location_id", locationId);
+    .eq("location_id", locationId)
+    .eq("active", true);
 
   if (assignErr) {
     return jsonError(500, "internal_error", { message: "user lookup failed" });

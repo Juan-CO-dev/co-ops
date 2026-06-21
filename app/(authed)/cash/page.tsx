@@ -109,7 +109,8 @@ export default async function CashPage({ searchParams }: PageProps) {
     const { data: locScoped, error: locErr } = await sb
       .from("user_locations")
       .select("user_id")
-      .eq("location_id", locationParam);
+      .eq("location_id", locationParam)
+      .eq("active", true);
     if (locErr) throw new Error(`CashPage: user_locations: ${locErr.message}`);
     const locIds = ((locScoped ?? []) as Array<{ user_id: string }>).map((r) => r.user_id);
 

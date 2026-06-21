@@ -1419,7 +1419,8 @@ async function loadPickerCandidates(args: {
   const { data: locRows, error: locErr } = await sb
     .from("user_locations")
     .select("user_id")
-    .eq("location_id", args.locationId);
+    .eq("location_id", args.locationId)
+    .eq("active", true);
   if (locErr) throw new Error(`loadPickerCandidates location members: ${locErr.message}`);
   const locationMembers = new Set((locRows ?? []).map((r) => r.user_id as string));
 

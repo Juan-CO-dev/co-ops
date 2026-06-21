@@ -62,6 +62,10 @@ export const ROLES: Record<RoleCode, RoleDefinition> = {
   prospect:             { code: "prospect",             label: "Prospect",                shortLabel: "PROS",level: 0,  color: "#E2E8F0", hasEmailAuth: false, canAdmin: false },
 };
 
+export function isRoleCode(v: string): v is RoleCode {
+  return v in ROLES;
+}
+
 export function getRoleLevel(code: RoleCode): number {
   return ROLES[code].level;
 }

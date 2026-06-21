@@ -178,7 +178,8 @@ export async function createSession(
   const { data: locRows, error: locErr } = await sb
     .from("user_locations")
     .select("location_id")
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .eq("active", true);
   if (locErr) throw new Error(`createSession: failed to load user_locations: ${locErr.message}`);
   const locations = (locRows ?? []).map((r) => r.location_id as string);
 
@@ -227,13 +228,25 @@ export async function createSession(
 
 /**
  * True when the served path is within the /admin surface — the hub root
- * ("/admin", exact) OR any child ("/admin/..."). The step-up auto-clear uses
- * this so step_up_unlocked survives navigation WITHIN admin (incl. the hub
- * root, which the admin layout passes as the literal "/admin") and clears only
- * when the actor actually leaves the admin surface.
+ * ("/admin", exact) OR any page child ("/admin/...") OR any admin API route
+ * ("/api/admin", "/api/admin/..."). The step-up auto-clear uses this so
+ * step_up_unlocked survives WITHIN the admin surface and clears only when the
+ * actor actually leaves it.
+ *
+ * The /api/admin/* arm is load-bearing: admin action routes call
+ * requireSession with their own "/api/admin/users/[id]/..." path. Without it,
+ * an action route's own requireSession would clear the step-up flag (set by
+ * the immediately-preceding POST /api/auth/step-up) before assertStepUp reads
+ * it — breaking every step-up-gated admin mutation. The admin API surface is
+ * INSIDE admin; calling it is not "leaving."
  */
 export function isAdminPath(currentPath: string): boolean {
-  return currentPath === "/admin" || currentPath.startsWith("/admin/");
+  return (
+    currentPath === "/admin" ||
+    currentPath.startsWith("/admin/") ||
+    currentPath === "/api/admin" ||
+    currentPath.startsWith("/api/admin/")
+  );
 }
 
 /**
@@ -425,6 +438,24 @@ export async function revokeSession(sessionId: string): Promise<{ rowsAffected: 
     .select("id");
   if (error) throw new Error(`revokeSession failed: ${error.message}`);
   return { rowsAffected: data?.length ?? 0 };
+}
+
+/**
+ * Revoke ALL active sessions for a user (service-role). Used by admin
+ * auth-affecting mutations (role/location/credential change, deactivate) so
+ * the change takes effect immediately rather than waiting on the ≤12h JWT exp.
+ * Mirrors revokeSession's idempotent .is("revoked_at", null) filter.
+ */
+export async function revokeAllUserSessions(userId: string): Promise<{ count: number }> {
+  const sb = getServiceRoleClient();
+  const { data, error } = await sb
+    .from("sessions")
+    .update({ revoked_at: new Date().toISOString() })
+    .eq("user_id", userId)
+    .is("revoked_at", null)
+    .select("id");
+  if (error) throw new Error(`revokeAllUserSessions failed: ${error.message}`);
+  return { count: data?.length ?? 0 };
 }
 
 export async function unlockStepUp(sessionId: string): Promise<void> {
