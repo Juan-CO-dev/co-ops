@@ -12,6 +12,12 @@ interface PlaceholderCardProps {
   features: string[];
   /** "Phase B" by default; some modules will land in Phase C+. */
   shippingIn?: string;
+  /**
+   * Whether to render the built-in back-to-dashboard link. Default true.
+   * Set false when a parent layout already owns the back affordance (e.g.
+   * the admin shell's context-aware AdminBackLink), to avoid a duplicate.
+   */
+  showBackLink?: boolean;
 }
 
 export function PlaceholderCard({
@@ -19,23 +25,26 @@ export function PlaceholderCard({
   description,
   features,
   shippingIn = "Phase B",
+  showBackLink = true,
 }: PlaceholderCardProps) {
   return (
     <div className="mx-auto w-full max-w-[460px] p-3 pb-8">
       {/* Plain server-safe link (PlaceholderCard renders on statically-
           prerendered stub pages with no TranslationProvider). */}
-      <a
-        href="/dashboard"
-        className="
-          -ml-2 mb-2 inline-flex min-h-[44px] items-center gap-1.5 rounded-md px-2 py-2
-          text-xs font-bold uppercase tracking-[0.14em] text-co-text-muted
-          transition hover:text-co-text
-          focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
-        "
-      >
-        <span aria-hidden>‹</span>
-        <span>Dashboard</span>
-      </a>
+      {showBackLink && (
+        <a
+          href="/dashboard"
+          className="
+            -ml-2 mb-2 inline-flex min-h-[44px] items-center gap-1.5 rounded-md px-2 py-2
+            text-xs font-bold uppercase tracking-[0.14em] text-co-text-muted
+            transition hover:text-co-text
+            focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
+          "
+        >
+          <span aria-hidden>‹</span>
+          <span>Dashboard</span>
+        </a>
+      )}
       <div className="mb-3 flex items-center gap-2">
         <h2 className="m-0 text-base font-bold text-white">{title}</h2>
       </div>

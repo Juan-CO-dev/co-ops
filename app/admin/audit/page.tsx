@@ -3,6 +3,7 @@ import { PlaceholderCard } from "@/components/PlaceholderCard";
 export default function AdminAuditPage() {
   return (
     <PlaceholderCard
+      showBackLink={false}
       title="Audit Log"
       description="Foundation admin tool. Read-only, level 9+."
       features={[

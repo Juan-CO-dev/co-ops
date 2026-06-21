@@ -226,6 +226,17 @@ export async function createSession(
 // ─── requireSession (route handler + server component) ──────────────────────
 
 /**
+ * True when the served path is within the /admin surface — the hub root
+ * ("/admin", exact) OR any child ("/admin/..."). The step-up auto-clear uses
+ * this so step_up_unlocked survives navigation WITHIN admin (incl. the hub
+ * root, which the admin layout passes as the literal "/admin") and clears only
+ * when the actor actually leaves the admin surface.
+ */
+export function isAdminPath(currentPath: string): boolean {
+  return currentPath === "/admin" || currentPath.startsWith("/admin/");
+}
+
+/**
  * Core session validation — pure function over (rawJwt, ipAddress, userAgent,
  * currentPath). Used by both the NextRequest-shaped route-handler wrapper
  * (`requireSession`) and the next/headers-shaped server-component wrapper
@@ -303,7 +314,7 @@ async function requireSessionCore(
   // password re-confirmation. proxy.ts cannot do this (no DB in edge runtime),
   // so it lives here on the Node-runtime side.
   let stepUpCleared = false;
-  if (row.step_up_unlocked && !currentPath.startsWith("/admin/")) {
+  if (row.step_up_unlocked && !isAdminPath(currentPath)) {
     await clearStepUp(row.id);
     stepUpCleared = true;
   }

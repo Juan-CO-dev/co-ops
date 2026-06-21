@@ -3,6 +3,7 @@ import { PlaceholderCard } from "@/components/PlaceholderCard";
 export default function AdminChecklistTemplateDetailPage() {
   return (
     <PlaceholderCard
+      showBackLink={false}
       title="Checklist Template Detail"
       description="Edit metadata, manage items, drag-to-reorder, set role-level and required flags."
       features={[

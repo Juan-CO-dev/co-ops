@@ -3,6 +3,7 @@ import { PlaceholderCard } from "@/components/PlaceholderCard";
 export default function AdminChecklistTemplatesPage() {
   return (
     <PlaceholderCard
+      showBackLink={false}
       title="Checklist Templates"
       description="Foundation admin tool. Define opening / prep / closing templates per location."
       features={[

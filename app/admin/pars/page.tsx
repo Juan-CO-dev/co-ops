@@ -3,6 +3,7 @@ import { PlaceholderCard } from "@/components/PlaceholderCard";
 export default function AdminParsPage() {
   return (
     <PlaceholderCard
+      showBackLink={false}
       title="Par Levels"
       description="Foundation admin tool. Per-location par values referencing vendor_items."
       features={[

@@ -3,6 +3,7 @@ import { PlaceholderCard } from "@/components/PlaceholderCard";
 export default function AdminVendorDetailPage() {
   return (
     <PlaceholderCard
+      showBackLink={false}
       title="Vendor Detail"
       description="Per-vendor profile + item catalog management."
       features={[
