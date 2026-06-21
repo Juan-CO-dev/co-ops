@@ -15,6 +15,7 @@ export const DESTRUCTIVE_ACTIONS = [
   "user.demote",
   "user.change_locations",
   "user.reset_pin",
+  "user.reset_password",
   "user.set_pin",
   "user.change_email",
 
