@@ -178,7 +178,8 @@ export async function createSession(
   const { data: locRows, error: locErr } = await sb
     .from("user_locations")
     .select("location_id")
-    .eq("user_id", userId);
+    .eq("user_id", userId)
+    .eq("active", true);
   if (locErr) throw new Error(`createSession: failed to load user_locations: ${locErr.message}`);
   const locations = (locRows ?? []).map((r) => r.location_id as string);
 

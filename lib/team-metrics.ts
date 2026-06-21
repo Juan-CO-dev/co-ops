@@ -76,7 +76,7 @@ export async function loadTeamOperatingHealth(
 
   // ── Roster: location-assigned, active, level < 8 ──
   const { data: ulRows } = await service
-    .from("user_locations").select("user_id").eq("location_id", args.locationId);
+    .from("user_locations").select("user_id").eq("location_id", args.locationId).eq("active", true);
   const userIds = [...new Set((ulRows ?? []).map((r) => (r as { user_id: string }).user_id))];
   if (userIds.length === 0) return emptyResult();
 
@@ -446,7 +446,7 @@ export async function loadPersonDetail(
 
   // IDOR: person must be assigned to this location, active, and rankable (< MoO).
   const { data: ul } = await service
-    .from("user_locations").select("user_id").eq("location_id", args.locationId).eq("user_id", args.personId).maybeSingle();
+    .from("user_locations").select("user_id").eq("location_id", args.locationId).eq("user_id", args.personId).eq("active", true).maybeSingle();
   if (!ul) return null;
   const { data: u } = await service
     .from("users").select("id, name, role, active, created_at").eq("id", args.personId)
@@ -508,7 +508,7 @@ export async function loadMyPerformance(
   // SECURITY: self only — person is ALWAYS the session user, never a param.
   // IDOR: the viewer must be assigned to the location they're viewing.
   const { data: ul } = await service
-    .from("user_locations").select("user_id").eq("location_id", args.locationId).eq("user_id", args.viewer.userId).maybeSingle();
+    .from("user_locations").select("user_id").eq("location_id", args.locationId).eq("user_id", args.viewer.userId).eq("active", true).maybeSingle();
   if (!ul) return null;
   const { data: u } = await service
     .from("users").select("id, name, role, active, created_at").eq("id", args.viewer.userId)

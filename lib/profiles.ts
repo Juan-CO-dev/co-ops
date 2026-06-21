@@ -69,7 +69,7 @@ async function viewableUserIds(
   if (viewerLocations.length === 0) return [];
   const ulRows = await selectAllRows<{ user_id: string }>(
     (from, to) => service.from("user_locations").select("user_id")
-      .in("location_id", viewerLocations).order("user_id", { ascending: true }).range(from, to),
+      .in("location_id", viewerLocations).eq("active", true).order("user_id", { ascending: true }).range(from, to),
   );
   const ids = [...new Set(ulRows.map((r) => r.user_id))];
   if (ids.length === 0) return [];
@@ -126,7 +126,7 @@ export async function loadPublicProfile(
   const cardKind: "staff" | "leadership" = level >= 8 ? "leadership" : "staff";
 
   // Visibility gate: viewer shares ≥1 location with target (unless all-locations).
-  const { data: tul } = await service.from("user_locations").select("location_id").eq("user_id", args.targetUserId);
+  const { data: tul } = await service.from("user_locations").select("location_id").eq("user_id", args.targetUserId).eq("active", true);
   const targetLocationIds = (tul ?? []).map((r) => (r as { location_id: string }).location_id);
   if (cardKind === "staff" && args.viewerLocations !== "all") {
     const shared = targetLocationIds.some((l) => args.viewerLocations.includes(l));
