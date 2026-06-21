@@ -47,6 +47,7 @@
   "admin.hub.heading": "Administración",
   "admin.hub.subtitle": "Administra la configuración de tu negocio.",
   "admin.back_to_dashboard": "Panel",
+  "admin.back_to_hub": "Admin",
   "admin.section.users": "Gestión de Usuarios",
   "admin.section.checklist-templates": "Plantillas de Listas",
   "admin.section.vendors": "Proveedores",

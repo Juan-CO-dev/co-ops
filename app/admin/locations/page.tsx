@@ -3,6 +3,7 @@ import { PlaceholderCard } from "@/components/PlaceholderCard";
 export default function AdminLocationsPage() {
   return (
     <PlaceholderCard
+      showBackLink={false}
       title="Location Management"
       description="Foundation admin tool. Owner+ only (level 9+)."
       features={[

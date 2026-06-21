@@ -3,6 +3,7 @@ import { PlaceholderCard } from "@/components/PlaceholderCard";
 export default function AdminVendorsPage() {
   return (
     <PlaceholderCard
+      showBackLink={false}
       title="Vendor Management"
       description="Foundation admin tool. Tiered edit permissions: AGM+ for trivial / item catalog, GM+ for lifecycle."
       features={[

@@ -3,6 +3,7 @@ import { PlaceholderCard } from "@/components/PlaceholderCard";
 export default function AdminUsersPage() {
   return (
     <PlaceholderCard
+      showBackLink={false}
       title="User Management"
       description="Foundation admin tool. Full CRUD on users with role-aware constraints."
       features={[

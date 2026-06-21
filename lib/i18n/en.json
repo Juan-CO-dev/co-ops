@@ -47,6 +47,7 @@
   "admin.hub.heading": "Admin",
   "admin.hub.subtitle": "Manage your business configuration.",
   "admin.back_to_dashboard": "Dashboard",
+  "admin.back_to_hub": "Admin",
   "admin.section.users": "User Management",
   "admin.section.checklist-templates": "Checklist Templates",
   "admin.section.vendors": "Vendors",
