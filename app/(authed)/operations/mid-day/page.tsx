@@ -55,7 +55,8 @@ async function loadAgmPlusManagers(
   const { data: locScoped, error: locErr } = await sb
     .from("user_locations")
     .select("user_id")
-    .eq("location_id", locationId);
+    .eq("location_id", locationId)
+    .eq("active", true);
   if (locErr) throw new Error(`loadAgmPlusManagers: location ids: ${locErr.message}`);
   const locScopedIds = ((locScoped ?? []) as Array<{ user_id: string }>).map((r) => r.user_id);
   const { data: candidates, error: usersErr } = await sb

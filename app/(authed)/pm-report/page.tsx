@@ -117,7 +117,8 @@ export default async function PmReportPage({ searchParams }: PageProps) {
   const { data: locScoped } = await sb
     .from("user_locations")
     .select("user_id")
-    .eq("location_id", locationId);
+    .eq("location_id", locationId)
+    .eq("active", true);
   const locIds = ((locScoped ?? []) as Array<{ user_id: string }>).map((r) => r.user_id);
   if (locIds.length > 0) {
     const { data: candidates } = await sb
