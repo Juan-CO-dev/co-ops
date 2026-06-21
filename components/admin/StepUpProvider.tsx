@@ -62,6 +62,10 @@ export function StepUpProvider({
 
   const requestStepUp = useCallback(
     (tier: StepUpTier): Promise<"ok" | "cancelled"> => {
+      // Client `unlocked` is advisory — it drives the Tier A skip-the-prompt
+      // UX only. The server-side assertStepUp (lib/admin/step-up.ts) is the
+      // real gate; if the server flag was cleared underneath us, the consuming
+      // action route returns step_up_required and the consumer re-prompts.
       if (stepUpDecision(tier, unlocked) === "proceed") return Promise.resolve("ok");
       return new Promise<"ok" | "cancelled">((resolve) => {
         resolverRef.current = resolve;

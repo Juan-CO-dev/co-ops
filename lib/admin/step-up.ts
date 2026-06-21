@@ -44,7 +44,7 @@ export function assertStepUp(
   const unlockedAt = ctx.session.stepUpUnlockedAt;
   if (!unlockedAt) return { ok: false, code: "step_up_stale" };
   const age = now - Date.parse(unlockedAt);
-  if (Number.isNaN(age) || age > stepUpFreshWindowMs()) {
+  if (Number.isNaN(age) || age < 0 || age > stepUpFreshWindowMs()) {
     return { ok: false, code: "step_up_stale" };
   }
   return { ok: true };
