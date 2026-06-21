@@ -428,6 +428,24 @@ export async function revokeSession(sessionId: string): Promise<{ rowsAffected: 
   return { rowsAffected: data?.length ?? 0 };
 }
 
+/**
+ * Revoke ALL active sessions for a user (service-role). Used by admin
+ * auth-affecting mutations (role/location/credential change, deactivate) so
+ * the change takes effect immediately rather than waiting on the ≤12h JWT exp.
+ * Mirrors revokeSession's idempotent .is("revoked_at", null) filter.
+ */
+export async function revokeAllUserSessions(userId: string): Promise<{ count: number }> {
+  const sb = getServiceRoleClient();
+  const { data, error } = await sb
+    .from("sessions")
+    .update({ revoked_at: new Date().toISOString() })
+    .eq("user_id", userId)
+    .is("revoked_at", null)
+    .select("id");
+  if (error) throw new Error(`revokeAllUserSessions failed: ${error.message}`);
+  return { count: data?.length ?? 0 };
+}
+
 export async function unlockStepUp(sessionId: string): Promise<void> {
   const sb = getServiceRoleClient();
   const now = new Date().toISOString();
