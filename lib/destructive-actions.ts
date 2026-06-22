@@ -47,6 +47,12 @@ export const DESTRUCTIVE_ACTIONS = [
   "checklist_template.create",
   "checklist_template.delete_or_deactivate",
   "checklist_template_item.delete",
+  // In-place config edit of a prep template item (C.44 Module 3 slice 1).
+  // — destructive because it alters operational config (par targets, who can
+  // complete a step). Auto-derives destructive=true on the audit row via
+  // isDestructive(). Edits are id-preserving; history stays frozen via C.44
+  // snapshots. before_state/after_state carry the changed fields.
+  "checklist_template_item.update",
 
   // Checklist completion correction (per SPEC_AMENDMENTS.md C.28)
   // — destructive because they alter operational/accountability record.

@@ -1,0 +1,413 @@
+/**
+ * Admin prep-template data layer (C.44 Module 3 slice 1).
+ *
+ * SERVER-ONLY. Service-role client throughout — admin authorization is enforced
+ * APP-LAYER by the calling routes (requireSession → level >= 7 → assertStepUp)
+ * and re-checked here for the IDOR location-bind (defense in depth). Service-role
+ * bypasses RLS by design, consistent with lib/admin/users.ts.
+ *
+ * Prep-only this slice: type='prep' (am_prep | mid_day_prep). Opening/closing
+ * editing is a later slice. prep_meta writes go through lib/prep.ts
+ * setPrepItemMeta so the station/section sync invariant is preserved.
+ */
+
+import { getServiceRoleClient } from "@/lib/supabase-server";
+import { audit } from "@/lib/audit";
+import { isAllLocationsAccess, lockLocationContext } from "@/lib/locations";
+import {
+  TEMPLATE_ITEM_COLUMNS,
+  type TemplateItemRow,
+  rowToTemplateItem,
+} from "@/lib/template-items";
+import { setPrepItemMeta, narrowPrepTemplateItem, isPrepMeta } from "@/lib/prep";
+import type { AuthContext } from "@/lib/session";
+import type {
+  ChecklistTemplateItem,
+  ChecklistTemplateItemTranslations,
+  PrepMeta,
+} from "@/lib/types";
+
+export type PrepSubtype = "am_prep" | "mid_day_prep";
+
+export interface AdminPrepTemplateListItem {
+  id: string;
+  name: string;
+  prepSubtype: PrepSubtype;
+  activeItemCount: number;
+}
+
+export interface AdminPrepTemplateDetail {
+  id: string;
+  name: string;
+  prepSubtype: PrepSubtype;
+  locationId: string;
+  items: ChecklistTemplateItem[];
+}
+
+/** Typed error the routes map to jsonError(status, code). */
+export class AdminTemplateError extends Error {
+  constructor(public status: number, public code: string, message?: string) {
+    super(message ?? code);
+    this.name = "AdminTemplateError";
+  }
+}
+
+interface TemplateRow {
+  id: string;
+  name: string;
+  type: string;
+  prep_subtype: PrepSubtype | null;
+  location_id: string;
+  active: boolean;
+}
+
+function actorLocationShape(actor: AuthContext) {
+  return { role: actor.user.role, locations: actor.locations };
+}
+
+/**
+ * Loads a prep template by id and binds it to the actor's authorized location.
+ * Throws AdminTemplateError(404) when missing, not a prep template, or the
+ * actor isn't authorized for its location (404 — don't confirm existence).
+ */
+async function loadAuthorizedPrepTemplate(
+  actor: AuthContext,
+  templateId: string,
+): Promise<TemplateRow> {
+  const sb = getServiceRoleClient();
+  const { data, error } = await sb
+    .from("checklist_templates")
+    .select("id, name, type, prep_subtype, location_id, active")
+    .eq("id", templateId)
+    .maybeSingle<TemplateRow>();
+  if (error) throw new Error(`loadAuthorizedPrepTemplate failed: ${error.message}`);
+  if (!data || data.type !== "prep" || !data.prep_subtype) {
+    throw new AdminTemplateError(404, "template_not_found", "Template not found");
+  }
+  if (!lockLocationContext(actorLocationShape(actor), data.location_id)) {
+    throw new AdminTemplateError(404, "template_not_found", "Template not found");
+  }
+  return data;
+}
+
+/** Active prep templates (am + mid-day) at a location the actor may access. */
+export async function listPrepTemplates(
+  actor: AuthContext,
+  locationId: string,
+): Promise<AdminPrepTemplateListItem[]> {
+  if (!lockLocationContext(actorLocationShape(actor), locationId)) {
+    throw new AdminTemplateError(404, "location_not_found", "Location not accessible");
+  }
+  const sb = getServiceRoleClient();
+  const { data, error } = await sb
+    .from("checklist_templates")
+    .select("id, name, prep_subtype")
+    .eq("location_id", locationId)
+    .eq("type", "prep")
+    .eq("active", true)
+    .order("prep_subtype", { ascending: true })
+    .returns<Array<{ id: string; name: string; prep_subtype: PrepSubtype }>>();
+  if (error) throw new Error(`listPrepTemplates failed: ${error.message}`);
+  const templates = data ?? [];
+
+  const out: AdminPrepTemplateListItem[] = [];
+  for (const t of templates) {
+    const { count, error: cErr } = await sb
+      .from("checklist_template_items")
+      .select("id", { count: "exact", head: true })
+      .eq("template_id", t.id)
+      .eq("active", true);
+    if (cErr) throw new Error(`listPrepTemplates count failed: ${cErr.message}`);
+    out.push({ id: t.id, name: t.name, prepSubtype: t.prep_subtype, activeItemCount: count ?? 0 });
+  }
+  return out;
+}
+
+/** A prep template's active items (typed, invariant-checked), ordered for display. */
+export async function getPrepTemplateDetail(
+  actor: AuthContext,
+  templateId: string,
+): Promise<AdminPrepTemplateDetail> {
+  const tmpl = await loadAuthorizedPrepTemplate(actor, templateId);
+  const sb = getServiceRoleClient();
+  const { data, error } = await sb
+    .from("checklist_template_items")
+    .select(TEMPLATE_ITEM_COLUMNS)
+    .eq("template_id", templateId)
+    .eq("active", true)
+    .order("display_order", { ascending: true })
+    .returns<TemplateItemRow[]>();
+  if (error) throw new Error(`getPrepTemplateDetail items failed: ${error.message}`);
+  const items = (data ?? []).map(rowToTemplateItem).map(narrowPrepTemplateItem);
+  return {
+    id: tmpl.id,
+    name: tmpl.name,
+    prepSubtype: tmpl.prep_subtype as PrepSubtype,
+    locationId: tmpl.location_id,
+    items,
+  };
+}
+
+/**
+ * When an AM-prep item's par changes, update the linked Opening Phase-2 item's
+ * mirrored par (OpeningPhase2Meta.parValue/parUnit). The link is the Opening
+ * item's references_template_item_id → the AM-prep item id. Scoped to the
+ * active opening template at the same location. Returns propagated item ids.
+ * No-op (returns []) when no active opening template or no linked item.
+ */
+async function propagateParToOpeningMirror(args: {
+  amPrepItemId: string;
+  locationId: string;
+  parValue: number | null;
+  parUnit: string | null;
+}): Promise<string[]> {
+  const sb = getServiceRoleClient();
+  const { data: openingTmpl, error: otErr } = await sb
+    .from("checklist_templates")
+    .select("id")
+    .eq("location_id", args.locationId)
+    .eq("type", "opening")
+    .eq("active", true)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ id: string }>();
+  if (otErr) throw new Error(`propagate: opening template lookup failed: ${otErr.message}`);
+  if (!openingTmpl) return [];
+
+  const { data: linked, error: lErr } = await sb
+    .from("checklist_template_items")
+    .select("id, prep_meta")
+    .eq("template_id", openingTmpl.id)
+    .eq("references_template_item_id", args.amPrepItemId)
+    .eq("active", true)
+    .returns<Array<{ id: string; prep_meta: Record<string, unknown> | null }>>();
+  if (lErr) throw new Error(`propagate: linked items lookup failed: ${lErr.message}`);
+
+  const propagated: string[] = [];
+  for (const item of linked ?? []) {
+    const nextMeta = {
+      ...(item.prep_meta ?? {}),
+      parValue: args.parValue,
+      parUnit: args.parUnit,
+    };
+    const { error: uErr } = await sb
+      .from("checklist_template_items")
+      .update({ prep_meta: nextMeta })
+      .eq("id", item.id);
+    if (uErr) throw new Error(`propagate: update item ${item.id} failed: ${uErr.message}`);
+    propagated.push(item.id);
+  }
+  return propagated;
+}
+
+export interface PrepItemContentPatch {
+  label?: string;
+  labelEs?: string | null;
+  description?: string | null;
+  descriptionEs?: string | null;
+  displayOrder?: number;
+  required?: boolean;
+  parValue?: number | null;
+  parUnit?: string | null;
+  specialInstruction?: string | null; // en (prep_meta.specialInstruction)
+  specialInstructionEs?: string | null;
+}
+
+function mergeEsTranslation(
+  existing: ChecklistTemplateItemTranslations | null,
+  patch: { label?: string | null; description?: string | null; specialInstruction?: string | null },
+): ChecklistTemplateItemTranslations {
+  const next: ChecklistTemplateItemTranslations = { ...(existing ?? {}) };
+  const es = { ...(next.es ?? {}) };
+  if (patch.label !== undefined) es.label = patch.label ?? undefined;
+  if (patch.description !== undefined) es.description = patch.description;
+  if (patch.specialInstruction !== undefined) es.specialInstruction = patch.specialInstruction;
+  next.es = es;
+  return next;
+}
+
+/**
+ * In-place content edit of a prep template item (Tier A). Writes prep_meta via
+ * setPrepItemMeta (preserves section/columns, asserts station match), top-level
+ * columns + translations via a direct UPDATE. AM-prep par edits propagate to
+ * the Opening mirror. Audits checklist_template_item.update with before/after.
+ */
+export async function updatePrepItemContent(
+  actor: AuthContext,
+  args: { templateId: string; itemId: string; patch: PrepItemContentPatch },
+): Promise<void> {
+  const tmpl = await loadAuthorizedPrepTemplate(actor, args.templateId);
+  const sb = getServiceRoleClient();
+
+  const { data: rawRow, error: rErr } = await sb
+    .from("checklist_template_items")
+    .select(TEMPLATE_ITEM_COLUMNS)
+    .eq("id", args.itemId)
+    .eq("template_id", args.templateId)
+    .eq("active", true)
+    .maybeSingle<TemplateItemRow>();
+  if (rErr) throw new Error(`updatePrepItemContent read failed: ${rErr.message}`);
+  if (!rawRow) throw new AdminTemplateError(404, "item_not_found", "Template item not found");
+  const item = rowToTemplateItem(rawRow);
+
+  const { patch } = args;
+  const before: Record<string, unknown> = {};
+  const after: Record<string, unknown> = {};
+
+  // ── Top-level columns + en translations ──────────────────────────────────
+  const colUpdate: Record<string, unknown> = {};
+  if (patch.label !== undefined) {
+    const v = patch.label.trim();
+    if (!v) throw new AdminTemplateError(400, "invalid_label", "Label cannot be empty");
+    if (v !== item.label) { before.label = item.label; after.label = v; colUpdate.label = v; }
+  }
+  if (patch.description !== undefined) {
+    const v = patch.description?.trim() || null;
+    if (v !== item.description) { before.description = item.description; after.description = v; colUpdate.description = v; }
+  }
+  if (patch.displayOrder !== undefined) {
+    if (!Number.isInteger(patch.displayOrder) || patch.displayOrder < 0) {
+      throw new AdminTemplateError(400, "invalid_display_order", "Display order must be a non-negative integer");
+    }
+    if (patch.displayOrder !== item.displayOrder) {
+      before.displayOrder = item.displayOrder; after.displayOrder = patch.displayOrder;
+      colUpdate.display_order = patch.displayOrder;
+    }
+  }
+  if (patch.required !== undefined && patch.required !== item.required) {
+    before.required = item.required; after.required = patch.required; colUpdate.required = patch.required;
+  }
+
+  // es translations (label/description/specialInstruction)
+  const esPatch: { label?: string | null; description?: string | null; specialInstruction?: string | null } = {};
+  if (patch.labelEs !== undefined) esPatch.label = patch.labelEs?.trim() || null;
+  if (patch.descriptionEs !== undefined) esPatch.description = patch.descriptionEs?.trim() || null;
+  if (patch.specialInstructionEs !== undefined) esPatch.specialInstruction = patch.specialInstructionEs?.trim() || null;
+  if (Object.keys(esPatch).length > 0) {
+    colUpdate.translations = mergeEsTranslation(item.translations, esPatch);
+    before.translations_es = item.translations?.es ?? null;
+    after.translations_es = (colUpdate.translations as ChecklistTemplateItemTranslations).es;
+  }
+
+  if (Object.keys(colUpdate).length > 0) {
+    const { error: uErr } = await sb
+      .from("checklist_template_items").update(colUpdate).eq("id", args.itemId);
+    if (uErr) throw new Error(`updatePrepItemContent column update failed: ${uErr.message}`);
+  }
+
+  // ── prep_meta (par/unit/specialInstruction en) via setPrepItemMeta ────────
+  let parChanged = false;
+  const touchesMeta =
+    patch.parValue !== undefined || patch.parUnit !== undefined || patch.specialInstruction !== undefined;
+  if (touchesMeta) {
+    if (!isPrepMeta(item.prepMeta)) {
+      throw new AdminTemplateError(400, "not_a_prep_item", "Item has no editable prep metadata");
+    }
+    const base: PrepMeta = item.prepMeta;
+    const nextMeta: PrepMeta = {
+      ...base,
+      parValue: patch.parValue !== undefined ? patch.parValue : base.parValue,
+      parUnit: patch.parUnit !== undefined ? (patch.parUnit?.trim() || null) : base.parUnit,
+      specialInstruction:
+        patch.specialInstruction !== undefined
+          ? (patch.specialInstruction?.trim() || null)
+          : base.specialInstruction,
+    };
+    if (nextMeta.parValue !== null && (!Number.isFinite(nextMeta.parValue) || nextMeta.parValue < 0)) {
+      throw new AdminTemplateError(400, "invalid_par", "Par must be a non-negative number or empty");
+    }
+    parChanged = nextMeta.parValue !== base.parValue || nextMeta.parUnit !== base.parUnit;
+    if (
+      nextMeta.parValue !== base.parValue ||
+      nextMeta.parUnit !== base.parUnit ||
+      nextMeta.specialInstruction !== base.specialInstruction
+    ) {
+      before.prep_meta = { parValue: base.parValue, parUnit: base.parUnit, specialInstruction: base.specialInstruction };
+      after.prep_meta = { parValue: nextMeta.parValue, parUnit: nextMeta.parUnit, specialInstruction: nextMeta.specialInstruction };
+      // setPrepItemMeta asserts meta.section === existing station before writing.
+      await setPrepItemMeta(sb, { templateItemId: args.itemId, meta: nextMeta });
+    }
+  }
+
+  if (Object.keys(after).length === 0) return; // nothing changed
+
+  // ── Propagation (AM-prep par edits → Opening mirror) ─────────────────────
+  let propagatedTo: string[] = [];
+  if (parChanged && tmpl.prep_subtype === "am_prep") {
+    propagatedTo = await propagateParToOpeningMirror({
+      amPrepItemId: args.itemId,
+      locationId: tmpl.location_id,
+      parValue: (after.prep_meta as { parValue: number | null }).parValue,
+      parUnit: (after.prep_meta as { parUnit: string | null }).parUnit,
+    });
+  }
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "checklist_template_item.update",
+    resourceTable: "checklist_template_items",
+    resourceId: args.itemId,
+    metadata: {
+      template_id: args.templateId,
+      prep_subtype: tmpl.prep_subtype,
+      before,
+      after,
+      ...(propagatedTo.length > 0
+        ? {
+            propagated_to_item_ids: propagatedTo,
+            par_before: (before.prep_meta as { parValue: number | null } | undefined)?.parValue ?? null,
+            par_after: (after.prep_meta as { parValue: number | null } | undefined)?.parValue ?? null,
+          }
+        : {}),
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+}
+
+/** Tier-B: change who can complete a prep step. Audited; no propagation. */
+export async function setPrepItemMinRole(
+  actor: AuthContext,
+  args: { templateId: string; itemId: string; minRoleLevel: number },
+): Promise<void> {
+  const tmpl = await loadAuthorizedPrepTemplate(actor, args.templateId);
+  if (!Number.isFinite(args.minRoleLevel) || args.minRoleLevel < 0 || args.minRoleLevel > 10) {
+    throw new AdminTemplateError(400, "invalid_min_role", "Min role level must be between 0 and 10");
+  }
+  const sb = getServiceRoleClient();
+  const { data: row, error: rErr } = await sb
+    .from("checklist_template_items")
+    .select("min_role_level")
+    .eq("id", args.itemId)
+    .eq("template_id", args.templateId)
+    .eq("active", true)
+    .maybeSingle<{ min_role_level: number }>();
+  if (rErr) throw new Error(`setPrepItemMinRole read failed: ${rErr.message}`);
+  if (!row) throw new AdminTemplateError(404, "item_not_found", "Template item not found");
+  if (row.min_role_level === args.minRoleLevel) return;
+
+  const { error: uErr } = await sb
+    .from("checklist_template_items")
+    .update({ min_role_level: args.minRoleLevel })
+    .eq("id", args.itemId);
+  if (uErr) throw new Error(`setPrepItemMinRole update failed: ${uErr.message}`);
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "checklist_template_item.update",
+    resourceTable: "checklist_template_items",
+    resourceId: args.itemId,
+    metadata: {
+      template_id: args.templateId,
+      prep_subtype: tmpl.prep_subtype,
+      field: "min_role_level",
+      tier: "B",
+      before: { min_role_level: row.min_role_level },
+      after: { min_role_level: args.minRoleLevel },
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+}
