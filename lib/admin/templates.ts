@@ -365,3 +365,49 @@ export async function updatePrepItemContent(
     userAgent: null,
   });
 }
+
+/** Tier-B: change who can complete a prep step. Audited; no propagation. */
+export async function setPrepItemMinRole(
+  actor: AuthContext,
+  args: { templateId: string; itemId: string; minRoleLevel: number },
+): Promise<void> {
+  const tmpl = await loadAuthorizedPrepTemplate(actor, args.templateId);
+  if (!Number.isFinite(args.minRoleLevel) || args.minRoleLevel < 0 || args.minRoleLevel > 10) {
+    throw new AdminTemplateError(400, "invalid_min_role", "Min role level must be between 0 and 10");
+  }
+  const sb = getServiceRoleClient();
+  const { data: row, error: rErr } = await sb
+    .from("checklist_template_items")
+    .select("min_role_level")
+    .eq("id", args.itemId)
+    .eq("template_id", args.templateId)
+    .eq("active", true)
+    .maybeSingle<{ min_role_level: number }>();
+  if (rErr) throw new Error(`setPrepItemMinRole read failed: ${rErr.message}`);
+  if (!row) throw new AdminTemplateError(404, "item_not_found", "Template item not found");
+  if (row.min_role_level === args.minRoleLevel) return;
+
+  const { error: uErr } = await sb
+    .from("checklist_template_items")
+    .update({ min_role_level: args.minRoleLevel })
+    .eq("id", args.itemId);
+  if (uErr) throw new Error(`setPrepItemMinRole update failed: ${uErr.message}`);
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "checklist_template_item.update",
+    resourceTable: "checklist_template_items",
+    resourceId: args.itemId,
+    metadata: {
+      template_id: args.templateId,
+      prep_subtype: tmpl.prep_subtype,
+      field: "min_role_level",
+      tier: "B",
+      before: { min_role_level: row.min_role_level },
+      after: { min_role_level: args.minRoleLevel },
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+}
