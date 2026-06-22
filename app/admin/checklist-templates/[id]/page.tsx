@@ -32,7 +32,7 @@ export default async function AdminPrepTemplateDetailPage({
         {serverT(lang, `admin.templates.subtype.${detail.prepSubtype}` as TranslationKey)}
       </h1>
       <p className="mt-1 text-sm text-co-text-muted">{detail.name}</p>
-      <PrepTemplateEditor templateId={detail.id} items={detail.items} />
+      <PrepTemplateEditor templateId={detail.id} prepSubtype={detail.prepSubtype} items={detail.items} />
     </div>
   );
 }
