@@ -53,6 +53,10 @@ export const DESTRUCTIVE_ACTIONS = [
   // isDestructive(). Edits are id-preserving; history stays frozen via C.44
   // snapshots. before_state/after_state carry the changed fields.
   "checklist_template_item.update",
+  // In-place create of a prep template item (C.44 Module 3 slice 2).
+  // — destructive because it alters operational config. Auto-derives
+  // destructive=true via isDestructive(). Append-only INSERT (new active row).
+  "checklist_template_item.create",
 
   // Checklist completion correction (per SPEC_AMENDMENTS.md C.28)
   // — destructive because they alter operational/accountability record.
