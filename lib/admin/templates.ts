@@ -19,7 +19,7 @@ import {
   type TemplateItemRow,
   rowToTemplateItem,
 } from "@/lib/template-items";
-import { setPrepItemMeta, narrowPrepTemplateItem, isPrepMeta, seedPrepItem } from "@/lib/prep";
+import { setPrepItemMeta, setPrepItemSection, narrowPrepTemplateItem, isPrepMeta, seedPrepItem } from "@/lib/prep";
 import { columnsForSection, isPrepSectionName } from "@/lib/prep-sections";
 import type { AuthContext } from "@/lib/session";
 import type {
@@ -660,4 +660,74 @@ export async function removePrepItem(
   });
 
   return { deactivatedMirrorIds };
+}
+
+/**
+ * Change a prep item's section in place (Tier B). Syncs station+prep_meta.section
+ * via setPrepItemSection, then re-derives columns from the new section's
+ * convention (preserving par/unit/specialInstruction scalars). AM-prep also
+ * updates the Opening mirror's section. Audits with before/after section.
+ */
+export async function changePrepItemSection(
+  actor: AuthContext,
+  args: { templateId: string; itemId: string; section: PrepSection },
+): Promise<{ mirrorSyncedIds: string[] }> {
+  const tmpl = await loadAuthorizedPrepTemplate(actor, args.templateId);
+  if (!isPrepSectionName(args.section)) throw new AdminTemplateError(400, "invalid_section", "Unknown section");
+  const sb = getServiceRoleClient();
+
+  const { data: rawRow, error: rErr } = await sb
+    .from("checklist_template_items")
+    .select(TEMPLATE_ITEM_COLUMNS)
+    .eq("id", args.itemId)
+    .eq("template_id", args.templateId)
+    .eq("active", true)
+    .maybeSingle<TemplateItemRow>();
+  if (rErr) throw new Error(`changePrepItemSection read failed: ${rErr.message}`);
+  if (!rawRow) throw new AdminTemplateError(404, "item_not_found", "Template item not found");
+  const item = rowToTemplateItem(rawRow);
+  if (!isPrepMeta(item.prepMeta)) throw new AdminTemplateError(400, "not_a_prep_item", "Item has no prep metadata");
+
+  const fromSection = item.prepMeta.section;
+  if (fromSection === args.section) return { mirrorSyncedIds: [] }; // no-op
+
+  // 1) Sync station + prep_meta.section to the new section (preserves scalars + columns).
+  await setPrepItemSection(sb, { templateItemId: args.itemId, section: args.section });
+
+  // 2) Re-derive columns for the new section (preserve par/unit/specialInstruction).
+  const keepNote = args.section === "Misc" && item.prepMeta.columns.includes("free_text");
+  const nextMeta: PrepMeta = {
+    section: args.section,
+    parValue: item.prepMeta.parValue,
+    parUnit: item.prepMeta.parUnit,
+    specialInstruction: item.prepMeta.specialInstruction,
+    columns: columnsForSection(args.section, keepNote),
+  };
+  // setPrepItemMeta asserts meta.section === existing station (now args.section). OK.
+  await setPrepItemMeta(sb, { templateItemId: args.itemId, meta: nextMeta });
+
+  let mirrorSyncedIds: string[] = [];
+  if (tmpl.prep_subtype === "am_prep") {
+    mirrorSyncedIds = await setOpeningMirrorSection({ amPrepItemId: args.itemId, locationId: tmpl.location_id, section: args.section });
+  }
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "checklist_template_item.update",
+    resourceTable: "checklist_template_items",
+    resourceId: args.itemId,
+    metadata: {
+      template_id: args.templateId,
+      prep_subtype: tmpl.prep_subtype,
+      field: "section",
+      before: { section: fromSection },
+      after: { section: args.section },
+      mirror_synced_ids: mirrorSyncedIds,
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+
+  return { mirrorSyncedIds };
 }
