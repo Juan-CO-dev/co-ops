@@ -19,7 +19,8 @@ import {
   type TemplateItemRow,
   rowToTemplateItem,
 } from "@/lib/template-items";
-import { setPrepItemMeta, narrowPrepTemplateItem, isPrepMeta } from "@/lib/prep";
+import { setPrepItemMeta, narrowPrepTemplateItem, isPrepMeta, seedPrepItem } from "@/lib/prep";
+import { columnsForSection, isPrepSectionName } from "@/lib/prep-sections";
 import type { AuthContext } from "@/lib/session";
 import type {
   ChecklistTemplateItem,
@@ -510,4 +511,110 @@ export async function setPrepItemMinRole(
     ipAddress: null,
     userAgent: null,
   });
+}
+
+export interface AddPrepItemInput {
+  section: PrepSection;
+  parValue: number | null;
+  parUnit: string | null;
+  label: string;
+  labelEs: string | null;
+  description: string | null;
+  descriptionEs: string | null;
+  specialInstruction: string | null;
+  specialInstructionEs: string | null;
+  minRoleLevel: number;
+  required: boolean;
+  includeNote: boolean;        // Misc only: add the free_text column
+  createOpeningMirror: boolean; // am_prep only; ignored for mid-day
+}
+
+/** Add a prep template item in place (Tier B). AM-prep optionally gets an Opening mirror. */
+export async function addPrepItem(
+  actor: AuthContext,
+  args: { templateId: string; input: AddPrepItemInput },
+): Promise<{ itemId: string; openingMirrorId: string | null }> {
+  const tmpl = await loadAuthorizedPrepTemplate(actor, args.templateId);
+  const sb = getServiceRoleClient();
+  const { input } = args;
+
+  if (!isPrepSectionName(input.section)) throw new AdminTemplateError(400, "invalid_section", "Unknown section");
+  const label = input.label.trim();
+  if (!label) throw new AdminTemplateError(400, "invalid_label", "Label is required");
+  if (input.parValue !== null && (!Number.isFinite(input.parValue) || input.parValue < 0)) {
+    throw new AdminTemplateError(400, "invalid_par", "Par must be a non-negative number or empty");
+  }
+  if (!Number.isFinite(input.minRoleLevel) || input.minRoleLevel < 0 || input.minRoleLevel > 10) {
+    throw new AdminTemplateError(400, "invalid_min_role", "Min role level must be between 0 and 10");
+  }
+
+  // Append to display order (no unique constraint; max+1 across the template).
+  const { data: maxRow, error: mErr } = await sb
+    .from("checklist_template_items")
+    .select("display_order")
+    .eq("template_id", args.templateId)
+    .order("display_order", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ display_order: number }>();
+  if (mErr) throw new Error(`addPrepItem max order failed: ${mErr.message}`);
+  const displayOrder = (maxRow?.display_order ?? 0) + 1;
+
+  // Build es translations from the *Es fields (only when present).
+  const esLabel = input.labelEs?.trim() || undefined;
+  const esDesc = input.descriptionEs?.trim() || null;
+  const esSi = input.specialInstructionEs?.trim() || null;
+  const hasEs = esLabel !== undefined || input.descriptionEs !== null || input.specialInstructionEs !== null;
+  const translations: ChecklistTemplateItemTranslations | undefined = hasEs
+    ? { es: { ...(esLabel !== undefined ? { label: esLabel } : {}), description: esDesc, specialInstruction: esSi } }
+    : undefined;
+
+  const { templateItemId } = await seedPrepItem(sb, {
+    templateId: args.templateId,
+    displayOrder,
+    section: input.section,
+    label,
+    description: input.description?.trim() || null,
+    minRoleLevel: input.minRoleLevel,
+    required: input.required,
+    meta: {
+      parValue: input.parValue,
+      parUnit: input.parUnit?.trim() || null,
+      specialInstruction: input.specialInstruction?.trim() || null,
+      columns: columnsForSection(input.section, input.includeNote),
+    },
+    translations,
+  });
+
+  let openingMirrorId: string | null = null;
+  if (tmpl.prep_subtype === "am_prep" && input.createOpeningMirror) {
+    openingMirrorId = await createOpeningMirror({
+      amPrepItemId: templateItemId,
+      locationId: tmpl.location_id,
+      section: input.section,
+      parValue: input.parValue,
+      parUnit: input.parUnit?.trim() || null,
+      label,
+      translations: translations ?? null,
+      minRoleLevel: input.minRoleLevel,
+      required: input.required,
+    });
+  }
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "checklist_template_item.create",
+    resourceTable: "checklist_template_items",
+    resourceId: templateItemId,
+    metadata: {
+      template_id: args.templateId,
+      prep_subtype: tmpl.prep_subtype,
+      section: input.section,
+      created_opening_mirror_id: openingMirrorId,
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+
+  return { itemId: templateItemId, openingMirrorId };
 }
