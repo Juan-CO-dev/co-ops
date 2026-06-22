@@ -618,3 +618,46 @@ export async function addPrepItem(
 
   return { itemId: templateItemId, openingMirrorId };
 }
+
+/** Remove (soft-delete) a prep item in place (Tier B). AM-prep cascade-deactivates the Opening mirror. */
+export async function removePrepItem(
+  actor: AuthContext,
+  args: { templateId: string; itemId: string },
+): Promise<{ deactivatedMirrorIds: string[] }> {
+  const tmpl = await loadAuthorizedPrepTemplate(actor, args.templateId);
+  const sb = getServiceRoleClient();
+
+  const { data: row, error: rErr } = await sb
+    .from("checklist_template_items")
+    .select("id, active")
+    .eq("id", args.itemId)
+    .eq("template_id", args.templateId)
+    .maybeSingle<{ id: string; active: boolean }>();
+  if (rErr) throw new Error(`removePrepItem read failed: ${rErr.message}`);
+  if (!row) throw new AdminTemplateError(404, "item_not_found", "Template item not found");
+  if (!row.active) return { deactivatedMirrorIds: [] }; // already removed — idempotent
+
+  const { error: uErr } = await sb
+    .from("checklist_template_items")
+    .update({ active: false })
+    .eq("id", args.itemId);
+  if (uErr) throw new Error(`removePrepItem deactivate failed: ${uErr.message}`);
+
+  let deactivatedMirrorIds: string[] = [];
+  if (tmpl.prep_subtype === "am_prep") {
+    deactivatedMirrorIds = await deactivateOpeningMirror({ amPrepItemId: args.itemId, locationId: tmpl.location_id });
+  }
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "checklist_template_item.delete",
+    resourceTable: "checklist_template_items",
+    resourceId: args.itemId,
+    metadata: { template_id: args.templateId, prep_subtype: tmpl.prep_subtype, deactivated_mirror_ids: deactivatedMirrorIds },
+    ipAddress: null,
+    userAgent: null,
+  });
+
+  return { deactivatedMirrorIds };
+}
