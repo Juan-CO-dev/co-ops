@@ -26,7 +26,7 @@ export function PrepItemEditPanel({ templateId, item }: { templateId: string; it
   const [required, setRequired] = useState(item.required);
   const [minRole, setMinRole] = useState(item.minRoleLevel.toString());
 
-  const base = `/api/admin/templates/${templateId}/items/${item.id}`;
+  const base = `/api/admin/checklist-templates/${templateId}/items/${item.id}`;
 
   const saveContent = async () => {
     if (submitting) return;

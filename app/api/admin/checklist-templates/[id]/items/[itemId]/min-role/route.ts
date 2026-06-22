@@ -7,12 +7,12 @@ import { setPrepItemMinRole, AdminTemplateError } from "@/lib/admin/templates";
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: Promise<{ templateId: string; itemId: string }> },
+  { params }: { params: Promise<{ id: string; itemId: string }> },
 ) {
-  const { templateId, itemId } = await params;
+  const { id, itemId } = await params;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;
-  const ctx = await requireSession(req, `/api/admin/templates/${templateId}/items/${itemId}/min-role`);
+  const ctx = await requireSession(req, `/api/admin/checklist-templates/${id}/items/${itemId}/min-role`);
   if (ctx instanceof Response) return ctx;
   if (ROLES[ctx.user.role].level < 7) return jsonError(403, "forbidden");
   const su = assertStepUp(ctx, "B");
@@ -21,7 +21,7 @@ export async function PATCH(
   const minRoleLevel = (parsed as { minRoleLevel?: unknown }).minRoleLevel;
   if (typeof minRoleLevel !== "number") return jsonError(400, "invalid_payload", { field: "minRoleLevel" });
   try {
-    await setPrepItemMinRole(ctx, { templateId, itemId, minRoleLevel });
+    await setPrepItemMinRole(ctx, { templateId: id, itemId, minRoleLevel });
     return jsonOk({ ok: true });
   } catch (e) {
     if (e instanceof AdminTemplateError) return jsonError(e.status, e.code, { message: e.message });

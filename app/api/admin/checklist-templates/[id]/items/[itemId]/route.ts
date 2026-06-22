@@ -7,12 +7,12 @@ import { updatePrepItemContent, AdminTemplateError, type PrepItemContentPatch } 
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: Promise<{ templateId: string; itemId: string }> },
+  { params }: { params: Promise<{ id: string; itemId: string }> },
 ) {
-  const { templateId, itemId } = await params;
+  const { id, itemId } = await params;
   const parsed = await parseJsonBody(req);
   if (parsed instanceof Response) return parsed;
-  const ctx = await requireSession(req, `/api/admin/templates/${templateId}/items/${itemId}`);
+  const ctx = await requireSession(req, `/api/admin/checklist-templates/${id}/items/${itemId}`);
   if (ctx instanceof Response) return ctx;
   if (ROLES[ctx.user.role].level < 7) return jsonError(403, "forbidden");
   const su = assertStepUp(ctx, "A");
@@ -33,7 +33,7 @@ export async function PATCH(
 
   if (Object.keys(patch).length === 0) return jsonError(400, "invalid_payload", { message: "no editable fields" });
   try {
-    await updatePrepItemContent(ctx, { templateId, itemId, patch });
+    await updatePrepItemContent(ctx, { templateId: id, itemId, patch });
     return jsonOk({ ok: true });
   } catch (e) {
     if (e instanceof AdminTemplateError) return jsonError(e.status, e.code, { message: e.message });

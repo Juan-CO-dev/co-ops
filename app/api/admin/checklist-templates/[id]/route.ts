@@ -1,13 +1,19 @@
-import { NextResponse } from "next/server";
+import { type NextRequest } from "next/server";
+import { requireSession } from "@/lib/session";
+import { ROLES } from "@/lib/roles";
+import { jsonError, jsonOk } from "@/lib/api-helpers";
+import { getPrepTemplateDetail, AdminTemplateError } from "@/lib/admin/templates";
 
-const NOT_IMPLEMENTED = NextResponse.json(
-  { error: "Not implemented — checklist template admin API lands in Phase 5." },
-  { status: 501 },
-);
-
-export async function GET() {
-  return NOT_IMPLEMENTED;
-}
-export async function PATCH() {
-  return NOT_IMPLEMENTED;
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const ctx = await requireSession(req, `/api/admin/checklist-templates/${id}`);
+  if (ctx instanceof Response) return ctx;
+  if (ROLES[ctx.user.role].level < 7) return jsonError(403, "forbidden");
+  try {
+    const detail = await getPrepTemplateDetail(ctx, id);
+    return jsonOk({ detail });
+  } catch (e) {
+    if (e instanceof AdminTemplateError) return jsonError(e.status, e.code, { message: e.message });
+    throw e;
+  }
 }
