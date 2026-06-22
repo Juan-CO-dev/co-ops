@@ -25,6 +25,7 @@ import type {
   ChecklistTemplateItem,
   ChecklistTemplateItemTranslations,
   PrepMeta,
+  PrepSection,
 } from "@/lib/types";
 
 export type PrepSubtype = "am_prep" | "mid_day_prep";
@@ -148,12 +149,29 @@ export async function getPrepTemplateDetail(
   };
 }
 
+/** Resolve the active opening template id at a location (most-recent-active). */
+async function resolveActiveOpeningTemplateId(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+): Promise<string | null> {
+  const { data, error } = await sb
+    .from("checklist_templates")
+    .select("id")
+    .eq("location_id", locationId)
+    .eq("type", "opening")
+    .eq("active", true)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ id: string }>();
+  if (error) throw new Error(`resolveActiveOpeningTemplateId failed: ${error.message}`);
+  return data?.id ?? null;
+}
+
 /**
- * When an AM-prep item's par changes, update the linked Opening Phase-2 item's
- * mirrored par (OpeningPhase2Meta.parValue/parUnit). The link is the Opening
- * item's references_template_item_id → the AM-prep item id. Scoped to the
- * active opening template at the same location. Returns propagated item ids.
- * No-op (returns []) when no active opening template or no linked item.
+ * Update the linked Opening Phase-2 mirror's par (OpeningPhase2Meta.parValue/
+ * parUnit). Link = mirror's references_template_item_id → the AM-prep item id,
+ * scoped to the active opening template at the location. Returns affected ids.
+ * No-op ([]) when no active opening template or no linked item.
  */
 async function propagateParToOpeningMirror(args: {
   amPrepItemId: string;
@@ -162,42 +180,124 @@ async function propagateParToOpeningMirror(args: {
   parUnit: string | null;
 }): Promise<string[]> {
   const sb = getServiceRoleClient();
-  const { data: openingTmpl, error: otErr } = await sb
-    .from("checklist_templates")
-    .select("id")
-    .eq("location_id", args.locationId)
-    .eq("type", "opening")
-    .eq("active", true)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle<{ id: string }>();
-  if (otErr) throw new Error(`propagate: opening template lookup failed: ${otErr.message}`);
-  if (!openingTmpl) return [];
-
+  const openingId = await resolveActiveOpeningTemplateId(sb, args.locationId);
+  if (!openingId) return [];
   const { data: linked, error: lErr } = await sb
     .from("checklist_template_items")
     .select("id, prep_meta")
-    .eq("template_id", openingTmpl.id)
+    .eq("template_id", openingId)
     .eq("references_template_item_id", args.amPrepItemId)
     .eq("active", true)
     .returns<Array<{ id: string; prep_meta: Record<string, unknown> | null }>>();
   if (lErr) throw new Error(`propagate: linked items lookup failed: ${lErr.message}`);
-
-  const propagated: string[] = [];
+  const ids: string[] = [];
   for (const item of linked ?? []) {
-    const nextMeta = {
-      ...(item.prep_meta ?? {}),
-      parValue: args.parValue,
-      parUnit: args.parUnit,
-    };
+    const nextMeta = { ...(item.prep_meta ?? {}), parValue: args.parValue, parUnit: args.parUnit };
+    const { error: uErr } = await sb.from("checklist_template_items").update({ prep_meta: nextMeta }).eq("id", item.id);
+    if (uErr) throw new Error(`propagate: update item ${item.id} failed: ${uErr.message}`);
+    ids.push(item.id);
+  }
+  return ids;
+}
+
+/**
+ * Create an Opening Phase-2 verification mirror for a newly-added AM-prep item.
+ * Inserts into the active opening template at the location with OpeningPhase2Meta
+ * prep_meta and references_template_item_id = the AM-prep item. Mirrors label/
+ * translations/min-role/required; par/section mirrored. Appends to display_order.
+ * Returns the new mirror id, or null when no active opening template (graceful).
+ */
+async function createOpeningMirror(args: {
+  amPrepItemId: string;
+  locationId: string;
+  section: PrepSection;
+  parValue: number | null;
+  parUnit: string | null;
+  label: string;
+  translations: ChecklistTemplateItemTranslations | null;
+  minRoleLevel: number;
+  required: boolean;
+}): Promise<string | null> {
+  const sb = getServiceRoleClient();
+  const openingId = await resolveActiveOpeningTemplateId(sb, args.locationId);
+  if (!openingId) return null;
+
+  const { data: maxRow, error: mErr } = await sb
+    .from("checklist_template_items")
+    .select("display_order")
+    .eq("template_id", openingId)
+    .order("display_order", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ display_order: number }>();
+  if (mErr) throw new Error(`createOpeningMirror max order failed: ${mErr.message}`);
+  const nextOrder = (maxRow?.display_order ?? 0) + 1;
+
+  const { data: inserted, error: iErr } = await sb
+    .from("checklist_template_items")
+    .insert({
+      template_id: openingId,
+      station: args.section,
+      display_order: nextOrder,
+      label: args.label,
+      description: null,
+      min_role_level: args.minRoleLevel,
+      required: args.required,
+      expects_count: false,
+      expects_photo: false,
+      vendor_item_id: null,
+      active: true,
+      translations: args.translations,
+      prep_meta: { openingPhase2: true, section: args.section, parValue: args.parValue, parUnit: args.parUnit },
+      report_reference_type: null,
+      references_template_item_id: args.amPrepItemId,
+    })
+    .select("id")
+    .maybeSingle<{ id: string }>();
+  if (iErr) throw new Error(`createOpeningMirror insert failed: ${iErr.message}`);
+  return inserted?.id ?? null;
+}
+
+/** Deactivate (active=false) the Opening mirror(s) linked to an AM-prep item. Returns affected ids. */
+async function deactivateOpeningMirror(args: { amPrepItemId: string; locationId: string }): Promise<string[]> {
+  const sb = getServiceRoleClient();
+  const openingId = await resolveActiveOpeningTemplateId(sb, args.locationId);
+  if (!openingId) return [];
+  const { data, error } = await sb
+    .from("checklist_template_items")
+    .update({ active: false })
+    .eq("template_id", openingId)
+    .eq("references_template_item_id", args.amPrepItemId)
+    .eq("active", true)
+    .select("id")
+    .returns<Array<{ id: string }>>();
+  if (error) throw new Error(`deactivateOpeningMirror failed: ${error.message}`);
+  return (data ?? []).map((r) => r.id);
+}
+
+/** Update the Opening mirror's section (station + prep_meta.section) for a re-sectioned AM-prep item. */
+async function setOpeningMirrorSection(args: { amPrepItemId: string; locationId: string; section: PrepSection }): Promise<string[]> {
+  const sb = getServiceRoleClient();
+  const openingId = await resolveActiveOpeningTemplateId(sb, args.locationId);
+  if (!openingId) return [];
+  const { data: linked, error: lErr } = await sb
+    .from("checklist_template_items")
+    .select("id, prep_meta")
+    .eq("template_id", openingId)
+    .eq("references_template_item_id", args.amPrepItemId)
+    .eq("active", true)
+    .returns<Array<{ id: string; prep_meta: Record<string, unknown> | null }>>();
+  if (lErr) throw new Error(`setOpeningMirrorSection lookup failed: ${lErr.message}`);
+  const ids: string[] = [];
+  for (const item of linked ?? []) {
+    const nextMeta = { ...(item.prep_meta ?? {}), section: args.section };
     const { error: uErr } = await sb
       .from("checklist_template_items")
-      .update({ prep_meta: nextMeta })
+      .update({ station: args.section, prep_meta: nextMeta })
       .eq("id", item.id);
-    if (uErr) throw new Error(`propagate: update item ${item.id} failed: ${uErr.message}`);
-    propagated.push(item.id);
+    if (uErr) throw new Error(`setOpeningMirrorSection update ${item.id} failed: ${uErr.message}`);
+    ids.push(item.id);
   }
-  return propagated;
+  return ids;
 }
 
 export interface PrepItemContentPatch {
