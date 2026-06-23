@@ -28,6 +28,7 @@
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
+import { resolveSectionLabel } from "@/lib/prep-sections";
 import type { ChecklistTemplateItem } from "@/lib/types";
 
 import { PrepSection } from "../PrepSection";
@@ -48,6 +49,8 @@ export interface MiscSectionProps {
    * pair as Brand-Red micro-copy + role="alert" for screen readers.
    */
   errors?: Record<string, Partial<Record<keyof RawPrepInputs, string>>>;
+  /** DB-backed section labels (slug → { en, es }); preferred over the i18n fallback. */
+  sectionLabels?: Record<string, { en: string; es: string | null }>;
 }
 
 /**
@@ -184,15 +187,19 @@ export function MiscSection({
   onChange,
   disabled,
   errors,
+  sectionLabels,
 }: MiscSectionProps) {
   const { t, language } = useTranslation();
   const sectionDisplay = (() => {
-    const first = templateItems[0];
-    if (first) {
-      const resolved = resolveTemplateItemContent(first, language);
-      if (resolved.station) return resolved.station;
-    }
-    return t("am_prep.section.misc");
+    const fallback = (() => {
+      const first = templateItems[0];
+      if (first) {
+        const resolved = resolveTemplateItemContent(first, language);
+        if (resolved.station) return resolved.station;
+      }
+      return t("am_prep.section.misc");
+    })();
+    return resolveSectionLabel(sectionLabels ?? {}, SECTION_KEY, language, fallback);
   })();
 
   // Misc has no numeric column headers — just an empty header row to maintain

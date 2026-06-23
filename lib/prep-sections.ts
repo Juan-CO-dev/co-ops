@@ -40,3 +40,24 @@ export function columnsForSection(section: PrepSection, includeNote = false): Pr
 export function isPrepSectionName(v: unknown): v is PrepSection {
   return typeof v === "string" && (PREP_SECTIONS as readonly string[]).includes(v);
 }
+
+/**
+ * Resolve a section's display header from the DB-backed `sectionLabels` map
+ * (slug → { en, es }), preferring the user's language. Falls back to the
+ * caller-provided `fallback` (the existing station-translation-else-i18n-key
+ * computation) when the slug has no DB entry. CLIENT-SAFE (pure).
+ *
+ * Sections First-Class (migration 0082): loaders surface editable per-slug
+ * labels; the section header prefers them so a MoO+ rename renders everywhere.
+ * Seeded labels equal today's display, so this is a no-op until a rename.
+ */
+export function resolveSectionLabel(
+  sectionLabels: Record<string, { en: string; es: string | null }>,
+  slug: string,
+  language: string,
+  fallback: string,
+): string {
+  const entry = sectionLabels[slug];
+  if (!entry) return fallback;
+  return (language === "es" ? entry.es : entry.en) ?? entry.en ?? fallback;
+}

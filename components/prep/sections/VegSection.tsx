@@ -16,6 +16,7 @@
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
+import { resolveSectionLabel } from "@/lib/prep-sections";
 import type { ChecklistTemplateItem } from "@/lib/types";
 
 import { PrepRow } from "../PrepRow";
@@ -33,19 +34,25 @@ export interface VegSectionProps {
   disabled?: boolean;
   /** Per-row, per-field validation errors. Optional. */
   errors?: Record<string, Partial<Record<keyof RawPrepInputs, string>>>;
+  /** DB-backed section labels (slug → { en, es }); preferred over the i18n fallback. */
+  sectionLabels?: Record<string, { en: string; es: string | null }>;
 }
 
-export function VegSection({ templateItems, rawValues, onChange, disabled, errors }: VegSectionProps) {
+export function VegSection({ templateItems, rawValues, onChange, disabled, errors, sectionLabels }: VegSectionProps) {
   const { t, language } = useTranslation();
-  // Resolve section display name. Pulled from the first item's translations
-  // JSONB (per C.38) or falls back to the am_prep.section.veg i18n key.
+  // Resolve section display name. Prefers the DB-backed section label (Sections
+  // First-Class), then the first item's translations JSONB (per C.38), then the
+  // am_prep.section.veg i18n key.
   const sectionDisplay = (() => {
-    const first = templateItems[0];
-    if (first) {
-      const resolved = resolveTemplateItemContent(first, language);
-      if (resolved.station) return resolved.station;
-    }
-    return t("am_prep.section.veg");
+    const fallback = (() => {
+      const first = templateItems[0];
+      if (first) {
+        const resolved = resolveTemplateItemContent(first, language);
+        if (resolved.station) return resolved.station;
+      }
+      return t("am_prep.section.veg");
+    })();
+    return resolveSectionLabel(sectionLabels ?? {}, SECTION_KEY, language, fallback);
   })();
 
   const columnHeaders = [
