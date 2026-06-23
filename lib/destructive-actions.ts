@@ -58,6 +58,11 @@ export const DESTRUCTIVE_ACTIONS = [
   // destructive=true via isDestructive(). Append-only INSERT (new active row).
   "checklist_template_item.create",
 
+  // Item / inventory registry (Item/Inventory Spine, sub-project 1).
+  // — item lifecycle on the new registry. Auto-derive destructive via isDestructive().
+  "item.create",
+  "item.backfill",
+
   // Checklist completion correction (per SPEC_AMENDMENTS.md C.28)
   // — destructive because they alter operational/accountability record.
   // Auto-derived destructive=true on the audit row via isDestructive().
