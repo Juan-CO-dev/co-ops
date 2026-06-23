@@ -128,6 +128,7 @@
   "admin.templates.save": "Guardar",
   "admin.templates.cancel": "Cancelar",
   "admin.templates.saved": "Guardado",
+  "admin.templates.item_scope_note": "El par y el nombre aplican a este ítem en cada lista donde aparece.",
   "admin.templates.field.par_value": "Par",
   "admin.templates.field.par_unit": "Unidad",
   "admin.templates.field.special_instruction": "Instrucción especial (EN)",

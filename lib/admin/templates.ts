@@ -169,39 +169,6 @@ async function resolveActiveOpeningTemplateId(
 }
 
 /**
- * Update the linked Opening Phase-2 mirror's par (OpeningPhase2Meta.parValue/
- * parUnit). Link = mirror's references_template_item_id → the AM-prep item id,
- * scoped to the active opening template at the location. Returns affected ids.
- * No-op ([]) when no active opening template or no linked item.
- */
-async function propagateParToOpeningMirror(args: {
-  amPrepItemId: string;
-  locationId: string;
-  parValue: number | null;
-  parUnit: string | null;
-}): Promise<string[]> {
-  const sb = getServiceRoleClient();
-  const openingId = await resolveActiveOpeningTemplateId(sb, args.locationId);
-  if (!openingId) return [];
-  const { data: linked, error: lErr } = await sb
-    .from("checklist_template_items")
-    .select("id, prep_meta")
-    .eq("template_id", openingId)
-    .eq("references_template_item_id", args.amPrepItemId)
-    .eq("active", true)
-    .returns<Array<{ id: string; prep_meta: Record<string, unknown> | null }>>();
-  if (lErr) throw new Error(`propagate: linked items lookup failed: ${lErr.message}`);
-  const ids: string[] = [];
-  for (const item of linked ?? []) {
-    const nextMeta = { ...(item.prep_meta ?? {}), parValue: args.parValue, parUnit: args.parUnit };
-    const { error: uErr } = await sb.from("checklist_template_items").update({ prep_meta: nextMeta }).eq("id", item.id);
-    if (uErr) throw new Error(`propagate: update item ${item.id} failed: ${uErr.message}`);
-    ids.push(item.id);
-  }
-  return ids;
-}
-
-/**
  * Create an Opening Phase-2 verification mirror for a newly-added AM-prep item.
  * Inserts into the active opening template at the location with OpeningPhase2Meta
  * prep_meta and references_template_item_id = the AM-prep item. Mirrors label/
@@ -316,11 +283,10 @@ export interface PrepItemContentPatch {
 
 function mergeEsTranslation(
   existing: ChecklistTemplateItemTranslations | null,
-  patch: { label?: string | null; description?: string | null; specialInstruction?: string | null },
+  patch: { description?: string | null; specialInstruction?: string | null },
 ): ChecklistTemplateItemTranslations {
   const next: ChecklistTemplateItemTranslations = { ...(existing ?? {}) };
   const es = { ...(next.es ?? {}) };
-  if (patch.label !== undefined) es.label = patch.label ?? undefined;
   if (patch.description !== undefined) es.description = patch.description;
   if (patch.specialInstruction !== undefined) es.specialInstruction = patch.specialInstruction;
   next.es = es;
@@ -328,10 +294,13 @@ function mergeEsTranslation(
 }
 
 /**
- * In-place content edit of a prep template item (Tier A). Writes prep_meta via
- * setPrepItemMeta (preserves section/columns, asserts station match), top-level
- * columns + translations via a direct UPDATE. AM-prep par edits propagate to
- * the Opening mirror. Audits checklist_template_item.update with before/after.
+ * In-place content edit of a prep template item (Tier A). Par + name (label/
+ * labelEs) write the linked registry `items` row (edit-once-everywhere — they
+ * apply to the item on every list it appears on). Line-level fields
+ * (description/descriptionEs, specialInstruction/specialInstructionEs,
+ * required, displayOrder) write the line via direct UPDATE + setPrepItemMeta.
+ * Audits checklist_template_item.update with before/after (incl. item before/
+ * after + item_id when par/name changed).
  */
 export async function updatePrepItemContent(
   actor: AuthContext,
@@ -355,13 +324,27 @@ export async function updatePrepItemContent(
   const before: Record<string, unknown> = {};
   const after: Record<string, unknown> = {};
 
-  // ── Top-level columns + en translations ──────────────────────────────────
-  const colUpdate: Record<string, unknown> = {};
+  // ── Registry item (par + name → the item; edit-once-everywhere) ───────────
+  // Par and name (label/labelEs) write the linked `items` row, not the line —
+  // they apply to the item on every list it appears on. Validation of label
+  // emptiness mirrors the prior line-level check.
+  const itemUpdate: Record<string, unknown> = {};
   if (patch.label !== undefined) {
     const v = patch.label.trim();
     if (!v) throw new AdminTemplateError(400, "invalid_label", "Label cannot be empty");
-    if (v !== item.label) { before.label = item.label; after.label = v; colUpdate.label = v; }
+    itemUpdate.name = v;
   }
+  if (patch.labelEs !== undefined) itemUpdate.name_es = patch.labelEs?.trim() || null;
+  if (patch.parValue !== undefined) {
+    if (patch.parValue !== null && (!Number.isFinite(patch.parValue) || patch.parValue < 0)) {
+      throw new AdminTemplateError(400, "invalid_par", "Par must be a non-negative number or empty");
+    }
+    itemUpdate.default_par = patch.parValue;
+  }
+  if (patch.parUnit !== undefined) itemUpdate.default_par_unit = patch.parUnit?.trim() || null;
+
+  // ── Top-level columns + en translations ──────────────────────────────────
+  const colUpdate: Record<string, unknown> = {};
   if (patch.description !== undefined) {
     const v = patch.description?.trim() || null;
     if (v !== item.description) { before.description = item.description; after.description = v; colUpdate.description = v; }
@@ -379,9 +362,9 @@ export async function updatePrepItemContent(
     before.required = item.required; after.required = patch.required; colUpdate.required = patch.required;
   }
 
-  // es translations (label/description/specialInstruction)
-  const esPatch: { label?: string | null; description?: string | null; specialInstruction?: string | null } = {};
-  if (patch.labelEs !== undefined) esPatch.label = patch.labelEs?.trim() || null;
+  // es translations (description/specialInstruction stay line-level; label_es
+  // now lives on the item as name_es — see itemUpdate above).
+  const esPatch: { description?: string | null; specialInstruction?: string | null } = {};
   if (patch.descriptionEs !== undefined) esPatch.description = patch.descriptionEs?.trim() || null;
   if (patch.specialInstructionEs !== undefined) esPatch.specialInstruction = patch.specialInstructionEs?.trim() || null;
   if (Object.keys(esPatch).length > 0) {
@@ -396,52 +379,49 @@ export async function updatePrepItemContent(
     if (uErr) throw new Error(`updatePrepItemContent column update failed: ${uErr.message}`);
   }
 
-  // ── prep_meta (par/unit/specialInstruction en) via setPrepItemMeta ────────
-  let parChanged = false;
-  const touchesMeta =
-    patch.parValue !== undefined || patch.parUnit !== undefined || patch.specialInstruction !== undefined;
-  if (touchesMeta) {
+  // ── prep_meta (specialInstruction en only) via setPrepItemMeta ────────────
+  // Par/unit no longer live in prep_meta — they're item-level (default_par /
+  // default_par_unit on the items row). Only the en specialInstruction is a
+  // line-level prep_meta scalar.
+  if (patch.specialInstruction !== undefined) {
     if (!isPrepMeta(item.prepMeta)) {
       throw new AdminTemplateError(400, "not_a_prep_item", "Item has no editable prep metadata");
     }
     const base: PrepMeta = item.prepMeta;
-    const nextMeta: PrepMeta = {
-      ...base,
-      parValue: patch.parValue !== undefined ? patch.parValue : base.parValue,
-      parUnit: patch.parUnit !== undefined ? (patch.parUnit?.trim() || null) : base.parUnit,
-      specialInstruction:
-        patch.specialInstruction !== undefined
-          ? (patch.specialInstruction?.trim() || null)
-          : base.specialInstruction,
-    };
-    if (nextMeta.parValue !== null && (!Number.isFinite(nextMeta.parValue) || nextMeta.parValue < 0)) {
-      throw new AdminTemplateError(400, "invalid_par", "Par must be a non-negative number or empty");
-    }
-    parChanged = nextMeta.parValue !== base.parValue || nextMeta.parUnit !== base.parUnit;
-    if (
-      nextMeta.parValue !== base.parValue ||
-      nextMeta.parUnit !== base.parUnit ||
-      nextMeta.specialInstruction !== base.specialInstruction
-    ) {
-      before.prep_meta = { parValue: base.parValue, parUnit: base.parUnit, specialInstruction: base.specialInstruction };
-      after.prep_meta = { parValue: nextMeta.parValue, parUnit: nextMeta.parUnit, specialInstruction: nextMeta.specialInstruction };
+    const nextSi = patch.specialInstruction?.trim() || null;
+    if (nextSi !== base.specialInstruction) {
+      const nextMeta: PrepMeta = { ...base, specialInstruction: nextSi };
+      before.prep_meta = { specialInstruction: base.specialInstruction };
+      after.prep_meta = { specialInstruction: nextSi };
       // setPrepItemMeta asserts meta.section === existing station before writing.
       await setPrepItemMeta(sb, { templateItemId: args.itemId, meta: nextMeta });
     }
   }
 
-  if (Object.keys(after).length === 0) return; // nothing changed
-
-  // ── Propagation (AM-prep par edits → Opening mirror) ─────────────────────
-  let propagatedTo: string[] = [];
-  if (parChanged && tmpl.prep_subtype === "am_prep") {
-    propagatedTo = await propagateParToOpeningMirror({
-      amPrepItemId: args.itemId,
-      locationId: tmpl.location_id,
-      parValue: (after.prep_meta as { parValue: number | null }).parValue,
-      parUnit: (after.prep_meta as { parUnit: string | null }).parUnit,
-    });
+  // ── Registry item write (par + name → the item, edit-once-everywhere) ─────
+  if (Object.keys(itemUpdate).length > 0) {
+    if (!item.itemId) {
+      throw new AdminTemplateError(409, "item_unlinked", "This line has no linked registry item");
+    }
+    before.item = {
+      ...(itemUpdate.name !== undefined ? { name: item.label } : {}),
+      ...(itemUpdate.name_es !== undefined ? { name_es: item.translations?.es?.label ?? null } : {}),
+      ...(itemUpdate.default_par !== undefined ? { default_par: item.prepMeta?.parValue ?? null } : {}),
+      ...(itemUpdate.default_par_unit !== undefined ? { default_par_unit: item.prepMeta?.parUnit ?? null } : {}),
+    };
+    after.item = {
+      ...(itemUpdate.name !== undefined ? { name: itemUpdate.name } : {}),
+      ...(itemUpdate.name_es !== undefined ? { name_es: itemUpdate.name_es } : {}),
+      ...(itemUpdate.default_par !== undefined ? { default_par: itemUpdate.default_par } : {}),
+      ...(itemUpdate.default_par_unit !== undefined ? { default_par_unit: itemUpdate.default_par_unit } : {}),
+    };
+    itemUpdate.updated_by = actor.user.id;
+    itemUpdate.updated_at = new Date().toISOString();
+    const { error: itemErr } = await sb.from("items").update(itemUpdate).eq("id", item.itemId);
+    if (itemErr) throw new Error(`updatePrepItemContent item update: ${itemErr.message}`);
   }
+
+  if (Object.keys(after).length === 0) return; // nothing changed
 
   await audit({
     actorId: actor.user.id,
@@ -454,12 +434,8 @@ export async function updatePrepItemContent(
       prep_subtype: tmpl.prep_subtype,
       before,
       after,
-      ...(propagatedTo.length > 0
-        ? {
-            propagated_to_item_ids: propagatedTo,
-            par_before: (before.prep_meta as { parValue: number | null } | undefined)?.parValue ?? null,
-            par_after: (after.prep_meta as { parValue: number | null } | undefined)?.parValue ?? null,
-          }
+      ...(after.item !== undefined
+        ? { item_id: item.itemId, item_fields: Object.keys(after.item as Record<string, unknown>) }
         : {}),
     },
     ipAddress: null,
