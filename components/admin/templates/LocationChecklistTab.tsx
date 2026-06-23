@@ -29,12 +29,10 @@ export function LocationChecklistTab({
   view,
   subtype,
   registry,
-  actorLevel,
 }: {
   view: ChecklistLocationView;
   subtype: PrepSubtype;
   registry: ChecklistRegistryItem[];
-  actorLevel: number;
 }) {
   const { t } = useTranslation();
 
@@ -84,11 +82,12 @@ export function LocationChecklistTab({
                   templateId={templateId}
                   item={it}
                   locationId={view.locationId}
-                  actorLevel={actorLevel}
                   parCtx={
                     view.parContext[it.id] ?? {
                       itemId: null,
                       itemGlobal: false,
+                      itemName: null,
+                      itemNameEs: null,
                       recommendedPar: null,
                       recommendedParUnit: null,
                       overrides: [],
@@ -116,13 +115,11 @@ function LocationItemRow({
   templateId,
   item,
   locationId,
-  actorLevel,
   parCtx,
 }: {
   templateId: string;
   item: ChecklistTemplateItem;
   locationId: string;
-  actorLevel: number;
   parCtx: Parameters<typeof ParGrid>[0]["parCtx"];
 }) {
   const { t } = useTranslation();
@@ -132,15 +129,8 @@ function LocationItemRow({
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // GM+ line-detail editing (special instruction / required / section / min-role).
-  const canEditLine = actorLevel >= 7;
-  const es = item.translations?.es ?? {};
-  const [siEn, setSiEn] = useState(item.prepMeta?.specialInstruction ?? "");
-  const [siEs, setSiEs] = useState(es.specialInstruction ?? "");
-  const [required, setRequired] = useState(item.required);
-  const [section, setSection] = useState(item.station ?? "");
-  const [minRole, setMinRole] = useState(item.minRoleLevel.toString());
-
+  // Display the resolved item NAME (global definition), not the stale line label.
+  const displayName = parCtx.itemName ?? item.label;
   const baseRow = parCtx.overrides.find((o) => o.dayOfWeek === null);
   const headerPar = baseRow && baseRow.parMode === "manual" ? baseRow.parValue : parCtx.recommendedPar;
   const headerParUnit = baseRow?.parUnit ?? parCtx.recommendedParUnit;
@@ -163,51 +153,12 @@ function LocationItemRow({
 
   const smallBtn =
     "inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-text disabled:opacity-50";
-  const field =
-    "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60";
-
-  // ── GM+ line-detail saves (special instruction / required → content; section;
-  //    min-role) — same routes as the prior editor, now on the location tab. ──
-  const saveLineContent = async () => {
-    if (submitting) return;
-    setErrorMsg(null);
-    if ((await requestStepUp("A")) !== "ok") return;
-    setSubmitting(true);
-    const result = await postJson(
-      `/api/admin/checklist-templates/${templateId}/items/${item.id}`,
-      { specialInstruction: siEn.trim() || null, specialInstructionEs: siEs.trim() || null, required },
-      "PATCH",
-    );
-    setSubmitting(false);
-    if (result.ok) router.refresh();
-    else setErrorMsg(t(resolveErrorKey(result.code)));
-  };
-  const saveSection = async () => {
-    if (submitting || !section || section === item.station) return;
-    setErrorMsg(null);
-    if ((await requestStepUp("B")) !== "ok") return;
-    setSubmitting(true);
-    const result = await postJson(`/api/admin/checklist-templates/${templateId}/items/${item.id}/section`, { section }, "PATCH");
-    setSubmitting(false);
-    if (result.ok) router.refresh();
-    else setErrorMsg(t(resolveErrorKey(result.code)));
-  };
-  const saveMinRole = async () => {
-    if (submitting) return;
-    setErrorMsg(null);
-    if ((await requestStepUp("B")) !== "ok") return;
-    setSubmitting(true);
-    const result = await postJson(`/api/admin/checklist-templates/${templateId}/items/${item.id}/min-role`, { minRoleLevel: Number(minRole) }, "PATCH");
-    setSubmitting(false);
-    if (result.ok) router.refresh();
-    else setErrorMsg(t(resolveErrorKey(result.code)));
-  };
 
   return (
     <div className="rounded-lg border-2 border-co-border bg-co-surface p-3">
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-bold text-co-text">
-          {item.label}
+          {displayName}
           {headerPar != null ? (
             <span className="ml-2 text-co-text-muted">
               {t("admin.templates.field.par_value")}: {headerPar}
@@ -231,64 +182,6 @@ function LocationItemRow({
           <p className="text-xs text-co-text-muted">{t("admin.templates.edit_in_global_hint")}</p>
 
           <ParGrid templateId={templateId} lineId={item.id} locationId={locationId} parCtx={parCtx} />
-
-          {/* GM+ line details: special instruction / required / section / min-role */}
-          {canEditLine ? (
-            <>
-              <section className="rounded-lg border-2 border-co-border p-3">
-                <h3 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
-                  {t("admin.templates.line_content.title")}
-                </h3>
-                <label className="mt-2 block">
-                  <span className="text-sm font-bold text-co-text">{t("admin.templates.field.special_instruction")}</span>
-                  <textarea className={field} value={siEn} onChange={(e) => setSiEn(e.target.value)} />
-                </label>
-                <label className="mt-2 block">
-                  <span className="text-sm font-bold text-co-text">{t("admin.templates.field.special_instruction_es")}</span>
-                  <textarea className={field} value={siEs} onChange={(e) => setSiEs(e.target.value)} />
-                </label>
-                <label className="mt-2 flex items-center gap-2 text-sm text-co-text">
-                  <input type="checkbox" className="h-5 w-5 accent-co-gold" checked={required} onChange={(e) => setRequired(e.target.checked)} />
-                  {t("admin.templates.field.required")}
-                </label>
-                <div className="mt-3 flex justify-end">
-                  <button type="button" disabled={submitting} onClick={() => void saveLineContent()}
-                    className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50">
-                    {t("admin.templates.save")}
-                  </button>
-                </div>
-              </section>
-
-              <div className="rounded-lg border-2 border-co-border p-3">
-                <label className="block">
-                  <span className="text-sm font-bold text-co-text">{t("admin.templates.field.section")}</span>
-                  <div className="mt-1 flex items-end gap-2">
-                    <select className={field} value={section} onChange={(e) => setSection(e.target.value)}>
-                      {PREP_SECTIONS.map((s) => (
-                        <option key={s} value={s}>{t(`admin.templates.section.${s}` as TranslationKey)}</option>
-                      ))}
-                    </select>
-                    <button type="button" disabled={submitting} onClick={() => void saveSection()} className={smallBtn}>
-                      {t("admin.templates.change_section")}
-                    </button>
-                  </div>
-                </label>
-              </div>
-
-              <div className="rounded-lg border-2 border-co-border p-3">
-                <p className="text-xs text-co-text-muted">{t("admin.templates.min_role.hint")}</p>
-                <div className="mt-2 flex items-end gap-2">
-                  <label className="block">
-                    <span className="text-sm font-bold text-co-text">{t("admin.templates.field.min_role_level")}</span>
-                    <input className={field} inputMode="numeric" value={minRole} onChange={(e) => setMinRole(e.target.value)} />
-                  </label>
-                  <button type="button" disabled={submitting} onClick={() => void saveMinRole()} className={smallBtn}>
-                    {t("admin.templates.min_role.change")}
-                  </button>
-                </div>
-              </div>
-            </>
-          ) : null}
 
           <div className="rounded-lg border-2 border-co-border p-3">
             <button

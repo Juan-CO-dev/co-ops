@@ -44,6 +44,9 @@ export interface AdminPrepTemplateListItem {
 export interface PrepLineParContext {
   itemId: string | null;
   itemGlobal: boolean;
+  /** The item's name (the global definition) — display this, NOT the stale line label. */
+  itemName: string | null;
+  itemNameEs: string | null;
   /** The item's default_par = the global recommendation (NOT the vestigial line prep_meta). */
   recommendedPar: number | null;
   recommendedParUnit: string | null;
@@ -165,6 +168,7 @@ export async function getPrepTemplateDetail(
 
   const itemGlobalById = new Map<string, boolean>();
   const recommendationById = new Map<string, { par: number | null; parUnit: string | null }>();
+  const nameById = new Map<string, { name: string; nameEs: string | null }>();
   const overridesByItem = new Map<
     string,
     Array<{ dayOfWeek: number | null; parValue: number | null; parUnit: string | null; parMode: ParMode }>
@@ -173,13 +177,14 @@ export async function getPrepTemplateDetail(
   if (itemIds.length > 0) {
     const { data: itemRows, error: iErr } = await sb
       .from("items")
-      .select("id, location_id, default_par, default_par_unit")
+      .select("id, location_id, name, name_es, default_par, default_par_unit")
       .in("id", itemIds)
-      .returns<Array<{ id: string; location_id: string | null; default_par: number | null; default_par_unit: string | null }>>();
+      .returns<Array<{ id: string; location_id: string | null; name: string; name_es: string | null; default_par: number | null; default_par_unit: string | null }>>();
     if (iErr) throw new Error(`getPrepTemplateDetail items lookup failed: ${iErr.message}`);
     for (const r of itemRows ?? []) {
       itemGlobalById.set(r.id, r.location_id === null);
       recommendationById.set(r.id, { par: r.default_par, parUnit: r.default_par_unit });
+      nameById.set(r.id, { name: r.name, nameEs: r.name_es });
     }
 
     const { data: parRows, error: pErr } = await sb
@@ -201,15 +206,18 @@ export async function getPrepTemplateDetail(
   for (const it of items) {
     const itemId = typeof it.itemId === "string" ? it.itemId : null;
     const rec = itemId ? recommendationById.get(itemId) ?? null : null;
+    const nm = itemId ? nameById.get(itemId) ?? null : null;
     parContext[it.id] = itemId
       ? {
           itemId,
           itemGlobal: itemGlobalById.get(itemId) ?? false,
+          itemName: nm?.name ?? null,
+          itemNameEs: nm?.nameEs ?? null,
           recommendedPar: rec?.par ?? null,
           recommendedParUnit: rec?.parUnit ?? null,
           overrides: overridesByItem.get(itemId) ?? [],
         }
-      : { itemId: null, itemGlobal: false, recommendedPar: null, recommendedParUnit: null, overrides: [] };
+      : { itemId: null, itemGlobal: false, itemName: null, itemNameEs: null, recommendedPar: null, recommendedParUnit: null, overrides: [] };
   }
 
   return {

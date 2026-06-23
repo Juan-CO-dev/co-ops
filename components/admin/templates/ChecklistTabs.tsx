@@ -69,7 +69,6 @@ export function ChecklistTabs({ view }: { view: ChecklistAdminView }) {
           view={selectedLocation}
           subtype={view.subtype}
           registry={view.registry}
-          actorLevel={view.actorLevel}
         />
       ) : null}
     </div>
