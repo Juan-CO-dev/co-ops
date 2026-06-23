@@ -43,6 +43,7 @@ import {
   rowToCompletion,
   rowToInstance,
 } from "./checklist-rows";
+import { loadItemDefns } from "@/lib/items";
 import { isPrepData } from "./prep";
 import type { RoleCode } from "./roles";
 import {
@@ -699,15 +700,20 @@ export async function loadOpeningState(
       priorOperationalDate: yesterday,
       openingTemplateItemIds: phase2Items.map((it) => it.id),
     });
+    const phase2Defns = await loadItemDefns(
+      service,
+      phase2Items.map((it) => it.itemId).filter((x): x is string => !!x),
+    );
     snapshotsJson = phase2Items.map((it) => {
       const live = liveSnapshotMap.get(it.id) ?? null;
       const meta = it.prepMeta as OpeningPhase2Meta | null;
+      const defn = it.itemId ? phase2Defns.get(it.itemId) ?? null : null;
       return {
         template_item_id: it.id,
         closing_instance_id: live?.amPrepInstanceId ?? null,
         closer_count: live?.total ?? null,
-        par_value: meta?.parValue ?? null,
-        par_unit: meta?.parUnit ?? null,
+        par_value: defn ? defn.defaultPar : (meta?.parValue ?? null),
+        par_unit: defn ? defn.defaultParUnit : (meta?.parUnit ?? null),
       };
     });
   }
