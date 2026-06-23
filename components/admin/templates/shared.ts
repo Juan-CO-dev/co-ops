@@ -21,6 +21,7 @@ const KNOWN = new Set([
   "invalid_display_order",
   "invalid_min_role",
   "invalid_section",
+  "section_not_found",
   "invalid_par_mode",
   "invalid_day_of_week",
   "already_global",

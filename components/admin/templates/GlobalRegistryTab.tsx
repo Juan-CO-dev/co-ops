@@ -19,17 +19,21 @@ import { PREP_SECTIONS } from "@/lib/prep-sections";
 import type { PrepSection } from "@/lib/types";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { ChecklistRegistryItem } from "@/lib/admin/templates";
+import type { PrepSectionDefn } from "@/lib/types";
 import { postJson, resolveErrorKey } from "./shared";
 
 export function GlobalRegistryTab({
   registry,
+  sections,
   actorLevel,
 }: {
   registry: ChecklistRegistryItem[];
+  sections: PrepSectionDefn[];
   actorLevel: number;
 }) {
   const { t } = useTranslation();
   const canAdd = actorLevel >= 7;
+  const canEditSections = actorLevel >= 8; // MoO+
 
   // Group by section, standard sections first; null section → "—" bucket.
   const groups = new Map<string, ChecklistRegistryItem[]>();
@@ -47,6 +51,22 @@ export function GlobalRegistryTab({
       <p className="rounded-lg border-2 border-co-gold-deep bg-co-gold/15 px-3 py-2 text-xs font-bold text-co-text">
         {t("admin.templates.global_blast_radius_note")}
       </p>
+
+      {canEditSections && sections.length > 0 ? (
+        <section className="rounded-lg border-2 border-co-gold-deep bg-co-surface p-3">
+          <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+            {t("admin.templates.sections_panel.title")}
+          </h2>
+          <p className="mt-1 text-xs text-co-text-muted">
+            {t("admin.templates.sections_panel.note")}
+          </p>
+          <div className="mt-3 flex flex-col gap-2">
+            {sections.map((s) => (
+              <SectionRow key={s.slug} section={s} />
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {canAdd ? <AddGlobalItem /> : null}
 
@@ -66,6 +86,80 @@ export function GlobalRegistryTab({
           </section>
         );
       })}
+    </div>
+  );
+}
+
+function SectionRow({ section }: { section: PrepSectionDefn }) {
+  const { t } = useTranslation();
+  const router = useRouter();
+  const { requestStepUp } = useStepUp();
+
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const [labelEn, setLabelEn] = useState(section.labelEn);
+  const [labelEs, setLabelEs] = useState(section.labelEs ?? "");
+  const [displayOrder, setDisplayOrder] = useState(section.displayOrder.toString());
+
+  const field =
+    "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60";
+
+  const save = async () => {
+    if (submitting) return;
+    setErrorMsg(null);
+    if (!labelEn.trim()) { setErrorMsg(t(resolveErrorKey("invalid_label"))); return; }
+    if ((await requestStepUp("B")) !== "ok") return;
+    setSubmitting(true);
+    const result = await postJson(
+      `/api/admin/checklist-templates/sections/${section.slug}`,
+      {
+        labelEn: labelEn.trim(),
+        labelEs: labelEs.trim() || null,
+        displayOrder: displayOrder.trim() === "" ? undefined : Number(displayOrder),
+      },
+      "PATCH",
+    );
+    setSubmitting(false);
+    if (result.ok) router.refresh();
+    else setErrorMsg(t(resolveErrorKey(result.code)));
+  };
+
+  return (
+    <div className="rounded-lg border-2 border-co-border bg-co-surface p-3">
+      <p className="text-xs text-co-text-muted">
+        {t("admin.templates.sections_panel.slug_hint")}: <span className="font-mono">{section.slug}</span>
+      </p>
+      <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-end">
+        <label className="block flex-1">
+          <span className="text-sm font-bold text-co-text">{t("admin.templates.field.label_en")}</span>
+          <input className={field} value={labelEn} onChange={(e) => setLabelEn(e.target.value)} />
+        </label>
+        <label className="block flex-1">
+          <span className="text-sm font-bold text-co-text">{t("admin.templates.field.label_es")}</span>
+          <input className={field} value={labelEs} onChange={(e) => setLabelEs(e.target.value)} />
+        </label>
+        <label className="block sm:w-24">
+          <span className="text-sm font-bold text-co-text">{t("admin.templates.field.display_order")}</span>
+          <input
+            className={field}
+            inputMode="numeric"
+            value={displayOrder}
+            onChange={(e) => setDisplayOrder(e.target.value)}
+          />
+        </label>
+      </div>
+      {errorMsg ? <p className="mt-2 text-sm text-co-cta">{errorMsg}</p> : null}
+      <div className="mt-3 flex justify-end">
+        <button
+          type="button"
+          disabled={submitting}
+          onClick={() => void save()}
+          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50"
+        >
+          {t("admin.templates.save")}
+        </button>
+      </div>
     </div>
   );
 }
