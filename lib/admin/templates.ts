@@ -25,6 +25,7 @@ import type { AuthContext } from "@/lib/session";
 import type {
   ChecklistTemplateItem,
   ChecklistTemplateItemTranslations,
+  ParMode,
   PrepMeta,
   PrepSection,
 } from "@/lib/types";
@@ -177,6 +178,7 @@ async function resolveActiveOpeningTemplateId(
  */
 async function createOpeningMirror(args: {
   amPrepItemId: string;
+  itemId: string | null;
   locationId: string;
   section: PrepSection;
   parValue: number | null;
@@ -218,6 +220,9 @@ async function createOpeningMirror(args: {
       prep_meta: { openingPhase2: true, section: args.section, parValue: args.parValue, parUnit: args.parUnit },
       report_reference_type: null,
       references_template_item_id: args.amPrepItemId,
+      // Share the AM-prep line's registry item so the opening mirror resolves
+      // name + par from the same item (within-location edit-once-everywhere).
+      item_id: args.itemId,
     })
     .select("id")
     .maybeSingle<{ id: string }>();
@@ -544,6 +549,8 @@ export async function addPrepItem(
     ? { es: { ...(esLabel !== undefined ? { label: esLabel } : {}), description: esDesc, specialInstruction: esSi } }
     : undefined;
 
+  const parUnit = input.parUnit?.trim() || null;
+
   const { templateItemId } = await seedPrepItem(sb, {
     templateId: args.templateId,
     displayOrder,
@@ -554,21 +561,65 @@ export async function addPrepItem(
     required: input.required,
     meta: {
       parValue: input.parValue,
-      parUnit: input.parUnit?.trim() || null,
+      parUnit,
       specialInstruction: input.specialInstruction?.trim() || null,
       columns: columnsForSection(input.section, input.includeNote),
     },
     translations,
   });
 
+  // ── Registry-back the new line (Item/Inventory Spine 2B) ──────────────────
+  // Create a location-owned manual item carrying name + recommended default_par,
+  // link the line to it, and seed an all-days manual par override at the
+  // location so the resolver has both the recommendation (item.default_par) and
+  // the operational override (item_par_levels). edit-once-everywhere: the
+  // opening mirror shares the same item id.
+  const { data: itemRow, error: itemErr } = await sb
+    .from("items")
+    .insert({
+      location_id: tmpl.location_id,
+      kind: "manual",
+      name: label,
+      name_es: esLabel ?? null,
+      section: input.section,
+      default_par: input.parValue,
+      default_par_unit: parUnit,
+      active: true,
+      created_by: actor.user.id,
+    })
+    .select("id")
+    .maybeSingle<{ id: string }>();
+  if (itemErr) throw new Error(`addPrepItem item insert failed: ${itemErr.message}`);
+  if (!itemRow) throw new Error(`addPrepItem item insert returned no row`);
+  const itemId = itemRow.id;
+
+  const { error: linkErr } = await sb
+    .from("checklist_template_items")
+    .update({ item_id: itemId })
+    .eq("id", templateItemId);
+  if (linkErr) throw new Error(`addPrepItem item link failed: ${linkErr.message}`);
+
+  const { error: parErr } = await sb.from("item_par_levels").insert({
+    item_id: itemId,
+    location_id: tmpl.location_id,
+    day_of_week: null,
+    par_value: input.parValue,
+    par_unit: parUnit,
+    par_mode: "manual",
+    created_by: actor.user.id,
+    updated_by: actor.user.id,
+  });
+  if (parErr) throw new Error(`addPrepItem par seed failed: ${parErr.message}`);
+
   let openingMirrorId: string | null = null;
   if (tmpl.prep_subtype === "am_prep" && input.createOpeningMirror) {
     openingMirrorId = await createOpeningMirror({
       amPrepItemId: templateItemId,
+      itemId,
       locationId: tmpl.location_id,
       section: input.section,
       parValue: input.parValue,
-      parUnit: input.parUnit?.trim() || null,
+      parUnit,
       label,
       translations: translations ?? null,
       minRoleLevel: input.minRoleLevel,
@@ -586,6 +637,7 @@ export async function addPrepItem(
       template_id: args.templateId,
       prep_subtype: tmpl.prep_subtype,
       section: input.section,
+      item_id: itemId,
       created_opening_mirror_id: openingMirrorId,
     },
     ipAddress: null,
@@ -706,4 +758,177 @@ export async function changePrepItemSection(
   });
 
   return { mirrorSyncedIds };
+}
+
+/**
+ * Set (or supersede) a per-location, per-day par OVERRIDE for the item linked to
+ * a prep line (Item/Inventory Spine 2B). Writes `item_par_levels`, NOT the items
+ * row — the global recommendation (`items.default_par`) is edited via
+ * updatePrepItemContent. Route enforces AGM+ (≥6); this lib does not re-gate role.
+ *
+ * Upsert strategy: append-only. Deactivate any existing active row for the
+ * (item_id, locationId, dayOfWeek) slot, then INSERT the new row — preserves a
+ * forensic trail and respects the partial unique indexes (one active base row per
+ * (item,location) where dow IS NULL; one per (item,location,dow) otherwise).
+ *
+ * IDOR: the line's template is location-bound via loadAuthorizedPrepTemplate, and
+ * args.locationId must equal that template's location (the override lives at the
+ * template's location). Mismatch → 404 (don't confirm another location exists).
+ */
+export async function setItemPar(
+  actor: AuthContext,
+  args: {
+    templateId: string;
+    lineItemId: string; // checklist_template_items.id
+    locationId: string;
+    dayOfWeek: number | null;
+    parValue: number | null;
+    parUnit: string | null;
+    parMode: ParMode;
+  },
+): Promise<void> {
+  const tmpl = await loadAuthorizedPrepTemplate(actor, args.templateId);
+
+  // Validate inputs.
+  if (args.parValue !== null && (!Number.isFinite(args.parValue) || args.parValue < 0)) {
+    throw new AdminTemplateError(400, "invalid_par", "Par must be a non-negative number or empty");
+  }
+  if (args.parMode !== "inherit" && args.parMode !== "manual" && args.parMode !== "auto") {
+    throw new AdminTemplateError(400, "invalid_par_mode", "Par mode must be inherit, manual, or auto");
+  }
+  if (args.dayOfWeek !== null && (!Number.isInteger(args.dayOfWeek) || args.dayOfWeek < 0 || args.dayOfWeek > 6)) {
+    throw new AdminTemplateError(400, "invalid_day_of_week", "Day of week must be 0–6 or null");
+  }
+  // IDOR: the override is per-location; it must be the template's location.
+  if (args.locationId !== tmpl.location_id) {
+    throw new AdminTemplateError(404, "location_not_found", "Location not accessible");
+  }
+
+  const sb = getServiceRoleClient();
+
+  // Resolve the line → its registry item.
+  const { data: line, error: lErr } = await sb
+    .from("checklist_template_items")
+    .select("item_id")
+    .eq("id", args.lineItemId)
+    .eq("template_id", args.templateId)
+    .eq("active", true)
+    .maybeSingle<{ item_id: string | null }>();
+  if (lErr) throw new Error(`setItemPar line read failed: ${lErr.message}`);
+  if (!line) throw new AdminTemplateError(404, "item_not_found", "Template item not found");
+  if (!line.item_id) throw new AdminTemplateError(409, "item_unlinked", "This line has no linked registry item");
+  const itemId = line.item_id;
+
+  // Read the current active row for the slot (for audit before-state + supersession).
+  let existingQuery = sb
+    .from("item_par_levels")
+    .select("id, par_value, par_unit, par_mode")
+    .eq("item_id", itemId)
+    .eq("location_id", args.locationId)
+    .eq("active", true);
+  existingQuery = args.dayOfWeek === null
+    ? existingQuery.is("day_of_week", null)
+    : existingQuery.eq("day_of_week", args.dayOfWeek);
+  const { data: existing, error: eErr } = await existingQuery.maybeSingle<{
+    id: string;
+    par_value: number | null;
+    par_unit: string | null;
+    par_mode: ParMode;
+  }>();
+  if (eErr) throw new Error(`setItemPar existing read failed: ${eErr.message}`);
+
+  const before = existing
+    ? { parValue: existing.par_value, parUnit: existing.par_unit, parMode: existing.par_mode }
+    : null;
+
+  // Deactivate the prior active row in the slot (frees the partial unique index).
+  if (existing) {
+    const { error: dErr } = await sb
+      .from("item_par_levels")
+      .update({ active: false, updated_by: actor.user.id, updated_at: new Date().toISOString() })
+      .eq("id", existing.id);
+    if (dErr) throw new Error(`setItemPar deactivate failed: ${dErr.message}`);
+  }
+
+  // Insert the new active row.
+  const { error: iErr } = await sb.from("item_par_levels").insert({
+    item_id: itemId,
+    location_id: args.locationId,
+    day_of_week: args.dayOfWeek,
+    par_value: args.parValue,
+    par_unit: args.parUnit?.trim() || null,
+    par_mode: args.parMode,
+    active: true,
+    created_by: actor.user.id,
+    updated_by: actor.user.id,
+  });
+  if (iErr) throw new Error(`setItemPar insert failed: ${iErr.message}`);
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "item_par.update",
+    resourceTable: "item_par_levels",
+    resourceId: itemId,
+    metadata: {
+      item_id: itemId,
+      location_id: args.locationId,
+      day_of_week: args.dayOfWeek,
+      before,
+      after: { parValue: args.parValue, parUnit: args.parUnit?.trim() || null, parMode: args.parMode },
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+}
+
+/**
+ * Promote a location-owned item to a GLOBAL definition (location_id → NULL), so
+ * its name + recommended default_par apply company-wide. Existing
+ * item_par_levels rows are left as-is — each location keeps its own override.
+ * Route enforces MoO+ (≥8); this lib does not re-gate role beyond the IDOR bind.
+ *
+ * IDOR: the item's current location_id must be in the actor's authorized
+ * locations (all-locations grant bypasses). Missing/inactive → 404.
+ */
+export async function promoteItemToGlobal(
+  actor: AuthContext,
+  args: { itemId: string },
+): Promise<void> {
+  const sb = getServiceRoleClient();
+
+  const { data: item, error: rErr } = await sb
+    .from("items")
+    .select("id, location_id, active")
+    .eq("id", args.itemId)
+    .maybeSingle<{ id: string; location_id: string | null; active: boolean }>();
+  if (rErr) throw new Error(`promoteItemToGlobal read failed: ${rErr.message}`);
+  if (!item || !item.active) throw new AdminTemplateError(404, "item_not_found", "Item not found");
+  if (item.location_id === null) {
+    throw new AdminTemplateError(409, "already_global", "Item is already global");
+  }
+  // IDOR: actor must be authorized for the item's current location.
+  if (!lockLocationContext(actorLocationShape(actor), item.location_id)) {
+    throw new AdminTemplateError(404, "item_not_found", "Item not found");
+  }
+
+  const { error: uErr } = await sb
+    .from("items")
+    .update({ location_id: null, updated_by: actor.user.id, updated_at: new Date().toISOString() })
+    .eq("id", args.itemId);
+  if (uErr) throw new Error(`promoteItemToGlobal update failed: ${uErr.message}`);
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "item.promote_to_global",
+    resourceTable: "items",
+    resourceId: args.itemId,
+    metadata: {
+      before: { location_id: item.location_id },
+      after: { location_id: null },
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
 }
