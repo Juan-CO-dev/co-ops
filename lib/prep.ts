@@ -2242,6 +2242,13 @@ export async function submitAmPrep(
     itemsById.set(narrowed.id, narrowed);
   }
 
+  // Item/Inventory Spine 2A: snapshot freezes the item-resolved name+par
+  // (matches what the form showed via the loader's resolution).
+  const submitItemDefns = await loadItemDefns(
+    service,
+    [...itemsById.values()].map((it) => it.itemId).filter((x): x is string => !!x),
+  );
+
   // 4. Build entries with snapshot per C.44. Validate every templateItemId
   //    exists in this template AND is a prep item (prepMeta non-null).
   const rpcEntries = args.entries.map((entry) => {
@@ -2258,11 +2265,12 @@ export async function submitAmPrep(
         `template_item is not a prep item (prepMeta is null)`,
       );
     }
+    const resolved = resolveLineDefinition(item, item.itemId ? submitItemDefns.get(item.itemId) ?? null : null);
     const snapshot: PrepSnapshot = {
       section: item.prepMeta.section,
-      itemName: item.label,
-      parValue: item.prepMeta.parValue,
-      parUnit: item.prepMeta.parUnit,
+      itemName: resolved.name,
+      parValue: resolved.par,
+      parUnit: resolved.parUnit,
       specialInstruction: item.prepMeta.specialInstruction,
     };
     return {
