@@ -61,6 +61,7 @@ export const DESTRUCTIVE_ACTIONS = [
   // Item / inventory registry (Item/Inventory Spine, sub-project 1).
   // — item lifecycle on the new registry. Auto-derive destructive via isDestructive().
   "item.create",
+  "item.update",
   "item.backfill",
 
   // Par layer (Item/Inventory Spine, sub-project 2B).

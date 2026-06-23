@@ -1619,3 +1619,62 @@ export async function loadChecklistAdminView(
 
   return { subtype, actorLevel: ROLES[actor.user.role].level, registry, locations };
 }
+
+/**
+ * Edit a registry item's GLOBAL definition (name / name_es / recommended par)
+ * directly by item id — used by the Global tab (no template/line context).
+ * Route enforces MoO+. Section is fixed at creation (structural; not edited here).
+ */
+export async function updateRegistryItemDefinition(
+  actor: AuthContext,
+  args: { itemId: string; name?: string; nameEs?: string | null; recommendedPar?: number | null; recommendedParUnit?: string | null },
+): Promise<void> {
+  const sb = getServiceRoleClient();
+  const { data: item, error: rErr } = await sb
+    .from("items")
+    .select("id, active, name, name_es, default_par, default_par_unit")
+    .eq("id", args.itemId)
+    .maybeSingle<{ id: string; active: boolean; name: string; name_es: string | null; default_par: number | null; default_par_unit: string | null }>();
+  if (rErr) throw new Error(`updateRegistryItemDefinition read failed: ${rErr.message}`);
+  if (!item || !item.active) throw new AdminTemplateError(404, "item_not_found", "Item not found");
+
+  const update: Record<string, unknown> = {};
+  const before: Record<string, unknown> = {};
+  const after: Record<string, unknown> = {};
+  if (args.name !== undefined) {
+    const v = args.name.trim();
+    if (!v) throw new AdminTemplateError(400, "invalid_label", "Name cannot be empty");
+    if (v !== item.name) { update.name = v; before.name = item.name; after.name = v; }
+  }
+  if (args.nameEs !== undefined) {
+    const v = args.nameEs?.trim() || null;
+    if (v !== item.name_es) { update.name_es = v; before.name_es = item.name_es; after.name_es = v; }
+  }
+  if (args.recommendedPar !== undefined) {
+    if (args.recommendedPar !== null && (!Number.isFinite(args.recommendedPar) || args.recommendedPar < 0)) {
+      throw new AdminTemplateError(400, "invalid_par", "Par must be a non-negative number or empty");
+    }
+    if (args.recommendedPar !== item.default_par) { update.default_par = args.recommendedPar; before.default_par = item.default_par; after.default_par = args.recommendedPar; }
+  }
+  if (args.recommendedParUnit !== undefined) {
+    const v = args.recommendedParUnit?.trim() || null;
+    if (v !== item.default_par_unit) { update.default_par_unit = v; before.default_par_unit = item.default_par_unit; after.default_par_unit = v; }
+  }
+
+  if (Object.keys(update).length === 0) return; // nothing changed
+  update.updated_by = actor.user.id;
+  update.updated_at = new Date().toISOString();
+  const { error: uErr } = await sb.from("items").update(update).eq("id", args.itemId);
+  if (uErr) throw new Error(`updateRegistryItemDefinition update failed: ${uErr.message}`);
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "item.update",
+    resourceTable: "items",
+    resourceId: args.itemId,
+    metadata: { item_id: args.itemId, before, after },
+    ipAddress: null,
+    userAgent: null,
+  });
+}
