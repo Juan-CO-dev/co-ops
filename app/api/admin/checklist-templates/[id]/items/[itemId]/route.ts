@@ -46,7 +46,8 @@ export async function DELETE(
   const { id, itemId } = await params;
   const ctx = await requireSession(req, `/api/admin/checklist-templates/${id}/items/${itemId}`);
   if (ctx instanceof Response) return ctx;
-  if (ROLES[ctx.user.role].level < 7) return jsonError(403, "forbidden");
+  // Disable for a location = AGM+ (≥6); the location tab's per-location toggle.
+  if (ROLES[ctx.user.role].level < 6) return jsonError(403, "forbidden");
   const su = assertStepUp(ctx, "B");
   if (!su.ok) return jsonError(403, su.code);
   try {
