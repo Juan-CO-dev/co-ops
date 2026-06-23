@@ -61,7 +61,18 @@ export const DESTRUCTIVE_ACTIONS = [
   // Item / inventory registry (Item/Inventory Spine, sub-project 1).
   // — item lifecycle on the new registry. Auto-derive destructive via isDestructive().
   "item.create",
+  "item.update",
   "item.backfill",
+
+  // Par layer (Item/Inventory Spine, sub-project 2B).
+  // — item_par.update alters operational par config; item.promote_to_global flips
+  //   a location item to global (all-locations blast radius). Auto-derive
+  //   destructive=true via isDestructive(); append-only / reversible config writes.
+  "item_par.update",
+  "item.promote_to_global",
+  // — item.set_default toggles default-template membership (MoO+); turning it on
+  //   propagates enabled lines to every location. Auto-derive destructive.
+  "item.set_default",
 
   // Checklist completion correction (per SPEC_AMENDMENTS.md C.28)
   // — destructive because they alter operational/accountability record.

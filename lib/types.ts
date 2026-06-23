@@ -163,11 +163,28 @@ export interface Item {
   defaultParUnit: string | null;
   unit: string | null;
   notes: string | null;
+  /** Global default-set membership (only meaningful when locationId is null). is_default=true propagates to all active locations (migration 0081). */
+  isDefault: boolean;
   active: boolean;
   createdAt: string;
   createdBy: string | null;
   updatedAt: string;
   updatedBy: string | null;
+}
+
+export type ParMode = "inherit" | "manual" | "auto";
+
+/** Per-location, per-day par override for an item (Item/Inventory Spine 2B). */
+export interface ItemParLevel {
+  id: string;
+  itemId: string;
+  locationId: string;
+  /** 0–6 (0 = Sunday, JS getDay()); null = all-days base. */
+  dayOfWeek: number | null;
+  parValue: number | null;
+  parUnit: string | null;
+  parMode: ParMode;
+  active: boolean;
 }
 
 /** Costing BOM edge: a parent item's component is a SKU (vendor_item) XOR a sub-item. */

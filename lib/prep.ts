@@ -63,7 +63,7 @@ import {
   type TemplateItemRow,
   rowToTemplateItem,
 } from "./template-items";
-import { loadItemDefns, resolveLineDefinition } from "@/lib/items";
+import { loadItemDefns, loadItemOverrides, operationalDayOfWeek, pickOverride, resolveLineDefinition } from "@/lib/items";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
@@ -727,11 +727,17 @@ export async function loadAmPrepState(
     .map(rowToTemplateItem)
     .map(narrowPrepTemplateItem);
 
-  // Item/Inventory Spine 2A: name + par come from the linked item registry.
-  // Override the form-facing fields in place so the client component is untouched.
-  const itemDefns = await loadItemDefns(service, templateItems.map((t) => t.itemId).filter((x): x is string => !!x));
+  // Item/Inventory Spine 2A/2B: name + par come from the linked item registry,
+  // par via the override-aware resolver (per-location item_par_levels for the
+  // operational day-of-week). Override the form-facing fields in place so the
+  // client component is untouched.
+  const itemIds = templateItems.map((t) => t.itemId).filter((x): x is string => !!x);
+  const itemDefns = await loadItemDefns(service, itemIds);
+  const overrides = await loadItemOverrides(service, itemIds, args.locationId);
+  const dow = operationalDayOfWeek(args.date);
   const resolvedItems = templateItems.map((t) => {
-    const r = resolveLineDefinition(t, t.itemId ? itemDefns.get(t.itemId) ?? null : null);
+    const ovr = t.itemId ? pickOverride(overrides.get(t.itemId) ?? [], dow) : null;
+    const r = resolveLineDefinition(t, t.itemId ? itemDefns.get(t.itemId) ?? null : null, ovr);
     return {
       ...t,
       label: r.name,
@@ -829,11 +835,18 @@ export async function loadMidDayPrepState(
     .map(rowToTemplateItem)
     .map(narrowPrepTemplateItem);
 
-  // Item/Inventory Spine 2A: name + par come from the linked item registry.
+  // Item/Inventory Spine 2A/2B: name + par come from the linked item registry,
+  // par via the override-aware resolver (per-location item_par_levels for the
+  // operational day-of-week). Mid-day is instance-keyed (no date/location args),
+  // so the operational date + location come from the instance row itself.
   // Override the form-facing fields in place so the client component is untouched.
-  const itemDefns = await loadItemDefns(service, templateItems.map((t) => t.itemId).filter((x): x is string => !!x));
+  const itemIds = templateItems.map((t) => t.itemId).filter((x): x is string => !!x);
+  const itemDefns = await loadItemDefns(service, itemIds);
+  const overrides = await loadItemOverrides(service, itemIds, instanceRow.location_id);
+  const dow = operationalDayOfWeek(instanceRow.date);
   const resolvedItems = templateItems.map((t) => {
-    const r = resolveLineDefinition(t, t.itemId ? itemDefns.get(t.itemId) ?? null : null);
+    const ovr = t.itemId ? pickOverride(overrides.get(t.itemId) ?? [], dow) : null;
+    const r = resolveLineDefinition(t, t.itemId ? itemDefns.get(t.itemId) ?? null : null, ovr);
     return {
       ...t,
       label: r.name,
@@ -2242,12 +2255,13 @@ export async function submitAmPrep(
     itemsById.set(narrowed.id, narrowed);
   }
 
-  // Item/Inventory Spine 2A: snapshot freezes the item-resolved name+par
-  // (matches what the form showed via the loader's resolution).
-  const submitItemDefns = await loadItemDefns(
-    service,
-    [...itemsById.values()].map((it) => it.itemId).filter((x): x is string => !!x),
-  );
+  // Item/Inventory Spine 2A/2B: snapshot freezes the item-resolved name+par
+  // (matches what the form showed via the loader's resolution — including the
+  // per-location item_par_levels override for the instance's operational day).
+  const submitItemIds = [...itemsById.values()].map((it) => it.itemId).filter((x): x is string => !!x);
+  const submitItemDefns = await loadItemDefns(service, submitItemIds);
+  const submitOverrides = await loadItemOverrides(service, submitItemIds, instRow.location_id);
+  const submitDow = operationalDayOfWeek(instRow.date);
 
   // 4. Build entries with snapshot per C.44. Validate every templateItemId
   //    exists in this template AND is a prep item (prepMeta non-null).
@@ -2265,7 +2279,8 @@ export async function submitAmPrep(
         `template_item is not a prep item (prepMeta is null)`,
       );
     }
-    const resolved = resolveLineDefinition(item, item.itemId ? submitItemDefns.get(item.itemId) ?? null : null);
+    const ovr = item.itemId ? pickOverride(submitOverrides.get(item.itemId) ?? [], submitDow) : null;
+    const resolved = resolveLineDefinition(item, item.itemId ? submitItemDefns.get(item.itemId) ?? null : null, ovr);
     const snapshot: PrepSnapshot = {
       section: item.prepMeta.section,
       itemName: resolved.name,

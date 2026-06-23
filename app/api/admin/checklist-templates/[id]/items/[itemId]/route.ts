@@ -18,16 +18,14 @@ export async function PATCH(
   const su = assertStepUp(ctx, "A");
   if (!su.ok) return jsonError(403, su.code);
 
+  // LINE CONTENT ONLY. Name (label/labelEs) + par (parValue/parUnit) are the
+  // GLOBAL DEFINITION and move to .../[itemId]/definition (MoO+, Tier B).
   const b = parsed as Record<string, unknown>;
   const patch: PrepItemContentPatch = {};
-  if (typeof b.label === "string") patch.label = b.label;
-  if (b.labelEs === null || typeof b.labelEs === "string") patch.labelEs = b.labelEs as string | null;
   if (b.description === null || typeof b.description === "string") patch.description = b.description as string | null;
   if (b.descriptionEs === null || typeof b.descriptionEs === "string") patch.descriptionEs = b.descriptionEs as string | null;
   if (typeof b.displayOrder === "number") patch.displayOrder = b.displayOrder;
   if (typeof b.required === "boolean") patch.required = b.required;
-  if (b.parValue === null || typeof b.parValue === "number") patch.parValue = b.parValue as number | null;
-  if (b.parUnit === null || typeof b.parUnit === "string") patch.parUnit = b.parUnit as string | null;
   if (b.specialInstruction === null || typeof b.specialInstruction === "string") patch.specialInstruction = b.specialInstruction as string | null;
   if (b.specialInstructionEs === null || typeof b.specialInstructionEs === "string") patch.specialInstructionEs = b.specialInstructionEs as string | null;
 
@@ -48,7 +46,8 @@ export async function DELETE(
   const { id, itemId } = await params;
   const ctx = await requireSession(req, `/api/admin/checklist-templates/${id}/items/${itemId}`);
   if (ctx instanceof Response) return ctx;
-  if (ROLES[ctx.user.role].level < 7) return jsonError(403, "forbidden");
+  // Disable for a location = AGM+ (≥6); the location tab's per-location toggle.
+  if (ROLES[ctx.user.role].level < 6) return jsonError(403, "forbidden");
   const su = assertStepUp(ctx, "B");
   if (!su.ok) return jsonError(403, su.code);
   try {
