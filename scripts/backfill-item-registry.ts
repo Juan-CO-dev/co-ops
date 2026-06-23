@@ -39,7 +39,7 @@ interface ManifestEntry {
   name: string;
   section: string | null;
   locationId: string;
-  contributingLineIds: string[];
+  contributingLines: { lineId: string; reason: MergeReason }[];
   mergeReason: MergeReason;
   firstPar: number | null;
   parDivergence?: { firstPar: number | null; linePar: number | null; lineId: string }[];
@@ -188,7 +188,7 @@ async function main() {
           name,
           section,
           locationId,
-          contributingLineIds: [],
+          contributingLines: [],
           mergeReason: reason,
           firstPar: linePar,
         };
@@ -197,7 +197,7 @@ async function main() {
       } else if (linePar !== null && linePar !== entry.firstPar) {
         (entry.parDivergence ??= []).push({ firstPar: entry.firstPar, linePar, lineId: ln.id });
       }
-      entry.contributingLineIds.push(ln.id);
+      entry.contributingLines.push({ lineId: ln.id, reason });
     }
   }
 
