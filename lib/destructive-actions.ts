@@ -63,6 +63,13 @@ export const DESTRUCTIVE_ACTIONS = [
   "item.create",
   "item.backfill",
 
+  // Par layer (Item/Inventory Spine, sub-project 2B).
+  // — item_par.update alters operational par config; item.promote_to_global flips
+  //   a location item to global (all-locations blast radius). Auto-derive
+  //   destructive=true via isDestructive(); append-only / reversible config writes.
+  "item_par.update",
+  "item.promote_to_global",
+
   // Checklist completion correction (per SPEC_AMENDMENTS.md C.28)
   // — destructive because they alter operational/accountability record.
   // Auto-derived destructive=true on the audit row via isDestructive().
