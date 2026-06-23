@@ -330,6 +330,20 @@ export interface PrepMeta {
  * All keys camelCase per Build #2 convention. Stored in
  * `checklist_completions.prep_data.inputs`.
  */
+/**
+ * A first-class prep section definition (migration 0082 `prep_sections`).
+ * `slug` is the stable system key (= the PrepSection enum string stamped into
+ * lines' station/prep_meta.section); `labelEn`/`labelEs` are the editable
+ * display names; `columns` is the per-section PrepColumn convention.
+ */
+export interface PrepSectionDefn {
+  slug: string;
+  labelEn: string;
+  labelEs: string | null;
+  columns: PrepColumn[];
+  displayOrder: number;
+}
+
 export interface PrepInputs {
   onHand?: number;
   portioned?: number;
