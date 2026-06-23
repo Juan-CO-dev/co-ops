@@ -170,6 +170,21 @@ export interface Item {
   updatedBy: string | null;
 }
 
+export type ParMode = "inherit" | "manual" | "auto";
+
+/** Per-location, per-day par override for an item (Item/Inventory Spine 2B). */
+export interface ItemParLevel {
+  id: string;
+  itemId: string;
+  locationId: string;
+  /** 0–6 (0 = Sunday, JS getDay()); null = all-days base. */
+  dayOfWeek: number | null;
+  parValue: number | null;
+  parUnit: string | null;
+  parMode: ParMode;
+  active: boolean;
+}
+
 /** Costing BOM edge: a parent item's component is a SKU (vendor_item) XOR a sub-item. */
 export interface ItemComponent {
   id: string;
