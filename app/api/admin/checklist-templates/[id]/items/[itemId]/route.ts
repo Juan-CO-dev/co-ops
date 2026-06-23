@@ -3,7 +3,7 @@ import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
-import { updatePrepItemContent, AdminTemplateError, type PrepItemContentPatch } from "@/lib/admin/templates";
+import { updatePrepItemContent, removePrepItem, AdminTemplateError, type PrepItemContentPatch } from "@/lib/admin/templates";
 
 export async function PATCH(
   req: NextRequest,
@@ -35,6 +35,25 @@ export async function PATCH(
   try {
     await updatePrepItemContent(ctx, { templateId: id, itemId, patch });
     return jsonOk({ ok: true });
+  } catch (e) {
+    if (e instanceof AdminTemplateError) return jsonError(e.status, e.code, { message: e.message });
+    throw e;
+  }
+}
+
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: Promise<{ id: string; itemId: string }> },
+) {
+  const { id, itemId } = await params;
+  const ctx = await requireSession(req, `/api/admin/checklist-templates/${id}/items/${itemId}`);
+  if (ctx instanceof Response) return ctx;
+  if (ROLES[ctx.user.role].level < 7) return jsonError(403, "forbidden");
+  const su = assertStepUp(ctx, "B");
+  if (!su.ok) return jsonError(403, su.code);
+  try {
+    const result = await removePrepItem(ctx, { templateId: id, itemId });
+    return jsonOk(result);
   } catch (e) {
     if (e instanceof AdminTemplateError) return jsonError(e.status, e.code, { message: e.message });
     throw e;

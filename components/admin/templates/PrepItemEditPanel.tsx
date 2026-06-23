@@ -4,7 +4,9 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
-import type { ChecklistTemplateItem } from "@/lib/types";
+import type { ChecklistTemplateItem, PrepSection } from "@/lib/types";
+import { PREP_SECTIONS } from "@/lib/prep-sections";
+import type { TranslationKey } from "@/lib/i18n/types";
 import { postJson, resolveErrorKey } from "./shared";
 
 export function PrepItemEditPanel({ templateId, item }: { templateId: string; item: ChecklistTemplateItem }) {
@@ -25,6 +27,7 @@ export function PrepItemEditPanel({ templateId, item }: { templateId: string; it
   const [siEs, setSiEs] = useState(es.specialInstruction ?? "");
   const [required, setRequired] = useState(item.required);
   const [minRole, setMinRole] = useState(item.minRoleLevel.toString());
+  const [section, setSection] = useState(item.station ?? "");
 
   const base = `/api/admin/checklist-templates/${templateId}/items/${item.id}`;
 
@@ -53,6 +56,29 @@ export function PrepItemEditPanel({ templateId, item }: { templateId: string; it
     if ((await requestStepUp("B")) !== "ok") return;
     setSubmitting(true);
     const result = await postJson(`${base}/min-role`, { minRoleLevel: Number(minRole) }, "PATCH");
+    setSubmitting(false);
+    if (result.ok) { router.refresh(); }
+    else setErrorMsg(t(resolveErrorKey(result.code)));
+  };
+
+  const saveSection = async () => {
+    if (submitting || !section || section === item.station) return;
+    setErrorMsg(null);
+    if ((await requestStepUp("B")) !== "ok") return;
+    setSubmitting(true);
+    const result = await postJson(`${base}/section`, { section }, "PATCH");
+    setSubmitting(false);
+    if (result.ok) { router.refresh(); }
+    else setErrorMsg(t(resolveErrorKey(result.code)));
+  };
+
+  const removeItem = async () => {
+    if (submitting) return;
+    setErrorMsg(null);
+    if (!window.confirm(t("admin.templates.remove_confirm"))) return;
+    if ((await requestStepUp("B")) !== "ok") return;
+    setSubmitting(true);
+    const result = await postJson(base, {}, "DELETE");
     setSubmitting(false);
     if (result.ok) { router.refresh(); }
     else setErrorMsg(t(resolveErrorKey(result.code)));
@@ -114,6 +140,29 @@ export function PrepItemEditPanel({ templateId, item }: { templateId: string; it
                 {t("admin.templates.min_role.change")}
               </button>
             </div>
+          </div>
+
+          <div className="mt-2 border-t-2 border-co-border pt-3">
+            <Labeled label={t("admin.templates.field.section")}>
+              <div className="flex items-end gap-2">
+                <select className={field} value={section} onChange={(e) => setSection(e.target.value)}>
+                  {PREP_SECTIONS.map((s) => (
+                    <option key={s} value={s}>{t(`admin.templates.section.${s}` as TranslationKey)}</option>
+                  ))}
+                </select>
+                <button type="button" disabled={submitting} onClick={() => void saveSection()}
+                  className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-text disabled:opacity-50">
+                  {t("admin.templates.change_section")}
+                </button>
+              </div>
+            </Labeled>
+          </div>
+
+          <div className="mt-2 border-t-2 border-co-border pt-3">
+            <button type="button" disabled={submitting} onClick={() => void removeItem()}
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-surface px-3 text-xs font-bold text-co-cta hover:bg-co-cta hover:text-co-surface disabled:opacity-50">
+              {t("admin.templates.remove")}
+            </button>
           </div>
         </div>
       ) : null}

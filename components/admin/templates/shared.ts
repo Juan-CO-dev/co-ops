@@ -20,6 +20,7 @@ const KNOWN = new Set([
   "invalid_par",
   "invalid_display_order",
   "invalid_min_role",
+  "invalid_section",
   "not_a_prep_item",
   "step_up_required",
   "step_up_stale",
