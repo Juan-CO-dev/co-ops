@@ -35,7 +35,7 @@ export type PostResult =
 export async function postJson(
   url: string,
   body: unknown,
-  method: "POST" | "PATCH" = "POST",
+  method: "POST" | "PATCH" | "DELETE" = "POST",
 ): Promise<PostResult> {
   try {
     const res = await fetch(url, {
