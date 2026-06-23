@@ -76,7 +76,7 @@ import type {
 
 /** Column list for SELECTs against `checklist_template_items` — single source of truth. */
 export const TEMPLATE_ITEM_COLUMNS =
-  "id, template_id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, vendor_item_id, active, translations, prep_meta, report_reference_type, references_template_item_id";
+  "id, template_id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, vendor_item_id, active, translations, prep_meta, report_reference_type, references_template_item_id, item_id";
 
 /**
  * Snake_case row shape returned by `SELECT TEMPLATE_ITEM_COLUMNS FROM
@@ -100,6 +100,7 @@ export interface TemplateItemRow {
   prep_meta: unknown | null;
   report_reference_type: ReportType | null;
   references_template_item_id: string | null;
+  item_id: string | null;
 }
 
 /**
@@ -132,5 +133,6 @@ export function rowToTemplateItem(r: TemplateItemRow): ChecklistTemplateItem {
     prepMeta: (r.prep_meta ?? null) as PrepMeta | null,
     reportReferenceType: r.report_reference_type,
     referencesTemplateItemId: r.references_template_item_id,
+    itemId: r.item_id,
   };
 }

@@ -568,6 +568,8 @@ export interface ChecklistTemplateItem {
    * reportReferenceType column).
    */
   referencesTemplateItemId: string | null;
+  /** Item/Inventory Spine: linked registry item (migration 0079). */
+  itemId: string | null;
 }
 
 /**

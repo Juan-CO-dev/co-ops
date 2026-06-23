@@ -63,6 +63,7 @@ import {
   type TemplateItemRow,
   rowToTemplateItem,
 } from "./template-items";
+import { loadItemDefns, resolveLineDefinition } from "@/lib/items";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
@@ -726,6 +727,22 @@ export async function loadAmPrepState(
     .map(rowToTemplateItem)
     .map(narrowPrepTemplateItem);
 
+  // Item/Inventory Spine 2A: name + par come from the linked item registry.
+  // Override the form-facing fields in place so the client component is untouched.
+  const itemDefns = await loadItemDefns(service, templateItems.map((t) => t.itemId).filter((x): x is string => !!x));
+  const resolvedItems = templateItems.map((t) => {
+    const r = resolveLineDefinition(t, t.itemId ? itemDefns.get(t.itemId) ?? null : null);
+    return {
+      ...t,
+      label: r.name,
+      translations:
+        r.nameEs !== null
+          ? { ...(t.translations ?? {}), es: { ...(t.translations?.es ?? {}), label: r.nameEs } }
+          : t.translations,
+      prepMeta: t.prepMeta ? { ...t.prepMeta, parValue: r.par, parUnit: r.parUnit } : t.prepMeta,
+    };
+  });
+
   // Load live (non-superseded, non-revoked) completions for the instance.
   const { data: completionRows, error: compErr } = await service
     .from("checklist_completions")
@@ -757,7 +774,7 @@ export async function loadAmPrepState(
 
   return {
     template: tmplRow,
-    templateItems,
+    templateItems: resolvedItems,
     instance: rowToInstance(instanceRow),
     completions,
     authors,
@@ -812,6 +829,22 @@ export async function loadMidDayPrepState(
     .map(rowToTemplateItem)
     .map(narrowPrepTemplateItem);
 
+  // Item/Inventory Spine 2A: name + par come from the linked item registry.
+  // Override the form-facing fields in place so the client component is untouched.
+  const itemDefns = await loadItemDefns(service, templateItems.map((t) => t.itemId).filter((x): x is string => !!x));
+  const resolvedItems = templateItems.map((t) => {
+    const r = resolveLineDefinition(t, t.itemId ? itemDefns.get(t.itemId) ?? null : null);
+    return {
+      ...t,
+      label: r.name,
+      translations:
+        r.nameEs !== null
+          ? { ...(t.translations ?? {}), es: { ...(t.translations?.es ?? {}), label: r.nameEs } }
+          : t.translations,
+      prepMeta: t.prepMeta ? { ...t.prepMeta, parValue: r.par, parUnit: r.parUnit } : t.prepMeta,
+    };
+  });
+
   const { data: completionRows, error: compErr } = await service
     .from("checklist_completions")
     .select(COMPLETION_COLUMNS)
@@ -841,7 +874,7 @@ export async function loadMidDayPrepState(
 
   return {
     template: tmplRow,
-    templateItems,
+    templateItems: resolvedItems,
     instance: rowToInstance(instanceRow),
     completions,
     authors,
