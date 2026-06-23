@@ -883,6 +883,35 @@ export async function setItemPar(
 }
 
 /**
+ * Resolve a prep LINE → its registry item, then promote that item to a GLOBAL
+ * definition (Item/Inventory Spine 2B). Routes only know the line id
+ * (checklist_template_items.id); `promoteItemToGlobal` takes the items.id. This
+ * thin wrapper binds the line's template to the actor's location (IDOR), resolves
+ * the line's item_id, and delegates to `promoteItemToGlobal` (which re-binds the
+ * item's own location). Route enforces MoO+ (≥8).
+ */
+export async function promotePrepLineItemToGlobal(
+  actor: AuthContext,
+  args: { templateId: string; lineItemId: string },
+): Promise<void> {
+  await loadAuthorizedPrepTemplate(actor, args.templateId);
+  const sb = getServiceRoleClient();
+
+  const { data: line, error: lErr } = await sb
+    .from("checklist_template_items")
+    .select("item_id")
+    .eq("id", args.lineItemId)
+    .eq("template_id", args.templateId)
+    .eq("active", true)
+    .maybeSingle<{ item_id: string | null }>();
+  if (lErr) throw new Error(`promotePrepLineItemToGlobal line read failed: ${lErr.message}`);
+  if (!line) throw new AdminTemplateError(404, "item_not_found", "Template item not found");
+  if (!line.item_id) throw new AdminTemplateError(409, "item_unlinked", "This line has no linked registry item");
+
+  await promoteItemToGlobal(actor, { itemId: line.item_id });
+}
+
+/**
  * Promote a location-owned item to a GLOBAL definition (location_id → NULL), so
  * its name + recommended default_par apply company-wide. Existing
  * item_par_levels rows are left as-is — each location keeps its own override.
