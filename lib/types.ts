@@ -140,6 +140,50 @@ export interface ParLevel {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Item / inventory registry (Item/Inventory Spine, sub-project 1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ItemKind = "sku_direct" | "composite" | "manual";
+
+/**
+ * Item registry row. The entity reports will reference (via
+ * checklist_template_items.item_id). location_id NULL = global default; SET =
+ * location-owned. Append-only (disable via active). prep par migrates here as
+ * default_par; per-location par + BOM + classification land in later slices.
+ * No consumers this slice (shape only).
+ */
+export interface Item {
+  id: string;
+  locationId: string | null;
+  kind: ItemKind;
+  name: string;
+  nameEs: string | null;
+  section: string | null;
+  defaultPar: number | null;
+  defaultParUnit: string | null;
+  unit: string | null;
+  notes: string | null;
+  active: boolean;
+  createdAt: string;
+  createdBy: string | null;
+  updatedAt: string;
+  updatedBy: string | null;
+}
+
+/** Costing BOM edge: a parent item's component is a SKU (vendor_item) XOR a sub-item. */
+export interface ItemComponent {
+  id: string;
+  itemId: string;
+  componentSkuId: string | null;
+  componentItemId: string | null;
+  quantity: number;
+  unit: string | null;
+  displayOrder: number;
+  createdAt: string;
+  createdBy: string | null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Reports (SPEC_AMENDMENTS.md C.42)
 // ─────────────────────────────────────────────────────────────────────────────
 
