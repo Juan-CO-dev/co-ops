@@ -39,12 +39,24 @@ export interface AdminPrepTemplateListItem {
   activeItemCount: number;
 }
 
+/** Per-line par context for the admin editor (Item/Inventory Spine 2B). */
+export interface PrepLineParContext {
+  itemId: string | null;
+  itemGlobal: boolean;
+  /** The item's default_par = the global recommendation (NOT the vestigial line prep_meta). */
+  recommendedPar: number | null;
+  recommendedParUnit: string | null;
+  overrides: Array<{ dayOfWeek: number | null; parValue: number | null; parUnit: string | null; parMode: ParMode }>;
+}
+
 export interface AdminPrepTemplateDetail {
   id: string;
   name: string;
   prepSubtype: PrepSubtype;
   locationId: string;
   items: ChecklistTemplateItem[];
+  /** Keyed by LINE id (checklist_template_items.id). */
+  parContext: Record<string, PrepLineParContext>;
 }
 
 /** Typed error the routes map to jsonError(status, code). */
@@ -142,12 +154,70 @@ export async function getPrepTemplateDetail(
     .returns<TemplateItemRow[]>();
   if (error) throw new Error(`getPrepTemplateDetail items failed: ${error.message}`);
   const items = (data ?? []).map(rowToTemplateItem).map(narrowPrepTemplateItem);
+
+  // ── Par context per line (Item/Inventory Spine 2B) ────────────────────────
+  // Each line resolves to its registry item's global status + this location's
+  // active par overrides. Lines with no linked item get an empty context.
+  const itemIds = Array.from(
+    new Set(items.map((it) => it.itemId).filter((v): v is string => typeof v === "string")),
+  );
+
+  const itemGlobalById = new Map<string, boolean>();
+  const recommendationById = new Map<string, { par: number | null; parUnit: string | null }>();
+  const overridesByItem = new Map<
+    string,
+    Array<{ dayOfWeek: number | null; parValue: number | null; parUnit: string | null; parMode: ParMode }>
+  >();
+
+  if (itemIds.length > 0) {
+    const { data: itemRows, error: iErr } = await sb
+      .from("items")
+      .select("id, location_id, default_par, default_par_unit")
+      .in("id", itemIds)
+      .returns<Array<{ id: string; location_id: string | null; default_par: number | null; default_par_unit: string | null }>>();
+    if (iErr) throw new Error(`getPrepTemplateDetail items lookup failed: ${iErr.message}`);
+    for (const r of itemRows ?? []) {
+      itemGlobalById.set(r.id, r.location_id === null);
+      recommendationById.set(r.id, { par: r.default_par, parUnit: r.default_par_unit });
+    }
+
+    const { data: parRows, error: pErr } = await sb
+      .from("item_par_levels")
+      .select("item_id, day_of_week, par_value, par_unit, par_mode")
+      .in("item_id", itemIds)
+      .eq("location_id", tmpl.location_id)
+      .eq("active", true)
+      .returns<Array<{ item_id: string; day_of_week: number | null; par_value: number | null; par_unit: string | null; par_mode: ParMode }>>();
+    if (pErr) throw new Error(`getPrepTemplateDetail par lookup failed: ${pErr.message}`);
+    for (const r of parRows ?? []) {
+      const arr = overridesByItem.get(r.item_id) ?? [];
+      arr.push({ dayOfWeek: r.day_of_week, parValue: r.par_value, parUnit: r.par_unit, parMode: r.par_mode });
+      overridesByItem.set(r.item_id, arr);
+    }
+  }
+
+  const parContext: Record<string, PrepLineParContext> = {};
+  for (const it of items) {
+    const itemId = typeof it.itemId === "string" ? it.itemId : null;
+    const rec = itemId ? recommendationById.get(itemId) ?? null : null;
+    parContext[it.id] = itemId
+      ? {
+          itemId,
+          itemGlobal: itemGlobalById.get(itemId) ?? false,
+          recommendedPar: rec?.par ?? null,
+          recommendedParUnit: rec?.parUnit ?? null,
+          overrides: overridesByItem.get(itemId) ?? [],
+        }
+      : { itemId: null, itemGlobal: false, recommendedPar: null, recommendedParUnit: null, overrides: [] };
+  }
+
   return {
     id: tmpl.id,
     name: tmpl.name,
     prepSubtype: tmpl.prep_subtype as PrepSubtype,
     locationId: tmpl.location_id,
     items,
+    parContext,
   };
 }
 

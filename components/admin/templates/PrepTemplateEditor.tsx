@@ -6,15 +6,22 @@ import type { ChecklistTemplateItem, PrepSection } from "@/lib/types";
 import { PREP_SECTIONS } from "@/lib/prep-sections";
 import { PrepItemEditPanel } from "./PrepItemEditPanel";
 import { AddPrepItemForm } from "./AddPrepItemForm";
+import type { PrepLineParContext } from "@/lib/admin/templates";
 
 export function PrepTemplateEditor({
   templateId,
   prepSubtype,
   items,
+  actorLevel,
+  locationId,
+  parContext,
 }: {
   templateId: string;
   prepSubtype: "am_prep" | "mid_day_prep";
   items: ChecklistTemplateItem[];
+  actorLevel: number;
+  locationId: string;
+  parContext: Record<string, PrepLineParContext>;
 }) {
   const { t } = useTranslation();
   const [addingIn, setAddingIn] = useState<PrepSection | null>(null);
@@ -52,7 +59,14 @@ export function PrepTemplateEditor({
                 <AddPrepItemForm templateId={templateId} prepSubtype={prepSubtype} defaultSection={section as PrepSection} onClose={() => setAddingIn(null)} />
               ) : null}
               {sectionItems.map((it) => (
-                <PrepItemEditPanel key={it.id} templateId={templateId} item={it} />
+                <PrepItemEditPanel
+                  key={it.id}
+                  templateId={templateId}
+                  item={it}
+                  actorLevel={actorLevel}
+                  locationId={locationId}
+                  parCtx={parContext[it.id] ?? { itemId: null, itemGlobal: false, recommendedPar: null, recommendedParUnit: null, overrides: [] }}
+                />
               ))}
             </div>
           </section>

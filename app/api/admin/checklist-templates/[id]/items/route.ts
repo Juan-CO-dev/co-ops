@@ -12,7 +12,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (parsed instanceof Response) return parsed;
   const ctx = await requireSession(req, `/api/admin/checklist-templates/${id}/items`);
   if (ctx instanceof Response) return ctx;
-  if (ROLES[ctx.user.role].level < 7) return jsonError(403, "forbidden");
+  if (ROLES[ctx.user.role].level < 6) return jsonError(403, "forbidden");
   const su = assertStepUp(ctx, "B");
   if (!su.ok) return jsonError(403, su.code);
 

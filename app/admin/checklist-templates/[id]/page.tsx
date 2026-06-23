@@ -12,7 +12,8 @@ export default async function AdminPrepTemplateDetailPage({
 }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const auth = await requireSessionFromHeaders("/admin");
-  if (ROLES[auth.user.role].level < 7) redirect("/dashboard");
+  const actorLevel = ROLES[auth.user.role].level;
+  if (actorLevel < 6) redirect("/dashboard");
   const lang = auth.user.language;
 
   let detail: Awaited<ReturnType<typeof getPrepTemplateDetail>>;
@@ -32,7 +33,14 @@ export default async function AdminPrepTemplateDetailPage({
         {serverT(lang, `admin.templates.subtype.${detail.prepSubtype}` as TranslationKey)}
       </h1>
       <p className="mt-1 text-sm text-co-text-muted">{detail.name}</p>
-      <PrepTemplateEditor templateId={detail.id} prepSubtype={detail.prepSubtype} items={detail.items} />
+      <PrepTemplateEditor
+        templateId={detail.id}
+        prepSubtype={detail.prepSubtype}
+        items={detail.items}
+        actorLevel={actorLevel}
+        locationId={detail.locationId}
+        parContext={detail.parContext}
+      />
     </div>
   );
 }
