@@ -61,3 +61,19 @@ export function resolveSectionLabel(
   if (!entry) return fallback;
   return (language === "es" ? entry.es : entry.en) ?? entry.en ?? fallback;
 }
+
+/**
+ * Display label for a section slug from a PrepSectionDefn[] (the admin view's
+ * `sections`), preferring the user's language. Falls back to the slug. Used by
+ * the admin template surfaces (section headers + pickers) so a rename shows in
+ * the admin, not just on operator reports. CLIENT-SAFE (pure).
+ */
+export function sectionLabelByLang(
+  sections: ReadonlyArray<{ slug: string; labelEn: string; labelEs: string | null }>,
+  slug: string,
+  language: string,
+): string {
+  const s = sections.find((x) => x.slug === slug);
+  if (!s) return slug;
+  return (language === "es" ? s.labelEs : s.labelEn) ?? s.labelEn ?? slug;
+}

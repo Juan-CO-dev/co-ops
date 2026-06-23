@@ -17,8 +17,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
-import { PREP_SECTIONS } from "@/lib/prep-sections";
-import type { ChecklistTemplateItem, PrepSection } from "@/lib/types";
+import { PREP_SECTIONS, sectionLabelByLang } from "@/lib/prep-sections";
+import type { ChecklistTemplateItem, PrepSection, PrepSectionDefn } from "@/lib/types";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { ChecklistLocationView, ChecklistRegistryItem, PrepSubtype } from "@/lib/admin/templates";
 import { ParGrid } from "./ParGrid";
@@ -29,12 +29,14 @@ export function LocationChecklistTab({
   view,
   subtype,
   registry,
+  sections,
 }: {
   view: ChecklistLocationView;
   subtype: PrepSubtype;
   registry: ChecklistRegistryItem[];
+  sections: PrepSectionDefn[];
 }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
 
   // No active template for this subtype at this location.
   if (!view.templateId) {
@@ -73,7 +75,7 @@ export function LocationChecklistTab({
         return (
           <section key={section}>
             <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
-              {t("admin.templates.section_label")}: {section}
+              {t("admin.templates.section_label")}: {sectionLabelByLang(sections, section, language)}
             </h2>
             <div className="mt-2 flex flex-col gap-2">
               {sectionItems.map((it) => (
@@ -104,9 +106,10 @@ export function LocationChecklistTab({
         locationId={view.locationId}
         subtype={subtype}
         enableable={enableable}
+        sections={sections}
       />
 
-      <AddLocalItem templateId={templateId} subtype={subtype} />
+      <AddLocalItem templateId={templateId} subtype={subtype} sections={sections} />
     </div>
   );
 }
@@ -213,12 +216,14 @@ function EnableFromRegistry({
   locationId,
   subtype,
   enableable,
+  sections,
 }: {
   locationId: string;
   subtype: PrepSubtype;
   enableable: ChecklistRegistryItem[];
+  sections: PrepSectionDefn[];
 }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
   const [open, setOpen] = useState(false);
@@ -274,7 +279,7 @@ function EnableFromRegistry({
                 ) : null}
                 {r.section ? (
                   <span className="ml-2 text-xs text-co-text-muted">
-                    {t("admin.templates.section_label")}: {r.section}
+                    {t("admin.templates.section_label")}: {r.section ? sectionLabelByLang(sections, r.section, language) : ""}
                   </span>
                 ) : null}
               </span>
@@ -294,8 +299,8 @@ function EnableFromRegistry({
   );
 }
 
-function AddLocalItem({ templateId, subtype }: { templateId: string; subtype: PrepSubtype }) {
-  const { t } = useTranslation();
+function AddLocalItem({ templateId, subtype, sections }: { templateId: string; subtype: PrepSubtype; sections: PrepSectionDefn[] }) {
+  const { t, language } = useTranslation();
   const [section, setSection] = useState<PrepSection | null>(null);
 
   return (
@@ -315,7 +320,7 @@ function AddLocalItem({ templateId, subtype }: { templateId: string; subtype: Pr
             <option value="">{t("admin.templates.add_item")}</option>
             {PREP_SECTIONS.map((s) => (
               <option key={s} value={s}>
-                {t(`admin.templates.section.${s}` as TranslationKey)}
+                {sectionLabelByLang(sections, s, language)}
               </option>
             ))}
           </select>
@@ -327,6 +332,7 @@ function AddLocalItem({ templateId, subtype }: { templateId: string; subtype: Pr
             templateId={templateId}
             prepSubtype={subtype}
             defaultSection={section}
+            sections={sections}
             onClose={() => setSection(null)}
           />
         </div>

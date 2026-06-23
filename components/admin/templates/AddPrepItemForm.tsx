@@ -4,23 +4,24 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
-import { PREP_SECTIONS } from "@/lib/prep-sections";
-import type { PrepSection } from "@/lib/types";
-import type { TranslationKey } from "@/lib/i18n/types";
+import { PREP_SECTIONS, sectionLabelByLang } from "@/lib/prep-sections";
+import type { PrepSection, PrepSectionDefn } from "@/lib/types";
 import { postJson, resolveErrorKey } from "./shared";
 
 export function AddPrepItemForm({
   templateId,
   prepSubtype,
   defaultSection,
+  sections,
   onClose,
 }: {
   templateId: string;
   prepSubtype: "am_prep" | "mid_day_prep";
   defaultSection: PrepSection;
+  sections: PrepSectionDefn[];
   onClose: () => void;
 }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
 
@@ -66,7 +67,7 @@ export function AddPrepItemForm({
           <span className="text-sm font-bold text-co-text">{t("admin.templates.field.section")}</span>
           <select className={fieldCls} value={section} onChange={(e) => setSection(e.target.value as PrepSection)}>
             {PREP_SECTIONS.map((s) => (
-              <option key={s} value={s}>{t(`admin.templates.section.${s}` as TranslationKey)}</option>
+              <option key={s} value={s}>{sectionLabelByLang(sections, s, language)}</option>
             ))}
           </select>
         </label>

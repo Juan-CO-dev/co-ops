@@ -15,7 +15,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
-import { PREP_SECTIONS } from "@/lib/prep-sections";
+import { PREP_SECTIONS, sectionLabelByLang } from "@/lib/prep-sections";
 import type { PrepSection } from "@/lib/types";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { ChecklistRegistryItem } from "@/lib/admin/templates";
@@ -31,7 +31,7 @@ export function GlobalRegistryTab({
   sections: PrepSectionDefn[];
   actorLevel: number;
 }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const canAdd = actorLevel >= 7;
   const canEditSections = actorLevel >= 8; // MoO+
 
@@ -68,7 +68,7 @@ export function GlobalRegistryTab({
         </section>
       ) : null}
 
-      {canAdd ? <AddGlobalItem /> : null}
+      {canAdd ? <AddGlobalItem sections={sections} /> : null}
 
       {sectionKeys.map((section) => {
         const items = groups.get(section) ?? [];
@@ -76,7 +76,7 @@ export function GlobalRegistryTab({
         return (
           <section key={section}>
             <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
-              {t("admin.templates.section_label")}: {section}
+              {t("admin.templates.section_label")}: {sectionLabelByLang(sections, section, language)}
             </h2>
             <div className="mt-2 flex flex-col gap-2">
               {items.map((r) => (
@@ -301,8 +301,8 @@ function RegistryRow({ item, actorLevel }: { item: ChecklistRegistryItem; actorL
   );
 }
 
-function AddGlobalItem() {
-  const { t } = useTranslation();
+function AddGlobalItem({ sections }: { sections: PrepSectionDefn[] }) {
+  const { t, language } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
   const [open, setOpen] = useState(false);
@@ -382,7 +382,7 @@ function AddGlobalItem() {
           >
             {PREP_SECTIONS.map((s) => (
               <option key={s} value={s}>
-                {t(`admin.templates.section.${s}` as TranslationKey)}
+                {sectionLabelByLang(sections, s, language)}
               </option>
             ))}
           </select>
