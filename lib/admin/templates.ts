@@ -221,6 +221,37 @@ export async function getPrepTemplateDetail(
   };
 }
 
+/**
+ * Resolve the active prep template id (am_prep | mid_day_prep) at a location
+ * (most-recent-active). General form; the am-prep specialization wraps it.
+ */
+async function resolveActivePrepTemplateId(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+  subtype: PrepSubtype,
+): Promise<string | null> {
+  const { data, error } = await sb
+    .from("checklist_templates")
+    .select("id")
+    .eq("location_id", locationId)
+    .eq("type", "prep")
+    .eq("prep_subtype", subtype)
+    .eq("active", true)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ id: string }>();
+  if (error) throw new Error(`resolveActivePrepTemplateId failed: ${error.message}`);
+  return data?.id ?? null;
+}
+
+/** Resolve the active am_prep template id at a location (most-recent-active). */
+async function resolveActiveAmPrepTemplateId(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+): Promise<string | null> {
+  return resolveActivePrepTemplateId(sb, locationId, "am_prep");
+}
+
 /** Resolve the active opening template id at a location (most-recent-active). */
 async function resolveActiveOpeningTemplateId(
   sb: ReturnType<typeof getServiceRoleClient>,
@@ -1030,4 +1061,462 @@ export async function promoteItemToGlobal(
     ipAddress: null,
     userAgent: null,
   });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Registry default-set + per-location enablement (Item/Inventory Spine 2B′)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The registry-item fields propagation needs to build a location line. */
+interface DefaultItemFields {
+  itemId: string;
+  section: PrepSection;
+  name: string;
+  nameEs: string | null;
+  defaultPar: number | null;
+  defaultParUnit: string | null;
+}
+
+/**
+ * A sane min_role_level for a newly-created prep line linking an existing item:
+ * the min_role_level of an existing active prep line on the same template
+ * (most-recent), else 0. Routes set the operational gate; this is only the
+ * default for registry-driven line creation.
+ */
+async function resolveDefaultMinRole(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  templateId: string,
+): Promise<number> {
+  const { data, error } = await sb
+    .from("checklist_template_items")
+    .select("min_role_level")
+    .eq("template_id", templateId)
+    .eq("active", true)
+    .order("display_order", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ min_role_level: number }>();
+  if (error) throw new Error(`resolveDefaultMinRole failed: ${error.message}`);
+  // Fallback 3 (KH) = the prep norm + schema default, never 0 ("anyone").
+  // Only fires for a template with zero active lines (shouldn't happen for an
+  // active am-prep template, which always has lines).
+  return data?.min_role_level ?? 3;
+}
+
+/** Build the translations blob from an item's name_es (label only), or null. */
+function translationsFromItem(nameEs: string | null): ChecklistTemplateItemTranslations | null {
+  return nameEs ? { es: { label: nameEs } } : null;
+}
+
+/**
+ * Ensure an active line on `templateId` links `item`. Idempotent: if an active
+ * line already links the item, returns it without inserting. Otherwise inserts a
+ * line linking the EXISTING item (no new item row), seeds an all-days inherit
+ * par at the location if absent, and — for am_prep — creates the opening mirror.
+ * Returns the (existing or new) line id + opening mirror id (am_prep only).
+ */
+async function ensureItemLineOnTemplate(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  args: {
+    templateId: string;
+    subtype: PrepSubtype;
+    locationId: string;
+    item: DefaultItemFields;
+    actorId: string;
+  },
+): Promise<{ lineId: string; openingMirrorId: string | null; created: boolean }> {
+  const { templateId, subtype, locationId, item, actorId } = args;
+
+  // Idempotency: an active line already linking this item.
+  const { data: existing, error: exErr } = await sb
+    .from("checklist_template_items")
+    .select("id")
+    .eq("template_id", templateId)
+    .eq("item_id", item.itemId)
+    .eq("active", true)
+    .order("display_order", { ascending: true })
+    .limit(1)
+    .maybeSingle<{ id: string }>();
+  if (exErr) throw new Error(`ensureItemLineOnTemplate idempotency read failed: ${exErr.message}`);
+  if (existing) {
+    let mirrorId: string | null = null;
+    if (subtype === "am_prep") {
+      const { data: mirror, error: mErr } = await sb
+        .from("checklist_template_items")
+        .select("id")
+        .eq("references_template_item_id", existing.id)
+        .eq("active", true)
+        .order("display_order", { ascending: true })
+        .limit(1)
+        .maybeSingle<{ id: string }>();
+      if (mErr) throw new Error(`ensureItemLineOnTemplate mirror read failed: ${mErr.message}`);
+      mirrorId = mirror?.id ?? null;
+    }
+    return { lineId: existing.id, openingMirrorId: mirrorId, created: false };
+  }
+
+  // Next display order on the template.
+  const { data: maxRow, error: mxErr } = await sb
+    .from("checklist_template_items")
+    .select("display_order")
+    .eq("template_id", templateId)
+    .order("display_order", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ display_order: number }>();
+  if (mxErr) throw new Error(`ensureItemLineOnTemplate max order failed: ${mxErr.message}`);
+  const displayOrder = (maxRow?.display_order ?? 0) + 1;
+
+  const minRoleLevel = await resolveDefaultMinRole(sb, templateId);
+  const translations = translationsFromItem(item.nameEs);
+
+  // Insert the line linking the EXISTING item (no new item row).
+  const { data: inserted, error: insErr } = await sb
+    .from("checklist_template_items")
+    .insert({
+      template_id: templateId,
+      station: item.section,
+      display_order: displayOrder,
+      label: item.name,
+      description: null,
+      min_role_level: minRoleLevel,
+      required: false,
+      expects_count: false,
+      expects_photo: false,
+      vendor_item_id: null,
+      active: true,
+      translations,
+      prep_meta: {
+        section: item.section,
+        parValue: item.defaultPar,
+        parUnit: item.defaultParUnit,
+        specialInstruction: null,
+        columns: columnsForSection(item.section, false),
+      },
+      report_reference_type: null,
+      references_template_item_id: null,
+      item_id: item.itemId,
+    })
+    .select("id")
+    .maybeSingle<{ id: string }>();
+  if (insErr) throw new Error(`ensureItemLineOnTemplate insert failed: ${insErr.message}`);
+  if (!inserted) throw new Error(`ensureItemLineOnTemplate insert returned no row`);
+  const lineId = inserted.id;
+
+  // Seed an all-days inherit par at the location if absent (forensic floor for
+  // the resolver; manual overrides supersede via setItemPar later).
+  const { data: parExisting, error: pErr } = await sb
+    .from("item_par_levels")
+    .select("id")
+    .eq("item_id", item.itemId)
+    .eq("location_id", locationId)
+    .is("day_of_week", null)
+    .eq("active", true)
+    .maybeSingle<{ id: string }>();
+  if (pErr) throw new Error(`ensureItemLineOnTemplate par read failed: ${pErr.message}`);
+  if (!parExisting) {
+    const { error: parInsErr } = await sb.from("item_par_levels").insert({
+      item_id: item.itemId,
+      location_id: locationId,
+      day_of_week: null,
+      par_value: null,
+      par_unit: null,
+      par_mode: "inherit",
+      active: true,
+      created_by: actorId,
+      updated_by: actorId,
+    });
+    if (parInsErr) throw new Error(`ensureItemLineOnTemplate par seed failed: ${parInsErr.message}`);
+  }
+
+  let openingMirrorId: string | null = null;
+  if (subtype === "am_prep") {
+    openingMirrorId = await createOpeningMirror({
+      amPrepItemId: lineId,
+      itemId: item.itemId,
+      locationId,
+      section: item.section,
+      parValue: item.defaultPar,
+      parUnit: item.defaultParUnit,
+      label: item.name,
+      translations,
+      minRoleLevel,
+      required: false,
+    });
+  }
+
+  return { lineId, openingMirrorId, created: true };
+}
+
+/**
+ * Propagate a default registry item to every ACTIVE location: ensure an active
+ * am_prep line links the item at each (skipping locations with no active am_prep
+ * template). Idempotent per location. Returns the location ids where a line was
+ * NEWLY created. Shared by setItemDefault(true) and addRegistryItem(isDefault).
+ */
+async function propagateDefaultItem(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  item: DefaultItemFields,
+  actorId: string,
+): Promise<string[]> {
+  const { data: locations, error: locErr } = await sb
+    .from("locations")
+    .select("id")
+    .eq("active", true)
+    .returns<Array<{ id: string }>>();
+  if (locErr) throw new Error(`propagateDefaultItem locations read failed: ${locErr.message}`);
+
+  const propagatedLocationIds: string[] = [];
+  for (const loc of locations ?? []) {
+    const templateId = await resolveActiveAmPrepTemplateId(sb, loc.id);
+    if (!templateId) continue; // no active am_prep template at this location — skip
+    const { created } = await ensureItemLineOnTemplate(sb, {
+      templateId,
+      subtype: "am_prep",
+      locationId: loc.id,
+      item,
+      actorId,
+    });
+    if (created) propagatedLocationIds.push(loc.id);
+  }
+  return propagatedLocationIds;
+}
+
+/**
+ * Set (or clear) a global registry item's default-set membership. When set true,
+ * propagates the item to every active location's am_prep template (idempotent).
+ * When set false, only flips the flag — existing location lines are NOT removed
+ * (append-only; disable a location line via removePrepItem). Route enforces role.
+ *
+ * The item must be a GLOBAL registry item (location_id IS NULL). Missing/inactive
+ * → 404; location-owned → 409 not_global.
+ */
+export async function setItemDefault(
+  actor: AuthContext,
+  args: { itemId: string; isDefault: boolean },
+): Promise<{ propagatedLocationIds: string[] }> {
+  const sb = getServiceRoleClient();
+
+  const { data: item, error: rErr } = await sb
+    .from("items")
+    .select("id, location_id, active, is_default, section, name, name_es, default_par, default_par_unit")
+    .eq("id", args.itemId)
+    .maybeSingle<{
+      id: string;
+      location_id: string | null;
+      active: boolean;
+      is_default: boolean;
+      section: string | null;
+      name: string;
+      name_es: string | null;
+      default_par: number | null;
+      default_par_unit: string | null;
+    }>();
+  if (rErr) throw new Error(`setItemDefault read failed: ${rErr.message}`);
+  if (!item || !item.active) throw new AdminTemplateError(404, "item_not_found", "Item not found");
+  if (item.location_id !== null) throw new AdminTemplateError(409, "not_global", "Item is not global");
+
+  const beforeIsDefault = item.is_default;
+
+  const { error: uErr } = await sb
+    .from("items")
+    .update({ is_default: args.isDefault, updated_by: actor.user.id, updated_at: new Date().toISOString() })
+    .eq("id", args.itemId);
+  if (uErr) throw new Error(`setItemDefault update failed: ${uErr.message}`);
+
+  let propagatedLocationIds: string[] = [];
+  if (args.isDefault) {
+    if (!isPrepSectionName(item.section)) {
+      throw new AdminTemplateError(409, "invalid_section", "Item section is not a prep section; cannot propagate");
+    }
+    propagatedLocationIds = await propagateDefaultItem(
+      sb,
+      {
+        itemId: item.id,
+        section: item.section,
+        name: item.name,
+        nameEs: item.name_es,
+        defaultPar: item.default_par,
+        defaultParUnit: item.default_par_unit,
+      },
+      actor.user.id,
+    );
+  }
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "item.set_default",
+    resourceTable: "items",
+    resourceId: args.itemId,
+    metadata: {
+      itemId: args.itemId,
+      before: { is_default: beforeIsDefault },
+      after: { is_default: args.isDefault },
+      propagated_location_ids: propagatedLocationIds,
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+
+  return { propagatedLocationIds };
+}
+
+export interface AddRegistryItemInput {
+  name: string;
+  nameEs: string | null;
+  section: PrepSection;
+  recommendedPar: number | null;
+  recommendedParUnit: string | null;
+  isDefault: boolean;
+}
+
+/**
+ * Create a GLOBAL registry item (location_id NULL, kind 'manual'). When
+ * isDefault, propagates it to every active location's am_prep template (same
+ * path as setItemDefault(true)). Route enforces role.
+ */
+export async function addRegistryItem(
+  actor: AuthContext,
+  args: AddRegistryItemInput,
+): Promise<{ itemId: string; propagatedLocationIds: string[] }> {
+  const name = args.name.trim();
+  if (!name) throw new AdminTemplateError(400, "invalid_label", "Name is required");
+  if (!isPrepSectionName(args.section)) throw new AdminTemplateError(400, "invalid_section", "Unknown section");
+  if (args.recommendedPar !== null && (!Number.isFinite(args.recommendedPar) || args.recommendedPar < 0)) {
+    throw new AdminTemplateError(400, "invalid_par", "Par must be a non-negative number or empty");
+  }
+
+  const sb = getServiceRoleClient();
+  const nameEs = args.nameEs?.trim() || null;
+  const parUnit = args.recommendedParUnit?.trim() || null;
+
+  const { data: itemRow, error: iErr } = await sb
+    .from("items")
+    .insert({
+      location_id: null,
+      kind: "manual",
+      name,
+      name_es: nameEs,
+      section: args.section,
+      default_par: args.recommendedPar,
+      default_par_unit: parUnit,
+      is_default: args.isDefault,
+      active: true,
+      created_by: actor.user.id,
+    })
+    .select("id")
+    .maybeSingle<{ id: string }>();
+  if (iErr) throw new Error(`addRegistryItem insert failed: ${iErr.message}`);
+  if (!itemRow) throw new Error(`addRegistryItem insert returned no row`);
+  const itemId = itemRow.id;
+
+  let propagatedLocationIds: string[] = [];
+  if (args.isDefault) {
+    propagatedLocationIds = await propagateDefaultItem(
+      sb,
+      {
+        itemId,
+        section: args.section,
+        name,
+        nameEs,
+        defaultPar: args.recommendedPar,
+        defaultParUnit: parUnit,
+      },
+      actor.user.id,
+    );
+  }
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "item.create",
+    resourceTable: "items",
+    resourceId: itemId,
+    metadata: {
+      scope: "global",
+      is_default: args.isDefault,
+      item_id: itemId,
+      propagated_location_ids: propagatedLocationIds,
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+
+  return { itemId, propagatedLocationIds };
+}
+
+/**
+ * Enable a GLOBAL registry item at one location's prep template (am_prep |
+ * mid_day_prep) by linking an active line to the EXISTING item. Idempotent: if a
+ * line already links the item, returns it. For am_prep also creates the opening
+ * mirror. Route enforces role; this binds the location for IDOR.
+ *
+ * IDOR: locationId must be in the actor's authorized locations (404 otherwise).
+ * The item must be a global registry item (location_id NULL, active) → else 409
+ * not_global. No active template for the subtype → 404 template_not_found.
+ */
+export async function enableRegistryItemAtLocation(
+  actor: AuthContext,
+  args: { locationId: string; subtype: PrepSubtype; itemId: string },
+): Promise<{ lineId: string; openingMirrorId: string | null }> {
+  if (!lockLocationContext(actorLocationShape(actor), args.locationId)) {
+    throw new AdminTemplateError(404, "location_not_found", "Location not accessible");
+  }
+  const sb = getServiceRoleClient();
+
+  const { data: item, error: rErr } = await sb
+    .from("items")
+    .select("id, location_id, active, section, name, name_es, default_par, default_par_unit")
+    .eq("id", args.itemId)
+    .maybeSingle<{
+      id: string;
+      location_id: string | null;
+      active: boolean;
+      section: string | null;
+      name: string;
+      name_es: string | null;
+      default_par: number | null;
+      default_par_unit: string | null;
+    }>();
+  if (rErr) throw new Error(`enableRegistryItemAtLocation read failed: ${rErr.message}`);
+  if (!item || !item.active) throw new AdminTemplateError(404, "item_not_found", "Item not found");
+  if (item.location_id !== null) throw new AdminTemplateError(409, "not_global", "Item is not global");
+  if (!isPrepSectionName(item.section)) {
+    throw new AdminTemplateError(409, "invalid_section", "Item section is not a prep section");
+  }
+
+  const templateId = await resolveActivePrepTemplateId(sb, args.locationId, args.subtype);
+  if (!templateId) throw new AdminTemplateError(404, "template_not_found", "Template not found");
+
+  const { lineId, openingMirrorId } = await ensureItemLineOnTemplate(sb, {
+    templateId,
+    subtype: args.subtype,
+    locationId: args.locationId,
+    item: {
+      itemId: item.id,
+      section: item.section,
+      name: item.name,
+      nameEs: item.name_es,
+      defaultPar: item.default_par,
+      defaultParUnit: item.default_par_unit,
+    },
+    actorId: actor.user.id,
+  });
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "checklist_template_item.create",
+    resourceTable: "checklist_template_items",
+    resourceId: lineId,
+    metadata: {
+      enabled_from_registry: true,
+      item_id: item.id,
+      location_id: args.locationId,
+      subtype: args.subtype,
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+
+  return { lineId, openingMirrorId };
 }

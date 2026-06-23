@@ -163,6 +163,8 @@ export interface Item {
   defaultParUnit: string | null;
   unit: string | null;
   notes: string | null;
+  /** Global default-set membership (only meaningful when locationId is null). is_default=true propagates to all active locations (migration 0081). */
+  isDefault: boolean;
   active: boolean;
   createdAt: string;
   createdBy: string | null;
