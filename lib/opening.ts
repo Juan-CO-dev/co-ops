@@ -43,7 +43,7 @@ import {
   rowToCompletion,
   rowToInstance,
 } from "./checklist-rows";
-import { loadItemDefns } from "@/lib/items";
+import { loadItemDefns, loadItemOverrides, operationalDayOfWeek, pickOverride, resolveLineDefinition } from "@/lib/items";
 import { isPrepData } from "./prep";
 import type { RoleCode } from "./roles";
 import {
@@ -700,20 +700,26 @@ export async function loadOpeningState(
       priorOperationalDate: yesterday,
       openingTemplateItemIds: phase2Items.map((it) => it.id),
     });
-    const phase2Defns = await loadItemDefns(
-      service,
-      phase2Items.map((it) => it.itemId).filter((x): x is string => !!x),
-    );
+    // Item/Inventory Spine 2B: Phase-2 par resolves through the override-aware
+    // resolver (per-location item_par_levels for the OPENING's operational day).
+    // The day comes from args.date (the opening day) — NOT `yesterday`, which is
+    // only the prior-day closer-count lookup. Closer COUNT path is unchanged.
+    const phase2ItemIds = phase2Items.map((it) => it.itemId).filter((x): x is string => !!x);
+    const phase2Defns = await loadItemDefns(service, phase2ItemIds);
+    const phase2Overrides = await loadItemOverrides(service, phase2ItemIds, args.locationId);
+    const openingDow = operationalDayOfWeek(args.date);
     snapshotsJson = phase2Items.map((it) => {
       const live = liveSnapshotMap.get(it.id) ?? null;
       const meta = it.prepMeta as OpeningPhase2Meta | null;
-      const defn = it.itemId ? phase2Defns.get(it.itemId) ?? null : null;
+      const item = it.itemId ? phase2Defns.get(it.itemId) ?? null : null;
+      const ovr = it.itemId ? pickOverride(phase2Overrides.get(it.itemId) ?? [], openingDow) : null;
+      const r = resolveLineDefinition(it, item, ovr);
       return {
         template_item_id: it.id,
         closing_instance_id: live?.amPrepInstanceId ?? null,
         closer_count: live?.total ?? null,
-        par_value: defn ? defn.defaultPar : (meta?.parValue ?? null),
-        par_unit: defn ? defn.defaultParUnit : (meta?.parUnit ?? null),
+        par_value: item ? r.par : (meta?.parValue ?? null),
+        par_unit: item ? r.parUnit : (meta?.parUnit ?? null),
       };
     });
   }
