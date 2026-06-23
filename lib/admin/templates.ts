@@ -14,6 +14,7 @@
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
 import { isAllLocationsAccess, lockLocationContext } from "@/lib/locations";
+import { ROLES } from "@/lib/roles";
 import {
   TEMPLATE_ITEM_COLUMNS,
   type TemplateItemRow,
@@ -1519,4 +1520,102 @@ export async function enableRegistryItemAtLocation(
   });
 
   return { lineId, openingMirrorId };
+}
+
+// ── 3-Tab admin aggregate view (Item/Inventory Spine 2B′) ──────────────────
+
+export interface ChecklistRegistryItem {
+  itemId: string;
+  name: string;
+  nameEs: string | null;
+  section: string | null;
+  recommendedPar: number | null;
+  recommendedParUnit: string | null;
+  isDefault: boolean;
+}
+
+export interface ChecklistLocationView {
+  locationId: string;
+  name: string;
+  code: string;
+  templateId: string | null;
+  items: ChecklistTemplateItem[];
+  parContext: Record<string, PrepLineParContext>;
+  /** Item ids this location currently runs (active lines). */
+  enabledItemIds: string[];
+}
+
+export interface ChecklistAdminView {
+  subtype: PrepSubtype;
+  actorLevel: number;
+  registry: ChecklistRegistryItem[];
+  locations: ChecklistLocationView[];
+}
+
+/**
+ * Aggregate view for the 3-tab checklist admin: the global registry (the pool
+ * the Global tab shows, with default-set membership) + each accessible
+ * location's checklist for `subtype` (items + par context + which items it
+ * runs). Reuses getPrepTemplateDetail per location (which IDOR-binds).
+ */
+export async function loadChecklistAdminView(
+  actor: AuthContext,
+  subtype: PrepSubtype,
+): Promise<ChecklistAdminView> {
+  const sb = getServiceRoleClient();
+
+  // Registry = active global items (location_id NULL), grouped/sorted by section.
+  const { data: regRows, error: rErr } = await sb
+    .from("items")
+    .select("id, name, name_es, section, default_par, default_par_unit, is_default")
+    .is("location_id", null)
+    .eq("active", true)
+    .order("section", { ascending: true })
+    .order("name", { ascending: true })
+    .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; default_par: number | null; default_par_unit: string | null; is_default: boolean }>>();
+  if (rErr) throw new Error(`loadChecklistAdminView registry failed: ${rErr.message}`);
+  const registry: ChecklistRegistryItem[] = (regRows ?? []).map((r) => ({
+    itemId: r.id,
+    name: r.name,
+    nameEs: r.name_es,
+    section: r.section,
+    recommendedPar: r.default_par,
+    recommendedParUnit: r.default_par_unit,
+    isDefault: r.is_default,
+  }));
+
+  // Accessible locations (respect all-locations override + assignment list).
+  const { data: locRows, error: lErr } = await sb
+    .from("locations")
+    .select("id, name, code")
+    .eq("active", true)
+    .order("name", { ascending: true })
+    .returns<Array<{ id: string; name: string; code: string }>>();
+  if (lErr) throw new Error(`loadChecklistAdminView locations failed: ${lErr.message}`);
+  const actorAll = isAllLocationsAccess({ role: actor.user.role, locations: actor.locations });
+  const accessible = (locRows ?? []).filter((l) => actorAll || actor.locations.includes(l.id));
+
+  const locations: ChecklistLocationView[] = [];
+  for (const loc of accessible) {
+    const templateId = await resolveActivePrepTemplateId(sb, loc.id, subtype);
+    if (!templateId) {
+      locations.push({ locationId: loc.id, name: loc.name, code: loc.code, templateId: null, items: [], parContext: {}, enabledItemIds: [] });
+      continue;
+    }
+    const detail = await getPrepTemplateDetail(actor, templateId);
+    const enabledItemIds = detail.items
+      .map((it) => it.itemId)
+      .filter((v): v is string => typeof v === "string");
+    locations.push({
+      locationId: loc.id,
+      name: loc.name,
+      code: loc.code,
+      templateId,
+      items: detail.items,
+      parContext: detail.parContext,
+      enabledItemIds,
+    });
+  }
+
+  return { subtype, actorLevel: ROLES[actor.user.role].level, registry, locations };
 }
