@@ -111,6 +111,7 @@ export function PrepItemEditPanel({ templateId, item }: { templateId: string; it
           <Labeled label={t("admin.templates.field.special_instruction_es")}><textarea className={field} value={siEs} onChange={(e) => setSiEs(e.target.value)} /></Labeled>
           <Labeled label={t("admin.templates.field.label_en")}><input className={field} value={labelEn} onChange={(e) => setLabelEn(e.target.value)} /></Labeled>
           <Labeled label={t("admin.templates.field.label_es")}><input className={field} value={labelEs} onChange={(e) => setLabelEs(e.target.value)} /></Labeled>
+          <p className="text-xs text-co-text-muted">{t("admin.templates.item_scope_note")}</p>
           <label className="flex items-center gap-2 text-sm text-co-text">
             <input type="checkbox" className="h-5 w-5 accent-co-gold" checked={required} onChange={(e) => setRequired(e.target.checked)} />
             {t("admin.templates.field.required")}
