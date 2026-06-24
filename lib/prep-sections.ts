@@ -1,44 +1,51 @@
 /**
  * Prep section → column conventions (C.44 Module 3 slice 2).
  *
- * CLIENT-SAFE: pure data + type-only imports (no DB, no server deps), so both
+ * CLIENT-SAFE: pure helpers + type-only imports (no DB, no server deps), so both
  * the server data layer (lib/admin/templates.ts) and the client Add form can
- * import it. The column convention per section is the canonical map documented
- * in lib/types.ts PrepColumn — single source so add + change-section agree.
+ * import it. The column convention is derived from a section's SHAPE
+ * (shapeToColumns, migration 0086) — single source so add + change-section
+ * agree. Section slug validity is checked against a runtime active-slug set
+ * (isPrepSectionName), not a static union.
  */
 
-import type { PrepColumn, PrepSection } from "@/lib/types";
-
-export const PREP_SECTIONS: readonly PrepSection[] = [
-  "Veg",
-  "Cooks",
-  "Sides",
-  "Sauces",
-  "Slicing",
-  "Misc",
-];
-
-const SECTION_COLUMNS: Record<PrepSection, PrepColumn[]> = {
-  Veg: ["par", "on_hand", "back_up", "total"],
-  Cooks: ["par", "on_hand", "total"],
-  Sides: ["par", "portioned", "back_up", "total"],
-  Sauces: ["par", "line", "back_up", "total"],
-  Slicing: ["par", "line", "back_up", "total"],
-  Misc: ["yes_no"],
-};
+import type { PrepColumn, PrepSectionShape } from "@/lib/types";
 
 /**
- * Columns for a section. Misc gains a free_text note column when includeNote.
- * Returns a fresh array each call (callers may store it on prep_meta).
+ * Column set per shape — the single source for a section's columns (migration
+ * 0086 moved this off the old hardcoded SECTION_COLUMNS map keyed by slug).
+ * Numeric shapes always carry par + primary + back_up + total. yes_no carries
+ * the toggle (+ free_text note when includeNote). Returns a fresh array.
  */
-export function columnsForSection(section: PrepSection, includeNote = false): PrepColumn[] {
-  const base = [...SECTION_COLUMNS[section]];
-  if (section === "Misc" && includeNote) base.push("free_text");
-  return base;
+export function shapeToColumns(shape: PrepSectionShape, includeNote = false): PrepColumn[] {
+  switch (shape) {
+    case "on_hand":   return ["par", "on_hand", "back_up", "total"];
+    case "portioned": return ["par", "portioned", "back_up", "total"];
+    case "line":      return ["par", "line", "back_up", "total"];
+    case "yes_no":    return includeNote ? ["yes_no", "free_text"] : ["yes_no"];
+  }
 }
 
-export function isPrepSectionName(v: unknown): v is PrepSection {
-  return typeof v === "string" && (PREP_SECTIONS as readonly string[]).includes(v);
+/**
+ * Auto-total source fields for a numeric shape, or null for yes_no (no total).
+ * primary = the operationally-always-reported field; secondary = back_up
+ * (optional, treated as 0 when empty). Drives AmPrepForm.computeTotal + the
+ * PrepRow read-only-total gate.
+ */
+export function totalSourcesForShape(
+  shape: PrepSectionShape,
+): { primary: "on_hand" | "portioned" | "line"; secondary: "back_up" } | null {
+  switch (shape) {
+    case "on_hand":   return { primary: "on_hand", secondary: "back_up" };
+    case "portioned": return { primary: "portioned", secondary: "back_up" };
+    case "line":      return { primary: "line", secondary: "back_up" };
+    case "yes_no":    return null;
+  }
+}
+
+/** True when `slug` is one of the active section slugs (runtime set, not a union). */
+export function isPrepSectionName(slug: unknown, activeSlugs: ReadonlySet<string>): slug is string {
+  return typeof slug === "string" && activeSlugs.has(slug);
 }
 
 /**
@@ -76,4 +83,16 @@ export function sectionLabelByLang(
   const s = sections.find((x) => x.slug === slug);
   if (!s) return slug;
   return (language === "es" ? s.labelEs : s.labelEn) ?? s.labelEn ?? slug;
+}
+
+/**
+ * Ordered active section slugs (by displayOrder) from a loaded section list —
+ * the runtime replacement for the removed static PREP_SECTIONS const. Callers
+ * pass the `sections` they already loaded (loadPrepSections server-side, or the
+ * `sections` prop client-side). CLIENT-SAFE (pure). Returns a fresh array.
+ */
+export function orderedSectionSlugs(
+  sections: ReadonlyArray<{ slug: string; displayOrder: number }>,
+): string[] {
+  return [...sections].sort((a, b) => a.displayOrder - b.displayOrder).map((s) => s.slug);
 }

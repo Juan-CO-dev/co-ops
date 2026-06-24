@@ -21,7 +21,7 @@ import {
   rowToTemplateItem,
 } from "@/lib/template-items";
 import { setPrepItemMeta, setPrepItemSection, narrowPrepTemplateItem, isPrepMeta, seedPrepItem } from "@/lib/prep";
-import { columnsForSection, isPrepSectionName } from "@/lib/prep-sections";
+import { shapeToColumns, isPrepSectionName } from "@/lib/prep-sections";
 import { loadPrepSections } from "@/lib/prep-sections.server";
 import { loadUnits } from "@/lib/units.server";
 import type { AuthContext } from "@/lib/session";
@@ -72,6 +72,18 @@ export class AdminTemplateError extends Error {
     super(message ?? code);
     this.name = "AdminTemplateError";
   }
+}
+
+/**
+ * The set of active section slugs — the runtime validation source for
+ * isPrepSectionName (replaces the removed static PREP_SECTIONS union). Loaded
+ * from the prep_sections table per call (cheap; reads are the admin path).
+ */
+async function loadActiveSectionSlugs(
+  sb: ReturnType<typeof getServiceRoleClient>,
+): Promise<ReadonlySet<string>> {
+  const map = await loadPrepSections(sb);
+  return new Set(map.keys());
 }
 
 interface TemplateRow {
@@ -415,10 +427,11 @@ export interface ItemDefinitionChanges {
  *   - `specialInstructionEs` → translations.es.specialInstruction (every line,
  *       via mergeEsTranslation — shape-agnostic).
  *   - `section` → station + prep_meta.section on every line; prep lines also
- *       re-derive prep_meta.columns from the section convention (loadPrepSections,
- *       fallback columnsForSection, preserving the Misc free_text column). The
- *       mirror line updates station + prep_meta.section only (no column re-derive
- *       — OpeningPhase2Meta has no columns).
+ *       re-derive prep_meta.columns from the section's SHAPE (loadPrepSections →
+ *       shapeToColumns, migration 0086, preserving the Misc free_text column;
+ *       keep existing columns if the slug is somehow unknown). The mirror line
+ *       updates station + prep_meta.section only (no column re-derive —
+ *       OpeningPhase2Meta has no columns).
  *
  * Returns the count of lines updated. Operator render + the completion gating in
  * lib/checklists.ts keep reading LINE values — those are the columns we write.
@@ -480,9 +493,11 @@ async function propagateItemDefinitionToLines(
         const nextSection = hasSection ? (changes.section as PrepSection) : base.section;
         let nextColumns = base.columns;
         if (hasSection) {
-          const keepNote = nextSection === "Misc" && base.columns.includes("free_text");
-          const fromDefn = sectionMap?.get(nextSection)?.columns;
-          nextColumns = fromDefn ?? columnsForSection(nextSection, keepNote);
+          // Re-derive columns from the new section's SHAPE (migration 0086).
+          // Preserve the Misc free_text note column if the line carried it.
+          const sectionDef = sectionMap?.get(nextSection);
+          const keepNote = base.columns.includes("free_text");
+          nextColumns = sectionDef ? shapeToColumns(sectionDef.shape, keepNote) : base.columns;
         }
         const nextMeta: PrepMeta = {
           section: nextSection,
@@ -770,7 +785,9 @@ export async function addPrepItem(
   const sb = getServiceRoleClient();
   const { input } = args;
 
-  if (!isPrepSectionName(input.section)) throw new AdminTemplateError(400, "invalid_section", "Unknown section");
+  const sectionMap = await loadPrepSections(sb);
+  const sectionDef = sectionMap.get(input.section);
+  if (!sectionDef) throw new AdminTemplateError(400, "invalid_section", "Unknown section");
   const label = input.label.trim();
   if (!label) throw new AdminTemplateError(400, "invalid_label", "Label is required");
   if (input.parValue !== null && (!Number.isFinite(input.parValue) || input.parValue < 0)) {
@@ -814,7 +831,7 @@ export async function addPrepItem(
       parValue: input.parValue,
       parUnit,
       specialInstruction: input.specialInstruction?.trim() || null,
-      columns: columnsForSection(input.section, input.includeNote),
+      columns: shapeToColumns(sectionDef.shape, input.includeNote),
     },
     translations,
   });
@@ -958,8 +975,10 @@ export async function changePrepItemSection(
   args: { templateId: string; itemId: string; section: PrepSection },
 ): Promise<{ mirrorSyncedIds: string[] }> {
   const tmpl = await loadAuthorizedPrepTemplate(actor, args.templateId);
-  if (!isPrepSectionName(args.section)) throw new AdminTemplateError(400, "invalid_section", "Unknown section");
   const sb = getServiceRoleClient();
+  const sectionMap = await loadPrepSections(sb);
+  const sectionDef = sectionMap.get(args.section);
+  if (!sectionDef) throw new AdminTemplateError(400, "invalid_section", "Unknown section");
 
   const { data: rawRow, error: rErr } = await sb
     .from("checklist_template_items")
@@ -979,14 +998,15 @@ export async function changePrepItemSection(
   // 1) Sync station + prep_meta.section to the new section (preserves scalars + columns).
   await setPrepItemSection(sb, { templateItemId: args.itemId, section: args.section });
 
-  // 2) Re-derive columns for the new section (preserve par/unit/specialInstruction).
-  const keepNote = args.section === "Misc" && item.prepMeta.columns.includes("free_text");
+  // 2) Re-derive columns from the new section's SHAPE (migration 0086). Preserve
+  // par/unit/specialInstruction scalars + the Misc free_text note column if held.
+  const keepNote = item.prepMeta.columns.includes("free_text");
   const nextMeta: PrepMeta = {
     section: args.section,
     parValue: item.prepMeta.parValue,
     parUnit: item.prepMeta.parUnit,
     specialInstruction: item.prepMeta.specialInstruction,
-    columns: columnsForSection(args.section, keepNote),
+    columns: shapeToColumns(sectionDef.shape, keepNote),
   };
   // setPrepItemMeta asserts meta.section === existing station (now args.section). OK.
   await setPrepItemMeta(sb, { templateItemId: args.itemId, meta: nextMeta });
@@ -1336,6 +1356,10 @@ async function ensureItemLineOnTemplate(
   // Inherit min_role_level from the item canonical; fall back to the template
   // default (resolveDefaultMinRole) only when the item carries no value.
   const minRoleLevel = item.minRoleLevel ?? (await resolveDefaultMinRole(sb, templateId));
+  // Derive prep columns from the section's SHAPE (migration 0086). The section
+  // was validated upstream; if the slug is somehow unknown, fall back to yes_no
+  // (the most conservative single-column shape) rather than crash.
+  const sectionShape = (await loadPrepSections(sb)).get(item.section)?.shape ?? "yes_no";
   // Translations carry the item's name_es (label) + the canonical es special
   // instruction (mergeEsTranslation onto the label-only base, dropping empties).
   const baseTranslations = translationsFromItem(item.nameEs);
@@ -1365,7 +1389,7 @@ async function ensureItemLineOnTemplate(
         parValue: item.defaultPar,
         parUnit: item.defaultParUnit,
         specialInstruction: item.specialInstruction,
-        columns: columnsForSection(item.section, false),
+        columns: shapeToColumns(sectionShape, false),
       },
       report_reference_type: null,
       references_template_item_id: null,
@@ -1506,7 +1530,7 @@ export async function setItemDefault(
 
   let propagatedLocationIds: string[] = [];
   if (args.isDefault) {
-    if (!isPrepSectionName(item.section)) {
+    if (!isPrepSectionName(item.section, await loadActiveSectionSlugs(sb))) {
       throw new AdminTemplateError(409, "invalid_section", "Item section is not a prep section; cannot propagate");
     }
     propagatedLocationIds = await propagateDefaultItem(
@@ -1572,7 +1596,10 @@ export async function addRegistryItem(
 ): Promise<{ itemId: string; propagatedLocationIds: string[] }> {
   const name = args.name.trim();
   if (!name) throw new AdminTemplateError(400, "invalid_label", "Name is required");
-  if (!isPrepSectionName(args.section)) throw new AdminTemplateError(400, "invalid_section", "Unknown section");
+  const sb = getServiceRoleClient();
+  if (!isPrepSectionName(args.section, await loadActiveSectionSlugs(sb))) {
+    throw new AdminTemplateError(400, "invalid_section", "Unknown section");
+  }
   if (args.recommendedPar !== null && (!Number.isFinite(args.recommendedPar) || args.recommendedPar < 0)) {
     throw new AdminTemplateError(400, "invalid_par", "Par must be a non-negative number or empty");
   }
@@ -1583,7 +1610,6 @@ export async function addRegistryItem(
     throw new AdminTemplateError(400, "invalid_min_role", "Min role level must be between 0 and 10");
   }
 
-  const sb = getServiceRoleClient();
   const nameEs = args.nameEs?.trim() || null;
   const parUnit = args.recommendedParUnit?.trim() || null;
 
@@ -1693,7 +1719,7 @@ export async function enableRegistryItemAtLocation(
   if (rErr) throw new Error(`enableRegistryItemAtLocation read failed: ${rErr.message}`);
   if (!item || !item.active) throw new AdminTemplateError(404, "item_not_found", "Item not found");
   if (item.location_id !== null) throw new AdminTemplateError(409, "not_global", "Item is not global");
-  if (!isPrepSectionName(item.section)) {
+  if (!isPrepSectionName(item.section, await loadActiveSectionSlugs(sb))) {
     throw new AdminTemplateError(409, "invalid_section", "Item section is not a prep section");
   }
 
@@ -1878,7 +1904,8 @@ export async function updateRegistryItemDefinition(
   },
 ): Promise<void> {
   // Validate the full-definition fields up-front (before any read).
-  if (args.section !== undefined && !isPrepSectionName(args.section)) {
+  const sb = getServiceRoleClient();
+  if (args.section !== undefined && !isPrepSectionName(args.section, await loadActiveSectionSlugs(sb))) {
     throw new AdminTemplateError(400, "invalid_section", "Unknown section");
   }
   if (
@@ -1888,7 +1915,6 @@ export async function updateRegistryItemDefinition(
     throw new AdminTemplateError(400, "invalid_min_role", "Min role level must be between 0 and 10");
   }
 
-  const sb = getServiceRoleClient();
   const { data: item, error: rErr } = await sb
     .from("items")
     .select(

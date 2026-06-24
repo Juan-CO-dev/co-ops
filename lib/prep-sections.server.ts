@@ -17,13 +17,14 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import type { PrepColumn, PrepSectionDefn } from "@/lib/types";
+import type { PrepColumn, PrepSectionDefn, PrepSectionShape } from "@/lib/types";
 
 interface PrepSectionRow {
   slug: string;
   label_en: string;
   label_es: string | null;
   columns: PrepColumn[];
+  shape: PrepSectionShape;
   display_order: number;
 }
 
@@ -38,7 +39,7 @@ export async function loadPrepSections(
 ): Promise<Map<string, PrepSectionDefn>> {
   const { data, error } = await service
     .from("prep_sections")
-    .select("slug, label_en, label_es, columns, display_order")
+    .select("slug, label_en, label_es, columns, shape, display_order")
     .eq("active", true)
     .order("display_order", { ascending: true })
     .returns<PrepSectionRow[]>();
@@ -51,6 +52,7 @@ export async function loadPrepSections(
       labelEn: r.label_en,
       labelEs: r.label_es,
       columns: r.columns,
+      shape: r.shape,
       displayOrder: r.display_order,
     });
   }

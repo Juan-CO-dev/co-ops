@@ -17,7 +17,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
-import { PREP_SECTIONS, sectionLabelByLang } from "@/lib/prep-sections";
+import { orderedSectionSlugs, sectionLabelByLang } from "@/lib/prep-sections";
 import type { ChecklistTemplateItem, PrepSection, PrepSectionDefn } from "@/lib/types";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { ChecklistLocationView, ChecklistRegistryItem, PrepSubtype } from "@/lib/admin/templates";
@@ -58,7 +58,7 @@ export function LocationChecklistTab({
     arr.push(it);
     groups.set(key, arr);
   }
-  const sectionKeys: string[] = [...PREP_SECTIONS];
+  const sectionKeys: string[] = orderedSectionSlugs(sections);
   for (const k of groups.keys()) if (!sectionKeys.includes(k)) sectionKeys.push(k);
 
   // Registry items this location doesn't run yet (enable-from-registry pool).
@@ -320,7 +320,7 @@ function AddLocalItem({ templateId, subtype, sections, units }: { templateId: st
             }}
           >
             <option value="">{t("admin.templates.add_item")}</option>
-            {PREP_SECTIONS.map((s) => (
+            {orderedSectionSlugs(sections).map((s) => (
               <option key={s} value={s}>
                 {sectionLabelByLang(sections, s, language)}
               </option>

@@ -261,20 +261,22 @@ export interface ReportAssignment {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Prep section enum mirrored as a TS union. Stored as a raw string inside
+ * Prep section system key. Stored as a raw string inside
  * `checklist_template_items.prep_meta.section` JSONB (Postgres doesn't
- * enforce inside JSONB; lib/prep.ts isPrepSection() validates on read).
+ * enforce inside JSONB).
  *
  * `section` IS the system key (per SPEC_AMENDMENTS.md C.38) for prep
  * grouping/matching — never use the translated render-string for matching.
+ *
+ * PrepSection is now a free slug string (was a fixed 6-value union). The slug
+ * remains the system match key (C.38) — never match on the rendered label.
+ * Active slugs are validated at runtime against the loaded prep_sections set
+ * (isPrepSectionName), not by the type system.
  */
-export type PrepSection =
-  | "Veg"
-  | "Cooks"
-  | "Sides"
-  | "Sauces"
-  | "Slicing"
-  | "Misc";
+export type PrepSection = string;
+
+// A section's shape drives its column set + auto-total rule (migration 0086).
+export type PrepSectionShape = "on_hand" | "portioned" | "line" | "yes_no";
 
 /**
  * Per-row column descriptors for the AM Prep form. The template item's
@@ -346,6 +348,7 @@ export interface PrepSectionDefn {
   labelEn: string;
   labelEs: string | null;
   columns: PrepColumn[];
+  shape: PrepSectionShape;
   displayOrder: number;
 }
 

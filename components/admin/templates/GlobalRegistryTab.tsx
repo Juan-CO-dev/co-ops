@@ -15,7 +15,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
-import { PREP_SECTIONS, sectionLabelByLang, isPrepSectionName } from "@/lib/prep-sections";
+import { orderedSectionSlugs, sectionLabelByLang, isPrepSectionName } from "@/lib/prep-sections";
 import { roleLevelOptions } from "@/lib/roles";
 import type { PrepSection } from "@/lib/types";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -46,7 +46,7 @@ export function GlobalRegistryTab({
     arr.push(r);
     groups.set(key, arr);
   }
-  const sectionKeys: string[] = [...PREP_SECTIONS];
+  const sectionKeys: string[] = orderedSectionSlugs(sections);
   for (const k of groups.keys()) if (!sectionKeys.includes(k)) sectionKeys.push(k);
 
   return (
@@ -204,9 +204,11 @@ function RegistryRow({
   const [specialInstructionEs, setSpecialInstructionEs] = useState(item.specialInstructionEs ?? "");
   const [required, setRequired] = useState(item.required);
   const [minRole, setMinRole] = useState(item.minRoleLevel?.toString() ?? "");
-  const initialSection: PrepSection = isPrepSectionName(item.section)
+  const slugs = orderedSectionSlugs(sections);
+  const activeSlugs = new Set(slugs);
+  const initialSection: PrepSection = isPrepSectionName(item.section, activeSlugs)
     ? item.section
-    : PREP_SECTIONS[0]!;
+    : (slugs[0] ?? "");
   const [section, setSection] = useState<PrepSection>(initialSection);
 
   const field =
@@ -309,7 +311,7 @@ function RegistryRow({
                 value={section}
                 onChange={(e) => setSection(e.target.value as PrepSection)}
               >
-                {PREP_SECTIONS.map((s) => (
+                {slugs.map((s) => (
                   <option key={s} value={s}>
                     {sectionLabelByLang(sections, s, language)}
                   </option>
@@ -401,9 +403,10 @@ function AddGlobalItem({
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  const slugs = orderedSectionSlugs(sections);
   const [name, setName] = useState("");
   const [nameEs, setNameEs] = useState("");
-  const [section, setSection] = useState<PrepSection>(PREP_SECTIONS[0]!);
+  const [section, setSection] = useState<PrepSection>(slugs[0] ?? "");
   const [par, setPar] = useState("");
   const [parUnit, setParUnit] = useState("");
   const [isDefault, setIsDefault] = useState(false);
@@ -418,7 +421,7 @@ function AddGlobalItem({
   const reset = () => {
     setName("");
     setNameEs("");
-    setSection(PREP_SECTIONS[0]!);
+    setSection(slugs[0] ?? "");
     setPar("");
     setParUnit("");
     setIsDefault(false);
@@ -484,7 +487,7 @@ function AddGlobalItem({
             value={section}
             onChange={(e) => setSection(e.target.value as PrepSection)}
           >
-            {PREP_SECTIONS.map((s) => (
+            {slugs.map((s) => (
               <option key={s} value={s}>
                 {sectionLabelByLang(sections, s, language)}
               </option>
