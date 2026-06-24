@@ -9,13 +9,17 @@
 
 ## The arc (3 slices)
 
-1. **Slice 1 (this doc):** input type becomes **per-line** (section = the default for new lines); sections render **mixed** input types; admins can add **non-inventory "question" lines** (item_id NULL). The foundation.
-2. **Slice 2:** **item-attached questions** — a question field on the item definition that propagates to its lines (reusing #86's `propagateItemDefinitionToLines`) and rides the item onto reports.
-3. **Slice 3:** **standalone questions as searchable report tags** — extend `buildSearchCorpus` to index question text + answers at the established visibility hierarchy.
+1. **Slice 1 (this doc):** input type becomes **per-line** (section = the default for new lines); sections render **mixed** input types; MoO+ can add **non-inventory section-attached questions** (global, propagate to every list with that section; `item_id` NULL). The foundation.
+2. **Slice 2:** **item-attached questions** — a question field on the item definition that propagates to its lines (reusing #86's `propagateItemDefinitionToLines`) and rides the item onto reports. Also folds in the **item "include in Opening verification" toggle** (makes today's hard-wired inventory-item→Opening mirror a controllable, default-settable per-item setting).
+3. **Slice 3:** **questions as searchable report tags** — extend `buildSearchCorpus` to index question text + answers at the established visibility hierarchy.
+
+**Authority (Juan-locked):** all question creation — item-attached AND section-attached — is **MoO+ (≥8)**. Questions are definitional/structural content (the same layer as item definitions and section structure), not an AGM list-line. The "Add question" UI lives on the **Global tab**, not the location tab.
+
+**Opening verification (Juan-locked):** questions are **NOT** part of Opening verification in this arc — the existing inventory-item→Opening mirror is unchanged in Slice 1, becomes a controllable per-item toggle in Slice 2, and verifying a *question* in Opening (a Y/N verify vs today's numeric recount) is a **future** capability we deliberately leave the door open for but do not build here.
 
 ## Goal (Slice 1)
 
-Make a prep section able to hold lines of **different input types** (a numeric count, a Yes/No, a free-text prompt) instead of one uniform shape — and give admins a way to **add a non-inventory question** (a line that is just a prompt + an answer slot, with no registry item behind it).
+Make a prep section able to hold lines of **different input types** (a numeric count, a Yes/No, a free-text prompt) instead of one uniform shape — and let MoO+ **add a non-inventory question to a section** (a prompt + an answer slot, no registry item), which appears on every prep list that includes that section.
 
 ## Ground truth (why this is mostly wiring, not schema)
 
@@ -23,7 +27,7 @@ Make a prep section able to hold lines of **different input types** (a numeric c
 - **Input type is already physically per-line.** Each line carries its own `prep_meta.columns`. #88 made the *render* read the **section's** shape uniformly; the per-line columns are there but the renderer ignores per-line differences. Slice 1 makes the renderer honor each line's own columns.
 - **The only missing admin door:** since #84, "Add item" is registry-backed (`addPrepItem` always creates an `items` row + par override). There is **no admin path to create a question line** (item_id NULL). That path is new in Slice 1.
 
-So Slice 1 = (a) a per-line input-type concept derived from the line's columns, (b) a render that honors heterogeneous lines, (c) an "Add question" admin path. **No migration.**
+So Slice 1 = (a) a per-line input-type concept derived from the line's columns, (b) a render that honors heterogeneous lines, (c) section-attached global questions. **Parts (a)+(b) need no migration** (`item_id` nullable + `prep_meta.columns` already per-line); **part (c) likely adds one small table** (`section_questions`, the canonical question definition that propagates to lines) — the one schema decision for the slice.
 
 ## Architecture
 
@@ -55,23 +59,26 @@ Implementation: `AmPrepForm` decides per section: homogeneous-numeric → `Gener
 
 Opening Phase-2 + mid-day already render per-line by grouping; they need no change.
 
-### C. "Add question" admin path
+### C. Section-attached questions (MoO+, global, propagating)
 
-A new lib function + route + UI to add a **non-inventory** line:
+A question is **attached to a section** and is **global** — defined once (Global tab, MoO+) and appearing on every prep list that includes that section, across locations. This mirrors the `is_default` item pattern: define once → propagate to every list.
+
+**Storage model — materialized lines (reuse, don't reinvent).** A section question propagates as actual `checklist_template_items` lines (`item_id` NULL) onto every prep template (am_prep + mid_day) that runs that section — exactly how default items propagate via the #84 machinery. Rationale: answers then store as normal `checklist_completions` and surface on report drill-ins with zero new plumbing (vs a virtual/injected model that would need net-new answer storage + report surfacing). Where the canonical question definition lives (a `section_questions` table keyed by section slug, vs an `items`-like row) is the **one schema choice for this slice** (see Build order) — but the propagated artifact is always a normal line.
 
 ```
-addPrepQuestion(actor, {
-  templateId, section, label, labelEs,
-  inputType: LineInputType, includeNote?, minRoleLevel, required
-}) → { templateItemId }
+addSectionQuestion(actor, {
+  section, label, labelEs, inputType: LineInputType, includeNote?, minRoleLevel, required
+}) → { questionId }   // then propagate a line onto every prep list with that section
 ```
 
-- Seeds the line via `seedPrepItem` with `columns = shapeToColumns(inputType, includeNote)`, `item_id = NULL`, and **no** `items` row / **no** `item_par_levels` row (the deliberate difference from `addPrepItem`).
-- `parValue`/`parUnit` are NULL for questions.
-- Honors the station/section invariant (seedPrepItem sets station = section).
-- No Opening mirror (questions are answered per-list, not verified next-day) — see Open Decision D4.
+- Each propagated line: `seedPrepItem` with `columns = shapeToColumns(inputType, includeNote)`, `item_id = NULL`, `parValue`/`parUnit` NULL, station = section (invariant held).
+- **No** `items` row / **no** `item_par_levels` row — the deliberate difference from `addPrepItem`.
+- Disable = deactivate the question → its propagated lines deactivate (append-only), edit-once.
+- **No Opening mirror** (per the locked Opening-verification decision above).
 
-UI: an **"Add question"** affordance on the location tab, alongside the existing add-line path — label (EN/ES), input-type picker (Yes/No [+note] · Free text · a numeric type), min-role (position dropdown), required. EN+ES i18n.
+UI: an **"Add question"** affordance on the **Global tab** (MoO+), in/near the Sections panel — pick the section, label (EN/ES), input-type picker (Yes/No [+note] · Free text · a numeric type), min-role (position dropdown), required. EN+ES i18n.
+
+> **Scope note:** section-question propagation is the meatiest part of Slice 1. If it proves large at plan time, the clean split is **Slice 1a** = per-line input type + mixed render (A + B + D, the pure render foundation; the only mixed lines initially are the seeded Misc items) and **Slice 1b** = section-attached questions (C). Decide at plan time.
 
 ### D. Validation
 
@@ -81,28 +88,37 @@ Reuse #88's shape-driven validation, extended to per-line:
 - `free_text` line → non-empty `freeText` required (if `required`); optional otherwise
 A line's `required` flag already gates this.
 
-### No migration
+### Migration footprint
 
-`item_id` is nullable; `prep_meta.columns` is per-line; answers already store in `prep_data`. Nothing schema-level changes in Slice 1.
+The render foundation (per-line types + mixed render) needs **no migration** — `item_id` is nullable, `prep_meta.columns` is already per-line, answers already store in `prep_data`. The section-question canonical store (part C) likely adds **one small table** (`section_questions`: slug-keyed, label EN/ES, input type, min-role, required, active, audit) — propagated lines are normal `checklist_template_items`. Final call at plan time.
 
 ## Testing
 
 `npx tsc --noEmit` + `npm run build` + throwaway tsx smokes (deleted before commit):
 1. **Render parity:** the existing 6 sections still render byte-identically (homogeneous path unchanged). Re-run `scripts/check-prep-section-shape-parity.ts`.
 2. **Mixed render:** a section with a numeric line + a yes/no line + a free-text line renders each control correctly; answers store + surface on the report drill-in.
-3. **Add question:** `addPrepQuestion` creates an item_id NULL line with the chosen input type, no `items`/`item_par_levels` row; it renders + is answerable + submits.
-Operator smoke (Juan, preview): add a question to a list, answer it, see it on the report.
+3. **Add section question:** `addSectionQuestion` propagates an `item_id` NULL line (chosen input type, no `items`/`item_par_levels` row) onto every prep list with that section; it renders + is answerable + submits; disable deactivates the propagated lines.
+Operator smoke (Juan, preview): add a question to a section, see it on every list with that section, answer it, see it on the report.
 
-## Open decisions (your review)
+## Resolved decisions (from review)
 
-- **D1 — Input-type set.** Confirm line input types = `on_hand` / `portioned` / `line` (numeric) · `yes_no` (+ optional note) · **`free_text`** (pure text, NEW). Any other question type now (e.g. a numeric "reading" without par, like a temperature)? *Recommend: the 5 above; a par-less numeric reading can be a future addition.*
-- **D2 — Who can add questions.** *Recommend:* a **standalone** question on a location's list = same gate as adding a local line today (AGM+ for that location). Item-attached questions (Slice 2) = MoO+ (item definition). Confirm the standalone gate.
-- **D3 — Mixed render layout.** Confirm the "uniform sections keep the table; mixed sections render per-line control rows (no shared header)" approach. (A section flips to per-line rows the moment it holds a non-uniform line.)
-- **D4 — Do AM-prep questions mirror to Opening?** *Recommend: no* for Slice 1 — questions are answered per-list, not verified next-day; the mirror stays inventory-only. (Revisit if you want a question to carry to the next-morning Opening verify.)
-- **D5 — Per-line input-type storage.** *Recommend:* derive from `prep_meta.columns` (no migration; matches how Misc lines already work) rather than adding an explicit `prep_meta.inputType` field. Add the explicit field later only if it earns its keep.
+- **D1 — Input-type set ✅** = `on_hand` / `portioned` / `line` (numeric) · `yes_no` (+ optional note) · **`free_text`** (pure text, NEW). A par-less numeric "reading" (e.g. a temperature) is a future addition.
+- **D2 — Who can add questions ✅ MoO+** (item-attached AND section-attached). Questions are definitional content; the "Add question" UI is on the **Global tab**.
+- **D3 — Mixed render layout ✅** uniform sections keep the table; a section flips to per-line control rows the moment it holds a non-uniform line.
+- **D4 — Opening verification ✅** questions are NOT in Opening verify in this arc (future). Slice 1 adds no mirror for questions; the inventory-item→Opening mirror is unchanged. The item "include-in-Opening-verification" toggle is a Slice 2 nicety.
+- **D5 — Per-line input-type storage ✅** derive from `prep_meta.columns` (no migration); add an explicit field later only if it earns its keep.
+
+## Build order (one slice, dependency-ordered task-commits)
+
+1. `shapeFromColumns` + `free_text` line type in `lib/prep-sections.ts` (+ `shapeToColumns` handles `free_text`). No migration if section questions reuse a lightweight canonical store — **the one schema choice:** a `section_questions` table (slug-keyed) vs reusing an `items`-like row. Decide at plan time; lean `section_questions` (questions aren't items).
+2. Mixed render: `MixedPrepSection` + `AmPrepForm` uniform-vs-mixed dispatch (parity-gated for the 6).
+3. `addSectionQuestion` + propagation (mirror the default-item propagation) + disable/deactivate.
+4. Global-tab "Add question" UI + EN/ES i18n.
+5. Smokes + final gate.
 
 ## Out of scope (Slice 1)
 
-- Item-attached questions (Slice 2) and standalone-as-searchable-tag (Slice 3).
+- Item-attached questions + the item Opening-verification toggle (Slice 2); searchable questions (Slice 3).
+- Verifying a question in Opening Phase-2 (future — door left open, not built).
 - Changing a section's *default* shape (already shipped in #88 as edit-input-type).
 - Questions on opening/closing checklists (this slice is prep; those checklists already have their own yes/no items).
