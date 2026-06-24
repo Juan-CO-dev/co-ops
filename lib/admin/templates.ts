@@ -32,6 +32,7 @@ import type {
   PrepMeta,
   PrepSection,
   PrepSectionDefn,
+  PrepSectionShape,
 } from "@/lib/types";
 
 export type PrepSubtype = "am_prep" | "mid_day_prep";
@@ -2136,6 +2137,251 @@ export async function setSectionLabel(
       slug: section.slug,
       before: { labelEn: section.label_en, labelEs: section.label_es, displayOrder: section.display_order },
       after: { labelEn, labelEs, displayOrder: args.displayOrder ?? section.display_order },
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+}
+
+/** Derive a stable slug from an EN label: trim, collapse whitespace, strip
+ *  non-alphanumerics, PascalCase token. Empty result → throws invalid_label. */
+export function slugifySection(labelEn: string): string {
+  const token = labelEn
+    .trim()
+    .split(/\s+/)
+    .map((w) => w.replace(/[^A-Za-z0-9]/g, ""))
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join("");
+  if (!token) throw new AdminTemplateError(400, "invalid_label", "Section label is empty after slugify");
+  return token;
+}
+
+const PREP_SECTION_SHAPES: readonly PrepSectionShape[] = ["on_hand", "portioned", "line", "yes_no"];
+
+/**
+ * Add a prep section to the registry — add/remove SECTIONS UI (MoO+, all-locations).
+ * Derives a PascalCase slug from the EN label (slugifySection). Slug is globally
+ * unique (table UNIQUE constraint) — rejects if a row already holds it, active OR
+ * inactive. Columns are derived from the shape (shapeToColumns, migration 0086);
+ * display_order appends after the current max across ALL rows. Sections are GLOBAL
+ * (no location IDOR) — the route gates MoO+. Audits prep_section.create.
+ */
+export async function addPrepSection(
+  actor: AuthContext,
+  args: { labelEn: string; labelEs: string | null; shape: PrepSectionShape; includeNote?: boolean },
+): Promise<{ slug: string }> {
+  if (!PREP_SECTION_SHAPES.includes(args.shape)) {
+    throw new AdminTemplateError(400, "invalid_shape", "Unknown section shape");
+  }
+  const labelEn = args.labelEn.trim();
+  if (!labelEn) throw new AdminTemplateError(400, "invalid_label", "Label cannot be empty");
+
+  const slug = slugifySection(labelEn);
+  const sb = getServiceRoleClient();
+
+  // Slug is globally unique (UNIQUE constraint) — reject active OR inactive collisions.
+  const { data: existing, error: eErr } = await sb
+    .from("prep_sections")
+    .select("id")
+    .eq("slug", slug)
+    .maybeSingle<{ id: string }>();
+  if (eErr) throw new Error(`addPrepSection duplicate check failed: ${eErr.message}`);
+  if (existing) throw new AdminTemplateError(409, "section_exists", "A section with that slug already exists");
+
+  const columns = shapeToColumns(args.shape, args.includeNote ?? false);
+
+  // display_order = max across ALL rows +1 (append to the end).
+  const { data: maxRow, error: mErr } = await sb
+    .from("prep_sections")
+    .select("display_order")
+    .order("display_order", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ display_order: number }>();
+  if (mErr) throw new Error(`addPrepSection max order failed: ${mErr.message}`);
+  const displayOrder = (maxRow?.display_order ?? 0) + 1;
+
+  const labelEs = args.labelEs?.trim() || null;
+  const { data: inserted, error: iErr } = await sb
+    .from("prep_sections")
+    .insert({
+      slug,
+      label_en: labelEn,
+      label_es: labelEs,
+      columns,
+      shape: args.shape,
+      display_order: displayOrder,
+      active: true,
+      created_by: actor.user.id,
+      updated_by: actor.user.id,
+    })
+    .select("id")
+    .maybeSingle<{ id: string }>();
+  if (iErr) throw new Error(`addPrepSection insert failed: ${iErr.message}`);
+  if (!inserted) throw new Error("addPrepSection insert returned no row");
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "prep_section.create",
+    resourceTable: "prep_sections",
+    resourceId: inserted.id,
+    metadata: { slug, shape: args.shape, columns, displayOrder, label_en: labelEn, label_es: labelEs },
+    ipAddress: null,
+    userAgent: null,
+  });
+
+  return { slug };
+}
+
+/**
+ * Disable a prep section — add/remove SECTIONS UI (MoO+, all-locations). Cascades
+ * every ACTIVE line in the section to Misc FIRST (via changePrepItemSection, which
+ * re-derives columns + syncs the AM-prep→Opening mirror + audits per line), THEN
+ * flips the section active=false. Misc itself cannot be disabled (the cascade sink).
+ * Sections are GLOBAL (no location IDOR) — the route gates MoO+. Audits
+ * prep_section.disable with the moved line ids.
+ */
+export async function disablePrepSection(
+  actor: AuthContext,
+  args: { slug: string },
+): Promise<{ movedCount: number }> {
+  if (args.slug === "Misc") {
+    throw new AdminTemplateError(400, "cannot_disable_misc", "The Misc section cannot be disabled");
+  }
+
+  const sb = getServiceRoleClient();
+  const { data: section, error: rErr } = await sb
+    .from("prep_sections")
+    .select("id, slug, display_order")
+    .eq("slug", args.slug)
+    .eq("active", true)
+    .maybeSingle<{ id: string; slug: string; display_order: number }>();
+  if (rErr) throw new Error(`disablePrepSection read failed: ${rErr.message}`);
+  if (!section) throw new AdminTemplateError(404, "section_not_found", "Section not found");
+
+  // Find ACTIVE lines in this section — PREP templates ONLY (am_prep +
+  // mid_day_prep). The slug is stamped into prep_meta.section (== station);
+  // match on the JSONB key. We deliberately EXCLUDE opening Phase-2 mirror lines
+  // (type='opening'): their OpeningPhase2Meta also carries `section`, so they'd
+  // match the JSONB filter — but changePrepItemSection asserts type='prep' (it
+  // would throw on an opening template id), and the mirror is moved TRANSITIVELY
+  // by its am_prep parent's setOpeningMirrorSection. Two-step (ids then IN) avoids
+  // the fragile PostgREST embedded-relation filter (AGENTS.md).
+  const { data: prepTmpls, error: ptErr } = await sb
+    .from("checklist_templates")
+    .select("id")
+    .eq("type", "prep")
+    .eq("active", true)
+    .returns<Array<{ id: string }>>();
+  if (ptErr) throw new Error(`disablePrepSection prep-template lookup failed: ${ptErr.message}`);
+  const prepTemplateIds = (prepTmpls ?? []).map((t) => t.id);
+
+  let lines: Array<{ id: string; template_id: string }> = [];
+  if (prepTemplateIds.length > 0) {
+    const { data: lineRows, error: lErr } = await sb
+      .from("checklist_template_items")
+      .select("id, template_id")
+      .eq("active", true)
+      .eq("prep_meta->>section", args.slug)
+      .in("template_id", prepTemplateIds)
+      .returns<Array<{ id: string; template_id: string }>>();
+    if (lErr) throw new Error(`disablePrepSection line lookup failed: ${lErr.message}`);
+    lines = lineRows ?? [];
+  }
+
+  // Re-section each line to Misc via the canonical two-step (changePrepItemSection
+  // handles column re-derivation + AM-prep→Opening mirror sync + per-line audit).
+  const movedIds: string[] = [];
+  for (const line of lines) {
+    await changePrepItemSection(actor, {
+      templateId: line.template_id,
+      itemId: line.id,
+      section: "Misc",
+    });
+    movedIds.push(line.id);
+  }
+
+  // Deactivate the section (append-only — never DELETE).
+  const { error: uErr } = await sb
+    .from("prep_sections")
+    .update({ active: false, updated_by: actor.user.id, updated_at: new Date().toISOString() })
+    .eq("id", section.id);
+  if (uErr) throw new Error(`disablePrepSection deactivate failed: ${uErr.message}`);
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "prep_section.disable",
+    resourceTable: "prep_sections",
+    resourceId: section.id,
+    metadata: {
+      slug: section.slug,
+      moved_item_ids: movedIds,
+      moved_count: movedIds.length,
+      prior_display_order: section.display_order,
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+
+  return { movedCount: movedIds.length };
+}
+
+/**
+ * Reorder a prep section up/down by swapping its display_order with the adjacent
+ * active section — add/remove SECTIONS UI (MoO+, all-locations). Edge moves (no
+ * neighbor in the direction) are a no-op success. display_order has no UNIQUE
+ * index (migration 0082), so the transient duplicate during the two-step swap is
+ * fine. Sections are GLOBAL (no location IDOR) — the route gates MoO+. Audits
+ * prep_section.reorder.
+ */
+export async function reorderPrepSection(
+  actor: AuthContext,
+  args: { slug: string; direction: "up" | "down" },
+): Promise<void> {
+  const sb = getServiceRoleClient();
+  const { data: rows, error: rErr } = await sb
+    .from("prep_sections")
+    .select("id, slug, display_order")
+    .eq("active", true)
+    .order("display_order", { ascending: true })
+    .returns<Array<{ id: string; slug: string; display_order: number }>>();
+  if (rErr) throw new Error(`reorderPrepSection read failed: ${rErr.message}`);
+
+  const ordered = rows ?? [];
+  const index = ordered.findIndex((s) => s.slug === args.slug);
+  if (index === -1) throw new AdminTemplateError(404, "section_not_found", "Section not found");
+
+  const neighborIndex = args.direction === "up" ? index - 1 : index + 1;
+  if (neighborIndex < 0 || neighborIndex >= ordered.length) return; // edge — no-op
+
+  const target = ordered[index]!;
+  const neighbor = ordered[neighborIndex]!;
+
+  const { error: u1 } = await sb
+    .from("prep_sections")
+    .update({ display_order: neighbor.display_order, updated_by: actor.user.id, updated_at: new Date().toISOString() })
+    .eq("id", target.id);
+  if (u1) throw new Error(`reorderPrepSection swap (target) failed: ${u1.message}`);
+
+  const { error: u2 } = await sb
+    .from("prep_sections")
+    .update({ display_order: target.display_order, updated_by: actor.user.id, updated_at: new Date().toISOString() })
+    .eq("id", neighbor.id);
+  if (u2) throw new Error(`reorderPrepSection swap (neighbor) failed: ${u2.message}`);
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "prep_section.reorder",
+    resourceTable: "prep_sections",
+    resourceId: target.id,
+    metadata: {
+      slug: target.slug,
+      from_order: target.display_order,
+      to_order: neighbor.display_order,
+      swapped_slug: neighbor.slug,
     },
     ipAddress: null,
     userAgent: null,

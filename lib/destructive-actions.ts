@@ -75,6 +75,12 @@ export const DESTRUCTIVE_ACTIONS = [
   "item.set_default",
   // — prep_section.update renames a section's display label (MoO+, all-locations).
   "prep_section.update",
+  // — prep_section.create adds a section to the registry (MoO+, all-locations).
+  "prep_section.create",
+  // — prep_section.disable deactivates a section + cascades its active lines to Misc (MoO+).
+  "prep_section.disable",
+  // — prep_section.reorder swaps a section's display_order with a neighbor (MoO+).
+  "prep_section.reorder",
   // — unit.create adds a unit to the standardized registry (MoO+).
   "unit.create",
 
