@@ -75,6 +75,7 @@ import type {
   PrepInputs,
   PrepMeta,
   PrepSection,
+  PrepSectionDefn,
   PrepSnapshot,
   ReportType,
 } from "./types";
@@ -612,6 +613,12 @@ export async function loadAmPrepState(
   completions: ChecklistCompletion[];
   authors: Record<string, string>;
   sectionLabels: Record<string, { en: string; es: string | null }>;
+  /**
+   * Ordered active section definitions (by displayOrder) — drives the
+   * data-driven AM-prep render (Item/Inventory Spine, Task 4). Derived from
+   * the same loadPrepSections map that builds sectionLabels (one load).
+   */
+  sections: PrepSectionDefn[];
 } | null> {
   // Resolve active AM Prep template (most-recent-active per Path A versioning).
   // Per-location scoping via `.eq("location_id", args.locationId)` is LOAD-BEARING
@@ -783,6 +790,12 @@ export async function loadAmPrepState(
   const sectionLabels: Record<string, { en: string; es: string | null }> = {};
   for (const [slug, defn] of sectionMap) sectionLabels[slug] = { en: defn.labelEn, es: defn.labelEs };
 
+  // Ordered active sections from the SAME loaded map (one load, not two) —
+  // drives the data-driven AM-prep render (Task 4).
+  const sections = Array.from(sectionMap.values()).sort(
+    (a, b) => a.displayOrder - b.displayOrder,
+  );
+
   return {
     template: tmplRow,
     templateItems: resolvedItems,
@@ -790,6 +803,7 @@ export async function loadAmPrepState(
     completions,
     authors,
     sectionLabels,
+    sections,
   };
 }
 

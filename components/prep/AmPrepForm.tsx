@@ -12,7 +12,7 @@
  *   Y/N attestations are required. The form blocks submission until
  *   32 entries are completed. BACK UP fields and free_text remain
  *   optional. TOTAL fields auto-calculate from primary + secondary
- *   per the TOTAL_SOURCES map.
+ *   per the section's shape (totalSourcesForShape, migration 0086).
  *
  *   Operator types 0 if there is nothing on hand — empty is rejected.
  *   Per Juan: "all on hand should be filled out before submitting.
@@ -59,29 +59,18 @@ import { formatChainAttribution, formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language, TranslationKey, TranslationParams } from "@/lib/i18n/types";
 import { ActionButton } from "@/components/ActionButton";
+import { totalSourcesForShape } from "@/lib/prep-sections";
 import type {
   ChecklistInstance,
   ChecklistTemplateItem,
   PrepInputs,
-  PrepSection as PrepSectionEnum,
+  PrepSectionDefn,
+  PrepSectionShape,
 } from "@/lib/types";
 
-import { CooksSection } from "./sections/CooksSection";
+import { GenericPrepSection } from "./sections/GenericPrepSection";
 import { MiscSection } from "./sections/MiscSection";
-import { SaucesSection } from "./sections/SaucesSection";
-import { SidesSection } from "./sections/SidesSection";
-import { SlicingSection } from "./sections/SlicingSection";
-import { VegSection } from "./sections/VegSection";
 import type { RawPrepInputs } from "./types";
-
-const SECTION_ORDER: ReadonlyArray<PrepSectionEnum> = [
-  "Veg",
-  "Cooks",
-  "Sides",
-  "Sauces",
-  "Slicing",
-  "Misc",
-];
 
 /**
  * Numeric fields in RawPrepInputs that need parsing at submission time.
@@ -92,64 +81,57 @@ const NUMERIC_FIELDS = ["onHand", "portioned", "line", "backUp", "total"] as con
 type NumericField = (typeof NUMERIC_FIELDS)[number];
 
 /**
- * Per-section TOTAL auto-calc formula. Sections present in this map
- * auto-compute TOTAL when any source field changes; sections absent
- * (Misc) do NOT auto-calc.
+ * Maps the snake_case PrepColumn field names returned by
+ * `totalSourcesForShape` (on_hand / portioned / line / back_up) to the
+ * camelCase keys on RawPrepInputs (onHand / portioned / line / backUp).
+ * The shape lib speaks PrepColumn; the form state speaks RawPrepInputs.
+ */
+const PREP_COLUMN_TO_RAW_FIELD: Record<
+  "on_hand" | "portioned" | "line" | "back_up",
+  NumericField
+> = {
+  on_hand: "onHand",
+  portioned: "portioned",
+  line: "line",
+  back_up: "backUp",
+};
+
+/**
+ * TOTAL auto-calc, shape-driven (Item/Inventory Spine, Task 4). Replaces the
+ * old hardcoded TOTAL_SOURCES map. Looks up the section's shape, resolves the
+ * primary + secondary source fields via totalSourcesForShape; null shape (the
+ * yes_no Misc shape) → no total.
  *
- * Primary / secondary semantics (locked Build #2 PR 1 follow-up per
- * Juan smoke):
- *   - PRIMARY field is the operationally-always-reported source (ON HAND
- *     for Veg/Cooks; PORTIONED for Sides; LINE for Sauces/Slicing).
- *     Required: TOTAL stays empty until primary is filled.
- *   - SECONDARY field is BACK UP (always; "leftover that needs to be
- *     prepped for service"). Optional: empty SECONDARY treated as 0
- *     in the sum so operators do not have to type 0 on every line
- *     without backups.
+ * Primary / secondary semantics (unchanged from the hardcoded version):
+ *   - PRIMARY is the operationally-always-reported source (on_hand / portioned
+ *     / line per shape). TOTAL stays empty until primary is filled.
+ *   - SECONDARY is BACK UP (always). Optional: empty SECONDARY treated as 0 in
+ *     the sum so operators do not have to type 0 on lines without backups.
  *
- * Cooks history: original Q-A1 decision excluded Cooks because the
- * column shape was ["par","on_hand","total"] (no BACK UP) and auto-calc
- * would have forced TOTAL = ON HAND, masking the multi-day batch
- * semantic. Build #2 PR 1 follow-up added BACK UP per Juan ("we need
- * the backup to know how much we have leftover that needs to be
- * prepped for service"). With BACK UP present, TOTAL = ON HAND + BACK
- * UP cleanly captures total service-ready quantity across active days
- * (vodka/marinara: day-of + next day; caramelized onion: 3+ days) —
- * BACK UP being "what is left from prior batches still service-ready"
- * is exactly what makes the sum operationally correct. Cooks now
- * auto-calcs.
- *
- * Mirrored on PrepRow's SECTIONS_WITH_AUTO_TOTAL set (which gates the
- * read-only display on the TOTAL cell). Keep in sync if a section gets
- * added or its formula changes.
- *
- * Empty-source semantics:
+ * Empty-source semantics (byte-identical to the prior computeTotal):
  *   - primary "" → TOTAL "" (no value to sum)
  *   - primary filled, secondary "" → TOTAL = primary (treat empty as 0)
  *   - both filled → TOTAL = primary + secondary
- *   - any source non-finite → TOTAL "" (validator surfaces the
- *     underlying parse error on the source field)
+ *   - any source non-finite → TOTAL "" (validator surfaces the underlying
+ *     parse error on the source field)
  */
-const TOTAL_SOURCES: Partial<
-  Record<PrepSectionEnum, { primary: NumericField; secondary: NumericField }>
-> = {
-  Veg: { primary: "onHand", secondary: "backUp" },
-  Cooks: { primary: "onHand", secondary: "backUp" },
-  Sides: { primary: "portioned", secondary: "backUp" },
-  Sauces: { primary: "line", secondary: "backUp" },
-  Slicing: { primary: "line", secondary: "backUp" },
-};
-
-function computeTotal(section: PrepSectionEnum, raw: RawPrepInputs): string {
-  const sources = TOTAL_SOURCES[section];
-  if (!sources) return ""; // Misc — n/a
-  const primaryRaw = raw[sources.primary];
+function computeTotal(
+  shape: PrepSectionShape | undefined,
+  raw: RawPrepInputs,
+): string {
+  if (shape === undefined) return "";
+  const sources = totalSourcesForShape(shape);
+  if (!sources) return ""; // yes_no (Misc) — n/a
+  const primaryField = PREP_COLUMN_TO_RAW_FIELD[sources.primary];
+  const secondaryField = PREP_COLUMN_TO_RAW_FIELD[sources.secondary];
+  const primaryRaw = raw[primaryField];
   if (primaryRaw === undefined || primaryRaw === "") return "";
   const primaryNum = Number(primaryRaw);
   if (!Number.isFinite(primaryNum)) return "";
   // Secondary (BACK UP) defaults to 0 when empty — operator UX win:
   // no need to type 0 on lines without backups.
   let secondaryNum = 0;
-  const secondaryRaw = raw[sources.secondary];
+  const secondaryRaw = raw[secondaryField];
   if (secondaryRaw !== undefined && secondaryRaw !== "") {
     const n = Number(secondaryRaw);
     if (!Number.isFinite(n)) return "";
@@ -236,7 +218,8 @@ interface ValidationResult {
 function validateRawValues(
   rawValues: Record<string, RawPrepInputs>,
   templateItems: ChecklistTemplateItem[],
-  sectionByItemId: Map<string, PrepSectionEnum>,
+  sectionByItemId: Map<string, string>,
+  shapeBySlug: Map<string, PrepSectionShape>,
   t: (key: TranslationKey, params?: TranslationParams) => string,
 ): ValidationResult {
   const errors: Record<string, Partial<Record<keyof RawPrepInputs, string>>> = {};
@@ -282,36 +265,38 @@ function validateRawValues(
     // be filled before submission (operator types 0 if there's
     // nothing on hand). BACK UP and free_text remain optional.
     //
-    // Numeric sections (Veg/Cooks/Sides/Sauces/Slicing) require their
-    // section-specific primary (onHand for Veg/Cooks; portioned for
-    // Sides; line for Sauces/Slicing — drawn from TOTAL_SOURCES).
-    //
-    // Misc requires yesNo on every item (operationally-critical
-    // attestations: meatball mix ready, meatballs ready to cook,
-    // etc.). free_text on Cook Bacon? stays optional.
+    // Which field is "primary" is now SHAPE-driven (migration 0086),
+    // not hardcoded per slug:
+    //   - yes_no shape (Misc): require `yesNo` on every item
+    //     (operationally-critical attestations: meatball mix ready,
+    //     meatballs ready to cook, etc.). free_text stays optional.
+    //   - numeric shapes (on_hand / portioned / line): require the
+    //     shape's primary source field (totalSourcesForShape(shape).primary,
+    //     mapped snake_case → camelCase RawPrepInputs key).
     //
     // Per-row required check now ALWAYS fires because we iterate
     // templateItems (not rawValues). Untouched rows get default {} for
     // raw, so primary fields are undefined → primary_required error.
-    if (section && section !== "Misc") {
-      const sources = TOTAL_SOURCES[section];
+    const shape = section !== undefined ? shapeBySlug.get(section) : undefined;
+    if (shape === "yes_no") {
+      if (raw.yesNo === undefined) {
+        rowErrors.yesNo = t("am_prep.error.primary_required");
+        errorCount += 1;
+      }
+    } else if (shape !== undefined) {
+      const sources = totalSourcesForShape(shape);
       if (sources) {
-        const primaryRaw = raw[sources.primary];
+        const primaryField = PREP_COLUMN_TO_RAW_FIELD[sources.primary];
+        const primaryRaw = raw[primaryField];
         if (primaryRaw === undefined || primaryRaw === "") {
           // Only set the required-error if there isn't already a
           // parse-error on the same field (parse-error is more
           // specific feedback for the operator).
-          if (!rowErrors[sources.primary]) {
-            rowErrors[sources.primary] = t("am_prep.error.primary_required");
+          if (!rowErrors[primaryField]) {
+            rowErrors[primaryField] = t("am_prep.error.primary_required");
             errorCount += 1;
           }
         }
-      }
-    }
-    if (section === "Misc") {
-      if (raw.yesNo === undefined) {
-        rowErrors.yesNo = t("am_prep.error.primary_required");
-        errorCount += 1;
       }
     }
 
@@ -409,6 +394,13 @@ export interface AmPrepFormProps {
    * i18n fallback for the section header. Optional; defaults to {} (fallback).
    */
   sectionLabels?: Record<string, { en: string; es: string | null }>;
+  /**
+   * Item/Inventory Spine (Task 4) — ordered active section definitions (by
+   * displayOrder) from loadAmPrepState. Drives the data-driven render: the
+   * form maps over these instead of a hardcoded SECTION_ORDER, routing each
+   * section to MiscSection (yes_no shape) or GenericPrepSection (numeric).
+   */
+  sections: PrepSectionDefn[];
 }
 
 type SubmitState =
@@ -428,14 +420,28 @@ export function AmPrepForm({
   originalSubmissionId = null,
   locationId,
   sectionLabels = {},
+  sections,
 }: AmPrepFormProps) {
   const { t, language } = useTranslation();
   const router = useRouter();
 
-  // Group items by section.
+  // Per-slug shape lookup derived from the ordered `sections` prop
+  // (Item/Inventory Spine, Task 4). Gates the auto-calc TOTAL + the
+  // primary-required derivation. The render maps over `sections` directly
+  // (shape + columns live on each PrepSectionDefn), so no separate def map
+  // is needed.
+  const shapeBySlug = useMemo(() => {
+    const map = new Map<string, PrepSectionShape>();
+    for (const s of sections) map.set(s.slug, s.shape);
+    return map;
+  }, [sections]);
+
+  // Group items by section. Groups initialize from `sections` (display order
+  // preserved) instead of the removed hardcoded SECTION_ORDER. Items group by
+  // their prepMeta.section slug; items lacking prepMeta are dropped (warn).
   const itemsBySection = useMemo(() => {
-    const groups = new Map<PrepSectionEnum, ChecklistTemplateItem[]>();
-    for (const section of SECTION_ORDER) groups.set(section, []);
+    const groups = new Map<string, ChecklistTemplateItem[]>();
+    for (const s of sections) groups.set(s.slug, []);
     for (const item of templateItems) {
       if (!item.prepMeta) {
         console.warn(
@@ -451,12 +457,12 @@ export function AmPrepForm({
       list.sort((a, b) => a.displayOrder - b.displayOrder);
     }
     return groups;
-  }, [templateItems]);
+  }, [templateItems, sections]);
 
-  // Lookup: templateItemId → section. Used by handleChange to gate auto-
-  // calc TOTAL per section.
+  // Lookup: templateItemId → section slug. Used by handleChange to gate auto-
+  // calc TOTAL per section (via shapeBySlug) + by validation.
   const sectionByItemId = useMemo(() => {
-    const map = new Map<string, PrepSectionEnum>();
+    const map = new Map<string, string>();
     for (const item of templateItems) {
       if (item.prepMeta) map.set(item.id, item.prepMeta.section);
     }
@@ -489,8 +495,8 @@ export function AmPrepForm({
   );
 
   const validation = useMemo(
-    () => validateRawValues(rawValues, templateItems, sectionByItemId, t),
-    [rawValues, templateItems, sectionByItemId, t],
+    () => validateRawValues(rawValues, templateItems, sectionByItemId, shapeBySlug, t),
+    [rawValues, templateItems, sectionByItemId, shapeBySlug, t],
   );
 
   // C.46 — read-only is now derived from the explicit `mode` prop (replaces
@@ -520,19 +526,20 @@ export function AmPrepForm({
           return { ...prev, [templateItemId]: { ...prevRow, freeText: rawValue } };
         }
         // Numeric field — store raw string. Auto-calc TOTAL when a source
-        // field changes in a section that has the auto-calc formula
-        // (Veg/Cooks/Sides/Sauces/Slicing). All 5 numeric sections now
-        // auto-calc — see TOTAL_SOURCES JSDoc for primary/secondary
-        // semantics + Cooks BACK UP-column history.
+        // field changes in a section whose SHAPE carries a total (the numeric
+        // shapes on_hand / portioned / line; yes_no has no total). Shape-driven
+        // per migration 0086 — see computeTotal JSDoc for primary/secondary
+        // semantics.
         const nextRow: RawPrepInputs = { ...prevRow, [field]: rawValue };
         const section = sectionByItemId.get(templateItemId);
-        if (section && field !== "total" && TOTAL_SOURCES[section]) {
-          nextRow.total = computeTotal(section, nextRow);
+        const shape = section !== undefined ? shapeBySlug.get(section) : undefined;
+        if (shape !== undefined && field !== "total" && totalSourcesForShape(shape) != null) {
+          nextRow.total = computeTotal(shape, nextRow);
         }
         return { ...prev, [templateItemId]: nextRow };
       });
     },
-    [sectionByItemId],
+    [sectionByItemId, shapeBySlug],
   );
 
   // ─── Submit ─────────────────────────────────────────────────────────────
@@ -737,55 +744,38 @@ export function AmPrepForm({
         </section>
       ) : null}
 
-      {/* Sections — render in canonical order. */}
-      <VegSection
-        templateItems={itemsBySection.get("Veg") ?? []}
-        rawValues={rawValues}
-        onChange={handleChange}
-        disabled={isReadOnly}
-        errors={validation.errors}
-        sectionLabels={sectionLabels}
-      />
-      <CooksSection
-        templateItems={itemsBySection.get("Cooks") ?? []}
-        rawValues={rawValues}
-        onChange={handleChange}
-        disabled={isReadOnly}
-        errors={validation.errors}
-        sectionLabels={sectionLabels}
-      />
-      <SidesSection
-        templateItems={itemsBySection.get("Sides") ?? []}
-        rawValues={rawValues}
-        onChange={handleChange}
-        disabled={isReadOnly}
-        errors={validation.errors}
-        sectionLabels={sectionLabels}
-      />
-      <SaucesSection
-        templateItems={itemsBySection.get("Sauces") ?? []}
-        rawValues={rawValues}
-        onChange={handleChange}
-        disabled={isReadOnly}
-        errors={validation.errors}
-        sectionLabels={sectionLabels}
-      />
-      <SlicingSection
-        templateItems={itemsBySection.get("Slicing") ?? []}
-        rawValues={rawValues}
-        onChange={handleChange}
-        disabled={isReadOnly}
-        errors={validation.errors}
-        sectionLabels={sectionLabels}
-      />
-      <MiscSection
-        templateItems={itemsBySection.get("Misc") ?? []}
-        rawValues={rawValues}
-        onChange={handleChange}
-        disabled={isReadOnly}
-        errors={validation.errors}
-        sectionLabels={sectionLabels}
-      />
+      {/* Sections — data-driven render in display order (Item/Inventory
+          Spine, Task 4). `sections` is already display-ordered (the loader
+          sorts by displayOrder). yes_no shape → MiscSection (toggle pair);
+          numeric shapes → GenericPrepSection. Props match exactly what the
+          former per-section components received (byte-identical render for
+          the 6 seeded sections). */}
+      {sections.map((s) =>
+        s.shape === "yes_no" ? (
+          <MiscSection
+            key={s.slug}
+            templateItems={itemsBySection.get(s.slug) ?? []}
+            rawValues={rawValues}
+            onChange={handleChange}
+            disabled={isReadOnly}
+            errors={validation.errors}
+            sectionLabels={sectionLabels}
+          />
+        ) : (
+          <GenericPrepSection
+            key={s.slug}
+            section={s.slug}
+            shape={s.shape}
+            columns={s.columns}
+            templateItems={itemsBySection.get(s.slug) ?? []}
+            rawValues={rawValues}
+            onChange={handleChange}
+            disabled={isReadOnly}
+            errors={validation.errors}
+            sectionLabels={sectionLabels}
+          />
+        ),
+      )}
 
       {/* Form-level error summary — accessibility-driven (per locked
           decision: BOTH per-row inline AND form-level summary). Renders
