@@ -161,7 +161,15 @@ Each is its own brainstorm → spec → plan → subagent build → review → P
 7. **Food cost + yield.** BOM rollup × `vendor_price_history` → item/menu food cost; on-hand ÷ BOM → yield projection. The payoff analytics.
 8. **Global aggregate view (MoO+/Owner).** Cross-location rollup of inventory/orders/cost/par.
 9. **Sales-velocity / auto-par (Toast).** `par_mode=auto` suggestions. (Gated on Toast integration phase.)
-10. **Section model for prep** (the earlier slice-3/4 ask: display-rename + dynamic sections + generic operator-form refactor) — independent of the spine; can run in parallel.
+10. **Section model for prep** (the earlier slice-3/4 ask: display-rename + dynamic sections + generic operator-form refactor) — independent of the spine; ran alongside. ✅ SHIPPED across #85 (sections first-class + display-rename) and #88 (data-driven AM-prep render via one shape-driven `GenericPrepSection` + add/remove/reorder sections + edit-input-type; section `shape` ∈ on_hand|portioned|line|yes_no drives columns + auto-total). Section editing is MoO+-only.
+
+## 8a. Progress log (as built)
+- **#82** registry foundation (migration 0079 `items`+`item_components`+`item_id` bridge; backfill 87 items/174 lines). Step 1 ✅.
+- **#83** registry goes live — reports/edits resolve par+name from the item; propagation retired. Step 2 (part) ✅.
+- **#84** par layer (migration 0080 `item_par_levels`, day-aware resolver) + 3-tab checklist admin (Global registry + per-location). Step 2 ✅.
+- **#85 / #86 / #87** sections first-class + rename · full item definition (special-instruction/required/min-role/section, item-canonical + propagate) · units registry + dropdown + normalize. Admin matured.
+- **#88** add/remove/reorder sections + data-driven AM-prep render (migration 0086 `prep_sections.shape`; one `GenericPrepSection`) + edit-input-type. Committed parity gate ran 0-drift on prod.
+- **⭐ NEXT (post-#88): per-line input type + non-inventory Q&A.** Input type moves onto the line (section = default → mixed sections fall out). Questions keep the `items` registry PURE — two flavors: *item-attached* questions ride their item onto reports; *standalone* questions behave like **searchable report tags** (Reports Hub free-text search). The read-path already tolerates `item_id = NULL` lines, so this is a write/admin + heterogeneous-render change, not a schema fight. Then steps 3–9 (vendors/SKU → ordering → receiving → on-hand → cost/yield → aggregate → Toast auto-par).
 
 ## 9. What this absorbs / supersedes
 - The planned **Vendors + Pars** admin module is now sub-projects 2–3 of this arc.
