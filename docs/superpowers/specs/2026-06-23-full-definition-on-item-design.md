@@ -70,8 +70,12 @@ Backfill: for each item, copy from a **representative active line** (prefer the 
 ### UI — Global-tab item definition
 - The Global tab's item-edit (RegistryRow) gains: special instruction EN/ES, required checkbox, min-role input, section select (re-section). A "applies to this item on every location" note. Save → the extended definition route.
 
-## Authorization (flag for review)
-The Global-tab item definition is **MoO+ (≥8)** today (name/recommended-par). Adding these fields keeps them **MoO+** — consistent with "global definition = MoO+." NOTE: this *tightens* who can edit a special instruction / min-role (was GM+ ≥7 on the old location tab). The alternative is **GM+ (≥7)** for item-definition editing (consistent with "GM+ adds items to the registry," i.e. GM+ already sets these at create time). **Recommend: confirm MoO+ vs GM+ for item-definition editing.** (Whatever we pick should also gate `addRegistryItem`'s definition fields consistently.)
+## Authorization (locked — Juan: "GMs add one time, MoO+ manages")
+The rule across the registry: **CREATE = GM+ (≥7); EDIT/manage = MoO+ (≥8).**
+- **Create (GM+):** `addRegistryItem` stays GM+ and is **extended to accept the full definition at create time** — name/name_es, section, recommended par/unit, **special_instruction/es, required, min_role**, is_default. A GM stands up a complete item once.
+- **Edit (MoO+):** the Global-tab item-definition edit (name/par + the new special_instruction/required/min_role/section) is **MoO+**, via the item-keyed definition route (already MoO+). Consistent with the shipped definition-edit / set-default / promote / section-rename (all MoO+).
+
+This matches everything already shipped — no re-gating of existing routes; only `addRegistryItem` gains the extra create-time fields (still GM+), and the MoO+ definition route gains the extra edit fields.
 
 ## Verification
 - `tsc` + `next build` clean; migration 0083 applied + captured.
