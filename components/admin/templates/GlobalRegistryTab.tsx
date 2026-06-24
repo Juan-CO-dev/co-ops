@@ -15,7 +15,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
-import { PREP_SECTIONS, sectionLabelByLang } from "@/lib/prep-sections";
+import { PREP_SECTIONS, sectionLabelByLang, isPrepSectionName } from "@/lib/prep-sections";
+import { roleLevelOptions } from "@/lib/roles";
 import type { PrepSection } from "@/lib/types";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { ChecklistRegistryItem } from "@/lib/admin/templates";
@@ -80,7 +81,13 @@ export function GlobalRegistryTab({
             </h2>
             <div className="mt-2 flex flex-col gap-2">
               {items.map((r) => (
-                <RegistryRow key={r.itemId} item={r} actorLevel={actorLevel} />
+                <RegistryRow
+                  key={r.itemId}
+                  item={r}
+                  actorLevel={actorLevel}
+                  sections={sections}
+                  language={language}
+                />
               ))}
             </div>
           </section>
@@ -164,7 +171,17 @@ function SectionRow({ section }: { section: PrepSectionDefn }) {
   );
 }
 
-function RegistryRow({ item, actorLevel }: { item: ChecklistRegistryItem; actorLevel: number }) {
+function RegistryRow({
+  item,
+  actorLevel,
+  sections,
+  language,
+}: {
+  item: ChecklistRegistryItem;
+  actorLevel: number;
+  sections: PrepSectionDefn[];
+  language: string;
+}) {
   const { t } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
@@ -178,6 +195,14 @@ function RegistryRow({ item, actorLevel }: { item: ChecklistRegistryItem; actorL
   const [nameEs, setNameEs] = useState(item.nameEs ?? "");
   const [par, setPar] = useState(item.recommendedPar?.toString() ?? "");
   const [parUnit, setParUnit] = useState(item.recommendedParUnit ?? "");
+  const [specialInstruction, setSpecialInstruction] = useState(item.specialInstruction ?? "");
+  const [specialInstructionEs, setSpecialInstructionEs] = useState(item.specialInstructionEs ?? "");
+  const [required, setRequired] = useState(item.required);
+  const [minRole, setMinRole] = useState(item.minRoleLevel?.toString() ?? "");
+  const initialSection: PrepSection = isPrepSectionName(item.section)
+    ? item.section
+    : PREP_SECTIONS[0]!;
+  const [section, setSection] = useState<PrepSection>(initialSection);
 
   const field =
     "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60";
@@ -212,6 +237,11 @@ function RegistryRow({ item, actorLevel }: { item: ChecklistRegistryItem; actorL
         nameEs: nameEs.trim() || null,
         recommendedPar: par.trim() === "" ? null : Number(par),
         recommendedParUnit: parUnit.trim() || null,
+        specialInstruction: specialInstruction.trim() || null,
+        specialInstructionEs: specialInstructionEs.trim() || null,
+        required,
+        ...(minRole.trim() === "" ? {} : { minRoleLevel: Number(minRole) }),
+        section,
       },
       "PATCH",
     );
@@ -264,6 +294,51 @@ function RegistryRow({ item, actorLevel }: { item: ChecklistRegistryItem; actorL
             <Labeled label={t("admin.templates.field.par_unit")}>
               <input className={field} value={parUnit} onChange={(e) => setParUnit(e.target.value)} />
             </Labeled>
+            <Labeled label={t("admin.templates.field.section")}>
+              <select
+                className={field}
+                value={section}
+                onChange={(e) => setSection(e.target.value as PrepSection)}
+              >
+                {PREP_SECTIONS.map((s) => (
+                  <option key={s} value={s}>
+                    {sectionLabelByLang(sections, s, language)}
+                  </option>
+                ))}
+              </select>
+            </Labeled>
+            <Labeled label={t("admin.templates.field.special_instruction")}>
+              <textarea
+                className={`${field} min-h-[88px] py-2`}
+                value={specialInstruction}
+                onChange={(e) => setSpecialInstruction(e.target.value)}
+              />
+            </Labeled>
+            <Labeled label={t("admin.templates.field.special_instruction_es")}>
+              <textarea
+                className={`${field} min-h-[88px] py-2`}
+                value={specialInstructionEs}
+                onChange={(e) => setSpecialInstructionEs(e.target.value)}
+              />
+            </Labeled>
+            <label className="mt-2 flex items-center gap-2 text-sm font-bold text-co-text">
+              <input
+                type="checkbox"
+                className="h-5 w-5 accent-co-gold"
+                checked={required}
+                onChange={(e) => setRequired(e.target.checked)}
+              />
+              {t("admin.templates.field.required")}
+            </label>
+            <Labeled label={t("admin.templates.field.min_role_level")}>
+              <select className={field} value={minRole} onChange={(e) => setMinRole(e.target.value)}>
+                <option value="">—</option>
+                {roleLevelOptions().map((o) => (
+                  <option key={o.level} value={o.level}>{o.label} ({o.level})</option>
+                ))}
+              </select>
+            </Labeled>
+            <p className="mt-1 text-xs text-co-text-muted">{t("admin.templates.min_role.hint")}</p>
             <p className="mt-2 text-xs text-co-text-muted">{t("admin.templates.definition.blast_radius_note")}</p>
             <div className="mt-3 flex justify-end">
               <button
@@ -315,6 +390,10 @@ function AddGlobalItem({ sections }: { sections: PrepSectionDefn[] }) {
   const [par, setPar] = useState("");
   const [parUnit, setParUnit] = useState("");
   const [isDefault, setIsDefault] = useState(false);
+  const [specialInstruction, setSpecialInstruction] = useState("");
+  const [specialInstructionEs, setSpecialInstructionEs] = useState("");
+  const [required, setRequired] = useState(false);
+  const [minRole, setMinRole] = useState("");
 
   const field =
     "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60";
@@ -326,6 +405,10 @@ function AddGlobalItem({ sections }: { sections: PrepSectionDefn[] }) {
     setPar("");
     setParUnit("");
     setIsDefault(false);
+    setSpecialInstruction("");
+    setSpecialInstructionEs("");
+    setRequired(false);
+    setMinRole("");
     setErrorMsg(null);
   };
 
@@ -344,6 +427,10 @@ function AddGlobalItem({ sections }: { sections: PrepSectionDefn[] }) {
         recommendedPar: par.trim() === "" ? null : Number(par),
         recommendedParUnit: parUnit.trim() || null,
         isDefault,
+        specialInstruction: specialInstruction.trim() || null,
+        specialInstructionEs: specialInstructionEs.trim() || null,
+        required,
+        ...(minRole.trim() === "" ? {} : { minRoleLevel: Number(minRole) }),
       },
       "POST",
     );
@@ -393,6 +480,38 @@ function AddGlobalItem({ sections }: { sections: PrepSectionDefn[] }) {
         <Labeled label={t("admin.templates.field.par_unit")}>
           <input className={field} value={parUnit} onChange={(e) => setParUnit(e.target.value)} />
         </Labeled>
+        <Labeled label={t("admin.templates.field.special_instruction")}>
+          <textarea
+            className={`${field} min-h-[88px] py-2`}
+            value={specialInstruction}
+            onChange={(e) => setSpecialInstruction(e.target.value)}
+          />
+        </Labeled>
+        <Labeled label={t("admin.templates.field.special_instruction_es")}>
+          <textarea
+            className={`${field} min-h-[88px] py-2`}
+            value={specialInstructionEs}
+            onChange={(e) => setSpecialInstructionEs(e.target.value)}
+          />
+        </Labeled>
+        <label className="mt-2 flex items-center gap-2 text-sm font-bold text-co-text">
+          <input
+            type="checkbox"
+            className="h-5 w-5 accent-co-gold"
+            checked={required}
+            onChange={(e) => setRequired(e.target.checked)}
+          />
+          {t("admin.templates.field.required")}
+        </label>
+        <Labeled label={t("admin.templates.field.min_role_level")}>
+          <select className={field} value={minRole} onChange={(e) => setMinRole(e.target.value)}>
+            <option value="">—</option>
+            {roleLevelOptions().map((o) => (
+              <option key={o.level} value={o.level}>{o.label} ({o.level})</option>
+            ))}
+          </select>
+        </Labeled>
+        <p className="-mt-1 text-xs text-co-text-muted">{t("admin.templates.min_role.hint")}</p>
         <label className="flex items-center gap-2 text-sm text-co-text">
           <input
             type="checkbox"
@@ -402,6 +521,7 @@ function AddGlobalItem({ sections }: { sections: PrepSectionDefn[] }) {
           />
           {t("admin.templates.add_global_is_default")}
         </label>
+        <p className="text-xs text-co-text-muted">{t("admin.templates.global_blast_radius_note")}</p>
         {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
         <div className="flex justify-end gap-2">
           <button

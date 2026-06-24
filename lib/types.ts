@@ -165,6 +165,11 @@ export interface Item {
   notes: string | null;
   /** Global default-set membership (only meaningful when locationId is null). is_default=true propagates to all active locations (migration 0081). */
   isDefault: boolean;
+  /** Canonical full definition (migration 0083) — edited on the Global tab, propagated to the item's lines. */
+  specialInstruction: string | null;
+  specialInstructionEs: string | null;
+  minRoleLevel: number | null;
+  required: boolean;
   active: boolean;
   createdAt: string;
   createdBy: string | null;

@@ -79,6 +79,22 @@ export function canActOn(actor: RoleCode, target: RoleCode): boolean {
   return getRoleLevel(actor) > getRoleLevel(target);
 }
 
+/**
+ * Distinct role levels with one representative position label, ascending — for
+ * min-role-level picker dropdowns ("Position name (level #)"). Where several
+ * roles share a level (e.g. 6 = AGM/Catering/Prep/Social, 4 = KH/Trainer), the
+ * first in ROLES order (highest-listed) is the canonical label (AGM, Key Holder).
+ */
+export function roleLevelOptions(): Array<{ level: number; label: string }> {
+  const byLevel = new Map<number, string>();
+  for (const r of Object.values(ROLES)) {
+    if (!byLevel.has(r.level)) byLevel.set(r.level, r.label);
+  }
+  return [...byLevel.entries()]
+    .map(([level, label]) => ({ level, label }))
+    .sort((a, b) => a.level - b.level);
+}
+
 /** PIN length: 4 digits for all roles (Phase 2 Session 1 — matches Toast/7shifts punch-in convention). */
 export function minPinLength(_role: RoleCode): 4 {
   return 4;
