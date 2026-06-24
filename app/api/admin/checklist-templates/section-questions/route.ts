@@ -25,7 +25,12 @@ export async function POST(req: NextRequest) {
   if (typeof b.inputType !== "string" || !(INPUT_TYPES as readonly string[]).includes(b.inputType)) {
     return jsonError(400, "invalid_input_type", { field: "inputType" });
   }
-  if (typeof b.minRoleLevel !== "number") return jsonError(400, "invalid_min_role", { field: "minRoleLevel" });
+  // min-role optional: a number, or null/omitted (no explicit minimum). Reject
+  // only a non-numeric non-null value. The lib validates the 0..10 range.
+  if (b.minRoleLevel !== null && b.minRoleLevel !== undefined && typeof b.minRoleLevel !== "number") {
+    return jsonError(400, "invalid_min_role", { field: "minRoleLevel" });
+  }
+  const minRoleLevel = typeof b.minRoleLevel === "number" ? b.minRoleLevel : null;
   const labelEs = b.labelEs === null || typeof b.labelEs === "string" ? (b.labelEs as string | null) : null;
   try {
     const result = await addSectionQuestion(ctx, {
@@ -34,7 +39,7 @@ export async function POST(req: NextRequest) {
       labelEs,
       inputType: b.inputType as LineInputType,
       includeNote: b.includeNote === true,
-      minRoleLevel: b.minRoleLevel,
+      minRoleLevel,
       required: b.required === true,
     });
     return jsonOk(result);

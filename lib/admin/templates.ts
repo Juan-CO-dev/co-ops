@@ -2563,7 +2563,8 @@ interface SectionQuestionFields {
   labelEs: string | null;
   inputType: LineInputType;
   includeNote: boolean;
-  minRoleLevel: number;
+  /** null = no explicit minimum; the propagated line falls back to the template default. */
+  minRoleLevel: number | null;
   required: boolean;
 }
 
@@ -2607,6 +2608,10 @@ async function propagateSectionQuestionLine(
   if (mxErr) throw new Error(`propagateSectionQuestionLine max order failed: ${mxErr.message}`);
   const displayOrder = (maxRow?.display_order ?? 0) + 1;
 
+  // Inherit the question's min-role; fall back to the template default when the
+  // question carries no explicit minimum (mirrors ensureItemLineOnTemplate).
+  const lineMinRole = question.minRoleLevel ?? (await resolveDefaultMinRole(sb, templateId));
+
   // Seed the question line: station=section + prep_meta atomically (item_id NULL).
   const { templateItemId } = await seedPrepItem(sb, {
     templateId,
@@ -2614,7 +2619,7 @@ async function propagateSectionQuestionLine(
     section: question.sectionSlug,
     label: question.label,
     description: null,
-    minRoleLevel: question.minRoleLevel,
+    minRoleLevel: lineMinRole,
     required: question.required,
     meta: {
       parValue: null,
@@ -2718,7 +2723,7 @@ export async function addSectionQuestion(
     labelEs: string | null;
     inputType: LineInputType;
     includeNote?: boolean;
-    minRoleLevel: number;
+    minRoleLevel: number | null;
     required: boolean;
   },
 ): Promise<{ questionId: string; propagatedLineCount: number }> {
@@ -2727,7 +2732,9 @@ export async function addSectionQuestion(
   }
   const label = args.label.trim();
   if (!label) throw new AdminTemplateError(400, "invalid_label", "Label cannot be empty");
-  if (!Number.isInteger(args.minRoleLevel) || args.minRoleLevel < 0 || args.minRoleLevel > 10) {
+  // min-role is optional (null = no explicit minimum → line falls back to the
+  // template default at propagation). Validate only when a value is given.
+  if (args.minRoleLevel !== null && (!Number.isInteger(args.minRoleLevel) || args.minRoleLevel < 0 || args.minRoleLevel > 10)) {
     throw new AdminTemplateError(400, "invalid_min_role", "min_role_level must be 0..10");
   }
 
