@@ -125,12 +125,23 @@ function SectionRow({
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [confirmingDisable, setConfirmingDisable] = useState(false);
+  const [confirmingShape, setConfirmingShape] = useState(false);
 
   const [labelEn, setLabelEn] = useState(section.labelEn);
   const [labelEs, setLabelEs] = useState(section.labelEs ?? "");
   const [displayOrder, setDisplayOrder] = useState(section.displayOrder.toString());
+  const [shape, setShape] = useState<PrepSectionShape>(section.shape);
+  const [includeNote, setIncludeNote] = useState(section.columns.includes("free_text"));
 
   const isMisc = section.slug === "Misc";
+  const shapeChanged = shape !== section.shape;
+
+  const shapeOptions: Array<{ value: PrepSectionShape; key: TranslationKey }> = [
+    { value: "on_hand", key: "admin.templates.section_shape.on_hand" },
+    { value: "portioned", key: "admin.templates.section_shape.portioned" },
+    { value: "line", key: "admin.templates.section_shape.line" },
+    { value: "yes_no", key: "admin.templates.section_shape.yes_no" },
+  ];
 
   const field =
     "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60";
@@ -164,6 +175,21 @@ function SectionRow({
     );
     setSubmitting(false);
     if (result.ok) { setConfirmingDisable(false); router.refresh(); }
+    else setErrorMsg(t(resolveErrorKey(result.code)));
+  };
+
+  const applyShape = async () => {
+    if (submitting) return;
+    setErrorMsg(null);
+    if ((await requestStepUp("B")) !== "ok") return;
+    setSubmitting(true);
+    const result = await postJson(
+      `/api/admin/checklist-templates/sections/${section.slug}/shape`,
+      { shape, includeNote: shape === "yes_no" ? includeNote : undefined },
+      "PATCH",
+    );
+    setSubmitting(false);
+    if (result.ok) { setConfirmingShape(false); router.refresh(); }
     else setErrorMsg(t(resolveErrorKey(result.code)));
   };
 
@@ -286,6 +312,74 @@ function SectionRow({
           />
         </label>
       </div>
+
+      {/* Input type (shape) — changing it re-derives the column set on every
+          line in the section, so it's gated behind a confirm when changed. */}
+      <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end">
+        <label className="block flex-1">
+          <span className="text-sm font-bold text-co-text">{t("admin.templates.sections_panel.input_type")}</span>
+          <select
+            className={field}
+            value={shape}
+            onChange={(e) => { setShape(e.target.value as PrepSectionShape); setConfirmingShape(false); }}
+          >
+            {shapeOptions.map((o) => (
+              <option key={o.value} value={o.value}>{t(o.key)}</option>
+            ))}
+          </select>
+        </label>
+        {shape === "yes_no" ? (
+          <label className="flex items-center gap-2 text-sm font-bold text-co-text sm:pb-2">
+            <input
+              type="checkbox"
+              className="h-5 w-5 accent-co-gold"
+              checked={includeNote}
+              onChange={(e) => setIncludeNote(e.target.checked)}
+            />
+            {t("admin.templates.sections_panel.add_include_note")}
+          </label>
+        ) : null}
+        {shapeChanged ? (
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={() => setConfirmingShape((v) => !v)}
+            className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-surface px-4 text-sm font-bold text-co-text disabled:opacity-50 sm:w-auto"
+          >
+            {t("admin.templates.sections_panel.change_input_type")}
+          </button>
+        ) : null}
+      </div>
+
+      {confirmingShape && shapeChanged ? (
+        <div className="mt-3 rounded-lg border-2 border-co-gold-deep bg-co-gold/10 p-3">
+          <p className="text-sm font-bold text-co-text">
+            {t("admin.templates.sections_panel.change_input_type_confirm_title")
+              .replace("{count}", itemsInSection.length.toString())
+              .replace("{type}", t(shapeOptions.find((o) => o.value === shape)!.key))}
+          </p>
+          <p className="mt-2 text-xs text-co-text-muted">{t("admin.templates.sections_panel.change_input_type_warning")}</p>
+          <div className="mt-3 flex justify-end gap-2">
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => { setConfirmingShape(false); setShape(section.shape); setIncludeNote(section.columns.includes("free_text")); }}
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text disabled:opacity-50"
+            >
+              {t("admin.templates.sections_panel.disable_cancel")}
+            </button>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => void applyShape()}
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50"
+            >
+              {t("admin.templates.sections_panel.change_input_type_confirm")}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {errorMsg ? <p className="mt-2 text-sm text-co-cta">{errorMsg}</p> : null}
       <div className="mt-3 flex justify-end">
         <button

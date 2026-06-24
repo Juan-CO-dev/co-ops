@@ -2387,3 +2387,101 @@ export async function reorderPrepSection(
     userAgent: null,
   });
 }
+
+/**
+ * Change a prep section's input type (shape) — add/remove SECTIONS UI (MoO+,
+ * all-locations). Updates the section's shape + columns, then re-derives
+ * prep_meta.columns on EVERY active line in the section so the operator form
+ * renders the new input type. Scoped to PREP templates (am_prep + mid_day_prep)
+ * — opening Phase-2 mirror lines carry OpeningPhase2Meta (no columns), so they
+ * need no re-derive and are excluded (same scoping rationale as the disable
+ * cascade). The station/section invariant is untouched (we change columns only,
+ * not section). Audits prep_section.update with before/after shape.
+ *
+ * Forward-compatible with the per-line input-type arc: this is the "set the
+ * section default + apply to all its lines" action.
+ */
+export async function setPrepSectionShape(
+  actor: AuthContext,
+  args: { slug: string; shape: PrepSectionShape; includeNote?: boolean },
+): Promise<{ reshapedCount: number }> {
+  if (!PREP_SECTION_SHAPES.includes(args.shape)) {
+    throw new AdminTemplateError(400, "invalid_shape", "Unknown section shape");
+  }
+  const sb = getServiceRoleClient();
+  const { data: section, error: rErr } = await sb
+    .from("prep_sections")
+    .select("id, slug, shape, columns")
+    .eq("slug", args.slug)
+    .eq("active", true)
+    .maybeSingle<{ id: string; slug: string; shape: PrepSectionShape; columns: string[] }>();
+  if (rErr) throw new Error(`setPrepSectionShape read failed: ${rErr.message}`);
+  if (!section) throw new AdminTemplateError(404, "section_not_found", "Section not found");
+
+  const newColumns = shapeToColumns(args.shape, args.includeNote ?? false);
+
+  // 1) Update the section's shape + default columns.
+  const { error: uErr } = await sb
+    .from("prep_sections")
+    .update({ shape: args.shape, columns: newColumns, updated_by: actor.user.id, updated_at: new Date().toISOString() })
+    .eq("id", section.id);
+  if (uErr) throw new Error(`setPrepSectionShape update failed: ${uErr.message}`);
+
+  // 2) Re-derive columns on every active PREP line in this section (exclude
+  //    opening mirror lines — no columns). Two-step ids→IN avoids the fragile
+  //    embedded-relation filter (AGENTS.md).
+  const { data: prepTmpls, error: ptErr } = await sb
+    .from("checklist_templates")
+    .select("id")
+    .eq("type", "prep")
+    .eq("active", true)
+    .returns<Array<{ id: string }>>();
+  if (ptErr) throw new Error(`setPrepSectionShape prep-template lookup failed: ${ptErr.message}`);
+  const prepTemplateIds = (prepTmpls ?? []).map((t) => t.id);
+
+  let reshapedCount = 0;
+  if (prepTemplateIds.length > 0) {
+    const { data: lines, error: lErr } = await sb
+      .from("checklist_template_items")
+      .select("id, prep_meta")
+      .eq("active", true)
+      .eq("prep_meta->>section", args.slug)
+      .in("template_id", prepTemplateIds)
+      .returns<Array<{ id: string; prep_meta: PrepMeta }>>();
+    if (lErr) throw new Error(`setPrepSectionShape line lookup failed: ${lErr.message}`);
+    for (const line of lines ?? []) {
+      const m = line.prep_meta;
+      const nextMeta: PrepMeta = {
+        section: m.section,
+        parValue: m.parValue,
+        parUnit: m.parUnit,
+        specialInstruction: m.specialInstruction,
+        columns: newColumns,
+      };
+      // setPrepItemMeta asserts meta.section === station (unchanged here).
+      await setPrepItemMeta(sb, { templateItemId: line.id, meta: nextMeta });
+      reshapedCount += 1;
+    }
+  }
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "prep_section.update",
+    resourceTable: "prep_sections",
+    resourceId: section.id,
+    metadata: {
+      slug: section.slug,
+      change: "shape",
+      before_shape: section.shape,
+      after_shape: args.shape,
+      before_columns: section.columns,
+      after_columns: newColumns,
+      reshaped_count: reshapedCount,
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+
+  return { reshapedCount };
+}
