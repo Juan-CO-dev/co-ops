@@ -59,17 +59,18 @@ import { formatChainAttribution, formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language, TranslationKey, TranslationParams } from "@/lib/i18n/types";
 import { ActionButton } from "@/components/ActionButton";
-import { totalSourcesForShape } from "@/lib/prep-sections";
+import { shapeFromColumns, totalSourcesForShape } from "@/lib/prep-sections";
 import type {
   ChecklistInstance,
   ChecklistTemplateItem,
+  LineInputType,
   PrepInputs,
   PrepSectionDefn,
-  PrepSectionShape,
 } from "@/lib/types";
 
 import { GenericPrepSection } from "./sections/GenericPrepSection";
 import { MiscSection } from "./sections/MiscSection";
+import { MixedPrepSection } from "./sections/MixedPrepSection";
 import type { RawPrepInputs } from "./types";
 
 /**
@@ -116,12 +117,15 @@ const PREP_COLUMN_TO_RAW_FIELD: Record<
  *     parse error on the source field)
  */
 function computeTotal(
-  shape: PrepSectionShape | undefined,
+  shape: LineInputType | undefined,
   raw: RawPrepInputs,
 ): string {
-  if (shape === undefined) return "";
+  // free_text + yes_no carry no total; only the numeric shapes pass to
+  // totalSourcesForShape (typed for PrepSectionShape). The shape is now the
+  // LINE's own shape (per-line input types), not the section default.
+  if (shape === undefined || shape === "free_text") return "";
   const sources = totalSourcesForShape(shape);
-  if (!sources) return ""; // yes_no (Misc) — n/a
+  if (!sources) return ""; // yes_no — n/a
   const primaryField = PREP_COLUMN_TO_RAW_FIELD[sources.primary];
   const secondaryField = PREP_COLUMN_TO_RAW_FIELD[sources.secondary];
   const primaryRaw = raw[primaryField];
@@ -218,8 +222,7 @@ interface ValidationResult {
 function validateRawValues(
   rawValues: Record<string, RawPrepInputs>,
   templateItems: ChecklistTemplateItem[],
-  sectionByItemId: Map<string, string>,
-  shapeBySlug: Map<string, PrepSectionShape>,
+  lineShapeByItemId: Map<string, LineInputType>,
   t: (key: TranslationKey, params?: TranslationParams) => string,
 ): ValidationResult {
   const errors: Record<string, Partial<Record<keyof RawPrepInputs, string>>> = {};
@@ -232,7 +235,6 @@ function validateRawValues(
     const raw: RawPrepInputs = rawValues[templateItemId] ?? {};
     const rowErrors: Partial<Record<keyof RawPrepInputs, string>> = {};
     const inputs: PrepInputs = {};
-    const section = sectionByItemId.get(templateItemId);
 
     // Numeric fields — parse + validate.
     for (const f of NUMERIC_FIELDS) {
@@ -277,10 +279,22 @@ function validateRawValues(
     // Per-row required check now ALWAYS fires because we iterate
     // templateItems (not rawValues). Untouched rows get default {} for
     // raw, so primary fields are undefined → primary_required error.
-    const shape = section !== undefined ? shapeBySlug.get(section) : undefined;
+    //
+    // SHAPE is now the LINE's own input type (per-line input types slice),
+    // derived from prep_meta.columns via shapeFromColumns — not the section
+    // default. For homogeneous sections every line's shape equals the section
+    // shape, so this is identical to the prior section-keyed behavior.
+    const shape = lineShapeByItemId.get(templateItemId);
     if (shape === "yes_no") {
       if (raw.yesNo === undefined) {
         rowErrors.yesNo = t("am_prep.error.primary_required");
+        errorCount += 1;
+      }
+    } else if (shape === "free_text") {
+      // free_text lines require a non-empty note only when the template item
+      // is `required` (ChecklistTemplateItem.required). Otherwise optional.
+      if (item.required && (raw.freeText === undefined || raw.freeText.length === 0)) {
+        rowErrors.freeText = t("am_prep.error.primary_required");
         errorCount += 1;
       }
     } else if (shape !== undefined) {
@@ -425,16 +439,18 @@ export function AmPrepForm({
   const { t, language } = useTranslation();
   const router = useRouter();
 
-  // Per-slug shape lookup derived from the ordered `sections` prop
-  // (Item/Inventory Spine, Task 4). Gates the auto-calc TOTAL + the
-  // primary-required derivation. The render maps over `sections` directly
-  // (shape + columns live on each PrepSectionDefn), so no separate def map
-  // is needed.
-  const shapeBySlug = useMemo(() => {
-    const map = new Map<string, PrepSectionShape>();
-    for (const s of sections) map.set(s.slug, s.shape);
+  // Per-LINE shape lookup (per-line input types slice). Each line's input type
+  // is derived from its own prep_meta.columns via shapeFromColumns — the line's
+  // total/primary-required derive from ITS shape, not the section default. For
+  // the 6 homogeneous seeded sections every line's shape equals the section
+  // shape, so this is a no-op refactor until mixed sections exist (PR B).
+  const lineShapeByItemId = useMemo(() => {
+    const map = new Map<string, LineInputType>();
+    for (const item of templateItems) {
+      if (item.prepMeta) map.set(item.id, shapeFromColumns(item.prepMeta.columns));
+    }
     return map;
-  }, [sections]);
+  }, [templateItems]);
 
   // Group items by section. Groups initialize from `sections` (display order
   // preserved) instead of the removed hardcoded SECTION_ORDER. Items group by
@@ -458,16 +474,6 @@ export function AmPrepForm({
     }
     return groups;
   }, [templateItems, sections]);
-
-  // Lookup: templateItemId → section slug. Used by handleChange to gate auto-
-  // calc TOTAL per section (via shapeBySlug) + by validation.
-  const sectionByItemId = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const item of templateItems) {
-      if (item.prepMeta) map.set(item.id, item.prepMeta.section);
-    }
-    return map;
-  }, [templateItems]);
 
   // Derive initial rawValues from initialValues prop (one-time at mount).
   const initialRawValues = useMemo(() => {
@@ -495,8 +501,8 @@ export function AmPrepForm({
   );
 
   const validation = useMemo(
-    () => validateRawValues(rawValues, templateItems, sectionByItemId, shapeBySlug, t),
-    [rawValues, templateItems, sectionByItemId, shapeBySlug, t],
+    () => validateRawValues(rawValues, templateItems, lineShapeByItemId, t),
+    [rawValues, templateItems, lineShapeByItemId, t],
   );
 
   // C.46 — read-only is now derived from the explicit `mode` prop (replaces
@@ -531,15 +537,22 @@ export function AmPrepForm({
         // per migration 0086 — see computeTotal JSDoc for primary/secondary
         // semantics.
         const nextRow: RawPrepInputs = { ...prevRow, [field]: rawValue };
-        const section = sectionByItemId.get(templateItemId);
-        const shape = section !== undefined ? shapeBySlug.get(section) : undefined;
-        if (shape !== undefined && field !== "total" && totalSourcesForShape(shape) != null) {
+        // Auto-calc TOTAL is driven by the LINE's own shape (per-line input
+        // types), not the section default. Only numeric shapes carry a total;
+        // free_text + yes_no return null from totalSourcesForShape.
+        const shape = lineShapeByItemId.get(templateItemId);
+        if (
+          shape !== undefined &&
+          shape !== "free_text" &&
+          field !== "total" &&
+          totalSourcesForShape(shape) != null
+        ) {
           nextRow.total = computeTotal(shape, nextRow);
         }
         return { ...prev, [templateItemId]: nextRow };
       });
     },
-    [sectionByItemId, shapeBySlug],
+    [lineShapeByItemId],
   );
 
   // ─── Submit ─────────────────────────────────────────────────────────────
@@ -750,11 +763,37 @@ export function AmPrepForm({
           numeric shapes → GenericPrepSection. Props match exactly what the
           former per-section components received (byte-identical render for
           the 6 seeded sections). */}
-      {sections.map((s) =>
-        s.shape === "yes_no" ? (
+      {sections.map((s) => {
+        const sectionItems = itemsBySection.get(s.slug) ?? [];
+        // Homogeneity: a section renders the UNIFORM path (MiscSection /
+        // GenericPrepSection — byte-identical to before this slice) iff every
+        // line's own shape equals the section default. Empty section → no
+        // lines → vacuously uniform → uniform path. Only a genuinely-mixed
+        // section (≥1 line whose shape differs from the section default)
+        // takes MixedPrepSection.
+        const isUniform = sectionItems.every(
+          (i) => i.prepMeta != null && shapeFromColumns(i.prepMeta.columns) === s.shape,
+        );
+
+        if (!isUniform) {
+          return (
+            <MixedPrepSection
+              key={s.slug}
+              section={s.slug}
+              templateItems={sectionItems}
+              rawValues={rawValues}
+              onChange={handleChange}
+              disabled={isReadOnly}
+              errors={validation.errors}
+              sectionLabels={sectionLabels}
+            />
+          );
+        }
+
+        return s.shape === "yes_no" ? (
           <MiscSection
             key={s.slug}
-            templateItems={itemsBySection.get(s.slug) ?? []}
+            templateItems={sectionItems}
             rawValues={rawValues}
             onChange={handleChange}
             disabled={isReadOnly}
@@ -767,15 +806,15 @@ export function AmPrepForm({
             section={s.slug}
             shape={s.shape}
             columns={s.columns}
-            templateItems={itemsBySection.get(s.slug) ?? []}
+            templateItems={sectionItems}
             rawValues={rawValues}
             onChange={handleChange}
             disabled={isReadOnly}
             errors={validation.errors}
             sectionLabels={sectionLabels}
           />
-        ),
-      )}
+        );
+      })}
 
       {/* Form-level error summary — accessibility-driven (per locked
           decision: BOTH per-row inline AND form-level summary). Renders
