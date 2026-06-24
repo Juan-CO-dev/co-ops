@@ -27,6 +27,10 @@ export async function POST(req: NextRequest) {
     recommendedPar: b.recommendedPar === null || typeof b.recommendedPar === "number" ? (b.recommendedPar as number | null) : null,
     recommendedParUnit: b.recommendedParUnit === null || typeof b.recommendedParUnit === "string" ? (b.recommendedParUnit as string | null) : null,
     isDefault: b.isDefault === true,
+    specialInstruction: b.specialInstruction === null || typeof b.specialInstruction === "string" ? (b.specialInstruction as string | null) : null,
+    specialInstructionEs: b.specialInstructionEs === null || typeof b.specialInstructionEs === "string" ? (b.specialInstructionEs as string | null) : null,
+    required: b.required === true,
+    minRoleLevel: typeof b.minRoleLevel === "number" ? b.minRoleLevel : undefined,
   };
   try {
     const result = await addRegistryItem(ctx, input);
