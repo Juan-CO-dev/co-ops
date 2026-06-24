@@ -9,21 +9,37 @@
  * (isPrepSectionName), not a static union.
  */
 
-import type { PrepColumn, PrepSectionShape } from "@/lib/types";
+import type { LineInputType, PrepColumn, PrepSectionShape } from "@/lib/types";
 
 /**
- * Column set per shape — the single source for a section's columns (migration
+ * Column set per input type — the single source for a line's columns (migration
  * 0086 moved this off the old hardcoded SECTION_COLUMNS map keyed by slug).
  * Numeric shapes always carry par + primary + back_up + total. yes_no carries
- * the toggle (+ free_text note when includeNote). Returns a fresh array.
+ * the toggle (+ free_text note when includeNote). free_text is a text-only
+ * question line. Returns a fresh array. (Section shapes are a subset of
+ * LineInputType, so this also serves the section-default case.)
  */
-export function shapeToColumns(shape: PrepSectionShape, includeNote = false): PrepColumn[] {
+export function shapeToColumns(shape: LineInputType, includeNote = false): PrepColumn[] {
   switch (shape) {
     case "on_hand":   return ["par", "on_hand", "back_up", "total"];
     case "portioned": return ["par", "portioned", "back_up", "total"];
     case "line":      return ["par", "line", "back_up", "total"];
     case "yes_no":    return includeNote ? ["yes_no", "free_text"] : ["yes_no"];
+    case "free_text": return ["free_text"];
   }
+}
+
+/**
+ * A LINE's input type, derived from its prep_meta.columns (the per-line source
+ * of truth — inverse of shapeToColumns). Used by the operator render to pick a
+ * per-line control in mixed sections. CLIENT-SAFE (pure).
+ */
+export function shapeFromColumns(columns: PrepColumn[]): LineInputType {
+  if (columns.includes("on_hand")) return "on_hand";
+  if (columns.includes("portioned")) return "portioned";
+  if (columns.includes("line")) return "line";
+  if (columns.includes("yes_no")) return "yes_no";
+  return "free_text"; // ["free_text"] or empty → text-only question
 }
 
 /**
