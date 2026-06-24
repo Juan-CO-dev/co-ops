@@ -71,7 +71,11 @@ export function resolveLineDefinition(
     };
   }
   const par = override && override.parMode === "manual" ? override.parValue : item.defaultPar;
-  const parUnit = override?.parUnit ?? item.defaultParUnit;
+  // Unit is an ITEM-GLOBAL attribute now (Units Registry slice): it always comes
+  // from the item, never the per-location override. ItemOverride still carries a
+  // parUnit field (harmless/vestigial) — item_par_levels.par_unit is no longer
+  // written and not read here.
+  const parUnit = item.defaultParUnit;
   return { name: item.name, nameEs: item.nameEs, par, parUnit };
 }
 
