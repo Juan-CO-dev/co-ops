@@ -13,12 +13,14 @@ export function AddPrepItemForm({
   prepSubtype,
   defaultSection,
   sections,
+  units,
   onClose,
 }: {
   templateId: string;
   prepSubtype: "am_prep" | "mid_day_prep";
   defaultSection: PrepSection;
   sections: PrepSectionDefn[];
+  units: Array<{ label: string }>;
   onClose: () => void;
 }) {
   const { t, language } = useTranslation();
@@ -74,7 +76,18 @@ export function AddPrepItemForm({
         <label className="block"><span className="text-sm font-bold text-co-text">{t("admin.templates.field.label_en")}</span><input className={fieldCls} value={label} onChange={(e) => setLabel(e.target.value)} /></label>
         <label className="block"><span className="text-sm font-bold text-co-text">{t("admin.templates.field.label_es")}</span><input className={fieldCls} value={labelEs} onChange={(e) => setLabelEs(e.target.value)} /></label>
         <label className="block"><span className="text-sm font-bold text-co-text">{t("admin.templates.field.par_value")}</span><input className={fieldCls} inputMode="decimal" value={parValue} onChange={(e) => setParValue(e.target.value)} /></label>
-        <label className="block"><span className="text-sm font-bold text-co-text">{t("admin.templates.field.par_unit")}</span><input className={fieldCls} value={parUnit} onChange={(e) => setParUnit(e.target.value)} /></label>
+        <label className="block">
+          <span className="text-sm font-bold text-co-text">{t("admin.templates.field.par_unit")}</span>
+          <select className={fieldCls} value={parUnit} onChange={(e) => setParUnit(e.target.value)}>
+            <option value="">{t("admin.templates.unit_blank_option")}</option>
+            {parUnit.trim() !== "" && !units.some((u) => u.label === parUnit) ? (
+              <option value={parUnit}>{parUnit}</option>
+            ) : null}
+            {units.map((u) => (
+              <option key={u.label} value={u.label}>{u.label}</option>
+            ))}
+          </select>
+        </label>
         {section === "Misc" ? (
           <label className="flex items-center gap-2 text-sm text-co-text">
             <input type="checkbox" className="h-5 w-5 accent-co-gold" checked={includeNote} onChange={(e) => setIncludeNote(e.target.checked)} />

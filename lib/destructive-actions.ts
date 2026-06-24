@@ -75,6 +75,8 @@ export const DESTRUCTIVE_ACTIONS = [
   "item.set_default",
   // — prep_section.update renames a section's display label (MoO+, all-locations).
   "prep_section.update",
+  // — unit.create adds a unit to the standardized registry (MoO+).
+  "unit.create",
 
   // Checklist completion correction (per SPEC_AMENDMENTS.md C.28)
   // — destructive because they alter operational/accountability record.

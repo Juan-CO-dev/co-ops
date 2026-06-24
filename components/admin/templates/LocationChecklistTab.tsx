@@ -30,11 +30,13 @@ export function LocationChecklistTab({
   subtype,
   registry,
   sections,
+  units,
 }: {
   view: ChecklistLocationView;
   subtype: PrepSubtype;
   registry: ChecklistRegistryItem[];
   sections: PrepSectionDefn[];
+  units: Array<{ label: string }>;
 }) {
   const { t, language } = useTranslation();
 
@@ -109,7 +111,7 @@ export function LocationChecklistTab({
         sections={sections}
       />
 
-      <AddLocalItem templateId={templateId} subtype={subtype} sections={sections} />
+      <AddLocalItem templateId={templateId} subtype={subtype} sections={sections} units={units} />
     </div>
   );
 }
@@ -299,7 +301,7 @@ function EnableFromRegistry({
   );
 }
 
-function AddLocalItem({ templateId, subtype, sections }: { templateId: string; subtype: PrepSubtype; sections: PrepSectionDefn[] }) {
+function AddLocalItem({ templateId, subtype, sections, units }: { templateId: string; subtype: PrepSubtype; sections: PrepSectionDefn[]; units: Array<{ label: string }> }) {
   const { t, language } = useTranslation();
   const [section, setSection] = useState<PrepSection | null>(null);
 
@@ -333,6 +335,7 @@ function AddLocalItem({ templateId, subtype, sections }: { templateId: string; s
             prepSubtype={subtype}
             defaultSection={section}
             sections={sections}
+            units={units}
             onClose={() => setSection(null)}
           />
         </div>

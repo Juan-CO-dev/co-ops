@@ -6,9 +6,10 @@
  * + par_mode, and saves each row independently via PATCH
  * `…/[templateId]/items/[lineId]/par` (AGM+, Tier A step-up).
  *
- * Self-contained: owns its own base/days/parUnit state, seeded from the line's
- * PrepLineParContext. Used on the LOCATION tab only — the Global tab edits the
- * item definition, not per-location overrides.
+ * Self-contained: owns its own base/days state, seeded from the line's
+ * PrepLineParContext. The unit is item-global (lives on the item) — shown here
+ * read-only, never edited per-location. Used on the LOCATION tab only — the
+ * Global tab edits the item definition, not per-location overrides.
  */
 
 import { useState } from "react";
@@ -59,9 +60,10 @@ export function ParGrid({
 
   const [base, setBase] = useState<DayState>(() => seedDay(parCtx.overrides, null));
   const [days, setDays] = useState<DayState[]>(() => DAY_KEYS.map((_, i) => seedDay(parCtx.overrides, i)));
-  const [parUnit, setParUnit] = useState(
-    parCtx.overrides.find((o) => o.dayOfWeek === null)?.parUnit ?? parCtx.recommendedParUnit ?? "",
-  );
+
+  // The unit is item-global now (lives on the item, resolved from
+  // item.default_par_unit) — display it read-only here, no per-location input.
+  const itemUnit = parCtx.recommendedParUnit;
 
   const field =
     "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60";
@@ -76,9 +78,11 @@ export function ParGrid({
     // inherit → take the recommendation: send parValue=null.
     const parValue =
       state.parMode === "inherit" ? null : state.parValue.trim() === "" ? null : Number(state.parValue);
+    // parUnit is item-global now (lives on the item) — the /par route + setItemPar
+    // ignore it, so we no longer send it.
     const result = await postJson(
       `/api/admin/checklist-templates/${templateId}/items/${lineId}/par`,
-      { locationId, dayOfWeek, parValue, parUnit: parUnit.trim() || null, parMode: state.parMode },
+      { locationId, dayOfWeek, parValue, parMode: state.parMode },
       "PATCH",
     );
     setSubmitting(false);
@@ -92,9 +96,11 @@ export function ParGrid({
         {t("admin.templates.par_grid.title")}
       </h3>
       {errorMsg ? <p className="mt-2 text-sm text-co-cta">{errorMsg}</p> : null}
-      <Labeled label={t("admin.templates.field.par_unit")}>
-        <input className={field} value={parUnit} onChange={(e) => setParUnit(e.target.value)} />
-      </Labeled>
+      {itemUnit ? (
+        <p className="mt-2 text-xs text-co-text-muted">
+          {t("admin.templates.field.par_unit")}: <span className="font-bold text-co-text">{itemUnit}</span>
+        </p>
+      ) : null}
 
       <ParRow
         label={t("admin.templates.par_grid.all_days")}
@@ -123,6 +129,9 @@ export function ParGrid({
     </section>
   );
 }
+
+// (Labeled helper removed — the par-unit input it wrapped is now a read-only
+// item-global label; ParRow takes `field` directly.)
 
 function ParRow({
   label,
@@ -176,14 +185,5 @@ function ParRow({
         {t("admin.templates.save")}
       </button>
     </div>
-  );
-}
-
-function Labeled({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="mt-2 block">
-      <span className="text-sm font-bold text-co-text">{label}</span>
-      {children}
-    </label>
   );
 }

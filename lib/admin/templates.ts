@@ -23,6 +23,7 @@ import {
 import { setPrepItemMeta, setPrepItemSection, narrowPrepTemplateItem, isPrepMeta, seedPrepItem } from "@/lib/prep";
 import { columnsForSection, isPrepSectionName } from "@/lib/prep-sections";
 import { loadPrepSections } from "@/lib/prep-sections.server";
+import { loadUnits } from "@/lib/units.server";
 import type { AuthContext } from "@/lib/session";
 import type {
   ChecklistTemplateItem,
@@ -1112,7 +1113,11 @@ export async function setItemPar(
     location_id: args.locationId,
     day_of_week: args.dayOfWeek,
     par_value: args.parValue,
-    par_unit: args.parUnit?.trim() || null,
+    // Unit is item-global now (Units Registry slice): the per-location unit on
+    // item_par_levels is deprecated. We keep the `parUnit` arg in the signature
+    // (the /par route still passes it) but IGNORE it and write null. The unit
+    // lives on the item (items.default_par_unit) and is resolved from there.
+    par_unit: null,
     par_mode: args.parMode,
     active: true,
     created_by: actor.user.id,
@@ -1131,7 +1136,9 @@ export async function setItemPar(
       location_id: args.locationId,
       day_of_week: args.dayOfWeek,
       before,
-      after: { parValue: args.parValue, parUnit: args.parUnit?.trim() || null, parMode: args.parMode },
+      // parUnit is no longer persisted on item_par_levels (item-global now) —
+      // record null to match what was actually written.
+      after: { parValue: args.parValue, parUnit: null, parMode: args.parMode },
     },
     ipAddress: null,
     userAgent: null,
@@ -1765,6 +1772,8 @@ export interface ChecklistAdminView {
   locations: ChecklistLocationView[];
   /** First-class prep sections (active, by displayOrder) — editable labels. */
   sections: PrepSectionDefn[];
+  /** Canonical par units (active, by displayOrder) — the unit-dropdown pool. */
+  units: Array<{ label: string }>;
 }
 
 /**
@@ -1840,7 +1849,10 @@ export async function loadChecklistAdminView(
   const sectionMap = await loadPrepSections(sb);
   const sections = Array.from(sectionMap.values()).sort((a, b) => a.displayOrder - b.displayOrder);
 
-  return { subtype, actorLevel: ROLES[actor.user.role].level, registry, locations, sections };
+  // Canonical par units (active, by displayOrder) — the unit-dropdown pool.
+  const units = await loadUnits(sb);
+
+  return { subtype, actorLevel: ROLES[actor.user.role].level, registry, locations, sections, units };
 }
 
 /**
@@ -1981,6 +1993,67 @@ export async function updateRegistryItemDefinition(
       changed_fields: Object.keys(after),
       propagated_line_count: propagatedLineCount,
     },
+    ipAddress: null,
+    userAgent: null,
+  });
+}
+
+/**
+ * Add a canonical par unit to the registry (Units Registry slice). Validates the
+ * label is non-empty and not a case-insensitive duplicate of an existing
+ * `units.label`. Inserts with display_order = (max active +1). Units are GLOBAL
+ * (no location IDOR) — the route gates MoO+. Audits unit.create.
+ */
+export async function addUnit(
+  actor: AuthContext,
+  args: { label: string },
+): Promise<void> {
+  const label = args.label.trim();
+  if (!label) throw new AdminTemplateError(400, "invalid_label", "Label cannot be empty");
+
+  const sb = getServiceRoleClient();
+
+  // Duplicate check (case-insensitive) against existing units.
+  const { data: existing, error: eErr } = await sb
+    .from("units")
+    .select("id, label")
+    .ilike("label", label)
+    .maybeSingle<{ id: string; label: string }>();
+  if (eErr) throw new Error(`addUnit duplicate check failed: ${eErr.message}`);
+  if (existing) throw new AdminTemplateError(409, "unit_exists", "A unit with that label already exists");
+
+  // display_order = max active +1 (append to the end of the dropdown).
+  const { data: maxRow, error: mErr } = await sb
+    .from("units")
+    .select("display_order")
+    .eq("active", true)
+    .order("display_order", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ display_order: number }>();
+  if (mErr) throw new Error(`addUnit max order failed: ${mErr.message}`);
+  const displayOrder = (maxRow?.display_order ?? 0) + 1;
+
+  const { data: inserted, error: iErr } = await sb
+    .from("units")
+    .insert({
+      label,
+      active: true,
+      display_order: displayOrder,
+      created_by: actor.user.id,
+      updated_by: actor.user.id,
+    })
+    .select("id")
+    .maybeSingle<{ id: string }>();
+  if (iErr) throw new Error(`addUnit insert failed: ${iErr.message}`);
+  if (!inserted) throw new Error("addUnit insert returned no row");
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "unit.create",
+    resourceTable: "units",
+    resourceId: inserted.id,
+    metadata: { label },
     ipAddress: null,
     userAgent: null,
   });
