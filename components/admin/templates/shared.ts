@@ -26,6 +26,7 @@ const KNOWN = new Set([
   "invalid_day_of_week",
   "already_global",
   "not_global",
+  "unit_exists",
   "invalid_payload",
   "item_unlinked",
   "not_a_prep_item",

@@ -62,7 +62,12 @@ export function ChecklistTabs({ view }: { view: ChecklistAdminView }) {
       </div>
 
       {active === "global" ? (
-        <GlobalRegistryTab registry={view.registry} sections={view.sections} actorLevel={view.actorLevel} />
+        <GlobalRegistryTab
+          registry={view.registry}
+          sections={view.sections}
+          units={view.units}
+          actorLevel={view.actorLevel}
+        />
       ) : selectedLocation ? (
         <LocationChecklistTab
           key={selectedLocation.locationId}
@@ -70,6 +75,7 @@ export function ChecklistTabs({ view }: { view: ChecklistAdminView }) {
           subtype={view.subtype}
           registry={view.registry}
           sections={view.sections}
+          units={view.units}
         />
       ) : null}
     </div>
