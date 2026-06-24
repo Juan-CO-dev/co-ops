@@ -385,6 +385,144 @@ async function setOpeningMirrorSection(args: { amPrepItemId: string; locationId:
   return ids;
 }
 
+/**
+ * The canonical full-definition fields an item edit can change, in the subset
+ * actually present (undefined = unchanged). Drives propagation to every active
+ * line of the item (all locations + opening mirrors).
+ */
+export interface ItemDefinitionChanges {
+  specialInstruction?: string | null; // en — prep_meta.specialInstruction (prep lines only)
+  specialInstructionEs?: string | null; // translations.es.specialInstruction
+  required?: boolean; // line.required
+  minRoleLevel?: number; // line.min_role_level
+  section?: PrepSection; // station + prep_meta.section (+ re-derived columns on prep lines)
+}
+
+/**
+ * Propagate an item's canonical full-definition edit to every ACTIVE line that
+ * links the item — across all locations AND the opening Phase-2 mirror (the
+ * mirror shares the same item_id). Applies only the PRESENT (defined) changes.
+ *
+ * Per-line handling by prep_meta shape:
+ *   - `required`     → line `required` column (every line).
+ *   - `minRoleLevel` → line `min_role_level` column (every line).
+ *   - `specialInstruction` → prep lines (isPrepMeta): prep_meta.specialInstruction
+ *       via setPrepItemMeta (preserves the station/section invariant). Opening
+ *       mirror lines (OpeningPhase2Meta) carry NO specialInstruction field, so
+ *       SI is SKIPPED for them (CONFIRMED: lib/types.ts OpeningPhase2Meta has no
+ *       such field).
+ *   - `specialInstructionEs` → translations.es.specialInstruction (every line,
+ *       via mergeEsTranslation — shape-agnostic).
+ *   - `section` → station + prep_meta.section on every line; prep lines also
+ *       re-derive prep_meta.columns from the section convention (loadPrepSections,
+ *       fallback columnsForSection, preserving the Misc free_text column). The
+ *       mirror line updates station + prep_meta.section only (no column re-derive
+ *       — OpeningPhase2Meta has no columns).
+ *
+ * Returns the count of lines updated. Operator render + the completion gating in
+ * lib/checklists.ts keep reading LINE values — those are the columns we write.
+ */
+async function propagateItemDefinitionToLines(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  itemId: string,
+  changes: ItemDefinitionChanges,
+): Promise<number> {
+  // Nothing to propagate.
+  const hasSi = changes.specialInstruction !== undefined;
+  const hasSiEs = changes.specialInstructionEs !== undefined;
+  const hasRequired = changes.required !== undefined;
+  const hasMinRole = changes.minRoleLevel !== undefined;
+  const hasSection = changes.section !== undefined;
+  if (!hasSi && !hasSiEs && !hasRequired && !hasMinRole && !hasSection) return 0;
+
+  // Load ALL active lines linking the item (any template — all locations +
+  // opening mirror). Section column-derive needs the per-section convention.
+  const { data: lines, error: lErr } = await sb
+    .from("checklist_template_items")
+    .select(TEMPLATE_ITEM_COLUMNS)
+    .eq("item_id", itemId)
+    .eq("active", true)
+    .returns<TemplateItemRow[]>();
+  if (lErr) throw new Error(`propagateItemDefinitionToLines lines read failed: ${lErr.message}`);
+  const rows = lines ?? [];
+  if (rows.length === 0) return 0;
+
+  // Section convention source (only needed when re-deriving columns).
+  const sectionMap = hasSection ? await loadPrepSections(sb) : null;
+
+  let updated = 0;
+  for (const raw of rows) {
+    const item = rowToTemplateItem(raw);
+    const isPrepLine = isPrepMeta(item.prepMeta);
+
+    // ── Top-level columns (required / min_role_level / station) ─────────────
+    const colUpdate: Record<string, unknown> = {};
+    if (hasRequired) colUpdate.required = changes.required;
+    if (hasMinRole) colUpdate.min_role_level = changes.minRoleLevel;
+    if (hasSection) colUpdate.station = changes.section;
+
+    // ── es translation (shape-agnostic merge) ───────────────────────────────
+    if (hasSiEs) {
+      colUpdate.translations = mergeEsTranslation(item.translations, {
+        specialInstruction: changes.specialInstructionEs,
+      });
+    }
+
+    // ── prep_meta (section / specialInstruction) ────────────────────────────
+    // Both fields live in prep_meta and differ by shape, so merge once.
+    if (hasSection || hasSi) {
+      if (isPrepLine) {
+        // PrepMeta line: setPrepItemMeta asserts meta.section === station, so we
+        // must update station + prep_meta together. When the section changes we
+        // re-derive columns; otherwise keep the existing columns.
+        const base = item.prepMeta as PrepMeta;
+        const nextSection = hasSection ? (changes.section as PrepSection) : base.section;
+        let nextColumns = base.columns;
+        if (hasSection) {
+          const keepNote = nextSection === "Misc" && base.columns.includes("free_text");
+          const fromDefn = sectionMap?.get(nextSection)?.columns;
+          nextColumns = fromDefn ?? columnsForSection(nextSection, keepNote);
+        }
+        const nextMeta: PrepMeta = {
+          section: nextSection,
+          parValue: base.parValue,
+          parUnit: base.parUnit,
+          specialInstruction: hasSi ? (changes.specialInstruction ?? null) : base.specialInstruction,
+          columns: nextColumns,
+        };
+        // station must already be the new section for setPrepItemMeta's assert.
+        if (hasSection) {
+          await setPrepItemSection(sb, { templateItemId: item.id, section: nextSection });
+        }
+        await setPrepItemMeta(sb, { templateItemId: item.id, meta: nextMeta });
+        // setPrepItemSection/setPrepItemMeta wrote station+prep_meta already;
+        // drop station from colUpdate to avoid a redundant write.
+        delete colUpdate.station;
+      } else {
+        // Opening mirror (OpeningPhase2Meta) or other non-prep shape: update
+        // prep_meta.section only (no columns; no specialInstruction field).
+        // SI is skipped here by design.
+        if (hasSection) {
+          const existingMeta = (raw.prep_meta ?? {}) as Record<string, unknown>;
+          colUpdate.prep_meta = { ...existingMeta, section: changes.section };
+          // station already queued in colUpdate above.
+        }
+      }
+    }
+
+    if (Object.keys(colUpdate).length > 0) {
+      const { error: uErr } = await sb
+        .from("checklist_template_items")
+        .update(colUpdate)
+        .eq("id", item.id);
+      if (uErr) throw new Error(`propagateItemDefinitionToLines update ${item.id} failed: ${uErr.message}`);
+    }
+    updated += 1;
+  }
+
+  return updated;
+}
+
 export interface PrepItemContentPatch {
   label?: string;
   labelEs?: string | null;
@@ -696,6 +834,12 @@ export async function addPrepItem(
       section: input.section,
       default_par: input.parValue,
       default_par_unit: parUnit,
+      // Seed the item canonical from the same inputs the line was created with,
+      // so a later Global-tab edit propagates from a correct baseline (0083).
+      special_instruction: input.specialInstruction?.trim() || null,
+      special_instruction_es: esSi,
+      min_role_level: input.minRoleLevel,
+      required: input.required,
       active: true,
       created_by: actor.user.id,
     })
@@ -1086,6 +1230,12 @@ interface DefaultItemFields {
   nameEs: string | null;
   defaultPar: number | null;
   defaultParUnit: string | null;
+  // Canonical full definition (migration 0083) — new lines inherit these.
+  // minRoleLevel null → fall back to resolveDefaultMinRole.
+  specialInstruction: string | null;
+  specialInstructionEs: string | null;
+  minRoleLevel: number | null;
+  required: boolean;
 }
 
 /**
@@ -1176,8 +1326,16 @@ async function ensureItemLineOnTemplate(
   if (mxErr) throw new Error(`ensureItemLineOnTemplate max order failed: ${mxErr.message}`);
   const displayOrder = (maxRow?.display_order ?? 0) + 1;
 
-  const minRoleLevel = await resolveDefaultMinRole(sb, templateId);
-  const translations = translationsFromItem(item.nameEs);
+  // Inherit min_role_level from the item canonical; fall back to the template
+  // default (resolveDefaultMinRole) only when the item carries no value.
+  const minRoleLevel = item.minRoleLevel ?? (await resolveDefaultMinRole(sb, templateId));
+  // Translations carry the item's name_es (label) + the canonical es special
+  // instruction (mergeEsTranslation onto the label-only base, dropping empties).
+  const baseTranslations = translationsFromItem(item.nameEs);
+  const translations =
+    item.specialInstructionEs !== null
+      ? mergeEsTranslation(baseTranslations, { specialInstruction: item.specialInstructionEs })
+      : baseTranslations;
 
   // Insert the line linking the EXISTING item (no new item row).
   const { data: inserted, error: insErr } = await sb
@@ -1189,7 +1347,7 @@ async function ensureItemLineOnTemplate(
       label: item.name,
       description: null,
       min_role_level: minRoleLevel,
-      required: false,
+      required: item.required,
       expects_count: false,
       expects_photo: false,
       vendor_item_id: null,
@@ -1199,7 +1357,7 @@ async function ensureItemLineOnTemplate(
         section: item.section,
         parValue: item.defaultPar,
         parUnit: item.defaultParUnit,
-        specialInstruction: null,
+        specialInstruction: item.specialInstruction,
         columns: columnsForSection(item.section, false),
       },
       report_reference_type: null,
@@ -1250,7 +1408,7 @@ async function ensureItemLineOnTemplate(
       label: item.name,
       translations,
       minRoleLevel,
-      required: false,
+      required: item.required,
     });
   }
 
@@ -1308,7 +1466,9 @@ export async function setItemDefault(
 
   const { data: item, error: rErr } = await sb
     .from("items")
-    .select("id, location_id, active, is_default, section, name, name_es, default_par, default_par_unit")
+    .select(
+      "id, location_id, active, is_default, section, name, name_es, default_par, default_par_unit, special_instruction, special_instruction_es, min_role_level, required",
+    )
     .eq("id", args.itemId)
     .maybeSingle<{
       id: string;
@@ -1320,6 +1480,10 @@ export async function setItemDefault(
       name_es: string | null;
       default_par: number | null;
       default_par_unit: string | null;
+      special_instruction: string | null;
+      special_instruction_es: string | null;
+      min_role_level: number | null;
+      required: boolean;
     }>();
   if (rErr) throw new Error(`setItemDefault read failed: ${rErr.message}`);
   if (!item || !item.active) throw new AdminTemplateError(404, "item_not_found", "Item not found");
@@ -1347,6 +1511,10 @@ export async function setItemDefault(
         nameEs: item.name_es,
         defaultPar: item.default_par,
         defaultParUnit: item.default_par_unit,
+        specialInstruction: item.special_instruction,
+        specialInstructionEs: item.special_instruction_es,
+        minRoleLevel: item.min_role_level,
+        required: item.required,
       },
       actor.user.id,
     );
@@ -1378,6 +1546,12 @@ export interface AddRegistryItemInput {
   recommendedPar: number | null;
   recommendedParUnit: string | null;
   isDefault: boolean;
+  // Canonical full-definition fields (migration 0083) — set on the new item;
+  // new lines inherit these (see ensureItemLineOnTemplate / addPrepItem).
+  specialInstruction?: string | null;
+  specialInstructionEs?: string | null;
+  required?: boolean;
+  minRoleLevel?: number;
 }
 
 /**
@@ -1395,6 +1569,12 @@ export async function addRegistryItem(
   if (args.recommendedPar !== null && (!Number.isFinite(args.recommendedPar) || args.recommendedPar < 0)) {
     throw new AdminTemplateError(400, "invalid_par", "Par must be a non-negative number or empty");
   }
+  if (
+    args.minRoleLevel !== undefined &&
+    (!Number.isInteger(args.minRoleLevel) || args.minRoleLevel < 0 || args.minRoleLevel > 10)
+  ) {
+    throw new AdminTemplateError(400, "invalid_min_role", "Min role level must be between 0 and 10");
+  }
 
   const sb = getServiceRoleClient();
   const nameEs = args.nameEs?.trim() || null;
@@ -1411,6 +1591,11 @@ export async function addRegistryItem(
       default_par: args.recommendedPar,
       default_par_unit: parUnit,
       is_default: args.isDefault,
+      // Canonical full definition (migration 0083) — new lines inherit these.
+      special_instruction: args.specialInstruction?.trim() || null,
+      special_instruction_es: args.specialInstructionEs?.trim() || null,
+      ...(args.minRoleLevel !== undefined ? { min_role_level: args.minRoleLevel } : {}),
+      required: args.required ?? false,
       active: true,
       created_by: actor.user.id,
     })
@@ -1431,6 +1616,10 @@ export async function addRegistryItem(
         nameEs,
         defaultPar: args.recommendedPar,
         defaultParUnit: parUnit,
+        specialInstruction: args.specialInstruction?.trim() || null,
+        specialInstructionEs: args.specialInstructionEs?.trim() || null,
+        minRoleLevel: args.minRoleLevel ?? null,
+        required: args.required ?? false,
       },
       actor.user.id,
     );
@@ -1476,7 +1665,9 @@ export async function enableRegistryItemAtLocation(
 
   const { data: item, error: rErr } = await sb
     .from("items")
-    .select("id, location_id, active, section, name, name_es, default_par, default_par_unit")
+    .select(
+      "id, location_id, active, section, name, name_es, default_par, default_par_unit, special_instruction, special_instruction_es, min_role_level, required",
+    )
     .eq("id", args.itemId)
     .maybeSingle<{
       id: string;
@@ -1487,6 +1678,10 @@ export async function enableRegistryItemAtLocation(
       name_es: string | null;
       default_par: number | null;
       default_par_unit: string | null;
+      special_instruction: string | null;
+      special_instruction_es: string | null;
+      min_role_level: number | null;
+      required: boolean;
     }>();
   if (rErr) throw new Error(`enableRegistryItemAtLocation read failed: ${rErr.message}`);
   if (!item || !item.active) throw new AdminTemplateError(404, "item_not_found", "Item not found");
@@ -1509,6 +1704,10 @@ export async function enableRegistryItemAtLocation(
       nameEs: item.name_es,
       defaultPar: item.default_par,
       defaultParUnit: item.default_par_unit,
+      specialInstruction: item.special_instruction,
+      specialInstructionEs: item.special_instruction_es,
+      minRoleLevel: item.min_role_level,
+      required: item.required,
     },
     actorId: actor.user.id,
   });
@@ -1643,20 +1842,61 @@ export async function loadChecklistAdminView(
  */
 export async function updateRegistryItemDefinition(
   actor: AuthContext,
-  args: { itemId: string; name?: string; nameEs?: string | null; recommendedPar?: number | null; recommendedParUnit?: string | null },
+  args: {
+    itemId: string;
+    name?: string;
+    nameEs?: string | null;
+    recommendedPar?: number | null;
+    recommendedParUnit?: string | null;
+    // Canonical full-definition fields (migration 0083) — edited once on the
+    // Global tab, propagated to every active line of the item.
+    specialInstruction?: string | null;
+    specialInstructionEs?: string | null;
+    required?: boolean;
+    minRoleLevel?: number;
+    section?: PrepSection;
+  },
 ): Promise<void> {
+  // Validate the full-definition fields up-front (before any read).
+  if (args.section !== undefined && !isPrepSectionName(args.section)) {
+    throw new AdminTemplateError(400, "invalid_section", "Unknown section");
+  }
+  if (
+    args.minRoleLevel !== undefined &&
+    (!Number.isInteger(args.minRoleLevel) || args.minRoleLevel < 0 || args.minRoleLevel > 10)
+  ) {
+    throw new AdminTemplateError(400, "invalid_min_role", "Min role level must be between 0 and 10");
+  }
+
   const sb = getServiceRoleClient();
   const { data: item, error: rErr } = await sb
     .from("items")
-    .select("id, active, name, name_es, default_par, default_par_unit")
+    .select(
+      "id, active, name, name_es, section, default_par, default_par_unit, special_instruction, special_instruction_es, min_role_level, required",
+    )
     .eq("id", args.itemId)
-    .maybeSingle<{ id: string; active: boolean; name: string; name_es: string | null; default_par: number | null; default_par_unit: string | null }>();
+    .maybeSingle<{
+      id: string;
+      active: boolean;
+      name: string;
+      name_es: string | null;
+      section: string | null;
+      default_par: number | null;
+      default_par_unit: string | null;
+      special_instruction: string | null;
+      special_instruction_es: string | null;
+      min_role_level: number | null;
+      required: boolean;
+    }>();
   if (rErr) throw new Error(`updateRegistryItemDefinition read failed: ${rErr.message}`);
   if (!item || !item.active) throw new AdminTemplateError(404, "item_not_found", "Item not found");
 
   const update: Record<string, unknown> = {};
   const before: Record<string, unknown> = {};
   const after: Record<string, unknown> = {};
+  // The subset of full-definition fields that actually changed → propagated.
+  const changes: ItemDefinitionChanges = {};
+
   if (args.name !== undefined) {
     const v = args.name.trim();
     if (!v) throw new AdminTemplateError(400, "invalid_label", "Name cannot be empty");
@@ -1677,11 +1917,48 @@ export async function updateRegistryItemDefinition(
     if (v !== item.default_par_unit) { update.default_par_unit = v; before.default_par_unit = item.default_par_unit; after.default_par_unit = v; }
   }
 
+  // ── Canonical full-definition fields (item columns + propagate to lines) ──
+  if (args.specialInstruction !== undefined) {
+    const v = args.specialInstruction?.trim() || null;
+    if (v !== item.special_instruction) {
+      update.special_instruction = v; before.special_instruction = item.special_instruction; after.special_instruction = v;
+      changes.specialInstruction = v;
+    }
+  }
+  if (args.specialInstructionEs !== undefined) {
+    const v = args.specialInstructionEs?.trim() || null;
+    if (v !== item.special_instruction_es) {
+      update.special_instruction_es = v; before.special_instruction_es = item.special_instruction_es; after.special_instruction_es = v;
+      changes.specialInstructionEs = v;
+    }
+  }
+  if (args.required !== undefined) {
+    if (args.required !== item.required) {
+      update.required = args.required; before.required = item.required; after.required = args.required;
+      changes.required = args.required;
+    }
+  }
+  if (args.minRoleLevel !== undefined) {
+    if (args.minRoleLevel !== item.min_role_level) {
+      update.min_role_level = args.minRoleLevel; before.min_role_level = item.min_role_level; after.min_role_level = args.minRoleLevel;
+      changes.minRoleLevel = args.minRoleLevel;
+    }
+  }
+  if (args.section !== undefined) {
+    if (args.section !== item.section) {
+      update.section = args.section; before.section = item.section; after.section = args.section;
+      changes.section = args.section;
+    }
+  }
+
   if (Object.keys(update).length === 0) return; // nothing changed
   update.updated_by = actor.user.id;
   update.updated_at = new Date().toISOString();
   const { error: uErr } = await sb.from("items").update(update).eq("id", args.itemId);
   if (uErr) throw new Error(`updateRegistryItemDefinition update failed: ${uErr.message}`);
+
+  // Propagate the changed full-definition subset to every active line.
+  const propagatedLineCount = await propagateItemDefinitionToLines(sb, args.itemId, changes);
 
   await audit({
     actorId: actor.user.id,
@@ -1689,7 +1966,13 @@ export async function updateRegistryItemDefinition(
     action: "item.update",
     resourceTable: "items",
     resourceId: args.itemId,
-    metadata: { item_id: args.itemId, before, after },
+    metadata: {
+      item_id: args.itemId,
+      before,
+      after,
+      changed_fields: Object.keys(after),
+      propagated_line_count: propagatedLineCount,
+    },
     ipAddress: null,
     userAgent: null,
   });
