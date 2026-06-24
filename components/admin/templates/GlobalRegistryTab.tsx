@@ -16,6 +16,7 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
 import { PREP_SECTIONS, sectionLabelByLang, isPrepSectionName } from "@/lib/prep-sections";
+import { roleLevelOptions } from "@/lib/roles";
 import type { PrepSection } from "@/lib/types";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { ChecklistRegistryItem } from "@/lib/admin/templates";
@@ -330,12 +331,12 @@ function RegistryRow({
               {t("admin.templates.field.required")}
             </label>
             <Labeled label={t("admin.templates.field.min_role_level")}>
-              <input
-                className={field}
-                inputMode="numeric"
-                value={minRole}
-                onChange={(e) => setMinRole(e.target.value)}
-              />
+              <select className={field} value={minRole} onChange={(e) => setMinRole(e.target.value)}>
+                <option value="">—</option>
+                {roleLevelOptions().map((o) => (
+                  <option key={o.level} value={o.level}>{o.label} ({o.level})</option>
+                ))}
+              </select>
             </Labeled>
             <p className="mt-1 text-xs text-co-text-muted">{t("admin.templates.min_role.hint")}</p>
             <p className="mt-2 text-xs text-co-text-muted">{t("admin.templates.definition.blast_radius_note")}</p>
@@ -503,12 +504,12 @@ function AddGlobalItem({ sections }: { sections: PrepSectionDefn[] }) {
           {t("admin.templates.field.required")}
         </label>
         <Labeled label={t("admin.templates.field.min_role_level")}>
-          <input
-            className={field}
-            inputMode="numeric"
-            value={minRole}
-            onChange={(e) => setMinRole(e.target.value)}
-          />
+          <select className={field} value={minRole} onChange={(e) => setMinRole(e.target.value)}>
+            <option value="">—</option>
+            {roleLevelOptions().map((o) => (
+              <option key={o.level} value={o.level}>{o.label} ({o.level})</option>
+            ))}
+          </select>
         </Labeled>
         <p className="-mt-1 text-xs text-co-text-muted">{t("admin.templates.min_role.hint")}</p>
         <label className="flex items-center gap-2 text-sm text-co-text">
