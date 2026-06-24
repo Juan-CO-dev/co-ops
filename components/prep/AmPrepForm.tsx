@@ -403,6 +403,12 @@ export interface AmPrepFormProps {
   originalSubmissionId?: string | null;
   /** Location id — used for the Cancel button's stay-on-page navigation. */
   locationId?: string;
+  /**
+   * Sections First-Class — DB-backed section labels (slug → { en, es }) from
+   * the loader. Threaded to each section component, which prefers it over the
+   * i18n fallback for the section header. Optional; defaults to {} (fallback).
+   */
+  sectionLabels?: Record<string, { en: string; es: string | null }>;
 }
 
 type SubmitState =
@@ -421,6 +427,7 @@ export function AmPrepForm({
   chainAttribution = [],
   originalSubmissionId = null,
   locationId,
+  sectionLabels = {},
 }: AmPrepFormProps) {
   const { t, language } = useTranslation();
   const router = useRouter();
@@ -737,6 +744,7 @@ export function AmPrepForm({
         onChange={handleChange}
         disabled={isReadOnly}
         errors={validation.errors}
+        sectionLabels={sectionLabels}
       />
       <CooksSection
         templateItems={itemsBySection.get("Cooks") ?? []}
@@ -744,6 +752,7 @@ export function AmPrepForm({
         onChange={handleChange}
         disabled={isReadOnly}
         errors={validation.errors}
+        sectionLabels={sectionLabels}
       />
       <SidesSection
         templateItems={itemsBySection.get("Sides") ?? []}
@@ -751,6 +760,7 @@ export function AmPrepForm({
         onChange={handleChange}
         disabled={isReadOnly}
         errors={validation.errors}
+        sectionLabels={sectionLabels}
       />
       <SaucesSection
         templateItems={itemsBySection.get("Sauces") ?? []}
@@ -758,6 +768,7 @@ export function AmPrepForm({
         onChange={handleChange}
         disabled={isReadOnly}
         errors={validation.errors}
+        sectionLabels={sectionLabels}
       />
       <SlicingSection
         templateItems={itemsBySection.get("Slicing") ?? []}
@@ -765,6 +776,7 @@ export function AmPrepForm({
         onChange={handleChange}
         disabled={isReadOnly}
         errors={validation.errors}
+        sectionLabels={sectionLabels}
       />
       <MiscSection
         templateItems={itemsBySection.get("Misc") ?? []}
@@ -772,6 +784,7 @@ export function AmPrepForm({
         onChange={handleChange}
         disabled={isReadOnly}
         errors={validation.errors}
+        sectionLabels={sectionLabels}
       />
 
       {/* Form-level error summary — accessibility-driven (per locked

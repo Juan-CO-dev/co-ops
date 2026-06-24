@@ -13,6 +13,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
+import { resolveSectionLabel } from "@/lib/prep-sections";
 import type { MidDayOverUnder } from "@/lib/prep";
 import { ActionButton } from "@/components/ActionButton";
 import {
@@ -81,12 +82,15 @@ export function MidDayPhase2Form({
   instanceId,
   items,
   managers,
+  sectionLabels = {},
 }: {
   instanceId: string;
   items: MidDayPhase2Item[];
   managers: ManagerOption[];
+  /** DB-backed section labels (slug → { en, es }); preferred over the raw slug. */
+  sectionLabels?: Record<string, { en: string; es: string | null }>;
 }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const router = useRouter();
   const [states, setStates] = useState<Record<string, SaveState>>(() => {
     const init: Record<string, SaveState> = {};
@@ -202,7 +206,7 @@ export function MidDayPhase2Form({
       {groups.map((g) => (
         <section key={g.section}>
           <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
-            {g.section}
+            {resolveSectionLabel(sectionLabels, g.section, language, g.section)}
           </h2>
           <ul className="mt-2 flex flex-col gap-1.5">
             {g.items.map((it) => {

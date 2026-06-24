@@ -15,6 +15,7 @@
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
+import { resolveSectionLabel } from "@/lib/prep-sections";
 import type { ChecklistTemplateItem } from "@/lib/types";
 
 import { PrepRow } from "../PrepRow";
@@ -30,17 +31,22 @@ export interface SaucesSectionProps {
   onChange: (templateItemId: string, field: keyof RawPrepInputs, rawValue: string) => void;
   disabled?: boolean;
   errors?: Record<string, Partial<Record<keyof RawPrepInputs, string>>>;
+  /** DB-backed section labels (slug → { en, es }); preferred over the i18n fallback. */
+  sectionLabels?: Record<string, { en: string; es: string | null }>;
 }
 
-export function SaucesSection({ templateItems, rawValues, onChange, disabled, errors }: SaucesSectionProps) {
+export function SaucesSection({ templateItems, rawValues, onChange, disabled, errors, sectionLabels }: SaucesSectionProps) {
   const { t, language } = useTranslation();
   const sectionDisplay = (() => {
-    const first = templateItems[0];
-    if (first) {
-      const resolved = resolveTemplateItemContent(first, language);
-      if (resolved.station) return resolved.station;
-    }
-    return t("am_prep.section.sauces");
+    const fallback = (() => {
+      const first = templateItems[0];
+      if (first) {
+        const resolved = resolveTemplateItemContent(first, language);
+        if (resolved.station) return resolved.station;
+      }
+      return t("am_prep.section.sauces");
+    })();
+    return resolveSectionLabel(sectionLabels ?? {}, SECTION_KEY, language, fallback);
   })();
 
   const columnHeaders = [

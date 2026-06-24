@@ -22,6 +22,7 @@ import {
   loadMidDayPrepState,
   type MidDayOverUnder,
 } from "@/lib/prep";
+import { resolveSectionLabel } from "@/lib/prep-sections";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { ChecklistTemplateItem } from "@/lib/types";
@@ -189,6 +190,7 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
       {state.instance.status === "open" ? (
         <MidDayPhase1Form
           instanceId={state.instance.id}
+          sectionLabels={state.sectionLabels}
           items={state.templateItems.map((item) => ({
             id: item.id,
             label: item.label,
@@ -202,6 +204,7 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
           instanceId={state.instance.id}
           items={phase2Items}
           managers={managers}
+          sectionLabels={state.sectionLabels}
         />
       ) : (
         <>
@@ -213,7 +216,7 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
             {groups.map((g) => (
               <section key={g.section}>
                 <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
-                  {g.section}
+                  {resolveSectionLabel(state.sectionLabels, g.section, lang, g.section)}
                 </h2>
                 <ul className="mt-2 flex flex-col gap-1">
                   {g.items.map((item) => {

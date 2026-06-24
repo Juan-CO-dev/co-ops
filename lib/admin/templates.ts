@@ -22,6 +22,7 @@ import {
 } from "@/lib/template-items";
 import { setPrepItemMeta, setPrepItemSection, narrowPrepTemplateItem, isPrepMeta, seedPrepItem } from "@/lib/prep";
 import { columnsForSection, isPrepSectionName } from "@/lib/prep-sections";
+import { loadPrepSections } from "@/lib/prep-sections.server";
 import type { AuthContext } from "@/lib/session";
 import type {
   ChecklistTemplateItem,
@@ -29,6 +30,7 @@ import type {
   ParMode,
   PrepMeta,
   PrepSection,
+  PrepSectionDefn,
 } from "@/lib/types";
 
 export type PrepSubtype = "am_prep" | "mid_day_prep";
@@ -1558,6 +1560,8 @@ export interface ChecklistAdminView {
   actorLevel: number;
   registry: ChecklistRegistryItem[];
   locations: ChecklistLocationView[];
+  /** First-class prep sections (active, by displayOrder) — editable labels. */
+  sections: PrepSectionDefn[];
 }
 
 /**
@@ -1625,7 +1629,11 @@ export async function loadChecklistAdminView(
     });
   }
 
-  return { subtype, actorLevel: ROLES[actor.user.role].level, registry, locations };
+  // First-class sections (active, by displayOrder) — editable display labels.
+  const sectionMap = await loadPrepSections(sb);
+  const sections = Array.from(sectionMap.values()).sort((a, b) => a.displayOrder - b.displayOrder);
+
+  return { subtype, actorLevel: ROLES[actor.user.role].level, registry, locations, sections };
 }
 
 /**
@@ -1682,6 +1690,63 @@ export async function updateRegistryItemDefinition(
     resourceTable: "items",
     resourceId: args.itemId,
     metadata: { item_id: args.itemId, before, after },
+    ipAddress: null,
+    userAgent: null,
+  });
+}
+
+/**
+ * Rename a prep section's display label (+ optional reorder) — Item/Inventory
+ * Spine sub-slice A. Writes `prep_sections.label_en/label_es/display_order`;
+ * the `slug` (system key stamped into lines) is NEVER touched. Sections are
+ * GLOBAL (no location IDOR) — the route gates MoO+. Audits prep_section.update
+ * with before/after labels + displayOrder.
+ */
+export async function setSectionLabel(
+  actor: AuthContext,
+  args: { slug: string; labelEn: string; labelEs: string | null; displayOrder?: number },
+): Promise<void> {
+  const labelEn = args.labelEn.trim();
+  if (!labelEn) throw new AdminTemplateError(400, "invalid_label", "Label cannot be empty");
+  if (
+    args.displayOrder !== undefined &&
+    (!Number.isInteger(args.displayOrder) || args.displayOrder < 0)
+  ) {
+    throw new AdminTemplateError(400, "invalid_display_order", "Display order must be a non-negative integer");
+  }
+
+  const sb = getServiceRoleClient();
+  const { data: section, error: rErr } = await sb
+    .from("prep_sections")
+    .select("id, slug, label_en, label_es, display_order")
+    .eq("slug", args.slug)
+    .maybeSingle<{ id: string; slug: string; label_en: string; label_es: string | null; display_order: number }>();
+  if (rErr) throw new Error(`setSectionLabel read failed: ${rErr.message}`);
+  if (!section) throw new AdminTemplateError(404, "section_not_found", "Section not found");
+
+  const labelEs = args.labelEs?.trim() || null;
+  const update: Record<string, unknown> = {
+    label_en: labelEn,
+    label_es: labelEs,
+    updated_by: actor.user.id,
+    updated_at: new Date().toISOString(),
+  };
+  if (args.displayOrder !== undefined) update.display_order = args.displayOrder;
+
+  const { error: uErr } = await sb.from("prep_sections").update(update).eq("id", section.id);
+  if (uErr) throw new Error(`setSectionLabel update failed: ${uErr.message}`);
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "prep_section.update",
+    resourceTable: "prep_sections",
+    resourceId: section.id,
+    metadata: {
+      slug: section.slug,
+      before: { labelEn: section.label_en, labelEs: section.label_es, displayOrder: section.display_order },
+      after: { labelEn, labelEs, displayOrder: args.displayOrder ?? section.display_order },
+    },
     ipAddress: null,
     userAgent: null,
   });

@@ -64,6 +64,7 @@ import {
   rowToTemplateItem,
 } from "./template-items";
 import { loadItemDefns, loadItemOverrides, operationalDayOfWeek, pickOverride, resolveLineDefinition } from "@/lib/items";
+import { loadPrepSections } from "@/lib/prep-sections.server";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
@@ -613,6 +614,7 @@ export async function loadAmPrepState(
   instance: ChecklistInstance;
   completions: ChecklistCompletion[];
   authors: Record<string, string>;
+  sectionLabels: Record<string, { en: string; es: string | null }>;
 } | null> {
   // Resolve active AM Prep template (most-recent-active per Path A versioning).
   // Per-location scoping via `.eq("location_id", args.locationId)` is LOAD-BEARING
@@ -778,12 +780,19 @@ export async function loadAmPrepState(
     }
   }
 
+  // Section labels (migration 0082) — slug → { en, es }; the client picks by
+  // language. PURELY ADDITIVE: existing fields untouched.
+  const sectionMap = await loadPrepSections(service);
+  const sectionLabels: Record<string, { en: string; es: string | null }> = {};
+  for (const [slug, defn] of sectionMap) sectionLabels[slug] = { en: defn.labelEn, es: defn.labelEs };
+
   return {
     template: tmplRow,
     templateItems: resolvedItems,
     instance: rowToInstance(instanceRow),
     completions,
     authors,
+    sectionLabels,
   };
 }
 
@@ -803,6 +812,7 @@ export async function loadMidDayPrepState(
   instance: ChecklistInstance;
   completions: ChecklistCompletion[];
   authors: Record<string, string>;
+  sectionLabels: Record<string, { en: string; es: string | null }>;
 } | null> {
   const { data: instanceRow, error: instErr } = await service
     .from("checklist_instances")
@@ -885,12 +895,19 @@ export async function loadMidDayPrepState(
     }
   }
 
+  // Section labels (migration 0082) — slug → { en, es }; the client picks by
+  // language. PURELY ADDITIVE: existing fields untouched.
+  const sectionMap = await loadPrepSections(service);
+  const sectionLabels: Record<string, { en: string; es: string | null }> = {};
+  for (const [slug, defn] of sectionMap) sectionLabels[slug] = { en: defn.labelEn, es: defn.labelEs };
+
   return {
     template: tmplRow,
     templateItems: resolvedItems,
     instance: rowToInstance(instanceRow),
     completions,
     authors,
+    sectionLabels,
   };
 }
 
