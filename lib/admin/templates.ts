@@ -1741,6 +1741,10 @@ export interface ChecklistRegistryItem {
   recommendedPar: number | null;
   recommendedParUnit: string | null;
   isDefault: boolean;
+  specialInstruction: string | null;
+  specialInstructionEs: string | null;
+  required: boolean;
+  minRoleLevel: number | null;
 }
 
 export interface ChecklistLocationView {
@@ -1778,12 +1782,12 @@ export async function loadChecklistAdminView(
   // Registry = active global items (location_id NULL), grouped/sorted by section.
   const { data: regRows, error: rErr } = await sb
     .from("items")
-    .select("id, name, name_es, section, default_par, default_par_unit, is_default")
+    .select("id, name, name_es, section, default_par, default_par_unit, is_default, special_instruction, special_instruction_es, required, min_role_level")
     .is("location_id", null)
     .eq("active", true)
     .order("section", { ascending: true })
     .order("name", { ascending: true })
-    .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; default_par: number | null; default_par_unit: string | null; is_default: boolean }>>();
+    .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; default_par: number | null; default_par_unit: string | null; is_default: boolean; special_instruction: string | null; special_instruction_es: string | null; required: boolean; min_role_level: number | null }>>();
   if (rErr) throw new Error(`loadChecklistAdminView registry failed: ${rErr.message}`);
   const registry: ChecklistRegistryItem[] = (regRows ?? []).map((r) => ({
     itemId: r.id,
@@ -1793,6 +1797,10 @@ export async function loadChecklistAdminView(
     recommendedPar: r.default_par,
     recommendedParUnit: r.default_par_unit,
     isDefault: r.is_default,
+    specialInstruction: r.special_instruction,
+    specialInstructionEs: r.special_instruction_es,
+    required: r.required,
+    minRoleLevel: r.min_role_level,
   }));
 
   // Accessible locations (respect all-locations override + assignment list).
