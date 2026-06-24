@@ -83,6 +83,11 @@ export const DESTRUCTIVE_ACTIONS = [
   "prep_section.reorder",
   // — unit.create adds a unit to the standardized registry (MoO+).
   "unit.create",
+  // — section_question.create adds a non-inventory section question (MoO+) +
+  //   propagates a line onto every prep list with that section.
+  "section_question.create",
+  // — section_question.disable deactivates a section question + its propagated lines (MoO+).
+  "section_question.disable",
 
   // Checklist completion correction (per SPEC_AMENDMENTS.md C.28)
   // — destructive because they alter operational/accountability record.
