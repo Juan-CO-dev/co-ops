@@ -278,6 +278,12 @@ export type PrepSection = string;
 // A section's shape drives its column set + auto-total rule (migration 0086).
 export type PrepSectionShape = "on_hand" | "portioned" | "line" | "yes_no";
 
+// A LINE's input type (per-line input types slice). The four section shapes
+// plus `free_text` (a pure text question — no Yes/No). The section shape is the
+// default for new lines; a line can carry a different input type in its
+// prep_meta.columns (derived via shapeFromColumns).
+export type LineInputType = PrepSectionShape | "free_text";
+
 /**
  * Per-row column descriptors for the AM Prep form. The template item's
  * `prep_meta.columns` array enumerates which numeric inputs the form renders
