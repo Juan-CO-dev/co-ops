@@ -1804,12 +1804,26 @@ export interface ChecklistAdminView {
   units: Array<{ label: string }>;
   /** Non-inventory section questions (active, by section_slug + label) — Global tab. */
   sectionQuestions: SectionQuestionView[];
+  /** Non-inventory item questions (active, by item_id + label) — Global tab. */
+  itemQuestions: ItemQuestionView[];
 }
 
 /** A section question for the Global-tab UI (migration 0087 `section_questions`). */
 export interface SectionQuestionView {
   questionId: string;
   sectionSlug: string;
+  label: string;
+  labelEs: string | null;
+  inputType: LineInputType;
+  includeNote: boolean;
+  minRoleLevel: number | null;
+  required: boolean;
+}
+
+/** An item question for the Global-tab UI (migration 0088 `item_questions`). */
+export interface ItemQuestionView {
+  questionId: string;
+  itemId: string;
   label: string;
   labelEs: string | null;
   inputType: LineInputType;
@@ -1897,6 +1911,9 @@ export async function loadChecklistAdminView(
   // Non-inventory section questions (active), ordered by section + label.
   const sectionQuestions = await loadSectionQuestions(sb);
 
+  // Non-inventory item questions (active), ordered by item_id + label.
+  const itemQuestions = await loadItemQuestions(sb);
+
   return {
     subtype,
     actorLevel: ROLES[actor.user.role].level,
@@ -1905,6 +1922,7 @@ export async function loadChecklistAdminView(
     sections,
     units,
     sectionQuestions,
+    itemQuestions,
   };
 }
 
@@ -1938,6 +1956,45 @@ export async function loadSectionQuestions(
   return (data ?? []).map((r) => ({
     questionId: r.id,
     sectionSlug: r.section_slug,
+    label: r.label,
+    labelEs: r.label_es,
+    inputType: r.input_type,
+    includeNote: r.include_note,
+    minRoleLevel: r.min_role_level,
+    required: r.required,
+  }));
+}
+
+/**
+ * Load active item questions (migration 0088 `item_questions`), ordered by
+ * item_id + label, for the Global-tab UI. Service-role read (the table denies
+ * end-user DML; admin authorization is the calling route's job).
+ */
+export async function loadItemQuestions(
+  sb: ReturnType<typeof getServiceRoleClient>,
+): Promise<ItemQuestionView[]> {
+  const { data, error } = await sb
+    .from("item_questions")
+    .select("id, item_id, label, label_es, input_type, include_note, min_role_level, required")
+    .eq("active", true)
+    .order("item_id", { ascending: true })
+    .order("label", { ascending: true })
+    .returns<
+      Array<{
+        id: string;
+        item_id: string;
+        label: string;
+        label_es: string | null;
+        input_type: LineInputType;
+        include_note: boolean;
+        min_role_level: number | null;
+        required: boolean;
+      }>
+    >();
+  if (error) throw new Error(`loadItemQuestions failed: ${error.message}`);
+  return (data ?? []).map((r) => ({
+    questionId: r.id,
+    itemId: r.item_id,
     label: r.label,
     labelEs: r.label_es,
     inputType: r.input_type,
@@ -2852,6 +2909,341 @@ export async function disableSectionQuestion(
     actorRole: actor.user.role,
     action: "section_question.disable",
     resourceTable: "section_questions",
+    resourceId: args.questionId,
+    metadata: {
+      questionId: args.questionId,
+      deactivated_line_ids: lineIds,
+      deactivated_count: lineIds.length,
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+
+  return { deactivatedLineCount: lineIds.length };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Item questions (non-inventory) — Item/Inventory Spine, Slice 2 PR A
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The resolved item-question fields a propagated line carries. */
+interface ItemQuestionFields {
+  questionId: string;
+  itemId: string;
+  /** The item's canonical section (items.section) — the question line's station/section. */
+  sectionSlug: string;
+  label: string;
+  labelEs: string | null;
+  inputType: LineInputType;
+  includeNote: boolean;
+  /** null = no explicit minimum; the propagated line falls back to the template default. */
+  minRoleLevel: number | null;
+  required: boolean;
+}
+
+/**
+ * Ensure an active question line exists on `templateId` for `question`. Idempotent:
+ * if an active line already carries this item_question_id, returns it without
+ * inserting. Otherwise seeds a line (via seedPrepItem — sets station=the item's
+ * section + prep_meta atomically, leaves item_id NULL) and stamps item_question_id
+ * via a follow-up update. Mirrors propagateSectionQuestionLine: NO item row, NO
+ * item_par_levels row, NO opening mirror (questions aren't opening-verified this
+ * arc). The line carries item_question_id, NOT item_id (item_id stays NULL — it is
+ * NOT the item's count line). Returns the (existing or new) line id + whether it
+ * was newly created.
+ */
+async function propagateItemQuestionLine(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  args: { question: ItemQuestionFields; templateId: string; actorId: string },
+): Promise<{ lineId: string; created: boolean }> {
+  const { question, templateId } = args;
+
+  // Idempotency: an active line on this template already carrying the question.
+  const { data: existing, error: exErr } = await sb
+    .from("checklist_template_items")
+    .select("id")
+    .eq("template_id", templateId)
+    .eq("item_question_id", question.questionId)
+    .eq("active", true)
+    .order("display_order", { ascending: true })
+    .limit(1)
+    .maybeSingle<{ id: string }>();
+  if (exErr) throw new Error(`propagateItemQuestionLine idempotency read failed: ${exErr.message}`);
+  if (existing) return { lineId: existing.id, created: false };
+
+  // Next display order on the template.
+  const { data: maxRow, error: mxErr } = await sb
+    .from("checklist_template_items")
+    .select("display_order")
+    .eq("template_id", templateId)
+    .order("display_order", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ display_order: number }>();
+  if (mxErr) throw new Error(`propagateItemQuestionLine max order failed: ${mxErr.message}`);
+  const displayOrder = (maxRow?.display_order ?? 0) + 1;
+
+  // Inherit the question's min-role; fall back to the template default when the
+  // question carries no explicit minimum (mirrors propagateSectionQuestionLine).
+  const lineMinRole = question.minRoleLevel ?? (await resolveDefaultMinRole(sb, templateId));
+
+  // Seed the question line: station=the item's section + prep_meta atomically
+  // (item_id NULL). NO item/par row, NO opening mirror.
+  const { templateItemId } = await seedPrepItem(sb, {
+    templateId,
+    displayOrder,
+    section: question.sectionSlug,
+    label: question.label,
+    description: null,
+    minRoleLevel: lineMinRole,
+    required: question.required,
+    meta: {
+      parValue: null,
+      parUnit: null,
+      specialInstruction: null,
+      columns: shapeToColumns(question.inputType, question.includeNote),
+    },
+    translations: question.labelEs ? { es: { label: question.labelEs } } : undefined,
+  });
+
+  // Stamp item_question_id (seedPrepItem doesn't accept it). item_id stays NULL.
+  const { error: linkErr } = await sb
+    .from("checklist_template_items")
+    .update({ item_question_id: question.questionId })
+    .eq("id", templateItemId);
+  if (linkErr) throw new Error(`propagateItemQuestionLine link failed: ${linkErr.message}`);
+
+  return { lineId: templateItemId, created: true };
+}
+
+/**
+ * Propagate an item question to every prep list where the ITEM has an active line.
+ * Structurally distinct from section-question propagation: rather than "templates
+ * that HAVE the section", item questions ride onto "templates where the item has an
+ * active line" (item_id = itemId). Two-step: collect template_ids of the item's
+ * active lines, intersect with ACTIVE prep templates (type='prep', both subtypes) at
+ * ACTIVE locations. Idempotent per template. Returns the NEW line ids.
+ */
+async function propagateItemQuestion(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  question: ItemQuestionFields,
+  actorId: string,
+): Promise<string[]> {
+  // Templates that currently run this item (≥1 active line linking it).
+  const { data: itemLines, error: ilErr } = await sb
+    .from("checklist_template_items")
+    .select("template_id")
+    .eq("item_id", question.itemId)
+    .eq("active", true)
+    .returns<Array<{ template_id: string }>>();
+  if (ilErr) throw new Error(`propagateItemQuestion item-line lookup failed: ${ilErr.message}`);
+  const itemTemplateIds = new Set((itemLines ?? []).map((l) => l.template_id));
+  if (itemTemplateIds.size === 0) return [];
+
+  // All ACTIVE prep templates (am_prep + mid_day_prep) at active locations.
+  const { data: activeLocs, error: locErr } = await sb
+    .from("locations")
+    .select("id")
+    .eq("active", true)
+    .returns<Array<{ id: string }>>();
+  if (locErr) throw new Error(`propagateItemQuestion locations read failed: ${locErr.message}`);
+  const activeLocIds = new Set((activeLocs ?? []).map((l) => l.id));
+
+  const { data: prepTmpls, error: ptErr } = await sb
+    .from("checklist_templates")
+    .select("id, location_id")
+    .eq("type", "prep")
+    .eq("active", true)
+    .returns<Array<{ id: string; location_id: string }>>();
+  if (ptErr) throw new Error(`propagateItemQuestion prep-template lookup failed: ${ptErr.message}`);
+
+  // Intersect: active prep templates at active locations that run the item.
+  const targetTemplateIds = (prepTmpls ?? [])
+    .filter((t) => activeLocIds.has(t.location_id) && itemTemplateIds.has(t.id))
+    .map((t) => t.id);
+
+  const newLineIds: string[] = [];
+  for (const templateId of targetTemplateIds) {
+    const { lineId, created } = await propagateItemQuestionLine(sb, {
+      question,
+      templateId,
+      actorId,
+    });
+    if (created) newLineIds.push(lineId);
+  }
+  return newLineIds;
+}
+
+const ITEM_QUESTION_INPUT_TYPES: readonly LineInputType[] = [
+  "on_hand",
+  "portioned",
+  "line",
+  "yes_no",
+  "free_text",
+];
+
+/**
+ * Add a non-inventory item question (MoO+, all-locations). Validates input type +
+ * label + min-role, reads the item (active) to capture its canonical section, inserts
+ * the item_questions row, then propagates a question line onto every prep list (am_prep
+ * + mid_day_prep) where the item has an active line — in the item's section. Question
+ * lines carry item_question_id (NOT item_id) — NO item row, NO par row, NO opening
+ * mirror. Items/questions are GLOBAL (no location IDOR) — the route gates MoO+. Audits
+ * item_question.create.
+ */
+export async function addItemQuestion(
+  actor: AuthContext,
+  args: {
+    itemId: string;
+    label: string;
+    labelEs: string | null;
+    inputType: LineInputType;
+    includeNote?: boolean;
+    minRoleLevel: number | null;
+    required: boolean;
+  },
+): Promise<{ questionId: string; propagatedLineCount: number }> {
+  if (!ITEM_QUESTION_INPUT_TYPES.includes(args.inputType)) {
+    throw new AdminTemplateError(400, "invalid_input_type", "Unknown input type");
+  }
+  const label = args.label.trim();
+  if (!label) throw new AdminTemplateError(400, "invalid_label", "Label cannot be empty");
+  // min-role is optional (null = no explicit minimum → line falls back to the
+  // template default at propagation). Validate only when a value is given.
+  if (args.minRoleLevel !== null && (!Number.isInteger(args.minRoleLevel) || args.minRoleLevel < 0 || args.minRoleLevel > 10)) {
+    throw new AdminTemplateError(400, "invalid_min_role", "min_role_level must be 0..10");
+  }
+
+  const sb = getServiceRoleClient();
+
+  // Read the item (active) — its section is the canonical section/station for the
+  // question lines (the item's own lines use it).
+  const { data: item, error: itErr } = await sb
+    .from("items")
+    .select("id, section")
+    .eq("id", args.itemId)
+    .eq("active", true)
+    .maybeSingle<{ id: string; section: string | null }>();
+  if (itErr) throw new Error(`addItemQuestion item read failed: ${itErr.message}`);
+  if (!item) throw new AdminTemplateError(404, "item_not_found", "Item not found");
+  if (!item.section) {
+    // A question line requires a section (station/section is NOT NULL by construction
+    // in seedPrepItem). An item with no section can't anchor its question lines.
+    throw new AdminTemplateError(400, "item_has_no_section", "Item has no section");
+  }
+
+  const includeNote = args.includeNote ?? false;
+  const labelEs = args.labelEs?.trim() || null;
+
+  // Insert the question row (append-only; active=true via default).
+  const { data: inserted, error: iErr } = await sb
+    .from("item_questions")
+    .insert({
+      item_id: args.itemId,
+      label,
+      label_es: labelEs,
+      input_type: args.inputType,
+      include_note: includeNote,
+      min_role_level: args.minRoleLevel,
+      required: args.required,
+      active: true,
+      created_by: actor.user.id,
+      updated_by: actor.user.id,
+    })
+    .select("id")
+    .maybeSingle<{ id: string }>();
+  if (iErr) throw new Error(`addItemQuestion insert failed: ${iErr.message}`);
+  if (!inserted) throw new Error("addItemQuestion insert returned no row");
+
+  const question: ItemQuestionFields = {
+    questionId: inserted.id,
+    itemId: args.itemId,
+    sectionSlug: item.section,
+    label,
+    labelEs,
+    inputType: args.inputType,
+    includeNote,
+    minRoleLevel: args.minRoleLevel,
+    required: args.required,
+  };
+
+  const propagatedLineIds = await propagateItemQuestion(sb, question, actor.user.id);
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "item_question.create",
+    resourceTable: "item_questions",
+    resourceId: inserted.id,
+    metadata: {
+      itemId: args.itemId,
+      sectionSlug: item.section,
+      inputType: args.inputType,
+      label,
+      propagated_line_ids: propagatedLineIds,
+      propagated_count: propagatedLineIds.length,
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+
+  return { questionId: inserted.id, propagatedLineCount: propagatedLineIds.length };
+}
+
+/**
+ * Disable an item question (MoO+, all-locations). Deactivates every active line
+ * carrying this question (append-only: active=false, never DELETE — and
+ * checklist_template_items has no updated_by/_at, so active=false only), then the
+ * question row itself (item_questions DOES carry updated_by/_at). 404 when the
+ * question is missing or already inactive. Audits item_question.disable with the
+ * deactivated line ids.
+ */
+export async function disableItemQuestion(
+  actor: AuthContext,
+  args: { questionId: string },
+): Promise<{ deactivatedLineCount: number }> {
+  const sb = getServiceRoleClient();
+
+  const { data: question, error: rErr } = await sb
+    .from("item_questions")
+    .select("id")
+    .eq("id", args.questionId)
+    .eq("active", true)
+    .maybeSingle<{ id: string }>();
+  if (rErr) throw new Error(`disableItemQuestion read failed: ${rErr.message}`);
+  if (!question) throw new AdminTemplateError(404, "item_question_not_found", "Item question not found");
+
+  // Collect + deactivate the propagated lines (append-only).
+  const { data: lineRows, error: lErr } = await sb
+    .from("checklist_template_items")
+    .select("id")
+    .eq("item_question_id", args.questionId)
+    .eq("active", true)
+    .returns<Array<{ id: string }>>();
+  if (lErr) throw new Error(`disableItemQuestion line lookup failed: ${lErr.message}`);
+  const lineIds = (lineRows ?? []).map((l) => l.id);
+
+  // checklist_template_items has no updated_by/updated_at columns — soft-delete is
+  // active=false only, matching the other line soft-deletes in this file.
+  if (lineIds.length > 0) {
+    const { error: dErr } = await sb
+      .from("checklist_template_items")
+      .update({ active: false })
+      .in("id", lineIds);
+    if (dErr) throw new Error(`disableItemQuestion line deactivate failed: ${dErr.message}`);
+  }
+
+  // Deactivate the question row (item_questions DOES carry updated_by/_at).
+  const { error: qErr } = await sb
+    .from("item_questions")
+    .update({ active: false, updated_by: actor.user.id, updated_at: new Date().toISOString() })
+    .eq("id", args.questionId);
+  if (qErr) throw new Error(`disableItemQuestion question deactivate failed: ${qErr.message}`);
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "item_question.disable",
+    resourceTable: "item_questions",
     resourceId: args.questionId,
     metadata: {
       questionId: args.questionId,

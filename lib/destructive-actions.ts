@@ -88,6 +88,11 @@ export const DESTRUCTIVE_ACTIONS = [
   "section_question.create",
   // — section_question.disable deactivates a section question + its propagated lines (MoO+).
   "section_question.disable",
+  // — item_question.create adds a non-inventory question to an item (MoO+) +
+  //   propagates a line onto every prep list where the item appears.
+  "item_question.create",
+  // — item_question.disable deactivates an item question + its propagated lines (MoO+).
+  "item_question.disable",
 
   // Checklist completion correction (per SPEC_AMENDMENTS.md C.28)
   // — destructive because they alter operational/accountability record.

@@ -67,6 +67,7 @@ export function ChecklistTabs({ view }: { view: ChecklistAdminView }) {
           sections={view.sections}
           units={view.units}
           sectionQuestions={view.sectionQuestions}
+          itemQuestions={view.itemQuestions}
           actorLevel={view.actorLevel}
         />
       ) : selectedLocation ? (
