@@ -23,6 +23,8 @@ const KNOWN = new Set([
   "invalid_section",
   "section_not_found",
   "invalid_shape",
+  "invalid_input_type",
+  "section_question_not_found",
   "section_exists",
   "cannot_disable_misc",
   "invalid_direction",

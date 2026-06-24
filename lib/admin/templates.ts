@@ -28,6 +28,7 @@ import type { AuthContext } from "@/lib/session";
 import type {
   ChecklistTemplateItem,
   ChecklistTemplateItemTranslations,
+  LineInputType,
   ParMode,
   PrepMeta,
   PrepSection,
@@ -1801,6 +1802,20 @@ export interface ChecklistAdminView {
   sections: PrepSectionDefn[];
   /** Canonical par units (active, by displayOrder) — the unit-dropdown pool. */
   units: Array<{ label: string }>;
+  /** Non-inventory section questions (active, by section_slug + label) — Global tab. */
+  sectionQuestions: SectionQuestionView[];
+}
+
+/** A section question for the Global-tab UI (migration 0087 `section_questions`). */
+export interface SectionQuestionView {
+  questionId: string;
+  sectionSlug: string;
+  label: string;
+  labelEs: string | null;
+  inputType: LineInputType;
+  includeNote: boolean;
+  minRoleLevel: number | null;
+  required: boolean;
 }
 
 /**
@@ -1879,7 +1894,57 @@ export async function loadChecklistAdminView(
   // Canonical par units (active, by displayOrder) — the unit-dropdown pool.
   const units = await loadUnits(sb);
 
-  return { subtype, actorLevel: ROLES[actor.user.role].level, registry, locations, sections, units };
+  // Non-inventory section questions (active), ordered by section + label.
+  const sectionQuestions = await loadSectionQuestions(sb);
+
+  return {
+    subtype,
+    actorLevel: ROLES[actor.user.role].level,
+    registry,
+    locations,
+    sections,
+    units,
+    sectionQuestions,
+  };
+}
+
+/**
+ * Load active section questions (migration 0087 `section_questions`), ordered by
+ * section_slug + label, for the Global-tab UI. Service-role read (the table denies
+ * end-user DML; admin authorization is the calling route's job).
+ */
+export async function loadSectionQuestions(
+  sb: ReturnType<typeof getServiceRoleClient>,
+): Promise<SectionQuestionView[]> {
+  const { data, error } = await sb
+    .from("section_questions")
+    .select("id, section_slug, label, label_es, input_type, include_note, min_role_level, required")
+    .eq("active", true)
+    .order("section_slug", { ascending: true })
+    .order("label", { ascending: true })
+    .returns<
+      Array<{
+        id: string;
+        section_slug: string;
+        label: string;
+        label_es: string | null;
+        input_type: LineInputType;
+        include_note: boolean;
+        min_role_level: number | null;
+        required: boolean;
+      }>
+    >();
+  if (error) throw new Error(`loadSectionQuestions failed: ${error.message}`);
+  return (data ?? []).map((r) => ({
+    questionId: r.id,
+    sectionSlug: r.section_slug,
+    label: r.label,
+    labelEs: r.label_es,
+    inputType: r.input_type,
+    includeNote: r.include_note,
+    minRoleLevel: r.min_role_level,
+    required: r.required,
+  }));
 }
 
 /**
@@ -2484,4 +2549,318 @@ export async function setPrepSectionShape(
   });
 
   return { reshapedCount };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Section questions (non-inventory) — Item/Inventory Spine, Slice 1 PR B
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The resolved section-question fields a propagated line carries. */
+interface SectionQuestionFields {
+  questionId: string;
+  sectionSlug: string;
+  label: string;
+  labelEs: string | null;
+  inputType: LineInputType;
+  includeNote: boolean;
+  /** null = no explicit minimum; the propagated line falls back to the template default. */
+  minRoleLevel: number | null;
+  required: boolean;
+}
+
+/**
+ * Ensure an active question line exists on `templateId` for `question`. Idempotent:
+ * if an active line already carries this section_question_id, returns it without
+ * inserting. Otherwise seeds a line (via seedPrepItem — sets station=section +
+ * prep_meta atomically, leaves item_id NULL) and stamps section_question_id via a
+ * follow-up update. Mirrors ensureItemLineOnTemplate's structure (idempotency +
+ * max-order + insert) but is question-shaped: NO item row, NO item_par_levels row,
+ * NO opening mirror (questions aren't opening-verified this arc). Returns the
+ * (existing or new) line id + whether it was newly created.
+ */
+async function propagateSectionQuestionLine(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  args: { question: SectionQuestionFields; templateId: string; actorId: string },
+): Promise<{ lineId: string; created: boolean }> {
+  const { question, templateId } = args;
+
+  // Idempotency: an active line on this template already carrying the question.
+  const { data: existing, error: exErr } = await sb
+    .from("checklist_template_items")
+    .select("id")
+    .eq("template_id", templateId)
+    .eq("section_question_id", question.questionId)
+    .eq("active", true)
+    .order("display_order", { ascending: true })
+    .limit(1)
+    .maybeSingle<{ id: string }>();
+  if (exErr) throw new Error(`propagateSectionQuestionLine idempotency read failed: ${exErr.message}`);
+  if (existing) return { lineId: existing.id, created: false };
+
+  // Next display order on the template.
+  const { data: maxRow, error: mxErr } = await sb
+    .from("checklist_template_items")
+    .select("display_order")
+    .eq("template_id", templateId)
+    .order("display_order", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ display_order: number }>();
+  if (mxErr) throw new Error(`propagateSectionQuestionLine max order failed: ${mxErr.message}`);
+  const displayOrder = (maxRow?.display_order ?? 0) + 1;
+
+  // Inherit the question's min-role; fall back to the template default when the
+  // question carries no explicit minimum (mirrors ensureItemLineOnTemplate).
+  const lineMinRole = question.minRoleLevel ?? (await resolveDefaultMinRole(sb, templateId));
+
+  // Seed the question line: station=section + prep_meta atomically (item_id NULL).
+  const { templateItemId } = await seedPrepItem(sb, {
+    templateId,
+    displayOrder,
+    section: question.sectionSlug,
+    label: question.label,
+    description: null,
+    minRoleLevel: lineMinRole,
+    required: question.required,
+    meta: {
+      parValue: null,
+      parUnit: null,
+      specialInstruction: null,
+      columns: shapeToColumns(question.inputType, question.includeNote),
+    },
+    translations: question.labelEs ? { es: { label: question.labelEs } } : undefined,
+  });
+
+  // Stamp section_question_id (seedPrepItem doesn't accept it). item_id stays NULL.
+  const { error: linkErr } = await sb
+    .from("checklist_template_items")
+    .update({ section_question_id: question.questionId })
+    .eq("id", templateItemId);
+  if (linkErr) throw new Error(`propagateSectionQuestionLine link failed: ${linkErr.message}`);
+
+  return { lineId: templateItemId, created: true };
+}
+
+/**
+ * Propagate a section question to every ACTIVE location: for every ACTIVE prep
+ * template (am_prep AND mid_day_prep) at that location that HAS the section (≥1
+ * active line with prep_meta.section == the question's slug), ensure a question
+ * line. Templates with no line in the section are skipped ("every list that HAS
+ * the section"). Idempotent per template. Returns the NEW line ids.
+ */
+async function propagateSectionQuestion(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  question: SectionQuestionFields,
+  actorId: string,
+): Promise<string[]> {
+  // All ACTIVE prep templates (am_prep + mid_day_prep) at active locations.
+  const { data: activeLocs, error: locErr } = await sb
+    .from("locations")
+    .select("id")
+    .eq("active", true)
+    .returns<Array<{ id: string }>>();
+  if (locErr) throw new Error(`propagateSectionQuestion locations read failed: ${locErr.message}`);
+  const activeLocIds = new Set((activeLocs ?? []).map((l) => l.id));
+
+  const { data: prepTmpls, error: ptErr } = await sb
+    .from("checklist_templates")
+    .select("id, location_id")
+    .eq("type", "prep")
+    .eq("active", true)
+    .returns<Array<{ id: string; location_id: string }>>();
+  if (ptErr) throw new Error(`propagateSectionQuestion prep-template lookup failed: ${ptErr.message}`);
+  const candidateTemplateIds = (prepTmpls ?? [])
+    .filter((t) => activeLocIds.has(t.location_id))
+    .map((t) => t.id);
+  if (candidateTemplateIds.length === 0) return [];
+
+  // Of those, the templates that HAVE the section (≥1 active line in it). Two-step
+  // ids→IN avoids the fragile embedded-relation filter (AGENTS.md). Opening Phase-2
+  // mirror lines also carry `section`, but they live on type='opening' templates,
+  // which are excluded by the type='prep' filter above.
+  const { data: sectionLines, error: slErr } = await sb
+    .from("checklist_template_items")
+    .select("template_id")
+    .eq("active", true)
+    .eq("prep_meta->>section", question.sectionSlug)
+    .in("template_id", candidateTemplateIds)
+    .returns<Array<{ template_id: string }>>();
+  if (slErr) throw new Error(`propagateSectionQuestion section-line lookup failed: ${slErr.message}`);
+  const templatesWithSection = Array.from(new Set((sectionLines ?? []).map((l) => l.template_id)));
+
+  const newLineIds: string[] = [];
+  for (const templateId of templatesWithSection) {
+    const { lineId, created } = await propagateSectionQuestionLine(sb, {
+      question,
+      templateId,
+      actorId,
+    });
+    if (created) newLineIds.push(lineId);
+  }
+  return newLineIds;
+}
+
+const SECTION_QUESTION_INPUT_TYPES: readonly LineInputType[] = [
+  "on_hand",
+  "portioned",
+  "line",
+  "yes_no",
+  "free_text",
+];
+
+/**
+ * Add a non-inventory section question (MoO+, all-locations). Validates input type
+ * + section (must be active) + label + min-role, inserts the section_questions row,
+ * then propagates a question line onto every prep list (am_prep + mid_day_prep)
+ * that HAS the section. Question lines carry section_question_id (NOT item_id) — NO
+ * item row, NO par row, NO opening mirror. Sections/questions are GLOBAL (no
+ * location IDOR) — the route gates MoO+. Audits section_question.create.
+ */
+export async function addSectionQuestion(
+  actor: AuthContext,
+  args: {
+    sectionSlug: string;
+    label: string;
+    labelEs: string | null;
+    inputType: LineInputType;
+    includeNote?: boolean;
+    minRoleLevel: number | null;
+    required: boolean;
+  },
+): Promise<{ questionId: string; propagatedLineCount: number }> {
+  if (!SECTION_QUESTION_INPUT_TYPES.includes(args.inputType)) {
+    throw new AdminTemplateError(400, "invalid_input_type", "Unknown input type");
+  }
+  const label = args.label.trim();
+  if (!label) throw new AdminTemplateError(400, "invalid_label", "Label cannot be empty");
+  // min-role is optional (null = no explicit minimum → line falls back to the
+  // template default at propagation). Validate only when a value is given.
+  if (args.minRoleLevel !== null && (!Number.isInteger(args.minRoleLevel) || args.minRoleLevel < 0 || args.minRoleLevel > 10)) {
+    throw new AdminTemplateError(400, "invalid_min_role", "min_role_level must be 0..10");
+  }
+
+  const sb = getServiceRoleClient();
+  const section = (await loadPrepSections(sb)).get(args.sectionSlug);
+  if (!section) throw new AdminTemplateError(400, "invalid_section", "Unknown section");
+
+  const includeNote = args.includeNote ?? false;
+  const labelEs = args.labelEs?.trim() || null;
+
+  // Insert the question row (append-only; active=true via default).
+  const { data: inserted, error: iErr } = await sb
+    .from("section_questions")
+    .insert({
+      section_slug: args.sectionSlug,
+      label,
+      label_es: labelEs,
+      input_type: args.inputType,
+      include_note: includeNote,
+      min_role_level: args.minRoleLevel,
+      required: args.required,
+      active: true,
+      created_by: actor.user.id,
+      updated_by: actor.user.id,
+    })
+    .select("id")
+    .maybeSingle<{ id: string }>();
+  if (iErr) throw new Error(`addSectionQuestion insert failed: ${iErr.message}`);
+  if (!inserted) throw new Error("addSectionQuestion insert returned no row");
+
+  const question: SectionQuestionFields = {
+    questionId: inserted.id,
+    sectionSlug: args.sectionSlug,
+    label,
+    labelEs,
+    inputType: args.inputType,
+    includeNote,
+    minRoleLevel: args.minRoleLevel,
+    required: args.required,
+  };
+
+  const propagatedLineIds = await propagateSectionQuestion(sb, question, actor.user.id);
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "section_question.create",
+    resourceTable: "section_questions",
+    resourceId: inserted.id,
+    metadata: {
+      sectionSlug: args.sectionSlug,
+      inputType: args.inputType,
+      label,
+      propagated_line_ids: propagatedLineIds,
+      propagated_count: propagatedLineIds.length,
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+
+  return { questionId: inserted.id, propagatedLineCount: propagatedLineIds.length };
+}
+
+/**
+ * Disable a section question (MoO+, all-locations). Deactivates every active line
+ * carrying this question (append-only: active=false, never DELETE), then the
+ * question row itself. 404 when the question is missing or already inactive.
+ * Audits section_question.disable with the deactivated line ids.
+ */
+export async function disableSectionQuestion(
+  actor: AuthContext,
+  args: { questionId: string },
+): Promise<{ deactivatedLineCount: number }> {
+  const sb = getServiceRoleClient();
+
+  const { data: question, error: rErr } = await sb
+    .from("section_questions")
+    .select("id")
+    .eq("id", args.questionId)
+    .eq("active", true)
+    .maybeSingle<{ id: string }>();
+  if (rErr) throw new Error(`disableSectionQuestion read failed: ${rErr.message}`);
+  if (!question) throw new AdminTemplateError(404, "section_question_not_found", "Section question not found");
+
+  // Collect + deactivate the propagated lines (append-only).
+  const { data: lineRows, error: lErr } = await sb
+    .from("checklist_template_items")
+    .select("id")
+    .eq("section_question_id", args.questionId)
+    .eq("active", true)
+    .returns<Array<{ id: string }>>();
+  if (lErr) throw new Error(`disableSectionQuestion line lookup failed: ${lErr.message}`);
+  const lineIds = (lineRows ?? []).map((l) => l.id);
+
+  // checklist_template_items has no updated_by/updated_at columns (verified
+  // against live schema) — soft-delete is active=false only, matching the other
+  // line soft-deletes in this file.
+  if (lineIds.length > 0) {
+    const { error: dErr } = await sb
+      .from("checklist_template_items")
+      .update({ active: false })
+      .in("id", lineIds);
+    if (dErr) throw new Error(`disableSectionQuestion line deactivate failed: ${dErr.message}`);
+  }
+
+  // Deactivate the question row (section_questions DOES carry updated_by/_at).
+  const { error: qErr } = await sb
+    .from("section_questions")
+    .update({ active: false, updated_by: actor.user.id, updated_at: new Date().toISOString() })
+    .eq("id", args.questionId);
+  if (qErr) throw new Error(`disableSectionQuestion question deactivate failed: ${qErr.message}`);
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "section_question.disable",
+    resourceTable: "section_questions",
+    resourceId: args.questionId,
+    metadata: {
+      questionId: args.questionId,
+      deactivated_line_ids: lineIds,
+      deactivated_count: lineIds.length,
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+
+  return { deactivatedLineCount: lineIds.length };
 }
