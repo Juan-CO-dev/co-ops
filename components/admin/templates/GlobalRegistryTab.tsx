@@ -17,7 +17,7 @@ import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
 import { orderedSectionSlugs, sectionLabelByLang, isPrepSectionName } from "@/lib/prep-sections";
 import { roleLevelOptions } from "@/lib/roles";
-import type { PrepSection } from "@/lib/types";
+import type { PrepSection, PrepSectionShape } from "@/lib/types";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { ChecklistRegistryItem } from "@/lib/admin/templates";
 import type { PrepSectionDefn } from "@/lib/types";
@@ -64,10 +64,17 @@ export function GlobalRegistryTab({
             {t("admin.templates.sections_panel.note")}
           </p>
           <div className="mt-3 flex flex-col gap-2">
-            {sections.map((s) => (
-              <SectionRow key={s.slug} section={s} />
+            {sections.map((s, i) => (
+              <SectionRow
+                key={s.slug}
+                section={s}
+                isFirst={i === 0}
+                isLast={i === sections.length - 1}
+                itemsInSection={(groups.get(s.slug) ?? []).map((r) => r.name)}
+              />
             ))}
           </div>
+          <AddSectionForm />
         </section>
       ) : null}
 
@@ -100,20 +107,65 @@ export function GlobalRegistryTab({
   );
 }
 
-function SectionRow({ section }: { section: PrepSectionDefn }) {
+function SectionRow({
+  section,
+  isFirst,
+  isLast,
+  itemsInSection,
+}: {
+  section: PrepSectionDefn;
+  isFirst: boolean;
+  isLast: boolean;
+  itemsInSection: string[];
+}) {
   const { t } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
 
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [confirmingDisable, setConfirmingDisable] = useState(false);
 
   const [labelEn, setLabelEn] = useState(section.labelEn);
   const [labelEs, setLabelEs] = useState(section.labelEs ?? "");
   const [displayOrder, setDisplayOrder] = useState(section.displayOrder.toString());
 
+  const isMisc = section.slug === "Misc";
+
   const field =
     "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60";
+  const iconBtn =
+    "inline-flex h-9 w-9 items-center justify-center rounded-lg border-2 border-co-border bg-co-surface text-sm font-bold text-co-text hover:border-co-text disabled:opacity-50";
+
+  const reorder = async (direction: "up" | "down") => {
+    if (submitting) return;
+    setErrorMsg(null);
+    if ((await requestStepUp("B")) !== "ok") return;
+    setSubmitting(true);
+    const result = await postJson(
+      `/api/admin/checklist-templates/sections/${section.slug}/reorder`,
+      { direction },
+      "PATCH",
+    );
+    setSubmitting(false);
+    if (result.ok) router.refresh();
+    else setErrorMsg(t(resolveErrorKey(result.code)));
+  };
+
+  const disable = async () => {
+    if (submitting) return;
+    setErrorMsg(null);
+    if ((await requestStepUp("B")) !== "ok") return;
+    setSubmitting(true);
+    const result = await postJson(
+      `/api/admin/checklist-templates/sections/${section.slug}/disable`,
+      {},
+      "POST",
+    );
+    setSubmitting(false);
+    if (result.ok) { setConfirmingDisable(false); router.refresh(); }
+    else setErrorMsg(t(resolveErrorKey(result.code)));
+  };
 
   const save = async () => {
     if (submitting) return;
@@ -137,9 +189,84 @@ function SectionRow({ section }: { section: PrepSectionDefn }) {
 
   return (
     <div className="rounded-lg border-2 border-co-border bg-co-surface p-3">
-      <p className="text-xs text-co-text-muted">
-        {t("admin.templates.sections_panel.slug_hint")}: <span className="font-mono">{section.slug}</span>
-      </p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs text-co-text-muted">
+          {t("admin.templates.sections_panel.slug_hint")}: <span className="font-mono">{section.slug}</span>
+        </p>
+        <div className="flex items-center gap-1">
+          {!isFirst ? (
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => void reorder("up")}
+              aria-label={t("admin.templates.sections_panel.move_up")}
+              className={iconBtn}
+            >
+              ↑
+            </button>
+          ) : null}
+          {!isLast ? (
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => void reorder("down")}
+              aria-label={t("admin.templates.sections_panel.move_down")}
+              className={iconBtn}
+            >
+              ↓
+            </button>
+          ) : null}
+          {!isMisc ? (
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => setConfirmingDisable((v) => !v)}
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta hover:border-co-cta disabled:opacity-50"
+            >
+              {t("admin.templates.sections_panel.disable")}
+            </button>
+          ) : null}
+        </div>
+      </div>
+
+      {confirmingDisable && !isMisc ? (
+        <div className="mt-3 rounded-lg border-2 border-co-cta bg-co-cta/10 p-3">
+          <p className="text-sm font-bold text-co-text">
+            {t("admin.templates.sections_panel.disable_confirm_title")
+              .replace("{section}", section.labelEn)
+              .replace("{count}", itemsInSection.length.toString())}
+          </p>
+          {itemsInSection.length > 0 ? (
+            <ul className="mt-2 list-inside list-disc text-sm text-co-text">
+              {itemsInSection.map((n) => (
+                <li key={n}>{n}</li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-2 text-sm text-co-text-muted">{t("admin.templates.sections_panel.disable_empty")}</p>
+          )}
+          <p className="mt-2 text-xs text-co-text-muted">{t("admin.templates.sections_panel.disable_warning")}</p>
+          <div className="mt-3 flex justify-end gap-2">
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => setConfirmingDisable(false)}
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text disabled:opacity-50"
+            >
+              {t("admin.templates.sections_panel.disable_cancel")}
+            </button>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => void disable()}
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-cta px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-surface disabled:opacity-50"
+            >
+              {t("admin.templates.sections_panel.disable_confirm")}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-end">
         <label className="block flex-1">
           <span className="text-sm font-bold text-co-text">{t("admin.templates.field.label_en")}</span>
@@ -169,6 +296,107 @@ function SectionRow({ section }: { section: PrepSectionDefn }) {
         >
           {t("admin.templates.save")}
         </button>
+      </div>
+    </div>
+  );
+}
+
+function AddSectionForm() {
+  const { t } = useTranslation();
+  const router = useRouter();
+  const { requestStepUp } = useStepUp();
+
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const [labelEn, setLabelEn] = useState("");
+  const [labelEs, setLabelEs] = useState("");
+  const [shape, setShape] = useState<PrepSectionShape>("on_hand");
+  const [includeNote, setIncludeNote] = useState(false);
+
+  const field =
+    "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60";
+
+  const shapeOptions: Array<{ value: PrepSectionShape; key: TranslationKey }> = [
+    { value: "on_hand", key: "admin.templates.section_shape.on_hand" },
+    { value: "portioned", key: "admin.templates.section_shape.portioned" },
+    { value: "line", key: "admin.templates.section_shape.line" },
+    { value: "yes_no", key: "admin.templates.section_shape.yes_no" },
+  ];
+
+  const submit = async () => {
+    if (submitting) return;
+    setErrorMsg(null);
+    if (!labelEn.trim()) { setErrorMsg(t(resolveErrorKey("invalid_label"))); return; }
+    if ((await requestStepUp("B")) !== "ok") return;
+    setSubmitting(true);
+    const result = await postJson(
+      `/api/admin/checklist-templates/sections`,
+      {
+        labelEn: labelEn.trim(),
+        labelEs: labelEs.trim() || null,
+        shape,
+        includeNote: shape === "yes_no" ? includeNote : undefined,
+      },
+      "POST",
+    );
+    setSubmitting(false);
+    if (result.ok) {
+      setLabelEn("");
+      setLabelEs("");
+      setShape("on_hand");
+      setIncludeNote(false);
+      router.refresh();
+    } else {
+      setErrorMsg(t(resolveErrorKey(result.code)));
+    }
+  };
+
+  return (
+    <div className="mt-3 rounded-lg border-2 border-co-gold-deep bg-co-surface p-3">
+      <h3 className="text-sm font-extrabold text-co-text">{t("admin.templates.sections_panel.add_title")}</h3>
+      <div className="mt-3 flex flex-col gap-3">
+        <Labeled label={t("admin.templates.sections_panel.add_label_en")}>
+          <input className={field} value={labelEn} onChange={(e) => setLabelEn(e.target.value)} />
+        </Labeled>
+        <Labeled label={t("admin.templates.sections_panel.add_label_es")}>
+          <input className={field} value={labelEs} onChange={(e) => setLabelEs(e.target.value)} />
+        </Labeled>
+        <Labeled label={t("admin.templates.sections_panel.add_shape")}>
+          <select
+            className={field}
+            value={shape}
+            onChange={(e) => setShape(e.target.value as PrepSectionShape)}
+          >
+            {shapeOptions.map((o) => (
+              <option key={o.value} value={o.value}>
+                {t(o.key)}
+              </option>
+            ))}
+          </select>
+        </Labeled>
+        {shape === "yes_no" ? (
+          <label className="flex items-center gap-2 text-sm font-bold text-co-text">
+            <input
+              type="checkbox"
+              className="h-5 w-5 accent-co-gold"
+              checked={includeNote}
+              onChange={(e) => setIncludeNote(e.target.checked)}
+            />
+            {t("admin.templates.sections_panel.add_include_note")}
+          </label>
+        ) : null}
+        {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+        <div className="flex justify-end">
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={() => void submit()}
+            className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50"
+          >
+            {t("admin.templates.sections_panel.add_submit")}
+          </button>
+        </div>
       </div>
     </div>
   );
