@@ -630,6 +630,7 @@ function AddSectionQuestionForm({ sections }: { sections: PrepSectionDefn[] }) {
   const { requestStepUp } = useStepUp();
 
   const slugs = orderedSectionSlugs(sections);
+  const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -675,9 +676,21 @@ function AddSectionQuestionForm({ sections }: { sections: PrepSectionDefn[] }) {
       "POST",
     );
     setSubmitting(false);
-    if (result.ok) { reset(); router.refresh(); }
+    if (result.ok) { reset(); setOpen(false); router.refresh(); }
     else setErrorMsg(t(resolveErrorKey(result.code)));
   };
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="inline-flex min-h-[44px] items-center self-start rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-text"
+      >
+        {t("admin.templates.section_questions_panel.add_title")}
+      </button>
+    );
+  }
 
   return (
     <div className="mt-3 rounded-lg border-2 border-co-gold-deep bg-co-surface p-3">
@@ -741,7 +754,15 @@ function AddSectionQuestionForm({ sections }: { sections: PrepSectionDefn[] }) {
           {t("admin.templates.section_questions_panel.add_required")}
         </label>
         {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={() => { reset(); setOpen(false); }}
+            className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text disabled:opacity-50"
+          >
+            {t("admin.templates.section_questions_panel.disable_cancel")}
+          </button>
           <button
             type="button"
             disabled={submitting}
