@@ -239,6 +239,7 @@ export default async function AmPrepPage({ searchParams }: PageProps) {
           originalSubmissionId={chainState.originalSubmissionId}
           locationId={locationParam}
           sectionLabels={state.sectionLabels}
+          sections={state.sections}
         />
       </div>
     </main>

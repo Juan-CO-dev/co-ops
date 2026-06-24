@@ -75,6 +75,7 @@ import type {
   PrepInputs,
   PrepMeta,
   PrepSection,
+  PrepSectionDefn,
   PrepSnapshot,
   ReportType,
 } from "./types";
@@ -116,15 +117,6 @@ const REPORT_TYPE_VALUES: readonly ReportType[] = [
   "pm_report",
 ];
 
-const PREP_SECTION_VALUES: readonly PrepSection[] = [
-  "Veg",
-  "Cooks",
-  "Sides",
-  "Sauces",
-  "Slicing",
-  "Misc",
-];
-
 const PREP_COLUMN_VALUES: readonly PrepColumn[] = [
   "par",
   "on_hand",
@@ -140,8 +132,15 @@ export function isReportType(value: unknown): value is ReportType {
   return typeof value === "string" && (REPORT_TYPE_VALUES as readonly string[]).includes(value);
 }
 
+// Sections are now first-class + dynamic (migration 0082/0086): the slug is a
+// free string and the system match key (C.38). The READ path only requires it
+// to be a non-empty string — a section's validity AS a real section is enforced
+// at WRITE time (admin lib validates against the active prep_sections slugs).
+// Enum-validating here would crash narrowPrepTemplateItem on any newly-added
+// section, defeating add-sections. (Only used internally by isPrepMeta /
+// isPrepSnapshot / narrowPrepTemplateItem — no external callers.)
 export function isPrepSection(value: unknown): value is PrepSection {
-  return typeof value === "string" && (PREP_SECTION_VALUES as readonly string[]).includes(value);
+  return typeof value === "string" && value.length > 0;
 }
 
 export function isPrepColumn(value: unknown): value is PrepColumn {
@@ -363,14 +362,13 @@ export class ChecklistEditAccessDeniedError extends PrepError {
 export function narrowPrepTemplateItem(item: ChecklistTemplateItem): ChecklistTemplateItem {
   if (item.prepMeta === null) {
     if (isPrepSection(item.station)) {
-      // Defensive warn-only branch (per locked surface decision): cleaning
-      // template item that happens to use a section name as its station.
-      // Should not fire for current data — Standard Closing v1 stations are
-      // "Crunchy Boi Station" / "Walk-Out Verification" etc., none match
-      // PrepSection. If it ever fires, the seed/admin write-path didn't
-      // populate prep_meta when it should have.
+      // Defensive warn-only branch. narrowPrepTemplateItem runs ONLY on prep
+      // template items (loaders + submit + admin getPrepTemplateDetail), which
+      // must carry prep_meta — so a null prep_meta here is a write-path bug
+      // regardless of the station value. Should not fire for current data. If
+      // it does, the seed/admin write-path didn't populate prep_meta.
       console.warn(
-        `[prep] narrowPrepTemplateItem: template_item ${item.id} has section-shaped station "${item.station}" but no prep_meta; possible write-path bug.`,
+        `[prep] narrowPrepTemplateItem: template_item ${item.id} has station "${item.station}" but no prep_meta; possible write-path bug.`,
       );
     }
     return item;
@@ -615,6 +613,12 @@ export async function loadAmPrepState(
   completions: ChecklistCompletion[];
   authors: Record<string, string>;
   sectionLabels: Record<string, { en: string; es: string | null }>;
+  /**
+   * Ordered active section definitions (by displayOrder) — drives the
+   * data-driven AM-prep render (Item/Inventory Spine, Task 4). Derived from
+   * the same loadPrepSections map that builds sectionLabels (one load).
+   */
+  sections: PrepSectionDefn[];
 } | null> {
   // Resolve active AM Prep template (most-recent-active per Path A versioning).
   // Per-location scoping via `.eq("location_id", args.locationId)` is LOAD-BEARING
@@ -786,6 +790,12 @@ export async function loadAmPrepState(
   const sectionLabels: Record<string, { en: string; es: string | null }> = {};
   for (const [slug, defn] of sectionMap) sectionLabels[slug] = { en: defn.labelEn, es: defn.labelEs };
 
+  // Ordered active sections from the SAME loaded map (one load, not two) —
+  // drives the data-driven AM-prep render (Task 4).
+  const sections = Array.from(sectionMap.values()).sort(
+    (a, b) => a.displayOrder - b.displayOrder,
+  );
+
   return {
     template: tmplRow,
     templateItems: resolvedItems,
@@ -793,6 +803,7 @@ export async function loadAmPrepState(
     completions,
     authors,
     sectionLabels,
+    sections,
   };
 }
 

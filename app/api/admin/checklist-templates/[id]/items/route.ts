@@ -4,7 +4,6 @@ import { ROLES } from "@/lib/roles";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { addPrepItem, AdminTemplateError, type AddPrepItemInput } from "@/lib/admin/templates";
-import { isPrepSectionName } from "@/lib/prep-sections";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -17,7 +16,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (!su.ok) return jsonError(403, su.code);
 
   const b = parsed as Record<string, unknown>;
-  if (!isPrepSectionName(b.section)) return jsonError(400, "invalid_section", { field: "section" });
+  // Shape guard only; addPrepItem validates the slug against the active
+  // prep_sections set and throws invalid_section (slug list is runtime now).
+  if (typeof b.section !== "string") return jsonError(400, "invalid_section", { field: "section" });
   if (typeof b.label !== "string") return jsonError(400, "invalid_payload", { field: "label" });
   if (typeof b.minRoleLevel !== "number") return jsonError(400, "invalid_payload", { field: "minRoleLevel" });
 

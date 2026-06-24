@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
-import { PREP_SECTIONS, sectionLabelByLang } from "@/lib/prep-sections";
+import { orderedSectionSlugs, sectionLabelByLang } from "@/lib/prep-sections";
 import type { PrepSection, PrepSectionDefn } from "@/lib/types";
 import { postJson, resolveErrorKey } from "./shared";
 
@@ -68,7 +68,7 @@ export function AddPrepItemForm({
         <label className="block">
           <span className="text-sm font-bold text-co-text">{t("admin.templates.field.section")}</span>
           <select className={fieldCls} value={section} onChange={(e) => setSection(e.target.value as PrepSection)}>
-            {PREP_SECTIONS.map((s) => (
+            {orderedSectionSlugs(sections).map((s) => (
               <option key={s} value={s}>{sectionLabelByLang(sections, s, language)}</option>
             ))}
           </select>

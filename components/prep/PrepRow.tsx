@@ -83,29 +83,6 @@ const COLUMN_ARIA_KEY: Partial<Record<PrepColumn, TranslationKey>> = {
   portioned: "am_prep.column.portioned_aria",
 };
 
-/**
- * Sections where TOTAL is auto-calculated from sibling source fields
- * (operator can't type into it). All 5 numeric sections now auto-calc.
- *
- * Cooks history: originally excluded (column shape was
- * ["par","on_hand","total"] — auto-calc would have forced TOTAL = ON
- * HAND, masking the multi-day batch semantic). Build #2 PR 1 follow-up
- * added BACK UP to Cooks per Juan smoke; with BACK UP present, TOTAL
- * = ON HAND + BACK UP cleanly captures total service-ready quantity
- * across active days (vodka/marinara: day-of + next day; caramelized
- * onion: 3+ days). Cooks now auto-calcs alongside the other sections.
- *
- * Mirrored on the AmPrepForm side (TOTAL_SOURCES map). Keep these in
- * sync if a section gets added or its formula changes.
- */
-const SECTIONS_WITH_AUTO_TOTAL: ReadonlySet<string> = new Set([
-  "Veg",
-  "Cooks",
-  "Sides",
-  "Sauces",
-  "Slicing",
-]);
-
 export interface PrepRowProps {
   /** Stable id (template_item_id) — used for React key + onChange dispatch. */
   templateItemId: string;
@@ -156,14 +133,23 @@ export interface PrepRowProps {
    * the input cell as brand-Red text. Empty/missing → no error UI.
    */
   rowErrors?: Partial<Record<keyof RawPrepInputs, string>>;
+  /**
+   * When true, the TOTAL cell (if present in inputColumns) is read-only
+   * display — AmPrepForm.handleChange computes it from the source fields.
+   * Caller derives this from whether the section's column set includes
+   * "total" (shape-driven, migration 0086). Replaces the prior
+   * SECTIONS_WITH_AUTO_TOTAL slug set.
+   */
+  autoCalcTotal?: boolean;
 }
 
 export function PrepRow({
   templateItemId,
-  // section: SYSTEM-KEY (English source-of-truth per C.38). Used for the
-  // auto-calc TOTAL gate (SECTIONS_WITH_AUTO_TOTAL above) — Cooks TOTAL
-  // stays editable because of its multi-day batch semantic. Display
-  // string for the section header comes from `sectionDisplay`.
+  // section: SYSTEM-KEY (English source-of-truth per C.38). Used in ARIA
+  // labels via translation interpolation; never used as a render-string
+  // directly. Display string for the section header comes from
+  // `sectionDisplay`. The auto-calc TOTAL gate is now the `autoCalcTotal`
+  // prop (shape-driven), not a slug lookup.
   section,
   sectionDisplay,
   label,
@@ -175,6 +161,7 @@ export function PrepRow({
   onChange,
   disabled = false,
   rowErrors,
+  autoCalcTotal = false,
 }: PrepRowProps) {
   const { t } = useTranslation();
   // PAR cell display: "{value} {unit}" — or just the value if unit is null,
@@ -242,8 +229,9 @@ export function PrepRow({
         const fieldError = rowErrors?.[field];
         // TOTAL cells in auto-calc sections are read-only display
         // (computed from source fields by AmPrepForm.handleChange).
-        // Cooks TOTAL stays editable per the multi-day batch semantic.
-        const isAutoCalcTotal = col === "total" && SECTIONS_WITH_AUTO_TOTAL.has(section);
+        // Driven by the autoCalcTotal prop (shape-driven; true when the
+        // section's column set includes "total").
+        const isAutoCalcTotal = col === "total" && autoCalcTotal;
         return (
           <div key={col} className="flex flex-col gap-0.5">
             <PrepNumericCell

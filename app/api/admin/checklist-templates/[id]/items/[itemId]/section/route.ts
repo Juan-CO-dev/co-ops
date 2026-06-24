@@ -4,7 +4,6 @@ import { ROLES } from "@/lib/roles";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { changePrepItemSection, AdminTemplateError } from "@/lib/admin/templates";
-import { isPrepSectionName } from "@/lib/prep-sections";
 
 export async function PATCH(
   req: NextRequest,
@@ -20,7 +19,9 @@ export async function PATCH(
   if (!su.ok) return jsonError(403, su.code);
 
   const section = (parsed as { section?: unknown }).section;
-  if (!isPrepSectionName(section)) return jsonError(400, "invalid_section", { field: "section" });
+  // Shape guard only; changePrepItemSection validates the slug against the
+  // active prep_sections set and throws invalid_section (slug list is runtime).
+  if (typeof section !== "string") return jsonError(400, "invalid_section", { field: "section" });
   try {
     const result = await changePrepItemSection(ctx, { templateId: id, itemId, section });
     return jsonOk(result);
