@@ -1265,6 +1265,9 @@ interface DefaultItemFields {
   specialInstructionEs: string | null;
   minRoleLevel: number | null;
   required: boolean;
+  // Opening Phase-2 verification mirror gate (migration 0089). When false, the
+  // am_prep line is NOT mirrored to Opening. Default true preserves prior behavior.
+  openingVerify: boolean;
 }
 
 /**
@@ -1429,8 +1432,10 @@ async function ensureItemLineOnTemplate(
     if (parInsErr) throw new Error(`ensureItemLineOnTemplate par seed failed: ${parInsErr.message}`);
   }
 
+  // Gate the Opening mirror on the item's opening_verify flag (migration 0089).
+  // Default true → mirror created as before; flipped false → no mirror.
   let openingMirrorId: string | null = null;
-  if (subtype === "am_prep") {
+  if (subtype === "am_prep" && item.openingVerify) {
     openingMirrorId = await createOpeningMirror({
       amPrepItemId: lineId,
       itemId: item.itemId,
@@ -1500,7 +1505,7 @@ export async function setItemDefault(
   const { data: item, error: rErr } = await sb
     .from("items")
     .select(
-      "id, location_id, active, is_default, section, name, name_es, default_par, default_par_unit, special_instruction, special_instruction_es, min_role_level, required",
+      "id, location_id, active, is_default, section, name, name_es, default_par, default_par_unit, special_instruction, special_instruction_es, min_role_level, required, opening_verify",
     )
     .eq("id", args.itemId)
     .maybeSingle<{
@@ -1517,6 +1522,7 @@ export async function setItemDefault(
       special_instruction_es: string | null;
       min_role_level: number | null;
       required: boolean;
+      opening_verify: boolean;
     }>();
   if (rErr) throw new Error(`setItemDefault read failed: ${rErr.message}`);
   if (!item || !item.active) throw new AdminTemplateError(404, "item_not_found", "Item not found");
@@ -1548,6 +1554,7 @@ export async function setItemDefault(
         specialInstructionEs: item.special_instruction_es,
         minRoleLevel: item.min_role_level,
         required: item.required,
+        openingVerify: item.opening_verify,
       },
       actor.user.id,
     );
@@ -1570,6 +1577,136 @@ export async function setItemDefault(
   });
 
   return { propagatedLocationIds };
+}
+
+/**
+ * Toggle whether an item is included in Opening Phase-2 verification (Slice 2
+ * PR B; migration 0089 `items.opening_verify`). Mirrors setItemDefault's
+ * read→update→propagate→audit shape.
+ *
+ * Propagation across active locations: for each location's active am_prep
+ * template, find the item's active COUNT line (item_id = itemId — question
+ * lines have item_id NULL, so they're excluded). For each found am_prep line:
+ *   - openingVerify TRUE  → ensure an active Opening mirror exists; if absent,
+ *     create one from the am_prep line's prep_meta + line fields.
+ *   - openingVerify FALSE → deactivate any active Opening mirror.
+ * Counts locations where a mirror was newly created (on) or deactivated (off).
+ *
+ * Idempotent: toggling on when the mirror already exists is a no-op for that
+ * location (not counted); toggling off when no active mirror exists is a no-op.
+ *
+ * Missing/inactive item → 404 item_not_found. Route enforces role; this lib does
+ * not re-gate.
+ */
+export async function setItemOpeningVerify(
+  actor: AuthContext,
+  args: { itemId: string; openingVerify: boolean },
+): Promise<{ changedLocationCount: number }> {
+  const sb = getServiceRoleClient();
+
+  const { data: item, error: rErr } = await sb
+    .from("items")
+    .select("id, active, opening_verify")
+    .eq("id", args.itemId)
+    .maybeSingle<{ id: string; active: boolean; opening_verify: boolean }>();
+  if (rErr) throw new Error(`setItemOpeningVerify read failed: ${rErr.message}`);
+  if (!item || !item.active) throw new AdminTemplateError(404, "item_not_found", "Item not found");
+
+  const beforeOpeningVerify = item.opening_verify;
+
+  const { error: uErr } = await sb
+    .from("items")
+    .update({ opening_verify: args.openingVerify, updated_by: actor.user.id, updated_at: new Date().toISOString() })
+    .eq("id", args.itemId);
+  if (uErr) throw new Error(`setItemOpeningVerify update failed: ${uErr.message}`);
+
+  // Propagate across every active location's am_prep template.
+  const { data: locations, error: locErr } = await sb
+    .from("locations")
+    .select("id")
+    .eq("active", true)
+    .returns<Array<{ id: string }>>();
+  if (locErr) throw new Error(`setItemOpeningVerify locations read failed: ${locErr.message}`);
+
+  const changedLocationIds: string[] = [];
+  for (const loc of locations ?? []) {
+    const templateId = await resolveActiveAmPrepTemplateId(sb, loc.id);
+    if (!templateId) continue; // no active am_prep template here — nothing to mirror
+
+    // The item's active COUNT line on this template (item_id = itemId excludes
+    // question lines, which carry item_id NULL).
+    const { data: lineRow, error: lErr } = await sb
+      .from("checklist_template_items")
+      .select(TEMPLATE_ITEM_COLUMNS)
+      .eq("template_id", templateId)
+      .eq("item_id", args.itemId)
+      .eq("active", true)
+      .order("display_order", { ascending: true })
+      .limit(1)
+      .maybeSingle<TemplateItemRow>();
+    if (lErr) throw new Error(`setItemOpeningVerify line read failed: ${lErr.message}`);
+    if (!lineRow) continue; // item not enabled at this location — nothing to mirror
+
+    const line = rowToTemplateItem(lineRow);
+
+    if (args.openingVerify) {
+      // Ensure an active mirror exists; create one if absent.
+      const { data: mirror, error: mErr } = await sb
+        .from("checklist_template_items")
+        .select("id")
+        .eq("references_template_item_id", line.id)
+        .eq("active", true)
+        .limit(1)
+        .maybeSingle<{ id: string }>();
+      if (mErr) throw new Error(`setItemOpeningVerify mirror read failed: ${mErr.message}`);
+      if (mirror) continue; // already mirrored — idempotent no-op
+
+      // Gather createOpeningMirror args from the am_prep line (mirror how
+      // ensureItemLineOnTemplate builds them). prep_meta carries section/par;
+      // a non-prep shape (shouldn't happen for an am_prep count line) falls back
+      // to the line's station + null par.
+      const prep = isPrepMeta(line.prepMeta) ? line.prepMeta : null;
+      const section = (prep?.section ?? line.station) as PrepSection;
+      const created = await createOpeningMirror({
+        amPrepItemId: line.id,
+        itemId: line.itemId,
+        locationId: loc.id,
+        section,
+        parValue: prep?.parValue ?? null,
+        parUnit: prep?.parUnit ?? null,
+        label: line.label,
+        translations: line.translations,
+        minRoleLevel: line.minRoleLevel,
+        required: line.required,
+      });
+      // createOpeningMirror returns null when no active opening template at the
+      // location — treat that as "no change" (nothing was created).
+      if (created) changedLocationIds.push(loc.id);
+    } else {
+      // Deactivate any active Opening mirror for this am_prep line.
+      const deactivated = await deactivateOpeningMirror({ amPrepItemId: line.id, locationId: loc.id });
+      if (deactivated.length > 0) changedLocationIds.push(loc.id);
+    }
+  }
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "item.set_opening_verify",
+    resourceTable: "items",
+    resourceId: args.itemId,
+    metadata: {
+      itemId: args.itemId,
+      openingVerify: args.openingVerify,
+      before: { opening_verify: beforeOpeningVerify },
+      after: { opening_verify: args.openingVerify },
+      changed_location_ids: changedLocationIds,
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+
+  return { changedLocationCount: changedLocationIds.length };
 }
 
 export interface AddRegistryItemInput {
@@ -1655,6 +1792,9 @@ export async function addRegistryItem(
         specialInstructionEs: args.specialInstructionEs?.trim() || null,
         minRoleLevel: args.minRoleLevel ?? null,
         required: args.required ?? false,
+        // New global item: opening_verify defaults true at the DB level, so the
+        // propagated lines get their Opening mirror (preserves prior behavior).
+        openingVerify: true,
       },
       actor.user.id,
     );
@@ -1701,7 +1841,7 @@ export async function enableRegistryItemAtLocation(
   const { data: item, error: rErr } = await sb
     .from("items")
     .select(
-      "id, location_id, active, section, name, name_es, default_par, default_par_unit, special_instruction, special_instruction_es, min_role_level, required",
+      "id, location_id, active, section, name, name_es, default_par, default_par_unit, special_instruction, special_instruction_es, min_role_level, required, opening_verify",
     )
     .eq("id", args.itemId)
     .maybeSingle<{
@@ -1717,6 +1857,7 @@ export async function enableRegistryItemAtLocation(
       special_instruction_es: string | null;
       min_role_level: number | null;
       required: boolean;
+      opening_verify: boolean;
     }>();
   if (rErr) throw new Error(`enableRegistryItemAtLocation read failed: ${rErr.message}`);
   if (!item || !item.active) throw new AdminTemplateError(404, "item_not_found", "Item not found");
@@ -1743,6 +1884,7 @@ export async function enableRegistryItemAtLocation(
       specialInstructionEs: item.special_instruction_es,
       minRoleLevel: item.min_role_level,
       required: item.required,
+      openingVerify: item.opening_verify,
     },
     actorId: actor.user.id,
   });
@@ -1780,6 +1922,8 @@ export interface ChecklistRegistryItem {
   specialInstructionEs: string | null;
   required: boolean;
   minRoleLevel: number | null;
+  /** Opening Phase-2 verification mirror gate (migration 0089); default true. */
+  openingVerify: boolean;
 }
 
 export interface ChecklistLocationView {
@@ -1847,12 +1991,12 @@ export async function loadChecklistAdminView(
   // Registry = active global items (location_id NULL), grouped/sorted by section.
   const { data: regRows, error: rErr } = await sb
     .from("items")
-    .select("id, name, name_es, section, default_par, default_par_unit, is_default, special_instruction, special_instruction_es, required, min_role_level")
+    .select("id, name, name_es, section, default_par, default_par_unit, is_default, special_instruction, special_instruction_es, required, min_role_level, opening_verify")
     .is("location_id", null)
     .eq("active", true)
     .order("section", { ascending: true })
     .order("name", { ascending: true })
-    .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; default_par: number | null; default_par_unit: string | null; is_default: boolean; special_instruction: string | null; special_instruction_es: string | null; required: boolean; min_role_level: number | null }>>();
+    .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; default_par: number | null; default_par_unit: string | null; is_default: boolean; special_instruction: string | null; special_instruction_es: string | null; required: boolean; min_role_level: number | null; opening_verify: boolean }>>();
   if (rErr) throw new Error(`loadChecklistAdminView registry failed: ${rErr.message}`);
   const registry: ChecklistRegistryItem[] = (regRows ?? []).map((r) => ({
     itemId: r.id,
@@ -1866,6 +2010,7 @@ export async function loadChecklistAdminView(
     specialInstructionEs: r.special_instruction_es,
     required: r.required,
     minRoleLevel: r.min_role_level,
+    openingVerify: r.opening_verify,
   }));
 
   // Accessible locations (respect all-locations override + assignment list).

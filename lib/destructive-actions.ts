@@ -73,6 +73,11 @@ export const DESTRUCTIVE_ACTIONS = [
   // — item.set_default toggles default-template membership (MoO+); turning it on
   //   propagates enabled lines to every location. Auto-derive destructive.
   "item.set_default",
+  // — item.set_opening_verify toggles whether the item is included in Opening
+  //   Phase-2 verification (migration 0089); the toggle propagates Opening mirror
+  //   create/deactivate across every location's am_prep template. Auto-derive
+  //   destructive=true via isDestructive().
+  "item.set_opening_verify",
   // — prep_section.update renames a section's display label (MoO+, all-locations).
   "prep_section.update",
   // — prep_section.create adds a section to the registry (MoO+, all-locations).
