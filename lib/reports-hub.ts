@@ -323,6 +323,18 @@ export interface ChecklistDetailItem {
   isTempFlag: boolean; // true when item is in location's tempItemIds AND count_value > FRIDGE_DEFAULT_SAFE_MAX_F
 }
 
+/**
+ * A yes/no + free-text "check" answer surfaced on the report drill-in (Slice 3).
+ * Built from completions whose prep_data.inputs carry yesNo and/or freeText
+ * (section/item questions AND existing Misc items). Numeric lines stay in
+ * prepValues — a line carrying numeric inputs is NOT a check.
+ */
+export interface ChecklistCheckRow {
+  label: string;
+  yesNo: boolean | null; // null when the line has no yes/no (free-text-only)
+  freeText: string | null; // the note / text answer, when present
+}
+
 export interface ChecklistReportDetail {
   kind: "checklist";
   type: ReportTypeKey;
@@ -331,6 +343,7 @@ export interface ChecklistReportDetail {
   items: ChecklistDetailItem[];
   signals: ReportSignals;
   prepValues: PrepValueRow[];
+  checks: ChecklistCheckRow[];
 }
 
 async function loadChecklistDetail(
@@ -352,7 +365,7 @@ async function loadChecklistDetail(
   // AFTER the IDOR guard: load temp-item ids and compute signals (derived from
   // already-authorized data — does not bypass cash gate, IDOR guard, or notes redaction).
   const tempItemIds = await loadLocationTempItemIds(service, inst.location_id);
-  const { signals, prepValues } = await computeReportSignals(service, {
+  const { signals, prepValues, checks } = await computeReportSignals(service, {
     type: args.type,
     id: args.instanceId,
     tempItemIds,
@@ -419,7 +432,7 @@ async function loadChecklistDetail(
     };
   });
 
-  return { kind: "checklist", type: args.type, date: inst.date, status: inst.status, items, signals, prepValues };
+  return { kind: "checklist", type: args.type, date: inst.date, status: inst.status, items, signals, prepValues, checks };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1068,7 +1081,7 @@ export async function loadLocationTempItemIds(
 export async function computeReportSignals(
   service: SupabaseClient,
   args: { type: ReportTypeKey; id: string; tempItemIds: Set<string> },
-): Promise<{ signals: ReportSignals; prepValues: PrepValueRow[] }> {
+): Promise<{ signals: ReportSignals; prepValues: PrepValueRow[]; checks: ChecklistCheckRow[] }> {
   const empty: ReportSignals = {
     done: 0,
     total: 0,
@@ -1094,12 +1107,13 @@ export async function computeReportSignals(
         cashOverShortCents: data?.over_short_cents ?? null,
       },
       prepValues: [],
+      checks: [],
     };
   }
 
   if (args.type === "pm") {
     // pm uses its own gradient tally in the detail loader (Task 2)
-    return { signals: empty, prepValues: [] };
+    return { signals: empty, prepValues: [], checks: [] };
   }
 
   // checklist types: opening / closing / am_prep / mid_day
@@ -1108,7 +1122,7 @@ export async function computeReportSignals(
     .select("template_id")
     .eq("id", args.id)
     .maybeSingle<{ template_id: string }>();
-  if (!inst) return { signals: empty, prepValues: [] };
+  if (!inst) return { signals: empty, prepValues: [], checks: [] };
 
   const { data: titems } = await service
     .from("checklist_template_items")
@@ -1140,6 +1154,7 @@ export async function computeReportSignals(
   let underPar = 0;
   let overPar = 0;
   const prepValues: PrepValueRow[] = [];
+  const checks: ChecklistCheckRow[] = [];
 
   for (const r of rows) {
     // Temp-flag: ONLY on completions whose template_item_id is in the registry
@@ -1151,6 +1166,19 @@ export async function computeReportSignals(
 
     // Prep values: only completions that carry valid prep_data
     if (isPrepData(r.prep_data)) {
+      // Slice 3: a completion carrying yes/no or free-text answers is a CHECK,
+      // not a numeric prep value. yes_no + note lines produce a single check row
+      // carrying both. Numeric lines fall through to the prepValues path below,
+      // byte-identical to prior behavior.
+      const inputs = r.prep_data.inputs;
+      if (inputs.yesNo !== undefined || inputs.freeText !== undefined) {
+        checks.push({
+          label: labelById.get(r.template_item_id) ?? "—",
+          yesNo: inputs.yesNo ?? null,
+          freeText: inputs.freeText ?? null,
+        });
+        continue;
+      }
       const par = r.prep_data.snapshot.parValue; // number | null
       const totalVal = r.prep_data.inputs.total ?? null;
       const onHand = r.prep_data.inputs.onHand ?? null;
@@ -1174,5 +1202,6 @@ export async function computeReportSignals(
   return {
     signals: { done, total, skipped, underPar, overPar, tempFlags, cashOverShortCents: null },
     prepValues,
+    checks,
   };
 }
