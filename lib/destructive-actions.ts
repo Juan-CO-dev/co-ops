@@ -42,6 +42,20 @@ export const DESTRUCTIVE_ACTIONS = [
   "vendor.activate",
   "vendor.deactivate",
   "vendor.full_profile_edit",
+  // Vendor sub-resource changes (Vendor Directory v2, Slice A).
+  // — vendor.contact_change covers add/update/remove of a vendor_contacts row
+  //   (op carried in metadata.op = add|update|remove); vendor.ordering_change
+  //   covers the same for vendor_ordering_details. Auto-derive destructive=true
+  //   via isDestructive(). Append-only (remove = active=false; last-row removal
+  //   blocked at the lib).
+  "vendor.contact_change",
+  "vendor.ordering_change",
+
+  // Category registry (Vendor Directory v2, Slice A).
+  // — category.create adds a category to the shared `categories` registry (MoO+,
+  //   global). Same "enumerate categorical free-text via registries" principle
+  //   as unit.create. Auto-derive destructive=true via isDestructive().
+  "category.create",
 
   // Checklist template lifecycle
   "checklist_template.create",
