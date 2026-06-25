@@ -26,6 +26,7 @@ import type {
   VendorContact,
   VendorOrderingDetail,
 } from "@/lib/admin/vendors";
+import { VENDOR_COLOR_PALETTE } from "@/lib/admin/vendors";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { postJson, resolveErrorKey, ORDERING_METHODS } from "./shared";
 import { MultiSelectChips } from "./MultiSelectChips";
@@ -51,6 +52,7 @@ export function VendorDetailClient({
 
   const canEditCore = actorLevel >= 8; // MoO+
   const canEditClassification = actorLevel >= 7; // GM+
+  const canEditSchedule = actorLevel >= 7; // GM+
   const canEditNotes = actorLevel >= 7; // GM+
   const canManage = actorLevel >= 7; // GM+ edit/remove
   const canAppend = actorLevel >= 6; // AGM+ append
@@ -65,6 +67,7 @@ export function VendorDetailClient({
         canEdit={canEditClassification}
         requestStepUp={requestStepUp}
       />
+      <ScheduleCard vendor={vendor} canEdit={canEditSchedule} requestStepUp={requestStepUp} />
       <NotesCard vendor={vendor} canEdit={canEditNotes} />
       <ContactsCard
         vendorId={vendor.id}
@@ -343,6 +346,212 @@ function ClassificationCard({
         {canEdit ? (
           <div className="flex justify-end">
             <PrimaryBtn label={t("admin.vendors.save")} disabled={submitting || !canSave} onClick={() => void save()} />
+          </div>
+        ) : null}
+      </div>
+    </Card>
+  );
+}
+
+// ── Ordering-schedule card (GM+): order/delivery weekday strips + color ───────
+const WEEKDAYS = [0, 1, 2, 3, 4, 5, 6] as const;
+
+function DayStrip({
+  label,
+  selected,
+  canEdit,
+  onToggle,
+  t,
+}: {
+  label: string;
+  selected: Set<number>;
+  canEdit: boolean;
+  onToggle: (day: number) => void;
+  t: (key: TranslationKey) => string;
+}) {
+  return (
+    <div>
+      <span className="text-sm font-bold text-co-text">{label}</span>
+      <div className="mt-1 flex gap-1.5">
+        {WEEKDAYS.map((d) => {
+          const on = selected.has(d);
+          const dayLabel = t(`admin.vendors.weekday.${d}` as TranslationKey);
+          if (!canEdit) {
+            // Read-only pip: filled when selected, empty otherwise.
+            return (
+              <span
+                key={d}
+                aria-label={dayLabel}
+                className={
+                  "inline-flex h-9 w-9 items-center justify-center rounded-full border-2 text-xs font-bold " +
+                  (on
+                    ? "border-co-gold-deep bg-co-gold text-co-text"
+                    : "border-co-border bg-co-surface text-co-text-muted")
+                }
+              >
+                {dayLabel}
+              </span>
+            );
+          }
+          return (
+            <button
+              key={d}
+              type="button"
+              aria-pressed={on}
+              aria-label={dayLabel}
+              onClick={() => onToggle(d)}
+              className={
+                "inline-flex h-11 w-11 items-center justify-center rounded-full border-2 text-sm font-bold transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 " +
+                (on
+                  ? "border-co-gold-deep bg-co-gold text-co-text"
+                  : "border-co-border bg-co-surface text-co-text-muted hover:border-co-text")
+              }
+            >
+              {dayLabel}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ScheduleCard({
+  vendor,
+  canEdit,
+  requestStepUp,
+}: {
+  vendor: VendorView;
+  canEdit: boolean;
+  requestStepUp: StepUp;
+}) {
+  const { t } = useTranslation();
+  const router = useRouter();
+  const [orderDays, setOrderDays] = useState<Set<number>>(() => new Set(vendor.orderDays));
+  const [deliveryDays, setDeliveryDays] = useState<Set<number>>(() => new Set(vendor.deliveryDays));
+  const [color, setColor] = useState<string | null>(vendor.color);
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const toggleIn = (setter: React.Dispatch<React.SetStateAction<Set<number>>>) => (day: number) => {
+    setSaved(false);
+    setter((prev) => {
+      const next = new Set(prev);
+      if (next.has(day)) next.delete(day);
+      else next.add(day);
+      return next;
+    });
+  };
+
+  const pickColor = (c: string | null) => {
+    setSaved(false);
+    setColor(c);
+  };
+
+  const save = async () => {
+    if (submitting) return;
+    setErrorMsg(null);
+    setSaved(false);
+    if ((await requestStepUp("A")) !== "ok") return;
+    setSubmitting(true);
+    const result = await postJson(
+      `/api/admin/vendors/${vendor.id}/schedule`,
+      {
+        orderDays: [...orderDays].sort((a, b) => a - b),
+        deliveryDays: [...deliveryDays].sort((a, b) => a - b),
+        color,
+      },
+      "PATCH",
+    );
+    setSubmitting(false);
+    if (result.ok) {
+      setSaved(true);
+      router.refresh();
+    } else {
+      setErrorMsg(t(resolveErrorKey(result.code)));
+    }
+  };
+
+  return (
+    <Card title={t("admin.vendors.schedule.title")}>
+      <div className="flex flex-col gap-4">
+        <DayStrip
+          label={t("admin.vendors.schedule.order_days")}
+          selected={orderDays}
+          canEdit={canEdit}
+          onToggle={toggleIn(setOrderDays)}
+          t={t}
+        />
+        <DayStrip
+          label={t("admin.vendors.schedule.delivery_days")}
+          selected={deliveryDays}
+          canEdit={canEdit}
+          onToggle={toggleIn(setDeliveryDays)}
+          t={t}
+        />
+
+        <div>
+          <span className="text-sm font-bold text-co-text">{t("admin.vendors.schedule.color")}</span>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            {canEdit ? (
+              <button
+                type="button"
+                aria-pressed={color === null}
+                aria-label={t("admin.vendors.schedule.none")}
+                onClick={() => pickColor(null)}
+                className={
+                  "inline-flex h-9 items-center rounded-full border-2 px-3 text-xs font-bold transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 " +
+                  (color === null
+                    ? "border-co-text bg-co-surface text-co-text"
+                    : "border-co-border bg-co-surface text-co-text-muted hover:border-co-text")
+                }
+              >
+                {t("admin.vendors.schedule.none")}
+              </button>
+            ) : color === null ? (
+              <span className="text-sm text-co-text-muted">{t("admin.vendors.schedule.none")}</span>
+            ) : null}
+
+            {(canEdit ? VENDOR_COLOR_PALETTE : color ? [color] : []).map((c) => {
+              const isSelected = color === c;
+              if (!canEdit) {
+                return (
+                  <span
+                    key={c}
+                    aria-label={c}
+                    className="inline-block h-9 w-9 rounded-full border-2 border-co-border"
+                    style={{ backgroundColor: c }}
+                  />
+                );
+              }
+              return (
+                <button
+                  key={c}
+                  type="button"
+                  aria-pressed={isSelected}
+                  aria-label={c}
+                  onClick={() => pickColor(c)}
+                  className={
+                    "inline-block h-9 w-9 rounded-full border-2 transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 " +
+                    (isSelected ? "border-co-text ring-2 ring-co-text ring-offset-2 ring-offset-co-surface" : "border-co-border hover:border-co-text")
+                  }
+                  style={{ backgroundColor: c }}
+                />
+              );
+            })}
+          </div>
+        </div>
+
+        {!canEdit ? (
+          <p className="text-xs italic text-co-text-muted">{t("admin.vendors.schedule.readonly_note")}</p>
+        ) : null}
+        {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+        {saved ? <p className="text-sm text-co-gold-deep">{t("admin.vendors.saved")}</p> : null}
+
+        {canEdit ? (
+          <div className="flex justify-end">
+            <PrimaryBtn label={t("admin.vendors.save")} disabled={submitting} onClick={() => void save()} />
           </div>
         ) : null}
       </div>

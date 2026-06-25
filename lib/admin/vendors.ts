@@ -89,7 +89,19 @@ export interface VendorView {
   orderTypes: Array<{ id: string; slug: string; label: string }>;
   contacts: VendorContact[];
   orderingDetails: VendorOrderingDetail[];
+  /** Ordering schedule (Slice B1). Weekdays 0=Sun..6=Sat. color = a fixed-palette
+   *  hex for the B2 aggregated calendar (each vendor a distinct color). */
+  orderDays: number[];
+  deliveryDays: number[];
+  color: string | null;
 }
+
+/** Fixed, legible, on-brand-ish palette for vendor calendar colors (B2 reads
+ *  these; a curated set keeps the aggregated calendar readable vs free hex). */
+export const VENDOR_COLOR_PALETTE = [
+  "#2563EB", "#DC2626", "#16A34A", "#D97706", "#7C3AED",
+  "#0891B2", "#DB2777", "#65A30D", "#EA580C", "#4B5563",
+] as const;
 
 /** Typed error the routes map to jsonError(status, code). */
 export class AdminVendorError extends Error {
@@ -126,6 +138,9 @@ interface DbVendorRow {
   notes: string | null;
   active: boolean | null;
   category_id: string | null;
+  order_days: number[] | null;
+  delivery_days: number[] | null;
+  color: string | null;
 }
 interface DbContactRow {
   id: string;
@@ -164,7 +179,7 @@ interface DbVendorOrderTypeRow {
   order_type_id: string;
 }
 
-const VENDOR_COLS = "id, name, payment_terms, account_number, notes, active, category_id";
+const VENDOR_COLS = "id, name, payment_terms, account_number, notes, active, category_id, order_days, delivery_days, color";
 
 // ── Categories ────────────────────────────────────────────────────────────────
 export async function loadCategories(actor: AuthContext): Promise<CategoryView[]> {
@@ -469,6 +484,9 @@ async function hydrateVendors(rows: DbVendorRow[]): Promise<VendorView[]> {
       orderTypes: orderTypesByVendor.get(r.id) ?? [],
       contacts: contactsByVendor.get(r.id) ?? [],
       orderingDetails: orderingByVendor.get(r.id) ?? [],
+      orderDays: r.order_days ?? [],
+      deliveryDays: r.delivery_days ?? [],
+      color: r.color ?? null,
     };
   });
 }
@@ -819,6 +837,62 @@ export async function setVendorOrderTypes(
     resourceTable: "vendors",
     resourceId: args.vendorId,
     metadata: { scope: "order_types", before: [...existing], after: desired },
+    ipAddress: null,
+    userAgent: null,
+  });
+}
+
+/** Set a vendor's weekly ordering schedule + calendar color (Slice B1). GM+.
+ *  Weekdays 0=Sun..6=Sat (deduped, range-checked). color must be in the fixed
+ *  palette (or null to clear). Feeds the B2 aggregated calendar. */
+export async function setVendorSchedule(
+  actor: AuthContext,
+  args: { vendorId: string; orderDays: number[]; deliveryDays: number[]; color: string | null },
+): Promise<void> {
+  requireLevel(actor, GM_MIN);
+  const before = await getVendor(actor, args.vendorId);
+  if (!before) throw new AdminVendorError(404, "vendor_not_found", "Vendor not found");
+
+  const cleanDays = (days: unknown): number[] => {
+    if (!Array.isArray(days)) throw new AdminVendorError(400, "invalid_payload", "Days must be an array");
+    const set = new Set<number>();
+    for (const d of days) {
+      if (!Number.isInteger(d) || (d as number) < 0 || (d as number) > 6) {
+        throw new AdminVendorError(400, "invalid_day", "Weekdays must be 0..6");
+      }
+      set.add(d as number);
+    }
+    return [...set].sort((a, b) => a - b);
+  };
+  const orderDays = cleanDays(args.orderDays);
+  const deliveryDays = cleanDays(args.deliveryDays);
+  const color = args.color ?? null;
+  if (color !== null && !(VENDOR_COLOR_PALETTE as readonly string[]).includes(color)) {
+    throw new AdminVendorError(400, "invalid_color", "Color must be from the palette");
+  }
+
+  const sb = getServiceRoleClient();
+  const { error, count } = await sb
+    .from("vendors")
+    .update(
+      { order_days: orderDays, delivery_days: deliveryDays, color, updated_by: actor.user.id, updated_at: new Date().toISOString() },
+      { count: "exact" },
+    )
+    .eq("id", args.vendorId);
+  if (error) throw new Error(`setVendorSchedule failed: ${error.message}`);
+  if (count === 0) throw new AdminVendorError(404, "vendor_not_found", "Vendor not found");
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "vendor.full_profile_edit",
+    resourceTable: "vendors",
+    resourceId: args.vendorId,
+    metadata: {
+      scope: "schedule",
+      before: { order_days: before.orderDays, delivery_days: before.deliveryDays, color: before.color },
+      after: { order_days: orderDays, delivery_days: deliveryDays, color },
+    },
     ipAddress: null,
     userAgent: null,
   });

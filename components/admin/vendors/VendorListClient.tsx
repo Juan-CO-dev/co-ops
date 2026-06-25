@@ -62,7 +62,16 @@ export function VendorListClient({
               href={`/admin/vendors/${v.id}`}
               className="flex flex-wrap items-center justify-between gap-3 rounded-md focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
             >
-              <span className="text-base font-bold text-co-text">{v.name}</span>
+              <span className="flex items-center gap-2 text-base font-bold text-co-text">
+                {v.color ? (
+                  <span
+                    aria-hidden="true"
+                    className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: v.color }}
+                  />
+                ) : null}
+                {v.name}
+              </span>
               <span className="flex flex-wrap items-center gap-2">
                 {v.categories.map((c) => (
                   <span
