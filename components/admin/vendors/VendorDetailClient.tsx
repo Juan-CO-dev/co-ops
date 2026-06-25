@@ -22,11 +22,13 @@ import { useStepUp } from "@/components/admin/StepUpProvider";
 import type {
   VendorView,
   CategoryView,
+  OrderTypeView,
   VendorContact,
   VendorOrderingDetail,
 } from "@/lib/admin/vendors";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { postJson, resolveErrorKey, ORDERING_METHODS } from "./shared";
+import { MultiSelectChips } from "./MultiSelectChips";
 
 const fieldCls =
   "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-60";
@@ -36,23 +38,33 @@ type StepUp = (tier: "A" | "B") => Promise<"ok" | "cancelled">;
 export function VendorDetailClient({
   vendor,
   categories,
+  orderTypes,
   actorLevel,
 }: {
   vendor: VendorView;
   categories: CategoryView[];
+  orderTypes: OrderTypeView[];
   actorLevel: number;
 }) {
   const { t } = useTranslation();
   const { requestStepUp } = useStepUp();
 
   const canEditCore = actorLevel >= 8; // MoO+
+  const canEditClassification = actorLevel >= 7; // GM+
   const canEditNotes = actorLevel >= 7; // GM+
   const canManage = actorLevel >= 7; // GM+ edit/remove
   const canAppend = actorLevel >= 6; // AGM+ append
 
   return (
     <div className="mt-5 flex flex-col gap-4">
-      <CoreCard vendor={vendor} categories={categories} canEdit={canEditCore} requestStepUp={requestStepUp} />
+      <CoreCard vendor={vendor} canEdit={canEditCore} requestStepUp={requestStepUp} />
+      <ClassificationCard
+        vendor={vendor}
+        categories={categories}
+        orderTypes={orderTypes}
+        canEdit={canEditClassification}
+        requestStepUp={requestStepUp}
+      />
       <NotesCard vendor={vendor} canEdit={canEditNotes} />
       <ContactsCard
         vendorId={vendor.id}
@@ -137,27 +149,21 @@ function PlainBtn({
 // ── Core card (MoO+) ──────────────────────────────────────────────────────────
 function CoreCard({
   vendor,
-  categories,
   canEdit,
   requestStepUp,
 }: {
   vendor: VendorView;
-  categories: CategoryView[];
   canEdit: boolean;
   requestStepUp: StepUp;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
   const [name, setName] = useState(vendor.name);
-  const [categoryId, setCategoryId] = useState(vendor.category?.id ?? "");
   const [paymentTerms, setPaymentTerms] = useState(vendor.paymentTerms ?? "");
   const [accountNumber, setAccountNumber] = useState(vendor.accountNumber ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-
-  // If the vendor's current category isn't in the active list, keep it selectable.
-  const catMissing = !!vendor.category && !categories.some((c) => c.id === vendor.category!.id);
 
   const save = async () => {
     if (submitting) return;
@@ -169,7 +175,6 @@ function CoreCard({
       `/api/admin/vendors/${vendor.id}`,
       {
         name: name.trim(),
-        categoryId,
         paymentTerms: paymentTerms.trim() || null,
         accountNumber: accountNumber.trim() || null,
       },
@@ -190,18 +195,6 @@ function CoreCard({
         <Labeled label={t("admin.vendors.field.name")}>
           <input className={fieldCls} value={name} disabled={!canEdit} onChange={(e) => setName(e.target.value)} />
         </Labeled>
-        <Labeled label={t("admin.vendors.field.category")}>
-          <select className={fieldCls} value={categoryId} disabled={!canEdit} onChange={(e) => setCategoryId(e.target.value)}>
-            {catMissing && vendor.category ? (
-              <option value={vendor.category.id}>{vendor.category.label}</option>
-            ) : null}
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-        </Labeled>
         <Labeled label={t("admin.vendors.field.payment_terms")}>
           <input className={fieldCls} value={paymentTerms} disabled={!canEdit} onChange={(e) => setPaymentTerms(e.target.value)} />
         </Labeled>
@@ -217,7 +210,139 @@ function CoreCard({
 
         {canEdit ? (
           <div className="flex justify-end">
-            <PrimaryBtn label={t("admin.vendors.save")} disabled={submitting || !name.trim() || !categoryId} onClick={() => void save()} />
+            <PrimaryBtn label={t("admin.vendors.save")} disabled={submitting || !name.trim()} onClick={() => void save()} />
+          </div>
+        ) : null}
+      </div>
+    </Card>
+  );
+}
+
+// ── Classification card (GM+): multi-select categories + order types ──────────
+function ClassificationCard({
+  vendor,
+  categories,
+  orderTypes,
+  canEdit,
+  requestStepUp,
+}: {
+  vendor: VendorView;
+  categories: CategoryView[];
+  orderTypes: OrderTypeView[];
+  canEdit: boolean;
+  requestStepUp: StepUp;
+}) {
+  const { t } = useTranslation();
+  const router = useRouter();
+  const [categoryIds, setCategoryIds] = useState<Set<string>>(
+    () => new Set(vendor.categories.map((c) => c.id)),
+  );
+  const [orderTypeIds, setOrderTypeIds] = useState<Set<string>>(
+    () => new Set(vendor.orderTypes.map((o) => o.id)),
+  );
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const toggle = (setter: React.Dispatch<React.SetStateAction<Set<string>>>) => (id: string) => {
+    setSaved(false);
+    setter((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // Keep a vendor's currently-assigned options selectable even if they've since
+  // been deactivated in the registry (union the registry list with current ids).
+  const catOptions = [
+    ...categories.map((c) => ({ id: c.id, label: c.label })),
+    ...vendor.categories
+      .filter((c) => !categories.some((x) => x.id === c.id))
+      .map((c) => ({ id: c.id, label: c.label })),
+  ];
+  const otOptions = [
+    ...orderTypes.map((o) => ({ id: o.id, label: o.label })),
+    ...vendor.orderTypes
+      .filter((o) => !orderTypes.some((x) => x.id === o.id))
+      .map((o) => ({ id: o.id, label: o.label })),
+  ];
+
+  const canSave = canEdit && categoryIds.size >= 1 && orderTypeIds.size >= 1;
+
+  const save = async () => {
+    if (submitting || !canSave) return;
+    setErrorMsg(null);
+    setSaved(false);
+    if ((await requestStepUp("A")) !== "ok") return;
+    setSubmitting(true);
+    // Two endpoints (one per join). Send categories first, then order types;
+    // surface the first failure.
+    const catRes = await postJson(
+      `/api/admin/vendors/${vendor.id}/categories`,
+      { categoryIds: [...categoryIds] },
+      "PUT",
+    );
+    if (!catRes.ok) {
+      setSubmitting(false);
+      setErrorMsg(t(resolveErrorKey(catRes.code)));
+      return;
+    }
+    const otRes = await postJson(
+      `/api/admin/vendors/${vendor.id}/order-types`,
+      { orderTypeIds: [...orderTypeIds] },
+      "PUT",
+    );
+    setSubmitting(false);
+    if (otRes.ok) {
+      setSaved(true);
+      router.refresh();
+    } else {
+      setErrorMsg(t(resolveErrorKey(otRes.code)));
+    }
+  };
+
+  return (
+    <Card title={t("admin.vendors.card.classification")}>
+      <div className="flex flex-col gap-4">
+        <div>
+          <span className="text-sm font-bold text-co-text">{t("admin.vendors.field.categories")}</span>
+          {canEdit ? (
+            <p className="text-xs text-co-text-muted">{t("admin.vendors.field.categories_hint")}</p>
+          ) : null}
+          <MultiSelectChips
+            options={catOptions}
+            selectedIds={categoryIds}
+            onToggle={toggle(setCategoryIds)}
+            disabled={!canEdit}
+            ariaLabel={t("admin.vendors.field.categories")}
+          />
+        </div>
+
+        <div>
+          <span className="text-sm font-bold text-co-text">{t("admin.vendors.field.order_types")}</span>
+          {canEdit ? (
+            <p className="text-xs text-co-text-muted">{t("admin.vendors.field.order_types_hint")}</p>
+          ) : null}
+          <MultiSelectChips
+            options={otOptions}
+            selectedIds={orderTypeIds}
+            onToggle={toggle(setOrderTypeIds)}
+            disabled={!canEdit}
+            ariaLabel={t("admin.vendors.field.order_types")}
+          />
+        </div>
+
+        {!canEdit ? (
+          <p className="text-xs italic text-co-text-muted">{t("admin.vendors.classification.readonly_note")}</p>
+        ) : null}
+        {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+        {saved ? <p className="text-sm text-co-gold-deep">{t("admin.vendors.saved")}</p> : null}
+
+        {canEdit ? (
+          <div className="flex justify-end">
+            <PrimaryBtn label={t("admin.vendors.save")} disabled={submitting || !canSave} onClick={() => void save()} />
           </div>
         ) : null}
       </div>

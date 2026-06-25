@@ -10,12 +10,20 @@
  * Append-only: removals flip `active=false`, never DELETE. The last active
  * contact / ordering detail of a vendor cannot be removed (min-1 each).
  *
- * Schema (live, migrations 0090/0091/0092):
- *   vendors            — name, category_id (FK→categories, nullable),
+ * Schema (live, migrations 0090/0091/0092 + 0093 multi-classification):
+ *   vendors            — name, category_id (FK→categories, nullable + now
+ *                        VESTIGIAL — classification is via the join tables),
  *                        payment_terms, account_number, notes, active, audit.
  *                        Legacy single contact_/ordering_/category(text) cols
  *                        are VESTIGIAL — ignored here.
  *   categories         — slug (unique), label, label_es, active, display_order.
+ *   order_types        — slug (unique), label, label_es, active, display_order.
+ *                        Mirrors `categories` — the traditional supply view
+ *                        (Produce / Dry Goods / Paper / …).
+ *   vendor_categories  — vendor_id, category_id join (unique pair, NO `active`
+ *                        column — set-membership hard rows; replace = delete the
+ *                        rows not in the set + insert the new ones).
+ *   vendor_order_types — vendor_id, order_type_id join (same shape as above).
  *   vendor_contacts    — vendor_id, name, email, phone, display_order, active.
  *   vendor_ordering_details — vendor_id, method (email|url|phone|portal|other),
  *                             value, label, display_order, active.
@@ -37,6 +45,13 @@ export type OrderingMethod = (typeof ORDERING_METHODS)[number];
 
 // ── Types ───────────────────────────────────────────────────────────────────
 export interface CategoryView {
+  id: string;
+  slug: string;
+  label: string;
+  labelEs: string | null;
+}
+
+export interface OrderTypeView {
   id: string;
   slug: string;
   label: string;
@@ -66,7 +81,12 @@ export interface VendorView {
   accountNumber: string | null;
   notes: string | null;
   active: boolean;
-  category: { id: string; slug: string; label: string } | null;
+  /** Multi-classification (Vendor Directory v2.1): a vendor affects MULTIPLE
+   *  categories AND has MULTIPLE order types. Each hydrated from its join table,
+   *  ordered by the registry display_order. The vestigial vendors.category_id
+   *  single FK is ignored — categories come from vendor_categories. */
+  categories: Array<{ id: string; slug: string; label: string }>;
+  orderTypes: Array<{ id: string; slug: string; label: string }>;
   contacts: VendorContact[];
   orderingDetails: VendorOrderingDetail[];
 }
@@ -128,6 +148,20 @@ interface DbCategoryRow {
   slug: string;
   label: string;
   label_es: string | null;
+}
+interface DbOrderTypeRow {
+  id: string;
+  slug: string;
+  label: string;
+  label_es: string | null;
+}
+interface DbVendorCategoryRow {
+  vendor_id: string;
+  category_id: string;
+}
+interface DbVendorOrderTypeRow {
+  vendor_id: string;
+  order_type_id: string;
 }
 
 const VENDOR_COLS = "id, name, payment_terms, account_number, notes, active, category_id";
@@ -227,22 +261,161 @@ export async function addCategory(
   return { id: inserted.id, slug };
 }
 
-// ── Vendor reads (hydrate category + active contacts + active ordering) ────────
+// ── Order types (mirrors categories exactly — the traditional supply view) ─────
+export async function loadOrderTypes(actor: AuthContext): Promise<OrderTypeView[]> {
+  requireLevel(actor, READ_MIN);
+  const sb = getServiceRoleClient();
+  const { data, error } = await sb
+    .from("order_types")
+    .select("id, slug, label, label_es")
+    .eq("active", true)
+    .order("display_order", { ascending: true })
+    .returns<DbOrderTypeRow[]>();
+  if (error) throw new Error(`loadOrderTypes failed: ${error.message}`);
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    slug: r.slug,
+    label: r.label,
+    labelEs: r.label_es,
+  }));
+}
+
+export async function addOrderType(
+  actor: AuthContext,
+  args: { label: string; labelEs?: string | null },
+): Promise<{ id: string; slug: string }> {
+  requireLevel(actor, MOO_MIN);
+  const label = args.label.trim();
+  if (!label) throw new AdminVendorError(400, "invalid_label", "Label cannot be empty");
+  const slug = slugifyCategory(label); // same slugify rule as categories
+  const labelEs = normalizeOptional(args.labelEs);
+
+  const sb = getServiceRoleClient();
+
+  // Dup-guard on slug (stable system key).
+  const { data: existing, error: eErr } = await sb
+    .from("order_types")
+    .select("id")
+    .eq("slug", slug)
+    .maybeSingle<{ id: string }>();
+  if (eErr) throw new Error(`addOrderType dup check failed: ${eErr.message}`);
+  if (existing) throw new AdminVendorError(409, "order_type_exists", "An order type with that slug already exists");
+
+  // display_order = max active + 1.
+  const { data: maxRow, error: mErr } = await sb
+    .from("order_types")
+    .select("display_order")
+    .eq("active", true)
+    .order("display_order", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ display_order: number }>();
+  if (mErr) throw new Error(`addOrderType max order failed: ${mErr.message}`);
+  const displayOrder = (maxRow?.display_order ?? 0) + 1;
+
+  const { data: inserted, error: iErr } = await sb
+    .from("order_types")
+    .insert({
+      slug,
+      label,
+      label_es: labelEs,
+      active: true,
+      display_order: displayOrder,
+      created_by: actor.user.id,
+      updated_by: actor.user.id,
+    })
+    .select("id")
+    .maybeSingle<{ id: string }>();
+  if (iErr) throw new Error(`addOrderType insert failed: ${iErr.message}`);
+  if (!inserted) throw new Error("addOrderType insert returned no row");
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "order_type.create",
+    resourceTable: "order_types",
+    resourceId: inserted.id,
+    metadata: { slug, label, label_es: labelEs, display_order: displayOrder },
+    ipAddress: null,
+    userAgent: null,
+  });
+
+  return { id: inserted.id, slug };
+}
+
+// ── Vendor reads (hydrate categories + order types + active contacts/ordering) ─
 async function hydrateVendors(rows: DbVendorRow[]): Promise<VendorView[]> {
   if (rows.length === 0) return [];
   const sb = getServiceRoleClient();
   const vendorIds = rows.map((r) => r.id);
-  const categoryIds = [...new Set(rows.map((r) => r.category_id).filter((c): c is string => !!c))];
 
+  // ── Categories via the vendor_categories join (batched .in() over vendor ids).
+  const { data: vcJoins, error: vcErr } = await sb
+    .from("vendor_categories")
+    .select("vendor_id, category_id")
+    .in("vendor_id", vendorIds)
+    .returns<DbVendorCategoryRow[]>();
+  if (vcErr) throw new Error(`hydrateVendors vendor_categories failed: ${vcErr.message}`);
+  const categoryIds = [...new Set((vcJoins ?? []).map((j) => j.category_id))];
   const catMap = new Map<string, DbCategoryRow>();
   if (categoryIds.length > 0) {
     const { data: cats, error: cErr } = await sb
       .from("categories")
       .select("id, slug, label, label_es")
       .in("id", categoryIds)
+      .order("display_order", { ascending: true })
       .returns<DbCategoryRow[]>();
     if (cErr) throw new Error(`hydrateVendors categories failed: ${cErr.message}`);
     for (const c of cats ?? []) catMap.set(c.id, c);
+  }
+
+  // ── Order types via the vendor_order_types join.
+  const { data: votJoins, error: votErr } = await sb
+    .from("vendor_order_types")
+    .select("vendor_id, order_type_id")
+    .in("vendor_id", vendorIds)
+    .returns<DbVendorOrderTypeRow[]>();
+  if (votErr) throw new Error(`hydrateVendors vendor_order_types failed: ${votErr.message}`);
+  const orderTypeIds = [...new Set((votJoins ?? []).map((j) => j.order_type_id))];
+  const otMap = new Map<string, DbOrderTypeRow>();
+  if (orderTypeIds.length > 0) {
+    const { data: ots, error: otErr } = await sb
+      .from("order_types")
+      .select("id, slug, label, label_es")
+      .in("id", orderTypeIds)
+      .order("display_order", { ascending: true })
+      .returns<DbOrderTypeRow[]>();
+    if (otErr) throw new Error(`hydrateVendors order_types failed: ${otErr.message}`);
+    for (const o of ots ?? []) otMap.set(o.id, o);
+  }
+
+  // Build per-vendor classification lists, ordered by the registry display_order
+  // (catMap/otMap iteration order follows the ordered .in() fetch above).
+  const categoriesByVendor = new Map<string, Array<{ id: string; slug: string; label: string }>>();
+  for (const j of vcJoins ?? []) {
+    const cat = catMap.get(j.category_id);
+    if (!cat) continue;
+    const arr = categoriesByVendor.get(j.vendor_id) ?? [];
+    arr.push({ id: cat.id, slug: cat.slug, label: cat.label });
+    categoriesByVendor.set(j.vendor_id, arr);
+  }
+  const orderTypesByVendor = new Map<string, Array<{ id: string; slug: string; label: string }>>();
+  for (const j of votJoins ?? []) {
+    const ot = otMap.get(j.order_type_id);
+    if (!ot) continue;
+    const arr = orderTypesByVendor.get(j.vendor_id) ?? [];
+    arr.push({ id: ot.id, slug: ot.slug, label: ot.label });
+    orderTypesByVendor.set(j.vendor_id, arr);
+  }
+  // Sort each vendor's lists by registry display_order via the map (Map preserves
+  // insert order = the ordered registry fetch). Re-sort defensively by label-stable
+  // ordering using the registry rows' position.
+  const catOrder = new Map([...catMap.keys()].map((id, i) => [id, i] as const));
+  const otOrder = new Map([...otMap.keys()].map((id, i) => [id, i] as const));
+  for (const arr of categoriesByVendor.values()) {
+    arr.sort((a, b) => (catOrder.get(a.id) ?? 0) - (catOrder.get(b.id) ?? 0));
+  }
+  for (const arr of orderTypesByVendor.values()) {
+    arr.sort((a, b) => (otOrder.get(a.id) ?? 0) - (otOrder.get(b.id) ?? 0));
   }
 
   const { data: contacts, error: ctErr } = await sb
@@ -285,7 +458,6 @@ async function hydrateVendors(rows: DbVendorRow[]): Promise<VendorView[]> {
   }
 
   return rows.map((r) => {
-    const cat = r.category_id ? catMap.get(r.category_id) : undefined;
     return {
       id: r.id,
       name: r.name,
@@ -293,7 +465,8 @@ async function hydrateVendors(rows: DbVendorRow[]): Promise<VendorView[]> {
       accountNumber: r.account_number,
       notes: r.notes,
       active: r.active ?? true, // legacy null → active
-      category: cat ? { id: cat.id, slug: cat.slug, label: cat.label } : null,
+      categories: categoriesByVendor.get(r.id) ?? [],
+      orderTypes: orderTypesByVendor.get(r.id) ?? [],
       contacts: contactsByVendor.get(r.id) ?? [],
       orderingDetails: orderingByVendor.get(r.id) ?? [],
     };
@@ -326,16 +499,49 @@ export async function getVendor(actor: AuthContext, id: string): Promise<VendorV
   return view ?? null;
 }
 
-async function assertCategoryExists(categoryId: string): Promise<void> {
+/** Validate a non-empty set of category ids: ≥1 required, all must exist+active.
+ *  Returns the de-duplicated id list. (The singular assertCategoryExists was
+ *  removed in v2.1 — category is now multi via the join, validated in bulk.) */
+async function assertCategoriesExist(categoryIds: string[]): Promise<string[]> {
+  const ids = [...new Set(categoryIds.filter((c) => typeof c === "string" && c))];
+  if (ids.length === 0) {
+    throw new AdminVendorError(400, "invalid_category", "At least one category is required");
+  }
   const sb = getServiceRoleClient();
   const { data, error } = await sb
     .from("categories")
     .select("id")
-    .eq("id", categoryId)
+    .in("id", ids)
     .eq("active", true)
-    .maybeSingle<{ id: string }>();
-  if (error) throw new Error(`assertCategoryExists failed: ${error.message}`);
-  if (!data) throw new AdminVendorError(400, "invalid_category", "Category not found or inactive");
+    .returns<{ id: string }[]>();
+  if (error) throw new Error(`assertCategoriesExist failed: ${error.message}`);
+  const found = new Set((data ?? []).map((r) => r.id));
+  for (const id of ids) {
+    if (!found.has(id)) throw new AdminVendorError(400, "invalid_category", "Category not found or inactive");
+  }
+  return ids;
+}
+
+/** Validate a non-empty set of order_type ids: ≥1 required, all must exist+active.
+ *  Returns the de-duplicated id list. */
+async function assertOrderTypesExist(orderTypeIds: string[]): Promise<string[]> {
+  const ids = [...new Set(orderTypeIds.filter((c) => typeof c === "string" && c))];
+  if (ids.length === 0) {
+    throw new AdminVendorError(400, "invalid_order_type", "At least one order type is required");
+  }
+  const sb = getServiceRoleClient();
+  const { data, error } = await sb
+    .from("order_types")
+    .select("id")
+    .in("id", ids)
+    .eq("active", true)
+    .returns<{ id: string }[]>();
+  if (error) throw new Error(`assertOrderTypesExist failed: ${error.message}`);
+  const found = new Set((data ?? []).map((r) => r.id));
+  for (const id of ids) {
+    if (!found.has(id)) throw new AdminVendorError(400, "invalid_order_type", "Order type not found or inactive");
+  }
+  return ids;
 }
 
 /** Load a vendor row (id only) or throw 404. */
@@ -354,7 +560,8 @@ async function requireVendorRow(id: string): Promise<{ id: string }> {
 // ── Vendor create (GM+; seeds first contact + first ordering detail) ──────────
 export interface CreateVendorInput {
   name: string;
-  categoryId: string;
+  categoryIds: string[];
+  orderTypeIds: string[];
   paymentTerms?: string | null;
   accountNumber?: string | null;
   notes?: string | null;
@@ -370,8 +577,9 @@ export async function createVendor(
 
   const name = input.name.trim();
   if (!name) throw new AdminVendorError(400, "invalid_name", "Vendor name is required");
-  if (!input.categoryId) throw new AdminVendorError(400, "invalid_category", "Category is required");
-  await assertCategoryExists(input.categoryId);
+  // ≥1 category AND ≥1 order type required; all ids must exist + be active.
+  const categoryIds = await assertCategoriesExist(input.categoryIds ?? []);
+  const orderTypeIds = await assertOrderTypesExist(input.orderTypeIds ?? []);
 
   const contactName = input.firstContact?.name?.trim() ?? "";
   if (!contactName) throw new AdminVendorError(400, "invalid_contact", "First contact name is required");
@@ -385,11 +593,13 @@ export async function createVendor(
 
   const sb = getServiceRoleClient();
 
+  // Leave vendors.category_id NULL going forward — classification is via the
+  // vendor_categories / vendor_order_types join tables.
   const { data: vendorRow, error: vErr } = await sb
     .from("vendors")
     .insert({
       name,
-      category_id: input.categoryId,
+      category_id: null,
       payment_terms: normalizeOptional(input.paymentTerms),
       account_number: normalizeOptional(input.accountNumber),
       notes: normalizeOptional(input.notes),
@@ -401,6 +611,24 @@ export async function createVendor(
     .maybeSingle<{ id: string }>();
   if (vErr) throw new Error(`createVendor vendor insert failed: ${vErr.message}`);
   if (!vendorRow) throw new Error("createVendor vendor insert returned no row");
+
+  const { error: vcErr } = await sb.from("vendor_categories").insert(
+    categoryIds.map((category_id) => ({
+      vendor_id: vendorRow.id,
+      category_id,
+      created_by: actor.user.id,
+    })),
+  );
+  if (vcErr) throw new Error(`createVendor vendor_categories insert failed: ${vcErr.message}`);
+
+  const { error: votErr } = await sb.from("vendor_order_types").insert(
+    orderTypeIds.map((order_type_id) => ({
+      vendor_id: vendorRow.id,
+      order_type_id,
+      created_by: actor.user.id,
+    })),
+  );
+  if (votErr) throw new Error(`createVendor vendor_order_types insert failed: ${votErr.message}`);
 
   const { error: cErr } = await sb.from("vendor_contacts").insert({
     vendor_id: vendorRow.id,
@@ -432,7 +660,13 @@ export async function createVendor(
     action: "vendor.create",
     resourceTable: "vendors",
     resourceId: vendorRow.id,
-    metadata: { name, category_id: input.categoryId, seeded_contact: true, seeded_ordering: true },
+    metadata: {
+      name,
+      category_ids: categoryIds,
+      order_type_ids: orderTypeIds,
+      seeded_contact: true,
+      seeded_ordering: true,
+    },
     ipAddress: null,
     userAgent: null,
   });
@@ -443,7 +677,6 @@ export async function createVendor(
 // ── Vendor core / notes / deactivate ──────────────────────────────────────────
 export interface UpdateVendorCoreChanges {
   name?: string;
-  categoryId?: string;
   paymentTerms?: string | null;
   accountNumber?: string | null;
 }
@@ -462,15 +695,12 @@ export async function updateVendorCore(
     if (!n) throw new AdminVendorError(400, "invalid_name", "Vendor name cannot be empty");
     update.name = n;
   }
-  if (changes.categoryId !== undefined) {
-    if (!changes.categoryId) throw new AdminVendorError(400, "invalid_category", "Category is required");
-    await assertCategoryExists(changes.categoryId);
-    update.category_id = changes.categoryId;
-  }
   if (changes.paymentTerms !== undefined) update.payment_terms = normalizeOptional(changes.paymentTerms);
   if (changes.accountNumber !== undefined) update.account_number = normalizeOptional(changes.accountNumber);
 
   if (Object.keys(update).length === 0) return;
+  // NOTE: category is no longer a core field — classification edits go through
+  // setVendorCategories / setVendorOrderTypes (GM+).
   update.updated_by = actor.user.id;
   update.updated_at = new Date().toISOString();
 
@@ -485,6 +715,110 @@ export async function updateVendorCore(
     resourceTable: "vendors",
     resourceId: args.id,
     metadata: { scope: "core", fields: Object.keys(update).filter((k) => k !== "updated_by" && k !== "updated_at") },
+    ipAddress: null,
+    userAgent: null,
+  });
+}
+
+// ── Classification (GM+): replace the vendor's category / order-type set ──────
+//
+// These join tables have NO `active` column — they're set-membership HARD rows,
+// not the append-only config pattern. Replacing the set therefore DELETEs the
+// rows not in the new set + INSERTs the new ones. Hard-delete is acceptable here
+// precisely because a join row carries no state of its own (no audit-relevant
+// history beyond created_at/by); the forensic record lives on the
+// vendor.full_profile_edit audit row below (before/after id sets).
+export async function setVendorCategories(
+  actor: AuthContext,
+  args: { vendorId: string; categoryIds: string[] },
+): Promise<void> {
+  requireLevel(actor, GM_MIN);
+  await requireVendorRow(args.vendorId);
+  const desired = await assertCategoriesExist(args.categoryIds ?? []); // ≥1 enforced
+
+  const sb = getServiceRoleClient();
+  const { data: existingRows, error: exErr } = await sb
+    .from("vendor_categories")
+    .select("category_id")
+    .eq("vendor_id", args.vendorId)
+    .returns<{ category_id: string }[]>();
+  if (exErr) throw new Error(`setVendorCategories load failed: ${exErr.message}`);
+  const existing = new Set((existingRows ?? []).map((r) => r.category_id));
+  const desiredSet = new Set(desired);
+
+  const toAdd = desired.filter((id) => !existing.has(id));
+  const toRemove = [...existing].filter((id) => !desiredSet.has(id));
+
+  if (toRemove.length > 0) {
+    const { error: dErr } = await sb
+      .from("vendor_categories")
+      .delete()
+      .eq("vendor_id", args.vendorId)
+      .in("category_id", toRemove);
+    if (dErr) throw new Error(`setVendorCategories delete failed: ${dErr.message}`);
+  }
+  if (toAdd.length > 0) {
+    const { error: aErr } = await sb.from("vendor_categories").insert(
+      toAdd.map((category_id) => ({ vendor_id: args.vendorId, category_id, created_by: actor.user.id })),
+    );
+    if (aErr) throw new Error(`setVendorCategories insert failed: ${aErr.message}`);
+  }
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "vendor.full_profile_edit",
+    resourceTable: "vendors",
+    resourceId: args.vendorId,
+    metadata: { scope: "categories", before: [...existing], after: desired },
+    ipAddress: null,
+    userAgent: null,
+  });
+}
+
+export async function setVendorOrderTypes(
+  actor: AuthContext,
+  args: { vendorId: string; orderTypeIds: string[] },
+): Promise<void> {
+  requireLevel(actor, GM_MIN);
+  await requireVendorRow(args.vendorId);
+  const desired = await assertOrderTypesExist(args.orderTypeIds ?? []); // ≥1 enforced
+
+  const sb = getServiceRoleClient();
+  const { data: existingRows, error: exErr } = await sb
+    .from("vendor_order_types")
+    .select("order_type_id")
+    .eq("vendor_id", args.vendorId)
+    .returns<{ order_type_id: string }[]>();
+  if (exErr) throw new Error(`setVendorOrderTypes load failed: ${exErr.message}`);
+  const existing = new Set((existingRows ?? []).map((r) => r.order_type_id));
+  const desiredSet = new Set(desired);
+
+  const toAdd = desired.filter((id) => !existing.has(id));
+  const toRemove = [...existing].filter((id) => !desiredSet.has(id));
+
+  if (toRemove.length > 0) {
+    const { error: dErr } = await sb
+      .from("vendor_order_types")
+      .delete()
+      .eq("vendor_id", args.vendorId)
+      .in("order_type_id", toRemove);
+    if (dErr) throw new Error(`setVendorOrderTypes delete failed: ${dErr.message}`);
+  }
+  if (toAdd.length > 0) {
+    const { error: aErr } = await sb.from("vendor_order_types").insert(
+      toAdd.map((order_type_id) => ({ vendor_id: args.vendorId, order_type_id, created_by: actor.user.id })),
+    );
+    if (aErr) throw new Error(`setVendorOrderTypes insert failed: ${aErr.message}`);
+  }
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "vendor.full_profile_edit",
+    resourceTable: "vendors",
+    resourceId: args.vendorId,
+    metadata: { scope: "order_types", before: [...existing], after: desired },
     ipAddress: null,
     userAgent: null,
   });

@@ -15,9 +15,10 @@ import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
-import type { VendorView, CategoryView } from "@/lib/admin/vendors";
+import type { VendorView, CategoryView, OrderTypeView } from "@/lib/admin/vendors";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { postJson, resolveErrorKey, ORDERING_METHODS } from "./shared";
+import { MultiSelectChips } from "./MultiSelectChips";
 
 const fieldCls =
   "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60";
@@ -25,10 +26,12 @@ const fieldCls =
 export function VendorListClient({
   vendors,
   categories,
+  orderTypes,
   actorLevel,
 }: {
   vendors: VendorView[];
   categories: CategoryView[];
+  orderTypes: OrderTypeView[];
   actorLevel: number;
 }) {
   const { t } = useTranslation();
@@ -61,11 +64,22 @@ export function VendorListClient({
             >
               <span className="text-base font-bold text-co-text">{v.name}</span>
               <span className="flex flex-wrap items-center gap-2">
-                {v.category ? (
-                  <span className="inline-flex items-center rounded-full border-2 border-co-border px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-text-muted">
-                    {v.category.label}
+                {v.categories.map((c) => (
+                  <span
+                    key={`c-${c.id}`}
+                    className="inline-flex items-center rounded-full border-2 border-co-border px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-text-muted"
+                  >
+                    {c.label}
                   </span>
-                ) : null}
+                ))}
+                {v.orderTypes.map((o) => (
+                  <span
+                    key={`o-${o.id}`}
+                    className="inline-flex items-center rounded-full bg-co-gold/15 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-gold-deep"
+                  >
+                    {o.label}
+                  </span>
+                ))}
                 <span
                   className={
                     "inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] " +
@@ -90,6 +104,7 @@ export function VendorListClient({
       {creating ? (
         <AddVendorForm
           categories={categories}
+          orderTypes={orderTypes}
           requestStepUp={requestStepUp}
           onClose={() => setCreating(false)}
           onCreated={(id) => {
@@ -104,11 +119,13 @@ export function VendorListClient({
 
 function AddVendorForm({
   categories,
+  orderTypes,
   requestStepUp,
   onClose,
   onCreated,
 }: {
   categories: CategoryView[];
+  orderTypes: OrderTypeView[];
   requestStepUp: (tier: "A" | "B") => Promise<"ok" | "cancelled">;
   onClose: () => void;
   onCreated: (id: string) => void;
@@ -116,7 +133,15 @@ function AddVendorForm({
   const { t } = useTranslation();
 
   const [name, setName] = useState("");
-  const [categoryId, setCategoryId] = useState(categories[0]?.id ?? "");
+  const [categoryIds, setCategoryIds] = useState<Set<string>>(new Set());
+  const [orderTypeIds, setOrderTypeIds] = useState<Set<string>>(new Set());
+  const toggleIn = (setter: React.Dispatch<React.SetStateAction<Set<string>>>) => (id: string) =>
+    setter((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   const [paymentTerms, setPaymentTerms] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
   const [notes, setNotes] = useState("");
@@ -134,7 +159,8 @@ function AddVendorForm({
 
   const canSubmit =
     name.trim() !== "" &&
-    categoryId !== "" &&
+    categoryIds.size >= 1 &&
+    orderTypeIds.size >= 1 &&
     contactName.trim() !== "" &&
     orderingValue.trim() !== "";
 
@@ -145,7 +171,8 @@ function AddVendorForm({
     setSubmitting(true);
     const result = await postJson("/api/admin/vendors", {
       name: name.trim(),
-      categoryId,
+      categoryIds: [...categoryIds],
+      orderTypeIds: [...orderTypeIds],
       paymentTerms: paymentTerms.trim() || null,
       accountNumber: accountNumber.trim() || null,
       notes: notes.trim() || null,
@@ -184,15 +211,27 @@ function AddVendorForm({
             <input className={fieldCls} value={name} onChange={(e) => setName(e.target.value)} />
           </Labeled>
 
-          <Labeled label={t("admin.vendors.field.category")}>
-            <select className={fieldCls} value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
-          </Labeled>
+          <div>
+            <span className="text-sm font-bold text-co-text">{t("admin.vendors.field.categories")}</span>
+            <p className="text-xs text-co-text-muted">{t("admin.vendors.field.categories_hint")}</p>
+            <MultiSelectChips
+              options={categories.map((c) => ({ id: c.id, label: c.label }))}
+              selectedIds={categoryIds}
+              onToggle={toggleIn(setCategoryIds)}
+              ariaLabel={t("admin.vendors.field.categories")}
+            />
+          </div>
+
+          <div>
+            <span className="text-sm font-bold text-co-text">{t("admin.vendors.field.order_types")}</span>
+            <p className="text-xs text-co-text-muted">{t("admin.vendors.field.order_types_hint")}</p>
+            <MultiSelectChips
+              options={orderTypes.map((o) => ({ id: o.id, label: o.label }))}
+              selectedIds={orderTypeIds}
+              onToggle={toggleIn(setOrderTypeIds)}
+              ariaLabel={t("admin.vendors.field.order_types")}
+            />
+          </div>
 
           <Labeled label={t("admin.vendors.field.payment_terms")}>
             <input className={fieldCls} value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} />

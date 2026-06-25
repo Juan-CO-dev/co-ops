@@ -20,7 +20,7 @@ export type PostResult =
 export async function postJson(
   url: string,
   body: unknown,
-  method: "POST" | "PATCH" | "DELETE" = "POST",
+  method: "POST" | "PUT" | "PATCH" | "DELETE" = "POST",
 ): Promise<PostResult> {
   try {
     const res = await fetch(url, {
@@ -58,12 +58,14 @@ const KNOWN_ERROR_CODES = new Set([
   "last_contact",
   "last_ordering_detail",
   "category_exists",
+  "order_type_exists",
   "invalid_label",
   "vendor_not_found",
   "not_found",
   "invalid_payload",
   "invalid_name",
   "invalid_category",
+  "invalid_order_type",
   "invalid_contact",
   "invalid_ordering",
   "invalid_method",

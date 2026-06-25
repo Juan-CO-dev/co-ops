@@ -56,6 +56,10 @@ export const DESTRUCTIVE_ACTIONS = [
   //   global). Same "enumerate categorical free-text via registries" principle
   //   as unit.create. Auto-derive destructive=true via isDestructive().
   "category.create",
+  // — order_type.create adds an order type to the shared `order_types` registry
+  //   (MoO+, global). Mirrors category.create — the traditional supply view
+  //   (Produce / Dry Goods / Paper / …). Auto-derive destructive=true.
+  "order_type.create",
 
   // Checklist template lifecycle
   "checklist_template.create",

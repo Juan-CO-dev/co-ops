@@ -32,21 +32,26 @@ export async function POST(req: NextRequest) {
   const b = parsed as Record<string, unknown>;
   const fc = (b.firstContact ?? {}) as Record<string, unknown>;
   const fo = (b.firstOrdering ?? {}) as Record<string, unknown>;
+  const isStringArray = (v: unknown): v is string[] =>
+    Array.isArray(v) && v.every((x) => typeof x === "string");
   if (
     typeof b.name !== "string" ||
-    typeof b.categoryId !== "string" ||
+    !isStringArray(b.categoryIds) ||
+    !isStringArray(b.orderTypeIds) ||
     typeof fc.name !== "string" ||
     typeof fo.method !== "string" ||
     typeof fo.value !== "string"
   ) {
     return jsonError(400, "invalid_payload", {
-      message: "name, categoryId, firstContact.name, firstOrdering.method, firstOrdering.value required",
+      message:
+        "name, categoryIds[], orderTypeIds[], firstContact.name, firstOrdering.method, firstOrdering.value required",
     });
   }
 
   const input: CreateVendorInput = {
     name: b.name,
-    categoryId: b.categoryId,
+    categoryIds: b.categoryIds,
+    orderTypeIds: b.orderTypeIds,
     paymentTerms: typeof b.paymentTerms === "string" ? b.paymentTerms : null,
     accountNumber: typeof b.accountNumber === "string" ? b.accountNumber : null,
     notes: typeof b.notes === "string" ? b.notes : null,

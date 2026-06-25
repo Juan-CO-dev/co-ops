@@ -13,9 +13,11 @@ import {
 } from "@/lib/admin/vendors";
 
 // GET — fetch one vendor (≥6). PATCH — one concern per call:
-//   core  {name,categoryId,paymentTerms,accountNumber} → MoO+ (≥8), Tier B
-//   notes {notes}                                       → GM+  (≥7)
-//   active {active}                                     → MoO+ (≥8), Tier B
+//   core  {name,paymentTerms,accountNumber} → MoO+ (≥8), Tier B
+//   notes {notes}                           → GM+  (≥7)
+//   active {active}                         → MoO+ (≥8), Tier B
+// (Classification — categories / order types — is GM+ via the dedicated
+//  /categories + /order-types PUT routes, not a core PATCH concern.)
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const ctx = await requireSession(req, `/api/admin/vendors/${id}`);
@@ -32,7 +34,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
-const CORE_KEYS = ["name", "categoryId", "paymentTerms", "accountNumber"] as const;
+const CORE_KEYS = ["name", "paymentTerms", "accountNumber"] as const;
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -82,10 +84,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if ("name" in b) {
       if (typeof b.name !== "string") return jsonError(400, "invalid_payload", { field: "name" });
       changes.name = b.name;
-    }
-    if ("categoryId" in b) {
-      if (typeof b.categoryId !== "string") return jsonError(400, "invalid_payload", { field: "categoryId" });
-      changes.categoryId = b.categoryId;
     }
     if ("paymentTerms" in b) {
       changes.paymentTerms = b.paymentTerms === null ? null : typeof b.paymentTerms === "string" ? b.paymentTerms : undefined;

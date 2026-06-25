@@ -12,7 +12,7 @@ import { redirect } from "next/navigation";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
-import { loadVendors, loadCategories } from "@/lib/admin/vendors";
+import { loadVendors, loadCategories, loadOrderTypes } from "@/lib/admin/vendors";
 import { VendorListClient } from "@/components/admin/vendors/VendorListClient";
 
 export default async function AdminVendorsPage() {
@@ -21,7 +21,11 @@ export default async function AdminVendorsPage() {
   const lang = auth.user.language;
   const level = ROLES[auth.user.role].level;
 
-  const [vendors, categories] = await Promise.all([loadVendors(auth), loadCategories(auth)]);
+  const [vendors, categories, orderTypes] = await Promise.all([
+    loadVendors(auth),
+    loadCategories(auth),
+    loadOrderTypes(auth),
+  ]);
 
   return (
     <div>
@@ -29,7 +33,7 @@ export default async function AdminVendorsPage() {
         {serverT(lang, "admin.vendors.title")}
       </h1>
       <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "admin.vendors.subtitle")}</p>
-      <VendorListClient vendors={vendors} categories={categories} actorLevel={level} />
+      <VendorListClient vendors={vendors} categories={categories} orderTypes={orderTypes} actorLevel={level} />
     </div>
   );
 }
