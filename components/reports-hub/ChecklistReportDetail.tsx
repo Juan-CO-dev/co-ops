@@ -14,7 +14,7 @@
 import { formatDateLabel } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
-import type { ChecklistDetailItem, ChecklistReportDetail, PrepValueRow, ReportTypeKey } from "@/lib/reports-hub";
+import type { ChecklistCheckRow, ChecklistDetailItem, ChecklistReportDetail, PrepValueRow, ReportTypeKey } from "@/lib/reports-hub";
 
 const TYPE_LABEL_KEYS: Record<ReportTypeKey, TranslationKey> = {
   opening: "reports.type.opening",
@@ -88,6 +88,36 @@ function PrepValuesTable({ rows, t }: PrepValuesTableProps) {
   );
 }
 
+interface ChecksTableProps {
+  rows: ChecklistCheckRow[];
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string;
+}
+
+function ChecksTable({ rows, t }: ChecksTableProps) {
+  return (
+    <section>
+      <h2 className="mb-1 px-1 text-xs font-bold uppercase tracking-wide text-co-text-muted">
+        {t("reports.detail.checks_heading")}
+      </h2>
+      <ul className="flex flex-col gap-1">
+        {rows.map((row, idx) => (
+          <li key={idx} className="flex items-start justify-between gap-2 text-xs text-co-text">
+            <span className="font-medium">{row.label}</span>
+            <span className="flex flex-col items-end gap-0.5 text-right text-co-text-muted">
+              {row.yesNo !== null && (
+                <span className="font-semibold">
+                  {row.yesNo ? t("am_prep.misc.yes") : t("am_prep.misc.no")}
+                </span>
+              )}
+              {row.freeText !== null && <span>{row.freeText}</span>}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 interface Props {
   detail: ChecklistReportDetail;
   language: Language;
@@ -97,8 +127,9 @@ export function ChecklistReportDetailView({ detail, language }: Props) {
   const t = (key: TranslationKey, params?: Record<string, string | number>) =>
     serverT(language, key, params);
 
-  const { signals, prepValues } = detail;
+  const { signals, prepValues, checks } = detail;
   const hasPrepValues = prepValues.length > 0;
+  const hasChecks = checks.length > 0;
 
   // Group items by station (preserving order of first appearance)
   const stationOrder: string[] = [];
@@ -156,6 +187,13 @@ export function ChecklistReportDetailView({ detail, language }: Props) {
       {hasPrepValues && (
         <div className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-2">
           <PrepValuesTable rows={prepValues} t={t} />
+        </div>
+      )}
+
+      {/* Checks — yes/no + free-text answers (Slice 3); only when present */}
+      {hasChecks && (
+        <div className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-2">
+          <ChecksTable rows={checks} t={t} />
         </div>
       )}
 

@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { selectAllRows } from "@/lib/supabase-paginate";
+import { isPrepData } from "@/lib/prep";
 import { REPORTS_HUB_CASH_LEVEL, REPORTS_HUB_NOTES_LEVEL, type ReportListItem } from "@/lib/reports-hub";
 
 const OPERATIONAL_TZ = "America/New_York";
@@ -33,7 +34,7 @@ export function matchesReportQuery(
 /** A field of authorized searchable text for one report. `fieldKey` selects
  *  the snippet label (reports.search.snippet_field.<fieldKey>). */
 export interface SearchCorpusField {
-  fieldKey: "item" | "station" | "completer" | "note" | "cash_note" | "area_to_improve" | "pm_note" | "mvp_note" | "equipment" | "maintenance_note";
+  fieldKey: "item" | "station" | "completer" | "note" | "cash_note" | "area_to_improve" | "pm_note" | "mvp_note" | "equipment" | "maintenance_note" | "answer";
   text: string;
 }
 
@@ -130,9 +131,13 @@ export async function buildSearchCorpus(
     const templateIds = [...new Set(insts.map((r) => r.template_id))];
 
     const titemsByTemplate = new Map<string, { label: string; station: string }[]>();
+    // id → label map for the answer corpus field (Slice 3): a check answer
+    // is indexed as "<label> <answer>", so we need each completion's template
+    // item label keyed by template_item_id.
+    const labelByTemplateItem = new Map<string, string>();
     if (templateIds.length) {
-      const titems = await selectAllRows<{ template_id: string; label: string; station: string }>(
-        (from, to) => service.from("checklist_template_items").select("template_id, label, station")
+      const titems = await selectAllRows<{ id: string; template_id: string; label: string; station: string }>(
+        (from, to) => service.from("checklist_template_items").select("id, template_id, label, station")
           .in("template_id", templateIds).eq("active", true)
           .order("template_id", { ascending: true }).range(from, to),
       );
@@ -140,6 +145,7 @@ export async function buildSearchCorpus(
         const arr = titemsByTemplate.get(ti.template_id) ?? [];
         arr.push({ label: ti.label, station: ti.station });
         titemsByTemplate.set(ti.template_id, arr);
+        labelByTemplateItem.set(ti.id, ti.label);
       }
     }
     for (const inst of insts) {
@@ -152,8 +158,8 @@ export async function buildSearchCorpus(
     }
 
     const comps = authorizedInstanceIds.length
-      ? await selectAllRows<{ instance_id: string; completed_by: string | null; notes: string | null }>(
-          (from, to) => service.from("checklist_completions").select("instance_id, completed_by, notes")
+      ? await selectAllRows<{ instance_id: string; completed_by: string | null; notes: string | null; template_item_id: string; prep_data: unknown }>(
+          (from, to) => service.from("checklist_completions").select("instance_id, completed_by, notes, template_item_id, prep_data")
             .in("instance_id", authorizedInstanceIds).is("superseded_at", null).is("revoked_at", null)
             .order("instance_id", { ascending: true }).range(from, to),
         )
@@ -169,6 +175,20 @@ export async function buildSearchCorpus(
       if (!key) continue;
       if (c.completed_by) push(key, "completer", nameById.get(c.completed_by));
       if (showNotes) push(key, "note", c.notes);
+      // Answer field (Slice 3): yes/no + free-text question answers + Misc items.
+      // Indexed for ALL viewers (NOT gated behind showNotes) — matches the
+      // drill-in Checks visibility decision. Combined "<label> <answer>" so a
+      // label-only search still hits AND the answer carries question context.
+      if (isPrepData(c.prep_data)) {
+        const inputs = c.prep_data.inputs;
+        if (inputs.yesNo !== undefined || inputs.freeText !== undefined) {
+          const label = labelByTemplateItem.get(c.template_item_id) ?? "";
+          const answerText =
+            (inputs.yesNo === true ? "Yes" : inputs.yesNo === false ? "No" : "") +
+            (inputs.freeText ? ` ${inputs.freeText}` : "");
+          push(key, "answer", `${label} ${answerText}`.trim());
+        }
+      }
     }
   }
 
