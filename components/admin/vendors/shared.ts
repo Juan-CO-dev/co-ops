@@ -69,6 +69,8 @@ const KNOWN_ERROR_CODES = new Set([
   "invalid_contact",
   "invalid_ordering",
   "invalid_method",
+  "invalid_day",
+  "invalid_color",
   "step_up_required",
   "step_up_stale",
 ]);

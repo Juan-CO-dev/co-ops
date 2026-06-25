@@ -55,51 +55,17 @@ export function VendorListClient({
         ) : null}
       </div>
 
-      <ul className="mt-5 flex flex-col gap-3">
-        {vendors.map((v) => (
-          <li key={v.id} className="rounded-xl border-2 border-co-border bg-co-surface p-4">
-            <a
-              href={`/admin/vendors/${v.id}`}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-md focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
-            >
-              <span className="text-base font-bold text-co-text">{v.name}</span>
-              <span className="flex flex-wrap items-center gap-2">
-                {v.categories.map((c) => (
-                  <span
-                    key={`c-${c.id}`}
-                    className="inline-flex items-center rounded-full border-2 border-co-border px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-text-muted"
-                  >
-                    {c.label}
-                  </span>
-                ))}
-                {v.orderTypes.map((o) => (
-                  <span
-                    key={`o-${o.id}`}
-                    className="inline-flex items-center rounded-full bg-co-gold/15 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-gold-deep"
-                  >
-                    {o.label}
-                  </span>
-                ))}
-                <span
-                  className={
-                    "inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] " +
-                    (v.active
-                      ? "bg-co-gold/20 text-co-gold-deep"
-                      : "bg-co-text/10 text-co-text-muted")
-                  }
-                >
-                  {v.active ? t("admin.vendors.status.active") : t("admin.vendors.status.inactive")}
-                </span>
-              </span>
-            </a>
-          </li>
-        ))}
-        {vendors.length === 0 ? (
-          <li className="rounded-xl border-2 border-dashed border-co-border p-6 text-center text-sm text-co-text-muted">
-            {t("admin.vendors.empty")}
-          </li>
-        ) : null}
-      </ul>
+      {vendors.length === 0 ? (
+        <div className="mt-5 rounded-2xl border-2 border-dashed border-co-border p-6 text-center text-sm text-co-text-muted">
+          {t("admin.vendors.empty")}
+        </div>
+      ) : (
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {vendors.map((v) => (
+            <VendorCard key={v.id} vendor={v} t={t} />
+          ))}
+        </div>
+      )}
 
       {creating ? (
         <AddVendorForm
@@ -115,6 +81,124 @@ export function VendorListClient({
       ) : null}
     </div>
   );
+}
+
+/** A clickable vendor card — whole card links to the detail/edit page. Shows
+ *  classification chips, contacts/ordering counts, and a compact weekly
+ *  schedule. Inactive vendors render muted but stay clickable. */
+function VendorCard({
+  vendor: v,
+  t,
+}: {
+  vendor: VendorView;
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string;
+}) {
+  const firstContact = v.contacts[0];
+  const hasSchedule = v.orderDays.length > 0 || v.deliveryDays.length > 0;
+
+  return (
+    <a
+      href={`/admin/vendors/${v.id}`}
+      className={
+        "flex flex-col gap-3 rounded-2xl border-2 border-co-border bg-co-surface p-4 transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 " +
+        (v.active ? "" : "opacity-60")
+      }
+    >
+      {/* Header: color dot + name + active/inactive badge */}
+      <div className="flex items-start justify-between gap-2">
+        <span className="flex items-center gap-2 text-base font-bold leading-tight text-co-text">
+          {v.color ? (
+            <span
+              aria-hidden="true"
+              className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+              style={{ backgroundColor: v.color }}
+            />
+          ) : null}
+          {v.name}
+        </span>
+        <span
+          className={
+            "inline-flex shrink-0 items-center rounded-full px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] " +
+            (v.active ? "bg-co-gold/20 text-co-gold-deep" : "bg-co-text/10 text-co-text-muted")
+          }
+        >
+          {v.active ? t("admin.vendors.status.active") : t("admin.vendors.status.inactive")}
+        </span>
+      </div>
+
+      {/* Classification chips: order types (gold) + categories (outline) */}
+      {v.orderTypes.length > 0 || v.categories.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {v.orderTypes.map((o) => (
+            <span
+              key={`o-${o.id}`}
+              className="inline-flex items-center rounded-full bg-co-gold/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-gold-deep"
+            >
+              {o.label}
+            </span>
+          ))}
+          {v.categories.map((c) => (
+            <span
+              key={`c-${c.id}`}
+              className="inline-flex items-center rounded-full border-2 border-co-border px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-text-muted"
+            >
+              {c.label}
+            </span>
+          ))}
+        </div>
+      ) : null}
+
+      {/* Contacts + ordering counts */}
+      <div className="flex flex-col gap-1 text-sm">
+        {v.contacts.length > 0 ? (
+          <span className="text-co-text-muted">
+            <span className="font-bold text-co-text">
+              {t("admin.vendors.card.contacts_count", { count: v.contacts.length })}
+            </span>
+            {firstContact ? <> · {firstContact.name}</> : null}
+          </span>
+        ) : (
+          <span className="font-bold text-co-cta">{t("admin.vendors.card.no_contacts")}</span>
+        )}
+        {v.orderingDetails.length > 0 ? (
+          <span className="font-bold text-co-text">
+            {t("admin.vendors.card.ordering_count", { count: v.orderingDetails.length })}
+          </span>
+        ) : (
+          <span className="font-bold text-co-cta">{t("admin.vendors.card.no_ordering")}</span>
+        )}
+      </div>
+
+      {/* Order/delivery days — compact TEXT (the calendar itself lives outside
+          the cards, in the aggregated landing view; the card just summarizes). */}
+      {hasSchedule ? (
+        <div className="flex flex-col gap-0.5 text-xs text-co-text-muted">
+          {v.orderDays.length > 0 ? (
+            <span>
+              <span className="font-bold text-co-text">{t("admin.vendors.card.order")}:</span> {daysText(v.orderDays, t)}
+            </span>
+          ) : null}
+          {v.deliveryDays.length > 0 ? (
+            <span>
+              <span className="font-bold text-co-text">{t("admin.vendors.card.delivery")}:</span> {daysText(v.deliveryDays, t)}
+            </span>
+          ) : null}
+        </div>
+      ) : (
+        <span className="text-xs text-co-text-muted">{t("admin.vendors.card.no_schedule")}</span>
+      )}
+    </a>
+  );
+}
+
+/** Weekday 0=Sun..6=Sat → the 3-letter people.weekday.* i18n keys. */
+const WEEKDAY_KEYS: TranslationKey[] = [
+  "people.weekday.sun", "people.weekday.mon", "people.weekday.tue", "people.weekday.wed",
+  "people.weekday.thu", "people.weekday.fri", "people.weekday.sat",
+];
+/** Compact "Mon · Thu" text for a weekday set (sorted, 0=Sun..6=Sat). */
+function daysText(days: number[], t: (key: TranslationKey) => string): string {
+  return [...days].sort((a, b) => a - b).map((d) => t(WEEKDAY_KEYS[d]!)).join(" · ");
 }
 
 function AddVendorForm({
