@@ -170,6 +170,8 @@ export interface Item {
   specialInstructionEs: string | null;
   minRoleLevel: number | null;
   required: boolean;
+  /** When true (default), the item's AM-prep line gets an Opening Phase-2 verification mirror (migration 0089). Flip false to exclude it from Opening verification. */
+  openingVerify: boolean;
   active: boolean;
   createdAt: string;
   createdBy: string | null;
