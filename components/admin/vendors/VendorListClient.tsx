@@ -169,21 +169,20 @@ function VendorCard({
         )}
       </div>
 
-      {/* Compact weekly schedule */}
+      {/* Order/delivery days — compact TEXT (the calendar itself lives outside
+          the cards, in the aggregated landing view; the card just summarizes). */}
       {hasSchedule ? (
-        <div className="flex flex-col gap-1.5">
-          <ScheduleStrip
-            label={t("admin.vendors.card.order")}
-            days={v.orderDays}
-            t={t}
-            tone="order"
-          />
-          <ScheduleStrip
-            label={t("admin.vendors.card.delivery")}
-            days={v.deliveryDays}
-            t={t}
-            tone="delivery"
-          />
+        <div className="flex flex-col gap-0.5 text-xs text-co-text-muted">
+          {v.orderDays.length > 0 ? (
+            <span>
+              <span className="font-bold text-co-text">{t("admin.vendors.card.order")}:</span> {daysText(v.orderDays, t)}
+            </span>
+          ) : null}
+          {v.deliveryDays.length > 0 ? (
+            <span>
+              <span className="font-bold text-co-text">{t("admin.vendors.card.delivery")}:</span> {daysText(v.deliveryDays, t)}
+            </span>
+          ) : null}
         </div>
       ) : (
         <span className="text-xs text-co-text-muted">{t("admin.vendors.card.no_schedule")}</span>
@@ -192,43 +191,14 @@ function VendorCard({
   );
 }
 
-/** A single weekly row of S M T W T F S pips, filled for the selected days. */
-function ScheduleStrip({
-  label,
-  days,
-  t,
-  tone,
-}: {
-  label: string;
-  days: number[];
-  t: (key: TranslationKey, params?: Record<string, string | number>) => string;
-  tone: "order" | "delivery";
-}) {
-  const selected = new Set(days);
-  const fill = tone === "order" ? "bg-co-gold text-co-text" : "bg-co-text text-co-surface";
-  return (
-    <div className="flex items-center gap-1.5">
-      <span className="w-14 shrink-0 text-[11px] font-bold uppercase tracking-[0.06em] text-co-text-muted">
-        {label}
-      </span>
-      <div className="flex gap-1">
-        {[0, 1, 2, 3, 4, 5, 6].map((d) => {
-          const on = selected.has(d);
-          return (
-            <span
-              key={d}
-              className={
-                "inline-flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold " +
-                (on ? fill : "bg-co-text/10 text-co-text-muted")
-              }
-            >
-              {t(`admin.vendors.weekday.${d}` as TranslationKey)}
-            </span>
-          );
-        })}
-      </div>
-    </div>
-  );
+/** Weekday 0=Sun..6=Sat → the 3-letter people.weekday.* i18n keys. */
+const WEEKDAY_KEYS: TranslationKey[] = [
+  "people.weekday.sun", "people.weekday.mon", "people.weekday.tue", "people.weekday.wed",
+  "people.weekday.thu", "people.weekday.fri", "people.weekday.sat",
+];
+/** Compact "Mon · Thu" text for a weekday set (sorted, 0=Sun..6=Sat). */
+function daysText(days: number[], t: (key: TranslationKey) => string): string {
+  return [...days].sort((a, b) => a - b).map((d) => t(WEEKDAY_KEYS[d]!)).join(" · ");
 }
 
 function AddVendorForm({
