@@ -29,7 +29,6 @@ import { AuthShell } from "@/components/auth/AuthShell";
 import { IdleTimeoutWarning } from "@/components/auth/IdleTimeoutWarning";
 import { LogoutButton } from "@/components/auth/LogoutButton";
 import { NotificationBell } from "@/components/dashboard/NotificationBell";
-import { OrderingCalendar } from "@/components/dashboard/OrderingCalendar";
 import { ROLES } from "@/lib/roles";
 import { canEditReport, evaluateAutoReleaseForUserLocations } from "@/lib/checklists";
 import { accessibleLocations, type LocationActor } from "@/lib/locations";
@@ -45,8 +44,6 @@ import { loadTrendSeries } from "@/lib/reports-trends";
 import { TrendsWidget } from "@/components/trends/TrendsWidget";
 import { loadTeamOperatingHealth, TEAM_VIEW_LEVEL } from "@/lib/team-metrics";
 import { TeamRosterTable } from "@/components/team/TeamRosterTable";
-import { loadVendorOrderingWeek, VENDOR_CALENDAR_READ_MIN } from "@/lib/admin/vendors";
-import { operationalDayOfWeek } from "@/lib/items";
 
 import { ActionLink } from "@/components/ActionButton";
 import { CashDepositTile } from "@/components/CashDepositTile";
@@ -419,19 +416,6 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         })
       : null;
 
-  // Vendor ordering calendar (Slice B2) — SL+ (≥5) aggregated weekly schedule
-  // across all active scheduled vendors. Vendor-wide (not location-scoped); the
-  // loader self-gates at VENDOR_CALENDAR_READ_MIN. todayWeekday derives from the
-  // operational-TZ "today" (operational.todayDate, already computed) via the
-  // shared operationalDayOfWeek helper — same 0=Sun..6=Sat convention as the data.
-  const orderingWeek =
-    auth.level >= VENDOR_CALENDAR_READ_MIN
-      ? await loadVendorOrderingWeek(auth)
-      : null;
-  const orderingTodayWeekday = operational
-    ? operationalDayOfWeek(operational.todayDate)
-    : operationalDayOfWeek(todayAndYesterday().today);
-
   // Opening Report tile state (C.53) — resolve template + today's status inline
   // (the /operations/opening page owns the gate + 3-phase flow). Visible to
   // shift staff (level >= 3).
@@ -610,17 +594,6 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
           />
         ) : null}
 
-        {/* Vendor ordering calendar (Slice B2) — SL+ aggregated weekly schedule.
-         * Landing-priority placement: near the top, above the operational tiles.
-         * Hidden entirely for <5 (orderingWeek null). Vendor-wide, not location-
-         * scoped — renders regardless of selectedLocation. */}
-        {orderingWeek ? (
-          <OrderingCalendar
-            entries={orderingWeek}
-            todayWeekday={orderingTodayWeekday}
-            language={language}
-          />
-        ) : null}
 
         {/* Yesterday-unconfirmed alert — operational concern, not a history view. */}
         {selectedLocation && operational?.yesterdayUnconfirmed ? (
