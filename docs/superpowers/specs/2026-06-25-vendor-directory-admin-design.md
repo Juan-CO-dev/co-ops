@@ -1,58 +1,76 @@
-# Vendor Directory Admin — Design
+# Vendor Directory Admin — Design (v2, redesigned per Juan's review of #94)
 
 **Date:** 2026-06-25
-**Phase:** Item/Inventory Spine — the outward march, step 3 (first slice). Activates the dormant vendor scaffold.
-**Status:** draft, pending review
+**Phase:** Item/Inventory Spine — outward march, step 3. Now a **3-slice mini-arc**.
+**Status:** v2 draft (supersedes #94's single-contact/free-text model), pending review
 
 ---
 
-## Goal
+## Why v2
+#94's first cut (single contact + single ordering block, free-text category, GM/AGM trivial-full split) was reviewed; Juan reshaped it. Superseded. The vendor work splits into:
+- **Slice A — vendor directory (this spec):** core fields + **category from a shared registry** + **multi-contact + multi-ordering-detail** tables + the revised authority ladder.
+- **Slice B — ordering calendar:** per-vendor **order-days + delivery-days** + an **aggregated, color-coded landing-page calendar** (what to order when, 2 colors/vendor).
+- **Slice C (later) — SKU catalog + the SKU→portioned-item BOM** ("see what a vendor's cases convert into on the line").
 
-Fill the existing **501-stub** vendor admin (`app/admin/vendors/*`, `app/api/admin/vendors/*`) with a real **vendor directory** module: GM+ full CRUD of the shared vendor directory, AGM+ trivial edits. This is the foundation SKUs (next slice) + ordering hang off of.
+---
 
-## Ground truth
-- `vendors`: 1 row (`"TBD - Reassign"` placeholder). Cols: name, category, contact_person/email/phone, ordering_email/url/days, payment_terms, account_number, notes, active, created_at/by. **No updated_at/by** (migration 0090 adds them).
-- Vendor admin is **not built** — `route.ts`/`[id]/route.ts` return 501; `page.tsx`/`[id]/page.tsx` are stubs. This slice fills them.
-- `vendors_update_trivial` RLS policy exists (AGM+ may update a vendor row); the **column split is enforced app-layer** (RLS can't do per-column). Confirm the policy at build.
-- The 24 SKUs + the TBD placeholder stay as-is — SKU admin + remapping is the next slice.
+## Decisions (Juan-locked)
 
-## The trivial/full split (locked in AGENTS.md)
-- **Trivial — AGM+ (≥6):** `contact_person`, `contact_email`, `contact_phone`, `ordering_email`, `ordering_url`, `notes`.
-- **Full — GM+ (≥7):** the above PLUS `name`, `category`, `ordering_days`, `payment_terms`, `account_number`, `active`.
-- **Create + deactivate — GM+ (≥7).**
+**Category — a shared `categories` registry, adopted incrementally.** A new `categories` table seeded to ALIGN with the prep sections + line extras: `Veg, Cooks, Sides, Sauces, Slicing, Misc, Paper, Cleaning` (+ MoO+ add-new). Vendors reference it now; **items + the coming inventory report adopt the same list** as they're built; `prep_sections` stays as-is (it carries prep render shape/columns) and is reconciled into this taxonomy when the inventory report defines the requirement. The point: one category vocabulary so the whole system stays consistent. (Same "enumerate categorical free-text via registries" principle as units.)
 
-## Architecture (mirror the User Management module)
+**Contacts + ordering details — separate multi-row tables, ≥1 each.** A vendor has N contacts + N ordering details. AGM+ **appends**; GM+ **edits/removes**; the last contact + last ordering detail can't be removed (min 1 each).
 
-### Migration 0090
-`alter table vendors add column updated_at timestamptz; add column updated_by uuid references users(id);` (nullable; no backfill — edits set them going forward). Captured as `supabase/migrations/0090_vendors_updated_meta.sql`.
+**Authority ladder:**
+- **MoO+ (≥8):** delete/deactivate a vendor + **full edit** of the core identity/financial fields (name, category, payment_terms, account_number).
+- **GM+ (≥7):** **add** a vendor (sets all fields at creation) + **light edit** (notes) + **edit/remove** contacts & ordering details + add-category-to-registry.
+- **AGM+ (≥6):** **append** a new contact or ordering detail only (add-only; editing/removing existing = GM+).
+- (Interpretation to confirm: post-creation editing of name/category/payment/account is MoO+; a GM creates freely but changing those later is MoO+. Flagged below.)
 
-### Lib `lib/admin/vendors.ts` (new)
-- `loadVendors(actor)`: list active + inactive vendors (AGM+ readable; the page gates ≥6). Returns a `VendorView[]` (id, name, category, contacts, ordering_*, payment_terms, account_number, active, ...).
-- `createVendor(actor, input)`: GM+ only. Insert; `created_by`/`updated_by` = actor. Audit `vendor.create`.
-- `updateVendor(actor, { id, changes })`: **column-split enforced** — if `changes` touches any full-only column, require GM+ (else `AdminVendorError(403, "forbidden")`); trivial-only changes allow AGM+. Set `updated_at`/`updated_by`. Audit `vendor.full_profile_edit` (full) or a trivial action (reuse `vendor.full_profile_edit` with a `scope: "trivial"|"full"` metadata, OR a dedicated trivial code — decide at build; AGENTS.md notes the split but not a separate audit action, so reuse `vendor.full_profile_edit` with metadata scope). Check `rowCount`/`error`.
-- `deactivateVendor(actor, { id })`: GM+. `active=false` (append-only, never delete). Audit `vendor.deactivate`. (Reactivate = `vendor.activate`, also GM+ — include both directions via the active toggle.)
-- New typed error `AdminVendorError` mirroring `AdminTemplateError`.
+**Ordering days = Slice B** (not A). The aggregated landing calendar is part of B.
 
-### Routes (fill the stubs)
-- `app/api/admin/vendors/route.ts`: `GET` (list, AGM+) + `POST` (create, GM+).
-- `app/api/admin/vendors/[id]/route.ts`: `PATCH` (update — trivial/full split; the lib enforces the level per changed columns, but the route should also gate the floor at AGM+ + step-up) + `DELETE`/PATCH for deactivate (GM+).
-- Each self-gates `requireSession → level floor → assertStepUp(tier)`. **Step-up:** create/deactivate/full-edit = Tier B (they're destructive); a trivial-only edit = Tier A. (Mirror how User Management tiers create/role-change vs lighter edits.)
-- Leave `[id]/items/route.ts` (SKUs) stubbed — next slice.
+---
+
+## Architecture (Slice A)
+
+### Migrations
+- **0091 `categories`:** `id, slug (unique), label, label_es, active, display_order, audit`. Seeded: Veg/Cooks/Sides/Sauces/Slicing/Misc/Paper/Cleaning (slugs align with prep_sections slugs where they overlap). RLS deny-all (admin via service-role). MoO+ add-new (a `category.create` action + route, mirroring units' add-new).
+- **0092 `vendor_contacts`:** `id, vendor_id FK, name, email, phone, display_order, active, audit`. RLS deny-all.
+- **0093 `vendor_ordering_details`:** `id, vendor_id FK, method (text: email|url|phone|portal|other), value (text — the address/url/number), label, display_order, active, audit`. RLS deny-all.
+- **`vendors.category_id`** (nullable FK → categories) added; backfill the 1 placeholder. The legacy single `contact_*`/`ordering_*` + free-text `category` columns go **vestigial** (left in place; the new tables/FK are the truth). Migrate the placeholder's existing single contact/ordering into the new tables.
+
+### Lib `lib/admin/vendors.ts` (rework)
+- `loadVendors` / `getVendor` now hydrate `contacts: VendorContact[]` + `orderingDetails: VendorOrderingDetail[]` + `category` (from categories).
+- `createVendor` (GM+): core + category_id; seed the first contact + first ordering detail in the same call (min-1 satisfied at creation).
+- `updateVendorCore` (MoO+): name/category_id/payment_terms/account_number. `updateVendorLight` (GM+): notes. (Or one `updateVendor` that gates per-field-group: core→MoO+, notes→GM+.)
+- Contacts: `addVendorContact` (AGM+ append), `updateVendorContact` (GM+), `removeVendorContact` (GM+; **block if it's the last active contact** → `AdminVendorError(400, "last_contact")`).
+- Ordering details: `addVendorOrderingDetail` (AGM+), `updateVendorOrderingDetail` (GM+), `removeVendorOrderingDetail` (GM+; block last → `last_ordering_detail`).
+- `deactivateVendor` (MoO+).
+- `loadCategories` + `addCategory` (MoO+).
+- Audits: `vendor.create`, `vendor.full_profile_edit`, `vendor.deactivate`/`activate` (existing) + new `category.create` (+ contact/ordering changes audit under `vendor.full_profile_edit` with metadata, or dedicated — decide at build; lean metadata-scoped to keep the registry lean). Emails lowercased.
+
+### Routes
+- `vendors` GET (≥6) / POST create (GM+, Tier B).
+- `vendors/[id]` GET / PATCH core (MoO+ Tier B) / PATCH light (GM+) / deactivate (MoO+).
+- `vendors/[id]/contacts` POST (AGM+) ; `vendors/[id]/contacts/[contactId]` PATCH/DELETE (GM+).
+- `vendors/[id]/ordering-details` POST (AGM+) ; `.../[detailId]` PATCH/DELETE (GM+).
+- `categories` GET (≥6) / POST (MoO+).
+- Each self-gates requireSession → level floor → assertStepUp(tier). The lib is the authority per-action.
 
 ### Pages
-- `app/admin/vendors/page.tsx`: list (name + category + active badge) + an "Add vendor" affordance (GM+). Inactive vendors shown muted with a reactivate.
-- `app/admin/vendors/[id]/page.tsx`: edit form — full fields for GM+, only trivial fields editable for AGM+ (others read-only). Deactivate/reactivate (GM+).
-- Both under the admin shell (gate ≥6). EN+ES i18n. Add a Vendors card to the `/admin` hub.
+- `/admin/vendors`: list (name + category badge + active) + Add (GM+).
+- `/admin/vendors/[id]`: core fields (editable MoO+; read-only for GM/AGM), notes (GM+); **Contacts** list (+ Add for AGM+, edit/remove for GM+, last-one protected) ; **Ordering details** list (same). Category = dropdown from `categories`.
+- `/admin/categories` (or fold into an existing registry admin): MoO+ manage categories.
+- EN+ES i18n.
 
 ## Testing
-`npx tsc --noEmit` + `npm run build` + throwaway tsx smokes (deleted):
-- create a throwaway vendor (GM+ actor) → appears in `loadVendors`; trivial update as an AGM-level actor succeeds; a full-field update as AGM-level is rejected (403); GM+ full update succeeds + sets updated_by; deactivate flips active. Clean up (hard-delete the throwaway vendor — no FK refs since no SKUs attached).
-- Operator smoke (Juan, preview): rename "TBD - Reassign" / add a real vendor; confirm AGM sees only trivial fields editable.
+tsc + build + throwaway smokes (deleted): create vendor (GM+) seeds first contact+ordering; AGM appends a contact (ok) but can't edit/remove (403) or touch core (403); GM edits/removes a contact but can't remove the last (400 last_contact); MoO edits core + deactivates; category dropdown lists the registry; MoO adds a category. Clean up.
 
 ## Open decisions (your review)
-- **D1 — trivial-edit audit action.** Reuse `vendor.full_profile_edit` with `metadata.scope = "trivial"|"full"` (no new action), vs a dedicated `vendor.trivial_edit`. *Recommend reuse + scope metadata* (AGENTS.md defines the split but not a second action; keeps the registry lean).
-- **D2 — list visibility floor.** Vendor *directory* readable at AGM+ (≥6, the admin shell floor) — everyone who reaches /admin sees vendors; edit is gated per the split. Confirm (vs GM+-only to even view).
+- **D1 — GM create vs MoO core-edit.** A GM **creates** a vendor (sets name/category/payment/account at creation) but **post-creation edits** of those core fields are **MoO+** (GM+ light-edits notes + manages contacts/ordering). Confirm that's the intent (vs GM+ can also edit core after create, MoO+ only for delete).
+- **D2 — ordering detail shape.** `method` enum (email|url|phone|portal|other) + `value` + `label`. Enough, or do you want explicit fields (ordering_email, ordering_url, …) per detail? *Recommend method+value+label (flexible, one row per channel).*
+- **D3 — categories admin home.** A dedicated `/admin/categories` page vs folding category-manage into the checklist-templates Global tab (where sections/units live). *Recommend its own small page now; can move.*
 
-## Out of scope (next slices)
-- SKU (vendor_items) admin + remapping the 24 placeholders + manual-SKU (nullable vendor_id) + per-location SKU (location_id) schema. Next slice.
-- Ordering, receiving, on-hand, cost/yield — later steps.
+## Out of scope (this slice)
+- Order/delivery days + aggregated landing calendar (Slice B).
+- SKU catalog + SKU→item BOM visualization (Slice C).
+- Reconciling prep_sections into the categories taxonomy (when the inventory report lands).
