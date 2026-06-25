@@ -781,6 +781,12 @@
 
   "dashboard.no_locations.body": "Aún no tienes ubicaciones asignadas. Un administrador debe asignarte una antes de que las listas operativas estén disponibles.",
 
+  "dashboard.ordering_calendar.title": "Pedidos de esta semana",
+  "dashboard.ordering_calendar.legend_order": "Pedido",
+  "dashboard.ordering_calendar.legend_delivery": "Entrega",
+  "dashboard.ordering_calendar.today": "Hoy",
+  "dashboard.ordering_calendar.empty": "Aún no hay horarios de proveedores.",
+
   "auth.logout.label": "Cerrar sesión",
   "auth.logout.submitting": "Cerrando sesión…",
 

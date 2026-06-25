@@ -781,6 +781,12 @@
 
   "dashboard.no_locations.body": "You don't have any accessible locations yet. An admin needs to assign you to a location before operational checklists become available.",
 
+  "dashboard.ordering_calendar.title": "This week's ordering",
+  "dashboard.ordering_calendar.legend_order": "Order",
+  "dashboard.ordering_calendar.legend_delivery": "Delivery",
+  "dashboard.ordering_calendar.today": "Today",
+  "dashboard.ordering_calendar.empty": "No vendor schedules yet.",
+
   "auth.logout.label": "Log out",
   "auth.logout.submitting": "Signing out…",
 
