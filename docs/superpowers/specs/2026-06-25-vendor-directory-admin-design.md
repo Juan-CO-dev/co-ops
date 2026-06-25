@@ -74,3 +74,8 @@ tsc + build + throwaway smokes (deleted): create vendor (GM+) seeds first contac
 - Order/delivery days + aggregated landing calendar (Slice B).
 - SKU catalog + SKU→item BOM visualization (Slice C).
 - Reconciling prep_sections into the categories taxonomy (when the inventory report lands).
+
+---
+
+## Addendum (2026-06-25) — multi-classification (per Juan smoke of #95)
+A vendor now affects **MULTIPLE categories** (was single category_id) AND has **MULTIPLE order types** (NEW — traditional supply view: Produce/Protein/Dairy/Dry Goods/Paper/Chemical/Beverage/Specialty/Equipment/Other; an `order_types` registry mirroring categories, MoO+ add-new). Migration 0093: `order_types` + `vendor_categories` + `vendor_order_types` join tables (set-membership hard rows; vendors.category_id vestigial, migrated into the join). Authority: classification (categories + order types) management = **GM+** (lighter than identity/financial core, which stays MoO+); set at creation (GM+, ≥1 each required); `setVendorCategories`/`setVendorOrderTypes` replace the set (≥1 enforced); order_types registry add = MoO+. UI: multi-select chips on create + a GM+ "Classification" card on the detail page; list rows show category + order-type badges; taxonomy admin page covers both registries.
