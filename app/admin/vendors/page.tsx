@@ -12,8 +12,10 @@ import { redirect } from "next/navigation";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
-import { loadVendors, loadCategories, loadOrderTypes } from "@/lib/admin/vendors";
+import { loadVendors, loadCategories, loadOrderTypes, loadVendorOrderingWeek } from "@/lib/admin/vendors";
+import { operationalDayOfWeek } from "@/lib/items";
 import { VendorListClient } from "@/components/admin/vendors/VendorListClient";
+import { OrderingCalendar } from "@/components/admin/vendors/OrderingCalendar";
 
 export default async function AdminVendorsPage() {
   const auth = await requireSessionFromHeaders("/admin");
@@ -21,11 +23,18 @@ export default async function AdminVendorsPage() {
   const lang = auth.user.language;
   const level = ROLES[auth.user.role].level;
 
-  const [vendors, categories, orderTypes] = await Promise.all([
+  const [vendors, categories, orderTypes, orderingWeek] = await Promise.all([
     loadVendors(auth),
     loadCategories(auth),
     loadOrderTypes(auth),
+    loadVendorOrderingWeek(auth),
   ]);
+  // Today's operational weekday (0=Sun..6=Sat) for the calendar highlight, in
+  // the operational TZ (America/New_York — both CO locations are in DC).
+  const todayNy = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date());
+  const todayWeekday = operationalDayOfWeek(todayNy);
 
   return (
     <div>
@@ -33,6 +42,9 @@ export default async function AdminVendorsPage() {
         {serverT(lang, "admin.vendors.title")}
       </h1>
       <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "admin.vendors.subtitle")}</p>
+      <div className="mt-4">
+        <OrderingCalendar entries={orderingWeek} todayWeekday={todayWeekday} language={lang} />
+      </div>
       <VendorListClient vendors={vendors} categories={categories} orderTypes={orderTypes} actorLevel={level} />
     </div>
   );

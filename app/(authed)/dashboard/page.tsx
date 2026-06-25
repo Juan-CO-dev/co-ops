@@ -594,6 +594,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
           />
         ) : null}
 
+
         {/* Yesterday-unconfirmed alert — operational concern, not a history view. */}
         {selectedLocation && operational?.yesterdayUnconfirmed ? (
           <YesterdayUnconfirmedAlert

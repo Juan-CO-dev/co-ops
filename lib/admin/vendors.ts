@@ -503,6 +503,36 @@ export async function loadVendors(actor: AuthContext): Promise<VendorView[]> {
   return hydrateVendors(data ?? []);
 }
 
+/** SL+ (≥5) — shift-leads training toward AGM. The dashboard ordering calendar
+ *  (Slice B2) is non-sensitive (vendor name + color + weekday sets only), so it
+ *  reads below the ≥6 admin floor. */
+export const VENDOR_CALENDAR_READ_MIN = 5;
+
+export interface VendorWeekEntry {
+  id: string;
+  name: string;
+  color: string | null;
+  orderDays: number[];
+  deliveryDays: number[];
+}
+
+/** Active vendors that have a weekly schedule (≥1 order or delivery day), for the
+ *  dashboard aggregated ordering calendar. SL+ (≥5). */
+export async function loadVendorOrderingWeek(actor: AuthContext): Promise<VendorWeekEntry[]> {
+  requireLevel(actor, VENDOR_CALENDAR_READ_MIN);
+  const sb = getServiceRoleClient();
+  const { data, error } = await sb
+    .from("vendors")
+    .select("id, name, color, order_days, delivery_days")
+    .eq("active", true)
+    .order("name", { ascending: true })
+    .returns<Array<{ id: string; name: string; color: string | null; order_days: number[] | null; delivery_days: number[] | null }>>();
+  if (error) throw new Error(`loadVendorOrderingWeek failed: ${error.message}`);
+  return (data ?? [])
+    .map((r) => ({ id: r.id, name: r.name, color: r.color, orderDays: r.order_days ?? [], deliveryDays: r.delivery_days ?? [] }))
+    .filter((v) => v.orderDays.length > 0 || v.deliveryDays.length > 0);
+}
+
 export async function getVendor(actor: AuthContext, id: string): Promise<VendorView | null> {
   requireLevel(actor, READ_MIN);
   const sb = getServiceRoleClient();
