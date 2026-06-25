@@ -839,6 +839,21 @@ function RegistryRow({
     else setErrorMsg(t(resolveErrorKey(result.code)));
   };
 
+  const toggleOpeningVerify = async () => {
+    if (submitting) return;
+    setErrorMsg(null);
+    if ((await requestStepUp("B")) !== "ok") return;
+    setSubmitting(true);
+    const result = await postJson(
+      `/api/admin/checklist-templates/registry/${item.itemId}/opening-verify`,
+      { openingVerify: !item.openingVerify },
+      "PATCH",
+    );
+    setSubmitting(false);
+    if (result.ok) router.refresh();
+    else setErrorMsg(t(resolveErrorKey(result.code)));
+  };
+
   const saveDefinition = async () => {
     if (submitting) return;
     setErrorMsg(null);
@@ -976,6 +991,20 @@ function RegistryRow({
             <div className="mt-2">
               <button type="button" disabled={submitting} onClick={() => void toggleDefault()} className={smallBtn}>
                 {item.isDefault ? t("admin.templates.default_remove") : t("admin.templates.default_add")}
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-lg border-2 border-co-border p-3">
+            <p className="text-xs text-co-text-muted">{t("admin.templates.opening_verify_hint")}</p>
+            <div className="mt-2 flex items-center gap-2">
+              {item.openingVerify ? (
+                <span className="rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.05em] text-co-gold-deep">
+                  {t("admin.templates.opening_verify_on")}
+                </span>
+              ) : null}
+              <button type="button" disabled={submitting} onClick={() => void toggleOpeningVerify()} className={smallBtn}>
+                {item.openingVerify ? t("admin.templates.opening_verify_remove") : t("admin.templates.opening_verify_add")}
               </button>
             </div>
           </div>
