@@ -1,19 +1,39 @@
-import { PlaceholderCard } from "@/components/PlaceholderCard";
+/**
+ * /admin/vendors/[id] (Vendor Directory v2, Slice A) — vendor detail editor.
+ *
+ * Server gate ≥6 (mirrors the list page); notFound() if the vendor is missing.
+ * Loads the vendor + categories server-side and hands them to the client editor,
+ * which renders core/notes/contacts/ordering cards gated per the actor's level
+ * (MoO+ core+active, GM+ notes+edit/remove contacts&ordering, AGM+ append).
+ */
 
-export default function AdminVendorDetailPage() {
+import { notFound, redirect } from "next/navigation";
+
+import { requireSessionFromHeaders } from "@/lib/session";
+import { ROLES } from "@/lib/roles";
+import { serverT } from "@/lib/i18n/server";
+import { getVendor, loadCategories } from "@/lib/admin/vendors";
+import { VendorDetailClient } from "@/components/admin/vendors/VendorDetailClient";
+
+export default async function AdminVendorDetailPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
+  const auth = await requireSessionFromHeaders("/admin");
+  if (ROLES[auth.user.role].level < 6) redirect("/dashboard");
+  const lang = auth.user.language;
+  const level = ROLES[auth.user.role].level;
+
+  const [vendor, categories] = await Promise.all([getVendor(auth, id), loadCategories(auth)]);
+  if (!vendor) notFound();
+
   return (
-    <PlaceholderCard
-      showBackLink={false}
-      title="Vendor Detail"
-      description="Per-vendor profile + item catalog management."
-      features={[
-        "Tab 1: Profile (trivial fields AGM+, full fields GM+)",
-        "Tab 2: Items — add / edit / deactivate / delete",
-        "Tab 3: Recent deliveries (read-only)",
-        "Tab 4: Price history (read-only)",
-        "Deactivating an item auto-deactivates referencing par_levels",
-      ]}
-      shippingIn="Phase 5 (Foundation Admin Tools)"
-    />
+    <div>
+      <h1 className="text-xl font-extrabold leading-tight text-co-text">{vendor.name}</h1>
+      <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "admin.vendors.detail.subtitle")}</p>
+      <VendorDetailClient vendor={vendor} categories={categories} actorLevel={level} />
+    </div>
   );
 }
