@@ -51,6 +51,16 @@ export const DESTRUCTIVE_ACTIONS = [
   "vendor.contact_change",
   "vendor.ordering_change",
 
+  // SKU catalog lifecycle (Item/Inventory Spine — vendor mini-arc, Slice C1).
+  // — vendor_items are the purchasable units. create/update/deactivate/activate
+  //   on the catalog (GM+); vendor_id is nullable (manual/vendor-less SKUs) and
+  //   update may reassign it (incl. → null). Append-only (deactivate = active=false).
+  //   Auto-derive destructive=true via isDestructive().
+  "vendor_item.create",
+  "vendor_item.update",
+  "vendor_item.activate",
+  "vendor_item.deactivate",
+
   // Category registry (Vendor Directory v2, Slice A).
   // — category.create adds a category to the shared `categories` registry (MoO+,
   //   global). Same "enumerate categorical free-text via registries" principle
