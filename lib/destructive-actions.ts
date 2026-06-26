@@ -60,6 +60,8 @@ export const DESTRUCTIVE_ACTIONS = [
   "vendor_item.update",
   "vendor_item.activate",
   "vendor_item.deactivate",
+  "item_component.add",
+  "item_component.remove",
 
   // Category registry (Vendor Directory v2, Slice A).
   // — category.create adds a category to the shared `categories` registry (MoO+,
