@@ -21,6 +21,8 @@ import type { PrepSection, PrepSectionShape, LineInputType } from "@/lib/types";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { ChecklistRegistryItem, SectionQuestionView, ItemQuestionView } from "@/lib/admin/templates";
 import type { PrepSectionDefn } from "@/lib/types";
+import type { ComponentView } from "@/lib/admin/item-components";
+import { MadeFromEditor } from "./MadeFromEditor";
 import { postJson, resolveErrorKey } from "./shared";
 
 const INPUT_TYPE_OPTIONS: Array<{ value: LineInputType; key: TranslationKey }> = [
@@ -37,6 +39,9 @@ export function GlobalRegistryTab({
   units,
   sectionQuestions,
   itemQuestions,
+  itemComponents,
+  skuOptions,
+  measureUnits,
   actorLevel,
 }: {
   registry: ChecklistRegistryItem[];
@@ -44,8 +49,13 @@ export function GlobalRegistryTab({
   units: Array<{ label: string }>;
   sectionQuestions: SectionQuestionView[];
   itemQuestions: ItemQuestionView[];
+  itemComponents: ComponentView[];
+  skuOptions: Array<{ id: string; name: string }>;
+  measureUnits: Array<{ id: string; label: string }>;
   actorLevel: number;
 }) {
+  // Sub-item picker options (every registry item; the row excludes the parent).
+  const itemOptions = registry.map((r) => ({ id: r.itemId, name: r.name }));
   const { t, language } = useTranslation();
   const canAdd = actorLevel >= 7;
   const canEditSections = actorLevel >= 8; // MoO+
@@ -134,6 +144,10 @@ export function GlobalRegistryTab({
                   units={units}
                   language={language}
                   itemQuestions={itemQuestions.filter((q) => q.itemId === r.itemId)}
+                  itemComponents={itemComponents.filter((c) => c.itemId === r.itemId)}
+                  skuOptions={skuOptions}
+                  itemOptions={itemOptions}
+                  measureUnits={measureUnits}
                 />
               ))}
             </div>
@@ -787,6 +801,10 @@ function RegistryRow({
   units,
   language,
   itemQuestions,
+  itemComponents,
+  skuOptions,
+  itemOptions,
+  measureUnits,
 }: {
   item: ChecklistRegistryItem;
   actorLevel: number;
@@ -794,13 +812,21 @@ function RegistryRow({
   units: Array<{ label: string }>;
   language: string;
   itemQuestions: ItemQuestionView[];
+  itemComponents: ComponentView[];
+  skuOptions: Array<{ id: string; name: string }>;
+  itemOptions: Array<{ id: string; name: string }>;
+  measureUnits: Array<{ id: string; label: string }>;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
-  const canEdit = actorLevel >= 8; // MoO+
+  const canEdit = actorLevel >= 8; // MoO+ — item-definition editor
+  // BOM ("Made from") is GM+ edit / AGM+ view (its own affordance, NOT under the
+  // MoO+ definition editor), so a GM can manage an item's components.
+  const canViewBom = actorLevel >= 6;
 
   const [open, setOpen] = useState(false);
+  const [bomOpen, setBomOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -897,12 +923,33 @@ function RegistryRow({
             </span>
           ) : null}
         </span>
-        {canEdit ? (
-          <button type="button" onClick={() => setOpen((v) => !v)} className={smallBtn}>
-            {t("admin.templates.edit")}
-          </button>
-        ) : null}
+        <div className="flex gap-2">
+          {canViewBom ? (
+            <button type="button" onClick={() => setBomOpen((v) => !v)} className={smallBtn}>
+              {t("admin.items.made_from.title")}
+            </button>
+          ) : null}
+          {canEdit ? (
+            <button type="button" onClick={() => setOpen((v) => !v)} className={smallBtn}>
+              {t("admin.templates.edit")}
+            </button>
+          ) : null}
+        </div>
       </div>
+
+      {bomOpen && canViewBom ? (
+        <div className="mt-3">
+          <MadeFromEditor
+            itemId={item.itemId}
+            itemName={item.name}
+            components={itemComponents}
+            skuOptions={skuOptions}
+            itemOptions={itemOptions}
+            measureUnits={measureUnits}
+            actorLevel={actorLevel}
+          />
+        </div>
+      ) : null}
 
       {open && canEdit ? (
         <div className="mt-3 flex flex-col gap-3">
