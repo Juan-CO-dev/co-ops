@@ -12,7 +12,9 @@ import { notFound, redirect } from "next/navigation";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
+import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getVendor, loadCategories, loadOrderTypes } from "@/lib/admin/vendors";
+import { loadSkus } from "@/lib/admin/skus";
 import { VendorDetailClient } from "@/components/admin/vendors/VendorDetailClient";
 
 export default async function AdminVendorDetailPage({
@@ -26,18 +28,32 @@ export default async function AdminVendorDetailPage({
   const lang = auth.user.language;
   const level = ROLES[auth.user.role].level;
 
-  const [vendor, categories, orderTypes] = await Promise.all([
+  const sb = getServiceRoleClient();
+  const [vendor, categories, orderTypes, skus, locRes] = await Promise.all([
     getVendor(auth, id),
     loadCategories(auth),
     loadOrderTypes(auth),
+    loadSkus(auth, { vendorId: id }),
+    sb.from("locations").select("id, name").eq("active", true).order("name"),
   ]);
   if (!vendor) notFound();
+  const skuLocations = (locRes.data ?? []).map((r) => ({
+    id: (r as { id: string }).id,
+    name: (r as { name: string }).name,
+  }));
 
   return (
     <div>
       <h1 className="text-xl font-extrabold leading-tight text-co-text">{vendor.name}</h1>
       <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "admin.vendors.detail.subtitle")}</p>
-      <VendorDetailClient vendor={vendor} categories={categories} orderTypes={orderTypes} actorLevel={level} />
+      <VendorDetailClient
+        vendor={vendor}
+        categories={categories}
+        orderTypes={orderTypes}
+        skus={skus}
+        skuLocations={skuLocations}
+        actorLevel={level}
+      />
     </div>
   );
 }
