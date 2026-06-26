@@ -15,7 +15,7 @@ import { requireSessionFromHeaders } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { loadSkus } from "@/lib/admin/skus";
+import { loadSkus, loadPackFormats, loadMeasureUnits } from "@/lib/admin/skus";
 import { loadVendors } from "@/lib/admin/vendors";
 import { SkuCatalogClient } from "@/components/admin/skus/SkuCatalogClient";
 
@@ -26,9 +26,11 @@ export default async function AdminSkusPage() {
   const lang = auth.user.language;
 
   const sb = getServiceRoleClient();
-  const [skus, vendors, locRes] = await Promise.all([
+  const [skus, vendors, packFormats, measureUnits, locRes] = await Promise.all([
     loadSkus(auth),
     loadVendors(auth),
+    loadPackFormats(auth),
+    loadMeasureUnits(auth),
     sb.from("locations").select("id, name").eq("active", true).order("name"),
   ]);
 
@@ -50,6 +52,9 @@ export default async function AdminSkusPage() {
         skus={skus}
         vendors={activeVendors}
         locations={locations}
+        packFormats={packFormats}
+        measureUnits={measureUnits}
+        actorLevel={level}
         canManage={level >= 7}
       />
     </div>

@@ -15,19 +15,25 @@ import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
-import type { SkuView } from "@/lib/admin/skus";
-import { postJson, resolveErrorKey } from "./shared";
+import type { RegistryOption, SkuView } from "@/lib/admin/skus";
+import { postJson, resolveErrorKey, formatSkuPack } from "./shared";
 import { SkuForm, type SkuFormLocationOption, type SkuFormValues } from "./SkuForm";
 
 export function VendorSkusCard({
   vendorId,
   skus,
   locations,
+  packFormats,
+  measureUnits,
+  actorLevel,
   canManage,
 }: {
   vendorId: string;
   skus: SkuView[];
   locations: SkuFormLocationOption[];
+  packFormats: RegistryOption[];
+  measureUnits: RegistryOption[];
+  actorLevel: number;
   canManage: boolean; // GM+
 }) {
   const { t } = useTranslation();
@@ -102,6 +108,9 @@ export function VendorSkusCard({
                     initial={s}
                     fixedVendorId={vendorId}
                     locations={locations}
+                    packFormats={packFormats}
+                    measureUnits={measureUnits}
+                    actorLevel={actorLevel}
                     busy={busy}
                     errorMsg={errorMsg}
                     submitLabel={t("admin.skus.save")}
@@ -141,6 +150,9 @@ export function VendorSkusCard({
               <SkuForm
                 fixedVendorId={vendorId}
                 locations={locations}
+                packFormats={packFormats}
+                measureUnits={measureUnits}
+                actorLevel={actorLevel}
                 busy={busy}
                 errorMsg={errorMsg}
                 submitLabel={t("admin.skus.add")}
@@ -193,7 +205,7 @@ export function SkuRow({
 }) {
   const { t } = useTranslation();
   const meta: string[] = [];
-  meta.push(s.unitSize ? `${s.unit} · ${s.unitSize}` : s.unit);
+  meta.push(formatSkuPack(s, t));
   if (s.itemNumber) meta.push(`#${s.itemNumber}`);
   if (s.leadTimeDays != null) meta.push(t("admin.skus.lead_time_days", { count: s.leadTimeDays }));
 

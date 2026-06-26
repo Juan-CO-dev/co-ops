@@ -14,7 +14,7 @@ import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getVendor, loadCategories, loadOrderTypes } from "@/lib/admin/vendors";
-import { loadSkus } from "@/lib/admin/skus";
+import { loadSkus, loadPackFormats, loadMeasureUnits } from "@/lib/admin/skus";
 import { VendorDetailClient } from "@/components/admin/vendors/VendorDetailClient";
 
 export default async function AdminVendorDetailPage({
@@ -29,13 +29,16 @@ export default async function AdminVendorDetailPage({
   const level = ROLES[auth.user.role].level;
 
   const sb = getServiceRoleClient();
-  const [vendor, categories, orderTypes, skus, locRes] = await Promise.all([
-    getVendor(auth, id),
-    loadCategories(auth),
-    loadOrderTypes(auth),
-    loadSkus(auth, { vendorId: id }),
-    sb.from("locations").select("id, name").eq("active", true).order("name"),
-  ]);
+  const [vendor, categories, orderTypes, skus, packFormats, measureUnits, locRes] =
+    await Promise.all([
+      getVendor(auth, id),
+      loadCategories(auth),
+      loadOrderTypes(auth),
+      loadSkus(auth, { vendorId: id }),
+      loadPackFormats(auth),
+      loadMeasureUnits(auth),
+      sb.from("locations").select("id, name").eq("active", true).order("name"),
+    ]);
   if (!vendor) notFound();
   const skuLocations = (locRes.data ?? []).map((r) => ({
     id: (r as { id: string }).id,
@@ -52,6 +55,8 @@ export default async function AdminVendorDetailPage({
         orderTypes={orderTypes}
         skus={skus}
         skuLocations={skuLocations}
+        skuPackFormats={packFormats}
+        skuMeasureUnits={measureUnits}
         actorLevel={level}
       />
     </div>

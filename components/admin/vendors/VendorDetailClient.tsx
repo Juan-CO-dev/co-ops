@@ -30,7 +30,7 @@ import { VENDOR_COLOR_PALETTE } from "@/lib/admin/vendors";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { postJson, resolveErrorKey, ORDERING_METHODS } from "./shared";
 import { MultiSelectChips } from "./MultiSelectChips";
-import type { SkuView } from "@/lib/admin/skus";
+import type { RegistryOption, SkuView } from "@/lib/admin/skus";
 import type { SkuFormLocationOption } from "@/components/admin/skus/SkuForm";
 import { VendorSkusCard } from "@/components/admin/skus/VendorSkusCard";
 
@@ -45,6 +45,8 @@ export function VendorDetailClient({
   orderTypes,
   skus,
   skuLocations,
+  skuPackFormats,
+  skuMeasureUnits,
   actorLevel,
 }: {
   vendor: VendorView;
@@ -52,6 +54,8 @@ export function VendorDetailClient({
   orderTypes: OrderTypeView[];
   skus: SkuView[];
   skuLocations: SkuFormLocationOption[];
+  skuPackFormats: RegistryOption[];
+  skuMeasureUnits: RegistryOption[];
   actorLevel: number;
 }) {
   const { t } = useTranslation();
@@ -94,6 +98,9 @@ export function VendorDetailClient({
         vendorId={vendor.id}
         skus={skus}
         locations={skuLocations}
+        packFormats={skuPackFormats}
+        measureUnits={skuMeasureUnits}
+        actorLevel={actorLevel}
         canManage={canManage}
       />
       {actorLevel >= 8 ? <ActiveCard vendor={vendor} requestStepUp={requestStepUp} /> : null}

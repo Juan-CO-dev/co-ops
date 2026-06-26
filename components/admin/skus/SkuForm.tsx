@@ -15,7 +15,8 @@
 import { useState } from "react";
 
 import { useTranslation } from "@/lib/i18n/provider";
-import type { SkuView } from "@/lib/admin/skus";
+import type { RegistryOption, SkuView } from "@/lib/admin/skus";
+import { RegistrySelect } from "./RegistrySelect";
 
 export interface SkuFormVendorOption {
   id: string;
@@ -31,8 +32,10 @@ export interface SkuFormValues {
   vendorId: string | null;
   locationId: string | null;
   name: string;
-  unit: string;
-  unitSize: string | null;
+  packFormat: string;
+  unitsPerPack: number | null;
+  eachSize: number | null;
+  eachMeasure: string | null;
   itemNumber: string | null;
   sourceUrl: string | null;
   leadTimeDays: number | null;
@@ -56,6 +59,9 @@ export function SkuForm({
   fixedVendorId,
   vendors,
   locations,
+  packFormats,
+  measureUnits,
+  actorLevel,
   busy,
   errorMsg,
   submitLabel,
@@ -70,6 +76,12 @@ export function SkuForm({
   vendors?: SkuFormVendorOption[];
   /** Active locations (Global = null option + each location). */
   locations: SkuFormLocationOption[];
+  /** Pack-format registry options (Case/Box/Each…). */
+  packFormats: RegistryOption[];
+  /** Measure-unit registry options (oz/lb/count…). */
+  measureUnits: RegistryOption[];
+  /** Actor's role level (drives the MoO+ add-new affordance on the registries). */
+  actorLevel: number;
   busy: boolean;
   errorMsg: string | null;
   submitLabel: string;
@@ -85,8 +97,14 @@ export function SkuForm({
   // Location: "" sentinel = Global → null.
   const [locationId, setLocationId] = useState<string>(initial?.locationId ?? "");
   const [name, setName] = useState(initial?.name ?? "");
-  const [unit, setUnit] = useState(initial?.unit ?? "");
-  const [unitSize, setUnitSize] = useState(initial?.unitSize ?? "");
+  const [packFormat, setPackFormat] = useState(initial?.packFormat ?? "");
+  const [unitsPerPack, setUnitsPerPack] = useState(
+    initial?.unitsPerPack != null ? String(initial.unitsPerPack) : "",
+  );
+  const [eachSize, setEachSize] = useState(
+    initial?.eachSize != null ? String(initial.eachSize) : "",
+  );
+  const [eachMeasure, setEachMeasure] = useState(initial?.eachMeasure ?? "");
   const [itemNumber, setItemNumber] = useState(initial?.itemNumber ?? "");
   const [sourceUrl, setSourceUrl] = useState(initial?.sourceUrl ?? "");
   const [leadTime, setLeadTime] = useState(
@@ -95,21 +113,27 @@ export function SkuForm({
   const [notes, setNotes] = useState(initial?.notes ?? "");
 
   const showVendorDropdown = vendors !== undefined;
-  const canSubmit = name.trim() !== "" && unit.trim() !== "" && !busy;
+  const canSubmit = name.trim() !== "" && packFormat.trim() !== "" && !busy;
+
+  /** empty → null, else Number(...) (the lib validates positivity). */
+  const parseNum = (s: string): number | null => {
+    const trimmed = s.trim();
+    return trimmed === "" ? null : Number(trimmed);
+  };
 
   const submit = () => {
     if (!canSubmit) return;
-    const trimmedLead = leadTime.trim();
-    const parsedLead = trimmedLead === "" ? null : Number(trimmedLead);
     onSubmit({
       vendorId: showVendorDropdown ? (vendorId || null) : (fixedVendorId ?? null),
       locationId: locationId || null,
       name: name.trim(),
-      unit: unit.trim(),
-      unitSize: unitSize.trim() || null,
+      packFormat: packFormat.trim(),
+      unitsPerPack: parseNum(unitsPerPack),
+      eachSize: parseNum(eachSize),
+      eachMeasure: eachMeasure.trim() || null,
       itemNumber: itemNumber.trim() || null,
       sourceUrl: sourceUrl.trim() || null,
-      leadTimeDays: parsedLead,
+      leadTimeDays: parseNum(leadTime),
       notes: notes.trim() || null,
     });
   };
@@ -138,13 +162,56 @@ export function SkuForm({
         <input className={fieldCls} value={name} disabled={busy} onChange={(e) => setName(e.target.value)} />
       </Labeled>
 
+      <RegistrySelect
+        label={t("admin.skus.field.pack_format")}
+        value={packFormat}
+        onChange={setPackFormat}
+        options={packFormats}
+        actorLevel={actorLevel}
+        addEndpoint="/api/admin/skus/pack-formats"
+        addPromptKey="admin.skus.add_pack_format_prompt"
+        addButtonKey="admin.skus.add_pack_format"
+        required
+        disabled={busy}
+      />
+
+      <Labeled label={t("admin.skus.field.units_per_pack")}>
+        <input
+          className={fieldCls}
+          type="number"
+          min={1}
+          step={1}
+          inputMode="numeric"
+          value={unitsPerPack}
+          disabled={busy}
+          onChange={(e) => setUnitsPerPack(e.target.value)}
+        />
+      </Labeled>
+
       <div className="grid grid-cols-2 gap-2">
-        <Labeled label={t("admin.skus.field.unit")}>
-          <input className={fieldCls} value={unit} disabled={busy} onChange={(e) => setUnit(e.target.value)} />
+        <Labeled label={t("admin.skus.field.each_size")}>
+          <input
+            className={fieldCls}
+            type="number"
+            min={0}
+            step="any"
+            inputMode="decimal"
+            value={eachSize}
+            disabled={busy}
+            onChange={(e) => setEachSize(e.target.value)}
+          />
         </Labeled>
-        <Labeled label={t("admin.skus.field.unit_size")}>
-          <input className={fieldCls} value={unitSize} disabled={busy} onChange={(e) => setUnitSize(e.target.value)} />
-        </Labeled>
+        <RegistrySelect
+          label={t("admin.skus.field.each_measure")}
+          value={eachMeasure}
+          onChange={setEachMeasure}
+          options={measureUnits}
+          actorLevel={actorLevel}
+          addEndpoint="/api/admin/skus/measure-units"
+          addPromptKey="admin.skus.add_measure_prompt"
+          addButtonKey="admin.skus.add_measure"
+          disabled={busy}
+        />
       </div>
 
       <Labeled label={t("admin.skus.field.location")}>

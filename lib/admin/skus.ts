@@ -8,14 +8,20 @@
  *
  * Append-only: removals flip `active=false`, never DELETE.
  *
- * Schema (live, migration 0095 applied):
+ * Schema (live, migrations 0095 + 0096 applied):
  *   vendor_items — id, vendor_id (NULLABLE FK→vendors — null = manual/vendor-less),
  *                  location_id (NULLABLE FK→locations — null = global, set =
- *                  location-specific), name (not null), category (text, VESTIGIAL
- *                  — ignored here; categorization comes via the C2 item link),
- *                  unit (not null), unit_size, item_number, source_url,
+ *                  location-specific), name (not null), category (text, VESTIGIAL),
+ *                  unit/unit_size (text, VESTIGIAL — superseded by the structured
+ *                  purchase model below; unit lost its NOT NULL in 0096),
+ *                  pack_format (label from sku_pack_formats — how the vendor packs
+ *                  it: Case/Box/Each…), units_per_pack (int — e.g. 6, 1 for Each),
+ *                  each_size (numeric — e.g. 32), each_measure (label from
+ *                  measure_units — oz/lb/count…), item_number, source_url,
  *                  lead_time_days, weekday_par/weekend_par (dormant ordering par —
  *                  LEFT UNTOUCHED), notes, active, audit.
+ *   sku_pack_formats / measure_units — MoO+ registries (deny-all RLS, label-keyed),
+ *                  mirror public.units (migration 0084).
  *
  * SKU cost is deferred to the C3 cost/yield slice (vendor_price_history).
  */
@@ -26,8 +32,9 @@ import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 
 // ── Authority floors (the lib is the authority per-action) ──────────────────
-export const SKU_READ_MIN = 6; // AGM+ — view the catalog
+export const SKU_READ_MIN = 6; // AGM+ — view the catalog + registries
 export const SKU_WRITE_MIN = 7; // GM+ — create / update / deactivate / reassign
+export const SKU_REGISTRY_ADD_MIN = 8; // MoO+ — add a pack format / measure unit
 
 // ── Types ───────────────────────────────────────────────────────────────────
 export interface SkuView {
@@ -37,13 +44,21 @@ export interface SkuView {
   locationId: string | null;
   locationName: string | null;
   name: string;
-  unit: string;
-  unitSize: string | null;
+  packFormat: string | null; // label (Case/Box/Each…)
+  unitsPerPack: number | null; // 6 (1 for Each)
+  eachSize: number | null; // 32
+  eachMeasure: string | null; // label (oz/lb/count…)
   itemNumber: string | null;
   sourceUrl: string | null;
   leadTimeDays: number | null;
   notes: string | null;
   active: boolean;
+}
+
+/** A registry option (pack format or measure unit). */
+export interface RegistryOption {
+  id: string;
+  label: string;
 }
 
 /** Typed error the routes map to jsonError(status, code). Mirrors AdminVendorError. */
@@ -73,6 +88,24 @@ function normalizeLeadTime(v: number | null | undefined): number | null {
   if (v === null || v === undefined) return null;
   if (!Number.isInteger(v) || v < 0) {
     throw new AdminSkuError(400, "invalid_lead_time", "Lead time must be a non-negative integer");
+  }
+  return v;
+}
+
+/** units_per_pack: null clears; a value must be a positive integer. */
+function normalizeUnitsPerPack(v: number | null | undefined): number | null {
+  if (v === null || v === undefined) return null;
+  if (!Number.isInteger(v) || v < 1) {
+    throw new AdminSkuError(400, "invalid_units_per_pack", "Units per pack must be a positive integer");
+  }
+  return v;
+}
+
+/** each_size: null clears; a value must be a positive number. */
+function normalizeEachSize(v: number | null | undefined): number | null {
+  if (v === null || v === undefined) return null;
+  if (!Number.isFinite(v) || v <= 0) {
+    throw new AdminSkuError(400, "invalid_each_size", "Size of each must be a positive number");
   }
   return v;
 }
@@ -108,8 +141,10 @@ interface DbSkuRow {
   vendor_id: string | null;
   location_id: string | null;
   name: string;
-  unit: string;
-  unit_size: string | null;
+  pack_format: string | null;
+  units_per_pack: number | null;
+  each_size: number | string | null; // numeric arrives as string from PostgREST
+  each_measure: string | null;
   item_number: string | null;
   source_url: string | null;
   lead_time_days: number | null;
@@ -118,7 +153,13 @@ interface DbSkuRow {
 }
 
 const SKU_COLS =
-  "id, vendor_id, location_id, name, unit, unit_size, item_number, source_url, lead_time_days, notes, active";
+  "id, vendor_id, location_id, name, pack_format, units_per_pack, each_size, each_measure, item_number, source_url, lead_time_days, notes, active";
+
+function toNum(v: number | string | null): number | null {
+  if (v === null) return null;
+  const n = typeof v === "string" ? Number(v) : v;
+  return Number.isFinite(n) ? n : null;
+}
 
 // ── Reads ─────────────────────────────────────────────────────────────────────
 /** Hydrate vendorName + locationName via two-step batch loads (avoid fragile
@@ -158,8 +199,10 @@ async function hydrateSkus(rows: DbSkuRow[]): Promise<SkuView[]> {
     locationId: r.location_id,
     locationName: r.location_id ? locationNameById.get(r.location_id) ?? null : null,
     name: r.name,
-    unit: r.unit,
-    unitSize: r.unit_size,
+    packFormat: r.pack_format,
+    unitsPerPack: r.units_per_pack,
+    eachSize: toNum(r.each_size),
+    eachMeasure: r.each_measure,
     itemNumber: r.item_number,
     sourceUrl: r.source_url,
     leadTimeDays: r.lead_time_days,
@@ -190,9 +233,6 @@ export async function loadSkus(
       query = query.eq("vendor_id", opts.vendorId);
     }
   }
-  // active first (nulls treated as active by hydrate, but order by raw column),
-  // then name. Postgres orders boolean DESC as true>false; null actives sort
-  // last under DESC, so coalesce via two-key ordering on name as the stable tie.
   const { data, error } = await query
     .order("active", { ascending: false, nullsFirst: false })
     .order("name", { ascending: true })
@@ -201,13 +241,95 @@ export async function loadSkus(
   return hydrateSkus(data ?? []);
 }
 
+// ── Registries (pack formats + measure units) ───────────────────────────────────
+async function loadRegistry(actor: AuthContext, table: string): Promise<RegistryOption[]> {
+  requireLevel(actor, SKU_READ_MIN);
+  const sb = getServiceRoleClient();
+  const { data, error } = await sb
+    .from(table)
+    .select("id, label")
+    .eq("active", true)
+    .order("display_order", { ascending: true })
+    .order("label", { ascending: true })
+    .returns<RegistryOption[]>();
+  if (error) throw new Error(`loadRegistry(${table}) failed: ${error.message}`);
+  return data ?? [];
+}
+
+export function loadPackFormats(actor: AuthContext): Promise<RegistryOption[]> {
+  return loadRegistry(actor, "sku_pack_formats");
+}
+export function loadMeasureUnits(actor: AuthContext): Promise<RegistryOption[]> {
+  return loadRegistry(actor, "measure_units");
+}
+
+/** Add a registry label (MoO+). Idempotent on the unique label; returns the row. */
+async function addRegistryLabel(
+  actor: AuthContext,
+  table: string,
+  label: string,
+): Promise<RegistryOption> {
+  requireLevel(actor, SKU_REGISTRY_ADD_MIN);
+  const trimmed = label.trim();
+  if (!trimmed) throw new AdminSkuError(400, "invalid_label", "Label is required");
+
+  const sb = getServiceRoleClient();
+  // Reactivate-or-return if the label already exists (append-only friendly).
+  const { data: existing, error: exErr } = await sb
+    .from(table)
+    .select("id, label, active")
+    .eq("label", trimmed)
+    .maybeSingle<{ id: string; label: string; active: boolean | null }>();
+  if (exErr) throw new Error(`addRegistryLabel(${table}) lookup failed: ${exErr.message}`);
+  if (existing) {
+    if (existing.active === false) {
+      await sb
+        .from(table)
+        .update({ active: true, updated_by: actor.user.id, updated_at: new Date().toISOString() })
+        .eq("id", existing.id);
+    }
+    return { id: existing.id, label: existing.label };
+  }
+
+  const { data: maxRow } = await sb
+    .from(table)
+    .select("display_order")
+    .order("display_order", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ display_order: number }>();
+  const nextOrder = (maxRow?.display_order ?? 0) + 1;
+
+  const { data: inserted, error } = await sb
+    .from(table)
+    .insert({
+      label: trimmed,
+      display_order: nextOrder,
+      created_by: actor.user.id,
+      updated_by: actor.user.id,
+    })
+    .select("id, label")
+    .maybeSingle<RegistryOption>();
+  if (error) throw new Error(`addRegistryLabel(${table}) insert failed: ${error.message}`);
+  if (!inserted) throw new Error(`addRegistryLabel(${table}) returned no row`);
+  return inserted;
+}
+
+export function addPackFormat(actor: AuthContext, label: string): Promise<RegistryOption> {
+  return addRegistryLabel(actor, "sku_pack_formats", label);
+}
+export function addMeasureUnit(actor: AuthContext, label: string): Promise<RegistryOption> {
+  return addRegistryLabel(actor, "measure_units", label);
+}
+
 // ── Create (GM+) ───────────────────────────────────────────────────────────────
 export interface CreateSkuInput {
   vendorId: string | null;
   locationId: string | null;
   name: string;
-  unit: string;
-  unitSize?: string | null;
+  packFormat: string;
+  unitsPerPack?: number | null;
+  eachSize?: number | null;
+  eachMeasure?: string | null;
   itemNumber?: string | null;
   sourceUrl?: string | null;
   leadTimeDays?: number | null;
@@ -219,12 +341,14 @@ export async function createSku(actor: AuthContext, input: CreateSkuInput): Prom
 
   const name = input.name.trim();
   if (!name) throw new AdminSkuError(400, "invalid_name", "SKU name is required");
-  const unit = input.unit.trim();
-  if (!unit) throw new AdminSkuError(400, "invalid_unit", "Unit is required");
+  const packFormat = input.packFormat.trim();
+  if (!packFormat) throw new AdminSkuError(400, "invalid_pack_format", "Pack format is required");
 
   if (input.vendorId) await assertVendorActive(input.vendorId);
   if (input.locationId) await assertLocationActive(input.locationId);
   const leadTimeDays = normalizeLeadTime(input.leadTimeDays);
+  const unitsPerPack = normalizeUnitsPerPack(input.unitsPerPack);
+  const eachSize = normalizeEachSize(input.eachSize);
 
   const sb = getServiceRoleClient();
   const { data: inserted, error } = await sb
@@ -233,8 +357,10 @@ export async function createSku(actor: AuthContext, input: CreateSkuInput): Prom
       vendor_id: input.vendorId ?? null,
       location_id: input.locationId ?? null,
       name,
-      unit,
-      unit_size: normalizeOptional(input.unitSize),
+      pack_format: packFormat,
+      units_per_pack: unitsPerPack,
+      each_size: eachSize,
+      each_measure: normalizeOptional(input.eachMeasure),
       item_number: normalizeOptional(input.itemNumber),
       source_url: normalizeOptional(input.sourceUrl),
       lead_time_days: leadTimeDays,
@@ -258,7 +384,7 @@ export async function createSku(actor: AuthContext, input: CreateSkuInput): Prom
       name,
       vendor_id: input.vendorId ?? null,
       location_id: input.locationId ?? null,
-      unit,
+      pack_format: packFormat,
     },
     ipAddress: null,
     userAgent: null,
@@ -272,8 +398,10 @@ export interface UpdateSkuChanges {
   vendorId?: string | null;
   locationId?: string | null;
   name?: string;
-  unit?: string;
-  unitSize?: string | null;
+  packFormat?: string;
+  unitsPerPack?: number | null;
+  eachSize?: number | null;
+  eachMeasure?: string | null;
   itemNumber?: string | null;
   sourceUrl?: string | null;
   leadTimeDays?: number | null;
@@ -302,12 +430,14 @@ export async function updateSku(
     if (!n) throw new AdminSkuError(400, "invalid_name", "SKU name cannot be empty");
     update.name = n;
   }
-  if (changes.unit !== undefined) {
-    const u = changes.unit.trim();
-    if (!u) throw new AdminSkuError(400, "invalid_unit", "Unit cannot be empty");
-    update.unit = u;
+  if (changes.packFormat !== undefined) {
+    const p = changes.packFormat.trim();
+    if (!p) throw new AdminSkuError(400, "invalid_pack_format", "Pack format cannot be empty");
+    update.pack_format = p;
   }
-  if (changes.unitSize !== undefined) update.unit_size = normalizeOptional(changes.unitSize);
+  if (changes.unitsPerPack !== undefined) update.units_per_pack = normalizeUnitsPerPack(changes.unitsPerPack);
+  if (changes.eachSize !== undefined) update.each_size = normalizeEachSize(changes.eachSize);
+  if (changes.eachMeasure !== undefined) update.each_measure = normalizeOptional(changes.eachMeasure);
   if (changes.itemNumber !== undefined) update.item_number = normalizeOptional(changes.itemNumber);
   if (changes.sourceUrl !== undefined) update.source_url = normalizeOptional(changes.sourceUrl);
   if (changes.leadTimeDays !== undefined) update.lead_time_days = normalizeLeadTime(changes.leadTimeDays);

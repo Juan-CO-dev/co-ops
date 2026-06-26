@@ -6,6 +6,7 @@
  */
 
 import type { TranslationKey } from "@/lib/i18n/types";
+import type { SkuView } from "@/lib/admin/skus";
 
 export { postJson, type PostResult } from "@/components/admin/vendors/shared";
 
@@ -17,7 +18,10 @@ const KNOWN_ERROR_CODES = new Set([
   "invalid_location",
   "invalid_lead_time",
   "invalid_name",
-  "invalid_unit",
+  "invalid_pack_format",
+  "invalid_units_per_pack",
+  "invalid_each_size",
+  "invalid_label",
   "sku_not_found",
   "invalid_payload",
   "step_up_required",
@@ -30,4 +34,25 @@ export function resolveErrorKey(code: string): TranslationKey {
     return `admin.skus.error.${code}` as TranslationKey;
   }
   return "admin.skus.error.generic";
+}
+
+/**
+ * Compose the structured purchase model into a single human-readable string.
+ * Examples: "Case of 6 × 32 oz" / "Each — 32 oz" / "Case of 6" / "Case".
+ * Client-safe (takes the translator). Falls back to "—" when no pack format.
+ */
+export function formatSkuPack(
+  sku: Pick<SkuView, "packFormat" | "unitsPerPack" | "eachSize" | "eachMeasure">,
+  t: (key: TranslationKey) => string,
+): string {
+  let out = sku.packFormat ?? "—";
+  const hasCount = sku.unitsPerPack != null && sku.unitsPerPack > 1;
+  if (hasCount) {
+    out += ` ${t("admin.skus.pack_of")} ${sku.unitsPerPack}`;
+  }
+  if (sku.eachSize != null) {
+    const each = `${sku.eachSize}${sku.eachMeasure ? ` ${sku.eachMeasure}` : ""}`;
+    out += hasCount ? ` × ${each}` : ` — ${each}`;
+  }
+  return out;
 }

@@ -39,8 +39,8 @@ export async function POST(req: NextRequest) {
   if (!su.ok) return jsonError(403, su.code);
 
   const b = parsed as Record<string, unknown>;
-  if (typeof b.name !== "string" || typeof b.unit !== "string") {
-    return jsonError(400, "invalid_payload", { message: "name and unit are required" });
+  if (typeof b.name !== "string" || typeof b.packFormat !== "string") {
+    return jsonError(400, "invalid_payload", { message: "name and packFormat are required" });
   }
   // vendorId / locationId: string id, or null (manual / global). Anything else invalid.
   if (b.vendorId !== undefined && b.vendorId !== null && typeof b.vendorId !== "string") {
@@ -49,16 +49,20 @@ export async function POST(req: NextRequest) {
   if (b.locationId !== undefined && b.locationId !== null && typeof b.locationId !== "string") {
     return jsonError(400, "invalid_payload", { field: "locationId" });
   }
-  if (b.leadTimeDays !== undefined && b.leadTimeDays !== null && typeof b.leadTimeDays !== "number") {
-    return jsonError(400, "invalid_payload", { field: "leadTimeDays" });
+  for (const k of ["unitsPerPack", "eachSize", "leadTimeDays"] as const) {
+    if (b[k] !== undefined && b[k] !== null && typeof b[k] !== "number") {
+      return jsonError(400, "invalid_payload", { field: k });
+    }
   }
 
   const input: CreateSkuInput = {
     vendorId: typeof b.vendorId === "string" ? b.vendorId : null,
     locationId: typeof b.locationId === "string" ? b.locationId : null,
     name: b.name,
-    unit: b.unit,
-    unitSize: typeof b.unitSize === "string" ? b.unitSize : null,
+    packFormat: b.packFormat,
+    unitsPerPack: typeof b.unitsPerPack === "number" ? b.unitsPerPack : null,
+    eachSize: typeof b.eachSize === "number" ? b.eachSize : null,
+    eachMeasure: typeof b.eachMeasure === "string" ? b.eachMeasure : null,
     itemNumber: typeof b.itemNumber === "string" ? b.itemNumber : null,
     sourceUrl: typeof b.sourceUrl === "string" ? b.sourceUrl : null,
     leadTimeDays: typeof b.leadTimeDays === "number" ? b.leadTimeDays : null,

@@ -16,8 +16,8 @@ import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
-import type { SkuView } from "@/lib/admin/skus";
-import { postJson, resolveErrorKey } from "./shared";
+import type { RegistryOption, SkuView } from "@/lib/admin/skus";
+import { postJson, resolveErrorKey, formatSkuPack } from "./shared";
 import {
   SkuForm,
   type SkuFormLocationOption,
@@ -33,11 +33,17 @@ export function SkuCatalogClient({
   skus,
   vendors,
   locations,
+  packFormats,
+  measureUnits,
+  actorLevel,
   canManage,
 }: {
   skus: SkuView[];
   vendors: SkuFormVendorOption[];
   locations: SkuFormLocationOption[];
+  packFormats: RegistryOption[];
+  measureUnits: RegistryOption[];
+  actorLevel: number;
   canManage: boolean; // GM+
 }) {
   const { t } = useTranslation();
@@ -135,6 +141,9 @@ export function SkuCatalogClient({
           <SkuForm
             vendors={vendors}
             locations={locations}
+            packFormats={packFormats}
+            measureUnits={measureUnits}
+            actorLevel={actorLevel}
             busy={busy}
             errorMsg={errorMsg}
             submitLabel={t("admin.skus.add")}
@@ -163,6 +172,9 @@ export function SkuCatalogClient({
                   initial={s}
                   vendors={vendors}
                   locations={locations}
+                  packFormats={packFormats}
+                  measureUnits={measureUnits}
+                  actorLevel={actorLevel}
                   busy={busy}
                   errorMsg={errorMsg}
                   submitLabel={t("admin.skus.save")}
@@ -223,7 +235,7 @@ function CatalogRow({
   const meta: string[] = [];
   meta.push(s.vendorName ?? t("admin.skus.manual"));
   meta.push(s.locationName ?? t("admin.skus.global"));
-  meta.push(s.unitSize ? `${s.unit} · ${s.unitSize}` : s.unit);
+  meta.push(formatSkuPack(s, t));
   if (s.itemNumber) meta.push(`#${s.itemNumber}`);
 
   return (

@@ -14,8 +14,10 @@ const UPDATE_KEYS = [
   "vendorId",
   "locationId",
   "name",
-  "unit",
-  "unitSize",
+  "packFormat",
+  "unitsPerPack",
+  "eachSize",
+  "eachMeasure",
   "itemNumber",
   "sourceUrl",
   "leadTimeDays",
@@ -66,13 +68,21 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       if (typeof b.name !== "string") return jsonError(400, "invalid_payload", { field: "name" });
       changes.name = b.name;
     }
-    if ("unit" in b) {
-      if (typeof b.unit !== "string") return jsonError(400, "invalid_payload", { field: "unit" });
-      changes.unit = b.unit;
+    if ("packFormat" in b) {
+      if (typeof b.packFormat !== "string") return jsonError(400, "invalid_payload", { field: "packFormat" });
+      changes.packFormat = b.packFormat;
     }
-    if ("unitSize" in b) {
-      if (b.unitSize !== null && typeof b.unitSize !== "string") return jsonError(400, "invalid_payload", { field: "unitSize" });
-      changes.unitSize = b.unitSize as string | null;
+    if ("unitsPerPack" in b) {
+      if (b.unitsPerPack !== null && typeof b.unitsPerPack !== "number") return jsonError(400, "invalid_payload", { field: "unitsPerPack" });
+      changes.unitsPerPack = b.unitsPerPack as number | null;
+    }
+    if ("eachSize" in b) {
+      if (b.eachSize !== null && typeof b.eachSize !== "number") return jsonError(400, "invalid_payload", { field: "eachSize" });
+      changes.eachSize = b.eachSize as number | null;
+    }
+    if ("eachMeasure" in b) {
+      if (b.eachMeasure !== null && typeof b.eachMeasure !== "string") return jsonError(400, "invalid_payload", { field: "eachMeasure" });
+      changes.eachMeasure = b.eachMeasure as string | null;
     }
     if ("itemNumber" in b) {
       if (b.itemNumber !== null && typeof b.itemNumber !== "string") return jsonError(400, "invalid_payload", { field: "itemNumber" });
