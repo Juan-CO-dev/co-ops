@@ -24,6 +24,8 @@ import { setPrepItemMeta, setPrepItemSection, narrowPrepTemplateItem, isPrepMeta
 import { shapeToColumns, isPrepSectionName } from "@/lib/prep-sections";
 import { loadPrepSections } from "@/lib/prep-sections.server";
 import { loadUnits } from "@/lib/units.server";
+import { loadSkus, loadMeasureUnits } from "@/lib/admin/skus";
+import { loadItemComponentsForItems, type ComponentView } from "@/lib/admin/item-components";
 import type { AuthContext } from "@/lib/session";
 import type {
   ChecklistTemplateItem,
@@ -1950,6 +1952,12 @@ export interface ChecklistAdminView {
   sectionQuestions: SectionQuestionView[];
   /** Non-inventory item questions (active, by item_id + label) — Global tab. */
   itemQuestions: ItemQuestionView[];
+  /** BOM components across the registry items (C2 "Made from") — UI filters per item. */
+  itemComponents: ComponentView[];
+  /** Active SKUs for the BOM component picker. */
+  skuOptions: Array<{ id: string; name: string }>;
+  /** Measure-unit registry (oz/lb/count…) for the BOM line unit dropdown. */
+  measureUnits: Array<{ id: string; label: string }>;
 }
 
 /** A section question for the Global-tab UI (migration 0087 `section_questions`). */
@@ -2059,6 +2067,13 @@ export async function loadChecklistAdminView(
   // Non-inventory item questions (active), ordered by item_id + label.
   const itemQuestions = await loadItemQuestions(sb);
 
+  // C2 BOM: components across the registry + the picker pools (SKUs + measures).
+  const itemComponents = await loadItemComponentsForItems(actor, registry.map((r) => r.itemId));
+  const skuOptions = (await loadSkus(actor))
+    .filter((s) => s.active)
+    .map((s) => ({ id: s.id, name: s.name }));
+  const measureUnits = await loadMeasureUnits(actor);
+
   return {
     subtype,
     actorLevel: ROLES[actor.user.role].level,
@@ -2068,6 +2083,9 @@ export async function loadChecklistAdminView(
     units,
     sectionQuestions,
     itemQuestions,
+    itemComponents,
+    skuOptions,
+    measureUnits,
   };
 }
 

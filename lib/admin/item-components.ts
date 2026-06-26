@@ -160,8 +160,32 @@ export async function loadItemComponents(actor: AuthContext, itemId: string): Pr
     .order("display_order", { ascending: true })
     .returns<DbComponentRow[]>();
   if (error) throw new Error(`loadItemComponents failed: ${error.message}`);
-  const rows = data ?? [];
+  return hydrateComponentRows(data ?? []);
+}
+
+/**
+ * Bulk-load components for many parent items (≥6) in one query — for the 3-tab
+ * admin view (avoids N+1 over the registry). Returns a flat list; the UI filters
+ * per item (like itemQuestions). Ordered by display_order within each item.
+ */
+export async function loadItemComponentsForItems(actor: AuthContext, itemIds: string[]): Promise<ComponentView[]> {
+  requireLevel(actor, BOM_READ_MIN);
+  if (itemIds.length === 0) return [];
+  const sb = getServiceRoleClient();
+  const { data, error } = await sb
+    .from("item_components")
+    .select("id, item_id, component_sku_id, component_item_id, quantity, unit, display_order")
+    .in("item_id", itemIds)
+    .order("display_order", { ascending: true })
+    .returns<DbComponentRow[]>();
+  if (error) throw new Error(`loadItemComponentsForItems failed: ${error.message}`);
+  return hydrateComponentRows(data ?? []);
+}
+
+/** Hydrate component rows → ComponentView[] (batch SKU + sub-item name loads). */
+async function hydrateComponentRows(rows: DbComponentRow[]): Promise<ComponentView[]> {
   if (rows.length === 0) return [];
+  const sb = getServiceRoleClient();
 
   // Batch-hydrate SKU names + pack fields.
   const skuIds = [...new Set(rows.map((r) => r.component_sku_id).filter((v): v is string => v !== null))];
