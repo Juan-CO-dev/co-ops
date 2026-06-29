@@ -36,6 +36,7 @@ import type {
   PrepSection,
   PrepSectionDefn,
   PrepSectionShape,
+  TrackingType,
 } from "@/lib/types";
 
 export type PrepSubtype = "am_prep" | "mid_day_prep";
@@ -850,7 +851,6 @@ export async function addPrepItem(
     .from("items")
     .insert({
       location_id: tmpl.location_id,
-      kind: "manual",
       name: label,
       name_es: esLabel ?? null,
       section: input.section,
@@ -1727,7 +1727,7 @@ export interface AddRegistryItemInput {
 }
 
 /**
- * Create a GLOBAL registry item (location_id NULL, kind 'manual'). When
+ * Create a GLOBAL registry item (location_id NULL). When
  * isDefault, propagates it to every active location's am_prep template (same
  * path as setItemDefault(true)). Route enforces role.
  */
@@ -1758,7 +1758,6 @@ export async function addRegistryItem(
     .from("items")
     .insert({
       location_id: null,
-      kind: "manual",
       name,
       name_es: nameEs,
       section: args.section,
@@ -1926,6 +1925,12 @@ export interface ChecklistRegistryItem {
   minRoleLevel: number | null;
   /** Opening Phase-2 verification mirror gate (migration 0089); default true. */
   openingVerify: boolean;
+  /** How it's counted / depletes (migration 0097). */
+  trackingType: TrackingType;
+  /** Batch yield — par-units one batch makes (migration 0097). */
+  batchYield: number;
+  /** ≈ oz per full par-unit of the finished item (migration 0097). */
+  ozPerParUnit: number | null;
 }
 
 export interface ChecklistLocationView {
@@ -1999,12 +2004,12 @@ export async function loadChecklistAdminView(
   // Registry = active global items (location_id NULL), grouped/sorted by section.
   const { data: regRows, error: rErr } = await sb
     .from("items")
-    .select("id, name, name_es, section, default_par, default_par_unit, is_default, special_instruction, special_instruction_es, required, min_role_level, opening_verify")
+    .select("id, name, name_es, section, default_par, default_par_unit, is_default, special_instruction, special_instruction_es, required, min_role_level, opening_verify, tracking_type, batch_yield, oz_per_par_unit")
     .is("location_id", null)
     .eq("active", true)
     .order("section", { ascending: true })
     .order("name", { ascending: true })
-    .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; default_par: number | null; default_par_unit: string | null; is_default: boolean; special_instruction: string | null; special_instruction_es: string | null; required: boolean; min_role_level: number | null; opening_verify: boolean }>>();
+    .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; default_par: number | null; default_par_unit: string | null; is_default: boolean; special_instruction: string | null; special_instruction_es: string | null; required: boolean; min_role_level: number | null; opening_verify: boolean; tracking_type: string; batch_yield: number | string; oz_per_par_unit: number | string | null }>>();
   if (rErr) throw new Error(`loadChecklistAdminView registry failed: ${rErr.message}`);
   const registry: ChecklistRegistryItem[] = (regRows ?? []).map((r) => ({
     itemId: r.id,
@@ -2019,6 +2024,9 @@ export async function loadChecklistAdminView(
     required: r.required,
     minRoleLevel: r.min_role_level,
     openingVerify: r.opening_verify,
+    trackingType: (r.tracking_type ?? "portioned") as TrackingType,
+    batchYield: Number(r.batch_yield ?? 1),
+    ozPerParUnit: r.oz_per_par_unit == null ? null : Number(r.oz_per_par_unit),
   }));
 
   // Accessible locations (respect all-locations override + assignment list).
@@ -2187,6 +2195,9 @@ export async function updateRegistryItemDefinition(
     required?: boolean;
     minRoleLevel?: number;
     section?: PrepSection;
+    trackingType?: string;
+    batchYield?: number;
+    ozPerParUnit?: number | null;
   },
 ): Promise<void> {
   // Validate the full-definition fields up-front (before any read).
@@ -2200,11 +2211,20 @@ export async function updateRegistryItemDefinition(
   ) {
     throw new AdminTemplateError(400, "invalid_min_role", "Min role level must be between 0 and 10");
   }
+  if (args.trackingType !== undefined && !["on_hand", "portioned", "line"].includes(args.trackingType)) {
+    throw new AdminTemplateError(400, "invalid_tracking_type", "Tracking type must be on_hand, portioned, or line");
+  }
+  if (args.batchYield !== undefined && (!Number.isFinite(args.batchYield) || args.batchYield <= 0)) {
+    throw new AdminTemplateError(400, "invalid_batch_yield", "Batch yield must be a positive number");
+  }
+  if (args.ozPerParUnit !== undefined && args.ozPerParUnit !== null && (!Number.isFinite(args.ozPerParUnit) || args.ozPerParUnit <= 0)) {
+    throw new AdminTemplateError(400, "invalid_oz_per_par_unit", "Oz per par unit must be a positive number or empty");
+  }
 
   const { data: item, error: rErr } = await sb
     .from("items")
     .select(
-      "id, active, name, name_es, section, default_par, default_par_unit, special_instruction, special_instruction_es, min_role_level, required",
+      "id, active, name, name_es, section, default_par, default_par_unit, special_instruction, special_instruction_es, min_role_level, required, tracking_type, batch_yield, oz_per_par_unit",
     )
     .eq("id", args.itemId)
     .maybeSingle<{
@@ -2219,6 +2239,9 @@ export async function updateRegistryItemDefinition(
       special_instruction_es: string | null;
       min_role_level: number | null;
       required: boolean;
+      tracking_type: string;
+      batch_yield: number | string;
+      oz_per_par_unit: number | string | null;
     }>();
   if (rErr) throw new Error(`updateRegistryItemDefinition read failed: ${rErr.message}`);
   if (!item || !item.active) throw new AdminTemplateError(404, "item_not_found", "Item not found");
@@ -2281,6 +2304,17 @@ export async function updateRegistryItemDefinition(
       update.section = args.section; before.section = item.section; after.section = args.section;
       changes.section = args.section;
     }
+  }
+  // ── Recipe axes (migration 0097) — ITEM-ONLY; not carried on lines, so no `changes`. ──
+  if (args.trackingType !== undefined && args.trackingType !== item.tracking_type) {
+    update.tracking_type = args.trackingType; before.tracking_type = item.tracking_type; after.tracking_type = args.trackingType;
+  }
+  if (args.batchYield !== undefined && args.batchYield !== Number(item.batch_yield)) {
+    update.batch_yield = args.batchYield; before.batch_yield = Number(item.batch_yield); after.batch_yield = args.batchYield;
+  }
+  if (args.ozPerParUnit !== undefined) {
+    const prev = item.oz_per_par_unit == null ? null : Number(item.oz_per_par_unit);
+    if (args.ozPerParUnit !== prev) { update.oz_per_par_unit = args.ozPerParUnit; before.oz_per_par_unit = prev; after.oz_per_par_unit = args.ozPerParUnit; }
   }
 
   if (Object.keys(update).length === 0) return; // nothing changed
