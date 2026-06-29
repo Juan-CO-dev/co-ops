@@ -143,7 +143,8 @@ export interface ParLevel {
 // Item / inventory registry (Item/Inventory Spine, sub-project 1)
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type ItemKind = "sku_direct" | "composite" | "manual";
+/** How an item is counted / depletes (migration 0097). Consumed by R4 counting. */
+export type TrackingType = "on_hand" | "portioned" | "line";
 
 /**
  * Item registry row. The entity reports will reference (via
@@ -155,13 +156,18 @@ export type ItemKind = "sku_direct" | "composite" | "manual";
 export interface Item {
   id: string;
   locationId: string | null;
-  kind: ItemKind;
   name: string;
   nameEs: string | null;
   section: string | null;
   defaultPar: number | null;
   defaultParUnit: string | null;
   unit: string | null;
+  /** How it's counted / depletes (migration 0097); R4 consumes it. */
+  trackingType: TrackingType;
+  /** How many of the item's par-units one batch/composition makes (migration 0097). */
+  batchYield: number;
+  /** ≈ oz when a full default_par_unit of the FINISHED item (migration 0097); R4 consumes it. */
+  ozPerParUnit: number | null;
   notes: string | null;
   /** Global default-set membership (only meaningful when locationId is null). is_default=true propagates to all active locations (migration 0081). */
   isDefault: boolean;
