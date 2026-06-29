@@ -30,7 +30,7 @@ import { VENDOR_COLOR_PALETTE } from "@/lib/admin/vendors";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { postJson, resolveErrorKey, ORDERING_METHODS } from "./shared";
 import { MultiSelectChips } from "./MultiSelectChips";
-import type { RegistryOption, SkuView } from "@/lib/admin/skus";
+import type { RegistryOption, MeasureUnitOption, SkuView } from "@/lib/admin/skus";
 import type { SkuFormLocationOption } from "@/components/admin/skus/SkuForm";
 import { VendorSkusCard } from "@/components/admin/skus/VendorSkusCard";
 
@@ -55,7 +55,7 @@ export function VendorDetailClient({
   skus: SkuView[];
   skuLocations: SkuFormLocationOption[];
   skuPackFormats: RegistryOption[];
-  skuMeasureUnits: RegistryOption[];
+  skuMeasureUnits: MeasureUnitOption[];
   actorLevel: number;
 }) {
   const { t } = useTranslation();

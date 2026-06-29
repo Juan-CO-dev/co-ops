@@ -15,7 +15,7 @@ import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
-import type { RegistryOption, SkuView } from "@/lib/admin/skus";
+import type { RegistryOption, MeasureUnitOption, SkuView } from "@/lib/admin/skus";
 import { postJson, resolveErrorKey, formatSkuPack } from "./shared";
 import { SkuForm, type SkuFormLocationOption, type SkuFormValues } from "./SkuForm";
 
@@ -32,7 +32,7 @@ export function VendorSkusCard({
   skus: SkuView[];
   locations: SkuFormLocationOption[];
   packFormats: RegistryOption[];
-  measureUnits: RegistryOption[];
+  measureUnits: MeasureUnitOption[];
   actorLevel: number;
   canManage: boolean; // GM+
 }) {

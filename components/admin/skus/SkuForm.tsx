@@ -15,8 +15,10 @@
 import { useState } from "react";
 
 import { useTranslation } from "@/lib/i18n/provider";
-import type { RegistryOption, SkuView } from "@/lib/admin/skus";
+import type { RegistryOption, MeasureUnitOption, SkuView } from "@/lib/admin/skus";
+import { skuContentOz, type MeasureUnitFactor } from "@/lib/recipe-math";
 import { RegistrySelect } from "./RegistrySelect";
+import { MeasureUnitSelect } from "./MeasureUnitSelect";
 
 export interface SkuFormVendorOption {
   id: string;
@@ -36,6 +38,7 @@ export interface SkuFormValues {
   unitsPerPack: number | null;
   eachSize: number | null;
   eachMeasure: string | null;
+  avgOzPerEach: number | null;
   itemNumber: string | null;
   sourceUrl: string | null;
   leadTimeDays: number | null;
@@ -79,7 +82,7 @@ export function SkuForm({
   /** Pack-format registry options (Case/Box/Each…). */
   packFormats: RegistryOption[];
   /** Measure-unit registry options (oz/lb/count…). */
-  measureUnits: RegistryOption[];
+  measureUnits: MeasureUnitOption[];
   /** Actor's role level (drives the MoO+ add-new affordance on the registries). */
   actorLevel: number;
   busy: boolean;
@@ -105,6 +108,9 @@ export function SkuForm({
     initial?.eachSize != null ? String(initial.eachSize) : "",
   );
   const [eachMeasure, setEachMeasure] = useState(initial?.eachMeasure ?? "");
+  const [avgOzPerEach, setAvgOzPerEach] = useState(
+    initial?.avgOzPerEach != null ? String(initial.avgOzPerEach) : "",
+  );
   const [itemNumber, setItemNumber] = useState(initial?.itemNumber ?? "");
   const [sourceUrl, setSourceUrl] = useState(initial?.sourceUrl ?? "");
   const [leadTime, setLeadTime] = useState(
@@ -121,6 +127,21 @@ export function SkuForm({
     return trimmed === "" ? null : Number(trimmed);
   };
 
+  const measuresByLabel = new Map<string, MeasureUnitFactor>(
+    measureUnits.map((m) => [m.label, { dimension: m.dimension, toBaseFactor: m.toBaseFactor }]),
+  );
+  const selectedMeasure = measureUnits.find((m) => m.label === eachMeasure) ?? null;
+  const isNonWeight = selectedMeasure != null && selectedMeasure.dimension !== "weight";
+  const liveContentOz = skuContentOz(
+    {
+      unitsPerPack: parseNum(unitsPerPack),
+      eachSize: parseNum(eachSize),
+      eachMeasure: eachMeasure.trim() || null,
+      avgOzPerEach: parseNum(avgOzPerEach),
+    },
+    measuresByLabel,
+  );
+
   const submit = () => {
     if (!canSubmit) return;
     onSubmit({
@@ -131,6 +152,7 @@ export function SkuForm({
       unitsPerPack: parseNum(unitsPerPack),
       eachSize: parseNum(eachSize),
       eachMeasure: eachMeasure.trim() || null,
+      avgOzPerEach: parseNum(avgOzPerEach),
       itemNumber: itemNumber.trim() || null,
       sourceUrl: sourceUrl.trim() || null,
       leadTimeDays: parseNum(leadTime),
@@ -201,18 +223,37 @@ export function SkuForm({
             onChange={(e) => setEachSize(e.target.value)}
           />
         </Labeled>
-        <RegistrySelect
+        <MeasureUnitSelect
           label={t("admin.skus.field.each_measure")}
           value={eachMeasure}
           onChange={setEachMeasure}
           options={measureUnits}
           actorLevel={actorLevel}
-          addEndpoint="/api/admin/skus/measure-units"
-          addPromptKey="admin.skus.add_measure_prompt"
-          addButtonKey="admin.skus.add_measure"
           disabled={busy}
         />
       </div>
+
+      {isNonWeight ? (
+        <Labeled label={t("admin.skus.field.avg_oz_per_each")}>
+          <input
+            className={fieldCls}
+            type="number"
+            min={0}
+            step="any"
+            inputMode="decimal"
+            value={avgOzPerEach}
+            disabled={busy}
+            onChange={(e) => setAvgOzPerEach(e.target.value)}
+          />
+          <span className="mt-1 block text-xs text-co-text-muted">{t("admin.skus.avg_oz_per_each_hint")}</span>
+        </Labeled>
+      ) : null}
+      <p className="text-sm font-bold text-co-text">
+        {t("admin.skus.content_oz_label")}:{" "}
+        <span className="text-co-text-muted">
+          {liveContentOz == null ? "—" : `≈ ${Math.round(liveContentOz)} oz`}
+        </span>
+      </p>
 
       <Labeled label={t("admin.skus.field.location")}>
         <select
