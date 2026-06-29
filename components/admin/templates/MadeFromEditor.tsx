@@ -18,7 +18,7 @@ import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
-import { RegistrySelect } from "@/components/admin/skus/RegistrySelect";
+import { MeasureUnitSelect } from "@/components/admin/skus/MeasureUnitSelect";
 import { formatSkuPack } from "@/components/admin/skus/shared";
 import type { ComponentView } from "@/lib/admin/item-components";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -57,6 +57,7 @@ export function MadeFromEditor({
   itemOptions,
   measureUnits,
   actorLevel,
+  batchYield,
 }: {
   itemId: string;
   itemName: string;
@@ -65,6 +66,7 @@ export function MadeFromEditor({
   itemOptions: Array<{ id: string; name: string }>;
   measureUnits: Array<{ id: string; label: string }>;
   actorLevel: number;
+  batchYield: number;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -131,11 +133,14 @@ export function MadeFromEditor({
         {t("admin.items.made_from.title")}
       </h3>
       <p className="mt-1 text-xs text-co-text-muted">{t("admin.items.made_from.subtitle")}</p>
+      <p className="mt-1 text-xs text-co-text-muted">
+        {t("admin.items.made_from.batch_yield_note", { n: String(batchYield) })}
+      </p>
 
       {components.length > 0 ? (
         <div className="mt-2 flex flex-col gap-2">
           {components.map((c) => (
-            <MadeFromRow key={c.id} itemId={itemId} component={c} canEdit={canEdit} />
+            <MadeFromRow key={c.id} itemId={itemId} component={c} canEdit={canEdit} batchYield={batchYield} />
           ))}
         </div>
       ) : (
@@ -210,7 +215,7 @@ export function MadeFromEditor({
 
               {/* Quantity */}
               <label className="block">
-                <span className="text-sm font-bold text-co-text">{t("admin.items.made_from.quantity")}</span>
+                <span className="text-sm font-bold text-co-text">{t("admin.items.made_from.quantity_per_batch")}</span>
                 <input
                   className={field}
                   type="number"
@@ -223,15 +228,12 @@ export function MadeFromEditor({
               </label>
 
               {/* Measure */}
-              <RegistrySelect
+              <MeasureUnitSelect
                 label={t("admin.items.made_from.measure")}
                 value={unit}
                 onChange={setUnit}
                 options={measureUnits}
                 actorLevel={actorLevel}
-                addEndpoint="/api/admin/skus/measure-units"
-                addPromptKey="admin.skus.add_measure_prompt"
-                addButtonKey="admin.skus.add_measure"
               />
 
               {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
@@ -273,10 +275,12 @@ function MadeFromRow({
   itemId,
   component,
   canEdit,
+  batchYield,
 }: {
   itemId: string;
   component: ComponentView;
   canEdit: boolean;
+  batchYield: number;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -302,12 +306,15 @@ function MadeFromRow({
   };
 
   const qtyLabel = `${component.quantity} ${component.unit ?? ""} ${component.componentName}`.replace(/\s+/g, " ").trim();
+  const perUnit = batchYield > 0 ? component.quantity / batchYield : null;
+  const perUnitLabel = perUnit == null ? null : `${t("admin.items.made_from.per_unit")}: ${Number(perUnit.toFixed(3))} ${component.unit ?? ""}`.replace(/\s+/g, " ").trim();
 
   return (
     <div className="rounded-lg border-2 border-co-border bg-co-surface p-3">
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <p className="text-sm font-bold text-co-text">{qtyLabel}</p>
+          {perUnitLabel ? <p className="text-xs text-co-text-muted">{perUnitLabel}</p> : null}
           {component.kind === "sku" ? (
             <p className="text-xs text-co-text-muted">
               {component.skuPack ? formatSkuPack(component.skuPack, t) : "—"}

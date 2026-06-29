@@ -838,6 +838,9 @@ function RegistryRow({
   const [specialInstructionEs, setSpecialInstructionEs] = useState(item.specialInstructionEs ?? "");
   const [required, setRequired] = useState(item.required);
   const [minRole, setMinRole] = useState(item.minRoleLevel?.toString() ?? "");
+  const [trackingType, setTrackingType] = useState(item.trackingType);
+  const [batchYield, setBatchYield] = useState(item.batchYield.toString());
+  const [ozPerParUnit, setOzPerParUnit] = useState(item.ozPerParUnit != null ? String(item.ozPerParUnit) : "");
   const slugs = orderedSectionSlugs(sections);
   const activeSlugs = new Set(slugs);
   const initialSection: PrepSection = isPrepSectionName(item.section, activeSlugs)
@@ -898,6 +901,9 @@ function RegistryRow({
         required,
         ...(minRole.trim() === "" ? {} : { minRoleLevel: Number(minRole) }),
         section,
+        trackingType,
+        ...(batchYield.trim() === "" ? {} : { batchYield: Number(batchYield) }),
+        ozPerParUnit: ozPerParUnit.trim() === "" ? null : Number(ozPerParUnit),
       },
       "PATCH",
     );
@@ -947,6 +953,7 @@ function RegistryRow({
             itemOptions={itemOptions}
             measureUnits={measureUnits}
             actorLevel={actorLevel}
+            batchYield={item.batchYield}
           />
         </div>
       ) : null}
@@ -1020,6 +1027,21 @@ function RegistryRow({
               </select>
             </Labeled>
             <p className="mt-1 text-xs text-co-text-muted">{t("admin.templates.min_role.hint")}</p>
+            <Labeled label={t("admin.templates.field.tracking_type")}>
+              <select className={field} value={trackingType} onChange={(e) => setTrackingType(e.target.value as typeof trackingType)}>
+                <option value="on_hand">{t("admin.templates.tracking_type.on_hand")}</option>
+                <option value="portioned">{t("admin.templates.tracking_type.portioned")}</option>
+                <option value="line">{t("admin.templates.tracking_type.line")}</option>
+              </select>
+            </Labeled>
+            <Labeled label={t("admin.templates.field.batch_yield")}>
+              <input className={field} type="number" min={0} step="any" inputMode="decimal" value={batchYield} onChange={(e) => setBatchYield(e.target.value)} />
+              <span className="mt-1 block text-xs text-co-text-muted">{t("admin.templates.batch_yield_hint")}</span>
+            </Labeled>
+            <Labeled label={t("admin.templates.field.oz_per_par_unit")}>
+              <input className={field} type="number" min={0} step="any" inputMode="decimal" value={ozPerParUnit} onChange={(e) => setOzPerParUnit(e.target.value)} />
+              <span className="mt-1 block text-xs text-co-text-muted">{t("admin.templates.oz_per_par_unit_hint")}</span>
+            </Labeled>
             <p className="mt-2 text-xs text-co-text-muted">{t("admin.templates.definition.blast_radius_note")}</p>
             <div className="mt-3 flex justify-end">
               <button
