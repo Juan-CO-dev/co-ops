@@ -20,9 +20,19 @@ export async function POST(req: NextRequest) {
   if (typeof b.label !== "string" || !b.label.trim()) {
     return jsonError(400, "invalid_label", { field: "label" });
   }
+  if (typeof b.dimension !== "string") {
+    return jsonError(400, "invalid_dimension", { field: "dimension" });
+  }
+  if (typeof b.toBaseFactor !== "number") {
+    return jsonError(400, "invalid_factor", { field: "toBaseFactor" });
+  }
 
   try {
-    const option = await addMeasureUnit(ctx, b.label);
+    const option = await addMeasureUnit(ctx, {
+      label: b.label,
+      dimension: b.dimension,
+      toBaseFactor: b.toBaseFactor,
+    });
     return jsonOk({ option }, 201);
   } catch (e) {
     if (e instanceof AdminSkuError) return jsonError(e.status, e.code, { message: e.message });
