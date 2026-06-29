@@ -38,6 +38,9 @@ const KNOWN = new Set([
   "invalid_payload",
   "item_unlinked",
   "not_a_prep_item",
+  "invalid_tracking_type",
+  "invalid_batch_yield",
+  "invalid_oz_per_par_unit",
   "step_up_required",
   "step_up_stale",
 ]);
