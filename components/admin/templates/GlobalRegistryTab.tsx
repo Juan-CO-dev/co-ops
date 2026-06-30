@@ -43,6 +43,7 @@ export function GlobalRegistryTab({
   skuOptions,
   measureUnits,
   actorLevel,
+  itemCosts,
 }: {
   registry: ChecklistRegistryItem[];
   sections: PrepSectionDefn[];
@@ -53,6 +54,7 @@ export function GlobalRegistryTab({
   skuOptions: Array<{ id: string; name: string }>;
   measureUnits: Array<{ id: string; label: string }>;
   actorLevel: number;
+  itemCosts: Record<string, { perUnitCost: number | null; foodCostPct: number | null }>;
 }) {
   // Sub-item picker options (every registry item; the row excludes the parent).
   const itemOptions = registry.map((r) => ({ id: r.itemId, name: r.name }));
@@ -148,6 +150,7 @@ export function GlobalRegistryTab({
                   skuOptions={skuOptions}
                   itemOptions={itemOptions}
                   measureUnits={measureUnits}
+                  cost={itemCosts[r.itemId] ?? null}
                 />
               ))}
             </div>
@@ -805,6 +808,7 @@ function RegistryRow({
   skuOptions,
   itemOptions,
   measureUnits,
+  cost,
 }: {
   item: ChecklistRegistryItem;
   actorLevel: number;
@@ -816,6 +820,7 @@ function RegistryRow({
   skuOptions: Array<{ id: string; name: string }>;
   itemOptions: Array<{ id: string; name: string }>;
   measureUnits: Array<{ id: string; label: string }>;
+  cost: { perUnitCost: number | null; foodCostPct: number | null } | null;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -954,6 +959,7 @@ function RegistryRow({
             measureUnits={measureUnits}
             actorLevel={actorLevel}
             batchYield={item.batchYield}
+            cost={cost}
           />
         </div>
       ) : null}

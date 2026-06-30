@@ -72,6 +72,7 @@ export function ChecklistTabs({ view }: { view: ChecklistAdminView }) {
           skuOptions={view.skuOptions}
           measureUnits={view.measureUnits}
           actorLevel={view.actorLevel}
+          itemCosts={view.itemCosts}
         />
       ) : selectedLocation ? (
         <LocationChecklistTab
