@@ -29,6 +29,9 @@ const KNOWN_ERROR_CODES = new Set([
   "invalid_payload",
   "step_up_required",
   "step_up_stale",
+  "invalid_price",
+  "invalid_date",
+  "invalid_sku",
 ]);
 
 /** Resolve an error `code` to a localized message, falling back to generic. */
