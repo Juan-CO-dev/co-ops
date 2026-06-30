@@ -846,6 +846,7 @@ function RegistryRow({
   const [trackingType, setTrackingType] = useState(item.trackingType);
   const [batchYield, setBatchYield] = useState(item.batchYield.toString());
   const [ozPerParUnit, setOzPerParUnit] = useState(item.ozPerParUnit != null ? String(item.ozPerParUnit) : "");
+  const [menuPrice, setMenuPrice] = useState(item.menuPrice != null ? String(item.menuPrice) : "");
   const slugs = orderedSectionSlugs(sections);
   const activeSlugs = new Set(slugs);
   const initialSection: PrepSection = isPrepSectionName(item.section, activeSlugs)
@@ -909,6 +910,7 @@ function RegistryRow({
         trackingType,
         ...(batchYield.trim() === "" ? {} : { batchYield: Number(batchYield) }),
         ozPerParUnit: ozPerParUnit.trim() === "" ? null : Number(ozPerParUnit),
+        menuPrice: menuPrice.trim() === "" ? null : Number(menuPrice),
       },
       "PATCH",
     );
@@ -1047,6 +1049,10 @@ function RegistryRow({
             <Labeled label={t("admin.templates.field.oz_per_par_unit")}>
               <input className={field} type="number" min={0} step="any" inputMode="decimal" value={ozPerParUnit} onChange={(e) => setOzPerParUnit(e.target.value)} />
               <span className="mt-1 block text-xs text-co-text-muted">{t("admin.templates.oz_per_par_unit_hint")}</span>
+            </Labeled>
+            <Labeled label={t("admin.templates.field.menu_price")}>
+              <input className={field} type="number" min={0} step="any" inputMode="decimal" value={menuPrice} onChange={(e) => setMenuPrice(e.target.value)} />
+              <span className="mt-1 block text-xs text-co-text-muted">{t("admin.templates.menu_price_hint")}</span>
             </Labeled>
             <p className="mt-2 text-xs text-co-text-muted">{t("admin.templates.definition.blast_radius_note")}</p>
             <div className="mt-3 flex justify-end">
