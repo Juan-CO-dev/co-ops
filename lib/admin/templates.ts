@@ -26,6 +26,8 @@ import { loadPrepSections } from "@/lib/prep-sections.server";
 import { loadUnits } from "@/lib/units.server";
 import { loadSkus, loadMeasureUnits } from "@/lib/admin/skus";
 import { loadItemComponentsForItems, type ComponentView } from "@/lib/admin/item-components";
+import { loadCurrentSkuPrices, computeSkuCostPerOz, annotateComponentCosts } from "@/lib/admin/cost";
+import { skuContentOz, type MeasureUnitFactor } from "@/lib/recipe-math";
 import type { AuthContext } from "@/lib/session";
 import type {
   ChecklistTemplateItem,
@@ -1966,6 +1968,8 @@ export interface ChecklistAdminView {
   skuOptions: Array<{ id: string; name: string }>;
   /** Measure-unit registry (oz/lb/count…) for the BOM line unit dropdown. */
   measureUnits: Array<{ id: string; label: string }>;
+  /** Per-item derived cost (R2) — keyed by itemId. */
+  itemCosts: Record<string, { perUnitCost: number | null; foodCostPct: number | null }>;
 }
 
 /** A section question for the Global-tab UI (migration 0087 `section_questions`). */
@@ -2081,10 +2085,32 @@ export async function loadChecklistAdminView(
 
   // C2 BOM: components across the registry + the picker pools (SKUs + measures).
   const itemComponents = await loadItemComponentsForItems(actor, registry.map((r) => r.itemId));
-  const skuOptions = (await loadSkus(actor))
-    .filter((s) => s.active)
-    .map((s) => ({ id: s.id, name: s.name }));
+  const activeSkus = (await loadSkus(actor)).filter((s) => s.active);
+  const skuOptions = activeSkus.map((s) => ({ id: s.id, name: s.name }));
   const measureUnits = await loadMeasureUnits(actor);
+
+  // ── R2 cost annotation ──
+  const measuresMap = new Map<string, MeasureUnitFactor>(
+    measureUnits.map((x) => [x.label, { dimension: x.dimension, toBaseFactor: x.toBaseFactor }]),
+  );
+  const skuInputs = activeSkus.map((s) => ({
+    id: s.id, unitsPerPack: s.unitsPerPack, eachSize: s.eachSize, eachMeasure: s.eachMeasure, avgOzPerEach: s.avgOzPerEach,
+  }));
+  const prices = await loadCurrentSkuPrices(skuInputs.map((s) => s.id));
+  const skuCostPerOzById = computeSkuCostPerOz(skuInputs, prices, measureUnits);
+  const skuContentOzById = new Map<string, number | null>(
+    skuInputs.map((s) => [s.id, skuContentOz({ unitsPerPack: s.unitsPerPack, eachSize: s.eachSize, eachMeasure: s.eachMeasure, avgOzPerEach: s.avgOzPerEach }, measuresMap)]),
+  );
+  const skuAvgOzById = new Map<string, number | null>(skuInputs.map((s) => [s.id, s.avgOzPerEach]));
+  const { components: annotatedComponents, itemCosts: itemCostsMap } = annotateComponentCosts({
+    components: itemComponents,
+    items: registry.map((r) => ({ itemId: r.itemId, batchYield: r.batchYield, menuPrice: r.menuPrice })),
+    skuCostPerOzById,
+    skuContentOzById,
+    skuAvgOzById,
+    measures: measureUnits,
+  });
+  const itemCosts = Object.fromEntries(itemCostsMap);
 
   return {
     subtype,
@@ -2095,9 +2121,10 @@ export async function loadChecklistAdminView(
     units,
     sectionQuestions,
     itemQuestions,
-    itemComponents,
+    itemComponents: annotatedComponents,
     skuOptions,
     measureUnits,
+    itemCosts,
   };
 }
 
