@@ -115,3 +115,88 @@ export function packYieldForComponent(contentOz: number | null, perUnitOz: numbe
   if (contentOz == null || perUnitOz == null || perUnitOz <= 0) return null;
   return contentOz / perUnitOz;
 }
+
+// ── Cost (R2) — ride the same per-batch ÷ batch_yield math as the oz functions. ──
+
+/** Cost of ONE oz of a SKU = pack price ÷ content_oz. Null if price/content missing. */
+export function skuCostPerOz(packPrice: number | null, contentOz: number | null): number | null {
+  if (packPrice == null || contentOz == null || contentOz <= 0) return null;
+  const v = packPrice / contentOz;
+  return Number.isFinite(v) ? v : null;
+}
+
+/**
+ * Cost of a SKU component per ONE par-unit = componentPerUnitOz × cost/oz.
+ * (componentPerUnitOz already divides per-batch quantity by batch_yield.)
+ */
+export function componentPerUnitCost(
+  args: {
+    quantity: number;
+    unit: string | null;
+    batchYield: number;
+    skuAvgOzPerEach: number | null;
+    skuCostPerOz: number | null;
+  },
+  measuresByLabel: Map<string, MeasureUnitFactor>,
+): number | null {
+  if (args.skuCostPerOz == null) return null;
+  const perUnitOz = componentPerUnitOz(
+    { quantity: args.quantity, unit: args.unit, batchYield: args.batchYield, skuAvgOzPerEach: args.skuAvgOzPerEach },
+    measuresByLabel,
+  );
+  return perUnitOz == null ? null : perUnitOz * args.skuCostPerOz;
+}
+
+/**
+ * Cost of inputs consumed per ONE par-unit of `item` = Σ component costs.
+ * SKU components cost via `skuCostPerOzById`; sub-item components recurse via
+ * `resolveSubItemPerUnitCost` and divide by `batchYield` — the SAME per-batch
+ * semantics as `itemPerUnitOz` (component quantities are per-batch; this resolves
+ * the R1 spec-prose carry-forward — the code was correct). Null if any component
+ * cost is unresolved (UI shows "— incomplete").
+ */
+export function itemPerUnitCost(
+  batchYield: number,
+  components: Array<{
+    quantity: number;
+    unit: string | null;
+    componentSkuId: string | null;
+    componentItemId: string | null;
+    skuAvgOzPerEach: number | null;
+  }>,
+  measuresByLabel: Map<string, MeasureUnitFactor>,
+  skuCostPerOzById: Map<string, number | null>,
+  resolveSubItemPerUnitCost: (itemId: string) => number | null,
+): number | null {
+  if (!Number.isFinite(batchYield) || batchYield <= 0) return null;
+  let sum = 0;
+  for (const c of components) {
+    let cost: number | null;
+    if (c.componentSkuId != null) {
+      cost = componentPerUnitCost(
+        {
+          quantity: c.quantity,
+          unit: c.unit,
+          batchYield,
+          skuAvgOzPerEach: c.skuAvgOzPerEach,
+          skuCostPerOz: skuCostPerOzById.get(c.componentSkuId) ?? null,
+        },
+        measuresByLabel,
+      );
+    } else if (c.componentItemId != null) {
+      const sub = resolveSubItemPerUnitCost(c.componentItemId);
+      cost = sub == null ? null : (c.quantity * sub) / batchYield;
+    } else {
+      cost = null;
+    }
+    if (cost == null) return null;
+    sum += cost;
+  }
+  return sum;
+}
+
+/** Food-cost fraction = per-unit cost ÷ sell price (caller ×100 for %). */
+export function foodCostPct(perUnitCost: number | null, menuPrice: number | null): number | null {
+  if (perUnitCost == null || menuPrice == null || menuPrice <= 0) return null;
+  return perUnitCost / menuPrice;
+}
