@@ -1228,6 +1228,7 @@ export async function promoteItemToGlobal(
     throw new AdminTemplateError(404, "item_not_found", "Item not found");
   }
 
+  // All item columns (incl. menu_price, oz_per_par_unit, tracking_type, etc.) ride this in-place flip automatically — no explicit column list needed.
   const { error: uErr } = await sb
     .from("items")
     .update({ location_id: null, updated_by: actor.user.id, updated_at: new Date().toISOString() })
@@ -1931,6 +1932,8 @@ export interface ChecklistRegistryItem {
   batchYield: number;
   /** ≈ oz per full par-unit of the finished item (migration 0097). */
   ozPerParUnit: number | null;
+  /** Sell price (migration 0099) for food-cost % (R2). */
+  menuPrice: number | null;
 }
 
 export interface ChecklistLocationView {
@@ -2004,12 +2007,12 @@ export async function loadChecklistAdminView(
   // Registry = active global items (location_id NULL), grouped/sorted by section.
   const { data: regRows, error: rErr } = await sb
     .from("items")
-    .select("id, name, name_es, section, default_par, default_par_unit, is_default, special_instruction, special_instruction_es, required, min_role_level, opening_verify, tracking_type, batch_yield, oz_per_par_unit")
+    .select("id, name, name_es, section, default_par, default_par_unit, is_default, special_instruction, special_instruction_es, required, min_role_level, opening_verify, tracking_type, batch_yield, oz_per_par_unit, menu_price")
     .is("location_id", null)
     .eq("active", true)
     .order("section", { ascending: true })
     .order("name", { ascending: true })
-    .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; default_par: number | null; default_par_unit: string | null; is_default: boolean; special_instruction: string | null; special_instruction_es: string | null; required: boolean; min_role_level: number | null; opening_verify: boolean; tracking_type: string; batch_yield: number | string; oz_per_par_unit: number | string | null }>>();
+    .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; default_par: number | null; default_par_unit: string | null; is_default: boolean; special_instruction: string | null; special_instruction_es: string | null; required: boolean; min_role_level: number | null; opening_verify: boolean; tracking_type: string; batch_yield: number | string; oz_per_par_unit: number | string | null; menu_price: number | string | null }>>();
   if (rErr) throw new Error(`loadChecklistAdminView registry failed: ${rErr.message}`);
   const registry: ChecklistRegistryItem[] = (regRows ?? []).map((r) => ({
     itemId: r.id,
@@ -2027,6 +2030,7 @@ export async function loadChecklistAdminView(
     trackingType: (r.tracking_type ?? "portioned") as TrackingType,
     batchYield: Number(r.batch_yield ?? 1),
     ozPerParUnit: r.oz_per_par_unit == null ? null : Number(r.oz_per_par_unit),
+    menuPrice: r.menu_price == null ? null : Number(r.menu_price),
   }));
 
   // Accessible locations (respect all-locations override + assignment list).
@@ -2198,6 +2202,7 @@ export async function updateRegistryItemDefinition(
     trackingType?: string;
     batchYield?: number;
     ozPerParUnit?: number | null;
+    menuPrice?: number | null;
   },
 ): Promise<void> {
   // Validate the full-definition fields up-front (before any read).
@@ -2220,11 +2225,14 @@ export async function updateRegistryItemDefinition(
   if (args.ozPerParUnit !== undefined && args.ozPerParUnit !== null && (!Number.isFinite(args.ozPerParUnit) || args.ozPerParUnit <= 0)) {
     throw new AdminTemplateError(400, "invalid_oz_per_par_unit", "Oz per par unit must be a positive number or empty");
   }
+  if (args.menuPrice !== undefined && args.menuPrice !== null && (!Number.isFinite(args.menuPrice) || args.menuPrice <= 0)) {
+    throw new AdminTemplateError(400, "invalid_menu_price", "Menu price must be a positive number or empty");
+  }
 
   const { data: item, error: rErr } = await sb
     .from("items")
     .select(
-      "id, active, name, name_es, section, default_par, default_par_unit, special_instruction, special_instruction_es, min_role_level, required, tracking_type, batch_yield, oz_per_par_unit",
+      "id, active, name, name_es, section, default_par, default_par_unit, special_instruction, special_instruction_es, min_role_level, required, tracking_type, batch_yield, oz_per_par_unit, menu_price",
     )
     .eq("id", args.itemId)
     .maybeSingle<{
@@ -2242,6 +2250,7 @@ export async function updateRegistryItemDefinition(
       tracking_type: string;
       batch_yield: number | string;
       oz_per_par_unit: number | string | null;
+      menu_price: number | string | null;
     }>();
   if (rErr) throw new Error(`updateRegistryItemDefinition read failed: ${rErr.message}`);
   if (!item || !item.active) throw new AdminTemplateError(404, "item_not_found", "Item not found");
@@ -2315,6 +2324,10 @@ export async function updateRegistryItemDefinition(
   if (args.ozPerParUnit !== undefined) {
     const prev = item.oz_per_par_unit == null ? null : Number(item.oz_per_par_unit);
     if (args.ozPerParUnit !== prev) { update.oz_per_par_unit = args.ozPerParUnit; before.oz_per_par_unit = prev; after.oz_per_par_unit = args.ozPerParUnit; }
+  }
+  if (args.menuPrice !== undefined) {
+    const prev = item.menu_price == null ? null : Number(item.menu_price);
+    if (args.menuPrice !== prev) { update.menu_price = args.menuPrice; before.menu_price = prev; after.menu_price = args.menuPrice; }
   }
 
   if (Object.keys(update).length === 0) return; // nothing changed

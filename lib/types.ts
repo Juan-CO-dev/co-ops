@@ -168,6 +168,8 @@ export interface Item {
   batchYield: number;
   /** ≈ oz when a full default_par_unit of the FINISHED item (migration 0097); R4 consumes it. */
   ozPerParUnit: number | null;
+  /** Hand-entered sell/menu price (migration 0099); drives food-cost % in R2. */
+  menuPrice: number | null;
   notes: string | null;
   /** Global default-set membership (only meaningful when locationId is null). is_default=true propagates to all active locations (migration 0081). */
   isDefault: boolean;
