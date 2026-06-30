@@ -43,6 +43,7 @@ const KNOWN = new Set([
   "invalid_oz_per_par_unit",
   "step_up_required",
   "step_up_stale",
+  "invalid_menu_price",
 ]);
 
 export function resolveErrorKey(code: string): TranslationKey {

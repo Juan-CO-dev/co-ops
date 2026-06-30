@@ -17,6 +17,7 @@ import { serverT } from "@/lib/i18n/server";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadSkus, loadPackFormats, loadMeasureUnits } from "@/lib/admin/skus";
 import { loadVendors } from "@/lib/admin/vendors";
+import { loadCurrentSkuPrices, computeSkuCostPerOz, loadSkuUsageMap } from "@/lib/admin/cost";
 import { SkuCatalogClient } from "@/components/admin/skus/SkuCatalogClient";
 
 export default async function AdminSkusPage() {
@@ -42,6 +43,12 @@ export default async function AdminSkusPage() {
     name: (r as { name: string }).name,
   }));
 
+  const prices = await loadCurrentSkuPrices(skus.map((s) => s.id));
+  const costPerOz = computeSkuCostPerOz(skus, prices, measureUnits);
+  const usage = await loadSkuUsageMap();
+  const skuCost: Record<string, { currentPrice: number | null; costPerOz: number | null; usedBy: string[] }> =
+    Object.fromEntries(skus.map((s) => [s.id, { currentPrice: prices.get(s.id) ?? null, costPerOz: costPerOz.get(s.id) ?? null, usedBy: usage.get(s.id) ?? [] }]));
+
   return (
     <div>
       <h1 className="text-xl font-extrabold leading-tight text-co-text">
@@ -54,6 +61,7 @@ export default async function AdminSkusPage() {
         locations={locations}
         packFormats={packFormats}
         measureUnits={measureUnits}
+        skuCost={skuCost}
         actorLevel={level}
         canManage={level >= 7}
       />

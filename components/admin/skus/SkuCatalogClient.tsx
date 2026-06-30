@@ -18,6 +18,7 @@ import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
 import type { RegistryOption, MeasureUnitOption, SkuView } from "@/lib/admin/skus";
 import { postJson, resolveErrorKey, formatSkuPack } from "./shared";
+import { SkuCostPanel, type SkuCostInfo } from "./SkuCostPanel";
 import {
   SkuForm,
   type SkuFormLocationOption,
@@ -35,6 +36,7 @@ export function SkuCatalogClient({
   locations,
   packFormats,
   measureUnits,
+  skuCost,
   actorLevel,
   canManage,
 }: {
@@ -43,6 +45,7 @@ export function SkuCatalogClient({
   locations: SkuFormLocationOption[];
   packFormats: RegistryOption[];
   measureUnits: MeasureUnitOption[];
+  skuCost: Record<string, SkuCostInfo>;
   actorLevel: number;
   canManage: boolean; // GM+
 }) {
@@ -197,6 +200,13 @@ export function SkuCatalogClient({
                   onAskDeactivate={() => setConfirmDeactivateId(s.id)}
                   onCancelDeactivate={() => setConfirmDeactivateId(null)}
                   onConfirmDeactivate={() => void toggleActive(s)}
+                />
+              )}
+              {editingId === s.id ? null : (
+                <SkuCostPanel
+                  skuId={s.id}
+                  cost={skuCost[s.id] ?? { currentPrice: null, costPerOz: null, usedBy: [] }}
+                  canRecord={actorLevel >= 6}
                 />
               )}
             </li>

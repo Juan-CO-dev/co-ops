@@ -58,6 +58,7 @@ export function MadeFromEditor({
   measureUnits,
   actorLevel,
   batchYield,
+  cost,
 }: {
   itemId: string;
   itemName: string;
@@ -67,6 +68,7 @@ export function MadeFromEditor({
   measureUnits: Array<{ id: string; label: string }>;
   actorLevel: number;
   batchYield: number;
+  cost: { perUnitCost: number | null; foodCostPct: number | null } | null;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -135,6 +137,10 @@ export function MadeFromEditor({
       <p className="mt-1 text-xs text-co-text-muted">{t("admin.items.made_from.subtitle")}</p>
       <p className="mt-1 text-xs text-co-text-muted">
         {t("admin.items.made_from.batch_yield_note", { n: String(batchYield) })}
+      </p>
+      <p className="mt-1 text-xs text-co-text-muted">
+        {t("admin.items.made_from.unit_cost")}: {cost?.perUnitCost == null ? "—" : `$${cost.perUnitCost.toFixed(2)}`}
+        {cost?.foodCostPct != null ? ` · ${t("admin.items.made_from.food_cost")}: ${Math.round(cost.foodCostPct * 100)}%` : ""}
       </p>
 
       {components.length > 0 ? (
@@ -315,6 +321,12 @@ function MadeFromRow({
         <div className="min-w-0">
           <p className="text-sm font-bold text-co-text">{qtyLabel}</p>
           {perUnitLabel ? <p className="text-xs text-co-text-muted">{perUnitLabel}</p> : null}
+          {component.kind === "sku" && (component.perUnitCost != null || component.packYield != null) ? (
+            <p className="text-xs text-co-text-muted">
+              {component.perUnitCost != null ? `${t("admin.items.made_from.cost")}: $${component.perUnitCost.toFixed(2)}` : ""}
+              {component.packYield != null ? ` · ${t("admin.items.made_from.yield")}: ${t("admin.items.made_from.case_makes", { n: String(Math.round(component.packYield)) })}` : ""}
+            </p>
+          ) : null}
           {component.kind === "sku" ? (
             <p className="text-xs text-co-text-muted">
               {component.skuPack ? formatSkuPack(component.skuPack, t) : "—"}

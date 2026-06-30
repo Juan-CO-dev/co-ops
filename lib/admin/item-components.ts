@@ -49,6 +49,9 @@ export interface ComponentView {
   quantity: number;
   unit: string | null;
   displayOrder: number;
+  /** R2 cost annotation (filled by lib/admin/cost.ts annotateComponentCosts; absent on the raw load). */
+  perUnitCost?: number | null;
+  packYield?: number | null;
 }
 
 export class AdminItemComponentError extends Error {

@@ -25,7 +25,7 @@ export async function PATCH(
   const patch: {
     name?: string; nameEs?: string | null; recommendedPar?: number | null; recommendedParUnit?: string | null;
     specialInstruction?: string | null; specialInstructionEs?: string | null; required?: boolean; minRoleLevel?: number; section?: PrepSection;
-    trackingType?: string; batchYield?: number; ozPerParUnit?: number | null;
+    trackingType?: string; batchYield?: number; ozPerParUnit?: number | null; menuPrice?: number | null;
   } = {};
   if (typeof b.name === "string") patch.name = b.name;
   if (b.nameEs === null || typeof b.nameEs === "string") patch.nameEs = b.nameEs as string | null;
@@ -39,6 +39,7 @@ export async function PATCH(
   if (typeof b.trackingType === "string") patch.trackingType = b.trackingType; // lib validates the enum
   if (typeof b.batchYield === "number") patch.batchYield = b.batchYield;
   if (b.ozPerParUnit === null || typeof b.ozPerParUnit === "number") patch.ozPerParUnit = b.ozPerParUnit as number | null;
+  if (b.menuPrice === null || typeof b.menuPrice === "number") patch.menuPrice = b.menuPrice as number | null;
 
   if (Object.keys(patch).length === 0) return jsonError(400, "invalid_payload", { message: "no editable fields" });
   try {
