@@ -30,6 +30,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
+import type { MeasureDimension } from "@/lib/recipe-math";
 
 // ── Authority floors (the lib is the authority per-action) ──────────────────
 export const SKU_READ_MIN = 6; // AGM+ — view the catalog + registries
@@ -48,6 +49,7 @@ export interface SkuView {
   unitsPerPack: number | null; // 6 (1 for Each)
   eachSize: number | null; // 32
   eachMeasure: string | null; // label (oz/lb/count…)
+  avgOzPerEach: number | null; // oz per one each_measure unit (count/volume); null for weight
   itemNumber: string | null;
   sourceUrl: string | null;
   leadTimeDays: number | null;
@@ -59,6 +61,14 @@ export interface SkuView {
 export interface RegistryOption {
   id: string;
   label: string;
+}
+
+/** A measure-unit registry option carrying its conversion data (R1). */
+export interface MeasureUnitOption {
+  id: string;
+  label: string;
+  dimension: MeasureDimension;
+  toBaseFactor: number;
 }
 
 /** Typed error the routes map to jsonError(status, code). Mirrors AdminVendorError. */
@@ -110,6 +120,15 @@ function normalizeEachSize(v: number | null | undefined): number | null {
   return v;
 }
 
+/** avg_oz_per_each: null clears; a value must be a positive number. */
+function normalizeAvgOzPerEach(v: number | null | undefined): number | null {
+  if (v === null || v === undefined) return null;
+  if (!Number.isFinite(v) || v <= 0) {
+    throw new AdminSkuError(400, "invalid_avg_oz_per_each", "Average oz per each must be a positive number");
+  }
+  return v;
+}
+
 /** Verify a vendor id exists AND is active, else invalid_vendor. */
 async function assertVendorActive(vendorId: string): Promise<void> {
   const sb = getServiceRoleClient();
@@ -145,6 +164,7 @@ interface DbSkuRow {
   units_per_pack: number | null;
   each_size: number | string | null; // numeric arrives as string from PostgREST
   each_measure: string | null;
+  avg_oz_per_each: number | string | null;
   item_number: string | null;
   source_url: string | null;
   lead_time_days: number | null;
@@ -153,7 +173,7 @@ interface DbSkuRow {
 }
 
 const SKU_COLS =
-  "id, vendor_id, location_id, name, pack_format, units_per_pack, each_size, each_measure, item_number, source_url, lead_time_days, notes, active";
+  "id, vendor_id, location_id, name, pack_format, units_per_pack, each_size, each_measure, item_number, source_url, lead_time_days, notes, active, avg_oz_per_each";
 
 function toNum(v: number | string | null): number | null {
   if (v === null) return null;
@@ -203,6 +223,7 @@ async function hydrateSkus(rows: DbSkuRow[]): Promise<SkuView[]> {
     unitsPerPack: r.units_per_pack,
     eachSize: toNum(r.each_size),
     eachMeasure: r.each_measure,
+    avgOzPerEach: toNum(r.avg_oz_per_each),
     itemNumber: r.item_number,
     sourceUrl: r.source_url,
     leadTimeDays: r.lead_time_days,
@@ -259,8 +280,23 @@ async function loadRegistry(actor: AuthContext, table: string): Promise<Registry
 export function loadPackFormats(actor: AuthContext): Promise<RegistryOption[]> {
   return loadRegistry(actor, "sku_pack_formats");
 }
-export function loadMeasureUnits(actor: AuthContext): Promise<RegistryOption[]> {
-  return loadRegistry(actor, "measure_units");
+export async function loadMeasureUnits(actor: AuthContext): Promise<MeasureUnitOption[]> {
+  requireLevel(actor, SKU_READ_MIN);
+  const sb = getServiceRoleClient();
+  const { data, error } = await sb
+    .from("measure_units")
+    .select("id, label, dimension, to_base_factor")
+    .eq("active", true)
+    .order("display_order", { ascending: true })
+    .order("label", { ascending: true })
+    .returns<Array<{ id: string; label: string; dimension: MeasureDimension; to_base_factor: number | string }>>();
+  if (error) throw new Error(`loadMeasureUnits failed: ${error.message}`);
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    label: r.label,
+    dimension: r.dimension,
+    toBaseFactor: Number(r.to_base_factor),
+  }));
 }
 
 /** Add a registry label (MoO+). Idempotent on the unique label; returns the row. */
@@ -317,8 +353,47 @@ async function addRegistryLabel(
 export function addPackFormat(actor: AuthContext, label: string): Promise<RegistryOption> {
   return addRegistryLabel(actor, "sku_pack_formats", label);
 }
-export function addMeasureUnit(actor: AuthContext, label: string): Promise<RegistryOption> {
-  return addRegistryLabel(actor, "measure_units", label);
+const MEASURE_DIMENSIONS: ReadonlySet<string> = new Set(["weight", "volume", "count"]);
+
+export async function addMeasureUnit(
+  actor: AuthContext,
+  input: { label: string; dimension: string; toBaseFactor: number },
+): Promise<MeasureUnitOption> {
+  requireLevel(actor, SKU_REGISTRY_ADD_MIN);
+  const label = input.label.trim();
+  if (!label) throw new AdminSkuError(400, "invalid_label", "Label is required");
+  if (!MEASURE_DIMENSIONS.has(input.dimension)) {
+    throw new AdminSkuError(400, "invalid_dimension", "Dimension must be weight, volume, or count");
+  }
+  if (!Number.isFinite(input.toBaseFactor) || input.toBaseFactor <= 0) {
+    throw new AdminSkuError(400, "invalid_factor", "Conversion factor must be a positive number");
+  }
+  const sb = getServiceRoleClient();
+  const { data: existing, error: exErr } = await sb
+    .from("measure_units")
+    .select("id, label, dimension, to_base_factor, active")
+    .eq("label", label)
+    .maybeSingle<{ id: string; label: string; dimension: MeasureDimension; to_base_factor: number | string; active: boolean | null }>();
+  if (exErr) throw new Error(`addMeasureUnit lookup failed: ${exErr.message}`);
+  if (existing) {
+    if (existing.active === false) {
+      await sb.from("measure_units")
+        .update({ active: true, dimension: input.dimension, to_base_factor: input.toBaseFactor, updated_by: actor.user.id, updated_at: new Date().toISOString() })
+        .eq("id", existing.id);
+    }
+    return { id: existing.id, label: existing.label, dimension: existing.dimension, toBaseFactor: Number(existing.to_base_factor) };
+  }
+  const { data: maxRow } = await sb
+    .from("measure_units").select("display_order").order("display_order", { ascending: false }).limit(1).maybeSingle<{ display_order: number }>();
+  const nextOrder = (maxRow?.display_order ?? 0) + 1;
+  const { data: inserted, error } = await sb
+    .from("measure_units")
+    .insert({ label, dimension: input.dimension, to_base_factor: input.toBaseFactor, display_order: nextOrder, created_by: actor.user.id, updated_by: actor.user.id })
+    .select("id, label, dimension, to_base_factor")
+    .maybeSingle<{ id: string; label: string; dimension: MeasureDimension; to_base_factor: number | string }>();
+  if (error) throw new Error(`addMeasureUnit insert failed: ${error.message}`);
+  if (!inserted) throw new Error("addMeasureUnit returned no row");
+  return { id: inserted.id, label: inserted.label, dimension: inserted.dimension, toBaseFactor: Number(inserted.to_base_factor) };
 }
 
 // ── Create (GM+) ───────────────────────────────────────────────────────────────
@@ -330,6 +405,7 @@ export interface CreateSkuInput {
   unitsPerPack?: number | null;
   eachSize?: number | null;
   eachMeasure?: string | null;
+  avgOzPerEach?: number | null;
   itemNumber?: string | null;
   sourceUrl?: string | null;
   leadTimeDays?: number | null;
@@ -361,6 +437,7 @@ export async function createSku(actor: AuthContext, input: CreateSkuInput): Prom
       units_per_pack: unitsPerPack,
       each_size: eachSize,
       each_measure: normalizeOptional(input.eachMeasure),
+      avg_oz_per_each: normalizeAvgOzPerEach(input.avgOzPerEach),
       item_number: normalizeOptional(input.itemNumber),
       source_url: normalizeOptional(input.sourceUrl),
       lead_time_days: leadTimeDays,
@@ -402,6 +479,7 @@ export interface UpdateSkuChanges {
   unitsPerPack?: number | null;
   eachSize?: number | null;
   eachMeasure?: string | null;
+  avgOzPerEach?: number | null;
   itemNumber?: string | null;
   sourceUrl?: string | null;
   leadTimeDays?: number | null;
@@ -438,6 +516,7 @@ export async function updateSku(
   if (changes.unitsPerPack !== undefined) update.units_per_pack = normalizeUnitsPerPack(changes.unitsPerPack);
   if (changes.eachSize !== undefined) update.each_size = normalizeEachSize(changes.eachSize);
   if (changes.eachMeasure !== undefined) update.each_measure = normalizeOptional(changes.eachMeasure);
+  if (changes.avgOzPerEach !== undefined) update.avg_oz_per_each = normalizeAvgOzPerEach(changes.avgOzPerEach);
   if (changes.itemNumber !== undefined) update.item_number = normalizeOptional(changes.itemNumber);
   if (changes.sourceUrl !== undefined) update.source_url = normalizeOptional(changes.sourceUrl);
   if (changes.leadTimeDays !== undefined) update.lead_time_days = normalizeLeadTime(changes.leadTimeDays);
