@@ -14,6 +14,7 @@ import { lockLocationContext } from "@/lib/locations";
 import { AM_PREP_BASE_LEVEL, saveMidDayPhase2Item, type MidDayOverUnder } from "@/lib/prep";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import type { ConfirmedInput } from "@/lib/prep-consumption";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -22,6 +23,7 @@ interface ItemBody {
   templateItemId: string;
   prepped: number;
   overUnder?: MidDayOverUnder | null;
+  confirmedConsumption?: ConfirmedInput[] | null;
 }
 
 function parseOverUnder(v: unknown): MidDayOverUnder | null {
@@ -35,6 +37,26 @@ function parseOverUnder(v: unknown): MidDayOverUnder | null {
     directedBy: typeof o.directedBy === "string" ? o.directedBy : null,
     freeText: typeof o.freeText === "string" ? o.freeText : null,
   };
+}
+
+// null (not an array) = untouched → the lib records the derived-default consumption.
+function parseConfirmedConsumption(v: unknown): ConfirmedInput[] | null {
+  if (!Array.isArray(v)) return null;
+  const out: ConfirmedInput[] = [];
+  for (const raw of v) {
+    if (typeof raw !== "object" || raw === null) continue;
+    const o = raw as Record<string, unknown>;
+    if (typeof o.skuId !== "string" || !UUID_RE.test(o.skuId)) continue;
+    if (typeof o.qtyOz !== "number" || !Number.isFinite(o.qtyOz)) continue;
+    out.push({
+      skuId: o.skuId,
+      qtyOz: o.qtyOz,
+      qtyEntered: typeof o.qtyEntered === "number" && Number.isFinite(o.qtyEntered) ? o.qtyEntered : null,
+      unitEntered: typeof o.unitEntered === "string" ? o.unitEntered : null,
+      derivedOz: typeof o.derivedOz === "number" && Number.isFinite(o.derivedOz) ? o.derivedOz : null,
+    });
+  }
+  return out;
 }
 
 function validateBody(
@@ -52,9 +74,10 @@ function validateBody(
     return { ok: false, field: "prepped" };
   }
   const overUnder = parseOverUnder(r.overUnder);
+  const confirmedConsumption = parseConfirmedConsumption(r.confirmedConsumption);
   return {
     ok: true,
-    body: { instanceId: r.instanceId, templateItemId: r.templateItemId, prepped: r.prepped, overUnder },
+    body: { instanceId: r.instanceId, templateItemId: r.templateItemId, prepped: r.prepped, overUnder, confirmedConsumption },
   };
 }
 
@@ -105,6 +128,7 @@ export async function POST(req: NextRequest) {
       templateItemId: body.templateItemId,
       prepped: body.prepped,
       overUnder: body.overUnder ?? null,
+      confirmedConsumption: body.confirmedConsumption,
       actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level },
       ipAddress: extractIp(req),
       userAgent: req.headers.get("user-agent"),

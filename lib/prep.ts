@@ -65,6 +65,7 @@ import {
 } from "./template-items";
 import { loadItemDefns, loadItemOverrides, operationalDayOfWeek, pickOverride, resolveLineDefinition } from "@/lib/items";
 import { loadPrepSections } from "@/lib/prep-sections.server";
+import { loadDerivedForItems, recordProductionFromPrep, skuConsumptionForItem, type DerivedSku, type ConfirmedInput } from "@/lib/prep-consumption";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
@@ -824,6 +825,7 @@ export async function loadMidDayPrepState(
   completions: ChecklistCompletion[];
   authors: Record<string, string>;
   sectionLabels: Record<string, { en: string; es: string | null }>;
+  derived: Record<string, DerivedSku[]>;
 } | null> {
   const { data: instanceRow, error: instErr } = await service
     .from("checklist_instances")
@@ -912,6 +914,12 @@ export async function loadMidDayPrepState(
   const sectionLabels: Record<string, { en: string; es: string | null }> = {};
   for (const [slug, defn] of sectionMap) sectionLabels[slug] = { en: defn.labelEn, es: defn.labelEs };
 
+  // Item/Inventory Spine — production-in-prep fold. Per convertible item (keyed by
+  // TEMPLATE-ITEM id), the leaf-SKU consumption for the panel; [] = non-convertible.
+  const derivedByItemId = await loadDerivedForItems(itemIds);
+  const derived: Record<string, DerivedSku[]> = {};
+  for (const tItem of resolvedItems) derived[tItem.id] = tItem.itemId ? (derivedByItemId.get(tItem.itemId) ?? []) : [];
+
   return {
     template: tmplRow,
     templateItems: resolvedItems,
@@ -919,6 +927,7 @@ export async function loadMidDayPrepState(
     completions,
     authors,
     sectionLabels,
+    derived,
   };
 }
 
@@ -1210,6 +1219,8 @@ export async function saveMidDayPhase2Item(
     prepped: number;
     /** Structured over/under-prep capture (stored as prep_data.overUnder). */
     overUnder?: MidDayOverUnder | null;
+    /** Confirmed/edited SKU consumption from the panel; null/absent → record the derived default. */
+    confirmedConsumption?: ConfirmedInput[] | null;
     actor: PrepActor;
     ipAddress?: string | null;
     userAgent?: string | null;
@@ -1259,6 +1270,32 @@ export async function saveMidDayPhase2Item(
     ipAddress: args.ipAddress ?? null,
     userAgent: args.userAgent ?? null,
   });
+
+  // Item/Inventory Spine — production-in-prep fold. The completion is committed (RPC
+  // succeeded). Record the SKU depletion as a SEPARATE service-role write, idempotent by
+  // (instance, template_item). Untouched panel (confirmedConsumption null) → record the
+  // derived theoretical set; edited → record the confirmed set. A failure here must NOT
+  // fail the committed completion (sacred flow) — swallow + log; supersede-on-resave heals.
+  if (item.itemId) {
+    try {
+      let consumption = args.confirmedConsumption ?? null;
+      if (consumption === null) {
+        const derivedMap = await skuConsumptionForItem(item.itemId, args.prepped);
+        consumption = [...derivedMap].map(([skuId, oz]) => ({ skuId, qtyOz: oz, qtyEntered: null, unitEntered: null, derivedOz: oz }));
+      }
+      await recordProductionFromPrep(args.actor, {
+        locationId: state.instance.locationId,
+        instanceId: args.instanceId,
+        templateItemId: args.templateItemId,
+        outputItemId: item.itemId,
+        outputQty: args.prepped,
+        confirmedConsumption: consumption,
+        source: "mid_day_p2",
+      });
+    } catch (e) {
+      console.error(`saveMidDayPhase2Item: production capture failed (completion committed):`, e);
+    }
+  }
 
   const d = data as { completionId: string; savedAt: string };
   return { ok: true, completionId: d.completionId, savedAt: d.savedAt };

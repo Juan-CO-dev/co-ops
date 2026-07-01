@@ -162,6 +162,8 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
     const savedBy = prepped !== null && comp ? (state.authors[comp.completedBy] ?? null) : null;
     return {
       id: item.id,
+      itemId: item.itemId,
+      derived: state.derived[item.id] ?? [],
       label: item.label,
       section: item.prepMeta?.section ?? item.station ?? "Misc",
       parValue: par,

@@ -7,7 +7,7 @@
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { ozFromMeasure, skuContentOz, type MeasureUnitFactor } from "@/lib/recipe-math";
 import { audit } from "@/lib/audit";
-import type { AuthContext } from "@/lib/session";
+import type { RoleCode } from "@/lib/roles";
 
 function num(v: number | string | null): number | null {
   if (v === null) return null;
@@ -157,7 +157,7 @@ export async function loadDerivedForItems(itemIds: string[]): Promise<Map<string
  * depletion) and inserts nothing. Authorization is the CALLER's (the prep-save gate) —
  * this helper does NOT re-gate role.
  */
-export async function recordProductionFromPrep(actor: AuthContext, input: RecordFromPrepInput): Promise<{ productionId: string | null }> {
+export async function recordProductionFromPrep(actor: { userId: string; role: RoleCode }, input: RecordFromPrepInput): Promise<{ productionId: string | null }> {
   const sb = getServiceRoleClient();
   await sb.from("productions").update({ superseded_at: new Date().toISOString() })
     .eq("instance_id", input.instanceId).eq("template_item_id", input.templateItemId)
@@ -166,7 +166,7 @@ export async function recordProductionFromPrep(actor: AuthContext, input: Record
   if (positive.length === 0) return { productionId: null };
   const { data: hdr, error: hErr } = await sb.from("productions").insert({
     location_id: input.locationId, output_item_id: input.outputItemId, output_qty: input.outputQty,
-    source: input.source, instance_id: input.instanceId, template_item_id: input.templateItemId, created_by: actor.user.id,
+    source: input.source, instance_id: input.instanceId, template_item_id: input.templateItemId, created_by: actor.userId,
   }).select("id").maybeSingle<{ id: string }>();
   if (hErr) throw new Error(`recordProductionFromPrep header: ${hErr.message}`);
   if (!hdr) throw new Error("recordProductionFromPrep header returned no row");
@@ -175,15 +175,15 @@ export async function recordProductionFromPrep(actor: AuthContext, input: Record
     qty_entered: c.qtyEntered, unit_entered: c.unitEntered, derived_oz: c.derivedOz,
   })));
   if (lErr) throw new Error(`recordProductionFromPrep lines: ${lErr.message}`);
-  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "production.recorded", resourceTable: "productions", resourceId: hdr.id, metadata: { source: input.source, instance_id: input.instanceId, template_item_id: input.templateItemId, output_item_id: input.outputItemId, output_qty: input.outputQty, sku_count: positive.length }, ipAddress: null, userAgent: null });
+  await audit({ actorId: actor.userId, actorRole: actor.role, action: "production.recorded", resourceTable: "productions", resourceId: hdr.id, metadata: { source: input.source, instance_id: input.instanceId, template_item_id: input.templateItemId, output_item_id: input.outputItemId, output_qty: input.outputQty, sku_count: positive.length }, ipAddress: null, userAgent: null });
   return { productionId: hdr.id };
 }
 
 /** Reverse (revoke) the live production for a prep (instance, template_item). No-op if none live. */
-export async function reverseProductionForPrep(actor: AuthContext, args: { instanceId: string; templateItemId: string }): Promise<void> {
+export async function reverseProductionForPrep(actor: { userId: string; role: RoleCode }, args: { instanceId: string; templateItemId: string }): Promise<void> {
   const sb = getServiceRoleClient();
   const { data: live } = await sb.from("productions").select("id").eq("instance_id", args.instanceId).eq("template_item_id", args.templateItemId).is("superseded_at", null).is("revoked_at", null).maybeSingle<{ id: string }>();
   if (!live) return;
   await sb.from("productions").update({ revoked_at: new Date().toISOString() }).eq("id", live.id);
-  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "production.revoked", resourceTable: "productions", resourceId: live.id, metadata: { instance_id: args.instanceId, template_item_id: args.templateItemId }, ipAddress: null, userAgent: null });
+  await audit({ actorId: actor.userId, actorRole: actor.role, action: "production.revoked", resourceTable: "productions", resourceId: live.id, metadata: { instance_id: args.instanceId, template_item_id: args.templateItemId }, ipAddress: null, userAgent: null });
 }

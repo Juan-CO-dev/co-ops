@@ -25,7 +25,7 @@ void (async () => {
 
   const { data: cgs } = await sb.from("users").select("id, role").eq("role", "cgs").limit(1).maybeSingle<{ id: string; role: string }>();
   if (!cgs) throw new Error("no cgs user found for smoke actor");
-  const actor = { user: { id: cgs.id, role: cgs.role }, locations: [] } as any;
+  const actor = { userId: cgs.id, role: cgs.role, user: { id: cgs.id, role: cgs.role } } as any;
 
   const { data: itemRows } = await sb.from("items").select("id, location_id").returns<Array<{ id: string; location_id: string | null }>>();
   let itemId: string | null = null;

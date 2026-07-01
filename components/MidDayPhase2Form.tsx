@@ -27,6 +27,8 @@ import {
   type UnderParCapture,
   type UnderParReasonCategory,
 } from "@/components/opening/UnderParModal";
+import type { DerivedSku, ConfirmedInput } from "@/lib/prep-consumption";
+import { ProductionConsumptionPanel } from "@/components/production/ProductionConsumptionPanel";
 
 export interface MidDayPhase2Item {
   id: string;
@@ -37,6 +39,10 @@ export interface MidDayPhase2Item {
   need: number | null;
   initialPrepped: number | null;
   initialSavedBy: string | null;
+  /** Registry item id (for production capture); null = not registry-linked. */
+  itemId: string | null;
+  /** Per-one-output-unit leaf-SKU consumption for the panel; [] = non-convertible. */
+  derived: DerivedSku[];
   /** Structured over/under capture already saved (prep_data.overUnder), or null. */
   initialOverUnder: MidDayOverUnder | null;
 }
@@ -48,6 +54,8 @@ interface SaveState {
   status: "idle" | "saving" | "saved" | "error";
   savedBy: string | null;
   error: string | null;
+  /** Panel confirmation; null = untouched (server records the derived default). */
+  confirmedConsumption: ConfirmedInput[] | null;
 }
 
 const EMPTY: SaveState = {
@@ -57,6 +65,7 @@ const EMPTY: SaveState = {
   status: "idle",
   savedBy: null,
   error: null,
+  confirmedConsumption: null,
 };
 
 function overToOU(c: OverParCapture): MidDayOverUnder {
@@ -102,6 +111,7 @@ export function MidDayPhase2Form({
         status: it.initialPrepped !== null ? "saved" : "idle",
         savedBy: it.initialSavedBy,
         error: null,
+        confirmedConsumption: null,
       };
     }
     return init;
@@ -151,6 +161,7 @@ export function MidDayPhase2Form({
           templateItemId: it.id,
           prepped,
           overUnder: offPar ? st.overUnder : null,
+          confirmedConsumption: st.confirmedConsumption,
         }),
         redirect: "manual",
       });
@@ -286,6 +297,14 @@ export function MidDayPhase2Form({
                     </button>
                   ) : null}
 
+                  {it.derived.length > 0 ? (
+                    <ProductionConsumptionPanel
+                      derived={it.derived}
+                      outputQty={preppedNum ?? 0}
+                      value={st.confirmedConsumption}
+                      onChange={(rows) => patch(it.id, { confirmedConsumption: rows })}
+                    />
+                  ) : null}
                   {st.status === "saved" ? (
                     <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-success">
                       {st.savedBy
