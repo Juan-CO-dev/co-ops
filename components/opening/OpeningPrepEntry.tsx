@@ -42,6 +42,8 @@ import { formatTime } from "@/lib/i18n/format";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { OpeningCloserCountSnapshotRow } from "@/lib/opening";
+import type { DerivedSku, ConfirmedInput } from "@/lib/prep-consumption";
+import { ProductionConsumptionPanel } from "@/components/production/ProductionConsumptionPanel";
 import type { ChecklistTemplateItem, OpeningPhase2Meta } from "@/lib/types";
 
 import { OpeningSectionVerify } from "./OpeningSectionVerify";
@@ -62,6 +64,11 @@ export interface OpeningPhase2FormValue {
   overPar: OverParCapture | null;
   /** Under-prep capture; populated when delta_vs_prep_need < 0 AND opener saved a reason. */
   underPar: UnderParCapture | null;
+  /**
+   * Production-in-prep fold — confirmed/edited SKU consumption from the panel;
+   * null = untouched (server records the derived default at save).
+   */
+  confirmedConsumption: ConfirmedInput[] | null;
 }
 
 export type { ManagerOption };
@@ -129,6 +136,11 @@ export type Phase2RevokeOutcome =
 
 interface OpeningPrepEntryProps {
   items: ChecklistTemplateItem[];
+  /**
+   * Production-in-prep fold — per-Phase-2-item derived SKU consumption keyed by
+   * template-item id (`item.id`). [] = non-convertible → no panel rendered.
+   */
+  derivedByItem: Record<string, DerivedSku[]>;
   values: Map<string, OpeningPhase2FormValue>;
   onChange: (templateItemId: string, next: OpeningPhase2FormValue) => void;
   /**
@@ -184,6 +196,7 @@ interface OpeningPrepEntryProps {
 
 export function OpeningPrepEntry({
   items,
+  derivedByItem,
   values,
   onChange,
   saveStates,
@@ -304,6 +317,7 @@ export function OpeningPrepEntry({
                   openerPrepped: null,
                   overPar: null,
                   underPar: null,
+                  confirmedConsumption: null,
                 };
                 const snapshot = closerSnapshots.get(item.id) ?? null;
                 const saveState =
@@ -325,6 +339,7 @@ export function OpeningPrepEntry({
                   <PrepEntryRow
                     key={item.id}
                     item={item}
+                    derived={derivedByItem[item.id] ?? []}
                     value={value}
                     snapshot={snapshot}
                     phase1Resolved={phase1ResolvedByItem.get(item.id) ?? null}
@@ -362,6 +377,7 @@ export function OpeningPrepEntry({
               openerPrepped: null,
               overPar: null,
               underPar: null,
+              confirmedConsumption: null,
             };
             const next = { ...cur, overPar: capture };
             onChange(overParTarget.id, next);
@@ -383,6 +399,7 @@ export function OpeningPrepEntry({
               openerPrepped: null,
               overPar: null,
               underPar: null,
+              confirmedConsumption: null,
             };
             const next = { ...cur, underPar: capture };
             onChange(underParTarget.id, next);
@@ -411,6 +428,8 @@ export function OpeningPrepEntry({
 
 interface PrepEntryRowProps {
   item: ChecklistTemplateItem;
+  /** Production-in-prep fold — this item's derived per-output-unit SKU consumption; [] = no panel. */
+  derived: DerivedSku[];
   value: OpeningPhase2FormValue;
   snapshot: OpeningCloserCountSnapshotRow | null;
   /**
@@ -445,6 +464,7 @@ interface PrepEntryRowProps {
 
 function PrepEntryRow({
   item,
+  derived,
   value,
   snapshot,
   phase1Resolved,
@@ -613,6 +633,23 @@ function PrepEntryRow({
           disabled={readOnly}
         />
       </div>
+
+      {/* Production-in-prep fold — SKU consumption panel (renders null when
+       * derived is empty). Opening saves on blur (no Save button), so a panel
+       * edit must persist itself: onChange BOTH updates the value AND fires
+       * onSave(next). Hidden in read-only (finalized) view. */}
+      {!readOnly && derived.length > 0 ? (
+        <ProductionConsumptionPanel
+          derived={derived}
+          outputQty={value.openerPrepped ?? 0}
+          value={value.confirmedConsumption}
+          onChange={(rows) => {
+            const next = { ...value, confirmedConsumption: rows };
+            onChange(next);
+            onSave(next);
+          }}
+        />
+      ) : null}
 
       {/* Signal banners — modal triggers for over/under-prep capture */}
       {overDelta !== null ? (

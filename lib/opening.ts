@@ -44,6 +44,14 @@ import {
   rowToInstance,
 } from "./checklist-rows";
 import { loadItemDefns, loadItemOverrides, operationalDayOfWeek, pickOverride, resolveLineDefinition } from "@/lib/items";
+import {
+  loadDerivedForItems,
+  recordProductionFromPrep,
+  reverseProductionForPrep,
+  skuConsumptionForItem,
+  type ConfirmedInput,
+  type DerivedSku,
+} from "@/lib/prep-consumption";
 import { isPrepData } from "./prep";
 import type { RoleCode } from "./roles";
 import {
@@ -630,6 +638,13 @@ export async function loadOpeningState(
   instance: ChecklistInstance;
   completions: ChecklistCompletion[];
   authors: Record<string, string>;
+  /**
+   * Item/Inventory Spine — production-in-prep fold. Per Phase-2 template-item
+   * (keyed by template_item id `it.id`), the hydrated per-one-output-unit
+   * leaf-SKU consumption for the ProductionConsumptionPanel. [] = the item is
+   * not registry-linked OR its recipe is incomplete (non-convertible → no panel).
+   */
+  derived: Record<string, DerivedSku[]>;
 } | null> {
   // Resolve active opening template (most-recent-active per Path A versioning).
   // The `.eq("location_id", args.locationId)` clause is LOAD-BEARING: templates
@@ -836,12 +851,30 @@ export async function loadOpeningState(
     }
   }
 
+  // Item/Inventory Spine — production-in-prep fold. Hydrate the per-Phase-2-item
+  // derived SKU consumption for the ProductionConsumptionPanel. Keyed by
+  // TEMPLATE-ITEM id (it.id) to match the form's per-row lookup; resolved from
+  // the registry item id (it.itemId). Non-linked items → []. Mirrors
+  // loadMidDayPrepState's `derived` block.
+  const phase2ForDerived = templateItems.filter(
+    (it) => (it.prepMeta as OpeningPhase2Meta | null)?.openingPhase2 === true,
+  );
+  const phase2DerivedItemIds = phase2ForDerived
+    .map((it) => it.itemId)
+    .filter((x): x is string => !!x);
+  const derivedMap = await loadDerivedForItems(phase2DerivedItemIds);
+  const derived: Record<string, DerivedSku[]> = {};
+  for (const it of phase2ForDerived) {
+    derived[it.id] = it.itemId ? (derivedMap.get(it.itemId) ?? []) : [];
+  }
+
   return {
     template: tmplRow,
     templateItems,
     instance: rowToInstance(instanceRow),
     completions,
     authors,
+    derived,
   };
 }
 
@@ -2120,8 +2153,11 @@ export async function savePhase2Item(
   service: SupabaseClient,
   args: {
     instanceId: string;
+    locationId: string;
     actor: OpeningActor;
     entry: OpeningEntryPhase2;
+    /** Confirmed/edited SKU consumption from the panel; null/absent → record the derived default. */
+    confirmedConsumption?: ConfirmedInput[] | null;
     ipAddress?: string | null;
     userAgent?: string | null;
   },
@@ -2222,6 +2258,40 @@ export async function savePhase2Item(
       over_under_status: rpcResult.overUnderStatus,
     },
   });
+
+  // Item/Inventory Spine — production-in-prep fold. The completion is committed (RPC
+  // succeeded above). Record the SKU depletion as a SEPARATE service-role write,
+  // idempotent by (instance, template_item). The registry item id is NOT in the
+  // Phase 2 §8.4 args, so resolve it from the template item. Untouched panel
+  // (confirmedConsumption null) → record the derived theoretical set; edited →
+  // record the confirmed set. A failure here must NOT fail the committed completion
+  // (sacred flow) — swallow + log; supersede-on-resave heals. Mirrors
+  // saveMidDayPhase2Item.
+  try {
+    const { data: tItem } = await service
+      .from("checklist_template_items")
+      .select("item_id")
+      .eq("id", args.entry.templateItemId)
+      .maybeSingle<{ item_id: string | null }>();
+    if (tItem?.item_id) {
+      let consumption = args.confirmedConsumption ?? null;
+      if (consumption === null) {
+        const m = await skuConsumptionForItem(tItem.item_id, args.entry.openerPrepped);
+        consumption = [...m].map(([skuId, oz]) => ({ skuId, qtyOz: oz, qtyEntered: null, unitEntered: null, derivedOz: oz }));
+      }
+      await recordProductionFromPrep(args.actor, {
+        locationId: args.locationId,
+        instanceId: args.instanceId,
+        templateItemId: args.entry.templateItemId,
+        outputItemId: tItem.item_id,
+        outputQty: args.entry.openerPrepped,
+        confirmedConsumption: consumption,
+        source: "opening_p2",
+      });
+    }
+  } catch (e) {
+    console.error("savePhase2Item: production capture failed (completion committed):", e);
+  }
 
   return {
     completion: rowToCompletion(rpcResult.completion),
@@ -2512,6 +2582,19 @@ export async function revokePhase2Completion(
         elapsed_ms: elapsedMs,
       },
     });
+  }
+
+  // Item/Inventory Spine — production-in-prep fold. The prep completion is revoked
+  // (above); reverse the recorded SKU depletion for this (instance, template_item)
+  // so on-hand consumption no longer counts a withdrawn prep. No-op if none live.
+  // Never fail the committed revoke on a reverse error — swallow + log.
+  try {
+    await reverseProductionForPrep(args.actor, {
+      instanceId: args.instanceId,
+      templateItemId: updatedRow.template_item_id,
+    });
+  } catch (e) {
+    console.error("revokePhase2Completion: production reverse failed:", e);
   }
 
   return {

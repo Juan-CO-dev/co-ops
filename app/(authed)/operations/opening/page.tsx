@@ -260,6 +260,7 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
         instance={state.instance}
         templateItems={state.templateItems}
         closerSnapshots={closerSnapshots}
+        derived={state.derived}
         verifiedSections={verifiedSections}
         completions={state.completions}
         managers={managers}
