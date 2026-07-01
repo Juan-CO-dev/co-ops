@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import Link from "next/link";
 import { serverT } from "@/lib/i18n/server";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { requireSessionFromHeaders } from "@/lib/session";
@@ -37,16 +38,18 @@ export default async function ReceivingPage({ searchParams }: { searchParams: Pr
       ) : (
         <ul className="mt-2 flex flex-col gap-1.5">
           {recent.map((d) => (
-            <li key={d.id} className="rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2 text-sm">
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-semibold text-co-text">{d.vendorName}</span>
-                <span className="text-xs text-co-text-muted">{d.deliveryDate}</span>
-              </div>
-              <div className="text-[11px] text-co-text-dim">
-                {serverT(lang, "receiving.page.line_count", { n: d.lineCount })}
-                {d.invoiceNumber ? ` · #${d.invoiceNumber}` : ""}
-                {d.receivedByName ? ` · ${d.receivedByName}` : ""}
-              </div>
+            <li key={d.id}>
+              <Link href={`/operations/receiving/${d.id}`} className="block rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2 text-sm transition hover:border-co-text">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-co-text">{d.vendorName}</span>
+                  <span className="text-xs text-co-text-muted">{d.deliveryDate}</span>
+                </div>
+                <div className="text-[11px] text-co-text-dim">
+                  {serverT(lang, "receiving.page.line_count", { n: d.lineCount })}
+                  {d.invoiceNumber ? ` · #${d.invoiceNumber}` : ""}
+                  {d.receivedByName ? ` · ${d.receivedByName}` : ""}
+                </div>
+              </Link>
             </li>
           ))}
         </ul>
