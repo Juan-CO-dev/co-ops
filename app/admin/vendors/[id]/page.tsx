@@ -15,7 +15,7 @@ import { serverT } from "@/lib/i18n/server";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getVendor, loadCategories, loadOrderTypes } from "@/lib/admin/vendors";
 import { loadSkus, loadPackFormats, loadMeasureUnits } from "@/lib/admin/skus";
-import { loadCurrentSkuPrices, computeSkuCostPerOz, loadSkuUsageMap, loadSkuReceivingLedger } from "@/lib/admin/cost";
+import { loadCurrentSkuPrices, computeSkuCostPerOz, loadSkuUsageMap, loadSkuReceivingLedger, loadSkuConsumption, type SkuConsumption } from "@/lib/admin/cost";
 import { VendorDetailClient } from "@/components/admin/vendors/VendorDetailClient";
 
 export default async function AdminVendorDetailPage({
@@ -53,6 +53,8 @@ export default async function AdminVendorDetailPage({
     Object.fromEntries(skus.map((s) => [s.id, { currentPrice: prices.get(s.id) ?? null, costPerOz: costPerOz.get(s.id) ?? null, usedBy: usage.get(s.id) ?? [] }]));
   const ledgerMap = await loadSkuReceivingLedger(auth, skus.map((s) => s.id));
   const skuLedger: Record<string, import("@/lib/admin/cost").SkuReceivingLedger> = Object.fromEntries([...ledgerMap.entries()]);
+  const consumptionMap = await loadSkuConsumption(auth, skus.map((s) => s.id));
+  const skuConsumption: Record<string, SkuConsumption> = Object.fromEntries([...consumptionMap.entries()]);
 
   return (
     <div>
@@ -68,6 +70,7 @@ export default async function AdminVendorDetailPage({
         skuMeasureUnits={measureUnits}
         skuCost={skuCost}
         skuLedger={skuLedger}
+        skuConsumption={skuConsumption}
         actorLevel={level}
       />
     </div>

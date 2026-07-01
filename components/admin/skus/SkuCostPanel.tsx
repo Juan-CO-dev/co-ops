@@ -4,12 +4,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
-import type { SkuReceivingLedger } from "@/lib/admin/cost";
+import type { SkuReceivingLedger, SkuConsumption } from "@/lib/admin/cost";
 import { postJson, resolveErrorKey } from "./shared";
 
 export interface SkuCostInfo { currentPrice: number | null; costPerOz: number | null; usedBy: string[]; }
 
-export function SkuCostPanel({ skuId, cost, ledger, canRecord }: { skuId: string; cost: SkuCostInfo; ledger: SkuReceivingLedger | null; canRecord: boolean }) {
+export function SkuCostPanel({ skuId, cost, ledger, consumption, canRecord }: { skuId: string; cost: SkuCostInfo; ledger: SkuReceivingLedger | null; consumption: SkuConsumption | null; canRecord: boolean }) {
   const { t } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
@@ -46,6 +46,12 @@ export function SkuCostPanel({ skuId, cost, ledger, canRecord }: { skuId: string
       ) : null}
       {ledger && (ledger.deliveries.length > 0 || ledger.receivedDollars > 0) ? (
         <div className="mt-2 border-t-2 border-co-border pt-2">
+          {ledger ? (
+            <p className="text-co-text">
+              {t("admin.skus.stock.in_stock")}: <span className="font-bold">≈ {Math.round(ledger.receivedOz - (consumption?.consumedOz ?? 0))} oz</span>
+              <span className="text-co-text-muted"> · ${(ledger.receivedDollars - (consumption?.consumedDollars ?? 0)).toFixed(2)}</span>
+            </p>
+          ) : null}
           <p className="text-co-text">
             {t("admin.skus.ledger.received")}: <span className="font-bold">${ledger.receivedDollars.toFixed(2)}</span>
             <span className="text-co-text-muted"> · ≈ {Math.round(ledger.receivedOz)} oz</span>
