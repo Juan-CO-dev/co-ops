@@ -151,10 +151,12 @@ export function ProductionConsumptionPanel(props: {
     onChange(buildRows(d.skuId, qtyEntered, next));
   }
 
+  // Lead with the operator's natural unit (Case/each); keep oz alongside — oz drives
+  // the recipes + trains staff on inventory-in-oz, so it's shown, never hidden.
   const summaryParts = derived.map((d) => {
     const unit = defaultDisplayUnit(d);
     const oz = derivedOzForSku(d);
-    return `${fmtQty(oz, unit, d)} ${d.skuName}`;
+    return `${fmtQty(oz, unit, d)} ${d.skuName} · ~${Math.round(oz)} oz`;
   });
 
   return (
@@ -180,6 +182,8 @@ export function ProductionConsumptionPanel(props: {
             const displayQty = resolveDisplayQty(d);
             const canCase = !!(d.contentOz && d.contentOz > 0);
             const canEach = canCase && !!(d.unitsPerPack && d.unitsPerPack > 0);
+            // oz alongside the natural unit — always visible (Juan: oz drives recipes + trains staff).
+            const rowOz = value !== null ? (value.find((e) => e.skuId === d.skuId)?.qtyOz ?? derivedOzForSku(d)) : derivedOzForSku(d);
 
             return (
               <div key={d.skuId} className="flex min-h-[44px] items-center gap-2 py-1.5">
@@ -221,6 +225,7 @@ export function ProductionConsumptionPanel(props: {
                     oz
                   </button>
                 </div>
+                <span className="shrink-0 text-xs text-co-text-muted">~{Math.round(rowOz)} oz</span>
               </div>
             );
           })}
