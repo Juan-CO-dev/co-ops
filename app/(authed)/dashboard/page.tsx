@@ -51,6 +51,7 @@ import { PmReportTile } from "@/components/PmReportTile";
 import { DashboardNav } from "@/components/DashboardNav";
 import { MidDayPrepTile } from "@/components/MidDayPrepTile";
 import { ReceivingTile } from "@/components/receiving/ReceivingTile";
+import { ProductionTile } from "@/components/production/ProductionTile";
 import { OpeningTile } from "@/components/OpeningTile";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -680,6 +681,12 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
             ) : null}
             {auth.level >= 4 ? (
               <ReceivingTile
+                language={language}
+                locationId={selectedLocation.id}
+              />
+            ) : null}
+            {auth.level >= 4 ? (
+              <ProductionTile
                 language={language}
                 locationId={selectedLocation.id}
               />
