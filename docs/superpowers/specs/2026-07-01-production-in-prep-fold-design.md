@@ -90,6 +90,10 @@ depletion (Explore open-Q #1).
 For a convertible item, under its normal numeric prep input:
 - **Collapsed summary (default):** a single line — *"Uses: 1 Case Hot Peppers · 2 qt Pepper Base"* —
   scaled live from the entered output qty. Recipe-is-right case = one glance, zero taps.
+- **Visual cue (required):** the collapsed row must read as an actionable affordance, not static text,
+  so staff know to open it and confirm/adjust — a disclosure chevron + a subtle accent (co-gold hint
+  border/tint) + a short i18n'd prompt (e.g. *"tap to confirm usage"* / *"toca para confirmar"*). It's
+  a gentle pull, not a blocking gate — leaving it collapsed still records the derived default.
 - **Expand (tap):** each leaf SKU on its own row, pre-filled with the derived amount, **editable**,
   with a **case ⇄ each** unit toggle (Juan's earlier call). Editing any row records the actual.
 - **Units:** derived oz → the SKU's pack/each units for display (`skuContentOz` inverse); the toggle
@@ -229,8 +233,9 @@ stays for this path, rewritten to emit one header + one line.
 
 ## 13. Open decisions deferred
 - **D-writeback:** later, an override that repeats could promote a persistent yield into the recipe.
-- **D-panel-default-collapsed:** the collapsed-summary + tap-to-expand is my call unless Juan objects
-  (keeps the common case a single glance).
+- ~~D-panel-default-collapsed~~ **RESOLVED (Juan):** collapsed by default **with a required visual
+  cue** (chevron + accent + "tap to confirm usage" prompt) so staff are pulled toward expanding it —
+  see §4.
 - **D-atomic-vs-after:** whether the production write joins the completion RPC transaction or runs
   immediately after in the same server call — plan picks based on how cleanly the RPCs extend; the
   invariant is "no production write without a committed completion."
