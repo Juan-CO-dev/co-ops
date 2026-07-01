@@ -8,6 +8,7 @@ import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import type { MeasureUnitOption } from "@/lib/admin/skus";
+import { loadMeasureUnits } from "@/lib/admin/skus";
 import type { ComponentView } from "@/lib/admin/item-components";
 import {
   skuContentOz,
@@ -239,4 +240,70 @@ export async function recordSkuPrice(
     ipAddress: null, userAgent: null,
   });
   return { id: inserted.id };
+}
+
+export interface SkuReceivingLedger {
+  receivedDollars: number;
+  receivedOz: number;
+  unpricedLineCount: number;
+  missingOzLineCount: number;
+  deliveries: Array<{ deliveryId: string; date: string; vendorName: string; qty: number; unitPrice: number | null }>;
+}
+
+/**
+ * Per-SKU RECEIVED ledger (R3.5, AGM+): running $ + oz received to date + delivery
+ * history. $ = Σ qty × (line price ?? current SKU price); oz = Σ qty × content_oz.
+ * Lines missing a price / an oz basis are excluded and counted (honest under-count).
+ * Received-to-date, NOT true on-hand (R4 = received − counted).
+ */
+export async function loadSkuReceivingLedger(actor: AuthContext, skuIds: string[]): Promise<Map<string, SkuReceivingLedger>> {
+  requireLevel(actor, COST_READ_MIN);
+  const out = new Map<string, SkuReceivingLedger>();
+  if (skuIds.length === 0) return out;
+  const sb = getServiceRoleClient();
+
+  const { data: lineRows, error } = await sb
+    .from("vendor_delivery_items")
+    .select("vendor_item_id, delivery_id, qty_received, unit_price")
+    .in("vendor_item_id", skuIds)
+    .returns<Array<{ vendor_item_id: string; delivery_id: string; qty_received: number | string; unit_price: number | string | null }>>();
+  if (error) throw new Error(`loadSkuReceivingLedger lines: ${error.message}`);
+  const lines = lineRows ?? [];
+
+  const prices = await loadCurrentSkuPrices(skuIds);
+  const measures = await loadMeasureUnits(actor);
+  const measuresMap = new Map<string, MeasureUnitFactor>(measures.map((m) => [m.label, { dimension: m.dimension, toBaseFactor: m.toBaseFactor }]));
+  const { data: skuRows } = await sb.from("vendor_items").select("id, units_per_pack, each_size, each_measure, avg_oz_per_each").in("id", skuIds)
+    .returns<Array<{ id: string; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>>();
+  const contentOzById = new Map<string, number | null>(
+    (skuRows ?? []).map((s) => [s.id, skuContentOz({ unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure, avgOzPerEach: num(s.avg_oz_per_each) }, measuresMap)]),
+  );
+
+  const deliveryIds = [...new Set(lines.map((l) => l.delivery_id))];
+  const delMeta = new Map<string, { date: string; vendorName: string }>();
+  if (deliveryIds.length > 0) {
+    const { data: dels } = await sb.from("vendor_deliveries").select("id, delivery_date, vendor_id").in("id", deliveryIds).returns<Array<{ id: string; delivery_date: string; vendor_id: string }>>();
+    const vendorIds = [...new Set((dels ?? []).map((d) => d.vendor_id))];
+    const { data: vends } = vendorIds.length ? await sb.from("vendors").select("id, name").in("id", vendorIds).returns<Array<{ id: string; name: string }>>() : { data: [] as Array<{ id: string; name: string }> };
+    const vName = new Map((vends ?? []).map((v) => [v.id, v.name]));
+    for (const d of dels ?? []) delMeta.set(d.id, { date: d.delivery_date, vendorName: vName.get(d.vendor_id) ?? "(vendor)" });
+  }
+
+  for (const id of skuIds) out.set(id, { receivedDollars: 0, receivedOz: 0, unpricedLineCount: 0, missingOzLineCount: 0, deliveries: [] });
+
+  for (const l of lines) {
+    const led = out.get(l.vendor_item_id);
+    if (!led) continue;
+    const qty = num(l.qty_received) ?? 0;
+    const linePrice = num(l.unit_price) ?? prices.get(l.vendor_item_id) ?? null;
+    if (linePrice == null) led.unpricedLineCount += 1;
+    else led.receivedDollars += qty * linePrice;
+    const contentOz = contentOzById.get(l.vendor_item_id) ?? null;
+    if (contentOz == null) led.missingOzLineCount += 1;
+    else led.receivedOz += qty * contentOz;
+    const meta = delMeta.get(l.delivery_id);
+    led.deliveries.push({ deliveryId: l.delivery_id, date: meta?.date ?? "", vendorName: meta?.vendorName ?? "(vendor)", qty, unitPrice: num(l.unit_price) });
+  }
+  for (const led of out.values()) led.deliveries.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+  return out;
 }

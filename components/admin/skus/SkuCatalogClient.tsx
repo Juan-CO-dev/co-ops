@@ -18,6 +18,7 @@ import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
 import type { RegistryOption, MeasureUnitOption, SkuView } from "@/lib/admin/skus";
 import { postJson, resolveErrorKey, formatSkuPack } from "./shared";
+import type { SkuReceivingLedger } from "@/lib/admin/cost";
 import { SkuCostPanel, type SkuCostInfo } from "./SkuCostPanel";
 import {
   SkuForm,
@@ -37,6 +38,7 @@ export function SkuCatalogClient({
   packFormats,
   measureUnits,
   skuCost,
+  skuLedger,
   actorLevel,
   canManage,
 }: {
@@ -46,6 +48,7 @@ export function SkuCatalogClient({
   packFormats: RegistryOption[];
   measureUnits: MeasureUnitOption[];
   skuCost: Record<string, SkuCostInfo>;
+  skuLedger: Record<string, SkuReceivingLedger>;
   actorLevel: number;
   canManage: boolean; // GM+
 }) {
@@ -206,6 +209,7 @@ export function SkuCatalogClient({
                 <SkuCostPanel
                   skuId={s.id}
                   cost={skuCost[s.id] ?? { currentPrice: null, costPerOz: null, usedBy: [] }}
+                  ledger={skuLedger[s.id] ?? null}
                   canRecord={actorLevel >= 6}
                 />
               )}

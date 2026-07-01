@@ -1,13 +1,15 @@
 "use client";
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
+import type { SkuReceivingLedger } from "@/lib/admin/cost";
 import { postJson, resolveErrorKey } from "./shared";
 
 export interface SkuCostInfo { currentPrice: number | null; costPerOz: number | null; usedBy: string[]; }
 
-export function SkuCostPanel({ skuId, cost, canRecord }: { skuId: string; cost: SkuCostInfo; canRecord: boolean }) {
+export function SkuCostPanel({ skuId, cost, ledger, canRecord }: { skuId: string; cost: SkuCostInfo; ledger: SkuReceivingLedger | null; canRecord: boolean }) {
   const { t } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
@@ -41,6 +43,33 @@ export function SkuCostPanel({ skuId, cost, canRecord }: { skuId: string; cost: 
       </p>
       {cost.usedBy.length > 0 ? (
         <p className="mt-1 text-xs text-co-text-muted">{t("admin.skus.cost.used_by")}: {cost.usedBy.join(", ")}</p>
+      ) : null}
+      {ledger && (ledger.deliveries.length > 0 || ledger.receivedDollars > 0) ? (
+        <div className="mt-2 border-t-2 border-co-border pt-2">
+          <p className="text-co-text">
+            {t("admin.skus.ledger.received")}: <span className="font-bold">${ledger.receivedDollars.toFixed(2)}</span>
+            <span className="text-co-text-muted"> · ≈ {Math.round(ledger.receivedOz)} oz</span>
+          </p>
+          {ledger.unpricedLineCount > 0 || ledger.missingOzLineCount > 0 ? (
+            <p className="text-[11px] text-co-text-muted">
+              {ledger.unpricedLineCount > 0 ? t("admin.skus.ledger.unpriced", { n: ledger.unpricedLineCount }) : ""}
+              {ledger.unpricedLineCount > 0 && ledger.missingOzLineCount > 0 ? " · " : ""}
+              {ledger.missingOzLineCount > 0 ? t("admin.skus.ledger.no_oz", { n: ledger.missingOzLineCount }) : ""}
+            </p>
+          ) : null}
+          {ledger.deliveries.length > 0 ? (
+            <ul className="mt-1 flex flex-col gap-1">
+              {ledger.deliveries.slice(0, 5).map((d) => (
+                <li key={d.deliveryId + d.date}>
+                  <Link href={`/operations/receiving/${d.deliveryId}`} className="flex items-center justify-between gap-2 rounded-md border-2 border-co-border-2 px-2 py-1 text-xs transition hover:border-co-text">
+                    <span className="text-co-text">{d.date} · {d.vendorName}</span>
+                    <span className="text-co-text-muted">{d.qty}{d.unitPrice != null ? ` · $${d.unitPrice.toFixed(2)}` : ""}</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
       ) : null}
       {canRecord ? (
         open ? (
