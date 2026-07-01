@@ -307,3 +307,34 @@ export async function loadSkuReceivingLedger(actor: AuthContext, skuIds: string[
   for (const led of out.values()) led.deliveries.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
   return out;
 }
+
+export interface SkuConsumption { consumedOz: number; consumedDollars: number; }
+
+/**
+ * Per-SKU consumption from production (S1): Σ input_qty × content_oz (oz) and × cost/oz ($).
+ * (input_qty is in the SKU's pack unit; content_oz is oz-per-pack, so oz = input_qty × content_oz.)
+ */
+export async function loadSkuConsumption(actor: AuthContext, skuIds: string[]): Promise<Map<string, SkuConsumption>> {
+  requireLevel(actor, COST_READ_MIN);
+  const out = new Map<string, SkuConsumption>();
+  if (skuIds.length === 0) return out;
+  const sb = getServiceRoleClient();
+  const { data: prod, error } = await sb.from("productions").select("input_sku_id, input_qty").in("input_sku_id", skuIds).returns<Array<{ input_sku_id: string; input_qty: number | string }>>();
+  if (error) throw new Error(`loadSkuConsumption: ${error.message}`);
+  const prices = await loadCurrentSkuPrices(skuIds);
+  const measures = await loadMeasureUnits(actor);
+  const measuresMap = new Map<string, MeasureUnitFactor>(measures.map((m) => [m.label, { dimension: m.dimension, toBaseFactor: m.toBaseFactor }]));
+  const { data: skuRows } = await sb.from("vendor_items").select("id, units_per_pack, each_size, each_measure, avg_oz_per_each").in("id", skuIds)
+    .returns<Array<{ id: string; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>>();
+  const contentOzById = new Map<string, number | null>((skuRows ?? []).map((s) => [s.id, skuContentOz({ unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure, avgOzPerEach: num(s.avg_oz_per_each) }, measuresMap)]));
+  for (const id of skuIds) out.set(id, { consumedOz: 0, consumedDollars: 0 });
+  for (const p of prod ?? []) {
+    const c = out.get(p.input_sku_id); if (!c) continue;
+    const qty = num(p.input_qty) ?? 0;
+    const contentOz = contentOzById.get(p.input_sku_id) ?? null;
+    const price = prices.get(p.input_sku_id) ?? null;
+    if (contentOz != null) c.consumedOz += qty * contentOz;
+    if (price != null) c.consumedDollars += qty * price;
+  }
+  return out;
+}
