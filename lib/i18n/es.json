@@ -1680,5 +1680,11 @@
   "dashboard.production.tile_label": "Producción",
   "dashboard.production.hint": "Registra lo que convertiste de la materia prima.",
   "dashboard.production.cta": "Registrar producción",
-  "admin.skus.stock.in_stock": "En existencia (est.)"
+  "admin.skus.stock.in_stock": "En existencia (est.)",
+  "production.panel.uses": "Usa",
+  "production.panel.confirm_cue": "toca para confirmar",
+  "production.panel.per_sku": "{name}",
+  "production.panel.unit_case": "Caja",
+  "production.panel.unit_each": "Unidad",
+  "production.panel.none": "Sin receta vinculada — nada que descontar."
 }

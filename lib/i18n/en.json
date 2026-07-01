@@ -1680,5 +1680,11 @@
   "dashboard.production.tile_label": "Production",
   "dashboard.production.hint": "Log what you converted from raw stock.",
   "dashboard.production.cta": "Log production",
-  "admin.skus.stock.in_stock": "In stock (est.)"
+  "admin.skus.stock.in_stock": "In stock (est.)",
+  "production.panel.uses": "Uses",
+  "production.panel.confirm_cue": "tap to confirm usage",
+  "production.panel.per_sku": "{name}",
+  "production.panel.unit_case": "Case",
+  "production.panel.unit_each": "Each",
+  "production.panel.none": "No recipe linked — nothing to deplete."
 }
