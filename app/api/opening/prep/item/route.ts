@@ -40,6 +40,7 @@ import { lockLocationContext } from "@/lib/locations";
 import { OpeningError, savePhase2Item } from "@/lib/opening";
 import { requireSession } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import type { ConfirmedInput } from "@/lib/prep-consumption";
 import type { OpeningEntryPhase2 } from "@/lib/types";
 
 import { mapOpeningError } from "../../_helpers";
@@ -65,6 +66,37 @@ const UNDER_REASONS: ReadonlySet<string> = new Set([
 interface ValidBody {
   instanceId: string;
   entry: OpeningEntryPhase2;
+  /**
+   * Production-in-prep fold — confirmed/edited SKU consumption from the panel.
+   * null when the panel was untouched (server records the derived default);
+   * otherwise a sanitized ConfirmedInput[]. Top-level (sibling to `entry`),
+   * matching the client body shape.
+   */
+  confirmedConsumption: ConfirmedInput[] | null;
+}
+
+/**
+ * Sanitize the panel's confirmedConsumption payload. Returns null (record the
+ * derived default) when the field is absent/not an array. Each element requires
+ * a uuid skuId + finite qtyOz; qtyEntered / unitEntered / derivedOz are optional
+ * (null when malformed). Drops elements that fail the skuId/qtyOz contract.
+ */
+function parseConfirmedConsumption(raw: unknown): ConfirmedInput[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: ConfirmedInput[] = [];
+  for (const el of raw) {
+    if (typeof el !== "object" || el === null) continue;
+    const e = el as Record<string, unknown>;
+    if (typeof e.skuId !== "string" || !UUID_RE.test(e.skuId)) continue;
+    if (typeof e.qtyOz !== "number" || !Number.isFinite(e.qtyOz)) continue;
+    const qtyEntered =
+      typeof e.qtyEntered === "number" && Number.isFinite(e.qtyEntered) ? e.qtyEntered : null;
+    const unitEntered = typeof e.unitEntered === "string" ? e.unitEntered : null;
+    const derivedOz =
+      typeof e.derivedOz === "number" && Number.isFinite(e.derivedOz) ? e.derivedOz : null;
+    out.push({ skuId: e.skuId, qtyOz: e.qtyOz, qtyEntered, unitEntered, derivedOz });
+  }
+  return out;
 }
 
 function validateBody(
@@ -153,6 +185,7 @@ function validateBody(
         overPar,
         underPar,
       },
+      confirmedConsumption: parseConfirmedConsumption(r.confirmedConsumption),
     },
   };
 }
@@ -173,7 +206,7 @@ export async function POST(req: NextRequest) {
       field: validation.field,
     });
   }
-  const { instanceId, entry } = validation.body;
+  const { instanceId, entry, confirmedConsumption } = validation.body;
 
   // 3. Instance load + location access check (defense-in-depth).
   const service = getServiceRoleClient();
@@ -205,8 +238,10 @@ export async function POST(req: NextRequest) {
   try {
     const result = await savePhase2Item(service, {
       instanceId,
+      locationId: instance.location_id,
       actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level },
       entry,
+      confirmedConsumption,
       ipAddress: extractIp(req),
       userAgent: req.headers.get("user-agent"),
     });

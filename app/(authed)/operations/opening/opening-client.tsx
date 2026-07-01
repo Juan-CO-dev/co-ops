@@ -29,6 +29,7 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language, TranslationKey, TranslationParams } from "@/lib/i18n/types";
 import type { OpeningCloserCountSnapshotRow } from "@/lib/opening";
+import type { DerivedSku } from "@/lib/prep-consumption";
 import type {
   ChecklistCompletion,
   ChecklistInstance,
@@ -71,6 +72,12 @@ interface OpeningClientProps {
    * internally via useMemo for OpeningPrepEntry consumption.
    */
   closerSnapshots: Record<string, OpeningCloserCountSnapshotRow>;
+  /**
+   * Production-in-prep fold — per-Phase-2-item derived SKU consumption keyed by
+   * template-item id (loadOpeningState). Threaded straight to OpeningPrepEntry as
+   * `derivedByItem`. Record (not Map) to cross the RSC→client JSON boundary.
+   */
+  derived: Record<string, DerivedSku[]>;
   /**
    * Fix #7 — distinct verified section_keys read back from
    * opening_section_verifications (loadOpeningSectionVerifications). Seeds the
@@ -269,6 +276,10 @@ function saveStateToFormValue(
     openerPrepped: s.opener_prepped,
     overPar,
     underPar,
+    // Panel confirmation is not persisted into the phase2 completion's read-back
+    // shape (it lives on the productions ledger). A hydrated row starts untouched;
+    // the server re-derives the default on any subsequent blur-save.
+    confirmedConsumption: null,
   };
 }
 
@@ -298,6 +309,11 @@ function phase2Signature(v: OpeningPhase2FormValue): string {
           freeText: v.underPar.freeText,
         }
       : null,
+    // Production-in-prep fold — MUST fold in the panel confirmation, else a
+    // panel-only edit (same openerPrepped/over/under) produces an identical
+    // signature and the value-diff guard silently skips the re-POST that would
+    // persist the confirmed consumption.
+    confirmedConsumption: v.confirmedConsumption,
   });
 }
 
@@ -305,6 +321,7 @@ export function OpeningClient({
   instance,
   templateItems,
   closerSnapshots,
+  derived,
   verifiedSections,
   completions,
   managers,
@@ -433,7 +450,7 @@ export function OpeningClient({
         item.id,
         saved
           ? saveStateToFormValue(saved, item.id)
-          : { openerRecount: null, openerPrepped: null, overPar: null, underPar: null },
+          : { openerRecount: null, openerPrepped: null, overPar: null, underPar: null, confirmedConsumption: null },
       );
     }
     return map;
@@ -992,6 +1009,9 @@ export function OpeningClient({
             overPar: valueToSave.overPar,
             underPar: valueToSave.underPar,
           },
+          // Production-in-prep fold — top-level (sibling to `entry`), matching the
+          // route's ValidBody. null = untouched → server records the derived default.
+          confirmedConsumption: valueToSave.confirmedConsumption ?? null,
         }),
       });
 
@@ -1125,6 +1145,7 @@ export function OpeningClient({
           openerPrepped: null,
           overPar: null,
           underPar: null,
+          confirmedConsumption: null,
         });
         return updated;
       });
@@ -1508,6 +1529,7 @@ export function OpeningClient({
       {activePhase === "prep" && phase2Items.length > 0 ? (
         <OpeningPrepEntry
           items={phase2Items}
+          derivedByItem={derived}
           values={phase2Values}
           onChange={handlePhase2ItemChange}
           saveStates={saveStates}

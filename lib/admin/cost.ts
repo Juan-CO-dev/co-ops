@@ -307,3 +307,45 @@ export async function loadSkuReceivingLedger(actor: AuthContext, skuIds: string[
   for (const led of out.values()) led.deliveries.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
   return out;
 }
+
+export interface SkuConsumption { consumedOz: number; consumedDollars: number; }
+
+/**
+ * Per-SKU consumption from production (S1, reshaped to header + production_inputs
+ * lines): Σ input_oz (oz) over LIVE headers, and Σ input_oz × costPerOz ($) where
+ * costPerOz = current pack price ÷ content_oz. Superseded/revoked headers excluded.
+ */
+export async function loadSkuConsumption(actor: AuthContext, skuIds: string[]): Promise<Map<string, SkuConsumption>> {
+  requireLevel(actor, COST_READ_MIN);
+  const out = new Map<string, SkuConsumption>();
+  if (skuIds.length === 0) return out;
+  const sb = getServiceRoleClient();
+  const prices = await loadCurrentSkuPrices(skuIds);
+  const measures = await loadMeasureUnits(actor);
+  const measuresMap = new Map<string, MeasureUnitFactor>(measures.map((m) => [m.label, { dimension: m.dimension, toBaseFactor: m.toBaseFactor }]));
+  const { data: skuRows } = await sb.from("vendor_items").select("id, units_per_pack, each_size, each_measure, avg_oz_per_each").in("id", skuIds)
+    .returns<Array<{ id: string; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>>();
+  const contentOzById = new Map<string, number | null>((skuRows ?? []).map((s) => [s.id, skuContentOz({ unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure, avgOzPerEach: num(s.avg_oz_per_each) }, measuresMap)]));
+  // costPerOz = price-per-pack ÷ content_oz; null if either missing or content <= 0.
+  const costPerOzById = new Map<string, number | null>();
+  for (const id of skuIds) {
+    const price = prices.get(id) ?? null;
+    const content = contentOzById.get(id) ?? null;
+    costPerOzById.set(id, price != null && content != null && content > 0 ? price / content : null);
+  }
+
+  const { data: liveHdr } = await sb.from("productions").select("id").is("superseded_at", null).is("revoked_at", null).returns<Array<{ id: string }>>();
+  const liveIds = new Set((liveHdr ?? []).map((h) => h.id));
+  const { data: lines } = await sb.from("production_inputs").select("production_id, input_sku_id, input_oz").in("input_sku_id", skuIds).returns<Array<{ production_id: string; input_sku_id: string; input_oz: number | string }>>();
+
+  for (const id of skuIds) out.set(id, { consumedOz: 0, consumedDollars: 0 });
+  for (const l of lines ?? []) {
+    if (!liveIds.has(l.production_id)) continue;
+    const c = out.get(l.input_sku_id); if (!c) continue;
+    const oz = num(l.input_oz) ?? 0;
+    c.consumedOz += oz;
+    const cpo = costPerOzById.get(l.input_sku_id) ?? null;
+    if (cpo != null) c.consumedDollars += oz * cpo;
+  }
+  return out;
+}
