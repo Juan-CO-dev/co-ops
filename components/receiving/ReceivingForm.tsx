@@ -15,6 +15,7 @@ export function ReceivingForm({ formData, locationId, today }: { formData: Recei
   const [date, setDate] = useState(today);
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [invoiceTotal, setInvoiceTotal] = useState("");
+  const [notes, setNotes] = useState("");
   const [lines, setLines] = useState<LineDraft[]>([emptyLine()]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -32,13 +33,14 @@ export function ReceivingForm({ formData, locationId, today }: { formData: Recei
       vendorId, locationId, deliveryDate: date,
       invoiceNumber: invoiceNumber.trim() || null,
       invoiceTotal: num(invoiceTotal),
+      notes: notes.trim() || null,
       lines: lines.filter((l) => l.skuId !== "" && l.qty.trim() !== "").map((l) => ({
         skuId: l.skuId, qtyReceived: Number(l.qty), unitPrice: num(l.price), observedOzPerEach: num(l.observed),
       })),
     };
     const res = await fetch("/api/operations/receiving", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
     setBusy(false);
-    if (res.ok) { router.refresh(); setVendorId(""); setInvoiceNumber(""); setInvoiceTotal(""); setLines([emptyLine()]); }
+    if (res.ok) { router.refresh(); setVendorId(""); setInvoiceNumber(""); setInvoiceTotal(""); setNotes(""); setLines([emptyLine()]); }
     else { const j = await res.json().catch(() => ({} as { code?: string })); setErr(t(("receiving.error." + (j?.code ?? "generic")) as never)); }
   };
 
@@ -59,6 +61,8 @@ export function ReceivingForm({ formData, locationId, today }: { formData: Recei
       </div>
       <label className="mt-3 block"><span className="text-sm font-bold text-co-text">{t("receiving.form.invoice_total")}</span>
         <input className={field} type="number" min={0} step="any" inputMode="decimal" value={invoiceTotal} disabled={busy} onChange={(e) => setInvoiceTotal(e.target.value)} /></label>
+      <label className="mt-3 block"><span className="text-sm font-bold text-co-text">{t("receiving.form.notes")}</span>
+        <textarea className={`${field} min-h-[72px] py-2`} value={notes} disabled={busy} onChange={(e) => setNotes(e.target.value)} placeholder={t("receiving.form.notes_hint")} /></label>
 
       <h3 className="mt-4 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">{t("receiving.form.lines")}</h3>
       <div className="mt-2 flex flex-col gap-3">

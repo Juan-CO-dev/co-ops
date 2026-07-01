@@ -1621,6 +1621,8 @@
   "receiving.form.date": "Delivery date",
   "receiving.form.invoice_number": "Invoice #",
   "receiving.form.invoice_total": "Invoice total ($)",
+  "receiving.form.notes": "Notes",
+  "receiving.form.notes_hint": "Anything to flag about this delivery…",
   "receiving.form.lines": "Items received",
   "receiving.form.pick_sku": "Pick a SKU…",
   "receiving.form.qty": "Qty (packs)",

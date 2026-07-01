@@ -1621,6 +1621,8 @@
   "receiving.form.date": "Fecha de entrega",
   "receiving.form.invoice_number": "Factura #",
   "receiving.form.invoice_total": "Total de factura ($)",
+  "receiving.form.notes": "Notas",
+  "receiving.form.notes_hint": "Algo que señalar sobre esta entrega…",
   "receiving.form.lines": "Artículos recibidos",
   "receiving.form.pick_sku": "Elige un SKU…",
   "receiving.form.qty": "Cant. (paquetes)",
