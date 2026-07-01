@@ -21,8 +21,6 @@ import type { PrepSection, PrepSectionShape, LineInputType } from "@/lib/types";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { ChecklistRegistryItem, SectionQuestionView, ItemQuestionView } from "@/lib/admin/templates";
 import type { PrepSectionDefn } from "@/lib/types";
-import type { ComponentView } from "@/lib/admin/item-components";
-import { MadeFromEditor } from "./MadeFromEditor";
 import { postJson, resolveErrorKey } from "./shared";
 
 const INPUT_TYPE_OPTIONS: Array<{ value: LineInputType; key: TranslationKey }> = [
@@ -39,25 +37,15 @@ export function GlobalRegistryTab({
   units,
   sectionQuestions,
   itemQuestions,
-  itemComponents,
-  skuOptions,
-  measureUnits,
   actorLevel,
-  itemCosts,
 }: {
   registry: ChecklistRegistryItem[];
   sections: PrepSectionDefn[];
   units: Array<{ label: string }>;
   sectionQuestions: SectionQuestionView[];
   itemQuestions: ItemQuestionView[];
-  itemComponents: ComponentView[];
-  skuOptions: Array<{ id: string; name: string }>;
-  measureUnits: Array<{ id: string; label: string }>;
   actorLevel: number;
-  itemCosts: Record<string, { perUnitCost: number | null; foodCostPct: number | null }>;
 }) {
-  // Sub-item picker options (every registry item; the row excludes the parent).
-  const itemOptions = registry.map((r) => ({ id: r.itemId, name: r.name }));
   const { t, language } = useTranslation();
   const canAdd = actorLevel >= 7;
   const canEditSections = actorLevel >= 8; // MoO+
@@ -146,11 +134,6 @@ export function GlobalRegistryTab({
                   units={units}
                   language={language}
                   itemQuestions={itemQuestions.filter((q) => q.itemId === r.itemId)}
-                  itemComponents={itemComponents.filter((c) => c.itemId === r.itemId)}
-                  skuOptions={skuOptions}
-                  itemOptions={itemOptions}
-                  measureUnits={measureUnits}
-                  cost={itemCosts[r.itemId] ?? null}
                 />
               ))}
             </div>
@@ -804,11 +787,6 @@ function RegistryRow({
   units,
   language,
   itemQuestions,
-  itemComponents,
-  skuOptions,
-  itemOptions,
-  measureUnits,
-  cost,
 }: {
   item: ChecklistRegistryItem;
   actorLevel: number;
@@ -816,22 +794,13 @@ function RegistryRow({
   units: Array<{ label: string }>;
   language: string;
   itemQuestions: ItemQuestionView[];
-  itemComponents: ComponentView[];
-  skuOptions: Array<{ id: string; name: string }>;
-  itemOptions: Array<{ id: string; name: string }>;
-  measureUnits: Array<{ id: string; label: string }>;
-  cost: { perUnitCost: number | null; foodCostPct: number | null } | null;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
   const canEdit = actorLevel >= 8; // MoO+ — item-definition editor
-  // BOM ("Made from") is GM+ edit / AGM+ view (its own affordance, NOT under the
-  // MoO+ definition editor), so a GM can manage an item's components.
-  const canViewBom = actorLevel >= 6;
 
   const [open, setOpen] = useState(false);
-  const [bomOpen, setBomOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -846,7 +815,6 @@ function RegistryRow({
   const [trackingType, setTrackingType] = useState(item.trackingType);
   const [batchYield, setBatchYield] = useState(item.batchYield.toString());
   const [ozPerParUnit, setOzPerParUnit] = useState(item.ozPerParUnit != null ? String(item.ozPerParUnit) : "");
-  const [menuPrice, setMenuPrice] = useState(item.menuPrice != null ? String(item.menuPrice) : "");
   const slugs = orderedSectionSlugs(sections);
   const activeSlugs = new Set(slugs);
   const initialSection: PrepSection = isPrepSectionName(item.section, activeSlugs)
@@ -910,7 +878,6 @@ function RegistryRow({
         trackingType,
         ...(batchYield.trim() === "" ? {} : { batchYield: Number(batchYield) }),
         ozPerParUnit: ozPerParUnit.trim() === "" ? null : Number(ozPerParUnit),
-        menuPrice: menuPrice.trim() === "" ? null : Number(menuPrice),
       },
       "PATCH",
     );
@@ -937,11 +904,12 @@ function RegistryRow({
           ) : null}
         </span>
         <div className="flex gap-2">
-          {canViewBom ? (
-            <button type="button" onClick={() => setBomOpen((v) => !v)} className={smallBtn}>
-              {t("admin.items.made_from.title")}
-            </button>
-          ) : null}
+          <a
+            href="/admin/recipes"
+            className={smallBtn}
+          >
+            {t("recipes.item_link.production_recipe" as TranslationKey)}
+          </a>
           {canEdit ? (
             <button type="button" onClick={() => setOpen((v) => !v)} className={smallBtn}>
               {t("admin.templates.edit")}
@@ -949,22 +917,6 @@ function RegistryRow({
           ) : null}
         </div>
       </div>
-
-      {bomOpen && canViewBom ? (
-        <div className="mt-3">
-          <MadeFromEditor
-            itemId={item.itemId}
-            itemName={item.name}
-            components={itemComponents}
-            skuOptions={skuOptions}
-            itemOptions={itemOptions}
-            measureUnits={measureUnits}
-            actorLevel={actorLevel}
-            batchYield={item.batchYield}
-            cost={cost}
-          />
-        </div>
-      ) : null}
 
       {open && canEdit ? (
         <div className="mt-3 flex flex-col gap-3">
@@ -1049,10 +1001,6 @@ function RegistryRow({
             <Labeled label={t("admin.templates.field.oz_per_par_unit")}>
               <input className={field} type="number" min={0} step="any" inputMode="decimal" value={ozPerParUnit} onChange={(e) => setOzPerParUnit(e.target.value)} />
               <span className="mt-1 block text-xs text-co-text-muted">{t("admin.templates.oz_per_par_unit_hint")}</span>
-            </Labeled>
-            <Labeled label={t("admin.templates.field.menu_price")}>
-              <input className={field} type="number" min={0} step="any" inputMode="decimal" value={menuPrice} onChange={(e) => setMenuPrice(e.target.value)} />
-              <span className="mt-1 block text-xs text-co-text-muted">{t("admin.templates.menu_price_hint")}</span>
             </Labeled>
             <p className="mt-2 text-xs text-co-text-muted">{t("admin.templates.definition.blast_radius_note")}</p>
             <div className="mt-3 flex justify-end">

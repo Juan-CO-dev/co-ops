@@ -63,6 +63,23 @@ export const DESTRUCTIVE_ACTIONS = [
   "item_component.add",
   "item_component.remove",
 
+  // Recipe stage (Derivation Spine sub-project 1). Two-tier recipe entity
+  // (production→items / consumer→menu_items) + polymorphic input/output edges +
+  // menu_items leaf. Config mutations analogous to item_component.* / vendor_item.* —
+  // auto-derive destructive=true via isDestructive() so the audit record is
+  // consistently flagged. Writes are service-role + app-gated in lib/recipes.ts
+  // (GM+ create/edit; MoO+ for menu_price). Append-only for recipes/menu_items
+  // (deactivate via active=false); recipe_input/output are hard-deleted edges with
+  // before-state in the audit row (mirrors item_component.remove).
+  "recipe.create",
+  "recipe.update",
+  "recipe.deactivate",
+  "recipe_input.add",
+  "recipe_input.remove",
+  "recipe_output.add",
+  "recipe_output.remove",
+  "menu_item.create",
+
   // Category registry (Vendor Directory v2, Slice A).
   // — category.create adds a category to the shared `categories` registry (MoO+,
   //   global). Same "enumerate categorical free-text via registries" principle

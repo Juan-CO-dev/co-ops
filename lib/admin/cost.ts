@@ -161,51 +161,46 @@ export function annotateComponentCosts(args: {
   return { components: annotated, itemCosts };
 }
 
-/** Transitive reverse: every item that uses `skuId` directly or through a sub-item. Names only. */
+/** Transitive reverse over the RECIPE graph: every output item that uses `skuId`
+ * directly (recipe_inputs.component_sku_id) or through a sub-item input. Names only. */
 export async function loadSkuUsageMap(): Promise<Map<string, string[]>> {
   const sb = getServiceRoleClient();
-  const { data: edges, error } = await sb
-    .from("item_components")
-    .select("item_id, component_sku_id, component_item_id")
-    .returns<Array<{ item_id: string; component_sku_id: string | null; component_item_id: string | null }>>();
-  if (error) throw new Error(`loadSkuUsageMap edges failed: ${error.message}`);
-  const parentsOfItem = new Map<string, string[]>();
-  const skuDirect = new Map<string, Set<string>>();
-  for (const e of edges ?? []) {
-    if (e.component_item_id) {
-      const list = parentsOfItem.get(e.component_item_id) ?? [];
-      list.push(e.item_id);
-      parentsOfItem.set(e.component_item_id, list);
-    }
-    if (e.component_sku_id) {
-      const set = skuDirect.get(e.component_sku_id) ?? new Set<string>();
-      set.add(e.item_id);
-      skuDirect.set(e.component_sku_id, set);
-    }
+  const { data: ins, error: e1 } = await sb.from("recipe_inputs").select("recipe_id, component_sku_id, component_item_id")
+    .returns<Array<{ recipe_id: string; component_sku_id: string | null; component_item_id: string | null }>>();
+  if (e1) throw new Error(`loadSkuUsageMap inputs: ${e1.message}`);
+  const { data: outs, error: e2 } = await sb.from("recipe_outputs").select("recipe_id, output_item_id").not("output_item_id", "is", null)
+    .returns<Array<{ recipe_id: string; output_item_id: string }>>();
+  if (e2) throw new Error(`loadSkuUsageMap outputs: ${e2.message}`);
+
+  const outItemsOfRecipe = new Map<string, string[]>();
+  for (const o of outs ?? []) { const l = outItemsOfRecipe.get(o.recipe_id) ?? []; l.push(o.output_item_id); outItemsOfRecipe.set(o.recipe_id, l); }
+  const recipesUsingSku = new Map<string, Set<string>>();
+  const recipesUsingItem = new Map<string, Set<string>>();
+  for (const i of ins ?? []) {
+    if (i.component_sku_id) { const s = recipesUsingSku.get(i.component_sku_id) ?? new Set(); s.add(i.recipe_id); recipesUsingSku.set(i.component_sku_id, s); }
+    if (i.component_item_id) { const s = recipesUsingItem.get(i.component_item_id) ?? new Set(); s.add(i.recipe_id); recipesUsingItem.set(i.component_item_id, s); }
   }
+
   const allItemIds = new Set<string>();
-  for (const set of skuDirect.values()) for (const id of set) allItemIds.add(id);
-  for (const list of parentsOfItem.values()) for (const id of list) allItemIds.add(id);
-  for (const k of parentsOfItem.keys()) allItemIds.add(k);
-  const itemIdsToNames = new Map<string, string>();
-  if (allItemIds.size > 0) {
-    const { data: items, error: iErr } = await sb.from("items").select("id, name").in("id", [...allItemIds]).returns<Array<{ id: string; name: string }>>();
-    if (iErr) throw new Error(`loadSkuUsageMap names failed: ${iErr.message}`);
-    for (const it of items ?? []) itemIdsToNames.set(it.id, it.name);
+  const reachedItemsPerSku = new Map<string, Set<string>>();
+  for (const [skuId, seedRecipes] of recipesUsingSku) {
+    const reached = new Set<string>(); const rq = [...seedRecipes]; const seenR = new Set<string>();
+    while (rq.length) { const r = rq.shift()!; if (seenR.has(r)) continue; seenR.add(r);
+      for (const it of outItemsOfRecipe.get(r) ?? []) { reached.add(it); allItemIds.add(it);
+        for (const up of recipesUsingItem.get(it) ?? []) rq.push(up); } }
+    reachedItemsPerSku.set(skuId, reached);
   }
+  const names = await namesOfItems([...allItemIds]);
   const out = new Map<string, string[]>();
-  for (const [skuId, directParents] of skuDirect) {
-    const reached = new Set<string>();
-    const queue = [...directParents];
-    while (queue.length) {
-      const cur = queue.shift()!;
-      if (reached.has(cur)) continue;
-      reached.add(cur);
-      for (const p of parentsOfItem.get(cur) ?? []) queue.push(p);
-    }
-    out.set(skuId, [...reached].map((id) => itemIdsToNames.get(id) ?? "(item)").sort());
-  }
+  for (const [skuId, items] of reachedItemsPerSku) out.set(skuId, [...items].map((id) => names.get(id) ?? "(item)").sort());
   return out;
+}
+
+async function namesOfItems(ids: string[]): Promise<Map<string, string>> {
+  const m = new Map<string, string>(); if (ids.length === 0) return m;
+  const sb = getServiceRoleClient();
+  const { data } = await sb.from("items").select("id, name").in("id", ids).returns<Array<{ id: string; name: string }>>();
+  for (const r of data ?? []) m.set(r.id, r.name); return m;
 }
 
 /** Record a SKU price into the append-only ledger (AGM+). */

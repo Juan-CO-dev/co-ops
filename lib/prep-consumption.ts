@@ -15,8 +15,6 @@ function num(v: number | string | null): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-interface ItemNode { batchYield: number | null; components: Array<{ quantity: number; unit: string | null; componentSkuId: string | null; componentItemId: string | null }>; }
-
 async function loadMeasures(): Promise<Map<string, MeasureUnitFactor>> {
   const sb = getServiceRoleClient();
   const { data } = await sb.from("measure_units").select("label, dimension, to_base_factor").eq("active", true).returns<Array<{ label: string; dimension: "weight" | "volume" | "count"; to_base_factor: number | string }>>();
@@ -30,61 +28,90 @@ async function loadSkuAvg(skuIds: string[]): Promise<Map<string, number | null>>
   return new Map((data ?? []).map((s) => [s.id, num(s.avg_oz_per_each)]));
 }
 
+interface RecipeNode {
+  recipeId: string; batchYield: number | null;
+  inputs: Array<{ quantity: number; unit: string | null; componentSkuId: string | null; componentItemId: string | null }>;
+  outputs: Array<{ outputItemId: string; yield: number; ozWeight: number }>;
+}
+
 export async function perUnitSkuOzForItem(itemId: string): Promise<Map<string, number>> {
   const sb = getServiceRoleClient();
   const measures = await loadMeasures();
-  const nodeCache = new Map<string, ItemNode | null>();
+  const recipeByOutputItem = new Map<string, RecipeNode | null>();
 
-  async function loadNode(id: string): Promise<ItemNode | null> {
-    if (nodeCache.has(id)) return nodeCache.get(id) ?? null;
-    const { data: item } = await sb.from("items").select("batch_yield").eq("id", id).maybeSingle<{ batch_yield: number | string | null }>();
-    const { data: comps } = await sb.from("item_components").select("quantity, unit, component_sku_id, component_item_id").eq("item_id", id).returns<Array<{ quantity: number | string; unit: string | null; component_sku_id: string | null; component_item_id: string | null }>>();
-    const node: ItemNode = {
-      batchYield: item ? num(item.batch_yield) : null,
-      components: (comps ?? []).map((c) => ({ quantity: num(c.quantity) ?? 0, unit: c.unit, componentSkuId: c.component_sku_id, componentItemId: c.component_item_id })),
+  async function loadRecipeForOutputItem(outItemId: string): Promise<RecipeNode | null> {
+    if (recipeByOutputItem.has(outItemId)) return recipeByOutputItem.get(outItemId) ?? null;
+    const { data: outRow } = await sb.from("recipe_outputs").select("recipe_id").eq("output_item_id", outItemId).limit(1).maybeSingle<{ recipe_id: string }>();
+    if (!outRow) { recipeByOutputItem.set(outItemId, null); return null; }
+    const recipeId = outRow.recipe_id;
+    const { data: rec } = await sb.from("recipes").select("batch_yield").eq("id", recipeId).maybeSingle<{ batch_yield: number | string | null }>();
+    const { data: ins } = await sb.from("recipe_inputs").select("quantity, unit, component_sku_id, component_item_id").eq("recipe_id", recipeId)
+      .returns<Array<{ quantity: number | string; unit: string | null; component_sku_id: string | null; component_item_id: string | null }>>();
+    const { data: outs } = await sb.from("recipe_outputs").select("output_item_id, yield").eq("recipe_id", recipeId).not("output_item_id", "is", null)
+      .returns<Array<{ output_item_id: string; yield: number | string }>>();
+    const outItemIds = (outs ?? []).map((o) => o.output_item_id);
+    const ozPar = await loadItemOzPerPar(outItemIds);
+    const node: RecipeNode = {
+      recipeId, batchYield: rec ? num(rec.batch_yield) : null,
+      inputs: (ins ?? []).map((c) => ({ quantity: num(c.quantity) ?? 0, unit: c.unit, componentSkuId: c.component_sku_id, componentItemId: c.component_item_id })),
+      outputs: (outs ?? []).map((o) => { const y = num(o.yield) ?? 0; const w = (ozPar.get(o.output_item_id) ?? null); return { outputItemId: o.output_item_id, yield: y, ozWeight: w != null && w > 0 ? y * w : y }; }),
     };
-    nodeCache.set(id, node);
+    recipeByOutputItem.set(outItemId, node);
     return node;
   }
 
   const skuIds = new Set<string>();
-  async function collectSkus(id: string, seen: Set<string>): Promise<void> {
-    if (seen.has(id)) return;
-    seen.add(id);
-    const node = await loadNode(id);
-    if (!node) return;
-    for (const c of node.components) {
-      if (c.componentSkuId) skuIds.add(c.componentSkuId);
-      else if (c.componentItemId) await collectSkus(c.componentItemId, seen);
-    }
+  async function collect(outItemId: string, seen: Set<string>): Promise<void> {
+    if (seen.has(outItemId)) return; seen.add(outItemId);
+    const node = await loadRecipeForOutputItem(outItemId); if (!node) return;
+    for (const c of node.inputs) { if (c.componentSkuId) skuIds.add(c.componentSkuId); else if (c.componentItemId) await collect(c.componentItemId, seen); }
   }
-  await collectSkus(itemId, new Set());
+  await collect(itemId, new Set());
   const skuAvg = await loadSkuAvg([...skuIds]);
 
-  function recurse(id: string, visiting: Set<string>): Map<string, number> | null {
-    if (visiting.has(id)) return null;
-    const node = nodeCache.get(id) ?? null;
+  function batchOz(outItemId: string, visiting: Set<string>): Map<string, number> | null {
+    if (visiting.has(outItemId)) return null;
+    const node = recipeByOutputItem.get(outItemId) ?? null;
     if (!node || node.batchYield == null || node.batchYield <= 0) return null;
+    const next = new Set(visiting).add(outItemId);
     const out = new Map<string, number>();
-    const nextVisiting = new Set(visiting).add(id);
-    for (const c of node.components) {
+    for (const c of node.inputs) {
       if (c.componentSkuId != null) {
         const oz = ozFromMeasure(c.quantity, c.unit, measures, skuAvg.get(c.componentSkuId) ?? null);
         if (oz == null) return null;
-        out.set(c.componentSkuId, (out.get(c.componentSkuId) ?? 0) + oz / node.batchYield);
+        out.set(c.componentSkuId, (out.get(c.componentSkuId) ?? 0) + oz);
       } else if (c.componentItemId != null) {
-        const subMap = recurse(c.componentItemId, nextVisiting);
-        if (subMap == null) return null;
-        const scale = c.quantity / node.batchYield;
-        for (const [sku, oz] of subMap) out.set(sku, (out.get(sku) ?? 0) + oz * scale);
-      } else {
-        return null;
-      }
+        const subPerUnit = perUnitFromNode(c.componentItemId, next);
+        if (subPerUnit == null) return null;
+        for (const [sku, oz] of subPerUnit) out.set(sku, (out.get(sku) ?? 0) + oz * c.quantity);
+      } else return null;
     }
     return out;
   }
 
-  return recurse(itemId, new Set()) ?? new Map();
+  function perUnitFromNode(outItemId: string, visiting: Set<string>): Map<string, number> | null {
+    const node = recipeByOutputItem.get(outItemId) ?? null;
+    if (!node) return null;
+    const batch = batchOz(outItemId, visiting);
+    if (batch == null) return null;
+    const totalWeight = node.outputs.reduce((s, o) => s + (o.ozWeight > 0 ? o.ozWeight : 0), 0);
+    const me = node.outputs.find((o) => o.outputItemId === outItemId);
+    if (!me || me.yield <= 0) return null;
+    const share = totalWeight > 0 ? (me.ozWeight > 0 ? me.ozWeight : 0) / totalWeight : 1 / Math.max(node.outputs.length, 1);
+    const out = new Map<string, number>();
+    for (const [sku, oz] of batch) out.set(sku, (oz * share) / me.yield);
+    return out;
+  }
+
+  return perUnitFromNode(itemId, new Set()) ?? new Map();
+}
+
+/** oz_per_par_unit per item (for fan-out allocation weight). */
+async function loadItemOzPerPar(itemIds: string[]): Promise<Map<string, number | null>> {
+  if (itemIds.length === 0) return new Map();
+  const sb = getServiceRoleClient();
+  const { data } = await sb.from("items").select("id, oz_per_par_unit").in("id", itemIds).returns<Array<{ id: string; oz_per_par_unit: number | string | null }>>();
+  return new Map((data ?? []).map((r) => [r.id, num(r.oz_per_par_unit)]));
 }
 
 export async function skuConsumptionForItem(itemId: string, outputQty: number): Promise<Map<string, number>> {
