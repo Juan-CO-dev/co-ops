@@ -50,6 +50,7 @@ import { CashDepositTile } from "@/components/CashDepositTile";
 import { PmReportTile } from "@/components/PmReportTile";
 import { DashboardNav } from "@/components/DashboardNav";
 import { MidDayPrepTile } from "@/components/MidDayPrepTile";
+import { ReceivingTile } from "@/components/receiving/ReceivingTile";
 import { OpeningTile } from "@/components/OpeningTile";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -634,7 +635,8 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
           amPrepDashboard?.isVisibleToActor ||
           midDayPrepDashboard?.isVisibleToActor ||
           cashDashboard?.isVisibleToActor ||
-          pmDashboard?.isVisibleToActor) ? (
+          pmDashboard?.isVisibleToActor ||
+          auth.level >= 4) ? (
           <ReportsSection language={language}>
             {openingDashboard?.isVisibleToActor ? (
               <OpeningTile
@@ -674,6 +676,12 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                 language={language}
                 locationId={selectedLocation.id}
                 date={operational.todayDate}
+              />
+            ) : null}
+            {auth.level >= 4 ? (
+              <ReceivingTile
+                language={language}
+                locationId={selectedLocation.id}
               />
             ) : null}
             {cashDashboard?.isVisibleToActor ? (
