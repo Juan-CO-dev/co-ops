@@ -17,7 +17,7 @@ import { serverT } from "@/lib/i18n/server";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadSkus, loadPackFormats, loadMeasureUnits } from "@/lib/admin/skus";
 import { loadVendors } from "@/lib/admin/vendors";
-import { loadCurrentSkuPrices, computeSkuCostPerOz, loadSkuUsageMap } from "@/lib/admin/cost";
+import { loadCurrentSkuPrices, computeSkuCostPerOz, loadSkuUsageMap, loadSkuReceivingLedger } from "@/lib/admin/cost";
 import { SkuCatalogClient } from "@/components/admin/skus/SkuCatalogClient";
 
 export default async function AdminSkusPage() {
@@ -48,6 +48,8 @@ export default async function AdminSkusPage() {
   const usage = await loadSkuUsageMap();
   const skuCost: Record<string, { currentPrice: number | null; costPerOz: number | null; usedBy: string[] }> =
     Object.fromEntries(skus.map((s) => [s.id, { currentPrice: prices.get(s.id) ?? null, costPerOz: costPerOz.get(s.id) ?? null, usedBy: usage.get(s.id) ?? [] }]));
+  const ledgerMap = await loadSkuReceivingLedger(auth, skus.map((s) => s.id));
+  const skuLedger: Record<string, import("@/lib/admin/cost").SkuReceivingLedger> = Object.fromEntries([...ledgerMap.entries()]);
 
   return (
     <div>
@@ -62,6 +64,7 @@ export default async function AdminSkusPage() {
         packFormats={packFormats}
         measureUnits={measureUnits}
         skuCost={skuCost}
+        skuLedger={skuLedger}
         actorLevel={level}
         canManage={level >= 7}
       />

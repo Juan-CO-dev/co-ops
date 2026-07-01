@@ -34,6 +34,7 @@ import type { RegistryOption, MeasureUnitOption, SkuView } from "@/lib/admin/sku
 import type { SkuFormLocationOption } from "@/components/admin/skus/SkuForm";
 import { VendorSkusCard } from "@/components/admin/skus/VendorSkusCard";
 import type { SkuCostInfo } from "@/components/admin/skus/SkuCostPanel";
+import type { SkuReceivingLedger } from "@/lib/admin/cost";
 
 const fieldCls =
   "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-60";
@@ -49,6 +50,7 @@ export function VendorDetailClient({
   skuPackFormats,
   skuMeasureUnits,
   skuCost,
+  skuLedger,
   actorLevel,
 }: {
   vendor: VendorView;
@@ -59,6 +61,7 @@ export function VendorDetailClient({
   skuPackFormats: RegistryOption[];
   skuMeasureUnits: MeasureUnitOption[];
   skuCost: Record<string, SkuCostInfo>;
+  skuLedger: Record<string, SkuReceivingLedger>;
   actorLevel: number;
 }) {
   const { t } = useTranslation();
@@ -104,6 +107,7 @@ export function VendorDetailClient({
         packFormats={skuPackFormats}
         measureUnits={skuMeasureUnits}
         skuCost={skuCost}
+        skuLedger={skuLedger}
         actorLevel={actorLevel}
         canManage={canManage}
       />
