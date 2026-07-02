@@ -1936,6 +1936,12 @@ export interface ChecklistRegistryItem {
   ozPerParUnit: number | null;
   /** Sell price (migration 0099) for food-cost % (R2). */
   menuPrice: number | null;
+  /** Whether this item is sold directly (e.g. as a menu item). */
+  soldDirectly: boolean;
+  /** Sell portion size (units: sellPortionUnit). */
+  sellPortion: number | null;
+  /** Sell portion unit label. */
+  sellPortionUnit: string | null;
 }
 
 export interface ChecklistLocationView {
@@ -2011,12 +2017,12 @@ export async function loadChecklistAdminView(
   // Registry = active global items (location_id NULL), grouped/sorted by section.
   const { data: regRows, error: rErr } = await sb
     .from("items")
-    .select("id, name, name_es, section, default_par, default_par_unit, is_default, special_instruction, special_instruction_es, required, min_role_level, opening_verify, tracking_type, batch_yield, oz_per_par_unit, menu_price")
+    .select("id, name, name_es, section, default_par, default_par_unit, is_default, special_instruction, special_instruction_es, required, min_role_level, opening_verify, tracking_type, batch_yield, oz_per_par_unit, menu_price, sold_directly, sell_portion, sell_portion_unit")
     .is("location_id", null)
     .eq("active", true)
     .order("section", { ascending: true })
     .order("name", { ascending: true })
-    .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; default_par: number | null; default_par_unit: string | null; is_default: boolean; special_instruction: string | null; special_instruction_es: string | null; required: boolean; min_role_level: number | null; opening_verify: boolean; tracking_type: string; batch_yield: number | string; oz_per_par_unit: number | string | null; menu_price: number | string | null }>>();
+    .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; default_par: number | null; default_par_unit: string | null; is_default: boolean; special_instruction: string | null; special_instruction_es: string | null; required: boolean; min_role_level: number | null; opening_verify: boolean; tracking_type: string; batch_yield: number | string; oz_per_par_unit: number | string | null; menu_price: number | string | null; sold_directly: boolean | null; sell_portion: number | string | null; sell_portion_unit: string | null }>>();
   if (rErr) throw new Error(`loadChecklistAdminView registry failed: ${rErr.message}`);
   const registry: ChecklistRegistryItem[] = (regRows ?? []).map((r) => ({
     itemId: r.id,
@@ -2035,6 +2041,9 @@ export async function loadChecklistAdminView(
     batchYield: Number(r.batch_yield ?? 1),
     ozPerParUnit: r.oz_per_par_unit == null ? null : Number(r.oz_per_par_unit),
     menuPrice: r.menu_price == null ? null : Number(r.menu_price),
+    soldDirectly: r.sold_directly ?? false,
+    sellPortion: r.sell_portion == null ? null : Number(r.sell_portion),
+    sellPortionUnit: r.sell_portion_unit,
   }));
 
   // Accessible locations (respect all-locations override + assignment list).

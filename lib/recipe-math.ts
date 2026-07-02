@@ -61,6 +61,48 @@ export function ozFromMeasure(
   return quantity * ozPerUnit;
 }
 
+export interface RecipeInputSku {
+  packFormat: string | null;
+  eachContainerLabel: string | null;
+  unitsPerPack: number | null;
+  eachSize: number | null;
+  eachMeasure: string | null;
+  avgOzPerEach: number | null;
+}
+
+/**
+ * oz consumed by `quantity` of a SKU expressed in `unit`, resolving SKU pack levels:
+ *  - unit === sku.packFormat         → quantity × unitsPerPack × eachSize × ozPerMeasureUnit(eachMeasure)
+ *  - unit === sku.eachContainerLabel → quantity × eachSize × ozPerMeasureUnit(eachMeasure)
+ *  - else (a measure_units label like "oz") → ozFromMeasure(quantity, unit, measures, avgOzPerEach)
+ * Returns null if a required field is missing.
+ */
+export function ozForRecipeInput(
+  quantity: number,
+  unit: string | null,
+  sku: RecipeInputSku,
+  measuresByLabel: Map<string, MeasureUnitFactor>,
+): number | null {
+  if (!Number.isFinite(quantity) || unit == null) return null;
+  const perEachOz = (): number | null => {
+    if (sku.eachSize == null || sku.eachMeasure == null) return null;
+    const m = measuresByLabel.get(sku.eachMeasure);
+    if (!m) return null;
+    const per = ozPerMeasureUnit(m, sku.avgOzPerEach);
+    return per == null ? null : sku.eachSize * per;
+  };
+  if (unit === sku.packFormat) {
+    const each = perEachOz();
+    if (each == null || sku.unitsPerPack == null) return null;
+    return quantity * sku.unitsPerPack * each;
+  }
+  if (unit === sku.eachContainerLabel) {
+    const each = perEachOz();
+    return each == null ? null : quantity * each;
+  }
+  return ozFromMeasure(quantity, unit, measuresByLabel, sku.avgOzPerEach);
+}
+
 /** oz of a SKU component consumed per ONE par-unit = (component oz ÷ batch_yield). */
 export function componentPerUnitOz(
   args: { quantity: number; unit: string | null; batchYield: number; skuAvgOzPerEach: number | null },
