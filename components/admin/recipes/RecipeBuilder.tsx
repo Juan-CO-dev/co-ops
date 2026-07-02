@@ -1,15 +1,23 @@
 "use client";
 
 /**
- * RecipeBuilder — adaptive form for /admin/recipes/[id].
+ * RecipeBuilder — adaptive form for /admin/recipes/[id] (LIVE mode) and
+ * /admin/recipes/new (DRAFT mode).
  *
- * HEADER: name + nameEs, batchYield, collapsible Directions. PATCHes on blur.
- * CONSUMES: input rows + add-SKU / add-item forms.
- * PRODUCES: for 'production' — item output rows + add form;
- *           for 'consumer' — single menu-item output (pick existing menu item
- *           OR create one inline first).
- * LIVE READOUT: simple human echo of entered quantities + labels.
- *   (precise oz shown on the SKU/cost panels; we do NOT fabricate oz here)
+ * DRAFT mode  (recipe == null):
+ *   Header fields (name/nameEs/batchYield/directions/directionsEs) + recipe_type
+ *   are local state. Inputs + outputs are draft arrays. A single Save button
+ *   POSTs the entire draft to /api/admin/recipes/full after requestStepUp("B"),
+ *   then navigates to /admin/recipes/{id}.
+ *
+ * LIVE mode (recipe != null):
+ *   Header fields PATCH on blur. Inputs/outputs add immediately via POST.
+ *   recipe_type is shown read-only.
+ *
+ * SKU unit picker: after choosing a SKU the unit <select> offers
+ *   [packFormat, eachContainerLabel, eachMeasure] (nulls/dupes filtered).
+ * Output container: locked <select> over unitOptions (units registry).
+ * Live oz readout: calls ozForRecipeInput per SKU input row (shows "≈ N oz").
  */
 
 import { useState } from "react";
@@ -18,10 +26,12 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
 import { RegistrySelect } from "@/components/admin/skus/RegistrySelect";
-import type { RecipeView, RecipeInputView, RecipeOutputView } from "@/lib/recipes";
+import type { RecipeView, RecipeInputView, RecipeOutputView, RecipeType } from "@/lib/recipes";
 import { RECIPE_WRITE_MIN } from "@/lib/recipes";
 import type { RegistryOption } from "@/lib/admin/skus";
 import type { TranslationKey } from "@/lib/i18n/types";
+import type { MeasureUnitFactor, RecipeInputSku } from "@/lib/recipe-math";
+import { ozForRecipeInput } from "@/lib/recipe-math";
 import { postJson, resolveErrorKey } from "./shared";
 
 const rk = (k: string): TranslationKey => k as TranslationKey;
@@ -34,7 +44,34 @@ const fieldCls =
 const textareaCls =
   "mt-1 min-h-[88px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 py-2 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-60 resize-y";
 
-// ── Types for add-form inputs ────────────────────────────────────────────────
+// ── Richer SKU shape (includes pack fields for unit derivation + oz math) ────
+export interface RecipeBuilderSku extends RecipeInputSku {
+  id: string;
+  name: string;
+}
+
+// ── Draft input/output shapes ────────────────────────────────────────────────
+interface DraftInput {
+  _key: number;
+  kind: "sku" | "item";
+  componentSkuId: string | null;
+  componentItemId: string | null;
+  componentName: string;
+  quantity: number;
+  unit: string | null;
+  eachContainerLabel: string | null;
+  portioned: boolean;
+}
+interface DraftOutput {
+  _key: number;
+  kind: "item" | "menuItem";
+  outputItemId: string | null;
+  outputMenuItemId: string | null;
+  outputName: string;
+  yield: number;
+  outputContainerLabel: string | null;
+}
+
 type InputKind = "sku" | "item";
 
 // ── RecipeBuilder ────────────────────────────────────────────────────────────
@@ -43,34 +80,52 @@ export function RecipeBuilder({
   skus,
   items,
   unitOptions,
+  measures,
   level,
+  defaultType = "production",
 }: {
-  recipe: RecipeView;
-  skus: Array<{ id: string; name: string }>;
+  recipe: RecipeView | null;
+  skus: RecipeBuilderSku[];
   items: Array<{ id: string; name: string }>;
   unitOptions: Array<{ id: string; label: string }>;
+  measures: Map<string, MeasureUnitFactor>;
   level: number;
+  defaultType?: RecipeType;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
   const { requestStepUp } = useStepUp();
   const canEdit = level >= RECIPE_WRITE_MIN;
 
-  // ── Header patch state ──
+  // ── LIVE mode: header patch state ──
   const [patchError, setPatchError] = useState<string | null>(null);
   const [patchBusy, setPatchBusy] = useState(false);
   const [directionsOpen, setDirectionsOpen] = useState(false);
 
-  // Local editable state — kept in sync with server via router.refresh() on blur
-  const [nameVal, setNameVal] = useState(recipe.name);
-  const [nameEsVal, setNameEsVal] = useState(recipe.nameEs ?? "");
-  const [batchYieldVal, setBatchYieldVal] = useState(String(recipe.batchYield));
-  const [directionsVal, setDirectionsVal] = useState(recipe.directions ?? "");
-  const [directionsEsVal, setDirectionsEsVal] = useState(recipe.directionsEs ?? "");
+  // ── Header local state (used by both modes; LIVE patches on blur, DRAFT collects) ──
+  const [nameVal, setNameVal] = useState(recipe?.name ?? "");
+  const [nameEsVal, setNameEsVal] = useState(recipe?.nameEs ?? "");
+  const [batchYieldVal, setBatchYieldVal] = useState(String(recipe?.batchYield ?? "1"));
+  const [directionsVal, setDirectionsVal] = useState(recipe?.directions ?? "");
+  const [directionsEsVal, setDirectionsEsVal] = useState(recipe?.directionsEs ?? "");
 
-  // Track if a field is "dirty" so we only PATCH when it changed
+  // ── DRAFT mode: recipe type (LIVE: read-only from recipe) ──
+  const [draftType, setDraftType] = useState<RecipeType>(defaultType);
+  const effectiveType = recipe ? recipe.recipeType : draftType;
+
+  // ── DRAFT mode: local input/output arrays ──
+  const [draftInputs, setDraftInputs] = useState<DraftInput[]>([]);
+  const [draftOutputs, setDraftOutputs] = useState<DraftOutput[]>([]);
+  const [draftKeySeq, setDraftKeySeq] = useState(0);
+  const nextKey = () => { const k = draftKeySeq; setDraftKeySeq((n) => n + 1); return k; };
+
+  // ── DRAFT mode: save state ──
+  const [saveBusy, setSaveBusy] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  // ── LIVE mode: PATCH helpers ──
   const patchField = async (field: string, value: string | number | null) => {
-    if (!canEdit) return;
+    if (!canEdit || !recipe) return;
     setPatchError(null);
     setPatchBusy(true);
     const result = await postJson(
@@ -88,26 +143,26 @@ export function RecipeBuilder({
 
   const handleNameBlur = () => {
     const trimmed = nameVal.trim();
-    if (trimmed && trimmed !== recipe.name) void patchField("name", trimmed);
+    if (recipe && trimmed && trimmed !== recipe.name) void patchField("name", trimmed);
   };
   const handleNameEsBlur = () => {
     const trimmed = nameEsVal.trim() || null;
-    if (trimmed !== (recipe.nameEs ?? null)) void patchField("nameEs", trimmed);
+    if (recipe && trimmed !== (recipe.nameEs ?? null)) void patchField("nameEs", trimmed);
   };
   const handleBatchYieldBlur = () => {
     const n = Number(batchYieldVal);
-    if (Number.isFinite(n) && n > 0 && n !== recipe.batchYield) void patchField("batchYield", n);
+    if (recipe && Number.isFinite(n) && n > 0 && n !== recipe.batchYield) void patchField("batchYield", n);
   };
   const handleDirectionsBlur = () => {
     const v = directionsVal.trim() || null;
-    if (v !== (recipe.directions ?? null)) void patchField("directions", v);
+    if (recipe && v !== (recipe.directions ?? null)) void patchField("directions", v);
   };
   const handleDirectionsEsBlur = () => {
     const v = directionsEsVal.trim() || null;
-    if (v !== (recipe.directionsEs ?? null)) void patchField("directionsEs", v);
+    if (recipe && v !== (recipe.directionsEs ?? null)) void patchField("directionsEs", v);
   };
 
-  // ── Remove edge ──
+  // ── LIVE mode: remove edge ──
   const removeEdge = async (table: "recipe_inputs" | "recipe_outputs", edgeId: string) => {
     if (!canEdit) return;
     const result = await postJson("/api/admin/recipes/edges", { table, id: edgeId }, "DELETE");
@@ -116,24 +171,106 @@ export function RecipeBuilder({
     }
   };
 
-  // Convert unitOptions to RegistryOption shape for RegistrySelect
+  // ── DRAFT mode: save entire draft ──
+  const saveDraft = async () => {
+    if (saveBusy || !canEdit) return;
+    setSaveError(null);
+    const name = nameVal.trim();
+    const batchYield = Number(batchYieldVal);
+    if (!name) { setSaveError(t(rk("recipes.error.invalid_name"))); return; }
+    if (!Number.isFinite(batchYield) || batchYield <= 0) { setSaveError(t(rk("recipes.error.invalid_batch_yield"))); return; }
+    if (draftInputs.length === 0) { setSaveError(t(rk("recipes.draft.error_no_inputs"))); return; }
+    if (draftOutputs.length === 0) { setSaveError(t(rk("recipes.draft.error_no_outputs"))); return; }
+    if ((await requestStepUp("B")) !== "ok") return;
+    setSaveBusy(true);
+    const result = await postJson("/api/admin/recipes/full", {
+      name,
+      nameEs: nameEsVal.trim() || null,
+      recipeType: effectiveType,
+      batchYield,
+      directions: directionsVal.trim() || null,
+      directionsEs: directionsEsVal.trim() || null,
+      inputs: draftInputs.map((inp) => ({
+        componentSkuId: inp.componentSkuId ?? undefined,
+        componentItemId: inp.componentItemId ?? undefined,
+        quantity: inp.quantity,
+        unit: inp.unit ?? undefined,
+        eachContainerLabel: inp.eachContainerLabel ?? undefined,
+        portioned: inp.portioned,
+      })),
+      outputs: draftOutputs.map((out) => ({
+        outputItemId: out.outputItemId ?? undefined,
+        outputMenuItemId: out.outputMenuItemId ?? undefined,
+        yield: out.yield,
+        outputContainerLabel: out.outputContainerLabel ?? undefined,
+      })),
+    });
+    setSaveBusy(false);
+    if (result.ok) {
+      const id = result.data["id"] as string | undefined;
+      if (id) {
+        router.push(`/admin/recipes/${id}`);
+      } else {
+        router.push("/admin/recipes");
+      }
+    } else {
+      setSaveError(t(resolveErrorKey(result.code)));
+    }
+  };
+
+  // ── Callbacks for sub-sections ──
+  const onAddDraftInput = (di: DraftInput) => setDraftInputs((prev) => [...prev, di]);
+  const onAddDraftOutput = (dout: DraftOutput) => setDraftOutputs((prev) => [...prev, dout]);
+
+  const removeDraftInput = (key: number) =>
+    setDraftInputs((prev) => prev.filter((x) => x._key !== key));
+  const removeDraftOutput = (key: number) =>
+    setDraftOutputs((prev) => prev.filter((x) => x._key !== key));
+
   const unitRegistryOptions: RegistryOption[] = unitOptions.map((u) => ({
     id: u.id,
     label: u.label,
   }));
 
+  // ── Draft save enabled? ──
+  const draftSaveEnabled =
+    nameVal.trim().length > 0 &&
+    Number(batchYieldVal) > 0 &&
+    draftInputs.length >= 1 &&
+    draftOutputs.length >= 1;
+
+  // ── Effective inputs/outputs for rendering ──
+  const liveInputs: RecipeInputView[] = recipe ? recipe.inputs : [];
+  const liveOutputs: RecipeOutputView[] = recipe ? recipe.outputs : [];
+
   return (
     <div className="mt-2">
       {/* ── Header ── */}
       <div className="rounded-lg border-2 border-co-border bg-co-surface p-4">
-        {/* Recipe type badge (read-only) */}
+        {/* Recipe type badge / selector */}
         <div className="mb-3 flex items-center gap-2 flex-wrap">
-          <span className="rounded bg-co-gold/30 px-2 py-0.5 text-xs font-bold uppercase tracking-[0.08em] text-co-text">
-            {recipe.recipeType === "production"
-              ? t(rk("recipes.type.production"))
-              : t(rk("recipes.type.consumer"))}
-          </span>
-          {(!recipe.inputs.length || !recipe.outputs.length) ? (
+          {recipe ? (
+            <span className="rounded bg-co-gold/30 px-2 py-0.5 text-xs font-bold uppercase tracking-[0.08em] text-co-text">
+              {recipe.recipeType === "production"
+                ? t(rk("recipes.type.production"))
+                : t(rk("recipes.type.consumer"))}
+            </span>
+          ) : (
+            <label className="flex items-center gap-2">
+              <span className="text-xs font-bold uppercase tracking-[0.08em] text-co-text-muted">
+                {t(rk("recipes.create.type_label"))}
+              </span>
+              <select
+                className="rounded border-2 border-co-border bg-co-surface px-2 py-1 text-xs font-bold text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
+                value={draftType}
+                onChange={(e) => setDraftType(e.target.value as RecipeType)}
+              >
+                <option value="production">{t(rk("recipes.type.production"))}</option>
+                <option value="consumer">{t(rk("recipes.type.consumer"))}</option>
+              </select>
+            </label>
+          )}
+          {recipe && (!recipe.inputs.length || !recipe.outputs.length) ? (
             <span className="rounded bg-co-cta/15 px-2 py-0.5 text-xs font-bold text-co-cta">
               {t(rk("recipes.badge.incomplete"))}
             </span>
@@ -148,9 +285,9 @@ export function RecipeBuilder({
               className={fieldCls}
               type="text"
               value={nameVal}
-              disabled={!canEdit || patchBusy}
+              disabled={(!canEdit) || patchBusy}
               onChange={(e) => setNameVal(e.target.value)}
-              onBlur={handleNameBlur}
+              onBlur={recipe ? handleNameBlur : undefined}
             />
           </label>
 
@@ -161,9 +298,9 @@ export function RecipeBuilder({
               className={fieldCls}
               type="text"
               value={nameEsVal}
-              disabled={!canEdit || patchBusy}
+              disabled={(!canEdit) || patchBusy}
               onChange={(e) => setNameEsVal(e.target.value)}
-              onBlur={handleNameEsBlur}
+              onBlur={recipe ? handleNameEsBlur : undefined}
             />
           </label>
 
@@ -177,9 +314,9 @@ export function RecipeBuilder({
               step="any"
               inputMode="decimal"
               value={batchYieldVal}
-              disabled={!canEdit || patchBusy}
+              disabled={(!canEdit) || patchBusy}
               onChange={(e) => setBatchYieldVal(e.target.value)}
-              onBlur={handleBatchYieldBlur}
+              onBlur={recipe ? handleBatchYieldBlur : undefined}
             />
           </label>
 
@@ -200,9 +337,9 @@ export function RecipeBuilder({
                   <textarea
                     className={textareaCls}
                     value={directionsVal}
-                    disabled={!canEdit || patchBusy}
+                    disabled={(!canEdit) || patchBusy}
                     onChange={(e) => setDirectionsVal(e.target.value)}
-                    onBlur={handleDirectionsBlur}
+                    onBlur={recipe ? handleDirectionsBlur : undefined}
                   />
                 </label>
                 <label className="block">
@@ -210,9 +347,9 @@ export function RecipeBuilder({
                   <textarea
                     className={textareaCls}
                     value={directionsEsVal}
-                    disabled={!canEdit || patchBusy}
+                    disabled={(!canEdit) || patchBusy}
                     onChange={(e) => setDirectionsEsVal(e.target.value)}
-                    onBlur={handleDirectionsEsBlur}
+                    onBlur={recipe ? handleDirectionsEsBlur : undefined}
                   />
                 </label>
               </div>
@@ -225,32 +362,77 @@ export function RecipeBuilder({
 
       {/* ── CONSUMES ── */}
       <ConsumesSection
-        recipeId={recipe.id}
-        inputs={recipe.inputs}
+        recipeId={recipe?.id ?? null}
+        liveInputs={liveInputs}
+        draftInputs={draftInputs}
         skus={skus}
         items={items}
+        measures={measures}
         unitRegistryOptions={unitRegistryOptions}
         canEdit={canEdit}
         level={level}
-        onRemove={(id) => void removeEdge("recipe_inputs", id)}
+        isDraft={recipe === null}
+        onAddDraftInput={(di) => onAddDraftInput({ ...di, _key: nextKey() })}
+        onRemoveDraftInput={removeDraftInput}
+        onRemoveLive={(id) => void removeEdge("recipe_inputs", id)}
       />
 
       {/* ── PRODUCES ── */}
       <ProducesSection
-        recipeId={recipe.id}
-        recipeType={recipe.recipeType}
-        batchYield={recipe.batchYield}
-        outputs={recipe.outputs}
-        inputs={recipe.inputs}
+        recipeId={recipe?.id ?? null}
+        recipeType={effectiveType}
+        batchYield={recipe ? recipe.batchYield : (Number(batchYieldVal) || 1)}
+        liveOutputs={liveOutputs}
+        liveInputs={liveInputs}
+        draftOutputs={draftOutputs}
         items={items}
         unitRegistryOptions={unitRegistryOptions}
         canEdit={canEdit}
         level={level}
-        onRemove={(id) => void removeEdge("recipe_outputs", id)}
+        isDraft={recipe === null}
+        onAddDraftOutput={(dout) => onAddDraftOutput({ ...dout, _key: nextKey() })}
+        onRemoveDraftOutput={removeDraftOutput}
+        onRemoveLive={(id) => void removeEdge("recipe_outputs", id)}
       />
 
+      {/* ── DRAFT save bar ── */}
+      {recipe === null && canEdit ? (
+        <div className="mt-4 rounded-lg border-2 border-co-gold-deep bg-co-surface p-4">
+          {saveError ? <p className="mb-3 text-sm text-co-cta">{saveError}</p> : null}
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              disabled={saveBusy || !draftSaveEnabled}
+              onClick={() => void saveDraft()}
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-6 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50"
+            >
+              {saveBusy ? t(rk("recipes.draft.saving")) : t(rk("recipes.draft.save"))}
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-co-text-muted">
+            {t(rk("recipes.draft.save_hint"))}
+          </p>
+        </div>
+      ) : null}
+
       {/* ── LIVE READOUT ── */}
-      <LiveReadout inputs={recipe.inputs} outputs={recipe.outputs} batchYield={recipe.batchYield} />
+      {recipe !== null ? (
+        <LiveReadout
+          inputs={liveInputs}
+          outputs={liveOutputs}
+          batchYield={recipe.batchYield}
+          skus={skus}
+          measures={measures}
+        />
+      ) : (
+        <DraftReadout
+          draftInputs={draftInputs}
+          draftOutputs={draftOutputs}
+          batchYield={Number(batchYieldVal) || 1}
+          skus={skus}
+          measures={measures}
+        />
+      )}
     </div>
   );
 }
@@ -258,22 +440,32 @@ export function RecipeBuilder({
 // ── CONSUMES section ─────────────────────────────────────────────────────────
 function ConsumesSection({
   recipeId,
-  inputs,
+  liveInputs,
+  draftInputs,
   skus,
   items,
+  measures,
   unitRegistryOptions,
   canEdit,
   level,
-  onRemove,
+  isDraft,
+  onAddDraftInput,
+  onRemoveDraftInput,
+  onRemoveLive,
 }: {
-  recipeId: string;
-  inputs: RecipeInputView[];
-  skus: Array<{ id: string; name: string }>;
+  recipeId: string | null;
+  liveInputs: RecipeInputView[];
+  draftInputs: DraftInput[];
+  skus: RecipeBuilderSku[];
   items: Array<{ id: string; name: string }>;
+  measures: Map<string, MeasureUnitFactor>;
   unitRegistryOptions: RegistryOption[];
   canEdit: boolean;
   level: number;
-  onRemove: (id: string) => void;
+  isDraft: boolean;
+  onAddDraftInput: (di: Omit<DraftInput, "_key">) => void;
+  onRemoveDraftInput: (key: number) => void;
+  onRemoveLive: (id: string) => void;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -287,7 +479,6 @@ function ConsumesSection({
   const [skuId, setSkuId] = useState("");
   const [skuQty, setSkuQty] = useState("");
   const [skuUnit, setSkuUnit] = useState("");
-  const [skuContainerLabel, setSkuContainerLabel] = useState("");
   const [skuPortioned, setSkuPortioned] = useState(false);
 
   // Item form state
@@ -296,10 +487,36 @@ function ConsumesSection({
   const [itemUnit, setItemUnit] = useState("");
 
   const resetForms = () => {
-    setSkuId(""); setSkuQty(""); setSkuUnit(""); setSkuContainerLabel(""); setSkuPortioned(false);
+    setSkuId(""); setSkuQty(""); setSkuUnit(""); setSkuPortioned(false);
     setItemId(""); setItemQty(""); setItemUnit("");
     setErrorMsg(null);
   };
+
+  // Derive unit options for the selected SKU
+  const selectedSku = skus.find((s) => s.id === skuId) ?? null;
+  const skuUnitOptions: string[] = selectedSku
+    ? [...new Set([
+        selectedSku.packFormat,
+        selectedSku.eachContainerLabel,
+        selectedSku.eachMeasure,
+      ].filter((v): v is string => v != null && v.length > 0))]
+    : [];
+
+  // Reset skuUnit when SKU changes
+  const handleSkuChange = (newId: string) => {
+    setSkuId(newId);
+    setSkuUnit(""); // reset unit when SKU changes
+  };
+
+  // oz readout for current SKU form
+  const skuOzReadout: string | null = (() => {
+    if (!selectedSku || !skuUnit || !skuQty) return null;
+    const qty = Number(skuQty);
+    if (!Number.isFinite(qty) || qty <= 0) return null;
+    const oz = ozForRecipeInput(qty, skuUnit, selectedSku, measures);
+    if (oz == null) return null;
+    return `≈ ${oz.toFixed(1)} oz`;
+  })();
 
   const submitSkuInput = async () => {
     if (busy) return;
@@ -308,17 +525,36 @@ function ConsumesSection({
     if (!skuId) { setErrorMsg(t(rk("recipes.error.invalid_sku"))); return; }
     if (!Number.isFinite(qty) || qty <= 0) { setErrorMsg(t(rk("recipes.error.invalid_quantity"))); return; }
     if ((await requestStepUp("B")) !== "ok") return;
-    setBusy(true);
-    const result = await postJson(`/api/admin/recipes/${recipeId}/inputs`, {
-      componentSkuId: skuId,
-      quantity: qty,
-      unit: skuUnit.trim() || null,
-      eachContainerLabel: skuContainerLabel.trim() || null,
-      portioned: skuPortioned,
-    });
-    setBusy(false);
-    if (result.ok) { resetForms(); setAddKind(null); router.refresh(); }
-    else setErrorMsg(t(resolveErrorKey(result.code)));
+
+    const skuObj = skus.find((s) => s.id === skuId);
+    const resolvedEachContainerLabel = skuObj?.eachContainerLabel ?? null;
+
+    if (isDraft) {
+      onAddDraftInput({
+        kind: "sku",
+        componentSkuId: skuId,
+        componentItemId: null,
+        componentName: skuObj?.name ?? skuId,
+        quantity: qty,
+        unit: skuUnit || null,
+        eachContainerLabel: resolvedEachContainerLabel,
+        portioned: skuPortioned,
+      });
+      resetForms(); setAddKind(null);
+    } else {
+      if (!recipeId) return;
+      setBusy(true);
+      const result = await postJson(`/api/admin/recipes/${recipeId}/inputs`, {
+        componentSkuId: skuId,
+        quantity: qty,
+        unit: skuUnit.trim() || null,
+        eachContainerLabel: resolvedEachContainerLabel,
+        portioned: skuPortioned,
+      });
+      setBusy(false);
+      if (result.ok) { resetForms(); setAddKind(null); router.refresh(); }
+      else setErrorMsg(t(resolveErrorKey(result.code)));
+    }
   };
 
   const submitItemInput = async () => {
@@ -328,15 +564,33 @@ function ConsumesSection({
     if (!itemId) { setErrorMsg(t(rk("recipes.error.invalid_component_item"))); return; }
     if (!Number.isFinite(qty) || qty <= 0) { setErrorMsg(t(rk("recipes.error.invalid_quantity"))); return; }
     if ((await requestStepUp("B")) !== "ok") return;
-    setBusy(true);
-    const result = await postJson(`/api/admin/recipes/${recipeId}/inputs`, {
-      componentItemId: itemId,
-      quantity: qty,
-      unit: itemUnit.trim() || null,
-    });
-    setBusy(false);
-    if (result.ok) { resetForms(); setAddKind(null); router.refresh(); }
-    else setErrorMsg(t(resolveErrorKey(result.code)));
+
+    const itemObj = items.find((i) => i.id === itemId);
+
+    if (isDraft) {
+      onAddDraftInput({
+        kind: "item",
+        componentSkuId: null,
+        componentItemId: itemId,
+        componentName: itemObj?.name ?? itemId,
+        quantity: qty,
+        unit: itemUnit.trim() || null,
+        eachContainerLabel: null,
+        portioned: false,
+      });
+      resetForms(); setAddKind(null);
+    } else {
+      if (!recipeId) return;
+      setBusy(true);
+      const result = await postJson(`/api/admin/recipes/${recipeId}/inputs`, {
+        componentItemId: itemId,
+        quantity: qty,
+        unit: itemUnit.trim() || null,
+      });
+      setBusy(false);
+      if (result.ok) { resetForms(); setAddKind(null); router.refresh(); }
+      else setErrorMsg(t(resolveErrorKey(result.code)));
+    }
   };
 
   return (
@@ -346,15 +600,33 @@ function ConsumesSection({
       </h2>
       <p className="mt-1 text-xs text-co-text-muted">{t(rk("recipes.builder.consumes_subtitle"))}</p>
 
-      {inputs.length > 0 ? (
+      {/* Live rows */}
+      {liveInputs.length > 0 ? (
         <div className="mt-3 flex flex-col gap-2">
-          {inputs.map((inp) => (
-            <RecipeInputRow key={inp.id} input={inp} canEdit={canEdit} onRemove={onRemove} />
+          {liveInputs.map((inp) => (
+            <RecipeInputRow key={inp.id} input={inp} canEdit={canEdit} onRemove={onRemoveLive} />
           ))}
         </div>
-      ) : (
+      ) : null}
+
+      {/* Draft rows */}
+      {draftInputs.length > 0 ? (
+        <div className={`${liveInputs.length > 0 ? "mt-2" : "mt-3"} flex flex-col gap-2`}>
+          {draftInputs.map((di) => (
+            <DraftInputRow
+              key={di._key}
+              di={di}
+              skus={skus}
+              measures={measures}
+              onRemove={() => onRemoveDraftInput(di._key)}
+            />
+          ))}
+        </div>
+      ) : null}
+
+      {liveInputs.length === 0 && draftInputs.length === 0 ? (
         <p className="mt-3 text-xs text-co-text-muted">{t(rk("recipes.builder.consumes_empty"))}</p>
-      )}
+      ) : null}
 
       {canEdit ? (
         <div className="mt-4">
@@ -381,7 +653,7 @@ function ConsumesSection({
               <div className="mt-3 flex flex-col gap-3">
                 <label className="block">
                   <span className="text-sm font-bold text-co-text">{t(rk("recipes.input.pick_sku"))}</span>
-                  <select className={fieldCls} value={skuId} disabled={busy} onChange={(e) => setSkuId(e.target.value)}>
+                  <select className={fieldCls} value={skuId} disabled={busy} onChange={(e) => handleSkuChange(e.target.value)}>
                     <option value="">{t(rk("recipes.input.pick_sku"))}</option>
                     {skus.map((s) => (<option key={s.id} value={s.id}>{s.name}</option>))}
                   </select>
@@ -391,22 +663,27 @@ function ConsumesSection({
                   <input className={fieldCls} type="number" min={0.001} step="any" inputMode="decimal"
                     value={skuQty} disabled={busy} onChange={(e) => setSkuQty(e.target.value)} />
                 </label>
+                {/* SKU-derived unit picker */}
                 <label className="block">
                   <span className="text-sm font-bold text-co-text">{t(rk("recipes.input.unit"))}</span>
-                  <input className={fieldCls} type="text" value={skuUnit} disabled={busy}
-                    onChange={(e) => setSkuUnit(e.target.value)}
-                    placeholder={t(rk("recipes.input.unit_placeholder"))} />
+                  {skuUnitOptions.length > 0 ? (
+                    <select className={fieldCls} value={skuUnit} disabled={busy || !skuId}
+                      onChange={(e) => setSkuUnit(e.target.value)}>
+                      <option value="">{t(rk("recipes.input.unit_placeholder"))}</option>
+                      {skuUnitOptions.map((u) => (<option key={u} value={u}>{u}</option>))}
+                    </select>
+                  ) : (
+                    <input className={fieldCls} type="text" value={skuUnit} disabled={busy}
+                      onChange={(e) => setSkuUnit(e.target.value)}
+                      placeholder={t(rk("recipes.input.unit_placeholder"))} />
+                  )}
                 </label>
-                <RegistrySelect
-                  label={t(rk("recipes.input.container_label"))}
-                  value={skuContainerLabel}
-                  onChange={setSkuContainerLabel}
-                  options={unitRegistryOptions}
-                  actorLevel={level}
-                  addEndpoint="/api/admin/checklist-templates/units"
-                  addPromptKey="admin.templates.add_unit_prompt"
-                  addButtonKey="admin.templates.add_unit"
-                />
+                {/* Live oz readout for form */}
+                {skuOzReadout ? (
+                  <p className="text-xs text-co-text-muted">
+                    {skuQty} {skuUnit} {skuOzReadout}
+                  </p>
+                ) : null}
                 <label className="flex items-center gap-2">
                   <input
                     type="checkbox"
@@ -472,29 +749,109 @@ function ConsumesSection({
   );
 }
 
+// ── DraftInputRow — display a pending draft input with remove ────────────────
+function DraftInputRow({
+  di,
+  skus,
+  measures,
+  onRemove,
+}: {
+  di: DraftInput;
+  skus: RecipeBuilderSku[];
+  measures: Map<string, MeasureUnitFactor>;
+  onRemove: () => void;
+}) {
+  const { t } = useTranslation();
+  const [confirming, setConfirming] = useState(false);
+
+  const label = [
+    di.quantity > 0 ? String(di.quantity) : null,
+    di.unit ?? null,
+    di.componentName,
+  ].filter(Boolean).join(" ");
+
+  // oz readout for draft SKU input
+  let ozNote: string | null = null;
+  if (di.kind === "sku" && di.componentSkuId && di.unit) {
+    const sku = skus.find((s) => s.id === di.componentSkuId);
+    if (sku) {
+      const oz = ozForRecipeInput(di.quantity, di.unit, sku, measures);
+      if (oz != null) ozNote = `≈ ${oz.toFixed(1)} oz`;
+    }
+  }
+
+  const metaParts: string[] = [];
+  if (di.eachContainerLabel) metaParts.push(t(rk("recipes.input.container_label")) + ": " + di.eachContainerLabel);
+  if (di.portioned) metaParts.push(t(rk("recipes.input.portioned_tag")));
+  metaParts.push(di.kind === "sku" ? t(rk("recipes.input.sku_tag")) : t(rk("recipes.input.item_tag")));
+  if (ozNote) metaParts.push(ozNote);
+  const meta = metaParts.join(" · ");
+
+  return (
+    <div className="rounded-lg border-2 border-co-gold-deep/50 bg-co-surface p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-sm font-bold text-co-text">{label}</p>
+          {meta ? <p className="text-xs text-co-text-muted">{meta}</p> : null}
+        </div>
+        <button
+          type="button"
+          onClick={() => setConfirming((v) => !v)}
+          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta hover:border-co-cta"
+        >
+          {t(rk("recipes.row.remove"))}
+        </button>
+      </div>
+      {confirming ? (
+        <div className="mt-3 rounded-lg border-2 border-co-cta bg-co-cta/10 p-3">
+          <p className="text-sm font-bold text-co-text">{t(rk("recipes.row.confirm_remove"))}</p>
+          <div className="mt-3 flex justify-end gap-2">
+            <button type="button" onClick={() => setConfirming(false)}
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text">
+              {t(rk("recipes.row.cancel"))}
+            </button>
+            <button type="button" onClick={() => { setConfirming(false); onRemove(); }}
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-cta px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-surface">
+              {t(rk("recipes.row.remove"))}
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // ── PRODUCES section ─────────────────────────────────────────────────────────
 function ProducesSection({
   recipeId,
   recipeType,
   batchYield,
-  outputs,
-  inputs,
+  liveOutputs,
+  liveInputs,
+  draftOutputs,
   items,
   unitRegistryOptions,
   canEdit,
   level,
-  onRemove,
+  isDraft,
+  onAddDraftOutput,
+  onRemoveDraftOutput,
+  onRemoveLive,
 }: {
-  recipeId: string;
+  recipeId: string | null;
   recipeType: "production" | "consumer";
   batchYield: number;
-  outputs: RecipeOutputView[];
-  inputs: RecipeInputView[];
+  liveOutputs: RecipeOutputView[];
+  liveInputs: RecipeInputView[];
+  draftOutputs: DraftOutput[];
   items: Array<{ id: string; name: string }>;
   unitRegistryOptions: RegistryOption[];
   canEdit: boolean;
   level: number;
-  onRemove: (id: string) => void;
+  isDraft: boolean;
+  onAddDraftOutput: (dout: Omit<DraftOutput, "_key">) => void;
+  onRemoveDraftOutput: (key: number) => void;
+  onRemoveLive: (id: string) => void;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -510,14 +867,13 @@ function ProducesSection({
   const [outputContainerLabel, setOutputContainerLabel] = useState("");
 
   // Consumer menu-item output state
-  const [menuMode, setMenuMode] = useState<"pick" | "create">("pick");
   const [menuItemName, setMenuItemName] = useState("");
   const [menuItemPrice, setMenuItemPrice] = useState("");
   const [menuItemYield, setMenuItemYield] = useState("1");
 
   const resetForms = () => {
     setOutputItemId(""); setOutputYield("1"); setOutputContainerLabel("");
-    setMenuMode("pick"); setMenuItemName(""); setMenuItemPrice(""); setMenuItemYield("1");
+    setMenuItemName(""); setMenuItemPrice(""); setMenuItemYield("1");
     setErrorMsg(null);
   };
 
@@ -528,15 +884,31 @@ function ProducesSection({
     if (!outputItemId) { setErrorMsg(t(rk("recipes.error.invalid_output_item"))); return; }
     if (!Number.isFinite(yld) || yld <= 0) { setErrorMsg(t(rk("recipes.error.invalid_yield"))); return; }
     if ((await requestStepUp("B")) !== "ok") return;
-    setBusy(true);
-    const result = await postJson(`/api/admin/recipes/${recipeId}/outputs`, {
-      outputItemId,
-      yield: yld,
-      outputContainerLabel: outputContainerLabel.trim() || null,
-    });
-    setBusy(false);
-    if (result.ok) { resetForms(); setAddOpen(false); router.refresh(); }
-    else setErrorMsg(t(resolveErrorKey(result.code)));
+
+    const itemObj = items.find((i) => i.id === outputItemId);
+
+    if (isDraft) {
+      onAddDraftOutput({
+        kind: "item",
+        outputItemId,
+        outputMenuItemId: null,
+        outputName: itemObj?.name ?? outputItemId,
+        yield: yld,
+        outputContainerLabel: outputContainerLabel || null,
+      });
+      resetForms(); setAddOpen(false);
+    } else {
+      if (!recipeId) return;
+      setBusy(true);
+      const result = await postJson(`/api/admin/recipes/${recipeId}/outputs`, {
+        outputItemId,
+        yield: yld,
+        outputContainerLabel: outputContainerLabel || null,
+      });
+      setBusy(false);
+      if (result.ok) { resetForms(); setAddOpen(false); router.refresh(); }
+      else setErrorMsg(t(resolveErrorKey(result.code)));
+    }
   };
 
   const submitConsumerOutput = async () => {
@@ -544,43 +916,39 @@ function ProducesSection({
     setErrorMsg(null);
     const yld = Number(menuItemYield);
     if (!Number.isFinite(yld) || yld <= 0) { setErrorMsg(t(rk("recipes.error.invalid_yield"))); return; }
-
+    const name = menuItemName.trim();
+    if (!name) { setErrorMsg(t(rk("recipes.error.invalid_name"))); return; }
     if ((await requestStepUp("B")) !== "ok") return;
-    setBusy(true);
 
-    let menuId: string | null = null;
-
-    if (menuMode === "create") {
-      const name = menuItemName.trim();
-      if (!name) { setBusy(false); setErrorMsg(t(rk("recipes.error.invalid_name"))); return; }
+    if (isDraft) {
+      onAddDraftOutput({
+        kind: "menuItem",
+        outputItemId: null,
+        outputMenuItemId: null, // will be resolved on save
+        outputName: name,
+        yield: yld,
+        outputContainerLabel: null,
+      });
+      resetForms(); setAddOpen(false);
+    } else {
+      if (!recipeId) return;
+      setBusy(true);
       const price = menuItemPrice.trim() ? Number(menuItemPrice) : null;
       const miResult = await postJson("/api/admin/menu-items", {
         name,
         menuPrice: price,
       });
       if (!miResult.ok) { setBusy(false); setErrorMsg(t(resolveErrorKey(miResult.code))); return; }
-      menuId = miResult.data["id"] as string | null;
+      const menuId = miResult.data["id"] as string | null;
+      if (!menuId) { setBusy(false); setErrorMsg(t(rk("recipes.error.invalid_output_menu_item"))); return; }
+      const result = await postJson(`/api/admin/recipes/${recipeId}/outputs`, {
+        outputMenuItemId: menuId,
+        yield: yld,
+      });
+      setBusy(false);
+      if (result.ok) { resetForms(); setAddOpen(false); router.refresh(); }
+      else setErrorMsg(t(resolveErrorKey(result.code)));
     }
-    // For "pick" mode — we don't yet have a menu-item picker (menu_items may not be loaded)
-    // so create mode is the primary path for consumer outputs. The "pick" tab is a placeholder
-    // that notes future work. For now we only support "create" inline.
-
-    if (!menuId && menuMode === "create") {
-      setBusy(false); setErrorMsg(t(rk("recipes.error.invalid_output_menu_item"))); return;
-    }
-
-    if (!menuId) {
-      // In pick mode without a dedicated picker — guide user to use create instead
-      setBusy(false); setErrorMsg(t(rk("recipes.consumer.pick_not_supported"))); return;
-    }
-
-    const result = await postJson(`/api/admin/recipes/${recipeId}/outputs`, {
-      outputMenuItemId: menuId,
-      yield: yld,
-    });
-    setBusy(false);
-    if (result.ok) { resetForms(); setAddOpen(false); router.refresh(); }
-    else setErrorMsg(t(resolveErrorKey(result.code)));
   };
 
   return (
@@ -594,15 +962,31 @@ function ProducesSection({
           : t(rk("recipes.builder.produces_subtitle_consumer"))}
       </p>
 
-      {outputs.length > 0 ? (
+      {/* Live rows */}
+      {liveOutputs.length > 0 ? (
         <div className="mt-3 flex flex-col gap-2">
-          {outputs.map((out) => (
-            <RecipeOutputRow key={out.id} output={out} canEdit={canEdit} onRemove={onRemove} />
+          {liveOutputs.map((out) => (
+            <RecipeOutputRow key={out.id} output={out} canEdit={canEdit} onRemove={onRemoveLive} />
           ))}
         </div>
-      ) : (
+      ) : null}
+
+      {/* Draft rows */}
+      {draftOutputs.length > 0 ? (
+        <div className={`${liveOutputs.length > 0 ? "mt-2" : "mt-3"} flex flex-col gap-2`}>
+          {draftOutputs.map((dout) => (
+            <DraftOutputRow
+              key={dout._key}
+              dout={dout}
+              onRemove={() => onRemoveDraftOutput(dout._key)}
+            />
+          ))}
+        </div>
+      ) : null}
+
+      {liveOutputs.length === 0 && draftOutputs.length === 0 ? (
         <p className="mt-3 text-xs text-co-text-muted">{t(rk("recipes.builder.produces_empty"))}</p>
-      )}
+      ) : null}
 
       {canEdit ? (
         <div className="mt-4">
@@ -632,16 +1016,15 @@ function ProducesSection({
                   <input className={fieldCls} type="number" min={0.001} step="any" inputMode="decimal"
                     value={outputYield} disabled={busy} onChange={(e) => setOutputYield(e.target.value)} />
                 </label>
-                <RegistrySelect
-                  label={t(rk("recipes.output.container_label"))}
-                  value={outputContainerLabel}
-                  onChange={setOutputContainerLabel}
-                  options={unitRegistryOptions}
-                  actorLevel={level}
-                  addEndpoint="/api/admin/checklist-templates/units"
-                  addPromptKey="admin.templates.add_unit_prompt"
-                  addButtonKey="admin.templates.add_unit"
-                />
+                {/* Locked output container dropdown */}
+                <label className="block">
+                  <span className="text-sm font-bold text-co-text">{t(rk("recipes.output.container_label"))}</span>
+                  <select className={fieldCls} value={outputContainerLabel} disabled={busy}
+                    onChange={(e) => setOutputContainerLabel(e.target.value)}>
+                    <option value="">{t(rk("recipes.output.container_placeholder"))}</option>
+                    {unitRegistryOptions.map((u) => (<option key={u.id} value={u.label}>{u.label}</option>))}
+                  </select>
+                </label>
                 {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
                 <div className="flex justify-end gap-2">
                   <button type="button" disabled={busy} onClick={() => { resetForms(); setAddOpen(false); }}
@@ -661,15 +1044,6 @@ function ProducesSection({
               <h3 className="text-sm font-extrabold text-co-text">{t(rk("recipes.consumer.output_title"))}</h3>
               <p className="mt-1 text-xs text-co-text-muted">{t(rk("recipes.consumer.output_hint"))}</p>
               <div className="mt-3 flex flex-col gap-3">
-                {/* Mode toggle */}
-                <div className="flex gap-2">
-                  <button type="button"
-                    onClick={() => setMenuMode("create")}
-                    className={`inline-flex min-h-[40px] flex-1 items-center justify-center rounded-lg border-2 px-3 text-sm font-bold transition ${menuMode === "create" ? "border-co-gold-deep bg-co-gold text-co-text" : "border-co-border bg-co-surface text-co-text hover:border-co-text"}`}>
-                    {t(rk("recipes.consumer.mode_create"))}
-                  </button>
-                </div>
-                {/* Create menu-item inline */}
                 <label className="block">
                   <span className="text-sm font-bold text-co-text">{t(rk("recipes.consumer.menu_item_name"))}</span>
                   <input className={fieldCls} type="text" value={menuItemName} disabled={busy}
@@ -706,15 +1080,67 @@ function ProducesSection({
   );
 }
 
+// ── DraftOutputRow — display a pending draft output with remove ───────────────
+function DraftOutputRow({
+  dout,
+  onRemove,
+}: {
+  dout: DraftOutput;
+  onRemove: () => void;
+}) {
+  const { t } = useTranslation();
+  const [confirming, setConfirming] = useState(false);
+
+  const label = `${dout.yield} × ${dout.outputName}`;
+  const meta = [
+    dout.outputContainerLabel ? t(rk("recipes.output.container_label")) + ": " + dout.outputContainerLabel : null,
+    dout.kind === "item" ? t(rk("recipes.output.item_tag")) : t(rk("recipes.output.menu_item_tag")),
+  ].filter(Boolean).join(" · ");
+
+  return (
+    <div className="rounded-lg border-2 border-co-gold-deep/50 bg-co-surface p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-sm font-bold text-co-text">{label}</p>
+          {meta ? <p className="text-xs text-co-text-muted">{meta}</p> : null}
+        </div>
+        <button type="button" onClick={() => setConfirming((v) => !v)}
+          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta hover:border-co-cta">
+          {t(rk("recipes.row.remove"))}
+        </button>
+      </div>
+      {confirming ? (
+        <div className="mt-3 rounded-lg border-2 border-co-cta bg-co-cta/10 p-3">
+          <p className="text-sm font-bold text-co-text">{t(rk("recipes.row.confirm_remove"))}</p>
+          <div className="mt-3 flex justify-end gap-2">
+            <button type="button" onClick={() => setConfirming(false)}
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text">
+              {t(rk("recipes.row.cancel"))}
+            </button>
+            <button type="button" onClick={() => { setConfirming(false); onRemove(); }}
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-cta px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-surface">
+              {t(rk("recipes.row.remove"))}
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 // ── LIVE READOUT ─────────────────────────────────────────────────────────────
 function LiveReadout({
   inputs,
   outputs,
   batchYield,
+  skus,
+  measures,
 }: {
   inputs: RecipeInputView[];
   outputs: RecipeOutputView[];
   batchYield: number;
+  skus: RecipeBuilderSku[];
+  measures: Map<string, MeasureUnitFactor>;
 }) {
   const { t } = useTranslation();
   if (inputs.length === 0 && outputs.length === 0) return null;
@@ -725,10 +1151,30 @@ function LiveReadout({
         {t(rk("recipes.readout.title"))}
       </h2>
       <p className="mt-1 text-xs text-co-text-muted">{t(rk("recipes.readout.oz_note"))}</p>
+      {inputs.length > 0 ? (
+        <div className="mt-2 flex flex-col gap-1">
+          {inputs.map((inp) => {
+            const qtyLabel = `${inp.quantity}${inp.unit ? " " + inp.unit : ""}`;
+            let ozLabel = "";
+            if (inp.componentSkuId && inp.unit) {
+              const sku = skus.find((s) => s.id === inp.componentSkuId);
+              if (sku) {
+                const oz = ozForRecipeInput(inp.quantity, inp.unit, sku, measures);
+                if (oz != null) ozLabel = ` ≈ ${oz.toFixed(1)} oz`;
+              }
+            }
+            return (
+              <p key={inp.id} className="text-xs text-co-text">
+                <span className="font-bold">{inp.componentName}</span>
+                {" "}{qtyLabel}{ozLabel}
+              </p>
+            );
+          })}
+        </div>
+      ) : null}
       {outputs.length > 0 ? (
         <div className="mt-3 flex flex-col gap-2">
           {outputs.map((out) => {
-            // Echo the entered quantities and labels honestly — no fabricated oz.
             const firstInput = inputs[0];
             const inputLabel = firstInput
               ? `${firstInput.quantity}${firstInput.unit ? " " + firstInput.unit : ""}`
@@ -740,6 +1186,68 @@ function LiveReadout({
                   input: `1 ${inputLabel}`,
                   output: `${outputLabel} ${out.outputName}`,
                 })}
+              </p>
+            );
+          })}
+          <p className="mt-1 text-xs text-co-text-muted">
+            {t(rk("recipes.readout.batch_yield_note"), { n: String(batchYield) })}
+          </p>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+// ── DRAFT READOUT ─────────────────────────────────────────────────────────────
+function DraftReadout({
+  draftInputs,
+  draftOutputs,
+  batchYield,
+  skus,
+  measures,
+}: {
+  draftInputs: DraftInput[];
+  draftOutputs: DraftOutput[];
+  batchYield: number;
+  skus: RecipeBuilderSku[];
+  measures: Map<string, MeasureUnitFactor>;
+}) {
+  const { t } = useTranslation();
+  if (draftInputs.length === 0 && draftOutputs.length === 0) return null;
+
+  return (
+    <div className="mt-4 rounded-lg border-2 border-co-border bg-co-surface/50 p-4">
+      <h2 className="text-xs font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+        {t(rk("recipes.readout.title"))}
+      </h2>
+      {draftInputs.length > 0 ? (
+        <div className="mt-2 flex flex-col gap-1">
+          {draftInputs.map((di) => {
+            const qtyLabel = `${di.quantity}${di.unit ? " " + di.unit : ""}`;
+            let ozLabel = "";
+            if (di.kind === "sku" && di.componentSkuId && di.unit) {
+              const sku = skus.find((s) => s.id === di.componentSkuId);
+              if (sku) {
+                const oz = ozForRecipeInput(di.quantity, di.unit, sku, measures);
+                if (oz != null) ozLabel = ` ≈ ${oz.toFixed(1)} oz`;
+              }
+            }
+            return (
+              <p key={di._key} className="text-xs text-co-text">
+                <span className="font-bold">{di.componentName}</span>
+                {" "}{qtyLabel}{ozLabel}
+              </p>
+            );
+          })}
+        </div>
+      ) : null}
+      {draftOutputs.length > 0 ? (
+        <div className="mt-3 flex flex-col gap-1">
+          {draftOutputs.map((dout) => {
+            const outputLabel = `${dout.yield}${dout.outputContainerLabel ? " " + dout.outputContainerLabel : ""}`;
+            return (
+              <p key={dout._key} className="text-sm text-co-text">
+                {outputLabel} {dout.outputName}
               </p>
             );
           })}
