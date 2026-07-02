@@ -15,6 +15,7 @@
 import { useState } from "react";
 
 import { useTranslation } from "@/lib/i18n/provider";
+import type { TranslationKey } from "@/lib/i18n/types";
 import type { RegistryOption, MeasureUnitOption, SkuView } from "@/lib/admin/skus";
 import { skuContentOz, type MeasureUnitFactor } from "@/lib/recipe-math";
 import { RegistrySelect } from "./RegistrySelect";
@@ -38,6 +39,7 @@ export interface SkuFormValues {
   unitsPerPack: number | null;
   eachSize: number | null;
   eachMeasure: string | null;
+  eachContainerLabel: string | null;
   avgOzPerEach: number | null;
   itemNumber: string | null;
   sourceUrl: string | null;
@@ -108,6 +110,7 @@ export function SkuForm({
     initial?.eachSize != null ? String(initial.eachSize) : "",
   );
   const [eachMeasure, setEachMeasure] = useState(initial?.eachMeasure ?? "");
+  const [eachContainerLabel, setEachContainerLabel] = useState(initial?.eachContainerLabel ?? "");
   const [avgOzPerEach, setAvgOzPerEach] = useState(
     initial?.avgOzPerEach != null ? String(initial.avgOzPerEach) : "",
   );
@@ -152,6 +155,7 @@ export function SkuForm({
       unitsPerPack: parseNum(unitsPerPack),
       eachSize: parseNum(eachSize),
       eachMeasure: eachMeasure.trim() || null,
+      eachContainerLabel: eachContainerLabel.trim() || null,
       avgOzPerEach: parseNum(avgOzPerEach),
       itemNumber: itemNumber.trim() || null,
       sourceUrl: sourceUrl.trim() || null,
@@ -232,6 +236,16 @@ export function SkuForm({
           disabled={busy}
         />
       </div>
+
+      {/* i18n key added by the parallel i18n task (T8); cast until it lands in en.json. */}
+      <Labeled label={t("admin.skus.each_container_label" as TranslationKey)}>
+        <input
+          className={fieldCls}
+          value={eachContainerLabel}
+          disabled={busy}
+          onChange={(e) => setEachContainerLabel(e.target.value)}
+        />
+      </Labeled>
 
       {isNonWeight ? (
         <Labeled label={t("admin.skus.field.avg_oz_per_each")}>
