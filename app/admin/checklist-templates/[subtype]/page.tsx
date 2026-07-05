@@ -5,6 +5,8 @@ import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { loadChecklistAdminView, type PrepSubtype } from "@/lib/admin/templates";
+import { loadGraphReadiness } from "@/lib/admin/readiness-load";
+import type { Readiness } from "@/lib/readiness";
 import { ChecklistTabs } from "@/components/admin/templates/ChecklistTabs";
 
 function isPrepSubtype(v: string): v is PrepSubtype {
@@ -22,6 +24,16 @@ export default async function AdminChecklistSubtypePage({
 
   const view = await loadChecklistAdminView(auth, subtype);
 
+  let itemReadiness: Record<string, Readiness> = {};
+  try {
+    const g = await loadGraphReadiness(auth);
+    itemReadiness = Object.fromEntries(
+      [...g.itemReadiness.entries()].filter(([, r]) => r.status !== "ready"),
+    );
+  } catch (e) {
+    console.error("readiness load failed (rendering without badges)", e);
+  }
+
   return (
     <div>
       <Link href="/admin/checklist-templates" className="text-sm font-bold text-co-text-muted hover:text-co-text">
@@ -31,7 +43,7 @@ export default async function AdminChecklistSubtypePage({
         {serverT(lang, `admin.templates.subtype.${subtype}` as TranslationKey)}
       </h1>
       <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "admin.templates.subtitle")}</p>
-      <ChecklistTabs view={view} />
+      <ChecklistTabs view={view} itemReadiness={itemReadiness} />
     </div>
   );
 }
