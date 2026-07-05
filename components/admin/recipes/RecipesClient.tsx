@@ -12,6 +12,8 @@ import Link from "next/link";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { RecipeListRow, RecipeType } from "@/lib/recipes";
 import { RECIPE_WRITE_MIN } from "@/lib/recipes";
+import type { Readiness } from "@/lib/readiness";
+import { StatusBadge, ReadinessReasons } from "@/components/admin/StatusBadge";
 import type { TranslationKey } from "@/lib/i18n/types";
 
 /** Cast a recipes.* key — translated by the separate i18n task. */
@@ -22,9 +24,11 @@ type FilterType = RecipeType | "all";
 export function RecipesClient({
   recipes,
   level,
+  readiness,
 }: {
   recipes: RecipeListRow[];
   level: number;
+  readiness: Record<string, Readiness>;
 }) {
   const { t } = useTranslation();
   const canWrite = level >= RECIPE_WRITE_MIN;
@@ -61,35 +65,37 @@ export function RecipesClient({
         {filtered.length === 0 ? (
           <p className="text-sm text-co-text-muted">{t(rk("recipes.hub.empty"))}</p>
         ) : (
-          filtered.map((r) => (
-            <Link
-              key={r.id}
-              href={`/admin/recipes/${r.id}`}
-              className="flex items-center justify-between rounded-lg border-2 border-co-border bg-co-surface px-4 py-3 hover:border-co-text transition"
-            >
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-bold text-co-text">{r.name}</span>
-                  <span className="rounded bg-co-gold/30 px-2 py-0.5 text-xs font-bold uppercase tracking-[0.08em] text-co-text">
-                    {r.recipeType === "production"
-                      ? t(rk("recipes.type.production"))
-                      : t(rk("recipes.type.consumer"))}
-                  </span>
-                  {(!r.hasInputs || !r.hasOutputs) ? (
-                    <span className="rounded bg-co-cta/15 px-2 py-0.5 text-xs font-bold text-co-cta">
-                      {t(rk("recipes.badge.incomplete"))}
+          filtered.map((r) => {
+            const rd = readiness[r.id];
+            return (
+              <Link
+                key={r.id}
+                href={`/admin/recipes/${r.id}`}
+                className="flex items-center justify-between rounded-lg border-2 border-co-border bg-co-surface px-4 py-3 hover:border-co-text transition"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-bold text-co-text">{r.name}</span>
+                    <span className="rounded bg-co-gold/30 px-2 py-0.5 text-xs font-bold uppercase tracking-[0.08em] text-co-text">
+                      {r.recipeType === "production"
+                        ? t(rk("recipes.type.production"))
+                        : t(rk("recipes.type.consumer"))}
                     </span>
+                    {rd ? (
+                      <StatusBadge status={rd.status as "incomplete" | "upstream_gaps"} />
+                    ) : null}
+                  </div>
+                  {r.outputNames.length > 0 ? (
+                    <p className="mt-0.5 truncate text-xs text-co-text-muted">
+                      {t(rk("recipes.hub.outputs_label"))} {r.outputNames.join(", ")}
+                    </p>
                   ) : null}
+                  {rd ? <ReadinessReasons reasons={rd.reasons} /> : null}
                 </div>
-                {r.outputNames.length > 0 ? (
-                  <p className="mt-0.5 truncate text-xs text-co-text-muted">
-                    {t(rk("recipes.hub.outputs_label"))} {r.outputNames.join(", ")}
-                  </p>
-                ) : null}
-              </div>
-              <span className="ml-3 text-co-text-muted" aria-hidden>›</span>
-            </Link>
-          ))
+                <span className="ml-3 text-co-text-muted" aria-hidden>›</span>
+              </Link>
+            );
+          })
         )}
       </div>
 
