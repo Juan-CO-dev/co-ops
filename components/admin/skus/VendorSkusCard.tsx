@@ -18,6 +18,8 @@ import { useStepUp } from "@/components/admin/StepUpProvider";
 import type { RegistryOption, MeasureUnitOption, SkuView } from "@/lib/admin/skus";
 import { postJson, resolveErrorKey, formatSkuPack } from "./shared";
 import type { SkuReceivingLedger, SkuConsumption } from "@/lib/admin/cost";
+import type { Readiness } from "@/lib/readiness";
+import { StatusBadge, ReadinessReasons } from "@/components/admin/StatusBadge";
 import { SkuCostPanel, type SkuCostInfo } from "./SkuCostPanel";
 import { SkuForm, type SkuFormLocationOption, type SkuFormValues } from "./SkuForm";
 
@@ -30,6 +32,7 @@ export function VendorSkusCard({
   skuCost,
   skuLedger,
   skuConsumption,
+  skuReadiness,
   actorLevel,
   canManage,
 }: {
@@ -41,6 +44,7 @@ export function VendorSkusCard({
   skuCost: Record<string, SkuCostInfo>;
   skuLedger: Record<string, SkuReceivingLedger>;
   skuConsumption: Record<string, SkuConsumption>;
+  skuReadiness: Record<string, Readiness>;
   actorLevel: number;
   canManage: boolean; // GM+
 }) {
@@ -131,6 +135,7 @@ export function VendorSkusCard({
                 ) : (
                   <SkuRow
                     sku={s}
+                    readiness={skuReadiness[s.id] ?? null}
                     canManage={canManage}
                     confirming={confirmDeactivateId === s.id}
                     busy={busy}
@@ -203,6 +208,7 @@ export function VendorSkusCard({
 /** Compact read row for a SKU: name · unit/size · item# · lead time + badges. */
 export function SkuRow({
   sku: s,
+  readiness,
   canManage,
   confirming,
   busy,
@@ -212,6 +218,7 @@ export function SkuRow({
   onConfirmDeactivate,
 }: {
   sku: SkuView;
+  readiness: Readiness | null;
   canManage: boolean;
   confirming: boolean;
   busy: boolean;
@@ -241,8 +248,10 @@ export function SkuRow({
               {s.locationName}
             </span>
           ) : null}
+          {readiness ? <StatusBadge status={readiness.status as "incomplete" | "upstream_gaps"} /> : null}
         </div>
         <div className="text-co-text-muted">{meta.join(" · ")}</div>
+        {readiness ? <ReadinessReasons reasons={readiness.reasons} /> : null}
       </div>
       {canManage ? (
         <div className="flex gap-2">

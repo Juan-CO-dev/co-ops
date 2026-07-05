@@ -18,6 +18,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadSkus, loadPackFormats, loadMeasureUnits } from "@/lib/admin/skus";
 import { loadVendors } from "@/lib/admin/vendors";
 import { loadCurrentSkuPrices, computeSkuCostPerOz, loadSkuUsageMap, loadSkuReceivingLedger, loadSkuConsumption, type SkuConsumption } from "@/lib/admin/cost";
+import { skuPackComplete, skuReadiness, type Readiness } from "@/lib/readiness";
 import { SkuCatalogClient } from "@/components/admin/skus/SkuCatalogClient";
 
 export default async function AdminSkusPage() {
@@ -53,6 +54,17 @@ export default async function AdminSkusPage() {
   const consumptionMap = await loadSkuConsumption(auth, skus.map((s) => s.id));
   const skuConsumption: Record<string, SkuConsumption> = Object.fromEntries([...consumptionMap.entries()]);
 
+  const skuReadinessMap: Record<string, Readiness> = {};
+  for (const s of skus) {
+    const r = skuReadiness({
+      active: s.active,
+      packComplete: skuPackComplete(s),
+      hasPrice: prices.has(s.id),
+      deliveryCount: ledgerMap.get(s.id)?.deliveries.length ?? 0,
+    });
+    if (r && r.status !== "ready") skuReadinessMap[s.id] = r;
+  }
+
   return (
     <div>
       <h1 className="text-xl font-extrabold leading-tight text-co-text">
@@ -68,6 +80,7 @@ export default async function AdminSkusPage() {
         skuCost={skuCost}
         skuLedger={skuLedger}
         skuConsumption={skuConsumption}
+        skuReadiness={skuReadinessMap}
         actorLevel={level}
         canManage={level >= 7}
       />
