@@ -1809,5 +1809,22 @@
   "recipes.error.invalid_output": "El artículo o artículo del menú de salida no es válido.",
   "recipes.error.invalid_sell_portion": "La porción de venta debe ser un número positivo.",
 
-  "recipes.item_link.production_recipe": "Receta de producción"
+  "recipes.item_link.production_recipe": "Receta de producción",
+
+  "readiness.badge.not_ready": "No listo",
+  "readiness.badge.upstream": "Faltas arriba",
+  "readiness.reasons_prefix": "Falta:",
+  "readiness.reason.missing_pack": "empaque/tamaño incompleto",
+  "readiness.reason.missing_price": "sin precio",
+  "readiness.reason.no_delivery": "sin entrega recibida",
+  "readiness.reason.no_inputs": "sin ingredientes",
+  "readiness.reason.no_outputs": "sin productos",
+  "readiness.reason.no_batch_yield": "sin rendimiento de lote",
+  "readiness.reason.not_ready_skus": "{count} SKU(s) no listos",
+  "readiness.reason.not_ready_subitems": "{count} sub-artículo(s) no listos",
+  "readiness.reason.no_recipe": "sin receta — costo/trazabilidad incompletos",
+  "readiness.reason.no_oz_per_par_unit": "oz por unidad de par sin definir",
+  "readiness.reason.sell_incomplete": "venta directa sin porción/precio",
+  "readiness.reason.upstream_recipe": "su receta no está lista",
+  "readiness.hub.count": "{count} sin alistar"
 }

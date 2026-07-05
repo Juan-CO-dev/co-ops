@@ -1809,5 +1809,22 @@
   "recipes.error.invalid_output": "Output item or menu item is invalid.",
   "recipes.error.invalid_sell_portion": "Sell portion must be a positive number.",
 
-  "recipes.item_link.production_recipe": "Production recipe"
+  "recipes.item_link.production_recipe": "Production recipe",
+
+  "readiness.badge.not_ready": "Not ready",
+  "readiness.badge.upstream": "Upstream gaps",
+  "readiness.reasons_prefix": "Missing:",
+  "readiness.reason.missing_pack": "pack/size incomplete",
+  "readiness.reason.missing_price": "no price",
+  "readiness.reason.no_delivery": "no delivery received",
+  "readiness.reason.no_inputs": "no inputs",
+  "readiness.reason.no_outputs": "no outputs",
+  "readiness.reason.no_batch_yield": "no batch yield",
+  "readiness.reason.not_ready_skus": "{count} not-ready SKU(s)",
+  "readiness.reason.not_ready_subitems": "{count} not-ready sub-item(s)",
+  "readiness.reason.no_recipe": "no recipe — cost/traceability incomplete",
+  "readiness.reason.no_oz_per_par_unit": "oz per par unit not set",
+  "readiness.reason.sell_incomplete": "sold-directly missing portion/price",
+  "readiness.reason.upstream_recipe": "its recipe isn't ready",
+  "readiness.hub.count": "{count} not ready"
 }
