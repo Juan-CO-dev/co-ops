@@ -284,11 +284,6 @@ export function RecipeBuilder({
               </select>
             </label>
           )}
-          {recipe && (!recipe.inputs.length || !recipe.outputs.length) ? (
-            <span className="rounded bg-co-cta/15 px-2 py-0.5 text-xs font-bold text-co-cta">
-              {t(rk("recipes.badge.incomplete"))}
-            </span>
-          ) : null}
         </div>
 
         <div className="flex flex-col gap-3">
