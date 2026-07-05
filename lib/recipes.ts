@@ -32,6 +32,7 @@ export interface RecipeView {
 export interface RecipeListRow {
   id: string; name: string; recipeType: RecipeType; active: boolean;
   outputNames: string[]; hasInputs: boolean; hasOutputs: boolean;
+  batchYield: number | null;
 }
 
 export class RecipeError extends Error {
@@ -54,14 +55,14 @@ function normStr(s: string | null | undefined): string | null {
 export async function loadRecipes(actor: AuthContext, type?: RecipeType): Promise<RecipeListRow[]> {
   requireLevel(actor, RECIPE_READ_MIN);
   const sb = getServiceRoleClient();
-  let q = sb.from("recipes").select("id, name, recipe_type, active").eq("active", true).order("name");
+  let q = sb.from("recipes").select("id, name, recipe_type, active, batch_yield").eq("active", true).order("name");
   if (type) q = q.eq("recipe_type", type);
-  const { data, error } = await q.returns<Array<{ id: string; name: string; recipe_type: RecipeType; active: boolean }>>();
+  const { data, error } = await q.returns<Array<{ id: string; name: string; recipe_type: RecipeType; active: boolean; batch_yield: number | string | null }>>();
   if (error) throw new Error(`loadRecipes: ${error.message}`);
   const ids = (data ?? []).map((r) => r.id);
   const outNames = await outputNamesByRecipe(ids);
   const hasIn = await recipeIdsWithInputs(ids);
-  return (data ?? []).map((r) => ({ id: r.id, name: r.name, recipeType: r.recipe_type, active: r.active, outputNames: outNames.get(r.id) ?? [], hasInputs: hasIn.has(r.id), hasOutputs: (outNames.get(r.id) ?? []).length > 0 }));
+  return (data ?? []).map((r) => ({ id: r.id, name: r.name, recipeType: r.recipe_type, active: r.active, outputNames: outNames.get(r.id) ?? [], hasInputs: hasIn.has(r.id), hasOutputs: (outNames.get(r.id) ?? []).length > 0, batchYield: num(r.batch_yield) }));
 }
 
 async function recipeIdsWithInputs(recipeIds: string[]): Promise<Set<string>> {
