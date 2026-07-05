@@ -98,9 +98,13 @@ export async function loadGraphReadiness(actor: AuthContext): Promise<{
   for (const i of g.inputs) {
     const l = inputsOfRecipe.get(i.recipe_id) ?? []; l.push(i); inputsOfRecipe.set(i.recipe_id, l);
   }
+  // Only ACTIVE recipes exist in g.recipes; edges from inactive recipes are
+  // out of play — an item produced only by an inactive recipe reads "no recipe".
+  const activeRecipeIds = new Set(g.recipes.map((r) => r.id));
   const outputsOfRecipe = new Map<string, number>();
   const recipeOfItem = new Map<string, string>();
   for (const o of g.outputs) {
+    if (!activeRecipeIds.has(o.recipe_id)) continue;
     outputsOfRecipe.set(o.recipe_id, (outputsOfRecipe.get(o.recipe_id) ?? 0) + 1);
     if (o.output_item_id) recipeOfItem.set(o.output_item_id, o.recipe_id);
   }
