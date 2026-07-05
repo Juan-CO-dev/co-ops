@@ -63,6 +63,7 @@ export async function POST(req: NextRequest) {
     unitsPerPack: typeof b.unitsPerPack === "number" ? b.unitsPerPack : null,
     eachSize: typeof b.eachSize === "number" ? b.eachSize : null,
     eachMeasure: typeof b.eachMeasure === "string" ? b.eachMeasure : null,
+    eachContainerLabel: typeof b.eachContainerLabel === "string" ? b.eachContainerLabel : null,
     itemNumber: typeof b.itemNumber === "string" ? b.itemNumber : null,
     sourceUrl: typeof b.sourceUrl === "string" ? b.sourceUrl : null,
     leadTimeDays: typeof b.leadTimeDays === "number" ? b.leadTimeDays : null,

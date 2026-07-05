@@ -49,6 +49,7 @@ export interface SkuView {
   unitsPerPack: number | null; // 6 (1 for Each)
   eachSize: number | null; // 32
   eachMeasure: string | null; // label (oz/lb/count…)
+  eachContainerLabel: string | null; // free-text label for the each/container
   avgOzPerEach: number | null; // oz per one each_measure unit (count/volume); null for weight
   itemNumber: string | null;
   sourceUrl: string | null;
@@ -164,6 +165,7 @@ interface DbSkuRow {
   units_per_pack: number | null;
   each_size: number | string | null; // numeric arrives as string from PostgREST
   each_measure: string | null;
+  each_container_label: string | null;
   avg_oz_per_each: number | string | null;
   item_number: string | null;
   source_url: string | null;
@@ -173,7 +175,7 @@ interface DbSkuRow {
 }
 
 const SKU_COLS =
-  "id, vendor_id, location_id, name, pack_format, units_per_pack, each_size, each_measure, item_number, source_url, lead_time_days, notes, active, avg_oz_per_each";
+  "id, vendor_id, location_id, name, pack_format, units_per_pack, each_size, each_measure, each_container_label, item_number, source_url, lead_time_days, notes, active, avg_oz_per_each";
 
 function toNum(v: number | string | null): number | null {
   if (v === null) return null;
@@ -223,6 +225,7 @@ async function hydrateSkus(rows: DbSkuRow[]): Promise<SkuView[]> {
     unitsPerPack: r.units_per_pack,
     eachSize: toNum(r.each_size),
     eachMeasure: r.each_measure,
+    eachContainerLabel: r.each_container_label,
     avgOzPerEach: toNum(r.avg_oz_per_each),
     itemNumber: r.item_number,
     sourceUrl: r.source_url,
@@ -405,6 +408,7 @@ export interface CreateSkuInput {
   unitsPerPack?: number | null;
   eachSize?: number | null;
   eachMeasure?: string | null;
+  eachContainerLabel?: string | null;
   avgOzPerEach?: number | null;
   itemNumber?: string | null;
   sourceUrl?: string | null;
@@ -437,6 +441,7 @@ export async function createSku(actor: AuthContext, input: CreateSkuInput): Prom
       units_per_pack: unitsPerPack,
       each_size: eachSize,
       each_measure: normalizeOptional(input.eachMeasure),
+      each_container_label: normalizeOptional(input.eachContainerLabel),
       avg_oz_per_each: normalizeAvgOzPerEach(input.avgOzPerEach),
       item_number: normalizeOptional(input.itemNumber),
       source_url: normalizeOptional(input.sourceUrl),
@@ -479,6 +484,7 @@ export interface UpdateSkuChanges {
   unitsPerPack?: number | null;
   eachSize?: number | null;
   eachMeasure?: string | null;
+  eachContainerLabel?: string | null;
   avgOzPerEach?: number | null;
   itemNumber?: string | null;
   sourceUrl?: string | null;
@@ -516,6 +522,7 @@ export async function updateSku(
   if (changes.unitsPerPack !== undefined) update.units_per_pack = normalizeUnitsPerPack(changes.unitsPerPack);
   if (changes.eachSize !== undefined) update.each_size = normalizeEachSize(changes.eachSize);
   if (changes.eachMeasure !== undefined) update.each_measure = normalizeOptional(changes.eachMeasure);
+  if (changes.eachContainerLabel !== undefined) update.each_container_label = normalizeOptional(changes.eachContainerLabel);
   if (changes.avgOzPerEach !== undefined) update.avg_oz_per_each = normalizeAvgOzPerEach(changes.avgOzPerEach);
   if (changes.itemNumber !== undefined) update.item_number = normalizeOptional(changes.itemNumber);
   if (changes.sourceUrl !== undefined) update.source_url = normalizeOptional(changes.sourceUrl);

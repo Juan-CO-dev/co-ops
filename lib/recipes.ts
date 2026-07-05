@@ -137,6 +137,54 @@ export async function createRecipe(actor: AuthContext, input: { name: string; na
   return { id: data.id };
 }
 
+export interface RecipeDraftInput { componentSkuId?: string | null; componentItemId?: string | null; quantity: number; unit?: string | null; eachContainerLabel?: string | null; portioned?: boolean; }
+export interface RecipeDraftOutput { outputItemId?: string | null; outputMenuItemId?: string | null; yield: number; outputContainerLabel?: string | null; }
+export interface RecipeDraft {
+  name: string; nameEs?: string | null; recipeType: RecipeType; batchYield: number;
+  directions?: string | null; directionsEs?: string | null;
+  inputs: RecipeDraftInput[]; outputs: RecipeDraftOutput[];
+}
+
+/** Validate a full recipe draft in TS, then insert header + inputs + outputs atomically
+ * via the create_recipe_full RPC (draft-then-save-once). Exactly-one component/output +
+ * cycle guard enforced here; table CHECK constraints are the backstop. */
+export async function createRecipeFull(actor: AuthContext, draft: RecipeDraft): Promise<{ id: string }> {
+  requireLevel(actor, RECIPE_WRITE_MIN);
+  if (!normStr(draft.name)) throw new RecipeError(400, "invalid_name");
+  if (!(draft.batchYield > 0)) throw new RecipeError(400, "invalid_batch_yield");
+  if (draft.recipeType !== "production" && draft.recipeType !== "consumer") throw new RecipeError(400, "invalid_type");
+  if (draft.inputs.length === 0 || draft.outputs.length === 0) throw new RecipeError(400, "incomplete_recipe");
+  for (const i of draft.inputs) {
+    const sku = i.componentSkuId ?? null, it = i.componentItemId ?? null;
+    if ((sku === null) === (it === null)) throw new RecipeError(400, "invalid_component");
+    if (!(i.quantity > 0)) throw new RecipeError(400, "invalid_quantity");
+  }
+  for (const o of draft.outputs) {
+    const it = o.outputItemId ?? null, mi = o.outputMenuItemId ?? null;
+    if ((it === null) === (mi === null)) throw new RecipeError(400, "invalid_output");
+    if (!(o.yield > 0)) throw new RecipeError(400, "invalid_yield");
+    if (it !== null) {
+      for (const i of draft.inputs) {
+        if (i.componentItemId && await itemConsumesTransitively(i.componentItemId, it)) {
+          throw new RecipeError(400, "would_create_cycle");
+        }
+      }
+    }
+  }
+  const sb = getServiceRoleClient();
+  const { data, error } = await sb.rpc("create_recipe_full", {
+    p_header: { name: normStr(draft.name), name_es: normStr(draft.nameEs), recipe_type: draft.recipeType, batch_yield: draft.batchYield, directions: normStr(draft.directions), directions_es: normStr(draft.directionsEs) },
+    p_inputs: draft.inputs.map((i, idx) => ({ component_sku_id: i.componentSkuId ?? null, component_item_id: i.componentItemId ?? null, quantity: i.quantity, unit: normStr(i.unit), each_container_label: normStr(i.eachContainerLabel), portioned: i.portioned ?? false, display_order: idx })),
+    p_outputs: draft.outputs.map((o, idx) => ({ output_item_id: o.outputItemId ?? null, output_menu_item_id: o.outputMenuItemId ?? null, yield: o.yield, output_container_label: normStr(o.outputContainerLabel), display_order: idx })),
+    p_created_by: actor.user.id,
+  });
+  if (error) throw new Error(`createRecipeFull rpc: ${error.message}`);
+  const id = typeof data === "string" ? data : (data as { id?: string } | null)?.id;
+  if (!id) throw new Error("createRecipeFull returned no id");
+  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe.create", resourceTable: "recipes", resourceId: id, metadata: { name: draft.name, recipe_type: draft.recipeType, batch_yield: draft.batchYield, input_count: draft.inputs.length, output_count: draft.outputs.length, atomic: true }, ipAddress: null, userAgent: null });
+  return { id };
+}
+
 export async function updateRecipe(actor: AuthContext, id: string, patch: { name?: string; nameEs?: string | null; batchYield?: number; directions?: string | null; directionsEs?: string | null }): Promise<void> {
   requireLevel(actor, RECIPE_WRITE_MIN);
   const upd: Record<string, unknown> = { updated_at: new Date().toISOString(), updated_by: actor.user.id };
@@ -174,21 +222,44 @@ export async function createMenuItem(actor: AuthContext, input: { name: string; 
   return { id: data.id };
 }
 
-/** Adding output item `childItemId` to recipe R would cycle iff a SKU-free walk of
- * the recipe graph from childItemId's recipe reaches an input item already feeding R.
- * Simplified guard: reject if childItemId is (transitively) an input of the recipe. */
-async function outputWouldCycle(recipeId: string, childItemId: string): Promise<boolean> {
+/** Load the item-level recipe graph: item -> its producing recipe (by output),
+ * recipe -> its input items. Shared by the cycle-guard walks below. */
+async function loadItemRecipeGraph(): Promise<{ recipeOfItem: Map<string, string>; inputItemsOfRecipe: Map<string, string[]> }> {
   const sb = getServiceRoleClient();
-  // item -> recipe (by output), recipe -> input items. Walk item edges.
   const { data: outs } = await sb.from("recipe_outputs").select("recipe_id, output_item_id").not("output_item_id", "is", null).returns<Array<{ recipe_id: string; output_item_id: string }>>();
   const { data: ins } = await sb.from("recipe_inputs").select("recipe_id, component_item_id").not("component_item_id", "is", null).returns<Array<{ recipe_id: string; component_item_id: string }>>();
   const recipeOfItem = new Map<string, string>(); for (const o of outs ?? []) recipeOfItem.set(o.output_item_id, o.recipe_id);
   const inputItemsOfRecipe = new Map<string, string[]>(); for (const i of ins ?? []) { const l = inputItemsOfRecipe.get(i.recipe_id) ?? []; l.push(i.component_item_id); inputItemsOfRecipe.set(i.recipe_id, l); }
-  // Does recipeId (transitively) consume childItemId?
+  return { recipeOfItem, inputItemsOfRecipe };
+}
+
+/** Does `recipeId` (transitively) consume `targetItemId` as an input? BFS over the
+ * item-recipe graph: recipe -> input items -> each input item's producing recipe -> … */
+function recipeConsumesItem(recipeId: string, targetItemId: string, recipeOfItem: Map<string, string>, inputItemsOfRecipe: Map<string, string[]>): boolean {
   const seen = new Set<string>(); const queue = [recipeId];
   while (queue.length) { const r = queue.shift()!; if (seen.has(r)) continue; seen.add(r);
-    for (const it of inputItemsOfRecipe.get(r) ?? []) { if (it === childItemId) return true; const cr = recipeOfItem.get(it); if (cr) queue.push(cr); } }
+    for (const it of inputItemsOfRecipe.get(r) ?? []) { if (it === targetItemId) return true; const cr = recipeOfItem.get(it); if (cr) queue.push(cr); } }
   return false;
+}
+
+/** True if, starting from the recipe that OUTPUTS `startItemId`, following
+ * input-item → its-recipe → input-items… you reach `targetItemId` as an input
+ * (or startItemId === targetItemId). Used by createRecipeFull to detect that
+ * consuming `startItemId` while producing `targetItemId` would close a loop. */
+async function itemConsumesTransitively(startItemId: string, targetItemId: string): Promise<boolean> {
+  if (startItemId === targetItemId) return true;
+  const { recipeOfItem, inputItemsOfRecipe } = await loadItemRecipeGraph();
+  const startRecipe = recipeOfItem.get(startItemId);
+  if (!startRecipe) return false; // startItemId isn't produced by any recipe → no chain to walk
+  return recipeConsumesItem(startRecipe, targetItemId, recipeOfItem, inputItemsOfRecipe);
+}
+
+/** Adding output item `childItemId` to recipe R would cycle iff a SKU-free walk of
+ * the recipe graph from childItemId's recipe reaches an input item already feeding R.
+ * Simplified guard: reject if childItemId is (transitively) an input of the recipe. */
+async function outputWouldCycle(recipeId: string, childItemId: string): Promise<boolean> {
+  const { recipeOfItem, inputItemsOfRecipe } = await loadItemRecipeGraph();
+  return recipeConsumesItem(recipeId, childItemId, recipeOfItem, inputItemsOfRecipe);
 }
 
 export async function addRecipeInput(actor: AuthContext, input: { recipeId: string; componentSkuId?: string | null; componentItemId?: string | null; quantity: number; unit?: string | null; eachContainerLabel?: string | null; portioned?: boolean }): Promise<{ id: string }> {
@@ -231,4 +302,28 @@ export async function removeRecipeEdge(actor: AuthContext, args: { table: "recip
   if (error) throw new Error(`removeRecipeEdge: ${error.message}`);
   if (count === 0) throw new RecipeError(404, "edge_not_found");
   await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: `${args.table === "recipe_inputs" ? "recipe_input" : "recipe_output"}.remove`, resourceTable: args.table, resourceId: args.id, metadata: { before }, ipAddress: null, userAgent: null });
+}
+
+export const SOLD_DIRECT_WRITE_MIN = 7;
+
+/** Flag a production item as sold-directly (antipasta-side model): set sold_directly +
+ * optional sell portion/unit; clearing the flag nulls the portion fields. menu_price is
+ * MoO+-gated (MENU_PRICE_MIN) when provided. GM+ (SOLD_DIRECT_WRITE_MIN) for the flag itself. */
+export async function setItemSoldDirectly(actor: AuthContext, args: { itemId: string; soldDirectly: boolean; sellPortion?: number | null; sellPortionUnit?: string | null; menuPrice?: number | null }): Promise<void> {
+  requireLevel(actor, SOLD_DIRECT_WRITE_MIN);
+  if (args.menuPrice != null) requireLevel(actor, MENU_PRICE_MIN);
+  const upd: Record<string, unknown> = { sold_directly: args.soldDirectly, updated_at: new Date().toISOString(), updated_by: actor.user.id };
+  if (args.soldDirectly) {
+    if (args.sellPortion != null && !(args.sellPortion > 0)) throw new RecipeError(400, "invalid_sell_portion");
+    upd.sell_portion = args.sellPortion ?? null;
+    upd.sell_portion_unit = normStr(args.sellPortionUnit);
+    if (args.menuPrice !== undefined) upd.menu_price = args.menuPrice;
+  } else {
+    upd.sell_portion = null; upd.sell_portion_unit = null;
+  }
+  const sb = getServiceRoleClient();
+  const { error, count } = await sb.from("items").update(upd, { count: "exact" }).eq("id", args.itemId);
+  if (error) throw new Error(`setItemSoldDirectly: ${error.message}`);
+  if (count === 0) throw new RecipeError(404, "not_found");
+  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "item.set_sold_directly", resourceTable: "items", resourceId: args.itemId, metadata: { sold_directly: args.soldDirectly, sell_portion: args.sellPortion ?? null, sell_portion_unit: args.sellPortionUnit ?? null }, ipAddress: null, userAgent: null });
 }

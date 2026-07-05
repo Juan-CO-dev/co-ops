@@ -815,6 +815,14 @@ function RegistryRow({
   const [trackingType, setTrackingType] = useState(item.trackingType);
   const [batchYield, setBatchYield] = useState(item.batchYield.toString());
   const [ozPerParUnit, setOzPerParUnit] = useState(item.ozPerParUnit != null ? String(item.ozPerParUnit) : "");
+
+  // Sold-directly subsection state
+  const [soldDirectly, setSoldDirectly] = useState(item.soldDirectly);
+  const [sellPortion, setSellPortion] = useState(item.sellPortion != null ? String(item.sellPortion) : "");
+  const [sellPortionUnit, setSellPortionUnit] = useState(item.sellPortionUnit ?? "");
+  const [menuPrice, setMenuPrice] = useState(item.menuPrice != null ? String(item.menuPrice) : "");
+  const [savingSoldDirect, setSavingSoldDirect] = useState(false);
+  const [soldDirectError, setSoldDirectError] = useState<string | null>(null);
   const slugs = orderedSectionSlugs(sections);
   const activeSlugs = new Set(slugs);
   const initialSection: PrepSection = isPrepSectionName(item.section, activeSlugs)
@@ -826,6 +834,26 @@ function RegistryRow({
     "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60";
   const smallBtn =
     "inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-text disabled:opacity-50";
+
+  const saveSoldDirect = async () => {
+    if (savingSoldDirect) return;
+    setSoldDirectError(null);
+    if ((await requestStepUp("B")) !== "ok") return;
+    setSavingSoldDirect(true);
+    const result = await postJson(
+      `/api/admin/items/${item.itemId}/sold-directly`,
+      {
+        soldDirectly,
+        sellPortion: sellPortion.trim() === "" ? null : Number(sellPortion),
+        sellPortionUnit: sellPortionUnit || null,
+        menuPrice: menuPrice.trim() === "" ? null : Number(menuPrice),
+      },
+      "PATCH",
+    );
+    setSavingSoldDirect(false);
+    if (result.ok) router.refresh();
+    else setSoldDirectError(t(resolveErrorKey(result.code)));
+  };
 
   const toggleDefault = async () => {
     if (submitting) return;
@@ -1008,6 +1036,79 @@ function RegistryRow({
                 type="button"
                 disabled={submitting}
                 onClick={() => void saveDefinition()}
+                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50"
+              >
+                {t("admin.templates.save")}
+              </button>
+            </div>
+          </section>
+
+          <section className="rounded-lg border-2 border-co-border p-3">
+            <h3 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+              {t("admin.templates.sold_directly.title" as TranslationKey)}
+            </h3>
+            <label className="mt-2 flex items-center gap-2 text-sm font-bold text-co-text">
+              <input
+                type="checkbox"
+                className="h-5 w-5 accent-co-gold"
+                checked={soldDirectly}
+                onChange={(e) => setSoldDirectly(e.target.checked)}
+              />
+              {t("admin.templates.sold_directly.checkbox" as TranslationKey)}
+            </label>
+            {soldDirectly ? (
+              <div className="mt-3 flex flex-col gap-3">
+                <Labeled label={t("admin.templates.sold_directly.sell_portion" as TranslationKey)}>
+                  <input
+                    className={field}
+                    type="number"
+                    min={0}
+                    step="any"
+                    inputMode="decimal"
+                    value={sellPortion}
+                    onChange={(e) => setSellPortion(e.target.value)}
+                  />
+                </Labeled>
+                <UnitSelect
+                  label={t("admin.templates.sold_directly.sell_portion_unit" as TranslationKey)}
+                  value={sellPortionUnit}
+                  onChange={setSellPortionUnit}
+                  units={units}
+                  actorLevel={actorLevel}
+                />
+                <Labeled label={t("admin.templates.sold_directly.menu_price" as TranslationKey)}>
+                  <input
+                    className={field}
+                    type="number"
+                    min={0}
+                    step="any"
+                    inputMode="decimal"
+                    value={menuPrice}
+                    onChange={(e) => setMenuPrice(e.target.value)}
+                  />
+                </Labeled>
+              </div>
+            ) : (
+              <div className="mt-3">
+                <Labeled label={t("admin.templates.sold_directly.menu_price" as TranslationKey)}>
+                  <input
+                    className={field}
+                    type="number"
+                    min={0}
+                    step="any"
+                    inputMode="decimal"
+                    value={menuPrice}
+                    onChange={(e) => setMenuPrice(e.target.value)}
+                  />
+                </Labeled>
+              </div>
+            )}
+            {soldDirectError ? <p className="mt-2 text-sm text-co-cta">{soldDirectError}</p> : null}
+            <div className="mt-3 flex justify-end">
+              <button
+                type="button"
+                disabled={savingSoldDirect}
+                onClick={() => void saveSoldDirect()}
                 className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50"
               >
                 {t("admin.templates.save")}

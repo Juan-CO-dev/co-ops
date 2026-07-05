@@ -5,7 +5,7 @@
  * but ACCUMULATING PER LEAF SKU instead of summing. Returns oz-per-output-unit; callers scale.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { ozFromMeasure, skuContentOz, type MeasureUnitFactor } from "@/lib/recipe-math";
+import { ozForRecipeInput, skuContentOz, type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
 import { audit } from "@/lib/audit";
 import type { RoleCode } from "@/lib/roles";
 
@@ -21,11 +21,18 @@ async function loadMeasures(): Promise<Map<string, MeasureUnitFactor>> {
   return new Map((data ?? []).map((m) => [m.label, { dimension: m.dimension, toBaseFactor: num(m.to_base_factor) ?? 0 }]));
 }
 
-async function loadSkuAvg(skuIds: string[]): Promise<Map<string, number | null>> {
+async function loadSkuPack(skuIds: string[]): Promise<Map<string, RecipeInputSku>> {
   if (skuIds.length === 0) return new Map();
   const sb = getServiceRoleClient();
-  const { data } = await sb.from("vendor_items").select("id, avg_oz_per_each").in("id", skuIds).returns<Array<{ id: string; avg_oz_per_each: number | string | null }>>();
-  return new Map((data ?? []).map((s) => [s.id, num(s.avg_oz_per_each)]));
+  const { data } = await sb.from("vendor_items")
+    .select("id, pack_format, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each")
+    .in("id", skuIds)
+    .returns<Array<{ id: string; pack_format: string | null; each_container_label: string | null; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>>();
+  return new Map((data ?? []).map((s) => [s.id, {
+    packFormat: s.pack_format, eachContainerLabel: s.each_container_label,
+    unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure,
+    avgOzPerEach: num(s.avg_oz_per_each),
+  }]));
 }
 
 interface RecipeNode {
@@ -67,7 +74,7 @@ export async function perUnitSkuOzForItem(itemId: string): Promise<Map<string, n
     for (const c of node.inputs) { if (c.componentSkuId) skuIds.add(c.componentSkuId); else if (c.componentItemId) await collect(c.componentItemId, seen); }
   }
   await collect(itemId, new Set());
-  const skuAvg = await loadSkuAvg([...skuIds]);
+  const skuPack = await loadSkuPack([...skuIds]);
 
   function batchOz(outItemId: string, visiting: Set<string>): Map<string, number> | null {
     if (visiting.has(outItemId)) return null;
@@ -77,7 +84,8 @@ export async function perUnitSkuOzForItem(itemId: string): Promise<Map<string, n
     const out = new Map<string, number>();
     for (const c of node.inputs) {
       if (c.componentSkuId != null) {
-        const oz = ozFromMeasure(c.quantity, c.unit, measures, skuAvg.get(c.componentSkuId) ?? null);
+        const sku = skuPack.get(c.componentSkuId);
+        const oz = sku ? ozForRecipeInput(c.quantity, c.unit, sku, measures) : null;
         if (oz == null) return null;
         out.set(c.componentSkuId, (out.get(c.componentSkuId) ?? 0) + oz);
       } else if (c.componentItemId != null) {

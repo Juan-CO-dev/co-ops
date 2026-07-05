@@ -125,6 +125,9 @@ export const DESTRUCTIVE_ACTIONS = [
   //   create/deactivate across every location's am_prep template. Auto-derive
   //   destructive=true via isDestructive().
   "item.set_opening_verify",
+  // — item.set_sold_directly flags a production item as sold-directly + sets sell portion/unit
+  //   (Recipe Stage refinement, migration 0105). GM+ (menu_price MoO+). Auto-derive destructive.
+  "item.set_sold_directly",
   // — prep_section.update renames a section's display label (MoO+, all-locations).
   "prep_section.update",
   // — prep_section.create adds a section to the registry (MoO+, all-locations).

@@ -223,6 +223,7 @@
   "admin.skus.field.avg_oz_per_each": "Avg oz per each",
   "admin.skus.avg_oz_per_each_hint": "Average ounces in one — used because count/volume can't be weighed directly.",
   "admin.skus.content_oz_label": "Total per pack",
+  "admin.skus.each_container_label": "Container label",
   "admin.skus.measure.add_button": "+ Add measure unit",
   "admin.skus.measure.add_label": "Unit (e.g. quart)",
   "admin.skus.measure.add_factor": "Factor to base",
@@ -532,6 +533,13 @@
   "admin.templates.field.menu_price": "Menu / sell price",
   "admin.templates.menu_price_hint": "What you sell one of these for — drives food-cost %. Leave blank if not sold directly.",
   "admin.templates.error.invalid_menu_price": "Menu price must be a positive number or empty.",
+  "admin.templates.error.invalid_sell_portion": "Sell portion must be a positive number.",
+
+  "admin.templates.sold_directly.title": "Sold directly",
+  "admin.templates.sold_directly.checkbox": "This item is sold directly to customers",
+  "admin.templates.sold_directly.sell_portion": "Sell portion (units sold per transaction)",
+  "admin.templates.sold_directly.sell_portion_unit": "Sell portion unit",
+  "admin.templates.sold_directly.menu_price": "Menu price ($)",
   "nav.mid_shift": "Mid-Shift Pulse",
   "nav.my_feedback": "My Performance",
   "me.title": "My Performance",
@@ -1694,6 +1702,9 @@
   "recipes.hub.empty": "No recipes yet. Create one to get started.",
   "recipes.hub.outputs_label": "Outputs",
 
+  "recipes.new.title": "New recipe",
+  "recipes.new.subtitle": "Choose a type and name, then build the recipe.",
+
   "recipes.filter.all": "All",
   "recipes.filter.production": "Production",
   "recipes.filter.consumer": "Consumer",
@@ -1732,6 +1743,12 @@
   "recipes.builder.save": "Save",
   "recipes.builder.cancel": "Cancel",
 
+  "recipes.draft.save": "Save draft",
+  "recipes.draft.saving": "Saving…",
+  "recipes.draft.save_hint": "Saves inputs and outputs — mark complete when ready.",
+  "recipes.draft.error_no_inputs": "Add at least one input before saving.",
+  "recipes.draft.error_no_outputs": "Add at least one output before saving.",
+
   "recipes.input.pick_sku": "Pick a SKU…",
   "recipes.input.pick_item": "Pick an item…",
   "recipes.input.quantity": "Qty",
@@ -1746,6 +1763,7 @@
   "recipes.output.pick_item": "Pick an item…",
   "recipes.output.yield": "Yield (units per batch)",
   "recipes.output.container_label": "Container",
+  "recipes.output.container_placeholder": "Pick a container…",
   "recipes.output.item_tag": "Item",
   "recipes.output.menu_item_tag": "Menu item",
 
@@ -1786,6 +1804,10 @@
   "recipes.error.invalid_table": "Invalid edge type.",
   "recipes.error.step_up_required": "Confirm your password to continue.",
   "recipes.error.step_up_stale": "Your confirmation expired — confirm your password again.",
+  "recipes.error.incomplete_recipe": "Recipe must have at least one input and one output.",
+  "recipes.error.would_create_cycle": "This component would create a circular dependency.",
+  "recipes.error.invalid_output": "Output item or menu item is invalid.",
+  "recipes.error.invalid_sell_portion": "Sell portion must be a positive number.",
 
   "recipes.item_link.production_recipe": "Production recipe"
 }

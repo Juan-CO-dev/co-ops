@@ -24,6 +24,11 @@ const KNOWN_ERROR_CODES = new Set([
   "invalid_table",
   "step_up_required",
   "step_up_stale",
+  // Added in recipe-refinement slice (createRecipeFull / setItemSoldDirectly / addRecipeOutput errors)
+  "incomplete_recipe",
+  "would_create_cycle",
+  "invalid_output",
+  "invalid_sell_portion",
 ]);
 
 export function resolveErrorKey(code: string): TranslationKey {

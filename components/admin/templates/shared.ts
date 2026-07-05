@@ -44,6 +44,7 @@ const KNOWN = new Set([
   "step_up_required",
   "step_up_stale",
   "invalid_menu_price",
+  "invalid_sell_portion",
 ]);
 
 export function resolveErrorKey(code: string): TranslationKey {
