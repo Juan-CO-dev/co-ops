@@ -21,6 +21,8 @@ import type { PrepSection, PrepSectionShape, LineInputType } from "@/lib/types";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { ChecklistRegistryItem, SectionQuestionView, ItemQuestionView } from "@/lib/admin/templates";
 import type { PrepSectionDefn } from "@/lib/types";
+import type { Readiness } from "@/lib/readiness";
+import { StatusBadge, ReadinessReasons } from "@/components/admin/StatusBadge";
 import { postJson, resolveErrorKey } from "./shared";
 
 const INPUT_TYPE_OPTIONS: Array<{ value: LineInputType; key: TranslationKey }> = [
@@ -38,6 +40,7 @@ export function GlobalRegistryTab({
   sectionQuestions,
   itemQuestions,
   actorLevel,
+  itemReadiness,
 }: {
   registry: ChecklistRegistryItem[];
   sections: PrepSectionDefn[];
@@ -45,6 +48,7 @@ export function GlobalRegistryTab({
   sectionQuestions: SectionQuestionView[];
   itemQuestions: ItemQuestionView[];
   actorLevel: number;
+  itemReadiness: Record<string, Readiness>;
 }) {
   const { t, language } = useTranslation();
   const canAdd = actorLevel >= 7;
@@ -134,6 +138,7 @@ export function GlobalRegistryTab({
                   units={units}
                   language={language}
                   itemQuestions={itemQuestions.filter((q) => q.itemId === r.itemId)}
+                  readiness={itemReadiness[r.itemId] ?? null}
                 />
               ))}
             </div>
@@ -787,6 +792,7 @@ function RegistryRow({
   units,
   language,
   itemQuestions,
+  readiness,
 }: {
   item: ChecklistRegistryItem;
   actorLevel: number;
@@ -794,6 +800,7 @@ function RegistryRow({
   units: Array<{ label: string }>;
   language: string;
   itemQuestions: ItemQuestionView[];
+  readiness: Readiness | null;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -930,6 +937,11 @@ function RegistryRow({
               {t("admin.templates.default_badge")}
             </span>
           ) : null}
+          {readiness ? (
+            <span className="ml-2">
+              <StatusBadge status={readiness.status as "incomplete" | "upstream_gaps"} />
+            </span>
+          ) : null}
         </span>
         <div className="flex gap-2">
           <a
@@ -949,6 +961,7 @@ function RegistryRow({
       {open && canEdit ? (
         <div className="mt-3 flex flex-col gap-3">
           {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+          {readiness ? <ReadinessReasons reasons={readiness.reasons} /> : null}
 
           <section className="rounded-lg border-2 border-co-border p-3">
             <h3 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">

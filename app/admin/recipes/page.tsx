@@ -13,6 +13,8 @@ import { requireSessionFromHeaders } from "@/lib/session";
 import { getRoleLevel } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { loadRecipes, RECIPE_READ_MIN } from "@/lib/recipes";
+import { loadGraphReadiness } from "@/lib/admin/readiness-load";
+import type { Readiness } from "@/lib/readiness";
 import { AdminBackLink } from "@/components/admin/AdminBackLink";
 import { RecipesClient } from "@/components/admin/recipes/RecipesClient";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -28,6 +30,16 @@ export default async function AdminRecipesPage() {
 
   const recipes = await loadRecipes(auth);
 
+  let recipeReadiness: Record<string, Readiness> = {};
+  try {
+    const g = await loadGraphReadiness(auth);
+    recipeReadiness = Object.fromEntries(
+      [...g.recipeReadiness.entries()].filter(([, r]) => r.status !== "ready"),
+    );
+  } catch (e) {
+    console.error("readiness load failed (rendering without badges)", e);
+  }
+
   return (
     <div>
       <AdminBackLink />
@@ -37,7 +49,7 @@ export default async function AdminRecipesPage() {
       <p className="mt-1 text-sm text-co-text-muted">
         {serverT(lang, rk("recipes.hub.subtitle"))}
       </p>
-      <RecipesClient recipes={recipes} level={level} />
+      <RecipesClient recipes={recipes} level={level} readiness={recipeReadiness} />
     </div>
   );
 }

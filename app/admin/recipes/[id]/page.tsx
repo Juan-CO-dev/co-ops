@@ -11,6 +11,8 @@ import { requireSessionFromHeaders } from "@/lib/session";
 import { getRoleLevel } from "@/lib/roles";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadRecipe, RECIPE_READ_MIN } from "@/lib/recipes";
+import { loadGraphReadiness } from "@/lib/admin/readiness-load";
+import type { Readiness } from "@/lib/readiness";
 import { AdminBackLink } from "@/components/admin/AdminBackLink";
 import { RecipeBuilder } from "@/components/admin/recipes/RecipeBuilder";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
@@ -63,6 +65,14 @@ export default async function AdminRecipeDetailPage({
 
   if (!recipe) notFound();
 
+  let readiness: Readiness | null = null;
+  try {
+    const g = await loadGraphReadiness(auth);
+    readiness = g.recipeReadiness.get(id) ?? null;
+  } catch (e) {
+    console.error("readiness load failed (rendering without banner)", e);
+  }
+
   const skus = (skusRes.data ?? []).map((s) => ({
     id: s.id,
     name: s.name,
@@ -98,6 +108,7 @@ export default async function AdminRecipeDetailPage({
         unitOptions={unitOptions}
         measures={measures}
         level={level}
+        readiness={readiness}
       />
     </div>
   );

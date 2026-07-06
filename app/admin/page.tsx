@@ -5,6 +5,7 @@
  * ~5ms duplicate cost is accepted vs prop-drilling from the layout).
  */
 
+import { countNotReady } from "@/lib/admin/readiness-load";
 import { adminSectionsFor } from "@/lib/admin/sections";
 import { serverT } from "@/lib/i18n/server";
 import { requireSessionFromHeaders } from "@/lib/session";
@@ -13,6 +14,19 @@ export default async function AdminHubPage() {
   const auth = await requireSessionFromHeaders("/admin");
   const lang = auth.user.language;
   const sections = adminSectionsFor(auth.level);
+
+  const wantsCounts = sections.some(
+    (s) => s.id === "skus" || s.id === "recipes" || s.id === "checklist-templates",
+  );
+  let counts: Record<string, number> = {};
+  if (wantsCounts) {
+    try {
+      const c = await countNotReady(auth);
+      counts = { skus: c.skus, recipes: c.recipes, "checklist-templates": c.items };
+    } catch (e) {
+      console.error("hub readiness counts failed (rendering without pills)", e);
+    }
+  }
 
   return (
     <div>
@@ -31,6 +45,11 @@ export default async function AdminHubPage() {
             className="rounded-xl border-2 border-co-border bg-co-surface p-4 text-base font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
           >
             {serverT(lang, s.i18nKey)}
+            {(counts[s.id] ?? 0) > 0 ? (
+              <span className="ml-2 rounded bg-co-cta/15 px-2 py-0.5 text-xs font-bold text-co-cta">
+                {serverT(lang, "readiness.hub.count", { count: counts[s.id]! })}
+              </span>
+            ) : null}
           </a>
         ))}
       </div>

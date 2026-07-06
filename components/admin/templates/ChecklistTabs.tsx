@@ -13,12 +13,19 @@
 import { useState } from "react";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { ChecklistAdminView } from "@/lib/admin/templates";
+import type { Readiness } from "@/lib/readiness";
 import { GlobalRegistryTab } from "./GlobalRegistryTab";
 import { LocationChecklistTab } from "./LocationChecklistTab";
 
 type TabId = "global" | string; // "global" or a locationId
 
-export function ChecklistTabs({ view }: { view: ChecklistAdminView }) {
+export function ChecklistTabs({
+  view,
+  itemReadiness,
+}: {
+  view: ChecklistAdminView;
+  itemReadiness: Record<string, Readiness>;
+}) {
   const { t } = useTranslation();
 
   const defaultTab: TabId =
@@ -69,6 +76,7 @@ export function ChecklistTabs({ view }: { view: ChecklistAdminView }) {
           sectionQuestions={view.sectionQuestions}
           itemQuestions={view.itemQuestions}
           actorLevel={view.actorLevel}
+          itemReadiness={itemReadiness}
         />
       ) : selectedLocation ? (
         <LocationChecklistTab

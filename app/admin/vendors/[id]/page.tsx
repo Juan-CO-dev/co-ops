@@ -16,6 +16,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getVendor, loadCategories, loadOrderTypes } from "@/lib/admin/vendors";
 import { loadSkus, loadPackFormats, loadMeasureUnits } from "@/lib/admin/skus";
 import { loadCurrentSkuPrices, computeSkuCostPerOz, loadSkuUsageMap, loadSkuReceivingLedger, loadSkuConsumption, type SkuConsumption } from "@/lib/admin/cost";
+import { skuPackComplete, skuReadiness, type Readiness } from "@/lib/readiness";
 import { VendorDetailClient } from "@/components/admin/vendors/VendorDetailClient";
 
 export default async function AdminVendorDetailPage({
@@ -56,6 +57,17 @@ export default async function AdminVendorDetailPage({
   const consumptionMap = await loadSkuConsumption(auth, skus.map((s) => s.id));
   const skuConsumption: Record<string, SkuConsumption> = Object.fromEntries([...consumptionMap.entries()]);
 
+  const skuReadinessMap: Record<string, Readiness> = {};
+  for (const s of skus) {
+    const r = skuReadiness({
+      active: s.active,
+      packComplete: skuPackComplete(s),
+      hasPrice: prices.has(s.id),
+      deliveryCount: ledgerMap.get(s.id)?.deliveries.length ?? 0,
+    });
+    if (r && r.status !== "ready") skuReadinessMap[s.id] = r;
+  }
+
   return (
     <div>
       <h1 className="text-xl font-extrabold leading-tight text-co-text">{vendor.name}</h1>
@@ -71,6 +83,7 @@ export default async function AdminVendorDetailPage({
         skuCost={skuCost}
         skuLedger={skuLedger}
         skuConsumption={skuConsumption}
+        skuReadiness={skuReadinessMap}
         actorLevel={level}
       />
     </div>

@@ -25,6 +25,8 @@ import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
+import { StatusBadge, ReadinessReasons } from "@/components/admin/StatusBadge";
+import type { Readiness } from "@/lib/readiness";
 import { RegistrySelect } from "@/components/admin/skus/RegistrySelect";
 import type { RecipeView, RecipeInputView, RecipeOutputView, RecipeType } from "@/lib/recipes";
 import { RECIPE_WRITE_MIN } from "@/lib/recipes";
@@ -83,6 +85,7 @@ export function RecipeBuilder({
   measures,
   level,
   defaultType = "production",
+  readiness = null,
 }: {
   recipe: RecipeView | null;
   skus: RecipeBuilderSku[];
@@ -91,6 +94,7 @@ export function RecipeBuilder({
   measures: Map<string, MeasureUnitFactor>;
   level: number;
   defaultType?: RecipeType;
+  readiness?: Readiness | null;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -245,6 +249,16 @@ export function RecipeBuilder({
 
   return (
     <div className="mt-2">
+      {/* ── LIVE mode: what's-missing banner ── */}
+      {recipe !== null && readiness && readiness.status !== "ready" ? (
+        <div className="mt-3 rounded-lg border-2 border-co-border bg-co-surface p-3">
+          <div className="flex items-center gap-2">
+            <StatusBadge status={readiness.status as "incomplete" | "upstream_gaps"} />
+          </div>
+          <ReadinessReasons reasons={readiness.reasons} />
+        </div>
+      ) : null}
+
       {/* ── Header ── */}
       <div className="rounded-lg border-2 border-co-border bg-co-surface p-4">
         {/* Recipe type badge / selector */}
@@ -270,11 +284,6 @@ export function RecipeBuilder({
               </select>
             </label>
           )}
-          {recipe && (!recipe.inputs.length || !recipe.outputs.length) ? (
-            <span className="rounded bg-co-cta/15 px-2 py-0.5 text-xs font-bold text-co-cta">
-              {t(rk("recipes.badge.incomplete"))}
-            </span>
-          ) : null}
         </div>
 
         <div className="flex flex-col gap-3">
