@@ -1712,6 +1712,10 @@
   "recipes.type.production": "Receta de producción",
   "recipes.type.consumer": "Receta de consumo",
 
+  "recipes.delete.button": "Eliminar receta",
+  "recipes.delete.confirm": "Sí, eliminar",
+  "recipes.delete.cancel": "Cancelar",
+
   "recipes.badge.incomplete": "Incompleta",
 
   "recipes.create.title": "Nueva receta",
