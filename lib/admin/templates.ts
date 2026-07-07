@@ -11,6 +11,8 @@
  * setPrepItemMeta so the station/section sync invariant is preserved.
  */
 
+import type { SupabaseClient } from "@supabase/supabase-js";
+
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
 import { isAllLocationsAccess, lockLocationContext } from "@/lib/locations";
@@ -2008,13 +2010,9 @@ export interface ItemQuestionView {
  * location's checklist for `subtype` (items + par context + which items it
  * runs). Reuses getPrepTemplateDetail per location (which IDOR-binds).
  */
-export async function loadChecklistAdminView(
-  actor: AuthContext,
-  subtype: PrepSubtype,
-): Promise<ChecklistAdminView> {
-  const sb = getServiceRoleClient();
-
-  // Registry = active global items (location_id NULL), grouped/sorted by section.
+/** Registry = active GLOBAL items (location_id NULL), sorted by section + name.
+ * Shared by the checklist admin view and the /admin/items central page. */
+export async function loadItemRegistry(sb: SupabaseClient): Promise<ChecklistRegistryItem[]> {
   const { data: regRows, error: rErr } = await sb
     .from("items")
     .select("id, name, name_es, section, default_par, default_par_unit, is_default, special_instruction, special_instruction_es, required, min_role_level, opening_verify, tracking_type, batch_yield, oz_per_par_unit, menu_price, sold_directly, sell_portion, sell_portion_unit")
@@ -2023,8 +2021,8 @@ export async function loadChecklistAdminView(
     .order("section", { ascending: true })
     .order("name", { ascending: true })
     .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; default_par: number | null; default_par_unit: string | null; is_default: boolean; special_instruction: string | null; special_instruction_es: string | null; required: boolean; min_role_level: number | null; opening_verify: boolean; tracking_type: string; batch_yield: number | string; oz_per_par_unit: number | string | null; menu_price: number | string | null; sold_directly: boolean | null; sell_portion: number | string | null; sell_portion_unit: string | null }>>();
-  if (rErr) throw new Error(`loadChecklistAdminView registry failed: ${rErr.message}`);
-  const registry: ChecklistRegistryItem[] = (regRows ?? []).map((r) => ({
+  if (rErr) throw new Error(`loadItemRegistry failed: ${rErr.message}`);
+  return (regRows ?? []).map((r) => ({
     itemId: r.id,
     name: r.name,
     nameEs: r.name_es,
@@ -2045,6 +2043,15 @@ export async function loadChecklistAdminView(
     sellPortion: r.sell_portion == null ? null : Number(r.sell_portion),
     sellPortionUnit: r.sell_portion_unit,
   }));
+}
+
+export async function loadChecklistAdminView(
+  actor: AuthContext,
+  subtype: PrepSubtype,
+): Promise<ChecklistAdminView> {
+  const sb = getServiceRoleClient();
+
+  const registry = await loadItemRegistry(sb);
 
   // Accessible locations (respect all-locations override + assignment list).
   const { data: locRows, error: lErr } = await sb

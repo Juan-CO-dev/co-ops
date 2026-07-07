@@ -16,13 +16,13 @@ export default async function AdminHubPage() {
   const sections = adminSectionsFor(auth.level);
 
   const wantsCounts = sections.some(
-    (s) => s.id === "skus" || s.id === "recipes" || s.id === "checklist-templates",
+    (s) => s.id === "skus" || s.id === "recipes" || s.id === "items",
   );
   let counts: Record<string, number> = {};
   if (wantsCounts) {
     try {
       const c = await countNotReady(auth);
-      counts = { skus: c.skus, recipes: c.recipes, "checklist-templates": c.items };
+      counts = { skus: c.skus, recipes: c.recipes, items: c.items };
     } catch (e) {
       console.error("hub readiness counts failed (rendering without pills)", e);
     }
