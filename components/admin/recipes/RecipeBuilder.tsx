@@ -29,7 +29,7 @@ import { StatusBadge, ReadinessReasons } from "@/components/admin/StatusBadge";
 import type { Readiness } from "@/lib/readiness";
 import { RegistrySelect } from "@/components/admin/skus/RegistrySelect";
 import type { RecipeView, RecipeInputView, RecipeOutputView, RecipeType } from "@/lib/recipes";
-import { RECIPE_WRITE_MIN } from "@/lib/recipes";
+import { RECIPE_WRITE_MIN, RECIPE_DELETE_MIN } from "@/lib/recipes";
 import type { RegistryOption } from "@/lib/admin/skus";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { MeasureUnitFactor, RecipeInputSku } from "@/lib/recipe-math";
@@ -100,11 +100,32 @@ export function RecipeBuilder({
   const router = useRouter();
   const { requestStepUp } = useStepUp();
   const canEdit = level >= RECIPE_WRITE_MIN;
+  const canDelete = level >= RECIPE_DELETE_MIN;
 
   // ── LIVE mode: header patch state ──
   const [patchError, setPatchError] = useState<string | null>(null);
   const [patchBusy, setPatchBusy] = useState(false);
   const [directionsOpen, setDirectionsOpen] = useState(false);
+
+  // ── LIVE mode: delete (deactivate) state ──
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const deleteRecipe = async () => {
+    if (!recipe || deleteBusy) return;
+    setDeleteError(null);
+    if ((await requestStepUp("B")) !== "ok") return;
+    setDeleteBusy(true);
+    const result = await postJson(`/api/admin/recipes/${recipe.id}`, {}, "DELETE");
+    setDeleteBusy(false);
+    if (result.ok) {
+      router.push("/admin/recipes");
+    } else {
+      setConfirmDelete(false);
+      setDeleteError(t(resolveErrorKey(result.code)));
+    }
+  };
 
   // ── Header local state (used by both modes; LIVE patches on blur, DRAFT collects) ──
   const [nameVal, setNameVal] = useState(recipe?.name ?? "");
@@ -442,6 +463,43 @@ export function RecipeBuilder({
           measures={measures}
         />
       )}
+
+      {/* ── LIVE mode: delete (deactivate) ── */}
+      {recipe !== null && canDelete ? (
+        <div className="mt-6 rounded-lg border-2 border-co-cta/40 bg-co-surface p-4">
+          {deleteError ? <p className="mb-3 text-sm text-co-cta">{deleteError}</p> : null}
+          {confirmDelete ? (
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={deleteBusy}
+                onClick={() => setConfirmDelete(false)}
+                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text disabled:opacity-50"
+              >
+                {t(rk("recipes.delete.cancel"))}
+              </button>
+              <button
+                type="button"
+                disabled={deleteBusy}
+                onClick={() => void deleteRecipe()}
+                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-cta px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-surface disabled:opacity-50"
+              >
+                {t(rk("recipes.delete.confirm"))}
+              </button>
+            </div>
+          ) : (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => { setDeleteError(null); setConfirmDelete(true); }}
+                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-surface px-4 text-sm font-bold text-co-cta hover:border-co-cta"
+              >
+                {t(rk("recipes.delete.button"))}
+              </button>
+            </div>
+          )}
+        </div>
+      ) : null}
     </div>
   );
 }

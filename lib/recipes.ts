@@ -10,6 +10,7 @@ import type { AuthContext } from "@/lib/session";
 
 export const RECIPE_READ_MIN = 6;
 export const RECIPE_WRITE_MIN = 7;
+export const RECIPE_DELETE_MIN = 8;
 export const MENU_PRICE_MIN = 8;
 
 export type RecipeType = "production" | "consumer";
@@ -201,8 +202,9 @@ export async function updateRecipe(actor: AuthContext, id: string, patch: { name
   await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe.update", resourceTable: "recipes", resourceId: id, metadata: { patch }, ipAddress: null, userAgent: null });
 }
 
+/** Soft-delete (deactivate) a recipe. MoO+ (level >= RECIPE_DELETE_MIN, 8). */
 export async function deactivateRecipe(actor: AuthContext, id: string): Promise<void> {
-  requireLevel(actor, RECIPE_WRITE_MIN);
+  requireLevel(actor, RECIPE_DELETE_MIN);
   const sb = getServiceRoleClient();
   const { error, count } = await sb.from("recipes").update({ active: false, updated_at: new Date().toISOString(), updated_by: actor.user.id }, { count: "exact" }).eq("id", id);
   if (error) throw new Error(`deactivateRecipe: ${error.message}`);

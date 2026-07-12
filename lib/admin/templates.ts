@@ -11,6 +11,8 @@
  * setPrepItemMeta so the station/section sync invariant is preserved.
  */
 
+import type { SupabaseClient } from "@supabase/supabase-js";
+
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
 import { isAllLocationsAccess, lockLocationContext } from "@/lib/locations";
@@ -24,10 +26,6 @@ import { setPrepItemMeta, setPrepItemSection, narrowPrepTemplateItem, isPrepMeta
 import { shapeToColumns, isPrepSectionName } from "@/lib/prep-sections";
 import { loadPrepSections } from "@/lib/prep-sections.server";
 import { loadUnits } from "@/lib/units.server";
-import { loadSkus, loadMeasureUnits } from "@/lib/admin/skus";
-import { loadItemComponentsForItems, type ComponentView } from "@/lib/admin/item-components";
-import { loadCurrentSkuPrices, computeSkuCostPerOz, annotateComponentCosts } from "@/lib/admin/cost";
-import { skuContentOz, type MeasureUnitFactor } from "@/lib/recipe-math";
 import type { AuthContext } from "@/lib/session";
 import type {
   ChecklistTemplateItem,
@@ -1958,24 +1956,17 @@ export interface ChecklistLocationView {
 export interface ChecklistAdminView {
   subtype: PrepSubtype;
   actorLevel: number;
+  /** Global registry items — the enable-from-registry pool for LocationChecklistTab. */
   registry: ChecklistRegistryItem[];
   locations: ChecklistLocationView[];
   /** First-class prep sections (active, by displayOrder) — editable labels. */
   sections: PrepSectionDefn[];
   /** Canonical par units (active, by displayOrder) — the unit-dropdown pool. */
   units: Array<{ label: string }>;
-  /** Non-inventory section questions (active, by section_slug + label) — Global tab. */
+  /** Non-inventory section questions (active, by section_slug + label) — Sections tab. */
   sectionQuestions: SectionQuestionView[];
-  /** Non-inventory item questions (active, by item_id + label) — Global tab. */
-  itemQuestions: ItemQuestionView[];
-  /** BOM components across the registry items (C2 "Made from") — UI filters per item. */
-  itemComponents: ComponentView[];
-  /** Active SKUs for the BOM component picker. */
-  skuOptions: Array<{ id: string; name: string }>;
-  /** Measure-unit registry (oz/lb/count…) for the BOM line unit dropdown. */
-  measureUnits: Array<{ id: string; label: string }>;
-  /** Per-item derived cost (R2) — keyed by itemId. */
-  itemCosts: Record<string, { perUnitCost: number | null; foodCostPct: number | null }>;
+  /** section slug → registry item names currently in it (Sections-tab disable-confirm blast list). */
+  registryNamesBySection: Record<string, string[]>;
 }
 
 /** A section question for the Global-tab UI (migration 0087 `section_questions`). */
@@ -2008,13 +1999,9 @@ export interface ItemQuestionView {
  * location's checklist for `subtype` (items + par context + which items it
  * runs). Reuses getPrepTemplateDetail per location (which IDOR-binds).
  */
-export async function loadChecklistAdminView(
-  actor: AuthContext,
-  subtype: PrepSubtype,
-): Promise<ChecklistAdminView> {
-  const sb = getServiceRoleClient();
-
-  // Registry = active global items (location_id NULL), grouped/sorted by section.
+/** Registry = active GLOBAL items (location_id NULL), sorted by section + name.
+ * Shared by the checklist admin view and the /admin/items central page. */
+export async function loadItemRegistry(sb: SupabaseClient): Promise<ChecklistRegistryItem[]> {
   const { data: regRows, error: rErr } = await sb
     .from("items")
     .select("id, name, name_es, section, default_par, default_par_unit, is_default, special_instruction, special_instruction_es, required, min_role_level, opening_verify, tracking_type, batch_yield, oz_per_par_unit, menu_price, sold_directly, sell_portion, sell_portion_unit")
@@ -2023,8 +2010,8 @@ export async function loadChecklistAdminView(
     .order("section", { ascending: true })
     .order("name", { ascending: true })
     .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; default_par: number | null; default_par_unit: string | null; is_default: boolean; special_instruction: string | null; special_instruction_es: string | null; required: boolean; min_role_level: number | null; opening_verify: boolean; tracking_type: string; batch_yield: number | string; oz_per_par_unit: number | string | null; menu_price: number | string | null; sold_directly: boolean | null; sell_portion: number | string | null; sell_portion_unit: string | null }>>();
-  if (rErr) throw new Error(`loadChecklistAdminView registry failed: ${rErr.message}`);
-  const registry: ChecklistRegistryItem[] = (regRows ?? []).map((r) => ({
+  if (rErr) throw new Error(`loadItemRegistry failed: ${rErr.message}`);
+  return (regRows ?? []).map((r) => ({
     itemId: r.id,
     name: r.name,
     nameEs: r.name_es,
@@ -2045,6 +2032,15 @@ export async function loadChecklistAdminView(
     sellPortion: r.sell_portion == null ? null : Number(r.sell_portion),
     sellPortionUnit: r.sell_portion_unit,
   }));
+}
+
+export async function loadChecklistAdminView(
+  actor: AuthContext,
+  subtype: PrepSubtype,
+): Promise<ChecklistAdminView> {
+  const sb = getServiceRoleClient();
+
+  const registry = await loadItemRegistry(sb);
 
   // Accessible locations (respect all-locations override + assignment list).
   const { data: locRows, error: lErr } = await sb
@@ -2089,37 +2085,12 @@ export async function loadChecklistAdminView(
   // Non-inventory section questions (active), ordered by section + label.
   const sectionQuestions = await loadSectionQuestions(sb);
 
-  // Non-inventory item questions (active), ordered by item_id + label.
-  const itemQuestions = await loadItemQuestions(sb);
-
-  // C2 BOM: components across the registry + the picker pools (SKUs + measures).
-  const itemComponents = await loadItemComponentsForItems(actor, registry.map((r) => r.itemId));
-  const activeSkus = (await loadSkus(actor)).filter((s) => s.active);
-  const skuOptions = activeSkus.map((s) => ({ id: s.id, name: s.name }));
-  const measureUnits = await loadMeasureUnits(actor);
-
-  // ── R2 cost annotation ──
-  const measuresMap = new Map<string, MeasureUnitFactor>(
-    measureUnits.map((x) => [x.label, { dimension: x.dimension, toBaseFactor: x.toBaseFactor }]),
-  );
-  const skuInputs = activeSkus.map((s) => ({
-    id: s.id, unitsPerPack: s.unitsPerPack, eachSize: s.eachSize, eachMeasure: s.eachMeasure, avgOzPerEach: s.avgOzPerEach,
-  }));
-  const prices = await loadCurrentSkuPrices(skuInputs.map((s) => s.id));
-  const skuCostPerOzById = computeSkuCostPerOz(skuInputs, prices, measureUnits);
-  const skuContentOzById = new Map<string, number | null>(
-    skuInputs.map((s) => [s.id, skuContentOz({ unitsPerPack: s.unitsPerPack, eachSize: s.eachSize, eachMeasure: s.eachMeasure, avgOzPerEach: s.avgOzPerEach }, measuresMap)]),
-  );
-  const skuAvgOzById = new Map<string, number | null>(skuInputs.map((s) => [s.id, s.avgOzPerEach]));
-  const { components: annotatedComponents, itemCosts: itemCostsMap } = annotateComponentCosts({
-    components: itemComponents,
-    items: registry.map((r) => ({ itemId: r.itemId, batchYield: r.batchYield, menuPrice: r.menuPrice })),
-    skuCostPerOzById,
-    skuContentOzById,
-    skuAvgOzById,
-    measures: measureUnits,
-  });
-  const itemCosts = Object.fromEntries(itemCostsMap);
+  // section slug → registry item names in it (Sections-tab disable-confirm blast list).
+  const registryNamesBySection: Record<string, string[]> = {};
+  for (const r of registry) {
+    const key = r.section ?? "—";
+    (registryNamesBySection[key] ??= []).push(r.name);
+  }
 
   return {
     subtype,
@@ -2129,11 +2100,7 @@ export async function loadChecklistAdminView(
     sections,
     units,
     sectionQuestions,
-    itemQuestions,
-    itemComponents: annotatedComponents,
-    skuOptions,
-    measureUnits,
-    itemCosts,
+    registryNamesBySection,
   };
 }
 

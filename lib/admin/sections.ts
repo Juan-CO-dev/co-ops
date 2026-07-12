@@ -19,12 +19,15 @@ export interface AdminSection {
   minLevel: number;
 }
 
+// Order = display order, and it walks the derivation pipeline (Juan's model):
+// vendors → SKUs (source of truth) → recipes → items → checklists/reports.
 export const ADMIN_SECTIONS: AdminSection[] = [
   { id: "users",               i18nKey: "admin.section.users",               href: "/admin/users",               minLevel: 8 },
-  { id: "checklist-templates", i18nKey: "admin.section.checklist-templates", href: "/admin/checklist-templates", minLevel: 7 },
   { id: "vendors",             i18nKey: "admin.section.vendors",             href: "/admin/vendors",             minLevel: 6 },
   { id: "skus",                i18nKey: "admin.section.skus",                href: "/admin/skus",                minLevel: 6 },
   { id: "recipes",             i18nKey: "admin.section.recipes" as TranslationKey,             href: "/admin/recipes",             minLevel: 6 },
+  { id: "items",               i18nKey: "admin.section.items" as TranslationKey,               href: "/admin/items",               minLevel: 6 },
+  { id: "checklist-templates", i18nKey: "admin.section.checklist-templates", href: "/admin/checklist-templates", minLevel: 7 },
   { id: "categories",          i18nKey: "admin.section.categories",          href: "/admin/categories",          minLevel: 8 },
   { id: "pars",                i18nKey: "admin.section.pars",                href: "/admin/pars",                minLevel: 7 },
   { id: "locations",           i18nKey: "admin.section.locations",           href: "/admin/locations",           minLevel: 9 },

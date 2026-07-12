@@ -52,6 +52,7 @@
   "admin.section.checklist-templates": "Plantillas de Listas",
   "admin.section.vendors": "Proveedores",
   "admin.section.skus": "SKUs",
+  "admin.section.items": "Artículos",
   "admin.section.categories": "Categorías",
   "admin.section.pars": "Niveles Par",
   "admin.section.locations": "Ubicaciones",
@@ -211,6 +212,8 @@
   "admin.vendors.error.invalid_color": "Elige un color de la paleta.",
   "admin.vendors.error.step_up_required": "Confirma tu contraseña para continuar.",
   "admin.vendors.error.step_up_stale": "Tu confirmación expiró — confirma tu contraseña de nuevo.",
+  "admin.items.title": "Registro de Artículos",
+  "admin.items.subtitle": "Las recetas crean artículos; los artículos alimentan checklists y reportes.",
   "admin.skus.title": "Catálogo de SKUs",
   "admin.skus.subtitle": "Las unidades que compras — gestiónalas aquí o dentro de cada proveedor.",
   "admin.skus.card.title": "SKUs",
@@ -507,6 +510,9 @@
   "admin.templates.error.invalid_payload": "Faltan datos o son inválidos.",
   "admin.templates.tabs_label": "Vistas de la lista",
   "admin.templates.tab_global": "Global",
+  "admin.templates.tab_sections": "Secciones",
+  "admin.templates.items_moved": "Las definiciones de artículos ahora viven en el Registro de Artículos.",
+  "admin.templates.items_moved_link": "Ir al Registro de Artículos →",
   "admin.templates.no_template": "Este local aún no tiene una lista activa de este tipo.",
   "admin.templates.global_blast_radius_note": "Los cambios aquí aplican a todos los locales.",
   "admin.templates.location_scope_note": "Los cambios aquí afectan solo a {location}.",
@@ -1711,6 +1717,10 @@
 
   "recipes.type.production": "Receta de producción",
   "recipes.type.consumer": "Receta de consumo",
+
+  "recipes.delete.button": "Eliminar receta",
+  "recipes.delete.confirm": "Sí, eliminar",
+  "recipes.delete.cancel": "Cancelar",
 
   "recipes.badge.incomplete": "Incompleta",
 

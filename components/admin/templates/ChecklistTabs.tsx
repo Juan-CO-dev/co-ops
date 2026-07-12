@@ -1,35 +1,34 @@
 "use client";
 
 /**
- * ChecklistTabs (Item/Inventory Spine 2B′) — the 3-tab (checklist-first) IA for
- * the prep-checklist admin. Tab bar: Global | <each location.code · name>.
- * Default tab = Global when actorLevel ≥ 7 (GM+ can author the registry), else
+ * ChecklistTabs (Items Central Page, 2026-07-07) — the tab IA for the prep-
+ * checklist admin. Tab bar: Sections | <each location.code · name>. Item
+ * definitions moved to /admin/items; the first tab is now prep-report STRUCTURE
+ * (sections + section questions).
+ *
+ * Default tab = Sections when actorLevel ≥ 8 (sections editing is MoO+), else
  * the first accessible location (AGM+ live in the per-location world).
  *
- * Renders <GlobalRegistryTab> or the selected <LocationChecklistTab>. Chip
- * styling mirrors the location chips in the prior list page.
+ * Renders <SectionsTab> or the selected <LocationChecklistTab>.
  */
 
 import { useState } from "react";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { ChecklistAdminView } from "@/lib/admin/templates";
-import type { Readiness } from "@/lib/readiness";
-import { GlobalRegistryTab } from "./GlobalRegistryTab";
+import { SectionsTab } from "./SectionsTab";
 import { LocationChecklistTab } from "./LocationChecklistTab";
 
-type TabId = "global" | string; // "global" or a locationId
+type TabId = "sections" | string; // "sections" or a locationId
 
 export function ChecklistTabs({
   view,
-  itemReadiness,
 }: {
   view: ChecklistAdminView;
-  itemReadiness: Record<string, Readiness>;
 }) {
   const { t } = useTranslation();
 
   const defaultTab: TabId =
-    view.actorLevel >= 7 ? "global" : (view.locations[0]?.locationId ?? "global");
+    view.actorLevel >= 8 ? "sections" : (view.locations[0]?.locationId ?? "sections");
   const [active, setActive] = useState<TabId>(defaultTab);
 
   const chip = (selected: boolean) =>
@@ -40,7 +39,7 @@ export function ChecklistTabs({
     }`;
 
   const selectedLocation =
-    active === "global" ? null : view.locations.find((l) => l.locationId === active) ?? null;
+    active === "sections" ? null : view.locations.find((l) => l.locationId === active) ?? null;
 
   return (
     <div>
@@ -48,11 +47,11 @@ export function ChecklistTabs({
         <button
           type="button"
           role="tab"
-          aria-selected={active === "global"}
-          onClick={() => setActive("global")}
-          className={chip(active === "global")}
+          aria-selected={active === "sections"}
+          onClick={() => setActive("sections")}
+          className={chip(active === "sections")}
         >
-          {t("admin.templates.tab_global")}
+          {t("admin.templates.tab_sections")}
         </button>
         {view.locations.map((loc) => (
           <button
@@ -68,15 +67,12 @@ export function ChecklistTabs({
         ))}
       </div>
 
-      {active === "global" ? (
-        <GlobalRegistryTab
-          registry={view.registry}
+      {active === "sections" ? (
+        <SectionsTab
           sections={view.sections}
-          units={view.units}
           sectionQuestions={view.sectionQuestions}
-          itemQuestions={view.itemQuestions}
           actorLevel={view.actorLevel}
-          itemReadiness={itemReadiness}
+          registryNamesBySection={view.registryNamesBySection}
         />
       ) : selectedLocation ? (
         <LocationChecklistTab

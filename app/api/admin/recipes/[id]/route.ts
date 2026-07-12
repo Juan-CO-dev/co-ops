@@ -3,7 +3,7 @@ import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
-import { updateRecipe, deactivateRecipe, RecipeError, RECIPE_WRITE_MIN } from "@/lib/recipes";
+import { updateRecipe, deactivateRecipe, RecipeError, RECIPE_WRITE_MIN, RECIPE_DELETE_MIN } from "@/lib/recipes";
 
 export async function PATCH(
   req: NextRequest,
@@ -42,7 +42,7 @@ export async function DELETE(
   const { id } = await params;
   const ctx = await requireSession(req, `/api/admin/recipes/${id}`);
   if (ctx instanceof Response) return ctx;
-  if (ROLES[ctx.user.role].level < RECIPE_WRITE_MIN) return jsonError(403, "forbidden");
+  if (ROLES[ctx.user.role].level < RECIPE_DELETE_MIN) return jsonError(403, "forbidden");
   const su = assertStepUp(ctx, "B");
   if (!su.ok) return jsonError(403, su.code);
 
