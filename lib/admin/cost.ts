@@ -4,6 +4,7 @@
  * with prices from the append-only vendor_price_history ledger.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
@@ -46,15 +47,22 @@ export async function loadCurrentSkuPrices(skuIds: string[]): Promise<Map<string
   const out = new Map<string, number>();
   if (skuIds.length === 0) return out;
   const sb = getServiceRoleClient();
-  const { data, error } = await sb
-    .from("vendor_price_history")
-    .select("vendor_item_id, unit_price, effective_date, recorded_at")
-    .in("vendor_item_id", skuIds)
-    .order("effective_date", { ascending: false })
-    .order("recorded_at", { ascending: false })
-    .returns<Array<{ vendor_item_id: string; unit_price: number | string; effective_date: string; recorded_at: string | null }>>();
-  if (error) throw new Error(`loadCurrentSkuPrices failed: ${error.message}`);
-  for (const r of data ?? []) {
+  // Paginate past PostgREST's 1000-row cap: vendor_price_history is append-only
+  // and grows per delivery line, so a raw scan silently drops SKUs whose latest
+  // price row falls past row 1000 → they read "unpriced" (wrong readiness/cost).
+  // `id` is the unique tiebreaker that makes the newest-first order a total order.
+  // (Follow-up: a DISTINCT ON (vendor_item_id) RPC avoids loading history at all.)
+  const data = await selectAllRows<{ vendor_item_id: string; unit_price: number | string; effective_date: string; recorded_at: string | null }>(
+    (from, to) => sb
+      .from("vendor_price_history")
+      .select("vendor_item_id, unit_price, effective_date, recorded_at")
+      .in("vendor_item_id", skuIds)
+      .order("effective_date", { ascending: false })
+      .order("recorded_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(from, to),
+  );
+  for (const r of data) {
     if (!out.has(r.vendor_item_id)) {
       const p = num(r.unit_price);
       if (p != null) out.set(r.vendor_item_id, p);
@@ -257,13 +265,17 @@ export async function loadSkuReceivingLedger(actor: AuthContext, skuIds: string[
   if (skuIds.length === 0) return out;
   const sb = getServiceRoleClient();
 
-  const { data: lineRows, error } = await sb
-    .from("vendor_delivery_items")
-    .select("vendor_item_id, delivery_id, qty_received, unit_price")
-    .in("vendor_item_id", skuIds)
-    .returns<Array<{ vendor_item_id: string; delivery_id: string; qty_received: number | string; unit_price: number | string | null }>>();
-  if (error) throw new Error(`loadSkuReceivingLedger lines: ${error.message}`);
-  const lines = lineRows ?? [];
+  // Paginate: vendor_delivery_items grows with every receiving session; a raw
+  // scan truncates at 1000 and silently under-counts received $/oz. Order by the
+  // unique `id` for a stable total order across pages.
+  const lines = await selectAllRows<{ vendor_item_id: string; delivery_id: string; qty_received: number | string; unit_price: number | string | null }>(
+    (from, to) => sb
+      .from("vendor_delivery_items")
+      .select("vendor_item_id, delivery_id, qty_received, unit_price")
+      .in("vendor_item_id", skuIds)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
 
   const prices = await loadCurrentSkuPrices(skuIds);
   const measures = await loadMeasureUnits(actor);
@@ -329,12 +341,21 @@ export async function loadSkuConsumption(actor: AuthContext, skuIds: string[]): 
     costPerOzById.set(id, price != null && content != null && content > 0 ? price / content : null);
   }
 
-  const { data: liveHdr } = await sb.from("productions").select("id").is("superseded_at", null).is("revoked_at", null).returns<Array<{ id: string }>>();
-  const liveIds = new Set((liveHdr ?? []).map((h) => h.id));
-  const { data: lines } = await sb.from("production_inputs").select("production_id, input_sku_id, input_oz").in("input_sku_id", skuIds).returns<Array<{ production_id: string; input_sku_id: string; input_oz: number | string }>>();
+  // Paginate both reads past the 1000-row cap. `productions` grows fastest of
+  // all (one header per convertible prep item per prep save), so an unpaginated
+  // scan is the first to truncate and silently under-count consumed oz/$.
+  // (Follow-up: a SQL SUM(input_oz) GROUP BY input_sku_id over live headers
+  //  would avoid hydrating every header + line on each admin cost load.)
+  const liveHdr = await selectAllRows<{ id: string }>(
+    (from, to) => sb.from("productions").select("id").is("superseded_at", null).is("revoked_at", null).order("id", { ascending: true }).range(from, to),
+  );
+  const liveIds = new Set(liveHdr.map((h) => h.id));
+  const lines = await selectAllRows<{ production_id: string; input_sku_id: string; input_oz: number | string }>(
+    (from, to) => sb.from("production_inputs").select("production_id, input_sku_id, input_oz").in("input_sku_id", skuIds).order("id", { ascending: true }).range(from, to),
+  );
 
   for (const id of skuIds) out.set(id, { consumedOz: 0, consumedDollars: 0 });
-  for (const l of lines ?? []) {
+  for (const l of lines) {
     if (!liveIds.has(l.production_id)) continue;
     const c = out.get(l.input_sku_id); if (!c) continue;
     const oz = num(l.input_oz) ?? 0;

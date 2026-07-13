@@ -8,6 +8,7 @@
  * single input+output, so recordProduction writes exactly one input line.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
@@ -103,18 +104,38 @@ async function loadSkuToItems(skuIds: string[]): Promise<Record<string, Array<{ 
   return out;
 }
 
-/** received packs − consumed packs, per SKU (for the form's in-stock hint). Consumed = Σ qty_entered over LIVE headers only. */
-async function loadInStockPacks(skuIds: string[]): Promise<Map<string, number>> {
+/**
+ * received packs − consumed packs, per SKU (for the form's in-stock hint), scoped
+ * to ONE location: SKUs are global but physical stock is per-location, so receipts
+ * and productions are bound to `locationId` (mixing stores gave a wrong hint).
+ * All three reads paginate past the 1000-row cap (they silently truncated → the
+ * hint OVERSTATED stock as ledgers grew, hiding consumption past row 1000).
+ * NOTE: consumed still uses qty_entered, whose unit varies by producer (manual
+ * form = packs, prep panel = case/each/oz). For panel-created rows this mixes
+ * units; the advisory hint is approximate. Fixing that (consume via input_oz ÷
+ * content_oz) is a separate follow-up — see the audit backlog.
+ */
+async function loadInStockPacks(skuIds: string[], locationId: string): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (skuIds.length === 0) return out;
   const sb = getServiceRoleClient();
-  const { data: recv } = await sb.from("vendor_delivery_items").select("vendor_item_id, qty_received").in("vendor_item_id", skuIds).returns<Array<{ vendor_item_id: string; qty_received: number | string }>>();
-  const { data: liveHdr } = await sb.from("productions").select("id").is("superseded_at", null).is("revoked_at", null).returns<Array<{ id: string }>>();
-  const liveIds = new Set((liveHdr ?? []).map((h) => h.id));
-  const { data: lines } = await sb.from("production_inputs").select("production_id, input_sku_id, qty_entered").in("input_sku_id", skuIds).returns<Array<{ production_id: string; input_sku_id: string; qty_entered: number | string | null }>>();
+  // Deliveries at this location → the delivery ids that scope receipt lines.
+  const deliveryIds = (await selectAllRows<{ id: string }>(
+    (from, to) => sb.from("vendor_deliveries").select("id").eq("location_id", locationId).order("id", { ascending: true }).range(from, to),
+  )).map((d) => d.id);
+  const recv = deliveryIds.length === 0 ? [] : await selectAllRows<{ vendor_item_id: string; qty_received: number | string }>(
+    (from, to) => sb.from("vendor_delivery_items").select("vendor_item_id, qty_received").in("vendor_item_id", skuIds).in("delivery_id", deliveryIds).order("id", { ascending: true }).range(from, to),
+  );
+  const liveHdr = await selectAllRows<{ id: string }>(
+    (from, to) => sb.from("productions").select("id").eq("location_id", locationId).is("superseded_at", null).is("revoked_at", null).order("id", { ascending: true }).range(from, to),
+  );
+  const liveIds = new Set(liveHdr.map((h) => h.id));
+  const lines = await selectAllRows<{ production_id: string; input_sku_id: string; qty_entered: number | string | null }>(
+    (from, to) => sb.from("production_inputs").select("production_id, input_sku_id, qty_entered").in("input_sku_id", skuIds).order("id", { ascending: true }).range(from, to),
+  );
   for (const id of skuIds) out.set(id, 0);
-  for (const r of recv ?? []) out.set(r.vendor_item_id, (out.get(r.vendor_item_id) ?? 0) + (num(r.qty_received) ?? 0));
-  for (const l of lines ?? []) {
+  for (const r of recv) out.set(r.vendor_item_id, (out.get(r.vendor_item_id) ?? 0) + (num(r.qty_received) ?? 0));
+  for (const l of lines) {
     if (!liveIds.has(l.production_id)) continue;
     out.set(l.input_sku_id, (out.get(l.input_sku_id) ?? 0) - (num(l.qty_entered) ?? 0));
   }
@@ -128,7 +149,7 @@ export async function loadProductionFormData(actor: AuthContext, locationId: str
   const { data: skus, error } = await sb.from("vendor_items").select("id, name").eq("active", true).order("name", { ascending: true }).returns<Array<{ id: string; name: string }>>();
   if (error) throw new Error(`loadProductionFormData skus: ${error.message}`);
   const ids = (skus ?? []).map((s) => s.id);
-  const [skuToItems, inStock] = await Promise.all([loadSkuToItems(ids), loadInStockPacks(ids)]);
+  const [skuToItems, inStock] = await Promise.all([loadSkuToItems(ids), loadInStockPacks(ids, locationId)]);
   return {
     skus: (skus ?? []).map((s) => ({ id: s.id, name: s.name, inStockPacks: inStock.get(s.id) ?? 0 })),
     skuToItems,
