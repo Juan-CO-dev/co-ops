@@ -29,6 +29,22 @@ function opDate(tstz: string): string {
   }).format(new Date(tstz));
 }
 
+/**
+ * Inclusive UTC upper-bound for a query whose rows are BUCKETED by ET opDate.
+ * The window is [loadFrom, toInclusive] in ET days, but the columns are UTC
+ * timestamps. ET-evening work on `toInclusive` (e.g. a 9pm-ET close) has a UTC
+ * timestamp on `toInclusive+1` (~01:00-05:00Z), so a `${toInclusive}T23:59:59Z`
+ * bound EXCLUDES the whole closing shift until the next day. End-of-ET-day is at
+ * most 05:59:59Z the next day (EST; 04:59:59Z EDT), so bound at next-day 05:59:59Z.
+ * The extra ~few hours of next-morning ET rows this over-fetches are discarded by
+ * the curSet/prevSet bucket-membership check (opDate not in the window keys).
+ */
+function nextDayUtcBound(yyyymmdd: string): string {
+  const d = new Date(`${yyyymmdd}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return `${d.toISOString().slice(0, 10)}T05:59:59Z`;
+}
+
 export interface Viewer { userId: string; level: number; }
 
 export interface TeamMember {
@@ -68,6 +84,7 @@ export async function loadTeamOperatingHealth(
   const curSet = new Set(currentKeys);
   const prevSet = new Set(previousKeys ?? []);
   const loadToInclusive = args.today;
+  const upperTs = nextDayUtcBound(loadToInclusive);
 
   const emptyResult = (): TeamOperatingHealth => ({
     granularity: args.granularity, members: [], summary: { onTrack: 0, needsAttention: 0 },
@@ -119,7 +136,7 @@ export async function loadTeamOperatingHealth(
         .from("checklist_completions")
         .select("instance_id, completed_by, completed_at, notes")
         .in("instance_id", [...locInstanceIds])
-        .gte("completed_at", `${loadFrom}T00:00:00Z`).lte("completed_at", `${loadToInclusive}T23:59:59Z`)
+        .gte("completed_at", `${loadFrom}T00:00:00Z`).lte("completed_at", upperTs)
         .is("superseded_at", null).is("revoked_at", null)
         .order("completed_at", { ascending: true }).range(from, to),
     );
@@ -137,7 +154,7 @@ export async function loadTeamOperatingHealth(
   const { data: cashRows } = await service
     .from("cash_reports").select("signed_by, signed_at, over_short_note")
     .eq("location_id", args.locationId).is("superseded_at", null)
-    .gte("signed_at", `${loadFrom}T00:00:00Z`).lte("signed_at", `${loadToInclusive}T23:59:59Z`);
+    .gte("signed_at", `${loadFrom}T00:00:00Z`).lte("signed_at", upperTs);
   for (const c of (cashRows ?? []) as Array<{ signed_by: string | null; signed_at: string | null; over_short_note: string | null }>) {
     if (c.signed_by && c.signed_at) {
       place(c.signed_by, c.signed_at, "finalizations");
@@ -147,7 +164,7 @@ export async function loadTeamOperatingHealth(
   const { data: pmRows } = await service
     .from("pm_reports").select("id, submitted_by, submitted_at")
     .eq("location_id", args.locationId).is("superseded_at", null)
-    .gte("submitted_at", `${loadFrom}T00:00:00Z`).lte("submitted_at", `${loadToInclusive}T23:59:59Z`);
+    .gte("submitted_at", `${loadFrom}T00:00:00Z`).lte("submitted_at", upperTs);
   for (const r of (pmRows ?? []) as Array<{ submitted_by: string | null; submitted_at: string | null }>) {
     if (r.submitted_by && r.submitted_at) {
       place(r.submitted_by, r.submitted_at, "finalizations");
@@ -179,7 +196,7 @@ export async function loadTeamOperatingHealth(
   const { data: auditRows } = await service
     .from("audit_log").select("actor_id, action, occurred_at")
     .in("actor_id", memberIds).in("action", OVERSIGHT_ACTIONS)
-    .gte("occurred_at", `${loadFrom}T00:00:00Z`).lte("occurred_at", `${loadToInclusive}T23:59:59Z`);
+    .gte("occurred_at", `${loadFrom}T00:00:00Z`).lte("occurred_at", upperTs);
   for (const a of (auditRows ?? []) as Array<{ actor_id: string | null; occurred_at: string }>) {
     if (a.actor_id) place(a.actor_id, a.occurred_at, "oversight");
   }
@@ -286,6 +303,7 @@ async function computePersonMetrics(
   const curSet = new Set(currentKeys);
   const prevSet = new Set(previousKeys ?? []);
   const toIncl = args.today;
+  const upperTsP = nextDayUtcBound(toIncl);
 
   const current = emptyCounts();
   const previous = emptyCounts();
@@ -318,7 +336,7 @@ async function computePersonMetrics(
       (from, to) => service
         .from("checklist_completions").select("completed_at, notes")
         .eq("completed_by", args.personId).in("instance_id", locInstanceIds)
-        .gte("completed_at", `${loadFrom}T00:00:00Z`).lte("completed_at", `${toIncl}T23:59:59Z`)
+        .gte("completed_at", `${loadFrom}T00:00:00Z`).lte("completed_at", upperTsP)
         .is("superseded_at", null).is("revoked_at", null)
         .order("completed_at", { ascending: true }).range(from, to),
     );
@@ -341,7 +359,7 @@ async function computePersonMetrics(
   const { data: finInst } = await service
     .from("checklist_instances").select("date, confirmed_at")
     .eq("location_id", args.locationId).eq("confirmed_by", args.personId).not("confirmed_at", "is", null)
-    .gte("confirmed_at", `${loadFrom}T00:00:00Z`).lte("confirmed_at", `${toIncl}T23:59:59Z`);
+    .gte("confirmed_at", `${loadFrom}T00:00:00Z`).lte("confirmed_at", upperTsP);
   for (const f of (finInst ?? []) as Array<{ date: string; confirmed_at: string }>) {
     add(f.confirmed_at, "finalizations");
     if (windowOf(f.confirmed_at) === "cur") { finalsChrono.push({ at: f.confirmed_at, inWindow: opDate(f.confirmed_at) === f.date }); touch(opDate(f.confirmed_at)); }
@@ -349,7 +367,7 @@ async function computePersonMetrics(
   const { data: cashRows } = await service
     .from("cash_reports").select("signed_at, over_short_note, report_date")
     .eq("location_id", args.locationId).eq("signed_by", args.personId).is("superseded_at", null)
-    .gte("signed_at", `${loadFrom}T00:00:00Z`).lte("signed_at", `${toIncl}T23:59:59Z`);
+    .gte("signed_at", `${loadFrom}T00:00:00Z`).lte("signed_at", upperTsP);
   for (const c of (cashRows ?? []) as Array<{ signed_at: string | null; over_short_note: string | null; report_date: string }>) {
     if (!c.signed_at) continue;
     add(c.signed_at, "finalizations");
@@ -359,7 +377,7 @@ async function computePersonMetrics(
   const { data: pmMine } = await service
     .from("pm_reports").select("id, submitted_at, report_date")
     .eq("location_id", args.locationId).eq("submitted_by", args.personId).is("superseded_at", null)
-    .gte("submitted_at", `${loadFrom}T00:00:00Z`).lte("submitted_at", `${toIncl}T23:59:59Z`);
+    .gte("submitted_at", `${loadFrom}T00:00:00Z`).lte("submitted_at", upperTsP);
   for (const r of (pmMine ?? []) as Array<{ id: string; submitted_at: string | null; report_date: string }>) {
     if (!r.submitted_at) continue;
     add(r.submitted_at, "finalizations");
@@ -379,7 +397,7 @@ async function computePersonMetrics(
 
   const { data: auditRows } = await service
     .from("audit_log").select("occurred_at").eq("actor_id", args.personId).in("action", OVERSIGHT_ACTIONS)
-    .gte("occurred_at", `${loadFrom}T00:00:00Z`).lte("occurred_at", `${toIncl}T23:59:59Z`);
+    .gte("occurred_at", `${loadFrom}T00:00:00Z`).lte("occurred_at", upperTsP);
   for (const a of (auditRows ?? []) as Array<{ occurred_at: string }>) add(a.occurred_at, "oversight");
 
   const score = scoreFromCounts(args.role, current);
