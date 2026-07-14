@@ -194,9 +194,14 @@ export async function loadDerivedForItems(itemIds: string[]): Promise<Map<string
  */
 export async function recordProductionFromPrep(actor: { userId: string; role: RoleCode }, input: RecordFromPrepInput): Promise<{ productionId: string | null }> {
   const sb = getServiceRoleClient();
-  await sb.from("productions").update({ superseded_at: new Date().toISOString() })
+  // Check the supersede error: if it fails silently, the insert below lands a
+  // SECOND live header for this key → double-counted depletion. (Backstopped at
+  // the DB by the partial UNIQUE index productions_prep_live_idx, migration 0107,
+  // which also makes a concurrent racing insert fail loudly rather than duplicate.)
+  const { error: supErr } = await sb.from("productions").update({ superseded_at: new Date().toISOString() })
     .eq("instance_id", input.instanceId).eq("template_item_id", input.templateItemId)
     .is("superseded_at", null).is("revoked_at", null);
+  if (supErr) throw new Error(`recordProductionFromPrep supersede: ${supErr.message}`);
   const positive = input.confirmedConsumption.filter((c) => Number.isFinite(c.qtyOz) && c.qtyOz > 0);
   if (positive.length === 0) return { productionId: null };
   const { data: hdr, error: hErr } = await sb.from("productions").insert({
