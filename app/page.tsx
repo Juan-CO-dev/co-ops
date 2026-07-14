@@ -235,17 +235,17 @@ function LoginPageContent() {
   return (
     <main className="flex min-h-screen flex-col bg-co-bg">
       <header className="flex flex-col items-center justify-center bg-co-gold px-6 py-5 sm:py-6">
-        <h1
-          className="
-            text-center font-extrabold uppercase leading-none tracking-[-0.02em]
-            text-co-text
-            text-[28px] sm:text-[32px]
-          "
-          style={{ fontFamily: "var(--font-display)" }}
-        >
-          Compliments Only
+        {/* Brand rule: the wordmark is customized art — never reproduce it by
+            typing text. Render the approved asset; the alt carries the h1's name. */}
+        <h1 className="m-0 flex justify-center">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/brand/co-wordmark.png"
+            alt="Compliments Only"
+            className="h-7 w-auto sm:h-8"
+          />
         </h1>
-        <p className="mt-1 text-center text-[10px] font-bold uppercase tracking-[0.32em] text-co-text/70">
+        <p className="mt-2 text-center text-[10px] font-bold uppercase tracking-[0.32em] text-co-text/70">
           {t("auth.brand.tagline")}
         </p>
       </header>

@@ -62,8 +62,24 @@ export async function POST(req: NextRequest) {
     return jsonError(403, "role_insufficient", { required_level: MAINTENANCE_BASE_LEVEL });
   }
 
-  // 6. Persist.
   const service = getServiceRoleClient();
+
+  // 5b. Bind equipmentId to the authorized location. A client-supplied id must
+  //     reference equipment AT this location; otherwise the note lands against
+  //     another location's equipment and surfaces on that location's maintenance
+  //     view (cross-location injection — the IDOR "bind the record" rule).
+  if (equipmentId) {
+    const { data: equip } = await service
+      .from("maintenance_equipment")
+      .select("id")
+      .eq("id", equipmentId)
+      .eq("location_id", b.locationId)
+      .eq("active", true)
+      .maybeSingle();
+    if (!equip) return jsonError(404, "equipment_not_found", { field: "equipmentId" });
+  }
+
+  // 6. Persist.
   try {
     const { id } = await addMaintenanceNote(service, {
       locationId: b.locationId as string,

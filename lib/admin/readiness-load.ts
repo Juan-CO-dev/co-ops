@@ -8,6 +8,7 @@
  * badges on error — nudges must never take down a working admin page.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import type { AuthContext } from "@/lib/session";
 import { loadSkus } from "@/lib/admin/skus";
 import { loadCurrentSkuPrices } from "@/lib/admin/cost";
@@ -27,13 +28,20 @@ export async function loadSkuDeliveryCounts(skuIds: string[]): Promise<Map<strin
   const out = new Map<string, number>();
   if (skuIds.length === 0) return out;
   const sb = getServiceRoleClient();
-  const { data, error } = await sb
-    .from("vendor_delivery_items")
-    .select("vendor_item_id")
-    .in("vendor_item_id", skuIds)
-    .returns<Array<{ vendor_item_id: string }>>();
-  if (error) throw new Error(`loadSkuDeliveryCounts: ${error.message}`);
-  for (const r of data ?? []) out.set(r.vendor_item_id, (out.get(r.vendor_item_id) ?? 0) + 1);
+  // Paginate past the 1000-row cap: without it, once total delivery lines exceed
+  // 1000 a SKU whose rows fall past the cap under-counts to 0 and wrongly badges
+  // "no deliveries yet". Order by the unique `id` for a stable total order.
+  // (Follow-up: readiness only needs count>=1 — a GROUP BY / exists RPC would
+  //  avoid hydrating the whole ledger for a boolean-ish signal.)
+  const data = await selectAllRows<{ vendor_item_id: string }>(
+    (from, to) => sb
+      .from("vendor_delivery_items")
+      .select("vendor_item_id")
+      .in("vendor_item_id", skuIds)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  for (const r of data) out.set(r.vendor_item_id, (out.get(r.vendor_item_id) ?? 0) + 1);
   return out;
 }
 

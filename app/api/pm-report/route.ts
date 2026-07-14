@@ -30,6 +30,34 @@ function isNullableString(v: unknown, maxLen: number): v is string | null {
   return typeof v === "string" && v.length <= maxLen;
 }
 
+/**
+ * A PM-eval / MVP target must be a legitimate candidate — otherwise a KH+ can
+ * write eval content (incl. the private note) or inflate MVP stats against an
+ * ARBITRARY user id, cross-location. Mirror the eval picker's exact source
+ * (page.tsx): active user_locations row at this location AND an active user.
+ */
+async function isOnLocationRoster(
+  service: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+  userId: string,
+): Promise<boolean> {
+  const { data: membership } = await service
+    .from("user_locations")
+    .select("user_id")
+    .eq("location_id", locationId)
+    .eq("user_id", userId)
+    .eq("active", true)
+    .maybeSingle();
+  if (!membership) return false;
+  const { data: user } = await service
+    .from("users")
+    .select("id")
+    .eq("id", userId)
+    .eq("active", true)
+    .maybeSingle();
+  return !!user;
+}
+
 export async function POST(req: NextRequest) {
   const ctx = await requireSession(req, "/api/pm-report");
   if (ctx instanceof Response) return ctx;
@@ -65,6 +93,9 @@ export async function POST(req: NextRequest) {
     if (!isGradient(b.teamPlayer)) return jsonError(400, "invalid_payload", { field: "teamPlayer" });
     if (!isNullableString(b.areaToImprove, MAX_TEXT)) return jsonError(400, "invalid_payload", { field: "areaToImprove" });
     if (!isNullableString(b.note, MAX_TEXT)) return jsonError(400, "invalid_payload", { field: "note" });
+    if (!(await isOnLocationRoster(service, locationId, b.employeeId))) {
+      return jsonError(400, "invalid_target", { field: "employeeId" });
+    }
 
     try {
       const { id: pmReportId } = await getOrCreatePmReport(service, { locationId, date, actor });
@@ -92,6 +123,9 @@ export async function POST(req: NextRequest) {
       return jsonError(400, "invalid_payload", { field: "mvpUserId" });
     }
     if (!isNullableString(b.mvpNote, MAX_TEXT)) return jsonError(400, "invalid_payload", { field: "mvpNote" });
+    if (isUuid(b.mvpUserId) && !(await isOnLocationRoster(service, locationId, b.mvpUserId))) {
+      return jsonError(400, "invalid_target", { field: "mvpUserId" });
+    }
 
     try {
       const { id: pmReportId } = await getOrCreatePmReport(service, { locationId, date, actor });

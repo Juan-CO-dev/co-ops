@@ -19,9 +19,9 @@ export default function AuthedLoading() {
       aria-live="polite"
       className="flex min-h-screen flex-col items-center justify-center gap-6 bg-co-bg px-6 text-co-text"
     >
-      <span className="text-xl font-bold uppercase tracking-[0.18em] text-co-text">
-        Compliments Only
-      </span>
+      {/* Brand rule: wordmark is customized art — render the asset, don't typeset it. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src="/brand/co-wordmark.png" alt="Compliments Only" className="h-6 w-auto sm:h-7" />
       <span
         aria-hidden
         className="h-9 w-9 animate-spin rounded-full border-4 border-co-border border-t-co-gold"

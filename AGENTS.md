@@ -1064,3 +1064,22 @@ Pairs with the `confirm-before-authoring` skill and the existing "preserved-from
 ### Direct-push is fine for pure docs; any commit containing a code file MUST go through CI
 
 A `git push` straight to `main` is acceptable for a **pure-docs** commit (only `.md` / handoff / notes). But **any commit that includes a `.ts` (or other code) file must go through a PR + the CI build gate** — never a direct push. This is exactly what `324f2dd` did wrong: a `docs(C.55)` commit was direct-pushed to main but bundled `scripts/seed-test-accounts.ts` (a `.ts` with `noUncheckedIndexedAccess` type errors), skipping CI and **breaking main's `next build`** until `#49` fixed it. The fix PR (`#49`) deliberately went through CI; the smoke script that accompanied this arc's purge-log was kept local/untracked so the purge-log commit could stay pure-docs. Rule: if `git diff --cached --name-only` shows anything but docs, open a PR.
+
+---
+
+## Current-state pointer (as of 2026-07-13) — READ THIS before trusting the phase log above
+
+**The phase-by-phase log above ends 2026-06-04.** Everything from PR #57 onward is NOT documented in this file — and that is the single largest, most-current part of the system. Authoring against this file alone reproduces the exact "stale assumptions" bug class this project treats as its primary failure mode. Concretely, the following shipped AFTER the log above and are absent here:
+
+- **Admin console (C.44):** the top-level `/admin` shell + two-tier step-up primitive (`lib/admin/step-up.ts`, `assertStepUp` Tier A / Tier B), User Management (migration 0078 `user_locations.active`), the prep template + structural editors, and the readiness soft-gate (`lib/readiness.ts` + `lib/admin/readiness-load.ts`).
+- **Item / Inventory Spine (PRs #82–#110):** SKU + ITEM registries, BOM→recipes (`lib/recipes.ts`, migrations 0103/0104), receiving (`lib/receiving.ts`), cost/yield (`lib/admin/cost.ts`), production capture (`lib/production.ts`, migration 0102), the items central page, and computed readiness badges.
+- **Reports Hub, trends, people/team operating-health, PM reports, public profiles, maintenance log** (PRs #57–#77).
+
+**Where the current architecture actually lives:**
+- Durable memory snapshots at `~/.claude/projects/C--Users-conta/memory/` — start at the READ-FIRST state snapshot and `project_item_inventory_spine.md` (the data model).
+- Design specs + plans: `docs/superpowers/specs/`.
+- The recurring bug-class checklist (run it over any diff) lives in the `feedback_recurring_bug_classes` memory.
+
+**One concrete correction to the log above:** the Phase 2 Session 3 entry lists as a *future* acceptance criterion that admin user/location mutations "must call `revokeSession()`." That SHIPPED in PR #79 as `revokeAllUserSessions` (migration 0078). Treat any "Phase 5 / will / must (future)" phrasing in the log as possibly-already-shipped, and verify against the code before relying on it.
+
+**Discipline (unchanged, reinforced):** re-read the actual file / migration / RLS policy before authoring against it (`confirm-before-authoring`). This doc is a starting map with a known multi-week gap, not ground truth.
