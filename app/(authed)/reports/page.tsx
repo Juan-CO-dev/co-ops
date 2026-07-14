@@ -73,8 +73,21 @@ export default async function ReportsPage({ searchParams }: PageProps) {
   const todayDate = operationalNow(new Date()).date;
   const fourteenDaysAgo = operationalNow(new Date(Date.now() - 14 * 24 * 60 * 60 * 1000)).date;
 
-  const dateFrom = fromParam ?? fourteenDaysAgo;
-  const dateTo = toParam ?? todayDate;
+  // Validate + clamp the requested window. from/to are user-supplied and
+  // listReports fans out ~3 queries per report row, so an unclamped ?from=
+  // (e.g. 2026-01-01) lets any authed user force a 1000+-query burst. YYYY-MM-DD
+  // strings compare lexicographically, so ordering checks are valid as-is.
+  const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
+  const MAX_SPAN_DAYS = 92;
+  const validYmd = (s: string | undefined): string | null =>
+    s && YMD_RE.test(s) && !Number.isNaN(Date.parse(`${s}T00:00:00Z`)) ? s : null;
+  let dateFrom = validYmd(fromParam) ?? fourteenDaysAgo;
+  const dateTo = validYmd(toParam) ?? todayDate;
+  if (dateFrom > dateTo) dateFrom = dateTo;
+  const minFrom = new Date(`${dateTo}T00:00:00Z`);
+  minFrom.setUTCDate(minFrom.getUTCDate() - MAX_SPAN_DAYS);
+  const minFromStr = minFrom.toISOString().slice(0, 10);
+  if (dateFrom < minFromStr) dateFrom = minFromStr;
 
   // ── Resolve type filter ──
   // Single-select: one type OR empty/"all" = all the viewer may see.

@@ -150,6 +150,34 @@ export interface RecipeDraft {
 /** Validate a full recipe draft in TS, then insert header + inputs + outputs atomically
  * via the create_recipe_full RPC (draft-then-save-once). Exactly-one component/output +
  * cycle guard enforced here; table CHECK constraints are the backstop. */
+/**
+ * True if an ACTIVE recipe (other than excludeRecipeId) already outputs this item.
+ * The model assumes ONE active producing recipe per item — readiness, the items
+ * page, and the consumption engine each pick a different arbitrary winner when
+ * that's violated. Two-step (not an embedded filter) per the AGENTS.md RLS note.
+ */
+async function activeProducerExists(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  itemId: string,
+  excludeRecipeId: string | null,
+): Promise<boolean> {
+  const { data: outs } = await sb
+    .from("recipe_outputs")
+    .select("recipe_id")
+    .eq("output_item_id", itemId)
+    .returns<Array<{ recipe_id: string }>>();
+  const recipeIds = [...new Set((outs ?? []).map((o) => o.recipe_id))].filter((id) => id !== excludeRecipeId);
+  if (recipeIds.length === 0) return false;
+  const { data: active } = await sb
+    .from("recipes")
+    .select("id")
+    .in("id", recipeIds)
+    .eq("active", true)
+    .limit(1)
+    .returns<Array<{ id: string }>>();
+  return !!(active && active.length > 0);
+}
+
 export async function createRecipeFull(actor: AuthContext, draft: RecipeDraft): Promise<{ id: string }> {
   requireLevel(actor, RECIPE_WRITE_MIN);
   if (!normStr(draft.name)) throw new RecipeError(400, "invalid_name");
@@ -174,6 +202,12 @@ export async function createRecipeFull(actor: AuthContext, draft: RecipeDraft): 
     }
   }
   const sb = getServiceRoleClient();
+  // Enforce one active producer per item (the model's single-producer assumption).
+  for (const o of draft.outputs) {
+    if (o.outputItemId && (await activeProducerExists(sb, o.outputItemId, null))) {
+      throw new RecipeError(409, "duplicate_active_producer");
+    }
+  }
   const { data, error } = await sb.rpc("create_recipe_full", {
     p_header: { name: normStr(draft.name), name_es: normStr(draft.nameEs), recipe_type: draft.recipeType, batch_yield: draft.batchYield, directions: normStr(draft.directions), directions_es: normStr(draft.directionsEs) },
     p_inputs: draft.inputs.map((i, idx) => ({ component_sku_id: i.componentSkuId ?? null, component_item_id: i.componentItemId ?? null, quantity: i.quantity, unit: normStr(i.unit), each_container_label: normStr(i.eachContainerLabel), portioned: i.portioned ?? false, display_order: idx })),
@@ -287,6 +321,10 @@ export async function addRecipeOutput(actor: AuthContext, input: { recipeId: str
   if (!(input.yield > 0)) throw new RecipeError(400, "invalid_yield");
   if (itemId !== null && await outputWouldCycle(input.recipeId, itemId)) throw new RecipeError(400, "would_create_cycle");
   const sb = getServiceRoleClient();
+  // One active producer per item: reject if another active recipe already outputs it.
+  if (itemId !== null && (await activeProducerExists(sb, itemId, input.recipeId))) {
+    throw new RecipeError(409, "duplicate_active_producer");
+  }
   const { data: max } = await sb.from("recipe_outputs").select("display_order").eq("recipe_id", input.recipeId).order("display_order", { ascending: false }).limit(1).maybeSingle<{ display_order: number }>();
   const { data, error } = await sb.from("recipe_outputs").insert({ recipe_id: input.recipeId, output_item_id: itemId, output_menu_item_id: menuId, yield: input.yield, output_container_label: normStr(input.outputContainerLabel), display_order: (max?.display_order ?? 0) + 1, created_by: actor.user.id })
     .select("id").maybeSingle<{ id: string }>();

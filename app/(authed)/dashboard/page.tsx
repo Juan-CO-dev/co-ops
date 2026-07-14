@@ -346,76 +346,39 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     ? await loadOperationalState(sb, selectedLocation.id)
     : null;
 
-  // AM Prep dashboard tile state — slim shape distinct from
-  // /operations/am-prep page's loadAmPrepState. Only loads what the tile
-  // needs (template existence, today's instance status + confirmedBy
-  // name, assignment + assigner name for sub-KH+ users). Sub-KH+
-  // assignment lookup short-circuits inside the function via
-  // actor.level >= AM_PREP_BASE_LEVEL gate.
-  const amPrepDashboard =
-    selectedLocation && operational
-      ? await loadAmPrepDashboardState(sb, {
-          locationId: selectedLocation.id,
-          date: operational.todayDate,
-          actor: { userId: auth.user.id, role: auth.role, level: auth.level },
-        })
-      : null;
-
-  // Mid-day prep tile state (C.43) — multi-instance; lists today's numbered
-  // instances + a trigger. Visibility gates on shift-staff level internally.
-  const midDayPrepDashboard =
-    selectedLocation && operational
-      ? await loadMidDayPrepDashboardState(sb, {
-          locationId: selectedLocation.id,
-          date: operational.todayDate,
-          actor: { userId: auth.user.id, role: auth.role, level: auth.level },
-        })
-      : null;
-
-  const cashDashboard =
-    selectedLocation && operational
-      ? await loadCashDashboardState(sb, {
-          locationId: selectedLocation.id,
-          date: operational.todayDate,
-          actor: { userId: auth.user.id, role: auth.role, level: auth.level },
-        })
-      : null;
-
-  const pmDashboard =
-    selectedLocation && operational
-      ? await loadPmDashboardState(sb, {
-          locationId: selectedLocation.id,
-          date: operational.todayDate,
-          actor: { userId: auth.user.id, role: auth.role, level: auth.level },
-        })
-      : null;
-
-  // Trends widget series — compact day/last-30/no-compare read over the same
-  // loadTrendSeries used by /reports/trends. Reuses operational.todayDate
-  // (operational-TZ "today" already computed for the dashboard). cashVisible
-  // gates the cash mini-card inside the widget by viewer level.
-  const trendsSeries =
-    selectedLocation && operational
-      ? await loadTrendSeries(sb, {
-          viewer: { userId: auth.user.id, level: auth.level },
-          locationId: selectedLocation.id,
-          granularity: "day",
-          compare: false,
-          today: operational.todayDate,
-        })
-      : null;
-
-  // Team operating-health widget — AGM+ only (level >= TEAM_VIEW_LEVEL).
-  const teamHealth =
-    selectedLocation && operational && auth.level >= TEAM_VIEW_LEVEL
-      ? await loadTeamOperatingHealth(sb, {
-          viewer: { userId: auth.user.id, level: auth.level },
-          locationId: selectedLocation.id,
-          granularity: "day",
-          compare: false,
-          today: operational.todayDate,
-        })
-      : null;
+  // These six tile loaders depend only on selectedLocation.id + operational.todayDate
+  // (both already resolved above), so run them CONCURRENTLY — page TTFB was the sum
+  // of their latencies, ~25-40 serialized round trips for an AGM+ viewer. The inline
+  // `selectedLocation && operational ?` per element preserves TS narrowing; null
+  // array elements are fine (Promise.all treats them as already-resolved).
+  //  - amPrep: slim tile shape (template existence, today's status + confirmedBy name,
+  //    sub-KH+ assignment which short-circuits inside on actor.level).
+  //  - midDay (C.43): multi-instance list + trigger; visibility gates internally.
+  //  - trends: compact day/no-compare read over the same loadTrendSeries as /reports/trends.
+  //  - teamHealth: AGM+ only (level >= TEAM_VIEW_LEVEL).
+  const dashActor = { userId: auth.user.id, role: auth.role, level: auth.level };
+  const dashViewer = { userId: auth.user.id, level: auth.level };
+  const [amPrepDashboard, midDayPrepDashboard, cashDashboard, pmDashboard, trendsSeries, teamHealth] =
+    await Promise.all([
+      selectedLocation && operational
+        ? loadAmPrepDashboardState(sb, { locationId: selectedLocation.id, date: operational.todayDate, actor: dashActor })
+        : null,
+      selectedLocation && operational
+        ? loadMidDayPrepDashboardState(sb, { locationId: selectedLocation.id, date: operational.todayDate, actor: dashActor })
+        : null,
+      selectedLocation && operational
+        ? loadCashDashboardState(sb, { locationId: selectedLocation.id, date: operational.todayDate, actor: dashActor })
+        : null,
+      selectedLocation && operational
+        ? loadPmDashboardState(sb, { locationId: selectedLocation.id, date: operational.todayDate, actor: dashActor })
+        : null,
+      selectedLocation && operational
+        ? loadTrendSeries(sb, { viewer: dashViewer, locationId: selectedLocation.id, granularity: "day", compare: false, today: operational.todayDate })
+        : null,
+      selectedLocation && operational && auth.level >= TEAM_VIEW_LEVEL
+        ? loadTeamOperatingHealth(sb, { viewer: dashViewer, locationId: selectedLocation.id, granularity: "day", compare: false, today: operational.todayDate })
+        : null,
+    ]);
 
   // Opening Report tile state (C.53) — resolve template + today's status inline
   // (the /operations/opening page owns the gate + 3-phase flow). Visible to
