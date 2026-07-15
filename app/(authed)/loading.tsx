@@ -23,10 +23,10 @@ export default function AuthedLoading() {
     >
       {/* The mark IS the loading indicator — it breathes (reduced-motion → static).
           Decorative: the wordmark below + the sr-only "Loading…" carry the meaning. */}
-      <BrandMark size={52} decorative className="co-breathe" />
+      <BrandMark size={72} decorative className="co-breathe" />
       {/* Brand rule: wordmark is customized art — render the asset, don't typeset it. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/brand/co-wordmark.png" alt="Compliments Only" className="h-6 w-auto sm:h-7" />
+      <img src="/brand/co-wordmark.png" alt="Compliments Only" className="h-8 w-auto sm:h-10" />
       <span className="sr-only">Loading…</span>
     </main>
   );
