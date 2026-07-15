@@ -1437,9 +1437,11 @@ export function OpeningClient({
         ) : null}
       </div>
 
-      {/* Phase 1: Station cards */}
-      {activePhase === "verification"
-        ? Array.from(stationGroups.entries()).map(([station, items]) => (
+      {/* Phase 1: Station cards — single column on phone, multi-column on
+          desktop so the whole verification is visible at once. */}
+      {activePhase === "verification" ? (
+        <div className="columns-1 [column-gap:1rem] lg:columns-2">
+          {Array.from(stationGroups.entries()).map(([station, items]) => (
             <OpeningVerificationStation
               key={station}
               station={station}
@@ -1454,8 +1456,9 @@ export function OpeningClient({
               onSectionVerifyToggle={handleSectionVerifyToggle}
               verificationLocked={verificationLocked}
             />
-          ))
-        : null}
+          ))}
+        </div>
+      ) : null}
 
       {/* C.54 §2.C inline attestation prompt — pre-submit surface that fires
           when any Phase 1 spot-check item has NULL-source provenance

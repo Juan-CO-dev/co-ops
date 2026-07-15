@@ -135,7 +135,7 @@ export function OpeningVerificationStation({
   return (
     <section
       aria-label={t("opening.station.aria", { station: stationDisplay })}
-      className="rounded-2xl border-2 border-co-border bg-co-surface p-4 shadow-sm sm:p-5"
+      className="co-card mb-4 break-inside-avoid p-4 sm:p-5"
     >
       <header className="flex items-start justify-between gap-3">
         <h3 className="text-base font-extrabold uppercase tracking-[0.14em] text-co-text">
