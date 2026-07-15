@@ -86,7 +86,7 @@ export function ReportList({ items, locationId, language, viewerLevel, searchQue
           <li key={item.id}>
             <a
               href={href}
-              className="flex flex-col gap-0.5 rounded-lg border-2 border-co-border bg-co-surface px-3 py-3 text-sm hover:opacity-90"
+              className="co-card co-card-interactive flex flex-col gap-0.5 px-4 py-3 text-sm"
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="font-semibold text-co-text">{dateLabel}</span>

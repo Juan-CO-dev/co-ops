@@ -60,6 +60,13 @@
   --role-shift-lead:   #8B5CF6;
   --role-key-holder:   #F59E0B;
   --role-trainer:      #EC4899;
+
+  /* Direction C — warm-tinted elevation scale + card system. Shadows lean olive-
+   * gold (not neutral grey) so they read intentional on the Mayo background. */
+  --co-card-border: #F0E7C4;
+  --co-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(120, 100, 20, 0.09);
+  --co-shadow-card-hover: 0 2px 4px rgba(0, 0, 0, 0.05), 0 14px 34px rgba(120, 100, 20, 0.14);
+  --co-shadow-raised: 0 8px 20px rgba(0, 0, 0, 0.10), 0 24px 60px rgba(120, 100, 20, 0.18);
 }
 
 @theme inline {
@@ -117,6 +124,33 @@ html, body {
   font-feature-settings: "cv11", "ss01";
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Direction C — a soft warm gradient canvas (fixed so it doesn't tile on scroll)
+   for depth; html keeps flat Mayo as the fallback. */
+body {
+  min-height: 100vh;
+  background: linear-gradient(170deg, #FFFDF5 0%, #FFF3D4 100%);
+  background-attachment: fixed;
+}
+
+/* Direction C — canonical card surface: soft warm elevation, lighter border,
+   generous radius. `.co-card-interactive` adds a hover lift for tappable cards. */
+.co-card {
+  background: var(--co-surface);
+  border: 1px solid var(--co-card-border);
+  border-radius: 1rem;
+  box-shadow: var(--co-shadow-card);
+}
+.co-card-interactive {
+  transition: box-shadow 0.18s ease, transform 0.18s ease, border-color 0.18s ease;
+}
+.co-card-interactive:hover {
+  box-shadow: var(--co-shadow-card-hover);
+  border-color: var(--co-border-2);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .co-card-interactive:hover { transform: translateY(-1px); }
 }
 
 /* Auth UI animations (Phase 2 Session 4). */
