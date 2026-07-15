@@ -70,7 +70,7 @@ export interface RecordProductionInput {
 }
 export interface ProductionFormData {
   skus: Array<{ id: string; name: string; inStockPacks: number }>;
-  /** SKU id → the items makeable from it (direct item_components reverse edge). */
+  /** SKU id → the items makeable from it (output items of active recipes that take the SKU). */
   skuToItems: Record<string, Array<{ itemId: string; name: string }>>;
 }
 export interface ProductionView {
@@ -82,24 +82,44 @@ export interface ProductionView {
   outputQty: number;
 }
 
-/** Items makeable from each SKU = item_components rows with component_sku_id set. */
+/** Items makeable from each SKU = output items of ACTIVE recipes that take the SKU
+ *  as an input. Reads the canonical `recipes` graph (recipe_inputs → recipe →
+ *  recipe_outputs), matching prep-consumption / cost / readiness. Previously read
+ *  the legacy `item_components` graph, which diverged from recipes after migration
+ *  0104 — so recipe-authored items were invisible to the manual production form. */
 async function loadSkuToItems(skuIds: string[]): Promise<Record<string, Array<{ itemId: string; name: string }>>> {
   const out: Record<string, Array<{ itemId: string; name: string }>> = {};
   if (skuIds.length === 0) return out;
   const sb = getServiceRoleClient();
-  const { data: edges } = await sb.from("item_components").select("item_id, component_sku_id").in("component_sku_id", skuIds).not("component_sku_id", "is", null)
-    .returns<Array<{ item_id: string; component_sku_id: string }>>();
-  const itemIds = [...new Set((edges ?? []).map((e) => e.item_id))];
+  // Recipe inputs that consume one of these SKUs.
+  const { data: ins } = await sb.from("recipe_inputs").select("recipe_id, component_sku_id").in("component_sku_id", skuIds).not("component_sku_id", "is", null)
+    .returns<Array<{ recipe_id: string; component_sku_id: string }>>();
+  const recipeIds = [...new Set((ins ?? []).map((i) => i.recipe_id))];
+  if (recipeIds.length === 0) return out;
+  // Keep only ACTIVE recipes (inactive-edge rule, per readiness/consumption).
+  const { data: activeRows } = await sb.from("recipes").select("id").in("id", recipeIds).eq("active", true).returns<Array<{ id: string }>>();
+  const activeRecipes = new Set((activeRows ?? []).map((r) => r.id));
+  if (activeRecipes.size === 0) return out;
+  // Item outputs of those active recipes.
+  const { data: outs } = await sb.from("recipe_outputs").select("recipe_id, output_item_id").in("recipe_id", [...activeRecipes]).not("output_item_id", "is", null)
+    .returns<Array<{ recipe_id: string; output_item_id: string }>>();
+  const itemsByRecipe = new Map<string, string[]>();
+  for (const o of outs ?? []) { const l = itemsByRecipe.get(o.recipe_id) ?? []; l.push(o.output_item_id); itemsByRecipe.set(o.recipe_id, l); }
+  const itemIds = [...new Set((outs ?? []).map((o) => o.output_item_id))];
   const nameById = new Map<string, string>();
   if (itemIds.length > 0) {
     const { data: items } = await sb.from("items").select("id, name").in("id", itemIds).eq("active", true).returns<Array<{ id: string; name: string }>>();
     for (const it of items ?? []) nameById.set(it.id, it.name);
   }
-  for (const e of edges ?? []) {
-    const name = nameById.get(e.item_id);
-    if (!name) continue; // inactive item
-    const list = out[e.component_sku_id] ?? (out[e.component_sku_id] = []);
-    if (!list.some((x) => x.itemId === e.item_id)) list.push({ itemId: e.item_id, name });
+  // For each SKU input into an active recipe, expose that recipe's output items.
+  for (const i of ins ?? []) {
+    if (!activeRecipes.has(i.recipe_id)) continue;
+    const list = out[i.component_sku_id] ?? (out[i.component_sku_id] = []);
+    for (const itemId of itemsByRecipe.get(i.recipe_id) ?? []) {
+      const name = nameById.get(itemId);
+      if (!name) continue; // inactive item
+      if (!list.some((x) => x.itemId === itemId)) list.push({ itemId, name });
+    }
   }
   return out;
 }
@@ -189,8 +209,24 @@ export async function recordProduction(actor: AuthContext, input: RecordProducti
   if (!sku) throw new ProductionError(400, "invalid_sku", "SKU not found or inactive");
   const { data: item } = await sb.from("items").select("id").eq("id", input.outputItemId).eq("active", true).maybeSingle<{ id: string }>();
   if (!item) throw new ProductionError(400, "invalid_item", "Item not found or inactive");
-  const { data: edge } = await sb.from("item_components").select("id").eq("item_id", input.outputItemId).eq("component_sku_id", input.inputSkuId).maybeSingle<{ id: string }>();
-  if (!edge) throw new ProductionError(400, "invalid_conversion", "That item is not made from that SKU");
+  // Valid conversion = an ACTIVE recipe that takes this SKU as an input AND outputs
+  // this item (canonical recipes graph; was the legacy item_components edge). Two-step
+  // (not an embedded filter) per the AGENTS.md RLS/embedded-select note.
+  const { data: inRows } = await sb.from("recipe_inputs").select("recipe_id").eq("component_sku_id", input.inputSkuId)
+    .returns<Array<{ recipe_id: string }>>();
+  const skuRecipeIds = [...new Set((inRows ?? []).map((r) => r.recipe_id))];
+  let validConversion = false;
+  if (skuRecipeIds.length > 0) {
+    const { data: outRows } = await sb.from("recipe_outputs").select("recipe_id").eq("output_item_id", input.outputItemId).in("recipe_id", skuRecipeIds)
+      .returns<Array<{ recipe_id: string }>>();
+    const candidateRecipeIds = [...new Set((outRows ?? []).map((r) => r.recipe_id))];
+    if (candidateRecipeIds.length > 0) {
+      const { data: active } = await sb.from("recipes").select("id").in("id", candidateRecipeIds).eq("active", true).limit(1)
+        .returns<Array<{ id: string }>>();
+      validConversion = !!(active && active.length > 0);
+    }
+  }
+  if (!validConversion) throw new ProductionError(400, "invalid_conversion", "That item is not made from that SKU");
 
   // Resolve consumed oz for the single SKU line: inputQty (packs) × content_oz (oz/pack).
   const contentOz = await skuContentOzById(input.inputSkuId);
