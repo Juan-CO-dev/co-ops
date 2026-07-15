@@ -28,7 +28,7 @@ export default async function MidShiftPage({
 
   if (auth.level < MIDSHIFT_BASE_LEVEL) {
     return (
-      <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
+      <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
         <div className="mb-3">
           <DashboardBackLink />
         </div>
@@ -79,7 +79,7 @@ export default async function MidShiftPage({
   });
 
   return (
-    <main className="mx-auto flex max-w-2xl flex-col gap-5 px-4 pb-32 pt-4 sm:px-6">
+    <main className="mx-auto flex max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl flex-col gap-5 px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3">
         <DashboardBackLink />
       </div>

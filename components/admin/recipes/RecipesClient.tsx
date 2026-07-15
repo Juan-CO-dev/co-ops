@@ -61,7 +61,7 @@ export function RecipesClient({
       </div>
 
       {/* Recipe list */}
-      <div className="mt-4 flex flex-col gap-2">
+      <div className="mt-4 grid grid-cols-1 gap-2 lg:grid-cols-2">
         {filtered.length === 0 ? (
           <p className="text-sm text-co-text-muted">{t(rk("recipes.hub.empty"))}</p>
         ) : (

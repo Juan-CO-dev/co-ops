@@ -122,7 +122,7 @@ export function UserAdminClient({
       </div>
 
       {/* List */}
-      <ul className="mt-5 flex flex-col gap-3">
+      <ul className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-2">
         {users.map((u) => {
           const actionable = canActOn(actorRole, u.role);
           return (

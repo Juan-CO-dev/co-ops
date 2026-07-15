@@ -55,7 +55,7 @@ export function ItemsClient({
             <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
               {t("admin.templates.section_label")}: {sectionLabelByLang(view.sections, section, language)}
             </h2>
-            <div className="mt-2 flex flex-col gap-2">
+            <div className="mt-2 grid grid-cols-1 gap-2 lg:grid-cols-2">
               {items.map((r) => (
                 <ItemRow
                   key={r.itemId}
