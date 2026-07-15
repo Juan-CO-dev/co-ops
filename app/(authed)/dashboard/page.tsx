@@ -813,8 +813,8 @@ function TodaysOperationsCard({
     <section
       aria-label={serverT(language, "dashboard.today.aria", { location: location.name })}
       className="
-        rounded-2xl border-2 border-co-border bg-co-surface
-        p-5 shadow-sm sm:p-6
+        co-card
+        p-5 sm:p-6
       "
     >
       <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-co-text-dim">
@@ -850,7 +850,7 @@ function TodaysOperationsCard({
 
 function NoLocationsState({ language }: { language: Language }) {
   return (
-    <section className="rounded-2xl border-2 border-co-border bg-co-surface p-5 text-center sm:p-6">
+    <section className="co-card p-5 text-center sm:p-6">
       <p className="text-sm text-co-text-muted">
         {serverT(language, "dashboard.no_locations.body")}
       </p>
@@ -963,7 +963,7 @@ function AmPrepTile({
         aria-label={serverT(language, "dashboard.am_prep.aria", {
           status: serverT(language, "dashboard.am_prep.no_template"),
         })}
-        className="rounded-2xl border-2 border-co-border bg-co-surface p-5 shadow-sm sm:p-6"
+        className="co-card p-5 sm:p-6"
       >
         <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
           {serverT(language, "dashboard.am_prep.tile_label")}
@@ -1021,7 +1021,7 @@ function AmPrepTile({
   return (
     <section
       aria-label={serverT(language, "dashboard.am_prep.aria", { status: subtitle })}
-      className="rounded-2xl border-2 border-co-border bg-co-surface p-5 shadow-sm sm:p-6"
+      className="co-card p-5 sm:p-6"
     >
       <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-co-text-dim">
         {serverT(language, "dashboard.am_prep.tile_label")}

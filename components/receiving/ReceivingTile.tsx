@@ -11,7 +11,7 @@ export function ReceivingTile({
   locationId: string;
 }) {
   return (
-    <div className="rounded-xl border-2 border-co-border bg-co-surface p-4">
+    <div className="co-card p-4">
       <p className="text-xs font-bold uppercase tracking-[0.16em] text-co-text-dim">
         {serverT(language, "dashboard.receiving.tile_label")}
       </p>
