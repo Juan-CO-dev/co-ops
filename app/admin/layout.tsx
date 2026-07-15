@@ -19,6 +19,7 @@ import { redirect } from "next/navigation";
 import { AdminBackLink } from "@/components/admin/AdminBackLink";
 import { StepUpProvider } from "@/components/admin/StepUpProvider";
 import { UserMenu } from "@/components/UserMenu";
+import { CanvasWatermark } from "@/components/layout/CanvasWatermark";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import { ROLES } from "@/lib/roles";
 import { requireSessionFromHeaders } from "@/lib/session";
@@ -43,6 +44,7 @@ export default async function AdminLayout({ children }: { children: ReactNode })
           initialBlurb={auth.user.profileBlurb}
         />
       </div>
+      <CanvasWatermark />
       <StepUpProvider
         unlocked={auth.session.stepUpUnlocked}
         unlockedAt={auth.session.stepUpUnlockedAt}

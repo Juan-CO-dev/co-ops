@@ -41,7 +41,7 @@ export function TrendCard({
     tone === "good" ? "var(--co-success)" : tone === "bad" ? "var(--co-danger)" : "var(--co-text-dim)";
 
   return (
-    <section className="rounded-2xl border-2 border-co-border bg-co-surface p-4 shadow-sm sm:p-5">
+    <section className="co-card p-4 sm:p-5">
       <div className="flex items-baseline justify-between gap-3">
         <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-co-text">
           {serverT(language, titleKey)}
