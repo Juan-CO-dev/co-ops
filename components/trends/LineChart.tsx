@@ -55,6 +55,33 @@ export function LineChart({
     return d.trim();
   };
 
+  // Gradient area fill under the primary series — unsigned data only (a signed
+  // zero-baseline series must not fill to the bottom). Segmented so gaps stay gaps.
+  const bottom = height - padY;
+  const areaId = "coarea-" + ariaLabel.replace(/[^a-zA-Z0-9]/g, "").slice(0, 20);
+  const areaSegments = (points: (number | null)[]): string[] => {
+    const segs: [number, number][][] = [];
+    let cur: [number, number][] = [];
+    points.forEach((p, i) => {
+      if (p === null) {
+        if (cur.length) { segs.push(cur); cur = []; }
+        return;
+      }
+      cur.push([x(i), y(p)]);
+    });
+    if (cur.length) segs.push(cur);
+    return segs
+      .filter((seg) => seg.length >= 2)
+      .map((seg) => {
+        const top = seg.map(([px, py], k) => `${k ? "L" : "M"}${px.toFixed(1)},${py.toFixed(1)}`).join(" ");
+        const x0 = seg[0]![0].toFixed(1);
+        const x1 = seg[seg.length - 1]![0].toFixed(1);
+        return `${top} L${x1},${bottom.toFixed(1)} L${x0},${bottom.toFixed(1)} Z`;
+      });
+  };
+  const primary = series[0];
+  const areaPaths = !zeroBaseline && primary && !primary.dashed ? areaSegments(primary.points) : [];
+
   return (
     <svg
       viewBox={`0 0 ${width} ${height}`}
@@ -64,6 +91,19 @@ export function LineChart({
       aria-label={ariaLabel}
       preserveAspectRatio="none"
     >
+      {areaPaths.length && primary ? (
+        <>
+          <defs>
+            <linearGradient id={areaId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" style={{ stopColor: primary.color, stopOpacity: 0.2 }} />
+              <stop offset="100%" style={{ stopColor: primary.color, stopOpacity: 0 }} />
+            </linearGradient>
+          </defs>
+          {areaPaths.map((d, i) => (
+            <path key={`area-${i}`} d={d} fill={`url(#${areaId})`} stroke="none" />
+          ))}
+        </>
+      ) : null}
       {zeroBaseline && min < 0 && max > 0 ? (
         <line x1={0} y1={y(0)} x2={width} y2={y(0)} stroke="var(--co-border)" strokeWidth={1} />
       ) : null}

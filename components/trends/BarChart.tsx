@@ -34,6 +34,8 @@ export function BarChart({
 
   const barH = (v: number) => Math.max(0, (v / max) * (height - 2 * padY));
   const yTop = (v: number) => height - padY - barH(v);
+  // Unique-per-chart gradient id — charts on a page have distinct ariaLabels.
+  const gradId = "cobar-" + ariaLabel.replace(/[^a-zA-Z0-9]/g, "").slice(0, 20);
 
   return (
     <svg
@@ -44,14 +46,20 @@ export function BarChart({
       aria-label={ariaLabel}
       preserveAspectRatio="none"
     >
-      <line x1={0} y1={height - padY} x2={width} y2={height - padY} stroke="var(--co-border)" strokeWidth={1} />
+      <defs>
+        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" style={{ stopColor: colorCurrent, stopOpacity: 1 }} />
+          <stop offset="100%" style={{ stopColor: colorCurrent, stopOpacity: 0.55 }} />
+        </linearGradient>
+      </defs>
+      <line x1={0} y1={height - padY} x2={width} y2={height - padY} stroke="var(--co-card-border)" strokeWidth={1} />
       {current.map((v, i) => {
         const cx = i * slot + slot / 2;
         const prevV = previous?.[i] ?? null;
         return (
           <g key={i}>
             {grouped && prevV !== null ? (
-              <rect x={cx - barW - 1} y={yTop(prevV)} width={barW} height={barH(prevV)} fill={colorPrevious} rx={1.5} />
+              <rect x={cx - barW - 1} y={yTop(prevV)} width={barW} height={barH(prevV)} fill={colorPrevious} rx={3} />
             ) : null}
             {v !== null ? (
               <rect
@@ -59,8 +67,8 @@ export function BarChart({
                 y={yTop(v)}
                 width={barW}
                 height={barH(v)}
-                fill={colorCurrent}
-                rx={1.5}
+                fill={`url(#${gradId})`}
+                rx={3}
               />
             ) : null}
           </g>
