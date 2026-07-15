@@ -17,7 +17,7 @@ export default async function ProfilePage() {
     viewer: { userId: auth.user.id, locations: accessibleLocations(actor) },
   });
   return (
-    <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
+    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3"><DashboardBackLink /></div>
       <h1 className="text-lg font-bold text-co-text">{serverT(lang, "profile.directory_title")}</h1>
       <p className="mb-4 text-xs text-co-text-muted">{serverT(lang, "profile.directory_sub")}</p>

@@ -41,7 +41,7 @@ export default async function TeamRosterPage({ searchParams }: PageProps) {
   });
 
   return (
-    <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
+    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3"><BackToTrendsLink locationId={locationParam} language={language} /></div>
       <h1 className="text-lg font-bold text-co-text">{serverT(language, "reports.trends.team.title")}</h1>
       <p className="mb-4 text-xs text-co-text-muted">{serverT(language, "reports.trends.team.subtitle")}</p>
@@ -53,7 +53,7 @@ export default async function TeamRosterPage({ searchParams }: PageProps) {
           <p className="mt-4 mb-3 text-xs text-co-text-muted">
             {serverT(language, team.banner.key as Parameters<typeof serverT>[1], team.banner.params)}
           </p>
-          <div className="flex flex-col gap-3">
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
             {team.members.map((m) => (
               <TeamRosterCard key={m.userId} member={m} locationId={locationParam} language={language} />
             ))}

@@ -54,7 +54,7 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
 
   if (auth.level < MAINTENANCE_BASE_LEVEL) {
     return (
-      <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
+      <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
         <div className="mb-3">
           <DashboardBackLink />
         </div>
@@ -86,7 +86,7 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
     const allEquipment = await loadEquipment(sb, locationId);
 
     return (
-      <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
+      <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
         <div className="mb-3">
           <DashboardBackLink />
         </div>
@@ -125,7 +125,7 @@ export default async function MaintenancePage({ searchParams }: PageProps) {
   const allEquipment = await loadEquipment(sb, locationId);
 
   return (
-    <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
+    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3">
         <DashboardBackLink />
       </div>

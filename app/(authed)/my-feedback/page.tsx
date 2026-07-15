@@ -66,7 +66,7 @@ export default async function MyPerformancePage({ searchParams }: PageProps) {
   const feedback = allFeedback.filter((f) => f.locationId === selected.id);
 
   return (
-    <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
+    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3"><DashboardBackLink /></div>
       <div className="mb-1 flex items-center justify-between gap-2">
         <h1 className="text-lg font-bold text-co-text">{serverT(language, "me.title")}</h1>
@@ -106,7 +106,7 @@ export default async function MyPerformancePage({ searchParams }: PageProps) {
 
 function EmptyShell({ language }: { language: Language }) {
   return (
-    <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
+    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3"><DashboardBackLink /></div>
       <h1 className="mb-4 text-lg font-bold text-co-text">{serverT(language, "me.title")}</h1>
       <p className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-3 text-sm font-semibold text-co-text">

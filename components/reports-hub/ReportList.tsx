@@ -72,7 +72,7 @@ export function ReportList({ items, locationId, language, viewerLevel, searchQue
   }
 
   return (
-    <ul className="flex flex-col gap-2">
+    <ul className="grid grid-cols-1 gap-2 lg:grid-cols-2">
       {items.map((item) => {
         const href = `/reports/${item.type}/${item.id}?location=${locationId}`;
         const dateLabel = formatDateLabel(item.date, language);

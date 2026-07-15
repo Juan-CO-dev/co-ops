@@ -459,7 +459,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   );
 
   return (
-    <AuthShell>
+    <AuthShell width="wide">
       <div className="mt-2 flex flex-col gap-6">
         <div className="flex items-center gap-3">
           <BrandMark size={40} decorative className="shrink-0" />
@@ -894,7 +894,8 @@ function ReportsSection({
       >
         {serverT(language, "dashboard.reports.heading")}
       </h3>
-      <div className="flex flex-col gap-3">{children}</div>
+      {/* Tiles stack on phones (unchanged), grid on desktop so they use the width. */}
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">{children}</div>
     </section>
   );
 }

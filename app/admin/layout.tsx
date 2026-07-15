@@ -47,7 +47,7 @@ export default async function AdminLayout({ children }: { children: ReactNode })
         unlocked={auth.session.stepUpUnlocked}
         unlockedAt={auth.session.stepUpUnlockedAt}
       >
-        <div className="mx-auto w-full max-w-[640px] px-4 py-6">
+        <div className="mx-auto w-full max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 py-6">
           <AdminBackLink />
           {children}
         </div>
