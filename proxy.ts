@@ -53,7 +53,13 @@ const PUBLIC_PATHS = new Set<string>([
 ]);
 
 function isPublicPath(pathname: string): boolean {
-  return PUBLIC_PATHS.has(pathname);
+  if (PUBLIC_PATHS.has(pathname)) return true;
+  // Static brand assets (public/brand/*) are never auth-gated — otherwise the
+  // login/PIN surfaces (unauthenticated) can't load the wordmark/icon and the
+  // proxy 307-redirects the <img> request. The matcher also excludes asset
+  // extensions; this is the defense-in-depth half.
+  if (pathname.startsWith("/brand/")) return true;
+  return false;
 }
 
 export async function proxy(req: NextRequest): Promise<NextResponse> {
@@ -98,12 +104,15 @@ function redirectToLogin(req: NextRequest): NextResponse {
 export const config = {
   // Match every path EXCEPT:
   //   - Next infrastructure (_next/static, _next/image, favicon.ico)
+  //   - Static asset extensions (png/jpg/svg/... and fonts) — public/ assets like
+  //     /brand/*.png must NOT be auth-gated, or unauthenticated pages (login/PIN)
+  //     get their <img> requests 307-redirected and the brand marks break.
   //   - Public auth endpoints (verify, reset-password, /api/auth/{pin,password,verify,password-reset-request,password-reset})
   //   - The root login page (the `.+` quantifier requires ≥ 1 char after `/`,
   //     so `/` alone is excluded).
   matcher: [
     // Next 16 disallows capturing groups in matcher patterns. Use non-capturing
     // group `(?:...)` for the alternation of public auth endpoints.
-    "/((?!_next/static|_next/image|favicon\\.ico|verify$|reset-password$|api/auth/(?:pin|password|logout|verify|password-reset-request|password-reset)$|api/locations$|api/users/login-options$).+)",
+    "/((?!_next/static|_next/image|favicon\\.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico|woff|woff2|ttf)$|verify$|reset-password$|api/auth/(?:pin|password|logout|verify|password-reset-request|password-reset)$|api/locations$|api/users/login-options$).+)",
   ],
 };

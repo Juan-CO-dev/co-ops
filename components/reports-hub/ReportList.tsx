@@ -13,6 +13,7 @@
  * Mirrors maintenance card token styling.
  */
 
+import { EmptyState } from "@/components/EmptyState";
 import { formatDateLabel } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
@@ -67,11 +68,7 @@ export function ReportList({ items, locationId, language, viewerLevel, searchQue
   if (items.length === 0) {
     const q = searchQuery?.trim();
     const message = q ? serverT(language, "reports.search.empty", { q }) : t("reports.empty");
-    return (
-      <p className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-3 text-sm font-semibold text-co-text">
-        {message}
-      </p>
-    );
+    return <EmptyState message={message} />;
   }
 
   return (

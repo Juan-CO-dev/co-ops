@@ -27,6 +27,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ROLES, type RoleCode } from "@/lib/roles";
+import { BrandMark } from "@/components/BrandMark";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 
@@ -185,6 +186,7 @@ export function PinKeypad({ userName, role, onSubmit, onBack }: PinKeypadProps) 
     <div className="flex w-full flex-col items-stretch gap-6">
       {/* Identity + dots — top ~40% */}
       <div className="flex flex-col items-center gap-4 pt-2">
+        <BrandMark size={22} decorative className="opacity-70" />
         <div className="flex flex-col items-center gap-1">
           <span
             className="rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.18em] text-co-text"

@@ -32,6 +32,7 @@ import { RoleTile } from "@/components/auth/RoleTile";
 import { NameTile } from "@/components/auth/NameTile";
 import { PinKeypad, type PinKeypadError } from "@/components/auth/PinKeypad";
 import { ManagerLoginForm } from "@/components/auth/ManagerLoginForm";
+import { BrandMark } from "@/components/BrandMark";
 import type { RoleCode } from "@/lib/roles";
 import { TranslationProvider, useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -235,6 +236,9 @@ function LoginPageContent() {
   return (
     <main className="flex min-h-screen flex-col bg-co-bg">
       <header className="flex flex-col items-center justify-center bg-co-gold px-6 py-5 sm:py-6">
+        {/* Icon paired above the wordmark on the gold band — decorative (the
+            wordmark below carries the accessible name). */}
+        <BrandMark size={40} decorative className="mb-2" />
         {/* Brand rule: the wordmark is customized art — never reproduce it by
             typing text. Render the approved asset; the alt carries the h1's name. */}
         <h1 className="m-0 flex justify-center">
