@@ -41,7 +41,7 @@ export function TeamRosterTable({
         {serverT(language, health.banner.key as TranslationKey, health.banner.params)}
       </p>
 
-      <div className="divide-y divide-co-border rounded-xl border-2 border-co-border bg-co-surface">
+      <div className="divide-y divide-co-border co-card">
         {health.members.map((m, i) => {
           const expectedSet = new Set(expectedCategoriesFor(m.role));
           const breakdown = ALL_CATEGORIES.filter(
