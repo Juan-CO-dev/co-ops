@@ -84,7 +84,7 @@ export function TrendsWidget({
 
 function Mini({ title, value, children }: { title: string; value: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border-2 border-co-border bg-co-surface p-3">
+    <div className="co-card p-3">
       <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-text-dim">{title}</p>
       <p className="text-lg font-extrabold leading-none text-co-text">{value}</p>
       <div className="mt-1.5">{children}</div>
