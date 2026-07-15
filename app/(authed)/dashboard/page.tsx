@@ -26,6 +26,7 @@ import { after } from "next/server";
 import Link from "next/link";
 
 import { AuthShell } from "@/components/auth/AuthShell";
+import { BrandMark } from "@/components/BrandMark";
 import { IdleTimeoutWarning } from "@/components/auth/IdleTimeoutWarning";
 import { LogoutButton } from "@/components/auth/LogoutButton";
 import { NotificationBell } from "@/components/dashboard/NotificationBell";
@@ -460,13 +461,16 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   return (
     <AuthShell>
       <div className="mt-2 flex flex-col gap-6">
-        <div>
-          <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
-            {serverT(language, "dashboard.header.label")}
-          </p>
-          <h2 className="mt-1 text-3xl font-extrabold leading-tight text-co-text">
-            {serverT(language, "dashboard.header.greeting", { name: auth.user.name })}
-          </h2>
+        <div className="flex items-center gap-3">
+          <BrandMark size={40} decorative className="shrink-0" />
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
+              {serverT(language, "dashboard.header.label")}
+            </p>
+            <h2 className="mt-1 text-3xl font-extrabold leading-tight text-co-text">
+              {serverT(language, "dashboard.header.greeting", { name: auth.user.name })}
+            </h2>
+          </div>
         </div>
 
         {/* Primary navigation — non-report destinations. Report tiles below

@@ -132,3 +132,16 @@ html, body {
   75% { transform: translateX(-3px); }
   90% { transform: translateX(3px); }
 }
+
+/* Brand-icon loading beat — the mark "breathes" on the loading screen. Gated on
+   reduced-motion: those users get a static, full-opacity icon (the rule simply
+   doesn't apply, so no animation runs). */
+@media (prefers-reduced-motion: no-preference) {
+  .co-breathe {
+    animation: co-breathe-anim 1.8s ease-in-out infinite;
+  }
+  @keyframes co-breathe-anim {
+    0%, 100% { transform: scale(1); opacity: 0.6; }
+    50% { transform: scale(1.09); opacity: 1; }
+  }
+}
