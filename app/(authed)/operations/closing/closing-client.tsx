@@ -701,6 +701,11 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
 
     const observer = new IntersectionObserver(
       (entries) => {
+        // Desktop lays stations out in multi-column and keeps them expanded, so
+        // the mobile scroll-past auto-collapse is disabled there — otherwise a
+        // completed station collapsing mid-scroll would reflow the columns.
+        // Checked per-fire so it stays correct across a resize.
+        if (window.matchMedia("(min-width: 1024px)").matches) return;
         for (const e of entries) {
           const station = e.target.getAttribute("data-station");
           if (!station) continue;
@@ -824,7 +829,11 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
           render-only translation derived from the first item's
           translations via resolveTemplateItemContent. Per
           SPEC_AMENDMENTS.md C.38 system-key vs display-string discipline. */}
-      <div className="mt-4 flex flex-col gap-4">
+      {/* Stations: single column on phone; multi-column on desktop so the whole
+          shift is visible at once (each station's mb-4 provides the vertical
+          rhythm since columns have no flex gap; break-inside-avoid keeps a
+          station whole). Auto-collapse is disabled on desktop — see the observer. */}
+      <div className="mt-4 columns-1 [column-gap:1rem] lg:columns-2">
         {stationKeys.map((station) => {
           const items = stationGroups.get(station) ?? [];
           const firstItem = items[0];
@@ -1132,7 +1141,7 @@ function StationGroup({
       ref={setRef}
       // Display string in the user-facing aria-label.
       aria-label={t("closing.station.toggle_aria", { station: stationDisplay })}
-      className="rounded-2xl border-2 border-co-border bg-co-surface"
+      className="co-card mb-4 break-inside-avoid"
     >
       <button
         type="button"
