@@ -23,6 +23,13 @@ export function TempTrendChart({
     .map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`)
     .join(" ");
   const safeY = y(safeMaxF).toFixed(1);
+  const bottom = H - pad;
+  // Values-derived id so multiple fridge charts on a page keep distinct gradient defs.
+  const gradId = "cotemp-" + values.length + "-" + Math.round((values[0] ?? 0) * 10);
+  const areaPath =
+    `M ${x(0).toFixed(1)},${y(values[0]!).toFixed(1)} ` +
+    values.slice(1).map((v, i) => `L ${x(i + 1).toFixed(1)},${y(v).toFixed(1)}`).join(" ") +
+    ` L ${x(values.length - 1).toFixed(1)},${bottom.toFixed(1)} L ${x(0).toFixed(1)},${bottom.toFixed(1)} Z`;
   return (
     <svg
       viewBox={`0 0 ${W} ${H}`}
@@ -32,6 +39,13 @@ export function TempTrendChart({
       aria-label="Temperature trend"
       className="overflow-visible"
     >
+      <defs>
+        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" style={{ stopColor: "var(--co-text-muted)", stopOpacity: 0.14 }} />
+          <stop offset="100%" style={{ stopColor: "var(--co-text-muted)", stopOpacity: 0 }} />
+        </linearGradient>
+      </defs>
+      <path d={areaPath} fill={`url(#${gradId})`} stroke="none" />
       <line
         x1={pad}
         y1={safeY}
@@ -47,6 +61,8 @@ export function TempTrendChart({
         fill="none"
         stroke="currentColor"
         strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
         className="text-co-text-muted"
       />
       {values.map((v, i) => (
