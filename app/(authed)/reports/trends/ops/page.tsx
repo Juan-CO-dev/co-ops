@@ -100,7 +100,7 @@ export default async function OpsTrendsPage({ searchParams }: PageProps) {
         basePath="/reports/trends/ops"
       />
 
-      <div className="mt-5 flex flex-col gap-4">
+      <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* PAR — line (day) / grouped bars (week, month) */}
         <TrendCard
           titleKey="reports.trends.par_title"

@@ -269,7 +269,9 @@ export function RecipeBuilder({
   const liveOutputs: RecipeOutputView[] = recipe ? recipe.outputs : [];
 
   return (
-    <div className="mt-2">
+    // Focused width: the recipe editor is a form — keep it comfortable and
+    // centered inside the wide admin container instead of stretching to full width.
+    <div className="mt-2 mx-auto w-full max-w-3xl">
       {/* ── LIVE mode: what's-missing banner ── */}
       {recipe !== null && readiness && readiness.status !== "ready" ? (
         <div className="mt-3 rounded-lg border-2 border-co-border bg-co-surface p-3">

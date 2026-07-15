@@ -28,6 +28,7 @@
 import type { ReactNode } from "react";
 
 import { UserMenu } from "@/components/UserMenu";
+import { CanvasWatermark } from "@/components/layout/CanvasWatermark";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import { ROLES } from "@/lib/roles";
 import { requireSessionFromHeaders } from "@/lib/session";
@@ -58,6 +59,7 @@ export default async function AuthedLayout({ children }: { children: ReactNode }
           initialBlurb={auth.user.profileBlurb}
         />
       </div>
+      <CanvasWatermark />
       {children}
     </TranslationProvider>
   );
