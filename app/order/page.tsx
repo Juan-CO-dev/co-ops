@@ -90,7 +90,7 @@ const LOCATIONS = [
 
 function CtaButton({ label, dark }: { label: string; dark?: boolean }) {
   return (
-    <Link href="#platters" className={`inline-flex min-h-[56px] items-center justify-center rounded-full px-9 text-base font-bold uppercase tracking-[0.08em] shadow-xl shadow-black/20 transition hover:-translate-y-0.5 ${dark ? "bg-co-text text-co-cta hover:bg-co-text/90" : "bg-co-bg text-co-cta hover:bg-white"}`}>{label}</Link>
+    <Link href="/order/start" className={`inline-flex min-h-[56px] items-center justify-center rounded-full px-9 text-base font-bold uppercase tracking-[0.08em] shadow-xl shadow-black/20 transition hover:-translate-y-0.5 ${dark ? "bg-co-text text-co-cta hover:bg-co-text/90" : "bg-co-bg text-co-cta hover:bg-white"}`}>{label}</Link>
   );
 }
 function PriceList({ title, items }: { title: string; items: { name: string; price: string }[] }) {

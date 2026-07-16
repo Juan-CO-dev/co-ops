@@ -101,6 +101,12 @@ export default function OrderBuild() {
 
   const [factIdx, setFactIdx] = useState(0);
   useEffect(() => { const t = window.setInterval(() => setFactIdx((i) => (i + 1) % FACTS.length), 4500); return () => window.clearInterval(t); }, []);
+  // Carry the headcount from the intake form (?guests=) into the coverage panel.
+  useEffect(() => {
+    const g = new URLSearchParams(window.location.search).get("guests");
+    const n = g ? parseInt(g, 10) : NaN;
+    if (Number.isFinite(n) && n > 0) setHeadcount(n);
+  }, []);
   const modalItem = modalId ? ALL_ITEMS.find((i) => i.id === modalId) ?? null : null;
 
   return (
