@@ -25,6 +25,7 @@ const IMG = {
   counter: SPOT("0b/09a06b39a24bc58d5a35e99ea48cc0"), // "Stools and a wall counter for eating."
   interior: SPOT("bd/571a5564f24cc7a60fac380d4439ad"), // "The interior of the restaurant."
   catering: "https://cdn.spotapps.co/spothopper/image/fetch/f_auto,q_auto:best,c_fit,h_1200/http://static.spotapps.co/spots/92/f4e418d60d423486174f1c68c1ed49/:original",
+  spread: "https://s3.amazonaws.com/toasttab/restaurants/restaurant-221473000000000000/menu/items/9/item-100000052580370539_1744237345.jpg", // real Toast catering sandwich-platter/spread photo
 };
 
 const PACKAGES = [
@@ -85,7 +86,7 @@ export default function OrderStorefrontMockup() {
 
       {/* Hero */}
       <section className="relative flex min-h-[92vh] items-end overflow-hidden bg-co-text">
-        <img src={IMG.subs} alt="" className="absolute inset-0 h-full w-full object-cover opacity-95" />
+        <img src={IMG.spread} alt="" className="absolute inset-0 h-full w-full object-cover opacity-95" />
         <div className="absolute inset-0 bg-gradient-to-t from-co-text via-co-text/80 to-co-text/30" />
         <div className="relative mx-auto w-full max-w-6xl px-5 pb-16 pt-28 sm:pb-24">
           <p className="text-xs font-bold uppercase tracking-[0.32em] text-co-gold">Catering · Capitol Hill & Dupont Circle</p>
@@ -111,9 +112,9 @@ export default function OrderStorefrontMockup() {
       {/* Packages */}
       <section id="packages" className="mx-auto max-w-6xl scroll-mt-16 px-5 py-16">
         <Reveal className="mb-9 text-center">
-          <p className="text-xs font-bold uppercase tracking-[0.28em] text-co-text-dim">The catering menu</p>
-          <h2 className="mt-2 text-3xl font-extrabold tracking-tight text-co-text sm:text-4xl">Pick a spread, make it yours.</h2>
-          <p className="mx-auto mt-2 max-w-lg text-co-text-muted">Every item is customizable — swap subs, add sides, or build from scratch below.</p>
+          <p className="text-xs font-bold uppercase tracking-[0.28em] text-co-text-dim">Sandwich platters &amp; spreads</p>
+          <h2 className="mt-2 text-3xl font-extrabold tracking-tight text-co-text sm:text-4xl">Pick a platter, make it yours.</h2>
+          <p className="mx-auto mt-2 max-w-lg text-co-text-muted">Our catering spreads — every item customizable. Swap subs, add sides, or build from scratch below.</p>
         </Reveal>
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
           {PACKAGES.map((p, i) => (
