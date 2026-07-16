@@ -13,6 +13,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 
 const T = (id: string) => `https://s3.amazonaws.com/toasttab/restaurants/restaurant-221473000000000000/menu/images/item-${id}.jpg`;
@@ -79,7 +80,20 @@ const ALL_ITEMS: Item[] = MENU.flatMap((g) => g.items);
 const money = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
 const emptyLine = (): Line => ({ qty: 1, notes: "", allergens: [], subs: [], sub: "", drink: "" });
 
+// One-line human summary of a customized line (subs / drink / allergen holds / notes).
+// Module-scoped so both the cart render and the review-handoff persist use the same shape.
+function lineSummary(l: { item: Item; line: Line }): string {
+  const bits: string[] = [];
+  if (l.line.subs.length) bits.push(l.line.subs.join(", "));
+  if (l.line.sub) bits.push(l.line.sub);
+  if (l.line.drink) bits.push(l.line.drink);
+  if (l.line.allergens.length) bits.push(`no ${l.line.allergens.join(", ").toLowerCase()}`);
+  if (l.line.notes) bits.push(l.line.notes);
+  return bits.join(" · ");
+}
+
 export default function OrderBuild() {
+  const router = useRouter();
   const [cart, setCart] = useState<Record<string, Line>>({});
   const [headcount, setHeadcount] = useState(20);
   const [modalId, setModalId] = useState<string | null>(null);
@@ -98,6 +112,17 @@ export default function OrderBuild() {
   const hasBig = lines.some((l) => l.item.id === "three" || l.item.id === "six");
   const servedBy = (cat: Cat) => lines.filter((l) => l.item.cat === cat).reduce((s, l) => s + l.item.serves * l.line.qty, 0);
   const coverage = { main: servedBy("main"), side: servedBy("side"), sweet: servedBy("sweet"), drink: servedBy("drink") };
+
+  // Persist a self-describing order blob for the review/confirmation screens, then hand off.
+  const goToReview = () => {
+    if (lines.length === 0) return;
+    const order = {
+      lines: lines.map((l) => ({ id: l.item.id, name: l.item.name, price: l.item.price, kind: l.item.kind, serves: l.item.serves, qty: l.line.qty, summary: lineSummary(l), lead: l.item.lead })),
+      subtotal, headcount, coverage, hasBig,
+    };
+    try { window.sessionStorage.setItem("co_order", JSON.stringify(order)); } catch { /* non-fatal in mockup */ }
+    router.push("/order/review");
+  };
 
   const [factIdx, setFactIdx] = useState(0);
   useEffect(() => { const t = window.setInterval(() => setFactIdx((i) => (i + 1) % FACTS.length), 4500); return () => window.clearInterval(t); }, []);
@@ -163,14 +188,14 @@ export default function OrderBuild() {
         </div>
 
         <aside className="hidden lg:block"><div className="sticky top-24">
-          <Cart lines={lines} subtotal={subtotal} hasBig={hasBig} headcount={headcount} setHeadcount={setHeadcount} coverage={coverage} onCustomize={setModalId} dec={dec} add={quickAdd} />
+          <Cart lines={lines} subtotal={subtotal} hasBig={hasBig} headcount={headcount} setHeadcount={setHeadcount} coverage={coverage} onCustomize={setModalId} dec={dec} add={quickAdd} onContinue={goToReview} />
         </div></aside>
       </div>
 
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-co-border bg-co-bg/95 px-5 py-3 backdrop-blur lg:hidden">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4">
           <div className="text-sm"><span className="font-bold text-co-text">{count} item{count === 1 ? "" : "s"}</span><span className="ml-2 text-co-text-muted">{money(subtotal)}</span></div>
-          <Link href="#" className={`inline-flex min-h-[46px] items-center justify-center rounded-full px-6 text-sm font-bold uppercase tracking-[0.08em] ${count > 0 ? "bg-co-text text-co-cta" : "pointer-events-none bg-co-border text-co-text-dim"}`}>Continue →</Link>
+          <button type="button" onClick={goToReview} disabled={count === 0} className={`inline-flex min-h-[46px] items-center justify-center rounded-full px-6 text-sm font-bold uppercase tracking-[0.08em] transition ${count > 0 ? "bg-co-text text-co-cta hover:bg-co-text/90" : "cursor-not-allowed bg-co-border text-co-text-dim"}`}>Continue →</button>
         </div>
       </div>
 
@@ -198,9 +223,9 @@ function Bar({ label, served, headcount, softer }: { label: string; served: numb
   );
 }
 
-function Cart({ lines, subtotal, hasBig, headcount, setHeadcount, coverage, onCustomize, dec, add }: {
+function Cart({ lines, subtotal, hasBig, headcount, setHeadcount, coverage, onCustomize, dec, add, onContinue }: {
   lines: { item: Item; line: Line }[]; subtotal: number; hasBig: boolean; headcount: number; setHeadcount: (n: number) => void;
-  coverage: { main: number; side: number; sweet: number; drink: number }; onCustomize: (id: string) => void; dec: (id: string) => void; add: (id: string) => void;
+  coverage: { main: number; side: number; sweet: number; drink: number }; onCustomize: (id: string) => void; dec: (id: string) => void; add: (id: string) => void; onContinue: () => void;
 }) {
   const gapNudge = (() => {
     if (lines.length === 0) return null;
@@ -212,16 +237,6 @@ function Cart({ lines, subtotal, hasBig, headcount, setHeadcount, coverage, onCu
     if (cats.some((c) => c >= headcount * 1.8)) return `Everyone's covered for ${headcount}, with a few extras for seconds.`;
     return `One of everything for ${headcount}. Add more for seconds if you like.`;
   })();
-
-  const lineSummary = (l: { item: Item; line: Line }) => {
-    const bits: string[] = [];
-    if (l.line.subs.length) bits.push(l.line.subs.join(", "));
-    if (l.line.sub) bits.push(l.line.sub);
-    if (l.line.drink) bits.push(l.line.drink);
-    if (l.line.allergens.length) bits.push(`no ${l.line.allergens.join(", ").toLowerCase()}`);
-    if (l.line.notes) bits.push(l.line.notes);
-    return bits.join(" · ");
-  };
 
   return (
     <div className="overflow-hidden rounded-3xl border border-co-border/70 bg-co-surface shadow-sm">
@@ -268,7 +283,7 @@ function Cart({ lines, subtotal, hasBig, headcount, setHeadcount, coverage, onCu
         {hasBig && <p className="mt-3 rounded-xl border border-co-gold/50 bg-co-gold/15 px-3 py-2 text-xs font-semibold text-co-text">⏱ Big subs need 48–72 hours notice. We'll confirm your date.</p>}
         {lines.length > 0 && <p className="mt-2 rounded-xl bg-co-bg px-3 py-2 text-xs text-co-text-muted">Deposit locks your date; balance due 48h before. We confirm within a few hours — no charge until we do.</p>}
 
-        <Link href="#" className={`mt-5 flex min-h-[52px] items-center justify-center rounded-full text-base font-bold uppercase tracking-[0.08em] transition ${lines.length > 0 ? "bg-co-text text-co-cta hover:bg-co-text/90" : "pointer-events-none bg-co-border text-co-text-dim"}`}>Continue to details →</Link>
+        <button type="button" onClick={onContinue} disabled={lines.length === 0} className={`mt-5 flex min-h-[52px] w-full items-center justify-center rounded-full text-base font-bold uppercase tracking-[0.08em] transition ${lines.length > 0 ? "bg-co-text text-co-cta hover:bg-co-text/90" : "cursor-not-allowed bg-co-border text-co-text-dim"}`}>Continue to review →</button>
       </div>
     </div>
   );

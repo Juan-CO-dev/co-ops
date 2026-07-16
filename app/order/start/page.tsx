@@ -22,7 +22,11 @@ export default function OrderStart() {
   const [f, setF] = useState({ name: "", email: "", company: "", date: "", guests: "20", fulfillment: "delivery" as "delivery" | "pickup", location: "Capitol Hill", address: "" });
   const set = (patch: Partial<typeof f>) => setF((cur) => ({ ...cur, ...patch }));
 
-  const go = () => router.push(`/order/build?guests=${encodeURIComponent(f.guests || "20")}`);
+  const go = () => {
+    // Persist the event details so the builder → review → confirmation flow can recap them.
+    try { window.sessionStorage.setItem("co_order_details", JSON.stringify(f)); } catch { /* non-fatal in mockup */ }
+    router.push(`/order/build?guests=${encodeURIComponent(f.guests || "20")}`);
+  };
   const canSubmit = mode === "returning" ? f.email.includes("@") : f.name.trim() && f.email.includes("@") && f.date;
 
   return (
