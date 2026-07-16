@@ -7,15 +7,15 @@
  * data is authored — the surface is here for when it arrives.
  */
 
-import Link from "next/link";
 import { redirect } from "next/navigation";
 
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getRoleLevel } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { formatCents } from "@/lib/i18n/format";
-import type { Language, TranslationKey } from "@/lib/i18n/types";
+import type { TranslationKey } from "@/lib/i18n/types";
 import { loadCateringInsights, INSIGHTS_READ_MIN } from "@/lib/catering/insights";
+import { CateringBackLink } from "@/components/catering/CateringBackLink";
 
 const PIPELINE_STAGES = ["inquiry", "quote_sent", "confirmed", "completed", "lost"] as const;
 const QUOTE_STATUSES = ["draft", "sent", "accepted", "declined", "expired"] as const;
@@ -50,14 +50,11 @@ export default async function CateringInsightsPage() {
     insights.feedbackCount > 0;
 
   return (
-    <div>
-      <Link
-        href="/catering"
-        className="inline-flex items-center gap-1 text-xs font-semibold text-co-text-muted transition hover:text-co-text"
-      >
-        ← {serverT(lang, "catering.nav.back_to_catering")}
-      </Link>
-      <h1 className="mt-2 text-xl font-extrabold leading-tight text-co-text">{serverT(lang, "catering.insights.title")}</h1>
+    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
+      <div className="mb-3">
+        <CateringBackLink />
+      </div>
+      <h1 className="text-lg font-bold text-co-text">{serverT(lang, "catering.insights.title")}</h1>
       <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "catering.insights.subtitle")}</p>
 
       {/* Revenue cards */}
@@ -135,7 +132,7 @@ export default async function CateringInsightsPage() {
           </ul>
         )}
       </section>
-    </div>
+    </main>
   );
 }
 

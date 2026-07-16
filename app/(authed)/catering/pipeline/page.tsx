@@ -20,6 +20,7 @@ import {
   PIPELINE_WRITE_MIN,
 } from "@/lib/catering/pipeline";
 import { PipelineClient } from "@/components/catering/pipeline/PipelineClient";
+import { CateringBackLink } from "@/components/catering/CateringBackLink";
 
 export default async function CateringPipelinePage() {
   const auth = await requireSessionFromHeaders("/catering/pipeline");
@@ -64,10 +65,11 @@ export default async function CateringPipelinePage() {
   }
 
   return (
-    <div>
-      <h1 className="text-xl font-extrabold leading-tight text-co-text">
-        {serverT(lang, "catering.pipeline.title")}
-      </h1>
+    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
+      <div className="mb-3">
+        <CateringBackLink />
+      </div>
+      <h1 className="text-lg font-bold text-co-text">{serverT(lang, "catering.pipeline.title")}</h1>
       <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "catering.pipeline.subtitle")}</p>
       <PipelineClient
         leads={leads}
@@ -76,6 +78,6 @@ export default async function CateringPipelinePage() {
         actorLevel={level}
         writeMin={PIPELINE_WRITE_MIN}
       />
-    </div>
+    </main>
   );
 }

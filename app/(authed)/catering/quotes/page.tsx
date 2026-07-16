@@ -19,6 +19,7 @@ import { loadQuoteBoard, loadPricingContext, QUOTE_READ_MIN } from "@/lib/cateri
 import { loadCustomers } from "@/lib/catering/customers";
 import { loadPipelineBoard } from "@/lib/catering/pipeline";
 import { QuotesClient } from "@/components/catering/quotes/QuotesClient";
+import { CateringBackLink } from "@/components/catering/CateringBackLink";
 
 export default async function CateringQuotesPage() {
   const auth = await requireSessionFromHeaders("/catering/quotes");
@@ -66,8 +67,11 @@ export default async function CateringQuotesPage() {
   const pricingByLocation = Object.fromEntries(pricingEntries);
 
   return (
-    <div>
-      <h1 className="text-xl font-extrabold leading-tight text-co-text">{serverT(lang, "catering.quotes.title")}</h1>
+    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
+      <div className="mb-3">
+        <CateringBackLink />
+      </div>
+      <h1 className="text-lg font-bold text-co-text">{serverT(lang, "catering.quotes.title")}</h1>
       <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "catering.quotes.subtitle")}</p>
       <QuotesClient
         quotes={quotes}
@@ -84,6 +88,6 @@ export default async function CateringQuotesPage() {
         pricingByLocation={pricingByLocation}
         actorLevel={level}
       />
-    </div>
+    </main>
   );
 }
