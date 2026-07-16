@@ -1,0 +1,362 @@
+/**
+ * Catering pipeline data layer — Wave 1 slice 1C.
+ *
+ * SERVER-ONLY. Service-role reads/writes; authorization is APP-LAYER (requireLevel +
+ * lockLocationContext), consistent with lib/cash.ts and the admin lib. The lead row is
+ * a MUTABLE CRM row (D3 — contact/date/headcount/notes edit in place); stage transitions
+ * are APPEND-ONLY events in catering_pipeline_events (never edited/deleted; RLS on that
+ * table is parent-anchored per 0113, but writes here go via service-role).
+ *
+ * Attribution is derivable without new columns: created_by = who ACQUIRED the lead,
+ * lead_source = the SOURCE, and each catering_pipeline_events.actor_id = who WORKED that
+ * stage move. The capacity signal (slice 1B) is computed on demand per lead, not for the
+ * whole board (keeps the board loader lean).
+ */
+
+import { getServiceRoleClient } from "@/lib/supabase-server";
+import { getRoleLevel } from "@/lib/roles";
+import { lockLocationContext, isAllLocationsAccess } from "@/lib/locations";
+import { audit } from "@/lib/audit";
+import type { AuthContext } from "@/lib/session";
+import { checkCateringCapacity, type CateringCapacityResult } from "@/lib/catering/capacity";
+
+// ── Stage vocabulary ─────────────────────────────────────────────────────────
+export const PIPELINE_STAGES = ["inquiry", "quote_sent", "confirmed", "completed", "lost"] as const;
+export type PipelineStage = (typeof PIPELINE_STAGES)[number];
+export function isPipelineStage(v: unknown): v is PipelineStage {
+  return typeof v === "string" && (PIPELINE_STAGES as readonly string[]).includes(v);
+}
+/** Terminal stages — excluded from the follow-up queue. */
+const TERMINAL_STAGES: PipelineStage[] = ["completed", "lost"];
+
+// ── Authority floors ──────────────────────────────────────────────────────────
+export const PIPELINE_READ_MIN = 5; // shift_lead+ may VIEW (open-decision: grant L5 view)
+export const PIPELINE_WRITE_MIN = 6; // catering_mgr+ may EDIT (catering.pipeline.write)
+
+export class CateringPipelineError extends Error {
+  constructor(public status: number, public code: string, message?: string) {
+    super(message ?? code);
+    this.name = "CateringPipelineError";
+  }
+}
+
+function requireLevel(actor: AuthContext, min: number): void {
+  if (getRoleLevel(actor.user.role) < min) {
+    throw new CateringPipelineError(403, "forbidden", "Insufficient role level");
+  }
+}
+
+/** LocationActor shape from the AuthContext for lockLocationContext / isAllLocationsAccess. */
+function locActor(actor: AuthContext): { role: AuthContext["user"]["role"]; locations: string[] } {
+  return { role: actor.user.role, locations: actor.locations };
+}
+
+/**
+ * A lead is writable when the actor is level >= WRITE_MIN AND either the lead is
+ * global (location_id null) or the actor holds that location. Mirrors the scaffold
+ * RLS (level >= 6 AND (location null OR location match)).
+ */
+function assertCanWriteLead(actor: AuthContext, leadLocationId: string | null): void {
+  requireLevel(actor, PIPELINE_WRITE_MIN);
+  if (leadLocationId != null && !lockLocationContext(locActor(actor), leadLocationId)) {
+    throw new CateringPipelineError(403, "location_access_denied", "You do not manage that location");
+  }
+}
+
+// ── View types ────────────────────────────────────────────────────────────────
+export interface PipelineLead {
+  id: string;
+  customerId: string | null;
+  contactName: string;
+  company: string | null;
+  eventDate: string | null;
+  headcount: number | null;
+  stage: PipelineStage;
+  leadSource: string | null;
+  locationId: string | null;
+  notes: string | null;
+  followUpDate: string | null;
+  estimatedRevenueCents: number | null;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string | null;
+}
+
+interface DbLeadRow {
+  id: string;
+  customer_id: string | null;
+  contact_name: string;
+  company: string | null;
+  event_date: string | null;
+  headcount: number | null;
+  stage: string;
+  lead_source: string | null;
+  location_id: string | null;
+  notes: string | null;
+  follow_up_date: string | null;
+  estimated_revenue_cents: number | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string | null;
+}
+
+const LEAD_COLS =
+  "id, customer_id, contact_name, company, event_date, headcount, stage, lead_source, location_id, notes, follow_up_date, estimated_revenue_cents, created_by, created_at, updated_at";
+
+function mapLead(r: DbLeadRow): PipelineLead {
+  return {
+    id: r.id,
+    customerId: r.customer_id,
+    contactName: r.contact_name,
+    company: r.company,
+    eventDate: r.event_date,
+    headcount: r.headcount,
+    stage: (isPipelineStage(r.stage) ? r.stage : "inquiry"),
+    leadSource: r.lead_source,
+    locationId: r.location_id,
+    notes: r.notes,
+    followUpDate: r.follow_up_date,
+    estimatedRevenueCents: r.estimated_revenue_cents,
+    createdBy: r.created_by,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+/** The read-scope `.or()` filter string for the actor, or null when unrestricted (L9+ all-locations). */
+function readScopeOr(actor: AuthContext): string | null {
+  if (isAllLocationsAccess(locActor(actor))) return null;
+  const ids = actor.locations;
+  return ids.length === 0
+    ? "location_id.is.null"
+    : `location_id.is.null,location_id.in.(${ids.join(",")})`;
+}
+
+// ── Reads ───────────────────────────────────────────────────────────────────
+/** All non-archived leads the actor may view, for the board (grouped client-side by stage). */
+export async function loadPipelineBoard(actor: AuthContext): Promise<PipelineLead[]> {
+  requireLevel(actor, PIPELINE_READ_MIN);
+  const sb = getServiceRoleClient();
+  let q = sb.from("catering_pipeline").select(LEAD_COLS);
+  const scope = readScopeOr(actor);
+  if (scope) q = q.or(scope);
+  const { data, error } = await q.order("created_at", { ascending: false }).returns<DbLeadRow[]>();
+  if (error) throw new Error(`loadPipelineBoard: ${error.message}`);
+  return (data ?? []).map(mapLead);
+}
+
+/** Leads with a follow-up due on/before `throughDate`, in non-terminal stages, soonest first. */
+export async function loadFollowUps(actor: AuthContext, throughDate: string): Promise<PipelineLead[]> {
+  requireLevel(actor, PIPELINE_READ_MIN);
+  const sb = getServiceRoleClient();
+  let q = sb
+    .from("catering_pipeline")
+    .select(LEAD_COLS)
+    .not("follow_up_date", "is", null)
+    .lte("follow_up_date", throughDate)
+    .not("stage", "in", `(${TERMINAL_STAGES.join(",")})`);
+  const scope = readScopeOr(actor);
+  if (scope) q = q.or(scope);
+  const { data, error } = await q.order("follow_up_date", { ascending: true }).returns<DbLeadRow[]>();
+  if (error) throw new Error(`loadFollowUps: ${error.message}`);
+  return (data ?? []).map(mapLead);
+}
+
+/** One lead by id (scoped). Null if not found / not visible to the actor. */
+export async function loadLead(actor: AuthContext, id: string): Promise<PipelineLead | null> {
+  requireLevel(actor, PIPELINE_READ_MIN);
+  const sb = getServiceRoleClient();
+  const { data, error } = await sb.from("catering_pipeline").select(LEAD_COLS).eq("id", id).maybeSingle<DbLeadRow>();
+  if (error) throw new Error(`loadLead: ${error.message}`);
+  if (!data) return null;
+  // Visibility: global, or in the actor's locations, or all-locations.
+  if (
+    data.location_id != null &&
+    !isAllLocationsAccess(locActor(actor)) &&
+    !actor.locations.includes(data.location_id)
+  ) {
+    return null;
+  }
+  return mapLead(data);
+}
+
+/** The Mode-A capacity signal for a lead's (location, event_date) — computed on demand. */
+export async function leadCapacity(actor: AuthContext, id: string): Promise<CateringCapacityResult | null> {
+  const lead = await loadLead(actor, id);
+  if (!lead || lead.locationId == null || lead.eventDate == null) return null;
+  return checkCateringCapacity({
+    locationId: lead.locationId,
+    eventDate: lead.eventDate,
+    requestedCovers: lead.headcount ?? 0,
+    excludePipelineId: lead.id,
+  });
+}
+
+// ── Mutations ─────────────────────────────────────────────────────────────────
+export interface CreateLeadInput {
+  contactName: string;
+  company?: string | null;
+  eventDate?: string | null;
+  headcount?: number | null;
+  leadSource?: string | null;
+  locationId?: string | null;
+  notes?: string | null;
+  followUpDate?: string | null;
+  customerId?: string | null;
+  estimatedRevenueCents?: number | null;
+}
+
+/** Create a new lead at stage 'inquiry' + its initial append-only stage event. */
+export async function createLead(actor: AuthContext, input: CreateLeadInput): Promise<{ id: string }> {
+  const locationId = input.locationId ?? null;
+  assertCanWriteLead(actor, locationId);
+  if (!input.contactName || input.contactName.trim().length === 0) {
+    throw new CateringPipelineError(400, "invalid_payload", "contactName is required");
+  }
+  const sb = getServiceRoleClient();
+  const { data: inserted, error } = await sb
+    .from("catering_pipeline")
+    .insert({
+      contact_name: input.contactName.trim(),
+      company: input.company ?? null,
+      event_date: input.eventDate ?? null,
+      headcount: input.headcount ?? null,
+      stage: "inquiry",
+      lead_source: input.leadSource ?? null,
+      location_id: locationId,
+      notes: input.notes ?? null,
+      follow_up_date: input.followUpDate ?? null,
+      customer_id: input.customerId ?? null,
+      estimated_revenue_cents: input.estimatedRevenueCents ?? null,
+      created_by: actor.user.id,
+    })
+    .select("id")
+    .single<{ id: string }>();
+  if (error) throw new Error(`createLead: ${error.message}`);
+
+  const { error: evErr } = await sb.from("catering_pipeline_events").insert({
+    pipeline_id: inserted.id,
+    from_stage: null,
+    to_stage: "inquiry",
+    note: null,
+    actor_id: actor.user.id,
+  });
+  if (evErr) throw new Error(`createLead event: ${evErr.message}`);
+
+  void audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "catering.pipeline.create",
+    resourceTable: "catering_pipeline",
+    resourceId: inserted.id,
+    metadata: { location_id: locationId, lead_source: input.leadSource ?? null },
+    ipAddress: null,
+    userAgent: null,
+  });
+  return { id: inserted.id };
+}
+
+/** Move a lead to a new stage: mutate the lead's stage + append a stage event. */
+export async function moveStage(
+  actor: AuthContext,
+  args: { id: string; toStage: PipelineStage; note?: string | null },
+): Promise<void> {
+  const sb = getServiceRoleClient();
+  const { data: lead, error: lErr } = await sb
+    .from("catering_pipeline")
+    .select("id, stage, location_id")
+    .eq("id", args.id)
+    .maybeSingle<{ id: string; stage: string; location_id: string | null }>();
+  if (lErr) throw new Error(`moveStage load: ${lErr.message}`);
+  if (!lead) throw new CateringPipelineError(404, "not_found", "Lead not found");
+  assertCanWriteLead(actor, lead.location_id);
+
+  const fromStage = isPipelineStage(lead.stage) ? lead.stage : null;
+  if (fromStage === args.toStage) return; // no-op
+
+  const { error: uErr, count } = await sb
+    .from("catering_pipeline")
+    .update({ stage: args.toStage, updated_at: new Date().toISOString() }, { count: "exact" })
+    .eq("id", args.id);
+  if (uErr) throw new Error(`moveStage update: ${uErr.message}`);
+  if (count === 0) throw new CateringPipelineError(404, "not_found", "Lead not found");
+
+  const { error: evErr } = await sb.from("catering_pipeline_events").insert({
+    pipeline_id: args.id,
+    from_stage: fromStage,
+    to_stage: args.toStage,
+    note: args.note ?? null,
+    actor_id: actor.user.id,
+  });
+  if (evErr) throw new Error(`moveStage event: ${evErr.message}`);
+
+  void audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "catering.pipeline.stage_move",
+    resourceTable: "catering_pipeline",
+    resourceId: args.id,
+    metadata: { from_stage: fromStage, to_stage: args.toStage },
+    ipAddress: null,
+    userAgent: null,
+  });
+}
+
+export interface EditLeadInput {
+  contactName?: string;
+  company?: string | null;
+  eventDate?: string | null;
+  headcount?: number | null;
+  leadSource?: string | null;
+  notes?: string | null;
+  followUpDate?: string | null;
+  customerId?: string | null;
+  estimatedRevenueCents?: number | null;
+}
+
+/** Edit a lead's mutable CRM fields in place (never stage — use moveStage). */
+export async function editLead(actor: AuthContext, id: string, input: EditLeadInput): Promise<void> {
+  const sb = getServiceRoleClient();
+  const { data: lead, error: lErr } = await sb
+    .from("catering_pipeline")
+    .select("id, location_id")
+    .eq("id", id)
+    .maybeSingle<{ id: string; location_id: string | null }>();
+  if (lErr) throw new Error(`editLead load: ${lErr.message}`);
+  if (!lead) throw new CateringPipelineError(404, "not_found", "Lead not found");
+  assertCanWriteLead(actor, lead.location_id);
+
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (input.contactName !== undefined) {
+    if (!input.contactName || input.contactName.trim().length === 0) {
+      throw new CateringPipelineError(400, "invalid_payload", "contactName cannot be empty");
+    }
+    patch.contact_name = input.contactName.trim();
+  }
+  if (input.company !== undefined) patch.company = input.company;
+  if (input.eventDate !== undefined) patch.event_date = input.eventDate;
+  if (input.headcount !== undefined) patch.headcount = input.headcount;
+  if (input.leadSource !== undefined) patch.lead_source = input.leadSource;
+  if (input.notes !== undefined) patch.notes = input.notes;
+  if (input.followUpDate !== undefined) patch.follow_up_date = input.followUpDate;
+  if (input.customerId !== undefined) patch.customer_id = input.customerId;
+  if (input.estimatedRevenueCents !== undefined) patch.estimated_revenue_cents = input.estimatedRevenueCents;
+
+  const { error: uErr, count } = await sb
+    .from("catering_pipeline")
+    .update(patch, { count: "exact" })
+    .eq("id", id);
+  if (uErr) throw new Error(`editLead update: ${uErr.message}`);
+  if (count === 0) throw new CateringPipelineError(404, "not_found", "Lead not found");
+
+  void audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "catering.pipeline.edit",
+    resourceTable: "catering_pipeline",
+    resourceId: id,
+    metadata: { fields: Object.keys(patch).filter((k) => k !== "updated_at") },
+    ipAddress: null,
+    userAgent: null,
+  });
+}
