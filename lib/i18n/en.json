@@ -4,7 +4,6 @@
   "common.saving": "Saving…",
   "common.loading": "Loading…",
   "common.you": "you",
-
   "user_menu.aria_label": "User menu",
   "user_menu.signed_in_as": "Signed in as",
   "user_menu.language": "Language",
@@ -751,7 +750,6 @@
   "admin.templates.menu_price_hint": "What you sell one of these for — drives food-cost %. Leave blank if not sold directly.",
   "admin.templates.error.invalid_menu_price": "Menu price must be a positive number or empty.",
   "admin.templates.error.invalid_sell_portion": "Sell portion must be a positive number.",
-
   "admin.templates.sold_directly.title": "Sold directly",
   "admin.templates.sold_directly.checkbox": "This item is sold directly to customers",
   "admin.templates.sold_directly.sell_portion": "Sell portion (units sold per transaction)",
@@ -819,7 +817,6 @@
   "midshift.sales.heading": "Sales & forecast",
   "midshift.sales.placeholder": "Connect Toast to see sales velocity and end-of-day forecast.",
   "midshift.degrees": "{value}°F",
-
   "pm.page.title": "PM Report",
   "pm.my_feedback.title": "My Feedback",
   "pm.tile_label": "PM Report",
@@ -861,7 +858,6 @@
   "pm.my_feedback.mvp": "MVP ⭐",
   "pm.my_feedback.date_at": "{date} · {location}",
   "pm.error.generic": "Could not save. Try again.",
-
   "dashboard.opening.tile_label": "Opening Report",
   "dashboard.opening.cta": "Open / continue",
   "dashboard.opening.no_template": "No opening template for this location yet.",
@@ -880,7 +876,6 @@
   "dashboard.mid_day_prep.status.phase2_complete": "Submitted",
   "dashboard.mid_day_prep.finalized_by": "Finalized at {time} by {name}",
   "dashboard.mid_day_prep.cap_reached": "Mid-day prep limit reached ({cap} per day).",
-
   "cash.tile_label": "Cash Deposit",
   "cash.status.not_started": "Not started today",
   "cash.status.finalized_by": "Deposited at {time} by {name}",
@@ -912,7 +907,6 @@
   "cash.error.generic": "Could not submit. Try again.",
   "cash.locked.closing_finalized": "Today's closing is already finalized — the cash deposit is locked.",
   "cash.read_only.banner": "Deposited {amount} · signed by {name} at {time}",
-
   "mid_day_prep.page.title": "Mid-day Prep",
   "mid_day_prep.page.dashboard_back": "Dashboard",
   "mid_day_prep.page.dashboard_back_aria": "Back to dashboard",
@@ -935,7 +929,6 @@
   "mid_day_prep.phase2.add_reason": "Add over/under reason",
   "mid_day_prep.phase2.edit_reason": "Edit reason ✓",
   "mid_day_prep.phase2.reason_required": "Add an over/under reason first",
-
   "closing.role_badge.cgs_only": "CGS only",
   "closing.role_badge.owner_plus_only": "Owner+ only",
   "closing.role_badge.moo_plus_only": "MoO+ only",
@@ -943,7 +936,6 @@
   "closing.role_badge.agm_plus_only": "AGM+ only",
   "closing.role_badge.shift_lead_plus_only": "Shift Lead+ only",
   "closing.role_badge.level_plus_only": "Level {level}+ only",
-
   "closing.role_short.cgs": "CGS",
   "closing.role_short.owner": "Owner",
   "closing.role_short.moo": "MoO",
@@ -955,7 +947,6 @@
   "closing.role_short.trainer": "Trainer",
   "closing.role_short.employee": "Employee",
   "closing.role_short.trainee": "Trainee",
-
   "closing.row.undo": "Undo",
   "closing.row.tag": "Tag",
   "closing.row.aria_undo": "Undo this completion",
@@ -973,7 +964,6 @@
   "closing.row.aria_mark_not_done": "Mark not done — reopen this item",
   "closing.row.correct": "Correct",
   "closing.row.aria_correct": "Correct this completion",
-
   "closing.error.instance_closed": "This checklist is already confirmed.",
   "closing.error.single_submission_locked": "This template is locked after first submission.",
   "closing.error.role_level_insufficient": "Your role can't complete this item.",
@@ -998,32 +988,26 @@
   "closing.error.revoke_hierarchy_violation": "You can't reopen a more senior person's item.",
   "closing.error.use_self_revoke": "This is your own item — use Undo.",
   "closing.error.completer_not_found": "Can't find who completed this — refresh.",
-
   "closing.correction_menu.heading": "Correct this item",
   "closing.correction_menu.tag": "Tag actual completer",
   "closing.correction_menu.mark_not_done": "Mark not done (reopen)",
-
   "closing.mark_not_done.aria_label": "Mark item not done",
   "closing.mark_not_done.heading": "Reopen this item",
   "closing.mark_not_done.note_label": "Why is this not actually done?",
   "closing.mark_not_done.note_placeholder": "Required — explain what's still pending",
   "closing.mark_not_done.submit": "Reopen item",
-
   "closing.three_chip.heading": "What happened?",
   "closing.three_chip.wrong_user_credited": "Wrong person credited",
   "closing.three_chip.not_actually_done": "Not actually done",
   "closing.three_chip.other": "Other (note required)",
-
   "closing.note_other.aria_label": "Add note for undo",
   "closing.note_other.label": "Note (required)",
   "closing.note_other.placeholder": "Briefly explain",
   "closing.note_other.submit": "Submit undo",
-
   "closing.picker.self_credit_heading": "Who actually did this?",
   "closing.picker.kh_tag_heading": "Tag actual completer",
   "closing.picker.empty_self_credit": "No other candidates available right now.",
   "closing.picker.empty_kh_tag": "No candidates available right now.",
-
   "closing.expand.aria_details": "{label} details",
   "closing.expand.count_label": "Count",
   "closing.expand.count_placeholder": "e.g. 38",
@@ -1033,31 +1017,26 @@
   "closing.expand.notes_placeholder": "Anything noteworthy?",
   "closing.expand.save": "Save",
   "closing.expand.update": "Update",
-
   "closing.notes_edit.aria_label": "Edit note",
   "closing.notes_edit.add": "Add note",
   "closing.notes_edit.edit": "Edit note",
   "closing.notes_edit.save_button": "Save note",
   "closing.notes_edit.placeholder": "Anything noteworthy?",
-
   "closing.page.title": "Closing checklist",
   "closing.page.dashboard_back": "Dashboard",
   "closing.page.dashboard_back_aria": "Back to dashboard",
   "closing.page.progress_label": "Progress",
   "closing.page.progress_count": "{completed}/{total}",
   "closing.page.progress_aria": "{completed} of {total} required items complete",
-
   "closing.station.fully_complete_aria": "{station} — fully complete",
   "closing.station.progress_required": "{completed} of {total} required done",
   "closing.station.awaiting_higher_role": " · {count} awaiting higher role",
   "closing.station.toggle_aria": "{station} station",
-
   "closing.banner.confirmed": "Closing confirmed{time} by {who}",
   "closing.banner.incomplete_confirmed": "Closing submitted with incomplete items{time} by {who}",
   "closing.banner.yesterday_unconfirmed": "Yesterday's closing wasn't finalized. Contact a manager to resolve.",
   "closing.banner.historical": "Historical closing — {date}",
   "closing.banner.time_prefix": " · {time}",
-
   "closing.review.button_complete": "Review & submit",
   "closing.review.button_incomplete": "Review & submit (incomplete)",
   "closing.review.button_hide": "Hide review",
@@ -1070,15 +1049,12 @@
   "closing.cash_required.cta": "Do the cash deposit",
   "closing.review.cannot_finalize_yet": "Walk-Out Verification not complete — finalize unlocks once all 5 walk-out items are checked off.",
   "closing.review.role_too_low": "Only Key Holder or higher can finalize the closing.",
-
   "closing.finalize_pill.aria": "Finalize closing",
   "closing.finalize_pill.text": "Finalize closing",
-
   "closing.no_template.heading": "Closing checklist",
   "closing.no_template.body": "No closing template configured for this location. An admin needs to seed a closing template before you can open a closing here.",
   "closing.no_template.return_dashboard": "Return to dashboard",
   "closing.no_instance.body": "No closing was filed for {date} at this location.",
-
   "auth.pin_modal.title": "Confirm with your PIN",
   "auth.pin_modal.subtitle": "Enter your 4-digit PIN to confirm this action.",
   "auth.pin_modal.pin_label": "PIN",
@@ -1101,17 +1077,14 @@
   "auth.pin_modal.error_unknown": "Unable to confirm. Please try again.",
   "auth.pin_modal.error_network": "Network error. Try again.",
   "auth.pin_modal.error_cash_required": "Submit the cash deposit before finalizing.",
-
   "dashboard.header.label": "Dashboard",
   "dashboard.header.greeting": "Hi, {name}.",
   "dashboard.location.all": "All locations",
   "dashboard.location.none": "No locations",
   "dashboard.location.switcher_aria": "Location switcher",
-
   "dashboard.today.label": "Today's operations",
   "dashboard.today.aria": "Today's operations at {location}",
   "dashboard.today.closing_label": "Closing checklist",
-
   "dashboard.status.no_template": "No closing template configured for this location.",
   "dashboard.status.not_started": "Not started",
   "dashboard.status.confirmed": "Confirmed",
@@ -1119,33 +1092,26 @@
   "dashboard.status.in_progress": "In progress · {progress}",
   "dashboard.status.in_progress_progress": "{completed} of {required} items",
   "dashboard.status.in_progress_fallback": "in progress",
-
   "dashboard.cta.open_closing": "Open closing",
   "dashboard.cta.start_closing": "Start closing",
   "dashboard.cta.review_closing": "Review closing",
   "dashboard.cta.continue_closing": "Continue closing",
-
   "dashboard.yesterday.aria": "Yesterday's closing was not confirmed",
   "dashboard.yesterday.title": "Yesterday's closing at {code} was not confirmed.",
   "dashboard.yesterday.body": "{date} · status open. Review and finalize so handoff data is captured.",
   "dashboard.yesterday.cta": "Review yesterday's closing",
-
   "dashboard.no_locations.body": "You don't have any accessible locations yet. An admin needs to assign you to a location before operational checklists become available.",
-
   "admin.vendors.ordering_calendar.title": "This week's ordering",
   "admin.vendors.ordering_calendar.legend_order": "Order",
   "admin.vendors.ordering_calendar.legend_delivery": "Delivery",
   "admin.vendors.ordering_calendar.today": "Today",
   "admin.vendors.ordering_calendar.empty": "No vendor schedules yet.",
-
   "auth.logout.label": "Log out",
   "auth.logout.submitting": "Signing out…",
-
   "auth.idle.title": "Still there?",
   "auth.idle.body": "You'll be signed out for inactivity in",
   "auth.idle.stay": "Stay signed in",
   "auth.idle.logout_now": "Log out now",
-
   "role.cgs": "Chief Growth Strategist",
   "role.owner": "Owner",
   "role.moo": "Manager of Operations",
@@ -1161,7 +1127,6 @@
   "role.trainee": "Trainee",
   "role.hired_not_yet_worked": "Hired (Not Yet Worked)",
   "role.prospect": "Prospect",
-
   "am_prep.column.par": "PAR",
   "am_prep.column.par_with_unit": "PAR ({unit})",
   "am_prep.column.on_hand": "ON HAND",
@@ -1172,27 +1137,22 @@
   "am_prep.column.total": "TOTAL",
   "am_prep.column.yes_no": "Y/N",
   "am_prep.column.free_text": "NOTES",
-
   "am_prep.row.input_aria": "{section} · {item} · {column}",
   "am_prep.row.par_value_with_unit": "{value} {unit}",
-
   "am_prep.misc.yes": "YES",
   "am_prep.misc.no": "NO",
   "am_prep.misc.toggle_aria": "{item}: currently {state}, tap to change",
   "am_prep.misc.notes_placeholder": "Add notes…",
   "am_prep.misc.notes_label": "Notes",
-
   "am_prep.section.aria": "{section} prep section",
   "am_prep.section.empty": "No items in {section}",
   "am_prep.section.loading": "Loading {section}…",
-
   "am_prep.section.veg": "Veg",
   "am_prep.section.cooks": "Cooks",
   "am_prep.section.sides": "Sides",
   "am_prep.section.sauces": "Sauces",
   "am_prep.section.slicing": "Slicing",
   "am_prep.section.misc": "Misc",
-
   "am_prep.submit.button": "Submit AM Prep",
   "am_prep.submit.button_in_flight": "Submitting…",
   "am_prep.submit.button_no_changes": "No changes to submit",
@@ -1201,15 +1161,12 @@
   "am_prep.submit.button_update_in_flight": "Updating…",
   "am_prep.submit.button_cancel": "Cancel",
   "am_prep.submit.discard": "Discard changes",
-
   "am_prep.banner.success": "AM Prep submitted at {time} by {name}",
   "am_prep.banner.read_only": "AM Prep already submitted today by {name} at {time}",
   "am_prep.banner.read_only_chain": "AM Prep already submitted today: {attribution}",
   "am_prep.banner.editing": "Editing AM Prep submitted by {name} at {time}",
-
   "am_prep.attribution.original": "Submitted by {name} at {time}",
   "am_prep.attribution.update": "updated by {name} at {time}",
-
   "am_prep.error.summary_one": "Fix 1 issue before submitting",
   "am_prep.error.summary_other": "Fix {count} issues before submitting",
   "am_prep.error.numeric_invalid": "Enter a number",
@@ -1229,15 +1186,12 @@
   "am_prep.error.invalid_payload": "Submission was malformed — refresh the page",
   "am_prep.error.network": "Network error — try again",
   "am_prep.error.fallback": "Submission failed — try again",
-
   "am_prep.page.title": "AM Prep",
   "am_prep.page.dashboard_back": "Back to dashboard",
   "am_prep.page.dashboard_back_aria": "Back to dashboard",
-
   "am_prep.no_template.heading": "AM Prep template not configured",
   "am_prep.no_template.body": "Contact a manager to set up the AM Prep template at this location.",
   "am_prep.no_template.return_dashboard": "Return to dashboard",
-
   "dashboard.reports.heading": "Reports",
   "dashboard.am_prep.tile_label": "AM Prep",
   "dashboard.am_prep.cta_start": "Start AM Prep",
@@ -1251,7 +1205,6 @@
   "dashboard.am_prep.assigned_by_note": "\"{note}\"",
   "dashboard.am_prep.no_template": "AM Prep template not configured",
   "dashboard.am_prep.aria": "AM Prep — {status}",
-
   "closing.report_ref.attribution": "Submitted by {name} at {time}",
   "closing.report_ref.attribution_chain": "{attribution}",
   "closing.report_ref.empty_subtitle": "Pending — submit from the dashboard",
@@ -1261,34 +1214,27 @@
   "closing.report_ref.tap_to_submit_aria": "{label} — tap to submit from the AM Prep page",
   "closing.report_ref.edit_link": "Edit",
   "closing.report_ref.edit_link_aria": "Edit AM Prep submitted by {name}",
-
   "opening.page.label": "Opening Report",
   "opening.page.title": "Phase 1 — Verification",
   "opening.page.subtitle": "Verify last night's closing matches reality. Tap each station once you've checked it; add a comment if anything looks off.",
   "opening.page.dashboard_back": "Back to dashboard",
-
   "opening.no_location.body": "No locations available for your account.",
-
   "opening.no_template.heading": "Opening template not configured",
   "opening.no_template.body": "Contact a manager — the Opening template hasn't been set up yet at {code}.",
   "opening.no_template.aria": "Opening template not configured",
-
   "opening.gate.aria": "Waiting on prior closing finalization",
   "opening.gate.title": "Waiting on last night's closing at {code}",
   "opening.gate.body": "The closing report from {date} hasn't been finalized yet. Opening will unlock once it's confirmed or auto-released.",
   "opening.gate.cta_view_prior_closing": "View last night's closing",
-
   "opening.read_only.label": "Opening · {code}",
   "opening.read_only.title": "Opening verified",
   "opening.read_only.attribution": "Submitted by {name} at {time}",
   "opening.read_only.attribution_no_time": "Submitted by {name}",
-
   "opening.station.aria": "{station} — verification",
   "opening.station.tick_button": "Verified",
   "opening.station.ticked_button": "Verified",
   "opening.station.tick_aria": "Mark {station} as verified",
   "opening.station.untick_aria": "Untick {station}",
-
   "opening.item.add_addon": "Add comment",
   "opening.item.add_addon_with_content": "Edit comment",
   "opening.item.count_input_placeholder": "—",
@@ -1299,9 +1245,7 @@
   "opening.item.comment_aria": "Comment for {item}",
   "opening.item.photo_pending_label": "Photo upload coming soon",
   "opening.item.photo_pending_tooltip": "Photo capture will activate in a future build. Use the comment field for now.",
-
   "opening.phase.tab_phase1": "Phase 1 · Verify",
-
   "opening.submit.counter_verified": "{ticked} of {total} verified",
   "opening.submit.counter_temps": "{filled} of {total} temp readings entered",
   "opening.submit.gate_ready": "Submit ready",
@@ -1312,7 +1256,6 @@
   "opening.submit.gate_disabled_generic": "Submit disabled",
   "opening.submit.button_label": "Submit Opening",
   "opening.submit.submitting": "Submitting…",
-
   "opening.error.role_level_insufficient": "Your role can't submit Opening — contact a manager.",
   "opening.error.instance_not_open": "Opening was already submitted — refresh the page.",
   "opening.error.auto_complete_failed": "Last night's closing record can't be linked — contact a manager.",
@@ -1332,26 +1275,21 @@
   "opening.error.not_self": "Only the person who saved this — or a manager — can undo it.",
   "opening.error.revoke_conflict": "There's nothing to undo — this entry was already cleared.",
   "opening.error.revocation_reason_invalid": "That reason can't be recorded — pick another and try again.",
-
   "opening.phase1.recount.label": "Recount",
   "opening.phase1.recount.placeholder": "Enter morning count",
   "opening.phase1.recount.snapshot_was": "Closer recorded: {count}",
   "opening.phase1.recount.snapshot_null": "No closing data — recount required",
   "opening.phase1.recount.hint": "Overrides closer count",
-
   "opening.phase1.attestation.title": "No prior closing data detected",
   "opening.phase1.attestation.subtitle": "{count} item(s) had no closing count from last night — morning recounts were entered. Confirm the reason:",
   "opening.phase1.attestation.option.planned_closure": "Location was closed (planned)",
   "opening.phase1.attestation.option.missed_or_unknown": "Closing was missed / I don't know",
   "opening.phase1.attestation.continue": "Submit with attestation",
   "opening.phase1.attestation.captured": "Attestation: {reason}",
-
   "opening.phase2.pending_next_release.title": "Phase 2 submit pending",
   "opening.phase2.pending_next_release.body": "Phase 1 was submitted successfully. Phase 2 submission will be available in the next update. Nothing is lost — your Phase 1 data is saved.",
-
   "notifications.opening_no_prior_data.title": "No prior closing data — opening at {locationCode} ({openingDate})",
   "notifications.opening_no_prior_data.body": "{openerName} submitted today's opening at {locationCode} with no usable closing data from yesterday ({openingDate}). Attested cause: {attestationReason}. Counts established by morning recount — not captured at close. ({nullSourceCount} items)",
-
   "notifications.under_par_alert.title": "Under-par: {itemName} at {locationCode}",
   "notifications.under_par_alert.body": "{openerName} prepped {prepped} (par {par}, closer count {closer}). Reason: {reasonCategory}. {freeText}",
   "notifications.under_par_alert.reason.ingredient_unavailable": "Ingredient unavailable",
@@ -1374,7 +1312,6 @@
   "notifications.card.under_par.reason_prefix": "Reason: {reasonCategory}",
   "notifications.card.location_time": "{locationCode} · {time}",
   "notifications.card.location_date_time": "{locationCode} · {dateLabel} {time}",
-
   "opening.phase.tab_phase2": "Phase 2 — Prep Entry",
   "opening.phase.tab_phase2_locked": "Phase 2 (locked)",
   "opening.phase.tab_phase2_locked_aria": "Phase 2 locked — complete verification first",
@@ -1455,7 +1392,6 @@
   "opening.finalize.button_label_finalized": "Phase 2 finalized",
   "opening.finalize.gate_outstanding": "{count} prep items not yet saved",
   "opening.finalize.already_finalized": "Phase 2 already finalized",
-
   "maintenance.nav_label": "Maintenance",
   "maintenance.page.title": "Maintenance Log",
   "maintenance.overview.fridges_heading": "Fridge temps",
@@ -1493,10 +1429,8 @@
   "maintenance.error.generic": "Could not save. Try again.",
   "maintenance.not_available": "Maintenance Log is not available for your role.",
   "maintenance.not_found": "Equipment not found.",
-
   "notif.shift_feedback.title": "New shift feedback",
   "notif.shift_feedback.body": "A manager left feedback on your shift.",
-
   "reports.page.title": "Reports",
   "reports.filter.from": "From",
   "reports.filter.to": "To",
@@ -1554,7 +1488,6 @@
   "reports.status.confirmed": "Confirmed",
   "reports.status.incomplete_confirmed": "Confirmed (incomplete)",
   "reports.status.auto_finalized": "Auto-finalized",
-
   "reports.cash.projected": "Projected",
   "reports.cash.drawer": "Drawer total",
   "reports.cash.float": "Float",
@@ -1563,22 +1496,18 @@
   "reports.cash.tips": "Cash tips",
   "reports.cash.signed_by": "Signed by",
   "reports.cash.on_shift": "On shift",
-
   "reports.pm.submitted_by": "Submitted by",
   "reports.pm.gradient_tally": "Gradient tally",
-
   "reports.signal.completion": "{done}/{total} done · {skipped} skipped",
   "reports.signal.par": "{underPar} under par · {overPar} over par",
   "reports.signal.temp_flag": "{n} temp out of range",
   "reports.signal.cash_over": "{amount} over",
   "reports.signal.cash_short": "{amount} short",
   "reports.signal.cash_even": "even",
-
   "reports.values.heading": "Prep values",
   "reports.values.par": "Par",
   "reports.values.on_hand": "On hand",
   "reports.values.total": "Total",
-
   "reports.filter.signals_heading": "Signal filters",
   "reports.filter.under_par": "Under par",
   "reports.filter.over_par": "Over par",
@@ -1586,17 +1515,12 @@
   "reports.filter.temp_flag": "Temp out of range",
   "reports.filter.cash_over": "Cash over",
   "reports.filter.cash_short": "Cash short",
-
   "reports.badge.under_par": "{count} under par",
   "reports.badge.temp": "{count} temp flag",
-
   "reports.readings.heading": "Counts & readings",
   "reports.pm.shift_activity": "Shift activity",
-
   "reports.verify.against": "Verifying: closer {closer} · par {par}",
-
   "auth.brand.tagline": "Operations",
-
   "auth.login.surface_to_manager": "Manager login →",
   "auth.login.surface_to_tile": "Use tile login →",
   "auth.login.idle_signed_out": "You were signed out after 10 minutes of inactivity.",
@@ -1608,7 +1532,6 @@
   "auth.login.back": "Back",
   "auth.login.no_locations": "No active locations. Ask an admin to enable one.",
   "auth.login.no_users": "No active users for this role at this location.",
-
   "auth.manager.heading": "Manager login",
   "auth.manager.subtitle": "Email + password for AGM and above.",
   "auth.manager.email_label": "Email",
@@ -1631,7 +1554,6 @@
   "auth.manager.sending": "Sending…",
   "auth.manager.reset_need_email": "Enter your email above first.",
   "auth.manager.reset_error": "Couldn't send reset link. Try again.",
-
   "auth.pin.role_aria": "{role}",
   "auth.pin.prompt": "Enter your 4-digit PIN",
   "auth.pin.entry_aria": "PIN entry: {entered} of {total} digits entered",
@@ -1647,7 +1569,6 @@
   "auth.pin.use_keypad": "Use on-screen keypad",
   "auth.pin.use_system_keyboard": "Use system keyboard",
   "auth.pin.loading_aria": "Loading",
-
   "auth.set_password.new_label": "New password",
   "auth.set_password.confirm_label": "Confirm password",
   "auth.set_password.hint_min": "At least {min} characters.",
@@ -1656,7 +1577,6 @@
   "auth.set_password.error_mismatch": "Passwords don't match.",
   "auth.set_password.error_network": "Network error. Check your connection and try again.",
   "auth.set_password.loading_aria": "Loading",
-
   "auth.verify.heading": "Set your password",
   "auth.verify.subtitle": "Once your password is set, you'll be signed in automatically.",
   "auth.verify.submit": "Set password & sign in",
@@ -1668,7 +1588,6 @@
   "auth.verify.error_generic": "Something went wrong. Try again.",
   "auth.verify.error_network": "Network error. Check your connection.",
   "auth.verify.back_to_signin": "Back to sign in",
-
   "auth.reset.heading": "Reset password",
   "auth.reset.subtitle": "Choose a new password. You'll sign in with it next.",
   "auth.reset.submit": "Update password",
@@ -1682,11 +1601,9 @@
   "auth.reset.error_generic": "Something went wrong. Try again.",
   "auth.reset.error_network": "Network error. Check your connection.",
   "auth.reset.back_to_signin": "Back to sign in",
-
   "auth.tiles.select_location": "Select location {name}",
   "auth.tiles.select_role": "Select role {role}",
   "auth.tiles.select_user": "Select user {name}",
-
   "auth.step_up.title": "Confirm your password",
   "auth.step_up.subtitle": "Re-enter your password to confirm this action.",
   "auth.step_up.password_label": "Password",
@@ -1715,7 +1632,6 @@
   "reports.opening.ground_truth": "Ground truth: {value}",
   "reports.opening.prep_need": "prep need {value}",
   "reports.opening.temp_reading": "Temp {value}°",
-
   "reports.trends.title": "Trends",
   "reports.trends.nav_label": "View trends",
   "reports.trends.subtitle": "How the operation is moving over time",
@@ -1839,7 +1755,6 @@
   "profile.leadership.oversees.moo": "Oversees all store operations",
   "profile.leadership.oversees.owner": "Owner",
   "profile.leadership.oversees.cgs": "Growth & strategy",
-
   "receiving.page.title": "Receiving",
   "receiving.page.recent": "Recent deliveries",
   "receiving.page.none": "No deliveries logged yet.",
@@ -1913,28 +1828,21 @@
   "production.panel.unit_case": "Case",
   "production.panel.unit_each": "Each",
   "production.panel.none": "No recipe linked — nothing to deplete.",
-
   "recipes.hub.title": "Recipes",
   "recipes.hub.subtitle": "Build and manage production and consumer recipes.",
   "recipes.hub.empty": "No recipes yet. Create one to get started.",
   "recipes.hub.outputs_label": "Outputs",
-
   "recipes.new.title": "New recipe",
   "recipes.new.subtitle": "Choose a type and name, then build the recipe.",
-
   "recipes.filter.all": "All",
   "recipes.filter.production": "Production",
   "recipes.filter.consumer": "Consumer",
-
   "recipes.type.production": "Production recipe",
   "recipes.type.consumer": "Consumer recipe",
-
   "recipes.delete.button": "Delete recipe",
   "recipes.delete.confirm": "Yes, delete",
   "recipes.delete.cancel": "Cancel",
-
   "recipes.badge.incomplete": "Incomplete",
-
   "recipes.create.title": "New recipe",
   "recipes.create.type_label": "Recipe type",
   "recipes.create.name_label": "Name",
@@ -1943,7 +1851,6 @@
   "recipes.create.open_button": "New recipe",
   "recipes.create.submit": "Create",
   "recipes.create.cancel": "Cancel",
-
   "recipes.builder.name_en": "Name (English)",
   "recipes.builder.name_es": "Name (Spanish)",
   "recipes.builder.directions_toggle": "Directions",
@@ -1963,13 +1870,11 @@
   "recipes.builder.add_output_menu_item": "+ Add menu item output",
   "recipes.builder.save": "Save",
   "recipes.builder.cancel": "Cancel",
-
   "recipes.draft.save": "Save draft",
   "recipes.draft.saving": "Saving…",
   "recipes.draft.save_hint": "Saves inputs and outputs — mark complete when ready.",
   "recipes.draft.error_no_inputs": "Add at least one input before saving.",
   "recipes.draft.error_no_outputs": "Add at least one output before saving.",
-
   "recipes.input.pick_sku": "Pick a SKU…",
   "recipes.input.pick_item": "Pick an item…",
   "recipes.input.quantity": "Qty",
@@ -1980,14 +1885,12 @@
   "recipes.input.item_tag": "Item",
   "recipes.input.portioned": "Portioned",
   "recipes.input.portioned_tag": "Portioned",
-
   "recipes.output.pick_item": "Pick an item…",
   "recipes.output.yield": "Yield (units per batch)",
   "recipes.output.container_label": "Container",
   "recipes.output.container_placeholder": "Pick a container…",
   "recipes.output.item_tag": "Item",
   "recipes.output.menu_item_tag": "Menu item",
-
   "recipes.consumer.output_title": "Menu item output",
   "recipes.consumer.output_hint": "The menu item this recipe produces.",
   "recipes.consumer.mode_create": "Create new menu item",
@@ -1996,17 +1899,14 @@
   "recipes.consumer.menu_price": "Menu price ($)",
   "recipes.consumer.menu_price_optional": "Optional",
   "recipes.consumer.pick_not_supported": "Pick existing not supported yet.",
-
   "recipes.readout.title": "Recipe summary",
   "recipes.readout.line": "{input} → {output}",
   "recipes.readout.batch_yield_note": "Batch yields {n} units.",
   "recipes.readout.batch_fallback": "Batch yield not set.",
   "recipes.readout.oz_note": "oz per batch",
-
   "recipes.row.remove": "Remove",
   "recipes.row.confirm_remove": "Confirm remove?",
   "recipes.row.cancel": "Cancel",
-
   "recipes.error.generic": "Something went wrong — try again.",
   "recipes.error.invalid_name": "Name is required.",
   "recipes.error.invalid_batch_yield": "Batch yield must be a positive number.",
@@ -2029,9 +1929,7 @@
   "recipes.error.would_create_cycle": "This component would create a circular dependency.",
   "recipes.error.invalid_output": "Output item or menu item is invalid.",
   "recipes.error.invalid_sell_portion": "Sell portion must be a positive number.",
-
   "recipes.item_link.production_recipe": "Production recipe",
-
   "readiness.badge.not_ready": "Not ready",
   "readiness.badge.upstream": "Upstream gaps",
   "readiness.reasons_prefix": "Missing:",
@@ -2047,5 +1945,78 @@
   "readiness.reason.no_oz_per_par_unit": "oz per par unit not set",
   "readiness.reason.sell_incomplete": "sold-directly missing portion/price",
   "readiness.reason.upstream_recipe": "its recipe isn't ready",
-  "readiness.hub.count": "{count} not ready"
+  "readiness.hub.count": "{count} not ready",
+  "catering.hub.title": "Catering",
+  "catering.hub.subtitle": "Pipeline, quotes, and customers in one place.",
+  "catering.hub.pipeline_desc": "Leads from inquiry to confirmed.",
+  "catering.hub.quotes_desc": "Build, price, and send quotes.",
+  "catering.hub.customers_desc": "Customer directory and history.",
+  "catering.quotes.title": "Catering Quotes",
+  "catering.quotes.subtitle": "Build a priced quote, send it, and track its status.",
+  "catering.quotes.new": "New quote",
+  "catering.quotes.empty": "No quotes yet.",
+  "catering.quotes.status.draft": "draft",
+  "catering.quotes.status.sent": "sent",
+  "catering.quotes.status.accepted": "accepted",
+  "catering.quotes.status.declined": "declined",
+  "catering.quotes.status.expired": "expired",
+  "catering.quotes.no_date": "No date",
+  "catering.quotes.covers": "covers",
+  "catering.quotes.revise_title": "Revise quote",
+  "catering.quotes.cancel": "Cancel",
+  "catering.quotes.field.location": "Location",
+  "catering.quotes.no_pricing_rule": "No pricing rule for this location — tax, gratuity, and service charge stay $0 until one is set in Admin.",
+  "catering.quotes.field.event_date": "Event date",
+  "catering.quotes.field.headcount": "Headcount",
+  "catering.quotes.field.customer": "Customer",
+  "catering.quotes.none": "None",
+  "catering.quotes.field.lead": "Pipeline lead",
+  "catering.quotes.lines": "Line items",
+  "catering.quotes.field.description": "Description",
+  "catering.quotes.field.qty": "Qty",
+  "catering.quotes.field.unit_price": "Unit price",
+  "catering.quotes.remove_line": "Remove line",
+  "catering.quotes.add_line": "Add line",
+  "catering.quotes.is_delivery": "Delivery",
+  "catering.quotes.field.delivery_zone": "Delivery zone",
+  "catering.quotes.field.notes": "Notes",
+  "catering.quotes.subtotal": "Subtotal",
+  "catering.quotes.delivery": "Delivery",
+  "catering.quotes.service_charge": "Service charge",
+  "catering.quotes.gratuity": "Gratuity",
+  "catering.quotes.tax": "Tax",
+  "catering.quotes.total": "Total",
+  "catering.quotes.deposit": "Deposit due",
+  "catering.quotes.saving": "Saving…",
+  "catering.quotes.save_revision": "Save revision",
+  "catering.quotes.save_draft": "Save draft",
+  "catering.quotes.loading": "Loading…",
+  "catering.quotes.back": "Back",
+  "catering.quotes.expires": "Expires",
+  "catering.quotes.sent_emailed": "Quote sent — the customer was emailed.",
+  "catering.quotes.sent_no_email": "Quote marked sent. No customer email on file, so nothing was emailed.",
+  "catering.quotes.resend": "Resend",
+  "catering.quotes.send": "Send quote",
+  "catering.quotes.revise": "Revise",
+  "catering.quotes.mark_accepted": "Mark accepted",
+  "catering.quotes.mark_declined": "Mark declined",
+  "catering.quotes.labels": "Print labels",
+  "catering.quotes.error.generic": "Something went wrong. Please try again.",
+  "catering.quotes.error.forbidden": "You do not have permission for that.",
+  "catering.quotes.error.not_found": "Not found.",
+  "catering.quotes.error.invalid_payload": "Check the fields and try again.",
+  "catering.quotes.error.location_access_denied": "You do not manage that location.",
+  "catering.quotes.error.mixed_concerns": "Save one change at a time.",
+  "catering.quotes.error.not_current": "This quote was revised elsewhere. Reload and try again.",
+  "catering.quotes.error.invalid_status": "That action isn't allowed for this quote's status.",
+  "catering.quotes.error.step_up_required": "Confirm your password to send.",
+  "catering.quotes.error.step_up_stale": "Your confirmation expired. Confirm your password again.",
+  "catering.labels.title": "Food Labels",
+  "catering.labels.subtitle": "Print allergen labels for this quote's items.",
+  "catering.labels.print": "Print",
+  "catering.labels.qty": "Qty",
+  "catering.labels.contains": "CONTAINS",
+  "catering.labels.may_contain": "May contain",
+  "catering.labels.unverified": "Allergen info not on file — verify before serving.",
+  "catering.labels.unnamed_item": "Item"
 }

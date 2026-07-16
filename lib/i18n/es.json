@@ -4,7 +4,6 @@
   "common.saving": "Guardando…",
   "common.loading": "Cargando…",
   "common.you": "tú",
-
   "user_menu.aria_label": "Menú de usuario",
   "user_menu.signed_in_as": "Conectado como",
   "user_menu.language": "Idioma",
@@ -751,7 +750,6 @@
   "admin.templates.menu_price_hint": "A cuánto vendes uno — calcula el % de costo de alimento. Déjalo vacío si no se vende directo.",
   "admin.templates.error.invalid_menu_price": "El precio de menú debe ser un número positivo o vacío.",
   "admin.templates.error.invalid_sell_portion": "La porción de venta debe ser un número positivo.",
-
   "admin.templates.sold_directly.title": "Venta directa",
   "admin.templates.sold_directly.checkbox": "Este artículo se vende directamente a los clientes",
   "admin.templates.sold_directly.sell_portion": "Porción de venta (unidades por transacción)",
@@ -819,7 +817,6 @@
   "midshift.sales.heading": "Ventas y pronóstico",
   "midshift.sales.placeholder": "Conecta Toast para ver el ritmo de ventas y el pronóstico del día.",
   "midshift.degrees": "{value}°F",
-
   "pm.page.title": "Reporte PM",
   "pm.my_feedback.title": "Mis comentarios",
   "pm.tile_label": "Reporte PM",
@@ -861,7 +858,6 @@
   "pm.my_feedback.mvp": "MVP ⭐",
   "pm.my_feedback.date_at": "{date} · {location}",
   "pm.error.generic": "No se pudo guardar. Intenta de nuevo.",
-
   "dashboard.opening.tile_label": "Reporte de apertura",
   "dashboard.opening.cta": "Abrir / continuar",
   "dashboard.opening.no_template": "Aún no hay plantilla de apertura para esta ubicación.",
@@ -880,7 +876,6 @@
   "dashboard.mid_day_prep.status.phase2_complete": "Enviado",
   "dashboard.mid_day_prep.finalized_by": "Finalizado a las {time} por {name}",
   "dashboard.mid_day_prep.cap_reached": "Límite de preparación de mediodía alcanzado ({cap} por día).",
-
   "cash.tile_label": "Depósito de efectivo",
   "cash.status.not_started": "No iniciado hoy",
   "cash.status.finalized_by": "Depositado a las {time} por {name}",
@@ -912,7 +907,6 @@
   "cash.error.generic": "No se pudo enviar. Intenta de nuevo.",
   "cash.locked.closing_finalized": "El cierre de hoy ya está finalizado — el depósito de efectivo está bloqueado.",
   "cash.read_only.banner": "Depositado {amount} · firmado por {name} a las {time}",
-
   "mid_day_prep.page.title": "Preparación de mediodía",
   "mid_day_prep.page.dashboard_back": "Panel",
   "mid_day_prep.page.dashboard_back_aria": "Volver al panel",
@@ -935,7 +929,6 @@
   "mid_day_prep.phase2.add_reason": "Agregar razón sobre/bajo par",
   "mid_day_prep.phase2.edit_reason": "Editar razón ✓",
   "mid_day_prep.phase2.reason_required": "Agrega primero una razón de sobre/bajo par",
-
   "closing.role_badge.cgs_only": "Solo CGS",
   "closing.role_badge.owner_plus_only": "Solo Owner+",
   "closing.role_badge.moo_plus_only": "Solo MoO+",
@@ -943,7 +936,6 @@
   "closing.role_badge.agm_plus_only": "Solo AGM+",
   "closing.role_badge.shift_lead_plus_only": "Solo Shift Lead+",
   "closing.role_badge.level_plus_only": "Solo nivel {level}+",
-
   "closing.role_short.cgs": "CGS",
   "closing.role_short.owner": "Owner",
   "closing.role_short.moo": "MoO",
@@ -955,7 +947,6 @@
   "closing.role_short.trainer": "Entrenador",
   "closing.role_short.employee": "Empleado",
   "closing.role_short.trainee": "Aprendiz",
-
   "closing.row.undo": "Deshacer",
   "closing.row.tag": "Asignar",
   "closing.row.aria_undo": "Deshacer esta tarea",
@@ -973,7 +964,6 @@
   "closing.row.aria_mark_not_done": "Marcar como no hecho — reabrir este ítem",
   "closing.row.correct": "Corregir",
   "closing.row.aria_correct": "Corregir esta finalización",
-
   "closing.error.instance_closed": "Esta lista ya está confirmada.",
   "closing.error.single_submission_locked": "Esta plantilla se bloquea después del primer envío.",
   "closing.error.role_level_insufficient": "Tu rol no puede completar este ítem.",
@@ -998,32 +988,26 @@
   "closing.error.revoke_hierarchy_violation": "No puedes reabrir el ítem de alguien de más rango.",
   "closing.error.use_self_revoke": "Este es tu propio ítem — usa Deshacer.",
   "closing.error.completer_not_found": "No se encuentra quién lo completó — recarga.",
-
   "closing.correction_menu.heading": "Corregir este ítem",
   "closing.correction_menu.tag": "Asignar a quien lo hizo",
   "closing.correction_menu.mark_not_done": "Marcar como no hecho (reabrir)",
-
   "closing.mark_not_done.aria_label": "Marcar ítem como no hecho",
   "closing.mark_not_done.heading": "Reabrir este ítem",
   "closing.mark_not_done.note_label": "¿Por qué no está hecho en realidad?",
   "closing.mark_not_done.note_placeholder": "Obligatorio — explica qué falta",
   "closing.mark_not_done.submit": "Reabrir ítem",
-
   "closing.three_chip.heading": "¿Qué pasó?",
   "closing.three_chip.wrong_user_credited": "Persona equivocada",
   "closing.three_chip.not_actually_done": "No se hizo en realidad",
   "closing.three_chip.other": "Otro (nota obligatoria)",
-
   "closing.note_other.aria_label": "Agregar nota para deshacer",
   "closing.note_other.label": "Nota (obligatoria)",
   "closing.note_other.placeholder": "Explica brevemente",
   "closing.note_other.submit": "Enviar deshacer",
-
   "closing.picker.self_credit_heading": "¿Quién lo hizo en realidad?",
   "closing.picker.kh_tag_heading": "Asignar a quien lo hizo",
   "closing.picker.empty_self_credit": "No hay otros candidatos disponibles ahora.",
   "closing.picker.empty_kh_tag": "No hay candidatos disponibles ahora.",
-
   "closing.expand.aria_details": "Detalles de {label}",
   "closing.expand.count_label": "Cantidad",
   "closing.expand.count_placeholder": "ej. 38",
@@ -1033,31 +1017,26 @@
   "closing.expand.notes_placeholder": "¿Algo importante?",
   "closing.expand.save": "Guardar",
   "closing.expand.update": "Actualizar",
-
   "closing.notes_edit.aria_label": "Editar nota",
   "closing.notes_edit.add": "Agregar nota",
   "closing.notes_edit.edit": "Editar nota",
   "closing.notes_edit.save_button": "Guardar nota",
   "closing.notes_edit.placeholder": "¿Algo importante?",
-
   "closing.page.title": "Lista de cierre",
   "closing.page.dashboard_back": "Inicio",
   "closing.page.dashboard_back_aria": "Volver al inicio",
   "closing.page.progress_label": "Progreso",
   "closing.page.progress_count": "{completed}/{total}",
   "closing.page.progress_aria": "{completed} de {total} ítems obligatorios listos",
-
   "closing.station.fully_complete_aria": "{station} — terminada",
   "closing.station.progress_required": "{completed} de {total} obligatorios listos",
   "closing.station.awaiting_higher_role": " · {count} esperando rol superior",
   "closing.station.toggle_aria": "Estación {station}",
-
   "closing.banner.confirmed": "Cierre confirmado{time} por {who}",
   "closing.banner.incomplete_confirmed": "Cierre enviado con ítems sin completar{time} por {who}",
   "closing.banner.yesterday_unconfirmed": "El cierre de ayer no se finalizó. Contacta a un gerente para resolverlo.",
   "closing.banner.historical": "Cierre histórico — {date}",
   "closing.banner.time_prefix": " · {time}",
-
   "closing.review.button_complete": "Revisar y enviar",
   "closing.review.button_incomplete": "Revisar y enviar (incompleto)",
   "closing.review.button_hide": "Ocultar revisión",
@@ -1070,15 +1049,12 @@
   "closing.cash_required.cta": "Hacer el depósito de efectivo",
   "closing.review.cannot_finalize_yet": "Falta verificar la salida — se podrá finalizar cuando los 5 ítems de salida estén listos.",
   "closing.review.role_too_low": "Solo Key Holder o superior puede finalizar el cierre.",
-
   "closing.finalize_pill.aria": "Finalizar cierre",
   "closing.finalize_pill.text": "Finalizar cierre",
-
   "closing.no_template.heading": "Lista de cierre",
   "closing.no_template.body": "No hay plantilla de cierre configurada para esta ubicación. Un administrador debe crear una antes de abrir un cierre aquí.",
   "closing.no_template.return_dashboard": "Volver al inicio",
   "closing.no_instance.body": "No se registró ningún cierre para {date} en esta ubicación.",
-
   "auth.pin_modal.title": "Confirma con tu PIN",
   "auth.pin_modal.subtitle": "Pon tu PIN de 4 dígitos para confirmar.",
   "auth.pin_modal.pin_label": "PIN",
@@ -1101,17 +1077,14 @@
   "auth.pin_modal.error_unknown": "No se pudo confirmar. Intenta de nuevo.",
   "auth.pin_modal.error_network": "Error de red. Intenta de nuevo.",
   "auth.pin_modal.error_cash_required": "Envía el depósito de efectivo antes de finalizar.",
-
   "dashboard.header.label": "Panel",
   "dashboard.header.greeting": "Hola, {name}.",
   "dashboard.location.all": "Todas las ubicaciones",
   "dashboard.location.none": "Sin ubicaciones",
   "dashboard.location.switcher_aria": "Cambiar ubicación",
-
   "dashboard.today.label": "Operaciones de hoy",
   "dashboard.today.aria": "Operaciones de hoy en {location}",
   "dashboard.today.closing_label": "Lista de cierre",
-
   "dashboard.status.no_template": "No hay plantilla de cierre para esta ubicación.",
   "dashboard.status.not_started": "Sin empezar",
   "dashboard.status.confirmed": "Confirmado",
@@ -1119,33 +1092,26 @@
   "dashboard.status.in_progress": "En progreso · {progress}",
   "dashboard.status.in_progress_progress": "{completed} de {required} ítems",
   "dashboard.status.in_progress_fallback": "en progreso",
-
   "dashboard.cta.open_closing": "Abrir cierre",
   "dashboard.cta.start_closing": "Empezar cierre",
   "dashboard.cta.review_closing": "Revisar cierre",
   "dashboard.cta.continue_closing": "Continuar cierre",
-
   "dashboard.yesterday.aria": "El cierre de ayer no fue confirmado",
   "dashboard.yesterday.title": "El cierre de ayer en {code} no fue confirmado.",
   "dashboard.yesterday.body": "{date} · estado abierto. Revisa y finaliza para capturar el handoff.",
   "dashboard.yesterday.cta": "Revisar el cierre de ayer",
-
   "dashboard.no_locations.body": "Aún no tienes ubicaciones asignadas. Un administrador debe asignarte una antes de que las listas operativas estén disponibles.",
-
   "admin.vendors.ordering_calendar.title": "Pedidos de esta semana",
   "admin.vendors.ordering_calendar.legend_order": "Pedido",
   "admin.vendors.ordering_calendar.legend_delivery": "Entrega",
   "admin.vendors.ordering_calendar.today": "Hoy",
   "admin.vendors.ordering_calendar.empty": "Aún no hay horarios de proveedores.",
-
   "auth.logout.label": "Cerrar sesión",
   "auth.logout.submitting": "Cerrando sesión…",
-
   "auth.idle.title": "¿Sigues ahí?",
   "auth.idle.body": "Por inactividad cerraremos sesión en",
   "auth.idle.stay": "Seguir conectado",
   "auth.idle.logout_now": "Cerrar sesión ahora",
-
   "role.cgs": "Estratega de Crecimiento",
   "role.owner": "Dueño",
   "role.moo": "Gerente de Operaciones",
@@ -1161,7 +1127,6 @@
   "role.trainee": "Aprendiz",
   "role.hired_not_yet_worked": "Contratado (sin trabajar aún)",
   "role.prospect": "Prospecto",
-
   "am_prep.column.par": "PAR",
   "am_prep.column.par_with_unit": "PAR ({unit})",
   "am_prep.column.on_hand": "EN MANO",
@@ -1172,27 +1137,22 @@
   "am_prep.column.total": "TOTAL",
   "am_prep.column.yes_no": "S/N",
   "am_prep.column.free_text": "NOTAS",
-
   "am_prep.row.input_aria": "{section} · {item} · {column}",
   "am_prep.row.par_value_with_unit": "{value} {unit}",
-
   "am_prep.misc.yes": "SÍ",
   "am_prep.misc.no": "NO",
   "am_prep.misc.toggle_aria": "{item}: actualmente {state}, toca para cambiar",
   "am_prep.misc.notes_placeholder": "Agrega notas…",
   "am_prep.misc.notes_label": "Notas",
-
   "am_prep.section.aria": "Sección de prep {section}",
   "am_prep.section.empty": "No hay ítems en {section}",
   "am_prep.section.loading": "Cargando {section}…",
-
   "am_prep.section.veg": "Verduras",
   "am_prep.section.cooks": "Cocidos",
   "am_prep.section.sides": "Acompañantes",
   "am_prep.section.sauces": "Salsas",
   "am_prep.section.slicing": "Rebanado",
   "am_prep.section.misc": "Misceláneo",
-
   "am_prep.submit.button": "Enviar Lista de Prep AM",
   "am_prep.submit.button_in_flight": "Enviando…",
   "am_prep.submit.button_no_changes": "Sin cambios para enviar",
@@ -1201,15 +1161,12 @@
   "am_prep.submit.button_update_in_flight": "Actualizando…",
   "am_prep.submit.button_cancel": "Cancelar",
   "am_prep.submit.discard": "Descartar cambios",
-
   "am_prep.banner.success": "Lista de Prep AM enviada a las {time} por {name}",
   "am_prep.banner.read_only": "Lista de Prep AM ya enviada hoy por {name} a las {time}",
   "am_prep.banner.read_only_chain": "Lista de Prep AM ya enviada hoy: {attribution}",
   "am_prep.banner.editing": "Editando Lista de Prep AM enviada por {name} a las {time}",
-
   "am_prep.attribution.original": "Enviado por {name} a las {time}",
   "am_prep.attribution.update": "actualizado por {name} a las {time}",
-
   "am_prep.error.summary_one": "Corrige 1 problema antes de enviar",
   "am_prep.error.summary_other": "Corrige {count} problemas antes de enviar",
   "am_prep.error.numeric_invalid": "Ingresa un número",
@@ -1229,15 +1186,12 @@
   "am_prep.error.invalid_payload": "El envío estaba mal formado — recarga la página",
   "am_prep.error.network": "Error de red — intenta de nuevo",
   "am_prep.error.fallback": "Envío fallido — intenta de nuevo",
-
   "am_prep.page.title": "Lista de Prep AM",
   "am_prep.page.dashboard_back": "Volver al dashboard",
   "am_prep.page.dashboard_back_aria": "Volver al dashboard",
-
   "am_prep.no_template.heading": "Plantilla de Prep AM no configurada",
   "am_prep.no_template.body": "Contacta a un gerente para configurar la plantilla de Prep AM en esta ubicación.",
   "am_prep.no_template.return_dashboard": "Volver al dashboard",
-
   "dashboard.reports.heading": "Reportes",
   "dashboard.am_prep.tile_label": "Lista de Prep AM",
   "dashboard.am_prep.cta_start": "Iniciar Lista de Prep AM",
@@ -1251,7 +1205,6 @@
   "dashboard.am_prep.assigned_by_note": "\"{note}\"",
   "dashboard.am_prep.no_template": "Plantilla de Prep AM no configurada",
   "dashboard.am_prep.aria": "Lista de Prep AM — {status}",
-
   "closing.report_ref.attribution": "Enviado por {name} a las {time}",
   "closing.report_ref.attribution_chain": "{attribution}",
   "closing.report_ref.empty_subtitle": "Pendiente — envía desde el dashboard",
@@ -1261,34 +1214,27 @@
   "closing.report_ref.tap_to_submit_aria": "{label} — toca para enviar desde la página de Lista de Prep AM",
   "closing.report_ref.edit_link": "Editar",
   "closing.report_ref.edit_link_aria": "Editar Lista de Prep AM enviada por {name}",
-
   "opening.page.label": "Reporte de Apertura",
   "opening.page.title": "Fase 1 — Verificación",
   "opening.page.subtitle": "Verifica que el cierre de anoche corresponda con la realidad. Toca cada estación una vez que la revises; añade un comentario si algo no coincide.",
   "opening.page.dashboard_back": "Volver al dashboard",
-
   "opening.no_location.body": "No hay ubicaciones disponibles para tu cuenta.",
-
   "opening.no_template.heading": "Plantilla de Apertura no configurada",
   "opening.no_template.body": "Contacta a un gerente — la plantilla de Apertura aún no está configurada en {code}.",
   "opening.no_template.aria": "Plantilla de Apertura no configurada",
-
   "opening.gate.aria": "Esperando finalización del cierre anterior",
   "opening.gate.title": "Esperando el cierre de anoche en {code}",
   "opening.gate.body": "El reporte de cierre del {date} aún no se ha finalizado. La Apertura se desbloqueará cuando se confirme o se libere automáticamente.",
   "opening.gate.cta_view_prior_closing": "Ver el cierre de anoche",
-
   "opening.read_only.label": "Apertura · {code}",
   "opening.read_only.title": "Apertura verificada",
   "opening.read_only.attribution": "Enviado por {name} a las {time}",
   "opening.read_only.attribution_no_time": "Enviado por {name}",
-
   "opening.station.aria": "{station} — verificación",
   "opening.station.tick_button": "Verificar",
   "opening.station.ticked_button": "Verificado",
   "opening.station.tick_aria": "Marcar {station} como verificada",
   "opening.station.untick_aria": "Quitar marca de {station}",
-
   "opening.item.add_addon": "Añadir comentario",
   "opening.item.add_addon_with_content": "Editar comentario",
   "opening.item.count_input_placeholder": "—",
@@ -1299,9 +1245,7 @@
   "opening.item.comment_aria": "Comentario para {item}",
   "opening.item.photo_pending_label": "Subida de foto disponible próximamente",
   "opening.item.photo_pending_tooltip": "La captura de foto se activará en una versión futura. Por ahora usa el comentario.",
-
   "opening.phase.tab_phase1": "Fase 1 · Verificar",
-
   "opening.submit.counter_verified": "{ticked} de {total} verificadas",
   "opening.submit.counter_temps": "{filled} de {total} temperaturas registradas",
   "opening.submit.gate_ready": "Listo para enviar",
@@ -1312,7 +1256,6 @@
   "opening.submit.gate_disabled_generic": "Envío deshabilitado",
   "opening.submit.button_label": "Enviar Apertura",
   "opening.submit.submitting": "Enviando…",
-
   "opening.error.role_level_insufficient": "Tu rol no puede enviar la Apertura — contacta a un gerente.",
   "opening.error.instance_not_open": "La Apertura ya se envió — refresca la página.",
   "opening.error.auto_complete_failed": "El cierre de anoche no se puede vincular — contacta a un gerente.",
@@ -1332,26 +1275,21 @@
   "opening.error.not_self": "Solo quien guardó esto — o un gerente — puede deshacerlo.",
   "opening.error.revoke_conflict": "No hay nada que deshacer — esta entrada ya se borró.",
   "opening.error.revocation_reason_invalid": "Esa razón no se puede registrar — elige otra e inténtalo de nuevo.",
-
   "opening.phase1.recount.label": "Recuento",
   "opening.phase1.recount.placeholder": "Cuenta de la mañana",
   "opening.phase1.recount.snapshot_was": "Cerrador anotó: {count}",
   "opening.phase1.recount.snapshot_null": "Sin datos del cierre — recuento requerido",
   "opening.phase1.recount.hint": "Reemplaza la cuenta del cerrador",
-
   "opening.phase1.attestation.title": "No se detectaron datos de cierre previo",
   "opening.phase1.attestation.subtitle": "{count} artículo(s) no tenían conteo de cierre de anoche — se ingresaron recuentos matutinos. Confirma la razón:",
   "opening.phase1.attestation.option.planned_closure": "Ubicación cerrada (planificado)",
   "opening.phase1.attestation.option.missed_or_unknown": "Cierre omitido / No sé",
   "opening.phase1.attestation.continue": "Enviar con declaración",
   "opening.phase1.attestation.captured": "Declaración: {reason}",
-
   "opening.phase2.pending_next_release.title": "Envío de Fase 2 pendiente",
   "opening.phase2.pending_next_release.body": "La Fase 1 se envió correctamente. El envío de la Fase 2 estará disponible en la próxima actualización. No se pierde nada — tus datos de la Fase 1 están guardados.",
-
   "notifications.opening_no_prior_data.title": "Sin datos de cierre previo — apertura en {locationCode} ({openingDate})",
   "notifications.opening_no_prior_data.body": "{openerName} envió la apertura de hoy en {locationCode} sin datos de cierre utilizables de ayer ({openingDate}). Causa reportada: {attestationReason}. Conteos establecidos mediante reconteo matutino — no capturados al cierre. ({nullSourceCount} artículos)",
-
   "notifications.under_par_alert.title": "Por debajo del par: {itemName} en {locationCode}",
   "notifications.under_par_alert.body": "{openerName} preparó {prepped} (par {par}, conteo de cierre {closer}). Razón: {reasonCategory}. {freeText}",
   "notifications.under_par_alert.reason.ingredient_unavailable": "Ingrediente no disponible",
@@ -1374,7 +1312,6 @@
   "notifications.card.under_par.reason_prefix": "Razón: {reasonCategory}",
   "notifications.card.location_time": "{locationCode} · {time}",
   "notifications.card.location_date_time": "{locationCode} · {dateLabel} {time}",
-
   "opening.phase.tab_phase2": "Fase 2 — Entrada de Prep",
   "opening.phase.tab_phase2_locked": "Fase 2 (bloqueada)",
   "opening.phase.tab_phase2_locked_aria": "Fase 2 bloqueada — completa la verificación primero",
@@ -1455,7 +1392,6 @@
   "opening.finalize.button_label_finalized": "Fase 2 finalizada",
   "opening.finalize.gate_outstanding": "{count} artículos de prep aún sin guardar",
   "opening.finalize.already_finalized": "Fase 2 ya finalizada",
-
   "maintenance.nav_label": "Mantenimiento",
   "maintenance.page.title": "Registro de mantenimiento",
   "maintenance.overview.fridges_heading": "Temperaturas de refrigeradores",
@@ -1493,10 +1429,8 @@
   "maintenance.error.generic": "No se pudo guardar. Intenta de nuevo.",
   "maintenance.not_available": "El Registro de mantenimiento no está disponible para tu rol.",
   "maintenance.not_found": "Equipo no encontrado.",
-
   "notif.shift_feedback.title": "Nuevo comentario de turno",
   "notif.shift_feedback.body": "Un gerente dejó comentarios sobre tu turno.",
-
   "reports.page.title": "Reportes",
   "reports.filter.from": "Desde",
   "reports.filter.to": "Hasta",
@@ -1554,7 +1488,6 @@
   "reports.status.confirmed": "Confirmado",
   "reports.status.incomplete_confirmed": "Confirmado (incompleto)",
   "reports.status.auto_finalized": "Auto-finalizado",
-
   "reports.cash.projected": "Proyectado",
   "reports.cash.drawer": "Total del cajón",
   "reports.cash.float": "Fondo de caja",
@@ -1563,22 +1496,18 @@
   "reports.cash.tips": "Propinas en efectivo",
   "reports.cash.signed_by": "Firmado por",
   "reports.cash.on_shift": "En turno",
-
   "reports.pm.submitted_by": "Enviado por",
   "reports.pm.gradient_tally": "Resumen de evaluación",
-
   "reports.signal.completion": "{done}/{total} hechos · {skipped} omitidos",
   "reports.signal.par": "{underPar} bajo par · {overPar} sobre par",
   "reports.signal.temp_flag": "{n} temp fuera de rango",
   "reports.signal.cash_over": "{amount} de más",
   "reports.signal.cash_short": "{amount} de menos",
   "reports.signal.cash_even": "exacto",
-
   "reports.values.heading": "Valores de prep",
   "reports.values.par": "Par",
   "reports.values.on_hand": "En mano",
   "reports.values.total": "Total",
-
   "reports.filter.signals_heading": "Filtros de señal",
   "reports.filter.under_par": "Bajo par",
   "reports.filter.over_par": "Sobre par",
@@ -1586,17 +1515,12 @@
   "reports.filter.temp_flag": "Temp fuera de rango",
   "reports.filter.cash_over": "Efectivo de más",
   "reports.filter.cash_short": "Efectivo de menos",
-
   "reports.badge.under_par": "{count} bajo par",
   "reports.badge.temp": "{count} marca de temp",
-
   "reports.readings.heading": "Conteos y lecturas",
   "reports.pm.shift_activity": "Actividad del turno",
-
   "reports.verify.against": "Verificando: cierre {closer} · par {par}",
-
   "auth.brand.tagline": "Operaciones",
-
   "auth.login.surface_to_manager": "Acceso de gerente →",
   "auth.login.surface_to_tile": "Usar acceso por mosaicos →",
   "auth.login.idle_signed_out": "Se cerró tu sesión tras 10 minutos de inactividad.",
@@ -1608,7 +1532,6 @@
   "auth.login.back": "Atrás",
   "auth.login.no_locations": "No hay ubicaciones activas. Pide a un administrador que active una.",
   "auth.login.no_users": "No hay usuarios activos para este rol en esta ubicación.",
-
   "auth.manager.heading": "Acceso de gerente",
   "auth.manager.subtitle": "Correo y contraseña para AGM y superior.",
   "auth.manager.email_label": "Correo",
@@ -1631,7 +1554,6 @@
   "auth.manager.sending": "Enviando…",
   "auth.manager.reset_need_email": "Primero ingresa tu correo arriba.",
   "auth.manager.reset_error": "No se pudo enviar el enlace. Inténtalo de nuevo.",
-
   "auth.pin.role_aria": "{role}",
   "auth.pin.prompt": "Ingresa tu PIN de 4 dígitos",
   "auth.pin.entry_aria": "Entrada de PIN: {entered} de {total} dígitos ingresados",
@@ -1647,7 +1569,6 @@
   "auth.pin.use_keypad": "Usar teclado en pantalla",
   "auth.pin.use_system_keyboard": "Usar teclado del sistema",
   "auth.pin.loading_aria": "Cargando",
-
   "auth.set_password.new_label": "Nueva contraseña",
   "auth.set_password.confirm_label": "Confirmar contraseña",
   "auth.set_password.hint_min": "Al menos {min} caracteres.",
@@ -1656,7 +1577,6 @@
   "auth.set_password.error_mismatch": "Las contraseñas no coinciden.",
   "auth.set_password.error_network": "Error de red. Revisa tu conexión e inténtalo de nuevo.",
   "auth.set_password.loading_aria": "Cargando",
-
   "auth.verify.heading": "Establece tu contraseña",
   "auth.verify.subtitle": "Una vez que establezcas tu contraseña, iniciarás sesión automáticamente.",
   "auth.verify.submit": "Establecer contraseña e iniciar sesión",
@@ -1668,7 +1588,6 @@
   "auth.verify.error_generic": "Algo salió mal. Inténtalo de nuevo.",
   "auth.verify.error_network": "Error de red. Revisa tu conexión.",
   "auth.verify.back_to_signin": "Volver a iniciar sesión",
-
   "auth.reset.heading": "Restablecer contraseña",
   "auth.reset.subtitle": "Elige una nueva contraseña. La usarás para iniciar sesión a continuación.",
   "auth.reset.submit": "Actualizar contraseña",
@@ -1682,11 +1601,9 @@
   "auth.reset.error_generic": "Algo salió mal. Inténtalo de nuevo.",
   "auth.reset.error_network": "Error de red. Revisa tu conexión.",
   "auth.reset.back_to_signin": "Volver a iniciar sesión",
-
   "auth.tiles.select_location": "Selecciona la ubicación {name}",
   "auth.tiles.select_role": "Selecciona el rol {role}",
   "auth.tiles.select_user": "Selecciona al usuario {name}",
-
   "auth.step_up.title": "Confirma tu contraseña",
   "auth.step_up.subtitle": "Vuelve a ingresar tu contraseña para confirmar esta acción.",
   "auth.step_up.password_label": "Contraseña",
@@ -1715,7 +1632,6 @@
   "reports.opening.ground_truth": "Valor real: {value}",
   "reports.opening.prep_need": "necesario {value}",
   "reports.opening.temp_reading": "Temp {value}°",
-
   "reports.trends.title": "Tendencias",
   "reports.trends.nav_label": "Ver tendencias",
   "reports.trends.subtitle": "Cómo va la operación con el tiempo",
@@ -1839,7 +1755,6 @@
   "profile.leadership.oversees.moo": "Supervisa todas las operaciones",
   "profile.leadership.oversees.owner": "Propietario",
   "profile.leadership.oversees.cgs": "Crecimiento y estrategia",
-
   "receiving.page.title": "Recepción",
   "receiving.page.recent": "Entregas recientes",
   "receiving.page.none": "Aún no se han registrado entregas.",
@@ -1913,28 +1828,21 @@
   "production.panel.unit_case": "Caja",
   "production.panel.unit_each": "Unidad",
   "production.panel.none": "Sin receta vinculada — nada que descontar.",
-
   "recipes.hub.title": "Recetas",
   "recipes.hub.subtitle": "Crea y administra recetas de producción y de consumo.",
   "recipes.hub.empty": "Aún no hay recetas. Crea una para empezar.",
   "recipes.hub.outputs_label": "Salidas",
-
   "recipes.new.title": "Nueva receta",
   "recipes.new.subtitle": "Elige un tipo y un nombre, luego construye la receta.",
-
   "recipes.filter.all": "Todas",
   "recipes.filter.production": "Producción",
   "recipes.filter.consumer": "Consumo",
-
   "recipes.type.production": "Receta de producción",
   "recipes.type.consumer": "Receta de consumo",
-
   "recipes.delete.button": "Eliminar receta",
   "recipes.delete.confirm": "Sí, eliminar",
   "recipes.delete.cancel": "Cancelar",
-
   "recipes.badge.incomplete": "Incompleta",
-
   "recipes.create.title": "Nueva receta",
   "recipes.create.type_label": "Tipo de receta",
   "recipes.create.name_label": "Nombre",
@@ -1943,7 +1851,6 @@
   "recipes.create.open_button": "Nueva receta",
   "recipes.create.submit": "Crear",
   "recipes.create.cancel": "Cancelar",
-
   "recipes.builder.name_en": "Nombre (inglés)",
   "recipes.builder.name_es": "Nombre (español)",
   "recipes.builder.directions_toggle": "Instrucciones",
@@ -1963,13 +1870,11 @@
   "recipes.builder.add_output_menu_item": "+ Agregar salida de artículo del menú",
   "recipes.builder.save": "Guardar",
   "recipes.builder.cancel": "Cancelar",
-
   "recipes.draft.save": "Guardar borrador",
   "recipes.draft.saving": "Guardando…",
   "recipes.draft.save_hint": "Guarda entradas y salidas — marca completa cuando esté lista.",
   "recipes.draft.error_no_inputs": "Agrega al menos una entrada antes de guardar.",
   "recipes.draft.error_no_outputs": "Agrega al menos una salida antes de guardar.",
-
   "recipes.input.pick_sku": "Elige un SKU…",
   "recipes.input.pick_item": "Elige un artículo…",
   "recipes.input.quantity": "Cant.",
@@ -1980,14 +1885,12 @@
   "recipes.input.item_tag": "Artículo",
   "recipes.input.portioned": "Porcionado",
   "recipes.input.portioned_tag": "Porcionado",
-
   "recipes.output.pick_item": "Elige un artículo…",
   "recipes.output.yield": "Rendimiento (unidades por tanda)",
   "recipes.output.container_label": "Contenedor",
   "recipes.output.container_placeholder": "Elige un contenedor…",
   "recipes.output.item_tag": "Artículo",
   "recipes.output.menu_item_tag": "Artículo del menú",
-
   "recipes.consumer.output_title": "Salida del artículo del menú",
   "recipes.consumer.output_hint": "El artículo del menú que produce esta receta.",
   "recipes.consumer.mode_create": "Crear nuevo artículo del menú",
@@ -1996,17 +1899,14 @@
   "recipes.consumer.menu_price": "Precio del menú ($)",
   "recipes.consumer.menu_price_optional": "Opcional",
   "recipes.consumer.pick_not_supported": "Seleccionar existente aún no está disponible.",
-
   "recipes.readout.title": "Resumen de receta",
   "recipes.readout.line": "{input} → {output}",
   "recipes.readout.batch_yield_note": "La tanda rinde {n} unidades.",
   "recipes.readout.batch_fallback": "Rendimiento por tanda no definido.",
   "recipes.readout.oz_note": "oz por tanda",
-
   "recipes.row.remove": "Eliminar",
   "recipes.row.confirm_remove": "¿Confirmar eliminación?",
   "recipes.row.cancel": "Cancelar",
-
   "recipes.error.generic": "Algo salió mal — inténtalo de nuevo.",
   "recipes.error.invalid_name": "El nombre es obligatorio.",
   "recipes.error.invalid_batch_yield": "El rendimiento por tanda debe ser un número positivo.",
@@ -2029,9 +1929,7 @@
   "recipes.error.would_create_cycle": "Este componente crearía una dependencia circular.",
   "recipes.error.invalid_output": "El artículo o artículo del menú de salida no es válido.",
   "recipes.error.invalid_sell_portion": "La porción de venta debe ser un número positivo.",
-
   "recipes.item_link.production_recipe": "Receta de producción",
-
   "readiness.badge.not_ready": "No listo",
   "readiness.badge.upstream": "Faltas arriba",
   "readiness.reasons_prefix": "Falta:",
@@ -2047,5 +1945,78 @@
   "readiness.reason.no_oz_per_par_unit": "oz por unidad de par sin definir",
   "readiness.reason.sell_incomplete": "venta directa sin porción/precio",
   "readiness.reason.upstream_recipe": "su receta no está lista",
-  "readiness.hub.count": "{count} sin alistar"
+  "readiness.hub.count": "{count} sin alistar",
+  "catering.hub.title": "Catering",
+  "catering.hub.subtitle": "Flujo, cotizaciones y clientes en un solo lugar.",
+  "catering.hub.pipeline_desc": "Prospectos desde la consulta hasta confirmado.",
+  "catering.hub.quotes_desc": "Arma, cotiza y envía cotizaciones.",
+  "catering.hub.customers_desc": "Directorio de clientes e historial.",
+  "catering.quotes.title": "Cotizaciones de Catering",
+  "catering.quotes.subtitle": "Arma una cotización con precio, envíala y sigue su estado.",
+  "catering.quotes.new": "Nueva cotización",
+  "catering.quotes.empty": "Aún no hay cotizaciones.",
+  "catering.quotes.status.draft": "borrador",
+  "catering.quotes.status.sent": "enviada",
+  "catering.quotes.status.accepted": "aceptada",
+  "catering.quotes.status.declined": "rechazada",
+  "catering.quotes.status.expired": "vencida",
+  "catering.quotes.no_date": "Sin fecha",
+  "catering.quotes.covers": "personas",
+  "catering.quotes.revise_title": "Revisar cotización",
+  "catering.quotes.cancel": "Cancelar",
+  "catering.quotes.field.location": "Ubicación",
+  "catering.quotes.no_pricing_rule": "No hay regla de precios para esta ubicación — impuesto, propina y cargo por servicio quedan en $0 hasta configurarla en Admin.",
+  "catering.quotes.field.event_date": "Fecha del evento",
+  "catering.quotes.field.headcount": "Personas",
+  "catering.quotes.field.customer": "Cliente",
+  "catering.quotes.none": "Ninguno",
+  "catering.quotes.field.lead": "Prospecto",
+  "catering.quotes.lines": "Partidas",
+  "catering.quotes.field.description": "Descripción",
+  "catering.quotes.field.qty": "Cant.",
+  "catering.quotes.field.unit_price": "Precio unit.",
+  "catering.quotes.remove_line": "Quitar partida",
+  "catering.quotes.add_line": "Agregar partida",
+  "catering.quotes.is_delivery": "Entrega a domicilio",
+  "catering.quotes.field.delivery_zone": "Zona de entrega",
+  "catering.quotes.field.notes": "Notas",
+  "catering.quotes.subtotal": "Subtotal",
+  "catering.quotes.delivery": "Entrega",
+  "catering.quotes.service_charge": "Cargo por servicio",
+  "catering.quotes.gratuity": "Propina",
+  "catering.quotes.tax": "Impuesto",
+  "catering.quotes.total": "Total",
+  "catering.quotes.deposit": "Depósito requerido",
+  "catering.quotes.saving": "Guardando…",
+  "catering.quotes.save_revision": "Guardar revisión",
+  "catering.quotes.save_draft": "Guardar borrador",
+  "catering.quotes.loading": "Cargando…",
+  "catering.quotes.back": "Volver",
+  "catering.quotes.expires": "Vence",
+  "catering.quotes.sent_emailed": "Cotización enviada — se envió el correo al cliente.",
+  "catering.quotes.sent_no_email": "Cotización marcada como enviada. No hay correo del cliente, así que no se envió nada.",
+  "catering.quotes.resend": "Reenviar",
+  "catering.quotes.send": "Enviar cotización",
+  "catering.quotes.revise": "Revisar",
+  "catering.quotes.mark_accepted": "Marcar aceptada",
+  "catering.quotes.mark_declined": "Marcar rechazada",
+  "catering.quotes.labels": "Imprimir etiquetas",
+  "catering.quotes.error.generic": "Algo salió mal. Inténtalo de nuevo.",
+  "catering.quotes.error.forbidden": "No tienes permiso para eso.",
+  "catering.quotes.error.not_found": "No encontrado.",
+  "catering.quotes.error.invalid_payload": "Revisa los campos e inténtalo de nuevo.",
+  "catering.quotes.error.location_access_denied": "No administras esa ubicación.",
+  "catering.quotes.error.mixed_concerns": "Guarda un cambio a la vez.",
+  "catering.quotes.error.not_current": "Esta cotización se revisó en otro lugar. Recarga e inténtalo de nuevo.",
+  "catering.quotes.error.invalid_status": "Esa acción no está permitida para el estado de esta cotización.",
+  "catering.quotes.error.step_up_required": "Confirma tu contraseña para enviar.",
+  "catering.quotes.error.step_up_stale": "Tu confirmación venció. Confirma tu contraseña de nuevo.",
+  "catering.labels.title": "Etiquetas de Alimentos",
+  "catering.labels.subtitle": "Imprime etiquetas de alérgenos para las partidas de esta cotización.",
+  "catering.labels.print": "Imprimir",
+  "catering.labels.qty": "Cant.",
+  "catering.labels.contains": "CONTIENE",
+  "catering.labels.may_contain": "Puede contener",
+  "catering.labels.unverified": "Sin información de alérgenos — verifica antes de servir.",
+  "catering.labels.unnamed_item": "Artículo"
 }
