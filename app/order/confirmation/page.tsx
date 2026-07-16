@@ -115,8 +115,8 @@ export default function OrderConfirmation() {
         {/* Success hero */}
         <Reveal className="text-center">
           <div className="mx-auto grid h-20 w-20 place-items-center rounded-full bg-co-success/20 text-4xl text-co-success">✓</div>
-          <h1 className="mt-6 text-3xl font-extrabold tracking-tight text-co-text sm:text-4xl">Order received, {firstName}!</h1>
-          <p className="mx-auto mt-3 max-w-md text-co-text-muted">We&apos;ve got your request for {formatDate(details.date)}. Nothing&apos;s charged yet — here&apos;s exactly what happens next.</p>
+          <h1 className="mt-6 text-3xl font-extrabold tracking-tight text-co-text sm:text-4xl">You&apos;re locked in, {firstName}!</h1>
+          <p className="mx-auto mt-3 max-w-md text-co-text-muted">Your <span className="font-bold text-co-text">{money(charges.deposit)}</span> deposit is in and {formatDate(details.date)} is held — pending our team&apos;s final confirmation. Here&apos;s what happens next.</p>
           <div className="mt-5 inline-flex items-center gap-2 rounded-full border border-co-border bg-co-surface px-4 py-2 text-sm">
             <span className="font-bold uppercase tracking-wide text-co-text-dim">Order</span>
             <span className="font-extrabold tabular-nums text-co-text">{orderNumber(details)}</span>
@@ -126,10 +126,10 @@ export default function OrderConfirmation() {
         {/* What happens next */}
         <Reveal className="mt-9">
           <ol className="flex flex-col gap-4">
-            <Next n="1" title="We confirm availability" tone="active">Our team checks your date &amp; headcount — usually within a few hours. We&apos;ll email you either way.</Next>
-            <Next n="2" title={`Reserve with your ${Math.round(DEPOSIT_RATE * 100)}% deposit`}>We&apos;ll email a secure link for the <span className="font-bold text-co-text">{money(charges.deposit)}</span> deposit. Paying it locks your spot on the calendar.</Next>
-            <Next n="3" title="Pay in full by 48h before">{isCompany ? <>The <span className="font-bold text-co-text">{money(charges.balance)}</span> balance is due 48h before — or request <span className="font-bold text-co-text">Net-30 / Net-60</span> terms for {details.company}.</> : <>The remaining <span className="font-bold text-co-text">{money(charges.balance)}</span> is due no later than 48 hours before your event.</>}</Next>
-            <Next n="4" title="We build it & deliver">Made the morning of and delivered on time. You collect the compliments.</Next>
+            <Next n="1" title="Deposit paid — date locked" tone="done">Your {formatDate(details.date).split(",")[0]} spot is held. Nothing more to do right now.</Next>
+            <Next n="2" title="We confirm your order" tone="active">Our team reviews the details and confirms we&apos;re set for your date — you&apos;ll hear from us shortly.</Next>
+            <Next n="3" title="Pay the balance — up to 48h before">We&apos;ll email you a link for the <span className="font-bold text-co-text">{money(charges.balance)}</span> balance{isCompany ? <>, or put it on {details.company}&apos;s Net-30 / Net-60 terms</> : ""}. Pay anytime before the 48-hour mark — we&apos;ll remind you daily so it&apos;s easy.</Next>
+            <Next n="4" title="We build it & deliver">Made the morning of and delivered on time. <span className="text-co-text-dim">(Miss the 48h balance deadline and the deposit is forfeited — so we&apos;ll keep the reminders coming.)</span></Next>
           </ol>
         </Reveal>
 
@@ -154,14 +154,15 @@ export default function OrderConfirmation() {
                 </li>
               ))}
             </ul>
-            <div className="flex items-center justify-between border-t border-co-border/60 bg-co-bg/50 px-6 py-4">
-              <div>
-                <p className="text-xs text-co-text-dim">Estimated total</p>
-                <p className="text-lg font-extrabold tabular-nums text-co-text">{money(charges.total)}</p>
+            <div className="border-t border-co-border/60 bg-co-bg/50 px-6 py-4">
+              <div className="flex items-center justify-between text-sm text-co-text-muted"><span>Order total</span><span className="tabular-nums">{money(charges.total)}</span></div>
+              <div className="mt-2 flex items-center justify-between">
+                <span className="inline-flex items-center gap-1.5 text-sm font-bold text-co-success">✓ Deposit paid</span>
+                <span className="text-base font-extrabold tabular-nums text-co-success">{money(charges.deposit)}</span>
               </div>
-              <div className="text-right">
-                <p className="text-xs text-co-text-dim">Deposit to reserve</p>
-                <p className="text-lg font-extrabold tabular-nums text-co-cta">{money(charges.deposit)}</p>
+              <div className="mt-1 flex items-center justify-between text-sm">
+                <span className="font-semibold text-co-text">Balance due (by 48h before)</span>
+                <span className="font-extrabold tabular-nums text-co-text">{money(charges.balance)}</span>
               </div>
             </div>
           </section>
@@ -184,10 +185,11 @@ export default function OrderConfirmation() {
   );
 }
 
-function Next({ n, title, children, tone }: { n: string; title: string; children: React.ReactNode; tone?: "active" }) {
+function Next({ n, title, children, tone }: { n: string; title: string; children: React.ReactNode; tone?: "done" | "active" }) {
+  const badge = tone === "done" ? "bg-co-success/20 text-co-success" : tone === "active" ? "bg-co-text text-co-gold" : "bg-co-bg text-co-text-dim ring-1 ring-co-border";
   return (
-    <li className="flex gap-4 rounded-2xl border border-co-border/60 bg-co-surface p-5 shadow-sm">
-      <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-sm font-extrabold ${tone === "active" ? "bg-co-text text-co-gold" : "bg-co-bg text-co-text-dim ring-1 ring-co-border"}`}>{n}</span>
+    <li className={`flex gap-4 rounded-2xl border p-5 shadow-sm ${tone === "done" ? "border-co-success/40 bg-co-success/5" : "border-co-border/60 bg-co-surface"}`}>
+      <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-sm font-extrabold ${badge}`}>{tone === "done" ? "✓" : n}</span>
       <div>
         <h3 className="text-sm font-extrabold text-co-text">{title}</h3>
         <p className="mt-0.5 text-sm text-co-text-muted">{children}</p>

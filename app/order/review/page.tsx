@@ -88,13 +88,13 @@ export default function OrderReview() {
     return { subtotal, serviceCharge, deliveryFee, tax, gratuity, total, deposit, balance: total - deposit };
   }, [data, tipRate]);
 
-  const placeOrder = () => {
+  const toCheckout = () => {
     if (data && charges) {
       try {
         window.sessionStorage.setItem("co_order_charges", JSON.stringify({ ...charges, tipRate }));
       } catch { /* non-fatal in mockup */ }
     }
-    router.push("/order/confirmation");
+    router.push("/order/checkout");
   };
 
   if (!data || !charges) {
@@ -121,8 +121,8 @@ export default function OrderReview() {
       <main className="mx-auto max-w-2xl px-5 py-8">
         <Reveal>
           <p className="text-xs font-bold uppercase tracking-[0.28em] text-co-text-dim">Last step</p>
-          <h1 className="mt-2 text-3xl font-extrabold tracking-tight text-co-text sm:text-4xl">Review, then reserve your date.</h1>
-          <p className="mt-2 text-co-text-muted">Here&apos;s everything in one place. A deposit holds your date while our team confirms availability — you pay the balance in full before the event.</p>
+          <h1 className="mt-2 text-3xl font-extrabold tracking-tight text-co-text sm:text-4xl">Review, then lock in your date.</h1>
+          <p className="mt-2 text-co-text-muted">Here&apos;s everything in one place. Your deposit locks your date &amp; requirements right now — our team confirms your order, then emails you to pay the balance before the event.</p>
         </Reveal>
 
         {/* Event details */}
@@ -202,13 +202,13 @@ export default function OrderReview() {
             <div className="border-t border-co-border/60 bg-co-text px-6 py-5 text-co-bg">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-extrabold text-co-gold">Deposit to reserve your date</p>
-                  <p className="mt-0.5 text-xs text-co-bg/60">{Math.round(DEPOSIT_RATE * 100)}% now · holds your spot on the calendar</p>
+                  <p className="text-sm font-extrabold text-co-gold">Deposit to lock in your date</p>
+                  <p className="mt-0.5 text-xs text-co-bg/60">{Math.round(DEPOSIT_RATE * 100)}% now · locks your date &amp; requirements</p>
                 </div>
                 <span className="text-2xl font-extrabold tabular-nums text-co-bg">{money(charges.deposit)}</span>
               </div>
               <div className="mt-3 flex items-center justify-between border-t border-white/10 pt-3">
-                <p className="text-xs font-semibold text-co-bg/70">Balance — due in full by 48h before</p>
+                <p className="text-xs font-semibold text-co-bg/70">Balance — pay by 48h before, or forfeit</p>
                 <span className="text-sm font-bold tabular-nums text-co-bg/90">{money(charges.balance)}</span>
               </div>
             </div>
@@ -220,25 +220,25 @@ export default function OrderReview() {
           <section className="rounded-3xl border border-co-gold/50 bg-co-gold/10 p-6">
             <h2 className="text-sm font-extrabold text-co-text">How payment works</h2>
             <ol className="mt-3 flex flex-col gap-3 text-sm text-co-text">
-              <PayStep n="1" title="Place your order — no charge yet.">We check availability for your date and headcount, usually within a few hours.</PayStep>
-              <PayStep n="2" title={`We email a secure link for your ${Math.round(DEPOSIT_RATE * 100)}% deposit.`}>Paying it reserves your date. Nothing is charged until you do.</PayStep>
-              <PayStep n="3" title="Pay the balance in full by 48 hours before.">{isCompany ? "Or, as a company account, request Net-30 / Net-60 terms and we'll invoice you." : "The remaining balance is due no later than 48 hours before your event."}</PayStep>
-              <PayStep n="4" title="We build it the morning of, and deliver on time.">You collect the compliments.</PayStep>
+              <PayStep n="1" title={`Pay your ${Math.round(DEPOSIT_RATE * 100)}% deposit now — right here.`}>It locks in your date and your requirements on the spot.</PayStep>
+              <PayStep n="2" title="Our team confirms your order.">We review the details and confirm we&apos;re good to go for your date.</PayStep>
+              <PayStep n="3" title="We email you to pay the balance.">{isCompany ? <>Pay anytime up to 48h before — or use {details.company}&apos;s Net-30 / Net-60 terms. We&apos;ll remind you daily.</> : <>Pay the balance anytime up to 48 hours before your event. We&apos;ll remind you daily so it&apos;s easy.</>}</PayStep>
+              <PayStep n="4" title="Miss the 48h deadline and the deposit is forfeited.">So we nudge you daily until it&apos;s paid — then we build &amp; deliver.</PayStep>
             </ol>
           </section>
         </Reveal>
 
-        <p className="mt-6 text-center text-xs text-co-text-dim">Prices shown are estimates and are re-confirmed by our team before any deposit link is sent.</p>
+        <p className="mt-6 text-center text-xs text-co-text-dim">Prices shown are estimates and are re-confirmed by our team when they confirm your order.</p>
       </main>
 
       {/* Sticky place-order bar — the one click that completes the order */}
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-co-border bg-co-bg/95 px-5 py-3.5 backdrop-blur">
         <div className="mx-auto flex max-w-2xl items-center justify-between gap-4">
           <div className="min-w-0">
-            <p className="text-xs text-co-text-dim">Deposit to reserve</p>
+            <p className="text-xs text-co-text-dim">Deposit to lock in</p>
             <p className="text-lg font-extrabold tabular-nums text-co-text">{money(charges.deposit)}<span className="ml-1.5 text-xs font-semibold text-co-text-dim">of {money(charges.total)}</span></p>
           </div>
-          <button type="button" onClick={placeOrder} className="inline-flex min-h-[54px] flex-1 items-center justify-center rounded-full bg-co-text px-6 text-sm font-bold uppercase tracking-[0.08em] text-co-cta shadow-xl shadow-black/20 transition hover:bg-co-text/90 sm:flex-none sm:px-10">Place my order →</button>
+          <button type="button" onClick={toCheckout} className="inline-flex min-h-[54px] flex-1 items-center justify-center rounded-full bg-co-text px-6 text-sm font-bold uppercase tracking-[0.08em] text-co-cta shadow-xl shadow-black/20 transition hover:bg-co-text/90 sm:flex-none sm:px-10">Pay deposit &amp; lock my date →</button>
         </div>
       </div>
     </div>
