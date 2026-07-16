@@ -18,6 +18,7 @@ import { formatCents } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { PasswordModal } from "@/components/auth/PasswordModal";
 import type { Quote, QuoteItem, DeliveryZone, ChargeRates, ChargeStack } from "@/lib/catering/quotes";
+import type { CateringMenuItem, CateringPackage } from "@/lib/catering/menu";
 import { postJson, resolveErrorKey, isStepUpCode } from "./shared";
 
 const WRITE_MIN = 6;
@@ -33,6 +34,8 @@ export interface QuotesClientProps {
   customers: { id: string; name: string; company: string | null; email: string | null }[];
   leads: { id: string; contactName: string; company: string | null; eventDate: string | null; headcount: number | null; locationId: string | null }[];
   pricingByLocation: Record<string, LocationPricing>;
+  menuItems: CateringMenuItem[];
+  packagesByLocation: Record<string, CateringPackage[]>;
   actorLevel: number;
 }
 
@@ -51,7 +54,7 @@ function dollarsToCents(v: string): number | null {
   return Math.round(n * 100);
 }
 
-export function QuotesClient({ quotes, locations, customers, leads, pricingByLocation, actorLevel }: QuotesClientProps) {
+export function QuotesClient({ quotes, locations, customers, leads, pricingByLocation, menuItems, packagesByLocation, actorLevel }: QuotesClientProps) {
   const { t, language } = useTranslation();
   const router = useRouter();
   const [view, setView] = useState<View>({ mode: "list" });
@@ -66,6 +69,8 @@ export function QuotesClient({ quotes, locations, customers, leads, pricingByLoc
         customers={customers}
         leads={leads}
         pricingByLocation={pricingByLocation}
+        menuItems={menuItems}
+        packagesByLocation={packagesByLocation}
         onDone={(newId) => {
           router.refresh();
           setView(newId ? { mode: "detail", id: newId } : { mode: "list" });
@@ -168,11 +173,14 @@ interface LineDraft {
   description: string;
   quantity: string;
   unitPrice: string; // dollars
+  itemId: string | null;
+  menuItemId: string | null;
+  packageId: string | null;
 }
 let lineKeySeq = 0;
 function blankLine(): LineDraft {
   lineKeySeq += 1;
-  return { key: `l${lineKeySeq}`, description: "", quantity: "1", unitPrice: "" };
+  return { key: `l${lineKeySeq}`, description: "", quantity: "1", unitPrice: "", itemId: null, menuItemId: null, packageId: null };
 }
 
 function QuoteBuilder({
@@ -181,6 +189,8 @@ function QuoteBuilder({
   customers,
   leads,
   pricingByLocation,
+  menuItems,
+  packagesByLocation,
   onDone,
   onCancel,
 }: {
@@ -189,6 +199,8 @@ function QuoteBuilder({
   customers: QuotesClientProps["customers"];
   leads: QuotesClientProps["leads"];
   pricingByLocation: Record<string, LocationPricing>;
+  menuItems: CateringMenuItem[];
+  packagesByLocation: Record<string, CateringPackage[]>;
   onDone: (newId: string | null) => void;
   onCancel: () => void;
 }) {
@@ -215,6 +227,9 @@ function QuoteBuilder({
             description: i.description ?? "",
             quantity: String(i.quantity),
             unitPrice: (i.unitPriceCents / 100).toString(),
+            itemId: i.itemId,
+            menuItemId: i.menuItemId,
+            packageId: i.packageId,
           };
         })
       : [blankLine()],
@@ -232,8 +247,8 @@ function QuoteBuilder({
     const seq = ++previewSeq.current;
     const handle = window.setTimeout(async () => {
       const validLines = lines
-        .map((l) => ({ description: l.description.trim(), quantity: Number(l.quantity), unitPriceCents: dollarsToCents(l.unitPrice) }))
-        .filter((l) => l.description.length > 0 && Number.isFinite(l.quantity) && l.quantity > 0 && l.unitPriceCents != null);
+        .map((l) => ({ description: l.description.trim(), quantity: Number(l.quantity), unitPriceCents: dollarsToCents(l.unitPrice), itemId: l.itemId, menuItemId: l.menuItemId, packageId: l.packageId }))
+        .filter((l) => (l.description.length > 0 || l.itemId || l.menuItemId) && Number.isFinite(l.quantity) && l.quantity > 0 && l.unitPriceCents != null);
       if (!locationId || validLines.length === 0) {
         if (seq === previewSeq.current) setPreview(null);
         return;
@@ -255,11 +270,47 @@ function QuoteBuilder({
     setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
   const removeLine = (key: string) => setLines((prev) => (prev.length > 1 ? prev.filter((l) => l.key !== key) : prev));
 
+  const packages = packagesByLocation[locationId] ?? [];
+  const addALaCarte = (item: CateringMenuItem) => {
+    lineKeySeq += 1;
+    const line: LineDraft = {
+      key: `l${lineKeySeq}`,
+      description: item.name,
+      quantity: "1",
+      unitPrice: item.unitPriceCents ? (item.unitPriceCents / 100).toString() : "",
+      itemId: item.id,
+      menuItemId: null,
+      packageId: null,
+    };
+    setLines((prev) => [...prev, line]);
+  };
+  const addPackage = (pkg: CateringPackage) => {
+    // Expand the package into editable per-item lines (customize each item). If the package
+    // has no composition, add one priced line for the package itself.
+    const newLines: LineDraft[] = pkg.items.map((pi) => {
+      lineKeySeq += 1;
+      return {
+        key: `l${lineKeySeq}`,
+        description: pi.label,
+        quantity: String(pi.quantity),
+        unitPrice: pi.unitPriceCents ? (pi.unitPriceCents / 100).toString() : "",
+        itemId: pi.itemId,
+        menuItemId: pi.menuItemId,
+        packageId: pkg.id,
+      };
+    });
+    if (newLines.length === 0) {
+      lineKeySeq += 1;
+      newLines.push({ key: `l${lineKeySeq}`, description: pkg.labelEn, quantity: "1", unitPrice: (pkg.priceCents / 100).toString(), itemId: null, menuItemId: null, packageId: pkg.id });
+    }
+    setLines((prev) => [...prev, ...newLines]);
+  };
+
   const submit = async () => {
     setErrorKey(null);
     const payloadLines = lines
-      .map((l) => ({ description: l.description.trim(), quantity: Number(l.quantity), unitPriceCents: dollarsToCents(l.unitPrice) }))
-      .filter((l) => l.description.length > 0);
+      .map((l) => ({ description: l.description.trim(), quantity: Number(l.quantity), unitPriceCents: dollarsToCents(l.unitPrice), itemId: l.itemId, menuItemId: l.menuItemId, packageId: l.packageId }))
+      .filter((l) => l.description.length > 0 || l.itemId || l.menuItemId);
     if (payloadLines.length === 0) {
       setErrorKey("catering.quotes.error.invalid_payload");
       return;
@@ -399,9 +450,35 @@ function QuoteBuilder({
             </button>
           </div>
         ))}
-        <button type="button" onClick={() => setLines((p) => [...p, blankLine()])} className="self-start text-sm font-bold text-co-info underline">
-          + {t("catering.quotes.add_line")}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {packages.length > 0 && (
+            <select
+              value=""
+              onChange={(e) => { const pkg = packages.find((p) => p.id === e.target.value); if (pkg) addPackage(pkg); }}
+              className="min-h-[40px] rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text"
+            >
+              <option value="">{t("catering.quotes.add_package")}</option>
+              {packages.map((p) => (
+                <option key={p.id} value={p.id}>{(language === "es" ? p.labelEs ?? p.labelEn : p.labelEn)} — {money(p.priceCents)}</option>
+              ))}
+            </select>
+          )}
+          {menuItems.length > 0 && (
+            <select
+              value=""
+              onChange={(e) => { const item = menuItems.find((m) => m.id === e.target.value); if (item) addALaCarte(item); }}
+              className="min-h-[40px] rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text"
+            >
+              <option value="">{t("catering.quotes.add_ala_carte")}</option>
+              {menuItems.map((m) => (
+                <option key={m.id} value={m.id}>{(language === "es" ? m.nameEs ?? m.name : m.name)}{m.unitPriceCents ? ` — ${money(m.unitPriceCents)}` : ""}</option>
+              ))}
+            </select>
+          )}
+          <button type="button" onClick={() => setLines((p) => [...p, blankLine()])} className="text-sm font-bold text-co-info underline">
+            + {t("catering.quotes.add_line")}
+          </button>
+        </div>
       </div>
 
       {/* Delivery + notes */}

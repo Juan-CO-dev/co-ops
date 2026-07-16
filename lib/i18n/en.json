@@ -2068,5 +2068,20 @@
   "catering.companies.error.mixed_concerns": "One change at a time.",
   "catering.companies.error.personal_domain": "Personal email domains can't auto-attribute — attach those contacts by hand.",
   "catering.companies.error.domain_taken": "That domain is already registered to a company.",
-  "catering.companies.error.contact_not_found": "No active contact with that email."
+  "catering.companies.error.contact_not_found": "No active contact with that email.",
+  "catering.quotes.add_package": "Add package",
+  "catering.quotes.add_ala_carte": "Add à la carte",
+  "admin.catering.hub.menu": "Catering Menu",
+  "admin.catering.menu.title": "Catering Menu",
+  "admin.catering.menu.subtitle": "Flag items available for catering (à la carte) and, optionally, catering-only. Changes need a password step-up.",
+  "admin.catering.menu.empty": "No active items.",
+  "admin.catering.menu.no_section": "Uncategorized",
+  "admin.catering.menu.available": "Catering",
+  "admin.catering.menu.only": "Only",
+  "admin.catering.menu.error.generic": "Something went wrong. Please try again.",
+  "admin.catering.menu.error.forbidden": "You do not have permission for that.",
+  "admin.catering.menu.error.not_found": "Item not found.",
+  "admin.catering.menu.error.invalid_payload": "Invalid request.",
+  "admin.catering.menu.error.step_up_required": "Confirm your password to change catering flags.",
+  "admin.catering.menu.error.step_up_stale": "Your confirmation expired. Confirm your password again."
 }
