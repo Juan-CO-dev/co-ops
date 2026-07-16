@@ -18,6 +18,7 @@ import { isAllLocationsAccess } from "@/lib/locations";
 import { loadQuoteBoard, loadPricingContext, QUOTE_READ_MIN } from "@/lib/catering/quotes";
 import { loadCustomers } from "@/lib/catering/customers";
 import { loadPipelineBoard } from "@/lib/catering/pipeline";
+import { loadCateringMenuItems, loadCateringPackagesForQuote } from "@/lib/catering/menu";
 import { QuotesClient } from "@/components/catering/quotes/QuotesClient";
 import { CateringBackLink } from "@/components/catering/CateringBackLink";
 
@@ -27,10 +28,11 @@ export default async function CateringQuotesPage() {
   if (level < QUOTE_READ_MIN) redirect("/dashboard");
   const lang = auth.user.language;
 
-  const [quotes, customers, leads] = await Promise.all([
+  const [quotes, customers, leads, menuItems] = await Promise.all([
     loadQuoteBoard(auth),
     loadCustomers(auth),
     loadPipelineBoard(auth),
+    loadCateringMenuItems(auth),
   ]);
 
   const sb = getServiceRoleClient();
@@ -66,6 +68,11 @@ export default async function CateringQuotesPage() {
   );
   const pricingByLocation = Object.fromEntries(pricingEntries);
 
+  const packagesEntries = await Promise.all(
+    locations.map(async (l) => [l.id, await loadCateringPackagesForQuote(auth, l.id)] as const),
+  );
+  const packagesByLocation = Object.fromEntries(packagesEntries);
+
   return (
     <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3">
@@ -86,6 +93,8 @@ export default async function CateringQuotesPage() {
           locationId: l.locationId,
         }))}
         pricingByLocation={pricingByLocation}
+        menuItems={menuItems}
+        packagesByLocation={packagesByLocation}
         actorLevel={level}
       />
     </main>

@@ -17,6 +17,7 @@ import type { TranslationKey } from "@/lib/i18n/types";
 
 const EDITORS: { id: string; i18nKey: TranslationKey; href: string; minLevel: number }[] = [
   { id: "packages", i18nKey: "admin.catering.hub.packages", href: "/admin/catering/packages", minLevel: 6 },
+  { id: "menu",     i18nKey: "admin.catering.hub.menu",     href: "/admin/catering/menu",     minLevel: 7 },
   { id: "pricing",  i18nKey: "admin.catering.hub.pricing",  href: "/admin/catering/pricing",  minLevel: 8 },
   { id: "capacity", i18nKey: "admin.catering.hub.capacity", href: "/admin/catering/capacity", minLevel: 7 },
   { id: "zones",    i18nKey: "admin.catering.hub.zones",    href: "/admin/catering/zones",    minLevel: 7 },

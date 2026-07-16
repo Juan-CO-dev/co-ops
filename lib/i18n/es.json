@@ -2068,5 +2068,20 @@
   "catering.companies.error.mixed_concerns": "Un cambio a la vez.",
   "catering.companies.error.personal_domain": "Los dominios personales no se atribuyen automáticamente — adjunta esos contactos a mano.",
   "catering.companies.error.domain_taken": "Ese dominio ya está registrado a una empresa.",
-  "catering.companies.error.contact_not_found": "No hay contacto activo con ese correo."
+  "catering.companies.error.contact_not_found": "No hay contacto activo con ese correo.",
+  "catering.quotes.add_package": "Agregar paquete",
+  "catering.quotes.add_ala_carte": "Agregar a la carta",
+  "admin.catering.hub.menu": "Menú de Catering",
+  "admin.catering.menu.title": "Menú de Catering",
+  "admin.catering.menu.subtitle": "Marca los artículos disponibles para catering (a la carta) y, opcionalmente, solo-catering. Los cambios requieren confirmación de contraseña.",
+  "admin.catering.menu.empty": "No hay artículos activos.",
+  "admin.catering.menu.no_section": "Sin categoría",
+  "admin.catering.menu.available": "Catering",
+  "admin.catering.menu.only": "Solo",
+  "admin.catering.menu.error.generic": "Algo salió mal. Inténtalo de nuevo.",
+  "admin.catering.menu.error.forbidden": "No tienes permiso para eso.",
+  "admin.catering.menu.error.not_found": "Artículo no encontrado.",
+  "admin.catering.menu.error.invalid_payload": "Solicitud inválida.",
+  "admin.catering.menu.error.step_up_required": "Confirma tu contraseña para cambiar las marcas de catering.",
+  "admin.catering.menu.error.step_up_stale": "Tu confirmación venció. Confirma tu contraseña de nuevo."
 }
