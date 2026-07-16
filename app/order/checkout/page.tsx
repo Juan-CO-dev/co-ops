@@ -1,13 +1,13 @@
 "use client";
 /**
- * /order/checkout — Catering DEPOSIT PAYMENT (mockup pass v1).
+ * /order/checkout — Catering DEPOSIT PAYMENT (mockup pass v2 — Stripe hand-off).
  *
- * MOCKUP: the in-app deposit step. Per Juan, the deposit is paid right here on the web app to
- * lock in the date + the customer's requirements — it is NOT an emailed link. (The emailed link
- * is later, for the remaining balance, after the team confirms the order.) Payment fields are
- * non-functional in the mockup; the real Stripe deposit lands in Wave 2. Reads the order /
- * details / charges the prior screens persisted; on "pay" it marks the deposit paid and hands
- * off to the confirmation screen.
+ * MOCKUP: the in-app deposit step. Per Juan, the deposit is paid on the web app to lock in the
+ * date + requirements — BUT payment goes through Stripe's hosted checkout so we never see or
+ * store card details. So this page is the pre-Stripe hand-off: it shows the deposit + what it
+ * does + the refund/confirmation terms, and the CTA "redirects to Stripe" (mocked). The real
+ * build creates a Stripe Checkout session and redirects; on return we land the customer on
+ * confirmation. No card fields ever live on our page.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -76,7 +76,8 @@ export default function OrderCheckout() {
     if (paying) return;
     setPaying(true);
     try { window.sessionStorage.setItem("co_order_paid", "1"); } catch { /* non-fatal in mockup */ }
-    window.setTimeout(() => router.push("/order/confirmation"), 750);
+    // Real build: create a Stripe Checkout session + redirect; on return, land on confirmation.
+    window.setTimeout(() => router.push("/order/confirmation"), 900);
   };
 
   const summaryDate = useMemo(() => (state ? new Date(`${state.details.date}T00:00`) : null), [state]);
@@ -90,6 +91,7 @@ export default function OrderCheckout() {
   }
 
   const { order, details, charges } = state;
+  const dayLabel = formatDate(details.date).split(",")[0] ?? "your date";
 
   return (
     <div className="min-h-screen bg-co-bg pb-10 text-co-text">
@@ -102,37 +104,28 @@ export default function OrderCheckout() {
       </header>
 
       <main className="mx-auto grid max-w-4xl grid-cols-1 gap-8 px-5 py-8 lg:grid-cols-[1fr_360px]">
-        {/* Payment */}
+        {/* Payment hand-off */}
         <div className="order-2 lg:order-1">
           <p className="text-xs font-bold uppercase tracking-[0.28em] text-co-text-dim">Deposit</p>
-          <h1 className="mt-2 text-3xl font-extrabold tracking-tight text-co-text sm:text-4xl">Pay your deposit to lock in {formatDate(details.date).split(",")[0]}.</h1>
-          <p className="mt-2 text-co-text-muted">This <span className="font-bold text-co-text">{money(charges.deposit)}</span> deposit holds your date and your requirements. Our team then confirms your order and emails you to pay the balance.</p>
+          <h1 className="mt-2 text-3xl font-extrabold tracking-tight text-co-text sm:text-4xl">Pay your deposit to lock in {dayLabel}.</h1>
+          <p className="mt-2 text-co-text-muted">Your <span className="font-bold text-co-text">{money(charges.deposit)}</span> deposit locks in your date &amp; requirements while a team member confirms your order — usually <span className="font-bold text-co-text">within 24 hours</span>. If we can&apos;t accommodate your date, it&apos;s refunded in full.</p>
 
-          {/* Express pay (mock) */}
-          <div className="mt-6 flex flex-col gap-2.5 sm:flex-row">
-            <button type="button" className="flex min-h-[48px] flex-1 items-center justify-center gap-2 rounded-xl bg-co-text text-sm font-bold text-co-bg transition hover:bg-co-text/90"> Pay</button>
-            <button type="button" className="flex min-h-[48px] flex-1 items-center justify-center gap-2 rounded-xl border-2 border-co-border-2 bg-co-surface text-sm font-bold text-co-text transition hover:border-co-text/40">G Pay</button>
-          </div>
-          <div className="my-5 flex items-center gap-3 text-xs font-semibold uppercase tracking-wide text-co-text-dim"><span className="h-px flex-1 bg-co-border" />or pay by card<span className="h-px flex-1 bg-co-border" /></div>
-
-          {/* Card form (mock) */}
-          <div className="flex flex-col gap-4 rounded-3xl border border-co-border/70 bg-co-surface p-6 shadow-sm">
-            <Field label="Card number"><input inputMode="numeric" placeholder="1234 1234 1234 1234" className="ci" /></Field>
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="Expiry"><input inputMode="numeric" placeholder="MM / YY" className="ci" /></Field>
-              <Field label="CVC"><input inputMode="numeric" placeholder="123" className="ci" /></Field>
+          {/* Stripe hosted checkout — card data never touches our servers */}
+          <div className="mt-6 rounded-3xl border border-co-border/70 bg-co-surface p-6 shadow-sm">
+            <div className="flex items-center gap-2 text-sm font-extrabold text-co-text"><span aria-hidden>🔒</span> Secure payment by Stripe</div>
+            <p className="mt-2 text-sm text-co-text-muted">You&apos;ll complete payment on Stripe&apos;s secure checkout — card, Apple&nbsp;Pay, or Google&nbsp;Pay. <span className="font-semibold text-co-text">Compliments Only never sees or stores your card details.</span></p>
+            <div className="mt-4 flex items-center justify-between rounded-2xl bg-co-text px-5 py-4 text-co-bg">
+              <span className="text-sm font-semibold text-co-bg/70">Deposit due now</span>
+              <span className="text-2xl font-extrabold tabular-nums">{money(charges.deposit)}</span>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              <Field label="Name on card"><input placeholder={details.name || "Full name"} className="ci" /></Field>
-              <Field label="ZIP"><input inputMode="numeric" placeholder="20005" className="ci" /></Field>
-            </div>
+            <button type="button" onClick={pay} disabled={paying} className={`mt-4 flex min-h-[56px] w-full items-center justify-center gap-2 rounded-full text-base font-bold uppercase tracking-[0.08em] shadow-xl shadow-black/20 transition ${paying ? "cursor-wait bg-co-text/70 text-co-bg" : "bg-co-text text-co-cta hover:bg-co-text/90"}`}>
+              {paying ? "Redirecting to secure checkout…" : <>Pay deposit securely <span aria-hidden>→</span></>}
+            </button>
+            <p className="mt-3 flex items-center justify-center gap-1.5 text-xs text-co-text-dim"><span aria-hidden>🔒</span> Powered by <span className="font-bold text-co-text">Stripe</span> · PCI-compliant, encrypted</p>
           </div>
 
-          <button type="button" onClick={pay} disabled={paying} className={`mt-6 flex min-h-[56px] w-full items-center justify-center rounded-full text-base font-bold uppercase tracking-[0.08em] shadow-xl shadow-black/20 transition ${paying ? "cursor-wait bg-co-text/70 text-co-bg" : "bg-co-text text-co-cta hover:bg-co-text/90"}`}>
-            {paying ? "Processing…" : `Pay ${money(charges.deposit)} deposit & lock my date`}
-          </button>
-          <p className="mt-3 text-center text-xs text-co-text-dim">After we confirm your order, we&apos;ll email you to pay the {money(charges.balance)} balance — due up to 48h before your event, or the deposit is forfeited. We&apos;ll remind you daily.</p>
-          <p className="mt-4 rounded-xl bg-co-gold/15 px-4 py-2.5 text-center text-xs font-semibold text-co-text">Preview — payment isn&apos;t wired yet. This is a mockup of the Stripe deposit step (Wave 2).</p>
+          <p className="mt-4 text-sm text-co-text-muted">Once your order is confirmed, we&apos;ll email you to pay the <span className="font-bold text-co-text">{money(charges.balance)}</span> balance — due up to 48h before your event, or the deposit is forfeited. We&apos;ll remind you daily.</p>
+          <p className="mt-4 rounded-xl bg-co-gold/15 px-4 py-2.5 text-center text-xs font-semibold text-co-text">Preview — the Stripe checkout isn&apos;t wired yet. This mocks the hand-off (Wave 2).</p>
         </div>
 
         {/* Order summary */}
@@ -161,17 +154,6 @@ export default function OrderCheckout() {
           </div>
         </aside>
       </main>
-
-      <style>{`.ci{min-height:48px;width:100%;border-radius:0.75rem;border:2px solid var(--co-border-2,#e6ddc0);background:var(--co-bg,#fff9e4);padding:0 0.85rem;font-size:0.95rem;color:var(--co-text,#141414)}`}</style>
     </div>
-  );
-}
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="flex flex-col gap-1.5">
-      <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">{label}</span>
-      {children}
-    </label>
   );
 }

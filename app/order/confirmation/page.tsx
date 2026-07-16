@@ -116,7 +116,7 @@ export default function OrderConfirmation() {
         <Reveal className="text-center">
           <div className="mx-auto grid h-20 w-20 place-items-center rounded-full bg-co-success/20 text-4xl text-co-success">✓</div>
           <h1 className="mt-6 text-3xl font-extrabold tracking-tight text-co-text sm:text-4xl">You&apos;re locked in, {firstName}!</h1>
-          <p className="mx-auto mt-3 max-w-md text-co-text-muted">Your <span className="font-bold text-co-text">{money(charges.deposit)}</span> deposit is in and {formatDate(details.date)} is held — pending our team&apos;s final confirmation. Here&apos;s what happens next.</p>
+          <p className="mx-auto mt-3 max-w-md text-co-text-muted">Your <span className="font-bold text-co-text">{money(charges.deposit)}</span> deposit is in and {formatDate(details.date)} is held — pending our team&apos;s confirmation, usually within 24 hours. Here&apos;s what happens next.</p>
           <div className="mt-5 inline-flex items-center gap-2 rounded-full border border-co-border bg-co-surface px-4 py-2 text-sm">
             <span className="font-bold uppercase tracking-wide text-co-text-dim">Order</span>
             <span className="font-extrabold tabular-nums text-co-text">{orderNumber(details)}</span>
@@ -127,7 +127,7 @@ export default function OrderConfirmation() {
         <Reveal className="mt-9">
           <ol className="flex flex-col gap-4">
             <Next n="1" title="Deposit paid — date locked" tone="done">Your {formatDate(details.date).split(",")[0]} spot is held. Nothing more to do right now.</Next>
-            <Next n="2" title="We confirm your order" tone="active">Our team reviews the details and confirms we&apos;re set for your date — you&apos;ll hear from us shortly.</Next>
+            <Next n="2" title="We confirm your order — usually within 24 hours" tone="active">A team member checks we can do your date. If we can&apos;t, your deposit is refunded in full — otherwise you&apos;re locked in.</Next>
             <Next n="3" title="Pay the balance — up to 48h before">We&apos;ll email you a link for the <span className="font-bold text-co-text">{money(charges.balance)}</span> balance{isCompany ? <>, or put it on {details.company}&apos;s Net-30 / Net-60 terms</> : ""}. Pay anytime before the 48-hour mark — we&apos;ll remind you daily so it&apos;s easy.</Next>
             <Next n="4" title="We build it & deliver">Made the morning of and delivered on time. <span className="text-co-text-dim">(Miss the 48h balance deadline and the deposit is forfeited — so we&apos;ll keep the reminders coming.)</span></Next>
           </ol>

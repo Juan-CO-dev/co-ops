@@ -122,7 +122,7 @@ export default function OrderReview() {
         <Reveal>
           <p className="text-xs font-bold uppercase tracking-[0.28em] text-co-text-dim">Last step</p>
           <h1 className="mt-2 text-3xl font-extrabold tracking-tight text-co-text sm:text-4xl">Review, then lock in your date.</h1>
-          <p className="mt-2 text-co-text-muted">Here&apos;s everything in one place. Your deposit locks your date &amp; requirements right now — our team confirms your order, then emails you to pay the balance before the event.</p>
+          <p className="mt-2 text-co-text-muted">Here&apos;s everything in one place. Your deposit locks your date &amp; requirements while a team member confirms your order — usually within 24 hours — then we email you to pay the balance before the event.</p>
         </Reveal>
 
         {/* Event details */}
@@ -220,8 +220,8 @@ export default function OrderReview() {
           <section className="rounded-3xl border border-co-gold/50 bg-co-gold/10 p-6">
             <h2 className="text-sm font-extrabold text-co-text">How payment works</h2>
             <ol className="mt-3 flex flex-col gap-3 text-sm text-co-text">
-              <PayStep n="1" title={`Pay your ${Math.round(DEPOSIT_RATE * 100)}% deposit now — right here.`}>It locks in your date and your requirements on the spot.</PayStep>
-              <PayStep n="2" title="Our team confirms your order.">We review the details and confirm we&apos;re good to go for your date.</PayStep>
+              <PayStep n="1" title={`Pay your ${Math.round(DEPOSIT_RATE * 100)}% deposit — securely via Stripe.`}>It locks in your date and requirements while a team member reviews your order. We never see or store your card.</PayStep>
+              <PayStep n="2" title="We confirm your order — usually within 24 hours.">If we can&apos;t accommodate your date, your deposit is refunded in full.</PayStep>
               <PayStep n="3" title="We email you to pay the balance.">{isCompany ? <>Pay anytime up to 48h before — or use {details.company}&apos;s Net-30 / Net-60 terms. We&apos;ll remind you daily.</> : <>Pay the balance anytime up to 48 hours before your event. We&apos;ll remind you daily so it&apos;s easy.</>}</PayStep>
               <PayStep n="4" title="Miss the 48h deadline and the deposit is forfeited.">So we nudge you daily until it&apos;s paid — then we build &amp; deliver.</PayStep>
             </ol>
