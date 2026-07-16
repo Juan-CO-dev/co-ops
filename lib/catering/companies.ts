@@ -75,7 +75,7 @@ export interface CateringCompany {
   id: string;
   name: string;
   notes: string | null;
-  claimedByUserId: string | null;
+  claimedByCustomerId: string | null;
   claimedAt: string | null;
   active: boolean;
   createdAt: string;
@@ -102,19 +102,19 @@ interface DbCompanyRow {
   id: string;
   name: string;
   notes: string | null;
-  claimed_by_user_id: string | null;
+  claimed_by_customer_id: string | null;
   claimed_at: string | null;
   active: boolean;
   created_at: string;
   created_by: string | null;
 }
-const COMPANY_COLS = "id, name, notes, claimed_by_user_id, claimed_at, active, created_at, created_by";
+const COMPANY_COLS = "id, name, notes, claimed_by_customer_id, claimed_at, active, created_at, created_by";
 function mapCompany(r: DbCompanyRow): CateringCompany {
   return {
     id: r.id,
     name: r.name,
     notes: r.notes,
-    claimedByUserId: r.claimed_by_user_id,
+    claimedByCustomerId: r.claimed_by_customer_id,
     claimedAt: r.claimed_at,
     active: r.active,
     createdAt: r.created_at,
