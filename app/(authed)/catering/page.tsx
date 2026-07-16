@@ -11,6 +11,7 @@ import { requireSessionFromHeaders } from "@/lib/session";
 import { getRoleLevel } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import type { TranslationKey } from "@/lib/i18n/types";
+import { DashboardBackLink } from "@/components/DashboardBackLink";
 
 const CATERING_HUB_MIN = 5;
 
@@ -27,8 +28,11 @@ export default async function CateringHubPage() {
   const lang = auth.user.language;
 
   return (
-    <div>
-      <h1 className="text-xl font-extrabold leading-tight text-co-text">{serverT(lang, "catering.hub.title")}</h1>
+    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
+      <div className="mb-3">
+        <DashboardBackLink />
+      </div>
+      <h1 className="text-lg font-bold text-co-text">{serverT(lang, "catering.hub.title")}</h1>
       <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "catering.hub.subtitle")}</p>
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {CARDS.map((c) => (
@@ -38,6 +42,6 @@ export default async function CateringHubPage() {
           </Link>
         ))}
       </div>
-    </div>
+    </main>
   );
 }

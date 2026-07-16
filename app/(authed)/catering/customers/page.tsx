@@ -15,6 +15,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { isAllLocationsAccess } from "@/lib/locations";
 import { loadCustomers, CUSTOMER_READ_MIN } from "@/lib/catering/customers";
 import { CustomersClient } from "@/components/catering/customers/CustomersClient";
+import { CateringBackLink } from "@/components/catering/CateringBackLink";
 
 export default async function CateringCustomersPage() {
   const auth = await requireSessionFromHeaders("/catering/customers");
@@ -47,12 +48,13 @@ export default async function CateringCustomersPage() {
   }
 
   return (
-    <div>
-      <h1 className="text-xl font-extrabold leading-tight text-co-text">
-        {serverT(lang, "catering.customers.title")}
-      </h1>
+    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
+      <div className="mb-3">
+        <CateringBackLink />
+      </div>
+      <h1 className="text-lg font-bold text-co-text">{serverT(lang, "catering.customers.title")}</h1>
       <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "catering.customers.subtitle")}</p>
       <CustomersClient customers={customers} locations={locations} actorLevel={level} />
-    </div>
+    </main>
   );
 }
