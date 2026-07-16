@@ -50,6 +50,8 @@ const PUBLIC_PATHS = new Set<string>([
   // but no email/last-login.
   "/api/locations",
   "/api/users/login-options",
+  // Customer catering portal — public storefront (no staff auth). Mockup pass.
+  "/order",
 ]);
 
 function isPublicPath(pathname: string): boolean {
@@ -113,6 +115,6 @@ export const config = {
   matcher: [
     // Next 16 disallows capturing groups in matcher patterns. Use non-capturing
     // group `(?:...)` for the alternation of public auth endpoints.
-    "/((?!_next/static|_next/image|favicon\\.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico|woff|woff2|ttf)$|verify$|reset-password$|api/auth/(?:pin|password|logout|verify|password-reset-request|password-reset)$|api/locations$|api/users/login-options$).+)",
+    "/((?!_next/static|_next/image|favicon\\.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico|woff|woff2|ttf)$|verify$|reset-password$|api/auth/(?:pin|password|logout|verify|password-reset-request|password-reset)$|api/locations$|api/users/login-options$|order$).+)",
   ],
 };
