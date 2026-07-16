@@ -29,7 +29,7 @@ const IMG = {
 };
 
 const PACKAGES = [
-  { img: IMG.subs, name: "The Signature Spread", blurb: "A curated mix of our signature subs — Teamster, Crunchy Boi, Sicky Wicky Club & more — quartered for sharing, with UTZ chips and deli pickles.", price: "$17", per: "per person", min: "10+ guests" },
+  { img: IMG.spread, name: "The Signature Spread", blurb: "A curated mix of our signature subs — Teamster, Crunchy Boi, Sicky Wicky Club & more — quartered for sharing, with UTZ chips and deli pickles.", price: "$17", per: "per person", min: "10+ guests" },
   { img: IMG.sicky, name: "Build-Your-Own Bar", blurb: "House-baked Italian rolls, our meats & cheeses, and every topping — your crew builds their own perfect sub.", price: "$15", per: "per person", min: "15+ guests" },
   { img: IMG.vesuvio, name: "The Meatball Situation", blurb: "Vesuvio II — beef & pork meatballs in vodka sauce with melted mozz — plus garlic bread and marinara.", price: "$120", per: "serves ~12", min: "party tray" },
   { img: IMG.hotpants, name: "The Hot & Heavy", blurb: "For the ones who like it loud — Hot Pants, The Frex & Marisa Tomei, with cholula mayo and hot peppers throughout.", price: "$18", per: "per person", min: "10+ guests" },
@@ -86,7 +86,7 @@ export default function OrderStorefrontMockup() {
 
       {/* Hero */}
       <section className="relative flex min-h-[92vh] items-end overflow-hidden bg-co-text">
-        <img src={IMG.spread} alt="" className="absolute inset-0 h-full w-full object-cover opacity-95" />
+        <img src={IMG.subs} alt="" className="absolute inset-0 h-full w-full object-cover opacity-95" />
         <div className="absolute inset-0 bg-gradient-to-t from-co-text via-co-text/80 to-co-text/30" />
         <div className="relative mx-auto w-full max-w-6xl px-5 pb-16 pt-28 sm:pb-24">
           <p className="text-xs font-bold uppercase tracking-[0.32em] text-co-gold">Catering · Capitol Hill & Dupont Circle</p>
