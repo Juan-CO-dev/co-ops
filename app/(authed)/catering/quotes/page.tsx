@@ -76,7 +76,7 @@ export default async function CateringQuotesPage() {
       <QuotesClient
         quotes={quotes}
         locations={locations}
-        customers={customers.map((c) => ({ id: c.id, name: c.name, company: c.company }))}
+        customers={customers.map((c) => ({ id: c.id, name: c.name, company: c.company, email: c.email }))}
         leads={leads.map((l) => ({
           id: l.id,
           contactName: l.contactName,

@@ -9,6 +9,7 @@ import {
   QUOTE_WRITE_MIN,
   type CreateQuoteInput,
 } from "@/lib/catering/quotes";
+import { resolveOrCreateContact, CateringCompanyError } from "@/lib/catering/companies";
 
 // POST — create a draft catering quote (catering_mgr+ >= 6).
 export async function POST(req: NextRequest) {
@@ -26,10 +27,24 @@ export async function POST(req: NextRequest) {
   const optInt = (v: unknown): number | null => (typeof v === "number" && Number.isInteger(v) ? v : null);
 
   try {
+    // Email-as-identifier: when the builder supplies a client email (and no existing
+    // customer), resolve-or-create the contact (auto-attributing to a company by domain).
+    let customerId = optStr(b.customerId);
+    const contactEmail = optStr(b.contactEmail);
+    if (!customerId && contactEmail) {
+      const contact = await resolveOrCreateContact(ctx, {
+        email: contactEmail,
+        name: optStr(b.contactName),
+        company: optStr(b.contactCompany),
+        primaryLocationId: locationId,
+      });
+      customerId = contact.id;
+    }
+
     const input: CreateQuoteInput = {
       locationId,
       pipelineId: optStr(b.pipelineId),
-      customerId: optStr(b.customerId),
+      customerId,
       eventDate: optStr(b.eventDate),
       headcount: optInt(b.headcount),
       isDelivery: b.isDelivery === true,
@@ -42,6 +57,7 @@ export async function POST(req: NextRequest) {
     return jsonOk({ id, version }, 201);
   } catch (e) {
     if (e instanceof CateringQuoteError) return jsonError(e.status, e.code, { message: e.message });
+    if (e instanceof CateringCompanyError) return jsonError(e.status, e.code, { message: e.message });
     throw e;
   }
 }

@@ -30,7 +30,7 @@ interface LocationPricing {
 export interface QuotesClientProps {
   quotes: Quote[];
   locations: { id: string; name: string }[];
-  customers: { id: string; name: string; company: string | null }[];
+  customers: { id: string; name: string; company: string | null; email: string | null }[];
   leads: { id: string; contactName: string; company: string | null; eventDate: string | null; headcount: number | null; locationId: string | null }[];
   pricingByLocation: Record<string, LocationPricing>;
   actorLevel: number;
@@ -197,7 +197,9 @@ function QuoteBuilder({
   const editing = reviseOf?.quote ?? null;
 
   const [locationId, setLocationId] = useState<string>(editing?.locationId ?? locations[0]?.id ?? "");
-  const [customerId, setCustomerId] = useState<string>(editing?.customerId ?? "");
+  const [contactEmail, setContactEmail] = useState<string>("");
+  const [contactName, setContactName] = useState<string>("");
+  const [contactCompany, setContactCompany] = useState<string>("");
   const [pipelineId, setPipelineId] = useState<string>(editing?.pipelineId ?? "");
   const [eventDate, setEventDate] = useState<string>(editing?.eventDate ?? "");
   const [headcount, setHeadcount] = useState<string>(editing?.headcount != null ? String(editing.headcount) : "");
@@ -265,7 +267,9 @@ function QuoteBuilder({
     setSaving(true);
     const body = {
       locationId,
-      customerId: customerId || null,
+      contactEmail: contactEmail.trim() || null,
+      contactName: contactName.trim() || null,
+      contactCompany: contactCompany.trim() || null,
       pipelineId: pipelineId || null,
       eventDate: eventDate || null,
       headcount: headcount ? Number(headcount) : null,
@@ -328,24 +332,52 @@ function QuoteBuilder({
           </Field>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <Field label={t("catering.quotes.field.customer")}>
-            <select value={customerId} onChange={(e) => setCustomerId(e.target.value)} disabled={!!editing} className="min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text disabled:opacity-60">
-              <option value="">{t("catering.quotes.none")}</option>
-              {customers.map((c) => (
-                <option key={c.id} value={c.id}>{c.company ? `${c.name} · ${c.company}` : c.name}</option>
-              ))}
-            </select>
-          </Field>
-          <Field label={t("catering.quotes.field.lead")}>
-            <select value={pipelineId} onChange={(e) => setPipelineId(e.target.value)} disabled={!!editing} className="min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text disabled:opacity-60">
-              <option value="">{t("catering.quotes.none")}</option>
-              {leads.map((l) => (
-                <option key={l.id} value={l.id}>{l.company ? `${l.contactName} · ${l.company}` : l.contactName}</option>
-              ))}
-            </select>
-          </Field>
-        </div>
+        {!editing && (
+          <>
+            <Field label={t("catering.quotes.field.email")}>
+              <input
+                type="email"
+                inputMode="email"
+                autoComplete="off"
+                list="catering-contact-emails"
+                value={contactEmail}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setContactEmail(v);
+                  const match = customers.find((c) => c.email && c.email.toLowerCase() === v.trim().toLowerCase());
+                  if (match) {
+                    setContactName(match.name);
+                    setContactCompany(match.company ?? "");
+                  }
+                }}
+                placeholder="name@company.com"
+                className="min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text"
+              />
+              <datalist id="catering-contact-emails">
+                {customers.filter((c) => c.email).map((c) => (
+                  <option key={c.id} value={c.email ?? ""} />
+                ))}
+              </datalist>
+            </Field>
+            <p className="-mt-1 text-xs text-co-text-dim">{t("catering.quotes.email_hint")}</p>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label={t("catering.quotes.field.contact_name")}>
+                <input value={contactName} onChange={(e) => setContactName(e.target.value)} className="min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text" />
+              </Field>
+              <Field label={t("catering.quotes.field.contact_company")}>
+                <input value={contactCompany} onChange={(e) => setContactCompany(e.target.value)} className="min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text" />
+              </Field>
+            </div>
+          </>
+        )}
+        <Field label={t("catering.quotes.field.lead")}>
+          <select value={pipelineId} onChange={(e) => setPipelineId(e.target.value)} disabled={!!editing} className="min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text disabled:opacity-60">
+            <option value="">{t("catering.quotes.none")}</option>
+            {leads.map((l) => (
+              <option key={l.id} value={l.id}>{l.company ? `${l.contactName} · ${l.company}` : l.contactName}</option>
+            ))}
+          </select>
+        </Field>
       </div>
 
       {/* Lines */}

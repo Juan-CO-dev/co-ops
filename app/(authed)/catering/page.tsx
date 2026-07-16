@@ -20,6 +20,7 @@ const CARDS: Array<{ href: string; titleKey: TranslationKey; descKey: Translatio
   { href: "/catering/pipeline", titleKey: "catering.pipeline.title", descKey: "catering.hub.pipeline_desc" },
   { href: "/catering/quotes", titleKey: "catering.quotes.title", descKey: "catering.hub.quotes_desc" },
   { href: "/catering/customers", titleKey: "catering.customers.title", descKey: "catering.hub.customers_desc" },
+  { href: "/catering/companies", titleKey: "catering.companies.title", descKey: "catering.hub.companies_desc" },
 ];
 
 export default async function CateringHubPage() {
@@ -36,9 +37,12 @@ export default async function CateringHubPage() {
       <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "catering.hub.subtitle")}</p>
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {CARDS.map((c) => (
-          <Link key={c.href} href={c.href} className="co-card-interactive flex flex-col gap-1 p-5">
-            <span className="text-base font-extrabold text-co-text">{serverT(lang, c.titleKey)}</span>
-            <span className="text-sm text-co-text-muted">{serverT(lang, c.descKey)}</span>
+          <Link key={c.href} href={c.href} className="co-card-interactive group flex items-start justify-between gap-3 p-5">
+            <span className="flex flex-col gap-1">
+              <span className="text-base font-extrabold text-co-text">{serverT(lang, c.titleKey)}</span>
+              <span className="text-sm text-co-text-muted">{serverT(lang, c.descKey)}</span>
+            </span>
+            <span aria-hidden className="mt-0.5 text-lg text-co-text-dim transition group-hover:translate-x-0.5 group-hover:text-co-text">→</span>
           </Link>
         ))}
       </div>
