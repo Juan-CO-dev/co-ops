@@ -60,6 +60,16 @@ export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+/**
+ * Escape LIKE/ILIKE metacharacters (\ % _) so an email is matched LITERALLY. Email lookups
+ * use ILIKE for case-insensitive identity matching against possibly mixed-case legacy rows;
+ * without escaping, a "%"/"_" in the address (e.g. john_doe@x.com) would act as a wildcard
+ * and resolve to the WRONG contact — a wildcard-injection break of the email identifier.
+ */
+function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 export interface CateringCompany {
   id: string;
@@ -268,7 +278,7 @@ export async function attachContactByEmail(actor: AuthContext, companyId: string
   requireLevel(actor, COMPANY_WRITE_MIN);
   const email = normalizeEmail(emailRaw);
   const sb = getServiceRoleClient();
-  const { data, error } = await sb.from("catering_customers").select("id").eq("active", true).ilike("email", email).maybeSingle<{ id: string }>();
+  const { data, error } = await sb.from("catering_customers").select("id").eq("active", true).ilike("email", escapeLike(email)).maybeSingle<{ id: string }>();
   if (error) throw new Error(`attachContactByEmail lookup: ${error.message}`);
   if (!data) throw new CateringCompanyError(404, "contact_not_found", "No active contact with that email");
   await setContactCompany(actor, data.id, companyId);
@@ -305,7 +315,7 @@ export async function resolveOrCreateContact(actor: AuthContext, input: ResolveC
     .from("catering_customers")
     .select("id, company_id")
     .eq("active", true)
-    .ilike("email", email)
+    .ilike("email", escapeLike(email))
     .maybeSingle<{ id: string; company_id: string | null }>();
   if (lErr) throw new Error(`resolveOrCreateContact lookup: ${lErr.message}`);
   if (existing) return { id: existing.id, companyId: existing.company_id, created: false };
@@ -327,7 +337,7 @@ export async function resolveOrCreateContact(actor: AuthContext, input: ResolveC
   if (iErr) {
     if (iErr.code === "23505") {
       // Raced against a concurrent create — re-read by email.
-      const { data: raced } = await sb.from("catering_customers").select("id, company_id").eq("active", true).ilike("email", email).maybeSingle<{ id: string; company_id: string | null }>();
+      const { data: raced } = await sb.from("catering_customers").select("id, company_id").eq("active", true).ilike("email", escapeLike(email)).maybeSingle<{ id: string; company_id: string | null }>();
       if (raced) return { id: raced.id, companyId: raced.company_id, created: false };
     }
     throw new Error(`resolveOrCreateContact insert: ${iErr.message}`);
