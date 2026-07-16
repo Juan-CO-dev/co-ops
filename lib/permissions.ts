@@ -37,6 +37,13 @@ export type PermissionKey =
   // Catering
   | "catering.pipeline.write"
   | "catering.customers.write"
+  | "catering.kb.packages.write"
+  | "catering.kb.pricing.write"
+  | "catering.kb.capacity.write"
+  | "catering.kb.delivery_zones.write"
+  | "catering.kb.allergens.write"
+  | "catering.kb.faq.write"
+  | "catering.kb.food_facts.write"
   // Vendors
   | "vendor.profile.full_edit"
   | "vendor.profile.trivial_edit"
@@ -78,6 +85,15 @@ const PERMISSION_MIN_LEVEL: Record<PermissionKey, number> = {
   // Catering
   "catering.pipeline.write":         6,   // 5 -> 6
   "catering.customers.write":        6,
+  // Catering KB (slice 1A). Levels flagged where a governance choice: pricing/tax
+  // financial-config at MoO+ (8); allergens = safety data at GM+ (7). Both changeable.
+  "catering.kb.packages.write":      6,   // catering_mgr/AGM+ — content
+  "catering.kb.pricing.write":       8,   // MoO+ — tax/gratuity/service-charge/deposit (financial)
+  "catering.kb.capacity.write":      7,   // GM+ — per-location operational policy
+  "catering.kb.delivery_zones.write":7,   // GM+ — fee config
+  "catering.kb.allergens.write":     7,   // GM+ — safety-data sign-off
+  "catering.kb.faq.write":           6,   // catering_mgr/AGM+ — content
+  "catering.kb.food_facts.write":    6,   // catering_mgr/AGM+ — content
   // Vendors
   "vendor.profile.full_edit":        7,   // 6 -> 7
   "vendor.profile.trivial_edit":     6,   // 5 -> 6
