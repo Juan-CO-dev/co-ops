@@ -12,23 +12,16 @@
  */
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { GoodToKnow } from "@/components/portal/GoodToKnow";
 import { GTK } from "@/components/portal/portal-content";
 
 export default function OrderStart() {
-  const router = useRouter();
   const [mode, setMode] = useState<"new" | "returning">("new");
   const [sent, setSent] = useState(false);
   const [f, setF] = useState({ name: "", email: "", company: "", date: "", guests: "20", fulfillment: "delivery" as "delivery" | "pickup", location: "Capitol Hill", address: "" });
   const set = (patch: Partial<typeof f>) => setF((cur) => ({ ...cur, ...patch }));
 
-  const go = () => {
-    // Persist the event details so the builder → review → confirmation flow can recap them.
-    try { window.sessionStorage.setItem("co_order_details", JSON.stringify(f)); } catch { /* non-fatal in mockup */ }
-    router.push(`/order/build?guests=${encodeURIComponent(f.guests || "20")}`);
-  };
   const canSubmit = mode === "returning" ? f.email.includes("@") : f.name.trim() && f.email.includes("@") && f.date;
 
   return (
@@ -48,8 +41,7 @@ export default function OrderStart() {
               <div className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-co-gold/40 text-3xl">✉️</div>
               <h1 className="mt-5 text-2xl font-extrabold text-co-text">Check your email</h1>
               <p className="mx-auto mt-2 max-w-sm text-co-text-muted">We sent a link to <span className="font-bold text-co-text">{f.email || "your inbox"}</span> to {mode === "new" ? "confirm your order and set up your account" : "sign you in"}. Click it and you'll pick up right where you left off.</p>
-              <button type="button" onClick={go} className="mt-7 inline-flex min-h-[52px] w-full items-center justify-center rounded-full bg-co-text px-8 text-base font-bold uppercase tracking-[0.08em] text-co-cta transition hover:bg-co-text/90">Continue to your order →</button>
-              <p className="mt-3 text-xs text-co-text-dim">(Preview — email isn't live yet, so this button stands in for the verified link.)</p>
+              <p className="mt-4 text-sm text-co-text-dim">The link works once and expires in 30 minutes.</p>
             </div>
           ) : (
             <div className="rounded-3xl border border-co-border/70 bg-co-surface p-8 shadow-sm sm:p-10">
@@ -97,7 +89,17 @@ export default function OrderStart() {
                 )}
               </div>
 
-              <button type="button" disabled={!canSubmit} onClick={() => setSent(true)} className={`mt-7 flex min-h-[52px] w-full items-center justify-center rounded-full text-base font-bold uppercase tracking-[0.08em] transition ${canSubmit ? "bg-co-text text-co-cta hover:bg-co-text/90" : "cursor-not-allowed bg-co-border text-co-text-dim"}`}>
+              <button type="button" disabled={!canSubmit} onClick={async () => {
+                // Persist event details so the builder → review → confirmation flow can recap them.
+                try { window.sessionStorage.setItem("co_order_details", JSON.stringify(f)); } catch { /* non-fatal */ }
+                // Fire the magic-link request; response is always {ok:true} — don't block UX on failure.
+                await fetch("/api/portal/magic-link/request", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ email: f.email, name: f.name }),
+                }).catch(() => { /* non-fatal */ });
+                setSent(true);
+              }} className={`mt-7 flex min-h-[52px] w-full items-center justify-center rounded-full text-base font-bold uppercase tracking-[0.08em] transition ${canSubmit ? "bg-co-text text-co-cta hover:bg-co-text/90" : "cursor-not-allowed bg-co-border text-co-text-dim"}`}>
                 {mode === "new" ? "Continue →" : "Send me a sign-in link →"}
               </button>
 
