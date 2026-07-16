@@ -2018,5 +2018,20 @@
   "catering.labels.contains": "CONTIENE",
   "catering.labels.may_contain": "Puede contener",
   "catering.labels.unverified": "Sin información de alérgenos — verifica antes de servir.",
-  "catering.labels.unnamed_item": "Artículo"
+  "catering.labels.unnamed_item": "Artículo",
+  "catering.hub.insights_desc": "Flujo, ingresos y comentarios de un vistazo.",
+  "catering.nav.back_to_catering": "Volver a catering",
+  "catering.nav.back_to_dashboard": "Volver al panel",
+  "catering.insights.title": "Panel de Catering",
+  "catering.insights.subtitle": "Flujo, ingresos y comentarios de un vistazo.",
+  "catering.insights.revenue.open": "Flujo abierto",
+  "catering.insights.revenue.won": "Ganado (aceptado)",
+  "catering.insights.revenue.orders": "Pedidos reservados",
+  "catering.insights.empty": "Aún no hay actividad de catering — se llena a medida que llegan prospectos, cotizaciones y pedidos.",
+  "catering.insights.pipeline_funnel": "Flujo por etapa",
+  "catering.insights.quote_funnel": "Cotizaciones por estado",
+  "catering.insights.feedback": "Comentarios de clientes",
+  "catering.insights.feedback_count": "respuestas",
+  "catering.insights.no_feedback": "Aún no hay comentarios.",
+  "catering.insights.follow_up": "Seguimiento"
 }

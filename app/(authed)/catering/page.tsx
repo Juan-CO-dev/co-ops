@@ -15,6 +15,7 @@ import type { TranslationKey } from "@/lib/i18n/types";
 const CATERING_HUB_MIN = 5;
 
 const CARDS: Array<{ href: string; titleKey: TranslationKey; descKey: TranslationKey }> = [
+  { href: "/catering/insights", titleKey: "catering.insights.title", descKey: "catering.hub.insights_desc" },
   { href: "/catering/pipeline", titleKey: "catering.pipeline.title", descKey: "catering.hub.pipeline_desc" },
   { href: "/catering/quotes", titleKey: "catering.quotes.title", descKey: "catering.hub.quotes_desc" },
   { href: "/catering/customers", titleKey: "catering.customers.title", descKey: "catering.hub.customers_desc" },

@@ -2018,5 +2018,20 @@
   "catering.labels.contains": "CONTAINS",
   "catering.labels.may_contain": "May contain",
   "catering.labels.unverified": "Allergen info not on file — verify before serving.",
-  "catering.labels.unnamed_item": "Item"
+  "catering.labels.unnamed_item": "Item",
+  "catering.hub.insights_desc": "Pipeline, revenue, and feedback at a glance.",
+  "catering.nav.back_to_catering": "Back to catering",
+  "catering.nav.back_to_dashboard": "Back to dashboard",
+  "catering.insights.title": "Catering Insights",
+  "catering.insights.subtitle": "Pipeline, revenue, and feedback at a glance.",
+  "catering.insights.revenue.open": "Open pipeline",
+  "catering.insights.revenue.won": "Won (accepted)",
+  "catering.insights.revenue.orders": "Booked orders",
+  "catering.insights.empty": "No catering activity yet — this fills in as leads, quotes, and orders come through.",
+  "catering.insights.pipeline_funnel": "Pipeline by stage",
+  "catering.insights.quote_funnel": "Quotes by status",
+  "catering.insights.feedback": "Customer feedback",
+  "catering.insights.feedback_count": "responses",
+  "catering.insights.no_feedback": "No feedback yet.",
+  "catering.insights.follow_up": "Follow-up"
 }
