@@ -250,6 +250,25 @@ export function isAdminPath(currentPath: string): boolean {
 }
 
 /**
+ * The catering quote-SEND action route (POST /api/catering/quotes/[id]/send) is a
+ * step-up-gated money action that lives OUTSIDE /admin (catering is under (authed), not
+ * the admin surface). Its own requireSession must therefore preserve the step-up flag set
+ * by the immediately-preceding POST /api/auth/step-up — same load-bearing reason the
+ * /api/admin/* arm exists in isAdminPath. Scoped to the send route ONLY: no other catering
+ * path keeps step-up, so the flag is consumed by the send and cleared on the next
+ * navigation. Widening this predicate is a security decision (Triad A) — added for catering
+ * v1.3 slice 1E with Juan's explicit sign-off.
+ */
+export function isCateringStepUpPath(currentPath: string): boolean {
+  return currentPath.startsWith("/api/catering/quotes/") && currentPath.endsWith("/send");
+}
+
+/** Paths where an unlocked step-up flag survives requireSession (does not auto-clear). */
+export function isStepUpSurface(currentPath: string): boolean {
+  return isAdminPath(currentPath) || isCateringStepUpPath(currentPath);
+}
+
+/**
  * Core session validation — pure function over (rawJwt, ipAddress, userAgent,
  * currentPath). Used by both the NextRequest-shaped route-handler wrapper
  * (`requireSession`) and the next/headers-shaped server-component wrapper
@@ -322,12 +341,13 @@ async function requireSessionCore(
   if (!userRowRaw.active) return { denied: true };
   const userRow = userRowRaw;
 
-  // Step-up auto-clearing: when the actor leaves the /admin/* surface, the
-  // unlocked step-up flag clears so the next admin entry requires fresh
-  // password re-confirmation. proxy.ts cannot do this (no DB in edge runtime),
-  // so it lives here on the Node-runtime side.
+  // Step-up auto-clearing: when the actor leaves a step-up surface (the /admin/*
+  // surface, or the catering quote-send action route), the unlocked step-up flag
+  // clears so the next gated action requires fresh password re-confirmation.
+  // proxy.ts cannot do this (no DB in edge runtime), so it lives here on the
+  // Node-runtime side.
   let stepUpCleared = false;
-  if (row.step_up_unlocked && !isAdminPath(currentPath)) {
+  if (row.step_up_unlocked && !isStepUpSurface(currentPath)) {
     await clearStepUp(row.id);
     stepUpCleared = true;
   }
