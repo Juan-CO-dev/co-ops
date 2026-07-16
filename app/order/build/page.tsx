@@ -201,8 +201,10 @@ function Cart({ lines, subtotal, hasBig, headcount, setHeadcount, coverage, onCu
     if (coverage.main < headcount) return `Mains cover ~${coverage.main} of ${headcount}. Add a platter to round it out.`;
     if (coverage.drink < headcount) return `No drinks for everyone yet — a case of sodas covers 24.`;
     if (coverage.sweet === 0) return `Add a sweet to finish — not everyone needs one, but it lands.`;
-    if (coverage.main >= headcount * 1.8) return `Set for ${headcount} with seconds all around. 🎉`;
-    return `Nicely covered for ${headcount}. Add more for seconds if you like.`;
+    const cats = [coverage.main, coverage.side, coverage.sweet, coverage.drink];
+    if (cats.every((c) => c >= headcount * 1.8)) return `Set for ${headcount} with seconds all around. 🎉`;
+    if (cats.some((c) => c >= headcount * 1.8)) return `Everyone's covered for ${headcount}, with a few extras for seconds.`;
+    return `One of everything for ${headcount}. Add more for seconds if you like.`;
   })();
 
   const lineSummary = (l: { item: Item; line: Line }) => {
