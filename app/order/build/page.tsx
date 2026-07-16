@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { ITEM_FACTS } from "@/components/portal/portal-content";
 
 const T = (id: string) => `https://s3.amazonaws.com/toasttab/restaurants/restaurant-221473000000000000/menu/images/item-${id}.jpg`;
 const VESUVIO = "https://static.spotapps.co/spots/d3/a96ed4e6d84d189e5f239fa7fc42e4/full";
@@ -124,8 +125,13 @@ export default function OrderBuild() {
     router.push("/order/review");
   };
 
+  // Cart-aware ticker: facts about what's actually in your order surface first, then house facts.
+  const facts = useMemo(() => {
+    const itemFacts = lines.map((l) => ITEM_FACTS[l.item.id]).filter((f): f is string => Boolean(f));
+    return itemFacts.length ? Array.from(new Set([...itemFacts, ...FACTS])) : FACTS;
+  }, [lines]);
   const [factIdx, setFactIdx] = useState(0);
-  useEffect(() => { const t = window.setInterval(() => setFactIdx((i) => (i + 1) % FACTS.length), 4500); return () => window.clearInterval(t); }, []);
+  useEffect(() => { const t = window.setInterval(() => setFactIdx((i) => (i + 1) % facts.length), 4500); return () => window.clearInterval(t); }, [facts.length]);
   // Carry the headcount from the intake form (?guests=) into the coverage panel.
   useEffect(() => {
     const g = new URLSearchParams(window.location.search).get("guests");
@@ -136,16 +142,18 @@ export default function OrderBuild() {
 
   return (
     <div className="min-h-screen bg-co-bg pb-28 text-co-text lg:pb-0">
-      <header className="sticky top-0 z-30 border-b border-white/10 bg-co-text/90 text-co-bg backdrop-blur-md">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-3.5">
-          <Link href="/order" className="text-sm font-semibold text-co-bg/70 transition hover:text-co-bg">‹ Menu</Link>
-          <span className="text-sm font-extrabold uppercase tracking-[0.22em]">Build your order</span>
-          <span className="text-sm font-bold text-co-gold">{count > 0 ? `${count} item${count > 1 ? "s" : ""}` : " "}</span>
+      <div className="sticky top-0 z-30">
+        <header className="border-b border-white/10 bg-co-text/90 text-co-bg backdrop-blur-md">
+          <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-3.5">
+            <Link href="/order" className="text-sm font-semibold text-co-bg/70 transition hover:text-co-bg">‹ Menu</Link>
+            <span className="text-sm font-extrabold uppercase tracking-[0.22em]">Build your order</span>
+            <span className="text-sm font-bold text-co-gold">{count > 0 ? `${count} item${count > 1 ? "s" : ""}` : " "}</span>
+          </div>
+        </header>
+        {/* Mobile "good to know" — pinned under the header (desktop shows it beside the cart). */}
+        <div className="border-b border-co-border/50 bg-co-bg/95 backdrop-blur lg:hidden">
+          <div key={factIdx} className="mx-auto max-w-6xl px-5 py-2 text-center text-sm text-co-text-muted transition-opacity duration-500"><span className="mr-2" aria-hidden>💡</span>{facts[factIdx % facts.length]}</div>
         </div>
-      </header>
-
-      <div className="border-b border-co-border/50 bg-co-surface/60">
-        <div key={factIdx} className="mx-auto max-w-6xl px-5 py-2.5 text-center text-sm text-co-text-muted transition-opacity duration-500"><span className="mr-2">💡</span>{FACTS[factIdx]}</div>
       </div>
 
       <div className="mx-auto grid max-w-6xl grid-cols-1 gap-8 px-5 py-8 lg:grid-cols-[1fr_360px]">
@@ -187,7 +195,12 @@ export default function OrderBuild() {
           ))}
         </div>
 
-        <aside className="hidden lg:block"><div className="sticky top-24">
+        <aside className="hidden lg:block"><div className="sticky top-24 flex flex-col gap-4">
+          {/* "Good to know" rides with the sticky cart, cart-aware so it stays relevant. */}
+          <div className="rounded-2xl border border-co-border/70 bg-co-surface px-5 py-4 shadow-sm">
+            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-co-text-dim">💡 Good to know</p>
+            <p key={factIdx} className="mt-1.5 min-h-[2.75em] text-sm leading-snug text-co-text-muted transition-opacity duration-500">{facts[factIdx % facts.length]}</p>
+          </div>
           <Cart lines={lines} subtotal={subtotal} hasBig={hasBig} headcount={headcount} setHeadcount={setHeadcount} coverage={coverage} onCustomize={setModalId} dec={dec} add={quickAdd} onContinue={goToReview} />
         </div></aside>
       </div>
@@ -316,6 +329,7 @@ function CustomizeModal({ item, existing, onClose, onSave }: { item: Item; exist
             <div><h2 className="text-xl font-extrabold text-co-text">{item.name}</h2>{item.note && <p className="mt-1 text-sm text-co-text-muted">{item.note}</p>}</div>
             <span className="shrink-0 text-lg font-extrabold text-co-cta">{money(item.price)}</span>
           </div>
+          {ITEM_FACTS[item.id] && <p className="mt-3 rounded-xl bg-co-bg px-3 py-2 text-xs text-co-text-muted"><span className="mr-1" aria-hidden>🧑‍🍳</span>{ITEM_FACTS[item.id]}</p>}
 
           {k === "platter" && (
             <div className="mt-5">

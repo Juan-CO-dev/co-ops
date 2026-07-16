@@ -13,6 +13,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { GoodToKnow } from "@/components/portal/GoodToKnow";
+import { GTK } from "@/components/portal/portal-content";
 
 const SERVICE_RATE = 0.08;
 const TAX_RATE = 0.1;
@@ -125,6 +127,7 @@ export default function OrderCheckout() {
           </div>
 
           <p className="mt-4 text-sm text-co-text-muted">Once your order is confirmed, we&apos;ll email you to pay the <span className="font-bold text-co-text">{money(charges.balance)}</span> balance — due up to 48h before your event, or the deposit is forfeited. We&apos;ll remind you daily.</p>
+          <div className="mt-4"><GoodToKnow items={GTK.checkout} /></div>
           <p className="mt-4 rounded-xl bg-co-gold/15 px-4 py-2.5 text-center text-xs font-semibold text-co-text">Preview — the Stripe checkout isn&apos;t wired yet. This mocks the hand-off (Wave 2).</p>
         </div>
 
