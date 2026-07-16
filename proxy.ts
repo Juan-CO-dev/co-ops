@@ -58,6 +58,9 @@ function isPublicPath(pathname: string): boolean {
   if (PUBLIC_PATHS.has(pathname)) return true;
   // Customer catering portal surface (storefront + order flow) — all public. Mockup pass.
   if (pathname === "/order" || pathname.startsWith("/order/")) return true;
+  // Customer portal API (magic-link request/verify) — public; the routes do their own
+  // customer-session checks and are NOT staff-JWT-gated.
+  if (pathname.startsWith("/api/portal/")) return true;
   // Static brand assets (public/brand/*) are never auth-gated — otherwise the
   // login/PIN surfaces (unauthenticated) can't load the wordmark/icon and the
   // proxy 307-redirects the <img> request. The matcher also excludes asset
@@ -117,6 +120,6 @@ export const config = {
   matcher: [
     // Next 16 disallows capturing groups in matcher patterns. Use non-capturing
     // group `(?:...)` for the alternation of public auth endpoints.
-    "/((?!_next/static|_next/image|favicon\\.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico|woff|woff2|ttf)$|verify$|reset-password$|api/auth/(?:pin|password|logout|verify|password-reset-request|password-reset)$|api/locations$|api/users/login-options$|order(?:/.*)?$).+)",
+    "/((?!_next/static|_next/image|favicon\\.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico|woff|woff2|ttf)$|verify$|reset-password$|api/auth/(?:pin|password|logout|verify|password-reset-request|password-reset)$|api/locations$|api/users/login-options$|order(?:/.*)?$|api/portal/.*).+)",
   ],
 };
