@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { ITEM_FACTS } from "@/components/portal/portal-content";
 
 const T = (id: string) => `https://s3.amazonaws.com/toasttab/restaurants/restaurant-221473000000000000/menu/images/item-${id}.jpg`;
 const VESUVIO = "https://static.spotapps.co/spots/d3/a96ed4e6d84d189e5f239fa7fc42e4/full";
@@ -124,8 +125,13 @@ export default function OrderBuild() {
     router.push("/order/review");
   };
 
+  // Cart-aware ticker: facts about what's actually in your order surface first, then house facts.
+  const facts = useMemo(() => {
+    const itemFacts = lines.map((l) => ITEM_FACTS[l.item.id]).filter((f): f is string => Boolean(f));
+    return itemFacts.length ? Array.from(new Set([...itemFacts, ...FACTS])) : FACTS;
+  }, [lines]);
   const [factIdx, setFactIdx] = useState(0);
-  useEffect(() => { const t = window.setInterval(() => setFactIdx((i) => (i + 1) % FACTS.length), 4500); return () => window.clearInterval(t); }, []);
+  useEffect(() => { const t = window.setInterval(() => setFactIdx((i) => (i + 1) % facts.length), 4500); return () => window.clearInterval(t); }, [facts.length]);
   // Carry the headcount from the intake form (?guests=) into the coverage panel.
   useEffect(() => {
     const g = new URLSearchParams(window.location.search).get("guests");
@@ -145,7 +151,7 @@ export default function OrderBuild() {
       </header>
 
       <div className="border-b border-co-border/50 bg-co-surface/60">
-        <div key={factIdx} className="mx-auto max-w-6xl px-5 py-2.5 text-center text-sm text-co-text-muted transition-opacity duration-500"><span className="mr-2">💡</span>{FACTS[factIdx]}</div>
+        <div key={factIdx} className="mx-auto max-w-6xl px-5 py-2.5 text-center text-sm text-co-text-muted transition-opacity duration-500"><span className="mr-2">💡</span>{facts[factIdx % facts.length]}</div>
       </div>
 
       <div className="mx-auto grid max-w-6xl grid-cols-1 gap-8 px-5 py-8 lg:grid-cols-[1fr_360px]">
@@ -316,6 +322,7 @@ function CustomizeModal({ item, existing, onClose, onSave }: { item: Item; exist
             <div><h2 className="text-xl font-extrabold text-co-text">{item.name}</h2>{item.note && <p className="mt-1 text-sm text-co-text-muted">{item.note}</p>}</div>
             <span className="shrink-0 text-lg font-extrabold text-co-cta">{money(item.price)}</span>
           </div>
+          {ITEM_FACTS[item.id] && <p className="mt-3 rounded-xl bg-co-bg px-3 py-2 text-xs text-co-text-muted"><span className="mr-1" aria-hidden>🧑‍🍳</span>{ITEM_FACTS[item.id]}</p>}
 
           {k === "platter" && (
             <div className="mt-5">

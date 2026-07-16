@@ -14,6 +14,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { GoodToKnow } from "@/components/portal/GoodToKnow";
+import { GTK } from "@/components/portal/portal-content";
 
 export default function OrderStart() {
   const router = useRouter();
@@ -108,7 +110,8 @@ export default function OrderStart() {
               </p>
             </div>
           )}
-          <p className="mt-6 text-center text-xs text-co-text-dim">Your email is your account — one order history, no passwords to remember.</p>
+          <div className="mt-6"><GoodToKnow items={GTK.start} /></div>
+          <p className="mt-4 text-center text-xs text-co-text-dim">No passwords to remember — your email is your account.</p>
         </div>
       </main>
 

@@ -17,6 +17,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Reveal } from "@/components/portal/Reveal";
+import { GoodToKnow, FaqOpen } from "@/components/portal/GoodToKnow";
+import { FAQ, GTK } from "@/components/portal/portal-content";
 
 // —— Illustrative rates (real rates are server-side authority in the functional build) ——
 const SERVICE_RATE = 0.08; // kitchen & packing
@@ -164,6 +166,15 @@ export default function OrderReview() {
               <p className="text-sm font-semibold text-co-text">{coverageLine(order.coverage, Number(details.guests) || order.headcount)}</p>
             </div>
           </section>
+        </Reveal>
+
+        {/* Reassurance — surfaces before you commit, no click needed */}
+        <Reveal className="mt-5 flex flex-col gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <FaqOpen q={FAQ.count.q} a={FAQ.count.a} />
+            <FaqOpen q={FAQ.changeOrder.q} a={FAQ.changeOrder.a} />
+          </div>
+          <GoodToKnow items={GTK.review} tone="gold" />
         </Reveal>
 
         {/* Tip (optional) */}

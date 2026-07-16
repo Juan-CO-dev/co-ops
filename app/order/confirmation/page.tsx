@@ -10,9 +10,11 @@
  * derived deterministically from the details (stable across renders — no hydration mismatch).
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Reveal } from "@/components/portal/Reveal";
+import { GoodToKnow } from "@/components/portal/GoodToKnow";
+import { GTK } from "@/components/portal/portal-content";
 
 const SERVICE_RATE = 0.08;
 const TAX_RATE = 0.1;
@@ -37,12 +39,6 @@ const SAMPLE_ORDER: OrderBlob = {
   headcount: 20,
 };
 const SAMPLE_DETAILS: Details = { name: "Jordan Alvarez", email: "jordan@acmedesign.com", company: "Acme Design", date: "2026-08-14", guests: "20", fulfillment: "delivery", location: "Capitol Hill", address: "1200 K St NW, Washington, DC 20005" };
-
-const FACTS = [
-  "Everything's built the morning of your event — never the night before.",
-  "House-made ingredients, sliced and built face-to-face.",
-  "Allergen info is on every item, and we'll confirm anything you flagged.",
-];
 
 function computeCharges(order: OrderBlob, details: Details): Charges {
   const serviceCharge = order.subtotal * SERVICE_RATE;
@@ -83,13 +79,6 @@ export default function OrderConfirmation() {
     } catch { /* fall back to sample */ }
     setState({ order, details, charges: charges ?? computeCharges(order, details) });
   }, []);
-
-  const fact = useMemo(() => {
-    if (!state) return FACTS[0];
-    // deterministic pick from the order number, no Math.random
-    const n = orderNumber(state.details).split("").reduce((a, ch) => a + ch.charCodeAt(0), 0);
-    return FACTS[n % FACTS.length];
-  }, [state]);
 
   if (!state) {
     return (
@@ -170,9 +159,7 @@ export default function OrderConfirmation() {
 
         {/* Reassurance + contact */}
         <Reveal className="mt-6">
-          <div className="rounded-2xl bg-co-text px-6 py-5 text-center text-co-bg">
-            <p className="text-sm">💡 {fact}</p>
-          </div>
+          <GoodToKnow items={GTK.confirmation} label="While you wait" tone="dark" />
           <p className="mt-5 text-center text-sm text-co-text-muted">Questions? Reply to your confirmation email or call <span className="font-bold text-co-text">(202) 621-8645</span>. We&apos;re on it.</p>
         </Reveal>
 
