@@ -66,7 +66,7 @@ export function normalizeEmail(email: string): string {
  * without escaping, a "%"/"_" in the address (e.g. john_doe@x.com) would act as a wildcard
  * and resolve to the WRONG contact — a wildcard-injection break of the email identifier.
  */
-function escapeLike(s: string): string {
+export function escapeLike(s: string): string {
   return s.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
