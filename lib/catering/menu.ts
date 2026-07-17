@@ -13,6 +13,9 @@ import type { AuthContext } from "@/lib/session";
 
 export const MENU_READ_MIN = 5;
 
+/** Canonical UUID — locationId is interpolated into a PostgREST `.or()` filter, so guard it. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function requireLevel(actor: AuthContext, min: number): void {
   if (getRoleLevel(actor.user.role) < min) throw new Error("catering menu: insufficient role level");
 }
@@ -73,6 +76,9 @@ export async function loadCateringMenuItems(actor: AuthContext): Promise<Caterin
 /** Active catering packages (global + this location) with their line items, for expansion. */
 export async function loadCateringPackagesForQuote(actor: AuthContext, locationId: string): Promise<CateringPackage[]> {
   requireLevel(actor, MENU_READ_MIN);
+  // Guard the interpolated `.or()` filter below — reject a malformed locationId before the query
+  // (staff-auth'd, but closes the injection class for parity with the portal-side menu loader).
+  if (!UUID_RE.test(locationId)) throw new Error("catering menu: invalid locationId");
   const sb = getServiceRoleClient();
   const { data: pkgs, error } = await sb
     .from("catering_packages")
