@@ -37,6 +37,20 @@ const ZERO_RATES: ChargeRates = {
   taxOnGratuity: false,
 };
 
+/**
+ * The portal's locationId is CLIENT-SUPPLIED, and loadPublicCateringPackages interpolates it
+ * into a PostgREST `.or()` filter STRING (`.eq()` values are parameterized and safe, but an
+ * `.or(...)` argument is parsed as a filter expression). An unvalidated value is therefore a
+ * filter-injection vector. A location id is always a UUID — reject anything else up front so a
+ * value carrying commas/parens/operators never reaches the filter.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function assertLocationId(locationId: string): void {
+  if (typeof locationId !== "string" || !UUID_RE.test(locationId)) {
+    throw new Error("catering portal menu: locationId must be a UUID");
+  }
+}
+
 export interface PublicPricingContext {
   rates: ChargeRates;
   hasPricingRule: boolean;
@@ -67,6 +81,7 @@ export async function loadPublicCateringMenu(): Promise<CateringMenuItem[]> {
 
 /** Active catering packages (global + this location) with their expanded, priced line items. Un-gated. */
 export async function loadPublicCateringPackages(locationId: string): Promise<CateringPackage[]> {
+  assertLocationId(locationId); // filter-injection guard — locationId reaches an .or() string below
   const sb = getServiceRoleClient();
   const { data: pkgs, error } = await sb
     .from("catering_packages")
@@ -125,6 +140,7 @@ export async function loadPublicCateringPackages(locationId: string): Promise<Ca
 
 /** Active pricing rule (or ZERO_RATES) + active delivery zones for a location. Un-gated. */
 export async function loadPublicPricingContext(locationId: string): Promise<PublicPricingContext> {
+  assertLocationId(locationId); // defense-in-depth (these .eq() are parameterized, but keep it uniform)
   const sb = getServiceRoleClient();
   const [{ data: rule, error: rErr }, { data: zoneRows, error: zErr }] = await Promise.all([
     sb
