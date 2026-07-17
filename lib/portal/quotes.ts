@@ -21,6 +21,7 @@
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
 import { createPaymentDue } from "@/lib/catering/payments";
+import { paymentPlan } from "@/lib/catering/payment-plan";
 import type { Quote, QuoteItem, QuoteDetail } from "@/lib/catering/quotes";
 import { isQuoteStatus } from "@/lib/catering/quotes";
 
@@ -198,13 +199,40 @@ export async function initiatePayment(
   const sb = getServiceRoleClient();
   const { data: row, error } = await sb
     .from("catering_quotes")
-    .select("id, customer_id, deposit_cents, total_cents")
+    .select("id, customer_id, origin, status, superseded_at, event_date, deposit_cents, total_cents")
     .eq("id", quoteId)
-    .maybeSingle<{ id: string; customer_id: string | null; deposit_cents: number; total_cents: number }>();
+    .maybeSingle<{
+      id: string;
+      customer_id: string | null;
+      origin: string;
+      status: string;
+      superseded_at: string | null;
+      event_date: string | null;
+      deposit_cents: number;
+      total_cents: number;
+    }>();
   if (error) throw new Error(`initiatePayment quote: ${error.message}`);
   // OWNERSHIP CHECK — the authorization boundary. Not owned (or missing) ⇒ 404, never actionable.
   if (!row || row.customer_id !== customerId) {
     throw new PortalQuoteError(404, "not_found", "Quote not found");
+  }
+
+  // PAYABILITY GATE — a superseded revision or a terminal quote (declined/expired) is not payable.
+  if (row.superseded_at != null || row.status === "declined" || row.status === "expired") {
+    throw new PortalQuoteError(409, "not_payable", "This quote can no longer be paid");
+  }
+
+  // PAYMENT-PLAN AUTHORITY — the requested kind must be an option the real money rules allow
+  // for this quote (origin/lead-time/deposit-driven). This makes the stub enforce the same
+  // authority a real provider will wire behind, so an invalid kind can never create an intent.
+  const plan = paymentPlan({
+    origin: normalizeOrigin(row.origin),
+    eventDate: row.event_date,
+    totalCents: row.total_cents,
+    depositCents: row.deposit_cents,
+  });
+  if (!plan.options.some((o) => o.kind === kind)) {
+    throw new PortalQuoteError(400, "invalid_payment_kind", "That payment option is not available for this quote");
   }
 
   const amountCents = kind === "deposit" ? row.deposit_cents : row.total_cents;

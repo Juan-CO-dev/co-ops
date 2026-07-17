@@ -52,6 +52,18 @@ export function paymentPlan(input: PaymentPlanInput): PaymentPlan {
   const depositCents = input.depositCents;
   const balanceCents = Math.max(0, totalCents - depositCents);
 
+  // No meaningful deposit ⇒ there is nothing to "pay to reserve"; the only real option is
+  // pay-in-full, for BOTH origins, regardless of lead time. This guard runs first.
+  if (depositCents <= 0) {
+    return {
+      mode: "full_only",
+      options: [{ kind: "full", amountCents: totalCents, label: "Pay in full", locks: true }],
+      depositCents,
+      balanceCents,
+      totalCents,
+    };
+  }
+
   if (input.origin === "self_serve") {
     // Always deposit-required → wait for confirmation → pay the balance.
     return {

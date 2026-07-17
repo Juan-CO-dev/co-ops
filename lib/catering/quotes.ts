@@ -32,7 +32,7 @@ export const QUOTE_WRITE_MIN = 6; // catering_mgr+ may build/revise/send
 
 const DEFAULT_EXPIRY_DAYS = 14; // D22 — a quote is valid for 14 days unless caller overrides
 
-export const QUOTE_STATUSES = ["draft", "sent", "accepted", "declined", "expired"] as const;
+export const QUOTE_STATUSES = ["draft", "submitted", "sent", "accepted", "declined", "expired"] as const;
 export type QuoteStatus = (typeof QUOTE_STATUSES)[number];
 export function isQuoteStatus(v: unknown): v is QuoteStatus {
   return typeof v === "string" && (QUOTE_STATUSES as readonly string[]).includes(v);

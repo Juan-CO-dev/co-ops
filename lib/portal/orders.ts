@@ -38,6 +38,9 @@ import { checkAndRecord } from "./rate-limit";
 
 const DEFAULT_EXPIRY_DAYS = 14; // D22 — same validity window as staff quotes
 
+/** A canonical UUID (any version) — reject malformed location ids before they hit the DB. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export class PortalOrderError extends Error {
   constructor(public status: number, public code: string, message?: string) {
     super(message ?? code);
@@ -128,16 +131,32 @@ function centsToUsd(cents: number): string {
  * (Portal-2) — never from the request body.
  */
 export async function submitOrder(customerId: string, input: SubmitOrderInput): Promise<SubmitOrderResult> {
-  // 1 — shape validation.
+  // 1 — shape validation. FAIL FAST before any DB insert — these all previously reached the DB
+  // and 500'd (some after the lead insert = a stranded lead). A bad payload is a 400, no writes.
   if (!input.locationId || typeof input.locationId !== "string") {
     throw new PortalOrderError(400, "invalid_payload", "locationId is required");
+  }
+  if (!UUID_RE.test(input.locationId)) {
+    throw new PortalOrderError(400, "invalid_location", "locationId must be a valid id");
   }
   if (!input.contactName || input.contactName.trim().length === 0) {
     throw new PortalOrderError(400, "invalid_payload", "contactName is required");
   }
+  if (input.headcount != null && (!Number.isFinite(Number(input.headcount)) || Number(input.headcount) < 0)) {
+    throw new PortalOrderError(400, "invalid_headcount", "headcount must be zero or greater");
+  }
+  if (input.eventDate != null && Number.isNaN(Date.parse(input.eventDate))) {
+    throw new PortalOrderError(400, "invalid_event_date", "eventDate must be a valid YYYY-MM-DD date");
+  }
   if (!Array.isArray(input.lines) || input.lines.length === 0) {
     throw new PortalOrderError(400, "invalid_payload", "An order needs at least one line");
   }
+  input.lines.forEach((l, i) => {
+    const quantity = Number(l.quantity);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      throw new PortalOrderError(400, "invalid_line", `Line ${i + 1}: quantity must be > 0`);
+    }
+  });
 
   // 2 — throttle (fixed window: 5 submissions / 15 min per customer).
   const allowed = await checkAndRecord(`order_submit:${customerId}`, 15 * 60, 5);

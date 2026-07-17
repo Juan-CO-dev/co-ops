@@ -22,7 +22,7 @@
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
-import { lockLocationContext } from "@/lib/locations";
+import { lockLocationContext, isAllLocationsAccess } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 
@@ -109,6 +109,10 @@ function assertCanWrite(actor: AuthContext, locationId: string): void {
   if (!lockLocationContext(locActor(actor), locationId)) {
     throw new CateringPaymentError(403, "location_access_denied", "You do not manage that location");
   }
+}
+/** Read-scope location visibility (all-locations override for L7+, else assignment list). */
+function canSeeLocation(actor: AuthContext, locationId: string): boolean {
+  return isAllLocationsAccess(locActor(actor)) || actor.locations.includes(locationId);
 }
 
 /** Load the location_id of the quote that owns a payment (the location the payment gates on). */
@@ -214,6 +218,18 @@ export async function markPaymentPaid(actor: AuthContext, paymentId: string): Pr
 export async function loadPaymentsForQuote(actor: AuthContext, quoteId: string): Promise<Payment[]> {
   requireLevel(actor, PAYMENT_READ_MIN);
   const sb = getServiceRoleClient();
+  // Location gate: this table has no location column, so gate on the owning quote's location
+  // (mirrors markPaymentPaid). A quote the actor can't see ⇒ 404, never leaked cross-location.
+  const { data: quote, error: qErr } = await sb
+    .from("catering_quotes")
+    .select("id, location_id")
+    .eq("id", quoteId)
+    .maybeSingle<{ id: string; location_id: string }>();
+  if (qErr) throw new Error(`loadPaymentsForQuote quote: ${qErr.message}`);
+  if (!quote) throw new CateringPaymentError(404, "not_found", "Quote not found");
+  if (!canSeeLocation(actor, quote.location_id)) {
+    throw new CateringPaymentError(404, "not_found", "Quote not found");
+  }
   const { data, error } = await sb
     .from("catering_payments")
     .select(PAYMENT_COLS)
