@@ -239,7 +239,17 @@ export default function OrderBuild() {
               className="flex w-full items-center justify-between gap-3 border-b border-co-border/60 px-5 py-2 text-left"
             >
               <span className="min-w-0 flex-1 truncate text-xs font-semibold text-co-text">{computeGapNudge(lines, coverage, headcount) ?? "See who's covered — sizes vs your guest count"}</span>
-              <span className={`shrink-0 text-co-text-dim motion-safe:transition-transform motion-safe:duration-300 ${coverageOpen ? "rotate-180" : ""}`} aria-hidden>⌃</span>
+              {/* Glowing/pulsing chevron affordance — signals "tap to expand the at-a-glance guide". */}
+              <span
+                className={`grid h-6 w-6 shrink-0 place-items-center rounded-full text-sm font-extrabold leading-none transition-transform motion-safe:duration-300 ${
+                  coverageOpen
+                    ? "rotate-180 bg-co-bg text-co-text-dim"
+                    : count > 0
+                      ? "bg-co-text text-co-gold motion-safe:animate-[cohint_1.7s_ease-in-out_infinite]"
+                      : "bg-co-bg text-co-text-dim"
+                }`}
+                aria-hidden
+              >⌃</span>
             </button>
             {/* Pinned action row — count + subtotal + Continue stay reachable at all times. */}
             <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-3">
@@ -251,6 +261,9 @@ export default function OrderBuild() {
       </div>
 
       {modalItem && <CustomizeModal item={modalItem} existing={cart[modalItem.id] ?? null} onClose={() => setModalId(null)} onSave={(line) => { applyCustom(modalItem.id, line); setModalId(null); }} />}
+
+      {/* Gold glow-pulse for the mobile coverage-expand chevron (the "tap to view the guide" hint). */}
+      <style>{`@keyframes cohint{0%,100%{box-shadow:0 0 0 0 rgba(255,229,96,0)}50%{box-shadow:0 0 0 5px rgba(255,229,96,0.35),0 0 12px 2px rgba(255,229,96,0.6)}}`}</style>
     </div>
   );
 }
