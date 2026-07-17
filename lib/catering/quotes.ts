@@ -885,11 +885,19 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
     if (cust?.email) {
       recipient = cust.email;
       const total = (row.total_cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
+      // Link to the shared customer review+pay surface (sign-in required). Only include it when
+      // NEXT_PUBLIC_APP_URL is set — never emit a broken `undefined/...` URL into a sent email.
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+      const quoteUrl = appUrl ? `${appUrl}/order/quote/${id}` : null;
+      const htmlLink = quoteUrl
+        ? `<p>View &amp; pay your quote: <a href="${quoteUrl}">${quoteUrl}</a> (sign-in required).</p>`
+        : "";
+      const textLink = quoteUrl ? `\n\nView & pay your quote: ${quoteUrl} (sign-in required).` : "";
       const res = await sendEmail({
         to: cust.email,
         subject: "Your catering quote from Compliments Only",
-        html: `<p>Hi ${cust.name ?? "there"},</p><p>Your catering quote is ready. Estimated total: <strong>${total}</strong>.</p><p>Our team will follow up shortly to confirm the details.</p>`,
-        text: `Hi ${cust.name ?? "there"},\n\nYour catering quote is ready. Estimated total: ${total}.\n\nOur team will follow up shortly to confirm the details.`,
+        html: `<p>Hi ${cust.name ?? "there"},</p><p>Your catering quote is ready. Estimated total: <strong>${total}</strong>.</p>${htmlLink}<p>Our team will follow up shortly to confirm the details.</p>`,
+        text: `Hi ${cust.name ?? "there"},\n\nYour catering quote is ready. Estimated total: ${total}.${textLink}\n\nOur team will follow up shortly to confirm the details.`,
       });
       if ("id" in res) emailed = true;
       else emailError = res.error;
