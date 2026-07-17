@@ -99,6 +99,7 @@ export default function OrderBuild() {
   const [headcount, setHeadcount] = useState(20);
   const [modalId, setModalId] = useState<string | null>(null);
   const [coverageOpen, setCoverageOpen] = useState(false); // mobile bottom-sheet toggle
+  const [hintIdx, setHintIdx] = useState(0); // rotating index for the mobile collapsed coverage line
 
   const quickAdd = useCallback((id: string) => setCart((c) => ({ ...c, [id]: { ...(c[id] ?? emptyLine()), qty: (c[id]?.qty ?? 0) + 1 } })), []);
   const dec = useCallback((id: string) => setCart((c) => {
@@ -114,6 +115,14 @@ export default function OrderBuild() {
   const hasBig = lines.some((l) => l.item.id === "three" || l.item.id === "six");
   const servedBy = (cat: Cat) => lines.filter((l) => l.item.cat === cat).reduce((s, l) => s + l.item.serves * l.line.qty, 0);
   const coverage = { main: servedBy("main"), side: servedBy("side"), sweet: servedBy("sweet"), drink: servedBy("drink") };
+
+  // Ordered "what's left / upsell" hints; the mobile collapsed bar rotates through them line by line.
+  const hints = coverageHints(lines, coverage, headcount);
+  useEffect(() => {
+    if (hints.length <= 1) return;
+    const t = window.setInterval(() => setHintIdx((i) => i + 1), 3800);
+    return () => window.clearInterval(t);
+  }, [hints.length]);
 
   // Persist a self-describing order blob for the review/confirmation screens, then hand off.
   const goToReview = () => {
@@ -238,7 +247,7 @@ export default function OrderBuild() {
               aria-expanded={coverageOpen}
               className="flex w-full items-center justify-between gap-3 border-b border-co-border/60 px-5 py-2 text-left"
             >
-              <span className="min-w-0 flex-1 truncate text-xs font-semibold text-co-text">{computeGapNudge(lines, coverage, headcount) ?? "See who's covered — sizes vs your guest count"}</span>
+              <span key={hintIdx} className="min-w-0 flex-1 truncate text-xs font-semibold text-co-text transition-opacity duration-500">{hints.length > 0 ? hints[hintIdx % hints.length] : "See who's covered — sizes vs your guest count"}</span>
               {/* Glowing/pulsing chevron affordance — signals "tap to expand the at-a-glance guide". */}
               <span
                 className={`grid h-6 w-6 shrink-0 place-items-center rounded-full text-sm font-extrabold leading-none transition-transform motion-safe:duration-300 ${
@@ -287,17 +296,39 @@ function Bar({ label, served, headcount, softer }: { label: string; served: numb
   );
 }
 
-// Soft over/under nudge — one line reading the whole cart against headcount.
-// Module-scoped so BOTH the desktop Cart and the mobile bottom-bar summary can use it.
-function computeGapNudge(lines: { item: Item; line: Line }[], coverage: { main: number; side: number; sweet: number; drink: number }, headcount: number): string | null {
-  if (lines.length === 0) return null;
-  if (coverage.main < headcount) return `Mains cover ~${coverage.main} of ${headcount}. Add a platter to round it out.`;
-  if (coverage.drink < headcount) return `No drinks for everyone yet — a case of sodas covers 24.`;
-  if (coverage.sweet === 0) return `Add a sweet to finish — not everyone needs one, but it lands.`;
+// Ordered over/under guidance — what's LEFT to pick to round out the order (biggest gap first,
+// priority mains → drinks → sides → sweets), then a gentle upsell ("room for seconds"), then the
+// all-set close. The desktop shows the whole guide at once; the mobile collapsed bar rotates
+// through these one line at a time. Module-scoped so both surfaces share the logic.
+function coverageHints(lines: { item: Item; line: Line }[], coverage: { main: number; side: number; sweet: number; drink: number }, headcount: number): string[] {
+  if (lines.length === 0) return [];
+  const H = headcount;
+  const hints: string[] = [];
+
+  // 1) Still light — what's left to make it a well-rounded spread.
+  if (coverage.main < H) hints.push(`Mains cover ~${coverage.main} of ${H} — add a platter or a few subs so everyone eats.`);
+  if (coverage.drink < H) hints.push(coverage.drink === 0 ? `No drinks yet — a case of sodas covers 24, or grab a dozen waters.` : `Drinks cover ~${coverage.drink} of ${H} — another case so no one's parched.`);
+  if (coverage.side < H) hints.push(coverage.side === 0 ? `Add sides or chips so it's not just subs — rounds out the spread.` : `Sides cover ~${coverage.side} of ${H} — a little more rounds it out.`);
+  if (coverage.sweet === 0) hints.push(`No sweets yet — a tray of cookies or cannoli finishes it off.`);
+
+  // 2) Covered, but room for seconds — the nudge to round up.
+  if (coverage.main >= H && coverage.main < H * 1.8) hints.push(`Everyone's got a sub — add a platter so folks can grab seconds. 😋`);
+  if (coverage.drink >= H && coverage.drink < H * 1.8) hints.push(`Drinks are set — a little extra for the thirsty ones never hurts.`);
+  if (coverage.side >= H && coverage.side < H * 1.8) hints.push(`Sides are covered — a bit more means seconds all around.`);
+  if (coverage.sweet > 0 && coverage.sweet < H) hints.push(`A few sweets in — add more so there's one for everyone.`);
+  else if (coverage.sweet >= H && coverage.sweet < H * 1.8) hints.push(`Sweets for everyone — a couple extra and no one misses out.`);
+
+  // 3) Fully set / gentle close.
   const cats = [coverage.main, coverage.side, coverage.sweet, coverage.drink];
-  if (cats.every((c) => c >= headcount * 1.8)) return `Set for ${headcount} with seconds all around. 🎉`;
-  if (cats.some((c) => c >= headcount * 1.8)) return `Everyone's covered for ${headcount}, with a few extras for seconds.`;
-  return `One of everything for ${headcount}. Add more for seconds if you like.`;
+  if (cats.every((c) => c >= H * 1.8)) hints.push(`Set for ${H} with seconds all around. 🎉`);
+  if (hints.length === 0) hints.push(`One of everything for ${H} — add more for seconds if you like.`);
+
+  return hints;
+}
+
+// The single top-priority nudge (desktop guide + the expanded sheet) = the first coverage hint.
+function computeGapNudge(lines: { item: Item; line: Line }[], coverage: { main: number; side: number; sweet: number; drink: number }, headcount: number): string | null {
+  return coverageHints(lines, coverage, headcount)[0] ?? null;
 }
 
 // The at-a-glance coverage guide — over/under bars + headcount input + soft nudge.
