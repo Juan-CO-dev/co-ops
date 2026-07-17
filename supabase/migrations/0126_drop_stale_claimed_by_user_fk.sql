@@ -1,0 +1,11 @@
+-- Migration 0126_drop_stale_claimed_by_user_fk
+-- Applied via Supabase MCP apply_migration on 2026-07-16.
+-- Canonical reference: 0124_catering_company_claimed_by_customer.sql + Portal-2 adversarial review.
+--
+-- 0124 renamed claimed_by_user_id -> claimed_by_customer_id, but the ORIGINAL FK
+-- (catering_companies_claimed_by_user_id_fkey -> users(id)) followed the renamed column,
+-- leaving TWO foreign keys on claimed_by_customer_id — one -> users(id), one -> catering_customers(id).
+-- A non-null value would have to satisfy BOTH, so the column could only ever hold NULL, silently
+-- breaking the account-claim feature. Drop the stale users FK; keep the correct catering_customers
+-- FK from 0124. Caught by the Portal-2 adversarial review; tables are empty so there is no data risk.
+ALTER TABLE catering_companies DROP CONSTRAINT catering_companies_claimed_by_user_id_fkey;

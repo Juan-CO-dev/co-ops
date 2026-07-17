@@ -29,7 +29,7 @@ function cookieOpts(maxAgeSeconds: number) {
 export async function createCustomerSession(customerId: string, email: string, ctx?: { ip?: string | null; ua?: string | null }) {
   const sb = getServiceRoleClient();
   const sessionId = crypto.randomUUID();
-  const jwt = await signCustomerJwt({ customer_id: customerId, email, session_id: sessionId, role: "authenticated" } satisfies CustomerJwtClaims);
+  const jwt = await signCustomerJwt({ customer_id: customerId, email, session_id: sessionId } satisfies CustomerJwtClaims);
   const tokenHash = await hashToken(jwt);
   const now = new Date();
   const expiresAt = new Date(now.getTime() + SESSION_DAYS * 86400 * 1000);

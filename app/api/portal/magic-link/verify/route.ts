@@ -20,7 +20,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? req.headers.get("x-real-ip");
-  const result = await consumeMagicLink({ token: body.token, ip, ua: req.headers.get("user-agent") });
+  // consumeMagicLink flips the token single-use BEFORE creating the account/session; a genuine
+  // server error after the flip should still answer a clean constant-shape 400, not a 500.
+  let result;
+  try {
+    result = await consumeMagicLink({ token: body.token, ip, ua: req.headers.get("user-agent") });
+  } catch {
+    return NextResponse.json({ ok: false }, { status: 400 });
+  }
   if (!result.ok || !result.session) {
     return NextResponse.json({ ok: false }, { status: 400 });
   }

@@ -39,16 +39,21 @@ function allowlisted(email: string): boolean {
 export async function requestMagicLink(input: { email: string; name?: string | null; ip?: string | null }): Promise<void> {
   const email = normalizeEmail(input.email);
   if (!email || extractDomain(email) === null) return;
-  const ok = await checkAndRecord(`magic_link:${input.ip ?? "noip"}:${email}`, 15 * 60, 5);
-  if (!ok) { void audit({ actorId: null, actorRole: null, action: "portal.magic_link_throttled", resourceTable: "catering_portal_tokens", resourceId: email, metadata: { ip: input.ip }, ipAddress: input.ip ?? null, userAgent: null }); return; }
+  // Per-VICTIM cap keyed on email alone is IP-independent — an attacker spoofing the client
+  // x-forwarded-for cannot bomb a single victim past this. The per-SOURCE (ip+email) cap is a
+  // best-effort secondary. audit_log.resource_id is uuid, so null it and carry email in metadata.
+  const emailOk = await checkAndRecord(`magic_link_email:${email}`, 15 * 60, 5);
+  const sourceOk = await checkAndRecord(`magic_link_src:${input.ip ?? "noip"}:${email}`, 15 * 60, 5);
+  if (!emailOk || !sourceOk) { void audit({ actorId: null, actorRole: null, action: "portal.magic_link_throttled", resourceTable: "catering_portal_tokens", resourceId: null, metadata: { email, ip: input.ip }, ipAddress: input.ip ?? null, userAgent: null }); return; }
   const sb = getServiceRoleClient();
   const rawToken = generateToken();
   const tokenHash = await hashToken(rawToken);
   const expiresAt = new Date(Date.now() + TOKEN_TTL_MIN * 60 * 1000).toISOString();
   const { error } = await sb.from("catering_portal_tokens").insert({ email, token_hash: tokenHash, name: input.name?.trim() || null, expires_at: expiresAt, ip_address: input.ip ?? null });
-  if (error) { void audit({ actorId: null, actorRole: null, action: "portal.magic_link_insert_failed", resourceTable: "catering_portal_tokens", resourceId: email, metadata: { error: error.message }, ipAddress: input.ip ?? null, userAgent: null }); return; }
-  if (allowlisted(email)) {
-    const link = `${process.env.NEXT_PUBLIC_APP_URL}/order/verify?token=${rawToken}`;
+  if (error) { void audit({ actorId: null, actorRole: null, action: "portal.magic_link_insert_failed", resourceTable: "catering_portal_tokens", resourceId: null, metadata: { email, error: error.message }, ipAddress: input.ip ?? null, userAgent: null }); return; }
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+  if (allowlisted(email) && appUrl) {
+    const link = `${appUrl}/order/verify?token=${rawToken}`;
     await sendEmail({
       to: email,
       subject: "Your Compliments Only sign-in link",
@@ -56,7 +61,7 @@ export async function requestMagicLink(input: { email: string; name?: string | n
       text: `Sign in to Compliments Only: ${link}\n\nThis link works once and expires in 30 minutes. If you didn't request this, you can safely ignore this email.`,
     });
   }
-  void audit({ actorId: null, actorRole: null, action: "portal.magic_link_requested", resourceTable: "catering_portal_tokens", resourceId: email, metadata: { allowlisted: allowlisted(email) }, ipAddress: input.ip ?? null, userAgent: null });
+  void audit({ actorId: null, actorRole: null, action: "portal.magic_link_requested", resourceTable: "catering_portal_tokens", resourceId: null, metadata: { email, allowlisted: allowlisted(email) }, ipAddress: input.ip ?? null, userAgent: null });
 }
 
 export interface ConsumeResult { ok: boolean; session?: Awaited<ReturnType<typeof createCustomerSession>> }

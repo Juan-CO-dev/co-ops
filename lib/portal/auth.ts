@@ -3,17 +3,22 @@
  *
  * A catering customer is a `catering_customers` contact, NEVER a staff `users`
  * row. This principal rides its OWN cookie (`co_ops_portal`) + its OWN JWT and
- * must never satisfy a staff check (nor vice-versa). Two load-bearing guards
- * keep the principals separated — do NOT weaken either:
+ * must never satisfy a staff check (nor vice-versa). Three load-bearing guards
+ * keep the principals separated — do NOT weaken any:
  *   1. Distinct issuer "co-ops-portal" (staff lib/auth.ts uses "co-ops"), so a
  *      staff token fails jwtVerify's issuer check here and a customer token
  *      fails it on the staff side.
  *   2. verifyCustomerJwt hard-rejects any payload without `customer_id`
  *      (belt-and-suspenders on top of the issuer split).
+ *   3. NO `role` claim. The portal is service-role + app-layer only and never
+ *      forwards this cookie to a Supabase authenticated client — so the token
+ *      must NOT be a usable PostgREST token. PostgREST ignores `iss`; a `role:
+ *      "authenticated"` claim would make a customer cookie a signature-valid DB
+ *      token (with current_user_id() = NULL, satisfying any USING(true) policy).
+ *      Omitting `role` closes that footgun.
  *
  * Key material: same AUTH_JWT_SECRET as staff, hex-decoded to match Supabase's
- * HS256 key bytes (see lib/auth.ts getJwtKey). `role: "authenticated"` is the
- * PostgREST-reserved database role, identical to the staff claim shape.
+ * HS256 key bytes (see lib/auth.ts getJwtKey).
  */
 
 import { SignJWT, jwtVerify } from "jose";
@@ -34,7 +39,6 @@ export interface CustomerJwtClaims {
   customer_id: string;
   email: string;
   session_id: string;
-  role: "authenticated";
 }
 
 export interface VerifiedCustomerJwt extends CustomerJwtClaims {
