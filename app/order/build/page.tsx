@@ -98,6 +98,7 @@ export default function OrderBuild() {
   const [cart, setCart] = useState<Record<string, Line>>({});
   const [headcount, setHeadcount] = useState(20);
   const [modalId, setModalId] = useState<string | null>(null);
+  const [coverageOpen, setCoverageOpen] = useState(false); // mobile bottom-sheet toggle
 
   const quickAdd = useCallback((id: string) => setCart((c) => ({ ...c, [id]: { ...(c[id] ?? emptyLine()), qty: (c[id]?.qty ?? 0) + 1 } })), []);
   const dec = useCallback((id: string) => setCart((c) => {
@@ -205,14 +206,64 @@ export default function OrderBuild() {
         </div></aside>
       </div>
 
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-co-border bg-co-bg/95 px-5 py-3 backdrop-blur lg:hidden">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4">
-          <div className="text-sm"><span className="font-bold text-co-text">{count} item{count === 1 ? "" : "s"}</span><span className="ml-2 text-co-text-muted">{money(subtotal)}</span></div>
-          <button type="button" onClick={goToReview} disabled={count === 0} className={`inline-flex min-h-[46px] items-center justify-center rounded-full px-6 text-sm font-bold uppercase tracking-[0.08em] transition ${count > 0 ? "bg-co-text text-co-cta hover:bg-co-text/90" : "cursor-not-allowed bg-co-border text-co-text-dim"}`}>Continue →</button>
+      {/* Mobile bottom bar — the coverage guide (desktop-only until now) surfaces here as an expandable sheet. */}
+      <div className="lg:hidden">
+        {/* Dimmed backdrop behind the sheet; tap to collapse. */}
+        <button
+          type="button"
+          aria-hidden={!coverageOpen}
+          tabIndex={coverageOpen ? 0 : -1}
+          onClick={() => setCoverageOpen(false)}
+          className={`fixed inset-0 z-20 bg-co-text/40 backdrop-blur-sm motion-safe:transition-opacity motion-safe:duration-300 ${coverageOpen ? "opacity-100" : "pointer-events-none opacity-0"}`}
+        />
+
+        <div className="fixed inset-x-0 bottom-0 z-30">
+          {/* Slide-up sheet — the full CoveragePanel, above the pinned action row. */}
+          <div className={`overflow-hidden px-3 motion-safe:transition-[max-height,opacity] motion-safe:duration-300 ${coverageOpen ? "max-h-[70vh] opacity-100" : "max-h-0 opacity-0"}`}>
+            <div className="mx-auto max-h-[68vh] max-w-6xl overflow-y-auto rounded-t-3xl border border-co-border bg-co-surface p-4 pb-2 shadow-2xl">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-co-text">At-a-glance coverage</h2>
+                <button type="button" onClick={() => setCoverageOpen(false)} aria-label="Close coverage guide" className="grid h-8 w-8 place-items-center rounded-full bg-co-bg text-lg font-bold text-co-text-dim">×</button>
+              </div>
+              {/* -mt-5 offsets CoveragePanel's own mt-5 so it hugs the header inside the sheet. */}
+              <div className="-mt-5"><CoveragePanel coverage={coverage} headcount={headcount} setHeadcount={setHeadcount} gapNudge={computeGapNudge(lines, coverage, headcount)} /></div>
+            </div>
+          </div>
+
+          <div className="border-t border-co-border bg-co-bg/95 backdrop-blur">
+            {/* Tappable one-line coverage summary — expands/collapses the sheet. */}
+            <button
+              type="button"
+              onClick={() => setCoverageOpen((v) => !v)}
+              aria-expanded={coverageOpen}
+              className="flex w-full items-center justify-between gap-3 border-b border-co-border/60 px-5 py-2 text-left"
+            >
+              <span className="min-w-0 flex-1 truncate text-xs font-semibold text-co-text">{computeGapNudge(lines, coverage, headcount) ?? "See who's covered — sizes vs your guest count"}</span>
+              {/* Glowing/pulsing chevron affordance — signals "tap to expand the at-a-glance guide". */}
+              <span
+                className={`grid h-6 w-6 shrink-0 place-items-center rounded-full text-sm font-extrabold leading-none transition-transform motion-safe:duration-300 ${
+                  coverageOpen
+                    ? "rotate-180 bg-co-bg text-co-text-dim"
+                    : count > 0
+                      ? "bg-co-text text-co-gold motion-safe:animate-[cohint_1.7s_ease-in-out_infinite]"
+                      : "bg-co-bg text-co-text-dim"
+                }`}
+                aria-hidden
+              >⌃</span>
+            </button>
+            {/* Pinned action row — count + subtotal + Continue stay reachable at all times. */}
+            <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-3">
+              <div className="text-sm"><span className="font-bold text-co-text">{count} item{count === 1 ? "" : "s"}</span><span className="ml-2 text-co-text-muted">{money(subtotal)}</span></div>
+              <button type="button" onClick={goToReview} disabled={count === 0} className={`inline-flex min-h-[46px] items-center justify-center rounded-full px-6 text-sm font-bold uppercase tracking-[0.08em] transition ${count > 0 ? "bg-co-text text-co-cta hover:bg-co-text/90" : "cursor-not-allowed bg-co-border text-co-text-dim"}`}>Continue →</button>
+            </div>
+          </div>
         </div>
       </div>
 
       {modalItem && <CustomizeModal item={modalItem} existing={cart[modalItem.id] ?? null} onClose={() => setModalId(null)} onSave={(line) => { applyCustom(modalItem.id, line); setModalId(null); }} />}
+
+      {/* Gold glow-pulse for the mobile coverage-expand chevron (the "tap to view the guide" hint). */}
+      <style>{`@keyframes cohint{0%,100%{box-shadow:0 0 0 0 rgba(255,229,96,0)}50%{box-shadow:0 0 0 5px rgba(255,229,96,0.35),0 0 12px 2px rgba(255,229,96,0.6)}}`}</style>
     </div>
   );
 }
@@ -236,20 +287,47 @@ function Bar({ label, served, headcount, softer }: { label: string; served: numb
   );
 }
 
+// Soft over/under nudge — one line reading the whole cart against headcount.
+// Module-scoped so BOTH the desktop Cart and the mobile bottom-bar summary can use it.
+function computeGapNudge(lines: { item: Item; line: Line }[], coverage: { main: number; side: number; sweet: number; drink: number }, headcount: number): string | null {
+  if (lines.length === 0) return null;
+  if (coverage.main < headcount) return `Mains cover ~${coverage.main} of ${headcount}. Add a platter to round it out.`;
+  if (coverage.drink < headcount) return `No drinks for everyone yet — a case of sodas covers 24.`;
+  if (coverage.sweet === 0) return `Add a sweet to finish — not everyone needs one, but it lands.`;
+  const cats = [coverage.main, coverage.side, coverage.sweet, coverage.drink];
+  if (cats.every((c) => c >= headcount * 1.8)) return `Set for ${headcount} with seconds all around. 🎉`;
+  if (cats.some((c) => c >= headcount * 1.8)) return `Everyone's covered for ${headcount}, with a few extras for seconds.`;
+  return `One of everything for ${headcount}. Add more for seconds if you like.`;
+}
+
+// The at-a-glance coverage guide — over/under bars + headcount input + soft nudge.
+// Reused verbatim on desktop (inside Cart) and mobile (inside the expandable bottom sheet).
+function CoveragePanel({ coverage, headcount, setHeadcount, gapNudge }: {
+  coverage: { main: number; side: number; sweet: number; drink: number }; headcount: number; setHeadcount: (n: number) => void; gapNudge: string | null;
+}) {
+  return (
+    <div className="mt-5 rounded-2xl bg-co-bg p-4">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim">Covering</span>
+        <label className="flex items-center gap-1.5 text-xs text-co-text-muted">guests<input type="number" min={1} value={headcount} onChange={(e) => setHeadcount(Math.max(1, Number(e.target.value) || 1))} className="w-14 rounded-md border border-co-border-2 bg-co-surface px-2 py-1 text-sm font-bold text-co-text" /></label>
+      </div>
+      <div className="mt-3 flex flex-col gap-2.5">
+        <Bar label="Mains" served={coverage.main} headcount={headcount} />
+        <Bar label="Sides & chips" served={coverage.side} headcount={headcount} softer />
+        <Bar label="Sweets" served={coverage.sweet} headcount={headcount} softer />
+        <Bar label="Drinks" served={coverage.drink} headcount={headcount} softer />
+      </div>
+      {gapNudge && <p className="mt-3 text-xs font-semibold text-co-text">{gapNudge}</p>}
+      <p className="mt-1 text-[11px] text-co-text-dim">Not everyone takes a sub, a sweet, or a drink — this is your at-a-glance guide.</p>
+    </div>
+  );
+}
+
 function Cart({ lines, subtotal, hasBig, headcount, setHeadcount, coverage, onCustomize, dec, add, onContinue }: {
   lines: { item: Item; line: Line }[]; subtotal: number; hasBig: boolean; headcount: number; setHeadcount: (n: number) => void;
   coverage: { main: number; side: number; sweet: number; drink: number }; onCustomize: (id: string) => void; dec: (id: string) => void; add: (id: string) => void; onContinue: () => void;
 }) {
-  const gapNudge = (() => {
-    if (lines.length === 0) return null;
-    if (coverage.main < headcount) return `Mains cover ~${coverage.main} of ${headcount}. Add a platter to round it out.`;
-    if (coverage.drink < headcount) return `No drinks for everyone yet — a case of sodas covers 24.`;
-    if (coverage.sweet === 0) return `Add a sweet to finish — not everyone needs one, but it lands.`;
-    const cats = [coverage.main, coverage.side, coverage.sweet, coverage.drink];
-    if (cats.every((c) => c >= headcount * 1.8)) return `Set for ${headcount} with seconds all around. 🎉`;
-    if (cats.some((c) => c >= headcount * 1.8)) return `Everyone's covered for ${headcount}, with a few extras for seconds.`;
-    return `One of everything for ${headcount}. Add more for seconds if you like.`;
-  })();
+  const gapNudge = computeGapNudge(lines, coverage, headcount);
 
   return (
     <div className="overflow-hidden rounded-3xl border border-co-border/70 bg-co-surface shadow-sm">
@@ -278,20 +356,7 @@ function Cart({ lines, subtotal, hasBig, headcount, setHeadcount, coverage, onCu
 
         {lines.length > 0 && <div className="mt-5 flex items-center justify-between border-t border-co-border pt-4"><span className="text-sm font-semibold text-co-text-muted">Subtotal</span><span className="text-lg font-extrabold text-co-text">{money(subtotal)}</span></div>}
 
-        <div className="mt-5 rounded-2xl bg-co-bg p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim">Covering</span>
-            <label className="flex items-center gap-1.5 text-xs text-co-text-muted">guests<input type="number" min={1} value={headcount} onChange={(e) => setHeadcount(Math.max(1, Number(e.target.value) || 1))} className="w-14 rounded-md border border-co-border-2 bg-co-surface px-2 py-1 text-sm font-bold text-co-text" /></label>
-          </div>
-          <div className="mt-3 flex flex-col gap-2.5">
-            <Bar label="Mains" served={coverage.main} headcount={headcount} />
-            <Bar label="Sides & chips" served={coverage.side} headcount={headcount} softer />
-            <Bar label="Sweets" served={coverage.sweet} headcount={headcount} softer />
-            <Bar label="Drinks" served={coverage.drink} headcount={headcount} softer />
-          </div>
-          {gapNudge && <p className="mt-3 text-xs font-semibold text-co-text">{gapNudge}</p>}
-          <p className="mt-1 text-[11px] text-co-text-dim">Not everyone takes a sub, a sweet, or a drink — this is your at-a-glance guide.</p>
-        </div>
+        <CoveragePanel coverage={coverage} headcount={headcount} setHeadcount={setHeadcount} gapNudge={gapNudge} />
 
         {hasBig && <p className="mt-3 rounded-xl border border-co-gold/50 bg-co-gold/15 px-3 py-2 text-xs font-semibold text-co-text">⏱ Big subs need 48–72 hours notice. We'll confirm your date.</p>}
         {lines.length > 0 && <p className="mt-2 rounded-xl bg-co-bg px-3 py-2 text-xs text-co-text-muted">Deposit locks your date; balance due 48h before. We confirm within a few hours — no charge until we do.</p>}
