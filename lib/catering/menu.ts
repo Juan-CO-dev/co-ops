@@ -10,6 +10,8 @@
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
 import type { AuthContext } from "@/lib/session";
+import { loadActiveRateRules } from "@/lib/catering/rate-rules";
+import { cateringUnitPriceCents, resolveRateBps, type RateRule } from "@/lib/catering/pricing-derivation";
 
 export const MENU_READ_MIN = 5;
 
@@ -26,12 +28,39 @@ function dollarsToCents(v: number | string | null): number {
 }
 
 export interface CateringMenuItem {
-  id: string;
+  kind: "item" | "menu_item";
+  id: string;                       // item_id OR menu_item_id (per kind)
   name: string;
   nameEs: string | null;
   section: string | null;
-  unitPriceCents: number;
   cateringOnly: boolean;
+  portionable: boolean;
+  regularPriceCents: number;        // basis for recommend/implied-rate
+  rateBps: number;                  // resolved effective rate
+  unitPriceCents: number;           // whole catering price (= derived whole)
+  portionPricesCents: { quarter: number; half: number; whole: number } | null; // present iff portionable
+}
+
+/** Build a priced CateringMenuItem from a raw row + the location's rate rules. Returns null when
+ *  the entity has no usable regular price (unpriceable → excluded, never sold at $0). */
+export function buildCateringMenuItem(
+  row: { kind: "item" | "menu_item"; id: string; name: string; nameEs: string | null; section: string | null;
+         menuPriceCents: number; cateringOnly: boolean; portionable: boolean },
+  rules: RateRule[],
+): CateringMenuItem | null {
+  if (!(row.menuPriceCents > 0)) return null;
+  const rateBps = resolveRateBps(rules, { kind: row.kind, entityId: row.id, section: row.section });
+  const whole = cateringUnitPriceCents(row.menuPriceCents, "whole", rateBps);
+  return {
+    kind: row.kind, id: row.id, name: row.name, nameEs: row.nameEs, section: row.section,
+    cateringOnly: row.cateringOnly, portionable: row.portionable,
+    regularPriceCents: row.menuPriceCents, rateBps, unitPriceCents: whole,
+    portionPricesCents: row.portionable
+      ? { quarter: cateringUnitPriceCents(row.menuPriceCents, "quarter", rateBps),
+          half: cateringUnitPriceCents(row.menuPriceCents, "half", rateBps),
+          whole }
+      : null,
+  };
 }
 export interface PackageLine {
   itemId: string | null;
@@ -50,27 +79,51 @@ export interface CateringPackage {
   items: PackageLine[];
 }
 
-/** Active catering-available items (the à-la-carte menu), à-la-carte-picker ordered. */
-export async function loadCateringMenuItems(actor: AuthContext): Promise<CateringMenuItem[]> {
+/**
+ * The unified catering à-la-carte menu for a location: catering-available `items` (extras, whole
+ * only) ∪ catering-available `menu_items` (subs, portionable per catering_portionable), each priced
+ * by the location's active rate rules (regular price × portion × rate). Unpriceable rows are dropped.
+ * Rates are per-location, so a locationId is required.
+ */
+export async function loadCateringMenuItems(actor: AuthContext, locationId: string): Promise<CateringMenuItem[]> {
   requireLevel(actor, MENU_READ_MIN);
+  if (!UUID_RE.test(locationId)) throw new Error("catering menu: invalid locationId");
   const sb = getServiceRoleClient();
-  const { data, error } = await sb
-    .from("items")
-    .select("id, name, name_es, section, menu_price, catering_only")
-    .eq("active", true)
-    .eq("catering_available", true)
-    .order("section", { ascending: true, nullsFirst: false })
-    .order("name", { ascending: true })
-    .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null; catering_only: boolean }>>();
-  if (error) throw new Error(`loadCateringMenuItems: ${error.message}`);
-  return (data ?? []).map((r) => ({
-    id: r.id,
-    name: r.name,
-    nameEs: r.name_es,
-    section: r.section,
-    unitPriceCents: dollarsToCents(r.menu_price),
-    cateringOnly: r.catering_only,
-  }));
+  const rules = await loadActiveRateRules(locationId);
+  const [{ data: itemRows, error: iErr }, { data: subRows, error: sErr }] = await Promise.all([
+    sb
+      .from("items")
+      .select("id, name, name_es, section, menu_price, catering_only")
+      .eq("active", true)
+      .eq("catering_available", true)
+      .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null; catering_only: boolean }>>(),
+    sb
+      .from("menu_items")
+      .select("id, name, name_es, section, menu_price, catering_only, catering_portionable")
+      .eq("active", true)
+      .eq("catering_available", true)
+      .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null; catering_only: boolean; catering_portionable: boolean }>>(),
+  ]);
+  if (iErr) throw new Error(`loadCateringMenuItems items: ${iErr.message}`);
+  if (sErr) throw new Error(`loadCateringMenuItems menu_items: ${sErr.message}`);
+  const out: CateringMenuItem[] = [];
+  for (const r of itemRows ?? []) {
+    const built = buildCateringMenuItem(
+      { kind: "item", id: r.id, name: r.name, nameEs: r.name_es, section: r.section,
+        menuPriceCents: dollarsToCents(r.menu_price), cateringOnly: r.catering_only, portionable: false },
+      rules,
+    );
+    if (built) out.push(built);
+  }
+  for (const r of subRows ?? []) {
+    const built = buildCateringMenuItem(
+      { kind: "menu_item", id: r.id, name: r.name, nameEs: r.name_es, section: r.section,
+        menuPriceCents: dollarsToCents(r.menu_price), cateringOnly: r.catering_only, portionable: r.catering_portionable },
+      rules,
+    );
+    if (built) out.push(built);
+  }
+  return out.sort((a, b) => (a.section ?? "").localeCompare(b.section ?? "") || a.name.localeCompare(b.name));
 }
 
 /** Active catering packages (global + this location) with their line items, for expansion. */

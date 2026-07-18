@@ -17,7 +17,9 @@
  */
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { buildCateringMenuItem } from "@/lib/catering/menu";
 import type { CateringMenuItem, CateringPackage, PackageLine } from "@/lib/catering/menu";
+import { loadActiveRateRules } from "@/lib/catering/rate-rules";
 import type { ChargeRates, DeliveryZone } from "@/lib/catering/quotes";
 
 /** items.menu_price is numeric dollars; freeze to integer cents (mirrors lib/catering/menu.ts). */
@@ -57,26 +59,50 @@ export interface PublicPricingContext {
   zones: DeliveryZone[];
 }
 
-/** Active catering-available items (the à-la-carte menu), section→name ordered. Un-gated. */
-export async function loadPublicCateringMenu(): Promise<CateringMenuItem[]> {
+/**
+ * The unified public catering à-la-carte menu for a location: catering-available `items` (extras,
+ * whole only) ∪ catering-available `menu_items` (subs, portionable per catering_portionable), each
+ * priced by the location's active rate rules. Un-gated (portal has no staff AuthContext); the
+ * derived prices are the server-owned authority. Unpriceable rows are dropped. section→name ordered.
+ */
+export async function loadPublicCateringMenu(locationId: string): Promise<CateringMenuItem[]> {
+  assertLocationId(locationId);
   const sb = getServiceRoleClient();
-  const { data, error } = await sb
-    .from("items")
-    .select("id, name, name_es, section, menu_price, catering_only")
-    .eq("active", true)
-    .eq("catering_available", true)
-    .order("section", { ascending: true, nullsFirst: false })
-    .order("name", { ascending: true })
-    .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null; catering_only: boolean }>>();
-  if (error) throw new Error(`loadPublicCateringMenu: ${error.message}`);
-  return (data ?? []).map((r) => ({
-    id: r.id,
-    name: r.name,
-    nameEs: r.name_es,
-    section: r.section,
-    unitPriceCents: dollarsToCents(r.menu_price),
-    cateringOnly: r.catering_only,
-  }));
+  const rules = await loadActiveRateRules(locationId);
+  const [{ data: itemRows, error: iErr }, { data: subRows, error: sErr }] = await Promise.all([
+    sb
+      .from("items")
+      .select("id, name, name_es, section, menu_price, catering_only")
+      .eq("active", true)
+      .eq("catering_available", true)
+      .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null; catering_only: boolean }>>(),
+    sb
+      .from("menu_items")
+      .select("id, name, name_es, section, menu_price, catering_only, catering_portionable")
+      .eq("active", true)
+      .eq("catering_available", true)
+      .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null; catering_only: boolean; catering_portionable: boolean }>>(),
+  ]);
+  if (iErr) throw new Error(`loadPublicCateringMenu items: ${iErr.message}`);
+  if (sErr) throw new Error(`loadPublicCateringMenu menu_items: ${sErr.message}`);
+  const out: CateringMenuItem[] = [];
+  for (const r of itemRows ?? []) {
+    const built = buildCateringMenuItem(
+      { kind: "item", id: r.id, name: r.name, nameEs: r.name_es, section: r.section,
+        menuPriceCents: dollarsToCents(r.menu_price), cateringOnly: r.catering_only, portionable: false },
+      rules,
+    );
+    if (built) out.push(built);
+  }
+  for (const r of subRows ?? []) {
+    const built = buildCateringMenuItem(
+      { kind: "menu_item", id: r.id, name: r.name, nameEs: r.name_es, section: r.section,
+        menuPriceCents: dollarsToCents(r.menu_price), cateringOnly: r.catering_only, portionable: r.catering_portionable },
+      rules,
+    );
+    if (built) out.push(built);
+  }
+  return out.sort((a, b) => (a.section ?? "").localeCompare(b.section ?? "") || a.name.localeCompare(b.name));
 }
 
 /** Active catering packages (global + this location) with their expanded, priced line items. Un-gated. */

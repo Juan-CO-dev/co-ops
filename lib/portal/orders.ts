@@ -179,7 +179,7 @@ export async function submitOrder(customerId: string, input: SubmitOrderInput): 
   // 4 — SERVER PRICE AUTHORITY (D20): resolve + price every line from the real menu.
   // The input carries references + quantities ONLY; prices come from the lookup maps.
   const [menuItems, packages] = await Promise.all([
-    loadPublicCateringMenu(),
+    loadPublicCateringMenu(input.locationId),
     loadPublicCateringPackages(input.locationId),
   ]);
   const itemById = new Map(menuItems.map((m) => [m.id, m] as const));
