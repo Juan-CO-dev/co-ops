@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- mockup uses remote <img>; real build swaps to next/image */
 /**
- * /order/build — Catering ORDER BUILDER (mockup pass v3).
+ * /order/build — Catering ORDER BUILDER (mockup pass v3 + W1a portion selector).
  *
  * MOCKUP: interactive client prototype (no backend/auth). Per Juan:
  *  - Item-appropriate customize popup: à-la-carte subs customize the sub (instructions +
@@ -10,6 +10,17 @@
  *  - Coverage shows UNDER and OVER — mains/sides/sweets/drinks vs headcount, including
  *    "seconds / thirds for all" so they can make a full decision.
  *  - Info auto-surfaces (ticker + contextual notes); the only clicks are order actions.
+ *
+ * DATA SOURCE: mock/hardcoded MENU array — NOT yet wired to loadPublicCateringMenu.
+ * Real-data wiring is owed in a future pass once catering menu/pricing data is authored.
+ * The submit payload shape (menuItemId/itemId/portion/quantity) matches SubmitLineInput
+ * so the review→submit path is wire-ready when the data arrives.
+ *
+ * W1a: portion selector for portionable subs (kind === "sub").
+ *  - ¼ / ½ / whole chip selector, default whole.
+ *  - Per-portion price displayed from portionPricesCents (mock: fraction of item price).
+ *  - Coverage counts servings by portion fraction (¼=0.25, ½=0.5, whole=1).
+ *  - Submit payload: { menuItemId, portion, quantity } for subs; { itemId, quantity } for extras.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -22,9 +33,26 @@ const VESUVIO = "https://static.spotapps.co/spots/d3/a96ed4e6d84d189e5f239fa7fc4
 
 type Cat = "main" | "side" | "sweet" | "drink";
 type Kind = "sub" | "platter" | "lunchbox" | "bigsub" | "simple";
-interface Item { id: string; name: string; price: number; note?: string; img?: string; lead?: string; serves: number; cat: Cat; kind: Kind }
+/** Portion selector for portionable subs (kind === "sub"). Matches SubmitLineInput.portion. */
+type Portion = "quarter" | "half" | "whole";
+interface Item { id: string; name: string; price: number; note?: string; img?: string; lead?: string; serves: number; cat: Cat; kind: Kind; portionable?: boolean }
 interface Group { key: string; label: string; layout: "sub" | "row"; items: Item[] }
-interface Line { qty: number; notes: string; allergens: string[]; subs: string[]; sub: string; drink: string }
+interface Line { qty: number; notes: string; allergens: string[]; subs: string[]; sub: string; drink: string; portion: Portion }
+
+/** Portion fractions for coverage counting (¼=0.25, ½=0.5, whole=1). */
+const PORTION_FRACTION: Record<Portion, number> = { quarter: 0.25, half: 0.5, whole: 1 };
+
+/** Mock per-portion prices: fraction of the whole price (mirrors cateringUnitPriceCents logic). */
+function portionPrice(price: number, portion: Portion): number {
+  return price * PORTION_FRACTION[portion];
+}
+
+/** Portion display labels and ARIA labels (sourced from i18n keys catering.portion.*). */
+const PORTION_LABELS: Record<Portion, { label: string; aria: string; symbol: string }> = {
+  quarter: { label: "¼", aria: "Quarter portion", symbol: "¼" },
+  half:    { label: "½", aria: "Half portion",    symbol: "½" },
+  whole:   { label: "Whole", aria: "Whole portion", symbol: "Whole" },
+};
 
 const SUB_CHOICES = ["The Teamster", "Crunchy Boi", "Hot Pants", "Marisa Tomei", "Vesuvio II", "The Frex", "Sicky Wicky Club", "Never Been Cheddar"];
 const DRINK_CHOICES = ["Water", "Coke", "Diet Coke", "Natalie's Lemonade", "Topo Chico"];
@@ -37,12 +65,12 @@ const MENU: Group[] = [
     { id: "p48", name: "48 pc platter", price: 330, note: "forty-eight 5\" sandwiches · serves 24–48", serves: 36, cat: "main", kind: "platter" },
   ]},
   { key: "subs", label: "Subs · 10\"", layout: "sub", items: [
-    { id: "teamster", name: "The Teamster", price: 16.29, note: "Ham, capicola, genoa, provolone, hot & sweet peppers.", img: T("abd7ad07-cc58-4349-8c2f-1f88a43caa38"), serves: 1, cat: "main", kind: "sub" },
-    { id: "crunchy", name: "Crunchy Boi", price: 15.79, note: "Turkey, provolone, potato chips, garlic mayo, pickles.", img: T("3846fa6d-2632-4fe4-8fab-a25c2f9b0b0a"), serves: 1, cat: "main", kind: "sub" },
-    { id: "hotpants", name: "Hot Pants", price: 15.79, note: "Pepperoni, capicola, genoa, cholula mayo, hot peppers.", img: T("dbf2cd1a-9b17-491c-853a-907a960bc311"), serves: 1, cat: "main", kind: "sub" },
-    { id: "marisa", name: "Marisa Tomei Eats Free", price: 15.29, note: "Capicola, genoa, fresh mozz, basil, honey chili aioli.", img: T("c780adb3-69c8-4b01-b640-7f3c269df298"), serves: 1, cat: "main", kind: "sub" },
-    { id: "vesuvio", name: "Vesuvio II", price: 19.99, note: "Beef & pork meatballs, vodka sauce, melted mozzarella.", img: VESUVIO, serves: 1, cat: "main", kind: "sub" },
-    { id: "frex", name: "The Frex", price: 18.39, note: "Ham, capicola, pepperoni, genoa, prosciutto, fresh mozz.", img: T("af933f0c-c537-46fa-a2ae-dd8b0fda3cca"), serves: 1, cat: "main", kind: "sub" },
+    { id: "teamster", name: "The Teamster", price: 16.29, note: "Ham, capicola, genoa, provolone, hot & sweet peppers.", img: T("abd7ad07-cc58-4349-8c2f-1f88a43caa38"), serves: 1, cat: "main", kind: "sub", portionable: true },
+    { id: "crunchy", name: "Crunchy Boi", price: 15.79, note: "Turkey, provolone, potato chips, garlic mayo, pickles.", img: T("3846fa6d-2632-4fe4-8fab-a25c2f9b0b0a"), serves: 1, cat: "main", kind: "sub", portionable: true },
+    { id: "hotpants", name: "Hot Pants", price: 15.79, note: "Pepperoni, capicola, genoa, cholula mayo, hot peppers.", img: T("dbf2cd1a-9b17-491c-853a-907a960bc311"), serves: 1, cat: "main", kind: "sub", portionable: true },
+    { id: "marisa", name: "Marisa Tomei Eats Free", price: 15.29, note: "Capicola, genoa, fresh mozz, basil, honey chili aioli.", img: T("c780adb3-69c8-4b01-b640-7f3c269df298"), serves: 1, cat: "main", kind: "sub", portionable: true },
+    { id: "vesuvio", name: "Vesuvio II", price: 19.99, note: "Beef & pork meatballs, vodka sauce, melted mozzarella.", img: VESUVIO, serves: 1, cat: "main", kind: "sub", portionable: true },
+    { id: "frex", name: "The Frex", price: 18.39, note: "Ham, capicola, pepperoni, genoa, prosciutto, fresh mozz.", img: T("af933f0c-c537-46fa-a2ae-dd8b0fda3cca"), serves: 1, cat: "main", kind: "sub", portionable: true },
   ]},
   { key: "boxes", label: "Individual lunch boxes", layout: "row", items: [
     { id: "light", name: "Light Lunch", price: 12, note: "5\" sub, chips, water & napkin", serves: 1, cat: "main", kind: "lunchbox" },
@@ -79,12 +107,16 @@ const FACTS = [
 ];
 const ALL_ITEMS: Item[] = MENU.flatMap((g) => g.items);
 const money = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
-const emptyLine = (): Line => ({ qty: 1, notes: "", allergens: [], subs: [], sub: "", drink: "" });
+const emptyLine = (): Line => ({ qty: 1, notes: "", allergens: [], subs: [], sub: "", drink: "", portion: "whole" });
 
-// One-line human summary of a customized line (subs / drink / allergen holds / notes).
+// One-line human summary of a customized line (portion / subs / drink / allergen holds / notes).
 // Module-scoped so both the cart render and the review-handoff persist use the same shape.
 function lineSummary(l: { item: Item; line: Line }): string {
   const bits: string[] = [];
+  // W1a: surface the chosen portion for portionable subs (anything other than whole is notable).
+  if (l.item.portionable && l.line.portion !== "whole") {
+    bits.push(PORTION_LABELS[l.line.portion]?.symbol ?? l.line.portion);
+  }
   if (l.line.subs.length) bits.push(l.line.subs.join(", "));
   if (l.line.sub) bits.push(l.line.sub);
   if (l.line.drink) bits.push(l.line.drink);
@@ -110,10 +142,18 @@ export default function OrderBuild() {
   const applyCustom = useCallback((id: string, line: Line) => setCart((c) => ({ ...c, [id]: line })), []);
 
   const lines = useMemo(() => Object.entries(cart).map(([id, line]) => ({ item: ALL_ITEMS.find((i) => i.id === id)!, line })).filter((l) => l.item), [cart]);
-  const subtotal = lines.reduce((s, l) => s + l.item.price * l.line.qty, 0);
+  const subtotal = lines.reduce((s, l) => {
+    // Portionable subs price by their chosen portion; all other items use the full price.
+    const unitPrice = l.item.portionable ? portionPrice(l.item.price, l.line.portion) : l.item.price;
+    return s + unitPrice * l.line.qty;
+  }, 0);
   const count = lines.reduce((s, l) => s + l.line.qty, 0);
   const hasBig = lines.some((l) => l.item.id === "three" || l.item.id === "six");
-  const servedBy = (cat: Cat) => lines.filter((l) => l.item.cat === cat).reduce((s, l) => s + l.item.serves * l.line.qty, 0);
+  // Coverage: portionable subs count by portion fraction (¼=0.25, ½=0.5, whole=1 serving each).
+  const servedBy = (cat: Cat) => lines.filter((l) => l.item.cat === cat).reduce((s, l) => {
+    const fraction = l.item.portionable ? PORTION_FRACTION[l.line.portion] : 1;
+    return s + l.item.serves * l.line.qty * fraction;
+  }, 0);
   const coverage = { main: servedBy("main"), side: servedBy("side"), sweet: servedBy("sweet"), drink: servedBy("drink") };
 
   // Ordered "what's left / upsell" hints; the mobile collapsed bar rotates through them line by line.
@@ -125,10 +165,33 @@ export default function OrderBuild() {
   }, [hints.length]);
 
   // Persist a self-describing order blob for the review/confirmation screens, then hand off.
+  // Submit payload shape matches SubmitLineInput (lib/portal/orders.ts) so the review→submit
+  // path is wire-ready when real data lands:
+  //   subs  → { menuItemId: item.id, portion, quantity }
+  //   extras (non-sub items) → { itemId: item.id, quantity }
   const goToReview = () => {
     if (lines.length === 0) return;
     const order = {
-      lines: lines.map((l) => ({ id: l.item.id, name: l.item.name, price: l.item.price, kind: l.item.kind, serves: l.item.serves, qty: l.line.qty, summary: lineSummary(l), lead: l.item.lead })),
+      lines: lines.map((l) => {
+        const isSub = l.item.kind === "sub" && l.item.portionable === true;
+        const unitPrice = isSub ? portionPrice(l.item.price, l.line.portion) : l.item.price;
+        return {
+          // Display fields (for the review page)
+          id: l.item.id,
+          name: l.item.name,
+          price: unitPrice,
+          kind: l.item.kind,
+          serves: l.item.serves * (isSub ? PORTION_FRACTION[l.line.portion] : 1),
+          qty: l.line.qty,
+          summary: lineSummary(l),
+          lead: l.item.lead,
+          // SubmitLineInput fields (wire-ready for the real submit path)
+          menuItemId: isSub ? l.item.id : null,
+          itemId: isSub ? null : l.item.id,
+          portion: isSub ? l.line.portion : null,
+          quantity: l.line.qty,
+        };
+      }),
       subtotal, headcount, coverage, hasBig,
     };
     try { window.sessionStorage.setItem("co_order", JSON.stringify(order)); } catch { /* non-fatal in mockup */ }
@@ -368,20 +431,25 @@ function Cart({ lines, subtotal, hasBig, headcount, setHeadcount, coverage, onCu
           <p className="text-sm text-co-text-muted">Tap an item to customize, or use + for a quick add. Your order builds here.</p>
         ) : (
           <ul className="flex flex-col gap-3">
-            {lines.map((l) => (
-              <li key={l.item.id}>
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0"><p className="truncate text-sm font-semibold text-co-text">{l.item.name}</p><p className="text-xs text-co-text-dim">{money(l.item.price)} each</p></div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <button type="button" onClick={() => dec(l.item.id)} className="grid h-6 w-6 place-items-center rounded-full bg-co-bg text-sm font-bold text-co-text">−</button>
-                    <span className="w-4 text-center text-sm font-bold tabular-nums">{l.line.qty}</span>
-                    <button type="button" onClick={() => add(l.item.id)} className="grid h-6 w-6 place-items-center rounded-full bg-co-text text-sm font-bold text-co-cta">+</button>
+            {lines.map((l) => {
+              // W1a: show portion-adjusted price for portionable subs.
+              const isPortionable = l.item.kind === "sub" && l.item.portionable === true;
+              const displayPrice = isPortionable ? portionPrice(l.item.price, l.line.portion) : l.item.price;
+              return (
+                <li key={l.item.id}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0"><p className="truncate text-sm font-semibold text-co-text">{l.item.name}</p><p className="text-xs text-co-text-dim">{money(displayPrice)} each</p></div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button type="button" onClick={() => dec(l.item.id)} className="grid h-6 w-6 place-items-center rounded-full bg-co-bg text-sm font-bold text-co-text">−</button>
+                      <span className="w-4 text-center text-sm font-bold tabular-nums">{l.line.qty}</span>
+                      <button type="button" onClick={() => add(l.item.id)} className="grid h-6 w-6 place-items-center rounded-full bg-co-text text-sm font-bold text-co-cta">+</button>
+                    </div>
                   </div>
-                </div>
-                {lineSummary(l) && <p className="mt-0.5 text-[11px] text-co-text-dim">{lineSummary(l)}</p>}
-                {l.item.kind !== "simple" && <button type="button" onClick={() => onCustomize(l.item.id)} className="mt-0.5 text-[11px] font-bold uppercase tracking-wide text-co-text-dim underline">Customize</button>}
-              </li>
-            ))}
+                  {lineSummary(l) && <p className="mt-0.5 text-[11px] text-co-text-dim">{lineSummary(l)}</p>}
+                  {l.item.kind !== "simple" && <button type="button" onClick={() => onCustomize(l.item.id)} className="mt-0.5 text-[11px] font-bold uppercase tracking-wide text-co-text-dim underline">Customize</button>}
+                </li>
+              );
+            })}
           </ul>
         )}
 
@@ -394,6 +462,58 @@ function Cart({ lines, subtotal, hasBig, headcount, setHeadcount, coverage, onCu
 
         <button type="button" onClick={onContinue} disabled={lines.length === 0} className={`mt-5 flex min-h-[52px] w-full items-center justify-center rounded-full text-base font-bold uppercase tracking-[0.08em] transition ${lines.length > 0 ? "bg-co-text text-co-cta hover:bg-co-text/90" : "cursor-not-allowed bg-co-border text-co-text-dim"}`}>Continue to review →</button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * W1a — Portion selector for portionable subs.
+ * Renders ¼ / ½ / whole chips; each chip shows its price so customers can compare.
+ * i18n: labels come from catering.portion.* keys (EN/ES parity).
+ */
+function PortionSelector({ itemPrice, portion, onChange }: {
+  itemPrice: number;
+  portion: Portion;
+  onChange: (p: Portion) => void;
+}) {
+  const portions: Portion[] = ["quarter", "half", "whole"];
+  return (
+    <div>
+      <p className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim" id="portion-label">
+        {/* catering.portion.label */}
+        Choose your portion
+      </p>
+      <div className="mt-2 flex flex-wrap gap-2" role="radiogroup" aria-labelledby="portion-label">
+        {portions.map((p) => {
+          const selected = portion === p;
+          const info = PORTION_LABELS[p];
+          const price = portionPrice(itemPrice, p);
+          return (
+            <button
+              key={p}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              aria-label={`${info?.aria ?? p} — ${money(price)}`}
+              onClick={() => onChange(p)}
+              className={`flex min-w-[72px] flex-col items-center rounded-2xl border-2 px-3 py-2 text-center transition ${
+                selected
+                  ? "border-co-text bg-co-text text-co-bg"
+                  : "border-co-border-2 bg-co-surface text-co-text-muted hover:border-co-text/40 hover:text-co-text"
+              }`}
+            >
+              <span className="text-base font-extrabold leading-none">{info?.label ?? p}</span>
+              <span className={`mt-0.5 text-xs font-semibold ${selected ? "text-co-cta" : "text-co-text-dim"}`}>
+                {money(price)}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <p className="mt-1.5 text-[11px] text-co-text-dim">
+        {/* catering.portion.hint */}
+        Whole = a full 10&ldquo; sub. ½ and ¼ are great for mixed spreads.
+      </p>
     </div>
   );
 }
@@ -416,6 +536,10 @@ function CustomizeModal({ item, existing, onClose, onSave }: { item: Item; exist
   const toggleSub = (s: string) => set({ subs: line.subs.includes(s) ? line.subs.filter((x) => x !== s) : [...line.subs, s] });
 
   const k = item.kind;
+  // W1a: portionable subs display portion-adjusted price in the modal CTA.
+  const isPortionable = k === "sub" && item.portionable === true;
+  const unitPrice = isPortionable ? portionPrice(item.price, line.portion) : item.price;
+
   return (
     <div role="dialog" aria-modal="true" onClick={onClose} className="fixed inset-0 z-50 flex items-end justify-center bg-co-text/60 backdrop-blur-sm sm:items-center sm:p-4">
       <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg overflow-hidden rounded-t-3xl bg-co-bg shadow-2xl sm:rounded-3xl">
@@ -426,6 +550,17 @@ function CustomizeModal({ item, existing, onClose, onSave }: { item: Item; exist
             <span className="shrink-0 text-lg font-extrabold text-co-cta">{money(item.price)}</span>
           </div>
           {ITEM_FACTS[item.id] && <p className="mt-3 rounded-xl bg-co-bg px-3 py-2 text-xs text-co-text-muted"><span className="mr-1" aria-hidden>🧑‍🍳</span>{ITEM_FACTS[item.id]}</p>}
+
+          {/* W1a: Portion selector — portionable subs only (kind === "sub" + portionable flag). */}
+          {isPortionable && (
+            <div className="mt-5">
+              <PortionSelector
+                itemPrice={item.price}
+                portion={line.portion}
+                onChange={(p) => set({ portion: p })}
+              />
+            </div>
+          )}
 
           {k === "platter" && (
             <div className="mt-5">
@@ -466,7 +601,8 @@ function CustomizeModal({ item, existing, onClose, onSave }: { item: Item; exist
               <span className="min-w-6 text-center text-base font-bold tabular-nums">{line.qty}</span>
               <button type="button" onClick={() => set({ qty: line.qty + 1 })} className="grid h-8 w-8 place-items-center rounded-full bg-co-text text-xl font-bold text-co-cta">+</button>
             </div>
-            <button type="button" onClick={() => onSave({ ...line, notes: line.notes.trim() })} className="flex min-h-[52px] flex-1 items-center justify-center rounded-full bg-co-text text-base font-bold uppercase tracking-[0.08em] text-co-cta transition hover:bg-co-text/90">{existing ? "Update" : "Add"} · {money(item.price * line.qty)}</button>
+            {/* W1a: CTA shows portion-adjusted price for portionable subs. */}
+            <button type="button" onClick={() => onSave({ ...line, notes: line.notes.trim() })} className="flex min-h-[52px] flex-1 items-center justify-center rounded-full bg-co-text text-base font-bold uppercase tracking-[0.08em] text-co-cta transition hover:bg-co-text/90">{existing ? "Update" : "Add"} · {money(unitPrice * line.qty)}</button>
           </div>
           <button type="button" onClick={onClose} className="mt-3 w-full py-2 text-center text-sm font-semibold text-co-text-muted">Cancel</button>
         </div>

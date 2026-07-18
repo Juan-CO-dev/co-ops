@@ -2117,5 +2117,13 @@
   "admin.catering.rate.section.entities": "Por artículo",
   "admin.catering.rate.section.entities_aria": "Ajustes de tarifa por artículo",
   "admin.catering.rate.section.entities_hint": "Ajusta la tarifa de un artículo o extra específico. Gana la más específica.",
-  "admin.catering.rate.error.invalid_rate": "Ingresa una tarifa válida (0–300%)."
+  "admin.catering.rate.error.invalid_rate": "Ingresa una tarifa válida (0–300%).",
+  "catering.portion.label": "Elige tu porción",
+  "catering.portion.hint": "Entero = un sub de 10\". ½ y ¼ son ideales para spreads variados.",
+  "catering.portion.quarter": "¼",
+  "catering.portion.half": "½",
+  "catering.portion.whole": "Entero",
+  "catering.portion.quarter.aria": "Cuarto de porción",
+  "catering.portion.half.aria": "Mitad de porción",
+  "catering.portion.whole.aria": "Porción entera"
 }

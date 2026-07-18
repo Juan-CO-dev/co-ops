@@ -2117,5 +2117,13 @@
   "admin.catering.rate.section.entities": "Per item",
   "admin.catering.rate.section.entities_aria": "Per-item rate overrides",
   "admin.catering.rate.section.entities_hint": "Override the rate for a specific menu item or extra. Most specific wins.",
-  "admin.catering.rate.error.invalid_rate": "Enter a valid rate (0–300%)."
+  "admin.catering.rate.error.invalid_rate": "Enter a valid rate (0–300%).",
+  "catering.portion.label": "Choose your portion",
+  "catering.portion.hint": "Whole = a full 10\" sub. ½ and ¼ are great for mixed spreads.",
+  "catering.portion.quarter": "¼",
+  "catering.portion.half": "½",
+  "catering.portion.whole": "Whole",
+  "catering.portion.quarter.aria": "Quarter portion",
+  "catering.portion.half.aria": "Half portion",
+  "catering.portion.whole.aria": "Whole portion"
 }
