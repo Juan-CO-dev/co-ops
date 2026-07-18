@@ -50,7 +50,9 @@ export class PortalOrderError extends Error {
 
 export interface SubmitLineInput {
   itemId?: string | null;
+  menuItemId?: string | null;   // NEW — a sub (menu_item) reference
   packageId?: string | null;
+  portion?: "quarter" | "half" | "whole" | null; // NEW — sub portion
   quantity: number;
   notes?: string | null;
 }
@@ -107,7 +109,9 @@ function snapshotColumns(rates: ChargeRates, stack: ChargeStack, isDelivery: boo
 /** A line whose price has been resolved from the SERVER-owned menu — never from input. */
 interface ResolvedLine {
   itemId: string | null;
+  menuItemId: string | null;
   packageId: string | null;
+  portion: "quarter" | "half" | "whole" | null;
   description: string;
   quantity: number;
   unitPriceCents: number;
@@ -182,7 +186,9 @@ export async function submitOrder(customerId: string, input: SubmitOrderInput): 
     loadPublicCateringMenu(input.locationId),
     loadPublicCateringPackages(input.locationId),
   ]);
-  const itemById = new Map(menuItems.map((m) => [m.id, m] as const));
+  // The unified menu spans BOTH spines (items = extras, menu_items = subs); their raw uuids
+  // are separate id spaces, so the lookup map is keyed by `${kind}:${id}` to disambiguate.
+  const menuByKey = new Map(menuItems.map((m) => [`${m.kind}:${m.id}`, m] as const));
   const packageById = new Map(packages.map((p) => [p.id, p] as const));
 
   const resolved: ResolvedLine[] = input.lines.map((l, i) => {
@@ -191,15 +197,39 @@ export async function submitOrder(customerId: string, input: SubmitOrderInput): 
       throw new PortalOrderError(400, "invalid_line", `Line ${i + 1}: quantity must be > 0`);
     }
     const itemId = l.itemId ?? null;
+    const menuItemId = l.menuItemId ?? null;
     const packageId = l.packageId ?? null;
     if (itemId != null && itemId !== "") {
-      const item = itemById.get(itemId);
+      const item = menuByKey.get(`item:${itemId}`);
       if (!item) throw new PortalOrderError(400, "invalid_line", `Line ${i + 1}: unknown menu item`);
       const unitPriceCents = item.unitPriceCents; // server-owned price — NEVER from input
       return {
         itemId,
+        menuItemId: null,
         packageId: null,
+        portion: null,
         description: item.name,
+        quantity,
+        unitPriceCents,
+        lineTotalCents: lineTotalCents(quantity, unitPriceCents),
+        displayOrder: i,
+      };
+    }
+    if (menuItemId != null && menuItemId !== "") {
+      const sub = menuByKey.get(`menu_item:${menuItemId}`);
+      if (!sub) throw new PortalOrderError(400, "invalid_line", `Line ${i + 1}: unknown sub`);
+      const portion = l.portion ?? "whole";
+      if (!sub.portionable && portion !== "whole") {
+        throw new PortalOrderError(400, "invalid_line", `Line ${i + 1}: item is not portioned`);
+      }
+      // server-owned price — NEVER from input; portioned subs price from the derived portion table
+      const unitPriceCents = sub.portionable && sub.portionPricesCents ? sub.portionPricesCents[portion] : sub.unitPriceCents;
+      return {
+        itemId: null,
+        menuItemId,
+        packageId: null,
+        portion: sub.portionable ? portion : null,
+        description: sub.name,
         quantity,
         unitPriceCents,
         lineTotalCents: lineTotalCents(quantity, unitPriceCents),
@@ -212,7 +242,9 @@ export async function submitOrder(customerId: string, input: SubmitOrderInput): 
       const unitPriceCents = pkg.priceCents; // server-owned price — NEVER from input
       return {
         itemId: null,
+        menuItemId: null,
         packageId,
+        portion: null,
         description: pkg.labelEn,
         quantity,
         unitPriceCents,
@@ -295,8 +327,9 @@ export async function submitOrder(customerId: string, input: SubmitOrderInput): 
     resolved.map((l) => ({
       quote_id: quote.id,
       item_id: l.itemId,
-      menu_item_id: null,
+      menu_item_id: l.menuItemId,
       package_id: l.packageId,
+      portion: l.portion,
       description: l.description,
       quantity: l.quantity,
       unit_price_cents: l.unitPriceCents,
