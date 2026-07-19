@@ -170,7 +170,22 @@ export async function createPaymentDue(
     })
     .select("id")
     .single<{ id: string }>();
-  if (error) throw new Error(`createPaymentDue: ${error.message}`);
+  if (error) {
+    // A-M6: a live 'due' intent for (quote_id, kind) already exists (partial unique index
+    // catering_payments_one_due) — idempotent: reuse it rather than erroring on the race.
+    if (error.code === "23505") {
+      const { data: existing } = await sb
+        .from("catering_payments")
+        .select("id")
+        .eq("quote_id", input.quoteId)
+        .eq("kind", input.kind)
+        .eq("status", "due")
+        .limit(1)
+        .maybeSingle<{ id: string }>();
+      if (existing) return { id: existing.id };
+    }
+    throw new Error(`createPaymentDue: ${error.message}`);
+  }
   return { id: data.id };
 }
 

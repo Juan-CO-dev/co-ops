@@ -61,7 +61,9 @@ export interface EmailLayoutInput {
   footerNote: string;
 }
 
-function escapeHtml(s: string): string {
+/** HTML-escape a value before interpolating it into email `bodyHtml`. Customer-supplied strings
+ * (names, notes) MUST pass through this — bodyHtml is not auto-escaped (A-H2 stored-XSS-in-email). */
+export function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

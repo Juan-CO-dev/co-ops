@@ -171,6 +171,23 @@ async function main() {
     assert.equal(itemsAfter2 ?? 0, 1, "re-set replaces lines (no duplicate)");
     console.log("  ✓ setDraftLines: server-priced half sub (unit 510, total 1020), in place, v1, 1 row");
 
+    // ── B1 hardening: input guards reject bad payloads (still-draft, nothing persisted) ──
+    const isTip = (e: unknown) => e instanceof PortalDraftError && e.code === "invalid_tip";
+    const isLine = (e: unknown) => e instanceof PortalDraftError && e.code === "invalid_line";
+    await assert.rejects(() => previewDraft(customerId!, quoteId!, { tipBps: -100 }), isTip, "A-H1 negative tip rejected");
+    await assert.rejects(() => previewDraft(customerId!, quoteId!, { tipBps: 99999 }), isTip, "A-H1 out-of-range tip rejected");
+    await assert.rejects(() => previewDraft(customerId!, quoteId!, { tipBps: 15.5 }), isTip, "A-H1 fractional tip rejected");
+    await assert.rejects(() => setDraftLines(customerId!, quoteId!, [{ menuItemId: subId!, portion: "half", quantity: 2.5 }]), isLine, "A-H4 fractional qty rejected");
+    await assert.rejects(
+      () => setDraftLines(customerId!, quoteId!, Array.from({ length: 201 }, () => ({ menuItemId: subId!, quantity: 1 }))),
+      (e: unknown) => e instanceof PortalDraftError && e.code === "too_many_lines",
+      "A-H4 over-cap cart rejected",
+    );
+    // The guards threw BEFORE mutating — the draft still has exactly its one line.
+    const { count: itemsAfterGuards } = await sb.from("catering_quote_items").select("id", { count: "exact", head: true }).eq("quote_id", quoteId);
+    assert.equal(itemsAfterGuards ?? 0, 1, "guard rejections left the draft untouched");
+    console.log("  ✓ B1 guards: bad tip / fractional qty / over-cap cart all rejected, draft untouched");
+
     // ── previewDraft (compute-only) ────────────────────────────────────────────────────
     const preview = await previewDraft(customerId, quoteId, { tipBps: TIP_BPS, napkins: true });
     const expectPreview = computeChargeStack([subLineTotal, lineTotalCents(1, napkinsCents)], 0, { ...pricing.rates, gratuityBps: TIP_BPS });

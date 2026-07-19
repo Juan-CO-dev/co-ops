@@ -188,4 +188,33 @@ _(pending — Wave A triage first)_
 ---
 
 ## Triage & fix log
-_(populated after Juan triages each wave)_
+
+**Triage (Juan, 2026-07-19):** fix all High + all Medium now, batched; Lows triaged separately;
+auth-critical batch held for Juan's login+order smoke before merge.
+
+**Batch B1 — money/correctness + email (no login impact) — FIXED (this PR):**
+- **A-H1** `tipBps` — validated to an integer `0..MAX_TIP_BPS(5000)` at the `ratesWithTip` chokepoint
+  (throws 400 `invalid_tip`); routes coerce with `Number.isFinite` (NaN/Infinity → undefined);
+  `bpsOf` floors non-finite/negative rates to 0 (DiD). No longer depends on the DB CHECK.
+- **A-H2** email XSS — exported `escapeHtml` from `_layout.ts`; applied to `name` (+ eventDateLabel)
+  in the order-confirmation email and to `cust.name` in `sendQuote`.
+- **A-H4** unbounded input — `MAX_CART_LINES(200)` (lib + route fast-reject), integer `quantity`
+  `1..MAX_LINE_QTY(100000)`, `parseIntake` string caps (200/500/2000) + `headcount` `0..100000`.
+- **A-M3** `setDraftLines` — ordering guarantee documented: all validation (resolveLines / ratesWithTip
+  / resolveDeliveryFee) throws BEFORE the delete, so a bad payload can't leave a stale snapshot. Full
+  delete+insert+update RPC atomicity DEFERRED (residual = sub-ms concurrent-self-read window only).
+- **A-M4** double-submit napkins — `submitDraft` now folds napkins into the snapshot up front but only
+  inserts the line + creates the payment AFTER winning the atomic `status='draft'` flip.
+- **A-M6** duplicate `due` intents — migration **0130** partial unique index
+  `catering_payments_one_due (quote_id, kind) WHERE status='due'` (applied to prod) + `createPaymentDue`
+  idempotent on 23505.
+- **A-M7** email format — strict single-line `EMAIL_RE` in `requestMagicLink` (blocks
+  whitespace/control-char/header-injection values before store/send).
+- Verified: build + typecheck + lint green; `scripts/3a-smoke.ts` extended with B1 guard assertions
+  (bad tip / fractional qty / over-cap cart rejected, draft untouched) — PASS, zero residue.
+
+**Batch B2 — rate-limiting + IP + CSRF (AUTH-CRITICAL, hold for Juan's smoke):** M1, H3, M2, M5, H5 —
+_pending._
+
+**Lows:** L2 (`token_hash` UNIQUE) + L3 (strip token from URL) recommended for fix; L1 + L5 deferred
+(multi-location / Portal-5); L4 accepted (documented tile-flow tradeoff) — _awaiting Juan's pick._

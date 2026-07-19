@@ -31,6 +31,9 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** The dedicated menu section the napkins/utensils add-on lives in (excluded from the shopping list). */
 export const ADDON_SECTION = "Add-ons";
 const DEFAULT_EXPIRY_DAYS = 14; // D22 — same validity window as staff quotes
+/** Input bounds (A-H4) — a cart can't be an unbounded-insert / integer-overflow DoS. */
+export const MAX_CART_LINES = 200;
+export const MAX_LINE_QTY = 100000;
 
 export class PortalDraftError extends Error {
   constructor(public status: number, public code: string, message?: string) {
@@ -118,9 +121,19 @@ export interface DraftLoad extends DraftView {
 
 // ── Shared internals ──────────────────────────────────────────────────────────────
 
-/** Self-serve overrides the rule's gratuity with the customer's chosen tip. */
+/** Max customer tip = 50% in bps (the UI offers ≤20%; this is a generous adversarial ceiling). */
+const MAX_TIP_BPS = 5000;
+
+/** Self-serve overrides the rule's gratuity with the customer's chosen tip. The tip is the ONE
+ * customer-controlled rate on the money path (D20 owns every unit price), so it is validated at
+ * this single chokepoint (A-H1): a non-integer, negative, NaN/Infinity, or out-of-range tip is a
+ * clean 400 — never trusted into computeChargeStack, never depending on a DB CHECK backstop. */
 function ratesWithTip(base: ChargeRates, tipBps: number | null | undefined): ChargeRates {
-  return { ...base, gratuityBps: tipBps ?? 0 };
+  if (tipBps == null) return { ...base, gratuityBps: 0 };
+  if (!Number.isInteger(tipBps) || tipBps < 0 || tipBps > MAX_TIP_BPS) {
+    throw new PortalDraftError(400, "invalid_tip", "Tip must be a whole number between 0 and 50%");
+  }
+  return { ...base, gratuityBps: tipBps };
 }
 
 /** EXACT snapshot column shape (rates + stack + delivery) — mirrors lib/catering/quotes.ts. */
@@ -319,12 +332,17 @@ interface ResolvedLine {
 
 /** Resolve + price every line from the SERVER-owned menu (D20). A client price is never read. */
 async function resolveLines(locationId: string, lines: DraftLineInput[]): Promise<ResolvedLine[]> {
+  if (lines.length > MAX_CART_LINES) throw new PortalDraftError(400, "too_many_lines", `A cart can have at most ${MAX_CART_LINES} lines`);
   const menu = await loadPublicCateringMenu(locationId);
   // items and menu_items are separate id spaces → key the lookup by `${kind}:${id}` (mirrors orders.ts).
   const byKey = new Map(menu.map((m) => [`${m.kind}:${m.id}`, m] as const));
   return lines.map((l, i) => {
     const quantity = Number(l.quantity);
-    if (!Number.isFinite(quantity) || quantity <= 0) throw new PortalDraftError(400, "invalid_line", `Line ${i + 1}: quantity must be > 0`);
+    // Integer + bounded (A-H4): a fractional qty isn't meaningful for whole units, and a huge qty
+    // overflows the integer-cents columns → 500 + partial write.
+    if (!Number.isInteger(quantity) || quantity <= 0 || quantity > MAX_LINE_QTY) {
+      throw new PortalDraftError(400, "invalid_line", `Line ${i + 1}: quantity must be a whole number between 1 and ${MAX_LINE_QTY}`);
+    }
     const itemId = l.itemId ?? null;
     const menuItemId = l.menuItemId ?? null;
     if (itemId != null && itemId !== "") {
@@ -378,6 +396,11 @@ export async function setDraftLines(customerId: string, quoteId: string, lines: 
   const isDelivery = opts.isDelivery ?? header.is_delivery;
   const deliveryZoneId = opts.deliveryZoneId !== undefined ? opts.deliveryZoneId : header.delivery_zone_id;
 
+  // A-M3: ALL validation + the full charge stack are computed BEFORE any write — resolveLines
+  // (bounds/refs), ratesWithTip (tip validation), and resolveDeliveryFee all throw here, before the
+  // delete, so a bad payload can never leave the line items replaced with a stale snapshot. (Full
+  // delete+insert+update transactional atomicity would need an RPC; the residual is only a sub-ms
+  // concurrent-self-read window — tracked as an optional deeper fix.)
   const resolved = await resolveLines(header.location_id, lines);
   const pricing = await loadPublicPricingContext(header.location_id);
   const deliveryFee = await resolveDeliveryFee(header.location_id, isDelivery, deliveryZoneId);
@@ -452,22 +475,15 @@ export async function submitDraft(customerId: string, quoteId: string, opts: Sub
   const sb = getServiceRoleClient();
   const header = await loadOwnedDraftHeader(sb, customerId, quoteId);
 
-  // Append the napkins add-on line (server-priced) if toggled, BEFORE the final compute.
-  if (opts.napkins) {
-    const napkins = await loadNapkinsAddon(header.location_id);
-    if (napkins) {
-      const nextOrder = (await currentLineTotals(sb, quoteId)).length;
-      const { error: nErr } = await sb.from("catering_quote_items").insert({
-        quote_id: quoteId, item_id: napkins.id, menu_item_id: null, package_id: null, portion: null,
-        description: napkins.name, quantity: 1, unit_price_cents: napkins.unitPriceCents,
-        line_total_cents: lineTotalCents(1, napkins.unitPriceCents), display_order: nextOrder, created_by: null,
-      });
-      if (nErr) throw new Error(`submitDraft napkins: ${nErr.message}`);
-    }
-  }
+  const baseLineTotals = await currentLineTotals(sb, quoteId);
+  if (baseLineTotals.length === 0) throw new PortalDraftError(400, "empty_cart", "Your order is empty");
 
-  const lineTotals = await currentLineTotals(sb, quoteId);
-  if (lineTotals.length === 0) throw new PortalDraftError(400, "empty_cart", "Your order is empty");
+  // Resolve the napkins add-on price UP FRONT (to fold into the snapshot) but do NOT insert the line
+  // yet — only the submit that WINS the atomic status flip may mutate line items or create a payment
+  // (A-M4: two concurrent submits must not both append napkins onto a now-immutable quote).
+  const napkins = opts.napkins ? await loadNapkinsAddon(header.location_id) : null;
+  const napkinsTotal = napkins ? lineTotalCents(1, napkins.unitPriceCents) : null;
+  const lineTotals = napkinsTotal != null ? [...baseLineTotals, napkinsTotal] : baseLineTotals;
 
   const pricing = await loadPublicPricingContext(header.location_id);
   const isDelivery = opts.isDelivery ?? header.is_delivery;
@@ -476,12 +492,23 @@ export async function submitDraft(customerId: string, quoteId: string, opts: Sub
   const rates = ratesWithTip(pricing.rates, opts.tipBps);
   const stack = computeChargeStack(lineTotals, deliveryFee, rates);
 
-  // Flip draft → submitted + snapshot the final stack. Guard on status='draft' (concurrent-submit safe).
+  // ATOMIC CLAIM: flip draft → submitted with the final (napkins-inclusive) snapshot. Guard on
+  // status='draft' — the LOSER of a double-submit gets count=0 → 409 having mutated NOTHING.
   const { error: upErr, count } = await sb.from("catering_quotes")
     .update({ status: "submitted", ...snapshotColumns(rates, stack, isDelivery, deliveryZoneId), expires_at: defaultExpiry() }, { count: "exact" })
     .eq("id", quoteId).eq("status", "draft");
   if (upErr) throw new Error(`submitDraft flip: ${upErr.message}`);
   if (count === 0) throw new PortalDraftError(409, "not_draft", "This order was already submitted");
+
+  // WON the claim — now it is safe to append the napkins line (only one submitter reaches here).
+  if (napkins) {
+    const { error: nErr } = await sb.from("catering_quote_items").insert({
+      quote_id: quoteId, item_id: napkins.id, menu_item_id: null, package_id: null, portion: null,
+      description: napkins.name, quantity: 1, unit_price_cents: napkins.unitPriceCents,
+      line_total_cents: lineTotalCents(1, napkins.unitPriceCents), display_order: baseLineTotals.length, created_by: null,
+    });
+    if (nErr) throw new Error(`submitDraft napkins: ${nErr.message}`);
+  }
 
   // Deposit-due payment intent (self-serve is deposit-required).
   await createPaymentDue(sb, { quoteId, customerId, kind: "deposit", amountCents: stack.depositCents, createdBy: customerId });
