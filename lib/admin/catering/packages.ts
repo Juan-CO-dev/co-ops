@@ -49,14 +49,27 @@ const PRICING_MODES = ["per_head", "per_platter", "fixed"] as const;
 export type PricingMode = (typeof PRICING_MODES)[number];
 
 // ── Types ───────────────────────────────────────────────────────────────────
+export type LineSlotType = "fixed" | "choice";
+
+/** A resolved eligible option of a CHOICE slot (W1b). */
+export interface SlotOptionView {
+  id: string;
+  kind: "item" | "menu_item";
+  refId: string;
+  name: string;
+}
+
 export interface PackageLineItemView {
   id: string;
-  /** Freeform line for now — item_id/menu_item_id stay null until the menu is authored. */
-  itemId: string | null;
+  /** 'fixed' = a locked/specific item (spine-linked ref or freeform); 'choice' = a pick-N slot (W1b). */
+  slotType: LineSlotType;
+  itemId: string | null;      // fixed spine-link (or null: choice / freeform)
   menuItemId: string | null;
-  description: string | null;
+  refName: string | null;     // resolved name of the fixed spine ref (null when freeform/choice)
+  description: string | null; // freeform label (fixed) OR the slot label (choice)
   quantity: number;
   displayOrder: number;
+  options: SlotOptionView[];  // populated for choice lines (empty otherwise)
 }
 
 export interface PackageView {
@@ -198,6 +211,7 @@ interface DbPackageRow {
 interface DbLineItemRow {
   id: string;
   package_id: string;
+  slot_type: string;
   item_id: string | null;
   menu_item_id: string | null;
   description: string | null;
@@ -235,23 +249,60 @@ async function hydratePackages(rows: DbPackageRow[]): Promise<PackageView[]> {
   const packageIds = rows.map((r) => r.id);
   const { data: itemRows, error: itemErr } = await sb
     .from("catering_package_items")
-    .select("id, package_id, item_id, menu_item_id, description, quantity, display_order")
+    .select("id, package_id, slot_type, item_id, menu_item_id, description, quantity, display_order")
     .in("package_id", packageIds)
     .eq("active", true)
     .order("display_order", { ascending: true })
     .returns<DbLineItemRow[]>();
   if (itemErr) throw new Error(`hydratePackages line items failed: ${itemErr.message}`);
 
+  // Load the active slot options for choice lines (W1b).
+  const lineIds = (itemRows ?? []).map((r) => r.id);
+  const { data: optRows } = lineIds.length
+    ? await sb
+        .from("catering_package_slot_options")
+        .select("id, package_item_id, item_id, menu_item_id, display_order")
+        .in("package_item_id", lineIds)
+        .eq("active", true)
+        .order("display_order", { ascending: true })
+        .returns<Array<{ id: string; package_item_id: string; item_id: string | null; menu_item_id: string | null; display_order: number }>>()
+    : { data: [] as Array<{ id: string; package_item_id: string; item_id: string | null; menu_item_id: string | null; display_order: number }> };
+
+  // Batch-resolve names for every referenced item/menu_item (fixed refs + options).
+  const refItemIds = new Set<string>();
+  const refMenuItemIds = new Set<string>();
+  for (const r of itemRows ?? []) { if (r.item_id) refItemIds.add(r.item_id); if (r.menu_item_id) refMenuItemIds.add(r.menu_item_id); }
+  for (const o of optRows ?? []) { if (o.item_id) refItemIds.add(o.item_id); if (o.menu_item_id) refMenuItemIds.add(o.menu_item_id); }
+  const nameByItem = new Map<string, string>();
+  const nameByMenuItem = new Map<string, string>();
+  if (refItemIds.size) { const { data } = await sb.from("items").select("id, name").in("id", [...refItemIds]).returns<Array<{ id: string; name: string }>>(); for (const x of data ?? []) nameByItem.set(x.id, x.name); }
+  if (refMenuItemIds.size) { const { data } = await sb.from("menu_items").select("id, name").in("id", [...refMenuItemIds]).returns<Array<{ id: string; name: string }>>(); for (const x of data ?? []) nameByMenuItem.set(x.id, x.name); }
+
+  const optionsByLine = new Map<string, SlotOptionView[]>();
+  for (const o of optRows ?? []) {
+    const kind = o.menu_item_id ? ("menu_item" as const) : ("item" as const);
+    const refId = (o.menu_item_id ?? o.item_id)!;
+    const name = kind === "menu_item" ? nameByMenuItem.get(refId) ?? "Item" : nameByItem.get(refId) ?? "Item";
+    const arr = optionsByLine.get(o.package_item_id) ?? [];
+    arr.push({ id: o.id, kind, refId, name });
+    optionsByLine.set(o.package_item_id, arr);
+  }
+
   const itemsByPackage = new Map<string, PackageLineItemView[]>();
   for (const it of itemRows ?? []) {
+    const slotType: LineSlotType = it.slot_type === "choice" ? "choice" : "fixed";
+    const refName = it.menu_item_id ? nameByMenuItem.get(it.menu_item_id) ?? null : it.item_id ? nameByItem.get(it.item_id) ?? null : null;
     const arr = itemsByPackage.get(it.package_id) ?? [];
     arr.push({
       id: it.id,
+      slotType,
       itemId: it.item_id,
       menuItemId: it.menu_item_id,
+      refName,
       description: it.description,
       quantity: toQty(it.quantity),
       displayOrder: it.display_order,
+      options: optionsByLine.get(it.id) ?? [],
     });
     itemsByPackage.set(it.package_id, arr);
   }
@@ -569,38 +620,73 @@ export async function deactivatePackage(
   });
 }
 
-// ── Line items (Tier A; FREEFORM for now — description + quantity only) ─────────
-// item_id / menu_item_id stay null until the menu is authored (the CHECK allows
-// both-null). Spine-linking lands as a follow-up when menu_items/items are real.
-export async function addPackageLineItem(
-  actor: AuthContext,
-  args: { packageId: string; description: string; quantity: number },
-): Promise<{ id: string }> {
-  requireLevel(actor, PACKAGE_WRITE_MIN);
-  await requirePackageRow(args.packageId);
+// ── Line items (Tier A; W1b — a line is a locked FIXED item or an interchangeable CHOICE slot) ───
+// FIXED: spine-links a real catering-available item/menu_item (or a freeform description while the
+// menu is dormant). CHOICE: a pick-N slot; both FKs null, the label lives in description, and the
+// eligible options live in catering_package_slot_options (added separately).
 
-  const description = normalizeOptional(args.description);
-  if (!description) throw new AdminCateringError(400, "invalid_payload", "Line item description is required");
-  const quantity = normalizeQuantity(args.quantity);
+/** Verify a {kind,id} ref points at an ACTIVE, catering-available item/menu_item. */
+async function assertCateringRef(ref: { kind: "item" | "menu_item"; id: string }): Promise<void> {
+  const sb = getServiceRoleClient();
+  const table = ref.kind === "menu_item" ? "menu_items" : "items";
+  const { data, error } = await sb
+    .from(table)
+    .select("id")
+    .eq("id", ref.id)
+    .eq("active", true)
+    .eq("catering_available", true)
+    .maybeSingle<{ id: string }>();
+  if (error) throw new Error(`assertCateringRef failed: ${error.message}`);
+  if (!data) throw new AdminCateringError(400, "invalid_ref", "That item is not catering-available");
+}
+
+export interface AddPackageLineInput {
+  packageId: string;
+  slotType: LineSlotType;
+  ref?: { kind: "item" | "menu_item"; id: string } | null; // fixed spine-link
+  description?: string | null; // freeform label (fixed) OR slot label (choice)
+  quantity: number;
+}
+
+export async function addPackageLine(actor: AuthContext, input: AddPackageLineInput): Promise<{ id: string }> {
+  requireLevel(actor, PACKAGE_WRITE_MIN);
+  await requirePackageRow(input.packageId);
+  const quantity = normalizeQuantity(input.quantity);
+  const description = normalizeOptional(input.description);
+
+  let itemId: string | null = null;
+  let menuItemId: string | null = null;
+  if (input.slotType === "fixed") {
+    if (input.ref) {
+      await assertCateringRef(input.ref);
+      if (input.ref.kind === "menu_item") menuItemId = input.ref.id;
+      else itemId = input.ref.id;
+    } else if (!description) {
+      throw new AdminCateringError(400, "invalid_payload", "A fixed line needs an item or a description");
+    }
+  } else {
+    // choice: FKs stay null; the slot label lives in description; options are added separately.
+    if (!description) throw new AdminCateringError(400, "invalid_payload", "A choice slot needs a label");
+  }
 
   const sb = getServiceRoleClient();
   const { data: maxRow, error: mErr } = await sb
     .from("catering_package_items")
     .select("display_order")
-    .eq("package_id", args.packageId)
+    .eq("package_id", input.packageId)
     .order("display_order", { ascending: false })
     .limit(1)
     .maybeSingle<{ display_order: number }>();
-  if (mErr) throw new Error(`addPackageLineItem max order failed: ${mErr.message}`);
+  if (mErr) throw new Error(`addPackageLine max order failed: ${mErr.message}`);
   const displayOrder = (maxRow?.display_order ?? -1) + 1;
 
   const { data: inserted, error: iErr } = await sb
     .from("catering_package_items")
     .insert({
-      package_id: args.packageId,
-      // Freeform: leave the spine FKs null until the menu is authored.
-      item_id: null,
-      menu_item_id: null,
+      package_id: input.packageId,
+      slot_type: input.slotType,
+      item_id: itemId,
+      menu_item_id: menuItemId,
       description,
       quantity,
       display_order: displayOrder,
@@ -609,8 +695,8 @@ export async function addPackageLineItem(
     })
     .select("id")
     .maybeSingle<{ id: string }>();
-  if (iErr) throw new Error(`addPackageLineItem insert failed: ${iErr.message}`);
-  if (!inserted) throw new Error("addPackageLineItem insert returned no row");
+  if (iErr) throw new Error(`addPackageLine insert failed: ${iErr.message}`);
+  if (!inserted) throw new Error("addPackageLine insert returned no row");
 
   await audit({
     actorId: actor.user.id,
@@ -618,12 +704,98 @@ export async function addPackageLineItem(
     action: "catering.kb.packages.line_item_add",
     resourceTable: "catering_package_items",
     resourceId: inserted.id,
-    metadata: { package_id: args.packageId, description, quantity },
+    metadata: { package_id: input.packageId, slot_type: input.slotType, ref: input.ref ?? null },
     ipAddress: null,
     userAgent: null,
   });
 
   return { id: inserted.id };
+}
+
+/** @deprecated freeform wrapper — prefer addPackageLine. Kept for existing route/callers. */
+export async function addPackageLineItem(
+  actor: AuthContext,
+  args: { packageId: string; description: string; quantity: number },
+): Promise<{ id: string }> {
+  return addPackageLine(actor, { packageId: args.packageId, slotType: "fixed", description: args.description, quantity: args.quantity });
+}
+
+// ── Choice-slot options (Tier A; append-only) ───────────────────────────────────
+export async function addSlotOption(
+  actor: AuthContext,
+  args: { lineItemId: string; ref: { kind: "item" | "menu_item"; id: string } },
+): Promise<{ id: string }> {
+  requireLevel(actor, PACKAGE_WRITE_MIN);
+  const sb = getServiceRoleClient();
+  const { data: line, error: lErr } = await sb
+    .from("catering_package_items")
+    .select("id, slot_type")
+    .eq("id", args.lineItemId)
+    .maybeSingle<{ id: string; slot_type: string }>();
+  if (lErr) throw new Error(`addSlotOption line load: ${lErr.message}`);
+  if (!line) throw new AdminCateringError(404, "not_found", "Line item not found");
+  if (line.slot_type !== "choice") throw new AdminCateringError(409, "not_choice", "Options can only be added to a choice slot");
+  await assertCateringRef(args.ref);
+
+  const { data: maxRow, error: mErr } = await sb
+    .from("catering_package_slot_options")
+    .select("display_order")
+    .eq("package_item_id", args.lineItemId)
+    .order("display_order", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ display_order: number }>();
+  if (mErr) throw new Error(`addSlotOption max order failed: ${mErr.message}`);
+  const displayOrder = (maxRow?.display_order ?? -1) + 1;
+
+  const { data: inserted, error: iErr } = await sb
+    .from("catering_package_slot_options")
+    .insert({
+      package_item_id: args.lineItemId,
+      item_id: args.ref.kind === "item" ? args.ref.id : null,
+      menu_item_id: args.ref.kind === "menu_item" ? args.ref.id : null,
+      display_order: displayOrder,
+      active: true,
+      created_by: actor.user.id,
+    })
+    .select("id")
+    .maybeSingle<{ id: string }>();
+  if (iErr) throw new Error(`addSlotOption insert failed: ${iErr.message}`);
+  if (!inserted) throw new Error("addSlotOption insert returned no row");
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "catering.kb.packages.slot_option_add",
+    resourceTable: "catering_package_slot_options",
+    resourceId: inserted.id,
+    metadata: { line_item_id: args.lineItemId, ref: args.ref },
+    ipAddress: null,
+    userAgent: null,
+  });
+  return { id: inserted.id };
+}
+
+export async function removeSlotOption(actor: AuthContext, args: { optionId: string }): Promise<void> {
+  requireLevel(actor, PACKAGE_WRITE_MIN);
+  const sb = getServiceRoleClient();
+  const { error, count } = await sb
+    .from("catering_package_slot_options")
+    .update({ active: false }, { count: "exact" })
+    .eq("id", args.optionId)
+    .eq("active", true);
+  if (error) throw new Error(`removeSlotOption failed: ${error.message}`);
+  if (count === 0) throw new AdminCateringError(404, "not_found", "Option not found or already removed");
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "catering.kb.packages.slot_option_remove",
+    resourceTable: "catering_package_slot_options",
+    resourceId: args.optionId,
+    metadata: {},
+    ipAddress: null,
+    userAgent: null,
+  });
 }
 
 /** Load a line-item row (id + package) or throw 404. */
@@ -655,6 +827,9 @@ export async function removePackageLineItem(
     .eq("active", true);
   if (error) throw new Error(`removePackageLineItem failed: ${error.message}`);
   if (count === 0) throw new AdminCateringError(404, "not_found", "Line item not found or already removed");
+
+  // Cascade: a removed choice slot's eligible options are deactivated too (append-only, W1b).
+  await sb.from("catering_package_slot_options").update({ active: false }).eq("package_item_id", args.itemId).eq("active", true);
 
   await audit({
     actorId: actor.user.id,
