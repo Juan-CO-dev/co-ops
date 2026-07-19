@@ -15,6 +15,7 @@ import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { loadPackages, loadPackageLocations, PACKAGE_READ_MIN } from "@/lib/admin/catering/packages";
+import { loadPackagePickerMenu } from "@/lib/admin/catering/package-pricing";
 import { PackagesClient } from "@/components/admin/catering/packages/PackagesClient";
 
 export default async function AdminCateringPackagesPage() {
@@ -23,9 +24,10 @@ export default async function AdminCateringPackagesPage() {
   if (level < PACKAGE_READ_MIN) redirect("/dashboard");
   const lang = auth.user.language;
 
-  const [packages, locations] = await Promise.all([
+  const [packages, locations, pickerMenu] = await Promise.all([
     loadPackages(auth),
     loadPackageLocations(auth),
+    loadPackagePickerMenu(auth),
   ]);
 
   return (
@@ -36,7 +38,7 @@ export default async function AdminCateringPackagesPage() {
       <p className="mt-1 text-sm text-co-text-muted">
         {serverT(lang, "admin.catering.packages.subtitle" as TranslationKey)}
       </p>
-      <PackagesClient packages={packages} locations={locations} actorLevel={level} />
+      <PackagesClient packages={packages} locations={locations} pickerMenu={pickerMenu} actorLevel={level} />
     </div>
   );
 }
