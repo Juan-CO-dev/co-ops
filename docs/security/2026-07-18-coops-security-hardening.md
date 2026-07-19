@@ -321,3 +321,25 @@ _pending._
 
 **Lows:** L2 (`token_hash` UNIQUE) + L3 (strip token from URL) recommended for fix; L1 + L5 deferred
 (multi-location / Portal-5); L4 accepted (documented tile-flow tradeoff) — _awaiting Juan's pick._
+
+---
+
+**Wave B triage (Juan, 2026-07-19):** Critical hotfixed immediately (0132, merged #143). Fix the 4 High
+truncation now (batched), then the Mediums; Lows listed for Juan's pick.
+
+**Wave B Batch 1 — silent-at-scale truncation (4 High) — FIXED (this PR):**
+- **WB5-01** `lib/reports-trends.ts` `loadTrendSeries` — 4 growth-table reads wrapped in `selectAllRows`
+  (checklist_instances/template_items/completions/cash_reports), stable `id` order.
+- **WB5-02** `lib/reports-hub.ts` — `listReports` + `computeReportSignals` + the checklist/opening/pm
+  detail loaders (8 reads) paginated; the `loadPmDetail` `<L4 own-eval-only` security filter preserved
+  inside the paginated callback (CC-verified).
+- **WB5-03** `lib/admin/readiness-load.ts` `loadGraphRows` — all 4 recipe-graph reads paginated.
+- **WB5-04** `lib/recipes.ts` — `loadItemRecipeGraph` / `recipeIdsWithInputs` / `outputNamesByRecipe` /
+  `activeProducerExists` graph reads paginated (closes the cycle-guard + one-active-producer write-guard
+  bypass at scale).
+- Verified: build + typecheck green; all 9 ordered tables have an `id` PK (runtime-safe); **runtime proof
+  on real data** — `selectAllRows` returns all **4,177** `checklist_completions` rows (not the 1000 cap),
+  no dupes across pages. No login impact → CI-mergeable.
+
+**Wave B Batch 2 — Mediums (WB3-03 cross-loc SELECT, WB4-01 admin-search escape, WB5-05/06 pagination):** _next._
+**Wave B Lows (WB2-01 step-up tiering, WB2-02 live locations, WB4-02 invoiceTotal, WB3-04 delete-deny):** _awaiting Juan's pick._

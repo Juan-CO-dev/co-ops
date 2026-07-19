@@ -4,6 +4,7 @@
  * recipe_type: 'production' (→ items) | 'consumer' (→ menu_items). See spec §3.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
@@ -70,21 +71,23 @@ async function recipeIdsWithInputs(recipeIds: string[]): Promise<Set<string>> {
   const out = new Set<string>();
   if (recipeIds.length === 0) return out;
   const sb = getServiceRoleClient();
-  const { data } = await sb.from("recipe_inputs").select("recipe_id").in("recipe_id", recipeIds).returns<Array<{ recipe_id: string }>>();
-  for (const r of data ?? []) out.add(r.recipe_id);
+  const data = await selectAllRows<{ recipe_id: string }>((from, to) =>
+    sb.from("recipe_inputs").select("recipe_id").in("recipe_id", recipeIds).order("id", { ascending: true }).range(from, to));
+  for (const r of data) out.add(r.recipe_id);
   return out;
 }
 async function outputNamesByRecipe(recipeIds: string[]): Promise<Map<string, string[]>> {
   const out = new Map<string, string[]>();
   if (recipeIds.length === 0) return out;
   const sb = getServiceRoleClient();
-  const { data: rows } = await sb.from("recipe_outputs").select("recipe_id, output_item_id, output_menu_item_id")
-    .in("recipe_id", recipeIds).returns<Array<{ recipe_id: string; output_item_id: string | null; output_menu_item_id: string | null }>>();
-  const itemIds = [...new Set((rows ?? []).map((r) => r.output_item_id).filter((v): v is string => !!v))];
-  const menuIds = [...new Set((rows ?? []).map((r) => r.output_menu_item_id).filter((v): v is string => !!v))];
+  const rows = await selectAllRows<{ recipe_id: string; output_item_id: string | null; output_menu_item_id: string | null }>(
+    (from, to) => sb.from("recipe_outputs").select("recipe_id, output_item_id, output_menu_item_id")
+      .in("recipe_id", recipeIds).order("id", { ascending: true }).range(from, to));
+  const itemIds = [...new Set(rows.map((r) => r.output_item_id).filter((v): v is string => !!v))];
+  const menuIds = [...new Set(rows.map((r) => r.output_menu_item_id).filter((v): v is string => !!v))];
   const itemNames = await namesById("items", itemIds);
   const menuNames = await namesById("menu_items", menuIds);
-  for (const r of rows ?? []) {
+  for (const r of rows) {
     const list = out.get(r.recipe_id) ?? [];
     list.push(r.output_item_id ? (itemNames.get(r.output_item_id) ?? "(item)") : (menuNames.get(r.output_menu_item_id ?? "") ?? "(menu item)"));
     out.set(r.recipe_id, list);
@@ -161,12 +164,15 @@ async function activeProducerExists(
   itemId: string,
   excludeRecipeId: string | null,
 ): Promise<boolean> {
-  const { data: outs } = await sb
-    .from("recipe_outputs")
-    .select("recipe_id")
-    .eq("output_item_id", itemId)
-    .returns<Array<{ recipe_id: string }>>();
-  const recipeIds = [...new Set((outs ?? []).map((o) => o.recipe_id))].filter((id) => id !== excludeRecipeId);
+  const outs = await selectAllRows<{ recipe_id: string }>((from, to) =>
+    sb
+      .from("recipe_outputs")
+      .select("recipe_id")
+      .eq("output_item_id", itemId)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  const recipeIds = [...new Set(outs.map((o) => o.recipe_id))].filter((id) => id !== excludeRecipeId);
   if (recipeIds.length === 0) return false;
   const { data: active } = await sb
     .from("recipes")
@@ -263,10 +269,12 @@ export async function createMenuItem(actor: AuthContext, input: { name: string; 
  * recipe -> its input items. Shared by the cycle-guard walks below. */
 async function loadItemRecipeGraph(): Promise<{ recipeOfItem: Map<string, string>; inputItemsOfRecipe: Map<string, string[]> }> {
   const sb = getServiceRoleClient();
-  const { data: outs } = await sb.from("recipe_outputs").select("recipe_id, output_item_id").not("output_item_id", "is", null).returns<Array<{ recipe_id: string; output_item_id: string }>>();
-  const { data: ins } = await sb.from("recipe_inputs").select("recipe_id, component_item_id").not("component_item_id", "is", null).returns<Array<{ recipe_id: string; component_item_id: string }>>();
-  const recipeOfItem = new Map<string, string>(); for (const o of outs ?? []) recipeOfItem.set(o.output_item_id, o.recipe_id);
-  const inputItemsOfRecipe = new Map<string, string[]>(); for (const i of ins ?? []) { const l = inputItemsOfRecipe.get(i.recipe_id) ?? []; l.push(i.component_item_id); inputItemsOfRecipe.set(i.recipe_id, l); }
+  const outs = await selectAllRows<{ recipe_id: string; output_item_id: string }>((from, to) =>
+    sb.from("recipe_outputs").select("recipe_id, output_item_id").not("output_item_id", "is", null).order("id", { ascending: true }).range(from, to));
+  const ins = await selectAllRows<{ recipe_id: string; component_item_id: string }>((from, to) =>
+    sb.from("recipe_inputs").select("recipe_id, component_item_id").not("component_item_id", "is", null).order("id", { ascending: true }).range(from, to));
+  const recipeOfItem = new Map<string, string>(); for (const o of outs) recipeOfItem.set(o.output_item_id, o.recipe_id);
+  const inputItemsOfRecipe = new Map<string, string[]>(); for (const i of ins) { const l = inputItemsOfRecipe.get(i.recipe_id) ?? []; l.push(i.component_item_id); inputItemsOfRecipe.set(i.recipe_id, l); }
   return { recipeOfItem, inputItemsOfRecipe };
 }
 

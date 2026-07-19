@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import { isPrepData } from "@/lib/prep";
 import {
   REPORTS_HUB_CASH_LEVEL,
@@ -190,18 +191,21 @@ export async function loadTrendSeries(
   };
 
   // ── 1. Instances in span (IDOR-bound) ──
-  const { data: instData } = await service
-    .from("checklist_instances")
-    .select("id, location_id, date, template_id")
-    .eq("location_id", args.locationId)
-    .gte("date", loadFrom)
-    .lte("date", loadTo);
-  const instances = (instData ?? []) as Array<{
+  const instances = await selectAllRows<{
     id: string;
     location_id: string;
     date: string;
     template_id: string;
-  }>;
+  }>((from, to) =>
+    service
+      .from("checklist_instances")
+      .select("id, location_id, date, template_id")
+      .eq("location_id", args.locationId)
+      .gte("date", loadFrom)
+      .lte("date", loadTo)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
 
   // ── 2. Template → ReportTypeKey + required-item ids ──
   const tmplIds = [...new Set(instances.map((i) => i.template_id))];
@@ -216,12 +220,17 @@ export async function loadTrendSeries(
       const rt = checklistReportType(t.type, t.prep_subtype);
       if (rt) typeByTmpl.set(t.id, rt);
     }
-    const { data: titems } = await service
-      .from("checklist_template_items")
-      .select("id, template_id, required")
-      .in("template_id", tmplIds)
-      .eq("active", true);
-    for (const ti of (titems ?? []) as Array<{ id: string; template_id: string; required: boolean }>) {
+    const titems = await selectAllRows<{ id: string; template_id: string; required: boolean }>(
+      (from, to) =>
+        service
+          .from("checklist_template_items")
+          .select("id, template_id, required")
+          .in("template_id", tmplIds)
+          .eq("active", true)
+          .order("id", { ascending: true })
+          .range(from, to),
+    );
+    for (const ti of titems) {
       if (!ti.required) continue;
       let s = requiredByTmpl.get(ti.template_id);
       if (!s) {
@@ -239,18 +248,22 @@ export async function loadTrendSeries(
     Array<{ template_item_id: string; count_value: number | null; prep_data: unknown }>
   >();
   if (instIds.length) {
-    const { data: comps } = await service
-      .from("checklist_completions")
-      .select("instance_id, template_item_id, count_value, prep_data")
-      .in("instance_id", instIds)
-      .is("superseded_at", null)
-      .is("revoked_at", null);
-    for (const c of (comps ?? []) as Array<{
+    const comps = await selectAllRows<{
       instance_id: string;
       template_item_id: string;
       count_value: number | null;
       prep_data: unknown;
-    }>) {
+    }>((from, to) =>
+      service
+        .from("checklist_completions")
+        .select("instance_id, template_item_id, count_value, prep_data")
+        .in("instance_id", instIds)
+        .is("superseded_at", null)
+        .is("revoked_at", null)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
+    for (const c of comps) {
       let list = compsByInst.get(c.instance_id);
       if (!list) {
         list = [];
@@ -303,14 +316,19 @@ export async function loadTrendSeries(
 
   // ── 6. Cash reports (KH+ only) ──
   if (cashVisible) {
-    const { data: cash } = await service
-      .from("cash_reports")
-      .select("location_id, report_date, over_short_cents")
-      .eq("location_id", args.locationId)
-      .gte("report_date", loadFrom)
-      .lte("report_date", loadTo)
-      .is("superseded_at", null);
-    for (const r of (cash ?? []) as Array<{ location_id: string; report_date: string; over_short_cents: number | null }>) {
+    const cash = await selectAllRows<{ location_id: string; report_date: string; over_short_cents: number | null }>(
+      (from, to) =>
+        service
+          .from("cash_reports")
+          .select("location_id, report_date, over_short_cents")
+          .eq("location_id", args.locationId)
+          .gte("report_date", loadFrom)
+          .lte("report_date", loadTo)
+          .is("superseded_at", null)
+          .order("id", { ascending: true })
+          .range(from, to),
+    );
+    for (const r of cash) {
       const key = bucketStart(r.report_date, args.granularity);
       const a = bump(key);
       a.hasData = true;
