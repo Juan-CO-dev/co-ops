@@ -8,7 +8,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { requireCustomerSession } from "@/lib/portal/session";
-import { setDraftLines, PortalDraftError } from "@/lib/portal/draft";
+import { setDraftLines, PortalDraftError, MAX_CART_LINES } from "@/lib/portal/draft";
 import type { DraftLineInput } from "@/lib/portal/draft";
 
 export const runtime = "nodejs";
@@ -26,6 +26,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (!body || typeof body.quoteId !== "string" || !Array.isArray(body.lines)) {
     return NextResponse.json({ error: "invalid_payload" }, { status: 400 });
   }
+  // Reject an oversized cart BEFORE mapping it (A-H4 — unbounded-input DoS).
+  if (body.lines.length > MAX_CART_LINES) {
+    return NextResponse.json({ error: "too_many_lines" }, { status: 400 });
+  }
   const lines: DraftLineInput[] = body.lines.map((raw) => {
     const o = (raw ?? {}) as Record<string, unknown>;
     return {
@@ -40,7 +44,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const view = await setDraftLines(ctx.customerId, body.quoteId, lines, {
       isDelivery: typeof body.isDelivery === "boolean" ? body.isDelivery : undefined,
       deliveryZoneId: typeof body.deliveryZoneId === "string" ? body.deliveryZoneId : (body.deliveryZoneId === null ? null : undefined),
-      tipBps: typeof body.tipBps === "number" ? body.tipBps : undefined,
+      tipBps: Number.isFinite(body.tipBps) ? (body.tipBps as number) : undefined,
     });
     return NextResponse.json({ ok: true, stack: view.stack, isDelivery: view.isDelivery, deliveryZoneId: view.deliveryZoneId });
   } catch (e) {

@@ -25,6 +25,7 @@ import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, isAllLocationsAccess } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import { sendEmail } from "@/lib/email";
+import { escapeHtml } from "@/lib/email-templates/_layout";
 import type { AuthContext } from "@/lib/session";
 
 export const QUOTE_READ_MIN = 5; // shift_lead+ may VIEW (a lead viewer sees its quote)
@@ -92,9 +93,13 @@ export interface ChargeStack {
   depositCents: number;
 }
 
-/** basis-points of an integer-cents base, rounded half-up to the nearest cent. */
+/** basis-points of an integer-cents base, rounded half-up to the nearest cent. Defense-in-depth:
+ *  a non-finite or negative rate/base contributes 0 (never a negative or NaN charge) — the charge
+ *  stack must never go negative regardless of the rate inputs (see A-H1). Valid rates are ≥0, so
+ *  this is a no-op for legitimate inputs. */
 function bpsOf(baseCents: number, bps: number): number {
-  return Math.round((baseCents * bps) / 10000);
+  if (!Number.isFinite(baseCents) || !Number.isFinite(bps) || bps <= 0 || baseCents <= 0) return 0;
+  return Math.max(0, Math.round((baseCents * bps) / 10000));
 }
 /** A single line's frozen total: quantity × unit price, rounded to the nearest cent. */
 export function lineTotalCents(quantity: number, unitPriceCents: number): number {
@@ -898,6 +903,8 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
       .maybeSingle<{ email: string | null; name: string | null }>();
     if (cust?.email) {
       recipient = cust.email;
+      // Customer-supplied name is interpolated into email HTML → escape it (A-H2 stored-XSS-in-email).
+      const safeName = escapeHtml(cust.name ?? "there");
       const total = (row.total_cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
       // Link to the shared customer review+pay surface (sign-in required). Only include it when
       // NEXT_PUBLIC_APP_URL is set — never emit a broken `undefined/...` URL into a sent email.
@@ -910,7 +917,7 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
       const res = await sendEmail({
         to: cust.email,
         subject: "Your catering quote from Compliments Only",
-        html: `<p>Hi ${cust.name ?? "there"},</p><p>Your catering quote is ready. Estimated total: <strong>${total}</strong>.</p>${htmlLink}<p>Our team will follow up shortly to confirm the details.</p>`,
+        html: `<p>Hi ${safeName},</p><p>Your catering quote is ready. Estimated total: <strong>${total}</strong>.</p>${htmlLink}<p>Our team will follow up shortly to confirm the details.</p>`,
         text: `Hi ${cust.name ?? "there"},\n\nYour catering quote is ready. Estimated total: ${total}.${textLink}\n\nOur team will follow up shortly to confirm the details.`,
       });
       if ("id" in res) emailed = true;

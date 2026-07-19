@@ -30,7 +30,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     const stack = await previewDraft(ctx.customerId, body.quoteId, {
       isDelivery: typeof body.isDelivery === "boolean" ? body.isDelivery : undefined,
       deliveryZoneId: typeof body.deliveryZoneId === "string" ? body.deliveryZoneId : (body.deliveryZoneId === null ? null : undefined),
-      tipBps: typeof body.tipBps === "number" ? body.tipBps : undefined,
+      tipBps: Number.isFinite(body.tipBps) ? (body.tipBps as number) : undefined,
       napkins: body.napkins === true,
     });
     return NextResponse.json({ ok: true, stack });

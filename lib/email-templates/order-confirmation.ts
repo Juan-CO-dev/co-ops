@@ -12,7 +12,7 @@
  * email layer).
  */
 
-import { renderEmailLayout, appUrl } from "./_layout";
+import { renderEmailLayout, appUrl, escapeHtml } from "./_layout";
 
 function centsToUsd(cents: number): string {
   return (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -32,7 +32,7 @@ export function renderOrderConfirmationEmail(input: OrderConfirmationInput): str
     preheader: "We received your catering order — pending our team's confirmation.",
     heading: "Order received — pending our team's confirmation",
     bodyHtml: `
-      <p style="margin:0 0 16px;">Hi ${input.name}, thanks for your catering request for <strong>${input.eventDateLabel}</strong>. We've received it and our team will review the details.</p>
+      <p style="margin:0 0 16px;">Hi ${escapeHtml(input.name)}, thanks for your catering request for <strong>${escapeHtml(input.eventDateLabel)}</strong>. We've received it and our team will review the details.</p>
       <p style="margin:0 0 16px;">Estimated total: <strong>${total}</strong>. A <strong>${deposit}</strong> deposit reserves the date.</p>
       <p style="margin:0;">We'll confirm within about 24 hours. If we're not able to do your date, your deposit is refunded in full.</p>
     `,

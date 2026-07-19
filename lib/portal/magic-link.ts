@@ -32,6 +32,10 @@ import { audit } from "@/lib/audit";
 
 const TOKEN_TTL_MIN = 30;
 
+/** Strict single-line email shape (A-M7): exactly one `@`, a dotted domain, and NO whitespace or
+ * control characters (blocks CRLF/header-injection-style values before they're stored/sent). */
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 function allowlisted(email: string): boolean {
   const raw = process.env.PORTAL_MAGIC_LINK_ALLOWLIST ?? "juan@complimentsonlysubs.com";
   return raw.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean).includes(email.toLowerCase());
@@ -40,7 +44,7 @@ function allowlisted(email: string): boolean {
 /** Constant-shape: always resolves; internal disposition is audited only (enumeration defense). */
 export async function requestMagicLink(input: { email: string; name?: string | null; ip?: string | null; intake?: DraftIntake | null }): Promise<void> {
   const email = normalizeEmail(input.email);
-  if (!email || extractDomain(email) === null) return;
+  if (!email || !EMAIL_RE.test(email) || extractDomain(email) === null) return;
   // Per-VICTIM cap keyed on email alone is IP-independent — an attacker spoofing the client
   // x-forwarded-for cannot bomb a single victim past this. The per-SOURCE (ip+email) cap is a
   // best-effort secondary. audit_log.resource_id is uuid, so null it and carry email in metadata.

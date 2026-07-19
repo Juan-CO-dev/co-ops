@@ -15,27 +15,43 @@ export const runtime = "nodejs";
 
 /** Coerce a JSON intake payload into a DraftIntake (shape only — createDraftFromIntake re-validates
  * the location UUID + re-derives ALL pricing at consume time; nothing here is trusted for money). */
+// String-length caps so a crafted intake can't store a multi-MB blob on the (anon-reachable,
+// never-swept) token table (A-H4). Trim + truncate rather than reject, so a legit-but-long note
+// still produces a usable order.
+const CAP_SHORT = 200; // names, company, phone, window, type, event name, door
+const CAP_ADDR = 500; // delivery address
+const CAP_NOTES = 2000; // dietary & allergen notes
+const MAX_HEADCOUNT = 100000;
+
 function parseIntake(raw: unknown): DraftIntake | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
   const locationId = typeof o.locationId === "string" ? o.locationId : "";
-  const contactName = typeof o.contactName === "string" ? o.contactName.trim() : "";
+  const contactName = typeof o.contactName === "string" ? o.contactName.trim().slice(0, CAP_SHORT) : "";
   if (!locationId || !contactName) return null;
-  const str = (v: unknown): string | null => (typeof v === "string" && v.trim().length > 0 ? v.trim() : null);
+  const cap = (v: unknown, max: number): string | null => {
+    if (typeof v !== "string") return null;
+    const t = v.trim();
+    return t.length > 0 ? t.slice(0, max) : null;
+  };
+  const headcount =
+    typeof o.headcount === "number" && Number.isInteger(o.headcount) && o.headcount >= 0 && o.headcount <= MAX_HEADCOUNT
+      ? o.headcount
+      : null;
   return {
     locationId,
     contactName,
-    company: str(o.company),
-    eventDate: str(o.eventDate),
-    headcount: typeof o.headcount === "number" && Number.isFinite(o.headcount) ? o.headcount : null,
+    company: cap(o.company, CAP_SHORT),
+    eventDate: cap(o.eventDate, 40),
+    headcount,
     isDelivery: o.isDelivery === true,
-    deliveryAddress: str(o.deliveryAddress),
-    contactPhone: str(o.contactPhone),
-    timeWindow: str(o.timeWindow),
-    eventType: str(o.eventType),
-    dietaryNotes: str(o.dietaryNotes),
-    eventName: str(o.eventName),
-    dropoffDoor: str(o.dropoffDoor),
+    deliveryAddress: cap(o.deliveryAddress, CAP_ADDR),
+    contactPhone: cap(o.contactPhone, CAP_SHORT),
+    timeWindow: cap(o.timeWindow, CAP_SHORT),
+    eventType: cap(o.eventType, CAP_SHORT),
+    dietaryNotes: cap(o.dietaryNotes, CAP_NOTES),
+    eventName: cap(o.eventName, CAP_SHORT),
+    dropoffDoor: cap(o.dropoffDoor, CAP_SHORT),
   };
 }
 
