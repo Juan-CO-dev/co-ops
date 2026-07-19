@@ -208,16 +208,19 @@ async function main() {
 
     // ── immutability ──────────────────────────────────────────────────────────────────
     await assert.rejects(
-      () => setDraftLines(customerId, quoteId!, [{ menuItemId: subId!, portion: "whole", quantity: 1 }]),
+      () => setDraftLines(customerId!, quoteId!, [{ menuItemId: subId!, portion: "whole", quantity: 1 }]),
       (err: unknown) => err instanceof PortalDraftError && err.code === "not_draft" && err.status === 409,
       "setDraftLines on a submitted quote must throw not_draft (409)",
     );
     console.log("  ✓ immutability: setDraftLines on submitted → not_draft (409)");
 
     // ── stage vocabulary (the migration's 'out') ────────────────────────────────────────
-    for (const stage of ["confirmed", "out", "completed"] as const) {
-      const { error: stErr } = await sb.from("catering_pipeline").update({ stage }).eq("id", pipelineId);
-      assert.equal(stErr, null, `stage '${stage}' accepted by the CHECK`);
+    const stages: string[] = ["confirmed", "out", "completed"];
+    for (const stage of stages) {
+      // Explicit result type — Supabase's update() builder generics otherwise resolve to a
+      // self-referential type under strict TS (TS7022) for this single-field update.
+      const upd: { error: unknown } = await sb.from("catering_pipeline").update({ stage }).eq("id", pipelineId!);
+      assert.equal(upd.error, null, `stage '${stage}' accepted by the CHECK`);
     }
     console.log("  ✓ stage vocabulary: confirmed → out → completed all valid");
 
