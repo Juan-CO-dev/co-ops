@@ -96,6 +96,7 @@
   "catering.pipeline.stage.inquiry": "Consulta",
   "catering.pipeline.stage.quote_sent": "Cotización enviada",
   "catering.pipeline.stage.confirmed": "Confirmado",
+  "catering.pipeline.stage.out": "En reparto",
   "catering.pipeline.stage.completed": "Completado",
   "catering.pipeline.stage.lost": "Perdido",
   "catering.pipeline.field.contact_name": "Nombre de contacto",

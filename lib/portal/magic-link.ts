@@ -23,6 +23,8 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { generateToken, hashToken } from "./auth";
 import { createCustomerSession } from "./session";
 import { checkAndRecord } from "./rate-limit";
+import { createDraftFromIntake } from "./draft";
+import type { DraftIntake } from "./draft";
 import { extractDomain, normalizeEmail, resolveCompanyForEmail, escapeLike } from "@/lib/catering/companies";
 import { sendEmail } from "@/lib/email";
 import { renderMagicLinkEmail } from "@/lib/email-templates/magic-link";
@@ -36,7 +38,7 @@ function allowlisted(email: string): boolean {
 }
 
 /** Constant-shape: always resolves; internal disposition is audited only (enumeration defense). */
-export async function requestMagicLink(input: { email: string; name?: string | null; ip?: string | null }): Promise<void> {
+export async function requestMagicLink(input: { email: string; name?: string | null; ip?: string | null; intake?: DraftIntake | null }): Promise<void> {
   const email = normalizeEmail(input.email);
   if (!email || extractDomain(email) === null) return;
   // Per-VICTIM cap keyed on email alone is IP-independent — an attacker spoofing the client
@@ -49,7 +51,7 @@ export async function requestMagicLink(input: { email: string; name?: string | n
   const rawToken = generateToken();
   const tokenHash = await hashToken(rawToken);
   const expiresAt = new Date(Date.now() + TOKEN_TTL_MIN * 60 * 1000).toISOString();
-  const { error } = await sb.from("catering_portal_tokens").insert({ email, token_hash: tokenHash, name: input.name?.trim() || null, expires_at: expiresAt, ip_address: input.ip ?? null });
+  const { error } = await sb.from("catering_portal_tokens").insert({ email, token_hash: tokenHash, name: input.name?.trim() || null, expires_at: expiresAt, ip_address: input.ip ?? null, intake: input.intake ?? null });
   if (error) { void audit({ actorId: null, actorRole: null, action: "portal.magic_link_insert_failed", resourceTable: "catering_portal_tokens", resourceId: null, metadata: { email, error: error.message }, ipAddress: input.ip ?? null, userAgent: null }); return; }
   const appUrl = process.env.NEXT_PUBLIC_APP_URL;
   if (allowlisted(email) && appUrl) {
@@ -64,7 +66,7 @@ export async function requestMagicLink(input: { email: string; name?: string | n
   void audit({ actorId: null, actorRole: null, action: "portal.magic_link_requested", resourceTable: "catering_portal_tokens", resourceId: null, metadata: { email, allowlisted: allowlisted(email) }, ipAddress: input.ip ?? null, userAgent: null });
 }
 
-export interface ConsumeResult { ok: boolean; session?: Awaited<ReturnType<typeof createCustomerSession>> }
+export interface ConsumeResult { ok: boolean; session?: Awaited<ReturnType<typeof createCustomerSession>>; quoteId?: string }
 
 export async function consumeMagicLink(input: { token: string; ip?: string | null; ua?: string | null }): Promise<ConsumeResult> {
   const sb = getServiceRoleClient();
@@ -73,14 +75,28 @@ export async function consumeMagicLink(input: { token: string; ip?: string | nul
   const { data: rows, error } = await sb.from("catering_portal_tokens")
     .update({ consumed_at: new Date().toISOString() })
     .eq("token_hash", tokenHash).is("consumed_at", null).gt("expires_at", new Date().toISOString())
-    .select("id, email, name");
+    .select("id, email, name, intake");
   if (error || !rows || rows.length === 0) return { ok: false };
-  const tok = rows[0]!;
+  const tok = rows[0]! as { id: string; email: string; name: string | null; intake: DraftIntake | null };
   const customerId = await resolveOrCreatePortalCustomer(tok.email, tok.name);
   await sb.from("catering_customers").update({ email_verified_at: new Date().toISOString() }).eq("id", customerId).is("email_verified_at", null);
   const session = await createCustomerSession(customerId, tok.email, { ip: input.ip, ua: input.ua });
-  void audit({ actorId: null, actorRole: null, action: "portal.magic_link_consumed", resourceTable: "catering_customers", resourceId: customerId, metadata: {}, ipAddress: input.ip ?? null, userAgent: input.ua ?? null });
-  return { ok: true, session };
+
+  // Create the order artifact NOW (post-verify) if this link carried an intake — never before
+  // verification (no unverified/competitor rows). A malformed intake must NOT block sign-in.
+  let quoteId: string | undefined;
+  const intake = tok.intake;
+  if (intake && typeof intake === "object" && typeof intake.locationId === "string") {
+    try {
+      const draft = await createDraftFromIntake(customerId, { ...intake, email: tok.email });
+      quoteId = draft.quoteId;
+    } catch (err) {
+      console.error("[magic-link] createDraftFromIntake failed:", err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  void audit({ actorId: null, actorRole: null, action: "portal.magic_link_consumed", resourceTable: "catering_customers", resourceId: customerId, metadata: { created_draft: quoteId ?? null }, ipAddress: input.ip ?? null, userAgent: input.ua ?? null });
+  return { ok: true, session, quoteId };
 }
 
 /** Un-gated resolve-or-create keyed on lower(email); auto-attributes corporate domains. */

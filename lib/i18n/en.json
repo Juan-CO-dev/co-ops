@@ -96,6 +96,7 @@
   "catering.pipeline.stage.inquiry": "Inquiry",
   "catering.pipeline.stage.quote_sent": "Quote sent",
   "catering.pipeline.stage.confirmed": "Confirmed",
+  "catering.pipeline.stage.out": "Out for delivery",
   "catering.pipeline.stage.completed": "Completed",
   "catering.pipeline.stage.lost": "Lost",
   "catering.pipeline.field.contact_name": "Contact name",

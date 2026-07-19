@@ -32,6 +32,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: false }, { status: 400 });
   }
 
-  const res = NextResponse.json({ ok: true, next: "/order/build" });
+  // A new-order link created a draft → land on the builder for THAT draft; a pure sign-in → account home.
+  const next = result.quoteId ? `/order/build?draft=${result.quoteId}` : "/order/account";
+  const res = NextResponse.json({ ok: true, next });
   return applyPortalCookie(res, result.session);
 }
