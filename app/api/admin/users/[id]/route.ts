@@ -24,7 +24,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const ctx = await requireSession(req, `/api/admin/users/${id}`);
   if (ctx instanceof Response) return ctx;
   if (ROLES[ctx.user.role].level < ADMIN_MIN_LEVEL) return jsonError(403, "forbidden");
-  const su = assertStepUp(ctx, "A");
+  const su = assertStepUp(ctx, "B"); // WB2-01: editing another user's profile/email → Tier B, matching the other user mutations
   if (!su.ok) return jsonError(403, su.code);
 
   const b = parsed as { name?: unknown; phone?: unknown; email?: unknown };

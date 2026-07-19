@@ -341,6 +341,18 @@ async function requireSessionCore(
   if (!userRowRaw.active) return { denied: true };
   const userRow = userRowRaw;
 
+  // WB2-02: derive `locations` LIVE from user_locations (like role/level are already read live from
+  // the user row above) rather than trusting the JWT `locations` claim, which only refreshes on
+  // re-login/exp. This closes the window where an admin narrowing a user's locations doesn't take
+  // effect until session revoke/exp. Fail-safe: on a transient read error fall back to the JWT claim
+  // (never 401 a valid session over a locations-read hiccup).
+  const { data: locRows } = await sb
+    .from("user_locations")
+    .select("location_id")
+    .eq("user_id", claims.user_id)
+    .eq("active", true);
+  const liveLocations = locRows ? locRows.map((r) => r.location_id as string) : claims.locations;
+
   // Step-up auto-clearing: when the actor leaves a step-up surface (the /admin/*
   // surface, or the catering quote-send action route), the unlocked step-up flag
   // clears so the next gated action requires fresh password re-confirmation.
@@ -362,7 +374,7 @@ async function requireSessionCore(
     }),
     role: userRow.role,
     level: getRoleLevel(userRow.role),
-    locations: claims.locations,
+    locations: liveLocations,
   };
 }
 

@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
   if (ctx instanceof Response) return ctx;
   if (ROLES[ctx.user.role].level < ADMIN_MIN_LEVEL) return jsonError(403, "forbidden");
 
-  const su = assertStepUp(ctx, "A");
+  const su = assertStepUp(ctx, "B"); // WB2-01: creating a user is a user-lifecycle action → Tier B (fresh ≤120s), like the other user mutations
   if (!su.ok) return jsonError(403, su.code);
 
   const b = parsed as Partial<CreateUserInput>;
