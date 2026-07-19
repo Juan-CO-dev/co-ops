@@ -341,5 +341,16 @@ truncation now (batched), then the Mediums; Lows listed for Juan's pick.
   on real data** — `selectAllRows` returns all **4,177** `checklist_completions` rows (not the 1000 cap),
   no dupes across pages. No login impact → CI-mergeable.
 
-**Wave B Batch 2 — Mediums (WB3-03 cross-loc SELECT, WB4-01 admin-search escape, WB5-05/06 pagination):** _next._
+**Wave B Batch 2 — Mediums — FIXED (this PR):**
+- **WB3-03** — migration **0133** scopes `opening_setup_verifications` SELECT from `USING(true)` →
+  `current_user_role_level() >= 4` (matches the sibling verification table). Applied to prod +
+  verified; regression-free (no app code reads the table via the RLS-enforced authed client — all
+  access is service-role RPCs).
+- **WB4-01** — `listUsers` search term stripped of `.or()`-structural chars (`,()"\`) before
+  interpolation (`lib/admin/users.ts`) → filter-injection closed.
+- **WB5-05** — `lib/admin/skus.ts loadSkus` paginated (`selectAllRows`).
+- **WB5-06** — `lib/team-metrics.ts computePersonMetrics` (8 reads) paginated + the sibling
+  `loadTeamOperatingHealth` cash/pm/audit reads (3 more) folded in for consistency; the `evals`
+  own-eval-only security filter preserved. Verified: build + typecheck green.
+
 **Wave B Lows (WB2-01 step-up tiering, WB2-02 live locations, WB4-02 invoiceTotal, WB3-04 delete-deny):** _awaiting Juan's pick._

@@ -101,8 +101,15 @@ export async function listUsers(filters: ListUsersFilters): Promise<AdminUserLis
   if (typeof filters.active === "boolean") q = q.eq("active", filters.active);
   if (idFilter) q = q.in("id", idFilter);
   if (filters.query && filters.query.trim()) {
-    const term = `%${filters.query.trim()}%`;
-    q = q.or(`name.ilike.${term},email.ilike.${term}`);
+    // A-WB4-01: the search term is interpolated into a PostgREST `.or()` filter STRING, where
+    // commas/parens/quotes/backslash are STRUCTURAL (they'd add predicates or break out of the OR
+    // group — filter injection). Strip those so the term can only be a literal name/email fragment.
+    // (`%`/`_` remain as ILIKE wildcards — harmless search broadening for an already-all-users admin.)
+    const raw = filters.query.trim().replace(/[,()\\"]/g, "");
+    if (raw) {
+      const term = `%${raw}%`;
+      q = q.or(`name.ilike.${term},email.ilike.${term}`);
+    }
   }
 
   const { data, error } = await q.returns<DbUserRow[]>();
