@@ -316,7 +316,7 @@ auth-critical batch held for Juan's login+order smoke before merge.
 - Verified: build + typecheck + lint green; `scripts/3a-smoke.ts` extended with B1 guard assertions
   (bad tip / fractional qty / over-cap cart rejected, draft untouched) — PASS, zero residue.
 
-**Batch B2 — rate-limiting + IP + CSRF (AUTH-CRITICAL — HELD for Juan's login+order smoke):**
+**Batch B2 — rate-limiting + IP + CSRF (AUTH-CRITICAL) — MERGED #142 (after Juan's login+order smoke):**
 - **A-M1** atomic limiter — migration **0131** `portal_rate_limit_hit` RPC (INSERT…ON CONFLICT DO
   UPDATE…RETURNING, serialized on the unique index; applied to prod + self-tested allow/allow/deny);
   `checkAndRecord` delegates to it, fail-open on RPC error. Hardens EVERY throttle at once.
@@ -332,10 +332,7 @@ auth-critical batch held for Juan's login+order smoke before merge.
   `Origin` (+ `Sec-Fetch-Site: cross-site`) on ALL 7 portal mutating routes (was: skipped when Origin
   absent). `sameSite=lax` is no longer the sole control for order/payment mutations.
 - Verified: migration applied + RPC self-tested; build + typecheck + lint green; 3a-smoke PASS zero
-  residue. **HELD for Juan's smoke** (login + a full customer order on the preview URL) before merge.
-
-**Lows:** L2 (`token_hash` UNIQUE) + L3 (strip token from URL) recommended for fix; L1 + L5 deferred
-(multi-location / Portal-5); L4 accepted (documented tile-flow tradeoff) — _awaiting Juan's pick._
+  residue; `scripts/b2-csrf-ip-smoke.ts` PASS. Juan smoked login + a full customer order → **MERGED #142**.
 
 ---
 
@@ -368,4 +365,29 @@ truncation now (batched), then the Mediums; Lows listed for Juan's pick.
   `loadTeamOperatingHealth` cash/pm/audit reads (3 more) folded in for consistency; the `evals`
   own-eval-only security filter preserved. Verified: build + typecheck green.
 
-**Wave B Lows (WB2-01 step-up tiering, WB2-02 live locations, WB4-02 invoiceTotal, WB3-04 delete-deny):** _awaiting Juan's pick._
+**Lows — resolved (Juan's triage, 2026-07-19):**
+- **FIXED — safe Lows batch, MERGED #146:** WA-L2 (`token_hash` UNIQUE, migration 0134), WA-L3 (strip
+  token from URL via `history.replaceState`), WB4-02 (`invoiceTotal` numeric validation), WB3-04
+  (append-only `FOR DELETE USING(false)` on `catering_rate_rules` + `catering_portal_rate_limits`,
+  migration 0135).
+- **FIXED — auth-critical Lows batch, MERGED #147 (after Juan's smoke):** WB2-01 (`createUser` +
+  `updateUserProfile` step-up Tier A→B), WB2-02 (`requireSessionCore` derives `locations` live from
+  `user_locations`, fail-safe to the JWT claim on a transient read error).
+- **ACCEPTED:** WA-L4 (roster enumeration via `login-options`/`locations` — documented tile-flow UX
+  tradeoff; revisit at multi-tenant).
+- **DEFERRED:** WA-L1 (locationId not constrained to catering-enabled locations → multi-location),
+  WA-L5 (pg_cron janitor for tokens / rate-limits / abandoned drafts → Portal-5).
+
+---
+
+## PASS COMPLETE (2026-07-19)
+
+**Both waves fully triaged + shipped. No open security findings.** Final tally: **Critical 1 (fixed),
+High 9 (fixed), Medium 12 (fixed), Low 8 (6 fixed, 1 accepted, deferred: WA-L1/L5 + WA-L4 accepted).**
+Migrations 0130–0135 applied to prod. MERGED: #141, #143, #144, #145, #146, #142, #147.
+
+**Deferred to Portal-5 (payment provider):** the webhook must verify signature + match amount/currency +
+idempotency on `provider_ref` + expose NO customer-reachable "mark paid"; `markPaymentPaid` is
+customer-unreachable today. **When the 501 stubs (`/api/ai`, `/api/toast`, `/api/sms/process-queue`) are
+built:** level-gate + rate-limit `/api/ai` + scope its context; guard the toast/sms endpoints with a
+cron/internal secret. Durable lessons captured in memory `project_coops_security_hardening_pass`.
