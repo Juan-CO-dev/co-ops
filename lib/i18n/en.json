@@ -2154,5 +2154,18 @@
   "catering.portion.whole": "Whole",
   "catering.portion.quarter.aria": "Quarter portion",
   "catering.portion.half.aria": "Half portion",
-  "catering.portion.whole.aria": "Whole portion"
+  "catering.portion.whole.aria": "Whole portion",
+  "admin.catering.prep_demand.card": "Prep Demand",
+  "admin.catering.prep_demand.title": "Catering Prep Demand",
+  "admin.catering.prep_demand.subtitle": "Upcoming prep required by confirmed catering leads, with over-par alerts for the next 14 days.",
+  "admin.catering.prep_demand.location": "Location",
+  "admin.catering.prep_demand.date_window": "{from} – {to}",
+  "admin.catering.prep_demand.empty": "No upcoming catering prep demand for this location.",
+  "admin.catering.prep_demand.needs_pick": "Needs pick",
+  "admin.catering.prep_demand.sub_note": "Sub — par comparison in W4b",
+  "admin.catering.prep_demand.over_par": "Standing par {par} won't cover {needed} needed",
+  "admin.catering.prep_demand.no_par": "—",
+  "admin.catering.prep_demand.suggested_par": "Suggested par: {value}",
+  "admin.catering.prep_demand.raise_par": "Raise par",
+  "admin.catering.prep_demand.location_aria": "Select location"
 }

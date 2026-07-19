@@ -2154,5 +2154,18 @@
   "catering.portion.whole": "Entero",
   "catering.portion.quarter.aria": "Cuarto de porción",
   "catering.portion.half.aria": "Mitad de porción",
-  "catering.portion.whole.aria": "Porción entera"
+  "catering.portion.whole.aria": "Porción entera",
+  "admin.catering.prep_demand.card": "Demanda de Prep",
+  "admin.catering.prep_demand.title": "Demanda de Prep de Catering",
+  "admin.catering.prep_demand.subtitle": "Prep requerida por leads de catering confirmados, con alertas de par insuficiente para los próximos 14 días.",
+  "admin.catering.prep_demand.location": "Ubicación",
+  "admin.catering.prep_demand.date_window": "{from} – {to}",
+  "admin.catering.prep_demand.empty": "No hay demanda de prep de catering próxima para esta ubicación.",
+  "admin.catering.prep_demand.needs_pick": "Necesita elección",
+  "admin.catering.prep_demand.sub_note": "Sub — comparación de par en W4b",
+  "admin.catering.prep_demand.over_par": "El par actual de {par} no cubre los {needed} necesarios",
+  "admin.catering.prep_demand.no_par": "—",
+  "admin.catering.prep_demand.suggested_par": "Par sugerido: {value}",
+  "admin.catering.prep_demand.raise_par": "Subir par",
+  "admin.catering.prep_demand.location_aria": "Elige la ubicación"
 }

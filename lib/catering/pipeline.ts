@@ -19,6 +19,7 @@ import { lockLocationContext, isAllLocationsAccess } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { checkCateringCapacity, type CateringCapacityResult } from "@/lib/catering/capacity";
+import { reservePrepDemand, consumePrepDemand, releasePrepDemand } from "@/lib/catering/prep-demand";
 
 // ── Stage vocabulary ─────────────────────────────────────────────────────────
 export const PIPELINE_STAGES = ["inquiry", "quote_sent", "confirmed", "out", "completed", "lost"] as const;
@@ -324,6 +325,25 @@ export async function moveStage(
     actor_id: actor.user.id,
   });
   if (evErr) throw new Error(`moveStage event: ${evErr.message}`);
+
+  // W4a: propagate the stage change to the prep-demand ledger — best-effort; a demand-sync
+  // failure must never break the operational stage move (it's audited + re-syncable instead).
+  try {
+    if (args.toStage === "confirmed") await reservePrepDemand(actor, args.id);
+    else if (args.toStage === "out" || args.toStage === "completed") await consumePrepDemand(actor, args.id);
+    else if (args.toStage === "lost" || args.toStage === "inquiry" || args.toStage === "quote_sent") await releasePrepDemand(actor, args.id);
+  } catch (e) {
+    void audit({
+      actorId: actor.user.id,
+      actorRole: actor.user.role,
+      action: "catering.prep_demand.sync_failed",
+      resourceTable: "catering_pipeline",
+      resourceId: args.id,
+      metadata: { to_stage: args.toStage, error: e instanceof Error ? e.message : String(e) },
+      ipAddress: null,
+      userAgent: null,
+    });
+  }
 
   void audit({
     actorId: actor.user.id,
