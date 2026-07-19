@@ -28,11 +28,10 @@ export default async function CateringQuotesPage() {
   if (level < QUOTE_READ_MIN) redirect("/dashboard");
   const lang = auth.user.language;
 
-  const [quotes, customers, leads, menuItems] = await Promise.all([
+  const [quotes, customers, leads] = await Promise.all([
     loadQuoteBoard(auth),
     loadCustomers(auth),
     loadPipelineBoard(auth),
-    loadCateringMenuItems(auth),
   ]);
 
   const sb = getServiceRoleClient();
@@ -56,6 +55,13 @@ export default async function CateringQuotesPage() {
       .returns<Array<{ id: string; name: string }>>();
     locations = data ?? [];
   }
+
+  // Catering rates are per-location. The staff picker shows a single flat à-la-carte list, so we
+  // derive its prices against the actor's first accessible location as an interim rate basis. The
+  // per-location staff builder reskin (menuByLocation) is owned by the later portal/staff pass; the
+  // staff builder uses caller-supplied prices, so the picker price here is only a starting suggestion.
+  const rateLocationId = locations[0]?.id ?? null;
+  const menuItems = rateLocationId ? await loadCateringMenuItems(auth, rateLocationId) : [];
 
   // Per-location pricing context (delivery zones + rates) so the builder can render zones +
   // flag a missing pricing rule without an extra round-trip. The live total still comes from

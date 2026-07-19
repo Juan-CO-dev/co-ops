@@ -223,6 +223,7 @@ export interface QuoteItem {
   unitPriceCents: number;
   lineTotalCents: number;
   displayOrder: number;
+  portion: "quarter" | "half" | "whole" | null;
 }
 export interface Quote {
   id: string;
@@ -301,7 +302,7 @@ interface DbQuoteRow {
 const QUOTE_COLS =
   "id, root_id, version, pipeline_id, customer_id, location_id, status, event_date, headcount, is_delivery, delivery_zone_id, subtotal_cents, delivery_fee_cents, service_charge_cents, gratuity_cents, tax_cents, total_cents, deposit_cents, tax_rate_bps, gratuity_bps, service_charge_bps, deposit_pct_bps, tax_on_delivery, tax_on_gratuity, expires_at, notes, created_at, created_by, sent_at, sent_by, superseded_at";
 const ITEM_COLS =
-  "id, item_id, menu_item_id, package_id, description, quantity, unit_price_cents, line_total_cents, display_order";
+  "id, item_id, menu_item_id, package_id, description, quantity, unit_price_cents, line_total_cents, display_order, portion";
 
 function mapQuote(r: DbQuoteRow, now: number = Date.now()): Quote {
   const status: QuoteStatus = isQuoteStatus(r.status) ? r.status : "draft";
@@ -352,6 +353,7 @@ function mapItem(r: {
   unit_price_cents: number;
   line_total_cents: number;
   display_order: number;
+  portion: string | null;
 }): QuoteItem {
   return {
     id: r.id,
@@ -363,6 +365,10 @@ function mapItem(r: {
     unitPriceCents: r.unit_price_cents,
     lineTotalCents: r.line_total_cents,
     displayOrder: r.display_order,
+    portion:
+      r.portion === "quarter" || r.portion === "half" || r.portion === "whole"
+        ? r.portion
+        : null,
   };
 }
 
@@ -426,6 +432,7 @@ export interface QuoteLineInput {
   itemId?: string | null;
   menuItemId?: string | null;
   packageId?: string | null;
+  portion?: "quarter" | "half" | "whole" | null;
   quantity: number;
   unitPriceCents: number;
   displayOrder?: number;
@@ -448,6 +455,7 @@ interface ResolvedLine {
   itemId: string | null;
   menuItemId: string | null;
   packageId: string | null;
+  portion: "quarter" | "half" | "whole" | null;
   quantity: number;
   unitPriceCents: number;
   lineTotalCents: number;
@@ -482,6 +490,7 @@ function resolveLines(lines: QuoteLineInput[]): ResolvedLine[] {
       itemId,
       menuItemId,
       packageId: l.packageId ?? null,
+      portion: l.portion ?? null,
       quantity,
       unitPriceCents,
       lineTotalCents: lineTotalCents(quantity, unitPriceCents),
@@ -519,6 +528,7 @@ async function insertQuoteItems(
       menu_item_id: l.menuItemId,
       package_id: l.packageId,
       description: l.description,
+      portion: l.portion,
       quantity: l.quantity,
       unit_price_cents: l.unitPriceCents,
       line_total_cents: l.lineTotalCents,
@@ -587,6 +597,10 @@ export function parseQuoteLinesFromBody(raw: unknown): QuoteLineInput[] {
       itemId: typeof o.itemId === "string" ? o.itemId : null,
       menuItemId: typeof o.menuItemId === "string" ? o.menuItemId : null,
       packageId: typeof o.packageId === "string" ? o.packageId : null,
+      portion:
+        o.portion === "quarter" || o.portion === "half" || o.portion === "whole"
+          ? o.portion
+          : null,
       quantity: Number(o.quantity),
       unitPriceCents: Number(o.unitPriceCents),
       displayOrder: typeof o.displayOrder === "number" ? o.displayOrder : undefined,
