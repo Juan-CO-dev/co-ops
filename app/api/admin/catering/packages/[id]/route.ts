@@ -7,9 +7,13 @@ import {
   updatePackage,
   deactivatePackage,
   addPackageLineItem,
+  addPackageLine,
+  addSlotOption,
+  removeSlotOption,
   removePackageLineItem,
   AdminCateringError,
   type UpdatePackageChanges,
+  type LineSlotType,
 } from "@/lib/admin/catering/packages";
 
 const PACKAGE_MIN = 6; // catering.kb.packages.write — floor for every concern below
@@ -31,6 +35,14 @@ const FIELD_KEYS = [
   "leadTimeHours",
 ] as const;
 
+/** Parse a {kind, id} spine ref from the body, or null if absent/malformed. */
+function parseRef(raw: unknown): { kind: "item" | "menu_item"; id: string } | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const r = raw as Record<string, unknown>;
+  if ((r.kind !== "item" && r.kind !== "menu_item") || typeof r.id !== "string") return null;
+  return { kind: r.kind, id: r.id };
+}
+
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const parsed = await parseJsonBody(req);
@@ -44,11 +56,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const hasActive = "active" in b;
   const hasAddItem = "addItem" in b;
   const hasRemoveItem = "removeItemId" in b;
+  const hasAddLine = "addLine" in b; // W1b: {slotType, ref?, description?, quantity}
+  const hasAddSlotOption = "addSlotOption" in b; // W1b: {lineItemId, ref}
+  const hasRemoveSlotOption = "removeSlotOptionId" in b; // W1b
 
-  const concerns = [hasFields, hasActive, hasAddItem, hasRemoveItem].filter(Boolean).length;
+  const concerns = [hasFields, hasActive, hasAddItem, hasRemoveItem, hasAddLine, hasAddSlotOption, hasRemoveSlotOption].filter(Boolean).length;
   if (concerns === 0) return jsonError(400, "invalid_payload", { message: "No recognized fields to update" });
   if (concerns > 1) {
-    return jsonError(400, "mixed_concerns", { message: "One concern per PATCH: fields, active, addItem, or removeItemId" });
+    return jsonError(400, "mixed_concerns", { message: "One concern per PATCH: fields, active, addItem, removeItemId, addLine, addSlotOption, or removeSlotOptionId" });
   }
 
   // Step-up tier per concern: active/deactivate = B; everything else = A.
@@ -80,6 +95,41 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (hasRemoveItem) {
       if (typeof b.removeItemId !== "string") return jsonError(400, "invalid_payload", { field: "removeItemId" });
       await removePackageLineItem(ctx, { itemId: b.removeItemId });
+      return jsonOk({ ok: true });
+    }
+
+    if (hasAddLine) {
+      const line = b.addLine;
+      if (typeof line !== "object" || line === null) return jsonError(400, "invalid_payload", { field: "addLine" });
+      const l = line as Record<string, unknown>;
+      if (l.slotType !== "fixed" && l.slotType !== "choice") return jsonError(400, "invalid_payload", { field: "slotType" });
+      if (typeof l.quantity !== "number") return jsonError(400, "invalid_payload", { field: "quantity" });
+      const ref = parseRef(l.ref);
+      if (l.ref != null && !ref) return jsonError(400, "invalid_payload", { field: "ref" });
+      const { id: lineId } = await addPackageLine(ctx, {
+        packageId: id,
+        slotType: l.slotType as LineSlotType,
+        ref,
+        description: typeof l.description === "string" ? l.description : null,
+        quantity: l.quantity,
+      });
+      return jsonOk({ id: lineId }, 201);
+    }
+
+    if (hasAddSlotOption) {
+      const so = b.addSlotOption;
+      if (typeof so !== "object" || so === null) return jsonError(400, "invalid_payload", { field: "addSlotOption" });
+      const s = so as Record<string, unknown>;
+      if (typeof s.lineItemId !== "string") return jsonError(400, "invalid_payload", { field: "lineItemId" });
+      const ref = parseRef(s.ref);
+      if (!ref) return jsonError(400, "invalid_payload", { field: "ref" });
+      const { id: optId } = await addSlotOption(ctx, { lineItemId: s.lineItemId, ref });
+      return jsonOk({ id: optId }, 201);
+    }
+
+    if (hasRemoveSlotOption) {
+      if (typeof b.removeSlotOptionId !== "string") return jsonError(400, "invalid_payload", { field: "removeSlotOptionId" });
+      await removeSlotOption(ctx, { optionId: b.removeSlotOptionId });
       return jsonOk({ ok: true });
     }
 
