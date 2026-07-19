@@ -12,21 +12,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireCustomerSession } from "@/lib/portal/session";
 import { submitOrder, PortalOrderError } from "@/lib/portal/orders";
 import type { SubmitOrderInput, SubmitLineInput } from "@/lib/portal/orders";
+import { assertSameOrigin } from "@/lib/portal/csrf";
 
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  // CSRF: reject cross-site POSTs (a same-site fetch sends a matching Origin).
-  const origin = req.headers.get("origin");
-  if (origin) {
-    try {
-      if (new URL(origin).host !== req.nextUrl.host) {
-        return NextResponse.json({ error: "bad_origin" }, { status: 403 });
-      }
-    } catch {
-      return NextResponse.json({ error: "bad_origin" }, { status: 403 });
-    }
-  }
+  const csrf = assertSameOrigin(req); // A-H5 — fail closed on missing/cross-site Origin
+  if (csrf) return csrf;
 
   // Authorization boundary: the customer principal.
   const ctx = await requireCustomerSession(req);

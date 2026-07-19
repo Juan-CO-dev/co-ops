@@ -316,8 +316,23 @@ auth-critical batch held for Juan's login+order smoke before merge.
 - Verified: build + typecheck + lint green; `scripts/3a-smoke.ts` extended with B1 guard assertions
   (bad tip / fractional qty / over-cap cart rejected, draft untouched) — PASS, zero residue.
 
-**Batch B2 — rate-limiting + IP + CSRF (AUTH-CRITICAL, hold for Juan's smoke):** M1, H3, M2, M5, H5 —
-_pending._
+**Batch B2 — rate-limiting + IP + CSRF (AUTH-CRITICAL — HELD for Juan's login+order smoke):**
+- **A-M1** atomic limiter — migration **0131** `portal_rate_limit_hit` RPC (INSERT…ON CONFLICT DO
+  UPDATE…RETURNING, serialized on the unique index; applied to prod + self-tested allow/allow/deny);
+  `checkAndRecord` delegates to it, fail-open on RPC error. Hardens EVERY throttle at once.
+- **A-H3** throttle the previously-unthrottled routes — `draft/lines` + `draft/preview` (60/60s),
+  `draft/submit` + `quote/[id]/pay` (10/300s), per `customerId` → 429 when exceeded.
+- **A-M2** trusted client IP — new `lib/client-ip.ts trustedClientIp` (prefers Vercel's
+  `x-vercel-forwarded-for` / `x-real-ip`, then the RIGHTMOST XFF hop — never the spoofable leftmost);
+  `extractIp` (all auth routes) + the portal magic-link routes now use it.
+- **A-M5** reset mail-bomb — `password-reset-request` throttled 3/15min per email (constant-shape
+  preserved, audited `throttled`). Deliberately NO per-source cap on PIN/password sign-in (a whole
+  location shares one IP → would false-lock legit staff; per-account lockout is the brake there).
+- **A-H5** CSRF fail-closed — new `lib/portal/csrf.ts assertSameOrigin` rejects missing/cross-site
+  `Origin` (+ `Sec-Fetch-Site: cross-site`) on ALL 7 portal mutating routes (was: skipped when Origin
+  absent). `sameSite=lax` is no longer the sole control for order/payment mutations.
+- Verified: migration applied + RPC self-tested; build + typecheck + lint green; 3a-smoke PASS zero
+  residue. **HELD for Juan's smoke** (login + a full customer order on the preview URL) before merge.
 
 **Lows:** L2 (`token_hash` UNIQUE) + L3 (strip token from URL) recommended for fix; L1 + L5 deferred
 (multi-location / Portal-5); L4 accepted (documented tile-flow tradeoff) — _awaiting Juan's pick._

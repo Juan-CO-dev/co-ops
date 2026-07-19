@@ -10,6 +10,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCustomerSession } from "@/lib/portal/session";
 import { initiatePayment, PortalQuoteError } from "@/lib/portal/quotes";
+import { assertSameOrigin } from "@/lib/portal/csrf";
+import { checkAndRecord } from "@/lib/portal/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -20,20 +22,16 @@ export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
-  // CSRF: reject cross-site POSTs (a same-site fetch sends a matching Origin).
-  const origin = req.headers.get("origin");
-  if (origin) {
-    try {
-      if (new URL(origin).host !== req.nextUrl.host) {
-        return NextResponse.json({ error: "bad_origin" }, { status: 403 });
-      }
-    } catch {
-      return NextResponse.json({ error: "bad_origin" }, { status: 403 });
-    }
-  }
+  const csrf = assertSameOrigin(req); // A-H5
+  if (csrf) return csrf;
 
   const session = await requireCustomerSession(req);
   if (session instanceof NextResponse) return session; // 401 (with cleared cookie)
+
+  // A-H3: throttle payment initiations per customer.
+  if (!(await checkAndRecord(`pay:${session.customerId}`, 300, 10))) {
+    return NextResponse.json({ error: "rate_limited" }, { status: 429 });
+  }
 
   const { id } = await ctx.params; // Next 16 — params is a Promise.
 

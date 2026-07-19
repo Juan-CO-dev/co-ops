@@ -22,6 +22,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
+import { trustedClientIp } from "./client-ip";
 
 export interface JsonErrorOptions {
   /** Human-readable message. Falls back to `code` when omitted. */
@@ -49,11 +50,10 @@ export function jsonOk<T extends Record<string, unknown>>(
   return NextResponse.json(body, { status });
 }
 
-/** Read the client IP from x-forwarded-for / x-real-ip. Returns null if neither is set. */
+/** Read the client IP from a PLATFORM-TRUSTED source (A-M2 — the leftmost x-forwarded-for is
+ * client-spoofable). Delegates to trustedClientIp. Returns null if no source is set. */
 export function extractIp(req: NextRequest): string | null {
-  const xff = req.headers.get("x-forwarded-for");
-  if (xff) return xff.split(",")[0]?.trim() ?? null;
-  return req.headers.get("x-real-ip");
+  return trustedClientIp(req);
 }
 
 /**

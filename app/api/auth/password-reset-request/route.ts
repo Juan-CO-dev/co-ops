@@ -35,6 +35,7 @@ import { renderPasswordResetEmail } from "@/lib/email-templates/password-reset";
 import { ROLES, type RoleCode } from "@/lib/roles";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { jsonOk, parseJsonBody, extractIp } from "@/lib/api-helpers";
+import { checkAndRecord } from "@/lib/portal/rate-limit";
 
 interface ResetReqBody {
   email: string;
@@ -64,6 +65,24 @@ export async function POST(req: NextRequest) {
   const ipAddress = extractIp(req);
   const userAgent = req.headers.get("user-agent");
   const normalizedEmail = email.trim().toLowerCase();
+
+  // A-M5: throttle reset requests per email (3 / 15 min) to stop mail-bombing a known address + the
+  // unbounded password_resets row-growth. Constant-shape preserved — a throttled request returns the
+  // same 200 { ok }, audited as outcome 'throttled'. (No per-SOURCE cap on sign-in: a whole location
+  // shares one IP, so that would false-lock legit staff; the per-account lockout is the brake there.)
+  if (!(await checkAndRecord(`pwreset_email:${normalizedEmail}`, 15 * 60, 3))) {
+    await audit({
+      actorId: null,
+      actorRole: null,
+      action: "auth_password_reset_requested",
+      resourceTable: "password_resets",
+      resourceId: null,
+      metadata: { outcome: "throttled", requested_email: normalizedEmail },
+      ipAddress,
+      userAgent,
+    });
+    return constantOk();
+  }
 
   // Look up user
   const sb = getServiceRoleClient();
