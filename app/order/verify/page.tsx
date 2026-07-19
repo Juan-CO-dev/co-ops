@@ -26,6 +26,9 @@ export default function OrderVerify() {
       setState("error");
       return;
     }
+    // A-WA-L3: scrub the single-use token from the URL immediately so it can't leak via browser
+    // history or the Referer header of any subsequent request / asset load within the 30-min TTL.
+    window.history.replaceState(null, "", window.location.pathname);
     (async () => {
       try {
         const res = await fetch("/api/portal/magic-link/verify", {

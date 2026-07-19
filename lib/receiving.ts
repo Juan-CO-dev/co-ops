@@ -94,6 +94,10 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
     if (l.unitPrice != null && (!Number.isFinite(l.unitPrice) || l.unitPrice <= 0)) throw new ReceivingError(400, "invalid_price", "Price must be positive");
     if (l.observedOzPerEach != null && (!Number.isFinite(l.observedOzPerEach) || l.observedOzPerEach <= 0)) throw new ReceivingError(400, "invalid_observed", "Observed oz must be positive");
   }
+  // A-WB4-02: the header invoice total was written unvalidated (line prices were validated). Bound it.
+  if (input.invoiceTotal != null && (!Number.isFinite(input.invoiceTotal) || input.invoiceTotal < 0)) {
+    throw new ReceivingError(400, "invalid_invoice_total", "Invoice total must be zero or greater");
+  }
   const sb = getServiceRoleClient();
 
   const { data: vend } = await sb.from("vendors").select("id").eq("id", input.vendorId).eq("active", true).maybeSingle<{ id: string }>();
