@@ -21,7 +21,7 @@ import type { AuthContext } from "@/lib/session";
 import { checkCateringCapacity, type CateringCapacityResult } from "@/lib/catering/capacity";
 
 // ── Stage vocabulary ─────────────────────────────────────────────────────────
-export const PIPELINE_STAGES = ["inquiry", "quote_sent", "confirmed", "completed", "lost"] as const;
+export const PIPELINE_STAGES = ["inquiry", "quote_sent", "confirmed", "out", "completed", "lost"] as const;
 export type PipelineStage = (typeof PIPELINE_STAGES)[number];
 export function isPipelineStage(v: unknown): v is PipelineStage {
   return typeof v === "string" && (PIPELINE_STAGES as readonly string[]).includes(v);
@@ -71,6 +71,13 @@ export interface PipelineLead {
   company: string | null;
   eventDate: string | null;
   headcount: number | null;
+  contactPhone: string | null;
+  deliveryAddress: string | null;
+  timeWindow: string | null;
+  eventType: string | null;
+  dietaryNotes: string | null;
+  eventName: string | null;
+  dropoffDoor: string | null;
   stage: PipelineStage;
   leadSource: string | null;
   locationId: string | null;
@@ -89,6 +96,13 @@ interface DbLeadRow {
   company: string | null;
   event_date: string | null;
   headcount: number | null;
+  contact_phone: string | null;
+  delivery_address: string | null;
+  time_window: string | null;
+  event_type: string | null;
+  dietary_notes: string | null;
+  event_name: string | null;
+  dropoff_door: string | null;
   stage: string;
   lead_source: string | null;
   location_id: string | null;
@@ -101,7 +115,7 @@ interface DbLeadRow {
 }
 
 const LEAD_COLS =
-  "id, customer_id, contact_name, company, event_date, headcount, stage, lead_source, location_id, notes, follow_up_date, estimated_revenue_cents, created_by, created_at, updated_at";
+  "id, customer_id, contact_name, company, event_date, headcount, contact_phone, delivery_address, time_window, event_type, dietary_notes, event_name, dropoff_door, stage, lead_source, location_id, notes, follow_up_date, estimated_revenue_cents, created_by, created_at, updated_at";
 
 function mapLead(r: DbLeadRow): PipelineLead {
   return {
@@ -111,6 +125,13 @@ function mapLead(r: DbLeadRow): PipelineLead {
     company: r.company,
     eventDate: r.event_date,
     headcount: r.headcount,
+    contactPhone: r.contact_phone,
+    deliveryAddress: r.delivery_address,
+    timeWindow: r.time_window,
+    eventType: r.event_type,
+    dietaryNotes: r.dietary_notes,
+    eventName: r.event_name,
+    dropoffDoor: r.dropoff_door,
     stage: (isPipelineStage(r.stage) ? r.stage : "inquiry"),
     leadSource: r.lead_source,
     locationId: r.location_id,
@@ -198,6 +219,13 @@ export interface CreateLeadInput {
   company?: string | null;
   eventDate?: string | null;
   headcount?: number | null;
+  contactPhone?: string | null;
+  deliveryAddress?: string | null;
+  timeWindow?: string | null;
+  eventType?: string | null;
+  dietaryNotes?: string | null;
+  eventName?: string | null;
+  dropoffDoor?: string | null;
   leadSource?: string | null;
   locationId?: string | null;
   notes?: string | null;
@@ -221,6 +249,13 @@ export async function createLead(actor: AuthContext, input: CreateLeadInput): Pr
       company: input.company ?? null,
       event_date: input.eventDate ?? null,
       headcount: input.headcount ?? null,
+      contact_phone: input.contactPhone ?? null,
+      delivery_address: input.deliveryAddress ?? null,
+      time_window: input.timeWindow ?? null,
+      event_type: input.eventType ?? null,
+      dietary_notes: input.dietaryNotes ?? null,
+      event_name: input.eventName ?? null,
+      dropoff_door: input.dropoffDoor ?? null,
       stage: "inquiry",
       lead_source: input.leadSource ?? null,
       location_id: locationId,
@@ -307,6 +342,13 @@ export interface EditLeadInput {
   company?: string | null;
   eventDate?: string | null;
   headcount?: number | null;
+  contactPhone?: string | null;
+  deliveryAddress?: string | null;
+  timeWindow?: string | null;
+  eventType?: string | null;
+  dietaryNotes?: string | null;
+  eventName?: string | null;
+  dropoffDoor?: string | null;
   leadSource?: string | null;
   notes?: string | null;
   followUpDate?: string | null;
@@ -336,6 +378,13 @@ export async function editLead(actor: AuthContext, id: string, input: EditLeadIn
   if (input.company !== undefined) patch.company = input.company;
   if (input.eventDate !== undefined) patch.event_date = input.eventDate;
   if (input.headcount !== undefined) patch.headcount = input.headcount;
+  if (input.contactPhone !== undefined) patch.contact_phone = input.contactPhone;
+  if (input.deliveryAddress !== undefined) patch.delivery_address = input.deliveryAddress;
+  if (input.timeWindow !== undefined) patch.time_window = input.timeWindow;
+  if (input.eventType !== undefined) patch.event_type = input.eventType;
+  if (input.dietaryNotes !== undefined) patch.dietary_notes = input.dietaryNotes;
+  if (input.eventName !== undefined) patch.event_name = input.eventName;
+  if (input.dropoffDoor !== undefined) patch.dropoff_door = input.dropoffDoor;
   if (input.leadSource !== undefined) patch.lead_source = input.leadSource;
   if (input.notes !== undefined) patch.notes = input.notes;
   if (input.followUpDate !== undefined) patch.follow_up_date = input.followUpDate;

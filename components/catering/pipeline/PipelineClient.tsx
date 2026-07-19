@@ -42,6 +42,7 @@ export function PipelineClient({ leads, followUps, locations, actorLevel }: Prop
     inquiry: [],
     quote_sent: [],
     confirmed: [],
+    out: [],
     completed: [],
     lost: [],
   };

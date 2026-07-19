@@ -9,8 +9,35 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { requestMagicLink } from "@/lib/portal/magic-link";
+import type { DraftIntake } from "@/lib/portal/draft";
 
 export const runtime = "nodejs";
+
+/** Coerce a JSON intake payload into a DraftIntake (shape only — createDraftFromIntake re-validates
+ * the location UUID + re-derives ALL pricing at consume time; nothing here is trusted for money). */
+function parseIntake(raw: unknown): DraftIntake | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const locationId = typeof o.locationId === "string" ? o.locationId : "";
+  const contactName = typeof o.contactName === "string" ? o.contactName.trim() : "";
+  if (!locationId || !contactName) return null;
+  const str = (v: unknown): string | null => (typeof v === "string" && v.trim().length > 0 ? v.trim() : null);
+  return {
+    locationId,
+    contactName,
+    company: str(o.company),
+    eventDate: str(o.eventDate),
+    headcount: typeof o.headcount === "number" && Number.isFinite(o.headcount) ? o.headcount : null,
+    isDelivery: o.isDelivery === true,
+    deliveryAddress: str(o.deliveryAddress),
+    contactPhone: str(o.contactPhone),
+    timeWindow: str(o.timeWindow),
+    eventType: str(o.eventType),
+    dietaryNotes: str(o.dietaryNotes),
+    eventName: str(o.eventName),
+    dropoffDoor: str(o.dropoffDoor),
+  };
+}
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   // CSRF: reject cross-site POSTs (a same-site fetch sends a matching Origin).
@@ -32,7 +59,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? req.headers.get("x-real-ip");
   if (typeof body.email === "string") {
-    await requestMagicLink({ email: body.email, name: typeof body.name === "string" ? body.name : null, ip });
+    await requestMagicLink({ email: body.email, name: typeof body.name === "string" ? body.name : null, ip, intake: parseIntake(body.intake) });
   }
 
   // Constant shape regardless of internal disposition.
