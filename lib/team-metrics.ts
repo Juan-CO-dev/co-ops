@@ -151,21 +151,29 @@ export async function loadTeamOperatingHealth(
   for (const i of instRows) {
     if (i.confirmed_by && i.confirmed_at) place(i.confirmed_by, i.confirmed_at, "finalizations");
   }
-  const { data: cashRows } = await service
-    .from("cash_reports").select("signed_by, signed_at, over_short_note")
-    .eq("location_id", args.locationId).is("superseded_at", null)
-    .gte("signed_at", `${loadFrom}T00:00:00Z`).lte("signed_at", upperTs);
-  for (const c of (cashRows ?? []) as Array<{ signed_by: string | null; signed_at: string | null; over_short_note: string | null }>) {
+  // Paginate past the 1000-row cap (WB5-06 sibling of computePersonMetrics — same silent-truncation
+  // class over the same growth tables at the location+window grain).
+  const cashRows = await selectAllRows<{ signed_by: string | null; signed_at: string | null; over_short_note: string | null }>(
+    (from, to) => service
+      .from("cash_reports").select("signed_by, signed_at, over_short_note")
+      .eq("location_id", args.locationId).is("superseded_at", null)
+      .gte("signed_at", `${loadFrom}T00:00:00Z`).lte("signed_at", upperTs)
+      .order("id", { ascending: true }).range(from, to),
+  );
+  for (const c of cashRows) {
     if (c.signed_by && c.signed_at) {
       place(c.signed_by, c.signed_at, "finalizations");
       if (c.over_short_note && c.over_short_note.trim()) place(c.signed_by, c.signed_at, "notes");
     }
   }
-  const { data: pmRows } = await service
-    .from("pm_reports").select("id, submitted_by, submitted_at")
-    .eq("location_id", args.locationId).is("superseded_at", null)
-    .gte("submitted_at", `${loadFrom}T00:00:00Z`).lte("submitted_at", upperTs);
-  for (const r of (pmRows ?? []) as Array<{ submitted_by: string | null; submitted_at: string | null }>) {
+  const pmRows = await selectAllRows<{ id: string; submitted_by: string | null; submitted_at: string | null }>(
+    (from, to) => service
+      .from("pm_reports").select("id, submitted_by, submitted_at")
+      .eq("location_id", args.locationId).is("superseded_at", null)
+      .gte("submitted_at", `${loadFrom}T00:00:00Z`).lte("submitted_at", upperTs)
+      .order("id", { ascending: true }).range(from, to),
+  );
+  for (const r of pmRows) {
     if (r.submitted_by && r.submitted_at) {
       place(r.submitted_by, r.submitted_at, "finalizations");
       place(r.submitted_by, r.submitted_at, "peopleMgmt");
@@ -173,10 +181,7 @@ export async function loadTeamOperatingHealth(
   }
 
   // 3. NOTES from pm evals (authored by report submitter)
-  const pmReportById = new Map((pmRows ?? []).map((r) => {
-    const row = r as { id: string; submitted_by: string | null; submitted_at: string | null };
-    return [row.id, row] as const;
-  }));
+  const pmReportById = new Map(pmRows.map((row) => [row.id, row] as const));
   if (pmReportById.size) {
     const evalRows = await selectAllRows<{ pm_report_id: string; area_to_improve: string | null; note: string | null }>(
       (from, to) => service
@@ -192,12 +197,15 @@ export async function loadTeamOperatingHealth(
     }
   }
 
-  // 4. OVERSIGHT (audit_log by actor_id — window-global)
-  const { data: auditRows } = await service
-    .from("audit_log").select("actor_id, action, occurred_at")
-    .in("actor_id", memberIds).in("action", OVERSIGHT_ACTIONS)
-    .gte("occurred_at", `${loadFrom}T00:00:00Z`).lte("occurred_at", upperTs);
-  for (const a of (auditRows ?? []) as Array<{ actor_id: string | null; occurred_at: string }>) {
+  // 4. OVERSIGHT (audit_log by actor_id — window-global; audit_log grows fastest, so paginate)
+  const auditRows = await selectAllRows<{ actor_id: string | null; occurred_at: string }>(
+    (from, to) => service
+      .from("audit_log").select("actor_id, action, occurred_at")
+      .in("actor_id", memberIds).in("action", OVERSIGHT_ACTIONS)
+      .gte("occurred_at", `${loadFrom}T00:00:00Z`).lte("occurred_at", upperTs)
+      .order("id", { ascending: true }).range(from, to),
+  );
+  for (const a of auditRows) {
     if (a.actor_id) place(a.actor_id, a.occurred_at, "oversight");
   }
 
@@ -356,49 +364,64 @@ async function computePersonMetrics(
   }
 
   const finalsChrono: { at: string; inWindow: boolean }[] = [];
-  const { data: finInst } = await service
-    .from("checklist_instances").select("date, confirmed_at")
-    .eq("location_id", args.locationId).eq("confirmed_by", args.personId).not("confirmed_at", "is", null)
-    .gte("confirmed_at", `${loadFrom}T00:00:00Z`).lte("confirmed_at", upperTsP);
-  for (const f of (finInst ?? []) as Array<{ date: string; confirmed_at: string }>) {
+  const finInst = await selectAllRows<{ date: string; confirmed_at: string }>(
+    (from, to) => service
+      .from("checklist_instances").select("date, confirmed_at")
+      .eq("location_id", args.locationId).eq("confirmed_by", args.personId).not("confirmed_at", "is", null)
+      .gte("confirmed_at", `${loadFrom}T00:00:00Z`).lte("confirmed_at", upperTsP)
+      .order("id", { ascending: true }).range(from, to),
+  );
+  for (const f of finInst) {
     add(f.confirmed_at, "finalizations");
     if (windowOf(f.confirmed_at) === "cur") { finalsChrono.push({ at: f.confirmed_at, inWindow: opDate(f.confirmed_at) === f.date }); touch(opDate(f.confirmed_at)); }
   }
-  const { data: cashRows } = await service
-    .from("cash_reports").select("signed_at, over_short_note, report_date")
-    .eq("location_id", args.locationId).eq("signed_by", args.personId).is("superseded_at", null)
-    .gte("signed_at", `${loadFrom}T00:00:00Z`).lte("signed_at", upperTsP);
-  for (const c of (cashRows ?? []) as Array<{ signed_at: string | null; over_short_note: string | null; report_date: string }>) {
+  const cashRows = await selectAllRows<{ signed_at: string | null; over_short_note: string | null; report_date: string }>(
+    (from, to) => service
+      .from("cash_reports").select("signed_at, over_short_note, report_date")
+      .eq("location_id", args.locationId).eq("signed_by", args.personId).is("superseded_at", null)
+      .gte("signed_at", `${loadFrom}T00:00:00Z`).lte("signed_at", upperTsP)
+      .order("id", { ascending: true }).range(from, to),
+  );
+  for (const c of cashRows) {
     if (!c.signed_at) continue;
     add(c.signed_at, "finalizations");
     if (c.over_short_note && c.over_short_note.trim()) add(c.signed_at, "notes");
     if (windowOf(c.signed_at) === "cur") { finalsChrono.push({ at: c.signed_at, inWindow: opDate(c.signed_at) === c.report_date }); touch(opDate(c.signed_at)); }
   }
-  const { data: pmMine } = await service
-    .from("pm_reports").select("id, submitted_at, report_date")
-    .eq("location_id", args.locationId).eq("submitted_by", args.personId).is("superseded_at", null)
-    .gte("submitted_at", `${loadFrom}T00:00:00Z`).lte("submitted_at", upperTsP);
-  for (const r of (pmMine ?? []) as Array<{ id: string; submitted_at: string | null; report_date: string }>) {
+  const pmMine = await selectAllRows<{ id: string; submitted_at: string | null; report_date: string }>(
+    (from, to) => service
+      .from("pm_reports").select("id, submitted_at, report_date")
+      .eq("location_id", args.locationId).eq("submitted_by", args.personId).is("superseded_at", null)
+      .gte("submitted_at", `${loadFrom}T00:00:00Z`).lte("submitted_at", upperTsP)
+      .order("id", { ascending: true }).range(from, to),
+  );
+  for (const r of pmMine) {
     if (!r.submitted_at) continue;
     add(r.submitted_at, "finalizations");
     add(r.submitted_at, "peopleMgmt");
     if (windowOf(r.submitted_at) === "cur") { finalsChrono.push({ at: r.submitted_at, inWindow: opDate(r.submitted_at) === r.report_date }); touch(opDate(r.submitted_at)); }
   }
-  if (pmMine && pmMine.length) {
-    const submittedAtById = new Map((pmMine as Array<{ id: string; submitted_at: string | null }>).map((r) => [r.id, r.submitted_at] as const));
-    const { data: evAuthored } = await service
-      .from("pm_employee_evals").select("pm_report_id, area_to_improve, note")
-      .in("pm_report_id", (pmMine as Array<{ id: string }>).map((r) => r.id)).is("superseded_at", null);
-    for (const e of (evAuthored ?? []) as Array<{ pm_report_id: string; area_to_improve: string | null; note: string | null }>) {
+  if (pmMine.length) {
+    const submittedAtById = new Map(pmMine.map((r) => [r.id, r.submitted_at] as const));
+    const evAuthored = await selectAllRows<{ pm_report_id: string; area_to_improve: string | null; note: string | null }>(
+      (from, to) => service
+        .from("pm_employee_evals").select("pm_report_id, area_to_improve, note")
+        .in("pm_report_id", pmMine.map((r) => r.id)).is("superseded_at", null)
+        .order("id", { ascending: true }).range(from, to),
+    );
+    for (const e of evAuthored) {
       const at = submittedAtById.get(e.pm_report_id);
       if (at && ((e.area_to_improve && e.area_to_improve.trim()) || (e.note && e.note.trim()))) add(at, "notes");
     }
   }
 
-  const { data: auditRows } = await service
-    .from("audit_log").select("occurred_at").eq("actor_id", args.personId).in("action", OVERSIGHT_ACTIONS)
-    .gte("occurred_at", `${loadFrom}T00:00:00Z`).lte("occurred_at", upperTsP);
-  for (const a of (auditRows ?? []) as Array<{ occurred_at: string }>) add(a.occurred_at, "oversight");
+  const auditRows = await selectAllRows<{ occurred_at: string }>(
+    (from, to) => service
+      .from("audit_log").select("occurred_at").eq("actor_id", args.personId).in("action", OVERSIGHT_ACTIONS)
+      .gte("occurred_at", `${loadFrom}T00:00:00Z`).lte("occurred_at", upperTsP)
+      .order("id", { ascending: true }).range(from, to),
+  );
+  for (const a of auditRows) add(a.occurred_at, "oversight");
 
   const score = scoreFromCounts(args.role, current);
   const previousScore = args.compare ? scoreFromCounts(args.role, previous) : null;
@@ -416,26 +439,35 @@ async function computePersonMetrics(
   for (const e of onTimeByBucket.values()) { oh += e.hit; ot += e.total; }
   const overallOnTime = ot > 0 ? Math.round((oh / ot) * 100) : null;
 
-  const { data: pmInLoc } = await service
-    .from("pm_reports").select("id").eq("location_id", args.locationId).is("superseded_at", null)
-    .gte("report_date", loadFrom).lte("report_date", toIncl);
-  const repIds = (pmInLoc ?? []).map((r) => (r as { id: string }).id);
+  const pmInLoc = await selectAllRows<{ id: string }>(
+    (from, to) => service
+      .from("pm_reports").select("id").eq("location_id", args.locationId).is("superseded_at", null)
+      .gte("report_date", loadFrom).lte("report_date", toIncl)
+      .order("id", { ascending: true }).range(from, to),
+  );
+  const repIds = pmInLoc.map((r) => r.id);
   let great = 0, good = 0, needsWork = 0, flaggedToImprove = 0;
   if (repIds.length) {
-    const { data: evals } = await service
-      .from("pm_employee_evals").select("arrived_ready, attitude, production, team_player, area_to_improve")
-      .in("pm_report_id", repIds).eq("employee_id", args.personId).is("superseded_at", null);
-    for (const e of (evals ?? []) as Array<{ arrived_ready: string; attitude: string; production: string; team_player: string; area_to_improve: string | null }>) {
+    const evals = await selectAllRows<{ arrived_ready: string; attitude: string; production: string; team_player: string; area_to_improve: string | null }>(
+      (from, to) => service
+        .from("pm_employee_evals").select("arrived_ready, attitude, production, team_player, area_to_improve")
+        .in("pm_report_id", repIds).eq("employee_id", args.personId).is("superseded_at", null)
+        .order("id", { ascending: true }).range(from, to),
+    );
+    for (const e of evals) {
       for (const g of [e.arrived_ready, e.attitude, e.production, e.team_player]) {
         if (g === "great") great++; else if (g === "good") good++; else if (g === "needs_work") needsWork++;
       }
       if (e.area_to_improve && e.area_to_improve.trim()) flaggedToImprove++;
     }
   }
-  const { data: mvp } = await service
-    .from("pm_reports").select("id").eq("location_id", args.locationId).eq("mvp_user_id", args.personId).is("superseded_at", null)
-    .gte("report_date", loadFrom).lte("report_date", toIncl);
-  const mvpAwards = (mvp ?? []).length;
+  const mvp = await selectAllRows<{ id: string }>(
+    (from, to) => service
+      .from("pm_reports").select("id").eq("location_id", args.locationId).eq("mvp_user_id", args.personId).is("superseded_at", null)
+      .gte("report_date", loadFrom).lte("report_date", toIncl)
+      .order("id", { ascending: true }).range(from, to),
+  );
+  const mvpAwards = mvp.length;
 
   const contribution = currentKeys.map((k) => (contribBucket.has(k) ? contribBucket.get(k)! : null));
   const onTime = currentKeys.map((k) => { const e = onTimeByBucket.get(k); return e && e.total > 0 ? Math.round((e.hit / e.total) * 100) : null; });

@@ -27,6 +27,7 @@
  */
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
@@ -249,20 +250,23 @@ export async function loadSkus(
   requireLevel(actor, SKU_READ_MIN);
   const sb = getServiceRoleClient();
 
-  let query = sb.from("vendor_items").select(SKU_COLS);
-  if (opts && "vendorId" in opts) {
-    if (opts.vendorId === null) {
-      query = query.is("vendor_id", null);
-    } else if (typeof opts.vendorId === "string") {
-      query = query.eq("vendor_id", opts.vendorId);
+  const rows = await selectAllRows<DbSkuRow>((from, to) => {
+    let query = sb.from("vendor_items").select(SKU_COLS);
+    if (opts && "vendorId" in opts) {
+      if (opts.vendorId === null) {
+        query = query.is("vendor_id", null);
+      } else if (typeof opts.vendorId === "string") {
+        query = query.eq("vendor_id", opts.vendorId);
+      }
     }
-  }
-  const { data, error } = await query
-    .order("active", { ascending: false, nullsFirst: false })
-    .order("name", { ascending: true })
-    .returns<DbSkuRow[]>();
-  if (error) throw new Error(`loadSkus failed: ${error.message}`);
-  return hydrateSkus(data ?? []);
+    return query
+      .order("active", { ascending: false, nullsFirst: false })
+      .order("name", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to)
+      .returns<DbSkuRow[]>();
+  });
+  return hydrateSkus(rows);
 }
 
 // ── Registries (pack formats + measure units) ───────────────────────────────────
