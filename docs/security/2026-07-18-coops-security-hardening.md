@@ -182,8 +182,111 @@ constant-shape enumeration, filter-injection guards, mass-assignment whitelists,
 
 **Wave A counts (CC-consolidated):** Critical 0 · High 5 · Medium 7 · Low 5 · Info/confirmed ~14 + Portal-5 deferral.
 
-### Wave B findings
-_(pending — Wave A triage first)_
+### Wave B findings (5 dimension audits complete 2026-07-19; CC-synthesized + live-DB-verified)
+
+**Headline:** one **Critical** (anon-executable SECURITY DEFINER RPCs → forged writes) — **already
+hotfixed on prod (migration 0132)**. A cluster of **High** silent-at-scale truncation in the reporting +
+readiness layer (correctness/integrity that corrupts money/readiness as data grows). Tenancy/IDOR
+(WB1) and privilege-escalation (WB2) came back essentially clean — `canActOn`, `revokeAllUserSessions`
+on every authz change, the reserved `role` claim, bind-record location scoping, and (verified live) NO
+`cmd='ALL'` RLS policies + locked/anon-revoked helpers all held.
+
+#### CRITICAL — FIXED (migration 0132, applied to prod)
+
+**WB3-01 — Anon-executable SECURITY DEFINER atomic RPCs → unauthenticated forged operational + audit writes** · status: **FIXED (0132)**
+- *Location:* live functions `submit_am_prep_atomic`, `submit_mid_day_phase1_atomic`,
+  `save_mid_day_phase2_item_atomic` (migrations 0043/0060/0061) — had `has_function_privilege('anon',…)=true`.
+- *Bug-class:* anon-execute + secdef-privilege-escalation (the AGENTS.md default-ACL gotcha, un-applied here).
+- *Exploit:* all three are `SECURITY DEFINER` (bypass RLS) and take `p_actor_id` as a caller-supplied
+  param validated only at the route layer. PostgREST exposes `public` RPCs to any caller with the
+  **public anon key** (in the browser bundle). An unauthenticated attacker `POST`s `/rest/v1/rpc/
+  submit_am_prep_atomic` with an arbitrary `p_actor_id` + payload → forges `checklist_completions` /
+  `checklist_submissions` attributed to any user, flips instance status, supersedes real completions,
+  writes forged `audit_log` rows — corrupting append-only history + audit provenance with no credential.
+  *Proven by asymmetry:* the newer siblings (`submit_opening_atomic` etc.) were correctly service-role-only.
+- *Fix (applied):* **migration 0132** `REVOKE EXECUTE … FROM PUBLIC, anon, authenticated` on all three
+  (+ WB3-02). CC-verified post-condition: anon/authenticated EXECUTE = false, service_role = true.
+
+#### HIGH — silent-at-scale truncation (reporting + readiness/recipe)
+
+**WB5-01 — `loadTrendSeries` reads 4 growth tables unpaginated → every trend metric drifts low at scale** · status: open
+- `lib/reports-trends.ts:193/219/241/306` — no `.range()`/`selectAllRows`; relies on the implicit 1000-row
+  cap. `checklist_completions` is **already 4,177 rows**; a wide trend window truncates → completion %,
+  under/over-par, temp-flag, cash metrics all silently understate. The tell: `lib/reports-search.ts`
+  correctly paginates the SAME tables. Fix: wrap all four in `selectAllRows` + stable order.
+
+**WB5-02 — `listReports` + `computeReportSignals` + detail loaders unpaginated → reports vanish + signals understated** · status: open
+- `lib/reports-hub.ts` (`:97, :186, :1127, :1135, :376, :383, :565, :574, :856`) — same family, second loader
+  over the same tables; a wide window drops reports off the hub list + understates badges. Fix: paginate.
+
+**WB5-03 — `loadGraphRows` (readiness) unpaginated → readiness badges wrong once the inventory spine is authored** · status: open (LATENT)
+- `lib/admin/readiness-load.ts:79-86` (recipes/inputs/outputs/items). Dormant today (tiny tables) but arms
+  when the deliberately-deferred spine is authored — a dropped edge → a not-ready item silently badges
+  "ready" (soft-gate says go-live-safe when it isn't). Sibling loaders in the SAME file are already
+  paginated. Fix: `selectAllRows` on all four.
+
+**WB5-04 — `recipes.ts` graph-walk loaders unpaginated → cycle-guard + one-active-producer WRITE-guard bypass at scale** · status: open (LATENT)
+- `lib/recipes.ts:266-267/73/81/164`. `loadItemRecipeGraph` loads the full `recipe_outputs`+`recipe_inputs`
+  to build the cycle-detection graph; >1000 edges → the guard operates on a truncated graph and can ADMIT
+  a cycle it exists to prevent. `activeProducerExists` (the one-active-producer write-guard) can miss a
+  duplicate past row 1000. Enforcement gap, not just display. Fix: paginate the graph reads.
+
+#### MEDIUM
+
+- **WB3-02 — `portal_rate_limit_hit` was anon-executable** (my B2 migration 0131 — `REVOKE FROM anon`
+  didn't strip the PUBLIC grant) → an anon could inflate any rate-limit bucket to DoS a victim's legit
+  action. **FIXED in 0132** (same REVOKE). status: **FIXED**.
+- **WB3-03 — `opening_setup_verifications` SELECT policy is `USING (true)`** → any authenticated user (even
+  level 0–3) reads every location's setup verifications (cross-location info disclosure); its own INSERT
+  policy correctly scopes by role+location. Fix: replace with the sibling role-floor + location-scope pattern. status: open
+- **WB4-01 — admin user-search free-text into a `.or()` filter** (`lib/admin/users.ts:103-105`) — `?q=` is
+  interpolated into `name.ilike.%q%,email.ilike.%q%` with no `escapeLike`. The ONLY un-guarded free-text
+  filter site. Admin-gated (level 8, Owner/CGS who already see all users) → no priv gain today, but a
+  landmine if copied to a lower-privileged search + breaks the "only filter what you can see" invariant.
+  Fix: `escapeLike`/strip metacharacters, or two parameterized `.ilike()` unioned in-memory. status: open
+- **WB5-05 — `loadSkus` (`lib/admin/skus.ts:252`) unpaginated** → feeds the readiness SKU universe; a SKU
+  past row 1000 is absent from readiness (un-badged, excluded from the gate). Latent. Fix: paginate. status: open
+- **WB5-06 — `team-metrics.ts computePersonMetrics`** leaves the finalization/PM/audit reads unpaginated
+  (`:359/389/398/419/425/435`) while its heavy reads ARE paginated → a high-activity manager's oversight
+  score can understate. Reporting-only. Fix: paginate for consistency. status: open
+
+#### LOW
+
+- **WB2-01** — Tier-A step-up is "unlock once, act many" for `createUser` + `updateUserProfile`; promote
+  both to Tier B (fresh ≤120s) to match the other user-lifecycle mutations. (`app/api/admin/users/route.ts:40`, `[id]/route.ts:27`)
+- **WB2-02** — `ctx.locations` is read from the stale JWT (role/level are read live); a level-8 MoO with a
+  just-narrowed location set keeps old-location assign rights until revoke/exp (revoke-on-location-change
+  already closes it next mutation). Fix: derive locations live in `requireSessionCore`.
+- **WB4-02** — `invoiceTotal` (`lib/receiving.ts:108`) written with no numeric validation (display field,
+  not in cost math). Fix: validate like the line prices.
+- **WB3-04** — `catering_rate_rules` + `catering_portal_rate_limits` lack an explicit `FOR DELETE
+  USING(false)` (no permissive DELETE exists today, so default-denied; risk is a future `FOR ALL`). Fix:
+  add the deny to match the 0106 pattern (prioritize `catering_rate_rules` — it has an authoring UI).
+
+#### INFO / confirmed-safe (the co-ops core holds)
+
+- **WB1 Tenancy/IDOR — uniformly defended:** every load-by-id path re-checks the record's `location_id`
+  via `lockLocationContext` before acting; `location_id`-in-body is validated against the actor's scope;
+  RLS is a correct backstop where reads use the authed client; `/api/pm-report` validates the target
+  against the location roster. 0 findings. (Doc-drift: `ALL_LOCATIONS_THRESHOLD=9`, not 7 — code + RLS
+  agree at 9, so no split-brain; AGENTS.md/memory say 7 and are stale.)
+- **WB2 Privilege escalation — solid:** `canActOn` strict-greater (no self-promote / act-on-peer-senior /
+  promote-to-≥-self); `revokeAllUserSessions` confirmed on reset-pin/set-password/role-change(both
+  directions)/set-locations/deactivate; role gates server-side + live (never the `x-co-role-level`
+  header); step-up session-scoped; reserved `role` claim = `authenticated`; self-update touches only
+  language/profile_blurb.
+- **WB3 RLS:** **zero `cmd='ALL'` permissive policies** (the FOR-ALL→DELETE footgun is fully eliminated
+  live); the 3 `current_user_*` helpers + catering helpers + newer atomic RPCs all have locked
+  `search_path` + anon revoked; append-only coverage complete except WB3-04; column boundaries hold.
+- **WB4:** no mass-assignment (every admin write is field-by-field allowlisted); all other `.or()` sites
+  guarded; `.rpc()` all parameterized; staff-quote client-price is by-design (level-6+, stack still
+  server-computed). **AI / toast / sms-queue / notifications are 501 stubs** — no live surface, but when
+  built MUST level-gate + rate-limit `/api/ai` + scope its context, and guard `/api/sms/process-queue` +
+  `/api/toast` with a cron/internal secret.
+- **WB5:** RPC↔`audit_log` column shape CLEAN (no 42703 drift); money math CLEAN (integer cents
+  end-to-end, server-authoritative sums, `bpsOf` floors negatives, no float drift).
+
+**Wave B counts (CC-consolidated):** Critical 1 (FIXED) · High 4 · Medium 5 (1 FIXED) · Low 4 · Info/confirmed extensive.
 
 ---
 
