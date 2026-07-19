@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import { isPrepData } from "@/lib/prep";
 import {
   FRIDGE_DEFAULT_SAFE_MAX_F,
@@ -94,13 +95,7 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
 
   // ── checklist-based (opening/closing/am_prep/mid_day) — visible to everyone ──
   if (want("opening") || want("closing") || want("am_prep") || want("mid_day")) {
-    const { data: insts } = await service
-      .from("checklist_instances")
-      .select("id, location_id, date, status, confirmed_by, confirmed_at, template_id")
-      .eq("location_id", f.locationId)
-      .gte("date", f.dateFrom)
-      .lte("date", f.dateTo);
-    const rows = (insts ?? []) as Array<{
+    const rows = await selectAllRows<{
       id: string;
       location_id: string;
       date: string;
@@ -108,7 +103,16 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
       confirmed_by: string | null;
       confirmed_at: string | null;
       template_id: string;
-    }>;
+    }>((from, to) =>
+      service
+        .from("checklist_instances")
+        .select("id, location_id, date, status, confirmed_by, confirmed_at, template_id")
+        .eq("location_id", f.locationId)
+        .gte("date", f.dateFrom)
+        .lte("date", f.dateTo)
+        .order("id", { ascending: true })
+        .range(from, to),
+    );
     const tmplIds = [...new Set(rows.map((r) => r.template_id))];
     const typeById = new Map<string, ReportTypeKey>();
     if (tmplIds.length) {
@@ -183,13 +187,17 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
       const ids = pmRows.map((r) => r.id);
       const mine = new Set<string>();
       if (ids.length) {
-        const { data: evals } = await service
-          .from("pm_employee_evals")
-          .select("pm_report_id")
-          .in("pm_report_id", ids)
-          .eq("employee_id", f.viewer.userId)
-          .is("superseded_at", null);
-        for (const e of (evals ?? []) as Array<{ pm_report_id: string }>) mine.add(e.pm_report_id);
+        const evals = await selectAllRows<{ pm_report_id: string }>((from, to) =>
+          service
+            .from("pm_employee_evals")
+            .select("pm_report_id")
+            .in("pm_report_id", ids)
+            .eq("employee_id", f.viewer.userId)
+            .is("superseded_at", null)
+            .order("id", { ascending: true })
+            .range(from, to),
+        );
+        for (const e of evals) mine.add(e.pm_report_id);
       }
       pmRows = pmRows.filter((r) => mine.has(r.id));
     }
@@ -373,30 +381,39 @@ async function loadChecklistDetail(
 
   const showNotes = args.viewer.level >= REPORTS_HUB_NOTES_LEVEL;
 
-  const { data: titems } = await service
-    .from("checklist_template_items")
-    .select("id, station, label, display_order")
-    .eq("template_id", inst.template_id)
-    .eq("active", true)
-    .order("display_order", { ascending: true });
+  const titems = await selectAllRows<{ id: string; station: string; label: string; display_order: number }>(
+    (from, to) =>
+      service
+        .from("checklist_template_items")
+        .select("id, station, label, display_order")
+        .eq("template_id", inst.template_id)
+        .eq("active", true)
+        .order("display_order", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to),
+  );
 
-  const { data: comps } = await service
-    .from("checklist_completions")
-    .select("template_item_id, completed_by, count_value, notes")
-    .eq("instance_id", args.instanceId)
-    .is("superseded_at", null)
-    .is("revoked_at", null);
+  const comps = await selectAllRows<{
+    template_item_id: string;
+    completed_by: string | null;
+    count_value: number | null;
+    notes: string | null;
+  }>((from, to) =>
+    service
+      .from("checklist_completions")
+      .select("template_item_id, completed_by, count_value, notes")
+      .eq("instance_id", args.instanceId)
+      .is("superseded_at", null)
+      .is("revoked_at", null)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
 
   const compByItem = new Map<
     string,
     { completed_by: string | null; count_value: number | null; notes: string | null }
   >();
-  for (const c of (comps ?? []) as Array<{
-    template_item_id: string;
-    completed_by: string | null;
-    count_value: number | null;
-    notes: string | null;
-  }>) {
+  for (const c of comps) {
     compByItem.set(c.template_item_id, c);
   }
 
@@ -414,9 +431,7 @@ async function loadChecklistDetail(
       nameById.set(u.id, u.name);
   }
 
-  const items: ChecklistDetailItem[] = (
-    (titems ?? []) as Array<{ id: string; station: string; label: string }>
-  ).map((ti) => {
+  const items: ChecklistDetailItem[] = titems.map((ti) => {
     const c = compByItem.get(ti.id);
     const countValue = c?.count_value ?? null;
     return {
@@ -562,21 +577,36 @@ async function loadOpeningDetail(
   // (the same loader loadOpeningState materializes + reads from).
   const closerSnapshots = await loadOpeningCloserCountSnapshots(service, args.instanceId);
 
-  const { data: titems } = await service
-    .from("checklist_template_items")
-    .select("id, station, label, display_order")
-    .eq("template_id", inst.template_id)
-    .eq("active", true)
-    .order("display_order", { ascending: true });
+  const titems = await selectAllRows<{ id: string; station: string; label: string; display_order: number }>(
+    (from, to) =>
+      service
+        .from("checklist_template_items")
+        .select("id, station, label, display_order")
+        .eq("template_id", inst.template_id)
+        .eq("active", true)
+        .order("display_order", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, to),
+  );
 
   // Read prep_data so the recount / ground_truth / prep_need surface — the
   // generic loader never selects this, which is why the recount was invisible.
-  const { data: comps } = await service
-    .from("checklist_completions")
-    .select("template_item_id, completed_by, count_value, notes, prep_data")
-    .eq("instance_id", args.instanceId)
-    .is("superseded_at", null)
-    .is("revoked_at", null);
+  const comps = await selectAllRows<{
+    template_item_id: string;
+    completed_by: string | null;
+    count_value: number | null;
+    notes: string | null;
+    prep_data: unknown;
+  }>((from, to) =>
+    service
+      .from("checklist_completions")
+      .select("template_item_id, completed_by, count_value, notes, prep_data")
+      .eq("instance_id", args.instanceId)
+      .is("superseded_at", null)
+      .is("revoked_at", null)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
 
   // Spot-check phase1 fields live on the phase1 row; under dual-membership an
   // openingPhase2 item also has a phase2 row — phase1 fields are absent there,
@@ -585,13 +615,7 @@ async function loadOpeningDetail(
     string,
     { completed_by: string | null; count_value: number | null; notes: string | null; prep_data: unknown }
   >();
-  for (const c of (comps ?? []) as Array<{
-    template_item_id: string;
-    completed_by: string | null;
-    count_value: number | null;
-    notes: string | null;
-    prep_data: unknown;
-  }>) {
+  for (const c of comps) {
     const existing = compByItem.get(c.template_item_id);
     const isPhase1 =
       c.prep_data != null && typeof c.prep_data === "object" && "phase1" in c.prep_data;
@@ -612,9 +636,7 @@ async function loadOpeningDetail(
   let spotCheckCount = 0;
   let nullBaselineCount = 0;
 
-  const items: OpeningDetailItem[] = (
-    (titems ?? []) as Array<{ id: string; station: string; label: string }>
-  ).map((ti) => {
+  const items: OpeningDetailItem[] = titems.map((ti) => {
     const c = compByItem.get(ti.id);
     const countValue = c?.count_value ?? null;
     const snap = closerSnapshots.get(ti.id);
@@ -842,18 +864,6 @@ async function loadPmDetail(
   // redaction below sets note to null for employees and for managers below L5.
   // SECURITY: employee (< L4) sees ONLY their own eval via the .eq() filter.
   const evalCols = "id, employee_id, arrived_ready, attitude, production, team_player, area_to_improve, note";
-  let evalQuery = service
-    .from("pm_employee_evals")
-    .select(evalCols)
-    .eq("pm_report_id", report.id)
-    .is("superseded_at", null);
-
-  // SECURITY: employee (< L4) sees ONLY their own eval
-  if (!isManager) {
-    evalQuery = evalQuery.eq("employee_id", args.viewer.userId);
-  }
-
-  const { data: evalRows } = await evalQuery;
   type EvalRow = {
     id: string;
     employee_id: string;
@@ -864,7 +874,20 @@ async function loadPmDetail(
     area_to_improve: string | null;
     note: string | null;
   };
-  const rows = (evalRows ?? []) as unknown as EvalRow[];
+  const rows = await selectAllRows<EvalRow>((from, to) => {
+    let evalQuery = service
+      .from("pm_employee_evals")
+      .select(evalCols)
+      .eq("pm_report_id", report.id)
+      .is("superseded_at", null);
+    // SECURITY: employee (< L4) sees ONLY their own eval
+    if (!isManager) {
+      evalQuery = evalQuery.eq("employee_id", args.viewer.userId);
+    }
+    return evalQuery.order("id", { ascending: true }).range(from, to) as unknown as PromiseLike<{
+      data: EvalRow[] | null;
+    }>;
+  });
 
   // SECURITY: employee (< L4) with no eval in this report → return null
   if (!isManager && rows.length === 0) return null;
@@ -1124,25 +1147,31 @@ export async function computeReportSignals(
     .maybeSingle<{ template_id: string }>();
   if (!inst) return { signals: empty, prepValues: [], checks: [] };
 
-  const { data: titems } = await service
-    .from("checklist_template_items")
-    .select("id, label, required")
-    .eq("template_id", inst.template_id)
-    .eq("active", true);
-  const items = (titems ?? []) as Array<{ id: string; label: string; required: boolean }>;
+  const items = await selectAllRows<{ id: string; label: string; required: boolean }>((from, to) =>
+    service
+      .from("checklist_template_items")
+      .select("id, label, required")
+      .eq("template_id", inst.template_id)
+      .eq("active", true)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   const labelById = new Map(items.map((i) => [i.id, i.label]));
 
-  const { data: comps } = await service
-    .from("checklist_completions")
-    .select("template_item_id, count_value, prep_data")
-    .eq("instance_id", args.id)
-    .is("superseded_at", null)
-    .is("revoked_at", null);
-  const rows = (comps ?? []) as Array<{
+  const rows = await selectAllRows<{
     template_item_id: string;
     count_value: number | null;
     prep_data: unknown;
-  }>;
+  }>((from, to) =>
+    service
+      .from("checklist_completions")
+      .select("template_item_id, count_value, prep_data")
+      .eq("instance_id", args.id)
+      .is("superseded_at", null)
+      .is("revoked_at", null)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
   const completedIds = new Set(rows.map((r) => r.template_item_id));
 
   const requiredItems = items.filter((i) => i.required);

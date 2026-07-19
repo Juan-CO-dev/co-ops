@@ -75,20 +75,24 @@ interface GraphRows {
 
 async function loadGraphRows(): Promise<GraphRows> {
   const sb = getServiceRoleClient();
-  const [rRes, iRes, oRes, itRes] = await Promise.all([
-    sb.from("recipes").select("id, batch_yield").eq("active", true)
-      .returns<GraphRows["recipes"]>(),
-    sb.from("recipe_inputs").select("recipe_id, component_sku_id, component_item_id")
-      .returns<GraphRows["inputs"]>(),
-    sb.from("recipe_outputs").select("recipe_id, output_item_id, output_menu_item_id")
-      .returns<GraphRows["outputs"]>(),
-    sb.from("items").select("id, oz_per_par_unit, sold_directly, sell_portion, sell_portion_unit, menu_price").eq("active", true)
-      .returns<GraphRows["items"]>(),
+  // Paginate past the 1000-row cap on every whole-graph read — as recipes/edges/
+  // items grow past 1000 a truncated read would silently drop nodes and corrupt
+  // readiness. Order by the stable primary key `id` for deterministic ranging.
+  const [recipes, inputs, outputs, items] = await Promise.all([
+    selectAllRows<GraphRows["recipes"][number]>((from, to) =>
+      sb.from("recipes").select("id, batch_yield").eq("active", true)
+        .order("id", { ascending: true }).range(from, to)),
+    selectAllRows<GraphRows["inputs"][number]>((from, to) =>
+      sb.from("recipe_inputs").select("recipe_id, component_sku_id, component_item_id")
+        .order("id", { ascending: true }).range(from, to)),
+    selectAllRows<GraphRows["outputs"][number]>((from, to) =>
+      sb.from("recipe_outputs").select("recipe_id, output_item_id, output_menu_item_id")
+        .order("id", { ascending: true }).range(from, to)),
+    selectAllRows<GraphRows["items"][number]>((from, to) =>
+      sb.from("items").select("id, oz_per_par_unit, sold_directly, sell_portion, sell_portion_unit, menu_price").eq("active", true)
+        .order("id", { ascending: true }).range(from, to)),
   ]);
-  for (const [label, res] of [["recipes", rRes], ["recipe_inputs", iRes], ["recipe_outputs", oRes], ["items", itRes]] as const) {
-    if (res.error) throw new Error(`loadGraphRows ${label}: ${res.error.message}`);
-  }
-  return { recipes: rRes.data ?? [], inputs: iRes.data ?? [], outputs: oRes.data ?? [], items: itRes.data ?? [] };
+  return { recipes, inputs, outputs, items };
 }
 
 /**
