@@ -10,6 +10,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requestMagicLink } from "@/lib/portal/magic-link";
 import type { DraftIntake } from "@/lib/portal/draft";
+import { assertSameOrigin } from "@/lib/portal/csrf";
+import { trustedClientIp } from "@/lib/client-ip";
 
 export const runtime = "nodejs";
 
@@ -56,15 +58,8 @@ function parseIntake(raw: unknown): DraftIntake | null {
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  // CSRF: reject cross-site POSTs (a same-site fetch sends a matching Origin).
-  const origin = req.headers.get("origin");
-  if (origin) {
-    try {
-      if (new URL(origin).host !== req.nextUrl.host) return NextResponse.json({ error: "bad_origin" }, { status: 403 });
-    } catch {
-      return NextResponse.json({ error: "bad_origin" }, { status: 403 });
-    }
-  }
+  const csrf = assertSameOrigin(req); // A-H5 — fail closed on missing/cross-site Origin
+  if (csrf) return csrf;
 
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
 
@@ -73,7 +68,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: true });
   }
 
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? req.headers.get("x-real-ip");
+  const ip = trustedClientIp(req); // A-M2 — platform-trusted, not the spoofable leftmost XFF
   if (typeof body.email === "string") {
     await requestMagicLink({ email: body.email, name: typeof body.name === "string" ? body.name : null, ip, intake: parseIntake(body.intake) });
   }

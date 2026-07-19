@@ -10,16 +10,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { consumeMagicLink } from "@/lib/portal/magic-link";
 import { applyPortalCookie } from "@/lib/portal/session";
+import { assertSameOrigin } from "@/lib/portal/csrf";
+import { trustedClientIp } from "@/lib/client-ip";
 
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  const csrf = assertSameOrigin(req); // A-H5 — closes login-CSRF (forced token consume)
+  if (csrf) return csrf;
+
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
   if (typeof body.token !== "string" || body.token.length === 0) {
     return NextResponse.json({ ok: false }, { status: 400 });
   }
 
-  const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? req.headers.get("x-real-ip");
+  const ip = trustedClientIp(req); // A-M2 — platform-trusted, not the spoofable leftmost XFF
   // consumeMagicLink flips the token single-use BEFORE creating the account/session; a genuine
   // server error after the flip should still answer a clean constant-shape 400, not a 500.
   let result;

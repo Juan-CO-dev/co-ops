@@ -9,17 +9,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireCustomerSession } from "@/lib/portal/session";
 import { submitDraft, PortalDraftError } from "@/lib/portal/draft";
+import { checkAndRecord } from "@/lib/portal/rate-limit";
+import { assertSameOrigin } from "@/lib/portal/csrf";
 
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  const origin = req.headers.get("origin");
-  if (origin) {
-    try { if (new URL(origin).host !== req.nextUrl.host) return NextResponse.json({ error: "bad_origin" }, { status: 403 }); }
-    catch { return NextResponse.json({ error: "bad_origin" }, { status: 403 }); }
-  }
+  const csrf = assertSameOrigin(req); // A-H5
+  if (csrf) return csrf;
   const ctx = await requireCustomerSession(req);
   if (ctx instanceof NextResponse) return ctx;
+
+  // A-H3: throttle order submissions per customer (submits are rare).
+  if (!(await checkAndRecord(`draft_submit:${ctx.customerId}`, 300, 10))) {
+    return NextResponse.json({ error: "rate_limited" }, { status: 429 });
+  }
 
   const body = (await req.json().catch(() => null)) as Record<string, unknown> | null;
   if (!body || typeof body.quoteId !== "string") {
