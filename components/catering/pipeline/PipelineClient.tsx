@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { formatCents } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
-import { PIPELINE_STAGES, type PipelineStage, type PipelineLead } from "@/lib/catering/pipeline";
+import { PIPELINE_STAGES, type PipelineStage, type PipelineLead, type PipelineSearchResult } from "@/lib/catering/pipeline";
 import type { CateringCapacityResult } from "@/lib/catering/capacity";
 import { postJson, resolveErrorKey } from "./shared";
 
@@ -19,6 +19,8 @@ interface Props {
   locations: LocationOpt[];
   actorLevel: number;
   writeMin: number;
+  searchQuery: string;
+  results: PipelineSearchResult[] | null;
 }
 
 const SIGNAL_TONE: Record<CateringCapacityResult["signal"], string> = {
@@ -34,9 +36,11 @@ function stageKey(s: PipelineStage): TranslationKey {
   return `catering.pipeline.stage.${s}` as TranslationKey;
 }
 
-export function PipelineClient({ leads, followUps, locations, actorLevel }: Props) {
+export function PipelineClient({ leads, followUps, locations, actorLevel, searchQuery, results }: Props) {
   const { t, language } = useTranslation();
   const canWrite = actorLevel >= 6;
+
+  const money = (cents: number | null) => (cents == null ? null : formatCents(cents, language));
 
   const byStage: Record<PipelineStage, PipelineLead[]> = {
     inquiry: [],
@@ -48,48 +52,206 @@ export function PipelineClient({ leads, followUps, locations, actorLevel }: Prop
   };
   for (const l of leads) byStage[l.stage].push(l);
 
-  const money = (cents: number | null) => (cents == null ? null : formatCents(cents, language));
-
   return (
     <div className="mt-4 space-y-6">
-      {canWrite && <AddLeadRow locations={locations} />}
+      {/* Search box — always visible */}
+      <SearchBox searchQuery={searchQuery} />
 
-      {followUps.length > 0 && (
-        <section className="co-card p-4">
-          <h2 className="text-sm font-bold text-co-text">{t("catering.pipeline.follow_ups.heading")}</h2>
-          <ul className="mt-2 space-y-1.5">
-            {followUps.map((l) => (
-              <li key={l.id} className="flex items-center justify-between gap-3 text-sm">
-                <span className="text-co-text">
-                  {l.contactName}
-                  {l.company ? ` · ${l.company}` : ""}
-                </span>
-                <span className="text-co-cta">
-                  {t("catering.pipeline.follow_ups.due")} {l.followUpDate}
-                </span>
-              </li>
+      {results != null ? (
+        /* SEARCH MODE */
+        <SearchResults results={results} searchQuery={searchQuery} money={money} />
+      ) : (
+        /* BOARD MODE */
+        <>
+          {canWrite && <AddLeadRow locations={locations} />}
+
+          {followUps.length > 0 && (
+            <section className="co-card p-4">
+              <h2 className="text-sm font-bold text-co-text">{t("catering.pipeline.follow_ups.heading")}</h2>
+              <ul className="mt-2 space-y-1.5">
+                {followUps.map((l) => (
+                  <li key={l.id} className="flex items-center justify-between gap-3 text-sm">
+                    <span className="text-co-text">
+                      {l.contactName}
+                      {l.company ? ` · ${l.company}` : ""}
+                    </span>
+                    <span className="text-co-cta">
+                      {t("catering.pipeline.follow_ups.due")} {l.followUpDate}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
+          <div className="flex gap-3 overflow-x-auto pb-2">
+            {PIPELINE_STAGES.map((stage) => (
+              <div key={stage} className="min-w-[15rem] flex-1">
+                <div className="flex items-center justify-between px-1">
+                  <h2 className="text-xs font-bold uppercase tracking-wide text-co-text-muted">{t(stageKey(stage))}</h2>
+                  <span className="text-xs text-co-text-muted">{byStage[stage].length}</span>
+                </div>
+                <div className="mt-2 space-y-2">
+                  {byStage[stage].length === 0 ? (
+                    <p className="px-1 text-xs text-co-text-muted">{t("catering.pipeline.empty_stage")}</p>
+                  ) : (
+                    byStage[stage].map((lead) => <LeadCard key={lead.id} lead={lead} money={money} canWrite={canWrite} />)
+                  )}
+                </div>
+              </div>
             ))}
-          </ul>
-        </section>
-      )}
-
-      <div className="flex gap-3 overflow-x-auto pb-2">
-        {PIPELINE_STAGES.map((stage) => (
-          <div key={stage} className="min-w-[15rem] flex-1">
-            <div className="flex items-center justify-between px-1">
-              <h2 className="text-xs font-bold uppercase tracking-wide text-co-text-muted">{t(stageKey(stage))}</h2>
-              <span className="text-xs text-co-text-muted">{byStage[stage].length}</span>
-            </div>
-            <div className="mt-2 space-y-2">
-              {byStage[stage].length === 0 ? (
-                <p className="px-1 text-xs text-co-text-muted">{t("catering.pipeline.empty_stage")}</p>
-              ) : (
-                byStage[stage].map((lead) => <LeadCard key={lead.id} lead={lead} money={money} canWrite={canWrite} />)
-              )}
-            </div>
           </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Search box ────────────────────────────────────────────────────────────────
+function SearchBox({ searchQuery }: { searchQuery: string }) {
+  const { t } = useTranslation();
+  const router = useRouter();
+  const [value, setValue] = useState(searchQuery);
+
+  // During-render adjustment: if the server-prop changes (navigation), reset local state.
+  const [prevQuery, setPrevQuery] = useState(searchQuery);
+  if (searchQuery !== prevQuery) {
+    setPrevQuery(searchQuery);
+    setValue(searchQuery);
+  }
+
+  const handleSubmit = useCallback(
+    (e: FormEvent<HTMLFormElement>) => {
+      e.preventDefault();
+      const trimmed = value.trim();
+      if (trimmed) {
+        router.push(`/catering/pipeline?q=${encodeURIComponent(trimmed)}`);
+      }
+    },
+    [value, router],
+  );
+
+  const handleClear = useCallback(() => {
+    setValue("");
+    router.push("/catering/pipeline");
+  }, [router]);
+
+  return (
+    <form onSubmit={handleSubmit} className="flex items-center gap-2" role="search" aria-label={t("catering.pipeline.search.search_aria" as TranslationKey)}>
+      <div className="relative flex-1">
+        <input
+          type="search"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder={t("catering.pipeline.search.placeholder" as TranslationKey)}
+          className="w-full min-h-[44px] rounded-md border border-co-card-border bg-co-surface px-3 py-2 text-sm text-co-text placeholder:text-co-text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60"
+        />
+      </div>
+      <button
+        type="submit"
+        className="min-h-[44px] rounded-md bg-co-text px-4 py-2 text-sm font-semibold text-co-bg"
+      >
+        {t("catering.pipeline.search.submit" as TranslationKey)}
+      </button>
+      {searchQuery && (
+        <button
+          type="button"
+          onClick={handleClear}
+          className="min-h-[44px] rounded-md border border-co-card-border px-3 py-2 text-sm text-co-text-muted hover:text-co-text"
+        >
+          {t("catering.pipeline.search.clear" as TranslationKey)}
+        </button>
+      )}
+    </form>
+  );
+}
+
+// ── Search results ────────────────────────────────────────────────────────────
+function SearchResults({
+  results,
+  searchQuery,
+  money,
+}: {
+  results: PipelineSearchResult[];
+  searchQuery: string;
+  money: (cents: number | null) => string | null;
+}) {
+  const { t } = useTranslation();
+
+  const header = (t("catering.pipeline.search.results_header" as TranslationKey) as string)
+    .replace("{n}", String(results.length))
+    .replace("{q}", searchQuery);
+
+  if (results.length === 0) {
+    const empty = (t("catering.pipeline.search.empty" as TranslationKey) as string).replace("{q}", searchQuery);
+    return (
+      <div>
+        <p className="mb-3 text-sm font-semibold text-co-text">{header}</p>
+        <p className="text-sm text-co-text-muted">{empty}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <p className="mb-3 text-sm font-semibold text-co-text">{header}</p>
+      <div className="space-y-3">
+        {results.map((r) => (
+          <SearchResultCard key={r.id} result={r} money={money} />
         ))}
       </div>
+    </div>
+  );
+}
+
+function SearchResultCard({
+  result: r,
+  money,
+}: {
+  result: PipelineSearchResult;
+  money: (cents: number | null) => string | null;
+}) {
+  const { t } = useTranslation();
+  const quoteDisplay =
+    r.quoteStatus != null && r.quoteTotalCents != null
+      ? `${r.quoteStatus} · ${money(r.quoteTotalCents) ?? ""}`
+      : null;
+
+  return (
+    <div className="co-card p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <span className="font-semibold text-co-text">{r.contactName}</span>
+          {r.company && <span className="ml-2 text-sm text-co-text-muted">{r.company}</span>}
+        </div>
+        <span className="inline-block rounded-md bg-co-surface px-2 py-0.5 text-xs font-medium text-co-text-muted border border-co-card-border">
+          {t(stageKey(r.stage))}
+        </span>
+      </div>
+      <dl className="mt-2 grid grid-cols-1 gap-x-4 gap-y-0.5 text-xs sm:grid-cols-2">
+        {r.eventDate && (
+          <>
+            <dt className="text-co-text-muted">{t("catering.pipeline.field.event_date")}</dt>
+            <dd className="text-co-text">{r.eventDate}</dd>
+          </>
+        )}
+        {r.contactPhone && (
+          <>
+            <dt className="text-co-text-muted">{t("catering.pipeline.search.phone_label" as TranslationKey)}</dt>
+            <dd className="text-co-text">{r.contactPhone}</dd>
+          </>
+        )}
+        {r.email && (
+          <>
+            <dt className="text-co-text-muted">{t("catering.pipeline.search.email_label" as TranslationKey)}</dt>
+            <dd className="text-co-text">{r.email}</dd>
+          </>
+        )}
+        <dt className="text-co-text-muted">{t("catering.pipeline.search.quote_label" as TranslationKey)}</dt>
+        <dd className="text-co-text">
+          {quoteDisplay ?? t("catering.pipeline.search.no_quote" as TranslationKey)}
+        </dd>
+      </dl>
     </div>
   );
 }

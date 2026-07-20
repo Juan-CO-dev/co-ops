@@ -2177,5 +2177,15 @@
   "admin.catering.prep_demand.sku.order_more": "pide ~{packs} más",
   "admin.catering.prep_demand.sku.unresolved_choice": "{n} líneas de elección sin resolver no incluidas en los totales de SKU",
   "admin.catering.prep_demand.sku.no_recipe": "{n} líneas de demanda sin receta — no descompuestas",
-  "admin.catering.prep_demand.sku.empty": "Sin demanda de SKU — las recetas aún no están creadas."
+  "admin.catering.prep_demand.sku.empty": "Sin demanda de SKU — las recetas aún no están creadas.",
+  "catering.pipeline.search.placeholder": "Busca prospectos por nombre, empresa o teléfono…",
+  "catering.pipeline.search.submit": "Buscar",
+  "catering.pipeline.search.clear": "Limpia la búsqueda",
+  "catering.pipeline.search.results_header": "{n} resultados para \"{q}\"",
+  "catering.pipeline.search.empty": "No hay prospectos que coincidan con \"{q}\".",
+  "catering.pipeline.search.email_label": "Correo",
+  "catering.pipeline.search.phone_label": "Teléfono",
+  "catering.pipeline.search.quote_label": "Cotización",
+  "catering.pipeline.search.no_quote": "Sin cotización",
+  "catering.pipeline.search.search_aria": "Buscar prospectos de catering"
 }
