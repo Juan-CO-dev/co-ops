@@ -2167,5 +2167,15 @@
   "admin.catering.prep_demand.no_par": "—",
   "admin.catering.prep_demand.suggested_par": "Par sugerido: {value}",
   "admin.catering.prep_demand.raise_par": "Subir par",
-  "admin.catering.prep_demand.location_aria": "Elige la ubicación"
+  "admin.catering.prep_demand.location_aria": "Elige la ubicación",
+  "admin.catering.prep_demand.sku.tab_prep": "Prep",
+  "admin.catering.prep_demand.sku.tab_sku": "Crudo / SKU",
+  "admin.catering.prep_demand.sku.tab_aria": "Modo de vista",
+  "admin.catering.prep_demand.sku.total_packs": "{packs} paquetes ({oz} oz)",
+  "admin.catering.prep_demand.sku.total_oz_only": "{oz} oz (tamaño de paquete desconocido)",
+  "admin.catering.prep_demand.sku.on_hand_approx": "en existencia ~{packs} paquetes (aprox. — no es un conteo)",
+  "admin.catering.prep_demand.sku.order_more": "pide ~{packs} más",
+  "admin.catering.prep_demand.sku.unresolved_choice": "{n} líneas de elección sin resolver no incluidas en los totales de SKU",
+  "admin.catering.prep_demand.sku.no_recipe": "{n} líneas de demanda sin receta — no descompuestas",
+  "admin.catering.prep_demand.sku.empty": "Sin demanda de SKU — las recetas aún no están creadas."
 }
