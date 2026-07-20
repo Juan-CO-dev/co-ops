@@ -167,6 +167,93 @@ export async function loadPipelineBoard(actor: AuthContext): Promise<PipelineLea
   return (data ?? []).map(mapLead);
 }
 
+export interface PipelineSearchResult extends PipelineLead {
+  email: string | null;
+  quoteStatus: string | null;
+  quoteTotalCents: number | null;
+}
+
+/**
+ * Federated ilike search over leads + their customer (email/phone/name) + company name.
+ * Location-scoped (readScopeOr) + injection-sanitized (mirrors lib/admin/users.ts listUsers).
+ * Enriches each result with the customer email + the current (latest non-superseded) quote.
+ */
+export async function searchPipeline(actor: AuthContext, args: { query: string }): Promise<PipelineSearchResult[]> {
+  requireLevel(actor, PIPELINE_READ_MIN);
+  // A-WB4-01 filter-injection defense: strip PostgREST structural chars from the .or() term.
+  const raw = args.query.trim().replace(/[,()\\"]/g, "");
+  if (!raw) return [];
+  const sb = getServiceRoleClient();
+  const term = `%${raw}%`;
+
+  // 1. Customer ids matching email/phone/name, plus customers of companies whose name matches.
+  const matchedCustomerIds = new Set<string>();
+  const { data: custRows, error: cErr } = await sb
+    .from("catering_customers")
+    .select("id")
+    .or(`email.ilike.${term},phone.ilike.${term},name.ilike.${term}`)
+    .returns<Array<{ id: string }>>();
+  if (cErr) throw new Error(`searchPipeline customers: ${cErr.message}`);
+  for (const c of custRows ?? []) matchedCustomerIds.add(c.id);
+
+  const { data: compRows, error: coErr } = await sb
+    .from("catering_companies")
+    .select("id")
+    .ilike("name", term)
+    .returns<Array<{ id: string }>>();
+  if (coErr) throw new Error(`searchPipeline companies: ${coErr.message}`);
+  const companyIds = (compRows ?? []).map((c) => c.id);
+  if (companyIds.length) {
+    const { data: compCust, error: ccErr } = await sb
+      .from("catering_customers")
+      .select("id")
+      .in("company_id", companyIds)
+      .returns<Array<{ id: string }>>();
+    if (ccErr) throw new Error(`searchPipeline company customers: ${ccErr.message}`);
+    for (const c of compCust ?? []) matchedCustomerIds.add(c.id);
+  }
+
+  // 2. Search leads: own text fields OR matched customer ids, location-scoped.
+  const orParts = [`contact_name.ilike.${term}`, `company.ilike.${term}`, `contact_phone.ilike.${term}`, `event_name.ilike.${term}`];
+  if (matchedCustomerIds.size) orParts.push(`customer_id.in.(${[...matchedCustomerIds].join(",")})`);
+  let q = sb.from("catering_pipeline").select(LEAD_COLS);
+  const scope = readScopeOr(actor);
+  if (scope) q = q.or(scope); // AND-ed with the identity OR-group below (two .or() calls = AND of groups)
+  q = q.or(orParts.join(","));
+  const { data: leadRows, error } = await q.order("created_at", { ascending: false }).returns<DbLeadRow[]>();
+  if (error) throw new Error(`searchPipeline leads: ${error.message}`);
+  const leads = (leadRows ?? []).map(mapLead);
+  if (leads.length === 0) return [];
+
+  // 3. Enrich: email (per customer) + current quote (latest non-superseded per lead).
+  const custIds = [...new Set(leads.map((l) => l.customerId).filter((x): x is string => !!x))];
+  const emailByCustomer = new Map<string, string | null>();
+  if (custIds.length) {
+    const { data } = await sb.from("catering_customers").select("id, email").in("id", custIds).returns<Array<{ id: string; email: string | null }>>();
+    for (const c of data ?? []) emailByCustomer.set(c.id, c.email);
+  }
+  const leadIds = leads.map((l) => l.id);
+  const quoteByLead = new Map<string, { status: string; total_cents: number }>();
+  const { data: qRows } = await sb
+    .from("catering_quotes")
+    .select("pipeline_id, status, total_cents, created_at")
+    .in("pipeline_id", leadIds)
+    .is("superseded_at", null)
+    .order("created_at", { ascending: false })
+    .returns<Array<{ pipeline_id: string; status: string; total_cents: number; created_at: string }>>();
+  for (const qr of qRows ?? []) if (!quoteByLead.has(qr.pipeline_id)) quoteByLead.set(qr.pipeline_id, { status: qr.status, total_cents: qr.total_cents }); // first seen = latest (desc order)
+
+  return leads.map((l) => {
+    const quote = quoteByLead.get(l.id);
+    return {
+      ...l,
+      email: l.customerId ? (emailByCustomer.get(l.customerId) ?? null) : null,
+      quoteStatus: quote?.status ?? null,
+      quoteTotalCents: quote?.total_cents ?? null,
+    };
+  });
+}
+
 /** Leads with a follow-up due on/before `throughDate`, in non-terminal stages, soonest first. */
 export async function loadFollowUps(actor: AuthContext, throughDate: string): Promise<PipelineLead[]> {
   requireLevel(actor, PIPELINE_READ_MIN);
