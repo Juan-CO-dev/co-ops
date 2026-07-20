@@ -2167,5 +2167,15 @@
   "admin.catering.prep_demand.no_par": "—",
   "admin.catering.prep_demand.suggested_par": "Suggested par: {value}",
   "admin.catering.prep_demand.raise_par": "Raise par",
-  "admin.catering.prep_demand.location_aria": "Select location"
+  "admin.catering.prep_demand.location_aria": "Select location",
+  "admin.catering.prep_demand.sku.tab_prep": "Prep",
+  "admin.catering.prep_demand.sku.tab_sku": "Raw / SKU",
+  "admin.catering.prep_demand.sku.tab_aria": "View mode",
+  "admin.catering.prep_demand.sku.total_packs": "{packs} packs ({oz} oz)",
+  "admin.catering.prep_demand.sku.total_oz_only": "{oz} oz (pack size unknown)",
+  "admin.catering.prep_demand.sku.on_hand_approx": "on hand ~{packs} packs (approx — not a count)",
+  "admin.catering.prep_demand.sku.order_more": "order ~{packs} more",
+  "admin.catering.prep_demand.sku.unresolved_choice": "{n} unresolved choice lines not included in SKU totals",
+  "admin.catering.prep_demand.sku.no_recipe": "{n} demand lines have no recipe — not decomposed",
+  "admin.catering.prep_demand.sku.empty": "No SKU demand — recipes not yet authored."
 }

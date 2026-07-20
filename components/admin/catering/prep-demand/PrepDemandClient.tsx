@@ -1,19 +1,19 @@
 "use client";
 
 /**
- * PrepDemandClient — W4a Catering Prep Demand manager view.
+ * PrepDemandClient — W4a/W4b Catering Prep Demand manager view.
  *
- * READ-ONLY: no mutations, no step-up. Shows upcoming catering prep demand
- * per date for a selected location, with:
- *   - Location selector (router.push on change — server reloads with fresh data)
- *   - Date window caption (from–to)
- *   - Per-day sections: per line, renders differently by refKind:
- *       choice   → slot name + "needs pick" badge; no par math
- *       menu_item→ qty × [portion] name + info note ("sub — par comparison in W4b")
- *       item     → qty × name; if overPar → amber alert chip + par-bump affordance
- *   - Empty state when days is empty
+ * READ-ONLY: no mutations, no step-up. Two-tab toggle:
+ *   "Prep" tab — existing W4a per-day prep demand (unchanged)
+ *   "Raw / SKU" tab — W4b raw SKU consumption from confirmed catering,
+ *     with advisory on-hand shortfall / order-more signal.
+ *
+ * Both tabs share the location selector + date-window caption above them.
+ * Tab state is local useState (no useSearchParams).
+ * DORMANT-safe: both tabs render empty states with 0 data.
  */
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
@@ -22,6 +22,7 @@ import type { Language } from "@/lib/i18n/types";
 import { formatDateLabel } from "@/lib/i18n/format";
 import type { PrepDemandDay, PrepDemandLine } from "@/lib/catering/prep-demand";
 import type { PackageLocationOption } from "@/lib/admin/catering/packages";
+import type { CateringSkuDemand, SkuDemandRow } from "@/lib/catering/sku-demand";
 
 // Portion label map: quarter → ¼, half → ½, whole → (no prefix).
 const PORTION_LABELS: Record<string, string> = {
@@ -37,6 +38,11 @@ function portionPrefix(portion: string | null): string {
   return label ? `${label} ` : "";
 }
 
+/** Round to at most 1 decimal place. */
+function r1(n: number): number {
+  return Math.round(n * 10) / 10;
+}
+
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 interface Props {
@@ -46,13 +52,15 @@ interface Props {
   from: string;
   to: string;
   lang: Language;
+  skuDemand: CateringSkuDemand;
 }
 
 // ─── PrepDemandClient ─────────────────────────────────────────────────────────
 
-export function PrepDemandClient({ days, locations, locationId, from, to, lang }: Props) {
+export function PrepDemandClient({ days, locations, locationId, from, to, lang, skuDemand }: Props) {
   const { t } = useTranslation();
   const router = useRouter();
+  const [activeTab, setActiveTab] = useState<"prep" | "sku">("prep");
 
   const fieldCls =
     "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-60";
@@ -97,20 +105,172 @@ export function PrepDemandClient({ days, locations, locationId, from, to, lang }
         </p>
       </div>
 
-      {/* ─── Day list ──────────────────────────────────────────────────── */}
-      <div className="mt-5">
-        {days.length === 0 ? (
-          <div className="rounded-2xl border-2 border-dashed border-co-border p-6 text-center text-sm text-co-text-muted">
-            {t("admin.catering.prep_demand.empty" as TranslationKey)}
-          </div>
-        ) : (
-          <div className="flex flex-col gap-5">
-            {days.map((day) => (
-              <DaySection key={day.needDate} day={day} t={t} lang={lang} />
-            ))}
-          </div>
+      {/* ─── Tab toggle ────────────────────────────────────────────────── */}
+      <div
+        className="mt-5 flex gap-2"
+        role="tablist"
+        aria-label={t("admin.catering.prep_demand.sku.tab_aria" as TranslationKey)}
+      >
+        <button
+          role="tab"
+          aria-selected={activeTab === "prep"}
+          onClick={() => setActiveTab("prep")}
+          className={[
+            "min-h-[44px] rounded-lg border-2 px-4 text-sm font-bold transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
+            activeTab === "prep"
+              ? "border-co-text bg-co-text text-co-bg"
+              : "border-co-border bg-co-surface text-co-text hover:border-co-text",
+          ].join(" ")}
+        >
+          {t("admin.catering.prep_demand.sku.tab_prep" as TranslationKey)}
+        </button>
+        <button
+          role="tab"
+          aria-selected={activeTab === "sku"}
+          onClick={() => setActiveTab("sku")}
+          className={[
+            "min-h-[44px] rounded-lg border-2 px-4 text-sm font-bold transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
+            activeTab === "sku"
+              ? "border-co-text bg-co-text text-co-bg"
+              : "border-co-border bg-co-surface text-co-text hover:border-co-text",
+          ].join(" ")}
+        >
+          {t("admin.catering.prep_demand.sku.tab_sku" as TranslationKey)}
+        </button>
+      </div>
+
+      {/* ─── Prep tab content ──────────────────────────────────────────── */}
+      {activeTab === "prep" && (
+        <div className="mt-5">
+          {days.length === 0 ? (
+            <div className="rounded-2xl border-2 border-dashed border-co-border p-6 text-center text-sm text-co-text-muted">
+              {t("admin.catering.prep_demand.empty" as TranslationKey)}
+            </div>
+          ) : (
+            <div className="flex flex-col gap-5">
+              {days.map((day) => (
+                <DaySection key={day.needDate} day={day} t={t} lang={lang} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ─── Raw / SKU tab content ─────────────────────────────────────── */}
+      {activeTab === "sku" && (
+        <SkuTab skuDemand={skuDemand} t={t} lang={lang} />
+      )}
+    </div>
+  );
+}
+
+// ─── SkuTab ───────────────────────────────────────────────────────────────────
+
+function SkuTab({
+  skuDemand,
+  t,
+  lang,
+}: {
+  skuDemand: CateringSkuDemand;
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string;
+  lang: Language;
+}) {
+  return (
+    <div className="mt-5">
+      {skuDemand.rows.length === 0 ? (
+        <div className="rounded-2xl border-2 border-dashed border-co-border p-6 text-center text-sm text-co-text-muted">
+          {t("admin.catering.prep_demand.sku.empty" as TranslationKey)}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {skuDemand.rows.map((row) => (
+            <SkuRow key={row.skuId} row={row} t={t} lang={lang} />
+          ))}
+        </div>
+      )}
+
+      {/* ─── Captions ────────────────────────────────────────────────── */}
+      {(skuDemand.unresolvedChoiceLines > 0 || skuDemand.noRecipeLines > 0) && (
+        <div className="mt-4 flex flex-col gap-1">
+          {skuDemand.unresolvedChoiceLines > 0 && (
+            <p className="text-xs text-co-text-muted">
+              {t("admin.catering.prep_demand.sku.unresolved_choice" as TranslationKey, {
+                n: skuDemand.unresolvedChoiceLines,
+              })}
+            </p>
+          )}
+          {skuDemand.noRecipeLines > 0 && (
+            <p className="text-xs text-co-text-muted">
+              {t("admin.catering.prep_demand.sku.no_recipe" as TranslationKey, {
+                n: skuDemand.noRecipeLines,
+              })}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── SkuRow ───────────────────────────────────────────────────────────────────
+
+function SkuRow({
+  row,
+  t,
+  lang,
+}: {
+  row: SkuDemandRow;
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string;
+  lang: Language;
+}) {
+  const totalLabel =
+    row.totalPacks != null
+      ? t("admin.catering.prep_demand.sku.total_packs" as TranslationKey, {
+          packs: r1(row.totalPacks),
+          oz: r1(row.totalOz),
+        })
+      : t("admin.catering.prep_demand.sku.total_oz_only" as TranslationKey, {
+          oz: r1(row.totalOz),
+        });
+
+  // Per-date sub-line: "Fri 100 oz · Sat 40 oz"
+  const perDateLine = row.byDate
+    .map((cell) => `${formatDateLabel(cell.needDate, lang)} ${r1(cell.oz)} oz`)
+    .join(" · ");
+
+  return (
+    <div className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-2 text-sm text-co-text">
+      {/* SKU name + window total */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium">{row.skuName}</span>
+        <span className="text-xs text-co-text-muted">{totalLabel}</span>
+
+        {/* Short / order-more chip */}
+        {row.short && (
+          <span className="inline-flex flex-wrap items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-amber-800">
+            <span>
+              {t("admin.catering.prep_demand.sku.on_hand_approx" as TranslationKey, {
+                packs: r1(row.onHandPacks),
+              })}
+            </span>
+            {row.suggestOrderPacks != null && (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>
+                  {t("admin.catering.prep_demand.sku.order_more" as TranslationKey, {
+                    packs: r1(row.suggestOrderPacks),
+                  })}
+                </span>
+              </>
+            )}
+          </span>
         )}
       </div>
+
+      {/* Per-date breakdown */}
+      {perDateLine && (
+        <p className="mt-0.5 text-xs text-co-text-muted">{perDateLine}</p>
+      )}
     </div>
   );
 }
