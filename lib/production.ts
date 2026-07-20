@@ -135,7 +135,7 @@ async function loadSkuToItems(skuIds: string[]): Promise<Record<string, Array<{ 
  * units; the advisory hint is approximate. Fixing that (consume via input_oz ÷
  * content_oz) is a separate follow-up — see the audit backlog.
  */
-async function loadInStockPacks(skuIds: string[], locationId: string): Promise<Map<string, number>> {
+export async function loadInStockPacks(skuIds: string[], locationId: string): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (skuIds.length === 0) return out;
   const sb = getServiceRoleClient();

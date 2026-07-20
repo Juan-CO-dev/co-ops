@@ -15,7 +15,7 @@ function num(v: number | string | null): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-async function loadMeasures(): Promise<Map<string, MeasureUnitFactor>> {
+export async function loadMeasures(): Promise<Map<string, MeasureUnitFactor>> {
   const sb = getServiceRoleClient();
   const { data } = await sb.from("measure_units").select("label, dimension, to_base_factor").eq("active", true).returns<Array<{ label: string; dimension: "weight" | "volume" | "count"; to_base_factor: number | string }>>();
   return new Map((data ?? []).map((m) => [m.label, { dimension: m.dimension, toBaseFactor: num(m.to_base_factor) ?? 0 }]));
@@ -112,6 +112,83 @@ export async function perUnitSkuOzForItem(itemId: string): Promise<Map<string, n
   }
 
   return perUnitFromNode(itemId, new Set()) ?? new Map();
+}
+
+/**
+ * Per-one-unit leaf-SKU oz for a MENU_ITEM (sub) — the sub-shop analog of perUnitSkuOzForItem.
+ * A menu_item is a recipe OUTPUT via recipe_outputs.output_menu_item_id (which the item engine's
+ * output list filters out), so this handles the top-level recipe itself, then reuses
+ * perUnitSkuOzForItem for any component sub-ITEMS. Returns oz-per-one-sub; empty Map when the sub
+ * has no recipe OR any input can't be resolved (non-decomposable — mirrors perUnitSkuOzForItem).
+ */
+export async function perUnitSkuOzForMenuItem(menuItemId: string): Promise<Map<string, number>> {
+  const sb = getServiceRoleClient();
+  const { data: outRow } = await sb
+    .from("recipe_outputs")
+    .select("recipe_id, yield")
+    .eq("output_menu_item_id", menuItemId)
+    .limit(1)
+    .maybeSingle<{ recipe_id: string; yield: number | string }>();
+  if (!outRow) return new Map();
+  const recipeId = outRow.recipe_id;
+  const myYield = num(outRow.yield) ?? 0;
+  if (myYield <= 0) return new Map();
+
+  const measures = await loadMeasures();
+  const { data: rec } = await sb.from("recipes").select("batch_yield").eq("id", recipeId).maybeSingle<{ batch_yield: number | string | null }>();
+  const batchYield = rec ? num(rec.batch_yield) : null;
+  if (batchYield == null || batchYield <= 0) return new Map();
+
+  const { data: ins } = await sb
+    .from("recipe_inputs")
+    .select("quantity, unit, component_sku_id, component_item_id")
+    .eq("recipe_id", recipeId)
+    .returns<Array<{ quantity: number | string; unit: string | null; component_sku_id: string | null; component_item_id: string | null }>>();
+  const inputs = (ins ?? []).map((c) => ({ quantity: num(c.quantity) ?? 0, unit: c.unit, componentSkuId: c.component_sku_id, componentItemId: c.component_item_id }));
+
+  // Fan-out share: this sub's oz-weight / total oz-weight across ALL outputs (items + menu_items).
+  // menu_items carry no oz_per_par_unit → weight defaults to yield; item outputs use oz_per_par_unit×yield.
+  const { data: allOuts } = await sb
+    .from("recipe_outputs")
+    .select("output_item_id, output_menu_item_id, yield")
+    .eq("recipe_id", recipeId)
+    .returns<Array<{ output_item_id: string | null; output_menu_item_id: string | null; yield: number | string }>>();
+  const outList = allOuts ?? [];
+  const outItemIds = outList.filter((o) => o.output_item_id).map((o) => o.output_item_id!);
+  const ozPar = await loadItemOzPerPar(outItemIds);
+  let totalWeight = 0;
+  let myWeight = 0;
+  for (const o of outList) {
+    const y = num(o.yield) ?? 0;
+    const w = o.output_item_id ? (ozPar.get(o.output_item_id) ?? null) : null;
+    const ozWeight = w != null && w > 0 ? y * w : y;
+    if (ozWeight > 0) totalWeight += ozWeight;
+    if (o.output_menu_item_id === menuItemId) myWeight = ozWeight > 0 ? ozWeight : 0;
+  }
+  const share = totalWeight > 0 ? myWeight / totalWeight : 1 / Math.max(outList.length, 1);
+
+  // Batch oz per leaf SKU: SKU inputs directly; sub-ITEM inputs flatten via the item engine.
+  const skuIds = inputs.filter((c) => c.componentSkuId != null).map((c) => c.componentSkuId!);
+  const skuPack = await loadSkuPack(skuIds);
+  const batch = new Map<string, number>();
+  for (const c of inputs) {
+    if (c.componentSkuId != null) {
+      const sku = skuPack.get(c.componentSkuId);
+      const oz = sku ? ozForRecipeInput(c.quantity, c.unit, sku, measures) : null;
+      if (oz == null) return new Map();
+      batch.set(c.componentSkuId, (batch.get(c.componentSkuId) ?? 0) + oz);
+    } else if (c.componentItemId != null) {
+      const subPerUnit = await perUnitSkuOzForItem(c.componentItemId);
+      if (subPerUnit.size === 0) return new Map();
+      for (const [sku, oz] of subPerUnit) batch.set(sku, (batch.get(sku) ?? 0) + oz * c.quantity);
+    } else {
+      return new Map();
+    }
+  }
+
+  const out = new Map<string, number>();
+  for (const [sku, oz] of batch) out.set(sku, (oz * share) / myYield);
+  return out;
 }
 
 /** oz_per_par_unit per item (for fan-out allocation weight). */
