@@ -16,30 +16,26 @@ import { isAllLocationsAccess } from "@/lib/locations";
 import {
   loadPipelineBoard,
   loadFollowUps,
+  searchPipeline,
   PIPELINE_READ_MIN,
   PIPELINE_WRITE_MIN,
+  type PipelineSearchResult,
 } from "@/lib/catering/pipeline";
 import { PipelineClient } from "@/components/catering/pipeline/PipelineClient";
 import { CateringBackLink } from "@/components/catering/CateringBackLink";
 
-export default async function CateringPipelinePage() {
+export default async function CateringPipelinePage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   const auth = await requireSessionFromHeaders("/catering/pipeline");
   const level = getRoleLevel(auth.user.role);
   if (level < PIPELINE_READ_MIN) redirect("/dashboard");
   const lang = auth.user.language;
 
-  // Follow-up window: due on/before today (operational TZ — both CO locations are in DC).
-  const today = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
-
-  const [leads, followUps] = await Promise.all([
-    loadPipelineBoard(auth),
-    loadFollowUps(auth, today),
-  ]);
+  const sp = await searchParams;
+  const q = typeof sp["q"] === "string" ? sp["q"] : "";
 
   // Locations for the add-form select (the actor's accessible locations, by name).
   const sb = getServiceRoleClient();
@@ -64,6 +60,27 @@ export default async function CateringPipelinePage() {
     locations = data ?? [];
   }
 
+  let leads: Parameters<typeof PipelineClient>[0]["leads"] = [];
+  let followUps: Parameters<typeof PipelineClient>[0]["followUps"] = [];
+  let results: PipelineSearchResult[] | null = null;
+
+  if (q.trim()) {
+    // SEARCH MODE: skip the board/follow-up loads entirely.
+    results = await searchPipeline(auth, { query: q });
+  } else {
+    // BOARD MODE: existing parallel load.
+    const today = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/New_York",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date());
+    [leads, followUps] = await Promise.all([
+      loadPipelineBoard(auth),
+      loadFollowUps(auth, today),
+    ]);
+  }
+
   return (
     <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3">
@@ -77,6 +94,8 @@ export default async function CateringPipelinePage() {
         locations={locations}
         actorLevel={level}
         writeMin={PIPELINE_WRITE_MIN}
+        searchQuery={q}
+        results={results}
       />
     </main>
   );

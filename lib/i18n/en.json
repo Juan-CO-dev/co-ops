@@ -2177,5 +2177,15 @@
   "admin.catering.prep_demand.sku.order_more": "order ~{packs} more",
   "admin.catering.prep_demand.sku.unresolved_choice": "{n} unresolved choice lines not included in SKU totals",
   "admin.catering.prep_demand.sku.no_recipe": "{n} demand lines have no recipe — not decomposed",
-  "admin.catering.prep_demand.sku.empty": "No SKU demand — recipes not yet authored."
+  "admin.catering.prep_demand.sku.empty": "No SKU demand — recipes not yet authored.",
+  "catering.pipeline.search.placeholder": "Search leads by name, company, or phone…",
+  "catering.pipeline.search.submit": "Search",
+  "catering.pipeline.search.clear": "Clear search",
+  "catering.pipeline.search.results_header": "{n} results for \"{q}\"",
+  "catering.pipeline.search.empty": "No leads match \"{q}\".",
+  "catering.pipeline.search.email_label": "Email",
+  "catering.pipeline.search.phone_label": "Phone",
+  "catering.pipeline.search.quote_label": "Quote",
+  "catering.pipeline.search.no_quote": "No quote",
+  "catering.pipeline.search.search_aria": "Search catering leads"
 }
