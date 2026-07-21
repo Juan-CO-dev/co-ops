@@ -11,12 +11,31 @@
  *
  * sessionStorage write REMOVED — intake now flows server-side via the magic-link
  * request body, not the client store.
+ *
+ * FR-b integration: when deliveryNodesExist=true, the delivery path shows a
+ * Nominatim geocode → Leaflet map pin → routeDeliveryAction flow; the pickup path
+ * shows the pickupNodes chooser instead of the generic locations list. When
+ * deliveryNodesExist=false the original legacy flow renders unchanged.
  */
 
 import { useState } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { GoodToKnow } from "@/components/portal/GoodToKnow";
 import { GTK } from "@/components/portal/portal-content";
+import { routeDeliveryAction } from "./actions";
+import {
+  CATERING_DELIVERY_WINDOWS,
+  type DeliveryRouteResult,
+} from "@/lib/catering/fulfillment-routing";
+import { useTranslation } from "@/lib/i18n/provider";
+import type { TranslationKey } from "@/lib/i18n/types";
+
+// Dynamic import: ssr:false is REQUIRED — Leaflet is browser-only.
+const DeliveryRouteMap = dynamic(
+  () => import("@/components/order/DeliveryRouteMap"),
+  { ssr: false },
+);
 
 interface Location {
   id: string;
@@ -24,8 +43,15 @@ interface Location {
   code: string;
 }
 
+interface PickupNode {
+  locationId: string;
+  locationName: string;
+}
+
 interface Props {
   locations: Location[];
+  deliveryNodesExist: boolean;
+  pickupNodes: PickupNode[];
 }
 
 type Fulfillment = "delivery" | "pickup";
@@ -47,7 +73,8 @@ interface FormState {
   door: string;
 }
 
-export function OrderStartClient({ locations }: Props) {
+export function OrderStartClient({ locations, deliveryNodesExist, pickupNodes }: Props) {
+  const { t } = useTranslation();
   const [mode, setMode] = useState<"new" | "returning">("new");
   const [sent, setSent] = useState(false);
   const [f, setF] = useState<FormState>({
@@ -67,12 +94,86 @@ export function OrderStartClient({ locations }: Props) {
     door: "",
   });
 
+  // FR-b routing state
+  const [geo, setGeo] = useState<{ lat: number; lng: number } | null>(null);
+  const [route, setRoute] = useState<DeliveryRouteResult | null>(null);
+  const [locating, setLocating] = useState(false);
+
   const set = (patch: Partial<FormState>) => setF((cur) => ({ ...cur, ...patch }));
+
+  // runRoute: call the server action with current coords + form state.
+  const runRoute = async (lat: number, lng: number) => {
+    setLocating(true);
+    try {
+      const res = await routeDeliveryAction({
+        lat,
+        lng,
+        eventDate: f.date || null,
+        headcount: Number(f.guests) || null,
+      });
+      setRoute(res);
+    } finally {
+      setLocating(false);
+    }
+  };
+
+  // locate: button-triggered Nominatim geocode then route. One request, no per-keystroke.
+  const locate = async () => {
+    if (!f.address.trim() || locating) return;
+    setLocating(true);
+    try {
+      const resp = await fetch(
+        "https://nominatim.openstreetmap.org/search?format=json&limit=1&q=" +
+          encodeURIComponent(f.address),
+      );
+      const arr = (await resp.json()) as unknown[];
+      const first = Array.isArray(arr) ? (arr[0] as { lat?: string; lon?: string } | undefined) : null;
+      if (first && first.lat && first.lon) {
+        const lat = Number(first.lat);
+        const lng = Number(first.lon);
+        setGeo({ lat, lng });
+        const res = await routeDeliveryAction({
+          lat,
+          lng,
+          eventDate: f.date || null,
+          headcount: Number(f.guests) || null,
+        });
+        setRoute(res);
+      }
+    } catch {
+      /* non-fatal: user can drag the pin */
+    } finally {
+      setLocating(false);
+    }
+  };
+
+  // Derive the fulfilling locationId for the new-flow delivery path.
+  const routedLocationId =
+    deliveryNodesExist && f.fulfillment === "delivery" && route?.status === "routed"
+      ? route.locationId
+      : null;
+
+  // canSubmit: for the new delivery flow, block if no routed node yet.
+  const deliveryBlocked =
+    deliveryNodesExist && f.fulfillment === "delivery" && route?.status !== "routed";
 
   const canSubmit =
     mode === "returning"
       ? f.email.includes("@")
-      : !!(f.name.trim() && f.email.includes("@") && f.date && f.locationId);
+      : !!(
+          f.name.trim() &&
+          f.email.includes("@") &&
+          f.date &&
+          (deliveryNodesExist ? !deliveryBlocked : !!f.locationId)
+        );
+
+  // The locationId to send in the intake payload.
+  const effectiveLocationId =
+    deliveryNodesExist
+      ? f.fulfillment === "delivery"
+        ? (routedLocationId ?? "")
+        : (f.locationId) // pickup: chosen node id stored in locationId via set()
+      : f.locationId;
 
   return (
     <div className="flex min-h-screen flex-col bg-co-bg text-co-text">
@@ -193,14 +294,30 @@ export function OrderStartClient({ locations }: Props) {
                       </Field>
                     </div>
 
-                    <Field label="Time window (optional)">
-                      <input
-                        value={f.timeWindow}
-                        onChange={(e) => set({ timeWindow: e.target.value })}
-                        className="inp"
-                        placeholder="11:00–11:30 AM"
-                      />
-                    </Field>
+                    {/* Time window — select if nodes exist, free-text fallback */}
+                    {deliveryNodesExist ? (
+                      <Field label={t("order.route.window_label" as TranslationKey)}>
+                        <select
+                          value={f.timeWindow}
+                          onChange={(e) => set({ timeWindow: e.target.value })}
+                          className="inp"
+                        >
+                          <option value="">{t("order.route.window_any" as TranslationKey)}</option>
+                          {CATERING_DELIVERY_WINDOWS.map((w) => (
+                            <option key={w} value={w}>{w}</option>
+                          ))}
+                        </select>
+                      </Field>
+                    ) : (
+                      <Field label="Time window (optional)">
+                        <input
+                          value={f.timeWindow}
+                          onChange={(e) => set({ timeWindow: e.target.value })}
+                          className="inp"
+                          placeholder="11:00–11:30 AM"
+                        />
+                      </Field>
+                    )}
 
                     {/* Delivery or pickup */}
                     <Field label="Delivery or pickup?">
@@ -209,7 +326,12 @@ export function OrderStartClient({ locations }: Props) {
                           <button
                             key={opt}
                             type="button"
-                            onClick={() => set({ fulfillment: opt })}
+                            onClick={() => {
+                              set({ fulfillment: opt });
+                              // Reset routing state when switching modes
+                              setGeo(null);
+                              setRoute(null);
+                            }}
                             className={`flex-1 rounded-xl border-2 py-2.5 text-sm font-bold capitalize transition ${
                               f.fulfillment === opt
                                 ? "border-co-text bg-co-text text-co-bg"
@@ -222,53 +344,158 @@ export function OrderStartClient({ locations }: Props) {
                       </div>
                     </Field>
 
-                    {/* Location chooser — shown for both delivery and pickup */}
-                    <Field
-                      label={f.fulfillment === "pickup" ? "Pickup location" : "Nearest shop"}
-                      hint={
-                        f.fulfillment === "delivery"
-                          ? "Which of our locations will be fulfilling your order?"
-                          : undefined
-                      }
-                    >
-                      <div className="flex flex-wrap gap-2">
-                        {locations.map((loc) => (
-                          <button
-                            key={loc.id}
-                            type="button"
-                            onClick={() => set({ locationId: loc.id })}
-                            className={`flex-1 rounded-xl border-2 py-2.5 text-sm font-bold transition ${
-                              f.locationId === loc.id
-                                ? "border-co-text bg-co-text/10 text-co-text"
-                                : "border-co-border-2 bg-co-surface text-co-text-muted hover:text-co-text"
-                            }`}
-                          >
-                            {loc.name}
-                          </button>
-                        ))}
-                      </div>
-                    </Field>
-
-                    {/* Delivery-only fields */}
+                    {/* ── DELIVERY BLOCK ─────────────────────────────────────── */}
                     {f.fulfillment === "delivery" && (
                       <>
-                        <Field label="Delivery address">
-                          <input
-                            value={f.address}
-                            onChange={(e) => set({ address: e.target.value })}
-                            className="inp"
-                            placeholder="Street, city, ZIP"
-                          />
-                        </Field>
-                        <Field label="Preferred drop-off door (optional)">
-                          <input
-                            value={f.door}
-                            onChange={(e) => set({ door: e.target.value })}
-                            className="inp"
-                            placeholder="Lobby, loading dock, suite 4…"
-                          />
-                        </Field>
+                        {deliveryNodesExist ? (
+                          /* NEW: geocode + map flow */
+                          <div className="flex flex-col gap-3">
+                            <Field label="Delivery address">
+                              <div className="flex gap-2">
+                                <input
+                                  value={f.address}
+                                  onChange={(e) => set({ address: e.target.value })}
+                                  className="inp flex-1"
+                                  placeholder="Street, city, ZIP"
+                                />
+                                <button
+                                  type="button"
+                                  disabled={locating || !f.address.trim()}
+                                  onClick={() => void locate()}
+                                  className="min-h-[48px] rounded-xl border-2 border-co-border-2 bg-co-surface px-4 text-sm font-bold text-co-text transition hover:bg-co-gold/10 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {locating
+                                    ? "…"
+                                    : t("order.route.locate" as TranslationKey)}
+                                </button>
+                              </div>
+                            </Field>
+
+                            {geo && (
+                              <>
+                                <DeliveryRouteMap
+                                  mapKey="pin"
+                                  lat={geo.lat}
+                                  lng={geo.lng}
+                                  onPinChange={(lat, lng) => {
+                                    setGeo({ lat, lng });
+                                    void runRoute(lat, lng);
+                                  }}
+                                />
+                                <p className="text-xs text-co-text-muted">
+                                  {t("order.route.drag_hint" as TranslationKey)}
+                                </p>
+                                {route && (
+                                  <p className={`text-sm font-semibold ${
+                                    route.status === "routed"
+                                      ? "text-co-text"
+                                      : "text-co-cta"
+                                  }`}>
+                                    {route.status === "routed"
+                                      ? t("order.route.in_zone" as TranslationKey, { location: route.locationName })
+                                      : route.status === "out_of_zone"
+                                      ? t("order.route.out_of_zone" as TranslationKey)
+                                      : t("order.route.no_capacity" as TranslationKey)}
+                                  </p>
+                                )}
+                              </>
+                            )}
+
+                            <Field label="Preferred drop-off door (optional)">
+                              <input
+                                value={f.door}
+                                onChange={(e) => set({ door: e.target.value })}
+                                className="inp"
+                                placeholder="Lobby, loading dock, suite 4…"
+                              />
+                            </Field>
+                          </div>
+                        ) : (
+                          /* LEGACY: manual location chooser + free-text address (deliveryNodesExist=false) */
+                          <>
+                            <Field
+                              label="Nearest shop"
+                              hint="Which of our locations will be fulfilling your order?"
+                            >
+                              <div className="flex flex-wrap gap-2">
+                                {locations.map((loc) => (
+                                  <button
+                                    key={loc.id}
+                                    type="button"
+                                    onClick={() => set({ locationId: loc.id })}
+                                    className={`flex-1 rounded-xl border-2 py-2.5 text-sm font-bold transition ${
+                                      f.locationId === loc.id
+                                        ? "border-co-text bg-co-text/10 text-co-text"
+                                        : "border-co-border-2 bg-co-surface text-co-text-muted hover:text-co-text"
+                                    }`}
+                                  >
+                                    {loc.name}
+                                  </button>
+                                ))}
+                              </div>
+                            </Field>
+                            <Field label="Delivery address">
+                              <input
+                                value={f.address}
+                                onChange={(e) => set({ address: e.target.value })}
+                                className="inp"
+                                placeholder="Street, city, ZIP"
+                              />
+                            </Field>
+                            <Field label="Preferred drop-off door (optional)">
+                              <input
+                                value={f.door}
+                                onChange={(e) => set({ door: e.target.value })}
+                                className="inp"
+                                placeholder="Lobby, loading dock, suite 4…"
+                              />
+                            </Field>
+                          </>
+                        )}
                       </>
+                    )}
+
+                    {/* ── PICKUP BLOCK ───────────────────────────────────────── */}
+                    {f.fulfillment === "pickup" && (
+                      <Field label="Pickup location">
+                        {deliveryNodesExist ? (
+                          /* NEW: pickupNodes chooser */
+                          <div className="flex flex-wrap gap-2">
+                            {pickupNodes.map((node) => (
+                              <button
+                                key={node.locationId}
+                                type="button"
+                                onClick={() => set({ locationId: node.locationId })}
+                                className={`flex-1 rounded-xl border-2 py-2.5 text-sm font-bold transition ${
+                                  f.locationId === node.locationId
+                                    ? "border-co-text bg-co-text/10 text-co-text"
+                                    : "border-co-border-2 bg-co-surface text-co-text-muted hover:text-co-text"
+                                }`}
+                              >
+                                {node.locationName}
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          /* LEGACY: all locations chooser */
+                          <div className="flex flex-wrap gap-2">
+                            {locations.map((loc) => (
+                              <button
+                                key={loc.id}
+                                type="button"
+                                onClick={() => set({ locationId: loc.id })}
+                                className={`flex-1 rounded-xl border-2 py-2.5 text-sm font-bold transition ${
+                                  f.locationId === loc.id
+                                    ? "border-co-text bg-co-text/10 text-co-text"
+                                    : "border-co-border-2 bg-co-surface text-co-text-muted hover:text-co-text"
+                                }`}
+                              >
+                                {loc.name}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </Field>
                     )}
 
                     {/* Dietary notes */}
@@ -298,7 +525,7 @@ export function OrderStartClient({ locations }: Props) {
                         email: f.email,
                         name: f.name,
                         intake: {
-                          locationId: f.locationId,
+                          locationId: effectiveLocationId,
                           contactName: f.name,
                           company: f.company || null,
                           eventDate: f.date,
@@ -313,6 +540,10 @@ export function OrderStartClient({ locations }: Props) {
                           eventName: f.eventName || null,
                           dropoffDoor:
                             f.fulfillment === "delivery" ? (f.door || null) : null,
+                          // FR-b geo + routing fields
+                          geoLat: geo?.lat ?? null,
+                          geoLng: geo?.lng ?? null,
+                          fulfillmentRouted: route?.status === "routed",
                         },
                       }),
                     }).catch(() => {
