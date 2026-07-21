@@ -36,6 +36,7 @@ export default async function AdminRecipeDetailPage({
       .from("vendor_items")
       .select("id, name, pack_format, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each")
       .eq("active", true)
+      .eq("inventory_only", false) // exclude packaging/cleaning supplies from the ingredient picker
       .order("name")
       .returns<Array<{
         id: string; name: string;
