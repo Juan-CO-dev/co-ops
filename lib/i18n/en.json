@@ -2187,5 +2187,19 @@
   "catering.pipeline.search.phone_label": "Phone",
   "catering.pipeline.search.quote_label": "Quote",
   "catering.pipeline.search.no_quote": "No quote",
-  "catering.pipeline.search.search_aria": "Search catering leads"
+  "catering.pipeline.search.search_aria": "Search catering leads",
+  "admin.catering.hub.fulfillment": "Fulfillment Zones",
+  "admin.catering.fulfillment.title": "Fulfillment Zones",
+  "admin.catering.fulfillment.subtitle": "Set each store's delivery zone: drag the pin to center, adjust the radius, and toggle delivery / pickup availability.",
+  "admin.catering.fulfillment.location": "Location",
+  "admin.catering.fulfillment.select_location": "Select a location to configure",
+  "admin.catering.fulfillment.configured": "configured",
+  "admin.catering.fulfillment.not_set": "not set",
+  "admin.catering.fulfillment.radius_miles": "Delivery radius (miles)",
+  "admin.catering.fulfillment.offers_delivery": "Offers delivery",
+  "admin.catering.fulfillment.offers_pickup": "Offers pickup",
+  "admin.catering.fulfillment.save": "Save zone",
+  "admin.catering.fulfillment.saved": "Zone saved.",
+  "admin.catering.fulfillment.drag_hint": "Drag the pin to your store; set the delivery radius below.",
+  "admin.catering.fulfillment.empty": "No active locations found."
 }

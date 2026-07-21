@@ -22,7 +22,8 @@ const EDITORS: { id: string; i18nKey: TranslationKey; href: string; minLevel: nu
   { id: "capacity",    i18nKey: "admin.catering.hub.capacity",    href: "/admin/catering/capacity",    minLevel: 7 },
   { id: "zones",       i18nKey: "admin.catering.hub.zones",       href: "/admin/catering/zones",       minLevel: 7 },
   { id: "faq",         i18nKey: "admin.catering.hub.faq",         href: "/admin/catering/faq",         minLevel: 6 },
-  { id: "prep-demand", i18nKey: "admin.catering.prep_demand.card" as TranslationKey, href: "/admin/catering/prep-demand", minLevel: 6 },
+  { id: "prep-demand",  i18nKey: "admin.catering.prep_demand.card" as TranslationKey, href: "/admin/catering/prep-demand",  minLevel: 6 },
+  { id: "fulfillment", i18nKey: "admin.catering.hub.fulfillment" as TranslationKey,   href: "/admin/catering/fulfillment", minLevel: 7 },
 ];
 
 export default async function AdminCateringHubPage() {

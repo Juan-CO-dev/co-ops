@@ -2187,5 +2187,19 @@
   "catering.pipeline.search.phone_label": "Teléfono",
   "catering.pipeline.search.quote_label": "Cotización",
   "catering.pipeline.search.no_quote": "Sin cotización",
-  "catering.pipeline.search.search_aria": "Buscar prospectos de catering"
+  "catering.pipeline.search.search_aria": "Buscar prospectos de catering",
+  "admin.catering.hub.fulfillment": "Zonas de Entrega",
+  "admin.catering.fulfillment.title": "Zonas de Entrega",
+  "admin.catering.fulfillment.subtitle": "Configura la zona de entrega de cada tienda: arrastra el marcador al centro, ajusta el radio y activa la entrega y/o la recogida.",
+  "admin.catering.fulfillment.location": "Ubicación",
+  "admin.catering.fulfillment.select_location": "Elige una ubicación para configurar",
+  "admin.catering.fulfillment.configured": "configurada",
+  "admin.catering.fulfillment.not_set": "sin configurar",
+  "admin.catering.fulfillment.radius_miles": "Radio de entrega (millas)",
+  "admin.catering.fulfillment.offers_delivery": "Ofrece entrega a domicilio",
+  "admin.catering.fulfillment.offers_pickup": "Ofrece recogida en tienda",
+  "admin.catering.fulfillment.save": "Guardar zona",
+  "admin.catering.fulfillment.saved": "Zona guardada.",
+  "admin.catering.fulfillment.drag_hint": "Arrastra el marcador a tu tienda y ajusta el radio de entrega abajo.",
+  "admin.catering.fulfillment.empty": "No se encontraron ubicaciones activas."
 }
