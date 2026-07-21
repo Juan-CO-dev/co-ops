@@ -54,6 +54,9 @@ function parseIntake(raw: unknown): DraftIntake | null {
     dietaryNotes: cap(o.dietaryNotes, CAP_NOTES),
     eventName: cap(o.eventName, CAP_SHORT),
     dropoffDoor: cap(o.dropoffDoor, CAP_SHORT),
+    geoLat: typeof o.geoLat === "number" && Number.isFinite(o.geoLat) && Math.abs(o.geoLat) <= 90 ? o.geoLat : null,
+    geoLng: typeof o.geoLng === "number" && Number.isFinite(o.geoLng) && Math.abs(o.geoLng) <= 180 ? o.geoLng : null,
+    fulfillmentRouted: o.fulfillmentRouted === true,
   };
 }
 
