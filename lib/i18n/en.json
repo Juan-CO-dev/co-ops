@@ -2208,5 +2208,15 @@
   "order.route.out_of_zone": "That address is outside our delivery area.",
   "order.route.no_capacity": "You're in our area, but we're fully booked that date — try another date or choose pickup.",
   "order.route.window_label": "Delivery time window",
-  "order.route.window_any": "Flexible / any time"
+  "order.route.window_any": "Flexible / any time",
+  "admin.catering.prep_demand.tab_surplus": "Surplus",
+  "admin.catering.prep_demand.surplus_empty": "No surplus from recent cancellations.",
+  "catering.surplus.section_perishable": "Perishable prep surplus",
+  "catering.surplus.section_raw": "Raw SKU surplus",
+  "catering.surplus.hint.perishable": "Perishable — route to an LTO, discount, or staff meal soon.",
+  "catering.surplus.hint.adjust_ordering": "Raw stock freed — adjust ordering or use in normal service.",
+  "catering.surplus.days_out": "{n}d out",
+  "lto.surplus_title": "Surplus available to promote",
+  "lto.surplus_empty": "No perishable surplus right now.",
+  "admin.catering.hub.surplus_count": "{n} surplus"
 }

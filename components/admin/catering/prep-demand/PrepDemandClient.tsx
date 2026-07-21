@@ -23,6 +23,7 @@ import { formatDateLabel } from "@/lib/i18n/format";
 import type { PrepDemandDay, PrepDemandLine } from "@/lib/catering/prep-demand";
 import type { PackageLocationOption } from "@/lib/admin/catering/packages";
 import type { CateringSkuDemand, SkuDemandRow } from "@/lib/catering/sku-demand";
+import type { SurplusDay, SurplusLine } from "@/lib/catering/surplus";
 
 // Portion label map: quarter → ¼, half → ½, whole → (no prefix).
 const PORTION_LABELS: Record<string, string> = {
@@ -53,14 +54,15 @@ interface Props {
   to: string;
   lang: Language;
   skuDemand: CateringSkuDemand;
+  surplus: SurplusDay[];
 }
 
 // ─── PrepDemandClient ─────────────────────────────────────────────────────────
 
-export function PrepDemandClient({ days, locations, locationId, from, to, lang, skuDemand }: Props) {
+export function PrepDemandClient({ days, locations, locationId, from, to, lang, skuDemand, surplus }: Props) {
   const { t } = useTranslation();
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<"prep" | "sku">("prep");
+  const [activeTab, setActiveTab] = useState<"prep" | "sku" | "surplus">("prep");
 
   const fieldCls =
     "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-60";
@@ -137,6 +139,19 @@ export function PrepDemandClient({ days, locations, locationId, from, to, lang, 
         >
           {t("admin.catering.prep_demand.sku.tab_sku" as TranslationKey)}
         </button>
+        <button
+          role="tab"
+          aria-selected={activeTab === "surplus"}
+          onClick={() => setActiveTab("surplus")}
+          className={[
+            "min-h-[44px] rounded-lg border-2 px-4 text-sm font-bold transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
+            activeTab === "surplus"
+              ? "border-co-text bg-co-text text-co-bg"
+              : "border-co-border bg-co-surface text-co-text hover:border-co-text",
+          ].join(" ")}
+        >
+          {t("admin.catering.prep_demand.tab_surplus" as TranslationKey)}
+        </button>
       </div>
 
       {/* ─── Prep tab content ──────────────────────────────────────────── */}
@@ -159,6 +174,11 @@ export function PrepDemandClient({ days, locations, locationId, from, to, lang, 
       {/* ─── Raw / SKU tab content ─────────────────────────────────────── */}
       {activeTab === "sku" && (
         <SkuTab skuDemand={skuDemand} t={t} lang={lang} />
+      )}
+
+      {/* ─── Surplus tab content ───────────────────────────────────────── */}
+      {activeTab === "surplus" && (
+        <SurplusTab surplus={surplus} t={t} lang={lang} />
       )}
     </div>
   );
@@ -271,6 +291,132 @@ function SkuRow({
       {perDateLine && (
         <p className="mt-0.5 text-xs text-co-text-muted">{perDateLine}</p>
       )}
+    </div>
+  );
+}
+
+// ─── SurplusTab ───────────────────────────────────────────────────────────────
+
+function SurplusTab({
+  surplus,
+  t,
+  lang,
+}: {
+  surplus: SurplusDay[];
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string;
+  lang: Language;
+}) {
+  if (surplus.length === 0) {
+    return (
+      <div className="mt-5 rounded-2xl border-2 border-dashed border-co-border p-6 text-center text-sm text-co-text-muted">
+        {t("admin.catering.prep_demand.surplus_empty" as TranslationKey)}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-5 flex flex-col gap-5">
+      {surplus.map((day) => {
+        const dateLabel = formatDateLabel(day.needDate, lang);
+        const perishableLines = day.lines.filter((l) => l.kind === "prep");
+        const rawSkuLines = day.lines.filter((l) => l.kind === "raw_sku");
+
+        return (
+          <section key={day.needDate}>
+            <h2 className="mb-2 text-sm font-extrabold uppercase tracking-[0.08em] text-co-text">
+              {dateLabel}
+            </h2>
+            <div className="flex flex-col gap-3">
+              {perishableLines.length > 0 && (
+                <div>
+                  <p className="mb-1 text-xs font-bold uppercase tracking-[0.08em] text-co-text-muted">
+                    {t("catering.surplus.section_perishable" as TranslationKey)}
+                  </p>
+                  <ul className="flex flex-col gap-2">
+                    {perishableLines.map((line) => (
+                      <li key={`${line.pipelineId}-${line.refId}`}>
+                        <SurplusPrepLine line={line} t={t} />
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {rawSkuLines.length > 0 && (
+                <div>
+                  <p className="mb-1 text-xs font-bold uppercase tracking-[0.08em] text-co-text-muted">
+                    {t("catering.surplus.section_raw" as TranslationKey)}
+                  </p>
+                  <ul className="flex flex-col gap-2">
+                    {rawSkuLines.map((line) => (
+                      <li key={`${line.pipelineId}-${line.refId}`}>
+                        <SurplusRawSkuLine line={line} t={t} />
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── SurplusPrepLine ──────────────────────────────────────────────────────────
+
+function SurplusPrepLine({
+  line,
+  t,
+}: {
+  line: SurplusLine;
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string;
+}) {
+  const prefix = portionPrefix(line.portion);
+  return (
+    <div className="flex flex-wrap items-start gap-2 rounded-lg border-2 border-co-border bg-co-surface px-3 py-2 text-sm text-co-text">
+      <span className="font-medium text-co-cta">
+        {line.qty}
+        {" × "}
+        {prefix}
+        {line.name}
+      </span>
+      <span className="text-xs text-co-text-muted">
+        {t("catering.surplus.days_out" as TranslationKey, { n: line.daysOut })}
+      </span>
+      <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-amber-800">
+        {t("catering.surplus.hint.perishable" as TranslationKey)}
+      </span>
+    </div>
+  );
+}
+
+// ─── SurplusRawSkuLine ────────────────────────────────────────────────────────
+
+function SurplusRawSkuLine({
+  line,
+  t,
+}: {
+  line: SurplusLine;
+  t: (key: TranslationKey, params?: Record<string, string | number>) => string;
+}) {
+  return (
+    <div className="flex flex-wrap items-start gap-2 rounded-lg border-2 border-co-border bg-co-surface px-3 py-2 text-sm text-co-text">
+      <span className="font-medium">{line.name}</span>
+      {line.oz != null && (
+        <span className="text-xs text-co-text-muted">{line.oz} oz</span>
+      )}
+      {line.qty > 0 && (
+        <span className="text-xs text-co-text-muted">
+          ~{Math.round(line.qty * 10) / 10} packs
+        </span>
+      )}
+      <span className="text-xs text-co-text-muted">
+        {t("catering.surplus.days_out" as TranslationKey, { n: line.daysOut })}
+      </span>
+      <span className="inline-flex items-center rounded-full bg-co-surface px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-text-muted ring-1 ring-co-border">
+        {t("catering.surplus.hint.adjust_ordering" as TranslationKey)}
+      </span>
     </div>
   );
 }

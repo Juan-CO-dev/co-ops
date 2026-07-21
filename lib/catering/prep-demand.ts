@@ -110,7 +110,7 @@ export async function reservePrepDemand(actor: AuthContext, pipelineId: string):
   // Idempotency: retire prior reserved rows (append-only — mark released, never delete).
   const { error: relErr } = await sb
     .from("catering_prep_demand")
-    .update({ status: "released" })
+    .update({ status: "released", released_at: new Date().toISOString() })
     .eq("pipeline_id", pipelineId)
     .eq("status", "reserved");
   if (relErr) throw new Error(`reservePrepDemand release-prior: ${relErr.message}`);
@@ -155,7 +155,7 @@ export async function releasePrepDemand(actor: AuthContext, pipelineId: string):
   const sb = getServiceRoleClient();
   const { error } = await sb
     .from("catering_prep_demand")
-    .update({ status: "released" })
+    .update({ status: "released", released_at: new Date().toISOString() })
     .eq("pipeline_id", pipelineId)
     .eq("status", "reserved");
   if (error) throw new Error(`releasePrepDemand: ${error.message}`);
@@ -308,7 +308,7 @@ type ItemDefnMap = Awaited<ReturnType<typeof loadItemDefns>>;
 
 /** Batch-resolve display names for item/menu_item/choice-slot refs, and expose the loaded item
  *  defaults so callers can reuse them for par (avoids a second `items` query). */
-async function resolveRefs(
+export async function resolveRefs(
   sb: Sb,
   itemIds: Set<string>,
   menuIds: Set<string>,

@@ -14,6 +14,8 @@ import { requireSessionFromHeaders } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import type { TranslationKey } from "@/lib/i18n/types";
+import { loadPackageLocations } from "@/lib/admin/catering/packages";
+import { loadPerishableSurplus, SURPLUS_READ_MIN } from "@/lib/catering/surplus";
 
 const EDITORS: { id: string; i18nKey: TranslationKey; href: string; minLevel: number }[] = [
   { id: "packages",    i18nKey: "admin.catering.hub.packages",    href: "/admin/catering/packages",    minLevel: 6 },
@@ -33,6 +35,27 @@ export default async function AdminCateringHubPage() {
   const lang = auth.user.language;
   const visible = EDITORS.filter((e) => level >= e.minLevel);
 
+  // Perishable surplus count for the prep-demand card badge (catering_mgr+ only).
+  let surplusCount = 0;
+  if (level >= SURPLUS_READ_MIN) {
+    try {
+      const from = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+      const dt = new Date(Date.UTC(
+        Number(from.split("-")[0]),
+        Number(from.split("-")[1]) - 1,
+        Number(from.split("-")[2]) + 14,
+      ));
+      const to = dt.toISOString().slice(0, 10);
+      const locations = await loadPackageLocations(auth);
+      const results = await Promise.all(
+        locations.map((loc) => loadPerishableSurplus(auth, { locationId: loc.id, from, to })),
+      );
+      surplusCount = results.reduce((acc, lines) => acc + lines.length, 0);
+    } catch {
+      // Non-fatal: badge silently absent on error.
+    }
+  }
+
   return (
     <div>
       <h1 className="text-xl font-extrabold leading-tight text-co-text">
@@ -41,8 +64,13 @@ export default async function AdminCateringHubPage() {
       <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "admin.catering.subtitle")}</p>
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {visible.map((e) => (
-          <Link key={e.id} href={e.href} className="co-card co-card-interactive block p-4 text-co-text">
+          <Link key={e.id} href={e.href} className="co-card co-card-interactive flex items-center justify-between gap-2 p-4 text-co-text">
             <span className="font-semibold">{serverT(lang, e.i18nKey)}</span>
+            {e.id === "prep-demand" && surplusCount > 0 && (
+              <span className="inline-flex shrink-0 items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-amber-800">
+                {serverT(lang, "admin.catering.hub.surplus_count" as TranslationKey, { n: surplusCount })}
+              </span>
+            )}
           </Link>
         ))}
       </div>
