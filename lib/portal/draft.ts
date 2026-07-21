@@ -60,6 +60,9 @@ export interface DraftIntake {
   dietaryNotes?: string | null;
   eventName?: string | null;
   dropoffDoor?: string | null;
+  geoLat?: number | null;
+  geoLng?: number | null;
+  fulfillmentRouted?: boolean;
 }
 
 export type Portion = "quarter" | "half" | "whole";
@@ -221,6 +224,9 @@ export async function createDraftFromIntake(customerId: string, intake: DraftInt
       dietary_notes: intake.dietaryNotes ?? null,
       event_name: intake.eventName ?? null,
       dropoff_door: intake.dropoffDoor ?? null,
+      geo_lat: intake.geoLat ?? null,
+      geo_lng: intake.geoLng ?? null,
+      fulfillment_routed: intake.fulfillmentRouted ?? false,
       stage: "inquiry",
       lead_source: "portal",
       location_id: intake.locationId,

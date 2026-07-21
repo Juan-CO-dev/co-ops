@@ -2201,5 +2201,12 @@
   "admin.catering.fulfillment.save": "Save zone",
   "admin.catering.fulfillment.saved": "Zone saved.",
   "admin.catering.fulfillment.drag_hint": "Drag the pin to your store; set the delivery radius below.",
-  "admin.catering.fulfillment.empty": "No active locations found."
+  "admin.catering.fulfillment.empty": "No active locations found.",
+  "order.route.locate": "Locate on map",
+  "order.route.drag_hint": "Not quite right? Drag the pin to your exact spot.",
+  "order.route.in_zone": "✓ You're in our delivery zone — {location} will cater this.",
+  "order.route.out_of_zone": "That address is outside our delivery area.",
+  "order.route.no_capacity": "You're in our area, but we're fully booked that date — try another date or choose pickup.",
+  "order.route.window_label": "Delivery time window",
+  "order.route.window_any": "Flexible / any time"
 }
