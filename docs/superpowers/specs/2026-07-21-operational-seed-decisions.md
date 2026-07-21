@@ -92,3 +92,18 @@ Likely decomposed into staged seed scripts (each idempotent, each verified again
 7. **Checklists** (§7 closing checklist) — reconcile against the already-seeded closing/opening templates (may already exist; verify, don't duplicate).
 
 All idempotent (`pathToFileURL` main-guard), applied via `tsx --env-file=.env.local`, with pre/post live-count parity checks per the spine's backfill discipline.
+
+---
+
+## STAGE PROGRESS
+
+### ✅ Stage 1 — Vendors (DONE, prod, `scripts/seed/01-vendors.ts`)
+17 vendors, idempotent. `Sisco→Sysco` reconciled in place. Two axes seeded: **categories** (prep-section: Veg/Cooks/Sides/Sauces/Slicing/Misc/Paper/Cleaning/Other) + **order_types** (supply: Produce/Protein/Dairy/DryGoods/Paper/Chemical/Beverage/Specialty/Equipment/Other). Real contacts/ordering where known (Penny Candy email), placeholders "TBD" else. All satisfy min-1 on every axis. **Lesson:** the two vendor axes are distinct registries — don't conflate `categories` (prep-section) with `order_types` (supply). The seed's own min-1 verify caught it.
+
+### ⏳ Stage 2 — SKUs (`vendor_items`) — DECISIONS LOCKED, build next
+**Grounding:** locations = **Capitol Hill (MEP `54ce1029…`)** + **P Street (EM `d2cced11…`)** (P Street = the Dupont shop). 25 existing `vendor_items`, all global placeholders (mix of ~14 raw ingredients + ~10 in-house preps mislabeled as SKUs; **"Hot Peppers" is linked to 1 `item_components` row**). Pack registry: `pack_format` ∈ {Each (no case), Case, Box, Bag, Flat}; `each_measure` ∈ {oz, lb, fl oz, gallon, count, gram, kg, mL, liter}.
+**Decisions (Juan-locked):**
+- **Scope = GLOBAL shared catalog** (`location_id NULL`) — both shops run PFG; seed the PFG SKUs once with the Cap Hill 2025 guide's pars as the default. P Street overrides pars / adds SKUs later (its guide TBD).
+- **Placeholder reconciliation:** raw-ingredient placeholders → **match by name + UPDATE in place** (preserves the Hot Peppers recipe link); in-house-prep placeholders (aiolis, dressings, caramelized onions…) → **DEACTIVATE** (rebuilt as real sub-`items` in Stage 5 from the recipe docs).
+- **Par:** the 2025 guide has single pars → seed `weekday_par` + unit; `weekend_par` NULL (add later). Q5 units apply (numeric + unit string).
+**Build approach:** a script that PARSES `docs/seed/source/order-guide-caphill-2025-pfg.csv` (2-column layout → name/item#/par/vendor) + `inventory-costing.csv` (name → pack qty/unit for the pack model). Cost basis → Stage 4. Idempotent upsert by (name, global). Report unmatched names (don't fabricate pack data). Cost/oz math: `units_per_pack=1, each_size=<inventory case qty>, each_measure=<unit>` → `content_oz` = case qty, so `price/content_oz` = the inventory cost/oz.
