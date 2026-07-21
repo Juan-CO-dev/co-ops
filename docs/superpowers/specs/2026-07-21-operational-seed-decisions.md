@@ -61,11 +61,22 @@ Sarah and Cristian become ordinary `vendors` rows (the directory handles minimal
 | Q6 | Sub build quantities (slices vs oz) → slice→oz mapping to connect builds↔costing | ⏳ needs the Sub Recipes CSV |
 | Q7 | Menu Costing gaps (only Crunch Boi complete; Inventory cuts off; NBC misaligned) | ⏳ BLOCKED on CSV exports (Inventory / Menu Costing / Sub Recipes) |
 
-## AWAITING (Juan is preparing)
-1. **Per-location order guides** (authoritative per-location vendor/SKU/par source — resolves Q2 + closes the Q5 unit vocabulary).
-2. **CSV exports** of the "Food Inventory & Costing - Current" sheet — **Inventory / Menu Costing / Sub Recipes** tabs — close Q6/Q7 and give real `vendor_price_history` + `item_components` data instead of photo fragments.
+## DATA RECEIVED (2026-07-21) — in-repo at `docs/seed/`
+- `source/inventory-costing.csv` — the **2024 Inventory & Costing** tab: per-good `name, code, vendor, pack price, case qty, unit, cost/oz(or ea)`, sectioned (Produce/Meat/Dairy/Dry Goods/Bev/Misc). ~110 goods. **The cost basis.**
+- `source/order-guide-caphill-2025-pfg.csv` — the **2025 Cap Hill order guide**. Item, **item #**, par, vendor. **Key finding: it's PFG-based with item#s** (same structure as the DuPont guide) → **CO consolidated ordering to PFG in 2025** for both locations. This is the **current ordering SKU source** (vendor + item# + par).
+- `source/sandwich-build-sheet.csv` — per-sub ingredient **builds** (qty + unit). The sub `item_components`. Mostly oz/ea + a few hand-measures.
+- `source/smallwares-order-guide-2023.csv` — cleaning/office/kitchen smallwares (item, par, source, item#).
+- `recipes/ALL-RECIPES.md` — **38 sub-component recipes** (Garlic Mayo, Vodka Sauce, Marinara, Meatballs, aiolis, dressings, compound butters, etc.) text-extracted from .docx. **Bilingual EN/ES, structured** (ingredients + qty/unit, single/double batch, **yield**, method, storage/cook/reheat). These are recursive **sub-items** → feed `items` + `item_components` (composition/cost) AND training `recipes` (prose).
 
-**Next once those land:** resolve Q5/Q6/Q7 against the real data, then decompose + write the staged seed scripts (see build shape below).
+### Reconciliation nuance (surfaced, resolution below)
+- **Ordering vendor (2025 PFG guide) ≠ costing vendor (2024 inventory).** The 2025 guide is the CURRENT ordering source (PFG consolidated, item#s, pars, **no prices**). The 2024 inventory has **cost/oz** but from the older per-vendor sourcing (Baldor/BH/US Foods/etc.). → seed **current SKUs from the 2025 guide** (vendor+item#+par) and use the **2024 inventory cost/oz as the starting price** on the corresponding good (Juan refines via the receiving flow → `vendor_price_history`). Where the inventory has goods not in the 2025 guide (Bacon, Mortadella, Corned Beef…), seed the good + its cost; SKU/vendor as available.
+
+## OPEN QUESTIONS — updated status
+- **Q5 (units) → RESOLVABLE (proposal):** store a numeric `par_value` + a `unit` string (from the units/measure registries, extended as needed: cs, lb, ea, oz, qt, jug, bottle, jar, bag, sleeve, box, #10 Can, gal, roll, pk, container…). The genuinely fuzzy order pars (".25 Filled", "half b. unopened") normalize to value+unit with the oddity in a note. Recipe hand-measures ("Handful", "pinch", "ladle") stay as recipe units on the build line, not order pars. Confirm the value+unit approach.
+- **Q6 (slice→oz) → ONE REAL GAP:** the build sheet counts deli in **`ea` (slices)** (Ham 3 ea, Provolone 2 ea) but the inventory costs deli **per oz**. To cost a sub, deli slices need an **oz-per-slice** factor per meat (turkey shows as 4 oz in one build, ea in another — inconsistent). Need either (a) a slice-weight per deli, (b) the Menu Costing tab's ea→oz conversion, or (c) accept per-ea costing for deli where the pack gives $/slice. **Surfaced to Juan.**
+- **Q7 (costing) → RESOLVED by the inventory CSV** (cost/oz per good) — sub cost is DERIVED from builds × cost (that's the spine's food-cost engine), so no separate "Menu Costing" export is needed; only the Q6 deli slice→oz gap remains to fully cost slice-counted subs.
+
+**Next:** confirm Q5 + resolve Q6 (deli slice→oz), then decompose + write the staged seed scripts (below).
 
 ---
 
