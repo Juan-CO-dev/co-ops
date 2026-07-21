@@ -18,7 +18,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { audit } from "@/lib/audit";
 
-export interface RInput { name: string; qty: number; unit: string; item?: boolean }
+export interface RInput { name: string; qty: number; unit: string; item?: boolean; portioned?: boolean }
 export interface RecipeDef {
   recipe: string; item: string; batchYield: number; containerLabel: string;
   directions: string; inputs: RInput[]; approximate?: boolean;
@@ -138,7 +138,7 @@ export async function seedRecipes(sb: SB, opts: { dry: boolean; phase: string },
       if (dry) { inputsAdded++; continue; }
       const key = skuId ? `s:${skuId}` : `i:${subId}`;
       if (existingInputKeys.has(key)) continue; // already wired
-      const { error } = await sb.from("recipe_inputs").insert({ recipe_id: recipeId, component_sku_id: skuId, component_item_id: subId, quantity: inp.qty, unit: inp.unit, portioned: false, display_order: ord++, created_by: null });
+      const { error } = await sb.from("recipe_inputs").insert({ recipe_id: recipeId, component_sku_id: skuId, component_item_id: subId, quantity: inp.qty, unit: inp.unit, portioned: inp.portioned ?? false, display_order: ord++, created_by: null });
       if (error) throw new Error(`insert recipe_input ${r.recipe}/${inp.name}: ${error.message}`);
       existingInputKeys.add(key); inputsAdded++;
     }
