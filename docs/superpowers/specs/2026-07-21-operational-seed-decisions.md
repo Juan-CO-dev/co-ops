@@ -1,7 +1,7 @@
 # CO-OPS Operational Seed — Decisions Register
 
 **Date opened:** 2026-07-21
-**Status:** IN PROGRESS — resolving open questions before writing any seed script (per the "resolve the schema decision first" sequencing).
+**Status:** ✅ ALL 9 QUESTIONS RESOLVED (2026-07-21) — decisions locked, source data in-repo, ready to decompose + write the staged seed scripts.
 **Source input:** Juan's transcription of 13 photos of CO's physical order guides / build sheets / checklists / Google Sheets (the "CO-OPS Seed Data" distillation), plus forthcoming CSV exports of the "Food Inventory & Costing - Current" sheet (Inventory, Menu Costing, Sub Recipes tabs).
 **Why this doc:** the seed loads CO's real operational data (vendors, SKUs, items, pars, sub builds→recipes, menu costing, checklists, catering menu) into the **existing** inventory spine. The schema is mature (PRs #82–#110) — this is population + targeted extension, not greenfield. This register locks the modeling decisions so the seed script has one reference.
 
@@ -72,9 +72,9 @@ Sarah and Cristian become ordinary `vendors` rows (the directory handles minimal
 - **Ordering vendor (2025 PFG guide) ≠ costing vendor (2024 inventory).** The 2025 guide is the CURRENT ordering source (PFG consolidated, item#s, pars, **no prices**). The 2024 inventory has **cost/oz** but from the older per-vendor sourcing (Baldor/BH/US Foods/etc.). → seed **current SKUs from the 2025 guide** (vendor+item#+par) and use the **2024 inventory cost/oz as the starting price** on the corresponding good (Juan refines via the receiving flow → `vendor_price_history`). Where the inventory has goods not in the 2025 guide (Bacon, Mortadella, Corned Beef…), seed the good + its cost; SKU/vendor as available.
 
 ## OPEN QUESTIONS — updated status
-- **Q5 (units) → RESOLVABLE (proposal):** store a numeric `par_value` + a `unit` string (from the units/measure registries, extended as needed: cs, lb, ea, oz, qt, jug, bottle, jar, bag, sleeve, box, #10 Can, gal, roll, pk, container…). The genuinely fuzzy order pars (".25 Filled", "half b. unopened") normalize to value+unit with the oddity in a note. Recipe hand-measures ("Handful", "pinch", "ladle") stay as recipe units on the build line, not order pars. Confirm the value+unit approach.
-- **Q6 (slice→oz) → ONE REAL GAP:** the build sheet counts deli in **`ea` (slices)** (Ham 3 ea, Provolone 2 ea) but the inventory costs deli **per oz**. To cost a sub, deli slices need an **oz-per-slice** factor per meat (turkey shows as 4 oz in one build, ea in another — inconsistent). Need either (a) a slice-weight per deli, (b) the Menu Costing tab's ea→oz conversion, or (c) accept per-ea costing for deli where the pack gives $/slice. **Surfaced to Juan.**
-- **Q7 (costing) → RESOLVED by the inventory CSV** (cost/oz per good) — sub cost is DERIVED from builds × cost (that's the spine's food-cost engine), so no separate "Menu Costing" export is needed; only the Q6 deli slice→oz gap remains to fully cost slice-counted subs.
+- **Q5 (units) → ✅ LOCKED:** numeric `par_value` + a `unit` string (cs, lb, ea, oz, qt, jug, bottle, jar, bag, sleeve, box, #10 Can, gal, roll, pk, container…). Fuzzy order pars (".25 Filled", "half b. unopened") normalize to value+unit with the oddity in a **note**. Recipe hand-measures ("Handful", "pinch", "ladle") stay as **recipe units on the build/component line**, not order pars.
+- **Q6 (slice→oz) → ✅ LOCKED: estimate now, refine later.** Seed an **estimated oz/slice per deli** (flagged estimated) so every slice-counted sub costs immediately; refine via the spine's existing **running-average `avg_oz_per_each`** (receiving observations). CC proposes the estimates; Juan corrects any.
+- **Q7 (costing) → ✅ RESOLVED by the inventory CSV** (cost/oz per good) — sub cost is DERIVED from `builds × cost/oz` (the spine's food-cost engine). No separate "Menu Costing" export needed.
 
 **Next:** confirm Q5 + resolve Q6 (deli slice→oz), then decompose + write the staged seed scripts (below).
 
