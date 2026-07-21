@@ -2208,5 +2208,15 @@
   "order.route.out_of_zone": "Esa dirección está fuera de nuestra zona de entrega.",
   "order.route.no_capacity": "Estás en nuestra zona, pero estamos llenos esa fecha — prueba otra fecha o elige recoger.",
   "order.route.window_label": "Horario de entrega",
-  "order.route.window_any": "Flexible / cualquier hora"
+  "order.route.window_any": "Flexible / cualquier hora",
+  "admin.catering.prep_demand.tab_surplus": "Excedente",
+  "admin.catering.prep_demand.surplus_empty": "Sin excedente de cancelaciones recientes.",
+  "catering.surplus.section_perishable": "Excedente de prep perecedero",
+  "catering.surplus.section_raw": "Excedente de insumos (SKU)",
+  "catering.surplus.hint.perishable": "Perecedero — destina a un LTO, descuento o comida de personal pronto.",
+  "catering.surplus.hint.adjust_ordering": "Insumo liberado — ajusta el pedido o úsalo en el servicio normal.",
+  "catering.surplus.days_out": "en {n}d",
+  "lto.surplus_title": "Excedente disponible para promover",
+  "lto.surplus_empty": "Sin excedente perecedero por ahora.",
+  "admin.catering.hub.surplus_count": "{n} excedente"
 }

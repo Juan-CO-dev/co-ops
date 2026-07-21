@@ -20,6 +20,7 @@ import type { TranslationKey } from "@/lib/i18n/types";
 import { loadPackageLocations } from "@/lib/admin/catering/packages";
 import { loadCateringPrepDemand, PREP_DEMAND_READ_MIN } from "@/lib/catering/prep-demand";
 import { loadCateringSkuDemand, type CateringSkuDemand } from "@/lib/catering/sku-demand";
+import { loadCateringSurplus, type SurplusDay } from "@/lib/catering/surplus";
 import { PrepDemandClient } from "@/components/admin/catering/prep-demand/PrepDemandClient";
 
 /** YYYY-MM-DD of today (request-time) in operational TZ. */
@@ -61,13 +62,15 @@ export default async function AdminCateringPrepDemandPage({
   const to = addDays(from, 14);
 
   const emptySkuDemand: CateringSkuDemand = { rows: [], unresolvedChoiceLines: 0, noRecipeLines: 0 };
+  const emptySurplus: SurplusDay[] = [];
 
-  const [days, skuDemand] = locationId
+  const [days, skuDemand, surplus] = locationId
     ? await Promise.all([
         loadCateringPrepDemand(auth, { locationId, from, to }),
         loadCateringSkuDemand(auth, { locationId, from, to }),
+        loadCateringSurplus(auth, { locationId, from, to }),
       ])
-    : [[], emptySkuDemand];
+    : [[], emptySkuDemand, emptySurplus];
 
   return (
     <div>
@@ -85,6 +88,7 @@ export default async function AdminCateringPrepDemandPage({
         to={to}
         lang={lang}
         skuDemand={skuDemand}
+        surplus={surplus}
       />
     </div>
   );
