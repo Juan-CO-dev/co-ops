@@ -36,6 +36,15 @@ Don't pick "one canonical guide." Use the spine's existing **global-item → per
 - **Location-scoped vendor SKUs** (`vendor_items` with `location_id` + `vendor_id`) carry *who each location actually buys from* + that vendor's item#/pack/price/par (Cap Hill Ham → US Foods SKU; Dupont Ham → PFG `231710` SKU).
 - Per-location par + vendor differences ride on the location-scoped SKUs; the global item roster stays vendor-agnostic.
 
+### Q9 — canonical sub name → **"Crunchy Boi"** (LOCKED)
+Matches the customer-facing storefront + station build cards. The inventory/costing sheet's "Crunch Boi" is a shorthand typo → normalize to **"Crunchy Boi"** everywhere (menu, recipes, costing). Watch for the same normalization on other names as the CSVs land.
+
+### Q2 — Boar's Head A vs B → **resolved by the per-location guides Juan is providing** (LOCKED approach)
+Juan is handing over the authoritative **per-location order guides**. Seed per the Q1 model: **unify into the global item roster + scope SKUs/pars per location** from each location's actual guide. The A/B (5pc vs 4pc capicola, Ever Roast Chicken present/absent, C/O Water vs Deer Park, Sysco section) distinctions resolve from the real per-location guides — no era/location guess needed.
+
+### Q8 — person / internal sources → **plain vendor rows** (LOCKED)
+Sarah and Cristian become ordinary `vendors` rows (the directory handles minimal-info vendors — nullable contacts/pricing); their SKUs point at them via `vendor_id`. **"Pete's house" is NOT a source** — it's a **brand note** on a Baldor-sourced Worcestershire SKU (the inventory sheet lists it in the Brand column, meaning Pete's house recipe, bought via Baldor). Model it as a brand/note on that SKU, not a vendor.
+
 ---
 
 ## OPEN QUESTIONS (status)
@@ -45,14 +54,18 @@ Don't pick "one canonical guide." Use the spine's existing **global-item → per
 | Q1 | Canonical guide / seed structure | ✅ LOCKED — global baseline propagates |
 | Q3 | Same good, multiple vendors | ✅ LOCKED — A storage + B search |
 | Q4 | Dual pars | ✅ LOCKED — already supported (inline weekday/weekend) |
-| Q2 | Boar's Head guide A vs B — two locations or two eras? | ⏳ pending (surfaced to Juan) |
-| Q8 | Person-sources (Sarah / Cristian / "Pete's house") — how to model | ⏳ pending (surfaced to Juan) |
-| Q9 | Naming: "Crunchy Boi" vs "Crunch Boi" canonical string | ⏳ pending (surfaced to Juan) |
-| Q5 | Unit chaos ("1 Sleeve!", ".25 Filled", "1 Row") — verbatim + normalized? | ⏳ pending — needs decision before seeding pars |
-| Q6 | Sub build quantities (slices vs oz) → slice→oz mapping to connect builds↔costing | ⏳ pending — needs the Sub Recipes CSV |
+| Q9 | Naming: "Crunchy Boi" vs "Crunch Boi" | ✅ LOCKED — "Crunchy Boi" |
+| Q2 | Boar's Head guide A vs B | ✅ LOCKED approach — resolves from the per-location guides Juan is providing |
+| Q8 | Person-sources (Sarah / Cristian / "Pete's house") | ✅ LOCKED — plain vendor rows; "Pete's house" = brand note |
+| Q5 | Unit chaos ("1 Sleeve!", ".25 Filled", "1 Row") — verbatim + normalized? | ⏳ resolve WITH the incoming per-location guides (they carry the real unit vocabulary) |
+| Q6 | Sub build quantities (slices vs oz) → slice→oz mapping to connect builds↔costing | ⏳ needs the Sub Recipes CSV |
 | Q7 | Menu Costing gaps (only Crunch Boi complete; Inventory cuts off; NBC misaligned) | ⏳ BLOCKED on CSV exports (Inventory / Menu Costing / Sub Recipes) |
 
-**Gating input:** CSV exports of the "Food Inventory & Costing - Current" sheet (Inventory, Menu Costing, Sub Recipes tabs) — Juan is preparing these. They close Q6/Q7 and give real `vendor_price_history` + `item_components` data instead of photo fragments.
+## AWAITING (Juan is preparing)
+1. **Per-location order guides** (authoritative per-location vendor/SKU/par source — resolves Q2 + closes the Q5 unit vocabulary).
+2. **CSV exports** of the "Food Inventory & Costing - Current" sheet — **Inventory / Menu Costing / Sub Recipes** tabs — close Q6/Q7 and give real `vendor_price_history` + `item_components` data instead of photo fragments.
+
+**Next once those land:** resolve Q5/Q6/Q7 against the real data, then decompose + write the staged seed scripts (see build shape below).
 
 ---
 
