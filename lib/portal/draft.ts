@@ -74,6 +74,7 @@ export interface DraftLineInput {
   itemId?: string | null;
   menuItemId?: string | null;
   packageId?: string | null;
+  sizeId?: string | null;   // catering size of a sided item (sub-project A)
   portion?: Portion | null;
   quantity: number;
 }
@@ -83,6 +84,7 @@ export interface DraftItem {
   itemId: string | null;
   menuItemId: string | null;
   packageId: string | null;
+  sizeId: string | null;
   portion: Portion | null;
   description: string | null;
   quantity: number;
@@ -297,9 +299,9 @@ export async function loadDraft(customerId: string, quoteId: string): Promise<Dr
 
   const [{ data: itemRows, error: iErr }, menuAll, lead] = await Promise.all([
     sb.from("catering_quote_items")
-      .select("id, item_id, menu_item_id, package_id, description, quantity, unit_price_cents, line_total_cents, display_order, portion")
+      .select("id, item_id, menu_item_id, package_id, size_id, description, quantity, unit_price_cents, line_total_cents, display_order, portion")
       .eq("quote_id", quoteId).order("display_order", { ascending: true })
-      .returns<Array<{ id: string; item_id: string | null; menu_item_id: string | null; package_id: string | null; description: string | null; quantity: number; unit_price_cents: number; line_total_cents: number; display_order: number; portion: string | null }>>(),
+      .returns<Array<{ id: string; item_id: string | null; menu_item_id: string | null; package_id: string | null; size_id: string | null; description: string | null; quantity: number; unit_price_cents: number; line_total_cents: number; display_order: number; portion: string | null }>>(),
     loadPublicCateringMenu(row.location_id),
     loadDraftLead(sb, row.pipeline_id),
   ]);
@@ -308,7 +310,7 @@ export async function loadDraft(customerId: string, quoteId: string): Promise<Dr
   const addonNapkins = menuAll.find((m) => m.section === ADDON_SECTION) ?? null;
   const menu = menuAll.filter((m) => m.section !== ADDON_SECTION);
   const items: DraftItem[] = (itemRows ?? []).map((r) => ({
-    id: r.id, itemId: r.item_id, menuItemId: r.menu_item_id, packageId: r.package_id,
+    id: r.id, itemId: r.item_id, menuItemId: r.menu_item_id, packageId: r.package_id, sizeId: r.size_id,
     portion: r.portion === "quarter" || r.portion === "half" || r.portion === "whole" ? r.portion : null,
     description: r.description, quantity: Number(r.quantity), unitPriceCents: r.unit_price_cents,
     lineTotalCents: r.line_total_cents, displayOrder: r.display_order,
@@ -345,7 +347,7 @@ async function loadDraftLead(sb: ReturnType<typeof getServiceRoleClient>, pipeli
 // ── Line resolution (D20 server price authority) ───────────────────────────────────
 
 interface ResolvedLine {
-  itemId: string | null; menuItemId: string | null; packageId: string | null;
+  itemId: string | null; menuItemId: string | null; packageId: string | null; sizeId: string | null;
   portion: Portion | null; description: string; quantity: number;
   unitPriceCents: number; lineTotalCents: number; displayOrder: number;
 }
@@ -368,7 +370,13 @@ async function resolveLines(locationId: string, lines: DraftLineInput[]): Promis
     if (itemId != null && itemId !== "") {
       const it = byKey.get(`item:${itemId}`);
       if (!it) throw new PortalDraftError(400, "invalid_line", `Line ${i + 1}: unknown item`);
-      return { itemId, menuItemId: null, packageId: null, portion: null, description: it.name, quantity, unitPriceCents: it.unitPriceCents, lineTotalCents: lineTotalCents(quantity, it.unitPriceCents), displayOrder: i };
+      // Sized item (sub-project A): price by the chosen size (or default to the first/smallest).
+      if (it.sizes && it.sizes.length > 0) {
+        const size = l.sizeId ? it.sizes.find((s) => s.id === l.sizeId) : it.sizes[0];
+        if (!size) throw new PortalDraftError(400, "invalid_line", `Line ${i + 1}: unknown size`);
+        return { itemId, menuItemId: null, packageId: null, sizeId: size.id, portion: null, description: `${it.name} (${size.label})`, quantity, unitPriceCents: size.unitPriceCents, lineTotalCents: lineTotalCents(quantity, size.unitPriceCents), displayOrder: i };
+      }
+      return { itemId, menuItemId: null, packageId: null, sizeId: null, portion: null, description: it.name, quantity, unitPriceCents: it.unitPriceCents, lineTotalCents: lineTotalCents(quantity, it.unitPriceCents), displayOrder: i };
     }
     if (menuItemId != null && menuItemId !== "") {
       const sub = byKey.get(`menu_item:${menuItemId}`);
@@ -376,7 +384,7 @@ async function resolveLines(locationId: string, lines: DraftLineInput[]): Promis
       const portion: Portion = l.portion ?? "whole";
       if (!sub.portionable && portion !== "whole") throw new PortalDraftError(400, "invalid_line", `Line ${i + 1}: item is not portioned`);
       const unitPriceCents = sub.portionable && sub.portionPricesCents ? sub.portionPricesCents[portion] : sub.unitPriceCents;
-      return { itemId: null, menuItemId, packageId: null, portion: sub.portionable ? portion : null, description: sub.name, quantity, unitPriceCents, lineTotalCents: lineTotalCents(quantity, unitPriceCents), displayOrder: i };
+      return { itemId: null, menuItemId, packageId: null, sizeId: null, portion: sub.portionable ? portion : null, description: sub.name, quantity, unitPriceCents, lineTotalCents: lineTotalCents(quantity, unitPriceCents), displayOrder: i };
     }
     throw new PortalDraftError(400, "invalid_line", `Line ${i + 1}: needs an item or sub reference`);
   });
@@ -432,7 +440,7 @@ export async function setDraftLines(customerId: string, quoteId: string, lines: 
   if (delErr) throw new Error(`setDraftLines delete: ${delErr.message}`);
   if (resolved.length > 0) {
     const { error: insErr } = await sb.from("catering_quote_items").insert(resolved.map((l) => ({
-      quote_id: quoteId, item_id: l.itemId, menu_item_id: l.menuItemId, package_id: l.packageId,
+      quote_id: quoteId, item_id: l.itemId, menu_item_id: l.menuItemId, package_id: l.packageId, size_id: l.sizeId,
       portion: l.portion, description: l.description, quantity: l.quantity,
       unit_price_cents: l.unitPriceCents, line_total_cents: l.lineTotalCents, display_order: l.displayOrder, created_by: null,
     })));
@@ -445,7 +453,7 @@ export async function setDraftLines(customerId: string, quoteId: string, lines: 
 
   return {
     quoteId, pipelineId: header.pipeline_id, locationId: header.location_id, status: "draft", isDelivery, deliveryZoneId, stack,
-    items: resolved.map((l) => ({ id: `resolved-${l.displayOrder}`, itemId: l.itemId, menuItemId: l.menuItemId, packageId: l.packageId, portion: l.portion, description: l.description, quantity: l.quantity, unitPriceCents: l.unitPriceCents, lineTotalCents: l.lineTotalCents, displayOrder: l.displayOrder })),
+    items: resolved.map((l) => ({ id: `resolved-${l.displayOrder}`, itemId: l.itemId, menuItemId: l.menuItemId, packageId: l.packageId, sizeId: l.sizeId, portion: l.portion, description: l.description, quantity: l.quantity, unitPriceCents: l.unitPriceCents, lineTotalCents: l.lineTotalCents, displayOrder: l.displayOrder })),
   };
 }
 
