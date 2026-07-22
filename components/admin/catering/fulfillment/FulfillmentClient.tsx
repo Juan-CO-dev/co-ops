@@ -175,8 +175,9 @@ export function FulfillmentClient({
         </p>
       )}
 
-      {/* Map — SSR-safe via dynamic ssr:false */}
-      <div className="overflow-hidden rounded-lg">
+      {/* Map — SSR-safe via dynamic ssr:false. `isolate` contains Leaflet's internal
+          z-index (controls hit z-1000) so it can't paint over app modals (step-up). */}
+      <div className="isolate overflow-hidden rounded-lg">
         <ZoneMap
           mapKey={selectedId ?? "none"}
           lat={zone.lat}
