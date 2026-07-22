@@ -30,20 +30,26 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** ⑤ storefront carry-through: validate the pre-selection (item+qty). Drop malformed entries —
  *  never reject the whole intake (the draft just seeds fewer/no lines; createDraftFromIntake
  *  re-resolves + re-prices every ref server-side). Returns null when nothing valid remains. */
-function parsePreselect(v: unknown): Array<{ menuItemId?: string; itemId?: string; sizeId?: string; quantity: number }> | null {
+function parsePreselect(v: unknown): Array<{ menuItemId?: string; itemId?: string; sizeId?: string; packageId?: string; quantity: number }> | null {
   if (!Array.isArray(v)) return null;
-  const out: Array<{ menuItemId?: string; itemId?: string; sizeId?: string; quantity: number }> = [];
+  const out: Array<{ menuItemId?: string; itemId?: string; sizeId?: string; packageId?: string; quantity: number }> = [];
   for (const e of v) {
     if (!e || typeof e !== "object") continue;
     const o = e as Record<string, unknown>;
     const menuItemId = typeof o.menuItemId === "string" && UUID_RE.test(o.menuItemId) ? o.menuItemId : undefined;
     const itemId = typeof o.itemId === "string" && UUID_RE.test(o.itemId) ? o.itemId : undefined;
-    if ((menuItemId === undefined) === (itemId === undefined)) continue; // exactly one ref
+    const packageId = typeof o.packageId === "string" && UUID_RE.test(o.packageId) ? o.packageId : undefined;
+    if ([menuItemId, itemId, packageId].filter((r) => r !== undefined).length !== 1) continue; // exactly one ref
     const q = o.quantity;
     if (typeof q !== "number" || !Number.isInteger(q) || q < 1 || q > 99) continue;
-    // A sized item may carry the chosen size (item lines only; createDraftFromIntake re-resolves it).
+    // A sized item may carry the chosen size (item lines only); a package carries no options from
+    // marketing (unconfigured) — the build page configures it. createDraftFromIntake re-resolves both.
     const sizeId = typeof o.sizeId === "string" && UUID_RE.test(o.sizeId) ? o.sizeId : undefined;
-    out.push(menuItemId ? { menuItemId, quantity: q } : { itemId, quantity: q, ...(sizeId ? { sizeId } : {}) });
+    out.push(
+      packageId ? { packageId, quantity: q }
+      : menuItemId ? { menuItemId, quantity: q }
+      : { itemId, quantity: q, ...(sizeId ? { sizeId } : {}) },
+    );
     if (out.length >= MAX_PRESELECT) break;
   }
   return out.length > 0 ? out : null;
