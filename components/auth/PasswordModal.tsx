@@ -176,7 +176,7 @@ export function PasswordModal({ open, onConfirm, onCancel }: PasswordModalProps)
       aria-modal="true"
       aria-labelledby="step-up-title"
       onKeyDown={handleKeyDown}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-co-text/60 backdrop-blur-sm px-4 py-6"
+      className="fixed inset-0 z-[1100] flex items-center justify-center bg-co-text/60 backdrop-blur-sm px-4 py-6"
     >
       <div className="w-full max-w-sm rounded-2xl border-2 border-co-border bg-co-surface p-6 shadow-2xl">
         <h2 id="step-up-title" className="text-xl font-extrabold leading-tight text-co-text">
