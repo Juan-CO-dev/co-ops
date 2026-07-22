@@ -6,7 +6,8 @@
  *
  * Renders real catering menu groups (subs with photos, sides/sweets/drinks as compact rows).
  * Local qty state; floating pill carries selection to /order/start via sessionStorage.
- * No prices in the pill, no coverage, no portion selector — item + qty only.
+ * No prices in the pill, no coverage, no portion/size selector — item + qty only. A sized item
+ * carries its DEFAULT (smallest) size id in the preselect; the customer changes it on /order/build.
  */
 
 import { useState } from "react";
@@ -17,11 +18,14 @@ import { subImage } from "./storefront-images";
 /** sessionStorage key read by /order/start to pre-populate intent. */
 const PRESELECT_KEY = "co_order_preselect";
 
-type Pick = { kind: "menu_item" | "item"; id: string; name: string; qty: number };
+type Pick = { kind: "menu_item" | "item"; id: string; name: string; qty: number; sizeId?: string };
 type Picks = Record<string, Pick>;
 
 const money = (c: number) =>
   (c / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
+
+/** A sized item (kind:"item" with catering size tiers). Its top-level unitPriceCents is the "from" price. */
+const isSized = (m: CateringMenuItem) => m.sizes != null && m.sizes.length > 0;
 
 // ─── stepper ──────────────────────────────────────────────────────────────────
 
@@ -73,7 +77,9 @@ function SubCard({
   const priceDisplay =
     item.portionable && item.portionPricesCents
       ? `from ${money(item.portionPricesCents.whole)}`
-      : money(item.unitPriceCents);
+      : isSized(item)
+        ? `from ${money(item.unitPriceCents)}`
+        : money(item.unitPriceCents);
 
   return (
     <article className="group flex h-full flex-col overflow-hidden rounded-3xl bg-co-bg text-co-text shadow-lg shadow-black/20">
@@ -122,7 +128,7 @@ function CompactRow({
     <li className="flex items-center justify-between gap-3 border-b border-co-bg/15 pb-2.5 last:border-0">
       <div className="flex flex-1 flex-col">
         <span className="text-sm font-semibold text-co-bg/90">{item.name}</span>
-        <span className="text-xs font-bold text-co-gold">{money(item.unitPriceCents)}</span>
+        <span className="text-xs font-bold text-co-gold">{isSized(item) ? `from ${money(item.unitPriceCents)}` : money(item.unitPriceCents)}</span>
       </div>
       {qty > 0 ? (
         <div className="flex items-center gap-1.5">
@@ -172,7 +178,9 @@ export function StorefrontOrderTray({
     setPicks((prev) => {
       const k = key(m);
       const existing = prev[k];
-      return { ...prev, [k]: { kind: m.kind, id: m.id, name: m.name, qty: (existing?.qty ?? 0) + 1 } };
+      // A sized item carries its default (smallest) size id; the customer changes it on /order/build.
+      const sizeId = m.sizes?.[0]?.id;
+      return { ...prev, [k]: { kind: m.kind, id: m.id, name: m.name, qty: (existing?.qty ?? 0) + 1, ...(sizeId ? { sizeId } : {}) } };
     });
   }
 
@@ -195,7 +203,7 @@ export function StorefrontOrderTray({
     const preselect = Object.values(picks).map((x) =>
       x.kind === "menu_item"
         ? { menuItemId: x.id, quantity: x.qty }
-        : { itemId: x.id, quantity: x.qty },
+        : { itemId: x.id, quantity: x.qty, ...(x.sizeId ? { sizeId: x.sizeId } : {}) },
     );
     try {
       window.sessionStorage.setItem(PRESELECT_KEY, JSON.stringify(preselect));
