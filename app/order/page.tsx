@@ -16,8 +16,10 @@ import Link from "next/link";
 import { Reveal } from "@/components/portal/Reveal";
 import { FaqItem } from "@/components/portal/FaqItem";
 import { StorefrontOrderTray } from "@/components/portal/StorefrontOrderTray";
-import { loadPublicCateringMenu } from "@/lib/portal/menu";
+import { StorefrontPackages } from "@/components/portal/StorefrontPackages";
+import { loadPublicCateringMenu, loadPublicCateringPackages } from "@/lib/portal/menu";
 import type { CateringMenuItem } from "@/lib/catering/menu";
+import type { CateringPackage } from "@/lib/catering/menu";
 
 // ─── location id ─────────────────────────────────────────────────────────────
 // Prices are identical at both shops; Capitol Hill is the canonical source.
@@ -35,18 +37,6 @@ const IMG = {
 };
 
 // ─── static marketing data (preserved verbatim from mockup) ──────────────────
-const PLATTER_SIZES = [
-  { size: "8 pc",  serves: "serves 4–6",   price: "$60"  },
-  { size: "16 pc", serves: "serves 8–16",  price: "$115" },
-  { size: "32 pc", serves: "serves 16–32", price: "$210" },
-  { size: "48 pc", serves: "serves 24–48", price: "$330" },
-];
-
-const BIG_SUBS = [
-  { name: "The Three Footer", desc: "3 feet of sub roll from Cardinal Bakery, your choice of the Classics.", note: "48 hours notice", price: "$135" },
-  { name: "The Six Footer",   desc: "Six freakin' feet of sub. Your choice of the Classics.", note: "72 hours notice", price: "$260" },
-];
-
 const STEPS = [
   { n: "01", t: "Pick your spread",   d: "Choose a platter or lunch boxes, or build à la carte from the full menu." },
   { n: "02", t: "Make it yours",      d: "Swap subs, set quantities, add sides & sweets — customize every item." },
@@ -144,6 +134,14 @@ export default async function OrderStorefront() {
     console.error("[/order] loadPublicCateringMenu failed:", err);
   }
 
+  // Load real catering packages; gracefully degrade to empty array on error.
+  let packages: CateringPackage[] = [];
+  try {
+    packages = await loadPublicCateringPackages(CAPITOL_HILL_ID);
+  } catch (err) {
+    console.error("[/order] loadPublicCateringPackages failed:", err);
+  }
+
   const groups = deriveGroups(menu);
 
   return (
@@ -213,111 +211,12 @@ export default async function OrderStorefront() {
         </div>
       </div>
 
-      {/* ── Sandwich Platters (static marketing) ───────────────────────── */}
-      <section id="platters" className="mx-auto max-w-6xl scroll-mt-16 px-5 py-16">
-        <Reveal>
-          <div className="grid grid-cols-1 items-stretch gap-8 lg:grid-cols-2">
-            <div className="overflow-hidden rounded-3xl bg-co-text/5">
-              <img src={IMG.spread} alt="Sandwich platter" className="h-full w-full object-cover" />
-            </div>
-            <div className="flex flex-col justify-center">
-              <p className="text-xs font-bold uppercase tracking-[0.28em] text-co-text-dim">
-                Sandwich platters
-              </p>
-              <h2 className="mt-2 text-3xl font-extrabold tracking-tight text-co-text sm:text-4xl">
-                The crowd-pleaser.
-              </h2>
-              <p className="mt-2 text-co-text-muted">
-                Assorted 5-inch sandwiches — a mix of the Classics (Teamsters, Crunchy Bois &amp;
-                more). Pick your size and we&apos;ll build the spread.
-              </p>
-              <div className="mt-5 grid grid-cols-2 gap-3">
-                {PLATTER_SIZES.map((p) => (
-                  <div
-                    key={p.size}
-                    className="rounded-2xl border border-co-border/70 bg-co-surface p-4"
-                  >
-                    <div className="text-lg font-extrabold text-co-text">{p.size}</div>
-                    <div className="text-xs text-co-text-dim">{p.serves}</div>
-                    <div className="mt-1 text-base font-extrabold text-co-cta">{p.price}</div>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-6">
-                <CtaButton label="Start your order" dark />
-              </div>
-            </div>
-          </div>
-        </Reveal>
-      </section>
+      {/* ── Catering packages — platters / lunch boxes / big subs (data-driven) ── */}
+      <StorefrontPackages packages={packages} images={{ platter: IMG.spread, lunchBox: IMG.lightLunch }} />
 
       {/* ── Orderable tray (subs + sides/sweets/drinks) ────────────────── */}
       <StorefrontOrderTray groups={groups} />
 
-      {/* ── Lunch boxes + big subs (static marketing) ──────────────────── */}
-      <Section>
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <Reveal>
-            <div className="flex h-full overflow-hidden rounded-3xl border border-co-border/70 bg-co-surface">
-              <div className="relative hidden w-2/5 bg-co-text/5 sm:block">
-                <img
-                  src={IMG.lightLunch}
-                  alt="Lunch box"
-                  className="absolute inset-0 h-full w-full object-cover"
-                />
-              </div>
-              <div className="flex-1 p-6">
-                <p className="text-xs font-bold uppercase tracking-[0.2em] text-co-text-dim">
-                  Individual lunch boxes
-                </p>
-                <h3 className="mt-1 text-2xl font-extrabold text-co-text">
-                  Grab-and-go, sorted.
-                </h3>
-                <div className="mt-4 flex flex-col gap-3">
-                  <div className="flex items-baseline justify-between border-b border-co-border pb-2">
-                    <span className="text-sm font-semibold text-co-text">
-                      Light Lunch{" "}
-                      <span className="font-normal text-co-text-dim">· 5&quot; sub, chips, water</span>
-                    </span>
-                    <span className="font-extrabold text-co-cta">$12</span>
-                  </div>
-                  <div className="flex items-baseline justify-between">
-                    <span className="text-sm font-semibold text-co-text">
-                      Full Lunch{" "}
-                      <span className="font-normal text-co-text-dim">· 10&quot; sub, chips, water</span>
-                    </span>
-                    <span className="font-extrabold text-co-cta">$19.99</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </Reveal>
-          <Reveal delay={80}>
-            <div className="flex h-full flex-col rounded-3xl bg-co-gold p-7">
-              <p className="text-xs font-bold uppercase tracking-[0.2em] text-co-text/60">
-                Go big
-              </p>
-              <h3 className="mt-1 text-2xl font-extrabold text-co-text">
-                The really big subs.
-              </h3>
-              <div className="mt-4 flex flex-1 flex-col gap-4">
-                {BIG_SUBS.map((b) => (
-                  <div key={b.name} className="border-b border-co-text/15 pb-3 last:border-0">
-                    <div className="flex items-baseline justify-between gap-3">
-                      <span className="font-extrabold text-co-text">{b.name}</span>
-                      <span className="font-extrabold text-co-text">{b.price}</span>
-                    </div>
-                    <p className="mt-0.5 text-sm text-co-text/70">{b.desc}</p>
-                    <span className="mt-1 inline-block rounded-full bg-co-text px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-co-gold">
-                      {b.note}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </Reveal>
-        </div>
-      </Section>
 
       {/* ── Insight 1 ──────────────────────────────────────────────────── */}
       <Section>

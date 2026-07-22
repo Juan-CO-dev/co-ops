@@ -18,7 +18,7 @@
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { buildCateringMenuItem } from "@/lib/catering/menu";
-import type { CateringMenuItem, CateringPackage, PackageLine } from "@/lib/catering/menu";
+import type { CateringMenuItem, CateringPackage, PackageLine, PackageSlot, PackageSlotOption } from "@/lib/catering/menu";
 import { loadActiveRateRules } from "@/lib/catering/rate-rules";
 import type { ChargeRates, DeliveryZone } from "@/lib/catering/quotes";
 
@@ -133,22 +133,22 @@ export async function loadPublicCateringPackages(locationId: string): Promise<Ca
   const sb = getServiceRoleClient();
   const { data: pkgs, error } = await sb
     .from("catering_packages")
-    .select("id, label_en, label_es, pricing_mode, price_cents, min_headcount, location_id")
+    .select("id, label_en, label_es, pricing_mode, price_cents, min_headcount, lead_time_hours, location_id")
     .eq("active", true)
     .or(`location_id.is.null,location_id.eq.${locationId}`)
     .order("display_order", { ascending: true })
-    .returns<Array<{ id: string; label_en: string; label_es: string | null; pricing_mode: string; price_cents: number; min_headcount: number | null; location_id: string | null }>>();
+    .returns<Array<{ id: string; label_en: string; label_es: string | null; pricing_mode: string; price_cents: number; min_headcount: number | null; lead_time_hours: number | null; location_id: string | null }>>();
   if (error) throw new Error(`loadPublicCateringPackages: ${error.message}`);
   const packages = pkgs ?? [];
   if (packages.length === 0) return [];
 
   const { data: items, error: iErr } = await sb
     .from("catering_package_items")
-    .select("package_id, item_id, menu_item_id, description, quantity")
+    .select("id, package_id, slot_type, item_id, menu_item_id, description, quantity")
     .in("package_id", packages.map((p) => p.id))
     .eq("active", true)
     .order("display_order", { ascending: true })
-    .returns<Array<{ package_id: string; item_id: string | null; menu_item_id: string | null; description: string | null; quantity: number | string }>>();
+    .returns<Array<{ id: string; package_id: string; slot_type: string; item_id: string | null; menu_item_id: string | null; description: string | null; quantity: number | string }>>();
   if (iErr) throw new Error(`loadPublicCateringPackages items: ${iErr.message}`);
   const pkgItems = items ?? [];
 
@@ -175,6 +175,37 @@ export async function loadPublicCateringPackages(locationId: string): Promise<Ca
     byPackage.set(r.package_id, arr);
   }
 
+  // Choice slots + their eligible options (sub-project B). Mirrors lib/admin/catering/packages.ts hydratePackages.
+  const choiceLines = pkgItems.filter((r) => r.slot_type === "choice");
+  const slotsByPackage = new Map<string, PackageSlot[]>();
+  if (choiceLines.length > 0) {
+    const { data: optRows, error: oErr } = await sb
+      .from("catering_package_slot_options")
+      .select("package_item_id, item_id, menu_item_id, display_order")
+      .in("package_item_id", choiceLines.map((r) => r.id))
+      .eq("active", true)
+      .order("display_order", { ascending: true })
+      .returns<Array<{ package_item_id: string; item_id: string | null; menu_item_id: string | null; display_order: number }>>();
+    if (oErr) throw new Error(`loadPublicCateringPackages options: ${oErr.message}`);
+    // Resolve names for any option refs not already in the fixed-line maps.
+    const optItemIds = [...new Set((optRows ?? []).map((o) => o.item_id).filter((v): v is string => v != null && !itemMap.has(v)))];
+    const optMenuIds = [...new Set((optRows ?? []).map((o) => o.menu_item_id).filter((v): v is string => v != null && !menuMap.has(v)))];
+    if (optItemIds.length > 0) { const { data } = await sb.from("items").select("id, name").in("id", optItemIds).returns<Array<{ id: string; name: string }>>(); for (const x of data ?? []) itemMap.set(x.id, { name: x.name, priceCents: 0 }); }
+    if (optMenuIds.length > 0) { const { data } = await sb.from("menu_items").select("id, name").in("id", optMenuIds).returns<Array<{ id: string; name: string }>>(); for (const x of data ?? []) menuMap.set(x.id, { name: x.name, priceCents: 0 }); }
+    const optionsByLine = new Map<string, PackageSlotOption[]>();
+    for (const o of optRows ?? []) {
+      const kind = o.menu_item_id ? ("menu_item" as const) : ("item" as const);
+      const refId = (o.menu_item_id ?? o.item_id)!;
+      const name = kind === "menu_item" ? menuMap.get(refId)?.name ?? "Item" : itemMap.get(refId)?.name ?? "Item";
+      const arr = optionsByLine.get(o.package_item_id) ?? []; arr.push({ kind, refId, name }); optionsByLine.set(o.package_item_id, arr);
+    }
+    for (const line of choiceLines) {
+      const arr = slotsByPackage.get(line.package_id) ?? [];
+      arr.push({ packageItemId: line.id, label: (line.description && line.description.trim()) || "Choose", pickN: Number(line.quantity), options: optionsByLine.get(line.id) ?? [] });
+      slotsByPackage.set(line.package_id, arr);
+    }
+  }
+
   return packages.map((p) => ({
     id: p.id,
     labelEn: p.label_en,
@@ -182,6 +213,8 @@ export async function loadPublicCateringPackages(locationId: string): Promise<Ca
     pricingMode: p.pricing_mode,
     priceCents: p.price_cents,
     minHeadcount: p.min_headcount,
+    leadTimeHours: p.lead_time_hours,
+    slots: slotsByPackage.get(p.id) ?? [],
     items: byPackage.get(p.id) ?? [],
   }));
 }

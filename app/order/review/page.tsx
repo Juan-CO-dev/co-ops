@@ -44,6 +44,34 @@ function depositLabel(depositCents: number, totalCents: number): string {
   return `${pct}%`;
 }
 
+/**
+ * For a package line, returns a human-readable composition string like "Teamster ×2, Crunchy Boi"
+ * (the ×N is shown only when >1). Returns "" for non-package lines.
+ */
+function packageComposition(
+  line: DraftLoad["items"][number],
+  packages: DraftLoad["packages"],
+): string {
+  if (!line.packageId || line.options.length === 0) return "";
+  const pkg = packages.find((p) => p.id === line.packageId);
+  const parts = line.options.map((opt) => {
+    let name: string | undefined;
+    if (pkg) {
+      for (const slot of pkg.slots) {
+        const match = slot.options.find(
+          (o) =>
+            (opt.itemId != null && o.kind === "item" && o.refId === opt.itemId) ||
+            (opt.menuItemId != null && o.kind === "menu_item" && o.refId === opt.menuItemId),
+        );
+        if (match) { name = match.name; break; }
+      }
+    }
+    if (name) return opt.quantity > 1 ? `${name} ×${opt.quantity}` : name;
+    return opt.quantity === 1 ? "1 sub" : `${opt.quantity} subs`; // name unresolved — count fallback
+  });
+  return parts.join(", ");
+}
+
 // ── Main component ────────────────────────────────────────────────────────────────────
 
 export default function OrderReview() {
@@ -223,19 +251,31 @@ export default function OrderReview() {
               <Link href="/order/build" className="text-xs font-bold uppercase tracking-wide text-co-text underline decoration-co-gold decoration-2 underline-offset-4">Edit order</Link>
             </div>
             <ul className="divide-y divide-co-border/50">
-              {draft.items.map((line) => (
-                <li key={line.id} className="flex items-start justify-between gap-4 px-6 py-4">
-                  <div className="min-w-0">
-                    <p className="text-sm font-bold text-co-text">
-                      <span className="tabular-nums text-co-text-muted">{line.quantity}×</span>{" "}
-                      {line.description ?? "Item"}
-                    </p>
-                  </div>
-                  <span className="shrink-0 text-sm font-bold tabular-nums text-co-text">
-                    {centsToMoney(line.lineTotalCents)}
-                  </span>
-                </li>
-              ))}
+              {draft.items.map((line) => {
+                const composition = line.packageId
+                  ? line.options.length > 0
+                    ? packageComposition(line, draft.packages)
+                    : null // signals "unconfigured package"
+                  : undefined; // non-package line — no sub-text
+                return (
+                  <li key={line.id} className="flex items-start justify-between gap-4 px-6 py-4">
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-co-text">
+                        <span className="tabular-nums text-co-text-muted">{line.quantity}×</span>{" "}
+                        {line.description ?? "Item"}
+                      </p>
+                      {composition !== undefined && (
+                        <p className="mt-0.5 text-xs text-co-text-muted">
+                          {composition !== null ? composition : "Subs not chosen yet"}
+                        </p>
+                      )}
+                    </div>
+                    <span className="shrink-0 text-sm font-bold tabular-nums text-co-text">
+                      {centsToMoney(line.lineTotalCents)}
+                    </span>
+                  </li>
+                );
+              })}
             </ul>
           </section>
         </Reveal>

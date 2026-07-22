@@ -39,7 +39,21 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return {
       itemId: typeof o.itemId === "string" ? o.itemId : null,
       menuItemId: typeof o.menuItemId === "string" ? o.menuItemId : null,
+      packageId: typeof o.packageId === "string" ? o.packageId : null,
       sizeId: typeof o.sizeId === "string" ? o.sizeId : null,
+      // Shape-only; resolveLines re-validates each pick against the package's real slot options (D20).
+      packageOptions: Array.isArray(o.packageOptions)
+        ? o.packageOptions.flatMap((raw) => {
+            const p = (raw ?? {}) as Record<string, unknown>;
+            if (typeof p.packageItemId !== "string") return [];
+            return [{
+              packageItemId: p.packageItemId,
+              itemId: typeof p.itemId === "string" ? p.itemId : null,
+              menuItemId: typeof p.menuItemId === "string" ? p.menuItemId : null,
+              quantity: Number(p.quantity),
+            }];
+          })
+        : undefined,
       portion: o.portion === "quarter" || o.portion === "half" || o.portion === "whole" ? o.portion : null,
       quantity: Number(o.quantity),
     };
