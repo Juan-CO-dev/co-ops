@@ -85,11 +85,33 @@ export async function loadPublicCateringMenu(locationId: string): Promise<Cateri
   ]);
   if (iErr) throw new Error(`loadPublicCateringMenu items: ${iErr.message}`);
   if (sErr) throw new Error(`loadPublicCateringMenu menu_items: ${sErr.message}`);
+
+  // Batch-load the catering SIZE tiers for the fetched items (sub-project A). Grouped by item_id,
+  // ordered by display_order; passed into buildCateringMenuItem so a sided item prices off its sizes.
+  const itemIdList = (itemRows ?? []).map((r) => r.id);
+  const sizesByItem = new Map<string, Array<{ id: string; label: string; priceCents: number; serves: number | null }>>();
+  if (itemIdList.length > 0) {
+    const { data: sizeRows, error: szErr } = await sb
+      .from("item_sizes")
+      .select("id, item_id, label, price_cents, serves, display_order")
+      .in("item_id", itemIdList)
+      .eq("active", true)
+      .order("display_order", { ascending: true })
+      .returns<Array<{ id: string; item_id: string; label: string; price_cents: number; serves: number | string | null; display_order: number }>>();
+    if (szErr) throw new Error(`loadPublicCateringMenu sizes: ${szErr.message}`);
+    for (const s of sizeRows ?? []) {
+      const arr = sizesByItem.get(s.item_id) ?? [];
+      arr.push({ id: s.id, label: s.label, priceCents: s.price_cents, serves: s.serves == null ? null : Number(s.serves) });
+      sizesByItem.set(s.item_id, arr);
+    }
+  }
+
   const out: CateringMenuItem[] = [];
   for (const r of itemRows ?? []) {
     const built = buildCateringMenuItem(
       { kind: "item", id: r.id, name: r.name, nameEs: r.name_es, section: r.section,
-        menuPriceCents: dollarsToCents(r.menu_price), cateringOnly: r.catering_only, portionable: false },
+        menuPriceCents: dollarsToCents(r.menu_price), cateringOnly: r.catering_only, portionable: false,
+        sizes: sizesByItem.get(r.id) },
       rules,
     );
     if (built) out.push(built);
