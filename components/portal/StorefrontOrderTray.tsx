@@ -15,6 +15,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { CateringMenuItem } from "@/lib/catering/menu";
 import { subImage } from "./storefront-images";
+import { Reveal } from "./Reveal";
 
 /** sessionStorage key read by /order/start to pre-populate intent. */
 const PRESELECT_KEY = "co_order_preselect";
@@ -283,23 +284,24 @@ export function StorefrontOrderTray({
       {subGroup && subGroup.items.length > 0 && (
         <section id="subs" className="bg-co-text py-16 text-co-bg">
           <div className="mx-auto max-w-6xl px-5">
-            <div className="mb-9">
+            <Reveal className="mb-9">
               <p className="text-xs font-bold uppercase tracking-[0.28em] text-co-gold">
                 À la carte · 10&quot; subs
               </p>
               <h2 className="mt-2 text-3xl font-extrabold tracking-tight sm:text-4xl">
                 The ones people ask for by name.
               </h2>
-            </div>
+            </Reveal>
             <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-              {subGroup.items.map((item) => (
-                <SubCard
-                  key={item.id}
-                  item={item}
-                  qty={qtyFor(item)}
-                  onAdd={() => add(item)}
-                  onRemove={() => remove(item)}
-                />
+              {subGroup.items.map((item, i) => (
+                <Reveal key={item.id} delay={(i % 3) * 80}>
+                  <SubCard
+                    item={item}
+                    qty={qtyFor(item)}
+                    onAdd={() => add(item)}
+                    onRemove={() => remove(item)}
+                  />
+                </Reveal>
               ))}
             </div>
           </div>
@@ -310,19 +312,19 @@ export function StorefrontOrderTray({
       {otherGroups.some((g) => g.items.length > 0) && (
         <section className="bg-co-text py-16 text-co-bg">
           <div className="mx-auto max-w-6xl px-5">
-            <div className="mb-9">
+            <Reveal className="mb-9">
               <h2 className="text-3xl font-extrabold tracking-tight sm:text-4xl">
                 Round it out.
               </h2>
-            </div>
+            </Reveal>
             <div className="grid grid-cols-1 gap-10 md:grid-cols-3">
-              {otherGroups.map((group) => {
+              {otherGroups.map((group, gi) => {
                 if (group.items.length === 0) return null;
                 // Catering portions (sized sides + catering-only bundles) box up top; singles follow.
                 const catering = group.items.filter((i) => isSized(i) || i.cateringOnly);
                 const individual = group.items.filter((i) => !isSized(i) && !i.cateringOnly);
                 return (
-                  <div key={group.label}>
+                  <Reveal key={group.label} delay={gi * 90}>
                     <h3 className="mb-3 text-xs font-bold uppercase tracking-[0.2em] text-co-gold">
                       {group.label}
                     </h3>
@@ -367,7 +369,7 @@ export function StorefrontOrderTray({
                         ))}
                       </ul>
                     )}
-                  </div>
+                  </Reveal>
                 );
               })}
             </div>
