@@ -24,6 +24,28 @@ const CAP_SHORT = 200; // names, company, phone, window, type, event name, door
 const CAP_ADDR = 500; // delivery address
 const CAP_NOTES = 2000; // dietary & allergen notes
 const MAX_HEADCOUNT = 100000;
+const MAX_PRESELECT = 40; // mirrors MAX_CART_LINES; caps the anon-reachable token payload (A-H4)
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** ⑤ storefront carry-through: validate the pre-selection (item+qty). Drop malformed entries —
+ *  never reject the whole intake (the draft just seeds fewer/no lines; createDraftFromIntake
+ *  re-resolves + re-prices every ref server-side). Returns null when nothing valid remains. */
+function parsePreselect(v: unknown): Array<{ menuItemId?: string; itemId?: string; quantity: number }> | null {
+  if (!Array.isArray(v)) return null;
+  const out: Array<{ menuItemId?: string; itemId?: string; quantity: number }> = [];
+  for (const e of v) {
+    if (!e || typeof e !== "object") continue;
+    const o = e as Record<string, unknown>;
+    const menuItemId = typeof o.menuItemId === "string" && UUID_RE.test(o.menuItemId) ? o.menuItemId : undefined;
+    const itemId = typeof o.itemId === "string" && UUID_RE.test(o.itemId) ? o.itemId : undefined;
+    if ((menuItemId === undefined) === (itemId === undefined)) continue; // exactly one ref
+    const q = o.quantity;
+    if (typeof q !== "number" || !Number.isInteger(q) || q < 1 || q > 99) continue;
+    out.push(menuItemId ? { menuItemId, quantity: q } : { itemId, quantity: q });
+    if (out.length >= MAX_PRESELECT) break;
+  }
+  return out.length > 0 ? out : null;
+}
 
 function parseIntake(raw: unknown): DraftIntake | null {
   if (!raw || typeof raw !== "object") return null;
@@ -57,6 +79,7 @@ function parseIntake(raw: unknown): DraftIntake | null {
     geoLat: typeof o.geoLat === "number" && Number.isFinite(o.geoLat) && Math.abs(o.geoLat) <= 90 ? o.geoLat : null,
     geoLng: typeof o.geoLng === "number" && Number.isFinite(o.geoLng) && Math.abs(o.geoLng) <= 180 ? o.geoLng : null,
     fulfillmentRouted: o.fulfillmentRouted === true,
+    preselect: parsePreselect(o.preselect),
   };
 }
 
