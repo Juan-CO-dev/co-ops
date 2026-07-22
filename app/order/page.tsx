@@ -33,6 +33,7 @@ const IMG = {
   exterior: G("8f/a86fd66e2e4958a54b661d02a63194"),
   counter:  G("0b/09a06b39a24bc58d5a35e99ea48cc0"),
   spread:   "https://s3.amazonaws.com/toasttab/restaurants/restaurant-221473000000000000/menu/items/9/item-100000052580370539_1744237345.jpg",
+  lightLunch: "https://s3.amazonaws.com/toasttab/restaurants/restaurant-221473000000000000/menu/items/0/item-100000052583329150_1744237425.jpg",
 };
 
 // ─── static marketing data (preserved verbatim from mockup) ──────────────────
@@ -210,35 +211,8 @@ export default async function OrderStorefront() {
         </div>
       </div>
 
-      {/* ── Sandwich Platters hero (static marketing visual) ───────────── */}
-      <section id="platters" className="mx-auto max-w-6xl scroll-mt-16 px-5 py-16">
-        <Reveal>
-          <div className="grid grid-cols-1 items-stretch gap-8 lg:grid-cols-2">
-            <div className="overflow-hidden rounded-3xl bg-co-text/5">
-              <img src={IMG.spread} alt="Sandwich platter" className="h-full w-full object-cover" />
-            </div>
-            <div className="flex flex-col justify-center">
-              <p className="text-xs font-bold uppercase tracking-[0.28em] text-co-text-dim">
-                Sandwich platters &amp; packages
-              </p>
-              <h2 className="mt-2 text-3xl font-extrabold tracking-tight text-co-text sm:text-4xl">
-                The crowd-pleaser.
-              </h2>
-              <p className="mt-2 text-co-text-muted">
-                Assorted 5-inch sandwiches — a mix of the Classics (Teamsters, Crunchy Bois &amp;
-                more) — plus big subs and individual lunch boxes. Pick a package below and
-                we&apos;ll build the spread.
-              </p>
-              <div className="mt-6">
-                <CtaButton label="Start your order" dark />
-              </div>
-            </div>
-          </div>
-        </Reveal>
-      </section>
-
-      {/* ── Data-driven catering package cards ──────────────────────────── */}
-      <StorefrontPackages packages={packages} />
+      {/* ── Catering packages — platters / lunch boxes / big subs (data-driven) ── */}
+      <StorefrontPackages packages={packages} images={{ platter: IMG.spread, lunchBox: IMG.lightLunch }} />
 
       {/* ── Orderable tray (subs + sides/sweets/drinks) ────────────────── */}
       <StorefrontOrderTray groups={groups} />
