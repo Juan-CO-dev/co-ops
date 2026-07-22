@@ -13,6 +13,7 @@
  * ~400ms then POSTs /api/portal/order/draft/lines with
  *   subs   (menu_item) → { menuItemId, portion, quantity }
  *   extras (item)      → { itemId, quantity, sizeId? }
+ *   packages           → { packageId, quantity, packageOptions: [{ packageItemId, itemId?, menuItemId?, quantity }] }
  * The returned `stack` is the server-authoritative subtotal shown in the cart. "Continue" navigates
  * to /order/review?draft=<draftId>.
  *
@@ -33,6 +34,9 @@
  *
  * Per-line customization (allergens / notes / subs / drink) has no server home in 3a — kept as
  * local display-only state in the modal; it is NEVER part of the persisted payload.
+ *
+ * PACKAGES (W1b): packages are a separate cart slice (pkgCart) — each configured package instance
+ * is one PkgEntry keyed by a per-instance UUID. The payload carries references + qty only (D20).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -43,6 +47,16 @@ import type { CateringMenuItem } from "@/lib/catering/menu";
 type Cat = "main" | "side" | "sweet" | "drink";
 /** Portion selector for portionable subs. Matches the draft-lines API portion values. */
 type Portion = "quarter" | "half" | "whole";
+
+// ── Package types ─────────────────────────────────────────────────────────────
+/** One pick within a package slot (reference-only; never a price). */
+type PkgOption = { packageItemId: string; itemId: string | null; menuItemId: string | null; quantity: number };
+/** A choice slot inside a package (e.g. "Pick 3 subs"). */
+interface PkgSlot { packageItemId: string; label: string; pickN: number; options: Array<{ kind: "item" | "menu_item"; refId: string; name: string }> }
+/** The package definition as returned by GET /api/portal/order/draft/[quoteId]. */
+interface PkgView { id: string; labelEn: string; pricingMode: string; priceCents: number; minHeadcount: number | null; leadTimeHours: number | null; slots: PkgSlot[] }
+/** A configured package instance in the local cart. key is a per-instance UUID. */
+interface PkgEntry { key: string; pkg: PkgView; quantity: number; options: PkgOption[] }
 
 /** The draft shape returned by GET /api/portal/order/draft/[quoteId]. Mirrors lib/portal/draft.ts DraftLoad. */
 interface DraftStack {
@@ -56,8 +70,13 @@ interface DraftLead {
 }
 /** One persisted cart line (only the reference fields the build page needs to hydrate the cart). */
 interface DraftItem {
+  id: string;
   itemId: string | null; menuItemId: string | null; portion: Portion | null; quantity: number;
   sizeId: string | null;
+  /** Present for package lines only. */
+  packageId: string | null;
+  /** Per-slot picks for package lines. */
+  options: PkgOption[];
 }
 interface DraftLoad {
   quoteId: string; pipelineId: string | null; locationId: string; status: string;
@@ -67,6 +86,8 @@ interface DraftLoad {
   lead: DraftLead | null;
   menu: CateringMenuItem[];
   addonNapkins: CateringMenuItem | null;
+  /** Catering packages available for this order (empty array when none). */
+  packages: PkgView[];
 }
 
 /** Local-only line state. Only { portion, qty, sizeId } drive the persisted payload; the rest is display-only. */
@@ -94,7 +115,7 @@ const FACTS = [
   "48 hours notice keeps things smooth. The 3-footer needs 48, the six-footer 72.",
   "Allergen info is on every item — flag anything and we'll confirm.",
   "Delivery across DC, or free pickup at Capitol Hill or Dupont.",
-  "“The Crunchy Boi is my go-to — it’s just perfect.” — a real regular.",
+  "\"The Crunchy Boi is my go-to — it's just perfect.\" — a real regular.",
   "House-made ingredients, sliced and built face-to-face.",
 ];
 
@@ -162,6 +183,33 @@ function lineSummary(e: CartEntry): string {
   return bits.join(" · ");
 }
 
+/** Resolve a human-readable picks summary for a configured package entry.
+ *  e.g. "Teamster ×2, Crunchy Boi ×1 · Teamster ×1" (slot separator is " · "). */
+function pkgPicksSummary(entry: PkgEntry): string {
+  if (entry.options.length === 0) return "";
+  // Group options back to their slots for per-slot summaries.
+  const bySlot = new Map<string, PkgOption[]>();
+  for (const opt of entry.options) {
+    const arr = bySlot.get(opt.packageItemId) ?? [];
+    arr.push(opt);
+    bySlot.set(opt.packageItemId, arr);
+  }
+  const parts: string[] = [];
+  for (const [slotId, opts] of bySlot) {
+    const slot = entry.pkg.slots.find((s) => s.packageItemId === slotId);
+    if (!slot) continue;
+    const pieces = opts.map((o) => {
+      const kind = o.itemId ? "item" : "menu_item";
+      const refId = (o.itemId ?? o.menuItemId) ?? "";
+      const found = slot.options.find((so) => so.kind === kind && so.refId === refId);
+      const name = found?.name ?? refId;
+      return o.quantity > 1 ? `${name} ×${o.quantity}` : name;
+    });
+    parts.push(pieces.join(", "));
+  }
+  return parts.join(" · ");
+}
+
 export default function OrderBuild() {
   const router = useRouter();
   const [draftId, setDraftId] = useState<string | null>(null);
@@ -169,6 +217,12 @@ export default function OrderBuild() {
   const [loadState, setLoadState] = useState<"loading" | "empty" | "ready">("loading");
 
   const [cart, setCart] = useState<Record<string, Line>>({});
+  // Package cart — separate slice so item cart behavior is undisturbed.
+  const [pkgCart, setPkgCart] = useState<Record<string, PkgEntry>>({});
+  // Package configurator modal state.
+  const [pkgModalPkg, setPkgModalPkg] = useState<PkgView | null>(null);
+  const [pkgModalKey, setPkgModalKey] = useState<string | null>(null); // null = ADD, non-null = EDIT
+
   const [headcount, setHeadcount] = useState(0);
   const [modalKey, setModalKey] = useState<string | null>(null);
   const [coverageOpen, setCoverageOpen] = useState(false); // mobile bottom-sheet toggle
@@ -195,10 +249,18 @@ export default function OrderBuild() {
         setDraft(d);
         setSubtotalCents(d.stack.subtotalCents);
         setHeadcount(d.lead?.headcount ?? 0); // 24→20 FIX: seed from the lead, never a hardcoded 20.
-        // Hydrate the cart from the draft's persisted lines (a returning customer keeps their cart).
+        // Hydrate the item cart from the draft's persisted lines (a returning customer keeps their cart).
         const cardsByKey = new Map(expandCards(d.menu).map((c) => [c.key, c] as const));
         const initial: Record<string, Line> = {};
+        const initialPkg: Record<string, PkgEntry> = {};
         for (const it of d.items) {
+          if (it.packageId) {
+            // Package line: hydrate into pkgCart.
+            const pkg = (d.packages ?? []).find((p) => p.id === it.packageId);
+            if (!pkg) continue;
+            initialPkg[it.id] = { key: it.id, pkg, quantity: it.quantity, options: it.options ?? [] };
+            continue;
+          }
           // Reconstruct the sellable-card key from the persisted reference (incl. sizeId for sized items).
           const key = it.menuItemId
             ? `menu_item:${it.menuItemId}`
@@ -217,6 +279,7 @@ export default function OrderBuild() {
           };
         }
         setCart(initial);
+        setPkgCart(initialPkg);
         setLoadState("ready");
       } catch {
         if (!cancelled) setLoadState("empty");
@@ -240,6 +303,8 @@ export default function OrderBuild() {
     return Array.from(map.entries()).map(([label, items]) => ({ label, items }));
   }, [cards]);
 
+  const packages = useMemo(() => draft?.packages ?? [], [draft]);
+
   // ── Cart mutations ──────────────────────────────────────────────────────────────
   const quickAdd = useCallback((key: string) => setCart((c) => {
     const prev = c[key];
@@ -257,6 +322,57 @@ export default function OrderBuild() {
   }), []);
   const applyCustom = useCallback((key: string, line: Line) => setCart((c) => ({ ...c, [key]: line })), []);
 
+  // ── Package cart mutations ────────────────────────────────────────────────────
+  const openPkgAdd = useCallback((pkg: PkgView) => {
+    setPkgModalPkg(pkg);
+    setPkgModalKey(null); // ADD mode
+  }, []);
+  const openPkgEdit = useCallback((entryKey: string, pkg: PkgView) => {
+    setPkgModalPkg(pkg);
+    setPkgModalKey(entryKey); // EDIT mode
+  }, []);
+  const closePkgModal = useCallback(() => {
+    setPkgModalPkg(null);
+    setPkgModalKey(null);
+  }, []);
+  const savePkgEntry = useCallback((pkg: PkgView, save: { quantity: number; options: PkgOption[] }) => {
+    if (pkgModalKey !== null) {
+      // EDIT — update in place at the same key.
+      setPkgCart((c) => ({ ...c, [pkgModalKey]: { key: pkgModalKey, pkg, quantity: save.quantity, options: save.options } }));
+    } else {
+      // ADD — new instance key (only called in event handlers, never during SSR render).
+      const newKey = crypto.randomUUID();
+      setPkgCart((c) => ({ ...c, [newKey]: { key: newKey, pkg, quantity: save.quantity, options: save.options } }));
+    }
+    closePkgModal();
+  }, [pkgModalKey, closePkgModal]);
+  const decPkg = useCallback((entryKey: string) => {
+    setPkgCart((c) => {
+      const prev = c[entryKey];
+      if (!prev) return c;
+      if (prev.quantity <= 1) {
+        const copy = { ...c };
+        delete copy[entryKey];
+        return copy;
+      }
+      return { ...c, [entryKey]: { ...prev, quantity: prev.quantity - 1 } };
+    });
+  }, []);
+  const incPkg = useCallback((entryKey: string) => {
+    setPkgCart((c) => {
+      const prev = c[entryKey];
+      if (!prev) return c;
+      return { ...c, [entryKey]: { ...prev, quantity: prev.quantity + 1 } };
+    });
+  }, []);
+  const removePkg = useCallback((entryKey: string) => {
+    setPkgCart((c) => {
+      const copy = { ...c };
+      delete copy[entryKey];
+      return copy;
+    });
+  }, []);
+
   const lines: CartEntry[] = useMemo(
     () => Object.entries(cart)
       .map(([key, line]) => { const card = menuByKey.get(key); return card ? { key, item: card.item, line } : null; })
@@ -264,13 +380,17 @@ export default function OrderBuild() {
     [cart, menuByKey],
   );
 
+  const pkgEntries = useMemo(() => Object.values(pkgCart), [pkgCart]);
+
   // Local subtotal (cents) — an instant echo while the debounced POST is in flight; the server's
   // returned subtotalCents is authoritative once it lands.
-  const localSubtotalCents = lines.reduce((s, e) => s + unitCents(e.item, e.line) * e.line.qty, 0);
-  const count = lines.reduce((s, e) => s + e.line.qty, 0);
+  const localItemSubtotalCents = lines.reduce((s, e) => s + unitCents(e.item, e.line) * e.line.qty, 0);
+  const localPkgSubtotalCents = pkgEntries.reduce((s, e) => s + e.pkg.priceCents * e.quantity, 0);
+  const localSubtotalCents = localItemSubtotalCents + localPkgSubtotalCents;
+  const count = lines.reduce((s, e) => s + e.line.qty, 0) + pkgEntries.reduce((s, e) => s + e.quantity, 0);
 
   // Coverage: portionable subs count by portion fraction; sized items count by serves (or 1);
-  // everything else counts its quantity.
+  // everything else counts its quantity. Package whole-sub-equivalents count as mains.
   const servedBy = (cat: Cat) => lines
     .filter((e) => catFor(e.item) === cat)
     .reduce((s, e) => {
@@ -278,7 +398,14 @@ export default function OrderBuild() {
       if (isSized(e.item)) return s + e.line.qty * (selectedSize(e.item, e.line)?.serves ?? 1);
       return s + e.line.qty;
     }, 0);
-  const coverage = { main: servedBy("main"), side: servedBy("side"), sweet: servedBy("sweet"), drink: servedBy("drink") };
+  const pkgMainCoverage = pkgEntries.reduce((s, e) =>
+    s + e.options.reduce((a, o) => a + o.quantity, 0) * e.quantity, 0);
+  const coverage = {
+    main: servedBy("main") + pkgMainCoverage,
+    side: servedBy("side"),
+    sweet: servedBy("sweet"),
+    drink: servedBy("drink"),
+  };
 
   const hints = coverageHints(lines, coverage, headcount);
   useEffect(() => {
@@ -292,10 +419,17 @@ export default function OrderBuild() {
   // Serialize the reference payload so the effect only fires when the persisted shape actually changes
   // (not on a display-only customization edit). sizeId is included so a size change re-triggers POST.
   const linesPayload = useMemo(
-    () => lines.map((e) => e.item.kind === "menu_item"
-      ? { menuItemId: e.item.id, portion: e.line.portion, quantity: e.line.qty }
-      : { itemId: e.item.id, quantity: e.line.qty, ...(e.line.sizeId ? { sizeId: e.line.sizeId } : {}) }),
-    [lines],
+    () => [
+      ...lines.map((e) => e.item.kind === "menu_item"
+        ? { menuItemId: e.item.id, portion: e.line.portion, quantity: e.line.qty }
+        : { itemId: e.item.id, quantity: e.line.qty, ...(e.line.sizeId ? { sizeId: e.line.sizeId } : {}) }),
+      ...pkgEntries.map((e) => ({
+        packageId: e.pkg.id,
+        quantity: e.quantity,
+        packageOptions: e.options,
+      })),
+    ],
+    [lines, pkgEntries],
   );
   const payloadKey = JSON.stringify(linesPayload);
   const didHydrate = useRef(false);
@@ -319,7 +453,7 @@ export default function OrderBuild() {
       })();
     }, 400);
     return () => { if (persistTimer.current !== null) window.clearTimeout(persistTimer.current); };
-    // payloadKey captures the persisted-reference shape (incl. sizeId); linesPayload/draftId/loadState are stable deps.
+    // payloadKey captures the persisted-reference shape (incl. sizeId + pkgCart); linesPayload/draftId/loadState are stable deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payloadKey, draftId, loadState]);
 
@@ -331,7 +465,7 @@ export default function OrderBuild() {
   const displaySubtotalCents = count === 0 ? 0 : (localSubtotalCents || subtotalCents);
 
   const goToReview = () => {
-    if (lines.length === 0 || !draftId) return;
+    if ((lines.length === 0 && pkgEntries.length === 0) || !draftId) return;
     router.push(`/order/review?draft=${draftId}`);
   };
 
@@ -341,6 +475,9 @@ export default function OrderBuild() {
   useEffect(() => { const t = window.setInterval(() => setFactIdx((i) => (i + 1) % facts.length), 4500); return () => window.clearInterval(t); }, [facts.length]);
 
   const modalCard = modalKey ? menuByKey.get(modalKey) ?? null : null;
+  // Resolve the existing PkgEntry for edit mode.
+  const pkgModalExisting = pkgModalKey !== null ? (pkgCart[pkgModalKey] ?? null) : null;
+  const hasItems = lines.length > 0 || pkgEntries.length > 0;
 
   // ── Empty / loading states ──────────────────────────────────────────────────────
   if (loadState === "loading") {
@@ -414,6 +551,40 @@ export default function OrderBuild() {
               </div>
             </section>
           ))}
+
+          {/* ── Packages section — only rendered when packages exist ── */}
+          {packages.length > 0 && (
+            <section>
+              <h2 className="mb-4 text-xs font-bold uppercase tracking-[0.2em] text-co-text-dim">Packages</h2>
+              <div className="flex flex-col divide-y divide-co-border/60 overflow-hidden rounded-2xl border border-co-border/70 bg-co-surface">
+                {packages.map((pkg) => {
+                  const advisory: string[] = [];
+                  if (pkg.minHeadcount != null) advisory.push(`min ${pkg.minHeadcount} guests`);
+                  if (pkg.leadTimeHours != null) advisory.push(`${pkg.leadTimeHours}h notice`);
+                  return (
+                    <div key={pkg.id} className="flex items-center justify-between gap-4 p-4">
+                      <div className="min-w-0">
+                        <h3 className="text-sm font-extrabold text-co-text">{pkg.labelEn}</h3>
+                        {advisory.length > 0 && (
+                          <p className="mt-0.5 text-[11px] text-co-text-dim">{advisory.join(" · ")}</p>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-3">
+                        <span className="text-sm font-bold text-co-cta">from {money(pkg.priceCents)}</span>
+                        <button
+                          type="button"
+                          onClick={() => openPkgAdd(pkg)}
+                          className="inline-flex min-h-[36px] items-center justify-center rounded-full bg-co-text px-4 text-xs font-bold uppercase tracking-[0.08em] text-co-cta transition hover:bg-co-text/90"
+                        >
+                          Choose / Build →
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
         </div>
 
         <aside className="hidden lg:block"><div className="sticky top-24 flex flex-col gap-4">
@@ -422,7 +593,21 @@ export default function OrderBuild() {
             <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-co-text-dim">💡 Good to know</p>
             <p key={factIdx} className="mt-1.5 min-h-[2.75em] text-sm leading-snug text-co-text-muted transition-opacity duration-500">{facts[factIdx % facts.length]}</p>
           </div>
-          <Cart lines={lines} subtotalCents={displaySubtotalCents} headcount={headcount} setHeadcount={setHeadcount} coverage={coverage} onCustomize={setModalKey} dec={dec} add={quickAdd} onContinue={goToReview} />
+          <Cart
+            lines={lines}
+            pkgEntries={pkgEntries}
+            subtotalCents={displaySubtotalCents}
+            headcount={headcount}
+            setHeadcount={setHeadcount}
+            coverage={coverage}
+            onCustomize={setModalKey}
+            dec={dec}
+            add={quickAdd}
+            onContinue={goToReview}
+            onPkgEdit={openPkgEdit}
+            onPkgDec={decPkg}
+            onPkgInc={incPkg}
+          />
         </div></aside>
       </div>
 
@@ -468,13 +653,24 @@ export default function OrderBuild() {
             </button>
             <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-3">
               <div className="text-sm"><span className="font-bold text-co-text">{count} item{count === 1 ? "" : "s"}</span><span className="ml-2 text-co-text-muted">{money(displaySubtotalCents)}</span></div>
-              <button type="button" onClick={goToReview} disabled={count === 0} className={`inline-flex min-h-[46px] items-center justify-center rounded-full px-6 text-sm font-bold uppercase tracking-[0.08em] transition ${count > 0 ? "bg-co-text text-co-cta hover:bg-co-text/90" : "cursor-not-allowed bg-co-border text-co-text-dim"}`}>Continue →</button>
+              <button type="button" onClick={goToReview} disabled={!hasItems} className={`inline-flex min-h-[46px] items-center justify-center rounded-full px-6 text-sm font-bold uppercase tracking-[0.08em] transition ${hasItems ? "bg-co-text text-co-cta hover:bg-co-text/90" : "cursor-not-allowed bg-co-border text-co-text-dim"}`}>Continue →</button>
             </div>
           </div>
         </div>
       </div>
 
       {modalCard && modalKey && <CustomizeModal card={modalCard} existing={cart[modalKey] ?? null} onClose={() => setModalKey(null)} onSave={(line) => { applyCustom(modalKey, line); setModalKey(null); }} />}
+
+      {/* Package configurator modal */}
+      {pkgModalPkg && (
+        <PackageConfigurator
+          pkg={pkgModalPkg}
+          existing={pkgModalExisting}
+          leadHeadcount={headcount}
+          onClose={closePkgModal}
+          onSave={(save) => savePkgEntry(pkgModalPkg, save)}
+        />
+      )}
 
       {/* Gold glow-pulse for the mobile coverage-expand chevron. */}
       <style>{`@keyframes cohint{0%,100%{box-shadow:0 0 0 0 rgba(255,229,96,0)}50%{box-shadow:0 0 0 5px rgba(255,229,96,0.35),0 0 12px 2px rgba(255,229,96,0.6)}}`}</style>
@@ -554,17 +750,19 @@ function CoveragePanel({ coverage, headcount, setHeadcount, gapNudge }: {
   );
 }
 
-function Cart({ lines, subtotalCents, headcount, setHeadcount, coverage, onCustomize, dec, add, onContinue }: {
-  lines: CartEntry[]; subtotalCents: number; headcount: number; setHeadcount: (n: number) => void;
+function Cart({ lines, pkgEntries, subtotalCents, headcount, setHeadcount, coverage, onCustomize, dec, add, onContinue, onPkgEdit, onPkgDec, onPkgInc }: {
+  lines: CartEntry[]; pkgEntries: PkgEntry[]; subtotalCents: number; headcount: number; setHeadcount: (n: number) => void;
   coverage: { main: number; side: number; sweet: number; drink: number }; onCustomize: (key: string) => void; dec: (key: string) => void; add: (key: string) => void; onContinue: () => void;
+  onPkgEdit: (key: string, pkg: PkgView) => void; onPkgDec: (key: string) => void; onPkgInc: (key: string) => void;
 }) {
   const gapNudge = computeGapNudge(lines, coverage, headcount);
+  const hasItems = lines.length > 0 || pkgEntries.length > 0;
 
   return (
     <div className="overflow-hidden rounded-3xl border border-co-border/70 bg-co-surface shadow-sm">
       <div className="border-b border-co-border/60 bg-co-text px-6 py-4 text-co-bg"><h2 className="text-lg font-extrabold">Your order</h2></div>
       <div className="p-6">
-        {lines.length === 0 ? (
+        {!hasItems ? (
           <p className="text-sm text-co-text-muted">Tap an item to customize, or use + for a quick add. Your order builds here.</p>
         ) : (
           <ul className="flex flex-col gap-3">
@@ -586,16 +784,264 @@ function Cart({ lines, subtotalCents, headcount, setHeadcount, coverage, onCusto
                 </li>
               );
             })}
+            {/* Package entries in cart */}
+            {pkgEntries.map((e) => {
+              const summary = pkgPicksSummary(e);
+              const hasOptions = e.options.length > 0;
+              return (
+                <li key={e.key}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-co-text">{e.pkg.labelEn}</p>
+                      <p className="text-xs text-co-text-dim">{money(e.pkg.priceCents)} each</p>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button type="button" onClick={() => onPkgDec(e.key)} className="grid h-6 w-6 place-items-center rounded-full bg-co-bg text-sm font-bold text-co-text">−</button>
+                      <span className="w-4 text-center text-sm font-bold tabular-nums">{e.quantity}</span>
+                      <button type="button" onClick={() => onPkgInc(e.key)} className="grid h-6 w-6 place-items-center rounded-full bg-co-text text-sm font-bold text-co-cta">+</button>
+                    </div>
+                  </div>
+                  {hasOptions && summary && <p className="mt-0.5 text-[11px] text-co-text-dim">{summary}</p>}
+                  <div className="mt-0.5 flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => onPkgEdit(e.key, e.pkg)}
+                      className="text-[11px] font-bold uppercase tracking-wide text-co-text-dim underline"
+                    >
+                      {!hasOptions ? "Choose your subs →" : "Configure"}
+                    </button>
+                    <span className="text-[11px] font-bold text-co-cta">{money(e.pkg.priceCents * e.quantity)}</span>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
 
-        {lines.length > 0 && <div className="mt-5 flex items-center justify-between border-t border-co-border pt-4"><span className="text-sm font-semibold text-co-text-muted">Subtotal</span><span className="text-lg font-extrabold text-co-text">{money(subtotalCents)}</span></div>}
+        {hasItems && <div className="mt-5 flex items-center justify-between border-t border-co-border pt-4"><span className="text-sm font-semibold text-co-text-muted">Subtotal</span><span className="text-lg font-extrabold text-co-text">{money(subtotalCents)}</span></div>}
 
         <CoveragePanel coverage={coverage} headcount={headcount} setHeadcount={setHeadcount} gapNudge={gapNudge} />
 
-        {lines.length > 0 && <p className="mt-3 rounded-xl bg-co-bg px-3 py-2 text-xs text-co-text-muted">Deposit locks your date; balance due 48h before. We confirm within a few hours — no charge until we do.</p>}
+        {hasItems && <p className="mt-3 rounded-xl bg-co-bg px-3 py-2 text-xs text-co-text-muted">Deposit locks your date; balance due 48h before. We confirm within a few hours — no charge until we do.</p>}
 
-        <button type="button" onClick={onContinue} disabled={lines.length === 0} className={`mt-5 flex min-h-[52px] w-full items-center justify-center rounded-full text-base font-bold uppercase tracking-[0.08em] transition ${lines.length > 0 ? "bg-co-text text-co-cta hover:bg-co-text/90" : "cursor-not-allowed bg-co-border text-co-text-dim"}`}>Continue to review →</button>
+        <button type="button" onClick={onContinue} disabled={!hasItems} className={`mt-5 flex min-h-[52px] w-full items-center justify-center rounded-full text-base font-bold uppercase tracking-[0.08em] transition ${hasItems ? "bg-co-text text-co-cta hover:bg-co-text/90" : "cursor-not-allowed bg-co-border text-co-text-dim"}`}>Continue to review →</button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Package configurator modal. Mirrors CustomizeModal's shell + co-* tokens.
+ * For each slot: pickN===1 → radio group; pickN>1 → whole-sub allocator with running total.
+ * "Add/Update" enabled only when every slot's sum === pickN.
+ */
+function PackageConfigurator({ pkg, existing, leadHeadcount, onClose, onSave }: {
+  pkg: PkgView;
+  existing: PkgEntry | null;
+  leadHeadcount: number;
+  onClose: () => void;
+  onSave: (save: { quantity: number; options: PkgOption[] }) => void;
+}) {
+  const defaultQty = existing?.quantity ?? (pkg.pricingMode === "per_head" ? Math.max(1, leadHeadcount) : 1);
+  const [quantity, setQuantity] = useState(defaultQty);
+
+  // Per-slot pick state: Map<packageItemId, Map<refId, count>>.
+  // For pickN===1 slots, only one entry can have count>0.
+  const buildInitialPicks = (): Map<string, Map<string, number>> => {
+    const m = new Map<string, Map<string, number>>();
+    for (const slot of pkg.slots) {
+      const slotMap = new Map<string, number>();
+      if (existing) {
+        for (const opt of existing.options) {
+          if (opt.packageItemId === slot.packageItemId) {
+            const refId = (opt.itemId ?? opt.menuItemId) ?? "";
+            slotMap.set(refId, opt.quantity);
+          }
+        }
+      }
+      m.set(slot.packageItemId, slotMap);
+    }
+    return m;
+  };
+  const [picks, setPicks] = useState<Map<string, Map<string, number>>>(buildInitialPicks);
+
+  const slotSum = (slotId: string): number => {
+    const slotMap = picks.get(slotId);
+    if (!slotMap) return 0;
+    let s = 0;
+    for (const v of slotMap.values()) s += v;
+    return s;
+  };
+  const isComplete = pkg.slots.every((slot) => slotSum(slot.packageItemId) === slot.pickN);
+
+  const setRadio = (slotId: string, refId: string) => {
+    setPicks((prev) => {
+      const next = new Map(prev);
+      const slotMap = new Map<string, number>();
+      slotMap.set(refId, 1);
+      next.set(slotId, slotMap);
+      return next;
+    });
+  };
+
+  const adjAlloc = (slotId: string, refId: string, delta: number, pickN: number) => {
+    setPicks((prev) => {
+      const next = new Map(prev);
+      const slotMap = new Map(prev.get(slotId) ?? new Map<string, number>());
+      const cur = slotMap.get(refId) ?? 0;
+      const currentSum = slotSum(slotId);
+      const newVal = cur + delta;
+      if (newVal < 0) return prev; // can't go below 0
+      if (delta > 0 && currentSum >= pickN) return prev; // slot is full
+      if (newVal === 0) slotMap.delete(refId); else slotMap.set(refId, newVal);
+      next.set(slotId, slotMap);
+      return next;
+    });
+  };
+
+  const buildOptions = (): PkgOption[] => {
+    const opts: PkgOption[] = [];
+    for (const slot of pkg.slots) {
+      const slotMap = picks.get(slot.packageItemId);
+      if (!slotMap) continue;
+      for (const [refId, qty] of slotMap.entries()) {
+        if (qty <= 0) continue;
+        const slotOpt = slot.options.find((o) => o.refId === refId);
+        if (!slotOpt) continue;
+        opts.push({
+          packageItemId: slot.packageItemId,
+          itemId: slotOpt.kind === "item" ? refId : null,
+          menuItemId: slotOpt.kind === "menu_item" ? refId : null,
+          quantity: qty,
+        });
+      }
+    }
+    return opts;
+  };
+
+  const totalCents = pkg.priceCents * quantity;
+
+  return (
+    <div role="dialog" aria-modal="true" onClick={onClose} className="fixed inset-0 z-50 flex items-end justify-center bg-co-text/60 backdrop-blur-sm sm:items-center sm:p-4">
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-lg overflow-hidden rounded-t-3xl bg-co-bg shadow-2xl sm:rounded-3xl">
+        <div className="max-h-[80vh] overflow-y-auto p-6">
+          {/* Header */}
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-extrabold text-co-text">{pkg.labelEn}</h2>
+              <p className="mt-0.5 text-sm font-bold text-co-cta">from {money(pkg.priceCents)}</p>
+            </div>
+            <button type="button" onClick={onClose} aria-label="Close" className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-co-surface text-lg font-bold text-co-text-dim">×</button>
+          </div>
+
+          {/* Slots */}
+          <div className="mt-5 flex flex-col gap-6">
+            {pkg.slots.map((slot) => {
+              const sum = slotSum(slot.packageItemId);
+              const isSlotDone = sum === slot.pickN;
+              return (
+                <div key={slot.packageItemId}>
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim">{slot.label}</p>
+                    {slot.pickN > 1 && (
+                      <span className={`text-xs font-bold ${isSlotDone ? "text-co-success" : "text-co-text-muted"}`}>
+                        {isSlotDone ? `✓ ${sum} of ${slot.pickN}` : `${sum} of ${slot.pickN} subs`}
+                      </span>
+                    )}
+                  </div>
+                  {slot.pickN > 1 && (
+                    <p className="mt-0.5 text-[11px] text-co-text-dim">served as {slot.pickN * 2} pieces</p>
+                  )}
+
+                  {slot.pickN === 1 ? (
+                    // Radio group for pick-1 slots.
+                    <div className="mt-2 flex flex-wrap gap-2" role="radiogroup" aria-label={slot.label}>
+                      {slot.options.map((opt) => {
+                        const selected = (picks.get(slot.packageItemId)?.get(opt.refId) ?? 0) > 0;
+                        return (
+                          <button
+                            key={opt.refId}
+                            type="button"
+                            role="radio"
+                            aria-checked={selected}
+                            onClick={() => setRadio(slot.packageItemId, opt.refId)}
+                            className={`rounded-2xl border-2 px-3 py-1.5 text-sm font-semibold transition ${
+                              selected
+                                ? "border-co-text bg-co-text text-co-bg"
+                                : "border-co-border-2 bg-co-surface text-co-text-muted hover:border-co-text/40 hover:text-co-text"
+                            }`}
+                          >
+                            {opt.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    // Whole-sub allocator for pickN>1 slots.
+                    <div className="mt-2 flex flex-col gap-2">
+                      {slot.options.map((opt) => {
+                        const cur = picks.get(slot.packageItemId)?.get(opt.refId) ?? 0;
+                        const canInc = sum < slot.pickN;
+                        return (
+                          <div key={opt.refId} className="flex items-center justify-between gap-3 rounded-xl border border-co-border/70 bg-co-surface px-3 py-2">
+                            <span className="text-sm font-semibold text-co-text">{opt.name}</span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => adjAlloc(slot.packageItemId, opt.refId, -1, slot.pickN)}
+                                disabled={cur === 0}
+                                className={`grid h-7 w-7 place-items-center rounded-full text-sm font-bold ${cur === 0 ? "cursor-not-allowed bg-co-border text-co-text-dim" : "bg-co-bg text-co-text"}`}
+                              >−</button>
+                              <span className="w-5 text-center text-sm font-bold tabular-nums">{cur}</span>
+                              <button
+                                type="button"
+                                onClick={() => adjAlloc(slot.packageItemId, opt.refId, 1, slot.pickN)}
+                                disabled={!canInc}
+                                className={`grid h-7 w-7 place-items-center rounded-full text-sm font-bold ${!canInc ? "cursor-not-allowed bg-co-border text-co-text-dim" : "bg-co-text text-co-cta"}`}
+                              >+</button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Quantity stepper */}
+          <div className="mt-6">
+            <p className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim">Quantity</p>
+            <div className="mt-2 flex items-center gap-4">
+              <div className="inline-flex items-center gap-3 rounded-full border-2 border-co-border-2 px-2 py-1.5">
+                <button type="button" onClick={() => setQuantity((q) => Math.max(1, q - 1))} className="grid h-8 w-8 place-items-center rounded-full bg-co-surface text-xl font-bold text-co-text">−</button>
+                <span className="min-w-6 text-center text-base font-bold tabular-nums">{quantity}</span>
+                <button type="button" onClick={() => setQuantity((q) => q + 1)} className="grid h-8 w-8 place-items-center rounded-full bg-co-text text-xl font-bold text-co-cta">+</button>
+              </div>
+            </div>
+          </div>
+
+          {/* Add / Update */}
+          <div className="mt-6">
+            <button
+              type="button"
+              disabled={!isComplete}
+              onClick={() => { if (isComplete) onSave({ quantity, options: buildOptions() }); }}
+              className={`flex min-h-[52px] w-full items-center justify-center rounded-full text-base font-bold uppercase tracking-[0.08em] transition ${
+                isComplete
+                  ? "bg-co-text text-co-cta hover:bg-co-text/90"
+                  : "cursor-not-allowed bg-co-border text-co-text-dim"
+              }`}
+            >
+              {existing ? "Update" : "Add"} · {money(totalCents)}
+            </button>
+            {!isComplete && (
+              <p className="mt-2 text-center text-xs text-co-text-muted">Complete all selections above to continue.</p>
+            )}
+          </div>
+          <button type="button" onClick={onClose} className="mt-3 w-full py-2 text-center text-sm font-semibold text-co-text-muted">Cancel</button>
+        </div>
       </div>
     </div>
   );
