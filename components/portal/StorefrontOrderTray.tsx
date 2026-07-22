@@ -5,9 +5,10 @@
  * StorefrontOrderTray — the orderable section of the /order storefront.
  *
  * Renders real catering menu groups (subs with photos, sides/sweets/drinks as compact rows).
- * Local qty state; floating pill carries selection to /order/start via sessionStorage.
- * No prices in the pill, no coverage, no portion/size selector — item + qty only. A sized item
- * carries its DEFAULT (smallest) size id in the preselect; the customer changes it on /order/build.
+ * The catering-portion items (sized sides + catering-only bundles) are grouped in a boxed
+ * "Catering portions" block at the top of each list; the everyday singles follow. A sized item shows
+ * one Add button PER SIZE, so a ½ pint and a 32 oz are independent picks (keyed by item+size).
+ * Local qty state; the floating pill carries every {ref, sizeId?, qty} to /order/start via sessionStorage.
  */
 
 import { useState } from "react";
@@ -162,6 +163,67 @@ function CompactRow({
   );
 }
 
+// ─── sized row (one Add per size) ─────────────────────────────────────────────
+
+function SizedRow({
+  item,
+  qtyFor,
+  onAdd,
+  onRemove,
+}: {
+  item: CateringMenuItem;
+  qtyFor: (sizeId: string) => number;
+  onAdd: (sizeId: string) => void;
+  onRemove: (sizeId: string) => void;
+}) {
+  return (
+    <li className="border-b border-co-bg/15 pb-3 last:border-0">
+      <span className="text-sm font-semibold text-co-bg/90">{item.name}</span>
+      <div className="mt-1.5 flex flex-wrap gap-2">
+        {(item.sizes ?? []).map((sz) => {
+          const qty = qtyFor(sz.id);
+          return (
+            <div
+              key={sz.id}
+              className="flex items-center gap-2 rounded-full border border-co-bg/25 bg-co-bg/5 py-1 pl-3 pr-1"
+            >
+              <span className="text-xs font-semibold text-co-bg/90">{sz.label}</span>
+              <span className="text-xs font-bold text-co-gold">{money(sz.unitPriceCents)}</span>
+              {qty > 0 ? (
+                <span className="flex items-center gap-1">
+                  <button
+                    onClick={() => onRemove(sz.id)}
+                    aria-label={`Remove ${item.name} ${sz.label}`}
+                    className="flex h-7 w-7 items-center justify-center rounded-full border border-co-bg/30 text-co-bg/80 transition hover:border-co-bg"
+                  >
+                    −
+                  </button>
+                  <span className="min-w-[1rem] text-center text-xs font-bold tabular-nums text-co-bg">{qty}</span>
+                  <button
+                    onClick={() => onAdd(sz.id)}
+                    aria-label={`Add another ${item.name} ${sz.label}`}
+                    className="flex h-7 w-7 items-center justify-center rounded-full bg-co-gold text-co-text transition hover:bg-co-gold/90"
+                  >
+                    +
+                  </button>
+                </span>
+              ) : (
+                <button
+                  onClick={() => onAdd(sz.id)}
+                  aria-label={`Add ${item.name} ${sz.label}`}
+                  className="flex h-7 w-7 items-center justify-center rounded-full bg-co-bg text-co-text transition hover:bg-co-bg/80"
+                >
+                  +
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </li>
+  );
+}
+
 // ─── main export ──────────────────────────────────────────────────────────────
 
 export function StorefrontOrderTray({
@@ -172,21 +234,21 @@ export function StorefrontOrderTray({
   const router = useRouter();
   const [picks, setPicks] = useState<Picks>({});
 
-  const key = (m: CateringMenuItem) => `${m.kind}:${m.id}`;
+  // A pick is keyed by item+size so two sizes of the same item are independent lines.
+  const pickKey = (kind: string, id: string, sizeId?: string) => `${kind}:${id}:${sizeId ?? ""}`;
+  const qtyFor = (m: CateringMenuItem, sizeId?: string) => picks[pickKey(m.kind, m.id, sizeId)]?.qty ?? 0;
 
-  function add(m: CateringMenuItem) {
+  function add(m: CateringMenuItem, sizeId?: string) {
     setPicks((prev) => {
-      const k = key(m);
+      const k = pickKey(m.kind, m.id, sizeId);
       const existing = prev[k];
-      // A sized item carries its default (smallest) size id; the customer changes it on /order/build.
-      const sizeId = m.sizes?.[0]?.id;
       return { ...prev, [k]: { kind: m.kind, id: m.id, name: m.name, qty: (existing?.qty ?? 0) + 1, ...(sizeId ? { sizeId } : {}) } };
     });
   }
 
-  function remove(m: CateringMenuItem) {
+  function remove(m: CateringMenuItem, sizeId?: string) {
     setPicks((prev) => {
-      const k = key(m);
+      const k = pickKey(m.kind, m.id, sizeId);
       const existing = prev[k];
       if (!existing || existing.qty <= 1) {
         const next = { ...prev };
@@ -234,7 +296,7 @@ export function StorefrontOrderTray({
                 <SubCard
                   key={item.id}
                   item={item}
-                  qty={picks[key(item)]?.qty ?? 0}
+                  qty={qtyFor(item)}
                   onAdd={() => add(item)}
                   onRemove={() => remove(item)}
                 />
@@ -254,27 +316,60 @@ export function StorefrontOrderTray({
               </h2>
             </div>
             <div className="grid grid-cols-1 gap-10 md:grid-cols-3">
-              {otherGroups.map(
-                (group) =>
-                  group.items.length > 0 && (
-                    <div key={group.label}>
-                      <h3 className="mb-3 text-xs font-bold uppercase tracking-[0.2em] text-co-gold">
-                        {group.label}
-                      </h3>
+              {otherGroups.map((group) => {
+                if (group.items.length === 0) return null;
+                // Catering portions (sized sides + catering-only bundles) box up top; singles follow.
+                const catering = group.items.filter((i) => isSized(i) || i.cateringOnly);
+                const individual = group.items.filter((i) => !isSized(i) && !i.cateringOnly);
+                return (
+                  <div key={group.label}>
+                    <h3 className="mb-3 text-xs font-bold uppercase tracking-[0.2em] text-co-gold">
+                      {group.label}
+                    </h3>
+                    {catering.length > 0 && (
+                      <div className="mb-4 rounded-2xl border border-co-gold/40 bg-co-bg/5 p-3">
+                        <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-co-gold/90">
+                          Catering portions
+                        </p>
+                        <ul className="flex flex-col gap-2">
+                          {catering.map((item) =>
+                            isSized(item) ? (
+                              <SizedRow
+                                key={item.id}
+                                item={item}
+                                qtyFor={(sid) => qtyFor(item, sid)}
+                                onAdd={(sid) => add(item, sid)}
+                                onRemove={(sid) => remove(item, sid)}
+                              />
+                            ) : (
+                              <CompactRow
+                                key={item.id}
+                                item={item}
+                                qty={qtyFor(item)}
+                                onAdd={() => add(item)}
+                                onRemove={() => remove(item)}
+                              />
+                            ),
+                          )}
+                        </ul>
+                      </div>
+                    )}
+                    {individual.length > 0 && (
                       <ul className="flex flex-col gap-2">
-                        {group.items.map((item) => (
+                        {individual.map((item) => (
                           <CompactRow
                             key={item.id}
                             item={item}
-                            qty={picks[key(item)]?.qty ?? 0}
+                            qty={qtyFor(item)}
                             onAdd={() => add(item)}
                             onRemove={() => remove(item)}
                           />
                         ))}
                       </ul>
-                    </div>
-                  ),
-              )}
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </section>

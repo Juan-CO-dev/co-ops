@@ -23,8 +23,10 @@
  * PORTIONS (W1a): a portionable menu_item shows the ¼/½/whole selector priced from
  * portionPricesCents (cents). Everything else is quantity-only.
  *
- * SIZES (W1a extension): a sized item (kind:"item", sizes non-empty) shows the SizeSelector so the
- * customer picks which container/size. An item is portionable XOR sized XOR plain — never both.
+ * SIZES (W1a extension): a sized item (kind:"item", sizes non-empty) expands into one MENU ROW per
+ * size (each independently orderable, keyed by `item:id:sizeId`), so two sizes coexist as distinct
+ * cart lines. Size is identity here, not a switchable attribute. An item is portionable XOR sized
+ * XOR plain — never both.
  *
  * COVERAGE is best-effort: real menu rows have no explicit `serves`/`cat`, so category is derived
  * heuristically from `section`. With 0 catering data the menu is empty (correct dormant behavior).
@@ -69,8 +71,12 @@ interface DraftLoad {
 
 /** Local-only line state. Only { portion, qty, sizeId } drive the persisted payload; the rest is display-only. */
 interface Line { qty: number; portion: Portion; sizeId: string | null; notes: string; allergens: string[]; subs: string[]; sub: string; drink: string }
-/** A menu row keyed by its stable cart key (`${kind}:${id}`) so item/menu_item id-spaces don't collide. */
+/** A cart entry keyed by its stable cart key. line.sizeId carries the chosen size for a sized item. */
 interface CartEntry { key: string; item: CateringMenuItem; line: Line }
+/** A single sellable menu row. A sized item expands into one card per size (each independently
+ *  orderable, its own quick-add); everything else is one card. The key includes sizeId so two sizes
+ *  of the same item are distinct cart lines. */
+interface MenuCard { key: string; item: CateringMenuItem; sizeId: string | null; sizeLabel: string | null; label: string; priceCents: number; serves: number | null }
 
 /** Portion fractions for coverage counting (¼=0.25, ½=0.5, whole=1). */
 const PORTION_FRACTION: Record<Portion, number> = { quarter: 0.25, half: 0.5, whole: 1 };
@@ -95,14 +101,14 @@ const FACTS = [
 /** Money helper — takes CENTS (the whole page is in the cents model; the draft + menu are cents). */
 const money = (cents: number) => (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
 const emptyLine = (): Line => ({ qty: 1, portion: "whole", sizeId: null, notes: "", allergens: [], subs: [], sub: "", drink: "" });
-const cartKey = (item: CateringMenuItem) => `${item.kind}:${item.id}`;
+/** Cart key. Sized items key by item+size so two sizes coexist as distinct lines; subs/plain by kind:id. */
+const keyFor = (item: CateringMenuItem, sizeId: string | null) =>
+  item.kind === "item" && sizeId ? `item:${item.id}:${sizeId}` : `${item.kind}:${item.id}`;
 const isPortionable = (item: CateringMenuItem) => item.kind === "menu_item" && item.portionable === true;
 
 // ── Size helpers ─────────────────────────────────────────────────────────────
 /** A sized item is a kind:"item" with a non-empty sizes array. Mutually exclusive with portionable. */
 const isSized = (item: CateringMenuItem) => item.sizes != null && item.sizes.length > 0;
-/** The first size in the array is the default (also the smallest/"from" price). */
-const defaultSizeId = (item: CateringMenuItem): string | null => item.sizes?.[0]?.id ?? null;
 /** Resolve the currently-selected size object for a line; falls back to sizes[0]. */
 const selectedSize = (item: CateringMenuItem, line: Line) =>
   item.sizes?.find((s) => s.id === line.sizeId) ?? item.sizes?.[0] ?? null;
@@ -112,6 +118,22 @@ function unitCents(item: CateringMenuItem, line: Line): number {
   if (isSized(item)) return selectedSize(item, line)?.unitPriceCents ?? item.unitPriceCents;
   if (isPortionable(item) && item.portionPricesCents) return item.portionPricesCents[line.portion];
   return item.unitPriceCents;
+}
+
+/** Expand the menu into sellable cards: a sized item → one card per size; else one card. */
+function expandCards(menu: CateringMenuItem[]): MenuCard[] {
+  const cards: MenuCard[] = [];
+  for (const item of menu) {
+    if (isSized(item) && item.sizes) {
+      for (const sz of item.sizes) {
+        cards.push({ key: keyFor(item, sz.id), item, sizeId: sz.id, sizeLabel: sz.label, label: `${item.name} · ${sz.label}`, priceCents: sz.unitPriceCents, serves: sz.serves });
+      }
+    } else {
+      const priceCents = isPortionable(item) && item.portionPricesCents ? item.portionPricesCents.whole : item.unitPriceCents;
+      cards.push({ key: keyFor(item, null), item, sizeId: null, sizeLabel: null, label: item.name, priceCents, serves: null });
+    }
+  }
+  return cards;
 }
 
 /** Derive a coverage category from the row's section (best-effort — the real menu has no `cat`). */
@@ -174,22 +196,24 @@ export default function OrderBuild() {
         setSubtotalCents(d.stack.subtotalCents);
         setHeadcount(d.lead?.headcount ?? 0); // 24→20 FIX: seed from the lead, never a hardcoded 20.
         // Hydrate the cart from the draft's persisted lines (a returning customer keeps their cart).
-        const menuByKey = new Map(d.menu.map((m) => [cartKey(m), m] as const));
+        const cardsByKey = new Map(expandCards(d.menu).map((c) => [c.key, c] as const));
         const initial: Record<string, Line> = {};
         for (const it of d.items) {
-          const kind = it.menuItemId ? "menu_item" : "item";
-          const refId = it.menuItemId ?? it.itemId;
-          if (!refId) continue;
-          const key = `${kind}:${refId}`;
-          const menuItem = menuByKey.get(key);
-          if (!menuItem) continue; // line references something not in the shopping menu (e.g. napkins) — skip.
+          // Reconstruct the sellable-card key from the persisted reference (incl. sizeId for sized items).
+          const key = it.menuItemId
+            ? `menu_item:${it.menuItemId}`
+            : it.itemId
+              ? (it.sizeId ? `item:${it.itemId}:${it.sizeId}` : `item:${it.itemId}`)
+              : null;
+          if (!key) continue;
+          const card = cardsByKey.get(key);
+          if (!card) continue; // references something not in the shopping menu (e.g. napkins / retired size) — skip.
           const prev = initial[key];
           initial[key] = {
             ...emptyLine(),
             qty: (prev?.qty ?? 0) + it.quantity,
             portion: it.portion ?? "whole",
-            // Hydrate persisted sizeId; fall back to default if the item is sized and sizeId is missing.
-            sizeId: it.sizeId ?? defaultSizeId(menuItem),
+            sizeId: card.sizeId,
           };
         }
         setCart(initial);
@@ -202,30 +226,27 @@ export default function OrderBuild() {
   }, []);
 
   const menu = useMemo(() => draft?.menu ?? [], [draft]);
-  const menuByKey = useMemo(() => new Map(menu.map((m) => [cartKey(m), m] as const)), [menu]);
-  // Group the real menu by section (section as heading). Preserves menu order within a section.
+  const cards = useMemo(() => expandCards(menu), [menu]);
+  const menuByKey = useMemo(() => new Map(cards.map((c) => [c.key, c] as const)), [cards]);
+  // Group the sellable cards by section (section as heading). A sized item shows one row per size.
   const groups = useMemo(() => {
-    const map = new Map<string, CateringMenuItem[]>();
-    for (const m of menu) {
-      const section = m.section ?? "More";
+    const map = new Map<string, MenuCard[]>();
+    for (const c of cards) {
+      const section = c.item.section ?? "More";
       const arr = map.get(section) ?? [];
-      arr.push(m);
+      arr.push(c);
       map.set(section, arr);
     }
     return Array.from(map.entries()).map(([label, items]) => ({ label, items }));
-  }, [menu]);
+  }, [cards]);
 
   // ── Cart mutations ──────────────────────────────────────────────────────────────
   const quickAdd = useCallback((key: string) => setCart((c) => {
     const prev = c[key];
     if (prev) return { ...c, [key]: { ...prev, qty: prev.qty + 1 } };
-    // For a new line on a sized item, stamp the default size so the line is never size-less.
-    const menuItem = menuByKey.get(key);
-    const freshLine = emptyLine();
-    if (menuItem && isSized(menuItem)) {
-      freshLine.sizeId = defaultSizeId(menuItem);
-    }
-    return { ...c, [key]: freshLine };
+    // Fresh line — stamp the card's size (the key already encodes which size for a sized item).
+    const card = menuByKey.get(key);
+    return { ...c, [key]: { ...emptyLine(), sizeId: card?.sizeId ?? null } };
   }), [menuByKey]);
   const dec = useCallback((key: string) => setCart((c) => {
     const prev = c[key];
@@ -238,7 +259,7 @@ export default function OrderBuild() {
 
   const lines: CartEntry[] = useMemo(
     () => Object.entries(cart)
-      .map(([key, line]) => { const item = menuByKey.get(key); return item ? { key, item, line } : null; })
+      .map(([key, line]) => { const card = menuByKey.get(key); return card ? { key, item: card.item, line } : null; })
       .filter((e): e is CartEntry => e !== null),
     [cart, menuByKey],
   );
@@ -319,7 +340,7 @@ export default function OrderBuild() {
   const [factIdx, setFactIdx] = useState(0);
   useEffect(() => { const t = window.setInterval(() => setFactIdx((i) => (i + 1) % facts.length), 4500); return () => window.clearInterval(t); }, [facts.length]);
 
-  const modalItem = modalKey ? menuByKey.get(modalKey) ?? null : null;
+  const modalCard = modalKey ? menuByKey.get(modalKey) ?? null : null;
 
   // ── Empty / loading states ──────────────────────────────────────────────────────
   if (loadState === "loading") {
@@ -368,27 +389,24 @@ export default function OrderBuild() {
             <section key={g.label}>
               <h2 className="mb-4 text-xs font-bold uppercase tracking-[0.2em] text-co-text-dim">{g.label}</h2>
               <div className="flex flex-col divide-y divide-co-border/60 overflow-hidden rounded-2xl border border-co-border/70 bg-co-surface">
-                {g.items.map((it) => {
-                  const key = cartKey(it);
+                {g.items.map((card) => {
+                  const it = card.item;
                   const portionable = isPortionable(it);
-                  const sized = isSized(it);
-                  // Portionable: show "from" + whole price. Sized: show "from" + min (smallest) price (already unitPriceCents).
-                  // Plain: flat price.
-                  const priceCents = portionable && it.portionPricesCents ? it.portionPricesCents.whole : it.unitPriceCents;
-                  const affordanceText = portionable ? "Choose portion →" : sized ? "Choose size →" : "Customize →";
-                  const priceDisplay = portionable || sized ? `from ${money(priceCents)}` : money(priceCents);
+                  // Sized card: its own size price (each size is a distinct row). Portionable: "from" whole. Plain: flat.
+                  const priceDisplay = portionable ? `from ${money(card.priceCents)}` : money(card.priceCents);
+                  const affordanceText = portionable ? "Choose portion →" : "Customize →";
                   return (
-                    <div key={key} className="flex items-center justify-between gap-4">
-                      <button type="button" onClick={() => setModalKey(key)} className="flex-1 p-4 text-left transition hover:bg-co-bg/40">
+                    <div key={card.key} className="flex items-center justify-between gap-4">
+                      <button type="button" onClick={() => setModalKey(card.key)} className="flex-1 p-4 text-left transition hover:bg-co-bg/40">
                         <div className="flex items-center gap-2">
-                          <h3 className="text-sm font-extrabold text-co-text">{it.name}</h3>
+                          <h3 className="text-sm font-extrabold text-co-text">{card.label}</h3>
                           {it.cateringOnly && <span className="rounded-full bg-co-gold/70 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-co-text">Catering</span>}
                         </div>
                         <span className="mt-1 inline-block text-[11px] font-bold uppercase tracking-wide text-co-text-dim">{affordanceText}</span>
                       </button>
                       <div className="flex shrink-0 items-center gap-3 pr-4">
                         <span className="text-sm font-bold text-co-cta">{priceDisplay}</span>
-                        <button type="button" onClick={() => quickAdd(key)} aria-label={`Quick add ${it.name}`} className="grid h-9 w-9 place-items-center rounded-full bg-co-text text-xl font-bold text-co-cta transition hover:bg-co-text/90">+</button>
+                        <button type="button" onClick={() => quickAdd(card.key)} aria-label={`Quick add ${card.label}`} className="grid h-9 w-9 place-items-center rounded-full bg-co-text text-xl font-bold text-co-cta transition hover:bg-co-text/90">+</button>
                       </div>
                     </div>
                   );
@@ -456,7 +474,7 @@ export default function OrderBuild() {
         </div>
       </div>
 
-      {modalItem && modalKey && <CustomizeModal item={modalItem} existing={cart[modalKey] ?? null} onClose={() => setModalKey(null)} onSave={(line) => { applyCustom(modalKey, line); setModalKey(null); }} />}
+      {modalCard && modalKey && <CustomizeModal card={modalCard} existing={cart[modalKey] ?? null} onClose={() => setModalKey(null)} onSave={(line) => { applyCustom(modalKey, line); setModalKey(null); }} />}
 
       {/* Gold glow-pulse for the mobile coverage-expand chevron. */}
       <style>{`@keyframes cohint{0%,100%{box-shadow:0 0 0 0 rgba(255,229,96,0)}50%{box-shadow:0 0 0 5px rgba(255,229,96,0.35),0 0 12px 2px rgba(255,229,96,0.6)}}`}</style>
@@ -628,49 +646,6 @@ function PortionSelector({ item, portion, onChange }: {
   );
 }
 
-/**
- * Size selector for sized items (kind:"item" with a non-empty sizes array) — one chip per size,
- * each showing the size label and its unit price. Modeled as a sibling of PortionSelector.
- */
-function SizeSelector({ item, sizeId, onChange }: {
-  item: CateringMenuItem;
-  sizeId: string | null;
-  onChange: (id: string) => void;
-}) {
-  const sizes = item.sizes ?? [];
-  // Treat null as sizes[0] (the default).
-  const effectiveSizeId = sizeId ?? sizes[0]?.id;
-  return (
-    <div>
-      <p className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim" id="size-label">Choose your size</p>
-      <div className="mt-2 flex flex-wrap gap-2" role="radiogroup" aria-labelledby="size-label">
-        {sizes.map((sz) => {
-          const selected = sz.id === effectiveSizeId;
-          return (
-            <button
-              key={sz.id}
-              type="button"
-              role="radio"
-              aria-checked={selected}
-              aria-label={`${sz.label} — ${money(sz.unitPriceCents)}`}
-              onClick={() => onChange(sz.id)}
-              className={`flex min-w-[72px] flex-col items-center rounded-2xl border-2 px-3 py-2 text-center transition ${
-                selected
-                  ? "border-co-text bg-co-text text-co-bg"
-                  : "border-co-border-2 bg-co-surface text-co-text-muted hover:border-co-text/40 hover:text-co-text"
-              }`}
-            >
-              <span className="text-base font-extrabold leading-none">{sz.label}</span>
-              <span className={`mt-0.5 text-xs font-semibold ${selected ? "text-co-cta" : "text-co-text-dim"}`}>{money(sz.unitPriceCents)}</span>
-            </button>
-          );
-        })}
-      </div>
-      <p className="mt-1.5 text-[11px] text-co-text-dim">Pick the size for your spread.</p>
-    </div>
-  );
-}
-
 function Chips({ options, selected, onToggle }: { options: string[]; selected: string[]; onToggle: (v: string) => void }) {
   return (
     <div className="mt-2 flex flex-wrap gap-2">
@@ -684,19 +659,19 @@ function Chips({ options, selected, onToggle }: { options: string[]; selected: s
 
 /**
  * Customize modal. Portionable subs get the ¼/½/whole PortionSelector (portion IS persisted).
- * Sized items get the SizeSelector (sizeId IS persisted). The two selectors are mutually exclusive
- * (portionable XOR sized). Allergen / special-instructions fields are LOCAL display-only state —
+ * A sized card carries a FIXED size (size = identity — chosen on the menu row, not switched here);
+ * the modal shows it read-only. Allergen / special-instructions fields are LOCAL display-only state —
  * they have no server home in 3a and are NOT part of the persisted payload.
  */
-function CustomizeModal({ item, existing, onClose, onSave }: { item: CateringMenuItem; existing: Line | null; onClose: () => void; onSave: (line: Line) => void }) {
+function CustomizeModal({ card, existing, onClose, onSave }: { card: MenuCard; existing: Line | null; onClose: () => void; onSave: (line: Line) => void }) {
+  const item = card.item;
   const portionable = isPortionable(item);
-  const sized = isSized(item);
+  const sized = card.sizeId != null;
 
-  // Initialize: for a sized item without a sizeId, stamp the default so the selector is never blank.
+  // Initialize: a sized card's line always carries its fixed size id (never switched in the modal).
   const initialLine = (): Line => {
     const base = existing ?? emptyLine();
-    if (sized && !base.sizeId) return { ...base, sizeId: defaultSizeId(item) };
-    return base;
+    return sized ? { ...base, sizeId: card.sizeId } : base;
   };
 
   const [line, setLine] = useState<Line>(initialLine);
@@ -714,7 +689,7 @@ function CustomizeModal({ item, existing, onClose, onSave }: { item: CateringMen
               <h2 className="text-xl font-extrabold text-co-text">{item.name}</h2>
               {item.section && <p className="mt-1 text-sm text-co-text-muted">{item.section}</p>}
             </div>
-            <span className="shrink-0 text-lg font-extrabold text-co-cta">{money(item.unitPriceCents)}</span>
+            <span className="shrink-0 text-lg font-extrabold text-co-cta">{money(card.priceCents)}</span>
           </div>
 
           {portionable && (
@@ -723,9 +698,10 @@ function CustomizeModal({ item, existing, onClose, onSave }: { item: CateringMen
             </div>
           )}
 
-          {sized && (
-            <div className="mt-5">
-              <SizeSelector item={item} sizeId={line.sizeId ?? defaultSizeId(item)} onChange={(id) => set({ sizeId: id })} />
+          {sized && card.sizeLabel && (
+            <div className="mt-5 rounded-2xl border-2 border-co-border-2 bg-co-surface px-4 py-3">
+              <p className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim">Size</p>
+              <p className="mt-0.5 text-base font-extrabold text-co-text">{card.sizeLabel} · {money(card.priceCents)}</p>
             </div>
           )}
 
