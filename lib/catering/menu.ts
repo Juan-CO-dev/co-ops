@@ -37,20 +37,32 @@ export interface CateringMenuItem {
   portionable: boolean;
   regularPriceCents: number;        // basis for recommend/implied-rate
   rateBps: number;                  // resolved effective rate
-  unitPriceCents: number;           // whole catering price (= derived whole)
+  unitPriceCents: number;           // whole catering price (= derived whole; for a sized item = the "from"/smallest size)
   portionPricesCents: { quarter: number; half: number; whole: number } | null; // present iff portionable
+  sizes: Array<{ id: string; label: string; unitPriceCents: number; serves: number | null }> | null; // present iff the item has active item_sizes
 }
 
 /** Build a priced CateringMenuItem from a raw row + the location's rate rules. Returns null when
  *  the entity has no usable regular price (unpriceable → excluded, never sold at $0). */
 export function buildCateringMenuItem(
   row: { kind: "item" | "menu_item"; id: string; name: string; nameEs: string | null; section: string | null;
-         menuPriceCents: number; cateringOnly: boolean; portionable: boolean },
+         menuPriceCents: number; cateringOnly: boolean; portionable: boolean;
+         sizes?: Array<{ id: string; label: string; priceCents: number; serves: number | null }> },
   rules: RateRule[],
 ): CateringMenuItem | null {
-  if (!(row.menuPriceCents > 0)) return null;
+  // A sized item prices off its sizes (each an explicit base × rate); an un-sized item off menu_price.
+  const rawSizes = (row.sizes ?? []).filter((s) => s.priceCents > 0);
+  const hasSizes = rawSizes.length > 0;
+  if (!hasSizes && !(row.menuPriceCents > 0)) return null;
   const rateBps = resolveRateBps(rules, { kind: row.kind, entityId: row.id, section: row.section });
-  const whole = cateringUnitPriceCents(row.menuPriceCents, "whole", rateBps);
+  const sizes = hasSizes
+    ? rawSizes.map((s) => ({ id: s.id, label: s.label, serves: s.serves,
+        unitPriceCents: cateringUnitPriceCents(s.priceCents, "whole", rateBps) }))
+    : null;
+  // "whole"/top-level unit price: the smallest size (the "from …") for a sized item, else regular × rate.
+  const whole = sizes && sizes.length > 0
+    ? Math.min(...sizes.map((s) => s.unitPriceCents))
+    : cateringUnitPriceCents(row.menuPriceCents, "whole", rateBps);
   return {
     kind: row.kind, id: row.id, name: row.name, nameEs: row.nameEs, section: row.section,
     cateringOnly: row.cateringOnly, portionable: row.portionable,
@@ -60,6 +72,7 @@ export function buildCateringMenuItem(
           half: cateringUnitPriceCents(row.menuPriceCents, "half", rateBps),
           whole }
       : null,
+    sizes,
   };
 }
 export interface PackageLine {
