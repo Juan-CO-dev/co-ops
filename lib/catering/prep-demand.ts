@@ -31,18 +31,23 @@ interface ResolvedDemand {
   qty: number;
 }
 
+interface PackageComp { id: string; package_id: string; slot_type: string; item_id: string | null; menu_item_id: string | null; quantity: number | string }
+
 /** Resolve a lead's current quote lines into concrete prep demand. Fixed package components resolve
- *  to concrete refs; choice slots become one UNRESOLVED row each (never expanded to their options). */
-async function resolveQuoteDemand(sb: Sb, quoteId: string): Promise<ResolvedDemand[]> {
+ *  to concrete refs. A choice slot resolves to the CUSTOMER'S STORED PICKS (catering_quote_item_options,
+ *  sub-project B) — each chosen sub becomes concrete demand scaled by package-line-qty × pick-qty; only
+ *  an UNCONFIGURED package (no stored picks) falls back to one advisory "needs a pick" row. Package
+ *  lines are processed PER quote-line (two lines of the same package can hold different picks). */
+export async function resolveQuoteDemand(sb: Sb, quoteId: string): Promise<ResolvedDemand[]> {
   const { data: lines, error } = await sb
     .from("catering_quote_items")
-    .select("item_id, menu_item_id, package_id, quantity, portion")
+    .select("id, item_id, menu_item_id, package_id, quantity, portion")
     .eq("quote_id", quoteId)
-    .returns<Array<{ item_id: string | null; menu_item_id: string | null; package_id: string | null; quantity: number | string; portion: Portion | null }>>();
+    .returns<Array<{ id: string; item_id: string | null; menu_item_id: string | null; package_id: string | null; quantity: number | string; portion: Portion | null }>>();
   if (error) throw new Error(`resolveQuoteDemand items: ${error.message}`);
 
   const out: ResolvedDemand[] = [];
-  const packageLineQty = new Map<string, number>(); // package_id -> summed line quantity
+  const pkgLines: Array<{ quoteItemId: string; packageId: string; qty: number }> = [];
   for (const l of lines ?? []) {
     const qty = typeof l.quantity === "string" ? Number(l.quantity) : l.quantity;
     if (l.item_id) {
@@ -50,30 +55,59 @@ async function resolveQuoteDemand(sb: Sb, quoteId: string): Promise<ResolvedDema
     } else if (l.menu_item_id) {
       out.push({ itemId: null, menuItemId: l.menu_item_id, choicePackageItemId: null, portion: l.portion, qty });
     } else if (l.package_id) {
-      packageLineQty.set(l.package_id, (packageLineQty.get(l.package_id) ?? 0) + qty);
+      pkgLines.push({ quoteItemId: l.id, packageId: l.package_id, qty });
     }
   }
 
-  // Resolve package lines → their active components.
-  if (packageLineQty.size) {
+  if (pkgLines.length) {
+    const packageIds = [...new Set(pkgLines.map((p) => p.packageId))];
     const { data: comps, error: cErr } = await sb
       .from("catering_package_items")
       .select("id, package_id, slot_type, item_id, menu_item_id, quantity")
-      .in("package_id", [...packageLineQty.keys()])
+      .in("package_id", packageIds)
       .eq("active", true)
-      .returns<Array<{ id: string; package_id: string; slot_type: string; item_id: string | null; menu_item_id: string | null; quantity: number | string }>>();
+      .returns<PackageComp[]>();
     if (cErr) throw new Error(`resolveQuoteDemand package components: ${cErr.message}`);
-    for (const c of comps ?? []) {
-      const lineQty = packageLineQty.get(c.package_id) ?? 0;
-      const compQty = typeof c.quantity === "string" ? Number(c.quantity) : c.quantity;
-      const qty = lineQty * compQty;
-      if (qty <= 0) continue;
-      if (c.slot_type === "choice") {
-        out.push({ itemId: null, menuItemId: null, choicePackageItemId: c.id, portion: null, qty });
-      } else if (c.menu_item_id) {
-        out.push({ itemId: null, menuItemId: c.menu_item_id, choicePackageItemId: null, portion: null, qty });
-      } else if (c.item_id) {
-        out.push({ itemId: c.item_id, menuItemId: null, choicePackageItemId: null, portion: null, qty });
+    const compsByPackage = new Map<string, PackageComp[]>();
+    for (const c of comps ?? []) { const arr = compsByPackage.get(c.package_id) ?? []; arr.push(c); compsByPackage.set(c.package_id, arr); }
+
+    // The customer's stored slot picks (sub-project B), keyed `${quote_item_id}:${package_item_id}`.
+    const { data: optRows, error: oErr } = await sb
+      .from("catering_quote_item_options")
+      .select("quote_item_id, package_item_id, item_id, menu_item_id, quantity")
+      .in("quote_item_id", pkgLines.map((p) => p.quoteItemId))
+      .returns<Array<{ quote_item_id: string; package_item_id: string; item_id: string | null; menu_item_id: string | null; quantity: number | string }>>();
+    if (oErr) throw new Error(`resolveQuoteDemand package options: ${oErr.message}`);
+    const picksBySlot = new Map<string, Array<{ itemId: string | null; menuItemId: string | null; qty: number }>>();
+    for (const o of optRows ?? []) {
+      const key = `${o.quote_item_id}:${o.package_item_id}`;
+      const arr = picksBySlot.get(key) ?? [];
+      arr.push({ itemId: o.item_id, menuItemId: o.menu_item_id, qty: typeof o.quantity === "string" ? Number(o.quantity) : o.quantity });
+      picksBySlot.set(key, arr);
+    }
+
+    for (const pl of pkgLines) {
+      for (const c of compsByPackage.get(pl.packageId) ?? []) {
+        const compQty = typeof c.quantity === "string" ? Number(c.quantity) : c.quantity;
+        if (c.slot_type === "choice") {
+          const picks = picksBySlot.get(`${pl.quoteItemId}:${c.id}`);
+          if (picks && picks.length > 0) {
+            for (const p of picks) {
+              const qty = pl.qty * p.qty;
+              if (qty <= 0) continue;
+              out.push({ itemId: p.itemId, menuItemId: p.menuItemId, choicePackageItemId: null, portion: null, qty });
+            }
+          } else {
+            const qty = pl.qty * compQty;
+            if (qty > 0) out.push({ itemId: null, menuItemId: null, choicePackageItemId: c.id, portion: null, qty });
+          }
+        } else if (c.menu_item_id) {
+          const qty = pl.qty * compQty;
+          if (qty > 0) out.push({ itemId: null, menuItemId: c.menu_item_id, choicePackageItemId: null, portion: null, qty });
+        } else if (c.item_id) {
+          const qty = pl.qty * compQty;
+          if (qty > 0) out.push({ itemId: c.item_id, menuItemId: null, choicePackageItemId: null, portion: null, qty });
+        }
       }
     }
   }
