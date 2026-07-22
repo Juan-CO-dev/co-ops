@@ -18,7 +18,7 @@
  * deliveryNodesExist=false the original legacy flow renders unchanged.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { GoodToKnow } from "@/components/portal/GoodToKnow";
@@ -98,6 +98,23 @@ export function OrderStartClient({ locations, deliveryNodesExist, pickupNodes }:
   const [geo, setGeo] = useState<{ lat: number; lng: number } | null>(null);
   const [route, setRoute] = useState<DeliveryRouteResult | null>(null);
   const [locating, setLocating] = useState(false);
+
+  // ⑤ carry-through: pick up the storefront selection (co_order_preselect) once on mount, then
+  // clear it so a back-nav/refresh doesn't re-apply it. Folded into the new-client intake payload.
+  const [preselect, setPreselect] = useState<Array<{ menuItemId?: string; itemId?: string; quantity: number }>>([]);
+  useEffect(() => {
+    try {
+      const raw = window.sessionStorage.getItem("co_order_preselect");
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) setPreselect(parsed);
+        window.sessionStorage.removeItem("co_order_preselect");
+      }
+    } catch {
+      /* private mode / malformed — no carry-through, order still works */
+    }
+  }, []);
+  const preselectCount = preselect.reduce((s, p) => s + (Number(p.quantity) || 0), 0);
 
   const set = (patch: Partial<FormState>) => setF((cur) => ({ ...cur, ...patch }));
 
@@ -512,6 +529,12 @@ export function OrderStartClient({ locations, deliveryNodesExist, pickupNodes }:
                 )}
               </div>
 
+              {mode === "new" && preselectCount > 0 && (
+                <p className="mt-6 rounded-xl bg-co-gold/15 px-4 py-3 text-center text-sm font-semibold text-co-text">
+                  {t("order.start.preselect_note" as TranslationKey, { count: String(preselectCount) })}
+                </p>
+              )}
+
               <button
                 type="button"
                 disabled={!canSubmit}
@@ -544,6 +567,8 @@ export function OrderStartClient({ locations, deliveryNodesExist, pickupNodes }:
                           geoLat: geo?.lat ?? null,
                           geoLng: geo?.lng ?? null,
                           fulfillmentRouted: route?.status === "routed",
+                          // ⑤ storefront carry-through (item + qty; server re-resolves + re-prices)
+                          preselect: preselect.length > 0 ? preselect : null,
                         },
                       }),
                     }).catch(() => {

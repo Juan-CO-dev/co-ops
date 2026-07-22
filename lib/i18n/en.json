@@ -2209,6 +2209,7 @@
   "order.route.no_capacity": "You're in our area, but we're fully booked that date — try another date or choose pickup.",
   "order.route.window_label": "Delivery time window",
   "order.route.window_any": "Flexible / any time",
+  "order.start.preselect_note": "{count} item(s) from the menu will be added to your order.",
   "admin.catering.prep_demand.tab_surplus": "Surplus",
   "admin.catering.prep_demand.surplus_empty": "No surplus from recent cancellations.",
   "catering.surplus.section_perishable": "Perishable prep surplus",
