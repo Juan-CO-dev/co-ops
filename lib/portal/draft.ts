@@ -63,6 +63,8 @@ export interface DraftIntake {
   geoLat?: number | null;
   geoLng?: number | null;
   fulfillmentRouted?: boolean;
+  /** ⑤ storefront carry-through: cart lines to pre-seed the draft (v1: item+qty, whole portion). */
+  preselect?: DraftLineInput[] | null;
 }
 
 export type Portion = "quarter" | "half" | "whole";
@@ -259,6 +261,18 @@ export async function createDraftFromIntake(customerId: string, intake: DraftInt
     resourceTable: "catering_quotes", resourceId: quote.id,
     metadata: { pipeline_id: lead.id, customer_id: customerId, location_id: intake.locationId }, ipAddress: null, userAgent: null,
   });
+
+  // ⑤ carry-through: pre-seed the cart from the storefront selection. Best-effort — a stale/invalid
+  // ref must NEVER fail order creation (customer just starts empty). setDraftLines re-resolves +
+  // re-prices every ref against the server-owned menu (D20 price authority) and snapshots the stack.
+  if (intake.preselect && intake.preselect.length > 0) {
+    try {
+      await setDraftLines(customerId, quote.id, intake.preselect, { isDelivery: intake.isDelivery });
+    } catch (e) {
+      console.error("createDraftFromIntake preselect failed (draft left empty):", e);
+    }
+  }
+
   return { quoteId: quote.id, pipelineId: lead.id };
 }
 
