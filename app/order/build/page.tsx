@@ -12,7 +12,7 @@
  * CART PERSISTENCE (D20 — client sends REFERENCES only, never prices): every cart change debounces
  * ~400ms then POSTs /api/portal/order/draft/lines with
  *   subs   (menu_item) → { menuItemId, portion, quantity }
- *   extras (item)      → { itemId, quantity }
+ *   extras (item)      → { itemId, quantity, sizeId? }
  * The returned `stack` is the server-authoritative subtotal shown in the cart. "Continue" navigates
  * to /order/review?draft=<draftId>.
  *
@@ -22,6 +22,9 @@
  *
  * PORTIONS (W1a): a portionable menu_item shows the ¼/½/whole selector priced from
  * portionPricesCents (cents). Everything else is quantity-only.
+ *
+ * SIZES (W1a extension): a sized item (kind:"item", sizes non-empty) shows the SizeSelector so the
+ * customer picks which container/size. An item is portionable XOR sized XOR plain — never both.
  *
  * COVERAGE is best-effort: real menu rows have no explicit `serves`/`cat`, so category is derived
  * heuristically from `section`. With 0 catering data the menu is empty (correct dormant behavior).
@@ -52,6 +55,7 @@ interface DraftLead {
 /** One persisted cart line (only the reference fields the build page needs to hydrate the cart). */
 interface DraftItem {
   itemId: string | null; menuItemId: string | null; portion: Portion | null; quantity: number;
+  sizeId: string | null;
 }
 interface DraftLoad {
   quoteId: string; pipelineId: string | null; locationId: string; status: string;
@@ -63,8 +67,8 @@ interface DraftLoad {
   addonNapkins: CateringMenuItem | null;
 }
 
-/** Local-only line state. Only { portion, qty } drive the persisted payload; the rest is display-only. */
-interface Line { qty: number; portion: Portion; notes: string; allergens: string[]; subs: string[]; sub: string; drink: string }
+/** Local-only line state. Only { portion, qty, sizeId } drive the persisted payload; the rest is display-only. */
+interface Line { qty: number; portion: Portion; sizeId: string | null; notes: string; allergens: string[]; subs: string[]; sub: string; drink: string }
 /** A menu row keyed by its stable cart key (`${kind}:${id}`) so item/menu_item id-spaces don't collide. */
 interface CartEntry { key: string; item: CateringMenuItem; line: Line }
 
@@ -84,19 +88,29 @@ const FACTS = [
   "48 hours notice keeps things smooth. The 3-footer needs 48, the six-footer 72.",
   "Allergen info is on every item — flag anything and we'll confirm.",
   "Delivery across DC, or free pickup at Capitol Hill or Dupont.",
-  "“The Crunchy Boi is my go-to — it's just perfect.” — a real regular.",
+  "“The Crunchy Boi is my go-to — it’s just perfect.” — a real regular.",
   "House-made ingredients, sliced and built face-to-face.",
 ];
 
 /** Money helper — takes CENTS (the whole page is in the cents model; the draft + menu are cents). */
 const money = (cents: number) => (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
-const emptyLine = (): Line => ({ qty: 1, portion: "whole", notes: "", allergens: [], subs: [], sub: "", drink: "" });
+const emptyLine = (): Line => ({ qty: 1, portion: "whole", sizeId: null, notes: "", allergens: [], subs: [], sub: "", drink: "" });
 const cartKey = (item: CateringMenuItem) => `${item.kind}:${item.id}`;
 const isPortionable = (item: CateringMenuItem) => item.kind === "menu_item" && item.portionable === true;
 
-/** Per-portion unit price in cents (from portionPricesCents when portionable; else the whole price). */
-function unitCents(item: CateringMenuItem, portion: Portion): number {
-  if (isPortionable(item) && item.portionPricesCents) return item.portionPricesCents[portion];
+// ── Size helpers ─────────────────────────────────────────────────────────────
+/** A sized item is a kind:"item" with a non-empty sizes array. Mutually exclusive with portionable. */
+const isSized = (item: CateringMenuItem) => item.sizes != null && item.sizes.length > 0;
+/** The first size in the array is the default (also the smallest/"from" price). */
+const defaultSizeId = (item: CateringMenuItem): string | null => item.sizes?.[0]?.id ?? null;
+/** Resolve the currently-selected size object for a line; falls back to sizes[0]. */
+const selectedSize = (item: CateringMenuItem, line: Line) =>
+  item.sizes?.find((s) => s.id === line.sizeId) ?? item.sizes?.[0] ?? null;
+
+/** Per-line unit price in cents. Dispatches: sized → chosen size price; portionable → portion price; else → flat price. */
+function unitCents(item: CateringMenuItem, line: Line): number {
+  if (isSized(item)) return selectedSize(item, line)?.unitPriceCents ?? item.unitPriceCents;
+  if (isPortionable(item) && item.portionPricesCents) return item.portionPricesCents[line.portion];
   return item.unitPriceCents;
 }
 
@@ -110,10 +124,14 @@ function catFor(item: CateringMenuItem): Cat {
   return "main";
 }
 
-/** Human summary of a customized line (portion / subs / drink / allergen holds / notes) — display only. */
+/** Human summary of a customized line (portion / size / subs / drink / allergen holds / notes) — display only. */
 function lineSummary(e: CartEntry): string {
   const bits: string[] = [];
   if (isPortionable(e.item) && e.line.portion !== "whole") bits.push(PORTION_LABELS[e.line.portion].symbol);
+  if (isSized(e.item)) {
+    const sz = selectedSize(e.item, e.line);
+    if (sz) bits.push(sz.label);
+  }
   if (e.line.subs.length) bits.push(e.line.subs.join(", "));
   if (e.line.sub) bits.push(e.line.sub);
   if (e.line.drink) bits.push(e.line.drink);
@@ -163,12 +181,15 @@ export default function OrderBuild() {
           const refId = it.menuItemId ?? it.itemId;
           if (!refId) continue;
           const key = `${kind}:${refId}`;
-          if (!menuByKey.has(key)) continue; // line references something not in the shopping menu (e.g. napkins) — skip.
+          const menuItem = menuByKey.get(key);
+          if (!menuItem) continue; // line references something not in the shopping menu (e.g. napkins) — skip.
           const prev = initial[key];
           initial[key] = {
             ...emptyLine(),
             qty: (prev?.qty ?? 0) + it.quantity,
             portion: it.portion ?? "whole",
+            // Hydrate persisted sizeId; fall back to default if the item is sized and sizeId is missing.
+            sizeId: it.sizeId ?? defaultSizeId(menuItem),
           };
         }
         setCart(initial);
@@ -197,8 +218,15 @@ export default function OrderBuild() {
   // ── Cart mutations ──────────────────────────────────────────────────────────────
   const quickAdd = useCallback((key: string) => setCart((c) => {
     const prev = c[key];
-    return { ...c, [key]: prev ? { ...prev, qty: prev.qty + 1 } : emptyLine() };
-  }), []);
+    if (prev) return { ...c, [key]: { ...prev, qty: prev.qty + 1 } };
+    // For a new line on a sized item, stamp the default size so the line is never size-less.
+    const menuItem = menuByKey.get(key);
+    const freshLine = emptyLine();
+    if (menuItem && isSized(menuItem)) {
+      freshLine.sizeId = defaultSizeId(menuItem);
+    }
+    return { ...c, [key]: freshLine };
+  }), [menuByKey]);
   const dec = useCallback((key: string) => setCart((c) => {
     const prev = c[key];
     const next = (prev?.qty ?? 0) - 1;
@@ -217,13 +245,18 @@ export default function OrderBuild() {
 
   // Local subtotal (cents) — an instant echo while the debounced POST is in flight; the server's
   // returned subtotalCents is authoritative once it lands.
-  const localSubtotalCents = lines.reduce((s, e) => s + unitCents(e.item, e.line.portion) * e.line.qty, 0);
+  const localSubtotalCents = lines.reduce((s, e) => s + unitCents(e.item, e.line) * e.line.qty, 0);
   const count = lines.reduce((s, e) => s + e.line.qty, 0);
 
-  // Coverage: portionable subs count by portion fraction; everything else counts its quantity.
+  // Coverage: portionable subs count by portion fraction; sized items count by serves (or 1);
+  // everything else counts its quantity.
   const servedBy = (cat: Cat) => lines
     .filter((e) => catFor(e.item) === cat)
-    .reduce((s, e) => s + e.line.qty * (isPortionable(e.item) ? PORTION_FRACTION[e.line.portion] : 1), 0);
+    .reduce((s, e) => {
+      if (isPortionable(e.item)) return s + e.line.qty * PORTION_FRACTION[e.line.portion];
+      if (isSized(e.item)) return s + e.line.qty * (selectedSize(e.item, e.line)?.serves ?? 1);
+      return s + e.line.qty;
+    }, 0);
   const coverage = { main: servedBy("main"), side: servedBy("side"), sweet: servedBy("sweet"), drink: servedBy("drink") };
 
   const hints = coverageHints(lines, coverage, headcount);
@@ -233,14 +266,14 @@ export default function OrderBuild() {
     return () => window.clearInterval(t);
   }, [hints.length]);
 
-  // ── Debounced persistence (D20 — references + qty + portion only, never prices) ──
+  // ── Debounced persistence (D20 — references + qty + portion + sizeId only, never prices) ──
   const persistTimer = useRef<number | null>(null);
   // Serialize the reference payload so the effect only fires when the persisted shape actually changes
-  // (not on a display-only customization edit).
+  // (not on a display-only customization edit). sizeId is included so a size change re-triggers POST.
   const linesPayload = useMemo(
     () => lines.map((e) => e.item.kind === "menu_item"
       ? { menuItemId: e.item.id, portion: e.line.portion, quantity: e.line.qty }
-      : { itemId: e.item.id, quantity: e.line.qty }),
+      : { itemId: e.item.id, quantity: e.line.qty, ...(e.line.sizeId ? { sizeId: e.line.sizeId } : {}) }),
     [lines],
   );
   const payloadKey = JSON.stringify(linesPayload);
@@ -265,7 +298,7 @@ export default function OrderBuild() {
       })();
     }, 400);
     return () => { if (persistTimer.current !== null) window.clearTimeout(persistTimer.current); };
-    // payloadKey captures the persisted-reference shape; linesPayload/draftId/loadState are stable deps.
+    // payloadKey captures the persisted-reference shape (incl. sizeId); linesPayload/draftId/loadState are stable deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [payloadKey, draftId, loadState]);
 
@@ -338,7 +371,12 @@ export default function OrderBuild() {
                 {g.items.map((it) => {
                   const key = cartKey(it);
                   const portionable = isPortionable(it);
+                  const sized = isSized(it);
+                  // Portionable: show "from" + whole price. Sized: show "from" + min (smallest) price (already unitPriceCents).
+                  // Plain: flat price.
                   const priceCents = portionable && it.portionPricesCents ? it.portionPricesCents.whole : it.unitPriceCents;
+                  const affordanceText = portionable ? "Choose portion →" : sized ? "Choose size →" : "Customize →";
+                  const priceDisplay = portionable || sized ? `from ${money(priceCents)}` : money(priceCents);
                   return (
                     <div key={key} className="flex items-center justify-between gap-4">
                       <button type="button" onClick={() => setModalKey(key)} className="flex-1 p-4 text-left transition hover:bg-co-bg/40">
@@ -346,10 +384,10 @@ export default function OrderBuild() {
                           <h3 className="text-sm font-extrabold text-co-text">{it.name}</h3>
                           {it.cateringOnly && <span className="rounded-full bg-co-gold/70 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-co-text">Catering</span>}
                         </div>
-                        <span className="mt-1 inline-block text-[11px] font-bold uppercase tracking-wide text-co-text-dim">{portionable ? "Choose portion →" : "Customize →"}</span>
+                        <span className="mt-1 inline-block text-[11px] font-bold uppercase tracking-wide text-co-text-dim">{affordanceText}</span>
                       </button>
                       <div className="flex shrink-0 items-center gap-3 pr-4">
-                        <span className="text-sm font-bold text-co-cta">{portionable ? `from ${money(priceCents)}` : money(priceCents)}</span>
+                        <span className="text-sm font-bold text-co-cta">{priceDisplay}</span>
                         <button type="button" onClick={() => quickAdd(key)} aria-label={`Quick add ${it.name}`} className="grid h-9 w-9 place-items-center rounded-full bg-co-text text-xl font-bold text-co-cta transition hover:bg-co-text/90">+</button>
                       </div>
                     </div>
@@ -514,7 +552,7 @@ function Cart({ lines, subtotalCents, headcount, setHeadcount, coverage, onCusto
           <ul className="flex flex-col gap-3">
             {lines.map((e) => {
               const portionable = isPortionable(e.item);
-              const displayCents = unitCents(e.item, e.line.portion);
+              const displayCents = unitCents(e.item, e.line);
               return (
                 <li key={e.key}>
                   <div className="flex items-center justify-between gap-3">
@@ -562,7 +600,9 @@ function PortionSelector({ item, portion, onChange }: {
         {portions.map((p) => {
           const selected = portion === p;
           const info = PORTION_LABELS[p];
-          const priceCents = unitCents(item, p);
+          // PortionSelector only renders for portionable items — price off portionPricesCents directly
+          // (no line needed; size is irrelevant here since portionable XOR sized).
+          const priceCents = item.portionPricesCents?.[p] ?? item.unitPriceCents;
           return (
             <button
               key={p}
@@ -588,6 +628,49 @@ function PortionSelector({ item, portion, onChange }: {
   );
 }
 
+/**
+ * Size selector for sized items (kind:"item" with a non-empty sizes array) — one chip per size,
+ * each showing the size label and its unit price. Modeled as a sibling of PortionSelector.
+ */
+function SizeSelector({ item, sizeId, onChange }: {
+  item: CateringMenuItem;
+  sizeId: string | null;
+  onChange: (id: string) => void;
+}) {
+  const sizes = item.sizes ?? [];
+  // Treat null as sizes[0] (the default).
+  const effectiveSizeId = sizeId ?? sizes[0]?.id;
+  return (
+    <div>
+      <p className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim" id="size-label">Choose your size</p>
+      <div className="mt-2 flex flex-wrap gap-2" role="radiogroup" aria-labelledby="size-label">
+        {sizes.map((sz) => {
+          const selected = sz.id === effectiveSizeId;
+          return (
+            <button
+              key={sz.id}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              aria-label={`${sz.label} — ${money(sz.unitPriceCents)}`}
+              onClick={() => onChange(sz.id)}
+              className={`flex min-w-[72px] flex-col items-center rounded-2xl border-2 px-3 py-2 text-center transition ${
+                selected
+                  ? "border-co-text bg-co-text text-co-bg"
+                  : "border-co-border-2 bg-co-surface text-co-text-muted hover:border-co-text/40 hover:text-co-text"
+              }`}
+            >
+              <span className="text-base font-extrabold leading-none">{sz.label}</span>
+              <span className={`mt-0.5 text-xs font-semibold ${selected ? "text-co-cta" : "text-co-text-dim"}`}>{money(sz.unitPriceCents)}</span>
+            </button>
+          );
+        })}
+      </div>
+      <p className="mt-1.5 text-[11px] text-co-text-dim">Pick the size for your spread.</p>
+    </div>
+  );
+}
+
 function Chips({ options, selected, onToggle }: { options: string[]; selected: string[]; onToggle: (v: string) => void }) {
   return (
     <div className="mt-2 flex flex-wrap gap-2">
@@ -600,17 +683,27 @@ function Chips({ options, selected, onToggle }: { options: string[]; selected: s
 }
 
 /**
- * Customize modal. Portionable subs get the ¼/½/whole PortionSelector (portion IS persisted). The
- * allergen / special-instructions fields are LOCAL display-only state — they have no server home in
- * 3a and are NOT part of the persisted payload (only { portion, quantity } are).
+ * Customize modal. Portionable subs get the ¼/½/whole PortionSelector (portion IS persisted).
+ * Sized items get the SizeSelector (sizeId IS persisted). The two selectors are mutually exclusive
+ * (portionable XOR sized). Allergen / special-instructions fields are LOCAL display-only state —
+ * they have no server home in 3a and are NOT part of the persisted payload.
  */
 function CustomizeModal({ item, existing, onClose, onSave }: { item: CateringMenuItem; existing: Line | null; onClose: () => void; onSave: (line: Line) => void }) {
-  const [line, setLine] = useState<Line>(existing ?? emptyLine());
+  const portionable = isPortionable(item);
+  const sized = isSized(item);
+
+  // Initialize: for a sized item without a sizeId, stamp the default so the selector is never blank.
+  const initialLine = (): Line => {
+    const base = existing ?? emptyLine();
+    if (sized && !base.sizeId) return { ...base, sizeId: defaultSizeId(item) };
+    return base;
+  };
+
+  const [line, setLine] = useState<Line>(initialLine);
   const set = (patch: Partial<Line>) => setLine((l) => ({ ...l, ...patch }));
   const toggleAllergen = (a: string) => set({ allergens: line.allergens.includes(a) ? line.allergens.filter((x) => x !== a) : [...line.allergens, a] });
 
-  const portionable = isPortionable(item);
-  const unit = unitCents(item, line.portion);
+  const unit = unitCents(item, line);
 
   return (
     <div role="dialog" aria-modal="true" onClick={onClose} className="fixed inset-0 z-50 flex items-end justify-center bg-co-text/60 backdrop-blur-sm sm:items-center sm:p-4">
@@ -627,6 +720,12 @@ function CustomizeModal({ item, existing, onClose, onSave }: { item: CateringMen
           {portionable && (
             <div className="mt-5">
               <PortionSelector item={item} portion={line.portion} onChange={(p) => set({ portion: p })} />
+            </div>
+          )}
+
+          {sized && (
+            <div className="mt-5">
+              <SizeSelector item={item} sizeId={line.sizeId ?? defaultSizeId(item)} onChange={(id) => set({ sizeId: id })} />
             </div>
           )}
 
