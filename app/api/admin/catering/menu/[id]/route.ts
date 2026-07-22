@@ -18,7 +18,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (!su.ok) return jsonError(403, su.code);
 
   const b = parsed as Record<string, unknown>;
-  const changes: { cateringAvailable?: boolean; cateringOnly?: boolean } = {};
+  const kind = b.kind === "menu_item" ? "menu_item" : b.kind === "item" ? "item" : null;
+  if (!kind) return jsonError(400, "invalid_payload", { field: "kind" });
+  const changes: { cateringAvailable?: boolean; cateringOnly?: boolean; cateringPortionable?: boolean } = {};
   if ("cateringAvailable" in b) {
     if (typeof b.cateringAvailable !== "boolean") return jsonError(400, "invalid_payload", { field: "cateringAvailable" });
     changes.cateringAvailable = b.cateringAvailable;
@@ -27,11 +29,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (typeof b.cateringOnly !== "boolean") return jsonError(400, "invalid_payload", { field: "cateringOnly" });
     changes.cateringOnly = b.cateringOnly;
   }
+  if ("cateringPortionable" in b) {
+    if (typeof b.cateringPortionable !== "boolean") return jsonError(400, "invalid_payload", { field: "cateringPortionable" });
+    changes.cateringPortionable = b.cateringPortionable;
+  }
   if (Object.keys(changes).length === 0) return jsonError(400, "invalid_payload", { message: "No flags to set" });
 
   try {
-    const result = await setCateringFlags(ctx, id, changes);
-    return jsonOk({ cateringAvailable: result.cateringAvailable, cateringOnly: result.cateringOnly });
+    const result = await setCateringFlags(ctx, kind, id, changes);
+    return jsonOk({ cateringAvailable: result.cateringAvailable, cateringOnly: result.cateringOnly, cateringPortionable: result.cateringPortionable });
   } catch (e) {
     if (e instanceof AdminCateringMenuError) return jsonError(e.status, e.code, { message: e.message });
     throw e;
