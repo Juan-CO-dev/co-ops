@@ -82,6 +82,10 @@ export interface PackageLine {
   quantity: number;
   unitPriceCents: number;
 }
+/** An eligible option of a choice slot (sub-project B). */
+export interface PackageSlotOption { kind: "item" | "menu_item"; refId: string; name: string }
+/** A choice slot on a package: pick `pickN` (whole-sub) picks from `options`. */
+export interface PackageSlot { packageItemId: string; label: string; pickN: number; options: PackageSlotOption[] }
 export interface CateringPackage {
   id: string;
   labelEn: string;
@@ -89,6 +93,8 @@ export interface CateringPackage {
   pricingMode: string;
   priceCents: number;
   minHeadcount: number | null;
+  leadTimeHours: number | null;   // advisory
+  slots: PackageSlot[];           // choice slots + eligible options (sub-project B)
   items: PackageLine[];
 }
 
@@ -197,6 +203,8 @@ export async function loadCateringPackagesForQuote(actor: AuthContext, locationI
     pricingMode: p.pricing_mode,
     priceCents: p.price_cents,
     minHeadcount: p.min_headcount,
+    leadTimeHours: null, // staff quote picker doesn't consume these in sub-project B
+    slots: [],
     items: byPackage.get(p.id) ?? [],
   }));
 }
