@@ -45,8 +45,8 @@ function depositLabel(depositCents: number, totalCents: number): string {
 }
 
 /**
- * For a package line, returns a human-readable composition string like "Teamster ×2, Crunchy Boi ×1".
- * Returns "" for non-package lines.
+ * For a package line, returns a human-readable composition string like "Teamster ×2, Crunchy Boi"
+ * (the ×N is shown only when >1). Returns "" for non-package lines.
  */
 function packageComposition(
   line: DraftLoad["items"][number],
@@ -66,8 +66,8 @@ function packageComposition(
         if (match) { name = match.name; break; }
       }
     }
-    const label = name ?? (opt.quantity === 1 ? "1 sub" : `${opt.quantity} subs`);
-    return `${label} ×${opt.quantity}`;
+    if (name) return opt.quantity > 1 ? `${name} ×${opt.quantity}` : name;
+    return opt.quantity === 1 ? "1 sub" : `${opt.quantity} subs`; // name unresolved — count fallback
   });
   return parts.join(", ");
 }
