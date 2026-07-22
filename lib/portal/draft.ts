@@ -21,8 +21,8 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
 import { computeChargeStack, lineTotalCents } from "@/lib/catering/quotes";
 import type { ChargeRates, ChargeStack } from "@/lib/catering/quotes";
-import { loadPublicCateringMenu, loadPublicPricingContext } from "./menu";
-import type { CateringMenuItem } from "@/lib/catering/menu";
+import { loadPublicCateringMenu, loadPublicCateringPackages, loadPublicPricingContext } from "./menu";
+import type { CateringMenuItem, CateringPackage } from "@/lib/catering/menu";
 import { createPaymentDue } from "@/lib/catering/payments";
 import { sendEmail } from "@/lib/email";
 import { renderOrderConfirmationEmail } from "@/lib/email-templates/order-confirmation";
@@ -69,12 +69,18 @@ export interface DraftIntake {
 
 export type Portion = "quarter" | "half" | "whole";
 
-/** A cart line reference (no price — D20). Exactly one of itemId / menuItemId. */
+/** A per-slot pick on a package line (sub-project B) — a reference only, re-validated server-side. */
+export interface PackageOptionInput { packageItemId: string; itemId?: string | null; menuItemId?: string | null; quantity: number }
+/** A resolved/persisted per-slot pick on a package line. */
+export interface PackageOption { packageItemId: string; itemId: string | null; menuItemId: string | null; quantity: number }
+
+/** A cart line reference (no price — D20). Exactly one of itemId / menuItemId / packageId. */
 export interface DraftLineInput {
   itemId?: string | null;
   menuItemId?: string | null;
   packageId?: string | null;
   sizeId?: string | null;   // catering size of a sided item (sub-project A)
+  packageOptions?: PackageOptionInput[]; // the customer's slot picks for a package line (sub-project B)
   portion?: Portion | null;
   quantity: number;
 }
@@ -91,6 +97,7 @@ export interface DraftItem {
   unitPriceCents: number;
   lineTotalCents: number;
   displayOrder: number;
+  options: PackageOption[]; // the persisted slot picks (empty for non-package lines)
 }
 
 /** The lead's intake detail fields the review recap shows. */
@@ -123,6 +130,7 @@ export interface DraftView {
 export interface DraftLoad extends DraftView {
   lead: DraftLead | null;
   menu: CateringMenuItem[];
+  packages: CateringPackage[]; // orderable catering packages (sub-project B)
   addonNapkins: CateringMenuItem | null;
 }
 
@@ -297,15 +305,32 @@ export async function loadDraft(customerId: string, quoteId: string): Promise<Dr
   if (error) throw new Error(`loadDraft quote: ${error.message}`);
   if (!row || row.customer_id !== customerId) return null;
 
-  const [{ data: itemRows, error: iErr }, menuAll, lead] = await Promise.all([
+  const [{ data: itemRows, error: iErr }, menuAll, packages, lead] = await Promise.all([
     sb.from("catering_quote_items")
       .select("id, item_id, menu_item_id, package_id, size_id, description, quantity, unit_price_cents, line_total_cents, display_order, portion")
       .eq("quote_id", quoteId).order("display_order", { ascending: true })
       .returns<Array<{ id: string; item_id: string | null; menu_item_id: string | null; package_id: string | null; size_id: string | null; description: string | null; quantity: number; unit_price_cents: number; line_total_cents: number; display_order: number; portion: string | null }>>(),
     loadPublicCateringMenu(row.location_id),
+    loadPublicCateringPackages(row.location_id),
     loadDraftLead(sb, row.pipeline_id),
   ]);
   if (iErr) throw new Error(`loadDraft items: ${iErr.message}`);
+
+  // Hydrate the package slot picks for any package lines (sub-project B).
+  const packageLineIds = (itemRows ?? []).filter((r) => r.package_id).map((r) => r.id);
+  const optionsByLine = new Map<string, PackageOption[]>();
+  if (packageLineIds.length > 0) {
+    const { data: optRows, error: oErr } = await sb.from("catering_quote_item_options")
+      .select("quote_item_id, package_item_id, item_id, menu_item_id, quantity")
+      .in("quote_item_id", packageLineIds)
+      .returns<Array<{ quote_item_id: string; package_item_id: string; item_id: string | null; menu_item_id: string | null; quantity: number | string }>>();
+    if (oErr) throw new Error(`loadDraft options: ${oErr.message}`);
+    for (const o of optRows ?? []) {
+      const arr = optionsByLine.get(o.quote_item_id) ?? [];
+      arr.push({ packageItemId: o.package_item_id, itemId: o.item_id, menuItemId: o.menu_item_id, quantity: Number(o.quantity) });
+      optionsByLine.set(o.quote_item_id, arr);
+    }
+  }
 
   const addonNapkins = menuAll.find((m) => m.section === ADDON_SECTION) ?? null;
   const menu = menuAll.filter((m) => m.section !== ADDON_SECTION);
@@ -313,7 +338,7 @@ export async function loadDraft(customerId: string, quoteId: string): Promise<Dr
     id: r.id, itemId: r.item_id, menuItemId: r.menu_item_id, packageId: r.package_id, sizeId: r.size_id,
     portion: r.portion === "quarter" || r.portion === "half" || r.portion === "whole" ? r.portion : null,
     description: r.description, quantity: Number(r.quantity), unitPriceCents: r.unit_price_cents,
-    lineTotalCents: r.line_total_cents, displayOrder: r.display_order,
+    lineTotalCents: r.line_total_cents, displayOrder: r.display_order, options: optionsByLine.get(r.id) ?? [],
   }));
 
   return {
@@ -324,7 +349,7 @@ export async function loadDraft(customerId: string, quoteId: string): Promise<Dr
       serviceChargeCents: row.service_charge_cents, gratuityCents: row.gratuity_cents,
       taxCents: row.tax_cents, totalCents: row.total_cents, depositCents: row.deposit_cents,
     },
-    items, lead, menu, addonNapkins,
+    items, lead, menu, packages, addonNapkins,
   };
 }
 
@@ -350,6 +375,7 @@ interface ResolvedLine {
   itemId: string | null; menuItemId: string | null; packageId: string | null; sizeId: string | null;
   portion: Portion | null; description: string; quantity: number;
   unitPriceCents: number; lineTotalCents: number; displayOrder: number;
+  options: PackageOption[]; // resolved package slot picks (empty for non-package lines)
 }
 
 /** Resolve + price every line from the SERVER-owned menu (D20). A client price is never read. */
@@ -358,6 +384,10 @@ async function resolveLines(locationId: string, lines: DraftLineInput[]): Promis
   const menu = await loadPublicCateringMenu(locationId);
   // items and menu_items are separate id spaces → key the lookup by `${kind}:${id}` (mirrors orders.ts).
   const byKey = new Map(menu.map((m) => [`${m.kind}:${m.id}`, m] as const));
+  // Packages are a separate loader; only pay for it when the payload has a package line (sub-project B).
+  const hasPackages = lines.some((l) => l.packageId != null && l.packageId !== "");
+  const packages = hasPackages ? await loadPublicCateringPackages(locationId) : [];
+  const pkgById = new Map(packages.map((p) => [p.id, p] as const));
   return lines.map((l, i) => {
     const quantity = Number(l.quantity);
     // Integer + bounded (A-H4): a fractional qty isn't meaningful for whole units, and a huge qty
@@ -367,6 +397,7 @@ async function resolveLines(locationId: string, lines: DraftLineInput[]): Promis
     }
     const itemId = l.itemId ?? null;
     const menuItemId = l.menuItemId ?? null;
+    const packageId = l.packageId ?? null;
     if (itemId != null && itemId !== "") {
       const it = byKey.get(`item:${itemId}`);
       if (!it) throw new PortalDraftError(400, "invalid_line", `Line ${i + 1}: unknown item`);
@@ -374,9 +405,9 @@ async function resolveLines(locationId: string, lines: DraftLineInput[]): Promis
       if (it.sizes && it.sizes.length > 0) {
         const size = l.sizeId ? it.sizes.find((s) => s.id === l.sizeId) : it.sizes[0];
         if (!size) throw new PortalDraftError(400, "invalid_line", `Line ${i + 1}: unknown size`);
-        return { itemId, menuItemId: null, packageId: null, sizeId: size.id, portion: null, description: `${it.name} (${size.label})`, quantity, unitPriceCents: size.unitPriceCents, lineTotalCents: lineTotalCents(quantity, size.unitPriceCents), displayOrder: i };
+        return { itemId, menuItemId: null, packageId: null, sizeId: size.id, portion: null, description: `${it.name} (${size.label})`, quantity, unitPriceCents: size.unitPriceCents, lineTotalCents: lineTotalCents(quantity, size.unitPriceCents), displayOrder: i, options: [] };
       }
-      return { itemId, menuItemId: null, packageId: null, sizeId: null, portion: null, description: it.name, quantity, unitPriceCents: it.unitPriceCents, lineTotalCents: lineTotalCents(quantity, it.unitPriceCents), displayOrder: i };
+      return { itemId, menuItemId: null, packageId: null, sizeId: null, portion: null, description: it.name, quantity, unitPriceCents: it.unitPriceCents, lineTotalCents: lineTotalCents(quantity, it.unitPriceCents), displayOrder: i, options: [] };
     }
     if (menuItemId != null && menuItemId !== "") {
       const sub = byKey.get(`menu_item:${menuItemId}`);
@@ -384,9 +415,37 @@ async function resolveLines(locationId: string, lines: DraftLineInput[]): Promis
       const portion: Portion = l.portion ?? "whole";
       if (!sub.portionable && portion !== "whole") throw new PortalDraftError(400, "invalid_line", `Line ${i + 1}: item is not portioned`);
       const unitPriceCents = sub.portionable && sub.portionPricesCents ? sub.portionPricesCents[portion] : sub.unitPriceCents;
-      return { itemId: null, menuItemId, packageId: null, sizeId: null, portion: sub.portionable ? portion : null, description: sub.name, quantity, unitPriceCents, lineTotalCents: lineTotalCents(quantity, unitPriceCents), displayOrder: i };
+      return { itemId: null, menuItemId, packageId: null, sizeId: null, portion: sub.portionable ? portion : null, description: sub.name, quantity, unitPriceCents, lineTotalCents: lineTotalCents(quantity, unitPriceCents), displayOrder: i, options: [] };
     }
-    throw new PortalDraftError(400, "invalid_line", `Line ${i + 1}: needs an item or sub reference`);
+    if (packageId != null && packageId !== "") {
+      // Package line (sub-project B): price = package.price_cents × qty (D20 — picks never move price).
+      const pkg = pkgById.get(packageId);
+      if (!pkg) throw new PortalDraftError(400, "invalid_line", `Line ${i + 1}: unknown package`);
+      const slotByItemId = new Map(pkg.slots.map((s) => [s.packageItemId, s] as const));
+      const perSlotTotal = new Map<string, number>();
+      const options: PackageOption[] = (l.packageOptions ?? []).map((o) => {
+        const slot = slotByItemId.get(o.packageItemId);
+        if (!slot) throw new PortalDraftError(400, "invalid_line", `Line ${i + 1}: unknown package slot`);
+        const refKind: "item" | "menu_item" = o.menuItemId ? "menu_item" : "item";
+        const refId = o.menuItemId ?? o.itemId ?? "";
+        if (!slot.options.some((opt) => opt.kind === refKind && opt.refId === refId)) {
+          throw new PortalDraftError(400, "invalid_line", `Line ${i + 1}: not an eligible option`);
+        }
+        const q = Number(o.quantity);
+        if (!Number.isInteger(q) || q <= 0 || q > MAX_LINE_QTY) throw new PortalDraftError(400, "invalid_line", `Line ${i + 1}: invalid option quantity`);
+        perSlotTotal.set(o.packageItemId, (perSlotTotal.get(o.packageItemId) ?? 0) + q);
+        return { packageItemId: o.packageItemId, itemId: refKind === "item" ? refId : null, menuItemId: refKind === "menu_item" ? refId : null, quantity: q };
+      });
+      // Over-pick guard (under-pick allowed — an unconfigured carried-in package still prices).
+      for (const slot of pkg.slots) {
+        if ((perSlotTotal.get(slot.packageItemId) ?? 0) > slot.pickN) {
+          throw new PortalDraftError(400, "invalid_line", `Line ${i + 1}: too many picks for “${slot.label}”`);
+        }
+      }
+      const unitPriceCents = pkg.priceCents;
+      return { itemId: null, menuItemId: null, packageId, sizeId: null, portion: null, description: pkg.labelEn, quantity, unitPriceCents, lineTotalCents: lineTotalCents(quantity, unitPriceCents), displayOrder: i, options };
+    }
+    throw new PortalDraftError(400, "invalid_line", `Line ${i + 1}: needs an item, sub, or package reference`);
   });
 }
 
@@ -439,12 +498,22 @@ export async function setDraftLines(customerId: string, quoteId: string, lines: 
   const { error: delErr } = await sb.from("catering_quote_items").delete().eq("quote_id", quoteId);
   if (delErr) throw new Error(`setDraftLines delete: ${delErr.message}`);
   if (resolved.length > 0) {
-    const { error: insErr } = await sb.from("catering_quote_items").insert(resolved.map((l) => ({
+    const { data: insertedRows, error: insErr } = await sb.from("catering_quote_items").insert(resolved.map((l) => ({
       quote_id: quoteId, item_id: l.itemId, menu_item_id: l.menuItemId, package_id: l.packageId, size_id: l.sizeId,
       portion: l.portion, description: l.description, quantity: l.quantity,
       unit_price_cents: l.unitPriceCents, line_total_cents: l.lineTotalCents, display_order: l.displayOrder, created_by: null,
-    })));
+    }))).select("id, display_order");
     if (insErr) throw new Error(`setDraftLines insert: ${insErr.message}`);
+    // Persist package slot picks against the NEW line ids (old rows were cascade-deleted above).
+    const idByOrder = new Map((insertedRows ?? []).map((r) => [r.display_order as number, r.id as string] as const));
+    const optionRows = resolved.flatMap((l) => l.options.map((o) => ({
+      quote_item_id: idByOrder.get(l.displayOrder)!, package_item_id: o.packageItemId,
+      item_id: o.itemId, menu_item_id: o.menuItemId, quantity: o.quantity, created_by: null,
+    })));
+    if (optionRows.length > 0) {
+      const { error: optErr } = await sb.from("catering_quote_item_options").insert(optionRows);
+      if (optErr) throw new Error(`setDraftLines options insert: ${optErr.message}`);
+    }
   }
   const { error: upErr } = await sb.from("catering_quotes")
     .update(snapshotColumns(rates, stack, isDelivery, deliveryZoneId))
@@ -453,7 +522,7 @@ export async function setDraftLines(customerId: string, quoteId: string, lines: 
 
   return {
     quoteId, pipelineId: header.pipeline_id, locationId: header.location_id, status: "draft", isDelivery, deliveryZoneId, stack,
-    items: resolved.map((l) => ({ id: `resolved-${l.displayOrder}`, itemId: l.itemId, menuItemId: l.menuItemId, packageId: l.packageId, sizeId: l.sizeId, portion: l.portion, description: l.description, quantity: l.quantity, unitPriceCents: l.unitPriceCents, lineTotalCents: l.lineTotalCents, displayOrder: l.displayOrder })),
+    items: resolved.map((l) => ({ id: `resolved-${l.displayOrder}`, itemId: l.itemId, menuItemId: l.menuItemId, packageId: l.packageId, sizeId: l.sizeId, portion: l.portion, description: l.description, quantity: l.quantity, unitPriceCents: l.unitPriceCents, lineTotalCents: l.lineTotalCents, displayOrder: l.displayOrder, options: l.options })),
   };
 }
 
