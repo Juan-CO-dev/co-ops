@@ -12,7 +12,7 @@ import type { TranslationKey } from "@/lib/i18n/types";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
-import { loadAdminMenuItems, MENU_ADMIN_MIN } from "@/lib/admin/catering/menu";
+import { loadAdminCateringMenu, MENU_ADMIN_MIN } from "@/lib/admin/catering/menu";
 import { MenuClient } from "@/components/admin/catering/menu/MenuClient";
 
 export default async function AdminCateringMenuPage() {
@@ -21,7 +21,7 @@ export default async function AdminCateringMenuPage() {
   if (level < MENU_ADMIN_MIN) redirect("/dashboard");
   const lang = auth.user.language;
 
-  const items = await loadAdminMenuItems(auth);
+  const items = await loadAdminCateringMenu(auth);
 
   return (
     <div>
