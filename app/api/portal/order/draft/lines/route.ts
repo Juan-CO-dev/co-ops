@@ -39,6 +39,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return {
       itemId: typeof o.itemId === "string" ? o.itemId : null,
       menuItemId: typeof o.menuItemId === "string" ? o.menuItemId : null,
+      sizeId: typeof o.sizeId === "string" ? o.sizeId : null,
       portion: o.portion === "quarter" || o.portion === "half" || o.portion === "whole" ? o.portion : null,
       quantity: Number(o.quantity),
     };

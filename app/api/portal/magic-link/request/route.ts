@@ -30,9 +30,9 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /** ⑤ storefront carry-through: validate the pre-selection (item+qty). Drop malformed entries —
  *  never reject the whole intake (the draft just seeds fewer/no lines; createDraftFromIntake
  *  re-resolves + re-prices every ref server-side). Returns null when nothing valid remains. */
-function parsePreselect(v: unknown): Array<{ menuItemId?: string; itemId?: string; quantity: number }> | null {
+function parsePreselect(v: unknown): Array<{ menuItemId?: string; itemId?: string; sizeId?: string; quantity: number }> | null {
   if (!Array.isArray(v)) return null;
-  const out: Array<{ menuItemId?: string; itemId?: string; quantity: number }> = [];
+  const out: Array<{ menuItemId?: string; itemId?: string; sizeId?: string; quantity: number }> = [];
   for (const e of v) {
     if (!e || typeof e !== "object") continue;
     const o = e as Record<string, unknown>;
@@ -41,7 +41,9 @@ function parsePreselect(v: unknown): Array<{ menuItemId?: string; itemId?: strin
     if ((menuItemId === undefined) === (itemId === undefined)) continue; // exactly one ref
     const q = o.quantity;
     if (typeof q !== "number" || !Number.isInteger(q) || q < 1 || q > 99) continue;
-    out.push(menuItemId ? { menuItemId, quantity: q } : { itemId, quantity: q });
+    // A sized item may carry the chosen size (item lines only; createDraftFromIntake re-resolves it).
+    const sizeId = typeof o.sizeId === "string" && UUID_RE.test(o.sizeId) ? o.sizeId : undefined;
+    out.push(menuItemId ? { menuItemId, quantity: q } : { itemId, quantity: q, ...(sizeId ? { sizeId } : {}) });
     if (out.length >= MAX_PRESELECT) break;
   }
   return out.length > 0 ? out : null;
