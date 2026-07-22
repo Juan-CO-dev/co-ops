@@ -3,12 +3,12 @@
 /**
  * StorefrontPackages — data-driven catering package cards for the /order storefront.
  *
- * Receives real CateringPackage rows (from loadPublicCateringPackages) and renders
- * orderable cards. Each card has an "Add to order" button that writes a package
- * reference (packageId, quantity:1) to sessionStorage under the PRESELECT_KEY,
- * then shows a brief per-card "Added ✓" confirmation. A shared floating pill
- * (mirroring StorefrontOrderTray) reflects the total package count and links to
- * /order/start.
+ * Receives real CateringPackage rows (from loadPublicCateringPackages) and renders them in their
+ * own marketing sections — Sandwich Platters, Individual Lunch Boxes, The Really Big Subs (+ a
+ * catch-all) — echoing the pre-B static marketing layout. Each card has an "Add to order" button
+ * that writes a package reference (packageId, quantity:1) to sessionStorage under the PRESELECT_KEY,
+ * then shows a brief per-card "Added ✓" confirmation. A shared floating pill (mirroring
+ * StorefrontOrderTray) reflects the total package count and links to /order/start.
  *
  * Carry writes REFERENCES only — never a price. The build page configures + prices.
  */
@@ -111,6 +111,33 @@ function PackageCard({
   );
 }
 
+// ─── a titled package section ───────────────────────────────────────────────────
+
+function PkgSection({
+  id, eyebrow, title, blurb, packages, onAdd, gold,
+}: {
+  id: string; eyebrow: string; title: string; blurb: string;
+  packages: CateringPackage[]; onAdd: (id: string) => void; gold?: boolean;
+}) {
+  if (packages.length === 0) return null;
+  return (
+    <section id={id} className={`scroll-mt-16 ${gold ? "bg-co-gold/10" : ""}`}>
+      <div className="mx-auto max-w-6xl px-5 py-14">
+        <div className="mb-8">
+          <p className={`text-xs font-bold uppercase tracking-[0.28em] ${gold ? "text-co-text/60" : "text-co-text-dim"}`}>{eyebrow}</p>
+          <h2 className="mt-2 text-3xl font-extrabold tracking-tight text-co-text sm:text-4xl">{title}</h2>
+          <p className="mt-2 text-co-text-muted">{blurb}</p>
+        </div>
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          {packages.map((pkg) => (
+            <PackageCard key={pkg.id} pkg={pkg} onAdd={onAdd} />
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 // ─── main export ──────────────────────────────────────────────────────────────
 
 export function StorefrontPackages({ packages }: { packages: CateringPackage[] }) {
@@ -130,28 +157,28 @@ export function StorefrontPackages({ packages }: { packages: CateringPackage[] }
   // If no packages, render nothing (graceful dormant state)
   if (packages.length === 0) return null;
 
+  // Bucket into their own marketing sections (by label), sorted small→large by price.
+  const byPrice = (a: CateringPackage, b: CateringPackage) => a.priceCents - b.priceCents;
+  const platters = packages.filter((p) => /platter/i.test(p.labelEn)).sort(byPrice);
+  const bigSubs = packages.filter((p) => /footer/i.test(p.labelEn)).sort(byPrice);
+  const lunchBoxes = packages.filter((p) => /lunch/i.test(p.labelEn)).sort(byPrice);
+  const grouped = new Set([...platters, ...bigSubs, ...lunchBoxes].map((p) => p.id));
+  const other = packages.filter((p) => !grouped.has(p.id)).sort(byPrice); // catch-all so nothing is lost
+
   return (
     <>
-      {/* ── Package cards section ────────────────────────────────────────── */}
-      <section id="packages" className="mx-auto max-w-6xl scroll-mt-16 px-5 py-16">
-        <div className="mb-9">
-          <p className="text-xs font-bold uppercase tracking-[0.28em] text-co-text-dim">
-            Catering packages
-          </p>
-          <h2 className="mt-2 text-3xl font-extrabold tracking-tight text-co-text sm:text-4xl">
-            Everything in one order.
-          </h2>
-          <p className="mt-2 text-co-text-muted">
-            Choose a package to carry it into your order — you&apos;ll configure the details on the
-            next step.
-          </p>
-        </div>
-        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-          {packages.map((pkg) => (
-            <PackageCard key={pkg.id} pkg={pkg} onAdd={handleAdd} />
-          ))}
-        </div>
-      </section>
+      <PkgSection id="platters" eyebrow="Sandwich platters" title="The crowd-pleaser."
+        blurb="Assorted 5-inch sandwiches — pick your size and build the spread on the next step."
+        packages={platters} onAdd={handleAdd} />
+      <PkgSection id="lunch-boxes" eyebrow="Individual lunch boxes" title="Grab-and-go, sorted."
+        blurb="A sub, chips & a drink per person — choose the box, pick the subs on the next step."
+        packages={lunchBoxes} onAdd={handleAdd} />
+      <PkgSection id="big-subs" eyebrow="Go big" title="The really big subs."
+        blurb="Three or six feet of sub roll from Cardinal Bakery — your choice of the Classics."
+        packages={bigSubs} onAdd={handleAdd} gold />
+      <PkgSection id="more-packages" eyebrow="More" title="More catering packages."
+        blurb="Carry one into your order and configure the details on the next step."
+        packages={other} onAdd={handleAdd} />
 
       {/* ── Floating pill (only when packages have been added) ───────────── */}
       {pkgCount > 0 && (
