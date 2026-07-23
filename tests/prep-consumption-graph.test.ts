@@ -10,6 +10,7 @@ import {
   buildRecipeGraph,
   perUnitSkuOzForItemFromGraph,
   perUnitSkuOzForMenuItemFromGraph,
+  firstLevelItemConsumption,
   type GraphRecipe,
 } from "@/lib/prep-consumption-graph";
 import type { MeasureUnitFactor, RecipeInputSku } from "@/lib/recipe-math";
@@ -226,5 +227,43 @@ describe("weight-denominated item refs (Wave 1.5 math fix)", () => {
     ]);
     // parUnits = 4 oz ÷ 2 oz-per-par = 2 → batch sku1 = 4 oz; share 1; ÷ myYield 2.
     expect(perUnitSkuOzForMenuItemFromGraph(g, "M").get("sku1")).toBeCloseTo(2, 10);
+  });
+});
+
+describe("firstLevelItemConsumption (sales→prep-item grain)", () => {
+  function itemInUnit2(quantity: number, unit: string | null, itemId: string): GraphRecipe["inputs"][number] {
+    return { quantity, unit, componentSkuId: null, componentItemId: itemId };
+  }
+
+  it("count/null-unit refs consume quantity÷myYield par-units; SKU refs ignored", () => {
+    const g = graphOf([
+      { recipeId: "rA", batchYield: 10, inputs: [ozIn(20, "sku1")], outputs: [itemOut("A", 10)] },
+      { recipeId: "rM", batchYield: 2, inputs: [itemInUnit2(3, null, "A"), ozIn(4, "sku2")], outputs: [menuOut("M", 2)] },
+    ]);
+    const m = firstLevelItemConsumption(g, "M");
+    expect(m.size).toBe(1);
+    expect(m.get("A")).toBeCloseTo(1.5, 10); // 3 par-units per batch ÷ yield 2
+  });
+
+  it("weight-denominated refs convert via the sub's oz-per-par (registered)", () => {
+    const g = graphOf([
+      { recipeId: "rA", batchYield: 4, inputs: [ozIn(480, "sku1")], outputs: [itemOut("A", 4, 32)] },
+      { recipeId: "rM", batchYield: 1, inputs: [itemInUnit2(2, "oz", "A")], outputs: [menuOut("M", 1)] },
+    ]);
+    // 2 oz ÷ 32 oz/quart = 0.0625 quarts per unit of M
+    expect(firstLevelItemConsumption(g, "M").get("A")).toBeCloseTo(0.0625, 10);
+  });
+
+  it("an unresolvable item-ref poisons the map (volume unit, no density)", () => {
+    const g = graphOf([
+      { recipeId: "rA", batchYield: 10, inputs: [ozIn(20, "sku1")], outputs: [itemOut("A", 10)] },
+      { recipeId: "rM", batchYield: 1, inputs: [itemInUnit2(1, "quart", "A")], outputs: [menuOut("M", 1)] },
+    ]);
+    expect(firstLevelItemConsumption(g, "M").size).toBe(0);
+  });
+
+  it("no recipe / zero yield → empty", () => {
+    const g = graphOf([]);
+    expect(firstLevelItemConsumption(g, "nope").size).toBe(0);
   });
 });

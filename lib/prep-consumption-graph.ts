@@ -213,3 +213,36 @@ export function buildRecipeGraph(
   }
   return { byOutputItem, byOutputMenuItem, skuPack, measures };
 }
+
+/**
+ * FIRST-LEVEL prep-item consumption per ONE unit of a MENU_ITEM (read-track 2,
+ * sales→depletion): the consumer recipe's direct item-ref inputs converted to
+ * par-units by the SAME itemRefParUnits weight-honest semantics, share-scaled
+ * and ÷ myYield exactly like the menu engine. SKU-ref inputs are ignored here
+ * (they're the leaf engine's job); an unresolvable item-ref poisons the whole
+ * map to empty (per-entity poisoning, consistent with the flatten engines).
+ */
+export function firstLevelItemConsumption(graph: RecipeGraph, menuItemId: string): Map<string, number> {
+  const node = graph.byOutputMenuItem.get(menuItemId) ?? null;
+  if (!node || node.batchYield == null || node.batchYield <= 0) return new Map();
+  const meOut = node.outputs.find((o) => o.outputMenuItemId === menuItemId);
+  const myYield = meOut?.yield ?? 0;
+  if (myYield <= 0) return new Map();
+  let totalWeight = 0;
+  let myWeight = 0;
+  for (const o of node.outputs) {
+    const w = o.outputItemId != null ? itemOzWeight(o) : o.yield;
+    if (w > 0) totalWeight += w;
+    if (o.outputMenuItemId === menuItemId) myWeight = w > 0 ? w : 0;
+  }
+  const share = totalWeight > 0 ? myWeight / totalWeight : 1 / Math.max(node.outputs.length, 1);
+  const out = new Map<string, number>();
+  for (const c of node.inputs) {
+    if (c.componentItemId == null) continue;
+    const subPerUnit = perUnitSkuOzForItemFromGraph(graph, c.componentItemId);
+    const parUnits = itemRefParUnits(graph, c, subPerUnit);
+    if (parUnits == null) return new Map();
+    out.set(c.componentItemId, (out.get(c.componentItemId) ?? 0) + (parUnits * share) / myYield);
+  }
+  return out;
+}
