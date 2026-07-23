@@ -13,7 +13,8 @@ import { requireSessionFromHeaders } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { loadAdminCateringMenu, MENU_ADMIN_MIN } from "@/lib/admin/catering/menu";
-import { MenuClient } from "@/components/admin/catering/menu/MenuClient";
+import { loadToastMapState } from "@/lib/admin/toast-map";
+import { MenuTabs } from "@/components/admin/catering/menu/MenuTabs";
 
 export default async function AdminCateringMenuPage() {
   const auth = await requireSessionFromHeaders("/admin");
@@ -21,13 +22,13 @@ export default async function AdminCateringMenuPage() {
   if (level < MENU_ADMIN_MIN) redirect("/dashboard");
   const lang = auth.user.language;
 
-  const items = await loadAdminCateringMenu(auth);
+  const [items, toastState] = await Promise.all([loadAdminCateringMenu(auth), loadToastMapState(auth)]);
 
   return (
     <div>
       <h1 className="text-xl font-extrabold leading-tight text-co-text">{serverT(lang, "admin.catering.menu.title" as TranslationKey)}</h1>
       <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "admin.catering.menu.subtitle" as TranslationKey)}</p>
-      <MenuClient items={items} canWrite={level >= MENU_ADMIN_MIN} />
+      <MenuTabs items={items} toastState={toastState} canWrite={level >= MENU_ADMIN_MIN} />
     </div>
   );
 }
