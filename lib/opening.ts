@@ -505,7 +505,7 @@ export class OpeningPhase2IncompleteError extends OpeningError {
  * Returns NULL when the instance is in a terminal state (confirmed,
  * incomplete_confirmed, auto_finalized).
  *
- * The mapping mirrors `phase-router.tsx activePhaseForStatus` (same lookup;
+ * The mapping mirrors the former `phase-router.tsx activePhaseForStatus` (deleted 2026-07-23 deadwood pass) (same lookup;
  * lib-side helper for non-UI consumers).
  */
 export function activeOpeningPhase(status: ChecklistStatus): OpeningPhase | null {
