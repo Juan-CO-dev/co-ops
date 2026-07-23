@@ -10,7 +10,6 @@ import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import type { MeasureUnitOption } from "@/lib/admin/skus";
 import { loadMeasureUnits } from "@/lib/admin/skus";
-import type { ComponentView } from "@/lib/admin/item-components";
 import {
   skuContentOz,
   skuCostPerOz,
@@ -101,73 +100,6 @@ export function computeSkuCostPerOz(
   return out;
 }
 
-/**
- * Annotate components with perUnitCost + packYield, and compute per-item cost.
- * Memoized + visited-set guarded recursion over sub-items. Returns NEW
- * ComponentView[] (optional cost fields filled) + a per-item cost map.
- */
-export function annotateComponentCosts(args: {
-  components: ComponentView[];
-  items: Array<{ itemId: string; batchYield: number; menuPrice: number | null }>;
-  skuCostPerOzById: Map<string, number | null>;
-  skuContentOzById: Map<string, number | null>;
-  skuAvgOzById: Map<string, number | null>;
-  measures: MeasureUnitOption[];
-}): { components: ComponentView[]; itemCosts: Map<string, { perUnitCost: number | null; foodCostPct: number | null }> } {
-  const m = new Map<string, MeasureUnitFactor>(args.measures.map((x) => [x.label, { dimension: x.dimension, toBaseFactor: x.toBaseFactor }]));
-  const byItem = new Map<string, ComponentView[]>();
-  for (const c of args.components) {
-    const list = byItem.get(c.itemId) ?? [];
-    list.push(c);
-    byItem.set(c.itemId, list);
-  }
-  const itemMeta = new Map(args.items.map((i) => [i.itemId, i]));
-  const memo = new Map<string, number | null>();
-  const visiting = new Set<string>();
-
-  const perUnitCostOf = (itemId: string): number | null => {
-    const cached = memo.get(itemId);
-    if (cached !== undefined) return cached;
-    if (visiting.has(itemId)) return null; // defensive cycle guard
-    visiting.add(itemId);
-    const meta = itemMeta.get(itemId);
-    const comps = byItem.get(itemId) ?? [];
-    const cost = meta == null ? null : itemPerUnitCost(
-      meta.batchYield,
-      comps.map((c) => ({
-        quantity: c.quantity,
-        unit: c.unit,
-        componentSkuId: c.componentSkuId,
-        componentItemId: c.componentItemId,
-        skuAvgOzPerEach: c.componentSkuId ? (args.skuAvgOzById.get(c.componentSkuId) ?? null) : null,
-      })),
-      m,
-      args.skuCostPerOzById,
-      perUnitCostOf,
-    );
-    visiting.delete(itemId);
-    memo.set(itemId, cost);
-    return cost;
-  };
-
-  const itemCosts = new Map<string, { perUnitCost: number | null; foodCostPct: number | null }>();
-  for (const i of args.items) {
-    const c = perUnitCostOf(i.itemId);
-    itemCosts.set(i.itemId, { perUnitCost: c, foodCostPct: foodCostPct(c, i.menuPrice) });
-  }
-
-  const annotated = args.components.map((c) => {
-    if (c.componentSkuId == null) return { ...c, perUnitCost: null, packYield: null };
-    const batchYield = itemMeta.get(c.itemId)?.batchYield ?? 1;
-    const costPerOz = args.skuCostPerOzById.get(c.componentSkuId) ?? null;
-    const perUnitOz = componentPerUnitOz({ quantity: c.quantity, unit: c.unit, batchYield, skuAvgOzPerEach: args.skuAvgOzById.get(c.componentSkuId) ?? null }, m);
-    const perUnitCost = costPerOz == null || perUnitOz == null ? null : perUnitOz * costPerOz;
-    const packYield = packYieldForComponent(args.skuContentOzById.get(c.componentSkuId) ?? null, perUnitOz);
-    return { ...c, perUnitCost, packYield };
-  });
-
-  return { components: annotated, itemCosts };
-}
 
 /** Transitive reverse over the RECIPE graph: every output item that uses `skuId`
  * directly (recipe_inputs.component_sku_id) or through a sub-item input. Names only. */

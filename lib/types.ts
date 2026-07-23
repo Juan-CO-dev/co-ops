@@ -671,7 +671,7 @@ export type ChecklistStatus =
  *   - `confirmed` / `incomplete_confirmed` / `auto_finalized` → no active phase
  *
  * Used by `lib/opening.ts loadOpeningState` return shape (`currentPhase`) and
- * the phase-router stub at `app/(authed)/operations/opening/phase-router.tsx`.
+ * the (since-deleted, 2026-07-23 deadwood pass) phase-router stub.
  */
 export type OpeningPhase = 1 | 2 | 3;
 
