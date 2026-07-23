@@ -1,7 +1,7 @@
 /**
  * Prep-consumption engine (Item/Inventory Spine — production-in-prep fold). SERVER-ONLY,
  * service-role. Recursively flattens an item's item_components recipe to leaf-SKU oz consumed
- * per par-unit, mirroring lib/recipe-math.ts itemPerUnitOz's per-batch ÷ batch_yield semantics —
+ * per par-unit, mirroring recipe-math's per-batch ÷ batch_yield semantics —
  * but ACCUMULATING PER LEAF SKU instead of summing. Returns oz-per-output-unit; callers scale.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";

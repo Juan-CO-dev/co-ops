@@ -8,6 +8,12 @@
  * now loads the whole recipe graph in a fixed number of queries — see
  * loadRecipeGraph in prep-consumption.ts — and this module resolves in memory).
  *
+ * ONE deliberate math change vs the original (Wave 1.5, 2026-07-23): item-ref
+ * input lines with a WEIGHT-dimension unit now convert honestly to par-units
+ * of the sub-item (see itemRefParUnits) instead of reading the quantity AS
+ * par-units — prod data had 65 consumer-build lines like "2 oz Marinara"
+ * being counted as 2 QUARTS (~32× overstated SKU demand / cost).
+ *
  * Preserved semantics (load-bearing, do not "simplify"):
  *  - Cycle detection via a `visiting` set → cycle = unresolvable = null.
  *  - Any unresolvable input (unknown SKU pack, un-convertible unit, dangling
@@ -52,6 +58,41 @@ export interface RecipeGraph {
   measures: Map<string, MeasureUnitFactor>;
 }
 
+/**
+ * Par-units of a sub-ITEM consumed by an item-ref input line (Wave 1.5 math
+ * fix — prod had 65 oz-denominated consumer-build lines read as par-units,
+ * e.g. "2 oz Marinara" counted as 2 QUARTS, "3.5 oz Turkey" as 3.5 THIRD-PANS).
+ *
+ *  - unit null / unregistered / count-dimension → quantity IS par-units of the
+ *    sub-item (the seed convention for "each"/"handful"-style lines).
+ *  - WEIGHT-dimension unit → convert: oz = quantity × toBaseFactor; par-units
+ *    = oz ÷ oz-per-par-unit of the sub-item. oz-per-par-unit prefers
+ *    items.oz_per_par_unit (human-entered ground truth) and falls back to the
+ *    sub's per-par-unit INPUT mass (Σ of its flattened SKU-oz map) — exact for
+ *    mixes/salads, UNDERSTATES cook-down items (caramelized onions, jus)
+ *    until oz_per_par_unit is filled. Neither known-positive → null.
+ *  - VOLUME-dimension unit → null (unresolvable): volume→weight needs density
+ *    we don't have — same doctrine as recipe-math's ozPerMeasureUnit. Zero
+ *    prod rows carry volume-denominated item refs today.
+ */
+function itemRefParUnits(
+  graph: RecipeGraph,
+  input: GraphInput,
+  subPerUnitSkuOz: Map<string, number>,
+): number | null {
+  const m = input.unit != null ? graph.measures.get(input.unit) : undefined;
+  if (!m || m.dimension === "count") return input.quantity;
+  if (m.dimension === "volume") return null;
+  const oz = input.quantity * m.toBaseFactor;
+  const node = input.componentItemId != null ? graph.byOutputItem.get(input.componentItemId) : undefined;
+  const registered = node?.outputs.find((o) => o.outputItemId === input.componentItemId)?.ozPerParUnit ?? null;
+  let perParOz = registered != null && registered > 0 ? registered : 0;
+  if (perParOz <= 0) {
+    for (const v of subPerUnitSkuOz.values()) perParOz += v;
+  }
+  return perParOz > 0 ? oz / perParOz : null;
+}
+
 function itemOzWeight(o: GraphOutput): number {
   const w = o.ozPerParUnit;
   return w != null && w > 0 ? o.yield * w : o.yield;
@@ -81,7 +122,9 @@ function batchOz(graph: RecipeGraph, outItemId: string, visiting: Set<string>): 
     } else if (c.componentItemId != null) {
       const subPerUnit = perUnitFromNode(graph, c.componentItemId, next);
       if (subPerUnit == null) return null;
-      for (const [sku, oz] of subPerUnit) out.set(sku, (out.get(sku) ?? 0) + oz * c.quantity);
+      const parUnits = itemRefParUnits(graph, c, subPerUnit);
+      if (parUnits == null) return null;
+      for (const [sku, oz] of subPerUnit) out.set(sku, (out.get(sku) ?? 0) + oz * parUnits);
     } else return null;
   }
   return out;
@@ -141,7 +184,9 @@ export function perUnitSkuOzForMenuItemFromGraph(graph: RecipeGraph, menuItemId:
     } else if (c.componentItemId != null) {
       const subPerUnit = perUnitSkuOzForItemFromGraph(graph, c.componentItemId);
       if (subPerUnit.size === 0) return new Map();
-      for (const [sku, oz] of subPerUnit) batch.set(sku, (batch.get(sku) ?? 0) + oz * c.quantity);
+      const parUnits = itemRefParUnits(graph, c, subPerUnit);
+      if (parUnits == null) return new Map();
+      for (const [sku, oz] of subPerUnit) batch.set(sku, (batch.get(sku) ?? 0) + oz * parUnits);
     } else {
       return new Map();
     }

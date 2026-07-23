@@ -3,10 +3,9 @@
  *
  * Mirrors lib/prep.ts shape. Four primary public functions:
  *   - loadOpeningState         — Server Component data loader (page.tsx)
- *   - submitOpening            — invokes submit_opening_atomic RPC
- *   - resolveClosingOpeningVerifiedRefItemId — finds closing(N-1)'s
- *                                "Opening verified" item id for the
- *                                cross-reference auto-completion target
+ *   - submitPhase1Atomic / submitPhase2Atomic — per-phase atomic submit RPCs
+ *                                (C.53 split; legacy submitOpening deleted
+ *                                2026-07-23, Wave 1.5 legacy cuts)
  *   - loadOpeningCloserCountSnapshots — Step 11 helper reading the persisted
  *     closer-count snapshot table; SOLE READ PATH for Phase 2 closer counts
  *                                post-Step-15 inline of the live resolver.
@@ -515,29 +514,6 @@ export function activeOpeningPhase(status: ChecklistStatus): OpeningPhase | null
   return null;
 }
 
-/**
- * C.53 — narrows an entry array to a single homogeneous phase. Throws when
- * the array is empty (caller should validate non-empty before dispatch) or
- * mixes phases (the C.53 phase-routing dispatcher requires a single phase
- * per submit; cross-phase batching is no longer supported post-restructure).
- */
-function entriesPhase(entries: ReadonlyArray<OpeningEntry>): OpeningPhase {
-  if (entries.length === 0) {
-    throw new OpeningEntryShapeError("entries[] must be non-empty");
-  }
-  const first = entries[0]!.phase;
-  for (const e of entries) {
-    if (e.phase !== first) {
-      throw new OpeningEntryShapeError(
-        `entries[] must be homogeneous by phase (saw '${first}' and '${e.phase}')`,
-      );
-    }
-  }
-  if (first === "phase1") return 1;
-  if (first === "phase2") return 2;
-  return 3;
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Entry shapes — wire/lib contract for opening submissions
 //
@@ -879,50 +855,6 @@ export async function loadOpeningState(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// resolveClosingOpeningVerifiedRefItemId
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Finds the active closing template's "Opening verified" item id at this
- * location (the cross-reference auto-completion target). Used by submit
- * route to pass into submit_opening_atomic.
- *
- * Returns NULL when no closing template OR no opening_report report-reference
- * item exists. RPC handles NULL gracefully (skips the auto-complete block;
- * matches first-ever-at-location semantics).
- */
-export async function resolveClosingOpeningVerifiedRefItemId(
-  service: SupabaseClient,
-  args: { locationId: string },
-): Promise<string | null> {
-  const { data: tmplRow, error: tmplErr } = await service
-    .from("checklist_templates")
-    .select("id")
-    .eq("location_id", args.locationId)
-    .eq("type", "closing")
-    .eq("active", true)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle<{ id: string }>();
-  if (tmplErr) {
-    throw new Error(`resolveClosingOpeningVerifiedRefItemId: load template: ${tmplErr.message}`);
-  }
-  if (!tmplRow) return null;
-
-  const { data: itemRow, error: itemErr } = await service
-    .from("checklist_template_items")
-    .select("id")
-    .eq("template_id", tmplRow.id)
-    .eq("report_reference_type", "opening_report")
-    .eq("active", true)
-    .maybeSingle<{ id: string }>();
-  if (itemErr) {
-    throw new Error(`resolveClosingOpeningVerifiedRefItemId: load item: ${itemErr.message}`);
-  }
-  return itemRow?.id ?? null;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // materializeCloserCountSnapshots — private snapshot materializer
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1246,7 +1178,7 @@ export async function loadOpeningCloserCountSnapshots(
 
 /**
  * loadOpeningSectionVerifications — read-back of the section-verify beat
- * (C.50 §2). The submit RPC (submitOpening) APPENDS one row to
+ * (C.50 §2). The Phase 1 submit RPC APPENDS one row to
  * opening_section_verifications per verified=true section; this is the missing
  * reader that lets a second opener see opener A's persisted verify state
  * instead of a value derived from instance.status.
@@ -1280,462 +1212,34 @@ export async function loadOpeningSectionVerifications(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// submitOpening — invoke submit_opening_atomic RPC
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface SubmitRpcResult {
-  instance: InstanceRow;
-  submissionId: string;
-  completionIds: string[];
-  autoCompleteId: string | null;
-  editCount: number;
-  originalSubmissionId: string | null;
-  /** Build #3 PR 3 Step 4 — IDs of notifications fired for under-par Phase 2 entries. */
-  underParNotificationIds: string[];
-  /** C.50 §4 result counters (added in migration 0053; consumed by JS-side opening.submit audit metadata). */
-  phase2Count?: number;
-  sectionVerifyCount?: number;
-  recountCount?: number;
-  atParCount?: number;
-  overPrepCount?: number;
-  underPrepCount?: number;
-}
-
-/**
- * Submits an opening Phase 1 instance atomically via submit_opening_atomic.
- *
- * Pre-flight authorization:
- *   - actor.level >= OPENING_BASE_LEVEL (4, KH+)
- *
- * RPC handles atomicity: completions + submission + instance confirm +
- * closing(N-1) auto-complete all in one transaction. Failure at any step
- * rolls everything back.
- *
- * Audit emission (post-RPC, JS-side for IP/UA capture):
- *   - opening.submit with metadata.outcome = 'success' (or per error path)
- *   - On C.46 update path (forward-compat; PR 2 doesn't ship edit UI),
- *     RPC emits report.update inside the transaction; lib emits
- *     opening.submit with metadata.outcome ∈ {update_denied, update_rpc_failed}
- *     on failure paths (PR 4+).
- */
-export async function submitOpening(
-  service: SupabaseClient,
-  args: {
-    instanceId: string;
-    actor: OpeningActor;
-    entries: OpeningEntry[];
-    /**
-     * Section verifications (C.50 §2) — opener's section-level verify state
-     * at submit time. Step 13 RPC inserts one row to
-     * opening_section_verifications per `verified=true` entry. Phase 3
-     * accepts the field; Phase 5 RPC rewrite consumes it.
-     */
-    sectionVerifications?: OpeningSectionVerificationEntry[];
-    /** Resolved by caller from closing template; NULL if no prior closing exists. */
-    closingReportRefItemId: string | null;
-    ipAddress?: string | null;
-    userAgent?: string | null;
-    /** C.46 A6: when true, this is a chained update against an existing submission. PR 4+ wires UI. */
-    isUpdate?: boolean;
-    originalSubmissionId?: string;
-  },
-): Promise<{
-  instance: ChecklistInstance;
-  submittedCompletionIds: string[];
-  closingAutoCompleteId: string | null;
-  editCount: number;
-  originalSubmissionId: string | null;
-  /** Build #3 PR 3 Step 4 — IDs of notifications fired for under-par Phase 2 entries. */
-  underParNotificationIds: string[];
-}> {
-  // Authorization gate (original-submission path; update path uses canEditReport
-  // and is not in PR 2 scope).
-  if (!args.isUpdate && args.actor.level < OPENING_BASE_LEVEL) {
-    void audit({
-      actorId: args.actor.userId,
-      actorRole: args.actor.role,
-      action: "opening.submit",
-      resourceTable: "checklist_instances",
-      resourceId: args.instanceId,
-      metadata: {
-        outcome: "role_insufficient",
-        required_level: OPENING_BASE_LEVEL,
-        actual_level: args.actor.level,
-      },
-      ipAddress: args.ipAddress ?? null,
-      userAgent: args.userAgent ?? null,
-    });
-    throw new OpeningRoleViolationError(OPENING_BASE_LEVEL, args.actor.level);
-  }
-
-  // ───────────────────────────────────────────────────────────────────────────
-  // C.53 phase-routing dispatcher (type-contract-lock).
-  //
-  // 1. Per-entry shape validation (defense-in-depth; form should also enforce).
-  //    Phase 1 / Phase 2 / Phase 3 each carry distinct field groups; the
-  //    discriminated union narrows by entry.phase.
-  // 2. Read instance status → derive active phase via activeOpeningPhase.
-  // 3. Route by phase combination:
-  //      - solo phase3 → throw OpeningError("phase3_rpc_not_implemented")
-  //        (schema + Phase 3 RPC land in a downstream commit)
-  //      - solo phase2 → status must be 'phase1_complete'
-  //      - solo phase1 → status must be 'open'
-  //      - mixed phase1+phase2 → legacy combined path (status='open' only)
-  //      - mixed with phase3 → reject (phase3 must be solo)
-  // 4. Marshal entries for the unchanged submit_opening_atomic RPC. The RPC's
-  //    phase2 wire-contract is the OLD nested `phase2: { openerRecount,
-  //    openerPrepped, overPar, underPar }` shape; the new flat
-  //    OpeningEntryPhase2 lib contract is adapted back to nested at the call
-  //    site. openerRecount is null because the recount field MOVED to Phase 1
-  //    per C.53 §3 (legacy form's recount UI is no longer wired through the
-  //    dispatcher; the UI restructure downstream replaces it with a Phase 1
-  //    spot-check capture).
-  // ───────────────────────────────────────────────────────────────────────────
-
-  // 1. Per-entry shape validation + collect phases seen.
-  const phasesPresent = new Set<OpeningEntry["phase"]>();
-  for (const entry of args.entries) {
-    phasesPresent.add(entry.phase);
-    if (entry.phase === "phase1") {
-      if (entry.countValue !== null && typeof entry.countValue !== "number") {
-        throw new OpeningEntryShapeError(
-          `phase1 entry ${entry.templateItemId} countValue must be number or null`,
-        );
-      }
-    } else if (entry.phase === "phase2") {
-      if (typeof entry.openerPrepped !== "number") {
-        throw new OpeningEntryShapeError(
-          `phase2 entry ${entry.templateItemId} openerPrepped must be number`,
-        );
-      }
-      if (entry.underPar !== null && !entry.underPar.freeText.trim()) {
-        throw new OpeningEntryShapeError(
-          `phase2 entry ${entry.templateItemId} underPar.freeText is required when under-par`,
-        );
-      }
-      if (
-        entry.overPar !== null &&
-        entry.overPar.reasonCategory === "other" &&
-        (entry.overPar.freeText === null || !entry.overPar.freeText.trim())
-      ) {
-        throw new OpeningEntryShapeError(
-          `phase2 entry ${entry.templateItemId} overPar.freeText is required when reasonCategory='other'`,
-        );
-      }
-      if (
-        entry.overPar !== null &&
-        entry.overPar.reasonCategory === "management_directive" &&
-        entry.overPar.directedBy === null
-      ) {
-        throw new OpeningEntryShapeError(
-          `phase2 entry ${entry.templateItemId} overPar.directedBy is required when reasonCategory='management_directive'`,
-        );
-      }
-    } else {
-      // phase3 — setup verification entry. At least one of (verifiedAt+verifiedBy)
-      // or unverifiedReason must be set. Out-of-range verification without a
-      // reason category fires the C.53 §3 typed error so the route surfaces 422.
-      if (entry.verifiedAt === null && entry.unverifiedReason === null) {
-        throw new OpeningEntryShapeError(
-          `phase3 entry ${entry.setupItemId} must carry either verification (verifiedAt+verifiedBy) or unverifiedReason`,
-        );
-      }
-      if (entry.verifiedAt !== null && entry.verifiedBy === null) {
-        throw new OpeningEntryShapeError(
-          `phase3 entry ${entry.setupItemId} verifiedAt set without verifiedBy`,
-        );
-      }
-      if (entry.inRange === false && entry.unverifiedReason === null) {
-        throw new OpeningOutOfRangeReasonMissingError(
-          entry.setupItemId,
-          entry.stationKey,
-        );
-      }
-      if (
-        entry.unverifiedReason !== null &&
-        entry.unverifiedReason.category === "other" &&
-        (entry.unverifiedReason.text === null ||
-          !entry.unverifiedReason.text.trim())
-      ) {
-        throw new OpeningEntryShapeError(
-          `phase3 entry ${entry.setupItemId} unverifiedReason.text is required when category='other'`,
-        );
-      }
-    }
-  }
-  if (phasesPresent.size === 0) {
-    throw new OpeningEntryShapeError("entries[] must be non-empty");
-  }
-
-  // 2. Read instance status for phase-eligibility check.
-  const { data: instStatusRow, error: instStatusErr } = await service
-    .from("checklist_instances")
-    .select("status")
-    .eq("id", args.instanceId)
-    .maybeSingle<{ status: ChecklistStatus }>();
-  if (instStatusErr) {
-    throw new Error(
-      `submitOpening: read instance status: ${instStatusErr.message}`,
-    );
-  }
-  if (!instStatusRow) {
-    throw new Error(`submitOpening: instance ${args.instanceId} not found`);
-  }
-  const instanceStatus: ChecklistStatus = instStatusRow.status;
-
-  // 3. Phase 3 routing — must be solo, instance must be 'phase2_complete'.
-  if (phasesPresent.has("phase3")) {
-    if (phasesPresent.size > 1) {
-      throw new OpeningEntryShapeError(
-        "phase3 entries cannot mix with phase1 or phase2 entries in a single submission",
-      );
-    }
-    if (instanceStatus !== "phase2_complete") {
-      throw new OpeningPhase3NotEligibleError(args.instanceId, instanceStatus);
-    }
-    void audit({
-      actorId: args.actor.userId,
-      actorRole: args.actor.role,
-      action: "opening.submit",
-      resourceTable: "checklist_instances",
-      resourceId: args.instanceId,
-      metadata: {
-        outcome: "phase3_rpc_not_implemented",
-        entry_count: args.entries.length,
-      },
-      ipAddress: args.ipAddress ?? null,
-      userAgent: args.userAgent ?? null,
-    });
-    throw new OpeningError(
-      "Phase 3 setup-verification RPC not yet implemented (type-contract-lock placeholder).",
-      "phase3_rpc_not_implemented",
-    );
-  }
-
-  // 4. Phase 1 / Phase 2 / legacy-mixed eligibility.
-  const isPhase1Only =
-    phasesPresent.size === 1 && phasesPresent.has("phase1");
-  const isPhase2Only =
-    phasesPresent.size === 1 && phasesPresent.has("phase2");
-  const isLegacyMixed =
-    phasesPresent.has("phase1") && phasesPresent.has("phase2");
-
-  if (isPhase2Only && instanceStatus !== "phase1_complete") {
-    throw new OpeningPhase2NotEligibleError(args.instanceId, instanceStatus);
-  }
-  if ((isPhase1Only || isLegacyMixed) && instanceStatus !== "open") {
-    throw new OpeningPhase1NotEligibleError(args.instanceId, instanceStatus);
-  }
-
-  // C.54 §2.C — `OpeningProvenanceRequiredError` is the typed error that
-  // the Phase 1 RPC raises (via P0001 'provenance_required' → mapOpeningError)
-  // when a reconstructed-morning provenance entry lands without
-  // `openerNoPriorDataAttestation`. Per Triad A ruling 2026-05-26, the
-  // attestation lives on Phase 1 (NULL-source detection moved there under
-  // C.53's restructure); the dispatch site is `submitOpeningByPhase`'s
-  // Phase 1 branch + `submitPhase1Atomic`'s wired body. This legacy
-  // `submitOpening` dispatcher routes via the pre-C.53 `submit_opening_atomic`
-  // RPC and does NOT enforce the C.54 attestation contract — the error class
-  // is exported and referenced here to keep the export wired for the per-
-  // phase wrappers above.
-  void OpeningProvenanceRequiredError;
-
-  // 5. Marshal entries for the unchanged submit_opening_atomic RPC.
-  //    Phase 1: top-level countValue/photoId/notes as JSON strings (RPC casts
-  //    via NULLIF + cast); new C.53 spot-check fields are stripped — the RPC
-  //    doesn't know about them yet (Phase 1 RPC restructure lands downstream).
-  //    Phase 2: adapt new flat shape → old nested `phase2:` wrapper.
-  const rpcEntries = args.entries.map((e) => {
-    if (e.phase === "phase1") {
-      return {
-        templateItemId: e.templateItemId,
-        phase: "phase1" as const,
-        countValue: e.countValue === null ? "" : String(e.countValue),
-        photoId: e.photoId ?? "",
-        notes: e.notes ?? "",
-      };
-    }
-    if (e.phase === "phase2") {
-      return {
-        templateItemId: e.templateItemId,
-        phase: "phase2" as const,
-        phase2: {
-          openerRecount: null,
-          openerPrepped: e.openerPrepped,
-          overPar: e.overPar,
-          underPar: e.underPar,
-        },
-      };
-    }
-    // phase3 was rejected upstream; TS narrows to never here. Defensive throw
-    // documents the marshal-step invariant.
-    throw new OpeningEntryShapeError(
-      `unexpected entry phase in marshal step: ${(e as { phase: string }).phase}`,
-    );
-  });
-
-  let rpcResult: SubmitRpcResult;
-  try {
-    const { data, error } = await service.rpc("submit_opening_atomic", {
-      p_opening_instance_id: args.instanceId,
-      p_actor_id: args.actor.userId,
-      p_entries: rpcEntries,
-      p_closing_report_ref_item_id: args.closingReportRefItemId,
-      p_is_update: args.isUpdate ?? false,
-      p_original_submission_id: args.originalSubmissionId ?? null,
-      p_changed_fields: null,
-      p_ip_address: args.ipAddress ?? null,
-      p_user_agent: args.userAgent ?? null,
-      // C.50 §2 — section verifications array (Phase 5). Server inserts one
-      // row to opening_section_verifications per verified=true entry.
-      p_section_verifications: args.sectionVerifications ?? null,
-    });
-    if (error) {
-      // Map known RPC errors to typed exceptions.
-      if (error.code === "23514") {
-        // check_violation — instance not 'open'
-        const msg = error.message.includes("not open")
-          ? "instance_not_open"
-          : "check_violation";
-        if (msg === "instance_not_open") {
-          void audit({
-            actorId: args.actor.userId,
-            actorRole: args.actor.role,
-            action: "opening.submit",
-            resourceTable: "checklist_instances",
-            resourceId: args.instanceId,
-            metadata: {
-              outcome: "instance_not_open",
-              rpc_error: error.message,
-            },
-            ipAddress: args.ipAddress ?? null,
-            userAgent: args.userAgent ?? null,
-          });
-          throw new OpeningInstanceNotOpenError(args.instanceId, "not_open");
-        }
-      }
-      if (error.code === "23503") {
-        // foreign_key_violation — auto-complete failed (no closing instance at N-1)
-        void audit({
-          actorId: args.actor.userId,
-          actorRole: args.actor.role,
-          action: "opening.submit",
-          resourceTable: "checklist_instances",
-          resourceId: args.instanceId,
-          metadata: {
-            outcome: "auto_complete_failed",
-            rpc_error: error.message,
-            closing_report_ref_item_id: args.closingReportRefItemId,
-          },
-          ipAddress: args.ipAddress ?? null,
-          userAgent: args.userAgent ?? null,
-        });
-        throw new OpeningAutoCompleteError(
-          args.instanceId,
-          args.closingReportRefItemId ?? "<null>",
-          error.message,
-        );
-      }
-      throw new Error(`submit_opening_atomic rpc: ${error.message}`);
-    }
-    if (!data || typeof data !== "object") {
-      throw new Error(`submit_opening_atomic rpc: empty result`);
-    }
-    rpcResult = data as SubmitRpcResult;
-  } catch (err) {
-    if (err instanceof OpeningError) throw err;
-    void audit({
-      actorId: args.actor.userId,
-      actorRole: args.actor.role,
-      action: "opening.submit",
-      resourceTable: "checklist_instances",
-      resourceId: args.instanceId,
-      metadata: {
-        outcome: "rpc_failed",
-        rpc_error: err instanceof Error ? err.message : String(err),
-      },
-      ipAddress: args.ipAddress ?? null,
-      userAgent: args.userAgent ?? null,
-    });
-    throw err;
-  }
-
-  // Success — emit opening.submit audit row (original-submission path only;
-  // update path emits report.update inside the RPC per C.46 A7). Metadata
-  // includes C.50 §4 counters from RPC result (phase2_count, section_verify_count,
-  // recount_count, at_par_count, over_prep_count, under_prep_count) for forensic
-  // visibility into the C.50 calc-redesign behavior at submit time.
-  if (!args.isUpdate) {
-    void audit({
-      actorId: args.actor.userId,
-      actorRole: args.actor.role,
-      action: "opening.submit",
-      resourceTable: "checklist_instances",
-      resourceId: args.instanceId,
-      metadata: {
-        outcome: "success",
-        submission_id: rpcResult.submissionId,
-        completion_count: rpcResult.completionIds.length,
-        auto_complete_id: rpcResult.autoCompleteId,
-        closing_report_ref_item_id: args.closingReportRefItemId,
-        // C.50 counters
-        phase2_count: rpcResult.phase2Count ?? 0,
-        section_verify_count: rpcResult.sectionVerifyCount ?? 0,
-        recount_count: rpcResult.recountCount ?? 0,
-        at_par_count: rpcResult.atParCount ?? 0,
-        over_prep_count: rpcResult.overPrepCount ?? 0,
-        under_prep_count: rpcResult.underPrepCount ?? 0,
-        under_par_notification_count: rpcResult.underParNotificationIds.length,
-      },
-      ipAddress: args.ipAddress ?? null,
-      userAgent: args.userAgent ?? null,
-    });
-  }
-
-  return {
-    instance: rowToInstance(rpcResult.instance),
-    submittedCompletionIds: rpcResult.completionIds,
-    closingAutoCompleteId: rpcResult.autoCompleteId,
-    editCount: rpcResult.editCount,
-    originalSubmissionId: rpcResult.originalSubmissionId,
-    underParNotificationIds: rpcResult.underParNotificationIds ?? [],
-  };
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// C.53 per-phase submit stubs (type-contract-lock)
+// C.53 per-phase submits
 //
-// The C.53 restructure splits `submit_opening_atomic` into three per-phase
-// RPCs — `submit_phase1_atomic`, `submit_phase2_atomic`, `submit_phase3_atomic` —
-// each owning the atomic transaction for its phase's transition. The RPCs ship
-// in downstream commits (Phase 1 RPC + schema migrations + Phase 2 RPC with
-// C.54 NULL-source provenance + Phase 3 RPC for setup verification); this
-// commit locks the JS-side function signatures so route handlers and forms can
-// reference the contract while the runtime stays on the legacy
-// `submit_opening_atomic` path via `submitOpening` above.
+// The C.53 restructure split the retired `submit_opening_atomic` monolith into
+// per-phase RPCs — `submit_phase1_atomic` + `submit_phase2_atomic` are LIVE
+// (invoked directly by app/api/opening/submit/phase1|phase2 route handlers);
+// `submit_phase3_atomic` remains a type-contract-lock stub until the Phase 3
+// setup-verification RPC ships. The legacy `submitOpening` dispatcher, its
+// batch route (`/api/opening/submit`), and the `submit_opening_atomic` RPC
+// were deleted 2026-07-23 (Wave 1.5 legacy cuts; RPC dropped in migration
+// 0145) after the per-phase paths took all production traffic.
 //
-// Wiring contract: each per-phase stub takes a strict per-phase entry list +
-// the actor + the instance id + the IP/UA context. The Phase 1 stub
+// Wiring contract: each per-phase function takes a strict per-phase entry list
+// + the actor + the instance id + the IP/UA context. The Phase 1 path
 // additionally takes `openerNoPriorDataAttestation: OpeningNoPriorDataReason
 // | null` per C.54 §2.C (required when any Phase 1 spot-check entry lands
 // with `provenance='reconstructed_morning'`). Per Triad A ruling 2026-05-26,
 // attestation moved from Phase 2 to Phase 1 (NULL-source detection happens
 // in Phase 1 under C.53's restructure, so the attestation follows
-// detection). Returns mirror the success shape of `submitOpening`'s
-// return — instance + completion ids + edit chain context.
+// detection). Returns carry instance + completion ids + edit chain context.
 //
-// Calling the stubs at runtime throws OpeningError("phase{N}_rpc_not_implemented");
-// `submitOpeningByPhase` below dispatches by `entries[0].phase` and is the
-// future replacement for `submitOpening`. Downstream commit swaps the per-phase
-// stub bodies for real RPC invocations and migrates route handlers from
-// `submitOpening` → `submitOpeningByPhase` once Phase 1/2/3 RPCs ship.
+// Calling the Phase 3 stub at runtime throws
+// OpeningError("phase3_rpc_not_implemented") until its RPC ships.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Type-contract-lock shared result shape for per-phase atomic submits. The
  * Phase 1 path additionally carries closing(N-1) auto-complete state; Phases 2
- * + 3 leave `closingAutoCompleteId` null. Mirrors the success shape of
- * `submitOpening` above.
+ * + 3 leave `closingAutoCompleteId` null.
  */
 export interface OpeningPhaseSubmitResult {
   instance: ChecklistInstance;
@@ -1795,7 +1299,7 @@ function extractTemplateItemId(msg: string): string | null {
  *      p_original_submission_id, p_changed_fields, p_ip_address, p_user_agent)`
  *      → JSONB Phase1RpcResult.
  *
- * Pre-flight authorization (mirrors submitOpening): actor.level ≥
+ * Pre-flight authorization: actor.level ≥
  * OPENING_BASE_LEVEL (4, KH+). Fails fast with OpeningRoleViolationError before
  * RPC dispatch.
  *
@@ -1844,7 +1348,7 @@ export async function submitPhase1Atomic(
     userAgent?: string | null;
   },
 ): Promise<OpeningPhaseSubmitResult> {
-  // Authorization gate (mirrors submitOpening:1139-1155 pattern). The
+  // Authorization gate (standard opening-submit pattern). The
   // C.46 chain-edit path uses canEditReport which isn't in B2 scope; the
   // `isUpdate` parameter is forward-compat per migration 0055's chain-edit
   // branch but no UI exercises it yet.
@@ -2771,88 +2275,4 @@ export async function submitPhase3Atomic(
     "submit_phase3_atomic RPC not yet implemented (type-contract-lock stub).",
     "phase3_rpc_not_implemented",
   );
-}
-
-/**
- * C.53 type-contract-lock — phase-routing wrapper.
- *
- * Routes a homogeneous-phase entry batch to the matching per-phase atomic RPC
- * stub. Entries must all share the same `phase`; mixed-phase batches throw
- * `OpeningEntryShapeError`. This is the JS-side counterpart to the per-phase
- * RPC split — when the per-phase RPC stubs above are wired to real RPCs,
- * route handlers migrate from `submitOpening` (legacy single-RPC dispatcher
- * preserved above for production traffic) to `submitOpeningByPhase` here in
- * lockstep with the RPC ship.
- *
- * Per Triad A ruling 2026-05-26, Phase 1 callers MUST pass
- * `openerNoPriorDataAttestation` when any Phase 1 spot-check entry resolves
- * via NULL-source provenance (snapshot closer_count IS NULL + opener
- * recount). The caller resolves attestation requirement from the persisted
- * snapshot table via `loadOpeningCloserCountSnapshots`; the dispatcher does
- * not re-check snapshots (it trusts the route handler's pre-resolution).
- * Phase 2 no longer takes the attestation — Phase 2 reads the persisted
- * `checklist_instances.opener_no_prior_data_reason` written by Phase 1.
- */
-export async function submitOpeningByPhase(
-  service: SupabaseClient,
-  args: {
-    instanceId: string;
-    actor: OpeningActor;
-    entries: OpeningEntry[];
-    sectionVerifications?: OpeningSectionVerificationEntry[];
-    closingReportRefItemId?: string | null;
-    openerNoPriorDataAttestation?: OpeningNoPriorDataReason | null;
-    isUpdate?: boolean;
-    originalSubmissionId?: string;
-    ipAddress?: string | null;
-    userAgent?: string | null;
-  },
-): Promise<OpeningPhaseSubmitResult> {
-  const phase = entriesPhase(args.entries);
-  if (phase === 1) {
-    // Per Triad A ruling 2026-05-26 (rulings 1 + 2):
-    //   (1) Attestation moves to Phase 1: openerNoPriorDataAttestation
-    //       flows through here. NULL-source detection happens in Phase 1
-    //       under C.53's restructure; the per-instance attestation follows
-    //       detection. The Phase 1 RPC raises P0001 'provenance_required'
-    //       (→ OpeningProvenanceRequiredError) when any spot-check entry
-    //       resolves with reconstructed_morning provenance and this value
-    //       is null.
-    //   (2) closingReportRefItemId is NOT passed to Phase 1 (per C.54 §2.A,
-    //       opening→closing auto-complete lives at Phase 3 submit, NOT
-    //       Phase 1). The field stays on this wrapper's args as optional
-    //       for forward use by the Phase 3 dispatch branch when wired.
-    return submitPhase1Atomic(service, {
-      instanceId: args.instanceId,
-      actor: args.actor,
-      entries: args.entries as OpeningEntryPhase1[],
-      sectionVerifications: args.sectionVerifications ?? [],
-      openerNoPriorDataAttestation:
-        args.openerNoPriorDataAttestation ?? null,
-      isUpdate: args.isUpdate,
-      originalSubmissionId: args.originalSubmissionId,
-      ipAddress: args.ipAddress ?? null,
-      userAgent: args.userAgent ?? null,
-    });
-  }
-  if (phase === 2) {
-    // SPLIT (Question A): Phase 2 finalize is entries-less — per-item §8.4 writes
-    // land via savePhase2Item beforehand; finalize reads the persisted rows back.
-    // The dispatcher's `args.entries` are ignored on this branch.
-    return submitPhase2Atomic(service, {
-      instanceId: args.instanceId,
-      actor: args.actor,
-      isUpdate: args.isUpdate,
-      originalSubmissionId: args.originalSubmissionId,
-      ipAddress: args.ipAddress ?? null,
-      userAgent: args.userAgent ?? null,
-    });
-  }
-  return submitPhase3Atomic(service, {
-    instanceId: args.instanceId,
-    actor: args.actor,
-    entries: args.entries as OpeningEntryPhase3[],
-    ipAddress: args.ipAddress ?? null,
-    userAgent: args.userAgent ?? null,
-  });
 }

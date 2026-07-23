@@ -102,7 +102,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: true });
   }
 
-  const ip = trustedClientIp(req); // A-M2 — platform-trusted, not the spoofable leftmost XFF
+  const ip = trustedClientIp(req.headers); // A-M2 — platform-trusted, not the spoofable leftmost XFF
   if (typeof body.email === "string") {
     await requestMagicLink({ email: body.email, name: typeof body.name === "string" ? body.name : null, ip, intake: parseIntake(body.intake) });
   }
