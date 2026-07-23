@@ -10,15 +10,7 @@ import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import type { MeasureUnitOption } from "@/lib/admin/skus";
 import { loadMeasureUnits } from "@/lib/admin/skus";
-import {
-  skuContentOz,
-  skuCostPerOz,
-  itemPerUnitCost,
-  foodCostPct,
-  packYieldForComponent,
-  componentPerUnitOz,
-  type MeasureUnitFactor,
-} from "@/lib/recipe-math";
+import { skuContentOz, skuCostPerOz, type MeasureUnitFactor } from "@/lib/recipe-math";
 
 export const COST_READ_MIN = 6;  // AGM+ — view cost/yield
 export const PRICE_WRITE_MIN = 6; // AGM+ — record a SKU price (operational invoice logging)

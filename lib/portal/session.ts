@@ -14,7 +14,7 @@
  */
 
 import { NextResponse, type NextRequest } from "next/server";
-import { cookies as nextCookies, headers as nextHeaders } from "next/headers";
+import { cookies as nextCookies } from "next/headers";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { signCustomerJwt, verifyCustomerJwt, hashToken, PORTAL_COOKIE_NAME, type CustomerJwtClaims } from "./auth";
 
@@ -81,7 +81,4 @@ export function applyPortalCookie(res: NextResponse, s: { cookieName: string; jw
 }
 export function clearPortalCookie(res: NextResponse) { res.cookies.set(PORTAL_COOKIE_NAME, "", cookieOpts(0)); return res; }
 
-export async function ipFromHeaders(): Promise<{ ip: string | null; ua: string | null }> {
-  const h = await nextHeaders();
-  return { ip: h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? h.get("x-real-ip"), ua: h.get("user-agent") };
-}
+

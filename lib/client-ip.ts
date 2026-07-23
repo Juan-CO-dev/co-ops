@@ -7,16 +7,22 @@
  * (and `x-real-ip`) to the REAL connecting IP and ignores client-injected values for them — those
  * are the trustworthy sources. Fall back to the RIGHTMOST `x-forwarded-for` hop (the one appended by
  * the nearest trusted proxy), never the leftmost.
+ *
+ * Takes any headers-like `.get()` carrier so both `NextRequest.headers` and the
+ * `next/headers` ReadonlyHeaders store (Server Component / RSC path) share one
+ * implementation — pass `req.headers` or `await headers()`.
  */
 
-import type { NextRequest } from "next/server";
+export interface HeaderReader {
+  get(name: string): string | null;
+}
 
-export function trustedClientIp(req: NextRequest): string | null {
-  const vercel = req.headers.get("x-vercel-forwarded-for");
+export function trustedClientIp(headers: HeaderReader): string | null {
+  const vercel = headers.get("x-vercel-forwarded-for");
   if (vercel) return vercel.split(",")[0]?.trim() || null;
-  const real = req.headers.get("x-real-ip");
+  const real = headers.get("x-real-ip");
   if (real) return real.trim() || null;
-  const xff = req.headers.get("x-forwarded-for");
+  const xff = headers.get("x-forwarded-for");
   if (xff) {
     const hops = xff.split(",").map((s) => s.trim()).filter(Boolean);
     return hops.length > 0 ? hops[hops.length - 1]! : null;

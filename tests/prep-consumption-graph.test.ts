@@ -16,6 +16,9 @@ import type { MeasureUnitFactor, RecipeInputSku } from "@/lib/recipe-math";
 
 const MEASURES = new Map<string, MeasureUnitFactor>([
   ["oz", { dimension: "weight", toBaseFactor: 1 }],
+  ["lb", { dimension: "weight", toBaseFactor: 16 }],
+  ["quart", { dimension: "volume", toBaseFactor: 32 }],
+  ["each", { dimension: "count", toBaseFactor: 1 }],
 ]);
 const SKU: RecipeInputSku = {
   packFormat: null, eachContainerLabel: null, unitsPerPack: null,
@@ -160,5 +163,68 @@ describe("perUnitSkuOzForMenuItemFromGraph", () => {
     expect(perUnitSkuOzForMenuItemFromGraph(g, "nope").size).toBe(0);
     expect(perUnitSkuOzForMenuItemFromGraph(g, "M0").size).toBe(0);
     expect(perUnitSkuOzForMenuItemFromGraph(g, "M1").size).toBe(0);
+  });
+});
+
+describe("weight-denominated item refs (Wave 1.5 math fix)", () => {
+  function itemInUnit(quantity: number, unit: string | null, itemId: string): GraphRecipe["inputs"][number] {
+    return { quantity, unit, componentSkuId: null, componentItemId: itemId };
+  }
+
+  it("converts oz → par-units via the sub's registered oz_per_par_unit (the Marinara-quart bug)", () => {
+    // A = a quart-par item (oz_per_par_unit 32) whose batch consumes 480 oz of
+    // sku1 across 4 quarts → 120 oz input mass per quart (cook-down).
+    // "2 oz of A" must consume 2/32 = 0.0625 quarts → 7.5 oz of sku1,
+    // NOT 2 quarts (240 oz) as the legacy par-unit reading computed.
+    const g = graphOf([
+      { recipeId: "rA", batchYield: 4, inputs: [ozIn(480, "sku1")], outputs: [itemOut("A", 4, 32)] },
+      { recipeId: "rB", batchYield: 1, inputs: [itemInUnit(2, "oz", "A")], outputs: [itemOut("B", 1)] },
+    ]);
+    expect(perUnitSkuOzForItemFromGraph(g, "B").get("sku1")).toBeCloseTo(7.5, 10);
+  });
+
+  it("falls back to the sub's per-par-unit input mass when oz_per_par_unit is unset", () => {
+    // A per-unit input mass = 2 oz (20 oz ÷ yield 10). "4 oz of A" → 2 par-units
+    // → exactly 4 oz of A's ingredient mass flows through (identity for mixes).
+    const g = graphOf([
+      { recipeId: "rA", batchYield: 10, inputs: [ozIn(20, "sku1")], outputs: [itemOut("A", 10)] },
+      { recipeId: "rB", batchYield: 1, inputs: [itemInUnit(4, "oz", "A")], outputs: [itemOut("B", 1)] },
+    ]);
+    expect(perUnitSkuOzForItemFromGraph(g, "B").get("sku1")).toBeCloseTo(4, 10);
+  });
+
+  it("non-oz weight units convert through toBaseFactor (0.25 lb = 4 oz)", () => {
+    const g = graphOf([
+      { recipeId: "rA", batchYield: 10, inputs: [ozIn(20, "sku1")], outputs: [itemOut("A", 10)] },
+      { recipeId: "rB", batchYield: 1, inputs: [itemInUnit(0.25, "lb", "A")], outputs: [itemOut("B", 1)] },
+    ]);
+    expect(perUnitSkuOzForItemFromGraph(g, "B").get("sku1")).toBeCloseTo(4, 10);
+  });
+
+  it("volume-denominated item refs poison the flatten (no density — never guess)", () => {
+    const g = graphOf([
+      { recipeId: "rA", batchYield: 10, inputs: [ozIn(20, "sku1")], outputs: [itemOut("A", 10)] },
+      { recipeId: "rB", batchYield: 1, inputs: [itemInUnit(1, "quart", "A")], outputs: [itemOut("B", 1)] },
+    ]);
+    expect(perUnitSkuOzForItemFromGraph(g, "B").size).toBe(0);
+  });
+
+  it("count units and unregistered labels keep par-unit semantics (seed convention)", () => {
+    const g = graphOf([
+      { recipeId: "rA", batchYield: 10, inputs: [ozIn(20, "sku1")], outputs: [itemOut("A", 10)] },
+      { recipeId: "rB", batchYield: 1, inputs: [itemInUnit(2, "each", "A")], outputs: [itemOut("B", 1)] },
+      { recipeId: "rC", batchYield: 1, inputs: [itemInUnit(2, "ladle", "A")], outputs: [itemOut("C", 1)] },
+    ]);
+    expect(perUnitSkuOzForItemFromGraph(g, "B").get("sku1")).toBeCloseTo(4, 10);
+    expect(perUnitSkuOzForItemFromGraph(g, "C").get("sku1")).toBeCloseTo(4, 10);
+  });
+
+  it("MENU engine converts the same way (consumer builds are where the prod bug lived)", () => {
+    const g = graphOf([
+      { recipeId: "rA", batchYield: 10, inputs: [ozIn(20, "sku1")], outputs: [itemOut("A", 10)] },
+      { recipeId: "rM", batchYield: 2, inputs: [itemInUnit(4, "oz", "A")], outputs: [menuOut("M", 2)] },
+    ]);
+    // parUnits = 4 oz ÷ 2 oz-per-par = 2 → batch sku1 = 4 oz; share 1; ÷ myYield 2.
+    expect(perUnitSkuOzForMenuItemFromGraph(g, "M").get("sku1")).toBeCloseTo(2, 10);
   });
 });

@@ -29,6 +29,7 @@ import { cookies as nextCookies, headers as nextHeaders } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { signJwt, verifyJwt, hashToken, type AppJwtClaims } from "./auth";
+import { trustedClientIp } from "./client-ip";
 import { getServiceRoleClient } from "./supabase-server";
 import { type RoleCode, getRoleLevel } from "./roles";
 import { audit } from "./audit";
@@ -426,8 +427,9 @@ export async function requireSessionFromHeaders(
   const headerStore = await nextHeaders();
   const rawJwt = cookieStore.get(COOKIE_NAME)?.value ?? null;
 
-  const xff = headerStore.get("x-forwarded-for");
-  const ipAddress = xff ? (xff.split(",")[0]?.trim() ?? null) : headerStore.get("x-real-ip");
+  // A-M2 — platform-trusted source, never the client-spoofable leftmost XFF
+  // (audit ip_address forensics + session pinning read this value).
+  const ipAddress = trustedClientIp(headerStore);
   const userAgent = headerStore.get("user-agent");
 
   const result = await requireSessionCore(rawJwt, ipAddress, userAgent, currentPath);
@@ -439,9 +441,8 @@ export async function requireSessionFromHeaders(
 }
 
 function extractIp(req: NextRequest): string | null {
-  const xff = req.headers.get("x-forwarded-for");
-  if (xff) return xff.split(",")[0]?.trim() ?? null;
-  return req.headers.get("x-real-ip");
+  // A-M2 — delegate to the platform-trusted extractor (leftmost XFF is spoofable).
+  return trustedClientIp(req.headers);
 }
 
 // ─── revokeSession / unlockStepUp / clearStepUp / pruneExpiredSessions ──────

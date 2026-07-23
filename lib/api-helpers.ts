@@ -53,7 +53,7 @@ export function jsonOk<T extends Record<string, unknown>>(
 /** Read the client IP from a PLATFORM-TRUSTED source (A-M2 — the leftmost x-forwarded-for is
  * client-spoofable). Delegates to trustedClientIp. Returns null if no source is set. */
 export function extractIp(req: NextRequest): string | null {
-  return trustedClientIp(req);
+  return trustedClientIp(req.headers);
 }
 
 /**

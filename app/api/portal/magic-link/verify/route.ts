@@ -24,7 +24,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: false }, { status: 400 });
   }
 
-  const ip = trustedClientIp(req); // A-M2 — platform-trusted, not the spoofable leftmost XFF
+  const ip = trustedClientIp(req.headers); // A-M2 — platform-trusted, not the spoofable leftmost XFF
   // consumeMagicLink flips the token single-use BEFORE creating the account/session; a genuine
   // server error after the flip should still answer a clean constant-shape 400, not a 500.
   let result;
