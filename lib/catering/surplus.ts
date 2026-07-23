@@ -11,7 +11,8 @@ import { getRoleLevel } from "@/lib/roles";
 import type { AuthContext } from "@/lib/session";
 import { PORTION_FRACTION, type Portion } from "@/lib/catering/pricing-derivation";
 import { resolveRefs } from "@/lib/catering/prep-demand";
-import { perUnitSkuOzForItem, perUnitSkuOzForMenuItem, loadMeasures } from "@/lib/prep-consumption";
+import { loadRecipeGraph, loadMeasures } from "@/lib/prep-consumption";
+import { perUnitSkuOzForItemFromGraph, perUnitSkuOzForMenuItemFromGraph } from "@/lib/prep-consumption-graph";
 import { skuContentOz } from "@/lib/recipe-math";
 
 export const PREP_START_LEAD_DAYS = 3;    // ~72h prep-start window (Juan: "2–3 days before")
@@ -100,6 +101,7 @@ export async function loadCateringSurplus(
   const prepLines: SurplusLine[] = [];
   const skuAcc = new Map<string, { skuId: string; needDate: string; pipelineId: string; daysOut: number; oz: number }>();
   const perUnitCache = new Map<string, Map<string, number>>();
+  let recipeGraph: Awaited<ReturnType<typeof loadRecipeGraph>> | null = null;
   const itemIds = new Set<string>();
   const menuIds = new Set<string>();
   const choiceIds = new Set<string>();
@@ -131,7 +133,9 @@ export async function loadCateringSurplus(
     const cacheKey = `${isItem ? "item" : "menu_item"}:${refId}`;
     let perUnit = perUnitCache.get(cacheKey);
     if (!perUnit) {
-      perUnit = isItem ? await perUnitSkuOzForItem(refId) : await perUnitSkuOzForMenuItem(refId);
+      // ONE graph load for the whole pass (see loadRecipeGraph); resolution is pure/in-memory.
+      recipeGraph ??= await loadRecipeGraph();
+      perUnit = isItem ? perUnitSkuOzForItemFromGraph(recipeGraph, refId) : perUnitSkuOzForMenuItemFromGraph(recipeGraph, refId);
       perUnitCache.set(cacheKey, perUnit);
     }
     if (perUnit.size === 0 || scale <= 0) continue; // no recipe → nothing to flatten (silent-safe)

@@ -1,0 +1,164 @@
+/**
+ * Unit spine — lib/prep-consumption-graph.ts (the pure recipe-flatten resolver
+ * extracted in the 2026-07-23 batch-flatten rewrite; council fixture #1).
+ * Pins: recursion + quantity scaling, cycle poisoning, unresolvable-input
+ * poisoning, multi-output fan-out share (incl. the item-outputs-only weight
+ * universe vs the menu engine's all-outputs universe), first-wins indexing.
+ */
+import { describe, it, expect } from "vitest";
+import {
+  buildRecipeGraph,
+  perUnitSkuOzForItemFromGraph,
+  perUnitSkuOzForMenuItemFromGraph,
+  type GraphRecipe,
+} from "@/lib/prep-consumption-graph";
+import type { MeasureUnitFactor, RecipeInputSku } from "@/lib/recipe-math";
+
+const MEASURES = new Map<string, MeasureUnitFactor>([
+  ["oz", { dimension: "weight", toBaseFactor: 1 }],
+]);
+const SKU: RecipeInputSku = {
+  packFormat: null, eachContainerLabel: null, unitsPerPack: null,
+  eachSize: null, eachMeasure: null, avgOzPerEach: null,
+};
+const PACK = new Map<string, RecipeInputSku>([
+  ["sku1", SKU], ["sku2", SKU], ["sku3", SKU],
+]);
+
+function ozIn(quantity: number, skuId: string): GraphRecipe["inputs"][number] {
+  return { quantity, unit: "oz", componentSkuId: skuId, componentItemId: null };
+}
+function itemIn(quantity: number, itemId: string): GraphRecipe["inputs"][number] {
+  return { quantity, unit: null, componentSkuId: null, componentItemId: itemId };
+}
+function itemOut(itemId: string, yld: number, ozPerParUnit: number | null = null): GraphRecipe["outputs"][number] {
+  return { outputItemId: itemId, outputMenuItemId: null, yield: yld, ozPerParUnit };
+}
+function menuOut(menuItemId: string, yld: number): GraphRecipe["outputs"][number] {
+  return { outputItemId: null, outputMenuItemId: menuItemId, yield: yld, ozPerParUnit: null };
+}
+function graphOf(recipes: GraphRecipe[]) {
+  return buildRecipeGraph(recipes, PACK, MEASURES);
+}
+
+describe("perUnitSkuOzForItemFromGraph", () => {
+  it("flattens a single-level recipe: batch oz ÷ batch yield per SKU", () => {
+    const g = graphOf([
+      { recipeId: "r1", batchYield: 10, inputs: [ozIn(20, "sku1"), ozIn(5, "sku2")], outputs: [itemOut("A", 10)] },
+    ]);
+    const m = perUnitSkuOzForItemFromGraph(g, "A");
+    expect(m.get("sku1")).toBeCloseTo(2, 10);
+    expect(m.get("sku2")).toBeCloseTo(0.5, 10);
+  });
+
+  it("recurses through component items with quantity scaling", () => {
+    const g = graphOf([
+      { recipeId: "rA", batchYield: 10, inputs: [ozIn(20, "sku1"), ozIn(5, "sku2")], outputs: [itemOut("A", 10)] },
+      { recipeId: "rB", batchYield: 4, inputs: [itemIn(2, "A"), ozIn(8, "sku3")], outputs: [itemOut("B", 4)] },
+    ]);
+    const m = perUnitSkuOzForItemFromGraph(g, "B");
+    // per-unit A = {sku1:2, sku2:0.5}; B batch = 2×A + 8oz sku3; ÷ yield 4
+    expect(m.get("sku1")).toBeCloseTo(1, 10);
+    expect(m.get("sku2")).toBeCloseTo(0.25, 10);
+    expect(m.get("sku3")).toBeCloseTo(2, 10);
+  });
+
+  it("a cycle poisons the flatten to empty (never loops, never partial)", () => {
+    const g = graphOf([
+      { recipeId: "rA", batchYield: 1, inputs: [itemIn(1, "B")], outputs: [itemOut("A", 1)] },
+      { recipeId: "rB", batchYield: 1, inputs: [itemIn(1, "A")], outputs: [itemOut("B", 1)] },
+    ]);
+    expect(perUnitSkuOzForItemFromGraph(g, "A").size).toBe(0);
+    expect(perUnitSkuOzForItemFromGraph(g, "B").size).toBe(0);
+  });
+
+  it("any unresolvable input poisons the whole flatten (null unit on a SKU line)", () => {
+    const g = graphOf([
+      {
+        recipeId: "r1", batchYield: 10,
+        inputs: [ozIn(20, "sku1"), { quantity: 3, unit: null, componentSkuId: "sku2", componentItemId: null }],
+        outputs: [itemOut("A", 10)],
+      },
+    ]);
+    expect(perUnitSkuOzForItemFromGraph(g, "A").size).toBe(0);
+  });
+
+  it("multi-output fan-out allocates by ozWeight (yield × oz_per_par_unit)", () => {
+    const g = graphOf([
+      {
+        recipeId: "r1", batchYield: 4, inputs: [ozIn(12, "sku1")],
+        outputs: [itemOut("A", 2, 4), itemOut("C", 2, 2)], // weights 8 and 4 → shares 2/3, 1/3
+      },
+    ]);
+    expect(perUnitSkuOzForItemFromGraph(g, "A").get("sku1")).toBeCloseTo((12 * (2 / 3)) / 2, 10);
+    expect(perUnitSkuOzForItemFromGraph(g, "C").get("sku1")).toBeCloseTo((12 * (1 / 3)) / 2, 10);
+  });
+
+  it("ITEM engine's weight universe excludes menu outputs (the load-bearing asymmetry)", () => {
+    const g = graphOf([
+      {
+        recipeId: "r1", batchYield: 1, inputs: [ozIn(10, "sku1")],
+        outputs: [itemOut("A", 1), menuOut("M", 3)],
+      },
+    ]);
+    // Item engine: only A in the universe → share 1 → 10 oz per unit.
+    expect(perUnitSkuOzForItemFromGraph(g, "A").get("sku1")).toBeCloseTo(10, 10);
+    // Menu engine: universe = A(w=1) + M(w=3) → share 3/4, ÷ myYield 3.
+    expect(perUnitSkuOzForMenuItemFromGraph(g, "M").get("sku1")).toBeCloseTo((10 * (3 / 4)) / 3, 10);
+  });
+
+  it("zero/null batch yield and missing recipes resolve to empty", () => {
+    const g = graphOf([
+      { recipeId: "r1", batchYield: 0, inputs: [ozIn(10, "sku1")], outputs: [itemOut("A", 1)] },
+      { recipeId: "r2", batchYield: null, inputs: [ozIn(10, "sku1")], outputs: [itemOut("B", 1)] },
+    ]);
+    expect(perUnitSkuOzForItemFromGraph(g, "A").size).toBe(0);
+    expect(perUnitSkuOzForItemFromGraph(g, "B").size).toBe(0);
+    expect(perUnitSkuOzForItemFromGraph(g, "nope").size).toBe(0);
+  });
+
+  it("first recipe wins per output (mirrors the original limit-1 lookup)", () => {
+    const g = graphOf([
+      { recipeId: "r1", batchYield: 1, inputs: [ozIn(7, "sku1")], outputs: [itemOut("A", 1)] },
+      { recipeId: "r2", batchYield: 1, inputs: [ozIn(99, "sku1")], outputs: [itemOut("A", 1)] },
+    ]);
+    expect(perUnitSkuOzForItemFromGraph(g, "A").get("sku1")).toBeCloseTo(7, 10);
+  });
+});
+
+describe("perUnitSkuOzForMenuItemFromGraph", () => {
+  it("sole menu output: full batch ÷ sub yield", () => {
+    const g = graphOf([
+      { recipeId: "r1", batchYield: 4, inputs: [ozIn(16, "sku1")], outputs: [menuOut("M", 4)] },
+    ]);
+    expect(perUnitSkuOzForMenuItemFromGraph(g, "M").get("sku1")).toBeCloseTo(4, 10);
+  });
+
+  it("component sub-ITEMS flatten via the item engine with quantity scaling", () => {
+    const g = graphOf([
+      { recipeId: "rA", batchYield: 10, inputs: [ozIn(20, "sku1")], outputs: [itemOut("A", 10)] },
+      { recipeId: "rM", batchYield: 2, inputs: [itemIn(3, "A"), ozIn(4, "sku2")], outputs: [menuOut("M", 2)] },
+    ]);
+    const m = perUnitSkuOzForMenuItemFromGraph(g, "M");
+    // batch = 3×(A per-unit 2oz sku1) + 4oz sku2 = {sku1:6, sku2:4}; share 1; ÷ myYield 2
+    expect(m.get("sku1")).toBeCloseTo(3, 10);
+    expect(m.get("sku2")).toBeCloseTo(2, 10);
+  });
+
+  it("an empty component-item flatten poisons the sub (mirrors original .size===0 guard)", () => {
+    const g = graphOf([
+      { recipeId: "rM", batchYield: 2, inputs: [itemIn(1, "ghost")], outputs: [menuOut("M", 2)] },
+    ]);
+    expect(perUnitSkuOzForMenuItemFromGraph(g, "M").size).toBe(0);
+  });
+
+  it("no recipe / zero yield / zero batch resolve to empty", () => {
+    const g = graphOf([
+      { recipeId: "r1", batchYield: 2, inputs: [ozIn(4, "sku1")], outputs: [menuOut("M0", 0)] },
+      { recipeId: "r2", batchYield: 0, inputs: [ozIn(4, "sku1")], outputs: [menuOut("M1", 2)] },
+    ]);
+    expect(perUnitSkuOzForMenuItemFromGraph(g, "nope").size).toBe(0);
+    expect(perUnitSkuOzForMenuItemFromGraph(g, "M0").size).toBe(0);
+    expect(perUnitSkuOzForMenuItemFromGraph(g, "M1").size).toBe(0);
+  });
+});
