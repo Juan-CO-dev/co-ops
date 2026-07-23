@@ -74,6 +74,16 @@ Live in production (co-ops-ashy.vercel.app, two locations): auth + checklists (o
 - **All date/time formatting is language-aware via `lib/i18n/format.ts` helpers** (`formatTime`, `formatDateLabel`, `formatChainAttribution`) — never `toLocale*(undefined, …)`, never hardcoded locale, never new inline copies.
 - Template-item content translates via `lib/i18n/content.ts` resolver (JSONB `translations`); admin editors for template content MUST expose Spanish fields alongside English (C.44) or they recreate the partial-translation gap.
 
+### Tenant vocabulary (T0 — council-decided 2026-07-23, unanimous)
+
+CO-OPS is the template for a template-and-deploy product (one Vercel + one Supabase per customer). The tenant-config boundary is LOCKED (full decision: `~/.claude/council/2026-07-23-tenant-config/proposal-r3.md`): **code owns BEHAVIOR · the tenant DB owns VOCABULARY and CONTENT · env owns IDENTITY and SECRETS.**
+
+- **New code NEVER hardcodes tenant vocabulary.** No brand-name literals ("Compliments Only"), no location literals ("Cap Hill"/"P St" — read the `locations` table), no prep-section display literals (render via `resolveSectionLabel` / the `prep_sections` table from 0082; slugs as system keys are fine per the i18n system-key rule), no location UUIDs in code. If a value would differ for a second restaurant, it is config — not a literal.
+- **The role SET is a product invariant.** Role codes, numeric levels, the CHECK constraint, `current_user_role_level()`, and the ~122 level-based RLS policies are identical in every tenant DB, forever. Per-tenant role customization = display labels only (future `tenant_role_labels` overlay on `lib/roles.ts` defaults). Never add tenant-conditional role logic.
+- **One migrations lineage, no tenant-specific migrations, ever.** Tenant difference lives exclusively in data. (The existing migration discipline above already enforces this for one DB; it holds for N.)
+- **Known pre-existing debt (fix opportunistically when touching these files; T1 sweeps them wholesale later):** `app/order/page.tsx` (`CAPITOL_HILL_ID` UUID line ~26; `deriveGroups()` regex on CO section vocabulary lines ~62–104 — the ONE vocabulary-in-logic site; CO photos/copy/reviews arrays), `lib/email-templates/_layout.ts` (brand wordmark + footer), `lib/email-templates/magic-link.ts` (preheader), `app/layout.tsx` (metadata description), CO section-name i18n fallback keys (`en.json` ~716–720), ~20 brand-name literals repo-wide.
+- **Gate discipline:** the T1 extraction wave (env brand vars, `tenant_role_labels`, storefront content tables) does NOT start until 30 consecutive days of genuine daily CO use OR a named warm prospect — do not build it speculatively.
+
 ### Module boundaries & testing (2026-07-23)
 
 - **`lib/supabase-server.ts` carries `import "server-only"`** — client-component import paths fail the build instead of leaking the service-role module. This guard found 5 real leak chains on day one; keep it.
