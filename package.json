@@ -11,7 +11,8 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "secrets:generate": "powershell -ExecutionPolicy Bypass -File scripts/generate-secrets.ps1"
+    "secrets:generate": "powershell -ExecutionPolicy Bypass -File scripts/generate-secrets.ps1",
+    "test": "vitest run"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.1",
@@ -35,6 +36,7 @@
     "eslint-config-next": "16.2.4",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.10"
   }
 }
