@@ -30,7 +30,7 @@ export function ToastTab({ state, canWrite }: { state: ToastMapState; canWrite: 
   const router = useRouter();
   const [errorKey, setErrorKey] = useState<TranslationKey | null>(null);
   const [stepUpOpen, setStepUpOpen] = useState(false);
-  const pendingRef = useRef<null | (() => Promise<void>)>(null);
+  const pendingRef = useRef<null | { run: () => Promise<void>; busyKey: string | null }>(null);
   const [busy, setBusy] = useState<string | null>(null); // "<locId>:<action>" | mapId
   const [drift, setDrift] = useState<Record<string, DriftReport>>({});
   const [matchNote, setMatchNote] = useState<Record<string, { pulled: number; candidates: number }>>({});
@@ -41,7 +41,7 @@ export function ToastTab({ state, canWrite }: { state: ToastMapState; canWrite: 
     [language],
   );
 
-  const api = useCallback(async (url: string, method: string, body: unknown, onOk: (data: Record<string, unknown>) => void) => {
+  const api = useCallback(async (url: string, method: string, body: unknown, onOk: (data: Record<string, unknown>) => void, busyKey: string | null = null) => {
     setErrorKey(null);
     let res: Response;
     try {
@@ -59,7 +59,9 @@ export function ToastTab({ state, canWrite }: { state: ToastMapState; canWrite: 
     }
     const b = (await res.json().catch(() => ({}))) as { code?: string };
     if (b.code === "step_up_required" || b.code === "step_up_stale") {
-      pendingRef.current = () => api(url, method, body, onOk);
+      // Carry the busy key so the modal-confirm retry re-shows the spinner and
+      // keeps the buttons disabled mid-flight (review finding #2).
+      pendingRef.current = { run: () => api(url, method, body, onOk, busyKey), busyKey };
       setStepUpOpen(true);
       return;
     }
@@ -72,7 +74,7 @@ export function ToastTab({ state, canWrite }: { state: ToastMapState; canWrite: 
       const d = data as { pulled?: number; candidates?: number };
       setMatchNote((prev) => ({ ...prev, [locId]: { pulled: d.pulled ?? 0, candidates: d.candidates ?? 0 } }));
       router.refresh();
-    }).finally(() => setBusy(null));
+    }, `${locId}:match`).finally(() => setBusy(null));
   };
   const checkDrift = (locId: string) => {
     setBusy(`${locId}:drift`);
@@ -80,16 +82,16 @@ export function ToastTab({ state, canWrite }: { state: ToastMapState; canWrite: 
       const r = (data as { report?: DriftReport }).report;
       if (r) setDrift((prev) => ({ ...prev, [locId]: r }));
       router.refresh(); // stale flips may have landed
-    }).finally(() => setBusy(null));
+    }, `${locId}:drift`).finally(() => setBusy(null));
   };
   const rowAction = (mapId: string, action: "confirm" | "reject" | "unmap") => {
     setBusy(mapId);
-    void api(`/api/admin/toast-map/${mapId}`, "POST", { action }, () => router.refresh()).finally(() => setBusy(null));
+    void api(`/api/admin/toast-map/${mapId}`, "POST", { action }, () => router.refresh(), mapId).finally(() => setBusy(null));
   };
   const saveGuid = (locId: string) => {
     const value = (guidDraft[locId] ?? "").trim();
     setBusy(`${locId}:guid`);
-    void api("/api/admin/toast-map/location", "POST", { locationId: locId, toastRestaurantGuid: value === "" ? null : value }, () => router.refresh()).finally(() => setBusy(null));
+    void api("/api/admin/toast-map/location", "POST", { locationId: locId, toastRestaurantGuid: value === "" ? null : value }, () => router.refresh(), `${locId}:guid`).finally(() => setBusy(null));
   };
 
   const btn = "inline-flex min-h-[36px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 text-xs font-bold text-co-text-dim transition hover:text-co-text disabled:opacity-50";
@@ -203,7 +205,7 @@ export function ToastTab({ state, canWrite }: { state: ToastMapState; canWrite: 
         );
       })}
 
-      <PasswordModal open={stepUpOpen} onConfirm={async () => { if (pendingRef.current) await pendingRef.current(); }} onCancel={() => { setStepUpOpen(false); pendingRef.current = null; }} />
+      <PasswordModal open={stepUpOpen} onConfirm={async () => { const p = pendingRef.current; if (p) { if (p.busyKey) setBusy(p.busyKey); try { await p.run(); } finally { setBusy(null); } } }} onCancel={() => { setStepUpOpen(false); pendingRef.current = null; }} />
     </div>
   );
 }
