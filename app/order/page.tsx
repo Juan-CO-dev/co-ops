@@ -22,8 +22,11 @@ import type { CateringMenuItem } from "@/lib/catering/menu";
 import type { CateringPackage } from "@/lib/catering/menu";
 
 // ─── location id ─────────────────────────────────────────────────────────────
-// Prices are identical at both shops; Capitol Hill is the canonical source.
-const CAPITOL_HILL_ID = "54ce1029-400e-4a92-9c2b-0ccb3b031f0a";
+// Prices are identical at both shops; the storefront reads ONE canonical
+// location (T0: env owns identity — default is CO's Capitol Hill, so the live
+// deploy needs no env change; a future tenant sets the var at project creation).
+const STOREFRONT_LOCATION_ID =
+  process.env.NEXT_PUBLIC_STOREFRONT_LOCATION_ID ?? "54ce1029-400e-4a92-9c2b-0ccb3b031f0a";
 
 // ─── static image references (hero + gallery) ─────────────────────────────────
 const G = (id: string) => `https://static.spotapps.co/spots/${id}/full`;
@@ -129,7 +132,7 @@ export default async function OrderStorefront() {
   // (page is public marketing — never hard-crash for a DB hiccup).
   let menu: CateringMenuItem[] = [];
   try {
-    menu = await loadPublicCateringMenu(CAPITOL_HILL_ID);
+    menu = await loadPublicCateringMenu(STOREFRONT_LOCATION_ID);
   } catch (err) {
     console.error("[/order] loadPublicCateringMenu failed:", err);
   }
@@ -137,7 +140,7 @@ export default async function OrderStorefront() {
   // Load real catering packages; gracefully degrade to empty array on error.
   let packages: CateringPackage[] = [];
   try {
-    packages = await loadPublicCateringPackages(CAPITOL_HILL_ID);
+    packages = await loadPublicCateringPackages(STOREFRONT_LOCATION_ID);
   } catch (err) {
     console.error("[/order] loadPublicCateringPackages failed:", err);
   }

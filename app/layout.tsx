@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { DM_Sans } from "next/font/google";
 import "./globals.css";
+import { TENANT_NAME } from "@/lib/tenant";
 
 const dmSans = DM_Sans({
   subsets: ["latin"],
@@ -15,7 +16,7 @@ export const metadata: Metadata = {
   // canonical when NEXT_PUBLIC_APP_URL is unset (e.g. CI build with no env).
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? "https://co-ops-ashy.vercel.app"),
   title: "CO-OPS",
-  description: "Compliments Only Operations Platform",
+  description: `${TENANT_NAME} Operations Platform`,
 };
 
 export default function RootLayout({
