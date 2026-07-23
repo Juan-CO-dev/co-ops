@@ -9,7 +9,7 @@ import {
   sumDenominations,
   type Denominations,
   type OnShiftEntry,
-} from "@/lib/cash";
+} from "@/lib/cash-shared";
 import { formatCents } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language } from "@/lib/i18n/types";

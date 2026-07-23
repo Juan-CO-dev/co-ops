@@ -27,7 +27,7 @@ import { routeDeliveryAction } from "./actions";
 import {
   CATERING_DELIVERY_WINDOWS,
   type DeliveryRouteResult,
-} from "@/lib/catering/fulfillment-routing";
+} from "@/lib/catering/fulfillment-shared";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 
