@@ -22,8 +22,10 @@ import { checkCateringCapacity, type CateringCapacityResult } from "@/lib/cateri
 import { reservePrepDemand, consumePrepDemand, releasePrepDemand } from "@/lib/catering/prep-demand";
 
 // ── Stage vocabulary ─────────────────────────────────────────────────────────
-export const PIPELINE_STAGES = ["inquiry", "quote_sent", "confirmed", "out", "completed", "lost"] as const;
-export type PipelineStage = (typeof PIPELINE_STAGES)[number];
+import { PIPELINE_STAGES, type PipelineStage } from "./pipeline-shared";
+// Client-safe stage vocabulary lives in pipeline-shared.ts; re-exported for
+// existing server consumers.
+export { PIPELINE_STAGES, type PipelineStage };
 export function isPipelineStage(v: unknown): v is PipelineStage {
   return typeof v === "string" && (PIPELINE_STAGES as readonly string[]).includes(v);
 }

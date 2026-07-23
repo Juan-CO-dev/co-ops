@@ -1,6 +1,6 @@
 "use client";
 
-import { DENOMINATION_UNITS_CENTS, sumDenominations, type Denominations } from "@/lib/cash";
+import { DENOMINATION_UNITS_CENTS, sumDenominations, type Denominations } from "@/lib/cash-shared";
 import { formatCents } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language } from "@/lib/i18n/types";

@@ -26,7 +26,7 @@ import type {
   VendorContact,
   VendorOrderingDetail,
 } from "@/lib/admin/vendors";
-import { VENDOR_COLOR_PALETTE } from "@/lib/admin/vendors";
+import { VENDOR_COLOR_PALETTE } from "@/lib/admin/vendors-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { postJson, resolveErrorKey, ORDERING_METHODS } from "./shared";
 import { MultiSelectChips } from "./MultiSelectChips";

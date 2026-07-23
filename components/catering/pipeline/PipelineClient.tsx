@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { formatCents } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
-import { PIPELINE_STAGES, type PipelineStage, type PipelineLead, type PipelineSearchResult } from "@/lib/catering/pipeline";
+import { PIPELINE_STAGES, type PipelineStage } from "@/lib/catering/pipeline-shared";
+import type { PipelineLead, PipelineSearchResult } from "@/lib/catering/pipeline";
 import type { CateringCapacityResult } from "@/lib/catering/capacity";
 import { postJson, resolveErrorKey } from "./shared";
 

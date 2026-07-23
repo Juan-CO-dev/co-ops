@@ -96,12 +96,10 @@ export interface VendorView {
   color: string | null;
 }
 
-/** Fixed, legible, on-brand-ish palette for vendor calendar colors (B2 reads
- *  these; a curated set keeps the aggregated calendar readable vs free hex). */
-export const VENDOR_COLOR_PALETTE = [
-  "#2563EB", "#DC2626", "#16A34A", "#D97706", "#7C3AED",
-  "#0891B2", "#DB2777", "#65A30D", "#EA580C", "#4B5563",
-] as const;
+import { VENDOR_COLOR_PALETTE } from "./vendors-shared";
+// Client-safe palette lives in vendors-shared.ts; re-exported for existing
+// server consumers.
+export { VENDOR_COLOR_PALETTE };
 
 /** Typed error the routes map to jsonError(status, code). */
 export class AdminVendorError extends Error {
