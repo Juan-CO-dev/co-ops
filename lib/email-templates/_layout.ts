@@ -32,6 +32,8 @@
  * to web app UI in a later phase.
  */
 
+import { TENANT_NAME } from "@/lib/tenant";
+
 export const COLORS = {
   mayo: "#FFF9E4",
   dietCoke: "#141414",
@@ -117,7 +119,7 @@ export function renderEmailLayout(input: EmailLayoutInput): string {
       <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:560px;background:#FFFFFF;border-radius:12px;overflow:hidden;">
         <tr>
           <td align="center" style="background:${COLORS.mustard};padding:32px 24px;">
-            <div style="${wordmarkStyle}">Compliments Only</div>
+            <div style="${wordmarkStyle}">${escapeHtml(TENANT_NAME)}</div>
           </td>
         </tr>
         <tr>
@@ -138,7 +140,7 @@ export function renderEmailLayout(input: EmailLayoutInput): string {
           </td>
         </tr>
       </table>
-      <div style="margin-top:16px;font-size:12px;color:${COLORS.dietCoke};opacity:0.5;">&copy; Compliments Only</div>
+      <div style="margin-top:16px;font-size:12px;color:${COLORS.dietCoke};opacity:0.5;">&copy; ${escapeHtml(TENANT_NAME)}</div>
     </td>
   </tr>
 </table>
