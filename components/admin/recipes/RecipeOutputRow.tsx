@@ -7,7 +7,7 @@
 
 import { useState } from "react";
 import { useTranslation } from "@/lib/i18n/provider";
-import type { RecipeOutputView } from "@/lib/recipes";
+import type { RecipeOutputView } from "@/lib/recipes-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
 
 const rk = (k: string): TranslationKey => k as TranslationKey;

@@ -10,8 +10,8 @@ import { useState } from "react";
 import Link from "next/link";
 
 import { useTranslation } from "@/lib/i18n/provider";
-import type { RecipeListRow, RecipeType } from "@/lib/recipes";
-import { RECIPE_WRITE_MIN } from "@/lib/recipes";
+import type { RecipeListRow, RecipeType } from "@/lib/recipes-shared";
+import { RECIPE_WRITE_MIN } from "@/lib/recipes-shared";
 import type { Readiness } from "@/lib/readiness";
 import { StatusBadge, ReadinessReasons } from "@/components/admin/StatusBadge";
 import type { TranslationKey } from "@/lib/i18n/types";

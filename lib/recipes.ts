@@ -9,33 +9,31 @@ import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 
-export const RECIPE_READ_MIN = 6;
-export const RECIPE_WRITE_MIN = 7;
-export const RECIPE_DELETE_MIN = 8;
-export const MENU_PRICE_MIN = 8;
+import {
+  RECIPE_READ_MIN,
+  RECIPE_WRITE_MIN,
+  RECIPE_DELETE_MIN,
+  MENU_PRICE_MIN,
+  type RecipeType,
+  type RecipeInputView,
+  type RecipeOutputView,
+  type RecipeView,
+  type RecipeListRow,
+} from "@/lib/recipes-shared";
 
-export type RecipeType = "production" | "consumer";
-
-export interface RecipeInputView {
-  id: string; componentSkuId: string | null; componentItemId: string | null;
-  componentName: string; quantity: number; unit: string | null;
-  eachContainerLabel: string | null; portioned: boolean; displayOrder: number;
-}
-export interface RecipeOutputView {
-  id: string; outputItemId: string | null; outputMenuItemId: string | null;
-  outputName: string; yield: number; outputContainerLabel: string | null;
-  ozAllocShare: number | null; displayOrder: number;
-}
-export interface RecipeView {
-  id: string; name: string; nameEs: string | null; recipeType: RecipeType;
-  batchYield: number; directions: string | null; directionsEs: string | null;
-  active: boolean; inputs: RecipeInputView[]; outputs: RecipeOutputView[];
-}
-export interface RecipeListRow {
-  id: string; name: string; recipeType: RecipeType; active: boolean;
-  outputNames: string[]; hasInputs: boolean; hasOutputs: boolean;
-  batchYield: number | null;
-}
+// Client-safe surface lives in lib/recipes-shared.ts (see its header for why);
+// re-exported here so existing server consumers keep their import paths.
+export {
+  RECIPE_READ_MIN,
+  RECIPE_WRITE_MIN,
+  RECIPE_DELETE_MIN,
+  MENU_PRICE_MIN,
+  type RecipeType,
+  type RecipeInputView,
+  type RecipeOutputView,
+  type RecipeView,
+  type RecipeListRow,
+};
 
 export class RecipeError extends Error {
   constructor(public status: number, public code: string, message?: string) {
