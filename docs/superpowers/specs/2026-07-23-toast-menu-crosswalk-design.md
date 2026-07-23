@@ -105,7 +105,7 @@ Server page loads `loadToastMapState` alongside the existing menu load; `MenuCli
 - **Drift report:** grouped advisory lists (price changed / renamed / missing on Toast / new on Toast / CO unmapped).
 - All new strings in `en.json` + `es.json` under `admin.toast.*` (i18n law; operational tú-form Spanish).
 
-`/admin/locations`: add a `Toast restaurant GUID` text field to the existing location editor (same write gate that page already uses).
+~~`/admin/locations` field~~ **Corrected during build:** `/admin/locations` is still a placeholder page (no editor exists). The per-location `Toast restaurant GUID` field lives INLINE in the Toast tab instead (input + save, Tier-A step-up, via `setLocationToastGuid` + `POST /api/admin/toast-map/location`, audited `toast_map.set_location_guid`) — one surface for everything Toast.
 
 ## Testing (vitest additions)
 

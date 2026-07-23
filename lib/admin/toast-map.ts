@@ -328,3 +328,29 @@ export async function driftReport(actor: AuthContext, locationId: string): Promi
   report.unmappedCo = entities.filter((e) => !mappedEntityIds.has(e.id));
   return report;
 }
+
+/** Set/clear a location's Toast restaurant GUID (per-location operational identity — DATA
+ *  per the tenant boundary law; the GUID scopes every Toast API call for that location). */
+export async function setLocationToastGuid(
+  actor: AuthContext,
+  locationId: string,
+  guid: string | null,
+): Promise<void> {
+  requireLevel(actor, TOAST_MAP_MIN);
+  const trimmed = guid?.trim() || null;
+  if (trimmed != null && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed)) {
+    throw new AdminToastMapError(400, "invalid_guid", "Toast restaurant GUID must be a UUID");
+  }
+  const sb = getServiceRoleClient();
+  const { error, count } = await sb.from("locations")
+    .update({ toast_restaurant_guid: trimmed }, { count: "exact" })
+    .eq("id", locationId).eq("active", true);
+  if (error) throw new Error(`toast-map set guid: ${error.message}`);
+  if (count === 0) throw new AdminToastMapError(404, "location_not_found", "Location not found");
+  void audit({
+    actorId: actor.user.id, actorRole: actor.user.role,
+    action: "toast_map.set_location_guid", resourceTable: "locations", resourceId: locationId,
+    metadata: { toast_restaurant_guid_set: trimmed != null },
+    ipAddress: null, userAgent: null,
+  });
+}
