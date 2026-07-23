@@ -20,10 +20,14 @@
  *       - prep-list resolution generator
  *       - email verification + password reset token operations
  *
- * SECURITY: never import this module from client code. There is no Next
- * runtime guard here (no `server-only` dep yet); the convention is enforced
- * by review.
+ * SECURITY: never import this module from client code. The `server-only`
+ * import below makes this a build-time guarantee — any client-component
+ * import path fails the build instead of leaking the service-role key
+ * into a client bundle. (Was review-enforced convention before 2026-07-23;
+ * hardened after two council seats independently flagged the gap.)
  */
+
+import "server-only";
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
