@@ -16,6 +16,7 @@ export function tokenIsFresh(expiresAtMs: number | null, nowMs: number): boolean
 /** Fixture-mode routing: Toast GET path → checked-in fixture key (tests/fixtures/toast/<key>.json). */
 export const FIXTURE_KEYS: ReadonlyArray<{ prefix: string; key: string }> = [
   { prefix: "/menus/v2/menus", key: "menus-v2-sample" },
+  { prefix: "/orders/v2/ordersBulk", key: "orders-v2-sample" },
 ];
 
 export function resolveFixtureKey(path: string): string | null {
