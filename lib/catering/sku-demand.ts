@@ -10,7 +10,8 @@ import { getRoleLevel } from "@/lib/roles";
 import type { AuthContext } from "@/lib/session";
 import { PORTION_FRACTION, type Portion } from "@/lib/catering/pricing-derivation";
 import { PREP_DEMAND_READ_MIN } from "@/lib/catering/prep-demand";
-import { perUnitSkuOzForItem, perUnitSkuOzForMenuItem, loadMeasures } from "@/lib/prep-consumption";
+import { loadRecipeGraph, loadMeasures } from "@/lib/prep-consumption";
+import { perUnitSkuOzForItemFromGraph, perUnitSkuOzForMenuItemFromGraph } from "@/lib/prep-consumption-graph";
 import { loadInStockPacks } from "@/lib/production";
 import { skuContentOz } from "@/lib/recipe-math";
 
@@ -68,7 +69,8 @@ export async function loadCateringSkuDemand(
   const demandRows = rows ?? [];
 
   // Flatten each line to SKU oz, memoized per distinct item/sub ref (the flatten is per-ref).
-  const perUnitCache = new Map<string, Map<string, number>>(); // "item:id" | "menu_item:id" -> {sku -> oz/unit}
+  const perUnitCache = new Map<string, Map<string, number>>();
+  let recipeGraph: Awaited<ReturnType<typeof loadRecipeGraph>> | null = null; // "item:id" | "menu_item:id" -> {sku -> oz/unit}
   const skuOzByDate = new Map<string, Map<string, number>>(); // skuId -> (need_date -> oz)
   let unresolvedChoiceLines = 0;
   let noRecipeLines = 0;
@@ -83,7 +85,9 @@ export async function loadCateringSkuDemand(
     const cacheKey = `${isItem ? "item" : "menu_item"}:${refId}`;
     let perUnit = perUnitCache.get(cacheKey);
     if (!perUnit) {
-      perUnit = isItem ? await perUnitSkuOzForItem(refId) : await perUnitSkuOzForMenuItem(refId);
+      // ONE graph load for the whole pass (see loadRecipeGraph); resolution is pure/in-memory.
+      recipeGraph ??= await loadRecipeGraph();
+      perUnit = isItem ? perUnitSkuOzForItemFromGraph(recipeGraph, refId) : perUnitSkuOzForMenuItemFromGraph(recipeGraph, refId);
       perUnitCache.set(cacheKey, perUnit);
     }
     if (perUnit.size === 0) {
