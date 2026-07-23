@@ -3,7 +3,7 @@
  * Pins: tax-base composition, non-negative defense (A-H1), deposit-on-total, line rounding.
  */
 import { describe, it, expect } from "vitest";
-import { computeChargeStack, lineTotalCents, type ChargeRates } from "@/lib/catering/quotes";
+import { computeChargeStack, lineTotalCents, type ChargeRates } from "@/lib/catering/quotes-shared";
 
 const RATES: ChargeRates = {
   taxRateBps: 1000, // 10% DC-style sales tax for round numbers
