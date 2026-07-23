@@ -1,0 +1,37 @@
+[
+  {
+    "name": "Food",
+    "groups": [
+      {
+        "name": "Subs",
+        "items": [
+          { "guid": "tg-italian", "name": "Italian Sub", "price": 12.0 },
+          { "guid": "tg-turkey", "name": "Turkey Sub", "price": 11.0 },
+          { "guid": "tg-meatball", "name": "Meatball Sub", "price": 11.5 },
+          { "guid": "tg-hotpants", "name": "Hot Pants", "price": 12.5 },
+          { "guid": "tg-veggie", "name": "Veggie Sub", "price": 10.0 }
+        ]
+      },
+      {
+        "name": "Sides",
+        "items": [
+          { "guid": "tg-chips", "name": "Kettle Chips", "price": 2.5 },
+          { "guid": "tg-pickle", "name": "Whole Pickle", "price": 2.0 },
+          { "guid": "tg-market", "name": "Market Side", "price": null }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "Drinks",
+    "groups": [
+      {
+        "name": "Cold Drinks",
+        "items": [
+          { "guid": "tg-soda", "name": "Fountain Soda", "price": 2.75 },
+          { "guid": "tg-chips", "name": "Kettle Chips (dup)", "price": 9.99 }
+        ]
+      }
+    ]
+  }
+]
