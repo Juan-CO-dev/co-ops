@@ -2362,6 +2362,9 @@
   "admin.catering.lto.no_surplus": "No perishable surplus to act on.",
   "admin.catering.lto.no_events": "No LTOs or discounts yet.",
   "admin.catering.lto.manage_title": "LTOs & discounts",
+  "admin.catering.hub.rate_rules": "Catering Rates",
+  "admin.catering.lto.location_label": "Location",
+  "admin.catering.lto.error.percent_required": "Percent off is required for discounts.",
   "lto.active_title": "Active LTOs & discounts",
   "lto.active_empty": "No active LTOs or discounts right now."
 }

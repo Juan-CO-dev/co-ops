@@ -1,3 +1,8 @@
+> **Supersession note (audit 2026-07-24):** this spec's v1 decision "packages stay
+> marketing CTAs" was deliberately reversed by the package-configurator spec
+> (2026-07-22) — packages DO get Add-to-order via StorefrontPackages. The build
+> follows the later spec.
+
 # ⑤ Order-Funnel Carry-Through (design)
 
 **Status:** approved 2026-07-21 (Juan). Funnel-continuity follow-up to 3a-core (the order

@@ -21,6 +21,7 @@ const EDITORS: { id: string; i18nKey: TranslationKey; href: string; minLevel: nu
   { id: "packages",    i18nKey: "admin.catering.hub.packages",    href: "/admin/catering/packages",    minLevel: 6 },
   { id: "menu",        i18nKey: "admin.catering.hub.menu",        href: "/admin/catering/menu",        minLevel: 7 },
   { id: "pricing",     i18nKey: "admin.catering.hub.pricing",     href: "/admin/catering/pricing",     minLevel: 8 },
+  { id: "rate-rules",  i18nKey: "admin.catering.hub.rate_rules" as TranslationKey, href: "/admin/catering/rate-rules", minLevel: 8 },
   { id: "capacity",    i18nKey: "admin.catering.hub.capacity",    href: "/admin/catering/capacity",    minLevel: 7 },
   { id: "zones",       i18nKey: "admin.catering.hub.zones",       href: "/admin/catering/zones",       minLevel: 7 },
   { id: "faq",         i18nKey: "admin.catering.hub.faq",         href: "/admin/catering/faq",         minLevel: 6 },

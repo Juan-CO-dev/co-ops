@@ -94,7 +94,7 @@ function LineCard({ line, locationId, busy, setBusy, onSuccess }: LineCardProps)
     const hasPct = Number.isFinite(pctNum) && pctNum > 0;
 
     if (form.kind === "discount" && !hasPct) {
-      setErrorMsg(t("admin.catering.lto.percent_off" as TranslationKey) + " is required for discounts.");
+      setErrorMsg(t("admin.catering.lto.error.percent_required" as TranslationKey));
       return;
     }
 
@@ -446,7 +446,7 @@ export function LtoClient({
         <div>
           <label className="block">
             <span className="text-xs font-bold uppercase tracking-[0.08em] text-co-text-muted">
-              Location
+              {t("admin.catering.lto.location_label" as TranslationKey)}
             </span>
             <select
               className={fieldCls}
