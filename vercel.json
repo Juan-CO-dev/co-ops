@@ -1,0 +1,5 @@
+{
+  "crons": [
+    { "path": "/api/cron/toast-sales-pull", "schedule": "0 9 * * *" }
+  ]
+}

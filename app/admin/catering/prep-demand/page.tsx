@@ -89,6 +89,7 @@ export default async function AdminCateringPrepDemandPage({
         lang={lang}
         skuDemand={skuDemand}
         surplus={surplus}
+        canPull={level >= 7}
       />
     </div>
   );
