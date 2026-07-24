@@ -28,6 +28,7 @@ export async function POST(req: NextRequest) {
   const eventDate = optStr(b.eventDate);
   const headcount = optNum(b.headcount);
   const leadSource = optStr(b.leadSource);
+  const assignedTo = optStr(b.assignedTo);
   const locationId = optStr(b.locationId);
   const notes = optStr(b.notes);
   const followUpDate = optStr(b.followUpDate);
@@ -35,7 +36,7 @@ export async function POST(req: NextRequest) {
   const estimatedRevenueCents = optNum(b.estimatedRevenueCents);
 
   for (const [field, v] of Object.entries({
-    company, eventDate, headcount, leadSource, locationId, notes, followUpDate, customerId, estimatedRevenueCents,
+    company, eventDate, headcount, leadSource, locationId, notes, followUpDate, customerId, estimatedRevenueCents, assignedTo,
   })) {
     if (v === undefined) return jsonError(400, "invalid_payload", { field });
   }
@@ -46,6 +47,7 @@ export async function POST(req: NextRequest) {
     eventDate: eventDate ?? null,
     headcount: headcount ?? null,
     leadSource: leadSource ?? null,
+    assignedTo: assignedTo ?? null,
     locationId: locationId ?? null,
     notes: notes ?? null,
     followUpDate: followUpDate ?? null,

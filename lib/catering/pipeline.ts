@@ -14,7 +14,7 @@
  */
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { getRoleLevel } from "@/lib/roles";
+import { getRoleLevel, type RoleCode } from "@/lib/roles";
 import { lockLocationContext, isAllLocationsAccess } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
@@ -23,6 +23,7 @@ import { reservePrepDemand, consumePrepDemand, releasePrepDemand } from "@/lib/c
 
 // ── Stage vocabulary ─────────────────────────────────────────────────────────
 import { PIPELINE_STAGES, type PipelineStage } from "./pipeline-shared";
+import { isLeadSource } from "./intake-shared";
 // Client-safe stage vocabulary lives in pipeline-shared.ts; re-exported for
 // existing server consumers.
 export { PIPELINE_STAGES, type PipelineStage };
@@ -46,6 +47,24 @@ export class CateringPipelineError extends Error {
 function requireLevel(actor: AuthContext, min: number): void {
   if (getRoleLevel(actor.user.role) < min) {
     throw new CateringPipelineError(403, "forbidden", "Insufficient role level");
+  }
+}
+
+/** New lead_source writes must come from the intake registry (legacy free text stays readable). */
+function validateLeadSource(v: string | null | undefined): void {
+  if (v != null && !isLeadSource(v)) {
+    throw new CateringPipelineError(400, "invalid_source", "Unknown lead source");
+  }
+}
+
+/** The "order lead" must be an active staff member (level >= 3). */
+async function requireAssignable(userId: string): Promise<void> {
+  const sb = getServiceRoleClient();
+  const { data, error } = await sb.from("users").select("id, role, active")
+    .eq("id", userId).maybeSingle<{ id: string; role: RoleCode; active: boolean }>();
+  if (error) throw new Error(`pipeline assignable check: ${error.message}`);
+  if (!data || !data.active || getRoleLevel(data.role) < 3) {
+    throw new CateringPipelineError(400, "invalid_assignee", "Assignee must be an active staff member");
   }
 }
 
@@ -87,6 +106,8 @@ export interface PipelineLead {
   notes: string | null;
   followUpDate: string | null;
   estimatedRevenueCents: number | null;
+  /** The "order lead" — the client-facing owner of this order (spec #2b). */
+  assignedTo: string | null;
   createdBy: string | null;
   createdAt: string;
   updatedAt: string | null;
@@ -112,13 +133,14 @@ interface DbLeadRow {
   notes: string | null;
   follow_up_date: string | null;
   estimated_revenue_cents: number | null;
+  assigned_to: string | null;
   created_by: string | null;
   created_at: string;
   updated_at: string | null;
 }
 
 const LEAD_COLS =
-  "id, customer_id, contact_name, company, event_date, headcount, contact_phone, delivery_address, time_window, event_type, dietary_notes, event_name, dropoff_door, stage, lead_source, location_id, notes, follow_up_date, estimated_revenue_cents, created_by, created_at, updated_at";
+  "id, customer_id, contact_name, company, event_date, headcount, contact_phone, delivery_address, time_window, event_type, dietary_notes, event_name, dropoff_door, stage, lead_source, location_id, notes, follow_up_date, estimated_revenue_cents, assigned_to, created_by, created_at, updated_at";
 
 function mapLead(r: DbLeadRow): PipelineLead {
   return {
@@ -141,6 +163,7 @@ function mapLead(r: DbLeadRow): PipelineLead {
     notes: r.notes,
     followUpDate: r.follow_up_date,
     estimatedRevenueCents: r.estimated_revenue_cents,
+    assignedTo: r.assigned_to,
     createdBy: r.created_by,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -317,6 +340,7 @@ export interface CreateLeadInput {
   eventName?: string | null;
   dropoffDoor?: string | null;
   leadSource?: string | null;
+  assignedTo?: string | null;
   locationId?: string | null;
   notes?: string | null;
   followUpDate?: string | null;
@@ -331,6 +355,8 @@ export async function createLead(actor: AuthContext, input: CreateLeadInput): Pr
   if (!input.contactName || input.contactName.trim().length === 0) {
     throw new CateringPipelineError(400, "invalid_payload", "contactName is required");
   }
+  validateLeadSource(input.leadSource);
+  if (input.assignedTo != null) await requireAssignable(input.assignedTo);
   const sb = getServiceRoleClient();
   const { data: inserted, error } = await sb
     .from("catering_pipeline")
@@ -353,6 +379,7 @@ export async function createLead(actor: AuthContext, input: CreateLeadInput): Pr
       follow_up_date: input.followUpDate ?? null,
       customer_id: input.customerId ?? null,
       estimated_revenue_cents: input.estimatedRevenueCents ?? null,
+      assigned_to: input.assignedTo ?? null,
       created_by: actor.user.id,
     })
     .select("id")
@@ -459,6 +486,7 @@ export interface EditLeadInput {
   eventName?: string | null;
   dropoffDoor?: string | null;
   leadSource?: string | null;
+  assignedTo?: string | null;
   notes?: string | null;
   followUpDate?: string | null;
   customerId?: string | null;
@@ -494,11 +522,26 @@ export async function editLead(actor: AuthContext, id: string, input: EditLeadIn
   if (input.dietaryNotes !== undefined) patch.dietary_notes = input.dietaryNotes;
   if (input.eventName !== undefined) patch.event_name = input.eventName;
   if (input.dropoffDoor !== undefined) patch.dropoff_door = input.dropoffDoor;
-  if (input.leadSource !== undefined) patch.lead_source = input.leadSource;
+  if (input.leadSource !== undefined) {
+    validateLeadSource(input.leadSource);
+    patch.lead_source = input.leadSource;
+  }
+  if (input.assignedTo !== undefined) {
+    if (input.assignedTo != null) await requireAssignable(input.assignedTo);
+    patch.assigned_to = input.assignedTo;
+  }
   if (input.notes !== undefined) patch.notes = input.notes;
   if (input.followUpDate !== undefined) patch.follow_up_date = input.followUpDate;
   if (input.customerId !== undefined) patch.customer_id = input.customerId;
   if (input.estimatedRevenueCents !== undefined) patch.estimated_revenue_cents = input.estimatedRevenueCents;
+
+  // Pre-read the current order lead: the attribution norm (spec #2b) is that
+  // ONLY the assignee should edit — others may, but the audit row says so.
+  const { data: beforeRow, error: bErr } = await sb
+    .from("catering_pipeline").select("assigned_to")
+    .eq("id", id).maybeSingle<{ assigned_to: string | null }>();
+  if (bErr) throw new Error(`editLead pre-read: ${bErr.message}`);
+  if (!beforeRow) throw new CateringPipelineError(404, "not_found", "Lead not found");
 
   const { error: uErr, count } = await sb
     .from("catering_pipeline")
@@ -513,8 +556,31 @@ export async function editLead(actor: AuthContext, id: string, input: EditLeadIn
     action: "catering.pipeline.edit",
     resourceTable: "catering_pipeline",
     resourceId: id,
-    metadata: { fields: Object.keys(patch).filter((k) => k !== "updated_at") },
+    metadata: {
+      fields: Object.keys(patch).filter((k) => k !== "updated_at"),
+      ...(beforeRow.assigned_to != null && beforeRow.assigned_to !== actor.user.id
+        ? { non_assignee_edit: true, order_lead: beforeRow.assigned_to }
+        : {}),
+      ...("assigned_to" in patch && patch.assigned_to !== beforeRow.assigned_to
+        ? { assigned_to_changed: true, assigned_from: beforeRow.assigned_to, assigned_to: patch.assigned_to }
+        : {}),
+    },
     ipAddress: null,
     userAgent: null,
   });
+}
+
+// ── Assignable staff (spec #2b) ───────────────────────────────────────────────
+
+export interface AssignableStaff { id: string; name: string }
+
+/** Active staff (level >= 3) assignable as an order lead; also powers name display. */
+export async function loadAssignableStaff(actor: AuthContext): Promise<AssignableStaff[]> {
+  requireLevel(actor, PIPELINE_READ_MIN);
+  const sb = getServiceRoleClient();
+  const { data, error } = await sb.from("users").select("id, name, role, active")
+    .eq("active", true).order("name", { ascending: true })
+    .returns<Array<{ id: string; name: string; role: RoleCode; active: boolean }>>();
+  if (error) throw new Error(`loadAssignableStaff: ${error.message}`);
+  return (data ?? []).filter((u) => getRoleLevel(u.role) >= 3).map((u) => ({ id: u.id, name: u.name }));
 }
