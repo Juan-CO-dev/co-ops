@@ -12,10 +12,12 @@ import { MenuClient } from "./MenuClient";
 import { ToastTab } from "./ToastTab";
 import type { AdminMenuItem } from "@/lib/admin/catering/menu";
 import type { ToastMapState } from "@/lib/admin/toast-map";
+import type { EzcaterAdminState } from "@/lib/admin/ezcater-map";
 
-export function MenuTabs({ items, toastState, canWrite }: {
+export function MenuTabs({ items, toastState, ezcaterState, canWrite }: {
   items: AdminMenuItem[];
   toastState: ToastMapState;
+  ezcaterState: EzcaterAdminState;
   canWrite: boolean;
 }) {
   const { t } = useTranslation();
@@ -34,7 +36,7 @@ export function MenuTabs({ items, toastState, canWrite }: {
           {t("admin.toast.tab_toast")}
         </button>
       </div>
-      {tab === "menu" ? <MenuClient items={items} canWrite={canWrite} /> : <ToastTab state={toastState} canWrite={canWrite} />}
+      {tab === "menu" ? <MenuClient items={items} canWrite={canWrite} /> : <ToastTab state={toastState} ezcater={ezcaterState} canWrite={canWrite} />}
     </div>
   );
 }

@@ -15,9 +15,10 @@ import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { PasswordModal } from "@/components/auth/PasswordModal";
 import type { ToastMapState, DriftReport } from "@/lib/admin/toast-map";
+import type { EzcaterAdminState } from "@/lib/admin/ezcater-map";
 
 const KNOWN = new Set([
-  "forbidden", "invalid_payload", "invalid_guid", "not_found", "location_not_found",
+  "forbidden", "invalid_payload", "invalid_guid", "invalid_uuid", "not_found", "location_not_found",
   "not_candidate", "not_confirmed", "conflict", "not_configured", "auth_failed",
   "rate_limited", "bad_payload", "step_up_required", "step_up_stale", "generic",
 ]);
@@ -25,7 +26,7 @@ function errKey(code: string): TranslationKey {
   return (KNOWN.has(code) ? `admin.toast.error.${code}` : "admin.toast.error.generic") as TranslationKey;
 }
 
-export function ToastTab({ state, canWrite }: { state: ToastMapState; canWrite: boolean }) {
+export function ToastTab({ state, ezcater, canWrite }: { state: ToastMapState; ezcater: EzcaterAdminState; canWrite: boolean }) {
   const { t, language } = useTranslation();
   const router = useRouter();
   const [errorKey, setErrorKey] = useState<TranslationKey | null>(null);
@@ -35,6 +36,7 @@ export function ToastTab({ state, canWrite }: { state: ToastMapState; canWrite: 
   const [drift, setDrift] = useState<Record<string, DriftReport>>({});
   const [matchNote, setMatchNote] = useState<Record<string, { pulled: number; candidates: number }>>({});
   const [guidDraft, setGuidDraft] = useState<Record<string, string>>({});
+  const [ezDraft, setEzDraft] = useState<Record<string, string>>({});
 
   const money = useCallback(
     (c: number | null) => (c != null ? new Intl.NumberFormat(language === "es" ? "es-US" : "en-US", { style: "currency", currency: "USD" }).format(c / 100) : "—"),
@@ -87,6 +89,11 @@ export function ToastTab({ state, canWrite }: { state: ToastMapState; canWrite: 
   const rowAction = (mapId: string, action: "confirm" | "reject" | "unmap") => {
     setBusy(mapId);
     void api(`/api/admin/toast-map/${mapId}`, "POST", { action }, () => router.refresh(), mapId).finally(() => setBusy(null));
+  };
+  const saveEzUuid = (locId: string) => {
+    const value = (ezDraft[locId] ?? "").trim();
+    setBusy(`${locId}:ez`);
+    void api("/api/admin/ezcater/location", "POST", { locationId: locId, ezcaterCatererUuid: value === "" ? null : value }, () => router.refresh(), `${locId}:ez`).finally(() => setBusy(null));
   };
   const saveGuid = (locId: string) => {
     const value = (guidDraft[locId] ?? "").trim();
@@ -143,6 +150,22 @@ export function ToastTab({ state, canWrite }: { state: ToastMapState; canWrite: 
               />
               <button type="button" className={btn} disabled={!canWrite || busy === `${loc.id}:guid` || guidDraft[loc.id] === undefined} onClick={() => saveGuid(loc.id)}>
                 {t("admin.toast.guid_save")}
+              </button>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="text-xs font-bold uppercase tracking-wide text-co-text-dim" htmlFor={`ez-${loc.id}`}>
+                {t("admin.ezcater.uuid_label")}
+              </label>
+              <input
+                id={`ez-${loc.id}`}
+                className={inputCls}
+                defaultValue={ezcater.locations.find((l) => l.id === loc.id)?.ezcaterCatererUuid ?? ""}
+                onChange={(e) => setEzDraft((prev) => ({ ...prev, [loc.id]: e.target.value }))}
+                disabled={!canWrite}
+              />
+              <button type="button" className={btn} disabled={!canWrite || busy === `${loc.id}:ez` || ezDraft[loc.id] === undefined} onClick={() => saveEzUuid(loc.id)}>
+                {t("admin.ezcater.uuid_save")}
               </button>
             </div>
 
@@ -204,6 +227,24 @@ export function ToastTab({ state, canWrite }: { state: ToastMapState; canWrite: 
           </section>
         );
       })}
+
+      <section className="co-card p-4">
+        <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-co-text">{t("admin.ezcater.events_heading")}</h2>
+        <p className="mt-1 text-xs text-co-text-muted">
+          {ezcater.webhookConfigured ? t("admin.ezcater.webhook_on") : t("admin.ezcater.webhook_off")}
+          {" · "}
+          {ezcater.apiConfigured ? t("admin.ezcater.api_on") : t("admin.ezcater.api_off")}
+        </p>
+        <ul className="mt-2 flex flex-col gap-1 text-xs text-co-text">
+          {ezcater.events.map((e) => (
+            <li key={e.id} className="flex flex-wrap justify-between gap-2">
+              <span>{e.eventKey ?? "—"} · {e.entityId ?? "—"}{e.signatureValid ? "" : " ⚠"}</span>
+              <span className="text-co-text-dim">{e.processingResult ?? "—"} · {e.receivedAt.slice(0, 16).replace("T", " ")}</span>
+            </li>
+          ))}
+          {ezcater.events.length === 0 && <li className="text-co-text-muted">{t("admin.ezcater.no_events")}</li>}
+        </ul>
+      </section>
 
       <PasswordModal open={stepUpOpen} onConfirm={async () => { const p = pendingRef.current; if (p) { if (p.busyKey) setBusy(p.busyKey); try { await p.run(); } finally { setBusy(null); } } }} onCancel={() => { setStepUpOpen(false); pendingRef.current = null; }} />
     </div>
