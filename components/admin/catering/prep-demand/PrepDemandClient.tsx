@@ -17,6 +17,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
+import { SalesTab } from "./SalesTab";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { Language } from "@/lib/i18n/types";
 import { formatDateLabel } from "@/lib/i18n/format";
@@ -55,14 +56,15 @@ interface Props {
   lang: Language;
   skuDemand: CateringSkuDemand;
   surplus: SurplusDay[];
+  canPull: boolean;
 }
 
 // ─── PrepDemandClient ─────────────────────────────────────────────────────────
 
-export function PrepDemandClient({ days, locations, locationId, from, to, lang, skuDemand, surplus }: Props) {
+export function PrepDemandClient({ days, locations, locationId, from, to, lang, skuDemand, surplus, canPull }: Props) {
   const { t } = useTranslation();
   const router = useRouter();
-  const [activeTab, setActiveTab] = useState<"prep" | "sku" | "surplus">("prep");
+  const [activeTab, setActiveTab] = useState<"prep" | "sku" | "surplus" | "sales">("prep");
 
   const fieldCls =
     "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-60";
@@ -152,6 +154,19 @@ export function PrepDemandClient({ days, locations, locationId, from, to, lang, 
         >
           {t("admin.catering.prep_demand.tab_surplus" as TranslationKey)}
         </button>
+        <button
+          role="tab"
+          aria-selected={activeTab === "sales"}
+          onClick={() => setActiveTab("sales")}
+          className={[
+            "min-h-[44px] rounded-lg border-2 px-4 text-sm font-bold transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
+            activeTab === "sales"
+              ? "border-co-text bg-co-text text-co-bg"
+              : "border-co-border bg-co-surface text-co-text hover:border-co-text",
+          ].join(" ")}
+        >
+          {t("admin.toastsales.tab" as TranslationKey)}
+        </button>
       </div>
 
       {/* ─── Prep tab content ──────────────────────────────────────────── */}
@@ -180,6 +195,10 @@ export function PrepDemandClient({ days, locations, locationId, from, to, lang, 
       {activeTab === "surplus" && (
         <SurplusTab surplus={surplus} t={t} lang={lang} />
       )}
+      {activeTab === "sales" && (
+        <SalesTab locationId={locationId} canPull={canPull} />
+      )}
+
     </div>
   );
 }
