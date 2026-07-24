@@ -128,7 +128,7 @@ async function doPull(locationId: string, businessDate: string, actor: AuthConte
   }
   void audit({
     actorId: actor?.user.id ?? null,
-    actorRole: actor?.user.role ?? "system",
+    actorRole: actor?.user.role ?? null,
     action: "toast_sales.pull",
     resourceTable: "toast_sales_events",
     resourceId: locationId,
