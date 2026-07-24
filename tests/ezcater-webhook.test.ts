@@ -6,7 +6,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { createHmac } from "node:crypto";
-import { parseEzcaterSignature, verifyEzcaterSignature, parseEzcaterNotification } from "@/lib/ezcater/webhook-shared";
+import { parseEzcaterSignature, verifyEzcaterSignature, parseEzcaterNotification, SIGNATURE_FRESHNESS_SEC } from "@/lib/ezcater/webhook-shared";
 
 const SECRET = "test-webhook-secret";
 const BODY = JSON.stringify({ id: "n-1", parent_type: "Caterer", parent_id: "cat-1", entity_type: "Order", entity_id: "ord-1", key: "accepted", occurred_at: "2026-07-24T09:00:00Z" });
@@ -27,15 +27,21 @@ describe("parseEzcaterSignature", () => {
 });
 
 describe("verifyEzcaterSignature", () => {
-  it("accepts a correctly signed body", () => {
-    expect(verifyEzcaterSignature(SECRET, sign(BODY), BODY)).toBe(true);
+  const NOW = 1784900000; // matches sign()'s default ts — tests pin freshness explicitly
+  it("accepts a correctly signed, fresh body", () => {
+    expect(verifyEzcaterSignature(SECRET, sign(BODY), BODY, NOW)).toBe(true);
+    expect(verifyEzcaterSignature(SECRET, sign(BODY), BODY, NOW + SIGNATURE_FRESHNESS_SEC)).toBe(true);
   });
   it("rejects a tampered body", () => {
-    expect(verifyEzcaterSignature(SECRET, sign(BODY), BODY.replace("accepted", "cancelled"))).toBe(false);
+    expect(verifyEzcaterSignature(SECRET, sign(BODY), BODY.replace("accepted", "cancelled"), NOW)).toBe(false);
   });
   it("rejects the wrong secret and malformed headers", () => {
-    expect(verifyEzcaterSignature("other-secret", sign(BODY), BODY)).toBe(false);
-    expect(verifyEzcaterSignature(SECRET, "garbage", BODY)).toBe(false);
+    expect(verifyEzcaterSignature("other-secret", sign(BODY), BODY, NOW)).toBe(false);
+    expect(verifyEzcaterSignature(SECRET, "garbage", BODY, NOW)).toBe(false);
+  });
+  it("rejects stale signatures beyond the freshness window (replay-append vector)", () => {
+    expect(verifyEzcaterSignature(SECRET, sign(BODY), BODY, NOW + SIGNATURE_FRESHNESS_SEC + 1)).toBe(false);
+    expect(verifyEzcaterSignature(SECRET, sign(BODY), BODY, NOW - SIGNATURE_FRESHNESS_SEC - 1)).toBe(false);
   });
 });
 

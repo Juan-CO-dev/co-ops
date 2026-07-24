@@ -88,7 +88,8 @@ export async function processEzcaterDelivery(rawBody: string, signatureValid: bo
     return { result: "error:unparseable_body" };
   }
   if (!signatureValid) {
-    await appendEvent({ notification: null, raw, signatureValid, result: "invalid_signature" });
+    // Attacker-controllable path: cap what we store (review finding #3).
+    await appendEvent({ notification: null, raw: { unverified_body: rawBody.slice(0, 2000) }, signatureValid, result: "invalid_signature" });
     return { result: "invalid_signature" };
   }
   try {

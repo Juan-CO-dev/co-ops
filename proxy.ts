@@ -61,6 +61,11 @@ function isPublicPath(pathname: string): boolean {
   // Customer portal API (magic-link request/verify) — public; the routes do their own
   // customer-session checks and are NOT staff-JWT-gated.
   if (pathname.startsWith("/api/portal/")) return true;
+  // Inbound provider webhooks (ezCater; future platforms) — no staff session
+  // exists on these callers; authenticity = per-route HMAC signature + secret.
+  if (pathname.startsWith("/api/webhooks/")) return true;
+  // Scheduled jobs (Vercel Cron) — authenticity = CRON_SECRET at the route.
+  if (pathname.startsWith("/api/cron/")) return true;
   // Static brand assets (public/brand/*) are never auth-gated — otherwise the
   // login/PIN surfaces (unauthenticated) can't load the wordmark/icon and the
   // proxy 307-redirects the <img> request. The matcher also excludes asset
@@ -120,6 +125,6 @@ export const config = {
   matcher: [
     // Next 16 disallows capturing groups in matcher patterns. Use non-capturing
     // group `(?:...)` for the alternation of public auth endpoints.
-    "/((?!_next/static|_next/image|favicon\\.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico|woff|woff2|ttf)$|verify$|reset-password$|api/auth/(?:pin|password|logout|verify|password-reset-request|password-reset)$|api/locations$|api/users/login-options$|order(?:/.*)?$|api/portal/.*).+)",
+    "/((?!_next/static|_next/image|favicon\\.ico|.*\\.(?:png|jpg|jpeg|gif|svg|webp|ico|woff|woff2|ttf)$|verify$|reset-password$|api/auth/(?:pin|password|logout|verify|password-reset-request|password-reset)$|api/locations$|api/users/login-options$|order(?:/.*)?$|api/portal/.*|api/webhooks/.*|api/cron/.*).+)",
   ],
 };

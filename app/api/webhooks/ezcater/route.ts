@@ -9,11 +9,24 @@
 import { type NextRequest } from "next/server";
 import { jsonError, jsonOk } from "@/lib/api-helpers";
 import { verifyEzcaterSignature } from "@/lib/ezcater/webhook-shared";
+import { ezcaterConfigured } from "@/lib/ezcater/client";
+import { trustedClientIp } from "@/lib/client-ip";
+import { checkAndRecord } from "@/lib/portal/rate-limit";
 import { processEzcaterDelivery } from "@/lib/catering/ezcater-intake";
 
 export async function POST(req: NextRequest) {
   const secret = process.env.EZCATER_WEBHOOK_SECRET;
-  if (!secret) return jsonError(503, "webhook_disabled");
+  // BOTH halves must be configured: with the webhook secret set but the API
+  // token missing, a genuinely-signed delivery would fall into fixture mode
+  // and fabricate a lead from canned data (review finding #2). Refuse until
+  // the rollout is complete.
+  if (!secret || !ezcaterConfigured()) return jsonError(503, "webhook_disabled");
+
+  // Unauthenticated surface: throttle before any DB write (review finding #3).
+  // 60 deliveries/min/IP is far above ezCater's real cadence.
+  const ip = trustedClientIp(req.headers) ?? "unknown";
+  const allowed = await checkAndRecord(`ezcater_webhook:${ip}`, 60, 60);
+  if (!allowed) return jsonError(429, "rate_limited");
 
   const rawBody = await req.text();
   const signatureValid = verifyEzcaterSignature(secret, req.headers.get("x-ezcater-signature"), rawBody);

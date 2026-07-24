@@ -26,9 +26,18 @@ export function parseEzcaterSignature(header: string | null): ParsedSignature | 
   return { timestampSec: Math.trunc(ts), signature: sig };
 }
 
-export function verifyEzcaterSignature(secret: string, header: string | null, rawBody: string): boolean {
+/** Reject signatures older/newer than this window — closes the replay-append vector. */
+export const SIGNATURE_FRESHNESS_SEC = 300;
+
+export function verifyEzcaterSignature(
+  secret: string,
+  header: string | null,
+  rawBody: string,
+  nowSec: number = Math.floor(Date.now() / 1000),
+): boolean {
   const parsed = parseEzcaterSignature(header);
   if (!parsed) return false;
+  if (Math.abs(nowSec - parsed.timestampSec) > SIGNATURE_FRESHNESS_SEC) return false;
   const payload = `${parsed.timestampSec}.${rawBody}`;
   const computed = createHmac("sha256", secret).update(payload).digest("hex");
   const a = Buffer.from(computed);
