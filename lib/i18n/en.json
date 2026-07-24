@@ -2213,6 +2213,7 @@
   "admin.toastsales.error.bad_payload": "Toast returned an unexpected response.",
   "admin.toastsales.error.step_up_required": "Password confirmation required.",
   "admin.toastsales.error.step_up_stale": "Password confirmation expired — confirm again.",
+  "admin.toastsales.error.concurrent_pull": "Another pull just ran for this date — refresh and retry.",
   "admin.catering.hub.rate-rules": "Catering Rates",
   "admin.catering.rate.title": "Catering Rates",
   "admin.catering.rate.subtitle": "Set per-location catering price rates: default, per section, and per item override. Rate is a % of the regular price (100% = regular, 85% = 15% off).",

@@ -1,0 +1,5 @@
+[
+  { "guid": "do-takeout", "name": "Take Out", "behavior": "TAKE_OUT" },
+  { "guid": "do-catering", "name": "Catering", "behavior": "TAKE_OUT" },
+  { "guid": "do-dinein", "name": "Dine In", "behavior": "DINE_IN" }
+]

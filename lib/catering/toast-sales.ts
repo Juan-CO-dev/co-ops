@@ -20,6 +20,7 @@ import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { fetchToastOrders } from "@/lib/toast/orders";
 import { fetchToastMenuItems } from "@/lib/toast/menus";
+import { fetchDiningOptionNames } from "@/lib/toast/config";
 import { selectionChanged, type ToastSaleLine } from "@/lib/toast/orders-shared";
 import {
   matchesExclusion, SUSPECT_NAME_RE, SUSPECT_CHECK_QTY,
@@ -87,9 +88,10 @@ export interface PullResult { selections: number; appended: number; unchanged: n
 async function doPull(locationId: string, businessDate: string, actor: AuthContext | null): Promise<PullResult> {
   requireYmd(businessDate);
   const guid = await resolveLocationGuid(locationId);
-  const [lines, menuItems, latest] = await Promise.all([
+  const [lines, menuItems, diningNames, latest] = await Promise.all([
     fetchToastOrders(guid, businessDate),
     fetchToastMenuItems(guid),
+    fetchDiningOptionNames(guid), // orders carry bare diningOption refs — names live in the config API
     loadLatestVersions(locationId, businessDate),
   ]);
   const groupByGuid = new Map(menuItems.map((m) => [m.itemGuid, m.groupName]));
@@ -115,7 +117,9 @@ async function doPull(locationId: string, businessDate: string, actor: AuthConte
       quantity: line.quantity,
       price_cents: line.priceCents,
       voided: line.voided,
-      dining_option: line.diningOption,
+      dining_option: line.diningOptionGuid != null
+        ? (diningNames.get(line.diningOptionGuid) ?? line.diningOptionGuid)
+        : null,
       menu_group: groupByGuid.get(line.itemGuid) ?? null,
       snapshot_version: (prev?.snapshot_version ?? 0) + 1,
       created_by: actor?.user.id ?? null,
@@ -124,7 +128,12 @@ async function doPull(locationId: string, businessDate: string, actor: AuthConte
   if (inserts.length > 0) {
     const sb = getServiceRoleClient();
     const { error } = await sb.from("toast_sales_events").insert(inserts);
-    if (error) throw new Error(`toast-sales append: ${error.message}`);
+    if (error) {
+      // Unique-violation = a concurrent pull already appended these versions
+      // (cron + manual racing). Data is intact; degrade to a typed retryable.
+      if (error.code === "23505") throw new AdminToastSalesError(409, "concurrent_pull", "Another pull just ran — refresh and retry");
+      throw new Error(`toast-sales append: ${error.message}`);
+    }
   }
   void audit({
     actorId: actor?.user.id ?? null,

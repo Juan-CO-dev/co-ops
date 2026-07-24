@@ -8,7 +8,8 @@
  * and NESTED `modifiers[]` (themselves selections — walked recursively with
  * `parentSelectionGuid` threaded). Void-ness propagates: a selection is void
  * when itself, its check, or its order is voided. diningOption rides on the
- * ORDER (`{guid, name}`); we carry the name for exclusion matching.
+ * ORDER as a bare ToastReference `{guid, entityType}` — NO name (PR #174
+ * review finding #1; names resolve via the config API at ingest time).
  *
  * Malformed payload throws — whole pull poisons, never partial (house rule;
  * PR #173 review finding #1 taught us to pin the REAL shape in fixture+tests).
@@ -23,7 +24,7 @@ export interface ToastSaleLine {
   quantity: number;
   priceCents: number | null;
   voided: boolean;
-  diningOption: string | null;
+  diningOptionGuid: string | null;
 }
 
 interface RawSelection {
@@ -31,7 +32,7 @@ interface RawSelection {
   quantity?: unknown; price?: unknown; voided?: unknown; modifiers?: unknown;
 }
 interface RawCheck { guid?: unknown; voided?: unknown; selections?: unknown }
-interface RawOrder { guid?: unknown; voided?: unknown; diningOption?: { name?: unknown } | null; checks?: unknown }
+interface RawOrder { guid?: unknown; voided?: unknown; diningOption?: { guid?: unknown } | null; checks?: unknown }
 
 export function flattenToastOrders(json: unknown): ToastSaleLine[] {
   if (!Array.isArray(json)) throw new Error("toast orders payload: expected an array of orders");
@@ -61,7 +62,7 @@ export function flattenToastOrders(json: unknown): ToastSaleLine[] {
       quantity,
       priceCents: price != null ? Math.round(price * 100) : null,
       voided,
-      diningOption: ctx.dining,
+      diningOptionGuid: ctx.dining,
     });
     const mods = Array.isArray(sel.modifiers) ? (sel.modifiers as RawSelection[]) : [];
     for (const m of mods) {
@@ -71,7 +72,7 @@ export function flattenToastOrders(json: unknown): ToastSaleLine[] {
 
   for (const order of json as RawOrder[]) {
     const orderVoided = order?.voided === true;
-    const dining = typeof order?.diningOption?.name === "string" ? order.diningOption.name : null;
+    const dining = typeof order?.diningOption?.guid === "string" ? order.diningOption.guid : null;
     const checks = Array.isArray(order?.checks) ? (order.checks as RawCheck[]) : [];
     for (const check of checks) {
       if (typeof check?.guid !== "string" || check.guid.length === 0) {

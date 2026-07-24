@@ -29,6 +29,12 @@ export async function GET(req: NextRequest) {
   if (!process.env.CRON_SECRET) return jsonError(503, "cron_disabled");
   if (!secretOk(req)) return jsonError(401, "unauthorized");
   const businessDate = req.nextUrl.searchParams.get("date") ?? yesterdayYmd();
-  const results = await pullSalesForAllLocations(businessDate);
-  return jsonOk({ businessDate, results });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(businessDate)) return jsonError(400, "invalid_date");
+  try {
+    const results = await pullSalesForAllLocations(businessDate);
+    return jsonOk({ businessDate, results });
+  } catch (e) {
+    // Spec contract: never throw to the platform — surface as a structured 500.
+    return jsonError(500, "cron_failed", { message: e instanceof Error ? e.message : String(e) });
+  }
 }

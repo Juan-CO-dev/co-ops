@@ -22,7 +22,7 @@ function yesterdayEt(): string {
 
 const KNOWN = new Set([
   "forbidden", "invalid_payload", "invalid_date", "invalid_kind", "invalid_value", "not_found",
-  "location_not_found", "not_configured", "auth_failed", "rate_limited", "bad_payload",
+  "location_not_found", "not_configured", "auth_failed", "rate_limited", "bad_payload", "concurrent_pull",
   "step_up_required", "step_up_stale", "generic",
 ]);
 function errKey(code: string): TranslationKey {
@@ -39,12 +39,14 @@ export function SalesTab({ locationId, canPull }: { locationId: string | null; c
   const [errorKey, setErrorKey] = useState<TranslationKey | null>(null);
   const [stepUpOpen, setStepUpOpen] = useState(false);
   const pendingRef = useRef<null | (() => Promise<void>)>(null);
+  const loadSeq = useRef(0);
   const [exKind, setExKind] = useState("dining_option");
   const [exValue, setExValue] = useState("");
   const [showExclusions, setShowExclusions] = useState(false);
 
   const load = useCallback(async () => {
     if (!locationId) return;
+    const seq = ++loadSeq.current; // stale responses (rapid date flips) must not overwrite newer ones
     setLoading(true);
     setErrorKey(null);
     try {
@@ -55,6 +57,7 @@ export function SalesTab({ locationId, canPull }: { locationId: string | null; c
         return;
       }
       const data = (await res.json()) as { report: SalesConsumption; exclusions: ExclusionView[] };
+      if (seq !== loadSeq.current) return;
       setReport(data.report);
       setExclusions(data.exclusions);
     } catch {

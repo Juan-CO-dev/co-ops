@@ -29,8 +29,8 @@ describe("flattenToastOrders", () => {
     expect(lines.find((l) => l.selectionGuid === "sel-5")?.voided).toBe(false);
   });
 
-  it("carries dining option and converts prices to cents", () => {
-    expect(lines.find((l) => l.selectionGuid === "sel-3")?.diningOption).toBe("Catering");
+  it("carries the dining-option GUID (bare ToastReference — no name) and converts prices to cents", () => {
+    expect(lines.find((l) => l.selectionGuid === "sel-3")?.diningOptionGuid).toBe("do-catering");
     expect(lines.find((l) => l.selectionGuid === "sel-1")?.priceCents).toBe(2400);
   });
 

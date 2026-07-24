@@ -2213,6 +2213,7 @@
   "admin.toastsales.error.bad_payload": "Toast devolvió una respuesta inesperada.",
   "admin.toastsales.error.step_up_required": "Se requiere confirmación con contraseña.",
   "admin.toastsales.error.step_up_stale": "La confirmación expiró — confirma otra vez.",
+  "admin.toastsales.error.concurrent_pull": "Otra descarga acaba de correr para esta fecha — actualiza e intenta de nuevo.",
   "admin.catering.hub.rate-rules": "Tarifas de Catering",
   "admin.catering.rate.title": "Tarifas de Catering",
   "admin.catering.rate.subtitle": "Configura las tarifas de precio de catering por ubicación: predeterminada, por sección y por artículo. La tarifa es un % del precio regular (100% = regular, 85% = 15% de descuento).",
