@@ -37,6 +37,7 @@ const EDIT_KEYS = [
   "eventDate",
   "headcount",
   "leadSource",
+  "assignedTo",
   "notes",
   "followUpDate",
   "customerId",
@@ -94,6 +95,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       const v = optNum(b.headcount);
       if (v === undefined) return jsonError(400, "invalid_payload", { field: "headcount" });
       input.headcount = v;
+    }
+    if ("assignedTo" in b) {
+      const v = b.assignedTo;
+      if (v !== null && typeof v !== "string") return jsonError(400, "invalid_payload", { field: "assignedTo" });
+      input.assignedTo = v as string | null;
     }
     if ("leadSource" in b) {
       const v = optStr(b.leadSource);

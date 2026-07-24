@@ -14,6 +14,7 @@ import { serverT } from "@/lib/i18n/server";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { isAllLocationsAccess } from "@/lib/locations";
 import {
+  loadAssignableStaff,
   loadPipelineBoard,
   loadFollowUps,
   searchPipeline,
@@ -89,6 +90,7 @@ export default async function CateringPipelinePage({
       <h1 className="text-lg font-bold text-co-text">{serverT(lang, "catering.pipeline.title")}</h1>
       <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "catering.pipeline.subtitle")}</p>
       <PipelineClient
+        staff={await loadAssignableStaff(auth)}
         leads={leads}
         followUps={followUps}
         locations={locations}
