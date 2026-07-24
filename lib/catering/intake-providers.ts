@@ -4,6 +4,10 @@
  * one function becomes real per provider (EZCater first — Juan confirms an API
  * exists) and the punch-in flow it automates stays as the manual fallback.
  *
+ * EZCater is now LIVE-intake via webhook (spec #2c: lib/catering/ezcater-intake.ts
+ * + /api/webhooks/ezcater) — their Public API has NO list-orders query, so this
+ * list-shaped seam stays not_configured for ezcater and awaits a provider that
+ * supports polling. Original activation sketch:
  * Activation path (documented, not built): provider credentials land in env →
  * fetchPlatformOrders(provider) pulls that platform's orders → each becomes a
  * createLead punch-in with lead_source = the provider code and the platform

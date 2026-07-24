@@ -1,0 +1,62 @@
+{
+  "data": {
+    "order": {
+      "orderNumber": "ABC-123",
+      "orderSourceType": "MARKETPLACE",
+      "isTaxExempt": false,
+      "event": {
+        "headcount": 25,
+        "timestamp": "2026-07-25T15:30:00Z",
+        "catererHandoffFoodTime": "2026-07-25T14:45:00Z",
+        "orderType": "DELIVERY",
+        "thirdPartyDeliveryPartner": null
+      },
+      "caterer": {
+        "uuid": "cat-1111-2222-3333",
+        "live": true,
+        "name": "Compliments Only - Capitol Hill",
+        "address": { "street": "600 Pennsylvania Ave SE", "city": "Washington", "state": "DC" }
+      },
+      "totals": {
+        "customerTotalDue": { "currency": "USD", "subunits": 41250 },
+        "salesTax": { "currency": "USD", "subunits": 2451 },
+        "subTotal": { "currency": "USD", "subunits": 36500 },
+        "tip": { "currency": "USD", "subunits": 0 }
+      },
+      "catererCart": {
+        "totals": { "catererTotalDue": 35000 },
+        "feesAndDiscounts": [
+          { "typename": "DeliveryFee", "name": "Delivery Fee", "cost": { "currency": "USD", "subunits": 2299 } }
+        ],
+        "orderItems": [
+          {
+            "name": "Italian Sub Box Lunch",
+            "uuid": "item-aaaa-0001",
+            "totalInSubunits": { "subunits": 18000, "currency": "USD" },
+            "menuId": "menu-1",
+            "posItemId": "CO-SUB-ITALIAN",
+            "menuItemSizeId": "size-reg",
+            "quantity": 12,
+            "noteToCaterer": null,
+            "specialInstructions": "3 no onions",
+            "customizations": [
+              { "customizationId": "c1", "posCustomizationId": null, "name": "Add Hot Peppers", "quantity": 3, "customizationTypeName": "Add-ons" }
+            ]
+          },
+          {
+            "name": "Turkey Sub Box Lunch",
+            "uuid": "item-aaaa-0002",
+            "totalInSubunits": { "subunits": 16500, "currency": "USD" },
+            "menuId": "menu-1",
+            "posItemId": null,
+            "menuItemSizeId": "size-reg",
+            "quantity": 13,
+            "noteToCaterer": null,
+            "specialInstructions": null,
+            "customizations": []
+          }
+        ]
+      }
+    }
+  }
+}
