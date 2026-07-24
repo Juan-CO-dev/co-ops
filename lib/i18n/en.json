@@ -122,6 +122,8 @@
   "catering.pipeline.error.location_access_denied": "You do not manage that location.",
   "catering.pipeline.error.invalid_stage": "Invalid stage.",
   "catering.pipeline.error.mixed_concerns": "Save one change at a time.",
+  "catering.pipeline.error.invalid_source": "Pick a lead source from the list.",
+  "catering.pipeline.error.invalid_assignee": "The order lead must be an active staff member.",
   "admin.catering.title": "Catering",
   "admin.catering.subtitle": "Packages, pricing, capacity, delivery zones, and menu FAQ.",
   "admin.catering.hub.packages": "Packages",

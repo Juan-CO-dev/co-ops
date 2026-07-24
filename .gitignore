@@ -62,3 +62,6 @@ scripts/fix-test-pins.ts
 next-env.d.ts
 
 .vercel
+
+# codemod scratch files (never commit)
+.tmp-*

@@ -122,6 +122,8 @@
   "catering.pipeline.error.location_access_denied": "No administras esa ubicación.",
   "catering.pipeline.error.invalid_stage": "Etapa inválida.",
   "catering.pipeline.error.mixed_concerns": "Guarda un cambio a la vez.",
+  "catering.pipeline.error.invalid_source": "Elige un origen de la lista.",
+  "catering.pipeline.error.invalid_assignee": "El líder del pedido debe ser parte activa del equipo.",
   "admin.catering.title": "Catering",
   "admin.catering.subtitle": "Paquetes, precios, capacidad, zonas de entrega y preguntas del menú.",
   "admin.catering.hub.packages": "Paquetes",
