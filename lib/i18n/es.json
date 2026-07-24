@@ -2362,6 +2362,9 @@
   "admin.catering.lto.no_surplus": "Sin excedente perecedero para gestionar.",
   "admin.catering.lto.no_events": "Aún no hay LTOs ni descuentos.",
   "admin.catering.lto.manage_title": "LTOs y descuentos",
+  "admin.catering.hub.rate_rules": "Tarifas de catering",
+  "admin.catering.lto.location_label": "Ubicación",
+  "admin.catering.lto.error.percent_required": "El porcentaje de descuento es obligatorio para descuentos.",
   "lto.active_title": "LTOs y descuentos activos",
   "lto.active_empty": "Sin LTOs ni descuentos activos ahora."
 }
