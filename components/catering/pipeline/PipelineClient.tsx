@@ -6,7 +6,8 @@ import { useTranslation } from "@/lib/i18n/provider";
 import { formatCents } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { PIPELINE_STAGES, type PipelineStage } from "@/lib/catering/pipeline-shared";
-import type { PipelineLead, PipelineSearchResult } from "@/lib/catering/pipeline";
+import type { PipelineLead, PipelineSearchResult, AssignableStaff } from "@/lib/catering/pipeline";
+import { LEAD_SOURCES, leadSourceKey } from "@/lib/catering/intake-shared";
 import type { CateringCapacityResult } from "@/lib/catering/capacity";
 import { postJson, resolveErrorKey } from "./shared";
 
@@ -15,6 +16,7 @@ interface LocationOpt {
   name: string;
 }
 interface Props {
+  staff: AssignableStaff[];
   leads: PipelineLead[];
   followUps: PipelineLead[];
   locations: LocationOpt[];
@@ -37,11 +39,22 @@ function stageKey(s: PipelineStage): TranslationKey {
   return `catering.pipeline.stage.${s}` as TranslationKey;
 }
 
-export function PipelineClient({ leads, followUps, locations, actorLevel, searchQuery, results }: Props) {
+export function PipelineClient({ staff, leads, followUps, locations, actorLevel, searchQuery, results }: Props) {
   const { t, language } = useTranslation();
   const canWrite = actorLevel >= 6;
 
   const money = (cents: number | null) => (cents == null ? null : formatCents(cents, language));
+
+  // Attribution filters (spec #2b): by order lead + by intake source. Client-side.
+  const [filterAssignee, setFilterAssignee] = useState<string>("");
+  const [filterSource, setFilterSource] = useState<string>("");
+  const staffNames: Record<string, string> = {};
+  for (const m of staff) staffNames[m.id] = m.name;
+  const visibleLeads = leads.filter(
+    (l) =>
+      (filterAssignee === "" || l.assignedTo === filterAssignee) &&
+      (filterSource === "" || l.leadSource === filterSource),
+  );
 
   const byStage: Record<PipelineStage, PipelineLead[]> = {
     inquiry: [],
@@ -51,7 +64,7 @@ export function PipelineClient({ leads, followUps, locations, actorLevel, search
     completed: [],
     lost: [],
   };
-  for (const l of leads) byStage[l.stage].push(l);
+  for (const l of visibleLeads) byStage[l.stage].push(l);
 
   return (
     <div className="mt-4 space-y-6">
@@ -64,7 +77,24 @@ export function PipelineClient({ leads, followUps, locations, actorLevel, search
       ) : (
         /* BOARD MODE */
         <>
-          {canWrite && <AddLeadRow locations={locations} />}
+          {canWrite && <AddLeadRow locations={locations} staff={staff} />}
+
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="text-xs text-co-text-muted" htmlFor="pl-f-assignee">{t("catering.intake.filter.assignee")}</label>
+            <select id="pl-f-assignee" value={filterAssignee} onChange={(e) => setFilterAssignee(e.target.value)} className="rounded-md border border-co-card-border bg-co-surface p-1.5 text-sm text-co-text">
+              <option value="">{t("catering.intake.filter.all")}</option>
+              {staff.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+            <label className="text-xs text-co-text-muted" htmlFor="pl-f-source">{t("catering.intake.filter.source")}</label>
+            <select id="pl-f-source" value={filterSource} onChange={(e) => setFilterSource(e.target.value)} className="rounded-md border border-co-card-border bg-co-surface p-1.5 text-sm text-co-text">
+              <option value="">{t("catering.intake.filter.all")}</option>
+              {LEAD_SOURCES.map((sc) => (
+                <option key={sc} value={sc}>{t(`catering.intake.source.${sc}` as TranslationKey)}</option>
+              ))}
+            </select>
+          </div>
 
           {followUps.length > 0 && (
             <section className="co-card p-4">
@@ -96,7 +126,7 @@ export function PipelineClient({ leads, followUps, locations, actorLevel, search
                   {byStage[stage].length === 0 ? (
                     <p className="px-1 text-xs text-co-text-muted">{t("catering.pipeline.empty_stage")}</p>
                   ) : (
-                    byStage[stage].map((lead) => <LeadCard key={lead.id} lead={lead} money={money} canWrite={canWrite} />)
+                    byStage[stage].map((lead) => <LeadCard key={lead.id} lead={lead} money={money} canWrite={canWrite} staffNames={staffNames} />)
                   )}
                 </div>
               </div>
@@ -262,10 +292,12 @@ function LeadCard({
   lead,
   money,
   canWrite,
+  staffNames,
 }: {
   lead: PipelineLead;
   money: (c: number | null) => string | null;
   canWrite: boolean;
+  staffNames: Record<string, string>;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -283,7 +315,10 @@ function LeadCard({
         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-co-text-muted">
           {lead.eventDate && <span>{lead.eventDate}</span>}
           {lead.headcount != null && <span>{t("catering.pipeline.headcount_short").replace("{n}", String(lead.headcount))}</span>}
-          {lead.leadSource && <span>{lead.leadSource}</span>}
+          {lead.leadSource && (
+            <span>{leadSourceKey(lead.leadSource) ? t(leadSourceKey(lead.leadSource) as TranslationKey) : lead.leadSource}</span>
+          )}
+          {lead.assignedTo && <span>@{staffNames[lead.assignedTo] ?? "?"}</span>}
           {rev && <span>{rev}</span>}
         </div>
       </button>
@@ -400,7 +435,7 @@ function LeadDetail({
 }
 
 // ── Add-lead form ─────────────────────────────────────────────────────────────
-function AddLeadRow({ locations }: { locations: LocationOpt[] }) {
+function AddLeadRow({ locations, staff }: { locations: LocationOpt[]; staff: AssignableStaff[] }) {
   const { t } = useTranslation();
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -430,6 +465,7 @@ function AddLeadRow({ locations }: { locations: LocationOpt[] }) {
         eventDate: str("eventDate"),
         headcount: headcountRaw ? Number(headcountRaw) : null,
         leadSource: str("leadSource"),
+        assignedTo: str("assignedTo"),
         locationId,
         notes: str("notes"),
         followUpDate: str("followUpDate"),
@@ -464,7 +500,23 @@ function AddLeadRow({ locations }: { locations: LocationOpt[] }) {
         <Field label={t("catering.pipeline.field.company")} name="company" />
         <Field label={t("catering.pipeline.field.event_date")} name="eventDate" type="date" />
         <Field label={t("catering.pipeline.field.headcount")} name="headcount" type="number" />
-        <Field label={t("catering.pipeline.field.lead_source")} name="leadSource" />
+        <label className="block text-sm">
+          <span className="text-co-text-muted">{t("catering.pipeline.field.lead_source")}</span>
+          <select name="leadSource" defaultValue="staff" className="mt-1 w-full rounded-md border border-co-card-border bg-co-surface p-2 text-co-text">
+            {LEAD_SOURCES.map((sc) => (
+              <option key={sc} value={sc}>{t(`catering.intake.source.${sc}` as TranslationKey)}</option>
+            ))}
+          </select>
+        </label>
+        <label className="block text-sm">
+          <span className="text-co-text-muted">{t("catering.intake.field.assigned_to")}</span>
+          <select name="assignedTo" defaultValue="" className="mt-1 w-full rounded-md border border-co-card-border bg-co-surface p-2 text-co-text">
+            <option value="">{t("catering.intake.unassigned")}</option>
+            {staff.map((m) => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </select>
+        </label>
         <Field label={t("catering.pipeline.field.follow_up_date")} name="followUpDate" type="date" />
         <label className="block text-sm">
           <span className="text-co-text-muted">{t("catering.pipeline.field.location")}</span>
