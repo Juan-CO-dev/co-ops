@@ -416,3 +416,103 @@ export async function setLocationToastGuid(
     ipAddress: null, userAgent: null,
   });
 }
+
+/**
+ * MANUAL MAPPING (alias design 2026-07-25 — the crosswalk row IS the alias):
+ * maps a Toast guid the matcher couldn't resolve ("Regular Mayo (Dukes)" →
+ * Dukes, "Shredded Lettuce" → Iceberg) straight to a CONFIRMED row. Modifier
+ * mappings auto-classify disposition from the Toast name and derive the
+ * portion exactly like auto-matches; both are overridable later via unmap +
+ * re-map. Supersedes same-guid rivals (one entity per guid stays law).
+ */
+export async function manualMap(
+  actor: AuthContext,
+  input: {
+    locationId: string;
+    toastItemGuid: string;
+    toastItemName: string;
+    entityKind: "item" | "menu_item";
+    entityId: string;
+    isModifier: boolean;
+  },
+): Promise<{ id: string }> {
+  requireLevel(actor, TOAST_MAP_MIN);
+  const sb = getServiceRoleClient();
+  const name = input.toastItemName.trim();
+  if (name.length === 0 || name.length > 200) throw new AdminToastMapError(400, "invalid_payload", "Toast item name required");
+  if (input.toastItemGuid.trim().length === 0 || input.toastItemGuid.length > 100) {
+    throw new AdminToastMapError(400, "invalid_payload", "Toast item guid required");
+  }
+  if (input.isModifier && input.entityKind !== "item") {
+    throw new AdminToastMapError(400, "invalid_payload", "Modifiers map to items");
+  }
+
+  const table = input.entityKind === "menu_item" ? "menu_items" : "items";
+  const { data: ent, error: eErr } = await sb.from(table).select("id, name").eq("id", input.entityId).eq("active", true)
+    .maybeSingle<{ id: string; name: string }>();
+  if (eErr) throw new Error(`toast-map manual entity check: ${eErr.message}`);
+  if (!ent) throw new AdminToastMapError(400, "invalid_entity", "Target not found or inactive");
+
+  // Supersede any active rival claiming this guid at this location.
+  const { data: rivals, error: rErr } = await sb.from("toast_menu_map").select("id")
+    .eq("location_id", input.locationId).eq("active", true).eq("toast_item_guid", input.toastItemGuid)
+    .returns<Array<{ id: string }>>();
+  if (rErr) throw new Error(`toast-map manual rivals: ${rErr.message}`);
+  for (const rival of rivals ?? []) {
+    const { error, count } = await sb.from("toast_menu_map")
+      .update({ active: false }, { count: "exact" }).eq("id", rival.id).eq("active", true);
+    if (error) throw new Error(`toast-map manual supersede: ${error.message}`);
+    if (count === 0) throw new AdminToastMapError(409, "conflict", "Concurrent change — reload and retry");
+  }
+
+  let disposition: "deplete" | "remove" | "ignore" = "deplete";
+  let portionQty: number | null = null;
+  let portionUnit: string | null = null;
+  if (input.isModifier) {
+    disposition = classifyModifier(name).disposition;
+    const graph = await loadRecipeGraph();
+    const portion = derivePortion(graph, input.entityId);
+    portionQty = portion?.qty ?? null;
+    portionUnit = portion?.unit ?? null;
+  }
+
+  const { data: inserted, error } = await sb.from("toast_menu_map").insert({
+    location_id: input.locationId,
+    menu_item_id: input.entityKind === "menu_item" ? input.entityId : null,
+    item_id: input.entityKind === "item" ? input.entityId : null,
+    toast_item_guid: input.toastItemGuid,
+    toast_item_name: name,
+    toast_price_cents: null,
+    match_status: "confirmed",
+    match_score: null,
+    is_modifier: input.isModifier,
+    disposition,
+    portion_qty: portionQty,
+    portion_unit: portionUnit,
+    confirmed_by: actor.user.id,
+    confirmed_at: new Date().toISOString(),
+    created_by: actor.user.id,
+  }).select("id").maybeSingle<{ id: string }>();
+  if (error) throw new Error(`toast-map manual insert: ${error.message}`);
+  if (!inserted) throw new Error("toast-map manual insert returned no row");
+
+  void audit({
+    actorId: actor.user.id, actorRole: actor.user.role,
+    action: "toast_map.manual_map", resourceTable: "toast_menu_map", resourceId: inserted.id,
+    metadata: {
+      location_id: input.locationId, toast_item_guid: input.toastItemGuid, toast_item_name: name,
+      entity_kind: input.entityKind, entity_id: input.entityId, entity_name: ent.name,
+      is_modifier: input.isModifier, disposition, superseded: (rivals ?? []).length,
+    },
+    ipAddress: null, userAgent: null,
+  });
+  return { id: inserted.id };
+}
+
+/** Lightweight mappable-entity list for manual-mapping pickers (id/name/kind). */
+export async function listMappableEntities(actor: AuthContext): Promise<Array<{ id: string; name: string; kind: "item" | "menu_item" }>> {
+  requireLevel(actor, 6); // AGM+ — read-only names for the picker (writes stay >=7)
+  const all = await loadEntities(true);
+  return all.map((e) => ({ id: e.id, name: e.name, kind: e.kind })).sort((a, b) => (a.name < b.name ? -1 : 1));
+}
+
