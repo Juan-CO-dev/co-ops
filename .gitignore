@@ -65,3 +65,5 @@ next-env.d.ts
 
 # codemod scratch files (never commit)
 .tmp-*
+
+.vercel

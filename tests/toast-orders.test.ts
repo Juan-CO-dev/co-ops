@@ -16,7 +16,7 @@ describe("flattenToastOrders", () => {
   const lines = flattenToastOrders(fixture);
 
   it("flattens orders→checks→selections incl. nested modifiers with parent threading", () => {
-    expect(lines).toHaveLength(7); // sel-1, sel-1m1, sel-2, sel-3, sel-4, sel-5, sel-6
+    expect(lines).toHaveLength(7); // sel-1, sel-1m1, sel-2, sel-3, sel-4, sel-5, sel-6 — sel-1m2 (SPECIAL_REQUEST, item:null) skipped
     const mod = lines.find((l) => l.selectionGuid === "sel-1m1");
     expect(mod?.parentSelectionGuid).toBe("sel-1");
     expect(mod?.itemGuid).toBe("tg-hotpeppers");
@@ -34,9 +34,14 @@ describe("flattenToastOrders", () => {
     expect(lines.find((l) => l.selectionGuid === "sel-1")?.priceCents).toBe(2400);
   });
 
+  it("skips item-less selections (SPECIAL_REQUEST reality — first-live correction)", () => {
+    expect(lines.find((l) => l.selectionGuid === "sel-1m2")).toBeUndefined();
+    const skipped = flattenToastOrders([{ checks: [{ guid: "c", selections: [{ guid: "s", item: null, selectionType: "SPECIAL_REQUEST", quantity: 1 }] }] }]);
+    expect(skipped).toEqual([]);
+  });
+
   it("poisons on malformed payloads", () => {
     expect(() => flattenToastOrders({ orders: [] })).toThrow(/array of orders/);
-    expect(() => flattenToastOrders([{ checks: [{ guid: "c", selections: [{ guid: "s", quantity: 1 }] }] }])).toThrow(/without item guid/);
     expect(() => flattenToastOrders([{ checks: [{ guid: "c", selections: [{ guid: "s", item: { guid: "i" } }] }] }])).toThrow(/without quantity/);
   });
 });
