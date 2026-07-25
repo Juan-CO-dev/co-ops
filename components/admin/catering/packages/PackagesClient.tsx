@@ -169,6 +169,23 @@ export function PackagesClient({
     } else setErrorMsg(t(resolveErrorKey(result.code)));
   };
 
+  const setOptionClassic = async (packageId: string, optionId: string, classic: boolean) => {
+    if (busy) return;
+    setErrorMsg(null);
+    if ((await requestStepUp("A")) !== "ok") return;
+    setBusy(true);
+    const result = await postJson(
+      `/api/admin/catering/packages/${packageId}`,
+      { setOptionClassic: { optionId, classic } },
+      "PATCH",
+    );
+    setBusy(false);
+    if (result.ok) {
+      bumpRefresh(packageId);
+      router.refresh();
+    } else setErrorMsg(t(resolveErrorKey(result.code)));
+  };
+
   const removeLineItem = async (packageId: string, itemId: string) => {
     if (busy) return;
     setErrorMsg(null);
@@ -276,6 +293,7 @@ export function PackagesClient({
                   onAddLine={(payload) => void addLine(p.id, payload)}
                   onAddSlotOption={(lineItemId, ref) => void addSlotOption(p.id, lineItemId, ref)}
                   onRemoveSlotOption={(optionId) => void removeSlotOption(p.id, optionId)}
+                  onSetOptionClassic={(optionId, classic) => void setOptionClassic(p.id, optionId, classic)}
                   onRemoveLineItem={(itemId) => void removeLineItem(p.id, itemId)}
                   onUseRecommendedPrice={(priceCents) => void applyRecommendedPrice(p.id, priceCents)}
                 />
@@ -311,6 +329,7 @@ function PackageRow({
   onAddLine,
   onAddSlotOption,
   onRemoveSlotOption,
+  onSetOptionClassic,
   onRemoveLineItem,
   onUseRecommendedPrice,
 }: {
@@ -329,6 +348,7 @@ function PackageRow({
   onAddLine: (payload: { slotType: "fixed" | "choice"; ref?: { kind: "item" | "menu_item"; id: string } | null; description?: string | null; quantity: number }) => void;
   onAddSlotOption: (lineItemId: string, ref: { kind: "item" | "menu_item"; id: string }) => void;
   onRemoveSlotOption: (optionId: string) => void;
+  onSetOptionClassic: (optionId: string, classic: boolean) => void;
   onRemoveLineItem: (itemId: string) => void;
   onUseRecommendedPrice: (priceCents: number) => void;
 }) {
@@ -341,6 +361,7 @@ function PackageRow({
   meta.push(formatCents(p.priceCents, language));
   if (p.minHeadcount != null) meta.push(t("admin.catering.packages.min_headcount_meta" as TranslationKey, { count: p.minHeadcount }));
   if (p.leadTimeHours != null) meta.push(t("admin.catering.packages.lead_time_meta" as TranslationKey, { hours: p.leadTimeHours }));
+  if (p.serves != null) meta.push(t("admin.catering.packages.serves_meta" as TranslationKey, { count: p.serves }));
 
   return (
     <div className="flex flex-col gap-3">
@@ -419,6 +440,7 @@ function PackageRow({
         onAddLine={onAddLine}
         onAddSlotOption={onAddSlotOption}
         onRemoveSlotOption={onRemoveSlotOption}
+        onSetOptionClassic={onSetOptionClassic}
         onRemove={onRemoveLineItem}
       />
     </div>
@@ -447,6 +469,7 @@ function LineItemsSubList({
   onAddLine,
   onAddSlotOption,
   onRemoveSlotOption,
+  onSetOptionClassic,
   onRemove,
 }: {
   lineItems: PackageView["lineItems"];
@@ -456,6 +479,7 @@ function LineItemsSubList({
   onAddLine: (payload: { slotType: "fixed" | "choice"; ref?: { kind: "item" | "menu_item"; id: string } | null; description?: string | null; quantity: number }) => void;
   onAddSlotOption: (lineItemId: string, ref: { kind: "item" | "menu_item"; id: string }) => void;
   onRemoveSlotOption: (optionId: string) => void;
+  onSetOptionClassic: (optionId: string, classic: boolean) => void;
   onRemove: (itemId: string) => void;
 }) {
   const { t } = useTranslation();
@@ -581,9 +605,29 @@ function LineItemsSubList({
                           {li.options.map((opt) => (
                             <span
                               key={opt.id}
-                              className="inline-flex items-center gap-1 rounded-full border-2 border-co-border bg-co-surface px-2 py-0.5 text-xs text-co-text"
+                              className={`inline-flex items-center gap-1 rounded-full border-2 bg-co-surface px-2 py-0.5 text-xs text-co-text ${opt.classic ? "border-co-gold" : "border-co-border"}`}
                             >
                               {opt.name}
+                              {canManage ? (
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  aria-label={t(
+                                    (opt.classic
+                                      ? "admin.catering.packages.classic_off_aria"
+                                      : "admin.catering.packages.classic_on_aria") as TranslationKey,
+                                    { name: opt.name },
+                                  )}
+                                  aria-pressed={opt.classic}
+                                  title={t("admin.catering.packages.classic_badge" as TranslationKey)}
+                                  onClick={() => onSetOptionClassic(opt.id, !opt.classic)}
+                                  className={`inline-flex h-4 w-4 items-center justify-center rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60 disabled:opacity-50 ${opt.classic ? "text-co-gold-deep" : "text-co-text-muted hover:text-co-gold-deep"}`}
+                                >
+                                  {opt.classic ? "★" : "☆"}
+                                </button>
+                              ) : opt.classic ? (
+                                <span aria-label={t("admin.catering.packages.classic_badge" as TranslationKey)} className="text-co-gold-deep">★</span>
+                              ) : null}
                               {canManage ? (
                                 <button
                                   type="button"

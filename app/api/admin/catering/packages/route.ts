@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
   if (b.locationId !== undefined && b.locationId !== null && typeof b.locationId !== "string") {
     return jsonError(400, "invalid_payload", { field: "locationId" });
   }
-  for (const k of ["minHeadcount", "leadTimeHours"] as const) {
+  for (const k of ["minHeadcount", "leadTimeHours", "serves"] as const) {
     if (b[k] !== undefined && b[k] !== null && typeof b[k] !== "number") {
       return jsonError(400, "invalid_payload", { field: k });
     }
@@ -60,6 +60,7 @@ export async function POST(req: NextRequest) {
     priceCents: b.priceCents,
     minHeadcount: typeof b.minHeadcount === "number" ? b.minHeadcount : null,
     leadTimeHours: typeof b.leadTimeHours === "number" ? b.leadTimeHours : null,
+    serves: typeof b.serves === "number" ? b.serves : null,
   };
 
   try {

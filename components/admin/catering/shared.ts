@@ -67,6 +67,7 @@ const KNOWN_ERROR_CODES = new Set([
   "invalid_slug",
   "invalid_price",
   "invalid_headcount",
+  "invalid_serves",
   "invalid_mode",
   "invalid_rate",
   "invalid_fee",
