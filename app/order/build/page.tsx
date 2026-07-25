@@ -54,7 +54,7 @@ type PkgOption = { packageItemId: string; itemId: string | null; menuItemId: str
 /** A choice slot inside a package (e.g. "Pick 3 subs"). */
 interface PkgSlot { packageItemId: string; label: string; pickN: number; options: Array<{ kind: "item" | "menu_item"; refId: string; name: string }> }
 /** The package definition as returned by GET /api/portal/order/draft/[quoteId]. */
-interface PkgView { id: string; labelEn: string; pricingMode: string; priceCents: number; minHeadcount: number | null; leadTimeHours: number | null; slots: PkgSlot[] }
+interface PkgView { id: string; labelEn: string; pricingMode: string; priceCents: number; minHeadcount: number | null; leadTimeHours: number | null; serves: number | null; slots: PkgSlot[] }
 /** A configured package instance in the local cart. key is a per-instance UUID. */
 interface PkgEntry { key: string; pkg: PkgView; quantity: number; options: PkgOption[] }
 
@@ -151,7 +151,7 @@ function expandCards(menu: CateringMenuItem[]): MenuCard[] {
       }
     } else {
       const priceCents = isPortionable(item) && item.portionPricesCents ? item.portionPricesCents.whole : item.unitPriceCents;
-      cards.push({ key: keyFor(item, null), item, sizeId: null, sizeLabel: null, label: item.name, priceCents, serves: null });
+      cards.push({ key: keyFor(item, null), item, sizeId: null, sizeLabel: null, label: item.name, priceCents, serves: item.serves });
     }
   }
   return cards;
@@ -389,17 +389,20 @@ export default function OrderBuild() {
   const localSubtotalCents = localItemSubtotalCents + localPkgSubtotalCents;
   const count = lines.reduce((s, e) => s + e.line.qty, 0) + pkgEntries.reduce((s, e) => s + e.quantity, 0);
 
-  // Coverage: portionable subs count by portion fraction; sized items count by serves (or 1);
-  // everything else counts its quantity. Package whole-sub-equivalents count as mains.
+  // Coverage (0154 fix — "all catering items should have a headcount attached"):
+  // every line = qty × people-per-unit. Portionable subs scale by portion fraction
+  // × the sub's serves; sized items use the size's serves; everything else uses
+  // the entity's serves (a Case of Chips (24) covers 24, not 1). Packages use
+  // their explicit serves (× qty), falling back to whole-sub pick count.
   const servedBy = (cat: Cat) => lines
     .filter((e) => catFor(e.item) === cat)
     .reduce((s, e) => {
-      if (isPortionable(e.item)) return s + e.line.qty * PORTION_FRACTION[e.line.portion];
-      if (isSized(e.item)) return s + e.line.qty * (selectedSize(e.item, e.line)?.serves ?? 1);
-      return s + e.line.qty;
+      if (isPortionable(e.item)) return s + e.line.qty * PORTION_FRACTION[e.line.portion] * (e.item.serves ?? 1);
+      if (isSized(e.item)) return s + e.line.qty * (selectedSize(e.item, e.line)?.serves ?? e.item.serves ?? 1);
+      return s + e.line.qty * (e.item.serves ?? 1);
     }, 0);
   const pkgMainCoverage = pkgEntries.reduce((s, e) =>
-    s + e.options.reduce((a, o) => a + o.quantity, 0) * e.quantity, 0);
+    s + (e.pkg.serves ?? e.options.reduce((a, o) => a + o.quantity, 0)) * e.quantity, 0);
   const coverage = {
     main: servedBy("main") + pkgMainCoverage,
     side: servedBy("side"),

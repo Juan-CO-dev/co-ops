@@ -16,12 +16,12 @@ import type { TranslationKey } from "@/lib/i18n/types";
 import { PasswordModal } from "@/components/auth/PasswordModal";
 import type { AdminMenuItem, AdminSize } from "@/lib/admin/catering/menu";
 
-const KNOWN = new Set(["forbidden", "not_found", "invalid_payload", "invalid_size", "size_exists", "step_up_required", "step_up_stale", "generic"]);
+const KNOWN = new Set(["forbidden", "not_found", "invalid_payload", "invalid_size", "invalid_serves", "size_exists", "step_up_required", "step_up_stale", "generic"]);
 function errKey(code: string): TranslationKey {
   return (KNOWN.has(code) ? `admin.catering.menu.error.${code}` : "admin.catering.menu.error.generic") as TranslationKey;
 }
 
-type FlagChanges = { cateringAvailable?: boolean; cateringOnly?: boolean; cateringPortionable?: boolean };
+type FlagChanges = { cateringAvailable?: boolean; cateringOnly?: boolean; cateringPortionable?: boolean; serves?: number | null };
 
 export function MenuClient({ items: initial, canWrite }: { items: AdminMenuItem[]; canWrite: boolean }) {
   const { t, language } = useTranslation();
@@ -67,7 +67,7 @@ export function MenuClient({ items: initial, canWrite }: { items: AdminMenuItem[
     apiWrite(`/api/admin/catering/menu/${it.id}`, "PATCH", { kind: it.kind, ...changes }, (data) => {
       const d = data as { cateringAvailable?: boolean; cateringOnly?: boolean; cateringPortionable?: boolean | null };
       setItems((prev) => prev.map((x) => (x.id === it.id && x.kind === it.kind
-        ? { ...x, cateringAvailable: d.cateringAvailable ?? x.cateringAvailable, cateringOnly: d.cateringOnly ?? x.cateringOnly, cateringPortionable: d.cateringPortionable ?? x.cateringPortionable }
+        ? { ...x, cateringAvailable: d.cateringAvailable ?? x.cateringAvailable, cateringOnly: d.cateringOnly ?? x.cateringOnly, cateringPortionable: d.cateringPortionable ?? x.cateringPortionable, serves: "serves" in changes ? (changes.serves ?? null) : x.serves }
         : x)));
     }), [apiWrite]);
 
@@ -121,6 +121,7 @@ export function MenuClient({ items: initial, canWrite }: { items: AdminMenuItem[
                         <span className="text-xs text-co-text-dim">{money(it.menuPriceCents)}</span>
                       </span>
                       <span className="flex shrink-0 items-center gap-2">
+                        <ServesBox it={it} canWrite={canWrite} onSave={(x, v) => setFlags(x, { serves: v })} t={t} />
                         <button type="button" onClick={() => toggleExpand(it.id)} className="inline-flex min-h-[36px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 text-xs font-bold text-co-text-dim transition hover:text-co-text">
                           {t("admin.catering.menu.sizes")} ({it.sizes.length}){expanded.has(it.id) ? " ▾" : " ▸"}
                         </button>
@@ -153,7 +154,8 @@ export function MenuClient({ items: initial, canWrite }: { items: AdminMenuItem[
                       <span className="block truncate text-sm font-semibold text-co-text">{language === "es" ? it.nameEs ?? it.name : it.name}</span>
                       <span className="text-xs text-co-text-dim">{money(it.menuPriceCents)}</span>
                     </span>
-                    <span className="flex shrink-0 gap-2">
+                    <span className="flex shrink-0 items-center gap-2">
+                      <ServesBox it={it} canWrite={canWrite} onSave={(x, v) => setFlags(x, { serves: v })} t={t} />
                       <Toggle label={t("admin.catering.menu.available")} on={it.cateringAvailable} disabled={!canWrite} onClick={() => setFlags(it, { cateringAvailable: !it.cateringAvailable })} />
                       <Toggle label={t("admin.catering.menu.only")} on={it.cateringOnly} disabled={!canWrite} onClick={() => setFlags(it, { cateringOnly: !it.cateringOnly })} />
                       <Toggle label={t("admin.catering.menu.portionable")} on={it.cateringPortionable === true} disabled={!canWrite} onClick={() => setFlags(it, { cateringPortionable: !(it.cateringPortionable === true) })} />
@@ -172,6 +174,32 @@ export function MenuClient({ items: initial, canWrite }: { items: AdminMenuItem[
 
       <PasswordModal open={stepUpOpen} onConfirm={async () => { if (pendingRef.current) await pendingRef.current(); }} onCancel={() => { setStepUpOpen(false); pendingRef.current = null; }} />
     </div>
+  );
+}
+
+function ServesBox({ it, canWrite, onSave, t }: { it: AdminMenuItem; canWrite: boolean; onSave: (it: AdminMenuItem, serves: number | null) => void; t: (k: TranslationKey) => string }) {
+  const [draft, setDraft] = useState(it.serves != null ? String(it.serves) : "");
+  const dirty = draft !== (it.serves != null ? String(it.serves) : "");
+  const save = () => {
+    const v = draft.trim() === "" ? null : Number(draft);
+    if (v !== null && (!Number.isFinite(v) || v <= 0)) return;
+    onSave(it, v);
+  };
+  return (
+    <label className="flex items-center gap-1 text-xs text-co-text-dim" title={t("admin.catering.menu.serves_hint")}>
+      {t("admin.catering.menu.serves")}
+      <input
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => { if (dirty) save(); }}
+        onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+        inputMode="decimal"
+        placeholder="1"
+        disabled={!canWrite}
+        aria-label={t("admin.catering.menu.serves_hint")}
+        className="w-12 rounded-md border border-co-border-2 bg-co-surface px-1.5 py-0.5 text-xs font-bold text-co-text"
+      />
+    </label>
   );
 }
 

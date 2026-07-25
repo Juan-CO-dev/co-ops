@@ -72,16 +72,16 @@ export async function loadPublicCateringMenu(locationId: string): Promise<Cateri
   const [{ data: itemRows, error: iErr }, { data: subRows, error: sErr }] = await Promise.all([
     sb
       .from("items")
-      .select("id, name, name_es, section, menu_price, catering_only")
+      .select("id, name, name_es, section, menu_price, catering_only, serves")
       .eq("active", true)
       .eq("catering_available", true)
-      .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null; catering_only: boolean }>>(),
+      .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null; catering_only: boolean; serves: number | string | null }>>(),
     sb
       .from("menu_items")
-      .select("id, name, name_es, section, menu_price, catering_only, catering_portionable")
+      .select("id, name, name_es, section, menu_price, catering_only, catering_portionable, serves")
       .eq("active", true)
       .eq("catering_available", true)
-      .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null; catering_only: boolean; catering_portionable: boolean }>>(),
+      .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null; catering_only: boolean; catering_portionable: boolean; serves: number | string | null }>>(),
   ]);
   if (iErr) throw new Error(`loadPublicCateringMenu items: ${iErr.message}`);
   if (sErr) throw new Error(`loadPublicCateringMenu menu_items: ${sErr.message}`);
@@ -110,7 +110,7 @@ export async function loadPublicCateringMenu(locationId: string): Promise<Cateri
   for (const r of itemRows ?? []) {
     const built = buildCateringMenuItem(
       { kind: "item", id: r.id, name: r.name, nameEs: r.name_es, section: r.section,
-        menuPriceCents: dollarsToCents(r.menu_price), cateringOnly: r.catering_only, portionable: false,
+        menuPriceCents: dollarsToCents(r.menu_price), cateringOnly: r.catering_only, portionable: false, serves: r.serves == null ? null : Number(r.serves),
         sizes: sizesByItem.get(r.id) },
       rules,
     );
@@ -119,7 +119,7 @@ export async function loadPublicCateringMenu(locationId: string): Promise<Cateri
   for (const r of subRows ?? []) {
     const built = buildCateringMenuItem(
       { kind: "menu_item", id: r.id, name: r.name, nameEs: r.name_es, section: r.section,
-        menuPriceCents: dollarsToCents(r.menu_price), cateringOnly: r.catering_only, portionable: r.catering_portionable },
+        menuPriceCents: dollarsToCents(r.menu_price), cateringOnly: r.catering_only, portionable: r.catering_portionable, serves: r.serves == null ? null : Number(r.serves) },
       rules,
     );
     if (built) out.push(built);
@@ -133,11 +133,11 @@ export async function loadPublicCateringPackages(locationId: string): Promise<Ca
   const sb = getServiceRoleClient();
   const { data: pkgs, error } = await sb
     .from("catering_packages")
-    .select("id, label_en, label_es, pricing_mode, price_cents, min_headcount, lead_time_hours, location_id")
+    .select("id, label_en, label_es, pricing_mode, price_cents, min_headcount, lead_time_hours, location_id, serves")
     .eq("active", true)
     .or(`location_id.is.null,location_id.eq.${locationId}`)
     .order("display_order", { ascending: true })
-    .returns<Array<{ id: string; label_en: string; label_es: string | null; pricing_mode: string; price_cents: number; min_headcount: number | null; lead_time_hours: number | null; location_id: string | null }>>();
+    .returns<Array<{ id: string; label_en: string; label_es: string | null; pricing_mode: string; price_cents: number; min_headcount: number | null; lead_time_hours: number | null; location_id: string | null; serves: number | string | null }>>();
   if (error) throw new Error(`loadPublicCateringPackages: ${error.message}`);
   const packages = pkgs ?? [];
   if (packages.length === 0) return [];
@@ -208,6 +208,7 @@ export async function loadPublicCateringPackages(locationId: string): Promise<Ca
 
   return packages.map((p) => ({
     id: p.id,
+    serves: p.serves == null ? null : Number(p.serves),
     labelEn: p.label_en,
     labelEs: p.label_es,
     pricingMode: p.pricing_mode,

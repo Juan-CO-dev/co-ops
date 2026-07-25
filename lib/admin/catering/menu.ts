@@ -44,6 +44,8 @@ export interface AdminMenuItem {
   cateringAvailable: boolean;
   cateringOnly: boolean;
   cateringPortionable: boolean | null; // subs only; null for items
+  /** People covered per ONE whole unit (0154; null → 1 in coverage). */
+  serves: number | null;
   sizes: AdminSize[];                   // items only; [] for subs
 }
 
@@ -53,14 +55,14 @@ export async function loadAdminCateringMenu(actor: AuthContext): Promise<AdminMe
   requireLevel(actor, MENU_ADMIN_MIN);
   const sb = getServiceRoleClient();
   const [{ data: itemRows, error: iErr }, { data: subRows, error: sErr }] = await Promise.all([
-    sb.from("items").select("id, name, name_es, section, menu_price, catering_available, catering_only")
+    sb.from("items").select("id, name, name_es, section, menu_price, catering_available, catering_only, serves")
       .eq("active", true).is("location_id", null)
       .order("section", { ascending: true, nullsFirst: false }).order("name", { ascending: true })
-      .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null; catering_available: boolean; catering_only: boolean }>>(),
-    sb.from("menu_items").select("id, name, name_es, section, menu_price, catering_available, catering_only, catering_portionable")
+      .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null; catering_available: boolean; catering_only: boolean; serves: number | string | null }>>(),
+    sb.from("menu_items").select("id, name, name_es, section, menu_price, catering_available, catering_only, catering_portionable, serves")
       .eq("active", true)
       .order("section", { ascending: true, nullsFirst: false }).order("name", { ascending: true })
-      .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null; catering_available: boolean; catering_only: boolean; catering_portionable: boolean }>>(),
+      .returns<Array<{ id: string; name: string; name_es: string | null; section: string | null; menu_price: number | string | null; catering_available: boolean; catering_only: boolean; catering_portionable: boolean; serves: number | string | null }>>(),
   ]);
   if (iErr) throw new Error(`loadAdminCateringMenu items: ${iErr.message}`);
   if (sErr) throw new Error(`loadAdminCateringMenu menu_items: ${sErr.message}`);
@@ -84,12 +86,12 @@ export async function loadAdminCateringMenu(actor: AuthContext): Promise<AdminMe
   const items: AdminMenuItem[] = (itemRows ?? []).map((r) => ({
     id: r.id, kind: "item", name: r.name, nameEs: r.name_es, section: r.section,
     menuPriceCents: toCents(r.menu_price), cateringAvailable: r.catering_available, cateringOnly: r.catering_only,
-    cateringPortionable: null, sizes: sizesByItem.get(r.id) ?? [],
+    cateringPortionable: null, serves: r.serves == null ? null : Number(r.serves), sizes: sizesByItem.get(r.id) ?? [],
   }));
   const subs: AdminMenuItem[] = (subRows ?? []).map((r) => ({
     id: r.id, kind: "menu_item", name: r.name, nameEs: r.name_es, section: r.section,
     menuPriceCents: toCents(r.menu_price), cateringAvailable: r.catering_available, cateringOnly: r.catering_only,
-    cateringPortionable: r.catering_portionable, sizes: [],
+    cateringPortionable: r.catering_portionable, serves: r.serves == null ? null : Number(r.serves), sizes: [],
   }));
   return [...items, ...subs];
 }
@@ -100,7 +102,7 @@ export async function setCateringFlags(
   actor: AuthContext,
   kind: "item" | "menu_item",
   id: string,
-  changes: { cateringAvailable?: boolean; cateringOnly?: boolean; cateringPortionable?: boolean },
+  changes: { cateringAvailable?: boolean; cateringOnly?: boolean; cateringPortionable?: boolean; serves?: number | null },
 ): Promise<{ cateringAvailable: boolean; cateringOnly: boolean; cateringPortionable: boolean | null }> {
   requireLevel(actor, MENU_ADMIN_MIN);
   const sb = getServiceRoleClient();
@@ -117,6 +119,12 @@ export async function setCateringFlags(
   if (!available) only = false; // dropping availability drops only
 
   const update: Record<string, unknown> = { catering_available: available, catering_only: only, updated_by: actor.user.id, updated_at: new Date().toISOString() };
+  if (changes.serves !== undefined) {
+    if (changes.serves !== null && (!Number.isFinite(changes.serves) || changes.serves <= 0 || changes.serves > 500)) {
+      throw new AdminCateringMenuError(400, "invalid_serves", "Serves must be a positive number (≤500)");
+    }
+    update.serves = changes.serves;
+  }
   let portionable: boolean | null = kind === "menu_item" ? (cur.catering_portionable ?? false) : null;
   if (kind === "menu_item" && changes.cateringPortionable !== undefined) {
     portionable = changes.cateringPortionable;
@@ -133,7 +141,7 @@ export async function setCateringFlags(
     action: "catering.kb.menu.set_flags",
     resourceTable: table,
     resourceId: id,
-    metadata: { kind, catering_available: available, catering_only: only, ...(kind === "menu_item" ? { catering_portionable: portionable } : {}) },
+    metadata: { kind, catering_available: available, catering_only: only, ...(changes.serves !== undefined ? { serves: changes.serves } : {}), ...(kind === "menu_item" ? { catering_portionable: portionable } : {}) },
     ipAddress: null,
     userAgent: null,
   });
