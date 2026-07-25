@@ -32,6 +32,15 @@
                 "price": 1.0,
                 "voided": false,
                 "modifiers": []
+              },
+              {
+                "guid": "sel-1m2",
+                "item": null,
+                "selectionType": "SPECIAL_REQUEST",
+                "displayName": "All vegetarian",
+                "quantity": 1.0,
+                "price": 0.0,
+                "voided": false
               }
             ]
           },

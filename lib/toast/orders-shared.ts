@@ -13,6 +13,13 @@
  *
  * Malformed payload throws — whole pull poisons, never partial (house rule;
  * PR #173 review finding #1 taught us to pin the REAL shape in fixture+tests).
+ *
+ * FIRST-LIVE CORRECTION (2026-07-24, real Capitol Hill payload): selections of
+ * selectionType SPECIAL_REQUEST are free-text customer notes with `item: null`
+ * (e.g. "All vegetarian", $0). They can never resolve through the crosswalk
+ * and carry no depletion — SKIPPED (with their modifier subtree), not poison.
+ * Poison remains for structurally broken lines (no selection guid; an item
+ * present but quantity missing).
  */
 
 export interface ToastSaleLine {
@@ -47,7 +54,8 @@ export function flattenToastOrders(json: unknown): ToastSaleLine[] {
     }
     const itemGuid = sel.item?.guid;
     if (typeof itemGuid !== "string" || itemGuid.length === 0) {
-      throw new Error(`toast orders payload: selection ${sel.guid} without item guid`);
+      // SPECIAL_REQUEST / note lines carry item:null — unmappable by design; skip.
+      return;
     }
     const quantity = typeof sel.quantity === "number" && Number.isFinite(sel.quantity) ? sel.quantity : null;
     if (quantity == null) throw new Error(`toast orders payload: selection ${sel.guid} without quantity`);
