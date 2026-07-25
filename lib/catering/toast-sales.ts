@@ -28,7 +28,7 @@ import {
 } from "./toast-sales-shared";
 import { loadRecipeGraph } from "@/lib/prep-consumption";
 import {
-  perUnitSkuOzForItemFromGraph, perUnitSkuOzForMenuItemFromGraph, firstLevelItemConsumption,
+  perUnitSkuOzForItemFromGraph, perUnitDirectSkuOzForMenuItem, firstLevelItemConsumption,
 } from "@/lib/prep-consumption-graph";
 import { modifierParUnits, removalAmount } from "@/lib/toast/modifiers-shared";
 
@@ -312,7 +312,10 @@ export async function salesConsumption(actor: AuthContext, locationId: string, b
   const sku = new Map<string, number>();             // menu_item lane SKUs (direct)
   for (const e of qtyByEntity.values()) {
     if (e.kind === "menu_item") {
-      for (const [skuId, oz] of perUnitSkuOzForMenuItemFromGraph(graph, e.id)) sku.set(skuId, (sku.get(skuId) ?? 0) + oz * e.quantity);
+      // DIRECT SKUs only here — item-ref SKUs flow through itemUnits so the
+      // modifier lane can adjust them pre-flatten. Using the FULL flatten here
+      // double-counted item-ref SKUs ~2x (PR #180 review finding #1).
+      for (const [skuId, oz] of perUnitDirectSkuOzForMenuItem(graph, e.id)) sku.set(skuId, (sku.get(skuId) ?? 0) + oz * e.quantity);
       for (const [itemId, units] of firstLevelItemConsumption(graph, e.id)) itemUnits.set(itemId, (itemUnits.get(itemId) ?? 0) + units * e.quantity);
     } else {
       itemUnits.set(e.id, (itemUnits.get(e.id) ?? 0) + e.quantity);

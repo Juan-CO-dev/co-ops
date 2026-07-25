@@ -241,7 +241,7 @@ export async function runAutoMatch(
 async function loadRow(mapId: string): Promise<DbMapRow & { active: boolean }> {
   const sb = getServiceRoleClient();
   const { data, error } = await sb.from("toast_menu_map")
-    .select("id, location_id, menu_item_id, item_id, toast_item_guid, toast_item_name, toast_price_cents, match_status, match_score, confirmed_at, active")
+    .select("id, location_id, menu_item_id, item_id, toast_item_guid, toast_item_name, toast_price_cents, match_status, match_score, confirmed_at, is_modifier, disposition, portion_qty, portion_unit, active")
     .eq("id", mapId)
     .maybeSingle<DbMapRow & { active: boolean }>();
   if (error) throw new Error(`toast-map load row: ${error.message}`);

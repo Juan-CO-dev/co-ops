@@ -93,7 +93,7 @@ export function itemRefParUnits(
   return perParOz > 0 ? oz / perParOz : null;
 }
 
-function itemOzWeight(o: GraphOutput): number {
+export function itemOzWeight(o: GraphOutput): number {
   const w = o.ozPerParUnit;
   return w != null && w > 0 ? o.yield * w : o.yield;
 }
@@ -244,5 +244,53 @@ export function firstLevelItemConsumption(graph: RecipeGraph, menuItemId: string
     if (parUnits == null) return new Map();
     out.set(c.componentItemId, (out.get(c.componentItemId) ?? 0) + (parUnits * share) / myYield);
   }
+  return out;
+}
+
+/**
+ * DIRECT-SKU-only flatten for a MENU_ITEM (PR #180 review finding #1 — the
+ * SKU-double-count guard): identical share/yield/poison semantics to
+ * perUnitSkuOzForMenuItemFromGraph, but item-ref inputs contribute NOTHING
+ * here — their SKUs flow exclusively through the item-units lane (which the
+ * modifier lane adjusts before the clamp + item-grain flatten). Item-refs are
+ * still VALIDATED (unresolvable → poison), so both lanes agree on whether the
+ * sub resolves at all. Invariant (test-pinned): direct(M) + Σ firstLevel(M)[i]
+ * × perUnitItem(i) === perUnitSkuOzForMenuItemFromGraph(M).
+ */
+export function perUnitDirectSkuOzForMenuItem(graph: RecipeGraph, menuItemId: string): Map<string, number> {
+  const node = graph.byOutputMenuItem.get(menuItemId) ?? null;
+  if (!node) return new Map();
+  const meOut = node.outputs.find((o) => o.outputMenuItemId === menuItemId);
+  const myYield = meOut?.yield ?? 0;
+  if (myYield <= 0) return new Map();
+  if (node.batchYield == null || node.batchYield <= 0) return new Map();
+
+  let totalWeight = 0;
+  let myWeight = 0;
+  for (const o of node.outputs) {
+    const w = o.outputItemId != null ? itemOzWeight(o) : o.yield;
+    if (w > 0) totalWeight += w;
+    if (o.outputMenuItemId === menuItemId) myWeight = w > 0 ? w : 0;
+  }
+  const share = totalWeight > 0 ? myWeight / totalWeight : 1 / Math.max(node.outputs.length, 1);
+
+  const batch = new Map<string, number>();
+  for (const c of node.inputs) {
+    if (c.componentSkuId != null) {
+      const skuInfo = graph.skuPack.get(c.componentSkuId);
+      const oz = skuInfo ? ozForRecipeInput(c.quantity, c.unit, skuInfo, graph.measures) : null;
+      if (oz == null) return new Map();
+      batch.set(c.componentSkuId, (batch.get(c.componentSkuId) ?? 0) + oz);
+    } else if (c.componentItemId != null) {
+      // Validate resolvability (poison parity with the full flatten) — contribute nothing.
+      const subPerUnit = perUnitSkuOzForItemFromGraph(graph, c.componentItemId);
+      if (subPerUnit.size === 0) return new Map();
+      if (itemRefParUnits(graph, c, subPerUnit) == null) return new Map();
+    } else {
+      return new Map();
+    }
+  }
+  const out = new Map<string, number>();
+  for (const [skuId, oz] of batch) out.set(skuId, (oz * share) / myYield);
   return out;
 }

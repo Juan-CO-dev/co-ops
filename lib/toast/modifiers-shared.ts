@@ -13,6 +13,7 @@
  */
 import {
   itemRefParUnits,
+  itemOzWeight,
   perUnitSkuOzForItemFromGraph,
   type RecipeGraph,
 } from "@/lib/prep-consumption-graph";
@@ -47,7 +48,10 @@ export interface Portion {
  */
 export function derivePortion(graph: RecipeGraph, itemId: string): Portion | null {
   const samples: Array<{ qty: number; unit: string | null }> = [];
+  const seenRecipes = new Set<string>();
   for (const node of graph.byOutputMenuItem.values()) {
+    if (seenRecipes.has(node.recipeId)) continue; // multi-menu-output recipes sample once
+    seenRecipes.add(node.recipeId);
     for (const input of node.inputs) {
       if (input.componentItemId === itemId && Number.isFinite(input.quantity) && input.quantity > 0) {
         samples.push({ qty: input.quantity, unit: input.unit });
@@ -106,11 +110,12 @@ export function removalAmount(graph: RecipeGraph, parentMenuItemId: string, item
     found = true;
   }
   if (!found) return null;
-  // Same share/yield scaling as firstLevelItemConsumption (single-output subs → share 1).
+  // EXACT share/yield parity with firstLevelItemConsumption (review finding #2):
+  // item outputs weight by itemOzWeight, menu outputs by yield.
   let totalWeight = 0;
   let myWeight = 0;
   for (const o of node.outputs) {
-    const w = o.yield;
+    const w = o.outputItemId != null ? itemOzWeight(o) : o.yield;
     if (w > 0) totalWeight += w;
     if (o.outputMenuItemId === parentMenuItemId) myWeight = w > 0 ? w : 0;
   }
