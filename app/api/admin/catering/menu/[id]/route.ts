@@ -20,7 +20,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const b = parsed as Record<string, unknown>;
   const kind = b.kind === "menu_item" ? "menu_item" : b.kind === "item" ? "item" : null;
   if (!kind) return jsonError(400, "invalid_payload", { field: "kind" });
-  const changes: { cateringAvailable?: boolean; cateringOnly?: boolean; cateringPortionable?: boolean } = {};
+  const changes: { cateringAvailable?: boolean; cateringOnly?: boolean; cateringPortionable?: boolean; serves?: number | null } = {};
   if ("cateringAvailable" in b) {
     if (typeof b.cateringAvailable !== "boolean") return jsonError(400, "invalid_payload", { field: "cateringAvailable" });
     changes.cateringAvailable = b.cateringAvailable;
@@ -32,6 +32,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if ("cateringPortionable" in b) {
     if (typeof b.cateringPortionable !== "boolean") return jsonError(400, "invalid_payload", { field: "cateringPortionable" });
     changes.cateringPortionable = b.cateringPortionable;
+  }
+  if ("serves" in b) {
+    if (b.serves !== null && (typeof b.serves !== "number" || !Number.isFinite(b.serves))) {
+      return jsonError(400, "invalid_payload", { field: "serves" });
+    }
+    changes.serves = b.serves as number | null;
   }
   if (Object.keys(changes).length === 0) return jsonError(400, "invalid_payload", { message: "No flags to set" });
 

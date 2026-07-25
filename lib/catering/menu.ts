@@ -40,13 +40,15 @@ export interface CateringMenuItem {
   unitPriceCents: number;           // whole catering price (= derived whole; for a sized item = the "from"/smallest size)
   portionPricesCents: { quarter: number; half: number; whole: number } | null; // present iff portionable
   sizes: Array<{ id: string; label: string; unitPriceCents: number; serves: number | null }> | null; // present iff the item has active item_sizes
+  /** People covered per ONE whole unit (0154; at-a-glance coverage). Null → 1. */
+  serves: number | null;
 }
 
 /** Build a priced CateringMenuItem from a raw row + the location's rate rules. Returns null when
  *  the entity has no usable regular price (unpriceable → excluded, never sold at $0). */
 export function buildCateringMenuItem(
   row: { kind: "item" | "menu_item"; id: string; name: string; nameEs: string | null; section: string | null;
-         menuPriceCents: number; cateringOnly: boolean; portionable: boolean;
+         menuPriceCents: number; cateringOnly: boolean; portionable: boolean; serves?: number | null;
          sizes?: Array<{ id: string; label: string; priceCents: number; serves: number | null }> },
   rules: RateRule[],
 ): CateringMenuItem | null {
@@ -65,7 +67,7 @@ export function buildCateringMenuItem(
     : cateringUnitPriceCents(row.menuPriceCents, "whole", rateBps);
   return {
     kind: row.kind, id: row.id, name: row.name, nameEs: row.nameEs, section: row.section,
-    cateringOnly: row.cateringOnly, portionable: row.portionable,
+    cateringOnly: row.cateringOnly, portionable: row.portionable, serves: row.serves ?? null,
     regularPriceCents: row.menuPriceCents, rateBps, unitPriceCents: whole,
     portionPricesCents: row.portionable
       ? { quarter: cateringUnitPriceCents(row.menuPriceCents, "quarter", rateBps),
@@ -94,6 +96,8 @@ export interface CateringPackage {
   priceCents: number;
   minHeadcount: number | null;
   leadTimeHours: number | null;   // advisory
+  /** People covered per ONE package (0154; at-a-glance coverage). Null → derived from picks. */
+  serves: number | null;
   slots: PackageSlot[];           // choice slots + eligible options (sub-project B)
   items: PackageLine[];
 }
@@ -204,6 +208,7 @@ export async function loadCateringPackagesForQuote(actor: AuthContext, locationI
     priceCents: p.price_cents,
     minHeadcount: p.min_headcount,
     leadTimeHours: null, // staff quote picker doesn't consume these in sub-project B
+    serves: null,
     slots: [],
     items: byPackage.get(p.id) ?? [],
   }));
