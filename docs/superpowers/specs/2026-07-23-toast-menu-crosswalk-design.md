@@ -125,3 +125,17 @@ Webhooks · scheduled/cron drift · sales ingest + depletion + the catering doub
 ## Done criteria
 
 Typecheck + all tests green with zero Toast credentials present; the Toast tab renders the not-configured state on a fresh env; with fixtures forced (`TOAST_FIXTURES=1`) an admin can run match → confirm → see drift end-to-end locally. Migration file staged in the PR; **prod apply + merge = Juan's explicit go.**
+
+## AMENDMENT — multi-guid crosswalk (2026-07-24, first-light finding A; migration 0151)
+
+Real Capitol Hill data: Toast models CHANNEL-PRICED VARIANTS as distinct menu items — 84 of 148
+names carry multiple guids (e.g. Hot Pants: mainline $15.79 / Grubhub $16.50 / "Get What You Get"
+$12; zero shared masterId/multiLocationId → deliberately distinct, NOT misconfiguration; Toast's
+item-reuse feature IS used where prices match). Since every variant depletes the same food:
+- **One CO entity ↔ MANY Toast guids.** 0151 drops `toast_map_uq_menu_item`/`toast_map_uq_item`;
+  `toast_map_uq_guid` (one entity per guid) remains.
+- Matcher: greedy uniqueness is per-TOAST-ITEM only; an entity may candidate against every variant.
+- `confirmMapping` supersedes same-GUID rivals only; `runAutoMatch` keeps confirmed entities in the
+  candidate pool (they may gain variant guids).
+- Consumption resolution was already guid-keyed — no change; unmapped leakage (Hot Pants×9 on
+  07-23) closes once variants are confirmed.

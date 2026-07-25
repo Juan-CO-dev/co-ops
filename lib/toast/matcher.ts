@@ -7,9 +7,11 @@
  *   - else token-set Jaccard (0..1) + 0.15 bonus when both prices present and
  *     within 5% of each other (sum capped at 0.99 so only exact names hit 1.0)
  *   - candidates require score >= 0.8
- *   - greedy best-first pairing: each CO entity and each Toast item appears in
- *     at most ONE candidate; ties broken by normalized name, then guid, then
- *     entity id (deterministic under input reordering)
+ *   - greedy best-first pairing: each TOAST ITEM appears in at most ONE
+ *     candidate; a CO entity may appear in MANY (multi-guid reality, 2026-07-24
+ *     first-light finding: Toast models channel-priced variants — Grubhub
+ *     markup, specials — as distinct items; same food, many guids). Ties break
+ *     by normalized name, then guid, then entity id (deterministic).
  * The matcher only has to be GOOD — the admin confirm queue is the authority.
  */
 
@@ -89,12 +91,10 @@ export function matchCandidates(entities: CoEntity[], toastItems: ToastItem[]): 
     if (a.toast.itemGuid !== b.toast.itemGuid) return a.toast.itemGuid < b.toast.itemGuid ? -1 : 1;
     return a.entity.id < b.entity.id ? -1 : a.entity.id > b.entity.id ? 1 : 0;
   });
-  const usedEntity = new Set<string>();
   const usedToast = new Set<string>();
   const out: MatchCandidate[] = [];
   for (const c of scored) {
-    if (usedEntity.has(c.entity.id) || usedToast.has(c.toast.itemGuid)) continue;
-    usedEntity.add(c.entity.id);
+    if (usedToast.has(c.toast.itemGuid)) continue;
     usedToast.add(c.toast.itemGuid);
     out.push(c);
   }

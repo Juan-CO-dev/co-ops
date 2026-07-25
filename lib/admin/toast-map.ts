@@ -4,8 +4,10 @@
  * behind Tier-A step-up at the route (mirrors lib/admin/catering/menu.ts).
  *
  * The crosswalk maps CO entities → Toast menu-item GUIDs per location
- * (toast_menu_map, migration 0146; deny-all RLS — this lib is the sole write
- * path). State machine per row: candidate → confirmed | rejected; confirmed →
+ * (toast_menu_map, migration 0146; multi-guid since 0151 — ONE entity may hold
+ * MANY confirmed Toast guids because Toast models channel-priced variants as
+ * distinct items; each guid maps to exactly one entity. Deny-all RLS — this
+ * lib is the sole write path). State machine per row: candidate → confirmed | rejected; confirmed →
  * stale (drift: vanished from Toast) or active=false (unmap/supersede). Rows
  * never DELETE; identity changes supersede (new row + old active=false).
  *
@@ -143,12 +145,13 @@ export async function runAutoMatch(
   const toastItems = await fetchToastMenuItems(guid);
   const [rows, entities] = await Promise.all([loadActiveRows(locationId), loadEntities()]);
 
-  const takenEntities = new Set(rows.filter((r) => r.match_status === "confirmed").map((r) => r.menu_item_id ?? r.item_id));
+  // Multi-guid law: a confirmed entity stays in the pool (it may gain more
+  // channel-variant guids); only already-claimed GUIDs leave the pool.
   const takenGuids = new Set(rows.filter((r) => r.match_status === "confirmed").map((r) => r.toast_item_guid));
   const rejectedPairs = new Set(rows.filter((r) => r.match_status === "rejected").map((r) => `${r.menu_item_id ?? r.item_id}:${r.toast_item_guid}`));
   const existingCandidatePairs = new Set(rows.filter((r) => r.match_status === "candidate").map((r) => `${r.menu_item_id ?? r.item_id}:${r.toast_item_guid}`));
 
-  const freeEntities = entities.filter((e) => !takenEntities.has(e.id));
+  const freeEntities = entities;
   const freeToast = toastItems.filter((t) => !takenGuids.has(t.itemGuid));
   const candidates = matchCandidates(freeEntities, freeToast)
     .filter((c) => !rejectedPairs.has(`${c.entity.id}:${c.toast.itemGuid}`));
@@ -200,12 +203,12 @@ export async function confirmMapping(actor: AuthContext, mapId: string): Promise
   if (row.match_status !== "candidate") throw new AdminToastMapError(409, "not_candidate", "Only candidates confirm");
   const sb = getServiceRoleClient();
 
-  const entityCol = row.menu_item_id != null ? "menu_item_id" : "item_id";
   const entityId = row.menu_item_id ?? row.item_id!;
-  // Supersede competitors (other active rows claiming this entity or this guid at this location).
+  // Supersede competitors claiming this GUID (each guid maps to ONE entity).
+  // Same-entity rows are NOT rivals anymore — multi-guid law (0151).
   const { data: rivals, error: rErr } = await sb.from("toast_menu_map").select("id")
     .eq("location_id", row.location_id).eq("active", true).neq("id", mapId)
-    .or(`${entityCol}.eq.${entityId},toast_item_guid.eq.${row.toast_item_guid}`)
+    .eq("toast_item_guid", row.toast_item_guid)
     .returns<Array<{ id: string }>>();
   if (rErr) throw new Error(`toast-map rivals: ${rErr.message}`);
   for (const rival of rivals ?? []) {
