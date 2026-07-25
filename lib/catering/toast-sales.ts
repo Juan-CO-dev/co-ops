@@ -31,6 +31,10 @@ import {
   perUnitSkuOzForItemFromGraph, perUnitDirectSkuOzForMenuItem, firstLevelItemConsumption,
 } from "@/lib/prep-consumption-graph";
 import { modifierParUnits, removalAmount } from "@/lib/toast/modifiers-shared";
+import {
+  selectAssortmentPool, evenMixPerOption, MENU_ITEM_MODIFIER_PORTION_WHOLE_SUBS,
+  type AssortmentKind,
+} from "@/lib/toast/platter-shared";
 
 export const TOAST_SALES_WRITE_MIN = 7; // GM+ — pull + exclusions (mirrors toast-map)
 export const TOAST_SALES_READ_MIN = 6;  // AGM+ — consumption readout (prep-demand page floor)
@@ -232,7 +236,7 @@ export async function deactivateExclusion(actor: AuthContext, id: string): Promi
 // ─── Consumption projection (derived; advisory) ──────────────────────────────
 
 export interface SalesConsumption {
-  soldLines: Array<{ name: string; quantity: number; kind: "menu_item" | "item" }>;
+  soldLines: Array<{ name: string; quantity: number; kind: "menu_item" | "item" | "package" }>;
   prepConsumed: Array<{ itemId: string; name: string; units: number; removedUnits: number }>;
   skuConsumed: Array<{ skuId: string; name: string; oz: number }>;
   unmappedToastItems: Array<{ name: string; quantity: number; toastItemGuid: string; isModifier: boolean }>;
@@ -240,6 +244,8 @@ export interface SalesConsumption {
   suspectedCatering: Array<{ checkGuid: string; diningOption: string | null; totalQty: number; reason: "name" | "quantity" }>;
   /** Modifier lane (spec 2026-07-24): applications counted / subtracted / skipped. */
   modifierStats: { depleted: number; removed: number; ignored: number; portionNeeded: Array<{ name: string; quantity: number }> };
+  /** Platter lane (spec 2026-07-25): package composition gaps that block full depletion. */
+  packageIssues: Array<{ name: string; issue: "empty_pool" | "freeform_line" }>;
 }
 
 export async function salesConsumption(actor: AuthContext, locationId: string, businessDate: string): Promise<SalesConsumption> {
@@ -269,33 +275,50 @@ export async function salesConsumption(actor: AuthContext, locationId: string, b
   }
   const counted = live.filter((r) => !excluded.has(r.selection_guid));
 
-  // Crosswalk resolution (confirmed, active).
+  // Crosswalk resolution (confirmed, active). Three lanes since the platter
+  // spec 2026-07-25: base entities (menu_item/item/PACKAGE), assortment
+  // markers (modifier guid → pool behavior), and portioned modifiers
+  // (item- or menu_item-target).
   const { data: mapRows, error: mErr } = await sb.from("toast_menu_map")
-    .select("menu_item_id, item_id, toast_item_guid, is_modifier, disposition, portion_qty, portion_unit")
+    .select("menu_item_id, item_id, package_id, toast_item_guid, is_modifier, disposition, portion_qty, portion_unit")
     .eq("location_id", locationId).eq("active", true).eq("match_status", "confirmed")
-    .returns<Array<{ menu_item_id: string | null; item_id: string | null; toast_item_guid: string; is_modifier: boolean; disposition: "deplete" | "remove" | "ignore"; portion_qty: number | string | null; portion_unit: string | null }>>();
+    .returns<Array<{ menu_item_id: string | null; item_id: string | null; package_id: string | null; toast_item_guid: string; is_modifier: boolean; disposition: "deplete" | "remove" | "ignore" | "assortment_full" | "assortment_classics"; portion_qty: number | string | null; portion_unit: string | null }>>();
   if (mErr) throw new Error(`toast-sales crosswalk: ${mErr.message}`);
   const entityByGuid = new Map(
-    (mapRows ?? []).filter((m) => !m.is_modifier).map((m) => [m.toast_item_guid, m.menu_item_id != null
-      ? { kind: "menu_item" as const, id: m.menu_item_id }
-      : { kind: "item" as const, id: m.item_id! }]),
+    (mapRows ?? []).filter((m) => !m.is_modifier && (m.menu_item_id ?? m.item_id ?? m.package_id) != null)
+      .map((m) => [m.toast_item_guid, m.menu_item_id != null
+        ? { kind: "menu_item" as const, id: m.menu_item_id }
+        : m.item_id != null
+          ? { kind: "item" as const, id: m.item_id }
+          : { kind: "package" as const, id: m.package_id! }]),
+  );
+  const assortmentByGuid = new Map<string, AssortmentKind>(
+    (mapRows ?? []).filter((m) => m.is_modifier && (m.disposition === "assortment_full" || m.disposition === "assortment_classics"))
+      .map((m) => [m.toast_item_guid, m.disposition === "assortment_classics" ? "classics" as const : "full" as const]),
   );
   const modifierByGuid = new Map(
-    (mapRows ?? []).filter((m) => m.is_modifier && m.item_id != null).map((m) => [m.toast_item_guid, {
-      itemId: m.item_id!,
-      disposition: m.disposition,
-      portionQty: m.portion_qty != null ? Number(m.portion_qty) : null,
-      portionUnit: m.portion_unit,
-    }]),
+    (mapRows ?? [])
+      .filter((m) => m.is_modifier && (m.item_id != null || m.menu_item_id != null))
+      .map((m) => [m.toast_item_guid, {
+        targetKind: m.item_id != null ? ("item" as const) : ("menu_item" as const),
+        targetId: (m.item_id ?? m.menu_item_id)!,
+        disposition: m.disposition,
+        portionQty: m.portion_qty != null ? Number(m.portion_qty) : null,
+        portionUnit: m.portion_unit,
+      }]),
   );
 
   const baseLines = counted.filter((r) => r.parent_selection_guid == null);
   const modifierLines = counted.filter((r) => r.parent_selection_guid != null);
 
-  const qtyByEntity = new Map<string, { kind: "menu_item" | "item"; id: string; quantity: number }>();
+  const qtyByEntity = new Map<string, { kind: "menu_item" | "item" | "package"; id: string; quantity: number }>();
   const unmapped = new Map<string, { name: string; quantity: number; isModifier: boolean }>();
+  // Package sales keep PER-SELECTION grain: the assortment pick is a child of
+  // the specific platter line, so two platters on one check resolve distinctly.
+  const packageSales: Array<{ packageId: string; qty: number; selectionGuid: string }> = [];
   for (const r of baseLines) {
     const qty = Number(r.quantity);
+    if (assortmentByGuid.has(r.toast_item_guid)) continue; // structural marker mis-rung as a base line — mapped, no demand of its own
     const ent = entityByGuid.get(r.toast_item_guid);
     if (!ent) {
       const u = unmapped.get(r.toast_item_guid) ?? { name: r.item_name, quantity: 0, isModifier: false };
@@ -303,37 +326,112 @@ export async function salesConsumption(actor: AuthContext, locationId: string, b
       unmapped.set(r.toast_item_guid, u);
       continue;
     }
+    if (ent.kind === "package") packageSales.push({ packageId: ent.id, qty, selectionGuid: r.selection_guid });
     const key = `${ent.kind}:${ent.id}`;
     const cur = qtyByEntity.get(key);
     if (cur) cur.quantity += qty; else qtyByEntity.set(key, { ...ent, quantity: qty });
   }
 
-  // ── Graph load once; base flatten first (menu_items → SKUs directly; item
-  //    par-units accumulate SIGNED so the modifier lane can add/subtract before
-  //    the clamp + item-grain SKU flatten). ─────────────────────────────────
+  // ── Graph load once. BOTH lanes accumulate SIGNED before their clamp:
+  //    menuItemUnits (whole subs) takes bases + platter spreads + menu_item
+  //    modifiers, then clamps and flattens (direct SKUs + first-level items);
+  //    itemUnits takes item bases + platter item options + item modifiers,
+  //    then clamps and flattens to SKUs. Flatten stays split direct/first-level
+  //    (PR #180 invariant: recombination === full flatten, no 2× SKUs). ─────
   const graph = await loadRecipeGraph();
+  const menuItemUnits = new Map<string, number>();   // signed whole-sub units per menu_item
   const itemUnits = new Map<string, number>();       // signed par-units per item
   const removedByItem = new Map<string, number>();   // visible removal truth
   const sku = new Map<string, number>();             // menu_item lane SKUs (direct)
+  const packageIssues = new Map<string, { name: string; issue: "empty_pool" | "freeform_line" }>();
   for (const e of qtyByEntity.values()) {
-    if (e.kind === "menu_item") {
-      // DIRECT SKUs only here — item-ref SKUs flow through itemUnits so the
-      // modifier lane can adjust them pre-flatten. Using the FULL flatten here
-      // double-counted item-ref SKUs ~2x (PR #180 review finding #1).
-      for (const [skuId, oz] of perUnitDirectSkuOzForMenuItem(graph, e.id)) sku.set(skuId, (sku.get(skuId) ?? 0) + oz * e.quantity);
-      for (const [itemId, units] of firstLevelItemConsumption(graph, e.id)) itemUnits.set(itemId, (itemUnits.get(itemId) ?? 0) + units * e.quantity);
-    } else {
-      itemUnits.set(e.id, (itemUnits.get(e.id) ?? 0) + e.quantity);
+    if (e.kind === "menu_item") menuItemUnits.set(e.id, (menuItemUnits.get(e.id) ?? 0) + e.quantity);
+    else if (e.kind === "item") itemUnits.set(e.id, (itemUnits.get(e.id) ?? 0) + e.quantity);
+    // packages resolve below at per-sale grain
+  }
+
+  // ── Platter lane (spec 2026-07-25): a package sale resolves its composition —
+  //    fixed spine-linked lines deplete directly; a choice slot's whole subs
+  //    (slot quantity, halves doctrine) spread EVEN-MIX across the pool the
+  //    assortment pick selects (classics subset vs full enabled options). ────
+  if (packageSales.length > 0) {
+    const pkgIds = [...new Set(packageSales.map((p) => p.packageId))];
+    const [{ data: pkgRows, error: pnErr }, { data: lineRows, error: plErr }] = await Promise.all([
+      sb.from("catering_packages").select("id, label_en").in("id", pkgIds)
+        .returns<Array<{ id: string; label_en: string }>>(),
+      sb.from("catering_package_items")
+        .select("id, package_id, slot_type, item_id, menu_item_id, quantity")
+        .in("package_id", pkgIds).eq("active", true)
+        .returns<Array<{ id: string; package_id: string; slot_type: string; item_id: string | null; menu_item_id: string | null; quantity: number | string }>>(),
+    ]);
+    if (pnErr) throw new Error(`toast-sales package names: ${pnErr.message}`);
+    if (plErr) throw new Error(`toast-sales package lines: ${plErr.message}`);
+    const pkgName = new Map((pkgRows ?? []).map((p) => [p.id, p.label_en]));
+    const linesByPackage = new Map<string, NonNullable<typeof lineRows>>();
+    for (const l of lineRows ?? []) {
+      const arr = linesByPackage.get(l.package_id) ?? [];
+      arr.push(l);
+      linesByPackage.set(l.package_id, arr);
+    }
+    const choiceLineIds = (lineRows ?? []).filter((l) => l.slot_type === "choice").map((l) => l.id);
+    const { data: optRows, error: poErr } = choiceLineIds.length
+      ? await sb.from("catering_package_slot_options")
+          .select("package_item_id, item_id, menu_item_id, classic")
+          .in("package_item_id", choiceLineIds).eq("active", true)
+          .returns<Array<{ package_item_id: string; item_id: string | null; menu_item_id: string | null; classic: boolean }>>()
+      : { data: [], error: null };
+    if (poErr) throw new Error(`toast-sales package options: ${poErr.message}`);
+    const optsByLine = new Map<string, Array<{ item_id: string | null; menu_item_id: string | null; classic: boolean }>>();
+    for (const o of optRows ?? []) {
+      const arr = optsByLine.get(o.package_item_id) ?? [];
+      arr.push(o);
+      optsByLine.set(o.package_item_id, arr);
+    }
+    // The assortment pick rides as a MODIFIER child of the platter selection.
+    const assortBySelection = new Map<string, AssortmentKind>();
+    for (const r of modifierLines) {
+      const kind = assortmentByGuid.get(r.toast_item_guid);
+      if (kind != null && r.parent_selection_guid != null) {
+        // classics wins a (weird) double-pick — the narrower pool is the safer read
+        const prev = assortBySelection.get(r.parent_selection_guid);
+        assortBySelection.set(r.parent_selection_guid, prev === "classics" ? prev : kind);
+      }
+    }
+    for (const sale of packageSales) {
+      const name = pkgName.get(sale.packageId) ?? "(package)";
+      const lines = linesByPackage.get(sale.packageId) ?? [];
+      if (lines.length === 0) { packageIssues.set(`${name}:empty_pool`, { name, issue: "empty_pool" }); continue; }
+      for (const line of lines) {
+        const lineQty = Number(line.quantity);
+        if (line.slot_type === "choice") {
+          const kind = assortBySelection.get(sale.selectionGuid) ?? "full"; // no pick punched → Our-Favorites behavior
+          const pool = selectAssortmentPool(optsByLine.get(line.id) ?? [], kind);
+          if (pool.length === 0) { packageIssues.set(`${name}:empty_pool`, { name, issue: "empty_pool" }); continue; }
+          const per = evenMixPerOption(lineQty * sale.qty, pool.length);
+          for (const o of pool) {
+            if (o.menu_item_id != null) menuItemUnits.set(o.menu_item_id, (menuItemUnits.get(o.menu_item_id) ?? 0) + per);
+            else if (o.item_id != null) itemUnits.set(o.item_id, (itemUnits.get(o.item_id) ?? 0) + per);
+          }
+        } else if (line.menu_item_id != null) {
+          menuItemUnits.set(line.menu_item_id, (menuItemUnits.get(line.menu_item_id) ?? 0) + lineQty * sale.qty);
+        } else if (line.item_id != null) {
+          itemUnits.set(line.item_id, (itemUnits.get(line.item_id) ?? 0) + lineQty * sale.qty);
+        } else {
+          packageIssues.set(`${name}:freeform_line`, { name, issue: "freeform_line" });
+        }
+      }
     }
   }
 
-  // ── Modifier lane (spec 2026-07-24): deplete adds portion-par-units; remove
-  //    subtracts PARENT-AWARE amount (the parent sub recipe's own contribution)
-  //    with portion fallback — Juan: removals COUNT. ────────────────────────
+  // ── Modifier lane (spec 2026-07-24; menu_item targets since 2026-07-25):
+  //    deplete adds portion units; remove subtracts PARENT-AWARE amount (the
+  //    parent sub recipe's own contribution) with portion fallback — Juan:
+  //    removals COUNT. Assortment markers were consumed by the platter lane. ─
   const modifierStats = { depleted: 0, removed: 0, ignored: 0, portionNeeded: new Map<string, number>() };
   const parentGuidBySelection = new Map(counted.map((r) => [r.selection_guid, r.toast_item_guid]));
   for (const r of modifierLines) {
     const qty = Number(r.quantity);
+    if (assortmentByGuid.has(r.toast_item_guid)) continue; // pool marker, not demand
     const mod = modifierByGuid.get(r.toast_item_guid);
     if (!mod) {
       const u = unmapped.get(r.toast_item_guid) ?? { name: r.item_name, quantity: 0, isModifier: true };
@@ -342,22 +440,46 @@ export async function salesConsumption(actor: AuthContext, locationId: string, b
       continue;
     }
     if (mod.disposition === "ignore") { modifierStats.ignored += qty; continue; }
+    if (mod.targetKind === "menu_item") {
+      // Named-sub pick under a platter: portion is whole subs per application
+      // (halves doctrine default 0.5) — no unit conversion needed.
+      const wholeSubs = (mod.portionQty ?? MENU_ITEM_MODIFIER_PORTION_WHOLE_SUBS) * qty;
+      if (mod.disposition === "deplete") {
+        menuItemUnits.set(mod.targetId, (menuItemUnits.get(mod.targetId) ?? 0) + wholeSubs);
+        modifierStats.depleted += qty;
+      } else {
+        menuItemUnits.set(mod.targetId, (menuItemUnits.get(mod.targetId) ?? 0) - wholeSubs);
+        modifierStats.removed += qty;
+      }
+      continue;
+    }
     const portion = mod.portionQty != null ? { qty: mod.portionQty, unit: mod.portionUnit } : null;
-    const portionUnits = portion != null ? modifierParUnits(graph, mod.itemId, portion) : null;
+    const portionUnits = portion != null ? modifierParUnits(graph, mod.targetId, portion) : null;
     if (mod.disposition === "deplete") {
       if (portionUnits == null) { modifierStats.portionNeeded.set(r.item_name, (modifierStats.portionNeeded.get(r.item_name) ?? 0) + qty); continue; }
-      itemUnits.set(mod.itemId, (itemUnits.get(mod.itemId) ?? 0) + portionUnits * qty);
+      itemUnits.set(mod.targetId, (itemUnits.get(mod.targetId) ?? 0) + portionUnits * qty);
       modifierStats.depleted += qty;
     } else {
       // remove: parent-aware first, portion fallback.
       const parentToastGuid = r.parent_selection_guid != null ? parentGuidBySelection.get(r.parent_selection_guid) : undefined;
       const parentEnt = parentToastGuid != null ? entityByGuid.get(parentToastGuid) : undefined;
-      const parentAmount = parentEnt?.kind === "menu_item" ? removalAmount(graph, parentEnt.id, mod.itemId) : null;
+      const parentAmount = parentEnt?.kind === "menu_item" ? removalAmount(graph, parentEnt.id, mod.targetId) : null;
       const amount = parentAmount ?? portionUnits;
       if (amount == null) { modifierStats.portionNeeded.set(r.item_name, (modifierStats.portionNeeded.get(r.item_name) ?? 0) + qty); continue; }
-      itemUnits.set(mod.itemId, (itemUnits.get(mod.itemId) ?? 0) - amount * qty);
-      removedByItem.set(mod.itemId, (removedByItem.get(mod.itemId) ?? 0) + amount * qty);
+      itemUnits.set(mod.targetId, (itemUnits.get(mod.targetId) ?? 0) - amount * qty);
+      removedByItem.set(mod.targetId, (removedByItem.get(mod.targetId) ?? 0) + amount * qty);
       modifierStats.removed += qty;
+    }
+  }
+
+  // ── Clamp menu_item whole-sub totals at ≥0, THEN flatten each unit exactly
+  //    like a sold sub: DIRECT SKUs only + first-level item par-units (the
+  //    item-ref SKUs flow through itemUnits — PR #180 review finding #1). ────
+  for (const [menuItemId, units] of menuItemUnits) {
+    const clamped = Math.max(units, 0);
+    if (clamped > 0) {
+      for (const [skuId, oz] of perUnitDirectSkuOzForMenuItem(graph, menuItemId)) sku.set(skuId, (sku.get(skuId) ?? 0) + oz * clamped);
+      for (const [itemId, units2] of firstLevelItemConsumption(graph, menuItemId)) itemUnits.set(itemId, (itemUnits.get(itemId) ?? 0) + units2 * clamped);
     }
   }
 
@@ -371,21 +493,25 @@ export async function salesConsumption(actor: AuthContext, locationId: string, b
     }
   }
 
-  // Names for entities, prep items, and SKUs.
+  // Names for entities, prep items, packages, and SKUs.
   const menuItemIds = [...qtyByEntity.values()].filter((e) => e.kind === "menu_item").map((e) => e.id);
   const itemIds = [...new Set([...prep.keys(), ...[...qtyByEntity.values()].filter((e) => e.kind === "item").map((e) => e.id)])];
+  const soldPackageIds = [...qtyByEntity.values()].filter((e) => e.kind === "package").map((e) => e.id);
   const skuIds = [...sku.keys()];
-  const [menuNames, itemNames, skuNames] = await Promise.all([
+  const [menuNames, itemNames, skuNames, packageNames] = await Promise.all([
     menuItemIds.length ? sb.from("menu_items").select("id, name").in("id", menuItemIds).returns<Array<{ id: string; name: string }>>() : Promise.resolve({ data: [], error: null }),
     itemIds.length ? sb.from("items").select("id, name").in("id", itemIds).returns<Array<{ id: string; name: string }>>() : Promise.resolve({ data: [], error: null }),
     skuIds.length ? sb.from("vendor_items").select("id, name").in("id", skuIds).returns<Array<{ id: string; name: string }>>() : Promise.resolve({ data: [], error: null }),
+    soldPackageIds.length ? sb.from("catering_packages").select("id, label_en").in("id", soldPackageIds).returns<Array<{ id: string; label_en: string }>>() : Promise.resolve({ data: [], error: null }),
   ]);
   if (menuNames.error) throw new Error(`toast-sales names menu_items: ${menuNames.error.message}`);
   if (itemNames.error) throw new Error(`toast-sales names items: ${itemNames.error.message}`);
   if (skuNames.error) throw new Error(`toast-sales names skus: ${skuNames.error.message}`);
+  if (packageNames.error) throw new Error(`toast-sales names packages: ${packageNames.error.message}`);
   const mName = new Map((menuNames.data ?? []).map((r) => [r.id, r.name]));
   const iName = new Map((itemNames.data ?? []).map((r) => [r.id, r.name]));
   const sName = new Map((skuNames.data ?? []).map((r) => [r.id, r.name]));
+  const pName = new Map((packageNames.data ?? []).map((r) => [r.id, r.label_en]));
 
   // Suspected-catering advisory over NON-excluded checks.
   const byCheck = new Map<string, { qty: number; dining: string | null; nameHit: boolean }>();
@@ -403,7 +529,11 @@ export async function salesConsumption(actor: AuthContext, locationId: string, b
 
   return {
     soldLines: [...qtyByEntity.values()]
-      .map((e) => ({ name: (e.kind === "menu_item" ? mName.get(e.id) : iName.get(e.id)) ?? "(unknown)", quantity: e.quantity, kind: e.kind }))
+      .map((e) => ({
+        name: (e.kind === "menu_item" ? mName.get(e.id) : e.kind === "item" ? iName.get(e.id) : pName.get(e.id)) ?? "(unknown)",
+        quantity: e.quantity,
+        kind: e.kind,
+      }))
       .sort((a, b) => b.quantity - a.quantity),
     prepConsumed: [...prep.entries()]
       .filter(([itemId, units]) => units > 0 || (removedByItem.get(itemId) ?? 0) > 0)
@@ -421,5 +551,6 @@ export async function salesConsumption(actor: AuthContext, locationId: string, b
       ignored: modifierStats.ignored,
       portionNeeded: [...modifierStats.portionNeeded.entries()].map(([name, quantity]) => ({ name, quantity })).sort((a, b) => b.quantity - a.quantity),
     },
+    packageIssues: [...packageIssues.values()],
   };
 }

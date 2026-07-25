@@ -10,6 +10,7 @@ import {
   addPackageLine,
   addSlotOption,
   removeSlotOption,
+  setSlotOptionClassic,
   removePackageLineItem,
   AdminCateringError,
   type UpdatePackageChanges,
@@ -33,6 +34,7 @@ const FIELD_KEYS = [
   "priceCents",
   "minHeadcount",
   "leadTimeHours",
+  "serves",
 ] as const;
 
 /** Parse a {kind, id} spine ref from the body, or null if absent/malformed. */
@@ -59,11 +61,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const hasAddLine = "addLine" in b; // W1b: {slotType, ref?, description?, quantity}
   const hasAddSlotOption = "addSlotOption" in b; // W1b: {lineItemId, ref}
   const hasRemoveSlotOption = "removeSlotOptionId" in b; // W1b
+  const hasSetOptionClassic = "setOptionClassic" in b; // platter spec: {optionId, classic}
 
-  const concerns = [hasFields, hasActive, hasAddItem, hasRemoveItem, hasAddLine, hasAddSlotOption, hasRemoveSlotOption].filter(Boolean).length;
+  const concerns = [hasFields, hasActive, hasAddItem, hasRemoveItem, hasAddLine, hasAddSlotOption, hasRemoveSlotOption, hasSetOptionClassic].filter(Boolean).length;
   if (concerns === 0) return jsonError(400, "invalid_payload", { message: "No recognized fields to update" });
   if (concerns > 1) {
-    return jsonError(400, "mixed_concerns", { message: "One concern per PATCH: fields, active, addItem, removeItemId, addLine, addSlotOption, or removeSlotOptionId" });
+    return jsonError(400, "mixed_concerns", { message: "One concern per PATCH: fields, active, addItem, removeItemId, addLine, addSlotOption, removeSlotOptionId, or setOptionClassic" });
   }
 
   // Step-up tier per concern: active/deactivate = B; everything else = A.
@@ -133,6 +136,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return jsonOk({ ok: true });
     }
 
+    if (hasSetOptionClassic) {
+      const so = b.setOptionClassic;
+      if (typeof so !== "object" || so === null) return jsonError(400, "invalid_payload", { field: "setOptionClassic" });
+      const s = so as Record<string, unknown>;
+      if (typeof s.optionId !== "string") return jsonError(400, "invalid_payload", { field: "optionId" });
+      if (typeof s.classic !== "boolean") return jsonError(400, "invalid_payload", { field: "classic" });
+      await setSlotOptionClassic(ctx, { optionId: s.optionId, classic: s.classic });
+      return jsonOk({ ok: true });
+    }
+
     // hasFields — edit package fields (Tier A).
     const changes: UpdatePackageChanges = {};
     if ("labelEn" in b) {
@@ -166,6 +179,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if ("leadTimeHours" in b) {
       if (b.leadTimeHours !== null && typeof b.leadTimeHours !== "number") return jsonError(400, "invalid_payload", { field: "leadTimeHours" });
       changes.leadTimeHours = b.leadTimeHours as number | null;
+    }
+    if ("serves" in b) {
+      if (b.serves !== null && typeof b.serves !== "number") return jsonError(400, "invalid_payload", { field: "serves" });
+      changes.serves = b.serves as number | null;
     }
 
     await updatePackage(ctx, { id, changes });

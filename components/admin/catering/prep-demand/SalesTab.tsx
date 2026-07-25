@@ -14,7 +14,10 @@ import type { TranslationKey } from "@/lib/i18n/types";
 import { PasswordModal } from "@/components/auth/PasswordModal";
 import type { SalesConsumption, ExclusionView } from "@/lib/catering/toast-sales";
 
-type MappableEntity = { id: string; name: string; kind: "item" | "menu_item" };
+type MappableEntity = { id: string; name: string; kind: "item" | "menu_item" | "package"; locationId: string | null };
+
+/** Behavior targets for platter assortment picks (no entityId — the parent's package supplies the pool). */
+const ASSORTMENT_KINDS = ["assortment_classics", "assortment_full"] as const;
 
 function yesterdayEt(): string {
   const nowEt = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
@@ -163,7 +166,7 @@ export function SalesTab({ locationId, canPull }: { locationId: string | null; c
             </p>
           )}
 
-          {(report.unmappedToastItems.length > 0 || report.suspectedCatering.length > 0 || report.excludedCount > 0 || report.modifierStats.portionNeeded.length > 0) && (
+          {(report.unmappedToastItems.length > 0 || report.suspectedCatering.length > 0 || report.excludedCount > 0 || report.modifierStats.portionNeeded.length > 0 || report.packageIssues.length > 0) && (
             <section className="rounded-xl border border-co-border/60 bg-co-bg/40 p-4">
               <h3 className={h3}>{t("admin.toastsales.advisories_heading")}</h3>
               {report.excludedCount > 0 && (
@@ -185,20 +188,31 @@ export function SalesTab({ locationId, canPull }: { locationId: string | null; c
                               className={inputCls}
                             >
                               <option value="">{t("admin.toastsales.map_to_label")}</option>
+                              {u.isModifier && ASSORTMENT_KINDS.map((k) => (
+                                <option key={k} value={k}>{t(`admin.toastsales.${k}` as TranslationKey)}</option>
+                              ))}
                               {entities
-                                .filter((en) => !u.isModifier || en.kind === "item")
+                                // modifiers target items/menu_items (sub picks); base lines also target packages FOR THIS LOCATION
+                                .filter((en) => u.isModifier
+                                  ? en.kind !== "package"
+                                  : en.kind !== "package" || en.locationId == null || en.locationId === locationId)
                                 .map((en) => (
-                                  <option key={`${en.kind}:${en.id}`} value={`${en.kind}:${en.id}`}>{en.name}{en.kind === "menu_item" ? " (menu)" : ""}</option>
+                                  <option key={`${en.kind}:${en.id}`} value={`${en.kind}:${en.id}`}>
+                                    {en.name}{en.kind === "menu_item" ? ` (${t("admin.toastsales.menu_tag")})` : en.kind === "package" ? ` (${t("admin.toastsales.package_tag")})` : ""}
+                                  </option>
                                 ))}
                             </select>
                             <button
                               type="button" className={btn}
-                              disabled={busy || !(mapDraft[u.toastItemGuid] ?? "").includes(":")}
+                              disabled={busy || !(mapDraft[u.toastItemGuid] ?? "")}
                               onClick={() => {
-                                const [kind, id] = (mapDraft[u.toastItemGuid] ?? "").split(":");
+                                const draft = mapDraft[u.toastItemGuid] ?? "";
+                                const isAssortment = (ASSORTMENT_KINDS as readonly string[]).includes(draft);
+                                const [kind, id] = isAssortment ? [draft, undefined] : draft.split(":");
+                                if (!isAssortment && !id) return;
                                 void write("/api/admin/toast-map/manual", {
                                   locationId, toastItemGuid: u.toastItemGuid, toastItemName: u.name,
-                                  entityKind: kind, entityId: id, isModifier: u.isModifier,
+                                  entityKind: kind, ...(isAssortment ? {} : { entityId: id }), isModifier: u.isModifier,
                                 });
                               }}
                             >
@@ -216,6 +230,16 @@ export function SalesTab({ locationId, canPull }: { locationId: string | null; c
                   <p className="text-sm font-semibold text-co-text">{t("admin.toastsales.portion_needed_heading")}</p>
                   <ul className="text-sm text-co-text-muted">
                     {report.modifierStats.portionNeeded.map((u) => (<li key={u.name}>{u.name} × {u.quantity}</li>))}
+                  </ul>
+                </div>
+              )}
+              {report.packageIssues.length > 0 && (
+                <div className="mt-2">
+                  <p className="text-sm font-semibold text-co-text">{t("admin.toastsales.package_issues_heading")}</p>
+                  <ul className="text-sm text-co-text-muted">
+                    {report.packageIssues.map((u) => (
+                      <li key={`${u.name}:${u.issue}`}>{u.name} — {t(`admin.toastsales.issue.${u.issue}` as TranslationKey)}</li>
+                    ))}
                   </ul>
                 </div>
               )}

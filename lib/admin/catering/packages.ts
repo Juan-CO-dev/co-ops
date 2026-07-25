@@ -51,12 +51,14 @@ export type PricingMode = (typeof PRICING_MODES)[number];
 // ── Types ───────────────────────────────────────────────────────────────────
 export type LineSlotType = "fixed" | "choice";
 
-/** A resolved eligible option of a CHOICE slot (W1b). */
+/** A resolved eligible option of a CHOICE slot (W1b; classic flag = platter spec 2026-07-25). */
 export interface SlotOptionView {
   id: string;
   kind: "item" | "menu_item";
   refId: string;
   name: string;
+  /** "The Classics" subset — the pool a classics assortment depletes against. */
+  classic: boolean;
 }
 
 export interface PackageLineItemView {
@@ -85,6 +87,8 @@ export interface PackageView {
   priceCents: number;
   minHeadcount: number | null;
   leadTimeHours: number | null;
+  /** People covered per unit (0154) — platters: pieces; per_head: 1. */
+  serves: number | null;
   active: boolean;
   displayOrder: number;
   lineItems: PackageLineItemView[];
@@ -156,6 +160,16 @@ function normalizeLeadTimeHours(v: number | null | undefined): number | null {
   return v;
 }
 
+/** serves: null clears; a value must be a positive number ≤ 500 (mirrors the
+ *  menu-item serves validation in lib/admin/catering/menu.ts). */
+function normalizeServes(v: number | null | undefined): number | null {
+  if (v === null || v === undefined) return null;
+  if (!Number.isFinite(v) || v <= 0 || v > 500) {
+    throw new AdminCateringError(400, "invalid_serves", "Serves must be a positive number up to 500");
+  }
+  return v;
+}
+
 function assertPricingMode(mode: unknown): PricingMode {
   if (typeof mode !== "string" || !(PRICING_MODES as readonly string[]).includes(mode)) {
     throw new AdminCateringError(400, "invalid_mode", "Pricing mode must be per_head, per_platter, or fixed");
@@ -204,6 +218,7 @@ interface DbPackageRow {
   price_cents: number;
   min_headcount: number | null;
   lead_time_hours: number | null;
+  serves: number | string | null; // numeric arrives as string from PostgREST
   active: boolean | null;
   display_order: number;
 }
@@ -220,7 +235,7 @@ interface DbLineItemRow {
 }
 
 const PACKAGE_COLS =
-  "id, location_id, slug, label_en, label_es, description_en, description_es, pricing_mode, price_cents, min_headcount, lead_time_hours, active, display_order";
+  "id, location_id, slug, label_en, label_es, description_en, description_es, pricing_mode, price_cents, min_headcount, lead_time_hours, serves, active, display_order";
 
 function toQty(v: number | string): number {
   const n = typeof v === "string" ? Number(v) : v;
@@ -261,12 +276,12 @@ async function hydratePackages(rows: DbPackageRow[]): Promise<PackageView[]> {
   const { data: optRows } = lineIds.length
     ? await sb
         .from("catering_package_slot_options")
-        .select("id, package_item_id, item_id, menu_item_id, display_order")
+        .select("id, package_item_id, item_id, menu_item_id, classic, display_order")
         .in("package_item_id", lineIds)
         .eq("active", true)
         .order("display_order", { ascending: true })
-        .returns<Array<{ id: string; package_item_id: string; item_id: string | null; menu_item_id: string | null; display_order: number }>>()
-    : { data: [] as Array<{ id: string; package_item_id: string; item_id: string | null; menu_item_id: string | null; display_order: number }> };
+        .returns<Array<{ id: string; package_item_id: string; item_id: string | null; menu_item_id: string | null; classic: boolean; display_order: number }>>()
+    : { data: [] as Array<{ id: string; package_item_id: string; item_id: string | null; menu_item_id: string | null; classic: boolean; display_order: number }> };
 
   // Batch-resolve names for every referenced item/menu_item (fixed refs + options).
   const refItemIds = new Set<string>();
@@ -284,7 +299,7 @@ async function hydratePackages(rows: DbPackageRow[]): Promise<PackageView[]> {
     const refId = (o.menu_item_id ?? o.item_id)!;
     const name = kind === "menu_item" ? nameByMenuItem.get(refId) ?? "Item" : nameByItem.get(refId) ?? "Item";
     const arr = optionsByLine.get(o.package_item_id) ?? [];
-    arr.push({ id: o.id, kind, refId, name });
+    arr.push({ id: o.id, kind, refId, name, classic: o.classic });
     optionsByLine.set(o.package_item_id, arr);
   }
 
@@ -322,6 +337,7 @@ async function hydratePackages(rows: DbPackageRow[]): Promise<PackageView[]> {
     priceCents: r.price_cents,
     minHeadcount: r.min_headcount,
     leadTimeHours: r.lead_time_hours,
+    serves: r.serves != null ? toQty(r.serves) : null,
     active: r.active ?? true,
     displayOrder: r.display_order,
     lineItems: itemsByPackage.get(r.id) ?? [],
@@ -396,6 +412,7 @@ export interface CreatePackageInput {
   priceCents: number;
   minHeadcount?: number | null;
   leadTimeHours?: number | null;
+  serves?: number | null;
 }
 
 export async function createPackage(
@@ -411,6 +428,7 @@ export async function createPackage(
   const priceCents = normalizePriceCents(input.priceCents);
   const minHeadcount = normalizeMinHeadcount(input.minHeadcount);
   const leadTimeHours = normalizeLeadTimeHours(input.leadTimeHours);
+  const serves = normalizeServes(input.serves);
   const locationId = input.locationId ?? null;
   if (locationId !== null) await assertLocationActive(locationId);
 
@@ -445,6 +463,7 @@ export async function createPackage(
         price_cents: priceCents,
         min_headcount: minHeadcount,
         lead_time_hours: leadTimeHours,
+        serves,
         updated_by: actor.user.id,
         updated_at: new Date().toISOString(),
       })
@@ -487,6 +506,7 @@ export async function createPackage(
       price_cents: priceCents,
       min_headcount: minHeadcount,
       lead_time_hours: leadTimeHours,
+      serves,
       active: true,
       display_order: displayOrder,
       created_by: actor.user.id,
@@ -524,6 +544,7 @@ export interface UpdatePackageChanges {
   priceCents?: number;
   minHeadcount?: number | null;
   leadTimeHours?: number | null;
+  serves?: number | null;
 }
 
 export async function updatePackage(
@@ -547,6 +568,7 @@ export async function updatePackage(
   if (changes.priceCents !== undefined) update.price_cents = normalizePriceCents(changes.priceCents);
   if (changes.minHeadcount !== undefined) update.min_headcount = normalizeMinHeadcount(changes.minHeadcount);
   if (changes.leadTimeHours !== undefined) update.lead_time_hours = normalizeLeadTimeHours(changes.leadTimeHours);
+  if (changes.serves !== undefined) update.serves = normalizeServes(changes.serves);
 
   if (Object.keys(update).length === 0) return;
   update.updated_by = actor.user.id;
@@ -773,6 +795,34 @@ export async function addSlotOption(
     userAgent: null,
   });
   return { id: inserted.id };
+}
+
+/** Flag/unflag a slot option as part of "The Classics" subset (platter spec
+ *  2026-07-25) — the pool a classics assortment depletes against. Tier A. */
+export async function setSlotOptionClassic(
+  actor: AuthContext,
+  args: { optionId: string; classic: boolean },
+): Promise<void> {
+  requireLevel(actor, PACKAGE_WRITE_MIN);
+  const sb = getServiceRoleClient();
+  const { error, count } = await sb
+    .from("catering_package_slot_options")
+    .update({ classic: args.classic }, { count: "exact" })
+    .eq("id", args.optionId)
+    .eq("active", true);
+  if (error) throw new Error(`setSlotOptionClassic failed: ${error.message}`);
+  if (count === 0) throw new AdminCateringError(404, "not_found", "Option not found or removed");
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "catering.kb.packages.slot_option_classic",
+    resourceTable: "catering_package_slot_options",
+    resourceId: args.optionId,
+    metadata: { classic: args.classic },
+    ipAddress: null,
+    userAgent: null,
+  });
 }
 
 export async function removeSlotOption(actor: AuthContext, args: { optionId: string }): Promise<void> {

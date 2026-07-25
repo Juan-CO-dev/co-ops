@@ -22,9 +22,12 @@ export async function POST(req: NextRequest) {
   if (typeof b.locationId !== "string" || !UUID_RE.test(b.locationId)) return jsonError(400, "invalid_payload", { field: "locationId" });
   if (typeof b.toastItemGuid !== "string" || b.toastItemGuid.length === 0) return jsonError(400, "invalid_payload", { field: "toastItemGuid" });
   if (typeof b.toastItemName !== "string" || b.toastItemName.length === 0) return jsonError(400, "invalid_payload", { field: "toastItemName" });
-  const kind = b.entityKind === "menu_item" ? "menu_item" : b.entityKind === "item" ? "item" : null;
-  if (!kind) return jsonError(400, "invalid_payload", { field: "entityKind" });
-  if (typeof b.entityId !== "string" || !UUID_RE.test(b.entityId)) return jsonError(400, "invalid_payload", { field: "entityId" });
+  const KINDS = new Set(["menu_item", "item", "package", "assortment_full", "assortment_classics"]);
+  if (typeof b.entityKind !== "string" || !KINDS.has(b.entityKind)) return jsonError(400, "invalid_payload", { field: "entityKind" });
+  const kind = b.entityKind as "menu_item" | "item" | "package" | "assortment_full" | "assortment_classics";
+  const isAssortment = kind === "assortment_full" || kind === "assortment_classics";
+  // Assortment behaviors carry no target entity; everything else requires one.
+  if (!isAssortment && (typeof b.entityId !== "string" || !UUID_RE.test(b.entityId))) return jsonError(400, "invalid_payload", { field: "entityId" });
   if (typeof b.isModifier !== "boolean") return jsonError(400, "invalid_payload", { field: "isModifier" });
 
   try {
@@ -33,7 +36,7 @@ export async function POST(req: NextRequest) {
       toastItemGuid: b.toastItemGuid,
       toastItemName: b.toastItemName,
       entityKind: kind,
-      entityId: b.entityId,
+      entityId: isAssortment ? null : (b.entityId as string),
       isModifier: b.isModifier,
     });
     return jsonOk({ id });

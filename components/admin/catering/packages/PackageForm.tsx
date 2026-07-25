@@ -31,6 +31,7 @@ export interface PackageFormValues {
   priceCents: number;
   minHeadcount: number | null;
   leadTimeHours: number | null;
+  serves: number | null;
 }
 
 const PRICING_MODES: PricingMode[] = ["per_head", "per_platter", "fixed"];
@@ -87,6 +88,7 @@ export function PackageForm({
   const [leadTimeHours, setLeadTimeHours] = useState(
     initial?.leadTimeHours != null ? String(initial.leadTimeHours) : "",
   );
+  const [serves, setServes] = useState(initial?.serves != null ? String(initial.serves) : "");
 
   const canSubmit = labelEn.trim() !== "" && priceDollars.trim() !== "" && !busy;
 
@@ -111,6 +113,7 @@ export function PackageForm({
       priceCents: Number.isFinite(dollars) ? Math.round(dollars * 100) : 0,
       minHeadcount: parseIntOrNull(minHeadcount),
       leadTimeHours: parseIntOrNull(leadTimeHours),
+      serves: serves.trim() === "" ? null : Number(serves.trim()),
     });
   };
 
@@ -204,6 +207,21 @@ export function PackageForm({
             value={leadTimeHours}
             disabled={busy}
             onChange={(e) => setLeadTimeHours(e.target.value)}
+          />
+        </Labeled>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <Labeled label={t("admin.catering.packages.field.serves" as TranslationKey)}>
+          <input
+            className={fieldCls}
+            type="number"
+            min={0}
+            step="any"
+            inputMode="decimal"
+            value={serves}
+            disabled={busy}
+            onChange={(e) => setServes(e.target.value)}
           />
         </Labeled>
       </div>
