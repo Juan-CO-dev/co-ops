@@ -124,7 +124,10 @@ export function SalesTab({ locationId, canPull }: { locationId: string | null; c
                 <h3 className={h3}>{t("admin.toastsales.prep_heading")}</h3>
                 <ul className="flex flex-col gap-1 text-sm text-co-text">
                   {report.prepConsumed.map((r) => (
-                    <li key={r.itemId} className="flex justify-between gap-2"><span>{r.name}</span><span className="font-semibold">{r.units.toFixed(2)}</span></li>
+                    <li key={r.itemId} className="flex justify-between gap-2">
+                      <span>{r.name}{r.removedUnits > 0 ? <span className="ml-1 text-xs text-co-cta">(−{r.removedUnits.toFixed(2)} {t("admin.toastsales.removed_tag")})</span> : null}</span>
+                      <span className="font-semibold">{r.units.toFixed(2)}</span>
+                    </li>
                   ))}
                   {report.prepConsumed.length === 0 && <li className="text-co-text-muted">{t("admin.toastsales.none")}</li>}
                 </ul>
@@ -149,7 +152,13 @@ export function SalesTab({ locationId, canPull }: { locationId: string | null; c
             </div>
           )}
 
-          {(report.unmappedToastItems.length > 0 || report.suspectedCatering.length > 0 || report.excludedCount > 0) && (
+          {(report.modifierStats.depleted > 0 || report.modifierStats.removed > 0 || report.modifierStats.portionNeeded.length > 0) && (
+            <p className="text-sm text-co-text-muted">
+              {t("admin.toastsales.modifiers_line")}: +{report.modifierStats.depleted} · −{report.modifierStats.removed} · {t("admin.toastsales.ignored")} {report.modifierStats.ignored}
+            </p>
+          )}
+
+          {(report.unmappedToastItems.length > 0 || report.suspectedCatering.length > 0 || report.excludedCount > 0 || report.modifierStats.portionNeeded.length > 0) && (
             <section className="rounded-xl border border-co-border/60 bg-co-bg/40 p-4">
               <h3 className={h3}>{t("admin.toastsales.advisories_heading")}</h3>
               {report.excludedCount > 0 && (
@@ -160,6 +169,14 @@ export function SalesTab({ locationId, canPull }: { locationId: string | null; c
                   <p className="text-sm font-semibold text-co-text">{t("admin.toastsales.unmapped_heading")}</p>
                   <ul className="text-sm text-co-text-muted">
                     {report.unmappedToastItems.map((u) => (<li key={u.name}>{u.name} × {u.quantity}</li>))}
+                  </ul>
+                </div>
+              )}
+              {report.modifierStats.portionNeeded.length > 0 && (
+                <div className="mt-2">
+                  <p className="text-sm font-semibold text-co-text">{t("admin.toastsales.portion_needed_heading")}</p>
+                  <ul className="text-sm text-co-text-muted">
+                    {report.modifierStats.portionNeeded.map((u) => (<li key={u.name}>{u.name} × {u.quantity}</li>))}
                   </ul>
                 </div>
               )}

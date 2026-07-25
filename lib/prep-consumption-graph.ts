@@ -75,7 +75,7 @@ export interface RecipeGraph {
  *    we don't have — same doctrine as recipe-math's ozPerMeasureUnit. Zero
  *    prod rows carry volume-denominated item refs today.
  */
-function itemRefParUnits(
+export function itemRefParUnits(
   graph: RecipeGraph,
   input: GraphInput,
   subPerUnitSkuOz: Map<string, number>,
