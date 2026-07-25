@@ -45,13 +45,26 @@ describe("matchCandidates", () => {
     expect(exact[0]!.score).toBeCloseTo(1.0, 10); // exact name stays 1.0, not 1.15
   });
 
-  it("greedy uniqueness: one candidate per entity and per toast item", () => {
+  it("greedy uniqueness: one candidate per TOAST ITEM (exact beats partial)", () => {
     const out = matchCandidates(
       [co("Turkey Sub", 1100, "A"), co("Turkey Club", 1100, "B")],
       [toast("Turkey Sub", 1100, "t1")],
     );
     expect(out).toHaveLength(1);
-    expect(out[0]!.entity.id).toBe("A"); // exact beats partial
+    expect(out[0]!.entity.id).toBe("A");
+  });
+
+  it("multi-guid reality: one entity pairs with EVERY exact-name channel variant", () => {
+    // Toast models channel-priced variants as distinct items (first-light 2026-07-24):
+    // mainline $15.79, Grubhub $16.50, specials $12 — same food, three guids.
+    const out = matchCandidates(
+      [co("Hot Pants", 1579, "hp")],
+      [toast("Hot Pants", 1579, "t-main"), toast("Hot Pants", 1650, "t-grubhub"), toast("Hot Pants", 1200, "t-special")],
+    );
+    expect(out).toHaveLength(3);
+    expect(new Set(out.map((m) => m.entity.id))).toEqual(new Set(["hp"]));
+    expect(new Set(out.map((m) => m.toast.itemGuid)).size).toBe(3);
+    expect(out.every((m) => m.score >= 0.999)).toBe(true);
   });
 
   it("is deterministic under input reordering", () => {
