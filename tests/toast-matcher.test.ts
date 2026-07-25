@@ -15,9 +15,23 @@ function toast(name: string, priceCents: number | null = null, itemGuid = `g-${n
 }
 
 describe("normalizeName", () => {
-  it("lowercases, strips diacritics and punctuation, collapses whitespace", () => {
+  it("lowercases, strips diacritics and punctuation, collapses whitespace (+ plural fold)", () => {
     expect(normalizeName("  Jalapeño—Crunch,  Sub!  ")).toBe("jalapeno crunch sub");
-    expect(normalizeName("HOT PANTS")).toBe("hot pants");
+    expect(normalizeName("HOT PANTS")).toBe("hot pant"); // symmetric fold — both sides agree
+  });
+
+  it("folds simple plurals so Onions≡Onion, Tomatoes≡Tomato (queue-clearing class)", () => {
+    expect(normalizeName("Onions")).toBe(normalizeName("Onion"));
+    expect(normalizeName("Tomatoes")).toBe(normalizeName("Tomato")); // -oes fold
+    expect(normalizeName("Cucumbers")).toBe(normalizeName("Cucumber"));
+    expect(normalizeName("Swiss")).toBe("swiss"); // double-s never folds
+    expect(normalizeName("Vin")).toBe("vin");     // short tokens never fold
+  });
+
+  it("plural pairs now score exact through the matcher", () => {
+    const out = matchCandidates([co("Onion", null, "on")], [toast("Onions", null, "t-on")]);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.score).toBeCloseTo(1.0, 10);
   });
 });
 
