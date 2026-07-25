@@ -14,6 +14,8 @@ import type { TranslationKey } from "@/lib/i18n/types";
 import { PasswordModal } from "@/components/auth/PasswordModal";
 import type { SalesConsumption, ExclusionView } from "@/lib/catering/toast-sales";
 
+type MappableEntity = { id: string; name: string; kind: "item" | "menu_item" };
+
 function yesterdayEt(): string {
   const nowEt = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
   nowEt.setDate(nowEt.getDate() - 1);
@@ -22,7 +24,7 @@ function yesterdayEt(): string {
 
 const KNOWN = new Set([
   "forbidden", "invalid_payload", "invalid_date", "invalid_kind", "invalid_value", "not_found",
-  "location_not_found", "not_configured", "auth_failed", "rate_limited", "bad_payload", "concurrent_pull",
+  "location_not_found", "not_configured", "auth_failed", "rate_limited", "bad_payload", "concurrent_pull", "invalid_entity", "conflict",
   "step_up_required", "step_up_stale", "generic",
 ]);
 function errKey(code: string): TranslationKey {
@@ -34,6 +36,8 @@ export function SalesTab({ locationId, canPull }: { locationId: string | null; c
   const [date, setDate] = useState(yesterdayEt());
   const [report, setReport] = useState<SalesConsumption | null>(null);
   const [exclusions, setExclusions] = useState<ExclusionView[]>([]);
+  const [entities, setEntities] = useState<MappableEntity[]>([]);
+  const [mapDraft, setMapDraft] = useState<Record<string, string>>({}); // guid -> "kind:id"
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [errorKey, setErrorKey] = useState<TranslationKey | null>(null);
@@ -56,10 +60,11 @@ export function SalesTab({ locationId, canPull }: { locationId: string | null; c
         setErrorKey(errKey(b.code ?? "generic"));
         return;
       }
-      const data = (await res.json()) as { report: SalesConsumption; exclusions: ExclusionView[] };
+      const data = (await res.json()) as { report: SalesConsumption; exclusions: ExclusionView[]; entities?: MappableEntity[] };
       if (seq !== loadSeq.current) return;
       setReport(data.report);
       setExclusions(data.exclusions);
+      setEntities(data.entities ?? []);
     } catch {
       setErrorKey("admin.toastsales.error.generic" as TranslationKey);
     } finally {
@@ -167,8 +172,42 @@ export function SalesTab({ locationId, canPull }: { locationId: string | null; c
               {report.unmappedToastItems.length > 0 && (
                 <div className="mt-2">
                   <p className="text-sm font-semibold text-co-text">{t("admin.toastsales.unmapped_heading")}</p>
-                  <ul className="text-sm text-co-text-muted">
-                    {report.unmappedToastItems.map((u) => (<li key={u.name}>{u.name} × {u.quantity}</li>))}
+                  <ul className="flex flex-col gap-1 text-sm text-co-text-muted">
+                    {report.unmappedToastItems.map((u) => (
+                      <li key={u.toastItemGuid} className="flex flex-wrap items-center gap-2">
+                        <span>{u.name} × {u.quantity}{u.isModifier ? ` (${t("admin.toastsales.modifier_tag")})` : ""}</span>
+                        {canPull && locationId && (
+                          <>
+                            <select
+                              aria-label={t("admin.toastsales.map_to_label")}
+                              value={mapDraft[u.toastItemGuid] ?? ""}
+                              onChange={(e) => setMapDraft((prev) => ({ ...prev, [u.toastItemGuid]: e.target.value }))}
+                              className={inputCls}
+                            >
+                              <option value="">{t("admin.toastsales.map_to_label")}</option>
+                              {entities
+                                .filter((en) => !u.isModifier || en.kind === "item")
+                                .map((en) => (
+                                  <option key={`${en.kind}:${en.id}`} value={`${en.kind}:${en.id}`}>{en.name}{en.kind === "menu_item" ? " (menu)" : ""}</option>
+                                ))}
+                            </select>
+                            <button
+                              type="button" className={btn}
+                              disabled={busy || !(mapDraft[u.toastItemGuid] ?? "").includes(":")}
+                              onClick={() => {
+                                const [kind, id] = (mapDraft[u.toastItemGuid] ?? "").split(":");
+                                void write("/api/admin/toast-map/manual", {
+                                  locationId, toastItemGuid: u.toastItemGuid, toastItemName: u.name,
+                                  entityKind: kind, entityId: id, isModifier: u.isModifier,
+                                });
+                              }}
+                            >
+                              {t("admin.toastsales.map_button")}
+                            </button>
+                          </>
+                        )}
+                      </li>
+                    ))}
                   </ul>
                 </div>
               )}

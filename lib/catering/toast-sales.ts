@@ -235,7 +235,7 @@ export interface SalesConsumption {
   soldLines: Array<{ name: string; quantity: number; kind: "menu_item" | "item" }>;
   prepConsumed: Array<{ itemId: string; name: string; units: number; removedUnits: number }>;
   skuConsumed: Array<{ skuId: string; name: string; oz: number }>;
-  unmappedToastItems: Array<{ name: string; quantity: number }>;
+  unmappedToastItems: Array<{ name: string; quantity: number; toastItemGuid: string; isModifier: boolean }>;
   excludedCount: number;
   suspectedCatering: Array<{ checkGuid: string; diningOption: string | null; totalQty: number; reason: "name" | "quantity" }>;
   /** Modifier lane (spec 2026-07-24): applications counted / subtracted / skipped. */
@@ -293,11 +293,16 @@ export async function salesConsumption(actor: AuthContext, locationId: string, b
   const modifierLines = counted.filter((r) => r.parent_selection_guid != null);
 
   const qtyByEntity = new Map<string, { kind: "menu_item" | "item"; id: string; quantity: number }>();
-  const unmapped = new Map<string, number>();
+  const unmapped = new Map<string, { name: string; quantity: number; isModifier: boolean }>();
   for (const r of baseLines) {
     const qty = Number(r.quantity);
     const ent = entityByGuid.get(r.toast_item_guid);
-    if (!ent) { unmapped.set(r.item_name, (unmapped.get(r.item_name) ?? 0) + qty); continue; }
+    if (!ent) {
+      const u = unmapped.get(r.toast_item_guid) ?? { name: r.item_name, quantity: 0, isModifier: false };
+      u.quantity += qty;
+      unmapped.set(r.toast_item_guid, u);
+      continue;
+    }
     const key = `${ent.kind}:${ent.id}`;
     const cur = qtyByEntity.get(key);
     if (cur) cur.quantity += qty; else qtyByEntity.set(key, { ...ent, quantity: qty });
@@ -330,7 +335,12 @@ export async function salesConsumption(actor: AuthContext, locationId: string, b
   for (const r of modifierLines) {
     const qty = Number(r.quantity);
     const mod = modifierByGuid.get(r.toast_item_guid);
-    if (!mod) { unmapped.set(r.item_name, (unmapped.get(r.item_name) ?? 0) + qty); continue; }
+    if (!mod) {
+      const u = unmapped.get(r.toast_item_guid) ?? { name: r.item_name, quantity: 0, isModifier: true };
+      u.quantity += qty;
+      unmapped.set(r.toast_item_guid, u);
+      continue;
+    }
     if (mod.disposition === "ignore") { modifierStats.ignored += qty; continue; }
     const portion = mod.portionQty != null ? { qty: mod.portionQty, unit: mod.portionUnit } : null;
     const portionUnits = portion != null ? modifierParUnits(graph, mod.itemId, portion) : null;
@@ -400,7 +410,9 @@ export async function salesConsumption(actor: AuthContext, locationId: string, b
       .map(([itemId, units]) => ({ itemId, name: iName.get(itemId) ?? "(item)", units, removedUnits: removedByItem.get(itemId) ?? 0 }))
       .sort((a, b) => b.units - a.units),
     skuConsumed: [...sku.entries()].map(([skuId, oz]) => ({ skuId, name: sName.get(skuId) ?? "(sku)", oz })).sort((a, b) => b.oz - a.oz),
-    unmappedToastItems: [...unmapped.entries()].map(([name, quantity]) => ({ name, quantity })).sort((a, b) => b.quantity - a.quantity),
+    unmappedToastItems: [...unmapped.entries()]
+      .map(([toastItemGuid, u]) => ({ name: u.name, quantity: u.quantity, toastItemGuid, isModifier: u.isModifier }))
+      .sort((a, b) => b.quantity - a.quantity),
     excludedCount: excluded.size,
     suspectedCatering,
     modifierStats: {
