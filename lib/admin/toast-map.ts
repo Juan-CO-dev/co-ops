@@ -19,8 +19,10 @@ import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { toastConfigured } from "@/lib/toast/client";
-import { fetchToastMenuItems } from "@/lib/toast/menus";
+import { fetchToastMenuItems, fetchToastModifierOptions } from "@/lib/toast/menus";
 import { matchCandidates, type CoEntity, type ToastItem } from "@/lib/toast/matcher";
+import { classifyModifier, derivePortion } from "@/lib/toast/modifiers-shared";
+import { loadRecipeGraph } from "@/lib/prep-consumption";
 
 export const TOAST_MAP_MIN = 7; // GM+ — mirrors the catering-menu admin surface
 
@@ -46,6 +48,10 @@ export interface ToastMapRow {
   matchStatus: "candidate" | "confirmed" | "rejected" | "stale";
   matchScore: number | null;
   confirmedAt: string | null;
+  isModifier: boolean;
+  disposition: "deplete" | "remove" | "ignore";
+  portionQty: number | null;
+  portionUnit: string | null;
 }
 export interface ToastMapLocation {
   id: string;
@@ -64,18 +70,22 @@ interface DbMapRow {
   toast_item_guid: string; toast_item_name: string; toast_price_cents: number | null;
   match_status: "candidate" | "confirmed" | "rejected" | "stale"; match_score: number | string | null;
   confirmed_at: string | null;
+  is_modifier: boolean; disposition: "deplete" | "remove" | "ignore";
+  portion_qty: number | string | null; portion_unit: string | null;
 }
 
 const toCents = (v: number | string | null) => (v != null ? Math.round(Number(v) * 100) : null);
 
-/** Mappable universe (spec-pinned): active global menu_items + active global sold_directly items. */
-async function loadEntities(): Promise<CoEntity[]> {
+/** Mappable universe. Item lane (spec #1): active global menu_items + sold_directly items.
+ *  Modifier lane (spec 2026-07-24): ALL active global items — toppings are prep items. */
+async function loadEntities(all = false): Promise<CoEntity[]> {
   const sb = getServiceRoleClient();
+  let itemsQ = sb.from("items").select("id, name, menu_price").eq("active", true).is("location_id", null);
+  if (!all) itemsQ = itemsQ.eq("sold_directly", true);
   const [{ data: subs, error: sErr }, { data: items, error: iErr }] = await Promise.all([
     sb.from("menu_items").select("id, name, menu_price").eq("active", true)
       .returns<Array<{ id: string; name: string; menu_price: number | string | null }>>(),
-    sb.from("items").select("id, name, menu_price").eq("active", true).eq("sold_directly", true).is("location_id", null)
-      .returns<Array<{ id: string; name: string; menu_price: number | string | null }>>(),
+    itemsQ.returns<Array<{ id: string; name: string; menu_price: number | string | null }>>(),
   ]);
   if (sErr) throw new Error(`toast-map entities menu_items: ${sErr.message}`);
   if (iErr) throw new Error(`toast-map entities items: ${iErr.message}`);
@@ -88,7 +98,7 @@ async function loadEntities(): Promise<CoEntity[]> {
 async function loadActiveRows(locationId?: string): Promise<DbMapRow[]> {
   const sb = getServiceRoleClient();
   let q = sb.from("toast_menu_map")
-    .select("id, location_id, menu_item_id, item_id, toast_item_guid, toast_item_name, toast_price_cents, match_status, match_score, confirmed_at")
+    .select("id, location_id, menu_item_id, item_id, toast_item_guid, toast_item_name, toast_price_cents, match_status, match_score, confirmed_at, is_modifier, disposition, portion_qty, portion_unit")
     .eq("active", true);
   if (locationId) q = q.eq("location_id", locationId);
   const { data, error } = await q.returns<DbMapRow[]>();
@@ -117,6 +127,8 @@ export async function loadToastMapState(actor: AuthContext): Promise<ToastMapSta
       toastItemGuid: r.toast_item_guid, toastItemName: r.toast_item_name, toastPriceCents: r.toast_price_cents,
       matchStatus: r.match_status, matchScore: r.match_score != null ? Number(r.match_score) : null,
       confirmedAt: r.confirmed_at,
+      isModifier: r.is_modifier, disposition: r.disposition,
+      portionQty: r.portion_qty != null ? Number(r.portion_qty) : null, portionUnit: r.portion_unit,
     })),
     entities,
   };
@@ -139,10 +151,13 @@ async function requireLocationGuid(locationId: string): Promise<string> {
 export async function runAutoMatch(
   actor: AuthContext,
   locationId: string,
-): Promise<{ pulled: number; candidates: number; skippedExisting: number }> {
+): Promise<{ pulled: number; candidates: number; skippedExisting: number; modifierCandidates: number }> {
   requireLevel(actor, TOAST_MAP_MIN);
   const guid = await requireLocationGuid(locationId);
-  const toastItems = await fetchToastMenuItems(guid);
+  const [toastItems, modifierOptions] = await Promise.all([
+    fetchToastMenuItems(guid),
+    fetchToastModifierOptions(guid),
+  ]);
   const [rows, entities] = await Promise.all([loadActiveRows(locationId), loadEntities()]);
 
   // Multi-guid law: a confirmed entity stays in the pool (it may gain more
@@ -175,19 +190,58 @@ export async function runAutoMatch(
     if (error) throw new Error(`toast-map candidate insert: ${error.message}`);
     inserted += 1;
   }
+  // Modifier lane (spec 2026-07-24): options match ALL active items via
+  // classified names; candidates carry disposition + derived portion.
+  let modifierInserted = 0;
+  if (modifierOptions.length > 0) {
+    const allEntities = (await loadEntities(true)).filter((e) => e.kind === "item");
+    const graph = await loadRecipeGraph();
+    const classified = modifierOptions
+      .filter((t) => !takenGuids.has(t.itemGuid))
+      .map((t) => ({ toast: t, cls: classifyModifier(t.name) }))
+      .filter((x) => x.cls.matchName.length > 0);
+    const matchable: ToastItem[] = classified.map((x) => ({ ...x.toast, name: x.cls.matchName }));
+    const clsByGuid = new Map(classified.map((x) => [x.toast.itemGuid, x.cls]));
+    const nameByGuid = new Map(classified.map((x) => [x.toast.itemGuid, x.toast.name]));
+    const modCandidates = matchCandidates(allEntities, matchable)
+      .filter((c) => !rejectedPairs.has(`${c.entity.id}:${c.toast.itemGuid}`))
+      .filter((c) => !existingCandidatePairs.has(`${c.entity.id}:${c.toast.itemGuid}`));
+    for (const c of modCandidates) {
+      const cls = clsByGuid.get(c.toast.itemGuid)!;
+      const portion = derivePortion(graph, c.entity.id);
+      const { error } = await sb.from("toast_menu_map").insert({
+        location_id: locationId,
+        menu_item_id: null,
+        item_id: c.entity.id,
+        toast_item_guid: c.toast.itemGuid,
+        toast_item_name: nameByGuid.get(c.toast.itemGuid) ?? c.toast.name,
+        toast_price_cents: c.toast.priceCents,
+        match_status: "candidate",
+        match_score: c.score,
+        is_modifier: true,
+        disposition: cls.disposition,
+        portion_qty: portion?.qty ?? null,
+        portion_unit: portion?.unit ?? null,
+        created_by: actor.user.id,
+      });
+      if (error) throw new Error(`toast-map modifier candidate insert: ${error.message}`);
+      modifierInserted += 1;
+    }
+  }
+
   void audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "toast_map.auto_match", resourceTable: "toast_menu_map", resourceId: locationId,
-    metadata: { location_id: locationId, pulled: toastItems.length, candidates: inserted, skipped_existing: skipped },
+    metadata: { location_id: locationId, pulled: toastItems.length, candidates: inserted, skipped_existing: skipped, modifier_options: modifierOptions.length, modifier_candidates: modifierInserted },
     ipAddress: null, userAgent: null,
   });
-  return { pulled: toastItems.length, candidates: inserted, skippedExisting: skipped };
+  return { pulled: toastItems.length, candidates: inserted, skippedExisting: skipped, modifierCandidates: modifierInserted };
 }
 
 async function loadRow(mapId: string): Promise<DbMapRow & { active: boolean }> {
   const sb = getServiceRoleClient();
   const { data, error } = await sb.from("toast_menu_map")
-    .select("id, location_id, menu_item_id, item_id, toast_item_guid, toast_item_name, toast_price_cents, match_status, match_score, confirmed_at, active")
+    .select("id, location_id, menu_item_id, item_id, toast_item_guid, toast_item_name, toast_price_cents, match_status, match_score, confirmed_at, is_modifier, disposition, portion_qty, portion_unit, active")
     .eq("id", mapId)
     .maybeSingle<DbMapRow & { active: boolean }>();
   if (error) throw new Error(`toast-map load row: ${error.message}`);
@@ -286,7 +340,9 @@ export async function driftReport(actor: AuthContext, locationId: string): Promi
   const byGuid = new Map(toastItems.map((t) => [t.itemGuid, t]));
   const [rows, entities] = await Promise.all([loadActiveRows(locationId), loadEntities()]);
   const entityById = new Map(entities.map((e) => [e.id, e]));
-  const confirmed = rows.filter((r) => r.match_status === "confirmed");
+  // Drift compares the ITEM lane only — modifier options live in a different
+  // payload block and would all read as "missing on Toast" here.
+  const confirmed = rows.filter((r) => r.match_status === "confirmed" && !r.is_modifier);
   const mappedGuids = new Set(confirmed.map((r) => r.toast_item_guid));
   const mappedEntityIds = new Set(confirmed.map((r) => r.menu_item_id ?? r.item_id));
 
@@ -296,6 +352,8 @@ export async function driftReport(actor: AuthContext, locationId: string): Promi
     toastItemGuid: r.toast_item_guid, toastItemName: r.toast_item_name, toastPriceCents: r.toast_price_cents,
     matchStatus: r.match_status, matchScore: r.match_score != null ? Number(r.match_score) : null,
     confirmedAt: r.confirmed_at,
+    isModifier: r.is_modifier, disposition: r.disposition,
+    portionQty: r.portion_qty != null ? Number(r.portion_qty) : null, portionUnit: r.portion_unit,
   });
 
   const report: DriftReport = { priceChanged: [], renamed: [], missingOnToast: [], newOnToast: [], unmappedCo: [] };

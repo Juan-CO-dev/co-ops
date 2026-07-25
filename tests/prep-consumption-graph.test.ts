@@ -10,6 +10,7 @@ import {
   buildRecipeGraph,
   perUnitSkuOzForItemFromGraph,
   perUnitSkuOzForMenuItemFromGraph,
+  perUnitDirectSkuOzForMenuItem,
   firstLevelItemConsumption,
   type GraphRecipe,
 } from "@/lib/prep-consumption-graph";
@@ -265,5 +266,42 @@ describe("firstLevelItemConsumption (sales→prep-item grain)", () => {
   it("no recipe / zero yield → empty", () => {
     const g = graphOf([]);
     expect(firstLevelItemConsumption(g, "nope").size).toBe(0);
+  });
+});
+
+describe("perUnitDirectSkuOzForMenuItem (SKU double-count guard, PR #180)", () => {
+  function itemInU(quantity: number, unit: string | null, itemId: string): GraphRecipe["inputs"][number] {
+    return { quantity, unit, componentSkuId: null, componentItemId: itemId };
+  }
+  const g = graphOf([
+    { recipeId: "rA", batchYield: 10, inputs: [ozIn(20, "sku1")], outputs: [itemOut("A", 10)] },
+    { recipeId: "rM", batchYield: 2, inputs: [itemInU(3, null, "A"), ozIn(4, "sku2")], outputs: [menuOut("M", 2)] },
+  ]);
+
+  it("emits ONLY direct SKU-ref inputs (item-ref SKUs flow via the item lane)", () => {
+    const direct = perUnitDirectSkuOzForMenuItem(g, "M");
+    expect(direct.get("sku2")).toBeCloseTo(2, 10);
+    expect(direct.has("sku1")).toBe(false);
+  });
+
+  it("INVARIANT: direct + Σ firstLevel×perUnitItem === full flatten (no double-count)", () => {
+    const full = perUnitSkuOzForMenuItemFromGraph(g, "M");
+    const recombined = new Map(perUnitDirectSkuOzForMenuItem(g, "M"));
+    for (const [itemId, units] of firstLevelItemConsumption(g, "M")) {
+      for (const [skuId, oz] of perUnitSkuOzForItemFromGraph(g, itemId)) {
+        recombined.set(skuId, (recombined.get(skuId) ?? 0) + oz * units);
+      }
+    }
+    expect([...recombined.keys()].sort()).toEqual([...full.keys()].sort());
+    for (const [skuId, oz] of full) expect(recombined.get(skuId)).toBeCloseTo(oz, 10);
+  });
+
+  it("poison parity: unresolvable item-ref poisons the direct flatten too", () => {
+    const bad = graphOf([
+      { recipeId: "rA", batchYield: 10, inputs: [ozIn(20, "sku1")], outputs: [itemOut("A", 10)] },
+      { recipeId: "rM", batchYield: 1, inputs: [itemInU(1, "quart", "A"), ozIn(4, "sku2")], outputs: [menuOut("M", 1)] },
+    ]);
+    expect(perUnitDirectSkuOzForMenuItem(bad, "M").size).toBe(0);
+    expect(perUnitSkuOzForMenuItemFromGraph(bad, "M").size).toBe(0);
   });
 });

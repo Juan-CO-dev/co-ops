@@ -65,3 +65,33 @@ export function flattenToastMenus(json: unknown): ToastItem[] {
   }
   return out;
 }
+
+/**
+ * Modifier options from the menus payload root (`modifierOptionReferences`,
+ * live-verified 2026-07-24: dict keyed by referenceId → {guid, name, price,
+ * isDefault, ...}). Same normalization + first-wins dedupe as items; groupName
+ * carries a fixed marker so downstream can distinguish the lane.
+ */
+export function flattenToastModifierOptions(json: unknown): ToastItem[] {
+  const root = json as { modifierOptionReferences?: unknown } | null;
+  const refs = root?.modifierOptionReferences;
+  if (refs == null) return []; // older payloads/fixtures without the block — empty, not poison
+  if (typeof refs !== "object" || Array.isArray(refs)) {
+    throw new Error("toast menus payload: modifierOptionReferences is not an object map");
+  }
+  const out: ToastItem[] = [];
+  const seen = new Set<string>();
+  for (const raw of Object.values(refs as Record<string, RawItem>)) {
+    if (typeof raw?.guid !== "string" || raw.guid.length === 0) {
+      throw new Error("toast menus payload: modifier option without guid");
+    }
+    if (typeof raw?.name !== "string" || raw.name.length === 0) {
+      throw new Error(`toast menus payload: modifier option ${raw.guid} without name`);
+    }
+    if (seen.has(raw.guid)) continue;
+    seen.add(raw.guid);
+    const price = typeof raw.price === "number" && Number.isFinite(raw.price) ? raw.price : null;
+    out.push({ itemGuid: raw.guid, name: raw.name, priceCents: price != null ? Math.round(price * 100) : null, groupName: "(modifier)" });
+  }
+  return out;
+}

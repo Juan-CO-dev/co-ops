@@ -26,6 +26,17 @@ function errKey(code: string): TranslationKey {
   return (KNOWN.has(code) ? `admin.toast.error.${code}` : "admin.toast.error.generic") as TranslationKey;
 }
 
+function ModBadge({ r, t }: { r: import("@/lib/admin/toast-map").ToastMapRow; t: (k: TranslationKey) => string }) {
+  if (!r.isModifier) return null;
+  const tone = r.disposition === "remove" ? "border-co-cta text-co-cta" : r.disposition === "ignore" ? "border-co-border-2 text-co-text-dim" : "border-co-gold text-co-text";
+  return (
+    <span className={`ml-2 rounded-full border px-2 py-0.5 text-xs font-bold ${tone}`}>
+      {t(`admin.toast.disposition.${r.disposition}` as TranslationKey)}
+      {r.portionQty != null ? ` · ${r.portionQty}${r.portionUnit ? " " + r.portionUnit : ""}` : ""}
+    </span>
+  );
+}
+
 export function ToastTab({ state, ezcater, canWrite }: { state: ToastMapState; ezcater: EzcaterAdminState; canWrite: boolean }) {
   const { t, language } = useTranslation();
   const router = useRouter();
@@ -186,6 +197,7 @@ export function ToastTab({ state, ezcater, canWrite }: { state: ToastMapState; e
                         <span className="text-co-text-dim"> ↔ </span>
                         <span className="font-semibold">{r.toastItemName}</span>
                         <span className="ml-2 text-xs text-co-text-dim">{money(r.toastPriceCents)} · {t("admin.toast.score")} {r.matchScore != null ? r.matchScore.toFixed(2) : "—"}</span>
+                        <ModBadge r={r} t={t} />
                       </span>
                       {canWrite && (
                         <span className="flex gap-2">
@@ -212,6 +224,7 @@ export function ToastTab({ state, ezcater, canWrite }: { state: ToastMapState; e
                         {r.matchStatus === "stale" && (
                           <span className="ml-2 rounded-full border border-co-cta px-2 py-0.5 text-xs font-bold text-co-cta">{t("admin.toast.stale_badge")}</span>
                         )}
+                        <ModBadge r={r} t={t} />
                       </span>
                       {canWrite && (
                         <button type="button" className={btn} disabled={busy === r.id} onClick={() => rowAction(r.id, "unmap")}>{t("admin.toast.unmap")}</button>
