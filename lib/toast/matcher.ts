@@ -38,7 +38,11 @@ const PRICE_BONUS = 0.15;
 const PRICE_TOLERANCE = 0.05;
 const NON_EXACT_CAP = 0.99;
 
-/** Lowercase, strip diacritics + punctuation, collapse whitespace. */
+/** Lowercase, strip diacritics + punctuation, collapse whitespace, and FOLD
+ * simple plurals per token (Onions≡Onion, Tomatoes→Tomatoe... no: plain
+ * trailing-s strip on tokens >3 chars, never double-s) — symmetric, so
+ * existing exact matches are preserved and singular/plural pairs now agree
+ * (2026-07-25 follow-up: cleared the Onions/Tomatoes/Cucumbers queue class). */
 export function normalizeName(name: string): string {
   return name
     .normalize("NFKD")
@@ -46,7 +50,15 @@ export function normalizeName(name: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
-    .trim();
+    .trim()
+    .split(" ")
+    .map((tok) => {
+      let t = tok.length > 3 && tok.endsWith("s") && !tok.endsWith("ss") ? tok.slice(0, -1) : tok;
+      // -oes plurals (Tomatoes→tomatoe→tomato); symmetric, so Shoe/Shoes still agree.
+      if (t.length > 3 && t.endsWith("oe")) t = t.slice(0, -1);
+      return t;
+    })
+    .join(" ");
 }
 
 function tokens(normalized: string): Set<string> {

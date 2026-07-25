@@ -109,15 +109,16 @@ async function loadActiveRows(locationId?: string): Promise<DbMapRow[]> {
 export async function loadToastMapState(actor: AuthContext): Promise<ToastMapState> {
   requireLevel(actor, TOAST_MAP_MIN);
   const sb = getServiceRoleClient();
-  const [{ data: locs, error: lErr }, rows, entities] = await Promise.all([
+  const [{ data: locs, error: lErr }, rows, entities, allEntities] = await Promise.all([
     sb.from("locations").select("id, name, toast_restaurant_guid").eq("active", true)
       .order("name", { ascending: true })
       .returns<Array<{ id: string; name: string; toast_restaurant_guid: string | null }>>(),
     loadActiveRows(),
     loadEntities(),
+    loadEntities(true), // display names must cover MODIFIER targets (all items), not just the sellable lane
   ]);
   if (lErr) throw new Error(`toast-map locations: ${lErr.message}`);
-  const nameByEntity = new Map(entities.map((e) => [e.id, e.name]));
+  const nameByEntity = new Map(allEntities.map((e) => [e.id, e.name]));
   return {
     configured: toastConfigured(),
     locations: (locs ?? []).map((l) => ({ id: l.id, name: l.name, toastRestaurantGuid: l.toast_restaurant_guid })),
