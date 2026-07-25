@@ -293,7 +293,7 @@ export async function salesConsumption(actor: AuthContext, locationId: string, b
           : { kind: "package" as const, id: m.package_id! }]),
   );
   const assortmentByGuid = new Map<string, AssortmentKind>(
-    (mapRows ?? []).filter((m) => m.disposition === "assortment_full" || m.disposition === "assortment_classics")
+    (mapRows ?? []).filter((m) => m.is_modifier && (m.disposition === "assortment_full" || m.disposition === "assortment_classics"))
       .map((m) => [m.toast_item_guid, m.disposition === "assortment_classics" ? "classics" as const : "full" as const]),
   );
   const modifierByGuid = new Map(
