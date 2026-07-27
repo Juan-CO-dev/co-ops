@@ -26,7 +26,7 @@ import {
   firstLabelMeasureCollision,
   type PackChainLevel,
 } from "@/lib/pack-chain-shared";
-import { skuContentOz, type MeasureUnitFactor } from "@/lib/recipe-math";
+import { skuContentOz, ozForRecipeInput, type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
 
 const MEASURES = new Map<string, MeasureUnitFactor>([
   ["oz", { dimension: "weight", toBaseFactor: 1 }],
@@ -247,6 +247,45 @@ describe("L1 label-collision rejection", () => {
   });
   it("trims before comparing", () => {
     expect(firstLabelMeasureCollision([" oz "], measureLabels)).toBe("oz");
+  });
+});
+
+describe("ozForRecipeInput chain integration", () => {
+  const capChain: PackChainLevel[] = [
+    { id: "case", label: "case", containsQty: 4, containsLevelId: "log", containsMeasureUnit: null, displayOrdinal: 0 },
+    { id: "log", label: "log", containsQty: 34, containsLevelId: null, containsMeasureUnit: "oz", displayOrdinal: 1 },
+  ];
+  const chainedSku: RecipeInputSku = {
+    packFormat: "Case", eachContainerLabel: null,
+    unitsPerPack: null, eachSize: null, eachMeasure: null, avgOzPerEach: 1,
+    packChain: capChain,
+  };
+
+  it("a recipe input naming a CHAIN label walks the chain (2 log = 68 oz)", () => {
+    expect(ozForRecipeInput(2, "log", chainedSku, MEASURES)).toBeCloseTo(68, 10);
+    expect(ozForRecipeInput(1, "case", chainedSku, MEASURES)).toBeCloseTo(136, 10);
+  });
+
+  it("a recipe input naming a MEASURE unit ('oz') still resolves via the registry on a chained SKU", () => {
+    // 3 oz weight → 3 oz (chain doesn't swallow measure-unit inputs).
+    expect(ozForRecipeInput(3, "oz", chainedSku, MEASURES)).toBeCloseTo(3, 10);
+  });
+
+  it("a chained SKU does NOT honor its legacy packFormat label (chain is the source of truth)", () => {
+    // "Case" is the flat packFormat, but the chain label is lowercase "case";
+    // "Case" is neither a chain label nor a registered measure → null.
+    expect(ozForRecipeInput(1, "Case", chainedSku, MEASURES)).toBeNull();
+  });
+
+  it("legacy (no chain) SKU still resolves packFormat + eachContainerLabel", () => {
+    const legacy: RecipeInputSku = {
+      packFormat: "Case", eachContainerLabel: "roll",
+      unitsPerPack: 6, eachSize: 4, eachMeasure: "oz", avgOzPerEach: null,
+      packChain: null,
+    };
+    expect(ozForRecipeInput(1, "Case", legacy, MEASURES)).toBeCloseTo(24, 10); // 6 × 4 oz
+    expect(ozForRecipeInput(1, "roll", legacy, MEASURES)).toBeCloseTo(4, 10); // 1 × 4 oz
+    expect(ozForRecipeInput(2, "oz", legacy, MEASURES)).toBeCloseTo(2, 10);
   });
 });
 
