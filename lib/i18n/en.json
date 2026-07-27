@@ -2343,6 +2343,7 @@
   "admin.toastsales.modifier_tag": "modifier",
   "admin.toastsales.menu_tag": "menu",
   "admin.toastsales.package_tag": "package",
+  "admin.toastsales.raw_tag": "raw",
   "admin.toastsales.assortment_full": "Assortment — Our Favorites (full pool)",
   "admin.toastsales.assortment_classics": "Assortment — The Classics",
   "admin.toastsales.package_issues_heading": "Package wiring gaps",

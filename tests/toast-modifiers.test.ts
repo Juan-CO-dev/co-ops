@@ -6,7 +6,7 @@
  * COUNT — "we do not count that as being consumed").
  */
 import { describe, it, expect } from "vitest";
-import { classifyModifier, derivePortion, modifierParUnits, removalAmount } from "@/lib/toast/modifiers-shared";
+import { classifyModifier, derivePortion, modifierParUnits, removalAmount, skuPortionOz } from "@/lib/toast/modifiers-shared";
 import { flattenToastModifierOptions } from "@/lib/toast/menus-shared";
 import { buildRecipeGraph, type GraphRecipe } from "@/lib/prep-consumption-graph";
 import type { MeasureUnitFactor, RecipeInputSku } from "@/lib/recipe-math";
@@ -74,6 +74,37 @@ describe("removalAmount (parent-aware — removals COUNT)", () => {
   it("null when the parent has no input for the item (caller falls back to portion)", () => {
     expect(removalAmount(graph, "SIG", "ghost")).toBeNull();
     expect(removalAmount(graph, "nope", "PROV")).toBeNull();
+  });
+});
+
+describe("skuPortionOz (Part 2 — raw-SKU modifier portion → oz)", () => {
+  it("unit 'oz' → qty oz directly (avg_oz_per_each irrelevant)", () => {
+    expect(skuPortionOz({ qty: 2.5, unit: "oz" }, null)).toBe(2.5);
+    expect(skuPortionOz({ qty: 2.5, unit: "oz" }, 4)).toBe(2.5);
+  });
+  it("unit 'each' → qty × avg_oz_per_each (Sub Roll: 1 each × 3 oz)", () => {
+    expect(skuPortionOz({ qty: 1, unit: "each" }, 3)).toBe(3);
+    expect(skuPortionOz({ qty: 2, unit: "each" }, 3)).toBe(6);
+  });
+  it("null unit behaves like 'each'", () => {
+    expect(skuPortionOz({ qty: 1, unit: null }, 3)).toBe(3);
+  });
+  it("null per-each on an each/null portion → null (surfaces to portionNeeded)", () => {
+    expect(skuPortionOz({ qty: 1, unit: "each" }, null)).toBeNull();
+    expect(skuPortionOz({ qty: 1, unit: null }, null)).toBeNull();
+    expect(skuPortionOz({ qty: 1, unit: "each" }, 0)).toBeNull(); // non-positive weight = unknown
+  });
+  it("any other unit → null (out of scope — no volume/count conversion)", () => {
+    expect(skuPortionOz({ qty: 1, unit: "quart" }, 32)).toBeNull();
+  });
+  it("non-finite qty → null", () => {
+    expect(skuPortionOz({ qty: Number.NaN, unit: "oz" }, null)).toBeNull();
+  });
+  it("the sign is the caller's job — this returns the magnitude only", () => {
+    // deplete adds +oz, remove subtracts −oz at the call site; the helper is unsigned.
+    const oz = skuPortionOz({ qty: 1, unit: "each" }, 3);
+    expect(oz).toBe(3);
+    expect(oz! * -1).toBe(-3); // remove application
   });
 });
 

@@ -14,7 +14,7 @@ import type { TranslationKey } from "@/lib/i18n/types";
 import { PasswordModal } from "@/components/auth/PasswordModal";
 import type { SalesConsumption, ExclusionView } from "@/lib/catering/toast-sales";
 
-type MappableEntity = { id: string; name: string; kind: "item" | "menu_item" | "package"; locationId: string | null };
+type MappableEntity = { id: string; name: string; kind: "item" | "menu_item" | "package" | "sku"; locationId: string | null };
 
 /** Behavior targets for platter assortment picks (no entityId — the parent's package supplies the pool). */
 const ASSORTMENT_KINDS = ["assortment_classics", "assortment_full"] as const;
@@ -144,7 +144,10 @@ export function SalesTab({ locationId, canPull }: { locationId: string | null; c
                 <h3 className={h3}>{t("admin.toastsales.sku_heading")}</h3>
                 <ul className="flex flex-col gap-1 text-sm text-co-text">
                   {report.skuConsumed.map((r) => (
-                    <li key={r.skuId} className="flex justify-between gap-2"><span>{r.name}</span><span className="font-semibold">{r.oz.toFixed(1)} oz</span></li>
+                    <li key={r.skuId} className="flex justify-between gap-2">
+                      <span>{r.name}{r.removedOz > 0 ? <span className="ml-1 text-xs text-co-cta">(−{r.removedOz.toFixed(1)} oz {t("admin.toastsales.removed_tag")})</span> : null}</span>
+                      <span className="font-semibold">{r.oz.toFixed(1)} oz</span>
+                    </li>
                   ))}
                   {report.skuConsumed.length === 0 && <li className="text-co-text-muted">{t("admin.toastsales.none")}</li>}
                 </ul>
@@ -192,13 +195,17 @@ export function SalesTab({ locationId, canPull }: { locationId: string | null; c
                                 <option key={k} value={k}>{t(`admin.toastsales.${k}` as TranslationKey)}</option>
                               ))}
                               {entities
-                                // modifiers target items/menu_items (sub picks); base lines also target packages FOR THIS LOCATION
+                                // modifiers target items/menu_items (sub picks) + raw SKUs (Part 2:
+                                // Sub Roll, condiments); base lines target items/menu_items + packages
+                                // FOR THIS LOCATION (never a raw SKU — a SKU is never a sold base line).
                                 .filter((en) => u.isModifier
                                   ? en.kind !== "package"
-                                  : en.kind !== "package" || en.locationId == null || en.locationId === locationId)
+                                  : en.kind === "sku"
+                                    ? false
+                                    : en.kind !== "package" || en.locationId == null || en.locationId === locationId)
                                 .map((en) => (
                                   <option key={`${en.kind}:${en.id}`} value={`${en.kind}:${en.id}`}>
-                                    {en.name}{en.kind === "menu_item" ? ` (${t("admin.toastsales.menu_tag")})` : en.kind === "package" ? ` (${t("admin.toastsales.package_tag")})` : ""}
+                                    {en.name}{en.kind === "menu_item" ? ` (${t("admin.toastsales.menu_tag")})` : en.kind === "package" ? ` (${t("admin.toastsales.package_tag")})` : en.kind === "sku" ? ` (${t("admin.toastsales.raw_tag")})` : ""}
                                   </option>
                                 ))}
                             </select>
