@@ -209,10 +209,15 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   const chained = new Set([...chainsBySku.entries()].filter(([, lv]) => lv.length > 0).map(([id]) => id));
   const resolvedOzByLineIdx = input.lines.map((l) => resolveReceivedOz(l, skuById.get(l.skuId), chainsBySku.get(l.skuId) ?? null, measures));
 
+  // The 0160 `note` columns are the brief-canonical fields; the legacy `notes`
+  // columns stay populated so the existing detail reader keeps working (no split-
+  // brain — both mirror the same operator input this PR; a future pass can retire
+  // the legacy `notes` once every reader moves to `note`).
+  const headerNote = input.notes?.trim() || null;
   const { data: header, error: hErr } = await sb.from("vendor_deliveries").insert({
     vendor_id: input.vendorId, location_id: input.locationId, delivery_date: input.deliveryDate,
     invoice_number: input.invoiceNumber?.trim() || null, invoice_total: input.invoiceTotal ?? null,
-    notes: input.notes?.trim() || null, receipt_url: input.receiptUrl?.trim() || null, received_by: actor.user.id,
+    notes: headerNote, note: headerNote, receipt_url: input.receiptUrl?.trim() || null, received_by: actor.user.id,
   }).select("id").maybeSingle<{ id: string }>();
   if (hErr) throw new Error(`recordDelivery header: ${hErr.message}`);
   if (!header) throw new Error("recordDelivery header returned no row");
