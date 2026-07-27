@@ -295,7 +295,7 @@ export async function confirmMapping(actor: AuthContext, mapId: string): Promise
   if (row.match_status !== "candidate") throw new AdminToastMapError(409, "not_candidate", "Only candidates confirm");
   const sb = getServiceRoleClient();
 
-  const entityId = row.menu_item_id ?? row.item_id ?? row.package_id ?? null;
+  const entityId = row.menu_item_id ?? row.item_id ?? row.package_id ?? row.sku_id ?? null;
   // Supersede competitors claiming this GUID (each guid maps to ONE entity).
   // Same-entity rows are NOT rivals anymore — multi-guid law (0151).
   const { data: rivals, error: rErr } = await sb.from("toast_menu_map").select("id")
