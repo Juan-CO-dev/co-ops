@@ -80,7 +80,10 @@ export function resolveCountLineOz(
   sku: RecipeInputSku,
   measuresByLabel: Map<string, MeasureUnitFactor>,
 ): CountLineOzResult {
-  if (!Number.isFinite(line.qty) || line.qty < 0) return { ok: false, reason: "bad_qty" };
+  // F3: a count line requires a POSITIVE qty — a zero-qty line counts nothing and
+  // can't anchor. (The migration CHECK is qty >= 0 for schema tolerance; the app
+  // is the authority for count semantics.)
+  if (!Number.isFinite(line.qty) || line.qty <= 0) return { ok: false, reason: "bad_qty" };
   if (line.partialFraction != null && !(line.partialFraction > 0 && line.partialFraction <= 1)) {
     return { ok: false, reason: "bad_fraction" };
   }
@@ -102,6 +105,74 @@ export function sumAnchorOzBySku(
 ): Map<string, number> {
   const out = new Map<string, number>();
   for (const l of lines) out.set(l.skuId, (out.get(l.skuId) ?? 0) + (Number.isFinite(l.resolvedOz) ? l.resolvedOz : 0));
+  return out;
+}
+
+/**
+ * F1 — PER-SKU ANCHOR RESOLUTION (pure). Events are immutable sessions; there is no
+ * single "anchor event". Given every active count line across a location's events
+ * (each tagged with its event id + that event's counted_at), resolve, per SKU:
+ *   - ANCHOR  = the summed resolved oz of the lines from the most-recent event
+ *               (by counted_at) that counted that SKU, and that event's counted_at;
+ *   - PREV    = the summed oz from the next-most-recent event that counted it
+ *               (null when the SKU was counted in only one event → variance advisory);
+ *   - loose/partial line counts of the anchor lines (F6 read-side annotations).
+ * A spot count of ONE SKU therefore never strands any other SKU's anchor — each
+ * SKU ranks ITS OWN counting events independently.
+ */
+export interface CountLineForAnchor {
+  countEventId: string;
+  /** ISO counted_at of the line's event (the ranking key). */
+  eventCountedAt: string;
+  skuId: string;
+  resolvedOz: number;
+  isLoose: boolean;
+  partialFraction: number | null;
+}
+export interface SkuAnchor {
+  skuId: string;
+  anchorAt: string;
+  anchorOz: number;
+  looseLineCount: number;
+  partialLineCount: number;
+  /** ISO counted_at of the previous counting event for this SKU. null = first count. */
+  prevAt: string | null;
+  /** Summed oz of the previous count for this SKU. null = no earlier count. */
+  prevOz: number | null;
+}
+
+export function resolvePerSkuAnchors(lines: ReadonlyArray<CountLineForAnchor>): Map<string, SkuAnchor> {
+  // Group lines by SKU → by event.
+  const bySkuEvent = new Map<string, Map<string, CountLineForAnchor[]>>();
+  for (const l of lines) {
+    let byEvent = bySkuEvent.get(l.skuId);
+    if (!byEvent) { byEvent = new Map(); bySkuEvent.set(l.skuId, byEvent); }
+    const arr = byEvent.get(l.countEventId) ?? [];
+    arr.push(l);
+    byEvent.set(l.countEventId, arr);
+  }
+  const out = new Map<string, SkuAnchor>();
+  for (const [skuId, byEvent] of bySkuEvent) {
+    // Rank the events that counted THIS SKU, newest first (by counted_at).
+    const eventIds = [...byEvent.keys()].sort((a, b) => {
+      const ta = Date.parse(byEvent.get(a)![0]!.eventCountedAt);
+      const tb = Date.parse(byEvent.get(b)![0]!.eventCountedAt);
+      return tb - ta;
+    });
+    const anchorLines = byEvent.get(eventIds[0]!)!;
+    const prevLines = eventIds[1] != null ? byEvent.get(eventIds[1])! : null;
+    const sumOz = (ls: CountLineForAnchor[]): number =>
+      ls.reduce((s, l) => s + (Number.isFinite(l.resolvedOz) ? l.resolvedOz : 0), 0);
+    out.set(skuId, {
+      skuId,
+      anchorAt: anchorLines[0]!.eventCountedAt,
+      anchorOz: sumOz(anchorLines),
+      looseLineCount: anchorLines.filter((l) => l.isLoose === true).length,
+      partialLineCount: anchorLines.filter((l) => l.partialFraction != null).length,
+      prevAt: prevLines ? prevLines[0]!.eventCountedAt : null,
+      prevOz: prevLines ? sumOz(prevLines) : null,
+    });
+  }
   return out;
 }
 

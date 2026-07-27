@@ -209,6 +209,7 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   const chained = new Set([...chainsBySku.entries()].filter(([, lv]) => lv.length > 0).map(([id]) => id));
   const resolvedOzByLineIdx = input.lines.map((l) => resolveReceivedOz(l, skuById.get(l.skuId), chainsBySku.get(l.skuId) ?? null, measures));
 
+  // 0160 columns — apply 0160 BEFORE deploying this code (additive; old code unaffected).
   // The 0160 `note` columns are the brief-canonical fields; the legacy `notes`
   // columns stay populated so the existing detail reader keeps working (no split-
   // brain — both mirror the same operator input this PR; a future pass can retire

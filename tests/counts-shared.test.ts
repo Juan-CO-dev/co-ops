@@ -14,10 +14,12 @@ import {
   resolveCountLineOz,
   resolveCountLines,
   sumAnchorOzBySku,
+  resolvePerSkuAnchors,
   computeOnHand,
   computeVariance,
   anchorAgeDays,
   chainLabelsInWalkOrder,
+  type CountLineForAnchor,
   type CountLineInput,
 } from "@/lib/counts-shared";
 import type { MeasureUnitFactor, RecipeInputSku } from "@/lib/recipe-math";
@@ -66,8 +68,14 @@ describe("resolveCountLineOz — mixed-level resolution", () => {
     expect(r.ok && r.oz).toBe(16);
   });
 
-  it("bad qty fails loudly", () => {
+  it("bad qty (negative) fails loudly", () => {
     const r = resolveCountLineOz({ levelLabel: "case", qty: -1, partialFraction: null }, capSku, MEASURES);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("bad_qty");
+  });
+
+  it("F3: a ZERO qty fails loudly (a zero-qty line counts nothing / can't anchor)", () => {
+    const r = resolveCountLineOz({ levelLabel: "case", qty: 0, partialFraction: null }, capSku, MEASURES);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe("bad_qty");
   });
@@ -114,6 +122,73 @@ describe("resolveCountLines — batch + unknown sku", () => {
     const res = resolveCountLines(lines, skuById, MEASURES);
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.reason).toBe("unresolvable");
+  });
+
+  it("F3: a zero-qty line fails the whole batch (qty floor)", () => {
+    const lines: CountLineInput[] = [{ skuId: "cap", levelLabel: "case", qty: 0, isLoose: false, partialFraction: null }];
+    const res = resolveCountLines(lines, skuById, MEASURES);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toBe("bad_qty");
+  });
+});
+
+describe("resolvePerSkuAnchors — F1: events are sessions, anchors are per-SKU", () => {
+  // Three events at ONE location:
+  //   E1 (oldest): counts CAP=100 and TUB=50   ← the full session
+  //   E2 (middle): SPOT count of CAP=120 only   ← must NOT strand TUB
+  //   E3 (newest): SPOT count of CAP=130 only
+  const mk = (
+    countEventId: string,
+    eventCountedAt: string,
+    skuId: string,
+    resolvedOz: number,
+    extra?: Partial<CountLineForAnchor>,
+  ): CountLineForAnchor => ({ countEventId, eventCountedAt, skuId, resolvedOz, isLoose: false, partialFraction: null, ...extra });
+
+  const lines: CountLineForAnchor[] = [
+    mk("E1", "2026-07-20T10:00:00Z", "cap", 100),
+    mk("E1", "2026-07-20T10:00:00Z", "tub", 50),
+    mk("E2", "2026-07-23T10:00:00Z", "cap", 120),
+    mk("E3", "2026-07-25T10:00:00Z", "cap", 130),
+  ];
+
+  it("CAP anchor = newest event (E3=130); prev = E2=120", () => {
+    const a = resolvePerSkuAnchors(lines).get("cap")!;
+    expect(a.anchorOz).toBe(130);
+    expect(a.anchorAt).toBe("2026-07-25T10:00:00Z");
+    expect(a.prevOz).toBe(120);
+    expect(a.prevAt).toBe("2026-07-23T10:00:00Z");
+  });
+
+  it("a spot count of CAP does NOT strand TUB — TUB anchor stays E1=50 with NO prev", () => {
+    const a = resolvePerSkuAnchors(lines).get("tub")!;
+    expect(a.anchorOz).toBe(50);
+    expect(a.anchorAt).toBe("2026-07-20T10:00:00Z"); // TUB's own last count, not E3.
+    expect(a.prevOz).toBeNull(); // TUB counted once → first-count → variance advisory.
+    expect(a.prevAt).toBeNull();
+  });
+
+  it("disjoint anchor lines sum, and loose/partial line counts surface (F6)", () => {
+    const disjoint: CountLineForAnchor[] = [
+      mk("E1", "2026-07-20T10:00:00Z", "cap", 272), // 2 full cases
+      mk("E1", "2026-07-20T10:00:00Z", "cap", 102, { isLoose: true }), // 3 loose logs
+      mk("E1", "2026-07-20T10:00:00Z", "cap", 16, { partialFraction: 0.5 }), // half a tub
+    ];
+    const a = resolvePerSkuAnchors(disjoint).get("cap")!;
+    expect(a.anchorOz).toBe(390); // 272 + 102 + 16
+    expect(a.looseLineCount).toBe(1);
+    expect(a.partialLineCount).toBe(1);
+  });
+
+  it("newest event wins regardless of insertion order (ranks by counted_at)", () => {
+    const scrambled: CountLineForAnchor[] = [
+      mk("E3", "2026-07-25T10:00:00Z", "cap", 130),
+      mk("E1", "2026-07-20T10:00:00Z", "cap", 100),
+      mk("E2", "2026-07-23T10:00:00Z", "cap", 120),
+    ];
+    const a = resolvePerSkuAnchors(scrambled).get("cap")!;
+    expect(a.anchorOz).toBe(130);
+    expect(a.prevOz).toBe(120);
   });
 });
 
@@ -202,9 +277,9 @@ describe("computeVariance — new count vs prev + intervening ledger (L8)", () =
     expect(r.varianceOz).toBe(20);
   });
 
-  it("no prior count → advisory null", () => {
+  it("F2: a SKU with no prior count → advisory null, NEVER 0 (first count)", () => {
     const r = computeVariance({ skuId: "cap", newCountOz: 310, prevCountOz: null, receivedBetweenOz: 100, consumedBetweenOz: 80 });
-    expect(r.varianceOz).toBeNull();
+    expect(r.varianceOz).toBeNull(); // must be null (advisory), not a fabricated 0.
     expect(r.predictedOz).toBeNull();
   });
 

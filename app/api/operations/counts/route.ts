@@ -31,6 +31,8 @@ export async function POST(req: NextRequest) {
     if (typeof r.skuId !== "string" || typeof r.levelLabel !== "string" || typeof r.qty !== "number") {
       return jsonError(400, "invalid_payload", { field: "lines" });
     }
+    // F3: a count line requires a POSITIVE qty (a zero counts nothing / can't anchor).
+    if (!Number.isFinite(r.qty) || r.qty <= 0) return jsonError(400, "invalid_qty", { field: "qty" });
     const partial = r.partialFraction;
     const partialFraction = partial === undefined || partial === null ? null : typeof partial === "number" ? partial : undefined;
     if (partialFraction === undefined) return jsonError(400, "invalid_payload", { field: "partialFraction" });
