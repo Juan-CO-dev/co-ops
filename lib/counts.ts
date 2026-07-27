@@ -1,0 +1,500 @@
+/**
+ * Manager physical-count data layer (pack hierarchy PR 2, migration 0160).
+ * SERVER-ONLY, service-role client; authorization is APP-LAYER (AGM+ gate +
+ * location-bind IDOR; the WRITE also requires Tier-A step-up, enforced at the
+ * route per adjudication A4). Pure math lives in lib/counts-shared.ts.
+ *
+ * ── ANCHOR SEMANTIC (adversarial review #2, controller-adjudicated F1) ─────────
+ *   EVENTS ARE SESSIONS; ANCHORS ARE PER-SKU (latest counted line wins); SPOT
+ *   COUNTS ARE FIRST-CLASS. A count event is an immutable session — createCountEvent
+ *   NEVER deactivates prior events (no location-wide supersede). Every event stays
+ *   active. The anchor for a SKU is the most-recent count LINE for that SKU (by its
+ *   event's counted_at) across ALL active events at the location. A spot count of
+ *   ONE SKU therefore never strands any other SKU's anchor — each SKU's drift +
+ *   variance window runs from that SKU's own anchor timestamp, independently.
+ *
+ * Juan's model — RECEIVING FEEDS, COUNTS VERIFY, THE DIFFERENCE IS VARIANCE:
+ *   on-hand(sku) = anchor(sku) + received_since(sku) − consumed_since(sku)  (OZ, A3)
+ *   anchor(sku)  = the summed resolved oz of the latest count LINE(s) for that SKU
+ *   variance     = newest count(sku) − (prev count(sku) + received_between
+ *                  − consumed_between), each window per that SKU's own anchors.
+ *
+ * COUNCIL LOCKS:
+ *   L3  count lines persist resolved_oz at write; readers read stored oz.
+ *   L4  count events are location-scoped rows; SKUs stay global.
+ *   L5  ONE event per session (createCountEvent writes one event + its lines in
+ *       one call); events are immutable sessions (NO supersede); disjoint-by-law
+ *       lines; anchor = per-SKU oz snapshot; anchor age + retro-edit staleness
+ *       surfaced (read-time).
+ *   L8  shrinkage delta = variance, surfaced with a reason code.
+ *
+ * A3 SOURCES (oz-native, advisory-null; each window per-SKU from that SKU's anchor):
+ *   received_since  = SUM(vendor_delivery_items.resolved_oz) for this SKU on
+ *                     deliveries at this location dated after THAT SKU's anchor.
+ *                     Legacy lines with NULL resolved_oz can't contribute → that
+ *                     SKU's received term is advisory-null (never a fabricated #).
+ *   consumed_since  = SUM(production_inputs.input_oz) for this SKU on LIVE
+ *                     productions (superseded_at/revoked_at NULL) at this location
+ *                     with produced_at after THAT SKU's anchor. A NULL input_oz row →
+ *                     null-drift advisory for that SKU (production_inputs.input_oz
+ *                     is NOT NULL in schema, but we stay defensive).
+ *
+ * Every UPDATE checks error AND rowcount (AGENTS.md silent-UPDATE law). Audited.
+ */
+
+import { getServiceRoleClient } from "@/lib/supabase-server";
+import { getRoleLevel } from "@/lib/roles";
+import { lockLocationContext, type LocationActor } from "@/lib/locations";
+import { audit } from "@/lib/audit";
+import type { AuthContext } from "@/lib/session";
+import { loadMeasures, loadSkuPackChains } from "@/lib/prep-consumption";
+import { type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
+import {
+  resolveCountLines,
+  resolvePerSkuAnchors,
+  computeOnHand,
+  computeVariance,
+  chainLabelsInWalkOrder,
+  type CountLineInput,
+  type OnHandResult,
+} from "@/lib/counts-shared";
+
+export const COUNT_READ_MIN = 6; // AGM+
+export const COUNT_WRITE_MIN = 6; // AGM+ (Tier-A step-up enforced at the route)
+
+export class CountError extends Error {
+  constructor(public status: number, public code: string, message?: string) {
+    super(message ?? code);
+    this.name = "CountError";
+  }
+}
+
+function num(v: number | string | null): number | null {
+  if (v === null) return null;
+  const n = typeof v === "string" ? Number(v) : v;
+  return Number.isFinite(n) ? n : null;
+}
+function requireLevel(actor: AuthContext, min: number): void {
+  if (getRoleLevel(actor.user.role) < min) {
+    throw new CountError(403, "forbidden", "Insufficient role level for counts");
+  }
+}
+function actorLoc(actor: AuthContext): LocationActor {
+  return { role: actor.user.role, locations: actor.locations };
+}
+
+// ── Form data (SKUs + their chain labels for the level picker) ───────────────────
+export interface CountSkuOption {
+  id: string;
+  name: string;
+  chainLabels: string[];
+  packFormat: string | null;
+}
+export interface CountFormData {
+  skus: CountSkuOption[];
+}
+
+/** Load active SKUs + each one's root→leaf chain labels for the count level picker. */
+export async function loadCountFormData(actor: AuthContext, locationId: string): Promise<CountFormData> {
+  requireLevel(actor, COUNT_READ_MIN);
+  if (!lockLocationContext(actorLoc(actor), locationId)) throw new CountError(404, "not_found", "Location not found");
+  const sb = getServiceRoleClient();
+  const { data: skus, error } = await sb.from("vendor_items").select("id, name, pack_format").eq("active", true).order("name", { ascending: true })
+    .returns<Array<{ id: string; name: string; pack_format: string | null }>>();
+  if (error) throw new Error(`loadCountFormData skus: ${error.message}`);
+  const list = skus ?? [];
+  const chainsBySku = await loadSkuPackChains(list.map((s) => s.id));
+  return {
+    skus: list.map((s) => ({ id: s.id, name: s.name, packFormat: s.pack_format, chainLabels: chainLabelsInWalkOrder(chainsBySku.get(s.id) ?? []) })),
+  };
+}
+
+// ── Load per-SKU RecipeInputSku shapes (chain-aware) for oz resolution ───────────
+async function loadRecipeSkus(skuIds: string[]): Promise<Map<string, RecipeInputSku>> {
+  if (skuIds.length === 0) return new Map();
+  const sb = getServiceRoleClient();
+  const { data } = await sb.from("vendor_items")
+    .select("id, pack_format, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each")
+    .in("id", skuIds)
+    .returns<Array<{ id: string; pack_format: string | null; each_container_label: string | null; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>>();
+  const chainsBySku = await loadSkuPackChains(skuIds);
+  return new Map((data ?? []).map((s) => [s.id, {
+    packFormat: s.pack_format, eachContainerLabel: s.each_container_label,
+    unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure,
+    avgOzPerEach: num(s.avg_oz_per_each), packChain: chainsBySku.get(s.id) ?? null,
+  }]));
+}
+
+// ── Create a count event (AGM+; ONE event per call — council L5) ──────────────────
+export interface CreateCountEventInput {
+  locationId: string;
+  note?: string | null;
+  lines: CountLineInput[];
+}
+
+/**
+ * Record one physical-count EVENT + its lines (council L5). Each line resolves oz
+ * at write via the SKU pack chain (L3); an unresolvable line is REJECTED loudly (a
+ * count line with no oz can't anchor — resolved_oz is NOT NULL). The event is an
+ * IMMUTABLE SESSION: we NEVER supersede prior events (F1 — anchors are per-SKU, the
+ * latest counted line for a SKU wins, so a spot count of one SKU must not strand
+ * any other SKU's anchor). Append-only — never DELETE, never deactivate. Audited.
+ */
+export async function createCountEvent(actor: AuthContext, input: CreateCountEventInput): Promise<{ countEventId: string }> {
+  requireLevel(actor, COUNT_WRITE_MIN);
+  if (!lockLocationContext(actorLoc(actor), input.locationId)) throw new CountError(404, "not_found", "Location not found");
+  if (!Array.isArray(input.lines) || input.lines.length === 0) throw new CountError(400, "no_lines", "At least one count line is required");
+  for (const l of input.lines) {
+    if (typeof l.skuId !== "string" || !l.skuId) throw new CountError(400, "invalid_sku", "Each line needs a SKU");
+    if (typeof l.levelLabel !== "string" || !l.levelLabel.trim()) throw new CountError(400, "invalid_level", "Each line needs a level");
+    // F3: count lines require a POSITIVE qty — a zero-qty line counts nothing and
+    // must not anchor. The migration CHECK stays qty >= 0 for schema tolerance, but
+    // the app is the authority for count semantics; a real count is always > 0.
+    if (!Number.isFinite(l.qty) || l.qty <= 0) throw new CountError(400, "invalid_qty", "Quantity must be greater than zero");
+    if (l.partialFraction != null && !(l.partialFraction > 0 && l.partialFraction <= 1)) {
+      throw new CountError(400, "invalid_fraction", "Partial fraction must be between 0 and 1");
+    }
+  }
+
+  const sb = getServiceRoleClient();
+  const skuIds = [...new Set(input.lines.map((l) => l.skuId))];
+  const { data: activeSkus } = await sb.from("vendor_items").select("id").in("id", skuIds).eq("active", true).returns<Array<{ id: string }>>();
+  const activeSet = new Set((activeSkus ?? []).map((s) => s.id));
+  for (const id of skuIds) if (!activeSet.has(id)) throw new CountError(400, "invalid_sku", "A SKU is not found or inactive");
+
+  // Resolve every line's oz at write (council L3). Reject the whole event if ANY
+  // line is unresolvable — a null-oz count line can't anchor.
+  const [measures, recipeSkus] = await Promise.all([loadMeasures(), loadRecipeSkus(skuIds)]);
+  const resolution = resolveCountLines(input.lines, recipeSkus, measures);
+  if (!resolution.ok) {
+    throw new CountError(400, "unresolvable_line", `Can't convert "${resolution.badLine.levelLabel}" for a SKU to ounces — set the SKU's pack chain or avg oz first`);
+  }
+
+  // F1: NO location-wide supersede. Events are immutable sessions; anchors are
+  // resolved per-SKU at read time (latest counted line wins). A spot count of one
+  // SKU must never deactivate an event that still carries other SKUs' anchors.
+
+  // 1) insert the new event header (stays active forever, append-only).
+  const { data: ev, error: evErr } = await sb.from("sku_count_events").insert({
+    location_id: input.locationId, counted_by: actor.user.id, note: input.note?.trim() || null, active: true,
+  }).select("id").maybeSingle<{ id: string }>();
+  if (evErr) throw new Error(`createCountEvent header: ${evErr.message}`);
+  if (!ev) throw new Error("createCountEvent returned no row");
+
+  // 2) insert the resolved lines.
+  const { error: lErr } = await sb.from("sku_count_lines").insert(
+    resolution.resolved.map((l) => ({
+      count_event_id: ev.id, sku_id: l.skuId, level_label: l.levelLabel.trim(), qty: l.qty,
+      is_loose: l.isLoose === true, partial_fraction: l.partialFraction ?? null, resolved_oz: l.resolvedOz,
+    })),
+  );
+  if (lErr) throw new Error(`createCountEvent lines: ${lErr.message}`);
+
+  await audit({
+    actorId: actor.user.id, actorRole: actor.user.role,
+    action: "sku_count.recorded", resourceTable: "sku_count_events", resourceId: ev.id,
+    metadata: { location_id: input.locationId, line_count: resolution.resolved.length, sku_ids: skuIds },
+    ipAddress: null, userAgent: null,
+  });
+
+  return { countEventId: ev.id };
+}
+
+// ── On-hand read (AGM+): anchor + drift + variance ───────────────────────────────
+export interface OnHandRow extends OnHandResult {
+  skuName: string;
+  /** Variance of THIS anchor vs the previous count + intervening ledger (L8). null
+   *  = no prior count or a derive side missing (advisory). */
+  varianceOz: number | null;
+  /** F6 — read-side disjointness annotations for THIS SKU's anchor lines, so the
+   *  full/loose/partial split is auditable. Non-mathematical (partial_fraction is
+   *  already baked into resolved_oz): counts of lines flagged loose/partial. */
+  looseLineCount: number;
+  partialLineCount: number;
+}
+export interface OnHandView {
+  locationId: string;
+  /** ISO of the MOST RECENT count event at this location (any SKU), null if none
+   *  yet. Per-SKU anchor timestamps live on each row (anchorAt); this is only the
+   *  location-level "last counted" header hint. */
+  anchorAt: string | null;
+  rows: OnHandRow[];
+}
+
+/**
+ * Load the on-hand panel for a location with PER-SKU anchors (F1). Events are
+ * immutable sessions; there is no single "anchor event". For each SKU:
+ *   - its ANCHOR is the summed resolved oz of the lines from the most-recent event
+ *     (by counted_at) that counted that SKU; the anchor timestamp is THAT event's
+ *     counted_at (so a spot count of one SKU never moves another SKU's window);
+ *   - its PREV is the summed oz from the next-most-recent event that counted it;
+ *   - drift = received-since − consumed-since IN OZ from THAT SKU's anchor (A3);
+ *   - variance = newCount − (prevCount + received_between − consumed_between) via
+ *     the pure computeVariance (F2): a SKU never previously counted → prevCountOz
+ *     null → variance null (advisory "first count"), NEVER 0.
+ * Retro-edit staleness (a backdated delivery landing after a SKU's anchor) flags
+ * that SKU stale.
+ */
+export async function loadOnHand(actor: AuthContext, locationId: string, now: number = Date.now()): Promise<OnHandView> {
+  requireLevel(actor, COUNT_READ_MIN);
+  if (!lockLocationContext(actorLoc(actor), locationId)) throw new CountError(404, "not_found", "Location not found");
+  const sb = getServiceRoleClient();
+
+  // ALL active count events at this location, newest first — every event is a live
+  // session (F1: no supersede). We resolve each SKU's anchor across all of them.
+  const { data: events } = await sb.from("sku_count_events")
+    .select("id, counted_at")
+    .eq("location_id", locationId)
+    .eq("active", true)
+    .order("counted_at", { ascending: false })
+    .returns<Array<{ id: string; counted_at: string }>>();
+  const evList = events ?? [];
+  if (evList.length === 0) return { locationId, anchorAt: null, rows: [] };
+  const eventAt = new Map(evList.map((e) => [e.id, e.counted_at]));
+  const locationLastCountedAt = evList[0]!.counted_at; // header hint only.
+
+  // ALL lines across those active events, each tagged with its event's counted_at.
+  const eventIds = evList.map((e) => e.id);
+  const { data: allLines } = await sb.from("sku_count_lines")
+    .select("count_event_id, sku_id, resolved_oz, is_loose, partial_fraction")
+    .in("count_event_id", eventIds)
+    .returns<Array<{ count_event_id: string; sku_id: string; resolved_oz: number | string; is_loose: boolean; partial_fraction: number | string | null }>>();
+
+  // F1: pure per-SKU anchor resolution (each SKU ranks ITS OWN counting events;
+  // a spot count of one SKU never strands another's anchor). See counts-shared.
+  const anchorBySku = resolvePerSkuAnchors(
+    (allLines ?? []).map((l) => ({
+      countEventId: l.count_event_id,
+      eventCountedAt: eventAt.get(l.count_event_id) ?? "",
+      skuId: l.sku_id,
+      resolvedOz: num(l.resolved_oz) ?? 0,
+      isLoose: l.is_loose,
+      partialFraction: num(l.partial_fraction),
+    })),
+  );
+
+  const skuIds = [...anchorBySku.keys()];
+  if (skuIds.length === 0) return { locationId, anchorAt: locationLastCountedAt, rows: [] };
+
+  // SKU names.
+  const { data: skuRows } = await sb.from("vendor_items").select("id, name").in("id", skuIds).returns<Array<{ id: string; name: string }>>();
+  const skuName = new Map((skuRows ?? []).map((s) => [s.id, s.name]));
+
+  // Drift + variance windows are PER-SKU (each runs from that SKU's own anchor).
+  // A single stale check per distinct anchor timestamp (dedup) keeps it cheap.
+  const rows: OnHandRow[] = await Promise.all(
+    skuIds.map(async (skuId): Promise<OnHandRow> => {
+      const a = anchorBySku.get(skuId)!;
+      const [receivedSince, consumedSince, anchorStale] = await Promise.all([
+        sumReceivedOzSince(sb, [skuId], locationId, a.anchorAt),
+        sumConsumedOzSince(sb, [skuId], locationId, a.anchorAt),
+        detectRetroEditStaleness(sb, locationId, a.anchorAt, now),
+      ]);
+      const onHand = computeOnHand(
+        {
+          skuId,
+          anchorOz: a.anchorOz,
+          anchorAt: a.anchorAt,
+          receivedSinceOz: receivedSince.get(skuId) ?? null,
+          consumedSinceOz: consumedSince.get(skuId) ?? null,
+          anchorStale,
+        },
+        now,
+      );
+      // Variance via the pure tested computeVariance (F2). No prior count for this
+      // SKU → prevCountOz null → variance null (advisory), never 0. The between-
+      // window runs from prevAt→anchorAt (F4-bounded inside the ledger sums).
+      let receivedBetweenOz: number | null = null;
+      let consumedBetweenOz: number | null = null;
+      if (a.prevAt != null) {
+        const [rB, cB] = await Promise.all([
+          sumReceivedOzBetween(sb, [skuId], locationId, a.prevAt, a.anchorAt),
+          sumConsumedOzBetween(sb, [skuId], locationId, a.prevAt, a.anchorAt),
+        ]);
+        receivedBetweenOz = rB.get(skuId) ?? null;
+        consumedBetweenOz = cB.get(skuId) ?? null;
+      }
+      const variance = computeVariance({
+        skuId,
+        newCountOz: a.anchorOz,
+        prevCountOz: a.prevOz, // null when this SKU has no earlier count.
+        receivedBetweenOz,
+        consumedBetweenOz,
+      });
+      return {
+        ...onHand,
+        skuName: skuName.get(skuId) ?? "(sku)",
+        varianceOz: variance.varianceOz,
+        looseLineCount: a.looseLineCount,
+        partialLineCount: a.partialLineCount,
+      };
+    }),
+  );
+  rows.sort((a, b) => a.skuName.localeCompare(b.skuName));
+  return { locationId, anchorAt: locationLastCountedAt, rows };
+}
+
+// ── Ledger oz aggregations (A3, oz-native, advisory-null) ─────────────────────────
+/**
+ * Deliveries at this location whose write instant (vendor_deliveries.created_at)
+ * falls in the drift window — F4: bound the id set by the SAME window the line sum
+ * uses (created_at > anchor, <= until when set) rather than pulling the location's
+ * entire delivery history into the .in() clause. Cheaper + tighter (a huge legacy
+ * history no longer bloats the id list); correctness is unchanged because the line
+ * sum re-filters on the item created_at anyway.
+ */
+async function locationDeliveryIds(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+  afterIso: string,
+  untilIso: string | null,
+): Promise<string[]> {
+  let q = sb.from("vendor_deliveries").select("id").eq("location_id", locationId).gt("created_at", afterIso);
+  if (untilIso != null) q = q.lte("created_at", untilIso);
+  const { data } = await q.returns<Array<{ id: string }>>();
+  return (data ?? []).map((d) => d.id);
+}
+
+/**
+ * Received oz for each SKU on deliveries at this location dated STRICTLY AFTER the
+ * anchor. Uses vendor_delivery_items.resolved_oz (the persisted oz-at-write, L3).
+ * A SKU with ANY NULL resolved_oz among its in-window lines → null (advisory:
+ * can't derive a clean received term). No in-window lines at all → 0.
+ */
+async function sumReceivedOzSince(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  skuIds: string[],
+  locationId: string,
+  afterIso: string,
+): Promise<Map<string, number | null>> {
+  return sumReceivedOzWindow(sb, skuIds, locationId, afterIso, null);
+}
+async function sumReceivedOzBetween(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  skuIds: string[],
+  locationId: string,
+  afterIso: string,
+  untilIso: string,
+): Promise<Map<string, number | null>> {
+  return sumReceivedOzWindow(sb, skuIds, locationId, afterIso, untilIso);
+}
+async function sumReceivedOzWindow(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  skuIds: string[],
+  locationId: string,
+  afterIso: string,
+  untilIso: string | null,
+): Promise<Map<string, number | null>> {
+  const out = new Map<string, number | null>();
+  for (const id of skuIds) out.set(id, 0);
+  const deliveryIds = await locationDeliveryIds(sb, locationId, afterIso, untilIso);
+  if (deliveryIds.length === 0) return out;
+  // vendor_delivery_items has created_at; use it as the receipt timestamp (the
+  // delivery_date is a bare date, created_at is the true write instant that the
+  // anchor timestamp is comparable to).
+  let q = sb.from("vendor_delivery_items")
+    .select("vendor_item_id, resolved_oz, created_at")
+    .in("vendor_item_id", skuIds)
+    .in("delivery_id", deliveryIds)
+    .gt("created_at", afterIso);
+  if (untilIso != null) q = q.lte("created_at", untilIso);
+  const { data } = await q.returns<Array<{ vendor_item_id: string; resolved_oz: number | string | null; created_at: string }>>();
+  // Sum resolved oz per SKU; a SKU with ANY NULL resolved_oz in-window line →
+  // advisory null (can't derive a clean received term). Tracked separately so a
+  // null line taints the whole SKU regardless of row order.
+  const sums = new Map<string, number>();
+  const nulled = new Set<string>();
+  for (const r of data ?? []) {
+    const oz = num(r.resolved_oz);
+    if (oz == null) { nulled.add(r.vendor_item_id); continue; }
+    sums.set(r.vendor_item_id, (sums.get(r.vendor_item_id) ?? 0) + oz);
+  }
+  for (const [id, s] of sums) out.set(id, s);
+  for (const id of nulled) out.set(id, null); // taint wins over any partial sum.
+  return out;
+}
+
+/**
+ * Consumed oz for each SKU from LIVE productions (superseded_at/revoked_at NULL) at
+ * this location with produced_at STRICTLY AFTER the anchor, summing
+ * production_inputs.input_oz (A3). A NULL input_oz row → null for that SKU
+ * (defensive; the column is NOT NULL but we never fabricate). No in-window rows → 0.
+ */
+async function sumConsumedOzSince(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  skuIds: string[],
+  locationId: string,
+  afterIso: string,
+): Promise<Map<string, number | null>> {
+  return sumConsumedOzWindow(sb, skuIds, locationId, afterIso, null);
+}
+async function sumConsumedOzBetween(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  skuIds: string[],
+  locationId: string,
+  afterIso: string,
+  untilIso: string,
+): Promise<Map<string, number | null>> {
+  return sumConsumedOzWindow(sb, skuIds, locationId, afterIso, untilIso);
+}
+async function sumConsumedOzWindow(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  skuIds: string[],
+  locationId: string,
+  afterIso: string,
+  untilIso: string | null,
+): Promise<Map<string, number | null>> {
+  const out = new Map<string, number | null>();
+  for (const id of skuIds) out.set(id, 0);
+  // Live production headers at this location in the window.
+  let hq = sb.from("productions").select("id").eq("location_id", locationId)
+    .is("superseded_at", null).is("revoked_at", null).gt("produced_at", afterIso);
+  if (untilIso != null) hq = hq.lte("produced_at", untilIso);
+  const { data: hdrs } = await hq.returns<Array<{ id: string }>>();
+  const prodIds = (hdrs ?? []).map((h) => h.id);
+  if (prodIds.length === 0) return out;
+  const { data: lines } = await sb.from("production_inputs")
+    .select("input_sku_id, input_oz")
+    .in("input_sku_id", skuIds)
+    .in("production_id", prodIds)
+    .returns<Array<{ input_sku_id: string; input_oz: number | string | null }>>();
+  const sums = new Map<string, number>();
+  const nulled = new Set<string>();
+  for (const l of lines ?? []) {
+    const oz = num(l.input_oz);
+    if (oz == null) { nulled.add(l.input_sku_id); continue; }
+    sums.set(l.input_sku_id, (sums.get(l.input_sku_id) ?? 0) + oz);
+  }
+  for (const [id, s] of sums) out.set(id, s);
+  for (const id of nulled) out.set(id, null); // NULL input_oz → null-drift advisory.
+  return out;
+}
+
+/**
+ * Retro-edit staleness (L5): true when a BACKDATED delivery exists — one whose
+ * write instant (vendor_deliveries.created_at) is AFTER the anchor count but whose
+ * effective delivery_date is on-or-BEFORE the anchor. Such a row landed after the
+ * manager counted yet claims stock the count should already have reflected — so it
+ * can't be cleanly folded into the since-anchor drift, and the anchor's ground
+ * truth is suspect. Sound + cheap: the mismatch between write-time and effective-
+ * time IS the retro edit.
+ *
+ * SCOPE NOTE: only the delivery ledger is checkable — `productions` has NO
+ * created_at (schema: only produced_at, verified against live), so a backdated
+ * production is not observable without a created_at column. Documented seam: if a
+ * production created_at lands later, add the symmetric check here. We surface the
+ * honest signal we CAN derive rather than a fabricated one.
+ */
+async function detectRetroEditStaleness(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+  anchorIso: string,
+  _now: number,
+): Promise<boolean> {
+  const anchorDate = anchorIso.slice(0, 10); // YYYY-MM-DD for the bare delivery_date compare.
+  const { data: delivHit } = await sb.from("vendor_deliveries").select("id")
+    .eq("location_id", locationId)
+    .gt("created_at", anchorIso).lte("delivery_date", anchorDate).limit(1)
+    .returns<Array<{ id: string }>>();
+  return (delivHit ?? []).length > 0;
+}
