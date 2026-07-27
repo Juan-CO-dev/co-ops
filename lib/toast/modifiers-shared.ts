@@ -20,6 +20,36 @@ import {
 
 export type ModifierDisposition = "deplete" | "remove" | "ignore";
 
+/**
+ * Default per-application portion for a raw-SKU modifier target (Part 2,
+ * 2026-07-27): one each. Sub Roll = 1 each (salad "No bread" removes one);
+ * a raw condiment scoop = 1 each. Read-time oz conversion uses the SKU's
+ * vendor_items.avg_oz_per_each (see skuPortionOz).
+ */
+export const SKU_MODIFIER_DEFAULT_PORTION_QTY = 1;
+export const SKU_MODIFIER_DEFAULT_PORTION_UNIT = "each";
+
+/**
+ * Convert a SKU-target modifier portion to OZ (SKU depletion currency). PURE.
+ *  - unit 'oz'            → qty oz directly.
+ *  - unit 'each' (or null) → qty × avgOzPerEach; null avgOzPerEach → null.
+ *  - any other unit        → null (unresolvable — surfaces to portionNeeded).
+ * Callers apply the sign: deplete adds, remove subtracts. Null = the row
+ * confirms but the application skips into the "portion needed" advisory.
+ */
+export function skuPortionOz(
+  portion: { qty: number; unit: string | null },
+  avgOzPerEach: number | null,
+): number | null {
+  if (!Number.isFinite(portion.qty)) return null;
+  const unit = portion.unit;
+  if (unit === "oz") return portion.qty;
+  if (unit === "each" || unit == null) {
+    return avgOzPerEach != null && avgOzPerEach > 0 ? portion.qty * avgOzPerEach : null;
+  }
+  return null;
+}
+
 export interface ModifierClass {
   disposition: ModifierDisposition;
   /** The name to match against CO entities ("No Pickles" → "Pickles"). */
