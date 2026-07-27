@@ -32,6 +32,11 @@ import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import type { MeasureDimension } from "@/lib/recipe-math";
+import type { SkuClass } from "@/lib/admin/catalog-shared";
+// SKU_CLASSES + isSkuClass live in the client-safe shared module (used by the
+// SKU form); re-export so server consumers keep importing from lib/admin/skus.
+export { SKU_CLASSES, isSkuClass } from "@/lib/admin/catalog-shared";
+import { isSkuClass } from "@/lib/admin/catalog-shared";
 
 // ── Authority floors (the lib is the authority per-action) ──────────────────
 export const SKU_READ_MIN = 6; // AGM+ — view the catalog + registries
@@ -57,6 +62,8 @@ export interface SkuView {
   leadTimeDays: number | null;
   notes: string | null;
   active: boolean;
+  /** Taxonomy class (0157): raw | packaging | cleaning | misc. */
+  skuClass: SkuClass;
 }
 
 /** A registry option (pack format or measure unit). */
@@ -173,10 +180,12 @@ interface DbSkuRow {
   lead_time_days: number | null;
   notes: string | null;
   active: boolean | null;
+  sku_class: SkuClass | null;
 }
 
+// sku_class rides the STAGED 0157 migration (merges with it in this PR).
 const SKU_COLS =
-  "id, vendor_id, location_id, name, pack_format, units_per_pack, each_size, each_measure, each_container_label, item_number, source_url, lead_time_days, notes, active, avg_oz_per_each";
+  "id, vendor_id, location_id, name, pack_format, units_per_pack, each_size, each_measure, each_container_label, item_number, source_url, lead_time_days, notes, active, avg_oz_per_each, sku_class";
 
 function toNum(v: number | string | null): number | null {
   if (v === null) return null;
@@ -233,6 +242,7 @@ async function hydrateSkus(rows: DbSkuRow[]): Promise<SkuView[]> {
     leadTimeDays: r.lead_time_days,
     notes: r.notes,
     active: r.active ?? true, // nullable in DB → treat null as active
+    skuClass: r.sku_class ?? "raw", // default to raw (matches the 0157 column default)
   }));
 }
 
@@ -418,6 +428,7 @@ export interface CreateSkuInput {
   sourceUrl?: string | null;
   leadTimeDays?: number | null;
   notes?: string | null;
+  skuClass?: SkuClass | null;
 }
 
 export async function createSku(actor: AuthContext, input: CreateSkuInput): Promise<{ id: string }> {
@@ -433,6 +444,9 @@ export async function createSku(actor: AuthContext, input: CreateSkuInput): Prom
   const leadTimeDays = normalizeLeadTime(input.leadTimeDays);
   const unitsPerPack = normalizeUnitsPerPack(input.unitsPerPack);
   const eachSize = normalizeEachSize(input.eachSize);
+  if (input.skuClass != null && !isSkuClass(input.skuClass)) {
+    throw new AdminSkuError(400, "invalid_sku_class", "Unknown SKU class");
+  }
 
   const sb = getServiceRoleClient();
   const { data: inserted, error } = await sb
@@ -451,6 +465,7 @@ export async function createSku(actor: AuthContext, input: CreateSkuInput): Prom
       source_url: normalizeOptional(input.sourceUrl),
       lead_time_days: leadTimeDays,
       notes: normalizeOptional(input.notes),
+      sku_class: input.skuClass ?? "raw",
       active: true,
       created_by: actor.user.id,
       updated_by: actor.user.id,
@@ -494,6 +509,7 @@ export interface UpdateSkuChanges {
   sourceUrl?: string | null;
   leadTimeDays?: number | null;
   notes?: string | null;
+  skuClass?: SkuClass;
 }
 
 export async function updateSku(
@@ -532,6 +548,10 @@ export async function updateSku(
   if (changes.sourceUrl !== undefined) update.source_url = normalizeOptional(changes.sourceUrl);
   if (changes.leadTimeDays !== undefined) update.lead_time_days = normalizeLeadTime(changes.leadTimeDays);
   if (changes.notes !== undefined) update.notes = normalizeOptional(changes.notes);
+  if (changes.skuClass !== undefined) {
+    if (!isSkuClass(changes.skuClass)) throw new AdminSkuError(400, "invalid_sku_class", "Unknown SKU class");
+    update.sku_class = changes.skuClass;
+  }
 
   if (Object.keys(update).length === 0) return;
   update.updated_by = actor.user.id;

@@ -17,21 +17,37 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { PasswordModal } from "@/components/auth/PasswordModal";
-import type { CatalogEntity, CatalogIssue } from "@/lib/admin/catalog-shared";
+import type { CatalogEntity, CatalogIssue, ItemType } from "@/lib/admin/catalog-shared";
+import { ITEM_TYPES } from "@/lib/admin/catalog-shared";
 
 const tk = (k: string): TranslationKey => k as TranslationKey;
 
-type Lens = "all" | "prep" | "sold_as_is" | "menu_items" | "packages" | "seasonal" | "issues";
-const LENSES: Lens[] = ["all", "prep", "sold_as_is", "menu_items", "packages", "seasonal", "issues"];
+// The Master List: lenses speak the taxonomy (the nine words). Item taxa
+// (prepped/on_hand/sold_as_is) + menu made/retail + packages, plus the
+// cross-cutting seasonal + issues lenses.
+type Lens =
+  | "all"
+  | "prepped"
+  | "on_hand"
+  | "sold_as_is"
+  | "made"
+  | "retail"
+  | "packages"
+  | "seasonal"
+  | "issues";
+const LENSES: Lens[] = ["all", "prepped", "on_hand", "sold_as_is", "made", "retail", "packages", "seasonal", "issues"];
 
 const SEASONAL_MIN = 7; // GM+ writes the seasonal flag (mirrors the menu manager write floor)
+const ITEM_TYPE_MIN = 7; // GM+ writes item_type (mirrors setItemType's floor)
 
 function matchesLens(e: CatalogEntity, lens: Lens): boolean {
   switch (lens) {
     case "all": return true;
-    case "prep": return e.kind === "item" && !e.flags.soldDirectly;
-    case "sold_as_is": return e.kind === "item" && e.flags.soldDirectly;
-    case "menu_items": return e.kind === "menu_item";
+    case "prepped": return e.taxonType === "prepped";
+    case "on_hand": return e.taxonType === "on_hand";
+    case "sold_as_is": return e.taxonType === "sold_as_is";
+    case "made": return e.taxonType === "made";
+    case "retail": return e.taxonType === "retail";
     case "packages": return e.kind === "package";
     case "seasonal": return e.seasonal;
     case "issues": return e.issues.length > 0;
@@ -51,6 +67,7 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
   const pendingRef = useRef<null | (() => Promise<void>)>(null);
 
   const canWriteSeasonal = actorLevel >= SEASONAL_MIN;
+  const canWriteItemType = actorLevel >= ITEM_TYPE_MIN;
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -119,6 +136,37 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
     }
   }, [router]);
 
+  // Dossier item_type editor (items only; GM+ Tier-A step-up via pendingRef).
+  const writeItemType = useCallback(async (e: CatalogEntity, itemType: ItemType) => {
+    setErrorKey(null);
+    setBusyKey(e.key);
+    try {
+      const res = await fetch(`/api/admin/catalog/item-type/${e.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ itemType }),
+        redirect: "manual",
+      });
+      if (res.ok) {
+        setStepUpOpen(false);
+        pendingRef.current = null;
+        router.refresh();
+        return;
+      }
+      const b = (await res.json().catch(() => ({}))) as { code?: string };
+      if (b.code === "step_up_required" || b.code === "step_up_stale") {
+        pendingRef.current = () => writeItemType(e, itemType);
+        setStepUpOpen(true);
+        return;
+      }
+      setErrorKey("admin.catalog.error.generic");
+    } catch {
+      setErrorKey("admin.catalog.error.generic");
+    } finally {
+      setBusyKey(null);
+    }
+  }, [router]);
+
   const chip = (active: boolean) =>
     `inline-flex min-h-[36px] items-center rounded-full border-2 px-3 text-xs font-bold transition ${
       active ? "border-co-gold-deep bg-co-gold/25 text-co-text" : "border-co-border-2 bg-co-surface text-co-text-dim hover:text-co-text"
@@ -167,8 +215,10 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
                   expanded={expanded.has(e.key)}
                   onToggle={() => toggleExpand(e.key)}
                   canWriteSeasonal={canWriteSeasonal}
+                  canWriteItemType={canWriteItemType}
                   busy={busyKey === e.key}
                   onSeasonal={(seasonal) => void writeSeasonal(e, seasonal)}
+                  onItemType={(itemType) => void writeItemType(e, itemType)}
                 />
               ))}
             </div>
@@ -205,15 +255,26 @@ function EdgeList({ label, children }: { label: string; children: React.ReactNod
 
 const linkCls = "text-co-text underline decoration-co-border underline-offset-2 hover:decoration-co-text";
 
+function TypeBadge({ e }: { e: CatalogEntity }) {
+  const { t } = useTranslation();
+  return (
+    <span className="rounded bg-co-gold/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-co-text">
+      {t(tk(`admin.catalog.type.${e.taxonType}`))}
+    </span>
+  );
+}
+
 function CatalogRow({
-  e, expanded, onToggle, canWriteSeasonal, busy, onSeasonal,
+  e, expanded, onToggle, canWriteSeasonal, canWriteItemType, busy, onSeasonal, onItemType,
 }: {
   e: CatalogEntity;
   expanded: boolean;
   onToggle: () => void;
   canWriteSeasonal: boolean;
+  canWriteItemType: boolean;
   busy: boolean;
   onSeasonal: (seasonal: boolean) => void;
+  onItemType: (itemType: ItemType) => void;
 }) {
   const { t } = useTranslation();
   const none = <span className="text-co-text-muted">{t("admin.catalog.edge.none")}</span>;
@@ -223,9 +284,7 @@ function CatalogRow({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-bold text-co-text">{e.name}</span>
-          <span className="rounded bg-co-surface px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-co-text-dim">
-            {t(tk(`admin.catalog.kind.${e.kind}`))}
-          </span>
+          <TypeBadge e={e} />
           {!e.active && (
             <span className="rounded-full border border-co-border px-2 py-0.5 text-[11px] font-bold text-co-text-muted">
               {t("admin.catalog.badge.inactive")}
@@ -351,6 +410,30 @@ function CatalogRow({
               </EdgeList>
             )}
           </div>
+
+          {/* item_type editor — items only (menu_items derive made/retail; packages have no taxon). */}
+          {e.kind === "item" && canWriteItemType && e.itemType != null && (
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
+                {t("admin.catalog.item_type.label")}
+              </p>
+              <label className="sr-only" htmlFor={`item-type-${e.id}`}>
+                {t("admin.catalog.item_type.label")}
+              </label>
+              <select
+                id={`item-type-${e.id}`}
+                aria-label={t("admin.catalog.item_type.label")}
+                disabled={busy}
+                value={e.itemType}
+                onChange={(ev) => onItemType(ev.target.value as ItemType)}
+                className="mt-1 min-h-[36px] rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-xs font-bold text-co-text disabled:opacity-50"
+              >
+                {ITEM_TYPES.map((it) => (
+                  <option key={it} value={it}>{t(tk(`admin.catalog.type.${it}`))}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           {canWriteSeasonal && (
             <div>

@@ -257,6 +257,7 @@ function CatalogRow({
 }) {
   const { t } = useTranslation();
   const meta: string[] = [];
+  meta.push(t(`admin.skus.sku_class.${s.skuClass}` as import("@/lib/i18n/types").TranslationKey));
   meta.push(s.vendorName ?? t("admin.skus.manual"));
   meta.push(s.locationName ?? t("admin.skus.global"));
   meta.push(formatSkuPack(s, t));

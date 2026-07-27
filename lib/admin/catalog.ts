@@ -9,6 +9,7 @@
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
+import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { loadRecipeGraph } from "@/lib/prep-consumption";
 import {
@@ -16,15 +17,21 @@ import {
   firstLevelItemConsumption,
 } from "@/lib/prep-consumption-graph";
 import { loadGraphReadiness } from "@/lib/admin/readiness-load";
-import { classifyCatalogIssues } from "@/lib/admin/catalog-shared";
+import { classifyCatalogIssues, deriveCatalogType, isItemType, ITEM_TYPES } from "@/lib/admin/catalog-shared";
 import type {
   CatalogEntity,
   CatalogEdgeRef,
   CatalogChecklistRef,
+  ItemType,
 } from "@/lib/admin/catalog-shared";
 
 export {
   classifyCatalogIssues,
+  deriveCatalogType,
+  isItemType,
+  isSkuClass,
+  ITEM_TYPES,
+  SKU_CLASSES,
 } from "@/lib/admin/catalog-shared";
 export type {
   CatalogEntity,
@@ -35,7 +42,70 @@ export type {
   CatalogKind,
   CatalogIssue,
   CatalogIssueInput,
+  CatalogType,
+  ItemType,
+  SkuClass,
 } from "@/lib/admin/catalog-shared";
+
+// ── item_type write (dossier editor) ─────────────────────────────────────────
+export const ITEM_TYPE_WRITE_MIN = 7; // GM+ (Tier A) — mirrors the menu-flags floor
+
+export class AdminCatalogError extends Error {
+  constructor(public status: number, public code: string, message?: string) {
+    super(message ?? code);
+    this.name = "AdminCatalogError";
+  }
+}
+
+/**
+ * Set a registry item's taxonomy type (0157). Items only (menu_items derive
+ * made-vs-retail; packages have no taxon). Level floor ≥7 (Tier A is enforced
+ * at the route, mirroring setCateringFlags); the UPDATE is count-checked and
+ * audited. In-place additive — the item id + name are preserved.
+ */
+export async function setItemType(
+  actor: AuthContext,
+  args: { itemId: string; itemType: ItemType },
+): Promise<void> {
+  if (getRoleLevel(actor.user.role) < ITEM_TYPE_WRITE_MIN) {
+    throw new AdminCatalogError(403, "forbidden", "Insufficient role level");
+  }
+  if (!isItemType(args.itemType)) {
+    throw new AdminCatalogError(400, "invalid_item_type", "Unknown item type");
+  }
+  const sb = getServiceRoleClient();
+
+  // Read the current value for the audit before-state (and to skip a no-op).
+  const { data: cur, error: rErr } = await sb
+    .from("items")
+    .select("item_type")
+    .eq("id", args.itemId)
+    .maybeSingle<{ item_type: ItemType }>();
+  if (rErr) throw new Error(`setItemType read failed: ${rErr.message}`);
+  if (!cur) throw new AdminCatalogError(404, "item_not_found", "Item not found");
+  if (cur.item_type === args.itemType) return; // no-op
+
+  const { error, count } = await sb
+    .from("items")
+    .update(
+      { item_type: args.itemType, updated_by: actor.user.id, updated_at: new Date().toISOString() },
+      { count: "exact" },
+    )
+    .eq("id", args.itemId);
+  if (error) throw new Error(`setItemType update failed: ${error.message}`);
+  if (count === 0) throw new AdminCatalogError(404, "item_not_found", "Item not found");
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "item.set_type",
+    resourceTable: "items",
+    resourceId: args.itemId,
+    metadata: { before: { item_type: cur.item_type }, after: { item_type: args.itemType } },
+    ipAddress: null,
+    userAgent: null,
+  });
+}
 
 export const CATALOG_READ_MIN = 6; // AGM+ view (mirrors ITEMS_READ_MIN)
 
@@ -56,6 +126,7 @@ interface ItemRow {
   active: boolean; seasonal: boolean; sold_directly: boolean;
   catering_available: boolean; catering_only: boolean;
   serves: number | string | null; menu_price: number | string | null;
+  item_type: ItemType;
 }
 interface MenuItemRow {
   id: string; name: string; name_es: string | null; section: string | null;
@@ -88,7 +159,10 @@ export async function loadCatalogView(actor: AuthContext): Promise<CatalogEntity
     { data: recipeRows, error: rErr },
     graph,
   ] = await Promise.all([
-    sb.from("items").select("id, name, name_es, section, active, seasonal, sold_directly, catering_available, catering_only, serves, menu_price")
+    // item_type rides the STAGED 0157 migration — the same gate as seasonal
+    // (0156, also staged): this loader reads staged columns; both merge with
+    // their migrations in this PR.
+    sb.from("items").select("id, name, name_es, section, active, seasonal, sold_directly, catering_available, catering_only, serves, menu_price, item_type")
       .is("location_id", null).returns<ItemRow[]>(),
     sb.from("menu_items").select("id, name, name_es, section, active, seasonal, catering_available, catering_only, catering_portionable, serves, menu_price")
       .returns<MenuItemRow[]>(),
@@ -288,6 +362,8 @@ export async function loadCatalogView(actor: AuthContext): Promise<CatalogEntity
         toastGuids, sizesCount,
       },
       issues,
+      itemType: it.item_type,
+      taxonType: deriveCatalogType({ kind: "item", itemType: it.item_type }),
     });
   }
 
@@ -318,6 +394,9 @@ export async function loadCatalogView(actor: AuthContext): Promise<CatalogEntity
         toastGuids, sizesCount: 0,
       },
       issues,
+      itemType: null,
+      // made-vs-retail: an active consumer build → made; else retail (0157 §1).
+      taxonType: deriveCatalogType({ kind: "menu_item", hasBuild: hasRecipe }),
     });
   }
 
@@ -342,6 +421,8 @@ export async function loadCatalogView(actor: AuthContext): Promise<CatalogEntity
         toastGuids, sizesCount: 0,
       },
       issues,
+      itemType: null,
+      taxonType: deriveCatalogType({ kind: "package" }),
     });
   }
 
