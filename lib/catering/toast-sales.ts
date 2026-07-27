@@ -30,7 +30,7 @@ import { loadRecipeGraph } from "@/lib/prep-consumption";
 import {
   perUnitSkuOzForItemFromGraph, perUnitDirectSkuOzForMenuItem, firstLevelItemConsumption,
 } from "@/lib/prep-consumption-graph";
-import { modifierParUnits, removalAmount } from "@/lib/toast/modifiers-shared";
+import { modifierParUnits, removalAmount, skuPortionOz } from "@/lib/toast/modifiers-shared";
 import {
   selectAssortmentPool, evenMixPerOption, MENU_ITEM_MODIFIER_PORTION_WHOLE_SUBS,
   type AssortmentKind,
@@ -238,7 +238,7 @@ export async function deactivateExclusion(actor: AuthContext, id: string): Promi
 export interface SalesConsumption {
   soldLines: Array<{ name: string; quantity: number; kind: "menu_item" | "item" | "package" }>;
   prepConsumed: Array<{ itemId: string; name: string; units: number; removedUnits: number }>;
-  skuConsumed: Array<{ skuId: string; name: string; oz: number }>;
+  skuConsumed: Array<{ skuId: string; name: string; oz: number; removedOz: number }>;
   unmappedToastItems: Array<{ name: string; quantity: number; toastItemGuid: string; isModifier: boolean }>;
   excludedCount: number;
   suspectedCatering: Array<{ checkGuid: string; diningOption: string | null; totalQty: number; reason: "name" | "quantity" }>;
@@ -280,9 +280,9 @@ export async function salesConsumption(actor: AuthContext, locationId: string, b
   // markers (modifier guid → pool behavior), and portioned modifiers
   // (item- or menu_item-target).
   const { data: mapRows, error: mErr } = await sb.from("toast_menu_map")
-    .select("menu_item_id, item_id, package_id, toast_item_guid, is_modifier, disposition, portion_qty, portion_unit")
+    .select("menu_item_id, item_id, package_id, sku_id, toast_item_guid, is_modifier, disposition, portion_qty, portion_unit")
     .eq("location_id", locationId).eq("active", true).eq("match_status", "confirmed")
-    .returns<Array<{ menu_item_id: string | null; item_id: string | null; package_id: string | null; toast_item_guid: string; is_modifier: boolean; disposition: "deplete" | "remove" | "ignore" | "assortment_full" | "assortment_classics"; portion_qty: number | string | null; portion_unit: string | null }>>();
+    .returns<Array<{ menu_item_id: string | null; item_id: string | null; package_id: string | null; sku_id: string | null; toast_item_guid: string; is_modifier: boolean; disposition: "deplete" | "remove" | "ignore" | "assortment_full" | "assortment_classics"; portion_qty: number | string | null; portion_unit: string | null }>>();
   if (mErr) throw new Error(`toast-sales crosswalk: ${mErr.message}`);
   const entityByGuid = new Map(
     (mapRows ?? []).filter((m) => !m.is_modifier && (m.menu_item_id ?? m.item_id ?? m.package_id) != null)
@@ -298,10 +298,10 @@ export async function salesConsumption(actor: AuthContext, locationId: string, b
   );
   const modifierByGuid = new Map(
     (mapRows ?? [])
-      .filter((m) => m.is_modifier && (m.item_id != null || m.menu_item_id != null))
+      .filter((m) => m.is_modifier && (m.item_id != null || m.menu_item_id != null || m.sku_id != null))
       .map((m) => [m.toast_item_guid, {
-        targetKind: m.item_id != null ? ("item" as const) : ("menu_item" as const),
-        targetId: (m.item_id ?? m.menu_item_id)!,
+        targetKind: m.item_id != null ? ("item" as const) : m.menu_item_id != null ? ("menu_item" as const) : ("sku" as const),
+        targetId: (m.item_id ?? m.menu_item_id ?? m.sku_id)!,
         disposition: m.disposition,
         portionQty: m.portion_qty != null ? Number(m.portion_qty) : null,
         portionUnit: m.portion_unit,
@@ -343,6 +343,11 @@ export async function salesConsumption(actor: AuthContext, locationId: string, b
   const itemUnits = new Map<string, number>();       // signed par-units per item
   const removedByItem = new Map<string, number>();   // visible removal truth
   const sku = new Map<string, number>();             // menu_item lane SKUs (direct)
+  // SKU-target modifiers (Part 2): a raw SKU with no prep item (Sub Roll for a
+  // salad "No bread"; Arugula/Pepperoncini/Dijon). Applications are collected
+  // here (portion + sign) and converted to oz AFTER the SKU avg_oz_per_each
+  // batch-load in the names phase — no per-row queries in the loop.
+  const skuModApplications: Array<{ skuId: string; portion: { qty: number; unit: string | null }; sign: 1 | -1; qty: number; itemName: string }> = [];
   const packageIssues = new Map<string, { name: string; issue: "empty_pool" | "freeform_line" }>();
   for (const e of qtyByEntity.values()) {
     if (e.kind === "menu_item") menuItemUnits.set(e.id, (menuItemUnits.get(e.id) ?? 0) + e.quantity);
@@ -453,6 +458,20 @@ export async function salesConsumption(actor: AuthContext, locationId: string, b
       }
       continue;
     }
+    if (mod.targetKind === "sku") {
+      // Raw-SKU target (Part 2): a Sub Roll removed for salad conversion, or a
+      // raw condiment added. Portion→oz needs the SKU's avg_oz_per_each, batch-
+      // loaded in the names phase — collect the application now, convert after.
+      if (mod.portionQty == null) { modifierStats.portionNeeded.set(r.item_name, (modifierStats.portionNeeded.get(r.item_name) ?? 0) + qty); continue; }
+      skuModApplications.push({
+        skuId: mod.targetId,
+        portion: { qty: mod.portionQty, unit: mod.portionUnit },
+        sign: mod.disposition === "deplete" ? 1 : -1,
+        qty,
+        itemName: r.item_name,
+      });
+      continue;
+    }
     const portion = mod.portionQty != null ? { qty: mod.portionQty, unit: mod.portionUnit } : null;
     const portionUnits = portion != null ? modifierParUnits(graph, mod.targetId, portion) : null;
     if (mod.disposition === "deplete") {
@@ -497,11 +516,14 @@ export async function salesConsumption(actor: AuthContext, locationId: string, b
   const menuItemIds = [...qtyByEntity.values()].filter((e) => e.kind === "menu_item").map((e) => e.id);
   const itemIds = [...new Set([...prep.keys(), ...[...qtyByEntity.values()].filter((e) => e.kind === "item").map((e) => e.id)])];
   const soldPackageIds = [...qtyByEntity.values()].filter((e) => e.kind === "package").map((e) => e.id);
-  const skuIds = [...sku.keys()];
+  // SKU names+weights cover the flattened SKUs AND the SKU-modifier targets
+  // (whose ids may not appear in the flatten yet — a pure "No bread" removal on
+  // a check with no other SKU demand). avg_oz_per_each rides here (each→oz).
+  const skuIds = [...new Set([...sku.keys(), ...skuModApplications.map((a) => a.skuId)])];
   const [menuNames, itemNames, skuNames, packageNames] = await Promise.all([
     menuItemIds.length ? sb.from("menu_items").select("id, name").in("id", menuItemIds).returns<Array<{ id: string; name: string }>>() : Promise.resolve({ data: [], error: null }),
     itemIds.length ? sb.from("items").select("id, name").in("id", itemIds).returns<Array<{ id: string; name: string }>>() : Promise.resolve({ data: [], error: null }),
-    skuIds.length ? sb.from("vendor_items").select("id, name").in("id", skuIds).returns<Array<{ id: string; name: string }>>() : Promise.resolve({ data: [], error: null }),
+    skuIds.length ? sb.from("vendor_items").select("id, name, avg_oz_per_each").in("id", skuIds).returns<Array<{ id: string; name: string; avg_oz_per_each: number | string | null }>>() : Promise.resolve({ data: [], error: null }),
     soldPackageIds.length ? sb.from("catering_packages").select("id, label_en").in("id", soldPackageIds).returns<Array<{ id: string; label_en: string }>>() : Promise.resolve({ data: [], error: null }),
   ]);
   if (menuNames.error) throw new Error(`toast-sales names menu_items: ${menuNames.error.message}`);
@@ -512,6 +534,26 @@ export async function salesConsumption(actor: AuthContext, locationId: string, b
   const iName = new Map((itemNames.data ?? []).map((r) => [r.id, r.name]));
   const sName = new Map((skuNames.data ?? []).map((r) => [r.id, r.name]));
   const pName = new Map((packageNames.data ?? []).map((r) => [r.id, r.label_en]));
+  const skuAvgOzPerEach = new Map((skuNames.data ?? []).map((r) => [r.id, r.avg_oz_per_each != null ? Number(r.avg_oz_per_each) : null]));
+
+  // ── SKU-modifier lane (Part 2): convert each collected application to oz via
+  //    skuPortionOz (oz→oz, each→qty×avg_oz_per_each), apply the sign into the
+  //    SKU oz map, track removed oz for display, then clamp each SKU total ≥0
+  //    (a day can't consume negative bread). Unresolvable portion (no per-each
+  //    weight) → the portionNeeded advisory, never a silent skip. ────────────
+  const removedBySku = new Map<string, number>();
+  for (const a of skuModApplications) {
+    const oz = skuPortionOz(a.portion, skuAvgOzPerEach.get(a.skuId) ?? null);
+    if (oz == null) {
+      modifierStats.portionNeeded.set(a.itemName, (modifierStats.portionNeeded.get(a.itemName) ?? 0) + a.qty);
+      continue;
+    }
+    const delta = a.sign * oz * a.qty;
+    sku.set(a.skuId, (sku.get(a.skuId) ?? 0) + delta);
+    if (a.sign < 0) removedBySku.set(a.skuId, (removedBySku.get(a.skuId) ?? 0) + oz * a.qty);
+    if (a.sign > 0) modifierStats.depleted += a.qty; else modifierStats.removed += a.qty;
+  }
+  for (const [skuId, oz] of sku) sku.set(skuId, Math.max(oz, 0)); // clamp ≥0 (removals never go negative)
 
   // Suspected-catering advisory over NON-excluded checks.
   const byCheck = new Map<string, { qty: number; dining: string | null; nameHit: boolean }>();
@@ -539,7 +581,10 @@ export async function salesConsumption(actor: AuthContext, locationId: string, b
       .filter(([itemId, units]) => units > 0 || (removedByItem.get(itemId) ?? 0) > 0)
       .map(([itemId, units]) => ({ itemId, name: iName.get(itemId) ?? "(item)", units, removedUnits: removedByItem.get(itemId) ?? 0 }))
       .sort((a, b) => b.units - a.units),
-    skuConsumed: [...sku.entries()].map(([skuId, oz]) => ({ skuId, name: sName.get(skuId) ?? "(sku)", oz })).sort((a, b) => b.oz - a.oz),
+    skuConsumed: [...new Set([...sku.keys(), ...removedBySku.keys()])]
+      .map((skuId) => ({ skuId, name: sName.get(skuId) ?? "(sku)", oz: sku.get(skuId) ?? 0, removedOz: removedBySku.get(skuId) ?? 0 }))
+      .filter((r) => r.oz > 0 || r.removedOz > 0)
+      .sort((a, b) => b.oz - a.oz),
     unmappedToastItems: [...unmapped.entries()]
       .map(([toastItemGuid, u]) => ({ name: u.name, quantity: u.quantity, toastItemGuid, isModifier: u.isModifier }))
       .sort((a, b) => b.quantity - a.quantity),

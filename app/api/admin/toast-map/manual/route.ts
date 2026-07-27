@@ -22,13 +22,15 @@ export async function POST(req: NextRequest) {
   if (typeof b.locationId !== "string" || !UUID_RE.test(b.locationId)) return jsonError(400, "invalid_payload", { field: "locationId" });
   if (typeof b.toastItemGuid !== "string" || b.toastItemGuid.length === 0) return jsonError(400, "invalid_payload", { field: "toastItemGuid" });
   if (typeof b.toastItemName !== "string" || b.toastItemName.length === 0) return jsonError(400, "invalid_payload", { field: "toastItemName" });
-  const KINDS = new Set(["menu_item", "item", "package", "assortment_full", "assortment_classics"]);
+  const KINDS = new Set(["menu_item", "item", "package", "sku", "assortment_full", "assortment_classics"]);
   if (typeof b.entityKind !== "string" || !KINDS.has(b.entityKind)) return jsonError(400, "invalid_payload", { field: "entityKind" });
-  const kind = b.entityKind as "menu_item" | "item" | "package" | "assortment_full" | "assortment_classics";
+  const kind = b.entityKind as "menu_item" | "item" | "package" | "sku" | "assortment_full" | "assortment_classics";
   const isAssortment = kind === "assortment_full" || kind === "assortment_classics";
   // Assortment behaviors carry no target entity; everything else requires one.
   if (!isAssortment && (typeof b.entityId !== "string" || !UUID_RE.test(b.entityId))) return jsonError(400, "invalid_payload", { field: "entityId" });
   if (typeof b.isModifier !== "boolean") return jsonError(400, "invalid_payload", { field: "isModifier" });
+  // A raw SKU is never a sold base line — SKU targets must be modifiers.
+  if (kind === "sku" && b.isModifier !== true) return jsonError(400, "invalid_payload", { field: "isModifier" });
 
   try {
     const { id } = await manualMap(ctx, {

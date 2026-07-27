@@ -2343,6 +2343,7 @@
   "admin.toastsales.modifier_tag": "modificador",
   "admin.toastsales.menu_tag": "menú",
   "admin.toastsales.package_tag": "paquete",
+  "admin.toastsales.raw_tag": "crudo",
   "admin.toastsales.assortment_full": "Surtido — Our Favorites (pool completo)",
   "admin.toastsales.assortment_classics": "Surtido — The Classics",
   "admin.toastsales.package_issues_heading": "Huecos de cableado de paquetes",
