@@ -1,7 +1,10 @@
 /**
- * /admin/items (Items Central Page, 2026-07-07) — the central item registry.
- * Pipeline position: SKUs (source of truth) → recipes → ITEMS → checklists.
- * Server component: gate ≥6 (mirrors admin/skus); admin shell owns auth+chrome.
+ * /admin/items — THE Items Master Catalog (2026-07-26). Two top-level views via
+ * a client switcher: Catalog (default, NEW — every items-universe entity + its
+ * routing dossier) and the classic Prep registry (existing ItemsClient, zero
+ * regression). Server component: gate ≥6 (mirrors admin/skus); admin shell owns
+ * auth+chrome. Both the registry view and the catalog load server-side; the
+ * catalog batch-loads once (loadRecipeGraph law).
  */
 
 import { redirect } from "next/navigation";
@@ -10,10 +13,13 @@ import { requireSessionFromHeaders } from "@/lib/session";
 import { getRoleLevel } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { loadItemsAdminView, ITEMS_READ_MIN } from "@/lib/admin/items";
+import { loadCatalogView } from "@/lib/admin/catalog";
 import { loadGraphReadiness } from "@/lib/admin/readiness-load";
 import type { Readiness } from "@/lib/readiness";
 import { AdminBackLink } from "@/components/admin/AdminBackLink";
 import { ItemsClient } from "@/components/admin/items/ItemsClient";
+import { CatalogClient } from "@/components/admin/catalog/CatalogClient";
+import { ItemsPageTabs } from "@/components/admin/catalog/ItemsPageTabs";
 
 export default async function AdminItemsPage() {
   const auth = await requireSessionFromHeaders("/admin/items");
@@ -21,7 +27,10 @@ export default async function AdminItemsPage() {
   if (level < ITEMS_READ_MIN) redirect("/dashboard");
   const lang = auth.user.language;
 
-  const view = await loadItemsAdminView(auth);
+  const [view, entities] = await Promise.all([
+    loadItemsAdminView(auth),
+    loadCatalogView(auth),
+  ]);
 
   let itemReadiness: Record<string, Readiness> = {};
   try {
@@ -37,12 +46,15 @@ export default async function AdminItemsPage() {
     <div>
       <AdminBackLink />
       <h1 className="text-xl font-extrabold leading-tight text-co-text">
-        {serverT(lang, "admin.items.title")}
+        {serverT(lang, "admin.catalog.title")}
       </h1>
       <p className="mt-1 text-sm text-co-text-muted">
-        {serverT(lang, "admin.items.subtitle")}
+        {serverT(lang, "admin.catalog.subtitle")}
       </p>
-      <ItemsClient view={view} itemReadiness={itemReadiness} />
+      <ItemsPageTabs
+        catalog={<CatalogClient entities={entities} actorLevel={level} />}
+        registry={<ItemsClient view={view} itemReadiness={itemReadiness} />}
+      />
     </div>
   );
 }

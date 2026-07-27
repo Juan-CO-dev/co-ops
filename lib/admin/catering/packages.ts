@@ -89,6 +89,8 @@ export interface PackageView {
   leadTimeHours: number | null;
   /** People covered per unit (0154) — platters: pieces; per_head: 1. */
   serves: number | null;
+  /** Seasonal LABEL/LENS (0156) — not a hider; availability stays flag-governed. */
+  seasonal: boolean;
   active: boolean;
   displayOrder: number;
   lineItems: PackageLineItemView[];
@@ -219,6 +221,7 @@ interface DbPackageRow {
   min_headcount: number | null;
   lead_time_hours: number | null;
   serves: number | string | null; // numeric arrives as string from PostgREST
+  seasonal: boolean;
   active: boolean | null;
   display_order: number;
 }
@@ -235,7 +238,7 @@ interface DbLineItemRow {
 }
 
 const PACKAGE_COLS =
-  "id, location_id, slug, label_en, label_es, description_en, description_es, pricing_mode, price_cents, min_headcount, lead_time_hours, serves, active, display_order";
+  "id, location_id, slug, label_en, label_es, description_en, description_es, pricing_mode, price_cents, min_headcount, lead_time_hours, serves, seasonal, active, display_order";
 
 function toQty(v: number | string): number {
   const n = typeof v === "string" ? Number(v) : v;
@@ -338,6 +341,7 @@ async function hydratePackages(rows: DbPackageRow[]): Promise<PackageView[]> {
     minHeadcount: r.min_headcount,
     leadTimeHours: r.lead_time_hours,
     serves: r.serves != null ? toQty(r.serves) : null,
+    seasonal: r.seasonal,
     active: r.active ?? true,
     displayOrder: r.display_order,
     lineItems: itemsByPackage.get(r.id) ?? [],
@@ -545,6 +549,7 @@ export interface UpdatePackageChanges {
   minHeadcount?: number | null;
   leadTimeHours?: number | null;
   serves?: number | null;
+  seasonal?: boolean;
 }
 
 export async function updatePackage(
@@ -569,6 +574,7 @@ export async function updatePackage(
   if (changes.minHeadcount !== undefined) update.min_headcount = normalizeMinHeadcount(changes.minHeadcount);
   if (changes.leadTimeHours !== undefined) update.lead_time_hours = normalizeLeadTimeHours(changes.leadTimeHours);
   if (changes.serves !== undefined) update.serves = normalizeServes(changes.serves);
+  if (changes.seasonal !== undefined) update.seasonal = changes.seasonal;
 
   if (Object.keys(update).length === 0) return;
   update.updated_by = actor.user.id;

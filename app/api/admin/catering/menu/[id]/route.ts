@@ -20,7 +20,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const b = parsed as Record<string, unknown>;
   const kind = b.kind === "menu_item" ? "menu_item" : b.kind === "item" ? "item" : null;
   if (!kind) return jsonError(400, "invalid_payload", { field: "kind" });
-  const changes: { cateringAvailable?: boolean; cateringOnly?: boolean; cateringPortionable?: boolean; serves?: number | null } = {};
+  const changes: { cateringAvailable?: boolean; cateringOnly?: boolean; cateringPortionable?: boolean; serves?: number | null; seasonal?: boolean } = {};
   if ("cateringAvailable" in b) {
     if (typeof b.cateringAvailable !== "boolean") return jsonError(400, "invalid_payload", { field: "cateringAvailable" });
     changes.cateringAvailable = b.cateringAvailable;
@@ -38,6 +38,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return jsonError(400, "invalid_payload", { field: "serves" });
     }
     changes.serves = b.serves as number | null;
+  }
+  if ("seasonal" in b) {
+    if (typeof b.seasonal !== "boolean") return jsonError(400, "invalid_payload", { field: "seasonal" });
+    changes.seasonal = b.seasonal;
   }
   if (Object.keys(changes).length === 0) return jsonError(400, "invalid_payload", { message: "No flags to set" });
 

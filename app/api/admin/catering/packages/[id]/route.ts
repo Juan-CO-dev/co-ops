@@ -35,6 +35,7 @@ const FIELD_KEYS = [
   "minHeadcount",
   "leadTimeHours",
   "serves",
+  "seasonal",
 ] as const;
 
 /** Parse a {kind, id} spine ref from the body, or null if absent/malformed. */
@@ -183,6 +184,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if ("serves" in b) {
       if (b.serves !== null && typeof b.serves !== "number") return jsonError(400, "invalid_payload", { field: "serves" });
       changes.serves = b.serves as number | null;
+    }
+    if ("seasonal" in b) {
+      if (typeof b.seasonal !== "boolean") return jsonError(400, "invalid_payload", { field: "seasonal" });
+      changes.seasonal = b.seasonal;
     }
 
     await updatePackage(ctx, { id, changes });
