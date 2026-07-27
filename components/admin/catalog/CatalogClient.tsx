@@ -66,7 +66,9 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
   const groups = useMemo(() => {
     const map = new Map<string, CatalogEntity[]>();
     for (const e of filtered) {
-      const key = e.section ?? t("admin.catalog.section.none");
+      const key = e.section === "__global__"
+        ? t("admin.catalog.section.global")
+        : e.section ?? t("admin.catalog.section.none");
       const arr = map.get(key) ?? [];
       arr.push(e);
       map.set(key, arr);

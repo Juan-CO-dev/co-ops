@@ -324,7 +324,8 @@ export async function loadCatalogView(actor: AuthContext): Promise<CatalogEntity
   // Packages
   for (const p of packages) {
     const toastGuids = toastByPackage.get(p.id) ?? 0;
-    const sectionLabel = p.location_id ? (locationNameById.get(p.location_id) ?? null) : "Global";
+    // "__global__" is a sentinel the client translates (admin.catalog.section.global) — no display literal in logic (T0).
+    const sectionLabel = p.location_id ? (locationNameById.get(p.location_id) ?? null) : "__global__";
     const issues = classifyCatalogIssues({
       kind: "package", active: p.active, soldDirectly: false,
       sizesCount: 0, usedInMenuItems: 0, usedInPackages: 0,
