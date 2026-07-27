@@ -3,7 +3,8 @@ import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
-import { updateSku, deactivateSku, AdminSkuError, type UpdateSkuChanges } from "@/lib/admin/skus";
+import { updateSku, deactivateSku, AdminSkuError, isSkuClass, type UpdateSkuChanges } from "@/lib/admin/skus";
+import type { SkuClass } from "@/lib/admin/catalog-shared";
 
 // PATCH — body discriminates (one concern per call, like the vendors route):
 //   {active}-only        → deactivateSku  (GM+ ≥7, Tier A)
@@ -23,6 +24,7 @@ const UPDATE_KEYS = [
   "sourceUrl",
   "leadTimeDays",
   "notes",
+  "skuClass",
 ] as const;
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -104,6 +106,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if ("notes" in b) {
       if (b.notes !== null && typeof b.notes !== "string") return jsonError(400, "invalid_payload", { field: "notes" });
       changes.notes = b.notes as string | null;
+    }
+    if ("skuClass" in b) {
+      if (!isSkuClass(b.skuClass)) return jsonError(400, "invalid_payload", { field: "skuClass" });
+      changes.skuClass = b.skuClass as SkuClass;
     }
 
     await updateSku(ctx, { id, changes });

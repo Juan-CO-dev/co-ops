@@ -3,7 +3,8 @@ import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { assertStepUp } from "@/lib/admin/step-up";
 import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
-import { loadSkus, createSku, AdminSkuError, type CreateSkuInput } from "@/lib/admin/skus";
+import { loadSkus, createSku, AdminSkuError, isSkuClass, type CreateSkuInput } from "@/lib/admin/skus";
+import type { SkuClass } from "@/lib/admin/catalog-shared";
 
 // GET — list SKUs (≥6). Optional ?vendorId=<uuid> filters to a vendor;
 //   ?vendorId=none → manual / vendor-less SKUs only; absent → all.
@@ -54,6 +55,9 @@ export async function POST(req: NextRequest) {
       return jsonError(400, "invalid_payload", { field: k });
     }
   }
+  if (b.skuClass !== undefined && b.skuClass !== null && !isSkuClass(b.skuClass)) {
+    return jsonError(400, "invalid_payload", { field: "skuClass" });
+  }
 
   const input: CreateSkuInput = {
     vendorId: typeof b.vendorId === "string" ? b.vendorId : null,
@@ -68,6 +72,7 @@ export async function POST(req: NextRequest) {
     sourceUrl: typeof b.sourceUrl === "string" ? b.sourceUrl : null,
     leadTimeDays: typeof b.leadTimeDays === "number" ? b.leadTimeDays : null,
     notes: typeof b.notes === "string" ? b.notes : null,
+    skuClass: isSkuClass(b.skuClass) ? (b.skuClass as SkuClass) : null,
   };
 
   try {

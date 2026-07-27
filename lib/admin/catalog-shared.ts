@@ -14,6 +14,70 @@ export type CatalogKind = "item" | "menu_item" | "package";
 /** The four dossier "issues" the Issues lens surfaces (spec §Issues lens). */
 export type CatalogIssue = "no_recipe" | "no_sku_path" | "not_sold" | "toast_unmapped";
 
+// ── Taxonomy (The Master List, migration 0157) ───────────────────────────────
+
+/** items.item_type — one label per registry item (Juan's floor vocabulary). */
+export type ItemType = "prepped" | "on_hand" | "sold_as_is";
+
+/** The three legal item_type values (mirrors migration 0157's CHECK). */
+export const ITEM_TYPES: readonly ItemType[] = ["prepped", "on_hand", "sold_as_is"] as const;
+export function isItemType(v: unknown): v is ItemType {
+  return typeof v === "string" && (ITEM_TYPES as readonly string[]).includes(v);
+}
+
+/** vendor_items.sku_class — one label per SKU (0157). */
+export type SkuClass = "raw" | "packaging" | "cleaning" | "misc";
+
+/** The four legal sku_class values (mirrors migration 0157's CHECK). */
+export const SKU_CLASSES: readonly SkuClass[] = ["raw", "packaging", "cleaning", "misc"] as const;
+export function isSkuClass(v: unknown): v is SkuClass {
+  return typeof v === "string" && (SKU_CLASSES as readonly string[]).includes(v);
+}
+
+/**
+ * The nine taxonomy words a catalog entity can render as its type label. Derived
+ * (NOT stored on menu_items): a menu_item with an active consumer build is
+ * `made`; without one it's `retail` (anything we didn't make ourselves).
+ * Packages keep the generic `package` word (they're compositions, not a taxon).
+ */
+export type CatalogType =
+  | "prepped"
+  | "on_hand"
+  | "sold_as_is"
+  | "raw"
+  | "packaging"
+  | "cleaning"
+  | "misc"
+  | "made"
+  | "retail"
+  | "package";
+
+/**
+ * Derive the taxonomy label for a catalog entity (pure — spec §1 Taxonomy):
+ *  - item      → its stored item_type (prepped | on_hand | sold_as_is).
+ *  - menu_item → made (has an active consumer build) else retail.
+ *  - package   → the generic "package" word.
+ *
+ * `itemType` is required for kind "item" (stored on the row); `hasBuild`
+ * governs the menu_item made-vs-retail split. Defaults keep a malformed input
+ * from throwing — an item with no stored type reads "prepped" (the column
+ * default), matching the DB.
+ */
+export function deriveCatalogType(input: {
+  kind: CatalogKind;
+  itemType?: ItemType | null;
+  hasBuild?: boolean;
+}): CatalogType {
+  switch (input.kind) {
+    case "item":
+      return input.itemType ?? "prepped";
+    case "menu_item":
+      return input.hasBuild ? "made" : "retail";
+    case "package":
+      return "package";
+  }
+}
+
 /** The minimal per-entity facts the pure classifier reasons over. */
 export interface CatalogIssueInput {
   kind: CatalogKind;
@@ -128,4 +192,8 @@ export interface CatalogEntity {
   priceCents: number | null;
   edges: CatalogEdges;
   issues: CatalogIssue[];
+  /** items only: the stored item_type (0157); null for menu_items/packages. */
+  itemType: ItemType | null;
+  /** The derived taxonomy label (the nine words) — see deriveCatalogType. */
+  taxonType: CatalogType;
 }

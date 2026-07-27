@@ -17,6 +17,8 @@ import { useState } from "react";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { RegistryOption, MeasureUnitOption, SkuView } from "@/lib/admin/skus";
+import { SKU_CLASSES } from "@/lib/admin/catalog-shared";
+import type { SkuClass } from "@/lib/admin/catalog-shared";
 import { skuContentOz, type MeasureUnitFactor } from "@/lib/recipe-math";
 import { RegistrySelect } from "./RegistrySelect";
 import { MeasureUnitSelect } from "./MeasureUnitSelect";
@@ -45,6 +47,7 @@ export interface SkuFormValues {
   sourceUrl: string | null;
   leadTimeDays: number | null;
   notes: string | null;
+  skuClass: SkuClass;
 }
 
 const fieldCls =
@@ -120,6 +123,7 @@ export function SkuForm({
     initial?.leadTimeDays != null ? String(initial.leadTimeDays) : "",
   );
   const [notes, setNotes] = useState(initial?.notes ?? "");
+  const [skuClass, setSkuClass] = useState<SkuClass>(initial?.skuClass ?? "raw");
 
   const showVendorDropdown = vendors !== undefined;
   const canSubmit = name.trim() !== "" && packFormat.trim() !== "" && !busy;
@@ -161,6 +165,7 @@ export function SkuForm({
       sourceUrl: sourceUrl.trim() || null,
       leadTimeDays: parseNum(leadTime),
       notes: notes.trim() || null,
+      skuClass,
     });
   };
 
@@ -186,6 +191,19 @@ export function SkuForm({
 
       <Labeled label={t("admin.skus.field.name")}>
         <input className={fieldCls} value={name} disabled={busy} onChange={(e) => setName(e.target.value)} />
+      </Labeled>
+
+      <Labeled label={t("admin.skus.field.sku_class")}>
+        <select
+          className={fieldCls}
+          value={skuClass}
+          disabled={busy}
+          onChange={(e) => setSkuClass(e.target.value as SkuClass)}
+        >
+          {SKU_CLASSES.map((c) => (
+            <option key={c} value={c}>{t(`admin.skus.sku_class.${c}` as TranslationKey)}</option>
+          ))}
+        </select>
       </Labeled>
 
       <RegistrySelect
