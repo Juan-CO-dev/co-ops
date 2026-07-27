@@ -23,6 +23,23 @@
  * is 0/322 filled). The script SCANS + PRINTS what would need lockstep rewrite
  * (finding none today) and performs the rewrite idempotently only if any surface.
  *
+ * ── L1 COLLISION SAFETY (review-finding fix, 2026-07-27) ────────────────────
+ * A chain label must NEVER equal an ACTIVE measure_units label, because
+ * ozForRecipeInput is chain-FIRST (recipe-math): for a chained SKU, if the
+ * recipe line's unit matches a chain label the walk returns immediately —
+ * BEFORE the measure registry is consulted. Seed 10 registered "each" AND
+ * "unit" as active count-dim measure_units. Generating a chain level labeled
+ * "each" (the middle/leaf-container tier) or "unit" (the depth-1/each-style
+ * container) would therefore SHADOW those measure units: a live recipe line
+ * whose unit means the MEASURE "each" would resolve as one CONTAINER instead of
+ * one each-of-avg-oz (e.g. Sub Roll's 6-roll pack) — a silent 6×/40× error.
+ * So this seed (a) uses NON-COLLIDING container labels ("inner" for the middle/
+ * each-level, "container" for the depth-1/each-style root), verified against the
+ * live measure_units set at runtime, and (b) runs firstLabelMeasureCollision
+ * (the same L1 guard lib/admin/pack-chain.ts enforces) over EVERY generated
+ * chain and FAILS LOUDLY (exit 1) if any collision remains — the guard the
+ * write path always had but this seed originally bypassed.
+ *
  * Idempotent: re-running supersedes the active chain set for each backfilled SKU
  * (deactivate all active rows, insert the fresh set) — matches the lib's
  * supersede-as-a-SET. Safe to run repeatedly.
@@ -32,17 +49,28 @@
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
+import { firstLabelMeasureCollision } from "@/lib/pack-chain-shared";
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
 const DRY = process.env.SEED_DRY === "1";
 
-/** Canonical container label from a free-text pack_format (L6 casing drift). */
+// NON-COLLIDING container labels (L1 fix — see header). These stand in for the
+// middle/each-level and the depth-1/each-style root when the natural name would
+// collide with an active measure unit ("each"/"unit"). Verified against the live
+// measure_units set at runtime (assertLabelsFreeOfMeasures) and gated by
+// firstLabelMeasureCollision before any write.
+const EACH_LEVEL_LABEL = "inner"; // middle/each tier (was the colliding "each")
+const CONTAINER_LABEL = "container"; // depth-1 / each-style root (was the colliding "unit")
+
+/** Canonical container label from a free-text pack_format (L6 casing drift).
+ *  Never returns a measure-unit label: "Each (no case)" → the non-colliding
+ *  CONTAINER_LABEL (was "unit", which IS an active measure unit). */
 function canonicalContainerLabel(packFormat: string | null): string {
   if (!packFormat) return "pack";
   const p = packFormat.trim().toLowerCase();
   // "Each (no case)" and its variants → the container is a single unit.
-  if (p.startsWith("each")) return "unit";
+  if (p.startsWith("each")) return CONTAINER_LABEL;
   // Collapse casing drift: Case/case → case, Box → box, Bag/bag → bag, etc.
   return p;
 }
@@ -83,15 +111,18 @@ function buildLevels(sku: SkuRow, now: string): LevelRow[] | null {
   if (eachSize == null || eachSize <= 0 || !eachMeasure) return null; // not clean → caller flags
   const upp = sku.units_per_pack;
 
-  // The "each" level: one each contains `each_size` of the measure unit (leaf).
+  // The each/inner level: one inner contains `each_size` of the measure unit
+  // (leaf). Labeled EACH_LEVEL_LABEL ("inner") — NOT "each" (an active measure
+  // unit), so a recipe line meaning the MEASURE "each" never resolves as this
+  // container via the chain-first path (L1 fix).
   const eachId = randomUUID();
-  const eachLabel = "each";
+  const eachLabel = EACH_LEVEL_LABEL;
 
   if (upp != null && upp > 1) {
-    // Two-level: pack -> upp each ; each -> each_size measure.
+    // Two-level: pack -> upp inner ; inner -> each_size measure.
     const packId = randomUUID();
     const packLabel = canonicalContainerLabel(sku.pack_format);
-    // Avoid a pack label that equals the each label (defensive).
+    // Avoid a pack label that equals the each/inner label (defensive).
     const rootLabel = packLabel === eachLabel ? "pack" : packLabel;
     return [
       {
@@ -123,6 +154,26 @@ async function main() {
   if (DRY) console.log("── DRY RUN (SEED_DRY=1): report only, NO writes ──\n");
   const now = new Date().toISOString();
 
+  // L1 collision safety: load the ACTIVE measure_units labels once. Every
+  // generated chain label is checked against this set (the same rule
+  // lib/admin/pack-chain.ts enforces on the write path) — a chain label that
+  // equals a measure unit would be shadowed by the chain-first ozForRecipeInput.
+  const { data: measureRows, error: muErr } = await sb
+    .from("measure_units").select("label").eq("active", true)
+    .returns<Array<{ label: string }>>();
+  if (muErr) throw new Error(`load measure_units: ${muErr.message}`);
+  const measureLabels = new Set((measureRows ?? []).map((m) => m.label));
+
+  // Fail loudly up front if the chosen NON-COLLIDING container labels have
+  // themselves become active measure units (someone could register "inner"/
+  // "container" later). This turns a silent-shadow regression into a hard stop.
+  for (const lbl of [EACH_LEVEL_LABEL, CONTAINER_LABEL]) {
+    if (measureLabels.has(lbl)) {
+      console.error(`FATAL: the non-colliding container label "${lbl}" is now an ACTIVE measure_units label — pick a different container label (seed 13 L1 guard).`);
+      process.exit(1);
+    }
+  }
+
   const { data: skus, error } = await sb
     .from("vendor_items")
     .select("id, name, pack_format, units_per_pack, each_size, each_measure, avg_oz_per_each")
@@ -141,6 +192,15 @@ async function main() {
 
     const levels = buildLevels(sku, now);
     if (levels) {
+      // L1 GATE: no generated chain label may collide with an active measure
+      // unit (the guard the write path enforces; seed 13 originally skipped it).
+      // Fail LOUDLY — exit 1, printing the offending SKU + label — never write a
+      // shadowing chain.
+      const collision = firstLabelMeasureCollision(levels.map((l) => l.label), measureLabels);
+      if (collision != null) {
+        console.error(`FATAL: SKU "${sku.name}" would get chain label "${collision}", which IS an active measure_units label — it would shadow that measure unit in the chain-first ozForRecipeInput. Aborting (no writes past this point). Fix the label generator (seed 13 L1 guard).`);
+        process.exit(1);
+      }
       // CLEAN → backfill (supersede-as-a-SET, idempotent).
       if (!DRY) {
         const { error: deErr } = await sb.from("sku_pack_levels").update({ active: false }).eq("sku_id", sku.id).eq("active", true);

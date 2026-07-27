@@ -32,7 +32,10 @@ const MEASURES = new Map<string, MeasureUnitFactor>([
   ["oz", { dimension: "weight", toBaseFactor: 1 }],
   ["lb", { dimension: "weight", toBaseFactor: 16 }],
   ["quart", { dimension: "volume", toBaseFactor: 32 }],
+  // "each" AND "unit" are BOTH active count-dim measure units in prod (seed 10).
+  // A chain label must never collide with either (L1) — the seed-13 review find.
   ["each", { dimension: "count", toBaseFactor: 1 }],
+  ["unit", { dimension: "count", toBaseFactor: 1 }],
 ]);
 
 /** Helper: a two-level chain pack -> upp each ; each -> size measure. */
@@ -286,6 +289,100 @@ describe("ozForRecipeInput chain integration", () => {
     expect(ozForRecipeInput(1, "Case", legacy, MEASURES)).toBeCloseTo(24, 10); // 6 × 4 oz
     expect(ozForRecipeInput(1, "roll", legacy, MEASURES)).toBeCloseTo(4, 10); // 1 × 4 oz
     expect(ozForRecipeInput(2, "oz", legacy, MEASURES)).toBeCloseTo(2, 10);
+  });
+
+  it("MEASURE-unit sweep on a chained SKU: 'oz'/'each'/'unit' all resolve via the registry, NOT the chain", () => {
+    // The live recipe unit population is oz/each/unit (seed 10). On a chained SKU
+    // whose labels DON'T collide (case/log), every one of these must route through
+    // the measure registry (step 3), never a container walk. avg = 1 → count units
+    // resolve to 1 oz per each/unit.
+    expect(ozForRecipeInput(5, "oz", chainedSku, MEASURES)).toBeCloseTo(5, 10);
+    expect(ozForRecipeInput(5, "each", chainedSku, MEASURES)).toBeCloseTo(5, 10); // 5 × avg 1
+    expect(ozForRecipeInput(5, "unit", chainedSku, MEASURES)).toBeCloseTo(5, 10); // 5 × avg 1
+  });
+});
+
+// ── REGRESSION (review find 2026-07-27): seed 13 must not label a chain level
+//    with an active measure unit ("each"/"unit"). ozForRecipeInput is chain-FIRST,
+//    so a colliding label shadows the measure unit — a live recipe line meaning
+//    the MEASURE "each" would resolve as one CONTAINER (6×/40× wrong). This block
+//    pins BOTH the bug (a) and the fix (b/c). ─────────────────────────────────
+describe("seed-13 label-collision regression (chain-first shadowing)", () => {
+  // (a) THE BUG, pinned: the OLD seed labeled a container level "each" (an active
+  // measure unit). On a chained SKU, ozForRecipeInput(n, 'each', …) then walks
+  // the chain instead of the registry — the wrong (container) answer. This is
+  // exactly what the fix removes; we pin the divergence to prove the hazard is real.
+  // A colliding chain where the walk and the registry give DIFFERENT answers,
+  // so "which path was taken" is observable. Here the 'each'-labeled level is the
+  // ROOT of a 2-level chain (root "each" -> 6 × leaf ; leaf -> 1 measure "oz"):
+  // a recipe line `1 × 'each'` meaning the MEASURE 'each' (avg 4 → 4 oz) instead
+  // walks the chain → 6 × 1 = 6 oz. THAT is the silent 6× the finding describes.
+  const collidingRootChain: PackChainLevel[] = [
+    { id: "each", label: "each", containsQty: 6, containsLevelId: "leaf", containsMeasureUnit: null, displayOrdinal: 0 },
+    { id: "leaf", label: "leaf", containsQty: 1, containsLevelId: null, containsMeasureUnit: "oz", displayOrdinal: 1 },
+  ];
+  const collidingRootSku: RecipeInputSku = {
+    packFormat: "pack", eachContainerLabel: null,
+    unitsPerPack: null, eachSize: null, eachMeasure: null, avgOzPerEach: 4,
+    packChain: collidingRootChain,
+  };
+
+  it("(a) a chain level LABELED 'each' shadows the measure unit — chain-first returns the wrong number (the bug)", () => {
+    const registryValue = 4; // measure 'each': 1 × avg_oz_per_each (the correct value)
+    const shadowed = ozForRecipeInput(1, "each", collidingRootSku, MEASURES);
+    // The chain-first path intercepts 'each' and walks: 6 × (1 oz) = 6 — NOT 4.
+    expect(shadowed).toBeCloseTo(6, 10);
+    expect(shadowed).not.toBeCloseTo(registryValue, 5); // proves the measure value was NOT used
+    // The L1 guard the fix adds would reject this chain outright:
+    expect(firstLabelMeasureCollision(collidingRootChain.map((l) => l.label), new Set(MEASURES.keys()))).toBe("each");
+  });
+
+  // (b) THE FIX, legacy parity: the seed-13-shaped chain with the NEW non-colliding
+  // labels ("inner"/"container") lets ozForRecipeInput(n, 'each', …) fall through
+  // to the MEASURE registry → the legacy avg value, byte-for-byte.
+  const subRollFixed: PackChainLevel[] = [
+    // NEW seed 13: root "pack" -> 6 × "inner" ; "inner" -> 1 measure "each".
+    { id: "pack", label: "pack", containsQty: 6, containsLevelId: "inner", containsMeasureUnit: null, displayOrdinal: 0 },
+    { id: "inner", label: "inner", containsQty: 1, containsLevelId: null, containsMeasureUnit: "each", displayOrdinal: 1 },
+  ];
+  const subRollFixedSku: RecipeInputSku = {
+    packFormat: "pack", eachContainerLabel: null,
+    unitsPerPack: null, eachSize: null, eachMeasure: null, avgOzPerEach: 4,
+    packChain: subRollFixed,
+  };
+
+  it("(b) NEW labels: ozForRecipeInput with unit 'each' returns the MEASURE-registry value (legacy parity)", () => {
+    // 'each' is no longer a chain label → step 3 registry: n × avg 4.
+    expect(ozForRecipeInput(1, "each", subRollFixedSku, MEASURES)).toBeCloseTo(4, 10);
+    expect(ozForRecipeInput(6, "each", subRollFixedSku, MEASURES)).toBeCloseTo(24, 10); // 6 × avg 4
+    // And the container labels still walk correctly:
+    expect(ozForRecipeInput(1, "pack", subRollFixedSku, MEASURES)).toBeCloseTo(24, 10); // 6 inner × (1 × 4)
+    expect(ozForRecipeInput(1, "inner", subRollFixedSku, MEASURES)).toBeCloseTo(4, 10); // 1 × 4
+  });
+
+  it("(b') depth-1 each-style chain uses 'container' (not the measure 'unit') → 'unit' falls to the registry", () => {
+    // A 'pack_format = Each (no case)' SKU: OLD seed root label was "unit" (a measure
+    // unit!). NEW: "container". A recipe line meaning the MEASURE 'unit' must resolve
+    // via the registry, not this container.
+    const depth1: PackChainLevel[] = [
+      { id: "c", label: "container", containsQty: 1, containsLevelId: null, containsMeasureUnit: "each", displayOrdinal: 0 },
+    ];
+    const sku: RecipeInputSku = {
+      packFormat: "Each (no case)", eachContainerLabel: null,
+      unitsPerPack: null, eachSize: null, eachMeasure: null, avgOzPerEach: 5,
+      packChain: depth1,
+    };
+    expect(ozForRecipeInput(2, "unit", sku, MEASURES)).toBeCloseTo(10, 10); // 2 × avg 5 (registry)
+    expect(ozForRecipeInput(1, "container", sku, MEASURES)).toBeCloseTo(5, 10); // chain walk
+  });
+
+  it("(c) firstLabelMeasureCollision REJECTS an 'each'- or 'unit'-labeled chain level", () => {
+    const measureLabels = new Set(MEASURES.keys()); // includes 'each' AND 'unit'
+    expect(firstLabelMeasureCollision(["pack", "each"], measureLabels)).toBe("each");
+    expect(firstLabelMeasureCollision(["unit"], measureLabels)).toBe("unit");
+    // The NEW seed labels are clean:
+    expect(firstLabelMeasureCollision(["pack", "inner"], measureLabels)).toBeNull();
+    expect(firstLabelMeasureCollision(["container"], measureLabels)).toBeNull();
   });
 });
 
