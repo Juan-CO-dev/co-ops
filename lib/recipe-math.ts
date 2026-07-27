@@ -18,6 +18,8 @@
  * 1.5) — zero callers; the live per-item flatten is lib/prep-consumption-graph.ts.
  */
 
+import { buildPackChain, walkChainToOz, chainRootLabel, type PackChainLevel } from "@/lib/pack-chain-shared";
+
 export type MeasureDimension = "weight" | "volume" | "count";
 
 export interface MeasureUnitFactor {
@@ -35,17 +37,43 @@ function ozPerMeasureUnit(
   return avgOzPerEach != null && Number.isFinite(avgOzPerEach) ? avgOzPerEach : null;
 }
 
-/** Total usable ounces per pack. Null if any required input is missing. */
+/**
+ * Total usable ounces per pack. Null if any required input is missing.
+ *
+ * CHAIN-AWARE (pack hierarchy, 0159): when the SKU carries active pack-chain
+ * levels, content_oz = oz of ONE ROOT container, walked POINTER-directed
+ * (lib/pack-chain-shared). The chain is consulted FIRST; the legacy flat-field
+ * math (units_per_pack × each_size × oz-per-measure) is the fallback for SKUs
+ * without a chain (back-compat until backfill completes — nothing breaks
+ * pre-backfill). The two agree byte-for-byte on the 56 clean backfills (L7
+ * parity invariant, test-pinned).
+ */
 export function skuContentOz(
   sku: {
     unitsPerPack: number | null;
     eachSize: number | null;
     eachMeasure: string | null;
     avgOzPerEach: number | null;
+    /** Active pack-chain levels (0159). Omit/empty → legacy flat-field path. */
+    packChain?: PackChainLevel[] | null;
   },
   measuresByLabel: Map<string, MeasureUnitFactor>,
 ): number | null {
   const { unitsPerPack, eachSize, eachMeasure, avgOzPerEach } = sku;
+
+  // Chain path (preferred): content = oz of one root container.
+  if (sku.packChain && sku.packChain.length > 0) {
+    const chain = buildPackChain(sku.packChain);
+    const root = chainRootLabel(chain);
+    if (root != null) {
+      const walk = walkChainToOz(chain, root, measuresByLabel, avgOzPerEach);
+      if (walk.ok) return Number.isFinite(walk.oz) ? walk.oz : null;
+      return null; // malformed chain → null loudly (never fall through to guess)
+    }
+    return null;
+  }
+
+  // Legacy flat-field path (SKUs without a chain).
   if (unitsPerPack == null || eachSize == null || eachMeasure == null) return null;
   const m = measuresByLabel.get(eachMeasure);
   if (!m) return null;
@@ -77,14 +105,25 @@ export interface RecipeInputSku {
   eachSize: number | null;
   eachMeasure: string | null;
   avgOzPerEach: number | null;
+  /** Active pack-chain levels (0159). Omit/empty → legacy flat-field resolution. */
+  packChain?: PackChainLevel[] | null;
 }
 
 /**
- * oz consumed by `quantity` of a SKU expressed in `unit`, resolving SKU pack levels:
- *  - unit === sku.packFormat         → quantity × unitsPerPack × eachSize × ozPerMeasureUnit(eachMeasure)
- *  - unit === sku.eachContainerLabel → quantity × eachSize × ozPerMeasureUnit(eachMeasure)
- *  - else (a measure_units label like "oz") → ozFromMeasure(quantity, unit, measures, avgOzPerEach)
- * Returns null if a required field is missing.
+ * oz consumed by `quantity` of a SKU expressed in `unit`, resolving SKU pack levels.
+ *
+ * Resolution order (chain FIRST, then legacy, then measure registry — L2/back-compat):
+ *  1. CHAIN: unit matches an active chain label → quantity × walkChainToOz(unit)
+ *     (pointer-directed; the pack-hierarchy path — Capicola "case"/"log"/…).
+ *  2. LEGACY flat fields (SKUs without a chain, until backfill completes):
+ *       - unit === sku.packFormat         → quantity × unitsPerPack × eachSize × ozPerMeasureUnit(eachMeasure)
+ *       - unit === sku.eachContainerLabel → quantity × eachSize × ozPerMeasureUnit(eachMeasure)
+ *  3. MEASURE registry: a measure_units label like "oz"/"each" → ozFromMeasure(...).
+ * Returns null if a required field is missing (never guesses).
+ *
+ * A chain label always wins over the same-named measure label — but L1 forbids a
+ * chain label from equaling any measure_units label, so no collision arises in
+ * practice; step 3 handles genuine measure-unit inputs ("oz", "each", "gram").
  */
 export function ozForRecipeInput(
   quantity: number,
@@ -93,6 +132,21 @@ export function ozForRecipeInput(
   measuresByLabel: Map<string, MeasureUnitFactor>,
 ): number | null {
   if (!Number.isFinite(quantity) || unit == null) return null;
+
+  // 1. Chain path (preferred): the unit names a chain level → walk it.
+  if (sku.packChain && sku.packChain.length > 0) {
+    const chain = buildPackChain(sku.packChain);
+    if (chain.byLabel.has(unit)) {
+      const walk = walkChainToOz(chain, unit, measuresByLabel, sku.avgOzPerEach);
+      return walk.ok && Number.isFinite(quantity * walk.oz) ? quantity * walk.oz : null;
+    }
+    // unit isn't a chain label → fall through to the measure registry (step 3).
+    // (A chained SKU deliberately does NOT honor the legacy pack/container labels;
+    //  its chain is the source of truth for container units.)
+    return ozFromMeasure(quantity, unit, measuresByLabel, sku.avgOzPerEach);
+  }
+
+  // 2. Legacy flat-field path (SKUs without a chain).
   const perEachOz = (): number | null => {
     if (sku.eachSize == null || sku.eachMeasure == null) return null;
     const m = measuresByLabel.get(sku.eachMeasure);
@@ -109,6 +163,7 @@ export function ozForRecipeInput(
     const each = perEachOz();
     return each == null ? null : quantity * each;
   }
+  // 3. Measure registry.
   return ozFromMeasure(quantity, unit, measuresByLabel, sku.avgOzPerEach);
 }
 

@@ -6,6 +6,7 @@
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { skuContentOz, type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
+import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import {
   buildRecipeGraph,
   perUnitSkuOzForItemFromGraph,
@@ -35,11 +36,43 @@ async function loadSkuPack(skuIds: string[]): Promise<Map<string, RecipeInputSku
     .select("id, pack_format, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each")
     .in("id", skuIds)
     .returns<Array<{ id: string; pack_format: string | null; each_container_label: string | null; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>>();
+  // ONE batch query for the whole universe's active chain levels (loadRecipeGraph
+  // law — never per-SKU). Pack-hierarchy 0159; SKUs without a chain get [].
+  const chainsBySku = await loadSkuPackChains(skuIds);
   return new Map((data ?? []).map((s) => [s.id, {
     packFormat: s.pack_format, eachContainerLabel: s.each_container_label,
     unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure,
     avgOzPerEach: num(s.avg_oz_per_each),
+    packChain: chainsBySku.get(s.id) ?? null,
   }]));
+}
+
+/**
+ * Batch-load active pack-chain levels for a set of SKUs into per-SKU level arrays
+ * (pack-hierarchy 0159). ONE query regardless of SKU count (loadRecipeGraph law).
+ * Returns an empty map when there are no chains — every consumer treats a missing
+ * entry as "no chain → legacy flat-field path".
+ */
+export async function loadSkuPackChains(skuIds: string[]): Promise<Map<string, PackChainLevel[]>> {
+  const out = new Map<string, PackChainLevel[]>();
+  if (skuIds.length === 0) return out;
+  const sb = getServiceRoleClient();
+  const { data } = await sb.from("sku_pack_levels")
+    .select("id, sku_id, label, contains_qty, contains_level_id, contains_measure_unit, display_ordinal")
+    .in("sku_id", skuIds)
+    .eq("active", true)
+    .order("display_ordinal", { ascending: true })
+    .returns<Array<{ id: string; sku_id: string; label: string; contains_qty: number | string; contains_level_id: string | null; contains_measure_unit: string | null; display_ordinal: number }>>();
+  for (const r of data ?? []) {
+    const list = out.get(r.sku_id) ?? [];
+    list.push({
+      id: r.id, label: r.label, containsQty: num(r.contains_qty) ?? 0,
+      containsLevelId: r.contains_level_id, containsMeasureUnit: r.contains_measure_unit,
+      displayOrdinal: r.display_ordinal,
+    });
+    out.set(r.sku_id, list);
+  }
+  return out;
 }
 
 /** oz_per_par_unit per item (for fan-out allocation weight). */
@@ -155,8 +188,9 @@ export async function loadDerivedForItems(itemIds: string[]): Promise<Map<string
   if (allSkuIds.size > 0) {
     const { data: skus } = await sb.from("vendor_items").select("id, name, units_per_pack, each_size, each_measure, avg_oz_per_each").in("id", [...allSkuIds])
       .returns<Array<{ id: string; name: string; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>>();
+    const chainsBySku = await loadSkuPackChains([...allSkuIds]); // chain-aware content (0159)
     for (const s of skus ?? []) {
-      const contentOz = skuContentOz({ unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure, avgOzPerEach: num(s.avg_oz_per_each) }, measures);
+      const contentOz = skuContentOz({ unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure, avgOzPerEach: num(s.avg_oz_per_each), packChain: chainsBySku.get(s.id) ?? null }, measures);
       skuInfo.set(s.id, { name: s.name, unitsPerPack: s.units_per_pack, contentOz });
     }
   }
