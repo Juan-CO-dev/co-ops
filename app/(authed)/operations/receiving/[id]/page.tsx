@@ -32,6 +32,9 @@ export default async function DeliveryDetailPage({ params }: { params: Promise<{
         <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "receiving.detail.invoice_total")}: ${detail.invoiceTotal.toFixed(2)}</p>
       ) : null}
       {detail.notes ? <p className="mt-2 rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2 text-sm text-co-text">{detail.notes}</p> : null}
+      {detail.receiptUrl ? (
+        <p className="mt-2 text-[11px] text-co-text-dim">{serverT(lang, "receiving.detail.receipt_attached")}</p>
+      ) : null}
 
       <h2 className="mt-5 text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">{serverT(lang, "receiving.detail.items")}</h2>
       <ul className="mt-2 flex flex-col gap-1.5">
@@ -39,11 +42,17 @@ export default async function DeliveryDetailPage({ params }: { params: Promise<{
           <li key={i} className="rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2 text-sm">
             <div className="flex items-center justify-between gap-2">
               <span className="font-semibold text-co-text">{l.skuName}</span>
-              <span className="text-xs text-co-text-muted">{l.qtyReceived} {serverT(lang, "receiving.detail.packs")}</span>
+              <span className="text-xs text-co-text-muted">
+                {l.receivedLevelLabel
+                  ? `${l.qtyReceived} ${l.receivedLevelLabel}`
+                  : `${l.qtyReceived} ${serverT(lang, "receiving.detail.packs")}`}
+              </span>
             </div>
             <div className="text-[11px] text-co-text-dim">
               {l.unitPrice != null ? `$${l.unitPrice.toFixed(2)}/pack` : serverT(lang, "receiving.detail.no_price")}
+              {l.resolvedOz != null ? ` · ${serverT(lang, "receiving.detail.resolved_oz", { oz: l.resolvedOz.toFixed(1) })}` : ""}
               {l.observedOzPerEach != null ? ` · ${l.observedOzPerEach} oz/each` : ""}
+              {l.photoUrl ? ` · ${serverT(lang, "receiving.detail.has_photo")}` : ""}
               {l.notes ? ` · ${l.notes}` : ""}
             </div>
           </li>
