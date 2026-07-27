@@ -483,7 +483,7 @@
   "admin.catalog.badge.catering_only": "Solo catering",
   "admin.catalog.badge.issues": "{n} problema(s)",
   "admin.catalog.kind.item": "Artículo",
-  "admin.catalog.kind.menu_item": "Sub",
+  "admin.catalog.kind.menu_item": "Artículo de menú",
   "admin.catalog.kind.package": "Paquete",
   "admin.catalog.expand": "Ver detalles",
   "admin.catalog.collapse": "Ocultar detalles",
