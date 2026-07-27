@@ -13,8 +13,10 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadRecipe, RECIPE_READ_MIN } from "@/lib/recipes";
 import { loadGraphReadiness } from "@/lib/admin/readiness-load";
 import type { Readiness } from "@/lib/readiness";
+import { RECIPE_WRITE_MIN } from "@/lib/recipes-shared";
 import { AdminBackLink } from "@/components/admin/AdminBackLink";
 import { RecipeBuilder } from "@/components/admin/recipes/RecipeBuilder";
+import { RecipeCateringFlags, type RecipeMenuOutputFlags } from "@/components/admin/recipes/RecipeCateringFlags";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
 
 export default async function AdminRecipeDetailPage({
@@ -66,6 +68,32 @@ export default async function AdminRecipeDetailPage({
 
   if (!recipe) notFound();
 
+  // Catering flags for this recipe's MENU_ITEM outputs (piece 2) — batch load
+  // the current flag columns for every sub the recipe produces.
+  const menuOutputIds = [
+    ...new Set(recipe.outputs.map((o) => o.outputMenuItemId).filter((v): v is string => v != null)),
+  ];
+  let cateringFlags: RecipeMenuOutputFlags[] = [];
+  if (menuOutputIds.length > 0) {
+    const { data: flagRows } = await sb
+      .from("menu_items")
+      .select("id, name, catering_available, catering_only, catering_portionable, serves, seasonal")
+      .in("id", menuOutputIds)
+      .returns<Array<{
+        id: string; name: string; catering_available: boolean; catering_only: boolean;
+        catering_portionable: boolean | null; serves: number | string | null; seasonal: boolean;
+      }>>();
+    cateringFlags = (flagRows ?? []).map((r) => ({
+      menuItemId: r.id,
+      name: r.name,
+      cateringAvailable: r.catering_available,
+      cateringOnly: r.catering_only,
+      cateringPortionable: r.catering_portionable ?? false,
+      serves: r.serves == null ? null : Number(r.serves),
+      seasonal: r.seasonal,
+    }));
+  }
+
   let readiness: Readiness | null = null;
   try {
     const g = await loadGraphReadiness(auth);
@@ -111,6 +139,9 @@ export default async function AdminRecipeDetailPage({
         level={level}
         readiness={readiness}
       />
+      {menuOutputIds.length > 0 ? (
+        <RecipeCateringFlags outputs={cateringFlags} canEdit={level >= RECIPE_WRITE_MIN} />
+      ) : null}
     </div>
   );
 }
