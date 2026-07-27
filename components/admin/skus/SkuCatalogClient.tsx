@@ -22,6 +22,7 @@ import type { SkuReceivingLedger, SkuConsumption } from "@/lib/admin/cost";
 import type { Readiness } from "@/lib/readiness";
 import { StatusBadge, ReadinessReasons } from "@/components/admin/StatusBadge";
 import { SkuCostPanel, type SkuCostInfo } from "./SkuCostPanel";
+import { SkuPackChainPanel } from "./SkuPackChainPanel";
 import {
   SkuForm,
   type SkuFormLocationOption,
@@ -213,13 +214,16 @@ export function SkuCatalogClient({
                 />
               )}
               {editingId === s.id ? null : (
-                <SkuCostPanel
-                  skuId={s.id}
-                  cost={skuCost[s.id] ?? { currentPrice: null, costPerOz: null, usedBy: [] }}
-                  ledger={skuLedger[s.id] ?? null}
-                  consumption={skuConsumption[s.id] ?? null}
-                  canRecord={actorLevel >= 6}
-                />
+                <>
+                  <SkuCostPanel
+                    skuId={s.id}
+                    cost={skuCost[s.id] ?? { currentPrice: null, costPerOz: null, usedBy: [] }}
+                    ledger={skuLedger[s.id] ?? null}
+                    consumption={skuConsumption[s.id] ?? null}
+                    canRecord={actorLevel >= 6}
+                  />
+                  <SkuPackChainPanel skuId={s.id} measureUnits={measureUnits} canManage={canManage} />
+                </>
               )}
             </li>
           ))}

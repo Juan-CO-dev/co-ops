@@ -32,6 +32,19 @@ const KNOWN_ERROR_CODES = new Set([
   "invalid_price",
   "invalid_date",
   "invalid_sku",
+  // Pack-chain (0159) route/lib codes.
+  "empty_chain",
+  "label_is_measure_unit",
+  "duplicate_label",
+  "invalid_qty",
+  "invalid_link",
+  "invalid_pointer",
+  "self_reference",
+  "unknown_measure",
+  "chain_cycle",
+  "chain_unreachable",
+  "leaf_needs_avg",
+  "chain_invalid",
 ]);
 
 /** Resolve an error `code` to a localized message, falling back to generic. */
