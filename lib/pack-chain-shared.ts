@@ -68,6 +68,24 @@ export interface PackChain {
   levels: PackChainLevel[];
 }
 
+/**
+ * Label-collision check (L1, pure): a chain label must NOT equal any active
+ * measure_units label (else "case" and "oz" would live in the same namespace and
+ * ozForRecipeInput couldn't tell a container from a unit). Returns the first
+ * colliding label, or null when clean. The write path (lib/admin/pack-chain.ts)
+ * calls this against the live measure_units set before persisting.
+ */
+export function firstLabelMeasureCollision(
+  labels: readonly string[],
+  measureLabels: ReadonlySet<string>,
+): string | null {
+  for (const raw of labels) {
+    const label = raw.trim();
+    if (measureLabels.has(label)) return label;
+  }
+  return null;
+}
+
 /** Build the lookup indices for one SKU's active chain levels. */
 export function buildPackChain(levels: PackChainLevel[]): PackChain {
   const byId = new Map<string, PackChainLevel>();

@@ -34,6 +34,7 @@ import type { MeasureUnitFactor } from "@/lib/recipe-math";
 import {
   buildPackChain,
   validateChainReachable,
+  firstLabelMeasureCollision,
   type PackChainLevel,
 } from "@/lib/pack-chain-shared";
 
@@ -150,14 +151,16 @@ function validateSubmission(
 ): PackChainLevelInput[] {
   if (input.length === 0) throw new PackChainError(400, "empty_chain", "A chain needs at least one level");
 
+  // L1: no chain label may collide with a measure_units label (pure, testable).
+  const collision = firstLabelMeasureCollision(input.map((l) => l.label), measureLabels);
+  if (collision != null) {
+    throw new PackChainError(400, "label_is_measure_unit", `"${collision}" is a measure unit — pick a container name`);
+  }
+
   const seenLabels = new Set<string>();
   input.forEach((lvl, i) => {
     const label = lvl.label.trim();
     if (!label) throw new PackChainError(400, "invalid_label", "Every level needs a label");
-    if (measureLabels.has(label)) {
-      // L1: a chain label must not collide with a measure_units label.
-      throw new PackChainError(400, "label_is_measure_unit", `"${label}" is a measure unit — pick a container name`);
-    }
     if (seenLabels.has(label)) throw new PackChainError(400, "duplicate_label", `Duplicate level label "${label}"`);
     seenLabels.add(label);
 

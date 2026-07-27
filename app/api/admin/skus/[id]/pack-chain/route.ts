@@ -21,7 +21,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   if (ROLES[ctx.user.role].level < PACK_CHAIN_READ_MIN) return jsonError(403, "forbidden");
   try {
     const view = await loadSkuPackChain(ctx, id);
-    return jsonOk(view);
+    return jsonOk({ skuId: view.skuId, levels: view.levels, unverified: view.unverified });
   } catch (e) {
     if (e instanceof PackChainError) return jsonError(e.status, e.code, { message: e.message });
     throw e;
