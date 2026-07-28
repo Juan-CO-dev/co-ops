@@ -469,7 +469,8 @@ export function RecipeBuilder({
 
       {/* ── LIVE mode: delete (deactivate) ── */}
       {recipe !== null && canDelete ? (
-        <div className="mt-6 rounded-lg border-2 border-co-cta/40 bg-co-surface p-4">
+        <div className="mt-6">
+        <CollapsibleSection idBase="recipe-danger" title={t(rk("recipes.delete.danger_title"))}>
           {deleteError ? <p className="mb-3 text-sm text-co-cta">{deleteError}</p> : null}
           {confirmDelete ? (
             <div className="flex justify-end gap-2">
@@ -501,6 +502,7 @@ export function RecipeBuilder({
               </button>
             </div>
           )}
+        </CollapsibleSection>
         </div>
       ) : null}
     </div>
