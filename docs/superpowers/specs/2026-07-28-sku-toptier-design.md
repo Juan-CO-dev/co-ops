@@ -144,3 +144,56 @@ The pure walk internals (byte-identical); the 3 laggard consumers' READ logic (s
 ## D-law compliance (Disclosure Doctrine binds this UI)
 
 D1 identity line always visible · D2 unverified/no-pack-info badges + campaign counters never collapse · D5 i18n'd counts on collapsed headers · D6 lens chips + search on a ≥10-row list · D8 phone-first full-row toggles, vendor as select not chip · D9 disclosure state = useState only · D10 a11y `<button>`+aria on chips. **PR-B wizard:** D4 the wizard is a triggered flow, not a pre-rendered form · D8 one active question at a time (answered levels collapse to summary lines), 44px targets · D9 wizard state = useState only · D10 `<button>` + aria on every branch/terminate control.
+
+---
+
+## PR-C contents (this PR) — count-native counts/reorder + the 3 laggard-consumer wirings
+
+The last PR: the 3 flat-field consumers read the chain directly, and the count surface becomes **dimension-aware** — a count-terminated (non-raw) chain anchors + reorders in **leaf units** ("2 cases + 3 loose = 27 units"), never fabricating an ounce it can't know. The PR-B flat-field sync STAYS as a mirror (it's the fallback for the count-chain leaf that has no oz). The pure `walkChainToOz` stays byte-identical; receiving writes are untouched; counts events stay immutable/append-only.
+
+### 1. Migration 0161 — `anchor_dimension` on `sku_count_lines` (NULLABLE `resolved_oz`, NO sentinel)
+
+`supabase/migrations/0161_count_anchor_dimension.sql` (STAGED — apply BEFORE merging, the #191 protocol; Juan applies). Additive columns + a legacy-tolerant invariant CHECK:
+
+- `ADD anchor_dimension text NULL CHECK (anchor_dimension IN ('weight','count'))` — `NULL` on legacy rows (read as weight-anchored).
+- `ADD resolved_units numeric NULL CHECK (resolved_units IS NULL OR resolved_units >= 0)` — leaf-unit anchor for count-dimension lines.
+- `ALTER COLUMN resolved_oz DROP NOT NULL` — a count-anchored line has NO honest ounce.
+- Table CHECK (the invariant, tolerant of legacy `NULL`): `anchor_dimension IS NULL OR (anchor_dimension='weight' AND resolved_oz IS NOT NULL) OR (anchor_dimension='count' AND resolved_units IS NOT NULL)`.
+
+**Rationale (why NULL not a sentinel):** a sentinel `resolved_oz = 0` is a *silent-wrong-number trap* — any future oz aggregation (an on-hand oz rollup, a cross-SKU value report) would sum a real-looking 0 and be wrong with no signal. `NULL` is honest: it propagates to an advisory "—" everywhere, never a fabricated figure (the A3 discipline). **Apply-first-safe:** the pre-0161 code always writes non-null `resolved_oz` and *rejects* count-terminated lines (`unresolvable_line`), so no `NULL`/count rows can exist until the new code deploys. Applying 0161 before merging the code is therefore a no-op on existing data and cannot break the running app. The existing column `CHECK (resolved_oz >= 0)` stays satisfied on `NULL` (Postgres CHECK passes on unknown).
+
+**New write path:** a count-anchored line persists `anchor_dimension='count'` + `resolved_units` (leaf units) + `resolved_oz NULL`. A weight line: `anchor_dimension='weight'` + `resolved_oz` (as today) + `resolved_units NULL`. Legacy rows (`anchor_dimension NULL`) read as weight-anchored.
+
+### 2. `skuPackComplete` chain-aware by DELEGATION (no third predicate)
+
+`skuPackComplete(s, chain?, measures?, skuClass?)`: **chain present** → complete ⇔ `!isChainUnverified(chain, measures, avgOzPerEach, skuClass)` (the single badge predicate — no new rule); **no chain** → the legacy flat-trio rule unchanged. The new params are OPTIONAL so flat-only callers (the `scripts/readiness-rules-check.ts` harness) keep compiling untouched. Shared-type law: every caller threaded — `lib/admin/readiness-load.ts loadSkuReadinessMap` (batch-loads chains + measures + carries `skuClass`/`avgOzPerEach`), `app/admin/skus/page.tsx`, `app/admin/vendors/[id]/page.tsx`.
+
+### 3. `sku-demand` passes the chain
+
+`lib/catering/sku-demand.ts` adds ONE `loadSkuPackChains(skuIds)` batch call (loadRecipeGraph law — zero per-row queries), then passes `packChain` per SKU into `skuContentOz`. Chain-aware content-oz flows to the reorder math automatically (the fn is already chain-first).
+
+### 4. `formatSkuPack` gains a chain branch (LOCK 5)
+
+`formatSkuPack(sku, t, chain?)`: **chain present** → chain language via a NEW pure descriptor (`"Case → 4 log → 34 oz"` for a weight leaf, `"Case → 12 each"` for a count leaf); **flat fallback** otherwise. The descriptor + count-space helpers are pure (in `lib/pack-chain-shared.ts`) and unit-tested. Callers `SkuCatalogClient.tsx` + `VendorSkusCard.tsx` thread the SKU's chain.
+
+### 5. Count-space math + operational voice (LOCK 4)
+
+New pure helpers in `lib/pack-chain-shared.ts`: `chainLeafUnitsPerRoot(chain)` (structural product of every level's `containsQty` down the pointer path to the count leaf — e.g. `case → 12 each` = 12; `case → 4 log → 6 each` = 24) + `chainCountLeafMeasure(chain)` (the leaf's count measure label, or null if the chain doesn't terminate in a count leaf).
+
+**Count-anchored lines** (a line counted at a non-oz-resolvable, count-terminated chain — packaging/cleaning/misc): the anchor + deltas run in **LEAF UNITS**. A line entered as "2 cases" of a 12-per-case chain resolves to `24` leaf units; "3 loose" at the leaf resolves to `3`; the anchor sums to `27`. The oz drift line is **suppressed** for count-anchored SKUs (there's no honest ounce). Received units derive **read-time** from level-aware receiving: `vendor_delivery_items.received_qty_at_level` × the chain multipliers from the entered level down to the leaf (structural, date-blind) — where the data supports it; else advisory-unknown ("—"). We do NOT change receiving writes.
+
+**VOICE LAW:** packaging/cleaning is consumed with NO consumption artifact in the system (nobody logs "used 2 lids"), so a count-to-count delta reads **"used or lost since last count"** (advisory) — NEVER "variance"/"loss" (which implies a fault/shrinkage the system can't attribute). Ordering language for count SKUs is count-space and advisory-display-only ("2 cases short") — NO PO workflow.
+
+### 6. `VendorSkusCard` swaps `SkuForm` → `SkuBuilder` (LOCK 3)
+
+`VendorSkusCard` renders the PR-B reconciled `SkuBuilder` (fixed `vendorId` + `initialChain` + `onSaveChain` threading exactly like `SkuCatalogClient`, incl. the avg-PATCH-before-chain-POST flow). The vendor-detail page (`app/admin/vendors/[id]/page.tsx`) loads chains batch-wise for its SKUs (mirrors `app/admin/skus/page.tsx`) and threads `chainsBySku`/`chainUnverifiedBySku` through `VendorDetailClient`. `SkuBuilder`'s optional `cost?`/`ledger?`/`consumption?` render fine even where the vendor card lacks cost data (Section C gates on `isEdit && cost`). After this, **NO UI authors the flat trio** — the server sync (`syncSkuFlatFieldsFromChain`) is the only writer.
+
+**`SkuForm` disposition:** with `VendorSkusCard` on `SkuBuilder`, nothing renders `SkuForm` → **delete `SkuForm.tsx`** and its orphaned i18n keys (grep-confirmed both en + es). The `SkuFormValues`/`SkuFormVendorOption`/`SkuFormLocationOption` TYPES move to `SkuBuilder.tsx` (its current re-export source) so no import path breaks.
+
+### 7. i18n + cleanup
+
+New keys (en + es, tú-form): count-space count/onhand strings (`used or lost`, count-anchored on-hand in units, count-space ordering), chain-descriptor formatting. Any deleted `SkuForm` keys removed from both files.
+
+### Out of PR-C scope (do NOT touch)
+
+The pure `walkChainToOz` internals (byte-identical); the PR-B flat-field sync (STAYS as the mirror); receiving WRITES (received units derive read-time); counts events (immutable/append-only); toast-sales; proxy; staff runtime. No new deps.
