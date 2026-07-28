@@ -318,6 +318,82 @@ describe("deriveFlatFieldsFromChain", () => {
   });
 });
 
+// ── PackChainWizard generated-label collision guard ────────────────────────────
+// The wizard's ONLY generated (default) labels are "container" (root) and
+// "inner" (deeper levels + the size leaf); a non-raw bare count leaf is LABELED
+// "inner" and CONTAINS the measure "each". None of these labels may collide with
+// an active measure-unit label (the BC shadowing class, caught twice) — the
+// chain-first ozForRecipeInput would over-deplete. This mirrors the exact chain
+// shapes the wizard's `assembled` memo emits for each class path and runs them
+// through the SAME firstLabelMeasureCollision guard the write path enforces.
+describe("PackChainWizard generated-label collision safety", () => {
+  // Active measure units in prod include "each" AND "unit" (seed 10) — the two
+  // count words a generated LABEL must never be.
+  const measureLabels = new Set(["oz", "lb", "quart", "each", "unit", "count"]);
+
+  // Wizard defaults (mirrors the component's local constants).
+  const ROOT = "container";
+  const INNER = "inner";
+  const COUNT_LEAF_MEASURE = "each";
+
+  /** raw path: container(root) → N inner ; inner → S weight/measure (size leaf). */
+  const rawTwoLevel: StarterChainLevel[] = [
+    { label: ROOT, containsQty: 6, containsIndex: 1, containsMeasureUnit: null },
+    { label: INNER, containsQty: 32, containsIndex: null, containsMeasureUnit: "oz" },
+  ];
+  /** packaging/misc bare count leaf: the current level LABELED (defaulted)
+   *  "container" holds N of the count MEASURE "each". */
+  const bareCountLeaf: StarterChainLevel[] = [
+    { label: ROOT, containsQty: 12, containsIndex: null, containsMeasureUnit: COUNT_LEAF_MEASURE },
+  ];
+  /** packaging with an outer container: container → 12 inner ; inner → 1 each. */
+  const packagingTwoLevel: StarterChainLevel[] = [
+    { label: ROOT, containsQty: 12, containsIndex: 1, containsMeasureUnit: null },
+    { label: INNER, containsQty: 1, containsIndex: null, containsMeasureUnit: COUNT_LEAF_MEASURE },
+  ];
+
+  it("no wizard-generated default LABEL collides with an active measure unit", () => {
+    for (const chain of [rawTwoLevel, bareCountLeaf, packagingTwoLevel]) {
+      expect(firstLabelMeasureCollision(chain.map((l) => l.label), measureLabels)).toBeNull();
+    }
+  });
+
+  it("a bare count leaf LABELED 'container' CONTAINS the measure 'each' — label≠measure, not a collision", () => {
+    // The label is "container"; "each" lives in contains_measure_unit (a different
+    // column). This is a count chain, not a shadow.
+    const labels = bareCountLeaf.map((l) => l.label);
+    expect(labels).not.toContain("each");
+    expect(labels).not.toContain("unit");
+    expect(firstLabelMeasureCollision(labels, measureLabels)).toBeNull();
+    expect(bareCountLeaf[0]!.containsMeasureUnit).toBe("each");
+  });
+
+  it("the wizard's raw size-leaf uses 'inner' (not the measure word 'each'/'unit')", () => {
+    expect(rawTwoLevel[1]!.label).toBe(INNER);
+    expect(rawTwoLevel[1]!.label).not.toBe("each");
+    expect(rawTwoLevel[1]!.label).not.toBe("unit");
+  });
+
+  it("a non-raw bare count chain is structurally valid and VERIFIED (complete by design)", () => {
+    const walkable: PackChainLevel[] = packagingTwoLevel.map((l, i) => ({
+      id: `L${i}`,
+      label: l.label,
+      containsQty: l.containsQty,
+      containsLevelId: l.containsIndex != null ? `L${l.containsIndex}` : null,
+      containsMeasureUnit: l.containsMeasureUnit,
+      displayOrdinal: i,
+    }));
+    expect(chainRootLabel(buildPackChain(walkable))).toBe("container");
+    // derives to units 12, size 1, measure each — pack-complete for ordering.
+    expect(deriveFlatFieldsFromChain(packagingTwoLevel)).toEqual({
+      packFormat: "container",
+      unitsPerPack: 12,
+      eachSize: 1,
+      eachMeasure: "each",
+    });
+  });
+});
+
 // ── deriveRoleBadges ──────────────────────────────────────────────────────────
 describe("deriveRoleBadges", () => {
   it("a bought-only on-hand raw has no badges", () => {
