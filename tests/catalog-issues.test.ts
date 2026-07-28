@@ -148,3 +148,39 @@ describe("classifyCatalogIssues — toast_unmapped", () => {
     ).not.toContain("toast_unmapped");
   });
 });
+
+describe("classifyCatalogIssues — retype_suggested (SKU Builder streamline §3)", () => {
+  it("flags a sold_as_is item that has a producing recipe", () => {
+    expect(
+      classifyCatalogIssues(cleanItem({ itemType: "sold_as_is", hasRecipe: true })),
+    ).toContain("retype_suggested");
+  });
+  it("does NOT flag a sold_as_is item with no producing recipe", () => {
+    expect(
+      classifyCatalogIssues(cleanItem({ itemType: "sold_as_is", hasRecipe: false, soldDirectly: false })),
+    ).not.toContain("retype_suggested");
+  });
+  it("does NOT flag a prepped item even with a recipe", () => {
+    expect(
+      classifyCatalogIssues(cleanItem({ itemType: "prepped", hasRecipe: true })),
+    ).not.toContain("retype_suggested");
+  });
+  it("does NOT flag an on_hand item", () => {
+    expect(
+      classifyCatalogIssues(cleanItem({ itemType: "on_hand", hasRecipe: true })),
+    ).not.toContain("retype_suggested");
+  });
+  it("is items-only — a menu_item is never retype_suggested", () => {
+    expect(
+      classifyCatalogIssues({
+        kind: "menu_item", active: true, soldDirectly: false, sizesCount: 0,
+        usedInMenuItems: 0, usedInPackages: 0, hasRecipe: true, readinessReady: true, toastGuids: 1,
+      }),
+    ).not.toContain("retype_suggested");
+  });
+  it("treats a missing itemType as never retype_suggested (menu_items/packages)", () => {
+    expect(
+      classifyCatalogIssues(cleanItem({ itemType: null, hasRecipe: true })),
+    ).not.toContain("retype_suggested");
+  });
+});

@@ -350,6 +350,9 @@ export async function loadCatalogView(actor: AuthContext): Promise<CatalogEntity
       kind: "item", active: it.active, soldDirectly: it.sold_directly,
       sizesCount, usedInMenuItems: usedInMenu.length, usedInPackages: pkgs.length,
       hasRecipe, readinessReady, toastGuids,
+      // retype_suggested (SKU Builder streamline §3): a sold_as_is item that
+      // gained a producing recipe should be retyped to prepped.
+      itemType: it.item_type,
     });
     entities.push({
       key: `item:${it.id}`, kind: "item", id: it.id, name: it.name, nameEs: it.name_es,

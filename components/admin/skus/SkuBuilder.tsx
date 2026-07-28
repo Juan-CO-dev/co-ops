@@ -1,0 +1,634 @@
+"use client";
+
+/**
+ * SkuBuilder — the ONE SKU editor/builder surface (SKU Builder streamline,
+ * design 2026-07-27). Replaces the SkuForm-edit / SkuPackChainPanel /
+ * SkuCostPanel mutual-exclusion fork (a manager could not see the chain while
+ * renaming a SKU) AND serves as the Add form. Three sections co-render:
+ *
+ *   Section A — Identity & sourcing: name, class, vendor, location, item#,
+ *     source, lead time, notes. Non-blocking name-collision warning on the name
+ *     (design §1 dedupe: 11 dup pairs live — a warning, never a hard gate).
+ *   Section B — Pack truth (the chain is the only pack vocabulary):
+ *     · CHAINED SKU  → inline chain builder, seeded from the server-passed chain
+ *       (no lazy GET), with a "chain unverified" badge on the section header.
+ *     · UNCHAINED    → quick-pack fields (each size + measure, +units per pack)
+ *       that GENERATE a starter chain on save ONLY when filled. A bare unchained
+ *       save stays valid ("add pack detail later").
+ *   Section C — Cost & usage (edit mode only): the read-only SkuCostPanel
+ *     (cost/oz, in-stock, deliveries, used-by) with record-price as a sub-action.
+ *
+ * Pure presentational + local form state. The PARENT owns POST/PATCH + step-up +
+ * router.refresh: onSubmit hands back the identity/quick-pack payload PLUS an
+ * optional chain draft (add flow → one atomic request); onSaveChain persists an
+ * edited chain in edit mode (the SKU already exists → the pack-chain route).
+ * canSubmit = name && !busy (the pack_format required-field gate is removed —
+ * design §1, builder-seat find).
+ */
+
+import { useMemo, useState } from "react";
+
+import { useTranslation } from "@/lib/i18n/provider";
+import type { TranslationKey } from "@/lib/i18n/types";
+import type { RegistryOption, MeasureUnitOption, SkuView } from "@/lib/admin/skus";
+import { SKU_CLASSES } from "@/lib/admin/catalog-shared";
+import type { SkuClass } from "@/lib/admin/catalog-shared";
+import {
+  generateQuickPackChain,
+  skuNameCollisions,
+  type StarterChainLevel,
+  type SkuNameCollisionCandidate,
+} from "@/lib/admin/catalog-shared";
+import type { PackChainLevel } from "@/lib/pack-chain-shared";
+import { skuContentOz, type MeasureUnitFactor } from "@/lib/recipe-math";
+import { RegistrySelect } from "./RegistrySelect";
+import { MeasureUnitSelect } from "./MeasureUnitSelect";
+import type { SkuFormValues, SkuFormVendorOption, SkuFormLocationOption } from "./SkuForm";
+import { SkuCostPanel, type SkuCostInfo } from "./SkuCostPanel";
+import type { SkuReceivingLedger, SkuConsumption } from "@/lib/admin/cost";
+
+// Re-export the value/prop types so the parent can keep one import site.
+export type { SkuFormValues, SkuFormVendorOption, SkuFormLocationOption } from "./SkuForm";
+
+const fieldCls =
+  "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-60";
+const chainFieldCls =
+  "min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-60";
+
+function Labeled({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="text-sm font-bold text-co-text">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function SectionHeader({ title, badge }: { title: string; badge?: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-2">
+      <h3 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">{title}</h3>
+      {badge}
+    </div>
+  );
+}
+
+/** One editor row for the inline chain builder: label, qty, and a link that is
+ *  EITHER a level index OR a measure unit. Mirrors SkuPackChainPanel's shape. */
+interface EditorLevel {
+  label: string;
+  qty: string;
+  /** "level:<index>" | "measure:<label>" | "" (unset). */
+  link: string;
+}
+
+function toEditorLevels(levels: PackChainLevel[]): EditorLevel[] {
+  const indexById = new Map(levels.map((l, i) => [l.id, i]));
+  return levels.map((l) => ({
+    label: l.label,
+    qty: String(l.containsQty),
+    link:
+      l.containsLevelId != null && indexById.has(l.containsLevelId)
+        ? `level:${indexById.get(l.containsLevelId)}`
+        : l.containsMeasureUnit != null
+          ? `measure:${l.containsMeasureUnit}`
+          : "",
+  }));
+}
+
+/** Assemble the index-linked payload from editor rows (shared add + edit). */
+function editorRowsToPayload(rows: EditorLevel[]): StarterChainLevel[] {
+  return rows.map((row) => {
+    const qty = Number(row.qty);
+    if (row.link.startsWith("level:")) {
+      return { label: row.label.trim(), containsQty: qty, containsIndex: Number(row.link.slice("level:".length)), containsMeasureUnit: null };
+    }
+    if (row.link.startsWith("measure:")) {
+      return { label: row.label.trim(), containsQty: qty, containsIndex: null, containsMeasureUnit: row.link.slice("measure:".length) };
+    }
+    return { label: row.label.trim(), containsQty: qty, containsIndex: null, containsMeasureUnit: null };
+  });
+}
+
+export function SkuBuilder({
+  initial,
+  initialChain,
+  initialChainUnverified,
+  fixedVendorId,
+  vendors,
+  locations,
+  packFormats,
+  measureUnits,
+  actorLevel,
+  busy,
+  errorMsg,
+  submitLabel,
+  allSkus,
+  cost,
+  ledger,
+  consumption,
+  onSubmit,
+  onSaveChain,
+  onCancel,
+}: {
+  /** Existing SKU when editing; undefined when adding. */
+  initial?: SkuView;
+  /** Server-seeded active chain (no lazy GET); null when the SKU has no chain. */
+  initialChain?: PackChainLevel[] | null;
+  /** Server flag: the seeded chain fails reachability/termination. */
+  initialChainUnverified?: boolean;
+  /** When set, vendor is fixed (vendor-detail card) → no vendor dropdown. */
+  fixedVendorId?: string | null;
+  vendors?: SkuFormVendorOption[];
+  locations: SkuFormLocationOption[];
+  packFormats: RegistryOption[];
+  measureUnits: MeasureUnitOption[];
+  actorLevel: number;
+  busy: boolean;
+  errorMsg: string | null;
+  submitLabel: string;
+  /** All SKUs (for the non-blocking name-collision warning). Optional. */
+  allSkus?: SkuNameCollisionCandidate[];
+  /** Section C read data (edit mode). */
+  cost?: SkuCostInfo;
+  ledger?: SkuReceivingLedger | null;
+  consumption?: SkuConsumption | null;
+  /** Hands identity + quick-pack values + an optional chain draft (add flow). */
+  onSubmit: (values: SkuFormValues, chain: StarterChainLevel[] | null) => void;
+  /** Edit-mode chain save (SKU exists → pack-chain route). Returns ok. */
+  onSaveChain?: (levels: StarterChainLevel[]) => Promise<boolean>;
+  onCancel: () => void;
+}) {
+  const { t } = useTranslation();
+  const isEdit = initial !== undefined;
+  const hasChain = (initialChain?.length ?? 0) > 0;
+
+  // ── Section A + quick-pack state ──
+  const initialVendor =
+    initial?.vendorId ?? (fixedVendorId !== undefined ? fixedVendorId : null);
+  const [vendorId, setVendorId] = useState<string>(initialVendor ?? "");
+  const [locationId, setLocationId] = useState<string>(initial?.locationId ?? "");
+  const [name, setName] = useState(initial?.name ?? "");
+  const [skuClass, setSkuClass] = useState<SkuClass>(initial?.skuClass ?? "raw");
+  const [packFormat, setPackFormat] = useState(initial?.packFormat ?? "");
+  const [unitsPerPack, setUnitsPerPack] = useState(
+    initial?.unitsPerPack != null ? String(initial.unitsPerPack) : "",
+  );
+  const [eachSize, setEachSize] = useState(initial?.eachSize != null ? String(initial.eachSize) : "");
+  const [eachMeasure, setEachMeasure] = useState(initial?.eachMeasure ?? "");
+  const [avgOzPerEach, setAvgOzPerEach] = useState(
+    initial?.avgOzPerEach != null ? String(initial.avgOzPerEach) : "",
+  );
+  // Optional friendly names the starter chain uses for its levels.
+  const [packLabel, setPackLabel] = useState("");
+  const [eachLabel, setEachLabel] = useState("");
+  const [itemNumber, setItemNumber] = useState(initial?.itemNumber ?? "");
+  const [sourceUrl, setSourceUrl] = useState(initial?.sourceUrl ?? "");
+  const [leadTime, setLeadTime] = useState(initial?.leadTimeDays != null ? String(initial.leadTimeDays) : "");
+  const [notes, setNotes] = useState(initial?.notes ?? "");
+
+  // ── Section B chain-editor state (edit mode; seeded from server) ──
+  const [chainOpen, setChainOpen] = useState(false);
+  const [chainRows, setChainRows] = useState<EditorLevel[]>([]);
+  const [chainBusy, setChainBusy] = useState(false);
+  const [chainErr, setChainErr] = useState<string | null>(null);
+  const [chainSavedTick, setChainSavedTick] = useState(0); // bump on save to refresh display copy
+
+  const parseNum = (s: string): number | null => {
+    const trimmed = s.trim();
+    return trimmed === "" ? null : Number(trimmed);
+  };
+
+  const measuresByLabel = new Map<string, MeasureUnitFactor>(
+    measureUnits.map((m) => [m.label, { dimension: m.dimension, toBaseFactor: m.toBaseFactor }]),
+  );
+  // Active measure-unit labels — passed to generateQuickPackChain so a generated
+  // chain label that would collide with a unit (e.g. "each") is caught here
+  // rather than exploding in replaceSkuPackChain after createSku minted the SKU.
+  const measureLabelSet = useMemo(
+    () => new Set(measureUnits.map((m) => m.label)),
+    [measureUnits],
+  );
+  const selectedMeasure = measureUnits.find((m) => m.label === eachMeasure) ?? null;
+  const isNonWeight = selectedMeasure != null && selectedMeasure.dimension !== "weight";
+  const liveContentOz = skuContentOz(
+    {
+      unitsPerPack: parseNum(unitsPerPack),
+      eachSize: parseNum(eachSize),
+      eachMeasure: eachMeasure.trim() || null,
+      avgOzPerEach: parseNum(avgOzPerEach),
+    },
+    measuresByLabel,
+  );
+
+  const collisions = useMemo(
+    () => (allSkus ? skuNameCollisions(name, allSkus, initial?.id ?? null) : []),
+    [name, allSkus, initial?.id],
+  );
+
+  const showVendorDropdown = vendors !== undefined;
+  const canSubmit = name.trim() !== "" && !busy; // pack_format gate removed (design §1)
+
+  const assembleValues = (): SkuFormValues => ({
+    vendorId: showVendorDropdown ? (vendorId || null) : (fixedVendorId ?? null),
+    locationId: locationId || null,
+    name: name.trim(),
+    // Pack format stays part of the payload (createSku still requires a
+    // non-empty one); default to the real registry label "Each (no case)"
+    // (sku_pack_formats, migration 0096 — NOT the off-registry "Each") when the
+    // manager left it blank so a chain-first add never trips the lib's
+    // required-pack-format check.
+    packFormat: packFormat.trim() || "Each (no case)",
+    unitsPerPack: parseNum(unitsPerPack),
+    eachSize: parseNum(eachSize),
+    eachMeasure: eachMeasure.trim() || null,
+    // each_container_label retired from the builder UI (design §4) — omitted from
+    // SkuFormValues, so createSku/updateSku never touch the column (existing DB
+    // values preserved for the legacy recipe-math reader; write-retirement = Phase 2).
+    avgOzPerEach: parseNum(avgOzPerEach),
+    itemNumber: itemNumber.trim() || null,
+    sourceUrl: sourceUrl.trim() || null,
+    leadTimeDays: parseNum(leadTime),
+    notes: notes.trim() || null,
+    skuClass,
+  });
+
+  const submit = () => {
+    if (!canSubmit) return;
+    // ADD flow: an unchained SKU generates a starter chain from the quick-pack
+    // fields ONLY when they're filled; a bare save stays valid. EDIT-mode chain
+    // edits go through onSaveChain (the SKU already exists), never here.
+    const chainDraft =
+      !isEdit
+        ? generateQuickPackChain(
+            {
+              unitsPerPack: parseNum(unitsPerPack),
+              eachSize: parseNum(eachSize),
+              eachMeasure: eachMeasure.trim() || null,
+              packLabel: packLabel.trim() || null,
+              eachLabel: eachLabel.trim() || null,
+            },
+            measureLabelSet,
+          )
+        : null;
+    onSubmit(assembleValues(), chainDraft);
+  };
+
+  // ── Chain editor actions (edit mode) ──
+  const displayChain = useMemo(
+    () => initialChain ?? [],
+    // chainSavedTick is intentional: after a save the parent refreshes and
+    // re-seeds initialChain; the tick keeps the memo honest without a stale read.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [initialChain, chainSavedTick],
+  );
+
+  const startChainEdit = () => {
+    setChainRows(displayChain.length > 0 ? toEditorLevels(displayChain) : [{ label: "", qty: "", link: "" }]);
+    setChainOpen(true);
+    setChainErr(null);
+  };
+  const addChainRow = () => setChainRows((r) => [...r, { label: "", qty: "", link: "" }]);
+  const removeChainRow = (i: number) =>
+    setChainRows((r) => {
+      const next = r.filter((_, idx) => idx !== i);
+      return next.map((row) => {
+        if (!row.link.startsWith("level:")) return row;
+        const idx = Number(row.link.slice("level:".length));
+        if (idx === i) return { ...row, link: "" };
+        return { ...row, link: idx > i ? `level:${idx - 1}` : row.link };
+      });
+    });
+  const setChainRow = (i: number, patch: Partial<EditorLevel>) =>
+    setChainRows((r) => r.map((row, idx) => (idx === i ? { ...row, ...patch } : row)));
+
+  const saveChain = async () => {
+    if (chainBusy || !onSaveChain) return;
+    setChainErr(null);
+    const payload = editorRowsToPayload(chainRows);
+    setChainBusy(true);
+    const ok = await onSaveChain(payload);
+    setChainBusy(false);
+    if (ok) {
+      setChainOpen(false);
+      setChainSavedTick((n) => n + 1);
+    } else {
+      setChainErr(errorMsg ?? t("admin.skus.error.generic"));
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-5 rounded-lg border-2 border-dashed border-co-border p-3">
+      {/* ── Section A — Identity & sourcing ── */}
+      <section className="flex flex-col gap-3">
+        <SectionHeader title={t("admin.skus.builder.section_identity")} />
+
+        {showVendorDropdown ? (
+          <Labeled label={t("admin.skus.field.vendor")}>
+            <select className={fieldCls} value={vendorId} disabled={busy} onChange={(e) => setVendorId(e.target.value)}>
+              <option value="">{t("admin.skus.manual")}</option>
+              {vendors.map((v) => (
+                <option key={v.id} value={v.id}>{v.name}</option>
+              ))}
+            </select>
+          </Labeled>
+        ) : null}
+
+        <Labeled label={t("admin.skus.field.name")}>
+          <input className={fieldCls} value={name} disabled={busy} onChange={(e) => setName(e.target.value)} />
+        </Labeled>
+        {collisions.length > 0 ? (
+          <p className="text-xs font-semibold text-co-cta" role="status">
+            {t("admin.skus.builder.name_collision", { names: collisions.map((c) => c.name).join(", ") })}
+          </p>
+        ) : null}
+
+        <Labeled label={t("admin.skus.field.sku_class")}>
+          <select className={fieldCls} value={skuClass} disabled={busy} onChange={(e) => setSkuClass(e.target.value as SkuClass)}>
+            {SKU_CLASSES.map((c) => (
+              <option key={c} value={c}>{t(`admin.skus.sku_class.${c}` as TranslationKey)}</option>
+            ))}
+          </select>
+        </Labeled>
+
+        <Labeled label={t("admin.skus.field.location")}>
+          <select className={fieldCls} value={locationId} disabled={busy} onChange={(e) => setLocationId(e.target.value)}>
+            <option value="">{t("admin.skus.global")}</option>
+            {locations.map((l) => (
+              <option key={l.id} value={l.id}>{l.name}</option>
+            ))}
+          </select>
+        </Labeled>
+
+        <Labeled label={t("admin.skus.field.item_number")}>
+          <input className={fieldCls} value={itemNumber} disabled={busy} onChange={(e) => setItemNumber(e.target.value)} />
+        </Labeled>
+        <Labeled label={t("admin.skus.field.source_url")}>
+          <input className={fieldCls} type="url" value={sourceUrl} disabled={busy} onChange={(e) => setSourceUrl(e.target.value)} />
+        </Labeled>
+        <Labeled label={t("admin.skus.field.lead_time")}>
+          <input className={fieldCls} type="number" min={0} step={1} inputMode="numeric" value={leadTime} disabled={busy} onChange={(e) => setLeadTime(e.target.value)} />
+        </Labeled>
+        <Labeled label={t("admin.skus.field.notes")}>
+          <textarea className={fieldCls} rows={2} value={notes} disabled={busy} onChange={(e) => setNotes(e.target.value)} />
+        </Labeled>
+      </section>
+
+      {/* ── Section B — Pack truth (the chain is the only pack vocabulary) ── */}
+      <section className="flex flex-col gap-3 border-t-2 border-co-border pt-3">
+        <SectionHeader
+          title={t("admin.skus.builder.section_pack")}
+          badge={
+            isEdit && hasChain && initialChainUnverified ? (
+              <span className="inline-flex items-center rounded-full bg-co-cta/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-cta">
+                {t("admin.skus.chain.unverified")}
+              </span>
+            ) : undefined
+          }
+        />
+
+        {isEdit && hasChain ? (
+          // CHAINED SKU → inline chain builder (seeded, no lazy GET).
+          <div className="flex flex-col gap-2">
+            <p className="text-xs text-co-text-muted">{t("admin.skus.builder.chain_intro")}</p>
+            {!chainOpen ? (
+              <>
+                <ul className="flex flex-col gap-1">
+                  {orderedForDisplay(displayChain).map((l) => (
+                    <li key={l.id} className="rounded-md border-2 border-co-border-2 px-2 py-1 text-xs text-co-text">
+                      <span className="font-bold">{l.label}</span>
+                      {" → "}
+                      {l.containsMeasureUnit != null
+                        ? `${l.containsQty} ${l.containsMeasureUnit}`
+                        : `${l.containsQty} ${labelOf(displayChain, l.containsLevelId)}`}
+                    </li>
+                  ))}
+                </ul>
+                {onSaveChain ? (
+                  <button
+                    type="button"
+                    onClick={startChainEdit}
+                    disabled={busy}
+                    className="inline-flex min-h-[44px] w-fit items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-text disabled:opacity-50"
+                  >
+                    {t("admin.skus.builder.chain_toggle_show")}
+                  </button>
+                ) : null}
+              </>
+            ) : (
+              <ChainEditor
+                rows={chainRows}
+                measureUnits={measureUnits}
+                busy={chainBusy}
+                err={chainErr}
+                onSet={setChainRow}
+                onAdd={addChainRow}
+                onRemove={removeChainRow}
+                onSave={() => void saveChain()}
+                onCancel={() => { setChainOpen(false); setChainErr(null); }}
+              />
+            )}
+          </div>
+        ) : (
+          // UNCHAINED (add flow, or an unchained edit) → quick-pack fields.
+          <div className="flex flex-col gap-3">
+            <p className="text-xs text-co-text-muted">
+              {isEdit ? t("admin.skus.builder.quick_pack_intro") : t("admin.skus.builder.quick_pack_hint")}
+            </p>
+            <RegistrySelect
+              label={t("admin.skus.field.pack_format")}
+              value={packFormat}
+              onChange={setPackFormat}
+              options={packFormats}
+              actorLevel={actorLevel}
+              addEndpoint="/api/admin/skus/pack-formats"
+              addPromptKey="admin.skus.add_pack_format_prompt"
+              addButtonKey="admin.skus.add_pack_format"
+              disabled={busy}
+            />
+            <Labeled label={t("admin.skus.field.units_per_pack")}>
+              <input className={fieldCls} type="number" min={1} step={1} inputMode="numeric" value={unitsPerPack} disabled={busy} onChange={(e) => setUnitsPerPack(e.target.value)} />
+            </Labeled>
+            <div className="grid grid-cols-2 gap-2">
+              <Labeled label={t("admin.skus.field.each_size")}>
+                <input className={fieldCls} type="number" min={0} step="any" inputMode="decimal" value={eachSize} disabled={busy} onChange={(e) => setEachSize(e.target.value)} />
+              </Labeled>
+              <MeasureUnitSelect
+                label={t("admin.skus.field.each_measure")}
+                value={eachMeasure}
+                onChange={setEachMeasure}
+                options={measureUnits}
+                actorLevel={actorLevel}
+                disabled={busy}
+              />
+            </div>
+            {isNonWeight ? (
+              <Labeled label={t("admin.skus.field.avg_oz_per_each")}>
+                <input className={fieldCls} type="number" min={0} step="any" inputMode="decimal" value={avgOzPerEach} disabled={busy} onChange={(e) => setAvgOzPerEach(e.target.value)} />
+                <span className="mt-1 block text-xs text-co-text-muted">{t("admin.skus.avg_oz_per_each_hint")}</span>
+              </Labeled>
+            ) : null}
+            {/* Friendly names for the starter chain's levels (add flow only). */}
+            {!isEdit ? (
+              <div className="grid grid-cols-2 gap-2">
+                <Labeled label={t("admin.skus.builder.pack_label")}>
+                  <input className={fieldCls} value={packLabel} disabled={busy} placeholder={t("admin.skus.builder.pack_label_ph")} onChange={(e) => setPackLabel(e.target.value)} />
+                </Labeled>
+                <Labeled label={t("admin.skus.builder.each_label")}>
+                  <input className={fieldCls} value={eachLabel} disabled={busy} placeholder={t("admin.skus.builder.each_label_ph")} onChange={(e) => setEachLabel(e.target.value)} />
+                </Labeled>
+              </div>
+            ) : null}
+            <p className="text-sm font-bold text-co-text">
+              {t("admin.skus.content_oz_label")}:{" "}
+              <span className="text-co-text-muted">{liveContentOz == null ? "—" : `≈ ${Math.round(liveContentOz)} oz`}</span>
+            </p>
+            <p className="text-[11px] text-co-text-muted">{t("admin.skus.builder.add_detail_later")}</p>
+          </div>
+        )}
+      </section>
+
+      {/* ── Section C — Cost & usage (edit mode only; read + record-price sub-action) ── */}
+      {isEdit && cost ? (
+        <section className="flex flex-col gap-2 border-t-2 border-co-border pt-3" aria-label={t("admin.skus.builder.cost_aria")}>
+          <SectionHeader title={t("admin.skus.builder.section_cost")} />
+          <SkuCostPanel
+            skuId={initial!.id}
+            cost={cost}
+            ledger={ledger ?? null}
+            consumption={consumption ?? null}
+            canRecord={actorLevel >= 6}
+          />
+        </section>
+      ) : null}
+
+      {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+
+      <div className="flex justify-end gap-2 border-t-2 border-co-border pt-3">
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={busy}
+          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {t("admin.skus.cancel")}
+        </button>
+        <button
+          type="button"
+          disabled={!canSubmit}
+          onClick={submit}
+          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {submitLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Inline chain editor (edit mode) — mirrors SkuPackChainPanel's editor rows. */
+function ChainEditor({
+  rows,
+  measureUnits,
+  busy,
+  err,
+  onSet,
+  onAdd,
+  onRemove,
+  onSave,
+  onCancel,
+}: {
+  rows: EditorLevel[];
+  measureUnits: MeasureUnitOption[];
+  busy: boolean;
+  err: string | null;
+  onSet: (i: number, patch: Partial<EditorLevel>) => void;
+  onAdd: () => void;
+  onRemove: (i: number) => void;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-col gap-2">
+      {rows.map((row, i) => (
+        <div key={i} className="rounded-md border-2 border-co-border-2 p-2">
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className="text-[11px] font-bold text-co-text-muted">{t("admin.skus.chain.level_label")}</span>
+              <input className={chainFieldCls} value={row.label} disabled={busy} placeholder={t("admin.skus.chain.level_label_ph")} onChange={(e) => onSet(i, { label: e.target.value })} />
+            </label>
+            <label className="block">
+              <span className="text-[11px] font-bold text-co-text-muted">{t("admin.skus.chain.contains_qty")}</span>
+              <input className={chainFieldCls} type="number" min={0} step="any" inputMode="decimal" value={row.qty} disabled={busy} onChange={(e) => onSet(i, { qty: e.target.value })} />
+            </label>
+          </div>
+          <label className="mt-2 block">
+            <span className="text-[11px] font-bold text-co-text-muted">{t("admin.skus.chain.contains_link")}</span>
+            <select className={chainFieldCls} value={row.link} disabled={busy} onChange={(e) => onSet(i, { link: e.target.value })}>
+              <option value="">{t("admin.skus.chain.link_placeholder")}</option>
+              <optgroup label={t("admin.skus.chain.link_levels")}>
+                {rows.map((other, j) =>
+                  j === i ? null : (
+                    <option key={`level:${j}`} value={`level:${j}`}>
+                      {other.label.trim() || t("admin.skus.chain.level_n", { n: j + 1 })}
+                    </option>
+                  ),
+                )}
+              </optgroup>
+              <optgroup label={t("admin.skus.chain.link_measures")}>
+                {measureUnits.map((m) => (
+                  <option key={`measure:${m.label}`} value={`measure:${m.label}`}>{m.label}</option>
+                ))}
+              </optgroup>
+            </select>
+          </label>
+          <div className="mt-2 flex justify-end">
+            <button type="button" disabled={busy} onClick={() => onRemove(i)} className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-cta disabled:opacity-50">
+              {t("admin.skus.chain.remove_level")}
+            </button>
+          </div>
+        </div>
+      ))}
+      <button type="button" disabled={busy} onClick={onAdd} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 border-dashed border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-text disabled:opacity-50">
+        {t("admin.skus.chain.add_level")}
+      </button>
+      {err ? <p className="text-sm text-co-cta">{err}</p> : null}
+      <div className="flex justify-end gap-2">
+        <button type="button" disabled={busy} onClick={onCancel} className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text disabled:opacity-50">
+          {t("admin.skus.builder.chain_toggle_hide")}
+        </button>
+        <button type="button" disabled={busy} onClick={onSave} className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-3 text-xs font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50">
+          {t("admin.skus.chain.save")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Display order: root first (nobody points at it), following pointers down.
+ *  Copied from SkuPackChainPanel (same pure walk) so the chained display reads
+ *  case → log → oz. */
+function orderedForDisplay(levels: PackChainLevel[]): PackChainLevel[] {
+  if (levels.length === 0) return [];
+  const byId = new Map(levels.map((l) => [l.id, l]));
+  const pointedAt = new Set<string>();
+  for (const l of levels) if (l.containsLevelId != null) pointedAt.add(l.containsLevelId);
+  const root = levels.find((l) => !pointedAt.has(l.id));
+  if (!root) return [...levels].sort((a, b) => a.displayOrdinal - b.displayOrdinal);
+  const out: PackChainLevel[] = [];
+  const seen = new Set<string>();
+  let cur: PackChainLevel | undefined = root;
+  while (cur && !seen.has(cur.id)) {
+    seen.add(cur.id);
+    out.push(cur);
+    cur = cur.containsLevelId != null ? byId.get(cur.containsLevelId) : undefined;
+  }
+  for (const l of levels) if (!seen.has(l.id)) out.push(l);
+  return out;
+}
+
+function labelOf(levels: PackChainLevel[], id: string | null): string {
+  if (id == null) return "";
+  return levels.find((l) => l.id === id)?.label ?? "?";
+}
