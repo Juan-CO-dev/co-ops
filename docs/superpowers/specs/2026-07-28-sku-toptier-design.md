@@ -87,6 +87,60 @@ The pure walk internals; the three laggard consumers (`skuPackComplete`, `sku-de
 
 ---
 
+## PR-B contents — the class-aware guided chain wizard
+
+**Status:** BUILT 2026-07-28 (branch `claude/sku-toptier-b`, base c4de8b8 / PR #199). Replaces `SkuBuilder`'s legacy quick-pack fields (Section B, add + unchained-edit) with a guided flow that asks the SAME pack questions for every SKU and STOPS SOONER for non-raw. The stop is automatic BY CLASS, never a manager decision. So every SKU speaks ONE pack language — the chain — at class-aware depth.
+
+### 1. The wizard (`components/admin/skus/PackChainWizard.tsx`, pure-presentational client)
+
+An unchained SKU (add OR edit) gets, in Section B, a guided flow in chain vocabulary. Per level, two questions:
+- **Q1 "What does it come in?"** — the level label (free text + datalist suggestions from the passed pack-format registry / `sku_pack_formats`). Safe default when blank: `"container"` (root) / `"inner"` (deeper) — NEVER a measure-unit label.
+- **Q2 "How many per?"** — the `containsQty` count for that level.
+
+Then a **branch**: **"Another container inside?"** → recurse (a new Q1/Q2 for the inner level) — OR **terminate**. Termination is **CLASS-AWARE and AUTOMATIC** (the wizard renders the correct terminal question for the SKU's class; the manager never chooses "raw vs non-raw"):
+- **raw** → the terminal question is **"How big is each?"**: an oz amount + a measure unit. A count/volume unit additionally reveals **avg oz per each** (so the leaf is oz-resolvable — raw feeds depletion/cost).
+- **packaging / misc** → may terminate at a **bare count leaf**: the wizard auto-appends a leaf `containsMeasureUnit = "each"` (a registered count measure) with `containsQty = 1`. No size, no avg. Complete by design.
+- **cleaning** → same bare count leaf as packaging, BUT the wizard offers an **opt-in "Add a size?"** toggle (bleach = 128 oz/jug) that, when enabled, swaps the count leaf for a weight/volume size leaf. Skippable.
+
+**≤3-question save cap (6AM-risk law):** the shortest valid save is Q1+Q2+terminal = 3 questions. The wizard always keeps a valid save reachable within that; deeper depth is user-chosen recursion. The active question is the only open input; answered levels collapse to summary lines (D8 — no giant always-open form; useState only, D9).
+
+### 2. Label-collision law (BLOOD-BOUGHT — the BC class caught twice)
+
+Every wizard-generated / default level label is guarded against active measure-unit labels. The wizard's chain assembly runs through **the same `firstLabelMeasureCollision` guard** the write path enforces, and the wizard's defaults are `"container"`/`"inner"` (never `"each"`/`"unit"`, which are active count measures → chain-first resolution would over-deplete 6×–40×). The submit path is unchanged: add flow POSTs the `chain[]` to `/api/admin/skus` (which calls `replaceSkuPackChain` → `validateSubmission` → `firstLabelMeasureCollision`); unchained-edit POSTs to the pack-chain route. There is NO new chain-writing path — the wizard reuses the PR-A validated path, so the guard binds automatically. The count leaf's `label` is `"inner"` and its `containsMeasureUnit` is `"each"` — different columns, NOT a collision (identical to seed 14).
+
+### 3. Flat-field SYNC-ON-SAVE (`deriveFlatFieldsFromChain` in `lib/admin/catalog-shared.ts`, pure + tested)
+
+When the wizard saves a chain, the legacy flat fields are DERIVED from that chain and written in the same submission, so the 3 laggard consumers that still read flat fields stay correct until PR-C migrates them (`skuPackComplete`, `sku-demand`'s `skuContentOz`-sans-chain, `formatSkuPack`).
+
+**Derivation rule (linear root→leaf walk):**
+- `pack_format` ← the ROOT (top) level's label.
+- `units_per_pack` ← the PRODUCT of every NON-leaf level's `containsQty` (root × all intermediate). A single-leaf chain → `null` (matches an "Each"/single pack). A 2-level chain → the root qty. A 3-level `case(4) → log(2) → bundle(17 oz)` → `4×2 = 8`.
+- `each_size` ← the LEAF level's `containsQty`.
+- `each_measure` ← the LEAF level's `containsMeasureUnit`.
+- `avg_oz_per_each` ← UNCHANGED (SKU-level; already persisted; the sync never touches it).
+
+**Why this exact rule:** `skuContentOz`'s legacy math is `units_per_pack × each_size × ozPerMeasureUnit(each_measure, avg)`. For any LINEAR chain the pointer walk is `(∏ non-leaf qty) × leaf_qty × ozPerLeafUnit(leaf_measure, avg)`. With the mapping above the two are byte-identical → `sku-demand` (which passes NO `packChain`) computes the same content-oz as the chain would. The `case(4)→log(2)→bundle(17 oz)` example: flat `8×17×1 = 136` = walk `4×(2×(17×1)) = 136`. For a non-raw count leaf (`each`, no avg) both paths yield `null` content-oz consistently, and `skuPackComplete` becomes true (units+size+measure set) — correct, since a packaging SKU IS pack-complete for ordering. Derivation is defensive: a malformed/multi-root chain (no unique root) yields `null` flat fields rather than a wrong guess.
+
+**Where the sync runs:** the POST `/api/admin/skus` route derives + writes flat fields AFTER `replaceSkuPackChain` succeeds (one atomic add; a follow-up `updateSku` of the flat columns under the same session). The unchained-edit path (pack-chain route already exists) triggers the same flat-field sync via `syncSkuFlatFieldsFromChain` in `lib/admin/pack-chain.ts` so a chain write from ANY path keeps the flat fields consistent — the sync is server-authoritative (a hand-crafted client payload can't skip it).
+
+### 4. Legacy quick-pack UI leaves SkuBuilder entirely
+
+The flat COLUMNS stay (fallback math for the laggard consumers), but no UI writes them directly anymore — only the derive-on-save sync. The already-chained-SKU edit path keeps the existing inline chain editor; the wizard is the UNCHAINED path (add + unchained edit).
+
+### 5. Cleanup from PR-A review
+
+Deleted the 2 orphaned i18n keys `admin.skus.filter.unchained` + `admin.skus.filter.unchained_count` (en + es) — grep-confirmed zero code references (the chain filter folded into the "No pack info" lens in PR-A).
+
+### 6. Tests
+
+`tests/pack-chain.test.ts` / `tests/sku-builder-shared.test.ts` extended: `deriveFlatFieldsFromChain` cases (2-level raw oz leaf; 3-level raw avg leaf w/ product-of-non-leaf units; shallow packaging count chain; cleaning opt-in oz) + the wizard's generated-label collision guard. Existing 291 tests stay green.
+
+### Out of PR-B scope (do NOT touch)
+
+The pure walk internals (byte-identical); the 3 laggard consumers' READ logic (still read flat fields — wired to chains in PR-C); counts/receiving; anchor_dimension / count-native ordering (PR-C); toast-sales; proxy; staff runtime. No migration (all columns exist).
+
+---
+
 ## D-law compliance (Disclosure Doctrine binds this UI)
 
-D1 identity line always visible · D2 unverified/no-pack-info badges + campaign counters never collapse · D5 i18n'd counts on collapsed headers · D6 lens chips + search on a ≥10-row list · D8 phone-first full-row toggles, vendor as select not chip · D9 disclosure state = useState only · D10 a11y `<button>`+aria on chips.
+D1 identity line always visible · D2 unverified/no-pack-info badges + campaign counters never collapse · D5 i18n'd counts on collapsed headers · D6 lens chips + search on a ≥10-row list · D8 phone-first full-row toggles, vendor as select not chip · D9 disclosure state = useState only · D10 a11y `<button>`+aria on chips. **PR-B wizard:** D4 the wizard is a triggered flow, not a pre-rendered form · D8 one active question at a time (answered levels collapse to summary lines), 44px targets · D9 wizard state = useState only · D10 `<button>` + aria on every branch/terminate control.
