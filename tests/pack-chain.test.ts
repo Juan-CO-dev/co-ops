@@ -22,6 +22,8 @@ import {
   buildPackChain,
   walkChainToOz,
   validateChainReachable,
+  validateChainStructure,
+  isChainUnverified,
   chainRootLabel,
   firstLabelMeasureCollision,
   type PackChainLevel,
@@ -383,6 +385,159 @@ describe("seed-13 label-collision regression (chain-first shadowing)", () => {
     // The NEW seed labels are clean:
     expect(firstLabelMeasureCollision(["pack", "inner"], measureLabels)).toBeNull();
     expect(firstLabelMeasureCollision(["container"], measureLabels)).toBeNull();
+  });
+});
+
+// ── THE VALIDATION SPLIT (council 2026-07-28, PR-A) ─────────────────────────
+// validateChainReachable conflated structure with oz-resolvability, so a valid
+// count-terminated chain (case → 12 each, no avg) got the unverified badge —
+// packaging crying wolf (D2). validateChainStructure checks structure ONLY (any
+// registered leaf measure, no avg); isChainUnverified is the class-aware badge
+// predicate: unverified ⇔ !structural OR (class===raw AND !ozResolvable).
+describe("validation split — structural validity (any leaf dimension, no avg)", () => {
+  it("weight chain is structurally valid", () => {
+    const chain = buildPackChain(twoLevel("case", 6, 2, "lb"));
+    expect(validateChainStructure(chain, MEASURES).ok).toBe(true);
+  });
+
+  it("COUNT-terminated chain (case → 12 each, NO avg) is structurally valid — the cried-wolf case", () => {
+    // The exact false-negative from the old validateChainReachable: this walks to
+    // missing_avg (no avg passed) yet is perfectly well-formed. Structure = ok.
+    const chain = buildPackChain(twoLevel("case", 12, 1, "each"));
+    expect(validateChainStructure(chain, MEASURES).ok).toBe(true);
+    // And the old reachable check would have (correctly, but unhelpfully) failed it:
+    expect(validateChainReachable(chain, MEASURES, null).ok).toBe(false);
+    expect((validateChainReachable(chain, MEASURES, null) as { reason: string }).reason).toBe("missing_avg");
+  });
+
+  it("volume-terminated chain (jug → 128 quart) is structurally valid without avg", () => {
+    const chain = buildPackChain([
+      { id: "j", label: "jug", containsQty: 4, containsLevelId: null, containsMeasureUnit: "quart", displayOrdinal: 0 },
+    ]);
+    expect(validateChainStructure(chain, MEASURES).ok).toBe(true);
+  });
+
+  it("structural check still rejects a detached sibling (fork), any class", () => {
+    const forked: PackChainLevel[] = [
+      { id: "case", label: "case", containsQty: 4, containsLevelId: "log", containsMeasureUnit: null, displayOrdinal: 0 },
+      { id: "log", label: "log", containsQty: 34, containsLevelId: null, containsMeasureUnit: "oz", displayOrdinal: 1 },
+      { id: "flap", label: "flap", containsQty: 2, containsLevelId: "log", containsMeasureUnit: null, displayOrdinal: 2 },
+    ];
+    expect(validateChainStructure(buildPackChain(forked), MEASURES).ok).toBe(false);
+  });
+
+  it("structural check still rejects an unregistered leaf measure", () => {
+    const chain = buildPackChain([
+      { id: "a", label: "tub", containsQty: 32, containsLevelId: null, containsMeasureUnit: "furlong", displayOrdinal: 0 },
+    ]);
+    const r = validateChainStructure(chain, MEASURES);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("missing_measure");
+  });
+
+  it("structural check rejects a cycle below a unique root", () => {
+    // A unique root (case, pointed-at by nobody) whose descendants loop: log → bag
+    // → log. chainRootLabel finds the root, then the structural walk hits the cycle.
+    const levels: PackChainLevel[] = [
+      { id: "case", label: "case", containsQty: 2, containsLevelId: "log", containsMeasureUnit: null, displayOrdinal: 0 },
+      { id: "log", label: "log", containsQty: 3, containsLevelId: "bag", containsMeasureUnit: null, displayOrdinal: 1 },
+      { id: "bag", label: "bag", containsQty: 4, containsLevelId: "log", containsMeasureUnit: null, displayOrdinal: 2 },
+    ];
+    const r = validateChainStructure(buildPackChain(levels), MEASURES);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("cycle");
+  });
+
+  it("a 2-node mutual cycle has no unique root → unknown_label (root check fires first)", () => {
+    const levels: PackChainLevel[] = [
+      { id: "a", label: "case", containsQty: 2, containsLevelId: "b", containsMeasureUnit: null, displayOrdinal: 0 },
+      { id: "b", label: "log", containsQty: 3, containsLevelId: "a", containsMeasureUnit: null, displayOrdinal: 1 },
+    ];
+    const r = validateChainStructure(buildPackChain(levels), MEASURES);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe("unknown_label");
+  });
+});
+
+describe("validation split — isChainUnverified (class-aware badge)", () => {
+  const countChain = () => buildPackChain(twoLevel("case", 12, 1, "each")); // count leaf, no avg
+  const rawWeight = () => buildPackChain(twoLevel("case", 6, 2, "lb"));
+
+  it("NON-RAW count-terminated chain with NO avg is VERIFIED (complete by design)", () => {
+    for (const klass of ["packaging", "cleaning", "misc"] as const) {
+      expect(isChainUnverified(countChain(), MEASURES, null, klass)).toBe(false);
+    }
+  });
+
+  it("RAW count-terminated chain with NO avg is UNVERIFIED (raw must reach oz)", () => {
+    expect(isChainUnverified(countChain(), MEASURES, null, "raw")).toBe(true);
+  });
+
+  it("RAW count-terminated chain WITH avg is VERIFIED (oz now resolvable)", () => {
+    expect(isChainUnverified(countChain(), MEASURES, 4, "raw")).toBe(false);
+  });
+
+  it("RAW weight chain is VERIFIED (oz resolvable, no avg needed)", () => {
+    expect(isChainUnverified(rawWeight(), MEASURES, null, "raw")).toBe(false);
+  });
+
+  it("a STRUCTURAL break is UNVERIFIED for EVERY class (raw and non-raw alike)", () => {
+    const forked = buildPackChain([
+      { id: "case", label: "case", containsQty: 4, containsLevelId: "log", containsMeasureUnit: null, displayOrdinal: 0 },
+      { id: "log", label: "log", containsQty: 34, containsLevelId: null, containsMeasureUnit: "oz", displayOrdinal: 1 },
+      { id: "flap", label: "flap", containsQty: 2, containsLevelId: "log", containsMeasureUnit: null, displayOrdinal: 2 },
+    ]);
+    for (const klass of ["raw", "packaging", "cleaning", "misc"] as const) {
+      expect(isChainUnverified(forked, MEASURES, null, klass)).toBe(true);
+    }
+  });
+
+  it("an EMPTY chain is not unverified (that's 'no pack info', not a broken chain)", () => {
+    expect(isChainUnverified(buildPackChain([]), MEASURES, null, "raw")).toBe(false);
+    expect(isChainUnverified(buildPackChain([]), MEASURES, null, "packaging")).toBe(false);
+  });
+});
+
+// ── SEED 14 label guard — the shallow-chain generator must never emit a chain
+//    label colliding with an active measure unit (the chain-first shadow hazard,
+//    the BC class caught twice). Seed 14 builds "case → N inner ; inner → each":
+//    the leaf CONTAINER is LABELED "inner" (non-colliding) and CONTAINS the
+//    MEASURE "each" — label≠contains_measure_unit, so it is NOT a collision. ──
+describe("seed-14 shallow-chain label guard", () => {
+  const measureLabels = new Set(MEASURES.keys()); // includes "each" AND "unit"
+
+  function seed14Levels(rootPackFormat: string, upp: number): PackChainLevel[] {
+    // Mirrors buildShallowLevels: root = canonicalized pack_format, leaf container
+    // labeled "inner" containing the count MEASURE "each".
+    const root = rootPackFormat.trim().toLowerCase();
+    return [
+      { id: "p", label: root === "inner" ? "pack" : root, containsQty: upp, containsLevelId: "i", containsMeasureUnit: null, displayOrdinal: 0 },
+      { id: "i", label: "inner", containsQty: 1, containsLevelId: null, containsMeasureUnit: "each", displayOrdinal: 1 },
+    ];
+  }
+
+  it("the generated LABELS ('case','inner') are clean — 'each' lives in contains_measure_unit, not a label", () => {
+    const levels = seed14Levels("Case", 12);
+    expect(firstLabelMeasureCollision(levels.map((l) => l.label), measureLabels)).toBeNull();
+  });
+
+  it("the shallow chain is STRUCTURALLY valid and its non-raw badge is VERIFIED", () => {
+    const chain = buildPackChain(seed14Levels("Box", 24));
+    expect(validateChainStructure(chain, MEASURES).ok).toBe(true);
+    expect(isChainUnverified(chain, MEASURES, null, "packaging")).toBe(false);
+  });
+
+  it("a HYPOTHETICAL generator that LABELED a level 'each' WOULD be caught by the guard", () => {
+    // Pins the hazard: if the generator ever emitted "each"/"unit" as a LABEL the
+    // shared L1 guard rejects it (exit 1 in the seed). This is the tripwire.
+    expect(firstLabelMeasureCollision(["case", "each"], measureLabels)).toBe("each");
+    expect(firstLabelMeasureCollision(["unit"], measureLabels)).toBe("unit");
+  });
+
+  it("canonicalized 'Each (no case)' root avoids the measure 'unit' (→ 'container')", () => {
+    // Seed 14 reuses seed 13's canonicalizer: an each-style pack_format maps to
+    // "container", NOT the measure "unit" — so no shadow.
+    expect(firstLabelMeasureCollision(["container", "inner"], measureLabels)).toBeNull();
   });
 });
 
