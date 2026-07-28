@@ -24,6 +24,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
+import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { useStepUp } from "@/components/admin/StepUpProvider";
 import { StatusBadge, ReadinessReasons } from "@/components/admin/StatusBadge";
 import type { Readiness } from "@/lib/readiness";
@@ -468,8 +469,14 @@ export function RecipeBuilder({
 
       {/* ── LIVE mode: delete (deactivate) ── */}
       {recipe !== null && canDelete ? (
-        <div className="mt-6 rounded-lg border-2 border-co-cta/40 bg-co-surface p-4">
-          {deleteError ? <p className="mb-3 text-sm text-co-cta">{deleteError}</p> : null}
+        <div className="mt-6">
+        <CollapsibleSection
+          idBase="recipe-danger"
+          title={t(rk("recipes.delete.danger_title"))}
+          // D2 strict: a persisted delete error stays visible even if the section is
+          // re-collapsed after the failure (badge slot renders in both states).
+          badge={deleteError ? <span className="text-xs font-semibold text-co-cta">{deleteError}</span> : undefined}
+        >
           {confirmDelete ? (
             <div className="flex justify-end gap-2">
               <button
@@ -500,6 +507,7 @@ export function RecipeBuilder({
               </button>
             </div>
           )}
+        </CollapsibleSection>
         </div>
       ) : null}
     </div>
@@ -543,6 +551,13 @@ function ConsumesSection({
   const [addKind, setAddKind] = useState<InputKind | null>(null);
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Disclosure (D3: PRIMARY work section → default-open; D10: locked open while
+  // an add-form is in progress so the dirty draft stays mounted). Uncontrolled-
+  // style toggle otherwise (lift open state + force true while form open).
+  const [sectionOpen, setSectionOpen] = useState(true);
+  const formInProgress = addKind !== null;
+  const isOpen = sectionOpen || formInProgress;
 
   // SKU form state
   const [skuId, setSkuId] = useState("");
@@ -663,10 +678,14 @@ function ConsumesSection({
   };
 
   return (
-    <div className="mt-4 rounded-lg border-2 border-co-border p-4">
-      <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
-        {t(rk("recipes.builder.consumes_title"))}
-      </h2>
+    <div className="mt-4">
+    <CollapsibleSection
+      idBase="recipe-consumes"
+      title={t(rk("recipes.builder.consumes_title"))}
+      count={t(rk("recipes.builder.consumes_count"), { n: liveInputs.length + draftInputs.length })}
+      open={isOpen}
+      onToggle={() => { if (!formInProgress) setSectionOpen((v) => !v); }}
+    >
       <p className="mt-1 text-xs text-co-text-muted">{t(rk("recipes.builder.consumes_subtitle"))}</p>
 
       {/* Live rows */}
@@ -814,6 +833,7 @@ function ConsumesSection({
           )}
         </div>
       ) : null}
+    </CollapsibleSection>
     </div>
   );
 }
@@ -930,6 +950,13 @@ function ProducesSection({
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Disclosure (D3: PRIMARY work section → default-open; D10: locked open while
+  // the add-form is in progress so the dirty draft stays mounted). Uncontrolled-
+  // style toggle otherwise (lift open state + force true while form open).
+  const [sectionOpen, setSectionOpen] = useState(true);
+  const formInProgress = addOpen === true;
+  const isOpen = sectionOpen || formInProgress;
+
   // Production output state
   const [outputItemId, setOutputItemId] = useState("");
   const [outputYield, setOutputYield] = useState("1");
@@ -1021,10 +1048,14 @@ function ProducesSection({
   };
 
   return (
-    <div className="mt-4 rounded-lg border-2 border-co-border p-4">
-      <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
-        {t(rk("recipes.builder.produces_title"))}
-      </h2>
+    <div className="mt-4">
+    <CollapsibleSection
+      idBase="recipe-produces"
+      title={t(rk("recipes.builder.produces_title"))}
+      count={t(rk("recipes.builder.produces_count"), { n: liveOutputs.length + draftOutputs.length })}
+      open={isOpen}
+      onToggle={() => { if (!formInProgress) setSectionOpen((v) => !v); }}
+    >
       <p className="mt-1 text-xs text-co-text-muted">
         {recipeType === "production"
           ? t(rk("recipes.builder.produces_subtitle_production"))
@@ -1145,6 +1176,7 @@ function ProducesSection({
           )}
         </div>
       ) : null}
+    </CollapsibleSection>
     </div>
   );
 }
@@ -1214,11 +1246,31 @@ function LiveReadout({
   const { t } = useTranslation();
   if (inputs.length === 0 && outputs.length === 0) return null;
 
+  // Per-batch oz total for the collapsed summary (D5): sum of the same
+  // per-input oz values the expanded body renders. When NO input resolves to
+  // oz, count stays null (no "≈ 0 oz").
+  let perBatchOz = 0;
+  let anyOz = false;
+  for (const inp of inputs) {
+    if (inp.componentSkuId && inp.unit) {
+      const sku = skus.find((s) => s.id === inp.componentSkuId);
+      if (sku) {
+        const oz = ozForRecipeInput(inp.quantity, inp.unit, sku, measures);
+        if (oz != null) { perBatchOz += oz; anyOz = true; }
+      }
+    }
+  }
+  const perBatchSummary = anyOz
+    ? t(rk("recipes.readout.per_batch_summary"), { n: perBatchOz.toFixed(1) })
+    : null;
+
   return (
-    <div className="mt-4 rounded-lg border-2 border-co-border bg-co-surface/50 p-4">
-      <h2 className="text-xs font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
-        {t(rk("recipes.readout.title"))}
-      </h2>
+    <div className="mt-4">
+    <CollapsibleSection
+      idBase="recipe-readout-live"
+      title={t(rk("recipes.readout.title"))}
+      count={perBatchSummary}
+    >
       <p className="mt-1 text-xs text-co-text-muted">{t(rk("recipes.readout.oz_note"))}</p>
       {inputs.length > 0 ? (
         <div className="mt-2 flex flex-col gap-1">
@@ -1263,6 +1315,7 @@ function LiveReadout({
           </p>
         </div>
       ) : null}
+    </CollapsibleSection>
     </div>
   );
 }
@@ -1284,11 +1337,31 @@ function DraftReadout({
   const { t } = useTranslation();
   if (draftInputs.length === 0 && draftOutputs.length === 0) return null;
 
+  // Per-batch oz total for the collapsed summary (D5): sum of the same
+  // per-input oz values the expanded body renders. When NO input resolves to
+  // oz, count stays null (no "≈ 0 oz").
+  let perBatchOz = 0;
+  let anyOz = false;
+  for (const di of draftInputs) {
+    if (di.kind === "sku" && di.componentSkuId && di.unit) {
+      const sku = skus.find((s) => s.id === di.componentSkuId);
+      if (sku) {
+        const oz = ozForRecipeInput(di.quantity, di.unit, sku, measures);
+        if (oz != null) { perBatchOz += oz; anyOz = true; }
+      }
+    }
+  }
+  const perBatchSummary = anyOz
+    ? t(rk("recipes.readout.per_batch_summary"), { n: perBatchOz.toFixed(1) })
+    : null;
+
   return (
-    <div className="mt-4 rounded-lg border-2 border-co-border bg-co-surface/50 p-4">
-      <h2 className="text-xs font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
-        {t(rk("recipes.readout.title"))}
-      </h2>
+    <div className="mt-4">
+    <CollapsibleSection
+      idBase="recipe-readout-draft"
+      title={t(rk("recipes.readout.title"))}
+      count={perBatchSummary}
+    >
       {draftInputs.length > 0 ? (
         <div className="mt-2 flex flex-col gap-1">
           {draftInputs.map((di) => {
@@ -1325,6 +1398,7 @@ function DraftReadout({
           </p>
         </div>
       ) : null}
+    </CollapsibleSection>
     </div>
   );
 }
