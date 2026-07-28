@@ -38,7 +38,7 @@ export function CollapsibleSection({
   title: string;
   /** Already-formatted count for the collapsed header (D5) — pass the result of
    *  t(key, { n }); null/undefined renders no count. */
-  count?: number | null;
+  count?: string | null;
   /** Never-collapse alert slot (D2): over-par / issue / unsaved badges render here,
    *  visible in both states. */
   badge?: ReactNode;
