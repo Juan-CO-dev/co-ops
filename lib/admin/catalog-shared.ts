@@ -11,8 +11,16 @@
 
 export type CatalogKind = "item" | "menu_item" | "package";
 
-/** The four dossier "issues" the Issues lens surfaces (spec §Issues lens). */
-export type CatalogIssue = "no_recipe" | "no_sku_path" | "not_sold" | "toast_unmapped";
+/** The dossier "issues" the Issues lens surfaces (spec §Issues lens).
+ *  `retype_suggested` (SKU Builder streamline 2026-07-27) flags a sold_as_is item
+ *  that has gained a producing recipe — the auto-suggest-retype backfill rule
+ *  (design §3): sold_as_is is reserved for items with NO producing recipe. */
+export type CatalogIssue =
+  | "no_recipe"
+  | "no_sku_path"
+  | "not_sold"
+  | "toast_unmapped"
+  | "retype_suggested";
 
 // ── Taxonomy (The Master List, migration 0157) ───────────────────────────────
 
@@ -91,6 +99,9 @@ export interface CatalogIssueInput {
   readinessReady: boolean;
   /** count of ACTIVE + confirmed toast_menu_map GUIDs pointing at this entity. */
   toastGuids: number;
+  /** items only: the stored item_type (0157). Drives retype_suggested; null for
+   *  menu_items/packages (they carry no taxon). */
+  itemType?: ItemType | null;
 }
 
 /**
@@ -105,6 +116,11 @@ export interface CatalogIssueInput {
  *                    "Sellable" = a menu_item, a package, or a sold_directly
  *                    item (a prep item that is never itself sold isn't expected
  *                    to have a Toast GUID).
+ *  - retype_suggested — ITEMS only: item_type is sold_as_is BUT the item has a
+ *                    producing recipe. sold_as_is is reserved for items with no
+ *                    producing recipe (design §3, Juan's vocabulary call) — a
+ *                    recipe-produced seller should be retyped to prepped. Purely
+ *                    advisory (a JOIN fact, not a mutation).
  */
 export function classifyCatalogIssues(e: CatalogIssueInput): CatalogIssue[] {
   const issues: CatalogIssue[] = [];
@@ -126,7 +142,144 @@ export function classifyCatalogIssues(e: CatalogIssueInput): CatalogIssue[] {
   const sellable = e.kind !== "item" || e.soldDirectly;
   if (e.active && sellable && e.toastGuids === 0) issues.push("toast_unmapped");
 
+  if (e.kind === "item" && e.itemType === "sold_as_is" && e.hasRecipe) {
+    issues.push("retype_suggested");
+  }
+
   return issues;
+}
+
+// ── Role badges (SKU Builder streamline 2026-07-27, design §3) ────────────────
+
+/**
+ * A dual-role badge for a catalog item — a GRAPH FACT read at render time, never
+ * a stored property, so it cannot drift (design §3). "sold" = sold_directly;
+ * "used_in_builds" = the item is a recipe_inputs.component_item_id somewhere;
+ * "made" = a producing recipe exists. Reads like a deli-pan label:
+ * "Meatballs: made · sold · used in 3 builds".
+ */
+export type RoleBadge =
+  | { role: "sold" }
+  | { role: "used_in_builds"; count: number }
+  | { role: "made" };
+
+/** The graph facts deriveRoleBadges reasons over (all already loaded by the catalog). */
+export interface RoleBadgeInput {
+  soldDirectly: boolean;
+  /** count of menu_items + parent items whose recipe consumes this item. */
+  usedInBuilds: number;
+  /** true when a producing recipe exists (graph.byOutputItem hit). */
+  hasProducingRecipe: boolean;
+}
+
+/**
+ * Derive the role badges for a catalog item (pure). Order is deli-label reading
+ * order: what it IS (made) → how it's sold (sold) → how it's consumed (used in
+ * N builds). Any subset can be empty (an on-hand raw that's only bought). Zero
+ * schema — every input is a read-time graph fact.
+ */
+export function deriveRoleBadges(input: RoleBadgeInput): RoleBadge[] {
+  const badges: RoleBadge[] = [];
+  if (input.hasProducingRecipe) badges.push({ role: "made" });
+  if (input.soldDirectly) badges.push({ role: "sold" });
+  if (input.usedInBuilds > 0) badges.push({ role: "used_in_builds", count: input.usedInBuilds });
+  return badges;
+}
+
+// ── Quick-pack → starter chain generation (SKU Builder streamline, design §1) ──
+
+/** One index-linked chain level to persist (mirrors PackChainLevelInput on the
+ *  pack-chain route; kept local so this pure module has zero server coupling). */
+export interface StarterChainLevel {
+  label: string;
+  containsQty: number;
+  containsIndex: number | null;
+  containsMeasureUnit: string | null;
+}
+
+/** The quick-pack fields an unchained SKU can fill instead of building a chain. */
+export interface QuickPackInput {
+  /** How many of the each/inner container are in one pack (e.g. 6). null/1 → single-level. */
+  unitsPerPack: number | null;
+  /** Size of one each (e.g. 32). */
+  eachSize: number | null;
+  /** Measure-unit label of the each (e.g. "oz"). */
+  eachMeasure: string | null;
+  /** Free-text container/pack name (e.g. "Case"); falls back to a generic label. */
+  packLabel?: string | null;
+  /** Free-text each/inner name (e.g. "each"); falls back to a generic label. */
+  eachLabel?: string | null;
+}
+
+/**
+ * Generate a STARTER pack chain from quick-pack fields — ONLY when they are
+ * filled enough to be meaningful (design §1: "generate a starter chain on save
+ * ONLY when filled"). Returns null when the fields are bare (an unchained save
+ * stays valid — the "add pack detail later" escape hatch).
+ *
+ * Rules:
+ *  - Requires BOTH eachSize (> 0) AND a non-empty eachMeasure — the leaf's unit.
+ *    Without them there is no convertible content, so no chain (returns null).
+ *  - unitsPerPack > 1 → a 2-level chain: pack → unitsPerPack × each ; each →
+ *    eachSize × measure.
+ *  - unitsPerPack null/≤1 → a single leaf level: each → eachSize × measure.
+ *
+ * Labels default to generic container names when the caller doesn't supply them;
+ * they are NEVER a measure-unit label (the chain's L1 namespace rule is enforced
+ * downstream by replaceSkuPackChain — a caller passing "oz" as packLabel is
+ * rejected there, not silently generated here).
+ */
+export function generateQuickPackChain(input: QuickPackInput): StarterChainLevel[] | null {
+  const each = input.eachSize;
+  const measure = (input.eachMeasure ?? "").trim();
+  if (each == null || !Number.isFinite(each) || each <= 0 || measure === "") {
+    return null; // not filled enough → no starter chain (bare save stays valid)
+  }
+  const eachLabel = (input.eachLabel ?? "").trim() || "each";
+  const units = input.unitsPerPack;
+
+  if (units != null && Number.isFinite(units) && units > 1) {
+    const packLabel = (input.packLabel ?? "").trim() || "pack";
+    // 2-level: index 0 = pack (holds `units` of the each at index 1);
+    //          index 1 = each (holds `each` of the measure unit).
+    return [
+      { label: packLabel, containsQty: units, containsIndex: 1, containsMeasureUnit: null },
+      { label: eachLabel, containsQty: each, containsIndex: null, containsMeasureUnit: measure },
+    ];
+  }
+
+  // Single leaf: each → eachSize × measure.
+  return [
+    { label: eachLabel, containsQty: each, containsIndex: null, containsMeasureUnit: measure },
+  ];
+}
+
+// ── SKU name-collision warning (SKU Builder streamline, design §1 dedupe) ──────
+
+/** The minimal SKU fields the collision check reads (client-safe). */
+export interface SkuNameCollisionCandidate {
+  id: string;
+  name: string;
+  active: boolean;
+}
+
+/**
+ * Find ACTIVE SKUs whose name collides with `name` (case-insensitive, trimmed),
+ * excluding the SKU being edited (`selfId`). Pure — powers the NON-BLOCKING
+ * name-collision warning on save (design §1: "11 dup pairs live"; dedupe is a
+ * warning, never a hard gate). Returns the colliding candidates (so the UI can
+ * name them); empty when the name is clean or blank.
+ */
+export function skuNameCollisions(
+  name: string,
+  skus: readonly SkuNameCollisionCandidate[],
+  selfId?: string | null,
+): SkuNameCollisionCandidate[] {
+  const needle = name.trim().toLowerCase();
+  if (needle === "") return [];
+  return skus.filter(
+    (s) => s.active && s.id !== selfId && s.name.trim().toLowerCase() === needle,
+  );
 }
 
 // ── Assembled catalog entity (TYPE-only import for the client) ────────────────
