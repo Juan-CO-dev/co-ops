@@ -17,6 +17,7 @@ import {
   resolveCountLinesDim,
   sumAnchorOzBySku,
   resolvePerSkuAnchors,
+  reconcileAnchorDimensions,
   computeOnHand,
   computeOnHandUnits,
   computeVariance,
@@ -402,5 +403,45 @@ describe("PR-C count-space on-hand + used-or-lost", () => {
   it("computeUsedOrLost: no prior count → advisory null (not zero)", () => {
     const r = computeUsedOrLost({ skuId: "lid", newCountUnits: 27, prevCountUnits: null, receivedBetweenUnits: 12 });
     expect(r.usedOrLostUnits).toBeNull();
+  });
+});
+
+// ── reconcileAnchorDimensions (adversarial review 2026-07-28 HIGH) ─────────────
+// A SKU whose chain flipped dimension between counts has anchors in BOTH maps;
+// without reconciliation it renders TWICE (duplicate React key, contradictory
+// on-hand). Latest anchor wins ACROSS dimensions — one row per SKU, always.
+describe("reconcileAnchorDimensions", () => {
+  const w = (anchorAt: string) => ({ anchorAt });
+
+  it("weight→count flip: fresher COUNT anchor evicts the stale weight anchor", () => {
+    const weight = new Map([["gloves", w("2026-07-20T12:00:00Z")]]);
+    const count = new Map([["gloves", w("2026-07-27T12:00:00Z")]]);
+    reconcileAnchorDimensions(weight, count);
+    expect(weight.has("gloves")).toBe(false);
+    expect(count.has("gloves")).toBe(true);
+  });
+
+  it("count→weight flip: fresher WEIGHT anchor evicts the stale count anchor", () => {
+    const weight = new Map([["capicola", w("2026-07-27T12:00:00Z")]]);
+    const count = new Map([["capicola", w("2026-07-20T12:00:00Z")]]);
+    reconcileAnchorDimensions(weight, count);
+    expect(weight.has("capicola")).toBe(true);
+    expect(count.has("capicola")).toBe(false);
+  });
+
+  it("tie keeps COUNT (the newer write path — a same-instant flip terminates count-space)", () => {
+    const weight = new Map([["lids", w("2026-07-27T12:00:00Z")]]);
+    const count = new Map([["lids", w("2026-07-27T12:00:00Z")]]);
+    reconcileAnchorDimensions(weight, count);
+    expect(weight.has("lids")).toBe(false);
+    expect(count.has("lids")).toBe(true);
+  });
+
+  it("disjoint SKUs are untouched (no flip → no eviction)", () => {
+    const weight = new Map([["ham", w("2026-07-27T12:00:00Z")]]);
+    const count = new Map([["gloves", w("2026-07-20T12:00:00Z")]]);
+    reconcileAnchorDimensions(weight, count);
+    expect(weight.has("ham")).toBe(true);
+    expect(count.has("gloves")).toBe(true);
   });
 });

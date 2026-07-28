@@ -54,6 +54,7 @@ import {
   resolveCountLinesDim,
   resolvePerSkuAnchors,
   resolvePerSkuUnitAnchors,
+  reconcileAnchorDimensions,
   computeOnHand,
   computeOnHandUnits,
   computeVariance,
@@ -293,8 +294,10 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
   const isWeight = (d: "weight" | "count" | null): boolean => d !== "count";
 
   // F1: per-SKU anchor resolution PER DIMENSION. Weight lines → oz anchor; count
-  // lines → leaf-unit anchor. A SKU is one or the other (its chain determines the
-  // dimension at write); partitioning keeps each SKU in a single space.
+  // lines → leaf-unit anchor. A SKU's chain determines its dimension at write —
+  // but a chain edit ACROSS dimensions between counts leaves historical lines in
+  // BOTH spaces, so the maps are reconciled below (latest anchor wins; one row
+  // per SKU, never two).
   const anchorBySku = resolvePerSkuAnchors(
     lines.filter((l) => isWeight(l.anchor_dimension)).map((l) => ({
       countEventId: l.count_event_id,
@@ -315,6 +318,10 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
       partialFraction: num(l.partial_fraction),
     })),
   );
+
+  // DIMENSION-FLIP reconciliation (adversarial review HIGH): a SKU present in
+  // both maps keeps only its most recent anchor's dimension.
+  reconcileAnchorDimensions(anchorBySku, unitAnchorBySku);
 
   const weightSkuIds = [...anchorBySku.keys()];
   const countSkuIds = [...unitAnchorBySku.keys()];

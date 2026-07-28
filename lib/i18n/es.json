@@ -2055,6 +2055,7 @@
   "counts.onhand.units": "{n} {unit}",
   "counts.onhand.on_hand_units": "{n} {unit} en existencia",
   "counts.onhand.used_or_lost": "usado o perdido desde el último conteo: {n} {unit}",
+  "counts.onhand.counted_over": "contado de más por {n} {unit} desde el último conteo",
   "dashboard.counts.tile_label": "Conteo físico",
   "dashboard.counts.hint": "Cuenta el estante y verifica las existencias.",
   "dashboard.counts.cta": "Registrar un conteo",

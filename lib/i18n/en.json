@@ -2055,6 +2055,7 @@
   "counts.onhand.units": "{n} {unit}",
   "counts.onhand.on_hand_units": "{n} {unit} on hand",
   "counts.onhand.used_or_lost": "used or lost since last count: {n} {unit}",
+  "counts.onhand.counted_over": "counted over by {n} {unit} since last count",
   "dashboard.counts.tile_label": "Physical count",
   "dashboard.counts.hint": "Count the shelf and verify on-hand.",
   "dashboard.counts.cta": "Record a count",

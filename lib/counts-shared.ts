@@ -292,6 +292,30 @@ export function resolvePerSkuUnitAnchors(
   return out;
 }
 
+/**
+ * DIMENSION-FLIP reconciliation (adversarial review 2026-07-28 HIGH). A SKU whose
+ * chain was replaced ACROSS dimensions between counts (weight-terminated →
+ * count-terminated, or back — a legitimate supersede-as-a-SET chain edit) has
+ * historical lines in BOTH spaces, so it lands in BOTH per-SKU anchor maps and
+ * would render TWICE (duplicate React key, contradictory on-hand). The per-SKU
+ * law is "latest counted line wins" — this extends it across dimensions: for a
+ * SKU present in both maps, keep the dimension of its MOST RECENT anchor and
+ * delete it from the stale one. Ties (identical anchor timestamps) keep COUNT —
+ * the newer write path, and a same-instant flip means the chain now terminates
+ * in count-space. PURE (mutates only the two maps passed in).
+ */
+export function reconcileAnchorDimensions<
+  W extends { anchorAt: string },
+  C extends { anchorAt: string },
+>(weight: Map<string, W>, count: Map<string, C>): void {
+  for (const [skuId, w] of [...weight]) {
+    const c = count.get(skuId);
+    if (!c) continue;
+    if (Date.parse(c.anchorAt) >= Date.parse(w.anchorAt)) weight.delete(skuId);
+    else count.delete(skuId);
+  }
+}
+
 /** Per-SKU on-hand computation inputs (all in oz; nulls make drift advisory). */
 export interface OnHandInput {
   skuId: string;

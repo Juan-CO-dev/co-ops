@@ -93,7 +93,15 @@ function CountRow({ r, lang }: { r: OnHandCountRow; lang: Language }) {
         {serverT(lang, "counts.onhand.anchor")}: {units(r.anchorUnits)}
         {r.anchorAgeDays != null ? ` · ${serverT(lang, "counts.onhand.age_days", { n: r.anchorAgeDays })}` : ""}
         {r.usedOrLostUnits != null
-          ? ` · ${serverT(lang, "counts.onhand.used_or_lost", { n: round(r.usedOrLostUnits), unit: r.unitLabel })}`
+          ? // Sign voice (review LOW): positive = fewer than expected → "used or
+            // lost" (advisory, no fault implied); negative = counted MORE than
+            // expected → say "counted over by N", never a bare signed number
+            // (whose sign convention is inverted vs the weight variance rows).
+            ` · ${
+              r.usedOrLostUnits >= 0
+                ? serverT(lang, "counts.onhand.used_or_lost", { n: round(r.usedOrLostUnits), unit: r.unitLabel })
+                : serverT(lang, "counts.onhand.counted_over", { n: round(Math.abs(r.usedOrLostUnits)), unit: r.unitLabel })
+            }`
           : ""}
       </div>
       {disjointAnnotations(r, lang)}
