@@ -596,6 +596,8 @@
   "admin.skus.cost.used_by": "Usado por",
   "admin.skus.cost.record": "Registrar precio",
   "admin.skus.cost.price_placeholder": "Precio por paquete ($)",
+  "admin.skus.show_details": "Ver detalles",
+  "admin.skus.hide_details": "Ocultar detalles",
   "admin.skus.error.invalid_price": "El precio debe ser un número positivo.",
   "admin.skus.error.invalid_date": "Elige una fecha válida.",
   "admin.skus.error.invalid_sku": "SKU no encontrado o inactivo.",

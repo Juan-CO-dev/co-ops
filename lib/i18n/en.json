@@ -596,6 +596,8 @@
   "admin.skus.cost.used_by": "Used by",
   "admin.skus.cost.record": "Record price",
   "admin.skus.cost.price_placeholder": "Price per pack ($)",
+  "admin.skus.show_details": "Show details",
+  "admin.skus.hide_details": "Hide details",
   "admin.skus.error.invalid_price": "Price must be a positive number.",
   "admin.skus.error.invalid_date": "Pick a valid effective date.",
   "admin.skus.error.invalid_sku": "SKU not found or inactive.",

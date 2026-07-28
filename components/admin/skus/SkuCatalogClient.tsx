@@ -23,6 +23,7 @@ import type { Readiness } from "@/lib/readiness";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import type { StarterChainLevel, SkuNameCollisionCandidate } from "@/lib/admin/catalog-shared";
 import { StatusBadge, ReadinessReasons } from "@/components/admin/StatusBadge";
+import { SummaryRow } from "@/components/ui/SummaryRow";
 import { SkuCostPanel, type SkuCostInfo } from "./SkuCostPanel";
 import { SkuBuilder } from "./SkuBuilder";
 import type {
@@ -80,6 +81,18 @@ export function SkuCatalogClient({
   const [confirmDeactivateId, setConfirmDeactivateId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  // D7 browse multi-expand: which non-editing rows have their cost-panel drawer
+  // open. Caller-owned Set (mirrors CatalogClient) so several can be open at once
+  // and collapse preserves scroll. Drawer children (the SkuCostPanel) lazy-render
+  // only when expanded → 0 cost panels on first paint (the ×163 fix).
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggleExpand = (id: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const isChained = (id: string) => (chainsBySku[id]?.length ?? 0) > 0;
 
@@ -248,7 +261,12 @@ export function SkuCatalogClient({
           {filtered.map((s) => (
             <li
               key={s.id}
-              className={"rounded-lg border-2 border-co-border bg-co-surface p-3 " + (s.active ? "" : "opacity-60")}
+              className={
+                // Editing rows keep the card chrome around SkuBuilder; non-editing
+                // rows let SummaryRow be the card (avoids a nested double-card).
+                (editingId === s.id ? "rounded-lg border-2 border-co-border bg-co-surface p-3 " : "") +
+                (s.active ? "" : "opacity-60")
+              }
             >
               {editingId === s.id ? (
                 <SkuBuilder
@@ -282,6 +300,8 @@ export function SkuCatalogClient({
                   canManage={canManage}
                   confirming={confirmDeactivateId === s.id}
                   busy={busy}
+                  expanded={expanded.has(s.id)}
+                  onToggle={() => toggleExpand(s.id)}
                   onEdit={() => {
                     setEditingId(s.id);
                     setErrorMsg(null);
@@ -289,11 +309,6 @@ export function SkuCatalogClient({
                   onAskDeactivate={() => setConfirmDeactivateId(s.id)}
                   onCancelDeactivate={() => setConfirmDeactivateId(null)}
                   onConfirmDeactivate={() => void toggleActive(s)}
-                />
-              )}
-              {editingId === s.id ? null : (
-                <SkuCostPanel
-                  skuId={s.id}
                   cost={skuCost[s.id] ?? { currentPrice: null, costPerOz: null, usedBy: [] }}
                   ledger={skuLedger[s.id] ?? null}
                   consumption={skuConsumption[s.id] ?? null}
@@ -312,7 +327,20 @@ export function SkuCatalogClient({
   );
 }
 
-/** Read row: name · vendor name or "Manual" · location · pack · item#. */
+/**
+ * Read row → summary + drawer (Disclosure W2, docs/DISCLOSURE_DOCTRINE.md).
+ *
+ * ALWAYS-VISIBLE summary (D1): name + meta dot-string (class · vendor/Manual ·
+ * location · pack · item#). Never-collapse alerts (D2) stay on the collapsed
+ * line via SummaryRow's badges slot: inactive · unchained · readiness StatusBadge
+ * + ReadinessReasons — the readiness/unchained signal a broken SKU still shouts
+ * even collapsed. NOTE the readiness badge is derived from the `readiness` prop
+ * (skuReadiness), NOT from the SkuCostPanel — relocating the panel never hides it.
+ *
+ * The SkuCostPanel (cost/oz, stock, receiving ledger, "Record price") is SECONDARY
+ * content → lives in the lazy drawer (D3/D10): 0 panels render on first paint.
+ * Management actions (Edit trigger + Deactivate, D4) stay reachable on the summary.
+ */
 function CatalogRow({
   sku: s,
   readiness,
@@ -320,10 +348,16 @@ function CatalogRow({
   canManage,
   confirming,
   busy,
+  expanded,
+  onToggle,
   onEdit,
   onAskDeactivate,
   onCancelDeactivate,
   onConfirmDeactivate,
+  cost,
+  ledger,
+  consumption,
+  canRecord,
 }: {
   sku: SkuView;
   readiness: Readiness | null;
@@ -331,10 +365,16 @@ function CatalogRow({
   canManage: boolean;
   confirming: boolean;
   busy: boolean;
+  expanded: boolean;
+  onToggle: () => void;
   onEdit: () => void;
   onAskDeactivate: () => void;
   onCancelDeactivate: () => void;
   onConfirmDeactivate: () => void;
+  cost: SkuCostInfo;
+  ledger: SkuReceivingLedger | null;
+  consumption: SkuConsumption | null;
+  canRecord: boolean;
 }) {
   const { t } = useTranslation();
   const meta: string[] = [];
@@ -344,11 +384,24 @@ function CatalogRow({
   meta.push(formatSkuPack(s, t));
   if (s.itemNumber) meta.push(`#${s.itemNumber}`);
 
+  const actionBtn =
+    "inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50";
+
   return (
-    <div className="flex flex-wrap items-start justify-between gap-2">
-      <div className="text-sm text-co-text">
-        <div className="flex items-center gap-2 font-bold">
-          {s.name}
+    <SummaryRow
+      expanded={expanded}
+      onToggle={onToggle}
+      toggleLabel={expanded ? t("admin.skus.hide_details") : t("admin.skus.show_details")}
+      drawerId={`sku-cost-${s.id}`}
+      summary={
+        <div className="text-sm text-co-text">
+          <div className="font-bold">{s.name}</div>
+          <div className="text-co-text-muted">{meta.join(" · ")}</div>
+        </div>
+      }
+      badges={
+        <>
+          {/* Never-collapse alerts (D2): stay visible on the collapsed summary. */}
           {!s.active ? (
             <span className="inline-flex items-center rounded-full bg-co-text/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-text-muted">
               {t("admin.skus.status.inactive")}
@@ -360,51 +413,39 @@ function CatalogRow({
             </span>
           ) : null}
           {readiness ? <StatusBadge status={readiness.status as "incomplete" | "upstream_gaps"} /> : null}
-        </div>
-        <div className="text-co-text-muted">{meta.join(" · ")}</div>
-        {readiness ? <ReadinessReasons reasons={readiness.reasons} /> : null}
-      </div>
-      {canManage ? (
-        <div className="flex gap-2">
-          {confirming ? (
-            <>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={onCancelDeactivate}
-                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
-              >
-                {t("admin.skus.cancel")}
-              </button>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={onConfirmDeactivate}
-                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
-              >
-                {s.active ? t("admin.skus.deactivate") : t("admin.skus.reactivate")}
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                onClick={onEdit}
-                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
-              >
-                {t("admin.skus.edit")}
-              </button>
-              <button
-                type="button"
-                onClick={onAskDeactivate}
-                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
-              >
-                {s.active ? t("admin.skus.deactivate") : t("admin.skus.reactivate")}
-              </button>
-            </>
-          )}
-        </div>
-      ) : null}
-    </div>
+          {readiness ? <ReadinessReasons reasons={readiness.reasons} /> : null}
+          {/* Management actions (D4 triggers) — reachable without expanding. */}
+          {canManage ? (
+            confirming ? (
+              <>
+                <button type="button" disabled={busy} onClick={onCancelDeactivate} className={actionBtn}>
+                  {t("admin.skus.cancel")}
+                </button>
+                <button type="button" disabled={busy} onClick={onConfirmDeactivate} className={actionBtn}>
+                  {s.active ? t("admin.skus.deactivate") : t("admin.skus.reactivate")}
+                </button>
+              </>
+            ) : (
+              <>
+                <button type="button" onClick={onEdit} className={actionBtn}>
+                  {t("admin.skus.edit")}
+                </button>
+                <button type="button" onClick={onAskDeactivate} className={actionBtn}>
+                  {s.active ? t("admin.skus.deactivate") : t("admin.skus.reactivate")}
+                </button>
+              </>
+            )
+          ) : null}
+        </>
+      }
+    >
+      <SkuCostPanel
+        skuId={s.id}
+        cost={cost}
+        ledger={ledger}
+        consumption={consumption}
+        canRecord={canRecord}
+      />
+    </SummaryRow>
   );
 }
