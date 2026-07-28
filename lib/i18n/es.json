@@ -2349,6 +2349,8 @@
   "admin.catering.menu.serves": "porciones",
   "admin.catering.menu.serves_hint": "Personas cubiertas por unidad (una caja de 24 papitas cubre 24). Vacío = 1.",
   "admin.catering.menu.error.invalid_serves": "Las porciones deben ser un número positivo.",
+  "admin.catering.menu.section_count": "{n} artículos",
+  "admin.catering.menu.section_available": "{n} disponibles",
   "admin.toast.tabs_aria": "Secciones del gestor de menú",
   "admin.toast.tab_menu": "Menú",
   "admin.toast.tab_toast": "Toast",
