@@ -315,3 +315,120 @@ export function isChainUnverified(
   if (rootLabel == null) return true; // defensive (structure already checked this)
   return !walkChainToOz(chain, rootLabel, measuresByLabel, avgOzPerEach).ok;
 }
+
+// ── Count-space math (SKU top-tier PR-C, LOCK 4) ────────────────────────────────
+// A count-terminated chain (packaging/cleaning/misc leaf is a bare count measure
+// like "each") has NO honest ounce, but it DOES have a structural unit count: how
+// many leaf units one container holds. This is a PURE STRUCTURAL walk — it never
+// touches avg_oz_per_each, measures, or oz. It multiplies containsQty down the
+// pointer path to the leaf. The count surface anchors + reorders in these units
+// ("2 cases + 3 loose = 27 units") when the chain doesn't reach ounces.
+
+/**
+ * Leaf units contained in ONE unit of `fromLabel`, walking the chain
+ * POINTER-directed and multiplying `containsQty` at every level down to the leaf.
+ * PURE + structural — no measures, no avg, no oz. The leaf itself contributes its
+ * own `containsQty` (e.g. `case → 12 each` counts the leaf's 12; `case → 4 log ;
+ * log → 6 each` = 4 × 6 = 24). Returns null on: unknown start label, a pointer
+ * cycle, or a dangling pointer (loudly-null, never a wrong count). NOTE: this does
+ * NOT require the leaf to be a COUNT measure — it's a raw structural multiply; the
+ * caller decides whether count-space applies (see chainCountLeafMeasure).
+ */
+export function chainLeafUnitsFrom(chain: PackChain, fromLabel: string): number | null {
+  const start = chain.byLabel.get(fromLabel);
+  if (!start) return null;
+  let product = 1;
+  const seen = new Set<string>();
+  let cur: PackChainLevel | undefined = start;
+  while (cur) {
+    if (seen.has(cur.id)) return null; // cycle
+    seen.add(cur.id);
+    if (!Number.isFinite(cur.containsQty) || cur.containsQty <= 0) return null;
+    product *= cur.containsQty;
+    if (cur.containsLevelId == null) break; // leaf reached
+    const next = chain.byId.get(cur.containsLevelId);
+    if (!next) return null; // dangling pointer
+    cur = next;
+  }
+  return Number.isFinite(product) ? product : null;
+}
+
+/**
+ * Leaf units in ONE ROOT container (the whole pack, in count-space). Convenience
+ * over chainLeafUnitsFrom(root). Null when there's no unique root or the walk
+ * fails. Used for count-space content ("a case = 12 units") + reorder framing.
+ */
+export function chainLeafUnitsPerRoot(chain: PackChain): number | null {
+  const rootLabel = chainRootLabel(chain);
+  if (rootLabel == null) return null;
+  return chainLeafUnitsFrom(chain, rootLabel);
+}
+
+/**
+ * The chain's count-leaf measure label — the leaf's contains_measure_unit WHEN it
+ * is a registered COUNT-dimension measure (the "each" case). Returns null when the
+ * chain doesn't terminate cleanly in a count measure (a weight/volume leaf, a
+ * malformed chain, or an unregistered unit). This is the discriminator the count
+ * surface uses: a count-leaf measure present ⇒ count-space anchoring is available
+ * for a non-oz-resolvable line; absent ⇒ the line must resolve in oz or is
+ * unresolvable. PURE.
+ */
+export function chainCountLeafMeasure(
+  chain: PackChain,
+  measuresByLabel: Map<string, MeasureUnitFactor>,
+): string | null {
+  const rootLabel = chainRootLabel(chain);
+  if (rootLabel == null) return null;
+  const start = chain.byLabel.get(rootLabel);
+  if (!start) return null;
+  const seen = new Set<string>();
+  let cur: PackChainLevel | undefined = start;
+  while (cur) {
+    if (seen.has(cur.id)) return null; // cycle
+    seen.add(cur.id);
+    if (cur.containsLevelId == null) {
+      // Leaf: is its measure a registered COUNT-dimension unit?
+      const unit = cur.containsMeasureUnit;
+      if (unit == null) return null;
+      const measure = measuresByLabel.get(unit);
+      return measure && measure.dimension === "count" ? unit : null;
+    }
+    const next = chain.byId.get(cur.containsLevelId);
+    if (!next) return null; // dangling pointer
+    cur = next;
+  }
+  return null;
+}
+
+/**
+ * A human-readable chain descriptor for the SKU catalog ("Case → 4 log → 34 oz" /
+ * "Case → 12 each"), walking root→leaf pointer-directed. Each hop reads
+ * "<label> → <containsQty> <next label|measure>". PURE — no i18n needed (labels +
+ * measure units are already the manager's own words). Returns null when the chain
+ * is empty or has no unique root (the caller falls back to the flat format).
+ */
+export function formatChainDescriptor(chain: PackChain): string | null {
+  const rootLabel = chainRootLabel(chain);
+  if (rootLabel == null) return null;
+  const start = chain.byLabel.get(rootLabel);
+  if (!start) return null;
+  const parts: string[] = [start.label];
+  const seen = new Set<string>();
+  let cur: PackChainLevel | undefined = start;
+  while (cur) {
+    if (seen.has(cur.id)) return null; // cycle → bail to flat fallback
+    seen.add(cur.id);
+    if (cur.containsLevelId != null) {
+      const next = chain.byId.get(cur.containsLevelId);
+      if (!next) return null; // dangling
+      parts.push(`${cur.containsQty} ${next.label}`);
+      cur = next;
+      continue;
+    }
+    // Leaf: qty × its measure unit.
+    if (cur.containsMeasureUnit == null) return null;
+    parts.push(`${cur.containsQty} ${cur.containsMeasureUnit}`);
+    break;
+  }
+  return parts.join(" → ");
+}

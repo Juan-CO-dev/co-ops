@@ -26,6 +26,10 @@ import {
   isChainUnverified,
   chainRootLabel,
   firstLabelMeasureCollision,
+  chainLeafUnitsFrom,
+  chainLeafUnitsPerRoot,
+  chainCountLeafMeasure,
+  formatChainDescriptor,
   type PackChainLevel,
 } from "@/lib/pack-chain-shared";
 import { skuContentOz, ozForRecipeInput, type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
@@ -549,5 +553,62 @@ describe("root detection", () => {
       { id: "b", label: "box", containsQty: 16, containsLevelId: null, containsMeasureUnit: "oz", displayOrdinal: 1 },
     ];
     expect(chainRootLabel(buildPackChain(levels))).toBeNull();
+  });
+});
+
+// ── Count-space helpers (SKU top-tier PR-C) ────────────────────────────────────
+describe("PR-C count-space chain helpers", () => {
+  // A packaging count chain: case -> 12 each (bare count leaf, no size/avg).
+  const caseOfEach: PackChainLevel[] = [
+    { id: "case", label: "case", containsQty: 12, containsLevelId: null, containsMeasureUnit: "each", displayOrdinal: 0 },
+  ];
+  // A 2-level count chain: case -> 4 log ; log -> 6 each  = 24 leaf units/case.
+  const caseLogEach: PackChainLevel[] = [
+    { id: "case", label: "case", containsQty: 4, containsLevelId: "log", containsMeasureUnit: null, displayOrdinal: 0 },
+    { id: "log", label: "log", containsQty: 6, containsLevelId: null, containsMeasureUnit: "each", displayOrdinal: 1 },
+  ];
+  // A raw weight chain: case -> 4 log ; log -> 34 oz (Capicola) — no count leaf.
+  const capChain: PackChainLevel[] = [
+    { id: "case", label: "case", containsQty: 4, containsLevelId: "log", containsMeasureUnit: null, displayOrdinal: 0 },
+    { id: "log", label: "log", containsQty: 34, containsLevelId: null, containsMeasureUnit: "oz", displayOrdinal: 1 },
+  ];
+
+  it("chainLeafUnitsFrom: leaf units from a named level (structural, no oz/avg)", () => {
+    expect(chainLeafUnitsFrom(buildPackChain(caseOfEach), "case")).toBe(12);
+    expect(chainLeafUnitsFrom(buildPackChain(caseLogEach), "case")).toBe(24);
+    // From an inner level: one log = 6 leaf units.
+    expect(chainLeafUnitsFrom(buildPackChain(caseLogEach), "log")).toBe(6);
+    // Works on a weight chain too — purely structural (case = 4 logs = ... down to leaf).
+    expect(chainLeafUnitsFrom(buildPackChain(capChain), "case")).toBe(4 * 34);
+  });
+
+  it("chainLeafUnitsFrom: unknown label → null (loud, never a wrong count)", () => {
+    expect(chainLeafUnitsFrom(buildPackChain(caseOfEach), "pallet")).toBeNull();
+  });
+
+  it("chainLeafUnitsPerRoot: whole-pack leaf units from the root", () => {
+    expect(chainLeafUnitsPerRoot(buildPackChain(caseOfEach))).toBe(12);
+    expect(chainLeafUnitsPerRoot(buildPackChain(caseLogEach))).toBe(24);
+  });
+
+  it("chainCountLeafMeasure: count leaf → the measure label; weight leaf → null", () => {
+    expect(chainCountLeafMeasure(buildPackChain(caseOfEach), MEASURES)).toBe("each");
+    expect(chainCountLeafMeasure(buildPackChain(caseLogEach), MEASURES)).toBe("each");
+    // Capicola terminates in oz (weight) → not a count leaf.
+    expect(chainCountLeafMeasure(buildPackChain(capChain), MEASURES)).toBeNull();
+  });
+
+  it("formatChainDescriptor: chain language for count and weight leaves", () => {
+    expect(formatChainDescriptor(buildPackChain(caseOfEach))).toBe("case → 12 each");
+    expect(formatChainDescriptor(buildPackChain(capChain))).toBe("case → 4 log → 34 oz");
+    expect(formatChainDescriptor(buildPackChain(caseLogEach))).toBe("case → 4 log → 6 each");
+  });
+
+  it("formatChainDescriptor: no unique root → null (caller falls back to flat)", () => {
+    const multiRoot: PackChainLevel[] = [
+      { id: "a", label: "case", containsQty: 32, containsLevelId: null, containsMeasureUnit: "oz", displayOrdinal: 0 },
+      { id: "b", label: "box", containsQty: 16, containsLevelId: null, containsMeasureUnit: "oz", displayOrdinal: 1 },
+    ];
+    expect(formatChainDescriptor(buildPackChain(multiRoot))).toBeNull();
   });
 });

@@ -13,10 +13,14 @@ import { describe, it, expect } from "vitest";
 import {
   resolveCountLineOz,
   resolveCountLines,
+  resolveCountLineDim,
+  resolveCountLinesDim,
   sumAnchorOzBySku,
   resolvePerSkuAnchors,
   computeOnHand,
+  computeOnHandUnits,
   computeVariance,
+  computeUsedOrLost,
   anchorAgeDays,
   chainLabelsInWalkOrder,
   type CountLineForAnchor,
@@ -305,5 +309,98 @@ describe("chainLabelsInWalkOrder — root→leaf for the level picker", () => {
       { id: "b", label: "case", containsQty: 32, containsLevelId: null, containsMeasureUnit: "oz", displayOrdinal: 0 },
     ];
     expect(chainLabelsInWalkOrder(twoRoots)).toEqual(["case", "box"]); // display_ordinal 0,1
+  });
+});
+
+// ── PR-C: dimension-aware resolution + count-space on-hand / used-or-lost ────────
+describe("PR-C count-anchored resolution (resolveCountLineDim / resolveCountLinesDim)", () => {
+  // A packaging count chain: case -> 12 each (bare count leaf, no size/avg).
+  const lidChain: PackChainLevel[] = [
+    { id: "case", label: "case", containsQty: 12, containsLevelId: null, containsMeasureUnit: "each", displayOrdinal: 0 },
+  ];
+  const lidSku: RecipeInputSku = {
+    packFormat: "Case", eachContainerLabel: null,
+    unitsPerPack: null, eachSize: null, eachMeasure: null, avgOzPerEach: null,
+    packChain: lidChain,
+  };
+
+  it("raw oz chain anchors in WEIGHT (unchanged) — cap case = 136 oz", () => {
+    const r = resolveCountLineDim({ levelLabel: "case", qty: 1, partialFraction: null }, capSku, MEASURES);
+    expect(r).toEqual({ ok: true, dimension: "weight", oz: 136 });
+  });
+
+  it("count-terminated chain anchors in COUNT — 2 cases of 12 = 24 units", () => {
+    const r = resolveCountLineDim({ levelLabel: "case", qty: 2, partialFraction: null }, lidSku, MEASURES);
+    expect(r).toEqual({ ok: true, dimension: "count", units: 24 });
+  });
+
+  it("count line at the leaf level — 3 loose 'each' = 3 units", () => {
+    // The leaf itself is a chain label only if named; here the level 'each' is the
+    // leaf's measure, not a chain-level label, so a loose count is entered at 'case'
+    // fractionally OR the picker offers 'case'. A partial fraction scales leaf units.
+    const r = resolveCountLineDim({ levelLabel: "case", qty: 1, partialFraction: 0.25 }, lidSku, MEASURES);
+    expect(r).toEqual({ ok: true, dimension: "count", units: 3 }); // 12 × 0.25
+  });
+
+  it("no chain / not count-terminated → unresolvable (rejected loudly)", () => {
+    const noChain: RecipeInputSku = { ...lidSku, packChain: null };
+    expect(resolveCountLineDim({ levelLabel: "case", qty: 1, partialFraction: null }, noChain, MEASURES).ok).toBe(false);
+  });
+
+  it("bad qty is a hard failure in either dimension", () => {
+    const r = resolveCountLineDim({ levelLabel: "case", qty: 0, partialFraction: null }, lidSku, MEASURES);
+    expect(r).toEqual({ ok: false, reason: "bad_qty" });
+  });
+
+  it("batch resolveCountLinesDim: mixed weight + count lines persist their dimensions", () => {
+    const lines: CountLineInput[] = [
+      { skuId: "cap", levelLabel: "case", qty: 1, isLoose: false, partialFraction: null }, // weight
+      { skuId: "lid", levelLabel: "case", qty: 2, isLoose: false, partialFraction: null }, // count
+    ];
+    const skuMap = new Map<string, RecipeInputSku>([["cap", capSku], ["lid", lidSku]]);
+    const r = resolveCountLinesDim(lines, skuMap, MEASURES);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.resolved[0]).toMatchObject({ anchorDimension: "weight", resolvedOz: 136, resolvedUnits: null });
+    expect(r.resolved[1]).toMatchObject({ anchorDimension: "count", resolvedOz: null, resolvedUnits: 24 });
+  });
+
+  it("batch rejects the whole event on an unresolvable line", () => {
+    const lines: CountLineInput[] = [{ skuId: "x", levelLabel: "case", qty: 1, isLoose: false, partialFraction: null }];
+    const skuMap = new Map<string, RecipeInputSku>([["x", { ...lidSku, packChain: null }]]);
+    const r = resolveCountLinesDim(lines, skuMap, MEASURES);
+    expect(r.ok).toBe(false);
+  });
+});
+
+describe("PR-C count-space on-hand + used-or-lost", () => {
+  const NOW = Date.parse("2026-07-28T12:00:00Z");
+
+  it("computeOnHandUnits: anchor + received-since (no consumed term)", () => {
+    const r = computeOnHandUnits(
+      { skuId: "lid", anchorUnits: 24, anchorAt: "2026-07-20T12:00:00Z", receivedUnitsSince: 12, anchorStale: false },
+      NOW,
+    );
+    expect(r.onHandUnits).toBe(36);
+    expect(r.anchorAgeDays).toBe(8);
+  });
+
+  it("computeOnHandUnits: null intake → advisory null (never fabricated)", () => {
+    const r = computeOnHandUnits(
+      { skuId: "lid", anchorUnits: 24, anchorAt: "2026-07-20T12:00:00Z", receivedUnitsSince: null, anchorStale: false },
+      NOW,
+    );
+    expect(r.onHandUnits).toBeNull();
+  });
+
+  it("computeUsedOrLost: (prev + received) − new, POSITIVE = used or lost", () => {
+    // Prior count 30, received 12 between, new count 27 → 15 used or lost.
+    const r = computeUsedOrLost({ skuId: "lid", newCountUnits: 27, prevCountUnits: 30, receivedBetweenUnits: 12 });
+    expect(r.usedOrLostUnits).toBe(15);
+  });
+
+  it("computeUsedOrLost: no prior count → advisory null (not zero)", () => {
+    const r = computeUsedOrLost({ skuId: "lid", newCountUnits: 27, prevCountUnits: null, receivedBetweenUnits: 12 });
+    expect(r.usedOrLostUnits).toBeNull();
   });
 });
