@@ -943,6 +943,13 @@ function ProducesSection({
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Disclosure (D3: PRIMARY work section → default-open; D10: locked open while
+  // the add-form is in progress so the dirty draft stays mounted). Uncontrolled-
+  // style toggle otherwise (lift open state + force true while form open).
+  const [sectionOpen, setSectionOpen] = useState(true);
+  const formInProgress = addOpen === true;
+  const isOpen = sectionOpen || formInProgress;
+
   // Production output state
   const [outputItemId, setOutputItemId] = useState("");
   const [outputYield, setOutputYield] = useState("1");
@@ -1034,10 +1041,14 @@ function ProducesSection({
   };
 
   return (
-    <div className="mt-4 rounded-lg border-2 border-co-border p-4">
-      <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
-        {t(rk("recipes.builder.produces_title"))}
-      </h2>
+    <div className="mt-4">
+    <CollapsibleSection
+      idBase="recipe-produces"
+      title={t(rk("recipes.builder.produces_title"))}
+      count={t(rk("recipes.builder.produces_count"), { n: liveOutputs.length + draftOutputs.length })}
+      open={isOpen}
+      onToggle={() => { if (!formInProgress) setSectionOpen((v) => !v); }}
+    >
       <p className="mt-1 text-xs text-co-text-muted">
         {recipeType === "production"
           ? t(rk("recipes.builder.produces_subtitle_production"))
@@ -1158,6 +1169,7 @@ function ProducesSection({
           )}
         </div>
       ) : null}
+    </CollapsibleSection>
     </div>
   );
 }
