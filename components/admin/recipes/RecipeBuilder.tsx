@@ -24,6 +24,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
+import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { useStepUp } from "@/components/admin/StepUpProvider";
 import { StatusBadge, ReadinessReasons } from "@/components/admin/StatusBadge";
 import type { Readiness } from "@/lib/readiness";
@@ -544,6 +545,13 @@ function ConsumesSection({
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Disclosure (D3: PRIMARY work section → default-open; D10: locked open while
+  // an add-form is in progress so the dirty draft stays mounted). Uncontrolled-
+  // style toggle otherwise (lift open state + force true while form open).
+  const [sectionOpen, setSectionOpen] = useState(true);
+  const formInProgress = addKind !== null;
+  const isOpen = sectionOpen || formInProgress;
+
   // SKU form state
   const [skuId, setSkuId] = useState("");
   const [skuQty, setSkuQty] = useState("");
@@ -663,10 +671,14 @@ function ConsumesSection({
   };
 
   return (
-    <div className="mt-4 rounded-lg border-2 border-co-border p-4">
-      <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
-        {t(rk("recipes.builder.consumes_title"))}
-      </h2>
+    <div className="mt-4">
+    <CollapsibleSection
+      idBase="recipe-consumes"
+      title={t(rk("recipes.builder.consumes_title"))}
+      count={t(rk("recipes.builder.consumes_count"), { n: liveInputs.length + draftInputs.length })}
+      open={isOpen}
+      onToggle={() => { if (!formInProgress) setSectionOpen((v) => !v); }}
+    >
       <p className="mt-1 text-xs text-co-text-muted">{t(rk("recipes.builder.consumes_subtitle"))}</p>
 
       {/* Live rows */}
@@ -814,6 +826,7 @@ function ConsumesSection({
           )}
         </div>
       ) : null}
+    </CollapsibleSection>
     </div>
   );
 }
