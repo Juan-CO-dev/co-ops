@@ -381,13 +381,15 @@ async function loadChecklistDetail(
 
   const showNotes = args.viewer.level >= REPORTS_HUB_NOTES_LEVEL;
 
+  // HISTORICAL read (spec §2.2): render a PAST report instance's items by
+  // template_id WITHOUT the active filter — an item disabled after this instance
+  // ran must still render for the completions it captured.
   const titems = await selectAllRows<{ id: string; station: string; label: string; display_order: number }>(
     (from, to) =>
       service
         .from("checklist_template_items")
         .select("id, station, label, display_order")
         .eq("template_id", inst.template_id)
-        .eq("active", true)
         .order("display_order", { ascending: true })
         .order("id", { ascending: true })
         .range(from, to),
@@ -577,13 +579,15 @@ async function loadOpeningDetail(
   // (the same loader loadOpeningState materializes + reads from).
   const closerSnapshots = await loadOpeningCloserCountSnapshots(service, args.instanceId);
 
+  // HISTORICAL read (spec §2.2): render a PAST opening report instance's items by
+  // template_id WITHOUT the active filter — an item disabled after this instance
+  // ran must still render for the completions it captured.
   const titems = await selectAllRows<{ id: string; station: string; label: string; display_order: number }>(
     (from, to) =>
       service
         .from("checklist_template_items")
         .select("id, station, label, display_order")
         .eq("template_id", inst.template_id)
-        .eq("active", true)
         .order("display_order", { ascending: true })
         .order("id", { ascending: true })
         .range(from, to),
@@ -1147,12 +1151,14 @@ export async function computeReportSignals(
     .maybeSingle<{ template_id: string }>();
   if (!inst) return { signals: empty, prepValues: [], checks: [] };
 
+  // HISTORICAL read (spec §2.2): label map for a PAST instance's signals —
+  // read by template_id WITHOUT the active filter so a completion whose item was
+  // later disabled still resolves its label.
   const items = await selectAllRows<{ id: string; label: string; required: boolean }>((from, to) =>
     service
       .from("checklist_template_items")
       .select("id, label, required")
       .eq("template_id", inst.template_id)
-      .eq("active", true)
       .order("id", { ascending: true })
       .range(from, to),
   );

@@ -220,13 +220,16 @@ export async function loadTrendSeries(
       const rt = checklistReportType(t.type, t.prep_subtype);
       if (rt) typeByTmpl.set(t.id, rt);
     }
+    // HISTORICAL read (spec §2.2): required-item ids across a date range of PAST
+    // instances, read by template_id WITHOUT the active filter — an item that was
+    // required when an instance ran but later disabled still scores against the
+    // completions it captured (matches the fold's completedIds set below).
     const titems = await selectAllRows<{ id: string; template_id: string; required: boolean }>(
       (from, to) =>
         service
           .from("checklist_template_items")
           .select("id, template_id, required")
           .in("template_id", tmplIds)
-          .eq("active", true)
           .order("id", { ascending: true })
           .range(from, to),
     );
