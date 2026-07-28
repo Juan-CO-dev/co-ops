@@ -1239,11 +1239,31 @@ function LiveReadout({
   const { t } = useTranslation();
   if (inputs.length === 0 && outputs.length === 0) return null;
 
+  // Per-batch oz total for the collapsed summary (D5): sum of the same
+  // per-input oz values the expanded body renders. When NO input resolves to
+  // oz, count stays null (no "≈ 0 oz").
+  let perBatchOz = 0;
+  let anyOz = false;
+  for (const inp of inputs) {
+    if (inp.componentSkuId && inp.unit) {
+      const sku = skus.find((s) => s.id === inp.componentSkuId);
+      if (sku) {
+        const oz = ozForRecipeInput(inp.quantity, inp.unit, sku, measures);
+        if (oz != null) { perBatchOz += oz; anyOz = true; }
+      }
+    }
+  }
+  const perBatchSummary = anyOz
+    ? t(rk("recipes.readout.per_batch_summary"), { n: perBatchOz.toFixed(1) })
+    : null;
+
   return (
-    <div className="mt-4 rounded-lg border-2 border-co-border bg-co-surface/50 p-4">
-      <h2 className="text-xs font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
-        {t(rk("recipes.readout.title"))}
-      </h2>
+    <div className="mt-4">
+    <CollapsibleSection
+      idBase="recipe-readout-live"
+      title={t(rk("recipes.readout.title"))}
+      count={perBatchSummary}
+    >
       <p className="mt-1 text-xs text-co-text-muted">{t(rk("recipes.readout.oz_note"))}</p>
       {inputs.length > 0 ? (
         <div className="mt-2 flex flex-col gap-1">
@@ -1288,6 +1308,7 @@ function LiveReadout({
           </p>
         </div>
       ) : null}
+    </CollapsibleSection>
     </div>
   );
 }
@@ -1309,11 +1330,31 @@ function DraftReadout({
   const { t } = useTranslation();
   if (draftInputs.length === 0 && draftOutputs.length === 0) return null;
 
+  // Per-batch oz total for the collapsed summary (D5): sum of the same
+  // per-input oz values the expanded body renders. When NO input resolves to
+  // oz, count stays null (no "≈ 0 oz").
+  let perBatchOz = 0;
+  let anyOz = false;
+  for (const di of draftInputs) {
+    if (di.kind === "sku" && di.componentSkuId && di.unit) {
+      const sku = skus.find((s) => s.id === di.componentSkuId);
+      if (sku) {
+        const oz = ozForRecipeInput(di.quantity, di.unit, sku, measures);
+        if (oz != null) { perBatchOz += oz; anyOz = true; }
+      }
+    }
+  }
+  const perBatchSummary = anyOz
+    ? t(rk("recipes.readout.per_batch_summary"), { n: perBatchOz.toFixed(1) })
+    : null;
+
   return (
-    <div className="mt-4 rounded-lg border-2 border-co-border bg-co-surface/50 p-4">
-      <h2 className="text-xs font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
-        {t(rk("recipes.readout.title"))}
-      </h2>
+    <div className="mt-4">
+    <CollapsibleSection
+      idBase="recipe-readout-draft"
+      title={t(rk("recipes.readout.title"))}
+      count={perBatchSummary}
+    >
       {draftInputs.length > 0 ? (
         <div className="mt-2 flex flex-col gap-1">
           {draftInputs.map((di) => {
@@ -1350,6 +1391,7 @@ function DraftReadout({
           </p>
         </div>
       ) : null}
+    </CollapsibleSection>
     </div>
   );
 }
