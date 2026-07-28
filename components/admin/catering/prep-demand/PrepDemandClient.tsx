@@ -17,6 +17,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
+import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { SalesTab } from "./SalesTab";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { Language } from "@/lib/i18n/types";
@@ -179,7 +180,13 @@ export function PrepDemandClient({ days, locations, locationId, from, to, lang, 
           ) : (
             <div className="flex flex-col gap-5">
               {days.map((day) => (
-                <DaySection key={day.needDate} day={day} t={t} lang={lang} />
+                <DaySection
+                  key={day.needDate}
+                  day={day}
+                  t={t}
+                  lang={lang}
+                  defaultOpen={days.length < 4}
+                />
               ))}
             </div>
           )}
@@ -446,19 +453,32 @@ function DaySection({
   day,
   t,
   lang,
+  defaultOpen,
 }: {
   day: PrepDemandDay;
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
   lang: Language;
+  defaultOpen: boolean;
 }) {
   const dateLabel = formatDateLabel(day.needDate, lang);
+  const hasOverPar = day.lines.some((line) => line.overPar);
 
   return (
-    <section>
-      {/* Date header */}
-      <h2 className="mb-2 text-sm font-extrabold uppercase tracking-[0.08em] text-co-text">
-        {dateLabel}
-      </h2>
+    <CollapsibleSection
+      idBase={`prep-demand-day-${day.needDate}`}
+      title={dateLabel}
+      count={t("admin.catering.prep_demand.day_count" as TranslationKey, {
+        n: day.lines.length,
+      })}
+      defaultOpen={defaultOpen}
+      badge={
+        hasOverPar ? (
+          <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-amber-800">
+            {t("admin.catering.prep_demand.over_par_badge" as TranslationKey)}
+          </span>
+        ) : null
+      }
+    >
       <ul className="flex flex-col gap-2">
         {day.lines.map((line) => (
           <li key={line.key}>
@@ -466,7 +486,7 @@ function DaySection({
           </li>
         ))}
       </ul>
-    </section>
+    </CollapsibleSection>
   );
 }
 

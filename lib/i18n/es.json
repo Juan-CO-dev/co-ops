@@ -2526,6 +2526,8 @@
   "admin.catering.prep_demand.sku.unresolved_choice": "{n} líneas de elección sin resolver no incluidas en los totales de SKU",
   "admin.catering.prep_demand.sku.no_recipe": "{n} líneas de demanda sin receta — no descompuestas",
   "admin.catering.prep_demand.sku.empty": "Sin demanda de SKU — las recetas aún no están creadas.",
+  "admin.catering.prep_demand.day_count": "{n} artículos",
+  "admin.catering.prep_demand.over_par_badge": "Par excedido",
   "catering.pipeline.search.placeholder": "Busca prospectos por nombre, empresa o teléfono…",
   "catering.pipeline.search.submit": "Buscar",
   "catering.pipeline.search.clear": "Limpia la búsqueda",
