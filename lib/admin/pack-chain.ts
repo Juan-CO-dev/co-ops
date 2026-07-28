@@ -34,8 +34,11 @@ import type { MeasureUnitFactor } from "@/lib/recipe-math";
 import {
   buildPackChain,
   validateChainReachable,
+  validateChainStructure,
+  isChainUnverified,
   firstLabelMeasureCollision,
   type PackChainLevel,
+  type PackChainSkuClass,
 } from "@/lib/pack-chain-shared";
 
 // Mirror the SKU floors (view chain = catalog read; write chain = catalog write).
@@ -77,8 +80,10 @@ export interface PackChainLevelInput {
 export interface SkuPackChainView {
   skuId: string;
   levels: PackChainLevel[];
-  /** true when the chain fails reachability/termination — the "chain unverified"
-   *  badge (a 3-level deli backfill candidate, or a malformed hand-edit). */
+  /** true when the chain is structurally invalid (any class) OR oz-unresolvable
+   *  on a RAW SKU — the class-aware "chain unverified" badge (council PR-A,
+   *  cried-wolf law). A non-raw count-terminated chain is complete by design and
+   *  is NEVER flagged. See isChainUnverified in lib/pack-chain-shared.ts. */
   unverified: boolean;
 }
 
@@ -99,24 +104,31 @@ async function loadMeasureLabels(): Promise<Set<string>> {
   return new Set((data ?? []).map((m) => m.label));
 }
 
-/** Verify a SKU exists (active OR inactive — chains can be inspected either way). */
-async function assertSkuExists(skuId: string): Promise<{ avgOzPerEach: number | null }> {
+/** SKU class fallback (matches the 0157 column default) for a null/legacy row. */
+function normalizeSkuClass(v: string | null): PackChainSkuClass {
+  return v === "packaging" || v === "cleaning" || v === "misc" ? v : "raw";
+}
+
+/** Verify a SKU exists (active OR inactive — chains can be inspected either way).
+ *  Returns the SKU's avg_oz_per_each + sku_class (the class gates the leaf law:
+ *  raw chains must be oz-resolvable; non-raw may terminate at a bare count leaf). */
+async function assertSkuExists(skuId: string): Promise<{ avgOzPerEach: number | null; skuClass: PackChainSkuClass }> {
   const sb = getServiceRoleClient();
   const { data, error } = await sb
     .from("vendor_items")
-    .select("id, avg_oz_per_each")
+    .select("id, avg_oz_per_each, sku_class")
     .eq("id", skuId)
-    .maybeSingle<{ id: string; avg_oz_per_each: number | string | null }>();
+    .maybeSingle<{ id: string; avg_oz_per_each: number | string | null; sku_class: string | null }>();
   if (error) throw new Error(`assertSkuExists failed: ${error.message}`);
   if (!data) throw new PackChainError(404, "sku_not_found", "SKU not found");
-  return { avgOzPerEach: num(data.avg_oz_per_each) };
+  return { avgOzPerEach: num(data.avg_oz_per_each), skuClass: normalizeSkuClass(data.sku_class) };
 }
 
 // ── Read (AGM+) ────────────────────────────────────────────────────────────────
 /** Load one SKU's active chain, with an unverified flag from a reachability check. */
 export async function loadSkuPackChain(actor: AuthContext, skuId: string): Promise<SkuPackChainView> {
   requireLevel(actor, PACK_CHAIN_READ_MIN);
-  const { avgOzPerEach } = await assertSkuExists(skuId);
+  const { avgOzPerEach, skuClass } = await assertSkuExists(skuId);
   const sb = getServiceRoleClient();
   const { data, error } = await sb
     .from("sku_pack_levels")
@@ -135,7 +147,8 @@ export async function loadSkuPackChain(actor: AuthContext, skuId: string): Promi
   if (levels.length > 0) {
     const measures = await loadMeasuresMap();
     const chain = buildPackChain(levels);
-    unverified = !validateChainReachable(chain, measures, avgOzPerEach).ok;
+    // Class-aware badge: structural break (any class) OR oz-unresolvable on raw.
+    unverified = isChainUnverified(chain, measures, avgOzPerEach, skuClass);
   }
   return { skuId, levels, unverified };
 }
@@ -148,6 +161,7 @@ function validateSubmission(
   measureLabels: Set<string>,
   measures: Map<string, MeasureUnitFactor>,
   avgOzPerEach: number | null,
+  skuClass: PackChainSkuClass,
 ): PackChainLevelInput[] {
   if (input.length === 0) throw new PackChainError(400, "empty_chain", "A chain needs at least one level");
 
@@ -198,14 +212,24 @@ function validateSubmission(
     containsMeasureUnit: lvl.containsIndex != null ? null : lvl.containsMeasureUnit!.trim(),
     displayOrdinal: i,
   }));
-  const res = validateChainReachable(buildPackChain(temp), measures, avgOzPerEach);
+  // Class-aware leaf law (council PR-A): raw chains MUST be oz-resolvable (they
+  // feed depletion/cost) → the full reachable check throws leaf_needs_avg on a
+  // count/volume leaf with no avg. Non-raw chains (packaging/cleaning/misc) only
+  // need to be STRUCTURALLY sound — a bare count leaf ("case → 12 each") is
+  // complete by design, no avg required. The structural check still enforces
+  // single-root / acyclic / all-reachable / terminates-in-a-registered-measure
+  // for every class; only the oz-resolvability gate is class-gated.
+  const chain = buildPackChain(temp);
+  const res = skuClass === "raw"
+    ? validateChainReachable(chain, measures, avgOzPerEach)
+    : validateChainStructure(chain, measures);
   if (!res.ok) {
     // Map the pure failure to a caller-facing code.
     const code =
       res.reason === "cycle" ? "chain_cycle" :
       res.reason === "dangling_pointer" ? "chain_unreachable" : // detached sibling / fork
       res.reason === "missing_measure" ? "unknown_measure" :
-      res.reason === "missing_avg" ? "leaf_needs_avg" :
+      res.reason === "missing_avg" ? "leaf_needs_avg" : // raw-only (structure never returns this)
       "chain_invalid";
     const msg =
       code === "chain_unreachable" ? "Every level must be reachable from a single root container (no detached siblings)" :
@@ -232,9 +256,9 @@ export async function replaceSkuPackChain(
   args: { skuId: string; levels: PackChainLevelInput[] },
 ): Promise<{ levelCount: number }> {
   requireLevel(actor, PACK_CHAIN_WRITE_MIN);
-  const { avgOzPerEach } = await assertSkuExists(args.skuId);
+  const { avgOzPerEach, skuClass } = await assertSkuExists(args.skuId);
   const [measureLabels, measures] = await Promise.all([loadMeasureLabels(), loadMeasuresMap()]);
-  const validated = validateSubmission(args.levels, measureLabels, measures, avgOzPerEach);
+  const validated = validateSubmission(args.levels, measureLabels, measures, avgOzPerEach, skuClass);
 
   const sb = getServiceRoleClient();
 

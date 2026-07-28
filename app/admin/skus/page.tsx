@@ -20,7 +20,7 @@ import { loadVendors } from "@/lib/admin/vendors";
 import { loadCurrentSkuPrices, computeSkuCostPerOz, loadSkuUsageMap, loadSkuReceivingLedger, loadSkuConsumption, type SkuConsumption } from "@/lib/admin/cost";
 import { skuPackComplete, skuReadiness, type Readiness } from "@/lib/readiness";
 import { loadSkuPackChains } from "@/lib/prep-consumption";
-import { buildPackChain, validateChainReachable, type PackChainLevel } from "@/lib/pack-chain-shared";
+import { buildPackChain, isChainUnverified, type PackChainLevel } from "@/lib/pack-chain-shared";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
 import { SkuCatalogClient } from "@/components/admin/skus/SkuCatalogClient";
 
@@ -76,16 +76,21 @@ export default async function AdminSkusPage() {
     measureUnits.map((m) => [m.label, { dimension: m.dimension, toBaseFactor: m.toBaseFactor }]),
   );
   const avgOzById = new Map(skus.map((s) => [s.id, s.avgOzPerEach]));
+  const classById = new Map(skus.map((s) => [s.id, s.skuClass]));
   const chainsBySku: Record<string, PackChainLevel[]> = {};
   const chainUnverifiedBySku: Record<string, boolean> = {};
   for (const [skuId, levels] of chainMap.entries()) {
     if (levels.length === 0) continue;
     chainsBySku[skuId] = levels;
-    const unverified = !validateChainReachable(
+    // Class-aware badge (council PR-A): structural break for any class, OR
+    // oz-unresolvable on a RAW SKU. Non-raw count-terminated chains are complete
+    // by design → never flagged (the cried-wolf law).
+    const unverified = isChainUnverified(
       buildPackChain(levels),
       measuresByLabel,
       avgOzById.get(skuId) ?? null,
-    ).ok;
+      classById.get(skuId) ?? "raw",
+    );
     if (unverified) chainUnverifiedBySku[skuId] = true;
   }
 
