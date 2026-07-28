@@ -20,6 +20,7 @@ const UPDATE_KEYS = [
   "eachSize",
   "eachMeasure",
   "eachContainerLabel",
+  "avgOzPerEach",
   "itemNumber",
   "sourceUrl",
   "leadTimeDays",
@@ -90,6 +91,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if ("eachContainerLabel" in b) {
       if (b.eachContainerLabel !== null && typeof b.eachContainerLabel !== "string") return jsonError(400, "invalid_payload", { field: "eachContainerLabel" });
       changes.eachContainerLabel = b.eachContainerLabel as string | null;
+    }
+    if ("avgOzPerEach" in b) {
+      if (b.avgOzPerEach !== null && typeof b.avgOzPerEach !== "number") return jsonError(400, "invalid_payload", { field: "avgOzPerEach" });
+      changes.avgOzPerEach = b.avgOzPerEach as number | null;
     }
     if ("itemNumber" in b) {
       if (b.itemNumber !== null && typeof b.itemNumber !== "string") return jsonError(400, "invalid_payload", { field: "itemNumber" });
