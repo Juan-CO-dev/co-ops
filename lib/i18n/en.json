@@ -2526,6 +2526,8 @@
   "admin.catering.prep_demand.sku.unresolved_choice": "{n} unresolved choice lines not included in SKU totals",
   "admin.catering.prep_demand.sku.no_recipe": "{n} demand lines have no recipe — not decomposed",
   "admin.catering.prep_demand.sku.empty": "No SKU demand — recipes not yet authored.",
+  "admin.catering.prep_demand.day_count": "{n} items",
+  "admin.catering.prep_demand.over_par_badge": "Over par",
   "catering.pipeline.search.placeholder": "Search leads by name, company, or phone…",
   "catering.pipeline.search.submit": "Search",
   "catering.pipeline.search.clear": "Clear search",
