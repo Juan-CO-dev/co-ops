@@ -205,11 +205,21 @@ export interface QuickPackInput {
   eachSize: number | null;
   /** Measure-unit label of the each (e.g. "oz"). */
   eachMeasure: string | null;
-  /** Free-text container/pack name (e.g. "Case"); falls back to a generic label. */
+  /** Free-text container/pack name (e.g. "Case"); falls back to "pack". */
   packLabel?: string | null;
-  /** Free-text each/inner name (e.g. "each"); falls back to a generic label. */
+  /** Free-text each/inner name (e.g. "log"); falls back to "inner" — NEVER "each"
+   *  (an active measure-unit label; see generateQuickPackChain's collision guard). */
   eachLabel?: string | null;
 }
+
+/** The default each/inner-level label for a generated starter chain. "inner"
+ *  (NOT "each") is the SAME safe word seed 13 (scripts/seed/13-pack-chains.ts)
+ *  adopted for exactly this class — "each" is an active measure_units label, so
+ *  a generated leaf labeled "each" would collide with the chain's L1 namespace
+ *  rule and replaceSkuPackChain would throw label_is_measure_unit. */
+const DEFAULT_EACH_LABEL = "inner";
+/** The default pack/case-level label for a 2-level generated starter chain. */
+const DEFAULT_PACK_LABEL = "pack";
 
 /**
  * Generate a STARTER pack chain from quick-pack fields — ONLY when they are
@@ -220,38 +230,56 @@ export interface QuickPackInput {
  * Rules:
  *  - Requires BOTH eachSize (> 0) AND a non-empty eachMeasure — the leaf's unit.
  *    Without them there is no convertible content, so no chain (returns null).
- *  - unitsPerPack > 1 → a 2-level chain: pack → unitsPerPack × each ; each →
+ *  - unitsPerPack > 1 → a 2-level chain: pack → unitsPerPack × inner ; inner →
  *    eachSize × measure.
- *  - unitsPerPack null/≤1 → a single leaf level: each → eachSize × measure.
+ *  - unitsPerPack null/≤1 → a single leaf level: inner → eachSize × measure.
  *
- * Labels default to generic container names when the caller doesn't supply them;
- * they are NEVER a measure-unit label (the chain's L1 namespace rule is enforced
- * downstream by replaceSkuPackChain — a caller passing "oz" as packLabel is
- * rejected there, not silently generated here).
+ * Labels default to safe generic container names ("inner"/"pack") when the caller
+ * doesn't supply them — NEVER a measure-unit label (a generated "each" leaf would
+ * collide with the active "each" measure unit; the L1 namespace rule enforced by
+ * replaceSkuPackChain would then reject the whole chain AFTER createSku already
+ * minted the SKU — a mint-then-destroy). To pre-empt that class entirely, pass
+ * `measureLabels` (the loaded active measure_units labels): if ANY generated
+ * label would collide (case-insensitive, trimmed) this returns null (a bare valid
+ * unchained save) rather than emitting a chain that is guaranteed to be rejected
+ * downstream.
  */
-export function generateQuickPackChain(input: QuickPackInput): StarterChainLevel[] | null {
+export function generateQuickPackChain(
+  input: QuickPackInput,
+  measureLabels?: ReadonlySet<string>,
+): StarterChainLevel[] | null {
   const each = input.eachSize;
   const measure = (input.eachMeasure ?? "").trim();
   if (each == null || !Number.isFinite(each) || each <= 0 || measure === "") {
     return null; // not filled enough → no starter chain (bare save stays valid)
   }
-  const eachLabel = (input.eachLabel ?? "").trim() || "each";
+  const eachLabel = (input.eachLabel ?? "").trim() || DEFAULT_EACH_LABEL;
   const units = input.unitsPerPack;
 
-  if (units != null && Number.isFinite(units) && units > 1) {
-    const packLabel = (input.packLabel ?? "").trim() || "pack";
-    // 2-level: index 0 = pack (holds `units` of the each at index 1);
-    //          index 1 = each (holds `each` of the measure unit).
-    return [
-      { label: packLabel, containsQty: units, containsIndex: 1, containsMeasureUnit: null },
-      { label: eachLabel, containsQty: each, containsIndex: null, containsMeasureUnit: measure },
-    ];
+  const chain =
+    units != null && Number.isFinite(units) && units > 1
+      ? // 2-level: index 0 = pack (holds `units` of the inner at index 1);
+        //          index 1 = inner (holds `each` of the measure unit).
+        [
+          { label: (input.packLabel ?? "").trim() || DEFAULT_PACK_LABEL, containsQty: units, containsIndex: 1, containsMeasureUnit: null },
+          { label: eachLabel, containsQty: each, containsIndex: null, containsMeasureUnit: measure },
+        ]
+      : // Single leaf: inner → eachSize × measure.
+        [{ label: eachLabel, containsQty: each, containsIndex: null, containsMeasureUnit: measure }];
+
+  // Collision guard (mint-then-destroy prevention): if any GENERATED label equals
+  // an active measure-unit label (trim+lowercase), replaceSkuPackChain would throw
+  // label_is_measure_unit after the SKU was already minted. Bail to a bare valid
+  // save instead of emitting a doomed chain.
+  if (measureLabels && measureLabels.size > 0) {
+    const measureLower = new Set<string>();
+    for (const m of measureLabels) measureLower.add(m.trim().toLowerCase());
+    for (const level of chain) {
+      if (measureLower.has(level.label.trim().toLowerCase())) return null;
+    }
   }
 
-  // Single leaf: each → eachSize × measure.
-  return [
-    { label: eachLabel, containsQty: each, containsIndex: null, containsMeasureUnit: measure },
-  ];
+  return chain;
 }
 
 // ── SKU name-collision warning (SKU Builder streamline, design §1 dedupe) ──────

@@ -10,6 +10,7 @@ import {
   deriveRoleBadges,
   type SkuNameCollisionCandidate,
 } from "@/lib/admin/catalog-shared";
+import { firstLabelMeasureCollision } from "@/lib/pack-chain-shared";
 
 // ── skuNameCollisions ─────────────────────────────────────────────────────────
 describe("skuNameCollisions", () => {
@@ -79,20 +80,82 @@ describe("generateQuickPackChain", () => {
     ]);
   });
 
-  it("builds a single leaf when unitsPerPack is null/1 (each → measure)", () => {
+  it("builds a single leaf when unitsPerPack is null/1 (inner → measure)", () => {
     expect(generateQuickPackChain({ unitsPerPack: null, eachSize: 32, eachMeasure: "oz" })).toEqual([
-      { label: "each", containsQty: 32, containsIndex: null, containsMeasureUnit: "oz" },
+      { label: "inner", containsQty: 32, containsIndex: null, containsMeasureUnit: "oz" },
     ]);
     expect(generateQuickPackChain({ unitsPerPack: 1, eachSize: 12, eachMeasure: "lb" })).toEqual([
-      { label: "each", containsQty: 12, containsIndex: null, containsMeasureUnit: "lb" },
+      { label: "inner", containsQty: 12, containsIndex: null, containsMeasureUnit: "lb" },
     ]);
   });
 
-  it("defaults labels to generic container names when not supplied", () => {
+  it("defaults labels to SAFE generic names (inner / pack, NOT the measure word 'each')", () => {
     const chain = generateQuickPackChain({ unitsPerPack: 4, eachSize: 34, eachMeasure: "oz" });
     expect(chain).toEqual([
       { label: "pack", containsQty: 4, containsIndex: 1, containsMeasureUnit: null },
-      { label: "each", containsQty: 34, containsIndex: null, containsMeasureUnit: "oz" },
+      { label: "inner", containsQty: 34, containsIndex: null, containsMeasureUnit: "oz" },
+    ]);
+  });
+
+  // ── F1 (adversarial review #1 CRITICAL): mint-then-destroy guard ────────────
+  // The default each-level label MUST NOT be a measure_units label. "each" (the
+  // old default) IS an active measure unit, so a generated leaf labeled "each"
+  // would fail replaceSkuPackChain's L1 namespace rule (label_is_measure_unit)
+  // AFTER createSku already minted the SKU. These tests are integration-shaped:
+  // they walk the generated chain's labels through firstLabelMeasureCollision
+  // (the exact write-path collision check) against a measure set that includes
+  // each/unit/oz/count.
+  const measureSet = new Set(["each", "unit", "oz", "count"]);
+
+  it("generated 1-level default-label chain has NO measure-unit collision", () => {
+    const chain = generateQuickPackChain({ unitsPerPack: null, eachSize: 32, eachMeasure: "oz" });
+    expect(chain).not.toBeNull();
+    const labels = chain!.map((l) => l.label);
+    expect(firstLabelMeasureCollision(labels, measureSet)).toBeNull();
+  });
+
+  it("generated 2-level default-label chain has NO measure-unit collision", () => {
+    const chain = generateQuickPackChain({ unitsPerPack: 6, eachSize: 34, eachMeasure: "oz" });
+    expect(chain).not.toBeNull();
+    const labels = chain!.map((l) => l.label);
+    expect(firstLabelMeasureCollision(labels, measureSet)).toBeNull();
+  });
+
+  it("never emits 'each' or 'unit' as a generated label (1- and 2-level)", () => {
+    const one = generateQuickPackChain({ unitsPerPack: 1, eachSize: 12, eachMeasure: "lb" })!;
+    const two = generateQuickPackChain({ unitsPerPack: 4, eachSize: 34, eachMeasure: "oz" })!;
+    for (const level of [...one, ...two]) {
+      expect(level.label).not.toBe("each");
+      expect(level.label).not.toBe("unit");
+    }
+  });
+
+  it("returns null (bare valid save) when a caller-supplied label WOULD collide", () => {
+    // Manager typed "oz" as the each name → the generated leaf would be rejected
+    // downstream. The measureLabels guard bails to a bare unchained save instead.
+    expect(
+      generateQuickPackChain(
+        { unitsPerPack: null, eachSize: 32, eachMeasure: "oz", eachLabel: "oz" },
+        measureSet,
+      ),
+    ).toBeNull();
+    // Case-insensitive + trimmed: "  EACH  " as a pack label also collides.
+    expect(
+      generateQuickPackChain(
+        { unitsPerPack: 6, eachSize: 32, eachMeasure: "oz", packLabel: "  EACH  " },
+        measureSet,
+      ),
+    ).toBeNull();
+  });
+
+  it("still generates a chain when labels are clean, even with a measure set passed", () => {
+    const chain = generateQuickPackChain(
+      { unitsPerPack: 6, eachSize: 32, eachMeasure: "oz", packLabel: "Case", eachLabel: "log" },
+      measureSet,
+    );
+    expect(chain).toEqual([
+      { label: "Case", containsQty: 6, containsIndex: 1, containsMeasureUnit: null },
+      { label: "log", containsQty: 32, containsIndex: null, containsMeasureUnit: "oz" },
     ]);
   });
 });

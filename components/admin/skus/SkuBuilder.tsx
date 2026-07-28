@@ -202,6 +202,13 @@ export function SkuBuilder({
   const measuresByLabel = new Map<string, MeasureUnitFactor>(
     measureUnits.map((m) => [m.label, { dimension: m.dimension, toBaseFactor: m.toBaseFactor }]),
   );
+  // Active measure-unit labels — passed to generateQuickPackChain so a generated
+  // chain label that would collide with a unit (e.g. "each") is caught here
+  // rather than exploding in replaceSkuPackChain after createSku minted the SKU.
+  const measureLabelSet = useMemo(
+    () => new Set(measureUnits.map((m) => m.label)),
+    [measureUnits],
+  );
   const selectedMeasure = measureUnits.find((m) => m.label === eachMeasure) ?? null;
   const isNonWeight = selectedMeasure != null && selectedMeasure.dimension !== "weight";
   const liveContentOz = skuContentOz(
@@ -227,9 +234,11 @@ export function SkuBuilder({
     locationId: locationId || null,
     name: name.trim(),
     // Pack format stays part of the payload (createSku still requires a
-    // non-empty one); default to "Each" when the manager left it blank so a
-    // chain-first add never trips the lib's required-pack-format check.
-    packFormat: packFormat.trim() || "Each",
+    // non-empty one); default to the real registry label "Each (no case)"
+    // (sku_pack_formats, migration 0096 — NOT the off-registry "Each") when the
+    // manager left it blank so a chain-first add never trips the lib's
+    // required-pack-format check.
+    packFormat: packFormat.trim() || "Each (no case)",
     unitsPerPack: parseNum(unitsPerPack),
     eachSize: parseNum(eachSize),
     eachMeasure: eachMeasure.trim() || null,
@@ -251,13 +260,16 @@ export function SkuBuilder({
     // edits go through onSaveChain (the SKU already exists), never here.
     const chainDraft =
       !isEdit
-        ? generateQuickPackChain({
-            unitsPerPack: parseNum(unitsPerPack),
-            eachSize: parseNum(eachSize),
-            eachMeasure: eachMeasure.trim() || null,
-            packLabel: packLabel.trim() || null,
-            eachLabel: eachLabel.trim() || null,
-          })
+        ? generateQuickPackChain(
+            {
+              unitsPerPack: parseNum(unitsPerPack),
+              eachSize: parseNum(eachSize),
+              eachMeasure: eachMeasure.trim() || null,
+              packLabel: packLabel.trim() || null,
+              eachLabel: eachLabel.trim() || null,
+            },
+            measureLabelSet,
+          )
         : null;
     onSubmit(assembleValues(), chainDraft);
   };
