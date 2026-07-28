@@ -40,6 +40,7 @@ import {
   type PackChainLevel,
   type PackChainSkuClass,
 } from "@/lib/pack-chain-shared";
+import { deriveFlatFieldsFromChain } from "@/lib/admin/catalog-shared";
 
 // Mirror the SKU floors (view chain = catalog read; write chain = catalog write).
 export const PACK_CHAIN_READ_MIN = 6; // AGM+
@@ -241,6 +242,40 @@ function validateSubmission(
   return input;
 }
 
+/**
+ * Sync the legacy flat pack columns on vendor_items from a persisted chain
+ * (PR-B sync-on-save). Derives pack_format / units_per_pack / each_size /
+ * each_measure via the pure `deriveFlatFieldsFromChain` (the tested linear
+ * root→leaf collapse) and writes them. avg_oz_per_each is intentionally NOT
+ * written here — it's set on the SKU create/update payload and the chain's
+ * oz-resolution relies on it. Best-effort by design: the chain is already
+ * persisted; a flat-sync failure is logged, not thrown, so a transient write
+ * blip never reverts a good chain (the flat fields are a back-compat mirror, not
+ * the source of truth). `pack_format` NULL from a malformed derive is coalesced
+ * to a non-empty placeholder so the NOT-NULL-friendly consumers never see blank
+ * (validateSubmission guarantees a well-formed chain reaches here anyway).
+ */
+async function syncSkuFlatFieldsFromChain(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  skuId: string,
+  levels: PackChainLevelInput[],
+): Promise<void> {
+  const flat = deriveFlatFieldsFromChain(levels);
+  const { error } = await sb
+    .from("vendor_items")
+    .update({
+      pack_format: flat.packFormat ?? "Each (no case)",
+      units_per_pack: flat.unitsPerPack,
+      each_size: flat.eachSize,
+      each_measure: flat.eachMeasure,
+    })
+    .eq("id", skuId);
+  if (error) {
+    // Non-fatal: the chain (source of truth) is already saved.
+    console.error(`syncSkuFlatFieldsFromChain(${skuId}) failed (chain saved; flat fields stale): ${error.message}`);
+  }
+}
+
 // ── Write (GM+; supersede-as-a-SET) ──────────────────────────────────────────────
 /**
  * Replace a SKU's whole active chain with a new version (append-only): validate,
@@ -290,6 +325,18 @@ export async function replaceSkuPackChain(
   }));
   const { error: insErr } = await sb.from("sku_pack_levels").insert(rows);
   if (insErr) throw new Error(`replaceSkuPackChain insert: ${insErr.message}`);
+
+  // FLAT-FIELD SYNC-ON-SAVE (SKU top-tier PR-B): derive the legacy flat pack
+  // columns from the just-persisted chain and write them, so the 3 laggard
+  // consumers that still read flat fields (readiness.skuPackComplete,
+  // sku-demand's skuContentOz-sans-chain, formatSkuPack) stay correct until PR-C
+  // migrates them to read chains. Server-authoritative — every chain write path
+  // (add flow, unchained-edit wizard, chain editor) flows through here, so a
+  // hand-crafted client payload can't skip the sync. avg_oz_per_each is NOT
+  // touched (it's a SKU-level column set on the create/update payload). A
+  // malformed chain derives to all-null — but validateSubmission already rejected
+  // those above, so a persisted chain always derives cleanly.
+  await syncSkuFlatFieldsFromChain(sb, args.skuId, validated);
 
   await audit({
     actorId: actor.user.id,

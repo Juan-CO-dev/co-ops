@@ -12,9 +12,13 @@
  *   Section B — Pack truth (the chain is the only pack vocabulary):
  *     · CHAINED SKU  → inline chain builder, seeded from the server-passed chain
  *       (no lazy GET), with a "chain unverified" badge on the section header.
- *     · UNCHAINED    → quick-pack fields (each size + measure, +units per pack)
- *       that GENERATE a starter chain on save ONLY when filled. A bare unchained
- *       save stays valid ("add pack detail later").
+ *     · UNCHAINED    → the CLASS-AWARE guided WIZARD (SKU top-tier PR-B): plain
+ *       manager questions ("What does it come in? How many per?") that STOP
+ *       SOONER for non-raw classes and emit a chain. A bare unchained save stays
+ *       valid (the wizard is a triggered flow — no chain until the manager
+ *       builds one). The legacy quick-pack fields are GONE; the flat columns are
+ *       DERIVED from the chain server-side on save (sync-on-save for the 3
+ *       laggard consumers until PR-C migrates them).
  *   Section C — Cost & usage (edit mode only): the read-only SkuCostPanel
  *     (cost/oz, in-stock, deliveries, used-by) with record-price as a sub-action.
  *
@@ -34,15 +38,12 @@ import type { RegistryOption, MeasureUnitOption, SkuView } from "@/lib/admin/sku
 import { SKU_CLASSES } from "@/lib/admin/catalog-shared";
 import type { SkuClass } from "@/lib/admin/catalog-shared";
 import {
-  generateQuickPackChain,
   skuNameCollisions,
   type StarterChainLevel,
   type SkuNameCollisionCandidate,
 } from "@/lib/admin/catalog-shared";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
-import { skuContentOz, type MeasureUnitFactor } from "@/lib/recipe-math";
-import { RegistrySelect } from "./RegistrySelect";
-import { MeasureUnitSelect } from "./MeasureUnitSelect";
+import { PackChainWizard } from "./PackChainWizard";
 import type { SkuFormValues, SkuFormVendorOption, SkuFormLocationOption } from "./SkuForm";
 import { SkuCostPanel, type SkuCostInfo } from "./SkuCostPanel";
 import type { SkuReceivingLedger, SkuConsumption } from "@/lib/admin/cost";
@@ -155,37 +156,43 @@ export function SkuBuilder({
   consumption?: SkuConsumption | null;
   /** Hands identity + quick-pack values + an optional chain draft (add flow). */
   onSubmit: (values: SkuFormValues, chain: StarterChainLevel[] | null) => void;
-  /** Edit-mode chain save (SKU exists → pack-chain route). Returns ok. */
-  onSaveChain?: (levels: StarterChainLevel[]) => Promise<boolean>;
+  /** Edit-mode chain save (SKU exists → pack-chain route). Returns ok. When
+   *  `avgOzPerEach` is provided (the wizard's raw count/volume leaf), the parent
+   *  persists it on the SKU BEFORE the chain save so a count leaf is
+   *  oz-resolvable at validation time (undefined → the chain editor's path,
+   *  which never changes the avg). */
+  onSaveChain?: (levels: StarterChainLevel[], avgOzPerEach?: number | null) => Promise<boolean>;
   onCancel: () => void;
 }) {
   const { t } = useTranslation();
   const isEdit = initial !== undefined;
   const hasChain = (initialChain?.length ?? 0) > 0;
 
-  // ── Section A + quick-pack state ──
+  // ── Section A state ──
   const initialVendor =
     initial?.vendorId ?? (fixedVendorId !== undefined ? fixedVendorId : null);
   const [vendorId, setVendorId] = useState<string>(initialVendor ?? "");
   const [locationId, setLocationId] = useState<string>(initial?.locationId ?? "");
   const [name, setName] = useState(initial?.name ?? "");
   const [skuClass, setSkuClass] = useState<SkuClass>(initial?.skuClass ?? "raw");
-  const [packFormat, setPackFormat] = useState(initial?.packFormat ?? "");
-  const [unitsPerPack, setUnitsPerPack] = useState(
-    initial?.unitsPerPack != null ? String(initial.unitsPerPack) : "",
-  );
-  const [eachSize, setEachSize] = useState(initial?.eachSize != null ? String(initial.eachSize) : "");
-  const [eachMeasure, setEachMeasure] = useState(initial?.eachMeasure ?? "");
+  // avg_oz_per_each rides the submission (a raw count/volume leaf needs it so the
+  // chain is oz-resolvable). The wizard drives it for the leaf; kept here so it
+  // ships in the SAME create/save payload the chain does.
   const [avgOzPerEach, setAvgOzPerEach] = useState(
     initial?.avgOzPerEach != null ? String(initial.avgOzPerEach) : "",
   );
-  // Optional friendly names the starter chain uses for its levels.
-  const [packLabel, setPackLabel] = useState("");
-  const [eachLabel, setEachLabel] = useState("");
   const [itemNumber, setItemNumber] = useState(initial?.itemNumber ?? "");
   const [sourceUrl, setSourceUrl] = useState(initial?.sourceUrl ?? "");
   const [leadTime, setLeadTime] = useState(initial?.leadTimeDays != null ? String(initial.leadTimeDays) : "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
+
+  // ── Section B wizard state (unchained path — add + unchained edit) ──
+  // The wizard is a TRIGGERED flow (D4): closed until the manager taps
+  // "Add ordering info". It emits the assembled chain via onChange.
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardChain, setWizardChain] = useState<StarterChainLevel[] | null>(null);
+  const [wizardBusy, setWizardBusy] = useState(false);
+  const [wizardErr, setWizardErr] = useState<string | null>(null);
 
   // ── Section B chain-editor state (edit mode; seeded from server) ──
   const [chainOpen, setChainOpen] = useState(false);
@@ -199,28 +206,6 @@ export function SkuBuilder({
     return trimmed === "" ? null : Number(trimmed);
   };
 
-  const measuresByLabel = new Map<string, MeasureUnitFactor>(
-    measureUnits.map((m) => [m.label, { dimension: m.dimension, toBaseFactor: m.toBaseFactor }]),
-  );
-  // Active measure-unit labels — passed to generateQuickPackChain so a generated
-  // chain label that would collide with a unit (e.g. "each") is caught here
-  // rather than exploding in replaceSkuPackChain after createSku minted the SKU.
-  const measureLabelSet = useMemo(
-    () => new Set(measureUnits.map((m) => m.label)),
-    [measureUnits],
-  );
-  const selectedMeasure = measureUnits.find((m) => m.label === eachMeasure) ?? null;
-  const isNonWeight = selectedMeasure != null && selectedMeasure.dimension !== "weight";
-  const liveContentOz = skuContentOz(
-    {
-      unitsPerPack: parseNum(unitsPerPack),
-      eachSize: parseNum(eachSize),
-      eachMeasure: eachMeasure.trim() || null,
-      avgOzPerEach: parseNum(avgOzPerEach),
-    },
-    measuresByLabel,
-  );
-
   const collisions = useMemo(
     () => (allSkus ? skuNameCollisions(name, allSkus, initial?.id ?? null) : []),
     [name, allSkus, initial?.id],
@@ -233,18 +218,17 @@ export function SkuBuilder({
     vendorId: showVendorDropdown ? (vendorId || null) : (fixedVendorId ?? null),
     locationId: locationId || null,
     name: name.trim(),
-    // Pack format stays part of the payload (createSku still requires a
-    // non-empty one); default to the real registry label "Each (no case)"
-    // (sku_pack_formats, migration 0096 — NOT the off-registry "Each") when the
-    // manager left it blank so a chain-first add never trips the lib's
-    // required-pack-format check.
-    packFormat: packFormat.trim() || "Each (no case)",
-    unitsPerPack: parseNum(unitsPerPack),
-    eachSize: parseNum(eachSize),
-    eachMeasure: eachMeasure.trim() || null,
+    // The flat pack fields are no longer authored in the UI — they are DERIVED
+    // from the wizard's chain server-side on save (sync-on-save, PR-B). The trio
+    // is OMITTED (not null): the PATCH route treats a key-present null as
+    // "clear", so sending nulls would wipe existing legacy pack data on every
+    // identity edit. Absent keys skip the columns entirely (create coalesces
+    // absent → null, which is the correct bare "No pack info" state). We still
+    // send a non-empty pack_format because createSku requires one; the server
+    // sync overwrites it from the derived chain when a chain saves.
+    packFormat: initial?.packFormat?.trim() || "Each (no case)",
     // each_container_label retired from the builder UI (design §4) — omitted from
-    // SkuFormValues, so createSku/updateSku never touch the column (existing DB
-    // values preserved for the legacy recipe-math reader; write-retirement = Phase 2).
+    // SkuFormValues, so createSku/updateSku never touch the column.
     avgOzPerEach: parseNum(avgOzPerEach),
     itemNumber: itemNumber.trim() || null,
     sourceUrl: sourceUrl.trim() || null,
@@ -255,22 +239,11 @@ export function SkuBuilder({
 
   const submit = () => {
     if (!canSubmit) return;
-    // ADD flow: an unchained SKU generates a starter chain from the quick-pack
-    // fields ONLY when they're filled; a bare save stays valid. EDIT-mode chain
-    // edits go through onSaveChain (the SKU already exists), never here.
-    const chainDraft =
-      !isEdit
-        ? generateQuickPackChain(
-            {
-              unitsPerPack: parseNum(unitsPerPack),
-              eachSize: parseNum(eachSize),
-              eachMeasure: eachMeasure.trim() || null,
-              packLabel: packLabel.trim() || null,
-              eachLabel: eachLabel.trim() || null,
-            },
-            measureLabelSet,
-          )
-        : null;
+    // ADD flow: the wizard's assembled chain (or null when the manager left it
+    // untouched — a bare save stays valid). The server derives+syncs the flat
+    // pack fields from this chain. EDIT-mode chain edits go through onSaveChain
+    // (the SKU already exists), never here.
+    const chainDraft = !isEdit ? wizardChain : null;
     onSubmit(assembleValues(), chainDraft);
   };
 
@@ -314,6 +287,25 @@ export function SkuBuilder({
       setChainSavedTick((n) => n + 1);
     } else {
       setChainErr(errorMsg ?? t("admin.skus.error.generic"));
+    }
+  };
+
+  // ── Wizard save (UNCHAINED EDIT: the SKU exists → the pack-chain route, which
+  //    also syncs the flat fields server-side). Add flow never reaches here — it
+  //    ships the wizard chain in the create payload via submit(). ──
+  const saveWizardChain = async () => {
+    if (wizardBusy || !onSaveChain || !wizardChain) return;
+    setWizardErr(null);
+    setWizardBusy(true);
+    // Pass the avg so the parent persists it on the SKU before the chain save —
+    // a raw count/volume leaf needs it to pass validation (leaf_needs_avg).
+    const ok = await onSaveChain(wizardChain, parseNum(avgOzPerEach));
+    setWizardBusy(false);
+    if (ok) {
+      setWizardOpen(false);
+      setWizardChain(null);
+    } else {
+      setWizardErr(errorMsg ?? t("admin.skus.error.generic"));
     }
   };
 
@@ -430,60 +422,59 @@ export function SkuBuilder({
             )}
           </div>
         ) : (
-          // UNCHAINED (add flow, or an unchained edit) → quick-pack fields.
+          // UNCHAINED (add flow, or an unchained edit) → the class-aware WIZARD.
+          // A triggered flow (D4): closed until "Add ordering info" is tapped so
+          // a bare save stays valid ("add pack detail later").
           <div className="flex flex-col gap-3">
-            <p className="text-xs text-co-text-muted">
-              {isEdit ? t("admin.skus.builder.quick_pack_intro") : t("admin.skus.builder.quick_pack_hint")}
-            </p>
-            <RegistrySelect
-              label={t("admin.skus.field.pack_format")}
-              value={packFormat}
-              onChange={setPackFormat}
-              options={packFormats}
-              actorLevel={actorLevel}
-              addEndpoint="/api/admin/skus/pack-formats"
-              addPromptKey="admin.skus.add_pack_format_prompt"
-              addButtonKey="admin.skus.add_pack_format"
-              disabled={busy}
-            />
-            <Labeled label={t("admin.skus.field.units_per_pack")}>
-              <input className={fieldCls} type="number" min={1} step={1} inputMode="numeric" value={unitsPerPack} disabled={busy} onChange={(e) => setUnitsPerPack(e.target.value)} />
-            </Labeled>
-            <div className="grid grid-cols-2 gap-2">
-              <Labeled label={t("admin.skus.field.each_size")}>
-                <input className={fieldCls} type="number" min={0} step="any" inputMode="decimal" value={eachSize} disabled={busy} onChange={(e) => setEachSize(e.target.value)} />
-              </Labeled>
-              <MeasureUnitSelect
-                label={t("admin.skus.field.each_measure")}
-                value={eachMeasure}
-                onChange={setEachMeasure}
-                options={measureUnits}
-                actorLevel={actorLevel}
-                disabled={busy}
-              />
-            </div>
-            {isNonWeight ? (
-              <Labeled label={t("admin.skus.field.avg_oz_per_each")}>
-                <input className={fieldCls} type="number" min={0} step="any" inputMode="decimal" value={avgOzPerEach} disabled={busy} onChange={(e) => setAvgOzPerEach(e.target.value)} />
-                <span className="mt-1 block text-xs text-co-text-muted">{t("admin.skus.avg_oz_per_each_hint")}</span>
-              </Labeled>
-            ) : null}
-            {/* Friendly names for the starter chain's levels (add flow only). */}
-            {!isEdit ? (
-              <div className="grid grid-cols-2 gap-2">
-                <Labeled label={t("admin.skus.builder.pack_label")}>
-                  <input className={fieldCls} value={packLabel} disabled={busy} placeholder={t("admin.skus.builder.pack_label_ph")} onChange={(e) => setPackLabel(e.target.value)} />
-                </Labeled>
-                <Labeled label={t("admin.skus.builder.each_label")}>
-                  <input className={fieldCls} value={eachLabel} disabled={busy} placeholder={t("admin.skus.builder.each_label_ph")} onChange={(e) => setEachLabel(e.target.value)} />
-                </Labeled>
-              </div>
-            ) : null}
-            <p className="text-sm font-bold text-co-text">
-              {t("admin.skus.content_oz_label")}:{" "}
-              <span className="text-co-text-muted">{liveContentOz == null ? "—" : `≈ ${Math.round(liveContentOz)} oz`}</span>
-            </p>
-            <p className="text-[11px] text-co-text-muted">{t("admin.skus.builder.add_detail_later")}</p>
+            {!wizardOpen ? (
+              <>
+                <p className="text-xs text-co-text-muted">{t("admin.skus.builder.add_detail_later")}</p>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => { setWizardOpen(true); setWizardErr(null); }}
+                  className="inline-flex min-h-[44px] w-fit items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
+                >
+                  {t("admin.skus.builder.add_ordering_info")}
+                </button>
+              </>
+            ) : (
+              <>
+                <PackChainWizard
+                  skuClass={skuClass}
+                  packFormats={packFormats}
+                  measureUnits={measureUnits}
+                  avgOzPerEach={avgOzPerEach}
+                  onAvgOzPerEachChange={setAvgOzPerEach}
+                  busy={busy || wizardBusy}
+                  onChange={setWizardChain}
+                />
+                {wizardErr ? <p className="text-sm text-co-cta">{wizardErr}</p> : null}
+                <div className="flex flex-wrap justify-end gap-2">
+                  <button
+                    type="button"
+                    disabled={busy || wizardBusy}
+                    onClick={() => { setWizardOpen(false); setWizardChain(null); setWizardErr(null); }}
+                    className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text disabled:opacity-50"
+                  >
+                    {t("admin.skus.cancel")}
+                  </button>
+                  {/* Unchained EDIT: the SKU exists → save the chain now (its own
+                      route + step-up + server-side flat sync). ADD flow ships the
+                      chain in the create payload via the main Save button below. */}
+                  {isEdit && onSaveChain ? (
+                    <button
+                      type="button"
+                      disabled={busy || wizardBusy || !wizardChain}
+                      onClick={() => void saveWizardChain()}
+                      className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-3 text-xs font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50"
+                    >
+                      {t("admin.skus.chain.save")}
+                    </button>
+                  ) : null}
+                </div>
+              </>
+            )}
           </div>
         )}
       </section>

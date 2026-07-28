@@ -42,9 +42,13 @@ export interface SkuFormValues {
   locationId: string | null;
   name: string;
   packFormat: string;
-  unitsPerPack: number | null;
-  eachSize: number | null;
-  eachMeasure: string | null;
+  /** Optional since PR-B: SkuBuilder OMITS the flat pack trio (server-derived
+   *  from the chain via sync-on-save; a key-present null would CLEAR the columns
+   *  on every identity edit — the PATCH route treats `"key" in body` null as
+   *  "clear"). SkuForm (vendor-detail surface) still authors them. */
+  unitsPerPack?: number | null;
+  eachSize?: number | null;
+  eachMeasure?: string | null;
   avgOzPerEach: number | null;
   itemNumber: string | null;
   sourceUrl: string | null;
