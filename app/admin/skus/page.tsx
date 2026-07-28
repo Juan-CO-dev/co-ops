@@ -57,26 +57,29 @@ export default async function AdminSkusPage() {
   const consumptionMap = await loadSkuConsumption(auth, skus.map((s) => s.id));
   const skuConsumption: Record<string, SkuConsumption> = Object.fromEntries([...consumptionMap.entries()]);
 
-  const skuReadinessMap: Record<string, Readiness> = {};
-  for (const s of skus) {
-    const r = skuReadiness({
-      active: s.active,
-      packComplete: skuPackComplete(s),
-      hasPrice: prices.has(s.id),
-      deliveryCount: ledgerMap.get(s.id)?.deliveries.length ?? 0,
-    });
-    if (r && r.status !== "ready") skuReadinessMap[s.id] = r;
-  }
-
   // ── Pack chains (batch, ONE query — loadRecipeGraph law) so the SkuBuilder
-  //    seeds Section B without a lazy GET, and the catalog can show
-  //    "unchained (N)" + a per-chain "unverified" badge. ──
+  //    seeds Section B without a lazy GET, the catalog can show "unchained (N)" +
+  //    a per-chain "unverified" badge, AND skuPackComplete is chain-aware (PR-C). ──
   const chainMap = await loadSkuPackChains(skus.map((s) => s.id));
   const measuresByLabel = new Map<string, MeasureUnitFactor>(
     measureUnits.map((m) => [m.label, { dimension: m.dimension, toBaseFactor: m.toBaseFactor }]),
   );
   const avgOzById = new Map(skus.map((s) => [s.id, s.avgOzPerEach]));
   const classById = new Map(skus.map((s) => [s.id, s.skuClass]));
+
+  const skuReadinessMap: Record<string, Readiness> = {};
+  for (const s of skus) {
+    const r = skuReadiness({
+      active: s.active,
+      // PR-C: chain-aware pack-complete (delegates to the badge predicate for a
+      // chained SKU; legacy flat-trio for an unchained one).
+      packComplete: skuPackComplete(s, chainMap.get(s.id) ?? null, measuresByLabel, s.skuClass),
+      hasPrice: prices.has(s.id),
+      deliveryCount: ledgerMap.get(s.id)?.deliveries.length ?? 0,
+    });
+    if (r && r.status !== "ready") skuReadinessMap[s.id] = r;
+  }
+
   const chainsBySku: Record<string, PackChainLevel[]> = {};
   const chainUnverifiedBySku: Record<string, boolean> = {};
   for (const [skuId, levels] of chainMap.entries()) {

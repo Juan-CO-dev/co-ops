@@ -10,8 +10,10 @@
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import type { AuthContext } from "@/lib/session";
-import { loadSkus } from "@/lib/admin/skus";
+import { loadSkus, loadMeasureUnits } from "@/lib/admin/skus";
 import { loadCurrentSkuPrices } from "@/lib/admin/cost";
+import { loadSkuPackChains } from "@/lib/prep-consumption";
+import type { MeasureUnitFactor } from "@/lib/recipe-math";
 import {
   skuPackComplete, skuReadiness, recipeOwnReadiness, composeRecipeReadiness,
   itemReadiness, type Readiness, type ReadinessStatus,
@@ -50,14 +52,20 @@ export async function loadSkuReadinessMap(actor: AuthContext): Promise<Map<strin
   const skus = await loadSkus(actor);
   const active = skus.filter((s) => s.active);
   const ids = active.map((s) => s.id);
-  const [prices, deliveries] = await Promise.all([
-    loadCurrentSkuPrices(ids), loadSkuDeliveryCounts(ids),
+  // PR-C: pack-complete is chain-aware. Batch-load active chains + the measure
+  // registry so skuPackComplete delegates to the chain badge predicate for chained
+  // SKUs (ONE query each — loadRecipeGraph law; never per-SKU).
+  const [prices, deliveries, chainsBySku, measureUnits] = await Promise.all([
+    loadCurrentSkuPrices(ids), loadSkuDeliveryCounts(ids), loadSkuPackChains(ids), loadMeasureUnits(actor),
   ]);
+  const measuresByLabel = new Map<string, MeasureUnitFactor>(
+    measureUnits.map((m) => [m.label, { dimension: m.dimension, toBaseFactor: m.toBaseFactor }]),
+  );
   const out = new Map<string, Readiness>();
   for (const s of active) {
     const r = skuReadiness({
       active: true,
-      packComplete: skuPackComplete(s),
+      packComplete: skuPackComplete(s, chainsBySku.get(s.id) ?? null, measuresByLabel, s.skuClass),
       hasPrice: prices.has(s.id),
       deliveryCount: deliveries.get(s.id) ?? 0,
     });
