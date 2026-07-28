@@ -205,6 +205,11 @@ export function SkuForm({
             <option key={c} value={c}>{t(`admin.skus.sku_class.${c}` as TranslationKey)}</option>
           ))}
         </select>
+        {/* One-line hint per class (council PR-A vocabulary): raw needs a weight;
+            packaging/cleaning/misc just need pack counts for ordering. */}
+        <span className="mt-1 block text-xs text-co-text-muted">
+          {t(`admin.skus.class_hint.${skuClass}` as TranslationKey)}
+        </span>
       </Labeled>
 
       <RegistrySelect

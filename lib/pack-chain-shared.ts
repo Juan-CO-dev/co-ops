@@ -29,6 +29,15 @@
 
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
 
+/**
+ * SKU classes that gate the leaf law (council 2026-07-28, PR-A). Kept as a bare
+ * union here (not imported from catalog-shared) so this module has ZERO coupling
+ * beyond the MeasureUnitFactor type — the class-awareness is a single string
+ * compare (`=== "raw"`), never a dependency. catalog-shared's SkuClass is the
+ * same union; callers pass that value through.
+ */
+export type PackChainSkuClass = "raw" | "packaging" | "cleaning" | "misc";
+
 /** One chain level, as loaded from sku_pack_levels (active rows only). */
 export interface PackChainLevel {
   id: string;
@@ -220,4 +229,89 @@ function countReachable(chain: PackChain, rootLabel: string): number {
     cur = cur.containsLevelId != null ? chain.byId.get(cur.containsLevelId) : undefined;
   }
   return count;
+}
+
+// ── The validation split (council 2026-07-28, PR-A) ─────────────────────────
+// validateChainReachable (above) conflates two distinct questions: is the chain
+// STRUCTURALLY sound (single root, acyclic, all-reachable, terminates in a
+// registered measure)?  AND is it OZ-RESOLVABLE (the walk to oz succeeds — which
+// for a count/volume leaf needs the SKU's avg_oz_per_each)?  A structurally
+// perfect count-terminated chain (case → 12 each, no avg) FAILS the second but
+// not the first — yet the old single check flagged it "unverified", crying wolf
+// on every packaging SKU (Disclosure D2). The split below lets the badge be
+// class-aware: structural breaks are unverified for EVERY class; oz-unresolvability
+// is unverified ONLY for raw (which feeds depletion/cost). The pure oz walk is
+// NEVER touched — this is a NEW read over the same primitives.
+
+/**
+ * STRUCTURAL validity of a whole chain, WITHOUT requiring oz-resolvability.
+ * ok when: there is a unique root, every level is reachable from it by following
+ * contains_level_id, the root path is acyclic, and it terminates in a leaf whose
+ * contains_measure_unit is a REGISTERED measure of ANY dimension (weight/volume/
+ * count) — no avg_oz_per_each needed. This is the "the chain is well-formed and
+ * ends in a real unit" check; whether that unit converts to ounces is a separate
+ * question (walkChainToOz / oz-resolvability).
+ *
+ * Reuses the loud typed failure reasons: `unknown_label` (no unique root),
+ * `cycle`, `dangling_pointer` (unreachable / detached-sibling / fork), and
+ * `missing_measure` (leaf points at an unregistered unit). It never returns
+ * `missing_avg` — that is precisely the oz-only concern this function excludes.
+ */
+export function validateChainStructure(
+  chain: PackChain,
+  measuresByLabel: Map<string, MeasureUnitFactor>,
+): PackChainWalkResult {
+  const rootLabel = chainRootLabel(chain);
+  if (rootLabel == null) return { ok: false, reason: "unknown_label" };
+  // Walk the root path structurally: follow pointers (detecting cycles), and at
+  // the leaf require a registered measure of any dimension (NOT oz-resolvability).
+  const start = chain.byLabel.get(rootLabel);
+  if (!start) return { ok: false, reason: "unknown_label" };
+  const visiting = new Set<string>();
+  let cur: PackChainLevel | undefined = start;
+  while (cur) {
+    if (visiting.has(cur.id)) return { ok: false, reason: "cycle" };
+    visiting.add(cur.id);
+    if (cur.containsLevelId != null) {
+      const next = chain.byId.get(cur.containsLevelId);
+      if (!next) return { ok: false, reason: "dangling_pointer" };
+      cur = next;
+      continue;
+    }
+    // Leaf: must point at a registered measure unit (any dimension).
+    const unit = cur.containsMeasureUnit;
+    if (unit == null) return { ok: false, reason: "dangling_pointer" };
+    if (!measuresByLabel.has(unit)) return { ok: false, reason: "missing_measure" };
+    break; // structurally terminated in a real unit
+  }
+  // Totality: every level must be on the root path (no detached sibling / fork).
+  const onPath = countReachable(chain, rootLabel);
+  if (onPath !== chain.levels.length) return { ok: false, reason: "dangling_pointer" };
+  return { ok: true, oz: 0 }; // oz is not meaningful here; the flag is `ok`
+}
+
+/**
+ * The single source of truth for the "chain unverified" badge (council PR-A,
+ * cried-wolf law). A chain is UNVERIFIED iff it is structurally INVALID for ANY
+ * class, OR it is oz-UNRESOLVABLE and the SKU is class `raw` (raw feeds
+ * depletion/cost, so its chain must reach ounces). Non-raw structurally-valid
+ * count-terminated chains are COMPLETE BY DESIGN — never unverified.
+ *
+ *   unverified ⇔ !structurallyValid  OR  ( skuClass === "raw" AND !ozResolvable )
+ *
+ * Both the read path (app/admin/skus/page.tsx) and the SkuCatalogClient consume
+ * this — one predicate, no drift.
+ */
+export function isChainUnverified(
+  chain: PackChain,
+  measuresByLabel: Map<string, MeasureUnitFactor>,
+  avgOzPerEach: number | null,
+  skuClass: PackChainSkuClass,
+): boolean {
+  if (chain.levels.length === 0) return false; // no chain ≠ unverified (that's "no pack info")
+  if (!validateChainStructure(chain, measuresByLabel).ok) return true;
+  if (skuClass !== "raw") return false; // count-terminated non-raw = complete by design
+  const rootLabel = chainRootLabel(chain);
+  if (rootLabel == null) return true; // defensive (structure already checked this)
+  return !walkChainToOz(chain, rootLabel, measuresByLabel, avgOzPerEach).ok;
 }

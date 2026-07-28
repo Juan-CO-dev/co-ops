@@ -15,13 +15,15 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
+import type { TranslationKey } from "@/lib/i18n/types";
 import { useStepUp } from "@/components/admin/StepUpProvider";
 import type { RegistryOption, MeasureUnitOption, SkuView } from "@/lib/admin/skus";
 import { postJson, resolveErrorKey, formatSkuPack } from "./shared";
 import type { SkuReceivingLedger, SkuConsumption } from "@/lib/admin/cost";
 import type { Readiness } from "@/lib/readiness";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
-import type { StarterChainLevel, SkuNameCollisionCandidate } from "@/lib/admin/catalog-shared";
+import type { StarterChainLevel, SkuNameCollisionCandidate, SkuClass } from "@/lib/admin/catalog-shared";
+import { SKU_CLASSES } from "@/lib/admin/catalog-shared";
 import { StatusBadge, ReadinessReasons } from "@/components/admin/StatusBadge";
 import { SummaryRow } from "@/components/ui/SummaryRow";
 import { SkuCostPanel, type SkuCostInfo } from "./SkuCostPanel";
@@ -32,12 +34,17 @@ import type {
   SkuFormVendorOption,
 } from "./SkuForm";
 
-// Filter sentinels distinct from any real vendor id.
+// Vendor-select sentinels distinct from any real vendor id.
 const FILTER_ALL = "__all__";
 const FILTER_MANUAL = "__manual__";
-// Chain-completeness filter (design §3 "unchained (N)").
-const CHAIN_ALL = "__chain_all__";
-const CHAIN_UNCHAINED = "__unchained__";
+
+const tk = (k: string): TranslationKey => k as TranslationKey;
+
+// Catalog lenses (council PR-A): the four CLASS chips filter by sku_class; the
+// two cross-cutting status chips (No pack info / Unverified) carry the campaign
+// counters (D2 — never collapse). Vendor stays a SELECT (17 = chip sprawl, D8).
+type Lens = "all" | SkuClass | "no_pack_info" | "unverified";
+const LENSES: Lens[] = ["all", ...SKU_CLASSES, "no_pack_info", "unverified"];
 
 export function SkuCatalogClient({
   skus,
@@ -74,8 +81,9 @@ export function SkuCatalogClient({
   const router = useRouter();
   const { requestStepUp } = useStepUp();
 
-  const [filter, setFilter] = useState<string>(FILTER_ALL);
-  const [chainFilter, setChainFilter] = useState<string>(CHAIN_ALL);
+  const [vendorFilter, setVendorFilter] = useState<string>(FILTER_ALL);
+  const [lens, setLens] = useState<Lens>("all");
+  const [query, setQuery] = useState("");
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [confirmDeactivateId, setConfirmDeactivateId] = useState<string | null>(null);
@@ -95,6 +103,9 @@ export function SkuCatalogClient({
     });
 
   const isChained = (id: string) => (chainsBySku[id]?.length ?? 0) > 0;
+  // "No pack info" = an ACTIVE SKU with no chain (the completion campaign).
+  const isNoPackInfo = (s: SkuView) => s.active && !isChained(s.id);
+  const isUnverified = (id: string) => chainUnverifiedBySku[id] === true;
 
   // Collision candidates for the builder's name warning (active raw SKUs live).
   const collisionCandidates: SkuNameCollisionCandidate[] = useMemo(
@@ -102,22 +113,51 @@ export function SkuCatalogClient({
     [skus],
   );
 
-  // "unchained (N)" counter — active SKUs with no chain (the completion clock).
-  const unchainedCount = useMemo(
-    () => skus.filter((s) => s.active && !isChained(s.id)).length,
-    // isChained closes over chainsBySku; both are props.
+  // Campaign counters (D2 — always visible on the chips). "No pack info" is the
+  // completion clock; "Unverified" is the class-aware badge count.
+  const noPackInfoCount = useMemo(
+    () => skus.filter((s) => isNoPackInfo(s)).length,
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [skus, chainsBySku],
   );
-
-  const filtered = useMemo(() => {
-    let list = skus;
-    if (filter === FILTER_MANUAL) list = list.filter((s) => s.vendorId === null);
-    else if (filter !== FILTER_ALL) list = list.filter((s) => s.vendorId === filter);
-    if (chainFilter === CHAIN_UNCHAINED) list = list.filter((s) => !isChained(s.id));
-    return list;
+  const unverifiedCount = useMemo(
+    () => skus.filter((s) => isUnverified(s.id)).length,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [skus, filter, chainFilter, chainsBySku]);
+    [skus, chainUnverifiedBySku],
+  );
+
+  function matchesLens(s: SkuView, l: Lens): boolean {
+    switch (l) {
+      case "all": return true;
+      case "no_pack_info": return isNoPackInfo(s);
+      case "unverified": return isUnverified(s.id);
+      default: return s.skuClass === l; // one of the four class chips
+    }
+  }
+
+  // Vendor select → lens chip → search (name + item #), all AND-composed.
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return skus.filter((s) => {
+      if (vendorFilter === FILTER_MANUAL) { if (s.vendorId !== null) return false; }
+      else if (vendorFilter !== FILTER_ALL) { if (s.vendorId !== vendorFilter) return false; }
+      if (!matchesLens(s, lens)) return false;
+      if (!q) return true;
+      return s.name.toLowerCase().includes(q) || (s.itemNumber?.toLowerCase().includes(q) ?? false);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [skus, vendorFilter, lens, query, chainsBySku, chainUnverifiedBySku]);
+
+  // Group the filtered set by CLASS (the manager's mental shelf), in the fixed
+  // SKU_CLASSES order; each group header carries an i18n'd count (D5).
+  const groups = useMemo(() => {
+    const map = new Map<SkuClass, SkuView[]>();
+    for (const c of SKU_CLASSES) map.set(c, []);
+    for (const s of filtered) map.get(s.skuClass)?.push(s);
+    return SKU_CLASSES
+      .map((c) => [c, map.get(c) ?? []] as const)
+      .filter(([, rows]) => rows.length > 0);
+  }, [filtered]);
 
   const create = async (values: SkuFormValues, chain: StarterChainLevel[] | null) => {
     if (busy) return;
@@ -180,16 +220,107 @@ export function SkuCatalogClient({
     } else setErrorMsg(t(resolveErrorKey(result.code)));
   };
 
+  // One SKU row — editing swaps in the SkuBuilder, else the SummaryRow. Shared
+  // by every class group (avoids duplicating the block per section).
+  const renderRow = (s: SkuView) => (
+    <li
+      key={s.id}
+      className={
+        // Editing rows keep the card chrome around SkuBuilder; non-editing
+        // rows let SummaryRow be the card (avoids a nested double-card).
+        (editingId === s.id ? "rounded-lg border-2 border-co-border bg-co-surface p-3 " : "") +
+        (s.active ? "" : "opacity-60")
+      }
+    >
+      {editingId === s.id ? (
+        <SkuBuilder
+          initial={s}
+          initialChain={chainsBySku[s.id] ?? null}
+          initialChainUnverified={chainUnverifiedBySku[s.id] ?? false}
+          vendors={vendors}
+          locations={locations}
+          packFormats={packFormats}
+          measureUnits={measureUnits}
+          actorLevel={actorLevel}
+          busy={busy}
+          errorMsg={errorMsg}
+          submitLabel={t("admin.skus.save")}
+          allSkus={collisionCandidates}
+          cost={skuCost[s.id] ?? { currentPrice: null, costPerOz: null, usedBy: [] }}
+          ledger={skuLedger[s.id] ?? null}
+          consumption={skuConsumption[s.id] ?? null}
+          onSubmit={(values) => void saveEdit(s.id, values)}
+          onSaveChain={(levels) => saveChain(s.id, levels)}
+          onCancel={() => {
+            setEditingId(null);
+            setErrorMsg(null);
+          }}
+        />
+      ) : (
+        <CatalogRow
+          sku={s}
+          readiness={skuReadiness[s.id] ?? null}
+          chained={isChained(s.id)}
+          unverified={isUnverified(s.id)}
+          canManage={canManage}
+          confirming={confirmDeactivateId === s.id}
+          busy={busy}
+          expanded={expanded.has(s.id)}
+          onToggle={() => toggleExpand(s.id)}
+          onEdit={() => {
+            setEditingId(s.id);
+            setErrorMsg(null);
+          }}
+          onAskDeactivate={() => setConfirmDeactivateId(s.id)}
+          onCancelDeactivate={() => setConfirmDeactivateId(null)}
+          onConfirmDeactivate={() => void toggleActive(s)}
+          cost={skuCost[s.id] ?? { currentPrice: null, costPerOz: null, usedBy: [] }}
+          ledger={skuLedger[s.id] ?? null}
+          consumption={skuConsumption[s.id] ?? null}
+          canRecord={actorLevel >= 6}
+        />
+      )}
+    </li>
+  );
+
+  const chipCls = (active: boolean) =>
+    `inline-flex min-h-[36px] items-center rounded-full border-2 px-3 text-xs font-bold transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 ${
+      active ? "border-co-gold-deep bg-co-gold/25 text-co-text" : "border-co-border bg-co-surface text-co-text-muted hover:text-co-text"
+    }`;
+
+  // Chip label: the two cross-cutting lenses carry live campaign counters (D2/D5).
+  const lensLabel = (l: Lens): string => {
+    if (l === "no_pack_info") return t("admin.skus.lens.no_pack_info_n", { n: String(noPackInfoCount) });
+    if (l === "unverified") return t("admin.skus.lens.unverified_n", { n: String(unverifiedCount) });
+    return t(tk(`admin.skus.lens.${l}`));
+  };
+
   return (
-    <div className="mt-5">
+    <div className="mt-5 flex flex-col gap-4">
+      {/* Lens chips (D6): class set + the two cross-cutting status lenses. */}
+      <div className="flex flex-wrap gap-2">
+        {LENSES.map((l) => (
+          <button
+            key={l}
+            type="button"
+            className={chipCls(lens === l)}
+            aria-pressed={lens === l}
+            onClick={() => setLens(l)}
+          >
+            {lensLabel(l)}
+          </button>
+        ))}
+      </div>
+
+      {/* Vendor select (stays a select — 17 = chip sprawl, D8) + search + count + Add. */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="flex flex-wrap items-end gap-3">
           <label className="block">
             <span className="text-sm font-bold text-co-text">{t("admin.skus.filter.vendor")}</span>
             <select
               className="mt-1 min-h-[44px] rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
+              value={vendorFilter}
+              onChange={(e) => setVendorFilter(e.target.value)}
             >
               <option value={FILTER_ALL}>{t("admin.skus.filter.all")}</option>
               <option value={FILTER_MANUAL}>{t("admin.skus.filter.manual")}</option>
@@ -202,19 +333,20 @@ export function SkuCatalogClient({
           </label>
 
           <label className="block">
-            <span className="text-sm font-bold text-co-text">{t("admin.skus.builder.section_pack")}</span>
-            <select
-              className="mt-1 min-h-[44px] rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
-              value={chainFilter}
-              onChange={(e) => setChainFilter(e.target.value)}
-            >
-              <option value={CHAIN_ALL}>{t("admin.skus.filter.all")}</option>
-              <option value={CHAIN_UNCHAINED}>{t("admin.skus.filter.unchained")}</option>
-            </select>
-            <span className="mt-1 block text-xs font-semibold text-co-text-muted">
-              {t("admin.skus.filter.unchained_count", { n: String(unchainedCount) })}
-            </span>
+            <span className="text-sm font-bold text-co-text">{t("admin.skus.search_label")}</span>
+            <input
+              type="search"
+              aria-label={t("admin.skus.search_label")}
+              placeholder={t("admin.skus.search_placeholder")}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              className="mt-1 min-h-[44px] w-full max-w-xs rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
+            />
           </label>
+
+          <span className="pb-2 text-xs font-semibold text-co-text-muted">
+            {t("admin.skus.count_shown", { n: String(filtered.length) })}
+          </span>
         </div>
 
         {canManage && !adding ? (
@@ -232,7 +364,7 @@ export function SkuCatalogClient({
       </div>
 
       {adding ? (
-        <div className="mt-4">
+        <div>
           <SkuBuilder
             vendors={vendors}
             locations={locations}
@@ -252,72 +384,21 @@ export function SkuCatalogClient({
         </div>
       ) : null}
 
-      {filtered.length === 0 ? (
-        <div className="mt-5 rounded-2xl border-2 border-dashed border-co-border p-6 text-center text-sm text-co-text-muted">
+      {groups.length === 0 ? (
+        <div className="rounded-2xl border-2 border-dashed border-co-border p-6 text-center text-sm text-co-text-muted">
           {t("admin.skus.empty")}
         </div>
       ) : (
-        <ul className="mt-5 flex flex-col gap-2">
-          {filtered.map((s) => (
-            <li
-              key={s.id}
-              className={
-                // Editing rows keep the card chrome around SkuBuilder; non-editing
-                // rows let SummaryRow be the card (avoids a nested double-card).
-                (editingId === s.id ? "rounded-lg border-2 border-co-border bg-co-surface p-3 " : "") +
-                (s.active ? "" : "opacity-60")
-              }
-            >
-              {editingId === s.id ? (
-                <SkuBuilder
-                  initial={s}
-                  initialChain={chainsBySku[s.id] ?? null}
-                  initialChainUnverified={chainUnverifiedBySku[s.id] ?? false}
-                  vendors={vendors}
-                  locations={locations}
-                  packFormats={packFormats}
-                  measureUnits={measureUnits}
-                  actorLevel={actorLevel}
-                  busy={busy}
-                  errorMsg={errorMsg}
-                  submitLabel={t("admin.skus.save")}
-                  allSkus={collisionCandidates}
-                  cost={skuCost[s.id] ?? { currentPrice: null, costPerOz: null, usedBy: [] }}
-                  ledger={skuLedger[s.id] ?? null}
-                  consumption={skuConsumption[s.id] ?? null}
-                  onSubmit={(values) => void saveEdit(s.id, values)}
-                  onSaveChain={(levels) => saveChain(s.id, levels)}
-                  onCancel={() => {
-                    setEditingId(null);
-                    setErrorMsg(null);
-                  }}
-                />
-              ) : (
-                <CatalogRow
-                  sku={s}
-                  readiness={skuReadiness[s.id] ?? null}
-                  chained={isChained(s.id)}
-                  canManage={canManage}
-                  confirming={confirmDeactivateId === s.id}
-                  busy={busy}
-                  expanded={expanded.has(s.id)}
-                  onToggle={() => toggleExpand(s.id)}
-                  onEdit={() => {
-                    setEditingId(s.id);
-                    setErrorMsg(null);
-                  }}
-                  onAskDeactivate={() => setConfirmDeactivateId(s.id)}
-                  onCancelDeactivate={() => setConfirmDeactivateId(null)}
-                  onConfirmDeactivate={() => void toggleActive(s)}
-                  cost={skuCost[s.id] ?? { currentPrice: null, costPerOz: null, usedBy: [] }}
-                  ledger={skuLedger[s.id] ?? null}
-                  consumption={skuConsumption[s.id] ?? null}
-                  canRecord={actorLevel >= 6}
-                />
-              )}
-            </li>
-          ))}
-        </ul>
+        groups.map(([klass, rows]) => (
+          <section key={klass}>
+            <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+              {t(tk(`admin.skus.lens.${klass}`))} · {t("admin.skus.group_count", { n: String(rows.length) })}
+            </h2>
+            <ul className="mt-2 flex flex-col gap-2">
+              {rows.map((s) => renderRow(s))}
+            </ul>
+          </section>
+        ))
       )}
 
       {errorMsg && editingId === null && !adding ? (
@@ -332,19 +413,23 @@ export function SkuCatalogClient({
  *
  * ALWAYS-VISIBLE summary (D1): name + meta dot-string (class · vendor/Manual ·
  * location · pack · item#). Never-collapse alerts (D2) stay on the collapsed
- * line via SummaryRow's badges slot: inactive · unchained · readiness StatusBadge
- * + ReadinessReasons — the readiness/unchained signal a broken SKU still shouts
- * even collapsed. NOTE the readiness badge is derived from the `readiness` prop
- * (skuReadiness), NOT from the SkuCostPanel — relocating the panel never hides it.
+ * line via SummaryRow's badges slot: inactive · No pack info · Unverified (with
+ * a what-to-fix tooltip) · readiness StatusBadge + ReadinessReasons — the signals
+ * a broken SKU still shouts even collapsed. NOTE the readiness badge is derived
+ * from the `readiness` prop (skuReadiness), NOT from the SkuCostPanel — relocating
+ * the panel never hides it.
  *
  * The SkuCostPanel (cost/oz, stock, receiving ledger, "Record price") is SECONDARY
  * content → lives in the lazy drawer (D3/D10): 0 panels render on first paint.
- * Management actions (Edit trigger + Deactivate, D4) stay reachable on the summary.
+ * Management actions (Edit / "Add ordering info" trigger + Deactivate, D4) stay
+ * reachable on the summary. A no-pack-info SKU's CTA reads "Add ordering info"
+ * (task-oriented) instead of "Edit".
  */
 function CatalogRow({
   sku: s,
   readiness,
   chained,
+  unverified,
   canManage,
   confirming,
   busy,
@@ -362,6 +447,7 @@ function CatalogRow({
   sku: SkuView;
   readiness: Readiness | null;
   chained: boolean;
+  unverified: boolean;
   canManage: boolean;
   confirming: boolean;
   busy: boolean;
@@ -409,7 +495,17 @@ function CatalogRow({
           ) : null}
           {s.active && !chained ? (
             <span className="inline-flex items-center rounded-full bg-co-cta/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-cta">
-              {t("admin.skus.filter.unchained")}
+              {t("admin.skus.no_pack_info")}
+            </span>
+          ) : null}
+          {/* Unverified = class-aware structural/oz problem — carries a
+              what-to-fix tooltip (D2 alert; never hidden even collapsed). */}
+          {unverified ? (
+            <span
+              className="inline-flex items-center rounded-full bg-co-cta/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-cta"
+              title={t("admin.skus.unverified_hint")}
+            >
+              {t("admin.skus.unverified_badge")}
             </span>
           ) : null}
           {readiness ? <StatusBadge status={readiness.status as "incomplete" | "upstream_gaps"} /> : null}
@@ -428,7 +524,8 @@ function CatalogRow({
             ) : (
               <>
                 <button type="button" onClick={onEdit} className={actionBtn}>
-                  {t("admin.skus.edit")}
+                  {/* Task-oriented CTA for a no-pack-info SKU (sonnet's vocabulary find). */}
+                  {s.active && !chained ? t("admin.skus.add_ordering_info") : t("admin.skus.edit")}
                 </button>
                 <button type="button" onClick={onAskDeactivate} className={actionBtn}>
                   {s.active ? t("admin.skus.deactivate") : t("admin.skus.reactivate")}
