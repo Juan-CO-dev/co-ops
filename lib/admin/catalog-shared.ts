@@ -363,8 +363,8 @@ export function deriveFlatFieldsFromChain(
       if (!Number.isFinite(q) || q <= 0) return EMPTY_FLAT;
       unitsProduct *= q;
       sawNonLeaf = true;
-      const nextIdx = cur.containsIndex;
-      const next = levels[nextIdx];
+      const nextIdx: number = cur.containsIndex;
+      const next: StarterChainLevel | undefined = levels[nextIdx];
       if (!next) return EMPTY_FLAT; // dangling pointer
       cur = next;
       curIdx = nextIdx;
