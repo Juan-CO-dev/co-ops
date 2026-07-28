@@ -28,6 +28,7 @@ import { formatCents } from "@/lib/i18n/format";
 import { postJson, resolveErrorKey } from "@/components/admin/catering/shared";
 import type { PackageView, PackageLocationOption } from "@/lib/admin/catering/packages";
 import type { PickerItem } from "@/lib/admin/catering/package-pricing";
+import { SummaryRow } from "@/components/ui/SummaryRow";
 import { PackageForm, type PackageFormValues } from "./PackageForm";
 import { PriceAdvicePanel } from "./PriceAdvicePanel";
 
@@ -57,6 +58,18 @@ export function PackagesClient({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   // Per-package refreshKey: incremented on successful mutations to trigger recommendation re-fetch.
   const [refreshKeys, setRefreshKeys] = useState<Record<string, number>>({});
+  // D7 browse multi-expand (mirrors SkuCatalogClient/CatalogClient): which non-editing
+  // rows have their detail drawer open. Caller-owned Set so several can be open at once
+  // and collapse preserves scroll. The drawer's PriceAdvicePanel + LineItemsSubList
+  // lazy-render only when expanded → 0 advice-panel fetches on first paint (free perf).
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggleExpand = (id: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   const bumpRefresh = (packageId: string) => {
     setRefreshKeys((prev) => ({ ...prev, [packageId]: (prev[packageId] ?? 0) + 1 }));
@@ -258,7 +271,12 @@ export function PackagesClient({
           {packages.map((p) => (
             <li
               key={p.id}
-              className={"rounded-lg border-2 border-co-border bg-co-surface p-3 " + (p.active ? "" : "opacity-60")}
+              className={
+                // Editing rows keep the card chrome around PackageForm; non-editing
+                // rows let SummaryRow be the card (avoids a nested double-card).
+                (editingId === p.id ? "rounded-lg border-2 border-co-border bg-co-surface p-3 " : "") +
+                (p.active ? "" : "opacity-60")
+              }
             >
               {editingId === p.id ? (
                 <PackageForm
@@ -283,6 +301,8 @@ export function PackagesClient({
                   confirming={confirmDeactivateId === p.id}
                   busy={busy}
                   refreshKey={refreshKeys[p.id] ?? 0}
+                  expanded={expanded.has(p.id)}
+                  onToggle={() => toggleExpand(p.id)}
                   onEdit={() => {
                     setEditingId(p.id);
                     setErrorMsg(null);
@@ -312,7 +332,21 @@ export function PackagesClient({
 
 // ─── PackageRow ──────────────────────────────────────────────────────────────
 
-/** Read row: label · location · pricing mode · price · headcount/lead + line-items sub-list + price advice. */
+/**
+ * Read row → summary + drawer (Disclosure W3, docs/DISCLOSURE_DOCTRINE.md).
+ *
+ * ALWAYS-VISIBLE summary (D1): label + meta dot-string (location · mode · price ·
+ * min headcount · lead time · serves · line-item count). Never-collapse alerts (D2)
+ * stay on the collapsed line via SummaryRow's badges slot: the Inactive badge + the
+ * Edit/Deactivate management buttons (W2 precedent: buttons are siblings of the toggle
+ * in the badges slot, D4 triggers reachable without expanding).
+ *
+ * SECONDARY content → the lazy drawer (D3/D10): the PriceAdvicePanel + the
+ * LineItemsSubList (line items, choice slots with classic stars, add-option flows).
+ * Pure relocation — internals untouched. Because the drawer children only render when
+ * expanded, the PriceAdvicePanel doesn't mount on first paint → its recommend fetch is
+ * deferred until a manager opens the row (the free-perf win the council flagged).
+ */
 function PackageRow({
   pkg: p,
   language,
@@ -322,6 +356,8 @@ function PackageRow({
   confirming,
   busy,
   refreshKey,
+  expanded,
+  onToggle,
   onEdit,
   onAskDeactivate,
   onCancelDeactivate,
@@ -341,6 +377,8 @@ function PackageRow({
   confirming: boolean;
   busy: boolean;
   refreshKey: number;
+  expanded: boolean;
+  onToggle: () => void;
   onEdit: () => void;
   onAskDeactivate: () => void;
   onCancelDeactivate: () => void;
@@ -362,65 +400,59 @@ function PackageRow({
   if (p.minHeadcount != null) meta.push(t("admin.catering.packages.min_headcount_meta" as TranslationKey, { count: p.minHeadcount }));
   if (p.leadTimeHours != null) meta.push(t("admin.catering.packages.lead_time_meta" as TranslationKey, { hours: p.leadTimeHours }));
   if (p.serves != null) meta.push(t("admin.catering.packages.serves_meta" as TranslationKey, { count: p.serves }));
+  // Slot/line count on the collapsed summary (D5) — i18n'd, never string-concat.
+  meta.push(t("admin.catering.packages.line_count" as TranslationKey, { n: p.lineItems.length }));
+
+  const actionBtn =
+    "inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50";
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-start justify-between gap-2">
+    <SummaryRow
+      expanded={expanded}
+      onToggle={onToggle}
+      toggleLabel={expanded ? t("admin.catering.packages.hide_details" as TranslationKey) : t("admin.catering.packages.show_details" as TranslationKey)}
+      drawerId={`package-detail-${p.id}`}
+      summary={
         <div className="text-sm text-co-text">
-          <div className="flex items-center gap-2 font-bold">
-            {label}
-            {!p.active ? (
-              <span className="inline-flex items-center rounded-full bg-co-text/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-text-muted">
-                {t("admin.catering.packages.status.inactive" as TranslationKey)}
-              </span>
-            ) : null}
-          </div>
+          <div className="font-bold">{label}</div>
           <div className="text-co-text-muted">{meta.join(" · ")}</div>
         </div>
-        {canManage ? (
-          <div className="flex gap-2">
-            {confirming ? (
+      }
+      badges={
+        <>
+          {/* Never-collapse alerts (D2): the Inactive badge stays visible collapsed. */}
+          {!p.active ? (
+            <span className="inline-flex items-center rounded-full bg-co-text/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-text-muted">
+              {t("admin.catering.packages.status.inactive" as TranslationKey)}
+            </span>
+          ) : null}
+          {/* Management actions (D4 triggers) — reachable without expanding (W2 precedent). */}
+          {canManage ? (
+            confirming ? (
               <>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={onCancelDeactivate}
-                  className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
-                >
+                <button type="button" disabled={busy} onClick={onCancelDeactivate} className={actionBtn}>
                   {t("admin.catering.packages.cancel" as TranslationKey)}
                 </button>
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={onConfirmDeactivate}
-                  className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
-                >
+                <button type="button" disabled={busy} onClick={onConfirmDeactivate} className={actionBtn}>
                   {p.active ? t("admin.catering.packages.deactivate" as TranslationKey) : t("admin.catering.packages.reactivate" as TranslationKey)}
                 </button>
               </>
             ) : (
               <>
-                <button
-                  type="button"
-                  onClick={onEdit}
-                  className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
-                >
+                <button type="button" onClick={onEdit} className={actionBtn}>
                   {t("admin.catering.packages.edit" as TranslationKey)}
                 </button>
-                <button
-                  type="button"
-                  onClick={onAskDeactivate}
-                  className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
-                >
+                <button type="button" onClick={onAskDeactivate} className={actionBtn}>
                   {p.active ? t("admin.catering.packages.deactivate" as TranslationKey) : t("admin.catering.packages.reactivate" as TranslationKey)}
                 </button>
               </>
-            )}
-          </div>
-        ) : null}
-      </div>
-
-      {/* Price-advice panel — advisory, no step-up on read; step-up on "use recommended" */}
+            )
+          ) : null}
+        </>
+      }
+    >
+      {/* Price-advice panel — advisory, no step-up on read; step-up on "use recommended".
+          Lazy: only mounts when the drawer is open, deferring its recommend fetch. */}
       {canManage ? (
         <PriceAdvicePanel
           packageId={p.id}
@@ -443,7 +475,7 @@ function PackageRow({
         onSetOptionClassic={onSetOptionClassic}
         onRemove={onRemoveLineItem}
       />
-    </div>
+    </SummaryRow>
   );
 }
 
