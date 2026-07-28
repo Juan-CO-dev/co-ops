@@ -8,9 +8,18 @@ import {
   skuNameCollisions,
   generateQuickPackChain,
   deriveRoleBadges,
+  deriveFlatFieldsFromChain,
   type SkuNameCollisionCandidate,
+  type StarterChainLevel,
 } from "@/lib/admin/catalog-shared";
-import { firstLabelMeasureCollision } from "@/lib/pack-chain-shared";
+import {
+  buildPackChain,
+  chainRootLabel,
+  walkChainToOz,
+  firstLabelMeasureCollision,
+  type PackChainLevel,
+} from "@/lib/pack-chain-shared";
+import { skuContentOz, type MeasureUnitFactor } from "@/lib/recipe-math";
 
 // ── skuNameCollisions ─────────────────────────────────────────────────────────
 describe("skuNameCollisions", () => {
@@ -157,6 +166,155 @@ describe("generateQuickPackChain", () => {
       { label: "Case", containsQty: 6, containsIndex: 1, containsMeasureUnit: null },
       { label: "log", containsQty: 32, containsIndex: null, containsMeasureUnit: "oz" },
     ]);
+  });
+});
+
+// ── deriveFlatFieldsFromChain (SKU top-tier PR-B, sync-on-save) ────────────────
+// The derivation MUST reproduce the chain's content-oz through the LEGACY
+// flat-field math (units_per_pack × each_size × ozPer(measure,avg)), because
+// sku-demand's skuContentOz reads flat fields WITHOUT a chain until PR-C. Each
+// case pairs the derivation with a walk/flat parity assertion where meaningful.
+describe("deriveFlatFieldsFromChain", () => {
+  const MEASURES = new Map<string, MeasureUnitFactor>([
+    ["oz", { dimension: "weight", toBaseFactor: 1 }],
+    ["lb", { dimension: "weight", toBaseFactor: 16 }],
+    ["quart", { dimension: "volume", toBaseFactor: 32 }],
+    ["each", { dimension: "count", toBaseFactor: 1 }],
+  ]);
+
+  /** Turn the index-linked StarterChainLevel[] the wizard produces into the
+   *  id-linked PackChainLevel[] the pure walk consumes (index → "L<i>" id). */
+  function toWalkable(levels: StarterChainLevel[]): PackChainLevel[] {
+    return levels.map((l, i) => ({
+      id: `L${i}`,
+      label: l.label,
+      containsQty: l.containsQty,
+      containsLevelId: l.containsIndex != null ? `L${l.containsIndex}` : null,
+      containsMeasureUnit: l.containsMeasureUnit,
+      displayOrdinal: i,
+    }));
+  }
+
+  it("empty chain → all null", () => {
+    expect(deriveFlatFieldsFromChain([])).toEqual({
+      packFormat: null,
+      unitsPerPack: null,
+      eachSize: null,
+      eachMeasure: null,
+    });
+  });
+
+  it("2-level raw oz leaf: case → 6 × log ; log → 32 oz → Case/6/32/oz, parity 192", () => {
+    const chain: StarterChainLevel[] = [
+      { label: "Case", containsQty: 6, containsIndex: 1, containsMeasureUnit: null },
+      { label: "log", containsQty: 32, containsIndex: null, containsMeasureUnit: "oz" },
+    ];
+    const flat = deriveFlatFieldsFromChain(chain);
+    expect(flat).toEqual({ packFormat: "Case", unitsPerPack: 6, eachSize: 32, eachMeasure: "oz" });
+    // Parity: flat-field math === chain walk === 192.
+    const walkable = toWalkable(chain);
+    const walk = walkChainToOz(buildPackChain(walkable), chainRootLabel(buildPackChain(walkable))!, MEASURES, null);
+    const flatOz = skuContentOz(
+      { unitsPerPack: flat.unitsPerPack, eachSize: flat.eachSize, eachMeasure: flat.eachMeasure, avgOzPerEach: null },
+      MEASURES,
+    );
+    expect(walk.ok && walk.oz).toBe(192);
+    expect(flatOz).toBeCloseTo(192, 10);
+  });
+
+  it("3-level raw avg leaf collapses non-leaf qtys: case(4) → log(2) → bundle(17 each) → units 8, parity 136 with avg 1", () => {
+    const chain: StarterChainLevel[] = [
+      { label: "case", containsQty: 4, containsIndex: 1, containsMeasureUnit: null },
+      { label: "log", containsQty: 2, containsIndex: 2, containsMeasureUnit: null },
+      { label: "bundle", containsQty: 17, containsIndex: null, containsMeasureUnit: "each" },
+    ];
+    const flat = deriveFlatFieldsFromChain(chain);
+    // units_per_pack = 4 × 2 = 8 (product of the two NON-leaf container qtys).
+    expect(flat).toEqual({ packFormat: "case", unitsPerPack: 8, eachSize: 17, eachMeasure: "each" });
+    // Parity with avg 1 (count leaf): flat = 8 × 17 × 1 = 136 = walk 4×(2×(17×1)).
+    const walkable = toWalkable(chain);
+    const walk = walkChainToOz(buildPackChain(walkable), chainRootLabel(buildPackChain(walkable))!, MEASURES, 1);
+    const flatOz = skuContentOz(
+      { unitsPerPack: flat.unitsPerPack, eachSize: flat.eachSize, eachMeasure: flat.eachMeasure, avgOzPerEach: 1 },
+      MEASURES,
+    );
+    expect(walk.ok && walk.oz).toBe(136);
+    expect(flatOz).toBeCloseTo(136, 10);
+  });
+
+  it("single-leaf chain (root IS the leaf): tub → 32 oz → units_per_pack null, size 32", () => {
+    const chain: StarterChainLevel[] = [
+      { label: "tub", containsQty: 32, containsIndex: null, containsMeasureUnit: "oz" },
+    ];
+    expect(deriveFlatFieldsFromChain(chain)).toEqual({
+      packFormat: "tub",
+      unitsPerPack: null, // no non-leaf level
+      eachSize: 32,
+      eachMeasure: "oz",
+    });
+  });
+
+  it("shallow packaging count chain (case → 12 inner ; inner → each): units 12, measure 'each', size 1", () => {
+    // The seed-14 shape: leaf LABELED 'inner' CONTAINS the count measure 'each'.
+    const chain: StarterChainLevel[] = [
+      { label: "case", containsQty: 12, containsIndex: 1, containsMeasureUnit: null },
+      { label: "inner", containsQty: 1, containsIndex: null, containsMeasureUnit: "each" },
+    ];
+    const flat = deriveFlatFieldsFromChain(chain);
+    expect(flat).toEqual({ packFormat: "case", unitsPerPack: 12, eachSize: 1, eachMeasure: "each" });
+    // Packaging becomes pack-complete for ordering (units+size+measure all set).
+    // Content-oz is null both ways (count leaf, no avg) — consistent.
+    const flatOz = skuContentOz(
+      { unitsPerPack: flat.unitsPerPack, eachSize: flat.eachSize, eachMeasure: flat.eachMeasure, avgOzPerEach: null },
+      MEASURES,
+    );
+    expect(flatOz).toBeNull();
+  });
+
+  it("cleaning opt-in oz leaf (jug → 128 quart): units null, size 128, measure 'quart'", () => {
+    // Cleaning's opt-in size swaps the bare count leaf for a volume size leaf.
+    const chain: StarterChainLevel[] = [
+      { label: "jug", containsQty: 128, containsIndex: null, containsMeasureUnit: "quart" },
+    ];
+    expect(deriveFlatFieldsFromChain(chain)).toEqual({
+      packFormat: "jug",
+      unitsPerPack: null,
+      eachSize: 128,
+      eachMeasure: "quart",
+    });
+  });
+
+  it("malformed (no unique root — two disconnected leaves) → all null (never guess)", () => {
+    const chain: StarterChainLevel[] = [
+      { label: "case", containsQty: 32, containsIndex: null, containsMeasureUnit: "oz" },
+      { label: "box", containsQty: 16, containsIndex: null, containsMeasureUnit: "oz" },
+    ];
+    expect(deriveFlatFieldsFromChain(chain)).toEqual({
+      packFormat: null,
+      unitsPerPack: null,
+      eachSize: null,
+      eachMeasure: null,
+    });
+  });
+
+  it("malformed (dangling pointer) → all null", () => {
+    const chain: StarterChainLevel[] = [
+      { label: "case", containsQty: 6, containsIndex: 5, containsMeasureUnit: null }, // points at nonexistent index 5
+    ];
+    expect(deriveFlatFieldsFromChain(chain)).toEqual({
+      packFormat: null,
+      unitsPerPack: null,
+      eachSize: null,
+      eachMeasure: null,
+    });
+  });
+
+  it("non-leaf with a bad qty → all null (never fold a garbage multiplier)", () => {
+    const chain: StarterChainLevel[] = [
+      { label: "case", containsQty: 0, containsIndex: 1, containsMeasureUnit: null },
+      { label: "inner", containsQty: 1, containsIndex: null, containsMeasureUnit: "each" },
+    ];
+    expect(deriveFlatFieldsFromChain(chain).eachMeasure).toBeNull();
   });
 });
 

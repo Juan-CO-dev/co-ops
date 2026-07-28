@@ -282,6 +282,111 @@ export function generateQuickPackChain(
   return chain;
 }
 
+// ── Flat-field derivation from a chain (SKU top-tier PR-B, sync-on-save) ───────
+
+/** The legacy flat pack fields the 3 laggard consumers still read
+ *  (readiness.skuPackComplete, sku-demand's skuContentOz-sans-chain,
+ *  formatSkuPack). Derived from a saved chain so those consumers stay correct
+ *  until PR-C migrates them to read the chain directly. avg_oz_per_each is NOT
+ *  here — it's a SKU-level column the sync never touches. */
+export interface DerivedFlatFields {
+  /** Root (top) level label → vendor_items.pack_format. Null on a malformed chain. */
+  packFormat: string | null;
+  /** Product of every NON-leaf level's containsQty → vendor_items.units_per_pack.
+   *  Null for a single-leaf chain (no non-leaf level) and for a malformed chain. */
+  unitsPerPack: number | null;
+  /** Leaf level's containsQty → vendor_items.each_size. Null on a malformed chain. */
+  eachSize: number | null;
+  /** Leaf level's containsMeasureUnit → vendor_items.each_measure. Null on a malformed chain. */
+  eachMeasure: string | null;
+}
+
+const EMPTY_FLAT: DerivedFlatFields = {
+  packFormat: null,
+  unitsPerPack: null,
+  eachSize: null,
+  eachMeasure: null,
+};
+
+/**
+ * Derive the legacy flat pack fields from a chain (PURE — the sync-on-save
+ * mechanism). Walks the chain root→leaf following the SAME index pointers the
+ * pack-chain spine walks (never display order), collapsing the intermediate
+ * container quantities into a single units_per_pack so the legacy flat-field
+ * content-oz math reproduces the pointer walk byte-for-byte:
+ *
+ *   flat  = units_per_pack × each_size × ozPerMeasureUnit(each_measure, avg)
+ *   walk  = (∏ non-leaf containsQty) × leaf.containsQty × ozPerLeafUnit(leaf_measure, avg)
+ *
+ * With packFormat←root label, unitsPerPack←∏(non-leaf qty), each_size←leaf qty,
+ * each_measure←leaf measure the two expressions are identical for any LINEAR
+ * chain. avg_oz_per_each is a SKU-level column and is left untouched by the sync.
+ *
+ * Operates on the index-linked StarterChainLevel[] the wizard/generator produce
+ * (containsIndex = the array index of the level this one contains; a leaf has
+ * containsMeasureUnit set and containsIndex null). Returns all-null (EMPTY_FLAT)
+ * when the chain is empty, has no unique root, is cyclic/dangling, or the root
+ * path doesn't terminate in a measure leaf — a wrong guess is never emitted
+ * (the malformed chain is rejected by the write path anyway; this is defensive).
+ */
+export function deriveFlatFieldsFromChain(
+  levels: readonly StarterChainLevel[],
+): DerivedFlatFields {
+  if (levels.length === 0) return EMPTY_FLAT;
+
+  // Root = the single level no other level's containsIndex points at.
+  const pointedAt = new Set<number>();
+  for (const l of levels) {
+    if (l.containsIndex != null) pointedAt.add(l.containsIndex);
+  }
+  const rootIdxs: number[] = [];
+  for (let i = 0; i < levels.length; i++) {
+    if (!pointedAt.has(i)) rootIdxs.push(i);
+  }
+  if (rootIdxs.length !== 1) return EMPTY_FLAT; // no unique root (multi-root / cycle)
+  const rootIdx = rootIdxs[0]!;
+  const root = levels[rootIdx]!;
+
+  // Walk root→leaf, multiplying non-leaf quantities. Detect cycles + dangling
+  // pointers (return all-null rather than loop forever or guess).
+  let unitsProduct = 1;
+  let sawNonLeaf = false;
+  const seen = new Set<number>();
+  let cur: StarterChainLevel | undefined = root;
+  let curIdx = rootIdx;
+  while (cur) {
+    if (seen.has(curIdx)) return EMPTY_FLAT; // cycle
+    seen.add(curIdx);
+    if (cur.containsIndex != null) {
+      // Non-leaf: fold its qty into units_per_pack, descend the pointer.
+      const q = cur.containsQty;
+      if (!Number.isFinite(q) || q <= 0) return EMPTY_FLAT;
+      unitsProduct *= q;
+      sawNonLeaf = true;
+      const nextIdx = cur.containsIndex;
+      const next = levels[nextIdx];
+      if (!next) return EMPTY_FLAT; // dangling pointer
+      cur = next;
+      curIdx = nextIdx;
+      continue;
+    }
+    // Leaf: must terminate in a measure unit.
+    const measure = (cur.containsMeasureUnit ?? "").trim();
+    if (measure === "") return EMPTY_FLAT;
+    const eachSize = cur.containsQty;
+    if (!Number.isFinite(eachSize) || eachSize <= 0) return EMPTY_FLAT;
+    return {
+      packFormat: root.label.trim() || null,
+      // Single-leaf chain (root IS the leaf) → no non-leaf level → null (an
+      // "Each"/single pack); else the collapsed product of the container levels.
+      unitsPerPack: sawNonLeaf ? unitsProduct : null,
+      eachSize,
+      eachMeasure: measure,
+    };
+  }
+  return EMPTY_FLAT; // unreachable (loop returns on leaf) — defensive
+}
+
 // ── SKU name-collision warning (SKU Builder streamline, design §1 dedupe) ──────
 
 /** The minimal SKU fields the collision check reads (client-safe). */
