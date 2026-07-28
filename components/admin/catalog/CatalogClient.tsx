@@ -17,6 +17,7 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { PasswordModal } from "@/components/auth/PasswordModal";
+import { SummaryRow } from "@/components/ui/SummaryRow";
 import type { CatalogEntity, CatalogIssue, ItemType, RoleBadge } from "@/lib/admin/catalog-shared";
 import { ITEM_TYPES, deriveRoleBadges } from "@/lib/admin/catalog-shared";
 
@@ -312,12 +313,20 @@ function CatalogRow({
   const none = <span className="text-co-text-muted">{t("admin.catalog.edge.none")}</span>;
 
   return (
-    <div className="co-card p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2">
+    <SummaryRow
+      expanded={expanded}
+      onToggle={onToggle}
+      toggleLabel={expanded ? t("admin.catalog.collapse") : t("admin.catalog.expand")}
+      drawerId={`catalog-drawer-${e.key}`}
+      summary={
+        <>
           <span className="text-sm font-bold text-co-text">{e.name}</span>
           <TypeBadge e={e} />
           <RoleBadges e={e} />
+        </>
+      }
+      badges={
+        <>
           {!e.active && (
             <span className="rounded-full border border-co-border px-2 py-0.5 text-[11px] font-bold text-co-text-muted">
               {t("admin.catalog.badge.inactive")}
@@ -338,19 +347,9 @@ function CatalogRow({
               {t("admin.catalog.badge.issues", { n: String(e.issues.length) })}
             </span>
           )}
-        </div>
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={expanded}
-          className="inline-flex min-h-[32px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 text-xs font-bold text-co-text-dim hover:text-co-text"
-        >
-          {expanded ? t("admin.catalog.collapse") : t("admin.catalog.expand")}
-        </button>
-      </div>
-
-      {expanded && (
-        <div className="mt-3 flex flex-col gap-3 border-t border-co-border/50 pt-3">
+        </>
+      }
+    >
           {e.issues.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {e.issues.map((i) => <IssueBadge key={i} issue={i} />)}
@@ -482,8 +481,6 @@ function CatalogRow({
               </button>
             </div>
           )}
-        </div>
-      )}
-    </div>
+    </SummaryRow>
   );
 }
