@@ -32,7 +32,11 @@ export interface SkuFormLocationOption {
   name: string;
 }
 
-/** Payload shape handed to the parent — matches the route contracts. */
+/** Payload shape handed to the parent — matches the route contracts.
+ *  each_container_label is retired from the UI (SKU Builder streamline design §4,
+ *  Phase 1): no form sends it, so createSku/updateSku never touch the column and
+ *  existing DB values are preserved for the legacy recipe-math reader. The column
+ *  + lib carry-ability stay (write-retirement is Phase 2). */
 export interface SkuFormValues {
   vendorId: string | null;
   locationId: string | null;
@@ -41,7 +45,6 @@ export interface SkuFormValues {
   unitsPerPack: number | null;
   eachSize: number | null;
   eachMeasure: string | null;
-  eachContainerLabel: string | null;
   avgOzPerEach: number | null;
   itemNumber: string | null;
   sourceUrl: string | null;
@@ -113,7 +116,6 @@ export function SkuForm({
     initial?.eachSize != null ? String(initial.eachSize) : "",
   );
   const [eachMeasure, setEachMeasure] = useState(initial?.eachMeasure ?? "");
-  const [eachContainerLabel, setEachContainerLabel] = useState(initial?.eachContainerLabel ?? "");
   const [avgOzPerEach, setAvgOzPerEach] = useState(
     initial?.avgOzPerEach != null ? String(initial.avgOzPerEach) : "",
   );
@@ -159,7 +161,6 @@ export function SkuForm({
       unitsPerPack: parseNum(unitsPerPack),
       eachSize: parseNum(eachSize),
       eachMeasure: eachMeasure.trim() || null,
-      eachContainerLabel: eachContainerLabel.trim() || null,
       avgOzPerEach: parseNum(avgOzPerEach),
       itemNumber: itemNumber.trim() || null,
       sourceUrl: sourceUrl.trim() || null,
@@ -254,16 +255,6 @@ export function SkuForm({
           disabled={busy}
         />
       </div>
-
-      {/* i18n key added by the parallel i18n task (T8); cast until it lands in en.json. */}
-      <Labeled label={t("admin.skus.each_container_label" as TranslationKey)}>
-        <input
-          className={fieldCls}
-          value={eachContainerLabel}
-          disabled={busy}
-          onChange={(e) => setEachContainerLabel(e.target.value)}
-        />
-      </Labeled>
 
       {isNonWeight ? (
         <Labeled label={t("admin.skus.field.avg_oz_per_each")}>

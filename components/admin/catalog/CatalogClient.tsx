@@ -17,8 +17,8 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { PasswordModal } from "@/components/auth/PasswordModal";
-import type { CatalogEntity, CatalogIssue, ItemType } from "@/lib/admin/catalog-shared";
-import { ITEM_TYPES } from "@/lib/admin/catalog-shared";
+import type { CatalogEntity, CatalogIssue, ItemType, RoleBadge } from "@/lib/admin/catalog-shared";
+import { ITEM_TYPES, deriveRoleBadges } from "@/lib/admin/catalog-shared";
 
 const tk = (k: string): TranslationKey => k as TranslationKey;
 
@@ -264,6 +264,38 @@ function TypeBadge({ e }: { e: CatalogEntity }) {
   );
 }
 
+/**
+ * Dual-role badges for an ITEM (SKU Builder streamline §3) — pure graph facts
+ * read from the entity the loader already assembled (zero schema, cannot drift):
+ * made = a producing recipe; sold = sold_directly; used_in_builds = the item is
+ * consumed by N menu_items + parent items. Reads like a deli-pan label.
+ * Items-only (menu_items/packages have no such roles → render nothing).
+ */
+function RoleBadges({ e }: { e: CatalogEntity }) {
+  const { t } = useTranslation();
+  if (e.kind !== "item") return null;
+  const badges: RoleBadge[] = deriveRoleBadges({
+    soldDirectly: e.flags.soldDirectly,
+    usedInBuilds: e.edges.usedInMenuItems.length + e.edges.usedInItems.length,
+    hasProducingRecipe: e.edges.producedBy.length > 0,
+  });
+  if (badges.length === 0) return null;
+  return (
+    <>
+      {badges.map((b) => (
+        <span
+          key={b.role}
+          className="rounded-full border border-co-border-2 bg-co-surface px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-co-text-dim"
+        >
+          {b.role === "used_in_builds"
+            ? t("admin.catalog.role.used_in_builds", { n: String(b.count) })
+            : t(tk(`admin.catalog.role.${b.role}`))}
+        </span>
+      ))}
+    </>
+  );
+}
+
 function CatalogRow({
   e, expanded, onToggle, canWriteSeasonal, canWriteItemType, busy, onSeasonal, onItemType,
 }: {
@@ -285,6 +317,7 @@ function CatalogRow({
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-bold text-co-text">{e.name}</span>
           <TypeBadge e={e} />
+          <RoleBadges e={e} />
           {!e.active && (
             <span className="rounded-full border border-co-border px-2 py-0.5 text-[11px] font-bold text-co-text-muted">
               {t("admin.catalog.badge.inactive")}

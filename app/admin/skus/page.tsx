@@ -19,6 +19,9 @@ import { loadSkus, loadPackFormats, loadMeasureUnits } from "@/lib/admin/skus";
 import { loadVendors } from "@/lib/admin/vendors";
 import { loadCurrentSkuPrices, computeSkuCostPerOz, loadSkuUsageMap, loadSkuReceivingLedger, loadSkuConsumption, type SkuConsumption } from "@/lib/admin/cost";
 import { skuPackComplete, skuReadiness, type Readiness } from "@/lib/readiness";
+import { loadSkuPackChains } from "@/lib/prep-consumption";
+import { buildPackChain, validateChainReachable, type PackChainLevel } from "@/lib/pack-chain-shared";
+import type { MeasureUnitFactor } from "@/lib/recipe-math";
 import { SkuCatalogClient } from "@/components/admin/skus/SkuCatalogClient";
 
 export default async function AdminSkusPage() {
@@ -65,6 +68,27 @@ export default async function AdminSkusPage() {
     if (r && r.status !== "ready") skuReadinessMap[s.id] = r;
   }
 
+  // ── Pack chains (batch, ONE query — loadRecipeGraph law) so the SkuBuilder
+  //    seeds Section B without a lazy GET, and the catalog can show
+  //    "unchained (N)" + a per-chain "unverified" badge. ──
+  const chainMap = await loadSkuPackChains(skus.map((s) => s.id));
+  const measuresByLabel = new Map<string, MeasureUnitFactor>(
+    measureUnits.map((m) => [m.label, { dimension: m.dimension, toBaseFactor: m.toBaseFactor }]),
+  );
+  const avgOzById = new Map(skus.map((s) => [s.id, s.avgOzPerEach]));
+  const chainsBySku: Record<string, PackChainLevel[]> = {};
+  const chainUnverifiedBySku: Record<string, boolean> = {};
+  for (const [skuId, levels] of chainMap.entries()) {
+    if (levels.length === 0) continue;
+    chainsBySku[skuId] = levels;
+    const unverified = !validateChainReachable(
+      buildPackChain(levels),
+      measuresByLabel,
+      avgOzById.get(skuId) ?? null,
+    ).ok;
+    if (unverified) chainUnverifiedBySku[skuId] = true;
+  }
+
   return (
     <div>
       <h1 className="text-xl font-extrabold leading-tight text-co-text">
@@ -81,6 +105,8 @@ export default async function AdminSkusPage() {
         skuLedger={skuLedger}
         skuConsumption={skuConsumption}
         skuReadiness={skuReadinessMap}
+        chainsBySku={chainsBySku}
+        chainUnverifiedBySku={chainUnverifiedBySku}
         actorLevel={level}
         canManage={level >= 7}
       />
