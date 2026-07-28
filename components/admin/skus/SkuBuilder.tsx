@@ -156,8 +156,12 @@ export function SkuBuilder({
   consumption?: SkuConsumption | null;
   /** Hands identity + quick-pack values + an optional chain draft (add flow). */
   onSubmit: (values: SkuFormValues, chain: StarterChainLevel[] | null) => void;
-  /** Edit-mode chain save (SKU exists → pack-chain route). Returns ok. */
-  onSaveChain?: (levels: StarterChainLevel[]) => Promise<boolean>;
+  /** Edit-mode chain save (SKU exists → pack-chain route). Returns ok. When
+   *  `avgOzPerEach` is provided (the wizard's raw count/volume leaf), the parent
+   *  persists it on the SKU BEFORE the chain save so a count leaf is
+   *  oz-resolvable at validation time (undefined → the chain editor's path,
+   *  which never changes the avg). */
+  onSaveChain?: (levels: StarterChainLevel[], avgOzPerEach?: number | null) => Promise<boolean>;
   onCancel: () => void;
 }) {
   const { t } = useTranslation();
@@ -294,7 +298,9 @@ export function SkuBuilder({
     if (wizardBusy || !onSaveChain || !wizardChain) return;
     setWizardErr(null);
     setWizardBusy(true);
-    const ok = await onSaveChain(wizardChain);
+    // Pass the avg so the parent persists it on the SKU before the chain save —
+    // a raw count/volume leaf needs it to pass validation (leaf_needs_avg).
+    const ok = await onSaveChain(wizardChain, parseNum(avgOzPerEach));
     setWizardBusy(false);
     if (ok) {
       setWizardOpen(false);

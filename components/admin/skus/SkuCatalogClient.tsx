@@ -188,10 +188,24 @@ export function SkuCatalogClient({
 
   // Edit-mode chain save (the SKU exists → the pack-chain route). Its own Tier-A
   // step-up (mirrors the retired SkuPackChainPanel). Returns ok so the builder
-  // can close the editor + refresh the seeded chain.
-  const saveChain = async (id: string, levels: StarterChainLevel[]): Promise<boolean> => {
+  // can close the editor + refresh the seeded chain. When the wizard hands an
+  // `avgOzPerEach` (its raw count/volume leaf), PATCH it onto the SKU FIRST so
+  // the chain's count leaf is oz-resolvable at validation (both writes ride the
+  // one Tier-A step-up). The chain editor passes no avg → skips the PATCH.
+  const saveChain = async (
+    id: string,
+    levels: StarterChainLevel[],
+    avgOzPerEach?: number | null,
+  ): Promise<boolean> => {
     setErrorMsg(null);
     if ((await requestStepUp("A")) !== "ok") return false;
+    if (avgOzPerEach !== undefined && avgOzPerEach !== null) {
+      const avgResult = await postJson(`/api/admin/skus/${id}`, { avgOzPerEach }, "PATCH");
+      if (!avgResult.ok) {
+        setErrorMsg(t(resolveErrorKey(avgResult.code)));
+        return false;
+      }
+    }
     const payload = levels.map((l) => ({
       label: l.label,
       containsQty: l.containsQty,
@@ -250,7 +264,7 @@ export function SkuCatalogClient({
           ledger={skuLedger[s.id] ?? null}
           consumption={skuConsumption[s.id] ?? null}
           onSubmit={(values) => void saveEdit(s.id, values)}
-          onSaveChain={(levels) => saveChain(s.id, levels)}
+          onSaveChain={(levels, avg) => saveChain(s.id, levels, avg)}
           onCancel={() => {
             setEditingId(null);
             setErrorMsg(null);
