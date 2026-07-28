@@ -124,3 +124,6 @@ CO-OPS is the template for a template-and-deploy product (one Vercel + one Supab
 ---
 
 *Full chronicle with every incident and rationale: `docs/PHASE_HISTORY.md`. Spec corrections: `docs/SPEC_AMENDMENTS.md`. Security law: `docs/security/`. When this file and the live system disagree, the live system wins — and fix this file in the same PR.*
+
+### Disclosure doctrine (Juan-ratified 2026-07-28)
+- **Every admin/backend surface obeys `docs/DISCLOSURE_DOCTRINE.md` (10 laws, D1-D10):** summary rows + drawers; identity + alerts always visible; secondary content default-collapsed; i18n'd counts on collapsed headers; phone-first full-row toggles; useState-only disclosure state; a11y contract. New surfaces are born compliant; primitives = CollapsibleSection + the SummaryRow pattern.
