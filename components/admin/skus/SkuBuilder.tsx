@@ -44,12 +44,42 @@ import {
 } from "@/lib/admin/catalog-shared";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import { PackChainWizard } from "./PackChainWizard";
-import type { SkuFormValues, SkuFormVendorOption, SkuFormLocationOption } from "./SkuForm";
 import { SkuCostPanel, type SkuCostInfo } from "./SkuCostPanel";
 import type { SkuReceivingLedger, SkuConsumption } from "@/lib/admin/cost";
 
-// Re-export the value/prop types so the parent can keep one import site.
-export type { SkuFormValues, SkuFormVendorOption, SkuFormLocationOption } from "./SkuForm";
+// SKU form value/prop types (SKU top-tier PR-C: SkuForm was deleted — these moved
+// here, the one editor surface, so every parent keeps a single import site).
+export interface SkuFormVendorOption {
+  id: string;
+  name: string;
+}
+export interface SkuFormLocationOption {
+  id: string;
+  name: string;
+}
+
+/** Payload shape handed to the parent — matches the route contracts.
+ *  each_container_label is retired from the UI (SKU Builder streamline design §4,
+ *  Phase 1): no form sends it, so createSku/updateSku never touch the column and
+ *  existing DB values are preserved for the legacy recipe-math reader. */
+export interface SkuFormValues {
+  vendorId: string | null;
+  locationId: string | null;
+  name: string;
+  packFormat: string;
+  /** Optional since PR-B: SkuBuilder OMITS the flat pack trio (server-derived from
+   *  the chain via sync-on-save; a key-present null would CLEAR the columns on
+   *  every identity edit — the PATCH route treats `"key" in body` null as "clear"). */
+  unitsPerPack?: number | null;
+  eachSize?: number | null;
+  eachMeasure?: string | null;
+  avgOzPerEach: number | null;
+  itemNumber: string | null;
+  sourceUrl: string | null;
+  leadTimeDays: number | null;
+  notes: string | null;
+  skuClass: SkuClass;
+}
 
 const fieldCls =
   "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-60";
