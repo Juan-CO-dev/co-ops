@@ -49,14 +49,19 @@ import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { loadMeasures, loadSkuPackChains } from "@/lib/prep-consumption";
 import { type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
+import { buildPackChain, chainCountLeafMeasure, chainLeafUnitsFrom, type PackChainLevel } from "@/lib/pack-chain-shared";
 import {
-  resolveCountLines,
+  resolveCountLinesDim,
   resolvePerSkuAnchors,
+  resolvePerSkuUnitAnchors,
   computeOnHand,
+  computeOnHandUnits,
   computeVariance,
+  computeUsedOrLost,
   chainLabelsInWalkOrder,
   type CountLineInput,
   type OnHandResult,
+  type OnHandUnitsResult,
 } from "@/lib/counts-shared";
 
 export const COUNT_READ_MIN = 6; // AGM+
@@ -162,12 +167,14 @@ export async function createCountEvent(actor: AuthContext, input: CreateCountEve
   const activeSet = new Set((activeSkus ?? []).map((s) => s.id));
   for (const id of skuIds) if (!activeSet.has(id)) throw new CountError(400, "invalid_sku", "A SKU is not found or inactive");
 
-  // Resolve every line's oz at write (council L3). Reject the whole event if ANY
-  // line is unresolvable — a null-oz count line can't anchor.
+  // Resolve every line to its ANCHOR DIMENSION at write (council L3 + PR-C LOCK 1):
+  // a weight line persists resolved_oz; a count-terminated (packaging/cleaning/misc)
+  // line persists resolved_units in LEAF units + resolved_oz NULL. Reject the whole
+  // event if ANY line resolves to NEITHER space — a line with no anchor can't verify.
   const [measures, recipeSkus] = await Promise.all([loadMeasures(), loadRecipeSkus(skuIds)]);
-  const resolution = resolveCountLines(input.lines, recipeSkus, measures);
+  const resolution = resolveCountLinesDim(input.lines, recipeSkus, measures);
   if (!resolution.ok) {
-    throw new CountError(400, "unresolvable_line", `Can't convert "${resolution.badLine.levelLabel}" for a SKU to ounces — set the SKU's pack chain or avg oz first`);
+    throw new CountError(400, "unresolvable_line", `Can't anchor "${resolution.badLine.levelLabel}" for a SKU — set the SKU's pack chain (a count leaf like "each" is enough for packaging) or its avg oz first`);
   }
 
   // F1: NO location-wide supersede. Events are immutable sessions; anchors are
@@ -181,11 +188,14 @@ export async function createCountEvent(actor: AuthContext, input: CreateCountEve
   if (evErr) throw new Error(`createCountEvent header: ${evErr.message}`);
   if (!ev) throw new Error("createCountEvent returned no row");
 
-  // 2) insert the resolved lines.
+  // 2) insert the resolved lines. Each carries its anchor_dimension + the matching
+  //    space's value (weight → resolved_oz; count → resolved_units; the other NULL,
+  //    per migration 0161's invariant CHECK).
   const { error: lErr } = await sb.from("sku_count_lines").insert(
     resolution.resolved.map((l) => ({
       count_event_id: ev.id, sku_id: l.skuId, level_label: l.levelLabel.trim(), qty: l.qty,
-      is_loose: l.isLoose === true, partial_fraction: l.partialFraction ?? null, resolved_oz: l.resolvedOz,
+      is_loose: l.isLoose === true, partial_fraction: l.partialFraction ?? null,
+      anchor_dimension: l.anchorDimension, resolved_oz: l.resolvedOz, resolved_units: l.resolvedUnits,
     })),
   );
   if (lErr) throw new Error(`createCountEvent lines: ${lErr.message}`);
@@ -201,7 +211,12 @@ export async function createCountEvent(actor: AuthContext, input: CreateCountEve
 }
 
 // ── On-hand read (AGM+): anchor + drift + variance ───────────────────────────────
-export interface OnHandRow extends OnHandResult {
+// PR-C: a row is either WEIGHT-anchored (oz drift + variance — the raw path,
+// unchanged) or COUNT-anchored (leaf-unit on-hand + "used or lost since last count"
+// — the packaging/cleaning/misc path). The `dimension` discriminator lets the UI
+// render the right voice; a consumer can switch on it.
+export interface OnHandWeightRow extends OnHandResult {
+  dimension: "weight";
   skuName: string;
   /** Variance of THIS anchor vs the previous count + intervening ledger (L8). null
    *  = no prior count or a derive side missing (advisory). */
@@ -212,6 +227,19 @@ export interface OnHandRow extends OnHandResult {
   looseLineCount: number;
   partialLineCount: number;
 }
+export interface OnHandCountRow extends OnHandUnitsResult {
+  dimension: "count";
+  skuName: string;
+  /** The count-leaf measure label ("each") for unit labeling in the UI. */
+  unitLabel: string;
+  /** "Used or lost since last count" in leaf units (ADVISORY — never "variance"/
+   *  "loss"; packaging has no consumption artifact to attribute a fault to). null =
+   *  no prior count or the intake side can't derive. */
+  usedOrLostUnits: number | null;
+  looseLineCount: number;
+  partialLineCount: number;
+}
+export type OnHandRow = OnHandWeightRow | OnHandCountRow;
 export interface OnHandView {
   locationId: string;
   /** ISO of the MOST RECENT count event at this location (any SKU), null if none
@@ -254,16 +282,21 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
   const locationLastCountedAt = evList[0]!.counted_at; // header hint only.
 
   // ALL lines across those active events, each tagged with its event's counted_at.
+  // PR-C: read anchor_dimension + resolved_units to partition weight vs count rows.
   const eventIds = evList.map((e) => e.id);
   const { data: allLines } = await sb.from("sku_count_lines")
-    .select("count_event_id, sku_id, resolved_oz, is_loose, partial_fraction")
+    .select("count_event_id, sku_id, anchor_dimension, resolved_oz, resolved_units, is_loose, partial_fraction")
     .in("count_event_id", eventIds)
-    .returns<Array<{ count_event_id: string; sku_id: string; resolved_oz: number | string; is_loose: boolean; partial_fraction: number | string | null }>>();
+    .returns<Array<{ count_event_id: string; sku_id: string; anchor_dimension: "weight" | "count" | null; resolved_oz: number | string | null; resolved_units: number | string | null; is_loose: boolean; partial_fraction: number | string | null }>>();
+  const lines = allLines ?? [];
+  // Legacy rows (anchor_dimension NULL) read as weight-anchored (0161 rationale).
+  const isWeight = (d: "weight" | "count" | null): boolean => d !== "count";
 
-  // F1: pure per-SKU anchor resolution (each SKU ranks ITS OWN counting events;
-  // a spot count of one SKU never strands another's anchor). See counts-shared.
+  // F1: per-SKU anchor resolution PER DIMENSION. Weight lines → oz anchor; count
+  // lines → leaf-unit anchor. A SKU is one or the other (its chain determines the
+  // dimension at write); partitioning keeps each SKU in a single space.
   const anchorBySku = resolvePerSkuAnchors(
-    (allLines ?? []).map((l) => ({
+    lines.filter((l) => isWeight(l.anchor_dimension)).map((l) => ({
       countEventId: l.count_event_id,
       eventCountedAt: eventAt.get(l.count_event_id) ?? "",
       skuId: l.sku_id,
@@ -272,18 +305,33 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
       partialFraction: num(l.partial_fraction),
     })),
   );
+  const unitAnchorBySku = resolvePerSkuUnitAnchors(
+    lines.filter((l) => l.anchor_dimension === "count").map((l) => ({
+      countEventId: l.count_event_id,
+      eventCountedAt: eventAt.get(l.count_event_id) ?? "",
+      skuId: l.sku_id,
+      resolvedUnits: num(l.resolved_units) ?? 0,
+      isLoose: l.is_loose,
+      partialFraction: num(l.partial_fraction),
+    })),
+  );
 
-  const skuIds = [...anchorBySku.keys()];
+  const weightSkuIds = [...anchorBySku.keys()];
+  const countSkuIds = [...unitAnchorBySku.keys()];
+  const skuIds = [...new Set([...weightSkuIds, ...countSkuIds])];
   if (skuIds.length === 0) return { locationId, anchorAt: locationLastCountedAt, rows: [] };
 
-  // SKU names.
-  const { data: skuRows } = await sb.from("vendor_items").select("id, name").in("id", skuIds).returns<Array<{ id: string; name: string }>>();
+  // SKU names + chains (count rows derive received-units read-time from the chain).
+  const [{ data: skuRows }, chainsBySku, measures] = await Promise.all([
+    sb.from("vendor_items").select("id, name").in("id", skuIds).returns<Array<{ id: string; name: string }>>(),
+    loadSkuPackChains(countSkuIds),
+    loadMeasures(),
+  ]);
   const skuName = new Map((skuRows ?? []).map((s) => [s.id, s.name]));
 
-  // Drift + variance windows are PER-SKU (each runs from that SKU's own anchor).
-  // A single stale check per distinct anchor timestamp (dedup) keeps it cheap.
-  const rows: OnHandRow[] = await Promise.all(
-    skuIds.map(async (skuId): Promise<OnHandRow> => {
+  // ── Weight rows (oz drift + variance — unchanged path) ──
+  const weightRows: OnHandRow[] = await Promise.all(
+    weightSkuIds.map(async (skuId): Promise<OnHandRow> => {
       const a = anchorBySku.get(skuId)!;
       const [receivedSince, consumedSince, anchorStale] = await Promise.all([
         sumReceivedOzSince(sb, [skuId], locationId, a.anchorAt),
@@ -301,9 +349,6 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
         },
         now,
       );
-      // Variance via the pure tested computeVariance (F2). No prior count for this
-      // SKU → prevCountOz null → variance null (advisory), never 0. The between-
-      // window runs from prevAt→anchorAt (F4-bounded inside the ledger sums).
       let receivedBetweenOz: number | null = null;
       let consumedBetweenOz: number | null = null;
       if (a.prevAt != null) {
@@ -317,11 +362,12 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
       const variance = computeVariance({
         skuId,
         newCountOz: a.anchorOz,
-        prevCountOz: a.prevOz, // null when this SKU has no earlier count.
+        prevCountOz: a.prevOz,
         receivedBetweenOz,
         consumedBetweenOz,
       });
       return {
+        dimension: "weight",
         ...onHand,
         skuName: skuName.get(skuId) ?? "(sku)",
         varianceOz: variance.varianceOz,
@@ -330,7 +376,46 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
       };
     }),
   );
-  rows.sort((a, b) => a.skuName.localeCompare(b.skuName));
+
+  // ── Count rows (leaf-unit on-hand + "used or lost since last count") ──
+  // received-units derive READ-TIME from level-aware receiving: received_qty_at_level
+  // × chain multipliers to the leaf. No consumption term (packaging has no ledger).
+  const countRows: OnHandRow[] = await Promise.all(
+    countSkuIds.map(async (skuId): Promise<OnHandRow> => {
+      const a = unitAnchorBySku.get(skuId)!;
+      const chain = chainsBySku.get(skuId) ?? null;
+      const unitLabel = chain ? (chainCountLeafMeasure(buildPackChain(chain), measures) ?? "units") : "units";
+      const [receivedSince, anchorStale] = await Promise.all([
+        sumReceivedUnitsSince(sb, skuId, locationId, a.anchorAt, chain),
+        detectRetroEditStaleness(sb, locationId, a.anchorAt, now),
+      ]);
+      const onHand = computeOnHandUnits(
+        { skuId, anchorUnits: a.anchorUnits, anchorAt: a.anchorAt, receivedUnitsSince: receivedSince, anchorStale },
+        now,
+      );
+      let receivedBetweenUnits: number | null = null;
+      if (a.prevAt != null) {
+        receivedBetweenUnits = await sumReceivedUnitsBetween(sb, skuId, locationId, a.prevAt, a.anchorAt, chain);
+      }
+      const usedOrLost = computeUsedOrLost({
+        skuId,
+        newCountUnits: a.anchorUnits,
+        prevCountUnits: a.prevUnits,
+        receivedBetweenUnits,
+      });
+      return {
+        dimension: "count",
+        ...onHand,
+        skuName: skuName.get(skuId) ?? "(sku)",
+        unitLabel,
+        usedOrLostUnits: usedOrLost.usedOrLostUnits,
+        looseLineCount: a.looseLineCount,
+        partialLineCount: a.partialLineCount,
+      };
+    }),
+  );
+
+  const rows = [...weightRows, ...countRows].sort((a, b) => a.skuName.localeCompare(b.skuName));
   return { locationId, anchorAt: locationLastCountedAt, rows };
 }
 
@@ -412,6 +497,66 @@ async function sumReceivedOzWindow(
   for (const [id, s] of sums) out.set(id, s);
   for (const id of nulled) out.set(id, null); // taint wins over any partial sum.
   return out;
+}
+
+// ── Count-space received-units (PR-C): derive LEAF units from level-aware receiving ─
+// For a count-anchored SKU, on-hand needs "how many leaf units arrived since the
+// anchor". We derive it READ-TIME from the receiving line's entered level + qty:
+//   line_units = received_qty_at_level × chainLeafUnitsFrom(chain, received_level_label)
+// A line with no level label, no qty-at-level, or an unresolvable walk → the SKU's
+// received-units term is advisory-NULL (never a fabricated count). No chain → null.
+async function sumReceivedUnitsSince(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  skuId: string,
+  locationId: string,
+  afterIso: string,
+  chain: PackChainLevel[] | null,
+): Promise<number | null> {
+  return sumReceivedUnitsWindow(sb, skuId, locationId, afterIso, null, chain);
+}
+async function sumReceivedUnitsBetween(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  skuId: string,
+  locationId: string,
+  afterIso: string,
+  untilIso: string,
+  chain: PackChainLevel[] | null,
+): Promise<number | null> {
+  return sumReceivedUnitsWindow(sb, skuId, locationId, afterIso, untilIso, chain);
+}
+async function sumReceivedUnitsWindow(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  skuId: string,
+  locationId: string,
+  afterIso: string,
+  untilIso: string | null,
+  chain: PackChainLevel[] | null,
+): Promise<number | null> {
+  if (chain == null || chain.length === 0) return null; // no chain → can't map to leaf units.
+  const packChain = buildPackChain(chain);
+  const deliveryIds = await locationDeliveryIds(sb, locationId, afterIso, untilIso);
+  if (deliveryIds.length === 0) return 0;
+  let q = sb.from("vendor_delivery_items")
+    .select("received_level_label, received_qty_at_level, created_at")
+    .eq("vendor_item_id", skuId)
+    .in("delivery_id", deliveryIds)
+    .gt("created_at", afterIso);
+  if (untilIso != null) q = q.lte("created_at", untilIso);
+  const { data } = await q.returns<Array<{ received_level_label: string | null; received_qty_at_level: number | string | null; created_at: string }>>();
+  const rows = data ?? [];
+  if (rows.length === 0) return 0;
+  let sum = 0;
+  for (const r of rows) {
+    const level = r.received_level_label?.trim();
+    const qty = num(r.received_qty_at_level);
+    // A line with no level or no qty-at-level can't map to leaf units → advisory-null
+    // taint (the whole SKU's intake term is unknowable this window).
+    if (!level || qty == null) return null;
+    const perContainer = chainLeafUnitsFrom(packChain, level);
+    if (perContainer == null) return null; // unresolvable level → advisory-null.
+    sum += qty * perContainer;
+  }
+  return Number.isFinite(sum) ? sum : null;
 }
 
 /**

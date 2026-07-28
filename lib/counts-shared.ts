@@ -231,6 +231,67 @@ export function resolvePerSkuAnchors(lines: ReadonlyArray<CountLineForAnchor>): 
   return out;
 }
 
+// ── Count-space per-SKU anchor (SKU top-tier PR-C, LOCK 4) ─────────────────────
+// The count-space twin of resolvePerSkuAnchors: same per-SKU newest-event ranking
+// (F1 — a spot count of one SKU never strands another's anchor), but the anchor is
+// summed LEAF UNITS (resolvedUnits), not oz. Only count-anchored lines flow here;
+// the server partitions by anchor_dimension so a SKU never mixes spaces.
+
+/** A count-anchored line for per-SKU unit-anchor resolution. */
+export interface CountLineForUnitAnchor {
+  countEventId: string;
+  eventCountedAt: string;
+  skuId: string;
+  resolvedUnits: number;
+  isLoose: boolean;
+  partialFraction: number | null;
+}
+export interface SkuUnitAnchor {
+  skuId: string;
+  anchorAt: string;
+  anchorUnits: number;
+  looseLineCount: number;
+  partialLineCount: number;
+  prevAt: string | null;
+  /** Summed leaf units of the previous count for this SKU. null = no earlier count. */
+  prevUnits: number | null;
+}
+
+export function resolvePerSkuUnitAnchors(
+  lines: ReadonlyArray<CountLineForUnitAnchor>,
+): Map<string, SkuUnitAnchor> {
+  const bySkuEvent = new Map<string, Map<string, CountLineForUnitAnchor[]>>();
+  for (const l of lines) {
+    let byEvent = bySkuEvent.get(l.skuId);
+    if (!byEvent) { byEvent = new Map(); bySkuEvent.set(l.skuId, byEvent); }
+    const arr = byEvent.get(l.countEventId) ?? [];
+    arr.push(l);
+    byEvent.set(l.countEventId, arr);
+  }
+  const out = new Map<string, SkuUnitAnchor>();
+  for (const [skuId, byEvent] of bySkuEvent) {
+    const eventIds = [...byEvent.keys()].sort((a, b) => {
+      const ta = Date.parse(byEvent.get(a)![0]!.eventCountedAt);
+      const tb = Date.parse(byEvent.get(b)![0]!.eventCountedAt);
+      return tb - ta;
+    });
+    const anchorLines = byEvent.get(eventIds[0]!)!;
+    const prevLines = eventIds[1] != null ? byEvent.get(eventIds[1])! : null;
+    const sumUnits = (ls: CountLineForUnitAnchor[]): number =>
+      ls.reduce((s, l) => s + (Number.isFinite(l.resolvedUnits) ? l.resolvedUnits : 0), 0);
+    out.set(skuId, {
+      skuId,
+      anchorAt: anchorLines[0]!.eventCountedAt,
+      anchorUnits: sumUnits(anchorLines),
+      looseLineCount: anchorLines.filter((l) => l.isLoose === true).length,
+      partialLineCount: anchorLines.filter((l) => l.partialFraction != null).length,
+      prevAt: prevLines ? prevLines[0]!.eventCountedAt : null,
+      prevUnits: prevLines ? sumUnits(prevLines) : null,
+    });
+  }
+  return out;
+}
+
 /** Per-SKU on-hand computation inputs (all in oz; nulls make drift advisory). */
 export interface OnHandInput {
   skuId: string;
