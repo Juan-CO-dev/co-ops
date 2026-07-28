@@ -219,15 +219,14 @@ export function SkuBuilder({
     locationId: locationId || null,
     name: name.trim(),
     // The flat pack fields are no longer authored in the UI — they are DERIVED
-    // from the wizard's chain server-side on save (sync-on-save, PR-B). We still
-    // send a non-empty pack_format placeholder because createSku requires one;
-    // the server sync overwrites it (and units/each_size/each_measure) from the
-    // derived chain. When there's no chain (bare save) the placeholder stays —
-    // the SKU reads "No pack info", which is correct.
+    // from the wizard's chain server-side on save (sync-on-save, PR-B). The trio
+    // is OMITTED (not null): the PATCH route treats a key-present null as
+    // "clear", so sending nulls would wipe existing legacy pack data on every
+    // identity edit. Absent keys skip the columns entirely (create coalesces
+    // absent → null, which is the correct bare "No pack info" state). We still
+    // send a non-empty pack_format because createSku requires one; the server
+    // sync overwrites it from the derived chain when a chain saves.
     packFormat: initial?.packFormat?.trim() || "Each (no case)",
-    unitsPerPack: null,
-    eachSize: null,
-    eachMeasure: null,
     // each_container_label retired from the builder UI (design §4) — omitted from
     // SkuFormValues, so createSku/updateSku never touch the column.
     avgOzPerEach: parseNum(avgOzPerEach),
