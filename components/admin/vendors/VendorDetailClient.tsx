@@ -31,11 +31,12 @@ import type { TranslationKey } from "@/lib/i18n/types";
 import { postJson, resolveErrorKey, ORDERING_METHODS } from "./shared";
 import { MultiSelectChips } from "./MultiSelectChips";
 import type { RegistryOption, MeasureUnitOption, SkuView } from "@/lib/admin/skus";
-import type { SkuFormLocationOption } from "@/components/admin/skus/SkuForm";
+import type { SkuFormLocationOption } from "@/components/admin/skus/SkuBuilder";
 import { VendorSkusCard } from "@/components/admin/skus/VendorSkusCard";
 import type { SkuCostInfo } from "@/components/admin/skus/SkuCostPanel";
 import type { SkuReceivingLedger, SkuConsumption } from "@/lib/admin/cost";
 import type { Readiness } from "@/lib/readiness";
+import type { PackChainLevel } from "@/lib/pack-chain-shared";
 
 const fieldCls =
   "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-60";
@@ -54,6 +55,8 @@ export function VendorDetailClient({
   skuLedger,
   skuConsumption,
   skuReadiness,
+  skuChains,
+  skuChainUnverified,
   actorLevel,
 }: {
   vendor: VendorView;
@@ -67,6 +70,10 @@ export function VendorDetailClient({
   skuLedger: Record<string, SkuReceivingLedger>;
   skuConsumption: Record<string, SkuConsumption>;
   skuReadiness: Record<string, Readiness>;
+  /** Server batch-loaded active chains per SKU (PR-C — no lazy GET). Absent = unchained. */
+  skuChains: Record<string, PackChainLevel[]>;
+  /** Server class-aware "chain unverified" flag per SKU. */
+  skuChainUnverified: Record<string, boolean>;
   actorLevel: number;
 }) {
   const { t } = useTranslation();
@@ -115,6 +122,8 @@ export function VendorDetailClient({
         skuLedger={skuLedger}
         skuConsumption={skuConsumption}
         skuReadiness={skuReadiness}
+        chainsBySku={skuChains}
+        chainUnverifiedBySku={skuChainUnverified}
         actorLevel={actorLevel}
         canManage={canManage}
       />

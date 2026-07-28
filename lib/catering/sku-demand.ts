@@ -10,7 +10,7 @@ import { getRoleLevel } from "@/lib/roles";
 import type { AuthContext } from "@/lib/session";
 import { PORTION_FRACTION, type Portion } from "@/lib/catering/pricing-derivation";
 import { PREP_DEMAND_READ_MIN } from "@/lib/catering/prep-demand";
-import { loadRecipeGraph, loadMeasures } from "@/lib/prep-consumption";
+import { loadRecipeGraph, loadMeasures, loadSkuPackChains } from "@/lib/prep-consumption";
 import { perUnitSkuOzForItemFromGraph, perUnitSkuOzForMenuItemFromGraph } from "@/lib/prep-consumption-graph";
 import { loadInStockPacks } from "@/lib/production";
 import { skuContentOz } from "@/lib/recipe-math";
@@ -107,8 +107,11 @@ export async function loadCateringSkuDemand(
   const skuIds = [...skuOzByDate.keys()];
   if (skuIds.length === 0) return { rows: [], unresolvedChoiceLines, noRecipeLines };
 
-  // Resolve SKU name + content-oz + on-hand.
-  const measures = await loadMeasures();
+  // Resolve SKU name + content-oz + on-hand. PR-C: pass the active pack CHAIN so
+  // content-oz reflects the chain (chain-first in skuContentOz) — a newly-chained
+  // SKU now feeds reorder without waiting on the legacy flat-field sync. ONE batch
+  // chain load for all skuIds (loadRecipeGraph law — zero per-row queries).
+  const [measures, chainsBySku] = await Promise.all([loadMeasures(), loadSkuPackChains(skuIds)]);
   const { data: skuRows } = await sb
     .from("vendor_items")
     .select("id, name, pack_format, units_per_pack, each_size, each_measure, avg_oz_per_each")
@@ -117,7 +120,10 @@ export async function loadCateringSkuDemand(
   const skuMeta = new Map<string, { name: string; contentOz: number | null }>();
   for (const s of skuRows ?? []) {
     const contentOz = skuContentOz(
-      { unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure, avgOzPerEach: num(s.avg_oz_per_each) },
+      {
+        unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure,
+        avgOzPerEach: num(s.avg_oz_per_each), packChain: chainsBySku.get(s.id) ?? null,
+      },
       measures,
     );
     skuMeta.set(s.id, { name: s.name, contentOz });

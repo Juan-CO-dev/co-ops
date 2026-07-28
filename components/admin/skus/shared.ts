@@ -7,6 +7,7 @@
 
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { SkuView } from "@/lib/admin/skus";
+import { buildPackChain, formatChainDescriptor, type PackChainLevel } from "@/lib/pack-chain-shared";
 
 export { postJson, type PostResult } from "@/components/admin/vendors/shared";
 
@@ -56,14 +57,24 @@ export function resolveErrorKey(code: string): TranslationKey {
 }
 
 /**
- * Compose the structured purchase model into a single human-readable string.
- * Examples: "Case of 6 × 32 oz" / "Each — 32 oz" / "Case of 6" / "Case".
- * Client-safe (takes the translator). Falls back to "—" when no pack format.
+ * Compose the pack model into a single human-readable string (SKU top-tier PR-C —
+ * chain-aware). When the SKU carries an active pack CHAIN, render CHAIN language via
+ * the pure descriptor ("Case → 4 log → 34 oz" / "Case → 12 each") — the chain is
+ * the source of truth for pack vocabulary. Otherwise fall back to the legacy flat
+ * format: "Case of 6 × 32 oz" / "Each — 32 oz" / "Case of 6" / "Case" / "—".
+ * Client-safe (takes the translator; the descriptor needs no i18n — labels + measure
+ * units are already the manager's own words).
  */
 export function formatSkuPack(
   sku: Pick<SkuView, "packFormat" | "unitsPerPack" | "eachSize" | "eachMeasure">,
   t: (key: TranslationKey) => string,
+  chain?: PackChainLevel[] | null,
 ): string {
+  if (chain && chain.length > 0) {
+    const descriptor = formatChainDescriptor(buildPackChain(chain));
+    if (descriptor != null) return descriptor;
+    // Malformed chain (no unique root, etc.) → fall through to the flat format.
+  }
   let out = sku.packFormat ?? "—";
   const hasCount = sku.unitsPerPack != null && sku.unitsPerPack > 1;
   if (hasCount) {

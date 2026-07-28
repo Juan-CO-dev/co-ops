@@ -9,6 +9,14 @@
  * NOTE: deliberately NOT named "verify" — items.opening_verify owns that word.
  */
 
+import {
+  buildPackChain,
+  isChainUnverified,
+  type PackChainLevel,
+  type PackChainSkuClass,
+} from "@/lib/pack-chain-shared";
+import type { MeasureUnitFactor } from "@/lib/recipe-math";
+
 export type ReadinessStatus = "ready" | "incomplete" | "upstream_gaps";
 
 /** Closed reason vocabulary — reconcile against readiness.reason.* i18n keys
@@ -26,10 +34,29 @@ export interface Readiness { status: ReadinessStatus; reasons: Reason[] }
 
 const READY: Readiness = { status: "ready", reasons: [] };
 
-/** Pack definition complete: units_per_pack + each_size + each_measure all set. */
-export function skuPackComplete(s: {
-  unitsPerPack: number | null; eachSize: number | null; eachMeasure: string | null;
-}): boolean {
+/**
+ * Pack definition complete (SKU top-tier PR-C — chain-aware by DELEGATION).
+ *
+ * When the SKU carries an active pack CHAIN, "pack-complete" ⇔ the chain is NOT
+ * unverified — i.e. it delegates to the SAME single badge predicate the catalog
+ * uses (isChainUnverified: structural validity for every class, plus
+ * oz-resolvability only for raw). A non-raw count-terminated chain is complete by
+ * design; a raw chain that can't reach ounces is not. There is NO third rule.
+ *
+ * When there is NO chain, the LEGACY flat-trio rule is unchanged
+ * (units_per_pack + each_size + each_measure all set). The chain/measures/class
+ * params are OPTIONAL so flat-only callers (scripts, any un-migrated site) keep
+ * their exact behavior with no call-site change.
+ */
+export function skuPackComplete(
+  s: { unitsPerPack: number | null; eachSize: number | null; eachMeasure: string | null; avgOzPerEach?: number | null },
+  chain?: PackChainLevel[] | null,
+  measuresByLabel?: Map<string, MeasureUnitFactor>,
+  skuClass?: PackChainSkuClass,
+): boolean {
+  if (chain && chain.length > 0 && measuresByLabel) {
+    return !isChainUnverified(buildPackChain(chain), measuresByLabel, s.avgOzPerEach ?? null, skuClass ?? "raw");
+  }
   return (s.unitsPerPack ?? 0) > 0 && (s.eachSize ?? 0) > 0 && !!s.eachMeasure;
 }
 

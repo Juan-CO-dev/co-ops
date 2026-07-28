@@ -32,6 +32,8 @@
 import {
   buildPackChain,
   walkChainToOz,
+  chainLeafUnitsFrom,
+  chainCountLeafMeasure,
   type PackChainLevel,
 } from "@/lib/pack-chain-shared";
 import { ozForRecipeInput, type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
@@ -92,6 +94,59 @@ export function resolveCountLineOz(
   const frac = line.partialFraction ?? 1;
   const oz = base * frac;
   return Number.isFinite(oz) && oz >= 0 ? { ok: true, oz } : { ok: false, reason: "unresolvable" };
+}
+
+// ── Dimension-aware resolution (SKU top-tier PR-C, LOCK 4) ──────────────────────
+// A count line anchors in ONE of two spaces:
+//   - WEIGHT: the entered level is oz-resolvable → resolved_oz (as today).
+//   - COUNT: the chain terminates in a COUNT measure (packaging/cleaning/misc,
+//     no honest ounce) → resolved_units in LEAF units, resolved_oz NULL.
+// resolveCountLineOz above is the weight path (unchanged). resolveCountLineDim
+// below tries weight FIRST, then falls back to count-space — so a raw oz chain is
+// always weight-anchored and only a genuinely non-oz-resolvable count-terminated
+// chain anchors in count-space. A line that is neither is unresolvable (rejected).
+
+/** A count line resolved to its anchoring dimension. */
+export type CountLineDimResult =
+  | { ok: true; dimension: "weight"; oz: number }
+  | { ok: true; dimension: "count"; units: number }
+  | { ok: false; reason: CountLineOzFailure };
+
+/**
+ * Resolve one count line to its anchoring dimension (PR-C). Weight FIRST (an
+ * oz-resolvable chain — raw SKUs — always anchors in oz, unchanged behavior); if
+ * the line can't reach ounces, try COUNT-space: when the SKU's chain terminates in
+ * a registered COUNT measure and the entered level is a chain label, resolve to
+ * LEAF UNITS = qty × leafUnitsFrom(level) × partialFraction. A partial fraction on
+ * a count line scales the leaf-unit total the same way it scales oz (half a
+ * container of loose units = half its leaf-unit content). Anything else is
+ * unresolvable — the write path rejects it loudly (a count line with no anchor
+ * can't verify stock). PURE.
+ */
+export function resolveCountLineDim(
+  line: Pick<CountLineInput, "levelLabel" | "qty" | "partialFraction">,
+  sku: RecipeInputSku,
+  measuresByLabel: Map<string, MeasureUnitFactor>,
+): CountLineDimResult {
+  // Weight path first (byte-identical to today for oz-resolvable chains).
+  const oz = resolveCountLineOz(line, sku, measuresByLabel);
+  if (oz.ok) return { ok: true, dimension: "weight", oz: oz.oz };
+  // A qty/fraction problem is a hard failure in either space — don't paper over it.
+  if (oz.reason === "bad_qty" || oz.reason === "bad_fraction") return { ok: false, reason: oz.reason };
+
+  // Count-space fallback: the chain must terminate in a COUNT measure, and the
+  // entered level must be a chain label whose structural walk to the leaf resolves.
+  const levels = sku.packChain;
+  if (levels == null || levels.length === 0) return { ok: false, reason: "unresolvable" };
+  const chain = buildPackChain(levels);
+  if (chainCountLeafMeasure(chain, measuresByLabel) == null) return { ok: false, reason: "unresolvable" };
+  const perContainer = chainLeafUnitsFrom(chain, line.levelLabel);
+  if (perContainer == null) return { ok: false, reason: "unresolvable" };
+  const frac = line.partialFraction ?? 1;
+  const units = line.qty * perContainer * frac;
+  return Number.isFinite(units) && units >= 0
+    ? { ok: true, dimension: "count", units }
+    : { ok: false, reason: "unresolvable" };
 }
 
 /**
@@ -174,6 +229,91 @@ export function resolvePerSkuAnchors(lines: ReadonlyArray<CountLineForAnchor>): 
     });
   }
   return out;
+}
+
+// ── Count-space per-SKU anchor (SKU top-tier PR-C, LOCK 4) ─────────────────────
+// The count-space twin of resolvePerSkuAnchors: same per-SKU newest-event ranking
+// (F1 — a spot count of one SKU never strands another's anchor), but the anchor is
+// summed LEAF UNITS (resolvedUnits), not oz. Only count-anchored lines flow here;
+// the server partitions by anchor_dimension so a SKU never mixes spaces.
+
+/** A count-anchored line for per-SKU unit-anchor resolution. */
+export interface CountLineForUnitAnchor {
+  countEventId: string;
+  eventCountedAt: string;
+  skuId: string;
+  resolvedUnits: number;
+  isLoose: boolean;
+  partialFraction: number | null;
+}
+export interface SkuUnitAnchor {
+  skuId: string;
+  anchorAt: string;
+  anchorUnits: number;
+  looseLineCount: number;
+  partialLineCount: number;
+  prevAt: string | null;
+  /** Summed leaf units of the previous count for this SKU. null = no earlier count. */
+  prevUnits: number | null;
+}
+
+export function resolvePerSkuUnitAnchors(
+  lines: ReadonlyArray<CountLineForUnitAnchor>,
+): Map<string, SkuUnitAnchor> {
+  const bySkuEvent = new Map<string, Map<string, CountLineForUnitAnchor[]>>();
+  for (const l of lines) {
+    let byEvent = bySkuEvent.get(l.skuId);
+    if (!byEvent) { byEvent = new Map(); bySkuEvent.set(l.skuId, byEvent); }
+    const arr = byEvent.get(l.countEventId) ?? [];
+    arr.push(l);
+    byEvent.set(l.countEventId, arr);
+  }
+  const out = new Map<string, SkuUnitAnchor>();
+  for (const [skuId, byEvent] of bySkuEvent) {
+    const eventIds = [...byEvent.keys()].sort((a, b) => {
+      const ta = Date.parse(byEvent.get(a)![0]!.eventCountedAt);
+      const tb = Date.parse(byEvent.get(b)![0]!.eventCountedAt);
+      return tb - ta;
+    });
+    const anchorLines = byEvent.get(eventIds[0]!)!;
+    const prevLines = eventIds[1] != null ? byEvent.get(eventIds[1])! : null;
+    const sumUnits = (ls: CountLineForUnitAnchor[]): number =>
+      ls.reduce((s, l) => s + (Number.isFinite(l.resolvedUnits) ? l.resolvedUnits : 0), 0);
+    out.set(skuId, {
+      skuId,
+      anchorAt: anchorLines[0]!.eventCountedAt,
+      anchorUnits: sumUnits(anchorLines),
+      looseLineCount: anchorLines.filter((l) => l.isLoose === true).length,
+      partialLineCount: anchorLines.filter((l) => l.partialFraction != null).length,
+      prevAt: prevLines ? prevLines[0]!.eventCountedAt : null,
+      prevUnits: prevLines ? sumUnits(prevLines) : null,
+    });
+  }
+  return out;
+}
+
+/**
+ * DIMENSION-FLIP reconciliation (adversarial review 2026-07-28 HIGH). A SKU whose
+ * chain was replaced ACROSS dimensions between counts (weight-terminated →
+ * count-terminated, or back — a legitimate supersede-as-a-SET chain edit) has
+ * historical lines in BOTH spaces, so it lands in BOTH per-SKU anchor maps and
+ * would render TWICE (duplicate React key, contradictory on-hand). The per-SKU
+ * law is "latest counted line wins" — this extends it across dimensions: for a
+ * SKU present in both maps, keep the dimension of its MOST RECENT anchor and
+ * delete it from the stale one. Ties (identical anchor timestamps) keep COUNT —
+ * the newer write path, and a same-instant flip means the chain now terminates
+ * in count-space. PURE (mutates only the two maps passed in).
+ */
+export function reconcileAnchorDimensions<
+  W extends { anchorAt: string },
+  C extends { anchorAt: string },
+>(weight: Map<string, W>, count: Map<string, C>): void {
+  for (const [skuId, w] of [...weight]) {
+    const c = count.get(skuId);
+    if (!c) continue;
+    if (Date.parse(c.anchorAt) >= Date.parse(w.anchorAt)) weight.delete(skuId);
+    else count.delete(skuId);
+  }
 }
 
 /** Per-SKU on-hand computation inputs (all in oz; nulls make drift advisory). */
@@ -279,6 +419,94 @@ export function computeVariance(input: VarianceInput): VarianceResult {
   return { skuId: input.skuId, varianceOz: input.newCountOz - predictedOz, predictedOz, newCountOz: input.newCountOz };
 }
 
+// ── Count-space on-hand + delta (SKU top-tier PR-C, LOCK 4) ─────────────────────
+// A count-anchored SKU (packaging/cleaning/misc — a count-terminated chain) has NO
+// oz and NO consumption artifact: nobody logs "used 2 lids". So its model is
+// leaner and its VOICE is different:
+//   on-hand(units) = anchor_units + received_units_since   (no consumed term — there
+//                    is no consumption ledger for these; it's a pure count + intake)
+//   used_or_lost   = (prev_anchor + received_between) − new_anchor   ← ADVISORY
+// The count-to-count delta is "used or lost since last count" — NEVER "variance" or
+// "loss" (which would imply a fault the system can't attribute). received_units
+// derive READ-TIME from level-aware receiving (received_qty_at_level × chain
+// multipliers); a missing/unknown intake side → null (advisory, never fabricated).
+
+/** Per-SKU count-space on-hand inputs (all in LEAF UNITS; nulls make intake advisory). */
+export interface OnHandUnitsInput {
+  skuId: string;
+  /** Latest count-event summed leaf units for this SKU. null = never counted. */
+  anchorUnits: number | null;
+  anchorAt: string | null;
+  /** Leaf units RECEIVED since the anchor (derived read-time from receiving). null
+   *  = can't derive a clean intake term (advisory, never a fabricated number). */
+  receivedUnitsSince: number | null;
+  anchorStale: boolean;
+}
+export interface OnHandUnitsResult {
+  skuId: string;
+  anchorUnits: number | null;
+  anchorAt: string | null;
+  anchorAgeDays: number | null;
+  /** anchor + received-since. null when anchor OR intake can't derive (advisory). */
+  onHandUnits: number | null;
+  anchorStale: boolean;
+}
+
+/**
+ * Count-space on-hand for one SKU. on-hand = anchor + received-since (no consumed
+ * term — packaging/cleaning has no consumption ledger). Any null → onHandUnits null
+ * (advisory). PURE.
+ */
+export function computeOnHandUnits(input: OnHandUnitsInput, now: number): OnHandUnitsResult {
+  const onHandUnits =
+    input.anchorUnits == null || input.receivedUnitsSince == null
+      ? null
+      : input.anchorUnits + input.receivedUnitsSince;
+  return {
+    skuId: input.skuId,
+    anchorUnits: input.anchorUnits,
+    anchorAt: input.anchorAt,
+    anchorAgeDays: anchorAgeDays(input.anchorAt, now),
+    onHandUnits,
+    anchorStale: input.anchorStale,
+  };
+}
+
+/** Per-SKU count-space "used or lost since last count" inputs (LEAF UNITS). */
+export interface UsedOrLostInput {
+  skuId: string;
+  /** The newest count's summed leaf units (ground truth just recorded). */
+  newCountUnits: number;
+  /** The previous count's summed leaf units. null = no earlier count. */
+  prevCountUnits: number | null;
+  /** Leaf units received between the two counts (read-time from receiving). null =
+   *  can't derive → advisory. */
+  receivedBetweenUnits: number | null;
+}
+export interface UsedOrLostResult {
+  skuId: string;
+  /** (prev + received_between) − new. POSITIVE = fewer on the shelf than the prior
+   *  count + intake predicted (used or lost — the common case for packaging). A
+   *  NEGATIVE value = MORE than expected (an uncounted intake / earlier under-count).
+   *  null = advisory (no prior count or the intake side can't derive). */
+  usedOrLostUnits: number | null;
+  newCountUnits: number;
+}
+
+/**
+ * Count-space "used or lost since last count" (ADVISORY — never labeled variance /
+ * loss, which would imply an attributable fault the system can't know for goods
+ * with no consumption artifact). = (prevCount + receivedBetween) − newCount. PURE;
+ * advisory-null when there's no prior count or the intake side is missing (A3).
+ */
+export function computeUsedOrLost(input: UsedOrLostInput): UsedOrLostResult {
+  if (input.prevCountUnits == null || input.receivedBetweenUnits == null) {
+    return { skuId: input.skuId, usedOrLostUnits: null, newCountUnits: input.newCountUnits };
+  }
+  const predicted = input.prevCountUnits + input.receivedBetweenUnits;
+  return { skuId: input.skuId, usedOrLostUnits: predicted - input.newCountUnits, newCountUnits: input.newCountUnits };
+}
+
 /**
  * Convenience: resolve a batch of count lines to oz using a per-SKU RecipeInputSku
  * map + the measure registry, returning the resolved lines AND the first
@@ -301,6 +529,44 @@ export function resolveCountLines(
     const r = resolveCountLineOz(line, sku, measuresByLabel);
     if (!r.ok) return { ok: false, badLine: line, reason: r.reason };
     resolved.push({ ...line, resolvedOz: r.oz });
+  }
+  return { ok: true, resolved };
+}
+
+/** A count line resolved to its persisted shape: weight lines carry resolvedOz;
+ *  count lines carry resolvedUnits (resolvedOz stays null — no honest ounce). */
+export type ResolvedCountLine = CountLineInput & {
+  anchorDimension: "weight" | "count";
+  resolvedOz: number | null;
+  resolvedUnits: number | null;
+};
+export type ResolveCountLinesDimResult =
+  | { ok: true; resolved: ResolvedCountLine[] }
+  | { ok: false; badLine: CountLineInput; reason: CountLineOzFailure | "unknown_sku" };
+
+/**
+ * Dimension-aware batch resolution (PR-C write path). Each line resolves to either
+ * a weight anchor (resolvedOz, resolvedUnits null) or a count anchor (resolvedUnits
+ * in leaf units, resolvedOz null). An unresolvable line rejects the whole event
+ * loudly (a count line with no anchor can't verify stock — the 0160 rule holds,
+ * now spanning both dimensions). Pure; the server lib supplies the maps.
+ */
+export function resolveCountLinesDim(
+  lines: ReadonlyArray<CountLineInput>,
+  skuById: Map<string, RecipeInputSku>,
+  measuresByLabel: Map<string, MeasureUnitFactor>,
+): ResolveCountLinesDimResult {
+  const resolved: ResolvedCountLine[] = [];
+  for (const line of lines) {
+    const sku = skuById.get(line.skuId);
+    if (!sku) return { ok: false, badLine: line, reason: "unknown_sku" };
+    const r = resolveCountLineDim(line, sku, measuresByLabel);
+    if (!r.ok) return { ok: false, badLine: line, reason: r.reason };
+    if (r.dimension === "weight") {
+      resolved.push({ ...line, anchorDimension: "weight", resolvedOz: r.oz, resolvedUnits: null });
+    } else {
+      resolved.push({ ...line, anchorDimension: "count", resolvedOz: null, resolvedUnits: r.units });
+    }
   }
   return { ok: true, resolved };
 }

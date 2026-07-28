@@ -3,11 +3,19 @@
 /**
  * VendorSkusCard — the SKUs card on the vendor-detail page (Item/Inventory
  * Spine, Slice C1). Lists this vendor's SKUs and (GM+) supports add / edit /
- * deactivate. The vendor is fixed (this page's vendor), so the SkuForm hides
- * its vendor dropdown and the create payload carries `vendorId: <this vendor>`.
+ * deactivate. The vendor is fixed (this page's vendor), so the SkuBuilder hides
+ * its vendor dropdown (fixedVendorId, no `vendors` prop) and the create payload
+ * carries `vendorId: <this vendor>`.
  *
- * Authority (matches the routes): create = Tier B; edit + deactivate = Tier A.
- * Below GM+ (≥7) the write affordances are hidden.
+ * SKU top-tier PR-C: this card now renders the ONE SkuBuilder editor (the same
+ * surface the global catalog uses), replacing the retired SkuForm. The chain is
+ * the only pack vocabulary; the server sync derives the legacy flat fields on
+ * save (no UI authors the trio). Chains are server-seeded batch-wise (no lazy GET)
+ * via chainsBySku / chainUnverifiedBySku, and the edit-mode chain save mirrors the
+ * catalog's avg-PATCH-before-chain-POST flow.
+ *
+ * Authority (matches the routes): create = Tier B; edit + deactivate = Tier A;
+ * chain save = Tier A. Below GM+ (≥7) the write affordances are hidden.
  */
 
 import { useState } from "react";
@@ -19,9 +27,12 @@ import type { RegistryOption, MeasureUnitOption, SkuView } from "@/lib/admin/sku
 import { postJson, resolveErrorKey, formatSkuPack } from "./shared";
 import type { SkuReceivingLedger, SkuConsumption } from "@/lib/admin/cost";
 import type { Readiness } from "@/lib/readiness";
+import type { PackChainLevel } from "@/lib/pack-chain-shared";
+import type { StarterChainLevel, SkuNameCollisionCandidate } from "@/lib/admin/catalog-shared";
 import { StatusBadge, ReadinessReasons } from "@/components/admin/StatusBadge";
 import { SkuCostPanel, type SkuCostInfo } from "./SkuCostPanel";
-import { SkuForm, type SkuFormLocationOption, type SkuFormValues } from "./SkuForm";
+import { SkuBuilder } from "./SkuBuilder";
+import type { SkuFormLocationOption, SkuFormValues } from "./SkuBuilder";
 
 export function VendorSkusCard({
   vendorId,
@@ -33,6 +44,8 @@ export function VendorSkusCard({
   skuLedger,
   skuConsumption,
   skuReadiness,
+  chainsBySku,
+  chainUnverifiedBySku,
   actorLevel,
   canManage,
 }: {
@@ -45,6 +58,10 @@ export function VendorSkusCard({
   skuLedger: Record<string, SkuReceivingLedger>;
   skuConsumption: Record<string, SkuConsumption>;
   skuReadiness: Record<string, Readiness>;
+  /** Server batch-loaded active chains per SKU (PR-C — no lazy GET). Absent = unchained. */
+  chainsBySku: Record<string, PackChainLevel[]>;
+  /** Server class-aware "chain unverified" flag per SKU. */
+  chainUnverifiedBySku: Record<string, boolean>;
   actorLevel: number;
   canManage: boolean; // GM+
 }) {
@@ -58,12 +75,16 @@ export function VendorSkusCard({
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  const create = async (values: SkuFormValues) => {
+  // Collision candidates for the builder's non-blocking name warning.
+  const collisionCandidates: SkuNameCollisionCandidate[] = skus.map((s) => ({ id: s.id, name: s.name, active: s.active }));
+
+  const create = async (values: SkuFormValues, chain: StarterChainLevel[] | null) => {
     if (busy) return;
     setErrorMsg(null);
     if ((await requestStepUp("B")) !== "ok") return;
     setBusy(true);
-    const result = await postJson("/api/admin/skus", { ...values, vendorId });
+    // Atomic add: identity + optional starter chain in ONE request (matches catalog).
+    const result = await postJson("/api/admin/skus", { ...values, vendorId, chain });
     setBusy(false);
     if (result.ok) {
       setAdding(false);
@@ -82,6 +103,39 @@ export function VendorSkusCard({
       setEditingId(null);
       router.refresh();
     } else setErrorMsg(t(resolveErrorKey(result.code)));
+  };
+
+  // Edit-mode chain save (the SKU exists → the pack-chain route). Its own Tier-A
+  // step-up (mirrors SkuCatalogClient). When the wizard hands an `avgOzPerEach`
+  // (its raw count/volume leaf), PATCH it onto the SKU FIRST so the chain's count
+  // leaf is oz-resolvable at validation (both writes ride the one Tier-A step-up).
+  const saveChain = async (
+    id: string,
+    levels: StarterChainLevel[],
+    avgOzPerEach?: number | null,
+  ): Promise<boolean> => {
+    setErrorMsg(null);
+    if ((await requestStepUp("A")) !== "ok") return false;
+    if (avgOzPerEach !== undefined && avgOzPerEach !== null) {
+      const avgResult = await postJson(`/api/admin/skus/${id}`, { avgOzPerEach }, "PATCH");
+      if (!avgResult.ok) {
+        setErrorMsg(t(resolveErrorKey(avgResult.code)));
+        return false;
+      }
+    }
+    const payload = levels.map((l) => ({
+      label: l.label,
+      containsQty: l.containsQty,
+      containsIndex: l.containsIndex,
+      containsMeasureUnit: l.containsMeasureUnit,
+    }));
+    const result = await postJson(`/api/admin/skus/${id}/pack-chain`, { levels: payload }, "POST");
+    if (result.ok) {
+      router.refresh();
+      return true;
+    }
+    setErrorMsg(t(resolveErrorKey(result.code)));
+    return false;
   };
 
   const toggleActive = async (sku: SkuView) => {
@@ -116,8 +170,10 @@ export function VendorSkusCard({
                 }
               >
                 {editingId === s.id ? (
-                  <SkuForm
+                  <SkuBuilder
                     initial={s}
+                    initialChain={chainsBySku[s.id] ?? null}
+                    initialChainUnverified={chainUnverifiedBySku[s.id] ?? false}
                     fixedVendorId={vendorId}
                     locations={locations}
                     packFormats={packFormats}
@@ -126,7 +182,12 @@ export function VendorSkusCard({
                     busy={busy}
                     errorMsg={errorMsg}
                     submitLabel={t("admin.skus.save")}
+                    allSkus={collisionCandidates}
+                    cost={skuCost[s.id] ?? { currentPrice: null, costPerOz: null, usedBy: [] }}
+                    ledger={skuLedger[s.id] ?? null}
+                    consumption={skuConsumption[s.id] ?? null}
                     onSubmit={(values) => void saveEdit(s.id, values)}
+                    onSaveChain={(levels, avg) => saveChain(s.id, levels, avg)}
                     onCancel={() => {
                       setEditingId(null);
                       setErrorMsg(null);
@@ -135,6 +196,7 @@ export function VendorSkusCard({
                 ) : (
                   <SkuRow
                     sku={s}
+                    chain={chainsBySku[s.id] ?? null}
                     readiness={skuReadiness[s.id] ?? null}
                     canManage={canManage}
                     confirming={confirmDeactivateId === s.id}
@@ -169,7 +231,7 @@ export function VendorSkusCard({
         {canManage ? (
           adding ? (
             <div className="mt-3">
-              <SkuForm
+              <SkuBuilder
                 fixedVendorId={vendorId}
                 locations={locations}
                 packFormats={packFormats}
@@ -178,7 +240,8 @@ export function VendorSkusCard({
                 busy={busy}
                 errorMsg={errorMsg}
                 submitLabel={t("admin.skus.add")}
-                onSubmit={(values) => void create(values)}
+                allSkus={collisionCandidates}
+                onSubmit={(values, chain) => void create(values, chain)}
                 onCancel={() => {
                   setAdding(false);
                   setErrorMsg(null);
@@ -208,6 +271,7 @@ export function VendorSkusCard({
 /** Compact read row for a SKU: name · unit/size · item# · lead time + badges. */
 export function SkuRow({
   sku: s,
+  chain,
   readiness,
   canManage,
   confirming,
@@ -218,6 +282,7 @@ export function SkuRow({
   onConfirmDeactivate,
 }: {
   sku: SkuView;
+  chain: PackChainLevel[] | null;
   readiness: Readiness | null;
   canManage: boolean;
   confirming: boolean;
@@ -229,7 +294,7 @@ export function SkuRow({
 }) {
   const { t } = useTranslation();
   const meta: string[] = [];
-  meta.push(formatSkuPack(s, t));
+  meta.push(formatSkuPack(s, t, chain));
   if (s.itemNumber) meta.push(`#${s.itemNumber}`);
   if (s.leadTimeDays != null) meta.push(t("admin.skus.lead_time_days", { count: s.leadTimeDays }));
 

@@ -32,7 +32,7 @@ import type {
   SkuFormLocationOption,
   SkuFormValues,
   SkuFormVendorOption,
-} from "./SkuForm";
+} from "./SkuBuilder";
 
 // Vendor-select sentinels distinct from any real vendor id.
 const FILTER_ALL = "__all__";
@@ -273,6 +273,7 @@ export function SkuCatalogClient({
       ) : (
         <CatalogRow
           sku={s}
+          chain={chainsBySku[s.id] ?? null}
           readiness={skuReadiness[s.id] ?? null}
           chained={isChained(s.id)}
           unverified={isUnverified(s.id)}
@@ -441,6 +442,7 @@ export function SkuCatalogClient({
  */
 function CatalogRow({
   sku: s,
+  chain,
   readiness,
   chained,
   unverified,
@@ -459,6 +461,7 @@ function CatalogRow({
   canRecord,
 }: {
   sku: SkuView;
+  chain: PackChainLevel[] | null;
   readiness: Readiness | null;
   chained: boolean;
   unverified: boolean;
@@ -481,7 +484,7 @@ function CatalogRow({
   meta.push(t(`admin.skus.sku_class.${s.skuClass}` as import("@/lib/i18n/types").TranslationKey));
   meta.push(s.vendorName ?? t("admin.skus.manual"));
   meta.push(s.locationName ?? t("admin.skus.global"));
-  meta.push(formatSkuPack(s, t));
+  meta.push(formatSkuPack(s, t, chain));
   if (s.itemNumber) meta.push(`#${s.itemNumber}`);
 
   const actionBtn =

@@ -17,6 +17,9 @@ import { getVendor, loadCategories, loadOrderTypes } from "@/lib/admin/vendors";
 import { loadSkus, loadPackFormats, loadMeasureUnits } from "@/lib/admin/skus";
 import { loadCurrentSkuPrices, computeSkuCostPerOz, loadSkuUsageMap, loadSkuReceivingLedger, loadSkuConsumption, type SkuConsumption } from "@/lib/admin/cost";
 import { skuPackComplete, skuReadiness, type Readiness } from "@/lib/readiness";
+import { loadSkuPackChains } from "@/lib/prep-consumption";
+import { buildPackChain, isChainUnverified, type PackChainLevel } from "@/lib/pack-chain-shared";
+import type { MeasureUnitFactor } from "@/lib/recipe-math";
 import { VendorDetailClient } from "@/components/admin/vendors/VendorDetailClient";
 
 export default async function AdminVendorDetailPage({
@@ -57,11 +60,31 @@ export default async function AdminVendorDetailPage({
   const consumptionMap = await loadSkuConsumption(auth, skus.map((s) => s.id));
   const skuConsumption: Record<string, SkuConsumption> = Object.fromEntries([...consumptionMap.entries()]);
 
+  // ── Pack chains (batch, ONE query — loadRecipeGraph law) so VendorSkusCard's
+  //    SkuBuilder (PR-C) seeds Section B without a lazy GET + shows the class-aware
+  //    "unverified" badge, AND skuPackComplete is chain-aware. Mirrors
+  //    app/admin/skus/page.tsx. ──
+  const chainMap = await loadSkuPackChains(skus.map((s) => s.id));
+  const measuresByLabel = new Map<string, MeasureUnitFactor>(
+    measureUnits.map((m) => [m.label, { dimension: m.dimension, toBaseFactor: m.toBaseFactor }]),
+  );
+  const chainsBySku: Record<string, PackChainLevel[]> = {};
+  const chainUnverifiedBySku: Record<string, boolean> = {};
+  for (const [skuId, levels] of chainMap.entries()) {
+    if (levels.length === 0) continue;
+    chainsBySku[skuId] = levels;
+    const s = skus.find((x) => x.id === skuId);
+    const unverified = isChainUnverified(
+      buildPackChain(levels), measuresByLabel, s?.avgOzPerEach ?? null, s?.skuClass ?? "raw",
+    );
+    if (unverified) chainUnverifiedBySku[skuId] = true;
+  }
+
   const skuReadinessMap: Record<string, Readiness> = {};
   for (const s of skus) {
     const r = skuReadiness({
       active: s.active,
-      packComplete: skuPackComplete(s),
+      packComplete: skuPackComplete(s, chainMap.get(s.id) ?? null, measuresByLabel, s.skuClass),
       hasPrice: prices.has(s.id),
       deliveryCount: ledgerMap.get(s.id)?.deliveries.length ?? 0,
     });
@@ -84,6 +107,8 @@ export default async function AdminVendorDetailPage({
         skuLedger={skuLedger}
         skuConsumption={skuConsumption}
         skuReadiness={skuReadinessMap}
+        skuChains={chainsBySku}
+        skuChainUnverified={chainUnverifiedBySku}
         actorLevel={level}
       />
     </div>
