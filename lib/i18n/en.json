@@ -2346,6 +2346,8 @@
   "admin.catering.menu.serves": "serves",
   "admin.catering.menu.serves_hint": "People covered per one unit (e.g. a 24-bag chip case serves 24). Blank = 1.",
   "admin.catering.menu.error.invalid_serves": "Serves must be a positive number.",
+  "admin.catering.menu.section_count": "{n} items",
+  "admin.catering.menu.section_available": "{n} available",
   "admin.toast.tabs_aria": "Menu manager sections",
   "admin.toast.tab_menu": "Menu",
   "admin.toast.tab_toast": "Toast",

@@ -9,11 +9,12 @@
  * the UI reflects the returned state). Prices are entered in dollars and sent as integer cents.
  */
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { PasswordModal } from "@/components/auth/PasswordModal";
+import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import type { AdminMenuItem, AdminSize } from "@/lib/admin/catering/menu";
 
 const KNOWN = new Set(["forbidden", "not_found", "invalid_payload", "invalid_size", "invalid_serves", "size_exists", "step_up_required", "step_up_stale", "generic"]);
@@ -110,8 +111,7 @@ export function MenuClient({ items: initial, canWrite }: { items: AdminMenuItem[
         <div className="flex flex-col gap-5">
           <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-co-text">{t("admin.catering.menu.items_heading")}</h2>
           {itemSections.map(([section, rows]) => (
-            <section key={`item:${section || "_none"}`}>
-              <h3 className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">{section || t("admin.catering.menu.no_section")}</h3>
+            <MenuSection key={`item:${section || "_none"}`} idBase={`menu-item-section-${section || "_none"}`} section={section} rows={rows} t={t}>
               <ul className="flex flex-col gap-1.5">
                 {rows.map((it) => (
                   <li key={`item:${it.id}`} className="co-card p-3">
@@ -135,7 +135,7 @@ export function MenuClient({ items: initial, canWrite }: { items: AdminMenuItem[
                   </li>
                 ))}
               </ul>
-            </section>
+            </MenuSection>
           ))}
         </div>
       )}
@@ -145,8 +145,7 @@ export function MenuClient({ items: initial, canWrite }: { items: AdminMenuItem[
         <div className="flex flex-col gap-5">
           <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-co-text">{t("admin.catering.menu.menu_items_heading")}</h2>
           {subSections.map(([section, rows]) => (
-            <section key={`sub:${section || "_none"}`}>
-              <h3 className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">{section || t("admin.catering.menu.no_section")}</h3>
+            <MenuSection key={`sub:${section || "_none"}`} idBase={`menu-sub-section-${section || "_none"}`} section={section} rows={rows} t={t}>
               <ul className="flex flex-col gap-1.5">
                 {rows.map((it) => (
                   <li key={`sub:${it.id}`} className="co-card flex items-center justify-between gap-3 p-3">
@@ -163,7 +162,7 @@ export function MenuClient({ items: initial, canWrite }: { items: AdminMenuItem[
                   </li>
                 ))}
               </ul>
-            </section>
+            </MenuSection>
           ))}
         </div>
       )}
@@ -174,6 +173,38 @@ export function MenuClient({ items: initial, canWrite }: { items: AdminMenuItem[
 
       <PasswordModal open={stepUpOpen} onConfirm={async () => { if (pendingRef.current) await pendingRef.current(); }} onCancel={() => { setStepUpOpen(false); pendingRef.current = null; }} />
     </div>
+  );
+}
+
+/**
+ * MenuSection — Disclosure Doctrine W4: wraps a menu section's rows in a
+ * CollapsibleSection. Header = section name + i18n'd total count (D5) + an
+ * i18n'd "N available" count (D2 badge slot, catering_available among the rows).
+ * defaultOpen when the section has 6 or fewer items (larger sections collapse to
+ * cut first-paint scroll). Row internals are untouched — pure relocation.
+ */
+function MenuSection({ idBase, section, rows, t, children }: {
+  idBase: string;
+  section: string;
+  rows: AdminMenuItem[];
+  t: (k: TranslationKey, params?: Record<string, string | number>) => string;
+  children: ReactNode;
+}) {
+  const availableCount = rows.reduce((n, r) => n + (r.cateringAvailable ? 1 : 0), 0);
+  return (
+    <CollapsibleSection
+      idBase={idBase}
+      title={section || t("admin.catering.menu.no_section")}
+      count={t("admin.catering.menu.section_count", { n: rows.length })}
+      defaultOpen={rows.length <= 6}
+      badge={
+        <span className="inline-flex items-center rounded-full bg-co-gold/20 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-text">
+          {t("admin.catering.menu.section_available", { n: availableCount })}
+        </span>
+      }
+    >
+      {children}
+    </CollapsibleSection>
   );
 }
 
