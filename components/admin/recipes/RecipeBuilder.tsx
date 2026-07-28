@@ -470,8 +470,13 @@ export function RecipeBuilder({
       {/* ── LIVE mode: delete (deactivate) ── */}
       {recipe !== null && canDelete ? (
         <div className="mt-6">
-        <CollapsibleSection idBase="recipe-danger" title={t(rk("recipes.delete.danger_title"))}>
-          {deleteError ? <p className="mb-3 text-sm text-co-cta">{deleteError}</p> : null}
+        <CollapsibleSection
+          idBase="recipe-danger"
+          title={t(rk("recipes.delete.danger_title"))}
+          // D2 strict: a persisted delete error stays visible even if the section is
+          // re-collapsed after the failure (badge slot renders in both states).
+          badge={deleteError ? <span className="text-xs font-semibold text-co-cta">{deleteError}</span> : undefined}
+        >
           {confirmDelete ? (
             <div className="flex justify-end gap-2">
               <button
