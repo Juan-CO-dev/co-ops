@@ -41,11 +41,12 @@ import type { TranslationKey } from "@/lib/i18n/types";
 import type { RegistryOption, MeasureUnitOption } from "@/lib/admin/skus";
 import type { SkuClass } from "@/lib/admin/catalog-shared";
 import type { StarterChainLevel } from "@/lib/admin/catalog-shared";
+import { defaultWizardLevelLabel } from "@/lib/admin/catalog-shared";
 
-/** Safe non-colliding default labels (never a measure-unit label like each/unit). */
-const DEFAULT_ROOT_LABEL = "container";
-const DEFAULT_INNER_LABEL = "inner";
-/** The count-dim measure a non-raw bare count leaf terminates in (seed 10/14). */
+/** The count-dim measure a non-raw bare count leaf terminates in (seed 10/14).
+ *  Default level LABELS come from defaultWizardLevelLabel (catalog-shared):
+ *  distinct PER DEPTH — an all-default multi-level chain must never repeat a
+ *  label (UNIQUE(sku_id,label) → duplicate_label) — and never a measure word. */
 const COUNT_LEAF_MEASURE = "each";
 
 const fieldCls =
@@ -118,7 +119,7 @@ export function PackChainWizard({
   const selectedMeasure = measureUnits.find((m) => m.label === leafMeasure) ?? null;
   const leafIsNonWeight = selectedMeasure != null && selectedMeasure.dimension !== "weight";
 
-  const defaultLabelFor = (index: number) => (index === 0 ? DEFAULT_ROOT_LABEL : DEFAULT_INNER_LABEL);
+  const defaultLabelFor = defaultWizardLevelLabel;
 
   // ── Assemble the emitted chain from current state (pure) ──────────────────
   const assembled: StarterChainLevel[] | null = useMemo(() => {
@@ -166,7 +167,9 @@ export function PackChainWizard({
       containsMeasureUnit: null,
     };
     const sizeLeaf: StarterChainLevel = {
-      label: DEFAULT_INNER_LABEL, // the smallest piece; safe non-colliding label
+      // Depth-distinct default: at leaf depth curIndex+1 this can never repeat
+      // the container-of-leaf's default (curIndex) or any committed level's.
+      label: defaultLabelFor(curIndex + 1),
       containsQty: size,
       containsIndex: null,
       containsMeasureUnit: measure,

@@ -9,6 +9,7 @@ import {
   generateQuickPackChain,
   deriveRoleBadges,
   deriveFlatFieldsFromChain,
+  defaultWizardLevelLabel,
   type SkuNameCollisionCandidate,
   type StarterChainLevel,
 } from "@/lib/admin/catalog-shared";
@@ -242,16 +243,29 @@ describe("deriveFlatFieldsFromChain", () => {
     expect(flatOz).toBeCloseTo(136, 10);
   });
 
-  it("single-leaf chain (root IS the leaf): tub → 32 oz → units_per_pack null, size 32", () => {
+  it("single-leaf chain (root IS the leaf): tub → 32 oz → units_per_pack 1 ('1 for Each'), parity 32", () => {
+    // units_per_pack = 1, NOT null: a null fails skuPackComplete and nulls
+    // skuContentOz's flat path for a VALID depth-1 raw chain (adversarial
+    // review 2026-07-28 MED) — 1 is the documented legacy "1 for Each" value.
     const chain: StarterChainLevel[] = [
       { label: "tub", containsQty: 32, containsIndex: null, containsMeasureUnit: "oz" },
     ];
-    expect(deriveFlatFieldsFromChain(chain)).toEqual({
+    const flat = deriveFlatFieldsFromChain(chain);
+    expect(flat).toEqual({
       packFormat: "tub",
-      unitsPerPack: null, // no non-leaf level
+      unitsPerPack: 1,
       eachSize: 32,
       eachMeasure: "oz",
     });
+    // Parity: flat 1 × 32 × 1 = 32 = the chain walk.
+    const walkable = toWalkable(chain);
+    const walk = walkChainToOz(buildPackChain(walkable), chainRootLabel(buildPackChain(walkable))!, MEASURES, null);
+    const flatOz = skuContentOz(
+      { unitsPerPack: flat.unitsPerPack, eachSize: flat.eachSize, eachMeasure: flat.eachMeasure, avgOzPerEach: null },
+      MEASURES,
+    );
+    expect(walk.ok && walk.oz).toBe(32);
+    expect(flatOz).toBeCloseTo(32, 10);
   });
 
   it("shallow packaging count chain (case → 12 inner ; inner → each): units 12, measure 'each', size 1", () => {
@@ -271,14 +285,14 @@ describe("deriveFlatFieldsFromChain", () => {
     expect(flatOz).toBeNull();
   });
 
-  it("cleaning opt-in oz leaf (jug → 128 quart): units null, size 128, measure 'quart'", () => {
+  it("cleaning opt-in oz leaf (jug → 128 quart): units 1, size 128, measure 'quart'", () => {
     // Cleaning's opt-in size swaps the bare count leaf for a volume size leaf.
     const chain: StarterChainLevel[] = [
       { label: "jug", containsQty: 128, containsIndex: null, containsMeasureUnit: "quart" },
     ];
     expect(deriveFlatFieldsFromChain(chain)).toEqual({
       packFormat: "jug",
-      unitsPerPack: null,
+      unitsPerPack: 1, // single-leaf → the "1 for Each" convention
       eachSize: 128,
       eachMeasure: "quart",
     });
@@ -331,9 +345,9 @@ describe("PackChainWizard generated-label collision safety", () => {
   // count words a generated LABEL must never be.
   const measureLabels = new Set(["oz", "lb", "quart", "each", "unit", "count"]);
 
-  // Wizard defaults (mirrors the component's local constants).
-  const ROOT = "container";
-  const INNER = "inner";
+  // Wizard defaults — the REAL exported fn (no mirrored constants to drift).
+  const ROOT = defaultWizardLevelLabel(0); // "container"
+  const INNER = defaultWizardLevelLabel(1); // "inner"
   const COUNT_LEAF_MEASURE = "each";
 
   /** raw path: container(root) → N inner ; inner → S weight/measure (size leaf). */
@@ -372,6 +386,35 @@ describe("PackChainWizard generated-label collision safety", () => {
     expect(rawTwoLevel[1]!.label).toBe(INNER);
     expect(rawTwoLevel[1]!.label).not.toBe("each");
     expect(rawTwoLevel[1]!.label).not.toBe("unit");
+  });
+
+  it("all-default labels are DISTINCT at every depth (the duplicate_label class — adversarial review 2026-07-28)", () => {
+    // The reviewer's reproduction: canonical case → log → oz raw chain with all
+    // labels left blank. Pre-fix the wizard emitted container/inner/inner →
+    // UNIQUE(sku_id,label) rejection. The default-label fn must be injective
+    // for any realistic depth AND never a measure-unit word.
+    for (let depth = 2; depth <= 6; depth++) {
+      const labels = Array.from({ length: depth }, (_, i) => defaultWizardLevelLabel(i));
+      expect(new Set(labels).size).toBe(depth); // injective — no duplicates
+      expect(firstLabelMeasureCollision(labels, measureLabels)).toBeNull();
+    }
+  });
+
+  it("1-committed raw chain with all-default labels round-trips deriveFlatFieldsFromChain (the pre-fix failure shape)", () => {
+    // container(6) → inner(2) → [inner 2] 17 oz — as the assembled memo now
+    // emits it: committed container + container-of-leaf + depth-distinct size leaf.
+    const chain: StarterChainLevel[] = [
+      { label: defaultWizardLevelLabel(0), containsQty: 6, containsIndex: 1, containsMeasureUnit: null },
+      { label: defaultWizardLevelLabel(1), containsQty: 2, containsIndex: 2, containsMeasureUnit: null },
+      { label: defaultWizardLevelLabel(2), containsQty: 17, containsIndex: null, containsMeasureUnit: "oz" },
+    ];
+    expect(new Set(chain.map((l) => l.label)).size).toBe(3);
+    expect(deriveFlatFieldsFromChain(chain)).toEqual({
+      packFormat: "container",
+      unitsPerPack: 12, // 6 × 2
+      eachSize: 17,
+      eachMeasure: "oz",
+    });
   });
 
   it("a non-raw bare count chain is structurally valid and VERIFIED (complete by design)", () => {

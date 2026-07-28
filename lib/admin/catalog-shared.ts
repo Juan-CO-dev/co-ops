@@ -282,6 +282,21 @@ export function generateQuickPackChain(
   return chain;
 }
 
+/**
+ * Default level label for wizard depth `index` (0 = root). Distinct PER DEPTH —
+ * a ≥2-level all-default chain must never repeat a label (UNIQUE(sku_id,label)
+ * makes a repeat a loud `duplicate_label` rejection; adversarial review
+ * 2026-07-28 traced the canonical case→log→oz raw chain failing on
+ * "inner"/"inner") — and never a measure-unit word ("each"/"unit" — the BC
+ * shadowing class, caught twice). Manager-typed labels can still collide; the
+ * server rejects those loudly, which is acceptable — DEFAULTS must never.
+ */
+export function defaultWizardLevelLabel(index: number): string {
+  if (index === 0) return "container";
+  if (index === 1) return "inner";
+  return `inner ${index}`;
+}
+
 // ── Flat-field derivation from a chain (SKU top-tier PR-B, sync-on-save) ───────
 
 /** The legacy flat pack fields the 3 laggard consumers still read
@@ -293,7 +308,9 @@ export interface DerivedFlatFields {
   /** Root (top) level label → vendor_items.pack_format. Null on a malformed chain. */
   packFormat: string | null;
   /** Product of every NON-leaf level's containsQty → vendor_items.units_per_pack.
-   *  Null for a single-leaf chain (no non-leaf level) and for a malformed chain. */
+   *  1 for a single-leaf chain (the legacy "1 for Each" convention — a null here
+   *  would fail skuPackComplete + null out skuContentOz's flat path for a VALID
+   *  depth-1 raw chain). Null only for a malformed chain. */
   unitsPerPack: number | null;
   /** Leaf level's containsQty → vendor_items.each_size. Null on a malformed chain. */
   eachSize: number | null;
@@ -377,9 +394,11 @@ export function deriveFlatFieldsFromChain(
     if (!Number.isFinite(eachSize) || eachSize <= 0) return EMPTY_FLAT;
     return {
       packFormat: root.label.trim() || null,
-      // Single-leaf chain (root IS the leaf) → no non-leaf level → null (an
-      // "Each"/single pack); else the collapsed product of the container levels.
-      unitsPerPack: sawNonLeaf ? unitsProduct : null,
+      // Single-leaf chain (root IS the leaf) → 1, the legacy "1 for Each"
+      // convention (lib/admin/skus.ts) — keeps skuPackComplete true and the
+      // flat content-oz math (1 × each_size × ozPer) equal to the walk for a
+      // valid depth-1 raw chain; else the collapsed container-qty product.
+      unitsPerPack: sawNonLeaf ? unitsProduct : 1,
       eachSize,
       eachMeasure: measure,
     };
