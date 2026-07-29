@@ -47,7 +47,6 @@ import {
   confirmFloorForType,
   classifyEdits,
   nextOperationalDay,
-  applyEffectiveResolution,
   versionOutranks,
   resolveEffectiveVersionId,
   type ItemTranslationFill,
@@ -878,7 +877,9 @@ async function copyItemsToVersion(
   const copiedRows: Record<string, unknown>[] = [];
   for (const raw of srcItems) {
     // Strip identity columns — the new row gets a fresh id + the new template_id.
-    const { id: _oldId, template_id: _oldTpl, ...rest } = raw;
+    const rest: Record<string, unknown> = { ...raw };
+    delete rest.id;
+    delete rest.template_id;
     const row: Record<string, unknown> = { ...rest, template_id: newTemplateId };
 
     const isMirror = isMirrorItemRaw(raw.prep_meta);

@@ -99,7 +99,8 @@ export function TemplateBuilderClient({
   // only). Empty per template = clean. Edits feed the list + the phone preview + the
   // classifyEdits diff for the publish confirm modal. Publishing versions everything.
   const [drafts, setDrafts] = useState<DraftState>({});
-  const editsForActive = (active && drafts[active.id]) || [];
+  const activeId = active?.id ?? "";
+  const editsForActive = useMemo(() => drafts[activeId] ?? [], [drafts, activeId]);
 
   const pushEdit = (templateId: string, edit: TemplateItemEdit) => {
     setDrafts((prev) => ({ ...prev, [templateId]: [...(prev[templateId] ?? []), edit] }));
@@ -229,7 +230,7 @@ export function TemplateBuilderClient({
 
       {/* Phone preview (spec §7, REQUIRED) — renders the DRAFTED active template so the
           manager sees exactly what staff sees tonight/tomorrow before publishing. */}
-      {active && <PhonePreview template={active} draftedItems={draftedItems} />}
+      {active && <PhonePreview draftedItems={draftedItems} />}
     </div>
   );
 }
@@ -449,7 +450,7 @@ function ItemList({
 
       {/* Quick-add (spec §7): sticky-ish add bar; label + section + role + required,
           defaults carried; count toggle reveals the required spine-link picker. */}
-      {canFill && <QuickAdd template={template} draftedItems={draftedItems} linkTargets={linkTargets} onEdit={onEdit} />}
+      {canFill && <QuickAdd draftedItems={draftedItems} linkTargets={linkTargets} onEdit={onEdit} />}
 
       {draftedItems.length === 0 ? (
         <div className="mt-2 rounded-2xl border-2 border-dashed border-co-border p-6 text-center text-sm text-co-text-muted">
@@ -791,12 +792,10 @@ function StructuralEdits({
  *  defaults carried from the last item; the count toggle reveals a REQUIRED spine-
  *  link picker (dismiss reverts the toggle). Emits an `add` TemplateItemEdit. */
 function QuickAdd({
-  template,
   draftedItems,
   linkTargets,
   onEdit,
 }: {
-  template: TemplateBuilderTemplate;
   draftedItems: ChecklistTemplateItem[];
   linkTargets: LinkTarget[];
   onEdit: (edit: TemplateItemEdit) => void;
@@ -1454,10 +1453,8 @@ function PreviewStationGroups({
 }
 
 function PhonePreview({
-  template,
   draftedItems,
 }: {
-  template: TemplateBuilderTemplate;
   /** the DRAFTED items (source + edits applied) — the preview shows exactly what
    *  publishes. Disabled (draft-removed) rows are filtered out (they render nowhere
    *  for staff). */

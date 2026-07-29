@@ -289,28 +289,6 @@ async function resolveActiveAmPrepTemplateId(
 }
 
 /**
- * Resolve the active opening template id at a location — DATE-AWARE (PR-3): the
- * newest active version effective on `opDate`. Used by the operational mirror
- * resolvers below; opening IS versioned by the publish engine, so this correctly
- * ignores a pending (future effective_from) version until its day. opDate defaults
- * to operational-today.
- */
-async function resolveActiveOpeningTemplateId(
-  sb: ReturnType<typeof getServiceRoleClient>,
-  locationId: string,
-  opDate: string = operationalNow(new Date()).date,
-): Promise<string | null> {
-  const base = sb
-    .from("checklist_templates")
-    .select("id")
-    .eq("location_id", locationId)
-    .eq("type", "opening") as unknown as EffectiveResolvableBuilder;
-  const { data, error } = await applyEffectiveResolution(base, opDate).maybeSingle<{ id: string }>();
-  if (error) throw new Error(`resolveActiveOpeningTemplateId failed: ${error.message}`);
-  return data?.id ?? null;
-}
-
-/**
  * Resolve ALL active opening templates at a location (PR-3 mirror-targeting,
  * adjudication b). In steady state ≤2 rows: the currently-effective version + a
  * pending next-day version. A mirror add/remove/section-change must land on BOTH so
