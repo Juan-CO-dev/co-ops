@@ -22,6 +22,7 @@ import {
   confirmFloorForType,
   TemplateBuilderError,
   classifyEdits,
+  applyEditsToItems,
   shiftOperationalDay,
   nextOperationalDay,
   type TemplateItemEdit,
@@ -447,6 +448,75 @@ describe("classifyEdits — the diff classifier truth-table", () => {
     // b's required change: b ends disabled/removed but the requiredChanged classifier
     // reports the field delta regardless — the modal shows both facts honestly.
     expect(forward.requiredChanged).toEqual([{ itemId: "b", label: "Count cash", to: true }]);
+  });
+});
+
+describe("applyEditsToItems — in-memory draft render (preview + list)", () => {
+  function items() {
+    return [
+      item({ id: "a", label: "Sweep floor", displayOrder: 1, required: true, active: true }),
+      item({ id: "b", label: "Count cash", displayOrder: 2, minRoleLevel: 4, active: true }),
+    ];
+  }
+
+  it("relabel + describe + role + required mutate the drafted row", () => {
+    const out = applyEditsToItems(items(), [
+      { op: "relabel", itemId: "a", label: "Sweep the floor" },
+      { op: "describe", itemId: "a", description: "corners too" },
+      { op: "role", itemId: "b", minRoleLevel: 6 },
+      { op: "required", itemId: "b", required: true },
+    ]);
+    const a = out.find((it) => it.id === "a")!;
+    const b = out.find((it) => it.id === "b")!;
+    expect(a.label).toBe("Sweep the floor");
+    expect(a.description).toBe("corners too");
+    expect(b.minRoleLevel).toBe(6);
+    expect(b.required).toBe(true);
+  });
+
+  it("disable flips active=false (kept in the array for the struck-through list)", () => {
+    const out = applyEditsToItems(items(), [{ op: "disable", itemId: "a" }]);
+    expect(out.find((it) => it.id === "a")!.active).toBe(false);
+    expect(out).toHaveLength(2);
+  });
+
+  it("add produces a synthetic draft- row sorted by displayOrder", () => {
+    const out = applyEditsToItems(items(), [
+      { op: "add", tempId: "t1", label: "New", displayOrder: 3, minRoleLevel: 3, required: true, expectsCount: false },
+    ]);
+    expect(out).toHaveLength(3);
+    const added = out.find((it) => it.id === "draft-t1")!;
+    expect(added.label).toBe("New");
+    expect(out[out.length - 1]!.id).toBe("draft-t1"); // sorted last (order 3)
+  });
+
+  it("reorder swaps rendered order by displayOrder", () => {
+    const out = applyEditsToItems(items(), [
+      { op: "reorder", itemId: "a", displayOrder: 2 },
+      { op: "reorder", itemId: "b", displayOrder: 1 },
+    ]);
+    expect(out.map((it) => it.id)).toEqual(["b", "a"]);
+  });
+
+  it("NEVER edits a mirror row (the §5 seal)", () => {
+    const src = [mirrorItem({ id: "mir", label: "Mirror", displayOrder: 1 })];
+    const out = applyEditsToItems(src, [
+      { op: "relabel", itemId: "mir", label: "hacked" },
+      { op: "disable", itemId: "mir" },
+    ]);
+    expect(out[0]!.label).toBe("Mirror");
+    expect(out[0]!.active).toBe(true);
+  });
+
+  it("add with a count spine-link carries the item/sku ref", () => {
+    const outItem = applyEditsToItems(items(), [
+      { op: "add", tempId: "ti", label: "Count subs", displayOrder: 3, minRoleLevel: 3, required: true, expectsCount: true, spineLink: { kind: "item", id: "item-9" } },
+    ]);
+    expect(outItem.find((it) => it.id === "draft-ti")!.itemId).toBe("item-9");
+    const outSku = applyEditsToItems(items(), [
+      { op: "add", tempId: "ts", label: "Count SKU", displayOrder: 3, minRoleLevel: 3, required: true, expectsCount: true, spineLink: { kind: "sku", id: "sku-9" } },
+    ]);
+    expect(outSku.find((it) => it.id === "draft-ts")!.vendorItemId).toBe("sku-9");
   });
 });
 

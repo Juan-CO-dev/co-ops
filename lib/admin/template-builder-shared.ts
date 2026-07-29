@@ -500,6 +500,90 @@ export function classifyEdits(
   return { added: adds, removed, relabeled, reordered, roleChanged, requiredChanged };
 }
 
+/**
+ * Apply the draft edits to the source items IN MEMORY, producing the drafted item
+ * list the phone preview + the builder list render (the manager sees exactly what
+ * will publish). Pure — no I/O. MIRROR ROWS ARE NEVER EDITED (spec §5 seal): edits
+ * addressed to a mirror are ignored. "add" edits become synthetic items with a
+ * `draft-<tempId>` id; "disable" flips active=false (kept in the array so the list
+ * can render it struck-through — the preview filters inactive out). Result is sorted
+ * by the (possibly-reordered) displayOrder, stable on ties. The same coalescing rule
+ * as classifyEdits (last-write-wins per field per item).
+ */
+export function applyEditsToItems(
+  srcItems: ChecklistTemplateItem[],
+  edits: readonly TemplateItemEdit[],
+): ChecklistTemplateItem[] {
+  const byId = new Map(srcItems.map((it) => [it.id, { ...it }]));
+  const added: ChecklistTemplateItem[] = [];
+
+  for (const e of edits) {
+    if (e.op === "add") {
+      added.push({
+        id: `draft-${e.tempId}`,
+        templateId: srcItems[0]?.templateId ?? "",
+        station: e.station ?? null,
+        displayOrder: e.displayOrder,
+        label: e.label,
+        description: e.description ?? null,
+        minRoleLevel: e.minRoleLevel,
+        required: e.required,
+        expectsCount: e.expectsCount,
+        expectsPhoto: e.expectsPhoto ?? false,
+        vendorItemId: e.expectsCount && e.spineLink?.kind === "sku" ? e.spineLink.id : null,
+        active: true,
+        translations: e.es ? { es: { label: e.es.label ?? undefined, description: e.es.description ?? null } } : null,
+        prepMeta: null,
+        reportReferenceType: null,
+        referencesTemplateItemId: null,
+        itemId: e.expectsCount && e.spineLink?.kind === "item" ? e.spineLink.id : null,
+      });
+      continue;
+    }
+    const target = byId.get(e.itemId);
+    if (!target) continue;
+    if (isMirrorItem(target.prepMeta)) continue; // mirror rows never edited (seal)
+    switch (e.op) {
+      case "relabel":
+        target.label = e.label;
+        break;
+      case "describe":
+        target.description = e.description;
+        break;
+      case "station":
+        target.station = e.station;
+        break;
+      case "reorder":
+        target.displayOrder = e.displayOrder;
+        break;
+      case "role":
+        target.minRoleLevel = e.minRoleLevel;
+        break;
+      case "required":
+        target.required = e.required;
+        break;
+      case "disable":
+        target.active = false;
+        break;
+      case "enable":
+        target.active = true;
+        break;
+      case "translate": {
+        const cur = target.translations ?? {};
+        const es = { ...(cur.es ?? {}) };
+        if (e.es.label !== undefined) es.label = e.es.label ?? undefined;
+        if (e.es.description !== undefined) es.description = e.es.description;
+        if (e.es.specialInstruction !== undefined) es.specialInstruction = e.es.specialInstruction;
+        target.translations = { ...cur, es };
+        break;
+      }
+    }
+  }
+
+  const all = [...byId.values(), ...added];
+  return all.sort((a, b) => (a.displayOrder !== b.displayOrder ? a.displayOrder - b.displayOrder : 0));
+}
+
 // ── Operational-date primitives (pure; UTC-anchored YYYY-MM-DD arithmetic, the
 //    same idiom as lib/checklists.ts shiftDateByDays / lib/opening.ts yesterday). A
 //    YYYY-MM-DD string has no intrinsic TZ, so day-shifting via a UTC anchor is

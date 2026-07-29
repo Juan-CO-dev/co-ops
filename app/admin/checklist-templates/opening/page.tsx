@@ -28,9 +28,11 @@ import { TemplateBuilderClient } from "@/components/admin/template-builder/Templ
  * the two same-day FILLS are GM+ (level >= 7, Tier-A step-up) — enforced at the
  * fill routes AND gated in the client via `canFill`.
  *
- * WRITE SCOPE (spec §1): only PR-0's two same-day fills (es translations + spine
- * link, on Phase-1 rows) are wired. Structural edits arrive with PR-3's publish/
- * versioning engine — the client renders no structural affordances.
+ * WRITE SCOPE (spec §1, PR-3): the two same-day fills (es translations + spine link,
+ * on Phase-1 rows) write in place; STRUCTURAL edits (add / relabel / describe /
+ * disable / enable / reorder / required-flip / role) are drafted in the client and
+ * PUBLISHED as a new version effective next operational day (apply-now = today,
+ * gated). Phase-2 mirror rows are never draft-edited (the §5 seal).
  */
 export default async function AdminOpeningBuilderPage() {
   const auth = await requireSessionFromHeaders("/admin");
