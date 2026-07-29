@@ -31,7 +31,7 @@ import {
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
-import { DashboardBackLink } from "@/components/DashboardBackLink";
+import { BackLink } from "@/components/nav/BackLink";
 import { CashReportDetailView } from "@/components/reports-hub/CashReportDetail";
 import { ChecklistReportDetailView } from "@/components/reports-hub/ChecklistReportDetail";
 import { MaintenanceReportDetailView } from "@/components/reports-hub/MaintenanceReportDetail";
@@ -104,12 +104,7 @@ export default async function ReportDetailPage({ params, searchParams }: PagePro
 
   return (
     <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
-      <div className="mb-3">
-        <DashboardBackLink />
-      </div>
-      <a href={backHref} className="mb-4 block text-sm text-co-text-muted hover:underline">
-        {t("reports.detail.back")}
-      </a>
+      <BackLink search={`?location=${locationParam}`} labelKey="reports.detail.back" />
 
       {/* Opening detail view — surfaces recount numbers + NULL-sentinel indicator */}
       {detail.kind === "opening" ? (

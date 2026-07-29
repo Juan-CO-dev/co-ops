@@ -355,20 +355,13 @@ function FooterActions() {
 }
 
 function NoLocationView({ language }: { language: Language }) {
+  // Back-to-dashboard is already provided by ScaffoldHeader (rendered above
+  // this view), so no in-view dashboard link — it would be a duplicate.
   return (
     <section className="rounded-2xl border-2 border-co-border bg-co-surface p-5 text-center sm:p-6">
       <p className="text-sm text-co-text-muted">
         {serverT(language, "opening.no_location.body")}
       </p>
-      <Link
-        href="/dashboard"
-        className="
-          mt-3 inline-flex min-h-[48px] items-center justify-center rounded-md
-          border-2 border-co-text bg-co-surface px-4 text-sm font-bold uppercase tracking-[0.12em] text-co-text
-        "
-      >
-        {serverT(language, "opening.page.dashboard_back")}
-      </Link>
     </section>
   );
 }
