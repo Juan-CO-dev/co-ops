@@ -41,13 +41,20 @@ import {
   itemNeedsLink,
   applyEditsToItems,
   classifyEdits,
+  resolveGateTier,
+  RECONCILED_REPORT_REF_TYPES,
   type TemplateItemEdit,
+  type TemplatePatch,
   type TemplateBuilderTemplate,
   type TemplateBuilderView,
   type TemplateDoctorReport,
   type TemplateDoctorTemplate,
+  type TemplateBuilderType,
+  type ReferenceTargetsView,
+  type ReconciledReportRefType,
 } from "@/lib/admin/template-builder-shared";
 import type { LinkTarget } from "@/lib/admin/needs-link-shared";
+import type { GatePredicate, ChecklistType } from "@/lib/types";
 
 /** A local draft: the pending structural edits for one template (keyed by template
  *  id in the parent). Empty = clean. */
@@ -76,11 +83,14 @@ export function TemplateBuilderClient({
   view,
   doctor,
   linkTargets,
+  referenceTargets,
   canFill,
 }: {
   view: TemplateBuilderView;
   doctor: TemplateDoctorReport;
   linkTargets: LinkTarget[];
+  /** PR-4 (spec §5): the OTHER list's current items, for the ref-track picker. */
+  referenceTargets: ReferenceTargetsView;
   /** GM+ may run the two same-day fills (Tier-A) AND publish (Tier-A). */
   canFill: boolean;
 }) {
@@ -102,6 +112,15 @@ export function TemplateBuilderClient({
   const activeId = active?.id ?? "";
   const editsForActive = useMemo(() => drafts[activeId] ?? [], [drafts, activeId]);
 
+  // PR-4 (spec §5): the template-level submission-gate patch, keyed by template id. A
+  // value present here means the manager edited the "Requires" setting; it rides the
+  // same publish (templatePatch). `undefined` = untouched (source copies verbatim).
+  const [gatePatch, setGatePatch] = useState<Record<string, GatePredicate | null>>({});
+  const patchForActive: TemplatePatch | undefined =
+    activeId in gatePatch ? { submissionGatePredicate: gatePatch[activeId] ?? null } : undefined;
+  const setGateForActive = (templateId: string, predicate: GatePredicate | null) =>
+    setGatePatch((prev) => ({ ...prev, [templateId]: predicate }));
+
   const pushEdit = (templateId: string, edit: TemplateItemEdit) => {
     setDrafts((prev) => ({ ...prev, [templateId]: [...(prev[templateId] ?? []), edit] }));
   };
@@ -122,6 +141,11 @@ export function TemplateBuilderClient({
   };
   const clearDraft = (templateId: string) => {
     setDrafts((prev) => {
+      const next = { ...prev };
+      delete next[templateId];
+      return next;
+    });
+    setGatePatch((prev) => {
       const next = { ...prev };
       delete next[templateId];
       return next;
@@ -225,6 +249,7 @@ export function TemplateBuilderClient({
             template={active}
             draftedItems={draftedItems}
             linkTargets={linkTargets}
+            referenceTargets={referenceTargets}
             canFill={canFill}
             focusItemId={focusItemId}
             onEdit={(edit) => pushEdit(active.id, edit)}
@@ -233,12 +258,24 @@ export function TemplateBuilderClient({
         </div>
       )}
 
+      {/* Template-level "Requires" setting (spec §5) — the submission gate predicate.
+          Editing it drafts a templatePatch that rides the same publish. GM+ only. */}
+      {active && canFill && (
+        <SubmissionGateSetting
+          type={view.type}
+          current={active.submissionGatePredicate ?? null}
+          draftPredicate={active.id in gatePatch ? gatePatch[active.id] ?? null : undefined}
+          onChange={(predicate) => setGateForActive(active.id, predicate)}
+        />
+      )}
+
       {/* Publish bar — dirty banner (D2, never collapses) + Publish button + confirm
           modal. Only GM+ (canFill) sees the publish affordance. */}
       {active && canFill && (
         <PublishBar
           template={active}
           edits={editsForActive}
+          templatePatch={patchForActive}
           openInstancesToday={doctor.publish?.openInstancesToday ?? 0}
           onPublished={() => clearDraft(active.id)}
         />
@@ -267,8 +304,11 @@ function TemplateDoctorPanel({
   // fact itemized in the panel). esMissing is intentionally EXCLUDED — Spanish
   // renders as fill-count progress, not an issue (header must never claim an
   // issue the panel can't itemize — the PR-0 header/panel-disagreement class).
-  const { needsLink, roleFloorImpossible, drift } = doctor.totals;
-  const issueCount = needsLink + roleFloorImpossible + drift;
+  // ACTIONABLE issues drive the count/chip: needs-link, impossible role floors, drift,
+  // and PR-4 dangling ref_track references (a broken cross-list reference). Hard-gated
+  // items are an INVENTORY (surfaced in the panel, never counted as an "issue").
+  const { needsLink, roleFloorImpossible, drift, hardGated, danglingRefs } = doctor.totals;
+  const issueCount = needsLink + roleFloorImpossible + drift + danglingRefs;
   const clean = issueCount === 0;
 
   const badge = clean ? (
@@ -284,6 +324,10 @@ function TemplateDoctorPanel({
   const locName = (id: string): string =>
     doctor.templates.find((tpl) => tpl.locationId === id)?.locationName ?? id;
 
+  // PR-4: the hard-gated inventory shows even when there are no ACTIONABLE issues
+  // (the owner's guardrail — always visible if any line can block a submission).
+  const hasHardGated = hardGated > 0;
+
   return (
     <CollapsibleSection
       idBase="tb-doctor"
@@ -291,10 +335,13 @@ function TemplateDoctorPanel({
       badge={badge}
       defaultOpen={!clean}
     >
-      {clean ? (
+      {clean && !hasHardGated ? (
         <p className="text-sm text-co-text-muted">{t("admin.templates.doctor.all_clear_body")}</p>
       ) : (
         <div className="flex flex-col gap-4">
+          {clean && hasHardGated && (
+            <p className="text-sm text-co-text-muted">{t("admin.templates.doctor.all_clear_body")}</p>
+          )}
           {/* Location drift — NAMED per item (spec §6). */}
           {doctor.drift.length > 0 && (
             <DoctorGroup title={t("admin.templates.doctor.drift_heading", { n: String(doctor.drift.length) })}>
@@ -345,7 +392,12 @@ function DoctorTemplateBlock({
   const esMissing = tpl.esFill.total - tpl.esFill.filled;
   const impossible = tpl.roleFloor.filter((f) => f.severity === "impossible");
   const advisory = tpl.roleFloor.filter((f) => f.severity === "above_confirm_floor");
-  const nothing = tpl.needsLink.length === 0 && esMissing === 0 && tpl.roleFloor.length === 0;
+  const nothing =
+    tpl.needsLink.length === 0 &&
+    esMissing === 0 &&
+    tpl.roleFloor.length === 0 &&
+    tpl.hardGated.length === 0 &&
+    tpl.danglingRefs.length === 0;
   if (nothing) return null;
 
   return (
@@ -402,6 +454,45 @@ function DoctorTemplateBlock({
             </p>
           </div>
         )}
+
+        {/* Dangling ref_track references (spec §6, PR-4) — actionable: the tracked
+            target no longer exists on the referenced list, so the auto-tick can't fire. */}
+        {tpl.danglingRefs.length > 0 && (
+          <div>
+            <p className="text-sm font-bold text-co-cta">
+              {t("admin.templates.doctor.dangling_refs_n", { n: String(tpl.danglingRefs.length) })}
+            </p>
+            <ul className="mt-1 flex flex-col gap-1">
+              {tpl.danglingRefs.map((dr) => (
+                <li key={dr.itemId} className="flex items-center justify-between gap-2">
+                  <span className="text-sm text-co-text">{dr.label}</span>
+                  <button
+                    type="button"
+                    onClick={() => onFix(tpl.templateId, dr.itemId)}
+                    className="inline-flex min-h-[32px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
+                  >
+                    {t("admin.templates.doctor.fix")}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Hard-gated inventory (spec §6, PR-4) — LISTED so the manager sees every line
+            that can BLOCK a submission (the owner's guardrail). Not an issue; advisory. */}
+        {tpl.hardGated.length > 0 && (
+          <div>
+            <p className="text-sm font-semibold text-co-text-muted">
+              {t("admin.templates.doctor.hard_gated_n", { n: String(tpl.hardGated.length) })}
+            </p>
+            <ul className="mt-1 flex flex-col gap-1">
+              {tpl.hardGated.map((hg) => (
+                <li key={hg.itemId} className="text-sm text-co-text">{hg.label}</li>
+              ))}
+            </ul>
+          </div>
+        )}
       </div>
     </DoctorGroup>
   );
@@ -415,6 +506,7 @@ function ItemList({
   template,
   draftedItems,
   linkTargets,
+  referenceTargets,
   canFill,
   focusItemId,
   onEdit,
@@ -424,6 +516,7 @@ function ItemList({
   /** source items + draft edits applied (mirror rows untouched). */
   draftedItems: ChecklistTemplateItem[];
   linkTargets: LinkTarget[];
+  referenceTargets: ReferenceTargetsView;
   canFill: boolean;
   focusItemId: string | null;
   onEdit: (edit: TemplateItemEdit) => void;
@@ -480,8 +573,10 @@ function ItemList({
             <li key={item.id} id={`tb-item-${item.id}`}>
               <ItemRow
                 templateId={template.id}
+                locationId={template.locationId}
                 item={item}
                 linkTargets={linkTargets}
+                referenceTargets={referenceTargets}
                 canFill={canFill}
                 expanded={expanded.has(item.id)}
                 onToggle={() => toggle(item.id)}
@@ -521,16 +616,26 @@ function emitReorder(
   if (bPersisted) onEdit({ op: "reorder", itemId: b.id, displayOrder: a.displayOrder });
 }
 
-/** Gate-tier badge (spec §3): Optional vs "Must complete — or explain". hard_gate
- *  does not exist yet (PR-4), so only two tiers derive from `required`. */
-function gateTierKey(required: boolean): TranslationKey {
-  return required ? tk("admin.templates.builder.gate.must_complete") : tk("admin.templates.builder.gate.optional");
+/** Gate-tier badge label key (spec §3, PR-4): the 3-way tier — Optional /
+ *  "Must complete — or explain" / "Hard gate". Derived from the two boolean columns
+ *  via resolveGateTier (hard gate wins). */
+function gateTierKey(item: Pick<ChecklistTemplateItem, "required" | "hardGate">): TranslationKey {
+  switch (resolveGateTier(item)) {
+    case "hard_gate":
+      return tk("admin.templates.builder.gate.hard_gate");
+    case "must_complete":
+      return tk("admin.templates.builder.gate.must_complete");
+    case "optional":
+      return tk("admin.templates.builder.gate.optional");
+  }
 }
 
 function ItemRow({
   templateId,
+  locationId,
   item,
   linkTargets,
+  referenceTargets,
   canFill,
   expanded,
   onToggle,
@@ -542,8 +647,10 @@ function ItemRow({
   onMoveDown,
 }: {
   templateId: string;
+  locationId: string;
   item: ChecklistTemplateItem;
   linkTargets: LinkTarget[];
+  referenceTargets: ReferenceTargetsView;
   canFill: boolean;
   expanded: boolean;
   onToggle: () => void;
@@ -567,6 +674,9 @@ function ItemRow({
 
   const chip =
     "inline-flex items-center rounded-full border border-co-border px-2 py-0.5 text-[11px] font-semibold text-co-text-muted";
+  // PR-4: hard-gated lines get an emphatic chip (they can block a whole submission).
+  const chipHardGate =
+    "inline-flex items-center rounded-full border-2 border-co-cta/60 bg-co-cta/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.04em] text-co-cta";
   const moveBtn =
     "inline-flex h-8 w-8 items-center justify-center rounded-lg border-2 border-co-border-2 bg-co-surface text-sm font-bold text-co-text disabled:opacity-30";
 
@@ -582,7 +692,8 @@ function ItemRow({
           <div className={"font-bold" + (disabled ? " line-through" : "")}>{item.label}</div>
           <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
             {item.station && <span className={chip}>{item.station}</span>}
-            <span className={chip}>{t(gateTierKey(item.required))}</span>
+            {/* Gate-tier badge (3-way, PR-4): hard gate gets a distinct emphatic chip. */}
+            <span className={item.hardGate ? chipHardGate : chip}>{t(gateTierKey(item))}</span>
             <span className={chip}>{roleLabel(item.minRoleLevel)}</span>
             {item.expectsCount && <span className={chip}>{t("admin.templates.builder.flag.count")}</span>}
             {item.expectsPhoto && <span className={chip}>{t("admin.templates.builder.flag.photo")}</span>}
@@ -640,8 +751,10 @@ function ItemRow({
     >
       <ItemDrawer
         templateId={templateId}
+        locationId={locationId}
         item={item}
         linkTargets={linkTargets}
+        referenceTargets={referenceTargets}
         canFill={canFill}
         mirror={mirror}
         isDraftAdd={isDraftAdd}
@@ -659,8 +772,10 @@ function ItemRow({
 
 function ItemDrawer({
   templateId,
+  locationId,
   item,
   linkTargets,
+  referenceTargets,
   canFill,
   mirror,
   isDraftAdd,
@@ -668,8 +783,10 @@ function ItemDrawer({
   onRemoveDraftAdd,
 }: {
   templateId: string;
+  locationId: string;
   item: ChecklistTemplateItem;
   linkTargets: LinkTarget[];
+  referenceTargets: ReferenceTargetsView;
   canFill: boolean;
   mirror: boolean;
   isDraftAdd: boolean;
@@ -700,7 +817,14 @@ function ItemDrawer({
               disable/enable. All version at publish. Draft-added rows edit their own
               draft edit; persisted rows emit an edit against their id. */}
           {canFill && (
-            <StructuralEdits item={item} isDraftAdd={isDraftAdd} onEdit={onEdit} onRemoveDraftAdd={onRemoveDraftAdd} />
+            <StructuralEdits
+              item={item}
+              locationId={locationId}
+              isDraftAdd={isDraftAdd}
+              referenceTargets={referenceTargets}
+              onEdit={onEdit}
+              onRemoveDraftAdd={onRemoveDraftAdd}
+            />
           )}
 
           {/* Same-day fills (PR-0) — persisted rows only (a draft-add isn't linked
@@ -727,12 +851,16 @@ function ItemDrawer({
  *  simple + honest). */
 function StructuralEdits({
   item,
+  locationId,
   isDraftAdd,
+  referenceTargets,
   onEdit,
   onRemoveDraftAdd,
 }: {
   item: ChecklistTemplateItem;
+  locationId: string;
   isDraftAdd: boolean;
+  referenceTargets: ReferenceTargetsView;
   onEdit: (edit: TemplateItemEdit) => void;
   onRemoveDraftAdd: (tempId: string) => void;
 }) {
@@ -790,15 +918,40 @@ function StructuralEdits({
               ))}
             </select>
           </label>
-          <label className="flex items-center gap-2 text-sm text-co-text">
-            <input
-              type="checkbox"
-              checked={item.required}
-              onChange={(e) => onEdit({ op: "required", itemId: idForEdit, required: e.target.checked })}
-              className="h-5 w-5"
-            />
-            {t("admin.templates.builder.required_toggle")}
+          {/* Gate tier (3-way, spec §3, PR-4): Optional / must-complete-or-explain /
+              hard gate. Emits a gate_tier op carrying BOTH columns. Hard gate shows a
+              plain warning (staff cannot submit at all until it's done — use rarely). */}
+          <label className="block text-sm">
+            <span className="text-xs font-bold uppercase tracking-[0.08em] text-co-text-muted">
+              {t("admin.templates.builder.gate.tier_label")}
+            </span>
+            <select
+              value={resolveGateTier(item)}
+              onChange={(e) => {
+                const tier = e.target.value as "optional" | "must_complete" | "hard_gate";
+                onEdit({
+                  op: "gate_tier",
+                  itemId: idForEdit,
+                  required: tier !== "optional",
+                  hardGate: tier === "hard_gate",
+                });
+              }}
+              className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
+            >
+              <option value="optional">{t("admin.templates.builder.gate.optional")}</option>
+              <option value="must_complete">{t("admin.templates.builder.gate.must_complete")}</option>
+              <option value="hard_gate">{t("admin.templates.builder.gate.hard_gate")}</option>
+            </select>
+            {item.hardGate && (
+              <span className="mt-1 block text-xs font-semibold text-co-cta">
+                {t("admin.templates.builder.gate.hard_gate_warning")}
+              </span>
+            )}
           </label>
+
+          {/* Connections (spec §5, PR-4): the report-reference picker + the ref-track
+              picker. Persisted non-mirror rows only. */}
+          <ConnectionsEditor item={item} locationId={locationId} referenceTargets={referenceTargets} onEdit={onEdit} />
         </>
       )}
       {isDraftAdd ? (
@@ -824,6 +977,215 @@ function StructuralEdits({
         </button>
       )}
     </div>
+  );
+}
+
+/** Connections (spec §5, PR-4): the report-reference picker + the ref-track picker.
+ *  Both are STRUCTURAL edits (change submit/reconcile behavior) → they version via
+ *  publish. Persisted non-mirror rows only (the caller gates on isDraftAdd/mirror). */
+function ConnectionsEditor({
+  item,
+  locationId,
+  referenceTargets,
+  onEdit,
+}: {
+  item: ChecklistTemplateItem;
+  /** the active template's location — reference targets are location-scoped. */
+  locationId: string;
+  referenceTargets: ReferenceTargetsView;
+  onEdit: (edit: TemplateItemEdit) => void;
+}) {
+  const { t } = useTranslation();
+  const [refQuery, setRefQuery] = useState("");
+
+  // Reference targets are the OTHER list's active items for THIS item's location.
+  // Filter by the active template location (the reference partner shares the location).
+  const locationTargets = useMemo(
+    () => referenceTargets.targets.filter((r) => r.locationId === locationId),
+    [referenceTargets, locationId],
+  );
+  const filteredTargets = useMemo(() => {
+    const q = refQuery.trim().toLowerCase();
+    return locationTargets.filter((r) => (q ? r.label.toLowerCase().includes(q) : true)).slice(0, 12);
+  }, [locationTargets, refQuery]);
+
+  const currentTarget = item.referencesTemplateItemId
+    ? locationTargets.find((r) => r.itemId === item.referencesTemplateItemId) ?? null
+    : null;
+  const referenceableAvailable = referenceTargets.targets.length > 0;
+
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-co-border/60 bg-co-surface p-3">
+      <p className="text-xs font-bold uppercase tracking-[0.08em] text-co-text-muted">
+        {t("admin.templates.builder.connections.title")}
+      </p>
+
+      {/* Report-reference type (spec §5) — the artifact whose finalize auto-ticks this
+          item. Only reconcile-backed values are offered (each is auto-tickable). */}
+      <label className="block text-sm">
+        <span className="text-co-text-muted">{t("admin.templates.builder.connections.report_ref_label")}</span>
+        <select
+          value={item.reportReferenceType ?? ""}
+          onChange={(e) => {
+            const v = e.target.value;
+            onEdit({
+              op: "set_report_ref",
+              itemId: item.id,
+              refType: v === "" ? null : (v as ReconciledReportRefType),
+            });
+          }}
+          className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
+        >
+          <option value="">{t("admin.templates.builder.connections.report_ref_none")}</option>
+          {RECONCILED_REPORT_REF_TYPES.map((rt) => (
+            <option key={rt} value={rt}>
+              {t(tk(`admin.templates.builder.connections.report_ref.${rt}`))}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      {/* ref_track (spec §5, the ONE new mechanism) — auto-tick when a SPECIFIC item on
+          the OTHER list completes. Only offered when the other list has targets here. */}
+      {referenceableAvailable && (
+        <div>
+          <span className="block text-sm text-co-text-muted">
+            {t("admin.templates.builder.connections.ref_track_label")}
+          </span>
+          {currentTarget ? (
+            <div className="mt-1 flex items-center justify-between gap-2">
+              <span className="text-sm text-co-success">{currentTarget.label}</span>
+              <button
+                type="button"
+                onClick={() => onEdit({ op: "ref_track", itemId: item.id, targetItemId: null })}
+                className="inline-flex min-h-[32px] items-center rounded-full border-2 border-co-cta/50 bg-co-surface px-3 text-xs font-bold text-co-cta"
+              >
+                {t("admin.templates.builder.connections.ref_track_clear")}
+              </button>
+            </div>
+          ) : (
+            <>
+              <input
+                type="search"
+                aria-label={t("admin.templates.builder.connections.ref_track_search")}
+                placeholder={t("admin.templates.builder.connections.ref_track_search")}
+                value={refQuery}
+                onChange={(e) => setRefQuery(e.target.value)}
+                className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
+              />
+              <ul className="mt-1 flex flex-col gap-1">
+                {filteredTargets.length === 0 ? (
+                  <li className="text-xs text-co-text-muted">
+                    {t("admin.templates.builder.connections.ref_track_none")}
+                  </li>
+                ) : (
+                  filteredTargets.map((r) => (
+                    <li key={r.itemId} className="flex items-center justify-between gap-2">
+                      <span className="text-sm text-co-text">{r.label}</span>
+                      <button
+                        type="button"
+                        onClick={() => onEdit({ op: "ref_track", itemId: item.id, targetItemId: r.itemId })}
+                        className="inline-flex min-h-[32px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
+                      >
+                        {t("admin.templates.builder.connections.ref_track_pick")}
+                      </button>
+                    </li>
+                  ))
+                )}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * SubmissionGateSetting (spec §5, PR-4) — the TEMPLATE-level "Requires" control. Writes
+ * the existing submission_gate_predicate JSONB (evaluated by evaluateGatePredicate).
+ * The UI exposes ONLY the shapes the evaluator handles: "none" OR "the reference partner
+ * (opening/closing) submitted today" — a single clause of the requires_state shape. The
+ * change rides the SAME publish flow (a draft templatePatch), not a separate route.
+ */
+function SubmissionGateSetting({
+  type,
+  current,
+  draftPredicate,
+  onChange,
+}: {
+  type: TemplateBuilderType;
+  /** the source template's current predicate (null = no gate). */
+  current: GatePredicate | null;
+  /** the drafted predicate (undefined = untouched → shows `current`). */
+  draftPredicate: GatePredicate | null | undefined;
+  onChange: (predicate: GatePredicate | null) => void;
+}) {
+  const { t } = useTranslation();
+
+  // The reference partner whose submission this list can require (spec §5: closing
+  // requires opening, opening requires prior closing). deep_cleaning has no partner.
+  const partner: ChecklistType | null = type === "closing" ? "opening" : type === "opening" ? "closing" : null;
+
+  // The effective predicate the control reflects: the draft if touched, else the source.
+  const effective = draftPredicate !== undefined ? draftPredicate : current;
+  // We recognize exactly ONE builder-authored shape: a single requires_state clause on
+  // the partner type. Anything else (a hand-authored multi-clause predicate) shows as
+  // "custom" and is left untouched (the control degrades to read-only for it).
+  const firstClause = effective?.requires_state?.[0] ?? null;
+  const isBuilderShape =
+    !effective || (effective.requires_state.length === 1 && firstClause?.template_type === partner);
+  const gateOn = effective !== null && effective.requires_state.length > 0;
+
+  if (partner === null) return null; // deep_cleaning: no reference partner
+
+  // The concrete "submitted" clause the builder writes for the partner (any non-open
+  // finalized status counts as submitted; offset 0 = same operational day for closing↔
+  // opening — the reconcile family's same-day convention, Juan 2026-06-16).
+  const submittedPredicate: GatePredicate = {
+    requires_state: [
+      {
+        template_type: partner,
+        operational_date_offset: type === "opening" ? -1 : 0,
+        status_in: ["confirmed", "incomplete_confirmed", "auto_finalized"],
+      },
+    ],
+  };
+
+  return (
+    <CollapsibleSection idBase="tb-submission-gate" title={t("admin.templates.builder.gate_setting.title")}>
+      {!isBuilderShape ? (
+        <p className="text-sm text-co-text-muted">{t("admin.templates.builder.gate_setting.custom")}</p>
+      ) : (
+        <div className="flex flex-col gap-2">
+          <label className="flex items-start gap-2 text-sm text-co-text">
+            <input
+              type="radio"
+              name="tb-submission-gate"
+              checked={!gateOn}
+              onChange={() => onChange(null)}
+              className="mt-0.5 h-5 w-5"
+            />
+            {t("admin.templates.builder.gate_setting.none")}
+          </label>
+          <label className="flex items-start gap-2 text-sm text-co-text">
+            <input
+              type="radio"
+              name="tb-submission-gate"
+              checked={gateOn}
+              onChange={() => onChange(submittedPredicate)}
+              className="mt-0.5 h-5 w-5"
+            />
+            {t(tk(`admin.templates.builder.gate_setting.requires_${partner}`))}
+          </label>
+          {draftPredicate !== undefined && (
+            <p className="text-xs font-semibold text-co-cta">
+              {t("admin.templates.builder.gate_setting.pending_publish")}
+            </p>
+          )}
+        </div>
+      )}
+    </CollapsibleSection>
   );
 }
 
@@ -1262,11 +1624,14 @@ function SpineLinkBlock({
 function PublishBar({
   template,
   edits,
+  templatePatch,
   openInstancesToday,
   onPublished,
 }: {
   template: TemplateBuilderTemplate;
   edits: TemplateItemEdit[];
+  /** PR-4: the template-level submission-gate change riding this publish (undefined = none). */
+  templatePatch: TemplatePatch | undefined;
   openInstancesToday: number;
   onPublished: () => void;
 }) {
@@ -1278,7 +1643,8 @@ function PublishBar({
   const [busy, setBusy] = useState(false);
   const [errorKey, setErrorKey] = useState<TranslationKey | null>(null);
 
-  const dirty = edits.length > 0;
+  // Dirty when there are item edits OR a template-level gate change (spec §5).
+  const dirty = edits.length > 0 || templatePatch !== undefined;
   const diff = useMemo(() => classifyEdits(template.items, edits), [template.items, edits]);
 
   if (!dirty) return null;
@@ -1290,6 +1656,9 @@ function PublishBar({
   if (diff.reordered) diffChips.push(t("admin.templates.builder.publish_diff_reordered", { n: String(diff.reordered) }));
   if (diff.roleChanged.length) diffChips.push(t("admin.templates.builder.publish_diff_role", { n: String(diff.roleChanged.length) }));
   if (diff.requiredChanged.length) diffChips.push(t("admin.templates.builder.publish_diff_required", { n: String(diff.requiredChanged.length) }));
+  if (diff.gateChanged.length) diffChips.push(t("admin.templates.builder.publish_diff_gate", { n: String(diff.gateChanged.length) }));
+  if (diff.referenceChanged) diffChips.push(t("admin.templates.builder.publish_diff_reference", { n: String(diff.referenceChanged) }));
+  if (templatePatch !== undefined) diffChips.push(t("admin.templates.builder.publish_diff_gate_setting"));
 
   const publish = async () => {
     if (busy) return;
@@ -1308,7 +1677,11 @@ function PublishBar({
       const res = await fetch(`/api/admin/template-builder/${template.id}/publish`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ edits, effectiveMode: applyNow ? "apply_now" : "next_day" }),
+        body: JSON.stringify({
+          edits,
+          effectiveMode: applyNow ? "apply_now" : "next_day",
+          ...(templatePatch !== undefined ? { templatePatch } : {}),
+        }),
         redirect: "manual",
       });
       if (res.ok) {
@@ -1470,11 +1843,17 @@ function PreviewStationGroups({
                           {t("admin.templates.builder.preview.mirror_flag")}
                         </span>
                       )}
-                      {it.required && (
+                      {/* PR-4: a hard-gated line gets a distinct preview marker (staff
+                          cannot submit until it's done) — shown INSTEAD of "required". */}
+                      {it.hardGate ? (
+                        <span className="rounded bg-co-cta/15 px-1 text-[10px] font-bold uppercase tracking-wide text-co-cta">
+                          {t("admin.templates.builder.preview.hard_gate")}
+                        </span>
+                      ) : it.required ? (
                         <span className="text-[10px] font-bold uppercase tracking-wide text-co-cta">
                           {t("admin.templates.builder.preview.required")}
                         </span>
-                      )}
+                      ) : null}
                       {it.expectsCount && (
                         <span className="text-[10px] font-bold uppercase tracking-wide text-co-text-dim">
                           {t("admin.templates.builder.flag.count")}

@@ -35,20 +35,25 @@ import {
   rowToTemplateItem,
 } from "@/lib/template-items";
 import type { AuthContext } from "@/lib/session";
-import type { ChecklistTemplateItem } from "@/lib/types";
+import type { ChecklistTemplateItem, GatePredicate } from "@/lib/types";
 import {
   TemplateBuilderError,
   assertNotMirrorItem,
+  isMirrorItem,
   mergeEsFill,
   esFillCount,
   itemNeedsLink,
   diffLocationItems,
   classifyRoleFloor,
+  classifyHardGated,
+  classifyDanglingRefs,
   confirmFloorForType,
   classifyEdits,
   nextOperationalDay,
   versionOutranks,
   resolveEffectiveVersionId,
+  type ReferenceTarget,
+  type ReferenceTargetsView,
   type ItemTranslationFill,
   type SpineLinkTarget,
   type DriftFinding,
@@ -58,6 +63,7 @@ import {
   type TemplateDoctorReport,
   type TemplateItemEdit,
   type TemplateDiffSummary,
+  type TemplatePatch,
   type PublishEffectiveMode,
 } from "@/lib/admin/template-builder-shared";
 
@@ -77,6 +83,9 @@ export {
   applyEffectiveResolution,
   versionOutranks,
   resolveEffectiveVersionId,
+  resolveGateTier,
+  RECONCILED_REPORT_REF_TYPES,
+  isReconciledReportRefType,
   CLOSING_CONFIRM_FLOOR_LEVEL,
   OPENING_CONFIRM_FLOOR_LEVEL,
   confirmFloorForType,
@@ -93,6 +102,10 @@ export type {
   TemplateDoctorReport,
   TemplateItemEdit,
   TemplateDiffSummary,
+  TemplatePatch,
+  ReconciledReportRefType,
+  ReferenceTarget,
+  ReferenceTargetsView,
   PublishEffectiveMode,
 } from "@/lib/admin/template-builder-shared";
 
@@ -110,6 +123,8 @@ interface LineageTplRow {
   effective_from: string | null;
   created_at: string;
   prep_subtype: string | null;
+  /** PR-4: the template-level submission gate predicate (spec §5). */
+  submission_gate_predicate: GatePredicate | null;
 }
 
 /** Lineage key for the builder view: one edit target per (location, name, subtype). */
@@ -160,7 +175,7 @@ export async function loadTemplateBuilderView(
 
   const { data: tplRows, error: tErr } = await sb
     .from("checklist_templates")
-    .select("id, name, type, location_id, active, effective_from, created_at, prep_subtype")
+    .select("id, name, type, location_id, active, effective_from, created_at, prep_subtype, submission_gate_predicate")
     .eq("type", type)
     .eq("active", true)
     .order("location_id", { ascending: true })
@@ -204,8 +219,46 @@ export async function loadTemplateBuilderView(
       // client shows the "live tomorrow morning" banner.
       effectiveFrom: t.effective_from,
       isPending: t.effective_from !== null && t.effective_from > today,
+      // PR-4: the template-level submission gate ("this list requires <other> submitted").
+      submissionGatePredicate: t.submission_gate_predicate ?? null,
     })),
   };
+}
+
+/**
+ * PR-4 (spec §5): load the REFERENCE TARGETS for a builder of `type` — the OTHER
+ * list's current-version items (a closing item references an opening item, and vice
+ * versa). Reuses loadTemplateBuilderView on the referenced type (lineage-latest, active
+ * items, actor-scoped) and flattens to (itemId, label, locationId). Excludes mirror
+ * rows (an opening Phase-2 mirror is AM-Prep-managed — not a stable reference target).
+ * deep_cleaning is not referenceable (no templates) → empty. Two queries (via the view).
+ */
+export async function loadReferenceTargets(
+  actor: AuthContext,
+  type: TemplateBuilderType,
+): Promise<ReferenceTargetsView> {
+  const referencedType = referenceableType(type);
+  if (referencedType === null) {
+    return { referencedType: type, targets: [] };
+  }
+  const view = await loadTemplateBuilderView(actor, referencedType);
+  const targets: ReferenceTarget[] = [];
+  for (const tpl of view.templates) {
+    for (const it of tpl.items) {
+      if (!it.active) continue;
+      if (isMirrorItem(it.prepMeta)) continue; // mirrors aren't stable ref targets
+      targets.push({ itemId: it.id, label: it.label, locationId: tpl.locationId });
+    }
+  }
+  return { referencedType, targets };
+}
+
+/** The referenceable OTHER type for a builder type (spec §5: closing ↔ opening). null
+ *  when there is no cross-list reference partner (deep_cleaning). */
+function referenceableType(type: TemplateBuilderType): TemplateBuilderType | null {
+  if (type === "closing") return "opening";
+  if (type === "opening") return "closing";
+  return null;
 }
 
 /**
@@ -418,6 +471,12 @@ export async function runTemplateDoctor(
 
   const confirmFloorLevel = confirmFloorForType(type);
 
+  // PR-4 (spec §6): the reference-target id set (the OTHER list's active items) — used
+  // to flag DANGLING ref_track references (a tracked target that no longer exists). One
+  // batched view read (loadReferenceTargets); empty for deep_cleaning.
+  const refTargets = await loadReferenceTargets(actor, type);
+  const validTargetIds = new Set(refTargets.targets.map((r) => r.itemId));
+
   const templates: TemplateDoctorTemplate[] = view.templates.map((tpl) => {
     const needsLink = tpl.items
       .filter((it) => itemNeedsLink(it))
@@ -430,6 +489,8 @@ export async function runTemplateDoctor(
       needsLink,
       esFill: esFillCount(tpl.items),
       roleFloor: classifyRoleFloor(tpl.items, confirmFloorLevel),
+      hardGated: classifyHardGated(tpl.items),
+      danglingRefs: classifyDanglingRefs(tpl.items, validTargetIds),
     };
   });
 
@@ -455,6 +516,8 @@ export async function runTemplateDoctor(
       0,
     ),
     drift: drift.length,
+    hardGated: templates.reduce((n, t) => n + t.hardGated.length, 0),
+    danglingRefs: templates.reduce((n, t) => n + t.danglingRefs.length, 0),
   };
 
   // PR-3 publish signals: TODAY's open instances across the visible lineages (powers
@@ -564,6 +627,8 @@ type RawItemRow = Record<string, unknown> & {
   vendor_item_id: string | null;
   prep_meta: unknown | null;
   translations: Record<string, unknown> | null;
+  /** PR-4: the owner-ruled hard gate (migration 0163) — present via SELECT *. */
+  hard_gate: boolean;
 };
 
 export interface PublishResult {
@@ -595,6 +660,10 @@ export async function publishTemplateVersion(
     templateId: string;
     edits: readonly TemplateItemEdit[];
     effectiveMode: PublishEffectiveMode;
+    /** PR-4 (spec §5): a TEMPLATE-level structural change riding the same publish flow
+     *  (orchestrator ruling). `undefined` field = copy the source verbatim; explicit
+     *  null clears the submission gate; a GatePredicate sets it. Applied at mint. */
+    templatePatch?: TemplatePatch;
   },
 ): Promise<PublishResult> {
   const sb = getServiceRoleClient();
@@ -619,6 +688,16 @@ export async function publishTemplateVersion(
   // 2. effectiveFrom.
   const applyNow = args.effectiveMode === "apply_now";
   const effectiveFrom = applyNow ? today : nextOperationalDay(today);
+
+  // PR-4 (spec §5): resolve the submission gate predicate the minted version carries.
+  // A `templatePatch.submissionGatePredicate` present in the payload overrides the
+  // source (explicit null clears the gate); absent field copies the source verbatim.
+  // The evaluator (evaluateGatePredicate) throws on an unknown shape at EVALUATION
+  // time — we don't re-validate the shape here (it's the same lib that consumes it).
+  const nextSubmissionGate =
+    args.templatePatch && "submissionGatePredicate" in args.templatePatch
+      ? args.templatePatch.submissionGatePredicate ?? null
+      : src.submission_gate_predicate;
 
   // Enumerate the whole lineage's template ids (all versions — active or not) at
   // this location for the apply-now gate + the retirement pass. Lineage key =
@@ -678,9 +757,42 @@ export async function publishTemplateVersion(
       minRoleLevel: Number(r.min_role_level),
       required: r.required,
       active: r.active,
+      hardGate: r.hard_gate === true,
     })),
     args.edits,
   );
+
+  // DUPLICATE-REF GUARD (adversarial review MED-1, fail-loud per the contract):
+  // two ACTIVE items carrying the same report_reference_type on one version would
+  // make resolveClosingReportRefItemId ambiguous — pre-guard the FINAL post-edit
+  // state so the publish rejects loudly instead of publishing a broken reconcile.
+  {
+    const refByItem = new Map<string, string | null>();
+    for (const r of srcItems) refByItem.set(r.id, (r.report_reference_type as string | null) ?? null);
+    const removed = new Set<string>();
+    const enabled = new Set<string>();
+    for (const e of args.edits) {
+      if (e.op === "set_report_ref") refByItem.set(e.itemId, e.refType);
+      if (e.op === "disable") { removed.add(e.itemId); enabled.delete(e.itemId); }
+      if (e.op === "enable") { removed.delete(e.itemId); enabled.add(e.itemId); }
+    }
+    const seen = new Set<string>();
+    for (const r of srcItems) {
+      // Active on the NEW version = (was active and not draft-disabled) OR draft-re-enabled.
+      const activeOnNew = (r.active && !removed.has(r.id)) || enabled.has(r.id);
+      if (!activeOnNew) continue;
+      const ref = refByItem.get(r.id);
+      if (!ref) continue;
+      if (seen.has(ref)) {
+        throw new TemplateBuilderError(
+          409,
+          "duplicate_report_ref",
+          `Two items would carry the same report reference (${ref}) — each reference kind may appear on ONE line only`,
+        );
+      }
+      seen.add(ref);
+    }
+  }
 
   const currentlyEffectiveId = resolveEffectiveVersionId(lineage, today);
 
@@ -696,7 +808,8 @@ export async function publishTemplateVersion(
       description: src.description,
       single_submission_only: src.single_submission_only,
       reminder_time: src.reminder_time,
-      submission_gate_predicate: src.submission_gate_predicate,
+      // PR-4: the submission gate predicate may be patched at publish (spec §5).
+      submission_gate_predicate: nextSubmissionGate,
       edit_gate_predicate: src.edit_gate_predicate,
       // ACTIVATE-LAST (R0 partial-failure fix): the version is born INACTIVE and
       // flips active only after the item copy completes. A mid-copy failure leaves
@@ -798,7 +911,12 @@ export async function publishTemplateVersion(
         reordered: diff.reordered,
         roleChanged: diff.roleChanged.length,
         requiredChanged: diff.requiredChanged.length,
+        gateChanged: diff.gateChanged.length,
+        referenceChanged: diff.referenceChanged,
       },
+      // PR-4: record a submission-gate predicate change on the version (spec §5).
+      submission_gate_predicate_changed:
+        args.templatePatch !== undefined && "submissionGatePredicate" in args.templatePatch,
     },
     ipAddress: null,
     userAgent: null,
@@ -946,6 +1064,10 @@ async function copyItemsToVersion(
       prep_meta: null,
       report_reference_type: null,
       references_template_item_id: null,
+      // PR-4: a fresh quick-add is a plain new line — gate/ref off (set later via a
+      // gate_tier / set_report_ref op once the row is persisted in this version).
+      hard_gate: false,
+      ref_track_item_completion: false,
     });
   }
 
@@ -1003,6 +1125,22 @@ function applyEditToRow(row: Record<string, unknown>, e: TemplateItemEdit): void
       break;
     case "required":
       row.required = e.required;
+      break;
+    case "gate_tier":
+      // PR-4 (spec §3): the 3-way tier writes both columns. required = the
+      // must-complete-or-explain tier; hard_gate = the owner-ruled NO-OVERRIDE tier.
+      row.required = e.required;
+      row.hard_gate = e.hardGate;
+      break;
+    case "set_report_ref":
+      // PR-4 (spec §5): the report_reference_type picker. null clears it.
+      row.report_reference_type = e.refType;
+      break;
+    case "ref_track":
+      // PR-4 (spec §5): the ONE new mechanism. The referenced item + the tracking
+      // flag move together (a null target turns tracking off).
+      row.references_template_item_id = e.targetItemId;
+      row.ref_track_item_completion = e.targetItemId !== null;
       break;
     case "disable":
       row.active = false;

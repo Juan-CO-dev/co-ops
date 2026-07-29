@@ -27,6 +27,11 @@ import {
   nextOperationalDay,
   versionOutranks,
   resolveEffectiveVersionId,
+  resolveGateTier,
+  classifyHardGated,
+  classifyDanglingRefs,
+  isReconciledReportRefType,
+  RECONCILED_REPORT_REF_TYPES,
   type TemplateItemEdit,
   type LineageVersionRow,
 } from "@/lib/admin/template-builder-shared";
@@ -53,6 +58,8 @@ function item(over: Partial<ChecklistTemplateItem>): ChecklistTemplateItem {
     reportReferenceType: null,
     referencesTemplateItemId: null,
     itemId: null,
+    hardGate: false,
+    refTrackItemCompletion: false,
     ...over,
   };
 }
@@ -368,6 +375,8 @@ describe("classifyEdits — the diff classifier truth-table", () => {
       reordered: 0,
       roleChanged: [],
       requiredChanged: [],
+      gateChanged: [],
+      referenceChanged: 0,
     });
   });
 
@@ -591,5 +600,154 @@ describe("operational-date primitives (pure UTC-anchored day math)", () => {
   });
   it("nextOperationalDay = tomorrow", () => {
     expect(nextOperationalDay("2026-07-28")).toBe("2026-07-29");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PR-4 (spec §3/§5) — gate tier + references. resolveGateTier truth-table, the
+// three new classifyEdits/applyEditsToItems ops, the Doctor's hard-gated +
+// dangling-ref classifiers, and the report-ref exposure guard.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("resolveGateTier — the 3-way tier (spec §3)", () => {
+  it("hard gate wins over required", () => {
+    expect(resolveGateTier({ required: true, hardGate: true })).toBe("hard_gate");
+    expect(resolveGateTier({ required: false, hardGate: true })).toBe("hard_gate");
+  });
+  it("required (no hard gate) → must_complete", () => {
+    expect(resolveGateTier({ required: true, hardGate: false })).toBe("must_complete");
+  });
+  it("neither → optional", () => {
+    expect(resolveGateTier({ required: false, hardGate: false })).toBe("optional");
+  });
+});
+
+describe("classifyEdits — PR-4 gate_tier / set_report_ref / ref_track", () => {
+  function src4() {
+    return [
+      item({ id: "a", label: "Sweep floor", required: false, active: true, hardGate: false }),
+      item({ id: "b", label: "Count cash", required: true, active: true, hardGate: false }),
+      item({ id: "c", label: "Deposit", required: true, active: true, hardGate: true }),
+    ];
+  }
+
+  it("gate_tier optional→hard_gate reports a gateChanged transition", () => {
+    const d = classifyEdits(src4(), [{ op: "gate_tier", itemId: "a", required: true, hardGate: true }]);
+    expect(d.gateChanged).toEqual([{ itemId: "a", label: "Sweep floor", to: "hard_gate" }]);
+  });
+  it("gate_tier that doesn't change the resolved tier is NOT reported", () => {
+    // c is already hard_gate; re-asserting hard_gate is a no-op tier-wise.
+    const d = classifyEdits(src4(), [{ op: "gate_tier", itemId: "c", required: true, hardGate: true }]);
+    expect(d.gateChanged).toEqual([]);
+  });
+  it("a bare required flip (must_complete↔optional) is a gate tier change too", () => {
+    const d = classifyEdits(src4(), [{ op: "required", itemId: "b", required: false }]);
+    expect(d.gateChanged).toEqual([{ itemId: "b", label: "Count cash", to: "optional" }]);
+    expect(d.requiredChanged).toEqual([{ itemId: "b", label: "Count cash", to: false }]);
+  });
+  it("hard_gate → must_complete downgrade reports the softer tier", () => {
+    const d = classifyEdits(src4(), [{ op: "gate_tier", itemId: "c", required: true, hardGate: false }]);
+    expect(d.gateChanged).toEqual([{ itemId: "c", label: "Deposit", to: "must_complete" }]);
+  });
+  it("set_report_ref + ref_track count distinct items in referenceChanged", () => {
+    const d = classifyEdits(src4(), [
+      { op: "set_report_ref", itemId: "a", refType: "opening_report" },
+      { op: "ref_track", itemId: "a", targetItemId: "x" }, // same item twice = 1
+      { op: "ref_track", itemId: "b", targetItemId: "y" },
+    ]);
+    expect(d.referenceChanged).toBe(2);
+  });
+  it("a reference change on a removed item does NOT count", () => {
+    const d = classifyEdits(src4(), [
+      { op: "set_report_ref", itemId: "a", refType: "cash_report" },
+      { op: "disable", itemId: "a" },
+    ]);
+    expect(d.referenceChanged).toBe(0);
+  });
+});
+
+describe("applyEditsToItems — PR-4 gate_tier / set_report_ref / ref_track", () => {
+  function items4() {
+    return [item({ id: "a", label: "Deposit", required: false, hardGate: false })];
+  }
+  it("gate_tier writes both booleans in the drafted row", () => {
+    const out = applyEditsToItems(items4(), [{ op: "gate_tier", itemId: "a", required: true, hardGate: true }]);
+    const a = out.find((it) => it.id === "a")!;
+    expect(a.required).toBe(true);
+    expect(a.hardGate).toBe(true);
+  });
+  it("set_report_ref sets the reportReferenceType (null clears)", () => {
+    const on = applyEditsToItems(items4(), [{ op: "set_report_ref", itemId: "a", refType: "opening_report" }]);
+    expect(on.find((it) => it.id === "a")!.reportReferenceType).toBe("opening_report");
+    const off = applyEditsToItems(items4(), [{ op: "set_report_ref", itemId: "a", refType: null }]);
+    expect(off.find((it) => it.id === "a")!.reportReferenceType).toBeNull();
+  });
+  it("ref_track moves the target + the flag together (null turns tracking off)", () => {
+    const on = applyEditsToItems(items4(), [{ op: "ref_track", itemId: "a", targetItemId: "t1" }]);
+    const a = on.find((it) => it.id === "a")!;
+    expect(a.referencesTemplateItemId).toBe("t1");
+    expect(a.refTrackItemCompletion).toBe(true);
+    const off = applyEditsToItems(items4(), [{ op: "ref_track", itemId: "a", targetItemId: null }]);
+    const b = off.find((it) => it.id === "a")!;
+    expect(b.referencesTemplateItemId).toBeNull();
+    expect(b.refTrackItemCompletion).toBe(false);
+  });
+  it("NEVER applies a gate_tier / ref op to a mirror row (the §5 seal)", () => {
+    const out = applyEditsToItems([mirrorItem({ id: "mir" })], [
+      { op: "gate_tier", itemId: "mir", required: true, hardGate: true },
+      { op: "set_report_ref", itemId: "mir", refType: "cash_report" },
+      { op: "ref_track", itemId: "mir", targetItemId: "x" },
+    ]);
+    const m = out[0]!;
+    expect(m.hardGate).toBe(false);
+    expect(m.reportReferenceType).toBeNull(); // unchanged from mirror fixture
+  });
+});
+
+describe("classifyHardGated — the Doctor's hard-gate inventory (spec §6)", () => {
+  it("lists ACTIVE hard-gated non-mirror items", () => {
+    const items = [
+      item({ id: "a", label: "Deposit", hardGate: true, active: true }),
+      item({ id: "b", label: "Sweep", hardGate: false, active: true }),
+      item({ id: "c", label: "Old gate", hardGate: true, active: false }), // inactive → excluded
+      mirrorItem({ id: "m", label: "Mirror", hardGate: true }), // mirror → excluded
+    ];
+    expect(classifyHardGated(items)).toEqual([{ itemId: "a", label: "Deposit" }]);
+  });
+});
+
+describe("classifyDanglingRefs — broken ref_track references (spec §6)", () => {
+  it("flags a ref_track item whose target is not in the valid set", () => {
+    const items = [
+      item({ id: "a", label: "Tracks live", refTrackItemCompletion: true, referencesTemplateItemId: "live" }),
+      item({ id: "b", label: "Tracks gone", refTrackItemCompletion: true, referencesTemplateItemId: "gone" }),
+      item({ id: "c", label: "Tracks nothing", refTrackItemCompletion: true, referencesTemplateItemId: null }),
+      item({ id: "d", label: "Not tracking", refTrackItemCompletion: false, referencesTemplateItemId: "gone" }),
+    ];
+    const dangling = classifyDanglingRefs(items, new Set(["live"]));
+    expect(dangling).toEqual([
+      { itemId: "b", label: "Tracks gone" },
+      { itemId: "c", label: "Tracks nothing" }, // null target = dangling
+    ]);
+  });
+  it("excludes inactive + mirror rows", () => {
+    const items = [
+      item({ id: "x", label: "inactive", active: false, refTrackItemCompletion: true, referencesTemplateItemId: "gone" }),
+      mirrorItem({ id: "m", refTrackItemCompletion: true, referencesTemplateItemId: "gone" }),
+    ];
+    expect(classifyDanglingRefs(items, new Set())).toEqual([]);
+  });
+});
+
+describe("isReconciledReportRefType — only reconcile-backed values are exposed", () => {
+  it("TRUE for the 5 pull-ticked types", () => {
+    for (const rt of RECONCILED_REPORT_REF_TYPES) expect(isReconciledReportRefType(rt)).toBe(true);
+    expect(RECONCILED_REPORT_REF_TYPES).toHaveLength(5);
+  });
+  it("FALSE for the 2 un-reconciled enum values (training/special) + junk + null", () => {
+    expect(isReconciledReportRefType("training_report")).toBe(false);
+    expect(isReconciledReportRefType("special_report")).toBe(false);
+    expect(isReconciledReportRefType(null)).toBe(false);
+    expect(isReconciledReportRefType("nonsense")).toBe(false);
   });
 });

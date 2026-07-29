@@ -55,6 +55,10 @@ import { audit } from "./audit";
 import { getServiceRoleClient } from "./supabase-server";
 import { getRoleLevel, type RoleCode } from "./roles";
 import {
+  applyEffectiveResolution,
+  type EffectiveResolvableBuilder,
+} from "./admin/template-builder-shared";
+import {
   COMPLETION_COLUMNS,
   INSTANCE_COLUMNS,
   type CompletionRow,
@@ -399,6 +403,24 @@ export class ChecklistCashDepositRequiredError extends ChecklistError {
       "cash_deposit_required",
     );
     this.name = "ChecklistCashDepositRequiredError";
+  }
+}
+
+/**
+ * Template Builder PR-4 (spec §3) — thrown by confirmInstance when one or more
+ * ACTIVE hard-gated items (checklist_template_items.hard_gate = true) are not
+ * live-completed. The owner-ruled NO-OVERRIDE gate: unlike a required item, there
+ * is NO written-reason path — the checklist simply cannot be finalized until every
+ * hard-gated line is done. Generalizes the cash-deposit pattern to any line of any
+ * list. Carries the incomplete labels so the UI names exactly what's blocking.
+ */
+export class ChecklistHardGateIncompleteError extends ChecklistError {
+  constructor(public readonly labels: string[]) {
+    super(
+      `Cannot submit: ${labels.length} hard-gated item(s) not yet complete — ${labels.join(", ")}.`,
+      "hard_gate_incomplete",
+    );
+    this.name = "ChecklistHardGateIncompleteError";
   }
 }
 
@@ -1093,16 +1115,18 @@ export async function confirmInstance(
   // Required template items for this template.
   const { data: items, error: itemsErr } = await authed
     .from("checklist_template_items")
-    .select("id, min_role_level, required, active, report_reference_type")
+    .select("id, label, min_role_level, required, active, report_reference_type, hard_gate")
     .eq("template_id", instance.template_id)
     .eq("active", true);
   if (itemsErr) throw new Error(`confirmInstance load template items: ${itemsErr.message}`);
   const allItems = (items ?? []) as Array<{
     id: string;
+    label: string;
     min_role_level: number;
     required: boolean;
     active: boolean;
     report_reference_type: string | null;
+    hard_gate: boolean;
   }>;
 
   // Cash deposit HARD gate — no reason-override path, always required.
@@ -1126,6 +1150,35 @@ export async function confirmInstance(
       userAgent: args.userAgent ?? null,
     });
     throw new ChecklistCashDepositRequiredError();
+  }
+
+  // HARD GATE (Template Builder PR-4, spec §3) — the owner-ruled per-line NO-OVERRIDE
+  // gate. Any ACTIVE item with hard_gate=true that is NOT live-completed blocks the
+  // whole submission; there is NO written-reason path (unlike required items below).
+  // This is the cash-deposit pattern generalized to any line of any list. Runs BEFORE
+  // the required/reason logic so a hard-gate block is never confusable with a
+  // reason-able incomplete. The cash_report special case above REMAINS (it predates
+  // hard_gate and is driven by report_reference_type, not the flag — folding cash into
+  // hard_gate is a DATA decision for the owner, not migrated here). Vacuously passes
+  // when the template has no hard-gated items (every legacy row is hard_gate=false).
+  const incompleteHardGate = allItems.filter((it) => it.hard_gate && !completedItemIds.has(it.id));
+  if (incompleteHardGate.length > 0) {
+    const labels = incompleteHardGate.map((it) => it.label);
+    void audit({
+      actorId: actor.userId,
+      actorRole: actor.role,
+      action: "checklist.confirm",
+      resourceTable: "checklist_instances",
+      resourceId: instanceId,
+      metadata: {
+        outcome: "hard_gate_incomplete",
+        instance_id: instanceId,
+        hard_gate_item_ids: incompleteHardGate.map((it) => it.id),
+      },
+      ipAddress: args.ipAddress ?? null,
+      userAgent: args.userAgent ?? null,
+    });
+    throw new ChecklistHardGateIncompleteError(labels);
   }
 
   // Highest min_role_level among completed items — drives the role-sufficiency
@@ -2280,16 +2333,27 @@ export async function evaluateGatePredicate(
       );
     }
 
-    // (a) Resolve active template at this location matching template_type.
-    const { data: tmpl, error: tmplErr } = await service
+    // Resolve target operational date by offset FIRST (the version pick is date-aware
+    // against it). Using YYYY-MM-DD calendar arithmetic via UTC (matches dashboard
+    // pattern; sidesteps DST since we're walking calendar days only).
+    const targetDate = shiftDateByDays(operationalDate, clause.operational_date_offset);
+
+    // (a) Resolve the template VERSION effective on the target date (L1 fix, PR-4):
+    // under versioning a lineage can have MULTIPLE active rows (current + a pending
+    // next-day version). The pre-PR-4 resolver used ORDER BY created_at DESC LIMIT 1,
+    // which would pick a PENDING version (newer created_at) even though its
+    // effective_from hasn't arrived — gating today's instance against tomorrow's
+    // template. applyEffectiveResolution is the ONE version-immune resolver
+    // (effective_from <= targetDate, newest wins) shared with the reconcile family.
+    const tmplBase = service
       .from("checklist_templates")
       .select("id")
       .eq("location_id", locationId)
-      .eq("type", clause.template_type)
-      .eq("active", true)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle<{ id: string }>();
+      .eq("type", clause.template_type) as unknown as EffectiveResolvableBuilder;
+    const { data: tmpl, error: tmplErr } = await applyEffectiveResolution(
+      tmplBase,
+      targetDate,
+    ).maybeSingle<{ id: string }>();
     if (tmplErr) {
       throw new Error(`evaluateGatePredicate template resolve: ${tmplErr.message}`);
     }
@@ -2301,11 +2365,6 @@ export async function evaluateGatePredicate(
         reason: "template_not_found",
       };
     }
-
-    // Resolve target operational date by offset. Using YYYY-MM-DD
-    // calendar arithmetic via UTC (matches dashboard pattern; sidesteps
-    // DST since we're walking calendar days only).
-    const targetDate = shiftDateByDays(operationalDate, clause.operational_date_offset);
 
     // (b) Resolve instance for that template at the target date.
     const { data: inst, error: instErr } = await service

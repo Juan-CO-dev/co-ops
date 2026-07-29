@@ -11,9 +11,12 @@ import { jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import {
   publishTemplateVersion,
   TemplateBuilderError,
+  isReconciledReportRefType,
   type TemplateItemEdit,
+  type TemplatePatch,
   type PublishEffectiveMode,
 } from "@/lib/admin/template-builder";
+import type { GatePredicate } from "@/lib/types";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -40,8 +43,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     edits.push(e);
   }
 
+  // templatePatch — PR-4 (spec §5): the OPTIONAL template-level submission-gate change
+  // riding the same publish. Only present when the manager edited the "Requires" setting.
+  // A present-but-null field clears the gate; a GatePredicate sets it; absence copies
+  // the source verbatim (coerceTemplatePatch returns undefined then).
+  const templatePatch = coerceTemplatePatch(b.templatePatch);
+  if (templatePatch === "invalid") return jsonError(400, "invalid_payload", { field: "templatePatch" });
+
   try {
-    const result = await publishTemplateVersion(ctx, { templateId: id, edits, effectiveMode });
+    const result = await publishTemplateVersion(ctx, {
+      templateId: id,
+      edits,
+      effectiveMode,
+      ...(templatePatch !== undefined ? { templatePatch } : {}),
+    });
     return jsonOk({
       ok: true,
       newTemplateId: result.newTemplateId,
@@ -83,6 +98,26 @@ function coerceEdit(raw: unknown): TemplateItemEdit | null {
       return str(o.itemId) && role(o.minRoleLevel) ? { op, itemId: o.itemId, minRoleLevel: o.minRoleLevel } : null;
     case "required":
       return str(o.itemId) && bool(o.required) ? { op, itemId: o.itemId, required: o.required } : null;
+    case "gate_tier":
+      // PR-4: the 3-way tier. Both booleans required. hardGate IMPLIES required
+      // (adversarial review MED-2): a hard-gated-but-optional item would block
+      // confirmInstance while staying invisible to the Doctor's role-floor trap
+      // (classifyRoleFloor skips non-required) — the UI never emits that shape;
+      // the server rejects it so the API can't either.
+      if (!(str(o.itemId) && bool(o.required) && bool(o.hardGate))) return null;
+      if (o.hardGate === true && o.required !== true) return null;
+      return { op, itemId: o.itemId, required: o.required, hardGate: o.hardGate };
+    case "set_report_ref":
+      // PR-4: the report_reference_type picker — only the reconcile-backed values (or
+      // null). An unrecognized value fails loudly (never silently drop the edit).
+      if (!str(o.itemId)) return null;
+      if (o.refType === null) return { op, itemId: o.itemId, refType: null };
+      return isReconciledReportRefType(o.refType) ? { op, itemId: o.itemId, refType: o.refType } : null;
+    case "ref_track":
+      // PR-4: the ONE new mechanism. targetItemId is another item's id (or null to clear).
+      return str(o.itemId) && strOrNull(o.targetItemId)
+        ? { op, itemId: o.itemId, targetItemId: o.targetItemId }
+        : null;
     case "disable":
       return str(o.itemId) ? { op, itemId: o.itemId } : null;
     case "enable":
@@ -132,4 +167,51 @@ function coerceEdit(raw: unknown): TemplateItemEdit | null {
     default:
       return null;
   }
+}
+
+/**
+ * Narrow the optional templatePatch (PR-4, spec §5). Returns:
+ *   - undefined  → no patch present (copy the source predicate verbatim)
+ *   - TemplatePatch → a valid patch (submissionGatePredicate: null clears, or a
+ *     GatePredicate of the ONLY shape evaluateGatePredicate handles)
+ *   - "invalid"  → malformed → the route 400s
+ * The shape lock mirrors evaluateGatePredicate / GatePredicate (lib/types.ts): a
+ * single `requires_state` array of { template_type, operational_date_offset,
+ * status_in[] } clauses. We validate structurally here; the evaluator throws on an
+ * unknown shape at gate time as the final backstop.
+ */
+function coerceTemplatePatch(raw: unknown): TemplatePatch | undefined | "invalid" {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object") return "invalid";
+  const o = raw as Record<string, unknown>;
+  if (!("submissionGatePredicate" in o)) return undefined; // nothing to patch
+  const p = o.submissionGatePredicate;
+  if (p === null) return { submissionGatePredicate: null };
+  const pred = coerceGatePredicate(p);
+  return pred ? { submissionGatePredicate: pred } : "invalid";
+}
+
+/** Narrow a GatePredicate ({ requires_state: [clauses] }) or null on malformed input.
+ *  The builder only writes the ONE shape evaluateGatePredicate supports (a template
+ *  requires an upstream artifact submitted); the clause fields match
+ *  GatePredicateRequiresState. */
+function coerceGatePredicate(raw: unknown): GatePredicate | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const o = raw as Record<string, unknown>;
+  if (!Array.isArray(o.requires_state) || o.requires_state.length === 0) return null;
+  const clauses: GatePredicate["requires_state"] = [];
+  for (const c of o.requires_state as unknown[]) {
+    if (typeof c !== "object" || c === null) return null;
+    const cl = c as Record<string, unknown>;
+    if (typeof cl.template_type !== "string") return null;
+    if (typeof cl.operational_date_offset !== "number" || !Number.isInteger(cl.operational_date_offset)) return null;
+    if (!Array.isArray(cl.status_in) || cl.status_in.length === 0) return null;
+    if (!cl.status_in.every((s) => typeof s === "string")) return null;
+    clauses.push({
+      template_type: cl.template_type as GatePredicate["requires_state"][number]["template_type"],
+      operational_date_offset: cl.operational_date_offset,
+      status_in: cl.status_in as GatePredicate["requires_state"][number]["status_in"],
+    });
+  }
+  return { requires_state: clauses };
 }

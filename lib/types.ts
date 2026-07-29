@@ -625,6 +625,24 @@ export interface ChecklistTemplateItem {
   referencesTemplateItemId: string | null;
   /** Item/Inventory Spine: linked registry item (migration 0079). */
   itemId: string | null;
+  /**
+   * Template Builder PR-4 (spec §3, migration 0163): the owner-ruled per-line
+   * NO-OVERRIDE gate. When true on an active item, confirmInstance blocks
+   * finalization until it is live-completed — no written-reason path (the
+   * cash-deposit pattern generalized to any line of any list). Legacy rows =
+   * false. Set via the `gate_tier` publish op (structural → versions).
+   */
+  hardGate: boolean;
+  /**
+   * Template Builder PR-4 (spec §5, migration 0163): the ONE new reference
+   * mechanism. When true on a NON-mirror item that also carries
+   * `referencesTemplateItemId`, reconcileClosingReportRefs auto-ticks THIS item
+   * when the referenced item has a live completion on today's instance of its
+   * template lineage (date-aware). Gated on THIS flag (not on
+   * referencesTemplateItemId alone) so it never collides with the opening
+   * Phase-2 mirror's use of that column. Legacy rows = false.
+   */
+  refTrackItemCompletion: boolean;
 }
 
 /**

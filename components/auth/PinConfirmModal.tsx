@@ -211,6 +211,14 @@ export function PinConfirmModal({
             onError(body);
             return;
 
+          case "hard_gate_incomplete":
+            // PR-4 (spec §3): the owner-ruled hard gate — one or more items must be
+            // done before this checklist can be submitted (no reason path). The labels
+            // are on body.labels; the message names how many are blocking.
+            triggerError(t("auth.pin_modal.error_hard_gate"));
+            onError(body);
+            return;
+
           default:
             triggerError(t("auth.pin_modal.error_unknown"));
             return;
