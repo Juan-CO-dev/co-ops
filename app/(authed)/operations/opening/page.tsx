@@ -33,6 +33,7 @@ import {
 } from "@/lib/opening";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 import type { OpeningPhase2Meta } from "@/lib/types";
 
 import type { ManagerOption } from "@/components/opening/OverParModal";
@@ -100,15 +101,18 @@ async function loadPriorClosingState(
   sb: ReturnType<typeof getServiceRoleClient>,
   args: { locationId: string; yesterdayDate: string },
 ): Promise<PriorClosingState> {
-  const { data: tmpl, error: tmplErr } = await sb
+  // PR-3: resolve the closing template EFFECTIVE ON yesterday (the day the prior
+  // closing ran) — date-aware so a version published for tomorrow doesn't retro-
+  // resolve yesterday's gate check.
+  const priorClosingBase = sb
     .from("checklist_templates")
     .select("id")
     .eq("location_id", args.locationId)
-    .eq("type", "closing")
-    .eq("active", true)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle<{ id: string }>();
+    .eq("type", "closing") as unknown as EffectiveResolvableBuilder;
+  const { data: tmpl, error: tmplErr } = await applyEffectiveResolution(
+    priorClosingBase,
+    args.yesterdayDate,
+  ).maybeSingle<{ id: string }>();
   if (tmplErr) throw new Error(`prior closing template: ${tmplErr.message}`);
   if (!tmpl) return { exists: false, status: null };
 

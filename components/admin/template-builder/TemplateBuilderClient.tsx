@@ -15,13 +15,14 @@
  *   - the Template Doctor is a compact header chip (D2/D3) that expands inline;
  *   - a phone Preview disclosure renders the live active template as staff see it.
  *
- * WRITE SCOPE (spec §1 reconciliation contract): the ONLY writes here are the two
- * SAME-DAY FILLS (es translations + spine link). Structural edits (add / disable /
- * reorder / relabel / gate changes) DO NOT EXIST until PR-3's versioning engine —
- * so this component renders NO structural affordances (a plain "Editing arrives
- * with Publish" note instead of dead buttons). Nothing it does can violate §1.
- *
- * Fills are GM+ (Tier-A step-up via the admin StepUpProvider). Reads are AGM+.
+ * WRITE SCOPE (spec §1 reconciliation contract): PR-3 adds the DRAFT ENGINE — the
+ * manager drafts structural edits (add / relabel / describe / disable / enable /
+ * reorder / required-flip / role) in local useState, sees them live in the phone
+ * preview, and PUBLISHES: every publish mints a NEW version effective NEXT
+ * OPERATIONAL DAY (apply-now = today, gated + Tier-A). No in-place mutation of a
+ * served version. The two SAME-DAY FILLS (es translations + spine link, PR-0) still
+ * write in place (data-completeness only). MIRROR ROWS ARE NEVER DRAFT-EDITED (the
+ * §5 seal). Publish + fills are GM+ (Tier-A step-up); reads are AGM+.
  */
 
 import { useMemo, useState } from "react";
@@ -38,12 +39,19 @@ import type { ChecklistTemplateItem } from "@/lib/types";
 import {
   isMirrorItem,
   itemNeedsLink,
+  applyEditsToItems,
+  classifyEdits,
+  type TemplateItemEdit,
   type TemplateBuilderTemplate,
   type TemplateBuilderView,
   type TemplateDoctorReport,
   type TemplateDoctorTemplate,
 } from "@/lib/admin/template-builder-shared";
 import type { LinkTarget } from "@/lib/admin/needs-link-shared";
+
+/** A local draft: the pending structural edits for one template (keyed by template
+ *  id in the parent). Empty = clean. */
+type DraftState = Record<string, TemplateItemEdit[]>;
 
 const tk = (k: string): TranslationKey => k as TranslationKey;
 
@@ -73,7 +81,7 @@ export function TemplateBuilderClient({
   view: TemplateBuilderView;
   doctor: TemplateDoctorReport;
   linkTargets: LinkTarget[];
-  /** GM+ may run the two same-day fills (Tier-A at the route). */
+  /** GM+ may run the two same-day fills (Tier-A) AND publish (Tier-A). */
   canFill: boolean;
 }) {
   const { t } = useTranslation();
@@ -86,6 +94,47 @@ export function TemplateBuilderClient({
   // Deep-link target: when the Doctor "fix" link fires, expand that item's drawer
   // and scroll to it. Held in a shared piece of state the item list reads.
   const [focusItemId, setFocusItemId] = useState<string | null>(null);
+
+  // PR-3 DRAFT ENGINE — pending structural edits keyed by template id (D9: useState
+  // only). Empty per template = clean. Edits feed the list + the phone preview + the
+  // classifyEdits diff for the publish confirm modal. Publishing versions everything.
+  const [drafts, setDrafts] = useState<DraftState>({});
+  const activeId = active?.id ?? "";
+  const editsForActive = useMemo(() => drafts[activeId] ?? [], [drafts, activeId]);
+
+  const pushEdit = (templateId: string, edit: TemplateItemEdit) => {
+    setDrafts((prev) => ({ ...prev, [templateId]: [...(prev[templateId] ?? []), edit] }));
+  };
+  // Remove a draft-added row entirely (adversarial review M1): a disable edit
+  // against a draft-add is a no-op in BOTH the preview (applyEditsToItems keys
+  // persisted ids) and the publish copy (adds insert active=true) — so the honest
+  // affordance for an unwanted add is REMOVE: drop the add op + any edits that
+  // targeted its synthetic draft id.
+  const removeDraftAdd = (templateId: string, tempId: string) => {
+    setDrafts((prev) => ({
+      ...prev,
+      [templateId]: (prev[templateId] ?? []).filter(
+        (e) =>
+          !(e.op === "add" && e.tempId === tempId) &&
+          !("itemId" in e && e.itemId === `draft-${tempId}`),
+      ),
+    }));
+  };
+  const clearDraft = (templateId: string) => {
+    setDrafts((prev) => {
+      const next = { ...prev };
+      delete next[templateId];
+      return next;
+    });
+  };
+
+  // The drafted item array for the active template (source items + edits applied,
+  // mirror rows untouched). Drives the list + preview so the manager sees exactly
+  // what publishes.
+  const draftedItems = useMemo(
+    () => (active ? applyEditsToItems(active.items, editsForActive) : []),
+    [active, editsForActive],
+  );
 
   // Type-parameterized empty copy (PR-1 review debt: the key was closing-only).
   // `view.type` is the TemplateBuilderType; the per-type keys exist for all three.
@@ -114,10 +163,13 @@ export function TemplateBuilderClient({
         }}
       />
 
-      {/* Write-scope note (spec §1): editing arrives with Publish (PR-3). */}
-      <p className="rounded-lg border border-co-border/60 bg-co-surface px-3 py-2 text-xs text-co-text-muted">
-        {t("admin.templates.builder.editing_pending")}
-      </p>
+      {/* PENDING-VERSION banner (D2, never collapses): the loaded version is a pending
+          next-day publish — these on-screen items go live tomorrow morning. */}
+      {active?.isPending && active.effectiveFrom && (
+        <p className="rounded-lg border-2 border-co-gold-deep/60 bg-co-gold/15 px-3 py-2 text-sm font-semibold text-co-text">
+          {t("admin.templates.builder.pending_banner", { date: active.effectiveFrom })}
+        </p>
+      )}
 
       {/* Per-location tabs (D6 — never collapse). */}
       {view.templates.length > 1 && (
@@ -130,6 +182,7 @@ export function TemplateBuilderClient({
             const alerts = d
               ? d.needsLink.length + d.roleFloor.filter((f) => f.severity === "impossible").length
               : 0;
+            const dirty = (drafts[tpl.id]?.length ?? 0) > 0;
             return (
               <button
                 key={tpl.id}
@@ -150,6 +203,7 @@ export function TemplateBuilderClient({
                 }
               >
                 {tpl.name}
+                {dirty && <span aria-hidden className="text-co-cta">●</span>}
                 {alerts > 0 && (
                   <span className="inline-flex items-center rounded-full bg-co-cta/15 px-1.5 text-[11px] font-bold text-co-cta">
                     {alerts}
@@ -169,15 +223,30 @@ export function TemplateBuilderClient({
         >
           <ItemList
             template={active}
+            draftedItems={draftedItems}
             linkTargets={linkTargets}
             canFill={canFill}
             focusItemId={focusItemId}
+            onEdit={(edit) => pushEdit(active.id, edit)}
+            onRemoveDraftAdd={(tempId) => removeDraftAdd(active.id, tempId)}
           />
         </div>
       )}
 
-      {/* Phone preview (spec §7, REQUIRED) — renders the live active template. */}
-      {active && <PhonePreview template={active} />}
+      {/* Publish bar — dirty banner (D2, never collapses) + Publish button + confirm
+          modal. Only GM+ (canFill) sees the publish affordance. */}
+      {active && canFill && (
+        <PublishBar
+          template={active}
+          edits={editsForActive}
+          openInstancesToday={doctor.publish?.openInstancesToday ?? 0}
+          onPublished={() => clearDraft(active.id)}
+        />
+      )}
+
+      {/* Phone preview (spec §7, REQUIRED) — renders the DRAFTED active template so the
+          manager sees exactly what staff sees tonight/tomorrow before publishing. */}
+      {active && <PhonePreview draftedItems={draftedItems} />}
     </div>
   );
 }
@@ -344,14 +413,21 @@ function DoctorTemplateBlock({
 
 function ItemList({
   template,
+  draftedItems,
   linkTargets,
   canFill,
   focusItemId,
+  onEdit,
+  onRemoveDraftAdd,
 }: {
   template: TemplateBuilderTemplate;
+  /** source items + draft edits applied (mirror rows untouched). */
+  draftedItems: ChecklistTemplateItem[];
   linkTargets: LinkTarget[];
   canFill: boolean;
   focusItemId: string | null;
+  onEdit: (edit: TemplateItemEdit) => void;
+  onRemoveDraftAdd: (tempId: string) => void;
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState<Set<string>>(() =>
@@ -372,35 +448,77 @@ function ItemList({
       return next;
     });
 
-  if (template.items.length === 0) {
-    return (
-      <div className="rounded-2xl border-2 border-dashed border-co-border p-6 text-center text-sm text-co-text-muted">
-        {t("admin.templates.builder.no_items")}
-      </div>
-    );
-  }
+  // Reorder: swap this item's displayOrder with its up/down neighbour among the
+  // NON-mirror rows (phone-first up/down buttons, no drag dependency — spec §7).
+  // Mirror rows are pinned (never reordered); we compute neighbours over the
+  // editable rows only and emit two reorder edits (this + neighbour swap orders).
+  const editable = draftedItems.filter((it) => !isMirrorItem(it.prepMeta));
+  const move = (item: ChecklistTemplateItem, dir: -1 | 1) => {
+    const idx = editable.findIndex((it) => it.id === item.id);
+    const swapWith = editable[idx + dir];
+    if (!swapWith) return;
+    emitReorder(onEdit, item, swapWith);
+  };
 
   return (
     <section>
       <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
-        {t("admin.templates.builder.items_count", { n: String(template.items.length) })}
+        {t("admin.templates.builder.items_count", { n: String(draftedItems.filter((it) => it.active).length) })}
       </h2>
-      <ul className="mt-2 flex flex-col gap-2">
-        {template.items.map((item) => (
-          <li key={item.id} id={`tb-item-${item.id}`}>
-            <ItemRow
-              templateId={template.id}
-              item={item}
-              linkTargets={linkTargets}
-              canFill={canFill}
-              expanded={expanded.has(item.id)}
-              onToggle={() => toggle(item.id)}
-            />
-          </li>
-        ))}
-      </ul>
+
+      {/* Quick-add (spec §7): sticky-ish add bar; label + section + role + required,
+          defaults carried; count toggle reveals the required spine-link picker. */}
+      {canFill && <QuickAdd draftedItems={draftedItems} linkTargets={linkTargets} onEdit={onEdit} />}
+
+      {draftedItems.length === 0 ? (
+        <div className="mt-2 rounded-2xl border-2 border-dashed border-co-border p-6 text-center text-sm text-co-text-muted">
+          {t("admin.templates.builder.no_items")}
+        </div>
+      ) : (
+        <ul className="mt-2 flex flex-col gap-2">
+          {draftedItems.map((item, i) => (
+            <li key={item.id} id={`tb-item-${item.id}`}>
+              <ItemRow
+                templateId={template.id}
+                item={item}
+                linkTargets={linkTargets}
+                canFill={canFill}
+                expanded={expanded.has(item.id)}
+                onToggle={() => toggle(item.id)}
+                onEdit={onEdit}
+                onRemoveDraftAdd={onRemoveDraftAdd}
+                canMoveUp={editable.length > 1 && editable.findIndex((it) => it.id === item.id) > 0}
+                canMoveDown={
+                  editable.length > 1 &&
+                  editable.findIndex((it) => it.id === item.id) >= 0 &&
+                  editable.findIndex((it) => it.id === item.id) < editable.length - 1
+                }
+                onMoveUp={() => move(item, -1)}
+                onMoveDown={() => move(item, 1)}
+                isFirst={i === 0}
+              />
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
+}
+
+/** Emit the two reorder edits that swap `a` and `b`'s display orders. */
+function emitReorder(
+  onEdit: (edit: TemplateItemEdit) => void,
+  a: ChecklistTemplateItem,
+  b: ChecklistTemplateItem,
+) {
+  // A draft-added row (id `draft-…`) can't be a reorder TARGET server-side (no
+  // source id); the publish applies adds at the tail, so we skip emitting a reorder
+  // that targets a draft-added row and only reorder persisted rows. Swapping a
+  // persisted row with a draft row is a no-op at publish (adds go to the tail).
+  const aPersisted = !a.id.startsWith("draft-");
+  const bPersisted = !b.id.startsWith("draft-");
+  if (aPersisted) onEdit({ op: "reorder", itemId: a.id, displayOrder: b.displayOrder });
+  if (bPersisted) onEdit({ op: "reorder", itemId: b.id, displayOrder: a.displayOrder });
 }
 
 /** Gate-tier badge (spec §3): Optional vs "Must complete — or explain". hard_gate
@@ -416,6 +534,12 @@ function ItemRow({
   canFill,
   expanded,
   onToggle,
+  onEdit,
+  onRemoveDraftAdd,
+  canMoveUp,
+  canMoveDown,
+  onMoveUp,
+  onMoveDown,
 }: {
   templateId: string;
   item: ChecklistTemplateItem;
@@ -423,6 +547,13 @@ function ItemRow({
   canFill: boolean;
   expanded: boolean;
   onToggle: () => void;
+  onEdit: (edit: TemplateItemEdit) => void;
+  onRemoveDraftAdd: (tempId: string) => void;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+  isFirst: boolean;
 }) {
   const { t } = useTranslation();
   const roleLabel = useRoleLabelForLevel();
@@ -430,9 +561,14 @@ function ItemRow({
   const needsLink = itemNeedsLink(item);
   const esLabel = item.translations?.es?.label;
   const missingEs = !mirror && !(typeof esLabel === "string" && esLabel.trim() !== "");
+  const disabled = !item.active; // a draft-disabled row (renders struck-through)
+  // A draft-added row can't take in-place same-day fills (it isn't persisted yet).
+  const isDraftAdd = item.id.startsWith("draft-");
 
   const chip =
     "inline-flex items-center rounded-full border border-co-border px-2 py-0.5 text-[11px] font-semibold text-co-text-muted";
+  const moveBtn =
+    "inline-flex h-8 w-8 items-center justify-center rounded-lg border-2 border-co-border-2 bg-co-surface text-sm font-bold text-co-text disabled:opacity-30";
 
   return (
     <SummaryRow
@@ -441,9 +577,9 @@ function ItemRow({
       toggleLabel={expanded ? t("admin.templates.builder.hide") : t("admin.templates.builder.details")}
       drawerId={`tb-drawer-${item.id}`}
       summary={
-        <div className="text-sm text-co-text">
+        <div className={"text-sm text-co-text" + (disabled ? " opacity-50" : "")}>
           {/* IDENTITY (D1) — en label is the anchor. */}
-          <div className="font-bold">{item.label}</div>
+          <div className={"font-bold" + (disabled ? " line-through" : "")}>{item.label}</div>
           <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
             {item.station && <span className={chip}>{item.station}</span>}
             <span className={chip}>{t(gateTierKey(item.required))}</span>
@@ -451,6 +587,29 @@ function ItemRow({
             {item.expectsCount && <span className={chip}>{t("admin.templates.builder.flag.count")}</span>}
             {item.expectsPhoto && <span className={chip}>{t("admin.templates.builder.flag.photo")}</span>}
           </div>
+          {/* Reorder (phone-first up/down; spec §7) — non-mirror rows only. */}
+          {canFill && !mirror && (
+            <div className="mt-1.5 flex items-center gap-1.5">
+              <button
+                type="button"
+                className={moveBtn}
+                aria-label={t("admin.templates.builder.move_up")}
+                disabled={!canMoveUp}
+                onClick={(e) => { e.stopPropagation(); onMoveUp(); }}
+              >
+                ↑
+              </button>
+              <button
+                type="button"
+                className={moveBtn}
+                aria-label={t("admin.templates.builder.move_down")}
+                disabled={!canMoveDown}
+                onClick={(e) => { e.stopPropagation(); onMoveDown(); }}
+              >
+                ↓
+              </button>
+            </div>
+          )}
         </div>
       }
       badges={
@@ -461,7 +620,12 @@ function ItemRow({
               {t("admin.templates.builder.badge.mirror")}
             </span>
           )}
-          {missingEs && (
+          {disabled && (
+            <span className="inline-flex items-center rounded-full bg-co-text/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-text-muted">
+              {t("admin.templates.builder.disabled_badge")}
+            </span>
+          )}
+          {missingEs && !isDraftAdd && (
             <span className="inline-flex items-center rounded-full bg-co-cta/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-cta">
               {t("admin.templates.builder.badge.missing_es")}
             </span>
@@ -474,7 +638,16 @@ function ItemRow({
         </>
       }
     >
-      <ItemDrawer templateId={templateId} item={item} linkTargets={linkTargets} canFill={canFill} mirror={mirror} />
+      <ItemDrawer
+        templateId={templateId}
+        item={item}
+        linkTargets={linkTargets}
+        canFill={canFill}
+        mirror={mirror}
+        isDraftAdd={isDraftAdd}
+        onEdit={onEdit}
+        onRemoveDraftAdd={onRemoveDraftAdd}
+      />
     </SummaryRow>
   );
 }
@@ -490,12 +663,18 @@ function ItemDrawer({
   linkTargets,
   canFill,
   mirror,
+  isDraftAdd,
+  onEdit,
+  onRemoveDraftAdd,
 }: {
   templateId: string;
   item: ChecklistTemplateItem;
   linkTargets: LinkTarget[];
   canFill: boolean;
   mirror: boolean;
+  isDraftAdd: boolean;
+  onEdit: (edit: TemplateItemEdit) => void;
+  onRemoveDraftAdd: (tempId: string) => void;
 }) {
   const { t } = useTranslation();
 
@@ -517,12 +696,312 @@ function ItemDrawer({
         </p>
       ) : (
         <>
-          <SpanishBlock templateId={templateId} item={item} canFill={canFill} />
-          {item.expectsCount && (
-            <SpineLinkBlock templateId={templateId} item={item} linkTargets={linkTargets} canFill={canFill} />
+          {/* Structural edits (PR-3 draft): relabel/describe, gate-flip, role, and
+              disable/enable. All version at publish. Draft-added rows edit their own
+              draft edit; persisted rows emit an edit against their id. */}
+          {canFill && (
+            <StructuralEdits item={item} isDraftAdd={isDraftAdd} onEdit={onEdit} onRemoveDraftAdd={onRemoveDraftAdd} />
+          )}
+
+          {/* Same-day fills (PR-0) — persisted rows only (a draft-add isn't linked
+              yet; its Spanish + spine link are set at add time / by re-adding). */}
+          {!isDraftAdd && (
+            <>
+              <SpanishBlock templateId={templateId} item={item} canFill={canFill} />
+              {item.expectsCount && (
+                <SpineLinkBlock templateId={templateId} item={item} linkTargets={linkTargets} canFill={canFill} />
+              )}
+            </>
           )}
         </>
       )}
+    </div>
+  );
+}
+
+/** Structural edit affordances (PR-3 draft): relabel, describe, gate-tier (required)
+ *  flip, role, disable/enable. Emits TemplateItemEdit into the draft; the parent
+ *  applies them in memory + publishes them as a new version. Draft-added rows can't
+ *  target a persisted id — their structural fields were set at add time, so we only
+ *  expose disable (remove-from-draft would be cleaner but disable keeps the model
+ *  simple + honest). */
+function StructuralEdits({
+  item,
+  isDraftAdd,
+  onEdit,
+  onRemoveDraftAdd,
+}: {
+  item: ChecklistTemplateItem;
+  isDraftAdd: boolean;
+  onEdit: (edit: TemplateItemEdit) => void;
+  onRemoveDraftAdd: (tempId: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [label, setLabel] = useState(item.label);
+  const [description, setDescription] = useState(item.description ?? "");
+  const disabled = !item.active;
+
+  // Draft-added rows: their id is `draft-…` and can't be a server edit target —
+  // and a disable edit against it is a NO-OP in both the preview and the publish
+  // copy (adversarial review M1). The honest affordance for an unwanted add is
+  // REMOVE (drops the add from the draft entirely). Relabel/role/required on a
+  // draft-add are set at add-time.
+  const idForEdit = item.id;
+
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-co-border/60 bg-co-surface p-3">
+      {!isDraftAdd && (
+        <>
+          <label className="block text-sm">
+            <span className="text-xs font-bold uppercase tracking-[0.08em] text-co-text-muted">
+              {t("admin.templates.builder.edit_label")}
+            </span>
+            <input
+              type="text"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              onBlur={() => { if (label.trim() && label !== item.label) onEdit({ op: "relabel", itemId: idForEdit, label: label.trim() }); }}
+              className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="text-xs font-bold uppercase tracking-[0.08em] text-co-text-muted">
+              {t("admin.templates.builder.edit_description")}
+            </span>
+            <input
+              type="text"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              onBlur={() => { const v = description.trim() || null; if (v !== (item.description ?? null)) onEdit({ op: "describe", itemId: idForEdit, description: v }); }}
+              className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="text-xs font-bold uppercase tracking-[0.08em] text-co-text-muted">
+              {t("admin.templates.builder.role_label")}
+            </span>
+            <select
+              value={item.minRoleLevel}
+              onChange={(e) => onEdit({ op: "role", itemId: idForEdit, minRoleLevel: Number(e.target.value) })}
+              className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
+            >
+              {roleLevelOptions().map((o) => (
+                <option key={o.level} value={o.level}>{o.label}</option>
+              ))}
+            </select>
+          </label>
+          <label className="flex items-center gap-2 text-sm text-co-text">
+            <input
+              type="checkbox"
+              checked={item.required}
+              onChange={(e) => onEdit({ op: "required", itemId: idForEdit, required: e.target.checked })}
+              className="h-5 w-5"
+            />
+            {t("admin.templates.builder.required_toggle")}
+          </label>
+        </>
+      )}
+      {isDraftAdd ? (
+        <button
+          type="button"
+          onClick={() => onRemoveDraftAdd(item.id.slice("draft-".length))}
+          className="inline-flex min-h-[40px] items-center justify-center rounded-lg border-2 border-co-cta/50 bg-co-surface px-4 text-sm font-bold text-co-cta"
+        >
+          {t("admin.templates.builder.remove_draft_add")}
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => onEdit(disabled ? { op: "enable", itemId: idForEdit } : { op: "disable", itemId: idForEdit })}
+          className={
+            "inline-flex min-h-[40px] items-center justify-center rounded-lg border-2 px-4 text-sm font-bold " +
+            (disabled
+              ? "border-co-gold-deep bg-co-gold text-co-text"
+              : "border-co-cta/50 bg-co-surface text-co-cta")
+          }
+        >
+          {disabled ? t("admin.templates.builder.enable") : t("admin.templates.builder.disable")}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** Quick-add (spec §7): the 60-second add flow. Label + section + role + required,
+ *  defaults carried from the last item; the count toggle reveals a REQUIRED spine-
+ *  link picker (dismiss reverts the toggle). Emits an `add` TemplateItemEdit. */
+function QuickAdd({
+  draftedItems,
+  linkTargets,
+  onEdit,
+}: {
+  draftedItems: ChecklistTemplateItem[];
+  linkTargets: LinkTarget[];
+  onEdit: (edit: TemplateItemEdit) => void;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  // Defaults carried from the last non-mirror item (spec §7).
+  const last = [...draftedItems].reverse().find((it) => !isMirrorItem(it.prepMeta));
+  const [label, setLabel] = useState("");
+  const [station, setStation] = useState<string>(last?.station ?? "");
+  const [role, setRole] = useState<number>(last?.minRoleLevel ?? 3);
+  const [required, setRequired] = useState(true);
+  const [expectsCount, setExpectsCount] = useState(false);
+  const [spine, setSpine] = useState<LinkTarget | null>(null);
+  const [query, setQuery] = useState("");
+  const [error, setError] = useState<TranslationKey | null>(null);
+  const maxOrder = draftedItems.reduce((m, it) => Math.max(m, it.displayOrder), 0);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return linkTargets.filter((tg) => (q ? tg.name.toLowerCase().includes(q) : true)).slice(0, 12);
+  }, [linkTargets, query]);
+
+  const reset = () => {
+    setLabel(""); setExpectsCount(false); setSpine(null); setQuery(""); setError(null);
+  };
+
+  const add = () => {
+    if (!label.trim()) return;
+    if (expectsCount && !spine) { setError("admin.templates.builder.add_count_link_required"); return; }
+    onEdit({
+      op: "add",
+      tempId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      label: label.trim(),
+      station: station || null,
+      displayOrder: maxOrder + 1,
+      minRoleLevel: role,
+      required,
+      expectsCount,
+      spineLink: expectsCount ? spine : null,
+    });
+    reset();
+    // Keep the panel open for rapid repeat-adds (defaults carry).
+  };
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="mt-2 inline-flex min-h-[44px] items-center rounded-lg border-2 border-dashed border-co-gold-deep bg-co-surface px-4 text-sm font-bold text-co-text hover:bg-co-gold/15"
+      >
+        {t("admin.templates.builder.add_item")}
+      </button>
+    );
+  }
+
+  return (
+    <div className="mt-2 flex flex-col gap-2 rounded-lg border-2 border-co-gold-deep/50 bg-co-surface p-3">
+      <label className="block text-sm">
+        <span className="text-xs font-bold uppercase tracking-[0.08em] text-co-text-muted">
+          {t("admin.templates.builder.add_item_label")}
+        </span>
+        <input
+          type="text"
+          value={label}
+          autoFocus
+          placeholder={t("admin.templates.builder.add_item_placeholder")}
+          onChange={(e) => setLabel(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter" && !expectsCount) { e.preventDefault(); add(); } }}
+          className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
+        />
+      </label>
+      <div className="flex flex-wrap gap-2">
+        <label className="block flex-1 text-sm">
+          <span className="text-xs font-bold uppercase tracking-[0.08em] text-co-text-muted">
+            {t("admin.templates.builder.add_station_label")}
+          </span>
+          <input
+            type="text"
+            value={station}
+            onChange={(e) => setStation(e.target.value)}
+            className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
+          />
+        </label>
+        <label className="block flex-1 text-sm">
+          <span className="text-xs font-bold uppercase tracking-[0.08em] text-co-text-muted">
+            {t("admin.templates.builder.add_role_label")}
+          </span>
+          <select
+            value={role}
+            onChange={(e) => setRole(Number(e.target.value))}
+            className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
+          >
+            {roleLevelOptions().map((o) => (
+              <option key={o.level} value={o.level}>{o.label}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <label className="flex items-center gap-2 text-sm text-co-text">
+        <input type="checkbox" checked={required} onChange={(e) => setRequired(e.target.checked)} className="h-5 w-5" />
+        {t("admin.templates.builder.add_required_label")}
+      </label>
+      <label className="flex items-center gap-2 text-sm text-co-text">
+        <input
+          type="checkbox"
+          checked={expectsCount}
+          onChange={(e) => { setExpectsCount(e.target.checked); if (!e.target.checked) { setSpine(null); setError(null); } }}
+          className="h-5 w-5"
+        />
+        {t("admin.templates.builder.add_count_label")}
+      </label>
+
+      {/* Spine-link picker — appears ONLY when the count toggle is on (required). */}
+      {expectsCount && (
+        <div className="rounded-lg border border-co-border/60 bg-co-bg p-2">
+          {spine ? (
+            <p className="text-sm text-co-success">{spine.name}</p>
+          ) : (
+            <>
+              <input
+                type="search"
+                aria-label={t("admin.templates.needs_link.search_label")}
+                placeholder={t("admin.templates.needs_link.search_placeholder")}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                className="min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text"
+              />
+              <ul className="mt-1 flex flex-col gap-1">
+                {filtered.map((tg) => (
+                  <li key={`${tg.kind}:${tg.id}`} className="flex items-center justify-between gap-2">
+                    <span className="text-sm text-co-text">{tg.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => { setSpine(tg); setError(null); }}
+                      className="inline-flex min-h-[32px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
+                    >
+                      {t("admin.templates.needs_link.link")}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
+
+      {error && <p className="text-sm font-semibold text-co-cta">{t(error)}</p>}
+
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={add}
+          disabled={!label.trim()}
+          className="inline-flex min-h-[40px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold text-co-text disabled:opacity-50"
+        >
+          {t("admin.templates.builder.add_confirm")}
+        </button>
+        <button
+          type="button"
+          onClick={() => { reset(); setOpen(false); }}
+          className="inline-flex min-h-[40px] items-center rounded-lg border-2 border-co-border-2 bg-co-surface px-4 text-sm font-bold text-co-text-muted"
+        >
+          {t("admin.templates.builder.add_cancel")}
+        </button>
+      </div>
     </div>
   );
 }
@@ -775,6 +1254,165 @@ function SpineLinkBlock({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Publish bar (spec §1/§7) — dirty banner (D2, never collapses) + Publish button
+// + confirm modal (diff summary via classifyEdits, effective note, apply-now toggle
+// behind its own step-up, open-instances count). Every publish versions.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function PublishBar({
+  template,
+  edits,
+  openInstancesToday,
+  onPublished,
+}: {
+  template: TemplateBuilderTemplate;
+  edits: TemplateItemEdit[];
+  openInstancesToday: number;
+  onPublished: () => void;
+}) {
+  const { t } = useTranslation();
+  const router = useRouter();
+  const { requestStepUp } = useStepUp();
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [applyNow, setApplyNow] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [errorKey, setErrorKey] = useState<TranslationKey | null>(null);
+
+  const dirty = edits.length > 0;
+  const diff = useMemo(() => classifyEdits(template.items, edits), [template.items, edits]);
+
+  if (!dirty) return null;
+
+  const diffChips: string[] = [];
+  if (diff.added.length) diffChips.push(t("admin.templates.builder.publish_diff_added", { n: String(diff.added.length) }));
+  if (diff.removed.length) diffChips.push(t("admin.templates.builder.publish_diff_removed", { n: String(diff.removed.length) }));
+  if (diff.relabeled.length) diffChips.push(t("admin.templates.builder.publish_diff_relabeled", { n: String(diff.relabeled.length) }));
+  if (diff.reordered) diffChips.push(t("admin.templates.builder.publish_diff_reordered", { n: String(diff.reordered) }));
+  if (diff.roleChanged.length) diffChips.push(t("admin.templates.builder.publish_diff_role", { n: String(diff.roleChanged.length) }));
+  if (diff.requiredChanged.length) diffChips.push(t("admin.templates.builder.publish_diff_required", { n: String(diff.requiredChanged.length) }));
+
+  const publish = async () => {
+    if (busy) return;
+    setErrorKey(null);
+    // busy flips BEFORE the async step-up (adversarial review L5): two fast taps
+    // could otherwise both pass the guard during the step-up await and publish
+    // twice. Reset on a declined step-up.
+    setBusy(true);
+    // Apply-now requires its OWN step-up (Tier-A) on top of the drawer's; a next-day
+    // publish also steps up (GM+ Tier-A at the route). Request once here.
+    if ((await requestStepUp("A")) !== "ok") {
+      setBusy(false);
+      return;
+    }
+    try {
+      const res = await fetch(`/api/admin/template-builder/${template.id}/publish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ edits, effectiveMode: applyNow ? "apply_now" : "next_day" }),
+        redirect: "manual",
+      });
+      if (res.ok) {
+        setConfirmOpen(false);
+        onPublished();
+        router.refresh();
+        return;
+      }
+      // Distinguish the apply-now-blocked case for a precise message.
+      let code = "";
+      try { code = ((await res.json()) as { error?: string }).error ?? ""; } catch { /* ignore */ }
+      setErrorKey(code === "apply_now_blocked_open_instance"
+        ? "admin.templates.builder.apply_now_blocked"
+        : "admin.templates.builder.publish_error");
+    } catch {
+      setErrorKey("admin.templates.builder.publish_error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      {/* Dirty banner (D2 — never collapses). */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border-2 border-co-cta/40 bg-co-cta/5 px-3 py-2">
+        <span className="text-sm font-semibold text-co-text">{t("admin.templates.builder.dirty_banner")}</span>
+        <button
+          type="button"
+          onClick={() => { setConfirmOpen(true); setApplyNow(false); setErrorKey(null); }}
+          className="inline-flex min-h-[40px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-5 text-sm font-extrabold text-co-text"
+        >
+          {t("admin.templates.builder.publish")}
+        </button>
+      </div>
+
+      {confirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-3 sm:items-center" role="dialog" aria-modal="true" aria-labelledby="tb-publish-title">
+          <div className="w-full max-w-md rounded-2xl border-2 border-co-border bg-co-bg p-4 shadow-xl">
+            <h3 id="tb-publish-title" className="text-lg font-extrabold text-co-text">
+              {t("admin.templates.builder.publish_confirm_title")}
+            </h3>
+
+            {/* Diff summary. */}
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {diffChips.length === 0 ? (
+                <span className="text-sm text-co-text-muted">{t("admin.templates.builder.publish_diff_none")}</span>
+              ) : (
+                diffChips.map((c, i) => (
+                  <span key={i} className="inline-flex items-center rounded-full bg-co-gold/15 px-2 py-0.5 text-xs font-bold text-co-text">
+                    {c}
+                  </span>
+                ))
+              )}
+            </div>
+
+            {/* Effective note. */}
+            <p className="mt-3 text-sm font-semibold text-co-text">
+              {applyNow ? t("admin.templates.builder.publish_effective_now") : t("admin.templates.builder.publish_effective_next_day")}
+            </p>
+
+            {/* Open-instances-today signal (powers the apply-now gate). */}
+            {openInstancesToday > 0 && (
+              <p className="mt-1 text-xs text-co-text-muted">
+                {t("admin.templates.builder.open_instances_today", { n: String(openInstancesToday) })}
+              </p>
+            )}
+
+            {/* Apply-now toggle behind its own explicit control + warning. */}
+            <label className="mt-3 flex items-start gap-2 text-sm text-co-text">
+              <input type="checkbox" checked={applyNow} onChange={(e) => setApplyNow(e.target.checked)} className="mt-0.5 h-5 w-5" />
+              <span>
+                {t("admin.templates.builder.apply_now_toggle")}
+                <span className="mt-0.5 block text-xs text-co-cta">{t("admin.templates.builder.apply_now_warning")}</span>
+              </span>
+            </label>
+
+            {errorKey && <p className="mt-2 text-sm font-semibold text-co-cta">{t(errorKey)}</p>}
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmOpen(false)}
+                disabled={busy}
+                className="inline-flex min-h-[40px] items-center rounded-lg border-2 border-co-border-2 bg-co-surface px-4 text-sm font-bold text-co-text-muted disabled:opacity-50"
+              >
+                {t("admin.templates.builder.publish_cancel")}
+              </button>
+              <button
+                type="button"
+                onClick={() => void publish()}
+                disabled={busy}
+                className="inline-flex min-h-[40px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-5 text-sm font-extrabold text-co-text disabled:opacity-50"
+              >
+                {busy ? t("admin.templates.builder.publishing") : t("admin.templates.builder.publish_go")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Phone preview (spec §7) — a faithful, read-only re-render of the LIVE active
 // template as staff see it: items grouped by station, labels via the translations
 // resolver, en/es toggle. Presentational only (no instance, no submissions).
@@ -859,7 +1497,14 @@ function PreviewStationGroups({
   );
 }
 
-function PhonePreview({ template }: { template: TemplateBuilderTemplate }) {
+function PhonePreview({
+  draftedItems,
+}: {
+  /** the DRAFTED items (source + edits applied) — the preview shows exactly what
+   *  publishes. Disabled (draft-removed) rows are filtered out (they render nowhere
+   *  for staff). */
+  draftedItems: ChecklistTemplateItem[];
+}) {
   const { t } = useTranslation();
   const [lang, setLang] = useState<Language>("en");
 
@@ -868,15 +1513,17 @@ function PhonePreview({ template }: { template: TemplateBuilderTemplate }) {
   // the preview into Phase 1 (non-mirror, station-grouped) and Phase 2 (the
   // AM-Prep mirror counts). A list with NO mirror rows (closing) renders the
   // flat station-grouped list exactly as PR-1 did — no phase headers leak in.
+  // Only ACTIVE items render (a draft-disabled row shows nowhere for staff).
   const { phase1, phase2, hasPhases } = useMemo(() => {
     const p1: ChecklistTemplateItem[] = [];
     const p2: ChecklistTemplateItem[] = [];
-    for (const it of template.items) {
+    for (const it of draftedItems) {
+      if (!it.active) continue;
       if (isMirrorItem(it.prepMeta)) p2.push(it);
       else p1.push(it);
     }
     return { phase1: p1, phase2: p2, hasPhases: p2.length > 0 };
-  }, [template.items]);
+  }, [draftedItems]);
 
   const langChip = (activeChip: boolean) =>
     `inline-flex min-h-[32px] items-center rounded-full border-2 px-3 text-xs font-bold transition ${

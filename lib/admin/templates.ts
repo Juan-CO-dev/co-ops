@@ -23,6 +23,8 @@ import {
   rowToTemplateItem,
 } from "@/lib/template-items";
 import { setPrepItemMeta, setPrepItemSection, narrowPrepTemplateItem, isPrepMeta, seedPrepItem } from "@/lib/prep";
+import { operationalNow } from "@/lib/midshift";
+import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 import { shapeToColumns, isPrepSectionName } from "@/lib/prep-sections";
 import { loadPrepSections } from "@/lib/prep-sections.server";
 import { loadUnits } from "@/lib/units.server";
@@ -251,60 +253,72 @@ export async function getPrepTemplateDetail(
 }
 
 /**
- * Resolve the active prep template id (am_prep | mid_day_prep) at a location
- * (most-recent-active). General form; the am-prep specialization wraps it.
+ * Resolve the active prep template id (am_prep | mid_day_prep) at a location.
+ * DATE-AWARE (PR-3): the newest active version effective on `opDate`
+ * (applyEffectiveResolution). Prep is NOT versioned by the publish engine — it has
+ * exactly one active row per (location, subtype) with effective_from NULL — so the
+ * date-aware pick collapses to that single row (NULL always effective, sorts last
+ * but is the only candidate). The sweep is applied uniformly for consistency + so
+ * the day prep gains versioning the resolver is already correct. General form; the
+ * am-prep specialization wraps it. opDate defaults to operational-today.
  */
 async function resolveActivePrepTemplateId(
   sb: ReturnType<typeof getServiceRoleClient>,
   locationId: string,
   subtype: PrepSubtype,
+  opDate: string = operationalNow(new Date()).date,
 ): Promise<string | null> {
-  const { data, error } = await sb
+  const base = sb
     .from("checklist_templates")
     .select("id")
     .eq("location_id", locationId)
     .eq("type", "prep")
-    .eq("prep_subtype", subtype)
-    .eq("active", true)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle<{ id: string }>();
+    .eq("prep_subtype", subtype) as unknown as EffectiveResolvableBuilder;
+  const { data, error } = await applyEffectiveResolution(base, opDate).maybeSingle<{ id: string }>();
   if (error) throw new Error(`resolveActivePrepTemplateId failed: ${error.message}`);
   return data?.id ?? null;
 }
 
-/** Resolve the active am_prep template id at a location (most-recent-active). */
+/** Resolve the active am_prep template id at a location (date-aware). */
 async function resolveActiveAmPrepTemplateId(
   sb: ReturnType<typeof getServiceRoleClient>,
   locationId: string,
+  opDate: string = operationalNow(new Date()).date,
 ): Promise<string | null> {
-  return resolveActivePrepTemplateId(sb, locationId, "am_prep");
+  return resolveActivePrepTemplateId(sb, locationId, "am_prep", opDate);
 }
 
-/** Resolve the active opening template id at a location (most-recent-active). */
-async function resolveActiveOpeningTemplateId(
+/**
+ * Resolve ALL active opening templates at a location (PR-3 mirror-targeting,
+ * adjudication b). In steady state ≤2 rows: the currently-effective version + a
+ * pending next-day version. A mirror add/remove/section-change must land on BOTH so
+ * tomorrow's pending version is never missing a mirror the AM-prep list added today.
+ * Returns the ids (empty when no active opening template).
+ */
+async function resolveAllActiveOpeningTemplateIds(
   sb: ReturnType<typeof getServiceRoleClient>,
   locationId: string,
-): Promise<string | null> {
+): Promise<string[]> {
   const { data, error } = await sb
     .from("checklist_templates")
     .select("id")
     .eq("location_id", locationId)
     .eq("type", "opening")
     .eq("active", true)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle<{ id: string }>();
-  if (error) throw new Error(`resolveActiveOpeningTemplateId failed: ${error.message}`);
-  return data?.id ?? null;
+    .returns<Array<{ id: string }>>();
+  if (error) throw new Error(`resolveAllActiveOpeningTemplateIds failed: ${error.message}`);
+  return (data ?? []).map((r) => r.id);
 }
 
 /**
  * Create an Opening Phase-2 verification mirror for a newly-added AM-prep item.
- * Inserts into the active opening template at the location with OpeningPhase2Meta
- * prep_meta and references_template_item_id = the AM-prep item. Mirrors label/
- * translations/min-role/required; par/section mirrored. Appends to display_order.
- * Returns the new mirror id, or null when no active opening template (graceful).
+ * Inserts into EVERY active opening template at the location (PR-3 mirror-targeting,
+ * adjudication b) with OpeningPhase2Meta prep_meta + references_template_item_id =
+ * the AM-prep item — so a pending next-day opening version is never missing a mirror
+ * the AM-prep list added today. In steady state ≤2 templates (current + pending).
+ * Mirrors label/translations/min-role/required; par/section mirrored; appends to
+ * each template's own display_order. Returns the new mirror ids (empty when no
+ * active opening template — graceful).
  */
 async function createOpeningMirror(args: {
   amPrepItemId: string;
@@ -317,58 +331,83 @@ async function createOpeningMirror(args: {
   translations: ChecklistTemplateItemTranslations | null;
   minRoleLevel: number;
   required: boolean;
-}): Promise<string | null> {
+}): Promise<string[]> {
   const sb = getServiceRoleClient();
-  const openingId = await resolveActiveOpeningTemplateId(sb, args.locationId);
-  if (!openingId) return null;
+  const openingIds = await resolveAllActiveOpeningTemplateIds(sb, args.locationId);
+  if (openingIds.length === 0) return [];
 
-  const { data: maxRow, error: mErr } = await sb
-    .from("checklist_template_items")
-    .select("display_order")
-    .eq("template_id", openingId)
-    .order("display_order", { ascending: false })
-    .limit(1)
-    .maybeSingle<{ display_order: number }>();
-  if (mErr) throw new Error(`createOpeningMirror max order failed: ${mErr.message}`);
-  const nextOrder = (maxRow?.display_order ?? 0) + 1;
+  const created: string[] = [];
+  for (const openingId of openingIds) {
+    // Per-template idempotency: skip a template that already carries an active
+    // mirror for this AM-prep item (PR-3 — the multi-template loop must not
+    // duplicate a mirror the current version already has when a pending version
+    // was just minted, and vice-versa).
+    const { data: existing, error: exErr } = await sb
+      .from("checklist_template_items")
+      .select("id")
+      .eq("template_id", openingId)
+      .eq("references_template_item_id", args.amPrepItemId)
+      .eq("active", true)
+      .limit(1)
+      .maybeSingle<{ id: string }>();
+    if (exErr) throw new Error(`createOpeningMirror existing check failed: ${exErr.message}`);
+    if (existing) continue;
 
-  const { data: inserted, error: iErr } = await sb
-    .from("checklist_template_items")
-    .insert({
-      template_id: openingId,
-      station: args.section,
-      display_order: nextOrder,
-      label: args.label,
-      description: null,
-      min_role_level: args.minRoleLevel,
-      required: args.required,
-      expects_count: false,
-      expects_photo: false,
-      vendor_item_id: null,
-      active: true,
-      translations: args.translations,
-      prep_meta: { openingPhase2: true, section: args.section, parValue: args.parValue, parUnit: args.parUnit },
-      report_reference_type: null,
-      references_template_item_id: args.amPrepItemId,
-      // Share the AM-prep line's registry item so the opening mirror resolves
-      // name + par from the same item (within-location edit-once-everywhere).
-      item_id: args.itemId,
-    })
-    .select("id")
-    .maybeSingle<{ id: string }>();
-  if (iErr) throw new Error(`createOpeningMirror insert failed: ${iErr.message}`);
-  return inserted?.id ?? null;
+    const { data: maxRow, error: mErr } = await sb
+      .from("checklist_template_items")
+      .select("display_order")
+      .eq("template_id", openingId)
+      .order("display_order", { ascending: false })
+      .limit(1)
+      .maybeSingle<{ display_order: number }>();
+    if (mErr) throw new Error(`createOpeningMirror max order failed: ${mErr.message}`);
+    const nextOrder = (maxRow?.display_order ?? 0) + 1;
+
+    const { data: inserted, error: iErr } = await sb
+      .from("checklist_template_items")
+      .insert({
+        template_id: openingId,
+        station: args.section,
+        display_order: nextOrder,
+        label: args.label,
+        description: null,
+        min_role_level: args.minRoleLevel,
+        required: args.required,
+        expects_count: false,
+        expects_photo: false,
+        vendor_item_id: null,
+        active: true,
+        translations: args.translations,
+        prep_meta: { openingPhase2: true, section: args.section, parValue: args.parValue, parUnit: args.parUnit },
+        report_reference_type: null,
+        references_template_item_id: args.amPrepItemId,
+        // Share the AM-prep line's registry item so the opening mirror resolves
+        // name + par from the same item (within-location edit-once-everywhere).
+        item_id: args.itemId,
+      })
+      .select("id")
+      .maybeSingle<{ id: string }>();
+    if (iErr) throw new Error(`createOpeningMirror insert failed: ${iErr.message}`);
+    if (inserted?.id) created.push(inserted.id);
+  }
+  return created;
 }
 
-/** Deactivate (active=false) the Opening mirror(s) linked to an AM-prep item. Returns affected ids. */
+/**
+ * Deactivate (active=false) the Opening mirror(s) linked to an AM-prep item across
+ * EVERY active opening template at the location (PR-3 mirror-targeting) — so removing
+ * an AM-prep item removes its mirror from the pending version too. One UPDATE scoped
+ * by references_template_item_id catches all templates at the location. Returns the
+ * affected mirror ids.
+ */
 async function deactivateOpeningMirror(args: { amPrepItemId: string; locationId: string }): Promise<string[]> {
   const sb = getServiceRoleClient();
-  const openingId = await resolveActiveOpeningTemplateId(sb, args.locationId);
-  if (!openingId) return [];
+  const openingIds = await resolveAllActiveOpeningTemplateIds(sb, args.locationId);
+  if (openingIds.length === 0) return [];
   const { data, error } = await sb
     .from("checklist_template_items")
     .update({ active: false })
-    .eq("template_id", openingId)
+    .in("template_id", openingIds)
     .eq("references_template_item_id", args.amPrepItemId)
     .eq("active", true)
     .select("id")
@@ -377,15 +416,20 @@ async function deactivateOpeningMirror(args: { amPrepItemId: string; locationId:
   return (data ?? []).map((r) => r.id);
 }
 
-/** Update the Opening mirror's section (station + prep_meta.section) for a re-sectioned AM-prep item. */
+/**
+ * Update the Opening mirror's section (station + prep_meta.section) for a
+ * re-sectioned AM-prep item, across EVERY active opening template at the location
+ * (PR-3 mirror-targeting) — so the pending version's mirror re-sections too. Returns
+ * the affected mirror ids.
+ */
 async function setOpeningMirrorSection(args: { amPrepItemId: string; locationId: string; section: PrepSection }): Promise<string[]> {
   const sb = getServiceRoleClient();
-  const openingId = await resolveActiveOpeningTemplateId(sb, args.locationId);
-  if (!openingId) return [];
+  const openingIds = await resolveAllActiveOpeningTemplateIds(sb, args.locationId);
+  if (openingIds.length === 0) return [];
   const { data: linked, error: lErr } = await sb
     .from("checklist_template_items")
     .select("id, prep_meta")
-    .eq("template_id", openingId)
+    .in("template_id", openingIds)
     .eq("references_template_item_id", args.amPrepItemId)
     .eq("active", true)
     .returns<Array<{ id: string; prep_meta: Record<string, unknown> | null }>>();
@@ -889,9 +933,9 @@ export async function addPrepItem(
   });
   if (parErr) throw new Error(`addPrepItem par seed failed: ${parErr.message}`);
 
-  let openingMirrorId: string | null = null;
+  let openingMirrorIds: string[] = [];
   if (tmpl.prep_subtype === "am_prep" && input.createOpeningMirror) {
-    openingMirrorId = await createOpeningMirror({
+    openingMirrorIds = await createOpeningMirror({
       amPrepItemId: templateItemId,
       itemId,
       locationId: tmpl.location_id,
@@ -904,6 +948,10 @@ export async function addPrepItem(
       required: input.required,
     });
   }
+  // PR-3 mirror-targeting: mirrors now land on EVERY active opening version (current
+  // + pending). The single-id return contract keeps the first for back-compat; the
+  // full set rides in audit metadata.
+  const openingMirrorId = openingMirrorIds[0] ?? null;
 
   await audit({
     actorId: actor.user.id,
@@ -917,6 +965,7 @@ export async function addPrepItem(
       section: input.section,
       item_id: itemId,
       created_opening_mirror_id: openingMirrorId,
+      created_opening_mirror_ids: openingMirrorIds,
     },
     ipAddress: null,
     userAgent: null,
@@ -1437,9 +1486,11 @@ async function ensureItemLineOnTemplate(
 
   // Gate the Opening mirror on the item's opening_verify flag (migration 0089).
   // Default true → mirror created as before; flipped false → no mirror.
+  // PR-3 mirror-targeting: createOpeningMirror now lands on EVERY active opening
+  // version (current + pending); keep the first id for the single-id return.
   let openingMirrorId: string | null = null;
   if (subtype === "am_prep" && item.openingVerify) {
-    openingMirrorId = await createOpeningMirror({
+    const mirrorIds = await createOpeningMirror({
       amPrepItemId: lineId,
       itemId: item.itemId,
       locationId,
@@ -1451,6 +1502,7 @@ async function ensureItemLineOnTemplate(
       minRoleLevel,
       required: item.required,
     });
+    openingMirrorId = mirrorIds[0] ?? null;
   }
 
   return { lineId, openingMirrorId, created: true };
@@ -1682,9 +1734,10 @@ export async function setItemOpeningVerify(
         minRoleLevel: line.minRoleLevel,
         required: line.required,
       });
-      // createOpeningMirror returns null when no active opening template at the
-      // location — treat that as "no change" (nothing was created).
-      if (created) changedLocationIds.push(loc.id);
+      // createOpeningMirror returns [] when no active opening template at the
+      // location (or all already mirrored) — treat that as "no change" (PR-3: it
+      // now returns the ids created across every active opening version).
+      if (created.length > 0) changedLocationIds.push(loc.id);
     } else {
       // Deactivate any active Opening mirror for this am_prep line.
       const deactivated = await deactivateOpeningMirror({ amPrepItemId: line.id, locationId: loc.id });

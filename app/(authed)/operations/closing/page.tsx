@@ -53,6 +53,7 @@ import {
 } from "@/lib/checklist-rows";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { reconcileClosingReportRefs } from "@/lib/prep";
+import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
@@ -200,21 +201,29 @@ export default async function ClosingPage({ searchParams }: PageProps) {
   if (locErr) throw new Error(`load location: ${locErr.message}`);
   if (!locationRow) redirect("/dashboard");
 
-  // Resolve active closing template (most recent active per Path A versioning
-  // — picks v2 once Build #2 ships it without requiring code change).
-  // Per-location scoping via `.eq("location_id", locationParam)` is LOAD-BEARING
-  // — closing templates exist per-location, so omitting the filter would pick
-  // the most-recently-created closing template across ALL locations. See sibling
-  // pattern in `lib/opening.ts loadOpeningState` and `lib/prep.ts loadAmPrepState`.
-  const { data: templateRow, error: tmplErr } = await sb
+  // Date determination FIRST (PR-3: the template resolver is now date-aware, so it
+  // needs the operational date the page is viewing before it resolves the version).
+  const today = nyDateString(new Date());
+  const requestedDate = dateParam && DATE_RE.test(dateParam) ? dateParam : null;
+  const targetDate = requestedDate ?? today;
+  const isHistorical = targetDate !== today;
+
+  // Resolve the closing template EFFECTIVE ON targetDate (PR-3 date-aware
+  // resolution — the ONLY correctness mechanism, spec §1). Newest active version
+  // whose effective_from is NULL or <= targetDate; a pending next-day version is
+  // invisible until its day, so a mid-shift publish can never strand the closer.
+  // Per-location scoping via `.eq("location_id", locationParam)` stays LOAD-BEARING
+  // — closing templates exist per-location. See sibling pattern in
+  // `lib/opening.ts loadOpeningState` and `lib/prep.ts`.
+  const closingBase = sb
     .from("checklist_templates")
     .select("id")
     .eq("location_id", locationParam)
-    .eq("type", "closing")
-    .eq("active", true)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle<{ id: string }>();
+    .eq("type", "closing") as unknown as EffectiveResolvableBuilder;
+  const { data: templateRow, error: tmplErr } = await applyEffectiveResolution(
+    closingBase,
+    targetDate,
+  ).maybeSingle<{ id: string }>();
   if (tmplErr) throw new Error(`load template: ${tmplErr.message}`);
   if (!templateRow) {
     return (
@@ -224,12 +233,6 @@ export default async function ClosingPage({ searchParams }: PageProps) {
       />
     );
   }
-
-  // Date determination.
-  const today = nyDateString(new Date());
-  const requestedDate = dateParam && DATE_RE.test(dateParam) ? dateParam : null;
-  const targetDate = requestedDate ?? today;
-  const isHistorical = targetDate !== today;
 
   const todayUtc = new Date(`${today}T00:00:00Z`);
   todayUtc.setUTCDate(todayUtc.getUTCDate() - 1);

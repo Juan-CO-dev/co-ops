@@ -286,13 +286,17 @@ export function classifyRoleFloor(
 // imports them without any server-only proximity.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** One template (a location's active template of a type) with its display items. */
+/** One template (a location's lineage-latest template of a type) with its items. */
 export interface TemplateBuilderTemplate {
   id: string;
   name: string;
   type: string;
   locationId: string;
   items: ChecklistTemplateItem[];
+  /** PR-3: the loaded version's effective date (null = legacy always-effective). */
+  effectiveFrom?: string | null;
+  /** PR-3: true when effective_from > today — the "live tomorrow morning" banner. */
+  isPending?: boolean;
 }
 
 /** Every active template of a type at the actor's visible locations. */
@@ -325,4 +329,360 @@ export interface TemplateDoctorReport {
   confirmFloorLevel: number;
   /** convenience rollups for the header chip (D2/D3). */
   totals: { needsLink: number; esMissing: number; roleFloorImpossible: number; drift: number };
+  /**
+   * PR-3 publish signals for this type's active lineages (per location's current
+   * template). openInstancesToday powers the apply-now gate message (spec §1);
+   * pending surfaces the "changes go live tomorrow" state of an existing pending
+   * version. Empty in PR-1/PR-2 loads (the server fills these in PR-3). Keyed by
+   * templateId = the CURRENTLY-EFFECTIVE version the builder view loaded.
+   */
+  publish?: {
+    /** count of TODAY's checklist_instances across the whole lineage (all versions). */
+    openInstancesToday: number;
+    /** a pending (effective_from > today) version exists for a lineage in this view. */
+    hasPendingVersion: boolean;
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PR-3 — THE PUBLISH ENGINE (spec §1 + §10). The pure surface: the edit vocabulary,
+// the diff classifier (confirm-modal + audit metadata only — NEVER gates the write
+// path; everything versions), and the date primitives + the date-aware resolution
+// applicator the 9 resolver sites chain onto their checklist_templates select.
+// Zero I/O, no server import — CI owns the truth-tables here.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** apply_now = live TODAY (Tier-A step-up, gated on no open instance); the default
+ *  is next-day (spec §1: "Publish — live tomorrow morning"). */
+export type PublishEffectiveMode = "apply_now" | "next_day";
+
+/**
+ * One structural edit the manager drafted, addressed to a SOURCE item by id (or a
+ * fresh add). The publish transaction applies these while copying the source
+ * version → the new version. Every edit VERSIONS (spec §1) — the classifier below
+ * only summarizes them for the confirm modal + audit; it never decides the write.
+ *
+ *  - relabel/describe/station/reorder/role/required → mutate the copied row;
+ *  - disable → the copied row lands active=false (append-only: the version's row
+ *    set is TOTAL — a disabled row renders nowhere but keeps the lineage honest);
+ *  - add → a fresh row (spine link REQUIRED at write when expectsCount — the PR-0
+ *    guard, re-enforced server-side).
+ */
+export type TemplateItemEdit =
+  | { op: "relabel"; itemId: string; label: string }
+  | { op: "describe"; itemId: string; description: string | null }
+  | { op: "translate"; itemId: string; es: { label?: string | null; description?: string | null; specialInstruction?: string | null } }
+  | { op: "station"; itemId: string; station: string | null }
+  | { op: "reorder"; itemId: string; displayOrder: number }
+  | { op: "role"; itemId: string; minRoleLevel: number }
+  | { op: "required"; itemId: string; required: boolean }
+  | { op: "disable"; itemId: string }
+  | { op: "enable"; itemId: string }
+  | {
+      op: "add";
+      /** client-side temp id so reorder/other edits in the same draft can target it. */
+      tempId: string;
+      label: string;
+      description?: string | null;
+      station?: string | null;
+      displayOrder: number;
+      minRoleLevel: number;
+      required: boolean;
+      expectsCount: boolean;
+      expectsPhoto?: boolean;
+      /** REQUIRED when expectsCount (spine-link law §4) — set exactly one. */
+      spineLink?: SpineLinkTarget | null;
+      es?: { label?: string | null; description?: string | null };
+    };
+
+/**
+ * The pure diff summary the confirm modal + audit metadata read (spec §1: "3 added ·
+ * 1 removed · 2 renamed"). NEVER gates the write path — everything versions. Reorder
+ * is a COUNT (which items moved is noise for the manager); the rest are id/label
+ * lists so the modal + audit can name them.
+ */
+export interface TemplateDiffSummary {
+  added: Array<{ tempId: string; label: string }>;
+  removed: Array<{ itemId: string; label: string }>;
+  relabeled: Array<{ itemId: string; from: string; to: string }>;
+  reordered: number;
+  roleChanged: Array<{ itemId: string; label: string; from: number; to: number }>;
+  requiredChanged: Array<{ itemId: string; label: string; to: boolean }>;
+}
+
+/**
+ * classifyEdits — pure over (source items, draft edits). Deterministic, order-
+ * independent, and coalescing: the LAST edit of a given op for an item wins (a
+ * relabel A→B→C summarizes as A→C; a disable then enable nets to no removal).
+ * "removed" = a disable with no later enable. "relabeled" only when the label
+ * actually differs from the source. Used by the modal + audit ONLY.
+ */
+export function classifyEdits(
+  srcItems: Array<Pick<ChecklistTemplateItem, "id" | "label" | "minRoleLevel" | "required" | "active">>,
+  edits: readonly TemplateItemEdit[],
+): TemplateDiffSummary {
+  const srcById = new Map(srcItems.map((it) => [it.id, it]));
+
+  // Coalesce per item: last-write-wins on each mutable field.
+  const label = new Map<string, string>();
+  const role = new Map<string, number>();
+  const required = new Map<string, boolean>();
+  const disabled = new Map<string, boolean>(); // true=disable, false=enable
+  const reorderedIds = new Set<string>();
+  const adds: Array<{ tempId: string; label: string }> = [];
+
+  for (const e of edits) {
+    switch (e.op) {
+      case "relabel":
+        label.set(e.itemId, e.label);
+        break;
+      case "role":
+        role.set(e.itemId, e.minRoleLevel);
+        break;
+      case "required":
+        required.set(e.itemId, e.required);
+        break;
+      case "reorder":
+        reorderedIds.add(e.itemId);
+        break;
+      case "disable":
+        disabled.set(e.itemId, true);
+        break;
+      case "enable":
+        disabled.set(e.itemId, false);
+        break;
+      case "add":
+        adds.push({ tempId: e.tempId, label: e.label });
+        break;
+      // describe / station / translate don't appear in the manager-facing summary.
+      default:
+        break;
+    }
+  }
+
+  const removed: TemplateDiffSummary["removed"] = [];
+  for (const [id, isDisabled] of disabled) {
+    if (!isDisabled) continue; // netted back to enabled
+    const src = srcById.get(id);
+    // Only a currently-active source row that ends disabled counts as "removed".
+    if (src && src.active) removed.push({ itemId: id, label: src.label });
+  }
+
+  const relabeled: TemplateDiffSummary["relabeled"] = [];
+  for (const [id, to] of label) {
+    const src = srcById.get(id);
+    if (src && src.label !== to) relabeled.push({ itemId: id, from: src.label, to });
+  }
+
+  const roleChanged: TemplateDiffSummary["roleChanged"] = [];
+  for (const [id, to] of role) {
+    const src = srcById.get(id);
+    if (src && src.minRoleLevel !== to) {
+      roleChanged.push({ itemId: id, label: src.label, from: src.minRoleLevel, to });
+    }
+  }
+
+  const requiredChanged: TemplateDiffSummary["requiredChanged"] = [];
+  for (const [id, to] of required) {
+    const src = srcById.get(id);
+    if (src && src.required !== to) requiredChanged.push({ itemId: id, label: src.label, to });
+  }
+
+  // A reorder only "counts" if the item isn't already removed (a disabled row's
+  // order is irrelevant) and its position genuinely differs is enforced client-side;
+  // here we count the distinct reordered ids that survive.
+  let reordered = 0;
+  for (const id of reorderedIds) {
+    if (disabled.get(id) === true) continue;
+    reordered += 1;
+  }
+
+  return { added: adds, removed, relabeled, reordered, roleChanged, requiredChanged };
+}
+
+/**
+ * Apply the draft edits to the source items IN MEMORY, producing the drafted item
+ * list the phone preview + the builder list render (the manager sees exactly what
+ * will publish). Pure — no I/O. MIRROR ROWS ARE NEVER EDITED (spec §5 seal): edits
+ * addressed to a mirror are ignored. "add" edits become synthetic items with a
+ * `draft-<tempId>` id; "disable" flips active=false (kept in the array so the list
+ * can render it struck-through — the preview filters inactive out). Result is sorted
+ * by the (possibly-reordered) displayOrder, stable on ties. The same coalescing rule
+ * as classifyEdits (last-write-wins per field per item).
+ */
+export function applyEditsToItems(
+  srcItems: ChecklistTemplateItem[],
+  edits: readonly TemplateItemEdit[],
+): ChecklistTemplateItem[] {
+  const byId = new Map(srcItems.map((it) => [it.id, { ...it }]));
+  const added: ChecklistTemplateItem[] = [];
+
+  for (const e of edits) {
+    if (e.op === "add") {
+      added.push({
+        id: `draft-${e.tempId}`,
+        templateId: srcItems[0]?.templateId ?? "",
+        station: e.station ?? null,
+        displayOrder: e.displayOrder,
+        label: e.label,
+        description: e.description ?? null,
+        minRoleLevel: e.minRoleLevel,
+        required: e.required,
+        expectsCount: e.expectsCount,
+        expectsPhoto: e.expectsPhoto ?? false,
+        vendorItemId: e.expectsCount && e.spineLink?.kind === "sku" ? e.spineLink.id : null,
+        active: true,
+        translations: e.es ? { es: { label: e.es.label ?? undefined, description: e.es.description ?? null } } : null,
+        prepMeta: null,
+        reportReferenceType: null,
+        referencesTemplateItemId: null,
+        itemId: e.expectsCount && e.spineLink?.kind === "item" ? e.spineLink.id : null,
+      });
+      continue;
+    }
+    const target = byId.get(e.itemId);
+    if (!target) continue;
+    if (isMirrorItem(target.prepMeta)) continue; // mirror rows never edited (seal)
+    switch (e.op) {
+      case "relabel":
+        target.label = e.label;
+        break;
+      case "describe":
+        target.description = e.description;
+        break;
+      case "station":
+        target.station = e.station;
+        break;
+      case "reorder":
+        target.displayOrder = e.displayOrder;
+        break;
+      case "role":
+        target.minRoleLevel = e.minRoleLevel;
+        break;
+      case "required":
+        target.required = e.required;
+        break;
+      case "disable":
+        target.active = false;
+        break;
+      case "enable":
+        target.active = true;
+        break;
+      case "translate": {
+        const cur = target.translations ?? {};
+        const es = { ...(cur.es ?? {}) };
+        if (e.es.label !== undefined) es.label = e.es.label ?? undefined;
+        if (e.es.description !== undefined) es.description = e.es.description;
+        if (e.es.specialInstruction !== undefined) es.specialInstruction = e.es.specialInstruction;
+        target.translations = { ...cur, es };
+        break;
+      }
+    }
+  }
+
+  const all = [...byId.values(), ...added];
+  return all.sort((a, b) => (a.displayOrder !== b.displayOrder ? a.displayOrder - b.displayOrder : 0));
+}
+
+// ── Operational-date primitives (pure; UTC-anchored YYYY-MM-DD arithmetic, the
+//    same idiom as lib/checklists.ts shiftDateByDays / lib/opening.ts yesterday). A
+//    YYYY-MM-DD string has no intrinsic TZ, so day-shifting via a UTC anchor is
+//    exact. The CALLER supplies "today" in the operational TZ (server:
+//    operationalNow(new Date()).date). ─────────────────────────────────────────────
+
+/** Shift a YYYY-MM-DD operational date by whole days (UTC-anchored, exact). */
+export function shiftOperationalDay(yyyymmdd: string, offsetDays: number): string {
+  const d = new Date(`${yyyymmdd}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + offsetDays);
+  return d.toISOString().slice(0, 10);
+}
+
+/** The next operational day after `today` (spec §1: default publish effect). */
+export function nextOperationalDay(today: string): string {
+  return shiftOperationalDay(today, 1);
+}
+
+/** Minimal lineage row for the pure resolution rule (id + version-sort keys). */
+export interface LineageVersionRow {
+  id: string;
+  active: boolean;
+  effective_from: string | null;
+  created_at: string;
+}
+
+/**
+ * `a` outranks `b` under the resolution order — effective_from DESC NULLS LAST, then
+ * created_at DESC. THE ONE comparator both the SQL resolver (applyEffectiveResolution)
+ * and the in-memory pickers (loader lineage-latest + publish currently-effective)
+ * agree on. Pure. Returns true when a should sort BEFORE b (a wins).
+ */
+export function versionOutranks(a: LineageVersionRow, b: LineageVersionRow): boolean {
+  if (a.effective_from !== b.effective_from) {
+    if (a.effective_from === null) return false; // NULL sorts LAST
+    if (b.effective_from === null) return true;
+    return a.effective_from > b.effective_from;
+  }
+  return a.created_at > b.created_at;
+}
+
+/**
+ * The CURRENTLY-EFFECTIVE version on `opDate` from a lineage's rows — the newest
+ * ACTIVE row whose effective_from is NULL or <= opDate (pending rows invisible),
+ * ordered by versionOutranks. Returns null when only pending versions exist (a fresh
+ * lineage). Mirrors applyEffectiveResolution's SQL exactly; pure + CI-testable.
+ */
+export function resolveEffectiveVersionId(rows: LineageVersionRow[], opDate: string): string | null {
+  let best: LineageVersionRow | null = null;
+  for (const r of rows) {
+    if (!r.active) continue;
+    if (r.effective_from !== null && r.effective_from > opDate) continue; // pending
+    if (best === null || versionOutranks(r, best)) best = r;
+  }
+  return best?.id ?? null;
+}
+
+/** Minimal structural view of the PostgREST filter/transform builder methods
+ *  applyEffectiveResolution chains — declared NON-recursively (each method returns
+ *  this same interface, not the caller's deep generic) to avoid TS2589
+ *  "excessively deep" instantiation when applied to a fully-typed supabase-js
+ *  builder. Includes the terminal `maybeSingle<T>()` so callers await the resolved
+ *  builder directly with a single `as unknown as` cast on the way in. */
+export interface EffectiveResolvableBuilder {
+  eq(column: string, value: unknown): EffectiveResolvableBuilder;
+  is(column: string, value: null): EffectiveResolvableBuilder;
+  or(filters: string): EffectiveResolvableBuilder;
+  order(column: string, opts: { ascending: boolean; nullsFirst?: boolean }): EffectiveResolvableBuilder;
+  limit(n: number): EffectiveResolvableBuilder;
+  maybeSingle<T>(): Promise<{ data: T | null; error: { message: string } | null }>;
+}
+
+/**
+ * The date-aware resolution filter (adjudication a — the ONLY correctness
+ * mechanism). Chain this onto any `from("checklist_templates").select(...)` that
+ * already carries the site's own `.eq("type", ...)` / `.eq("prep_subtype", ...)` /
+ * `.eq("location_id", ...)` scoping. It adds:
+ *   active = true
+ *   AND (effective_from IS NULL OR effective_from <= opDate)
+ *   ORDER BY effective_from DESC NULLS LAST, created_at DESC
+ *   LIMIT 1  (caller adds .maybeSingle())
+ * so the newest active version whose effective date has arrived wins; a pending
+ * (effective_from > opDate) version is invisible until its day. Legacy NULL rows
+ * sort last but win when they're the only active row (identical to the pre-0162
+ * most-recent-active pick). PostgREST `.or()` string form — opDate is a plain
+ * YYYY-MM-DD (regex-validated at the callers), never user free-text.
+ *
+ * Non-generic (see EffectiveResolvableBuilder) — callers pass their builder with a
+ * single `as unknown as` cast and cast the return back to the concrete builder so
+ * `.maybeSingle<Row>()` keeps its row typing. Pure query-shape; zero I/O.
+ */
+export function applyEffectiveResolution(
+  query: EffectiveResolvableBuilder,
+  opDate: string,
+): EffectiveResolvableBuilder {
+  return query
+    .eq("active", true)
+    .or(`effective_from.is.null,effective_from.lte.${opDate}`)
+    .order("effective_from", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false })
+    .limit(1);
 }

@@ -20,6 +20,7 @@ import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 
 import { DashboardBackLink } from "@/components/DashboardBackLink";
 import { CashClient } from "./cash-client";
@@ -80,15 +81,14 @@ export default async function CashPage({ searchParams }: PageProps) {
   // in lib/cash.ts submitCashReport (lines 127–137).
   let closingFinalized = false;
   if (!report) {
-    const { data: cTmpl } = await sb
+    // PR-3: date-aware resolution — the closing version effective today (the
+    // instance lookup keys on `today`).
+    const cTmplBase = sb
       .from("checklist_templates")
       .select("id")
       .eq("location_id", locationParam)
-      .eq("type", "closing")
-      .eq("active", true)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle<{ id: string }>();
+      .eq("type", "closing") as unknown as EffectiveResolvableBuilder;
+    const { data: cTmpl } = await applyEffectiveResolution(cTmplBase, today).maybeSingle<{ id: string }>();
     if (cTmpl) {
       const { data: cInst } = await sb
         .from("checklist_instances")

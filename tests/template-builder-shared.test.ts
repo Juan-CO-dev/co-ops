@@ -21,6 +21,14 @@ import {
   OPENING_CONFIRM_FLOOR_LEVEL,
   confirmFloorForType,
   TemplateBuilderError,
+  classifyEdits,
+  applyEditsToItems,
+  shiftOperationalDay,
+  nextOperationalDay,
+  versionOutranks,
+  resolveEffectiveVersionId,
+  type TemplateItemEdit,
+  type LineageVersionRow,
 } from "@/lib/admin/template-builder-shared";
 import type { ChecklistTemplateItem, ChecklistTemplateItemTranslations } from "@/lib/types";
 
@@ -333,5 +341,255 @@ describe("Opening Phase-2 mirror — end-to-end read-only + Doctor exclusion (PR
       { locationId: "C", labels: [mirrorItem().label, "Lock door"] },
     );
     expect(findings).toHaveLength(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PR-3 — classifyEdits (the diff classifier truth-table; CI-owned per spec §6).
+// The classifier feeds the confirm modal + audit metadata ONLY — it never gates
+// the write path (everything versions). Order-independent, coalescing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Source items for classifier tests: two active rows + one already-inactive. */
+function src() {
+  return [
+    item({ id: "a", label: "Sweep floor", minRoleLevel: 3, required: true, active: true }),
+    item({ id: "b", label: "Count cash", minRoleLevel: 4, required: false, active: true }),
+    item({ id: "c", label: "Old thing", minRoleLevel: 3, required: true, active: false }),
+  ];
+}
+
+describe("classifyEdits — the diff classifier truth-table", () => {
+  it("empty edits → the zero summary", () => {
+    expect(classifyEdits(src(), [])).toEqual({
+      added: [],
+      removed: [],
+      relabeled: [],
+      reordered: 0,
+      roleChanged: [],
+      requiredChanged: [],
+    });
+  });
+
+  it("counts a genuine relabel; ignores a no-op relabel to the same label", () => {
+    const edits: TemplateItemEdit[] = [
+      { op: "relabel", itemId: "a", label: "Sweep the floor" },
+      { op: "relabel", itemId: "b", label: "Count cash" }, // unchanged
+    ];
+    const d = classifyEdits(src(), edits);
+    expect(d.relabeled).toEqual([{ itemId: "a", from: "Sweep floor", to: "Sweep the floor" }]);
+  });
+
+  it("coalesces multiple relabels of one item (last-write-wins A→B→C = A→C)", () => {
+    const edits: TemplateItemEdit[] = [
+      { op: "relabel", itemId: "a", label: "B" },
+      { op: "relabel", itemId: "a", label: "C" },
+    ];
+    expect(classifyEdits(src(), edits).relabeled).toEqual([{ itemId: "a", from: "Sweep floor", to: "C" }]);
+  });
+
+  it("disable of an active row → removed; disable of an already-inactive row → NOT removed", () => {
+    const d = classifyEdits(src(), [
+      { op: "disable", itemId: "a" },
+      { op: "disable", itemId: "c" }, // c is already inactive
+    ]);
+    expect(d.removed).toEqual([{ itemId: "a", label: "Sweep floor" }]);
+  });
+
+  it("disable then enable nets to no removal (order-independent coalesce)", () => {
+    expect(classifyEdits(src(), [{ op: "disable", itemId: "a" }, { op: "enable", itemId: "a" }]).removed).toEqual([]);
+  });
+
+  it("counts adds by tempId + label", () => {
+    const d = classifyEdits(src(), [
+      { op: "add", tempId: "t1", label: "New step", displayOrder: 99, minRoleLevel: 3, required: true, expectsCount: false },
+    ]);
+    expect(d.added).toEqual([{ tempId: "t1", label: "New step" }]);
+  });
+
+  it("role change reported only when the level differs from source", () => {
+    const d = classifyEdits(src(), [
+      { op: "role", itemId: "a", minRoleLevel: 5 },
+      { op: "role", itemId: "b", minRoleLevel: 4 }, // unchanged
+    ]);
+    expect(d.roleChanged).toEqual([{ itemId: "a", label: "Sweep floor", from: 3, to: 5 }]);
+  });
+
+  it("required change reported only when it differs from source", () => {
+    const d = classifyEdits(src(), [
+      { op: "required", itemId: "b", required: true }, // false → true
+      { op: "required", itemId: "a", required: true }, // unchanged
+    ]);
+    expect(d.requiredChanged).toEqual([{ itemId: "b", label: "Count cash", to: true }]);
+  });
+
+  it("reorder counts distinct moved ids, but not ids that are also disabled", () => {
+    const d = classifyEdits(src(), [
+      { op: "reorder", itemId: "a", displayOrder: 2 },
+      { op: "reorder", itemId: "b", displayOrder: 1 },
+      { op: "reorder", itemId: "b", displayOrder: 3 }, // same id twice = 1
+      { op: "disable", itemId: "b" }, // disabled → its reorder doesn't count
+    ]);
+    expect(d.reordered).toBe(1); // only "a" survives
+  });
+
+  it("is order-independent for the full mixed draft", () => {
+    const edits: TemplateItemEdit[] = [
+      { op: "relabel", itemId: "a", label: "Sweep the floor" },
+      { op: "role", itemId: "a", minRoleLevel: 5 },
+      { op: "required", itemId: "b", required: true },
+      { op: "disable", itemId: "b" },
+      { op: "add", tempId: "t1", label: "New step", displayOrder: 99, minRoleLevel: 3, required: true, expectsCount: false },
+    ];
+    const forward = classifyEdits(src(), edits);
+    const backward = classifyEdits(src(), [...edits].reverse());
+    expect(forward).toEqual(backward);
+    expect(forward.added).toHaveLength(1);
+    expect(forward.removed).toEqual([{ itemId: "b", label: "Count cash" }]);
+    expect(forward.relabeled).toHaveLength(1);
+    expect(forward.roleChanged).toHaveLength(1);
+    // b's required change: b ends disabled/removed but the requiredChanged classifier
+    // reports the field delta regardless — the modal shows both facts honestly.
+    expect(forward.requiredChanged).toEqual([{ itemId: "b", label: "Count cash", to: true }]);
+  });
+});
+
+describe("applyEditsToItems — in-memory draft render (preview + list)", () => {
+  function items() {
+    return [
+      item({ id: "a", label: "Sweep floor", displayOrder: 1, required: true, active: true }),
+      item({ id: "b", label: "Count cash", displayOrder: 2, minRoleLevel: 4, active: true }),
+    ];
+  }
+
+  it("relabel + describe + role + required mutate the drafted row", () => {
+    const out = applyEditsToItems(items(), [
+      { op: "relabel", itemId: "a", label: "Sweep the floor" },
+      { op: "describe", itemId: "a", description: "corners too" },
+      { op: "role", itemId: "b", minRoleLevel: 6 },
+      { op: "required", itemId: "b", required: true },
+    ]);
+    const a = out.find((it) => it.id === "a")!;
+    const b = out.find((it) => it.id === "b")!;
+    expect(a.label).toBe("Sweep the floor");
+    expect(a.description).toBe("corners too");
+    expect(b.minRoleLevel).toBe(6);
+    expect(b.required).toBe(true);
+  });
+
+  it("disable flips active=false (kept in the array for the struck-through list)", () => {
+    const out = applyEditsToItems(items(), [{ op: "disable", itemId: "a" }]);
+    expect(out.find((it) => it.id === "a")!.active).toBe(false);
+    expect(out).toHaveLength(2);
+  });
+
+  it("add produces a synthetic draft- row sorted by displayOrder", () => {
+    const out = applyEditsToItems(items(), [
+      { op: "add", tempId: "t1", label: "New", displayOrder: 3, minRoleLevel: 3, required: true, expectsCount: false },
+    ]);
+    expect(out).toHaveLength(3);
+    const added = out.find((it) => it.id === "draft-t1")!;
+    expect(added.label).toBe("New");
+    expect(out[out.length - 1]!.id).toBe("draft-t1"); // sorted last (order 3)
+  });
+
+  it("reorder swaps rendered order by displayOrder", () => {
+    const out = applyEditsToItems(items(), [
+      { op: "reorder", itemId: "a", displayOrder: 2 },
+      { op: "reorder", itemId: "b", displayOrder: 1 },
+    ]);
+    expect(out.map((it) => it.id)).toEqual(["b", "a"]);
+  });
+
+  it("NEVER edits a mirror row (the §5 seal)", () => {
+    const src = [mirrorItem({ id: "mir", label: "Mirror", displayOrder: 1 })];
+    const out = applyEditsToItems(src, [
+      { op: "relabel", itemId: "mir", label: "hacked" },
+      { op: "disable", itemId: "mir" },
+    ]);
+    expect(out[0]!.label).toBe("Mirror");
+    expect(out[0]!.active).toBe(true);
+  });
+
+  it("add with a count spine-link carries the item/sku ref", () => {
+    const outItem = applyEditsToItems(items(), [
+      { op: "add", tempId: "ti", label: "Count subs", displayOrder: 3, minRoleLevel: 3, required: true, expectsCount: true, spineLink: { kind: "item", id: "item-9" } },
+    ]);
+    expect(outItem.find((it) => it.id === "draft-ti")!.itemId).toBe("item-9");
+    const outSku = applyEditsToItems(items(), [
+      { op: "add", tempId: "ts", label: "Count SKU", displayOrder: 3, minRoleLevel: 3, required: true, expectsCount: true, spineLink: { kind: "sku", id: "sku-9" } },
+    ]);
+    expect(outSku.find((it) => it.id === "draft-ts")!.vendorItemId).toBe("sku-9");
+  });
+});
+
+describe("versionOutranks + resolveEffectiveVersionId — the date-aware resolution rule", () => {
+  const row = (over: Partial<LineageVersionRow> & { id: string }): LineageVersionRow => ({
+    active: true,
+    effective_from: null,
+    created_at: "2026-01-01T00:00:00Z",
+    ...over,
+  });
+
+  it("effective_from DESC, NULLS LAST", () => {
+    const legacy = row({ id: "legacy", effective_from: null });
+    const dated = row({ id: "dated", effective_from: "2026-07-20" });
+    expect(versionOutranks(dated, legacy)).toBe(true); // a dated version beats a NULL
+    expect(versionOutranks(legacy, dated)).toBe(false);
+  });
+
+  it("newer effective_from wins; ties break on created_at DESC", () => {
+    const older = row({ id: "o", effective_from: "2026-07-20" });
+    const newer = row({ id: "n", effective_from: "2026-07-28" });
+    expect(versionOutranks(newer, older)).toBe(true);
+    const t1 = row({ id: "t1", effective_from: "2026-07-28", created_at: "2026-07-27T10:00:00Z" });
+    const t2 = row({ id: "t2", effective_from: "2026-07-28", created_at: "2026-07-27T12:00:00Z" });
+    expect(versionOutranks(t2, t1)).toBe(true); // later created_at wins the tie
+  });
+
+  it("legacy-only lineage → legacy is currently effective (no publish yet)", () => {
+    expect(resolveEffectiveVersionId([row({ id: "legacy" })], "2026-07-28")).toBe("legacy");
+  });
+
+  it("current + pending: today resolves current, the pending is invisible until its day", () => {
+    const rows = [
+      row({ id: "current", effective_from: null }),
+      row({ id: "pending", effective_from: "2026-07-29" }),
+    ];
+    expect(resolveEffectiveVersionId(rows, "2026-07-28")).toBe("current"); // pending hidden
+    expect(resolveEffectiveVersionId(rows, "2026-07-29")).toBe("pending"); // its day arrived
+  });
+
+  it("apply-now (effective today) wins over the prior current from today onward", () => {
+    const rows = [
+      row({ id: "legacy", effective_from: null, created_at: "2026-01-01T00:00:00Z" }),
+      row({ id: "applied", effective_from: "2026-07-28", created_at: "2026-07-28T09:00:00Z" }),
+    ];
+    expect(resolveEffectiveVersionId(rows, "2026-07-28")).toBe("applied");
+  });
+
+  it("only-pending lineage → null (nothing effective yet)", () => {
+    expect(resolveEffectiveVersionId([row({ id: "p", effective_from: "2026-08-01" })], "2026-07-28")).toBeNull();
+  });
+
+  it("inactive rows are never resolved", () => {
+    const rows = [
+      row({ id: "dead", effective_from: "2026-07-28", active: false }),
+      row({ id: "live", effective_from: null }),
+    ];
+    expect(resolveEffectiveVersionId(rows, "2026-07-28")).toBe("live");
+  });
+});
+
+describe("operational-date primitives (pure UTC-anchored day math)", () => {
+  it("shiftOperationalDay adds/subtracts whole days across month + year boundaries", () => {
+    expect(shiftOperationalDay("2026-07-28", 1)).toBe("2026-07-29");
+    expect(shiftOperationalDay("2026-07-31", 1)).toBe("2026-08-01");
+    expect(shiftOperationalDay("2026-12-31", 1)).toBe("2027-01-01");
+    expect(shiftOperationalDay("2026-03-01", -1)).toBe("2026-02-28");
+    expect(shiftOperationalDay("2024-02-28", 1)).toBe("2024-02-29"); // leap year
+  });
+  it("nextOperationalDay = tomorrow", () => {
+    expect(nextOperationalDay("2026-07-28")).toBe("2026-07-29");
   });
 });
