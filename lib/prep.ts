@@ -1377,15 +1377,15 @@ export async function autoCompleteClosingMidDayRef(
   });
   if (!refItemId) return;
 
-  const { data: cTmpl, error: ctErr } = await service
+  // PR-3: date-aware resolution — the closing version effective on this day (the
+  // instance lookup below keys on (template_id, location, date), so it must resolve
+  // the SAME version the day's closing bound).
+  const cTmplBase = service
     .from("checklist_templates")
     .select("id")
     .eq("location_id", args.locationId)
-    .eq("type", "closing")
-    .eq("active", true)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle<{ id: string }>();
+    .eq("type", "closing") as unknown as EffectiveResolvableBuilder;
+  const { data: cTmpl, error: ctErr } = await applyEffectiveResolution(cTmplBase, args.date).maybeSingle<{ id: string }>();
   if (ctErr) throw new Error(`autoCompleteClosingMidDayRef: closing template: ${ctErr.message}`);
   if (!cTmpl) return;
 

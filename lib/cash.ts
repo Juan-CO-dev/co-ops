@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { audit } from "@/lib/audit";
 import type { RoleCode } from "@/lib/roles";
+import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 
 import {
   CASH_REPORT_BASE_LEVEL,
@@ -107,10 +108,12 @@ export async function submitCashReport(
     cashTipsCents: number; onShift: OnShiftEntry[]; overShortNote: string | null;
   },
 ): Promise<CashSubmitResult> {
-  // Edit-window gate: refuse if today's closing is confirmed.
-  const { data: cTmpl } = await service.from("checklist_templates").select("id")
-    .eq("location_id", args.locationId).eq("type", "closing").eq("active", true)
-    .order("created_at", { ascending: false }).limit(1).maybeSingle<{ id: string }>();
+  // Edit-window gate: refuse if today's closing is confirmed. PR-3 date-aware
+  // resolution — resolve the closing version effective on args.date (the instance
+  // lookup keys on that date).
+  const cTmplBase = service.from("checklist_templates").select("id")
+    .eq("location_id", args.locationId).eq("type", "closing") as unknown as EffectiveResolvableBuilder;
+  const { data: cTmpl } = await applyEffectiveResolution(cTmplBase, args.date).maybeSingle<{ id: string }>();
   if (cTmpl) {
     const { data: cInst } = await service.from("checklist_instances").select("status")
       .eq("template_id", cTmpl.id).eq("location_id", args.locationId).eq("date", args.date)
