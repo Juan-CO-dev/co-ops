@@ -54,7 +54,11 @@ export async function PlaceholderCard({
 }: PlaceholderCardProps) {
   // Only pay the session read when we actually render the back link. The stub
   // pages are all proxy-gated, so a session is guaranteed to exist.
-  const lang = showBackLink ? (await requireSessionFromHeaders(parentHref)).user.language : "en";
+  const lang = showBackLink ? (await requireSessionFromHeaders(
+    // NOTE: this arg is the PARENT href, not the stub's own path — benign (both are
+    // non-admin so the step-up decision is identical; the denial redirect is
+    // proxy-unreachable), kept for simplicity per PR-A review LOW-3.
+    parentHref)).user.language : "en";
 
   return (
     <div className="mx-auto w-full max-w-[460px] p-3 pb-8">

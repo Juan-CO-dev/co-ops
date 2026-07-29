@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { BackLink } from "@/components/nav/BackLink";
 
 import { LineChart } from "@/components/trends/LineChart";
 import type { PersonDetail as PersonDetailData } from "@/lib/team-metrics";
@@ -55,13 +56,11 @@ export function PersonDetail({
 
   return (
     <div className="space-y-3">
-      {/* 1. Back link */}
-      <Link
-        href={`/reports/trends/team?location=${locationId}`}
-        className="text-xs text-co-text-muted"
-      >
-        ← {serverT(language, "people.detail.back")}
-      </Link>
+      {/* 1. Back link — the registry primitive (polish PR-A; one idiom, 44px). */}
+      <BackLink
+        hrefOverride={`/reports/trends/team?location=${locationId}`}
+        labelKey="people.detail.back"
+      />
 
       {/* 2. Header */}
       <div className="flex items-start justify-between gap-3">

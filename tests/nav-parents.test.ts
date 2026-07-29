@@ -98,7 +98,7 @@ describe("parentFor — operator drill-ins", () => {
   it("trends ops/team sub-pages → /reports/trends", () => {
     expect(parentFor("/reports/trends/ops").href).toBe("/reports/trends");
     expect(parentFor("/reports/trends/team").href).toBe("/reports/trends");
-    expect(parentFor("/reports/trends/team/person-9").href).toBe("/reports/trends");
+    expect(parentFor("/reports/trends/team/person-9").href).toBe("/reports/trends/team");
   });
 });
 

@@ -77,7 +77,7 @@ const RULES: ParentRule[] = [
 
   // ─── Operator: drill-ins → their list ──────────────────────────────────
   { pattern: "/reports/[type]/[id]", parent: { href: "/reports", labelKey: "reports.page.title" } },
-  { pattern: "/reports/trends/team/[personId]", parent: { href: "/reports/trends", labelKey: "reports.trends.landing.title" } },
+  { pattern: "/reports/trends/team/[personId]", parent: { href: "/reports/trends/team", labelKey: "people.detail.back" } },
   { pattern: "/reports/trends/team", parent: { href: "/reports/trends", labelKey: "reports.trends.landing.title" } },
   { pattern: "/reports/trends/ops", parent: { href: "/reports/trends", labelKey: "reports.trends.landing.title" } },
   { pattern: "/reports/trends", parent: { href: "/reports", labelKey: "reports.page.title" } },
