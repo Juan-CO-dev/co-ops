@@ -38,6 +38,7 @@ import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { loadUnreadForUser } from "@/lib/notifications";
 import { loadAmPrepDashboardState, loadMidDayPrepDashboardState } from "@/lib/prep";
+import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 import { loadCashDashboardState } from "@/lib/cash";
 import { MAINTENANCE_BASE_LEVEL } from "@/lib/maintenance";
 import { loadPmDashboardState } from "@/lib/pm-report";
@@ -148,16 +149,14 @@ async function loadOperationalState(
 
   // Two-step query (per AGENTS.md Phase 2 Session 4: PostgREST embedded-select
   // .eq() filter on relation can fail unpredictably). Resolve template first,
-  // then instances.
-  const { data: tmpl, error: tmplErr } = await sb
+  // then instances. PR-3: date-aware resolution on `today` — the dashboard tile
+  // reflects the version effective today (a pending next-day version stays hidden).
+  const closingBase = sb
     .from("checklist_templates")
     .select("id")
     .eq("location_id", locationId)
-    .eq("type", "closing")
-    .eq("active", true)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle<{ id: string }>();
+    .eq("type", "closing") as unknown as EffectiveResolvableBuilder;
+  const { data: tmpl, error: tmplErr } = await applyEffectiveResolution(closingBase, today).maybeSingle<{ id: string }>();
   if (tmplErr) throw new Error(`load closing template: ${tmplErr.message}`);
 
   if (!tmpl) {
@@ -398,15 +397,14 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     if (auth.level < 3) {
       openingDashboard = { isVisibleToActor: false, hasTemplate: false, status: null, finalizedAt: null, finalizedByName: null };
     } else {
-      const { data: oTmpl } = await sb
+      // PR-3: date-aware resolution on today's operational date (the opening tile
+      // reflects the version effective today; a pending next-day version is hidden).
+      const openingBase = sb
         .from("checklist_templates")
         .select("id")
         .eq("location_id", selectedLocation.id)
-        .eq("type", "opening")
-        .eq("active", true)
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle<{ id: string }>();
+        .eq("type", "opening") as unknown as EffectiveResolvableBuilder;
+      const { data: oTmpl } = await applyEffectiveResolution(openingBase, operational.todayDate).maybeSingle<{ id: string }>();
       if (!oTmpl) {
         openingDashboard = { isVisibleToActor: true, hasTemplate: false, status: null, finalizedAt: null, finalizedByName: null };
       } else {

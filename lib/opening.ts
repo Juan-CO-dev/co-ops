@@ -53,7 +53,11 @@ import {
 } from "@/lib/prep-consumption";
 import { isPrepData } from "./prep";
 import type { RoleCode } from "./roles";
-import { OPENING_CONFIRM_FLOOR_LEVEL } from "@/lib/admin/template-builder-shared";
+import {
+  OPENING_CONFIRM_FLOOR_LEVEL,
+  applyEffectiveResolution,
+  type EffectiveResolvableBuilder,
+} from "@/lib/admin/template-builder-shared";
 import {
   TEMPLATE_ITEM_COLUMNS,
   type TemplateItemRow,
@@ -637,15 +641,18 @@ export async function loadOpeningState(
   // template across ALL locations — wrong for any caller scoping to one location.
   // The same pattern applies to prep templates (`lib/prep.ts loadAmPrepState`)
   // and closing templates (`app/(authed)/operations/closing/page.tsx`).
-  const { data: tmplRow, error: tmplErr } = await service
+  // PR-3: date-aware resolution on the opening date (args.date). Newest active
+  // version effective on that day — a pending next-day version is invisible until
+  // its day, so a mid-shift publish can never strand the opener.
+  const openingBase = service
     .from("checklist_templates")
     .select("id, name")
     .eq("location_id", args.locationId)
-    .eq("type", "opening")
-    .eq("active", true)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle<{ id: string; name: string }>();
+    .eq("type", "opening") as unknown as EffectiveResolvableBuilder;
+  const { data: tmplRow, error: tmplErr } = await applyEffectiveResolution(
+    openingBase,
+    args.date,
+  ).maybeSingle<{ id: string; name: string }>();
   if (tmplErr) {
     throw new Error(`loadOpeningState: load template: ${tmplErr.message}`);
   }
@@ -961,16 +968,20 @@ async function materializeCloserCountSnapshots(
   // type='prep'; without this filter the most-recent-active picker resolves the
   // mid-day template, so opening's closer-count snapshots would match against the
   // wrong items (mid-day items don't carry the opening references_template_item_id).
-  const { data: amPrepTmpl, error: tmplErr } = await service
+  // PR-3: date-aware resolution on the prior operational date (the day AM Prep was
+  // submitted). Prep is unversioned today (single active row, effective_from NULL →
+  // always effective), so this collapses to that row; applied uniformly with the
+  // sweep so it stays correct if prep ever gains versioning.
+  const amPrepBase = service
     .from("checklist_templates")
     .select("id")
     .eq("location_id", args.locationId)
     .eq("type", "prep")
-    .eq("prep_subtype", "am_prep")
-    .eq("active", true)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle<{ id: string }>();
+    .eq("prep_subtype", "am_prep") as unknown as EffectiveResolvableBuilder;
+  const { data: amPrepTmpl, error: tmplErr } = await applyEffectiveResolution(
+    amPrepBase,
+    args.priorOperationalDate,
+  ).maybeSingle<{ id: string }>();
   if (tmplErr) {
     throw new Error(
       `materializeCloserCountSnapshots: load AM Prep template: ${tmplErr.message}`,

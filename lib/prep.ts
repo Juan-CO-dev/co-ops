@@ -64,6 +64,8 @@ import {
   rowToTemplateItem,
 } from "./template-items";
 import { loadItemDefns, loadItemOverrides, operationalDayOfWeek, pickOverride, resolveLineDefinition } from "@/lib/items";
+import { operationalNow } from "@/lib/midshift";
+import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 import { loadPrepSections } from "@/lib/prep-sections.server";
 import { loadDerivedForItems, recordProductionFromPrep, skuConsumptionForItem, type DerivedSku, type ConfirmedInput } from "@/lib/prep-consumption";
 import type {
@@ -1371,6 +1373,7 @@ export async function autoCompleteClosingMidDayRef(
   const refItemId = await resolveClosingReportRefItemId(service, {
     locationId: args.locationId,
     reportType: "mid_day_prep",
+    opDate: args.date, // PR-3: resolve the closing ref against this day's version
   });
   if (!refItemId) return;
 
@@ -1570,17 +1573,17 @@ export async function reconcileClosingReportRefs(
   const openingRefId = await resolveClosingReportRefItemId(service, {
     locationId: args.locationId,
     reportType: "opening_report",
+    opDate: args.date, // PR-3: resolve the closing ref against the report's date
   });
   if (openingRefId) {
-    const { data: oTmpl, error: oTmplErr } = await service
+    // PR-3: date-aware resolution on the closing report's operational date — the
+    // same-day opening instance is matched against the version effective that day.
+    const oBase = service
       .from("checklist_templates")
       .select("id")
       .eq("location_id", args.locationId)
-      .eq("type", "opening")
-      .eq("active", true)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle<{ id: string }>();
+      .eq("type", "opening") as unknown as EffectiveResolvableBuilder;
+    const { data: oTmpl, error: oTmplErr } = await applyEffectiveResolution(oBase, args.date).maybeSingle<{ id: string }>();
     if (oTmplErr) throw new Error(`reconcileClosingReportRefs: opening template: ${oTmplErr.message}`);
     if (oTmpl) {
       const { data: oInst, error: oErr } = await service
@@ -1615,18 +1618,18 @@ export async function reconcileClosingReportRefs(
   const amRefId = await resolveClosingReportRefItemId(service, {
     locationId: args.locationId,
     reportType: "am_prep",
+    opDate: args.date,
   });
   if (amRefId) {
-    const { data: amTmpl, error: amTmplErr } = await service
+    // PR-3: date-aware resolution on the closing report's operational date (prep is
+    // unversioned → collapses to the single active row; applied uniformly).
+    const amBase = service
       .from("checklist_templates")
       .select("id")
       .eq("location_id", args.locationId)
       .eq("type", "prep")
-      .eq("prep_subtype", "am_prep")
-      .eq("active", true)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle<{ id: string }>();
+      .eq("prep_subtype", "am_prep") as unknown as EffectiveResolvableBuilder;
+    const { data: amTmpl, error: amTmplErr } = await applyEffectiveResolution(amBase, args.date).maybeSingle<{ id: string }>();
     if (amTmplErr) throw new Error(`reconcileClosingReportRefs: am-prep template: ${amTmplErr.message}`);
     if (amTmpl) {
       const { data: amInst, error: amErr } = await service
@@ -1661,6 +1664,7 @@ export async function reconcileClosingReportRefs(
   const midRefId = await resolveClosingReportRefItemId(service, {
     locationId: args.locationId,
     reportType: "mid_day_prep",
+    opDate: args.date,
   });
   if (midRefId) {
     const mTmpl = await resolveMidDayPrepTemplate(service, args.locationId);
@@ -1699,6 +1703,7 @@ export async function reconcileClosingReportRefs(
   const cashRefId = await resolveClosingReportRefItemId(service, {
     locationId: args.locationId,
     reportType: "cash_report",
+    opDate: args.date,
   });
   if (cashRefId) {
     const { data: cash, error: cashErr } = await service
@@ -1726,6 +1731,7 @@ export async function reconcileClosingReportRefs(
   const pmRefId = await resolveClosingReportRefItemId(service, {
     locationId: args.locationId,
     reportType: "pm_report",
+    opDate: args.date,
   });
   if (pmRefId) {
     const { data: pm, error: pmErr } = await service
@@ -2059,17 +2065,21 @@ export async function resolveClosingReportRefItemId(
   args: {
     locationId: string;
     reportType: ReportType;
+    /** PR-3: the operational date to resolve the closing version on. Optional so
+     *  the 5 non-reconcile callers (which want "the current closing template") are
+     *  untouched — defaults to operational-today. The reconcile caller threads its
+     *  report date so the ref item is resolved against the version effective that day. */
+    opDate?: string;
   },
 ): Promise<string | null> {
-  const { data: tmplRow, error: tmplErr } = await service
+  const opDate = args.opDate ?? operationalNow(new Date()).date;
+  // PR-3: date-aware resolution — the closing version effective on opDate.
+  const closingBase = service
     .from("checklist_templates")
     .select("id")
     .eq("location_id", args.locationId)
-    .eq("type", "closing")
-    .eq("active", true)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle<{ id: string }>();
+    .eq("type", "closing") as unknown as EffectiveResolvableBuilder;
+  const { data: tmplRow, error: tmplErr } = await applyEffectiveResolution(closingBase, opDate).maybeSingle<{ id: string }>();
   if (tmplErr) {
     throw new Error(`resolveClosingReportRefItemId: load template: ${tmplErr.message}`);
   }
