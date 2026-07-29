@@ -15,7 +15,7 @@ import { serverT } from "@/lib/i18n/server";
 import { formatCents } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { loadCateringInsights, INSIGHTS_READ_MIN } from "@/lib/catering/insights";
-import { CateringBackLink } from "@/components/catering/CateringBackLink";
+import { BackLink } from "@/components/nav/BackLink";
 
 const PIPELINE_STAGES = ["inquiry", "quote_sent", "confirmed", "completed", "lost"] as const;
 const QUOTE_STATUSES = ["draft", "sent", "accepted", "declined", "expired"] as const;
@@ -51,9 +51,7 @@ export default async function CateringInsightsPage() {
 
   return (
     <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
-      <div className="mb-3">
-        <CateringBackLink />
-      </div>
+      <BackLink />
       <h1 className="text-lg font-bold text-co-text">{serverT(lang, "catering.insights.title")}</h1>
       <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "catering.insights.subtitle")}</p>
 

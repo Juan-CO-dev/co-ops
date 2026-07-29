@@ -19,7 +19,7 @@ import { loadTrendSeries, type TrendGranularity, type TrendSeries } from "@/lib/
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
-import { BackToTrendsLink } from "@/components/trends/BackToTrendsLink";
+import { BackLink } from "@/components/nav/BackLink";
 import { LineChart } from "@/components/trends/LineChart";
 import type { LineSeries } from "@/components/trends/LineChart";
 import { BarChart } from "@/components/trends/BarChart";
@@ -86,9 +86,7 @@ export default async function OpsTrendsPage({ searchParams }: PageProps) {
 
   return (
     <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
-      <div className="mb-3">
-        <BackToTrendsLink locationId={locationParam} language={language} />
-      </div>
+      <BackLink search={`?location=${locationParam}`} labelKey="reports.trends.back" />
       <h1 className="text-lg font-bold text-co-text">{serverT(language, "reports.trends.title")}</h1>
       <p className="mb-4 text-xs text-co-text-muted">{serverT(language, "reports.trends.subtitle")}</p>
 
