@@ -210,7 +210,13 @@ export async function loadTrendSeries(
   // ── 2. Template → ReportTypeKey + required-item ids ──
   const tmplIds = [...new Set(instances.map((i) => i.template_id))];
   const typeByTmpl = new Map<string, ReportTypeKey>();
-  const requiredByTmpl = new Map<string, Set<string>>();
+  // Required ids per template, SPLIT active/inactive (spec §2.2 UNION semantics):
+  // an instance's required-at-the-time set is approximated as
+  //   activeRequired ∪ (inactiveRequired ∩ completed-on-this-instance)
+  // — a later-removed item still scores where it was actually done, but never
+  // becomes a phantom permanent "miss" on instances created after its removal.
+  // PR-3's version-every-publish makes this exact.
+  const requiredByTmpl = new Map<string, { active: Set<string>; inactive: Set<string> }>();
   if (tmplIds.length) {
     const { data: tmpls } = await service
       .from("checklist_templates")
@@ -220,15 +226,11 @@ export async function loadTrendSeries(
       const rt = checklistReportType(t.type, t.prep_subtype);
       if (rt) typeByTmpl.set(t.id, rt);
     }
-    // HISTORICAL read (spec §2.2): required-item ids across a date range of PAST
-    // instances, read by template_id WITHOUT the active filter — an item that was
-    // required when an instance ran but later disabled still scores against the
-    // completions it captured (matches the fold's completedIds set below).
-    const titems = await selectAllRows<{ id: string; template_id: string; required: boolean }>(
+    const titems = await selectAllRows<{ id: string; template_id: string; required: boolean; active: boolean }>(
       (from, to) =>
         service
           .from("checklist_template_items")
-          .select("id, template_id, required")
+          .select("id, template_id, required, active")
           .in("template_id", tmplIds)
           .order("id", { ascending: true })
           .range(from, to),
@@ -237,10 +239,10 @@ export async function loadTrendSeries(
       if (!ti.required) continue;
       let s = requiredByTmpl.get(ti.template_id);
       if (!s) {
-        s = new Set<string>();
+        s = { active: new Set<string>(), inactive: new Set<string>() };
         requiredByTmpl.set(ti.template_id, s);
       }
-      s.add(ti.id);
+      (ti.active ? s.active : s.inactive).add(ti.id);
     }
   }
 
@@ -308,12 +310,27 @@ export async function loadTrendSeries(
     }
 
     const required = requiredByTmpl.get(inst.template_id);
-    if (required && required.size > 0) {
+    if (required && (required.active.size > 0 || required.inactive.size > 0)) {
       const completedIds = new Set(comps.map((c) => c.template_item_id));
+      // UNION denominator per instance (spec §2.2): active required items always
+      // count; inactive required items count ONLY where this instance completed
+      // them (they existed then) — never a phantom miss after removal.
       let done = 0;
-      for (const reqId of required) if (completedIds.has(reqId)) done++;
-      a.doneSum += done;
-      a.reqSum += required.size;
+      let req = 0;
+      for (const reqId of required.active) {
+        req++;
+        if (completedIds.has(reqId)) done++;
+      }
+      for (const reqId of required.inactive) {
+        if (completedIds.has(reqId)) {
+          req++;
+          done++;
+        }
+      }
+      if (req > 0) {
+        a.doneSum += done;
+        a.reqSum += req;
+      }
     }
   }
 

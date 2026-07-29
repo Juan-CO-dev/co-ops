@@ -381,14 +381,17 @@ async function loadChecklistDetail(
 
   const showNotes = args.viewer.level >= REPORTS_HUB_NOTES_LEVEL;
 
-  // HISTORICAL read (spec §2.2): render a PAST report instance's items by
-  // template_id WITHOUT the active filter — an item disabled after this instance
-  // ran must still render for the completions it captured.
-  const titems = await selectAllRows<{ id: string; station: string; label: string; display_order: number }>(
+  // HISTORICAL read (spec §2.2, UNION semantics): read ALL items by template_id
+  // (no active filter), then render each iff active OR completed on THIS
+  // instance. Include-all alone paints a phantom "not done" row on instances
+  // created AFTER an in-place removal; the active filter alone erases history
+  // (the owner's named failure). The union is right on both sides; PR-3's
+  // version-every-publish makes it exact. Filter applied where items map below.
+  const titems = await selectAllRows<{ id: string; station: string; label: string; display_order: number; active: boolean }>(
     (from, to) =>
       service
         .from("checklist_template_items")
-        .select("id, station, label, display_order")
+        .select("id, station, label, display_order, active")
         .eq("template_id", inst.template_id)
         .order("display_order", { ascending: true })
         .order("id", { ascending: true })
@@ -433,7 +436,9 @@ async function loadChecklistDetail(
       nameById.set(u.id, u.name);
   }
 
-  const items: ChecklistDetailItem[] = titems.map((ti) => {
+  // UNION filter (spec §2.2): an inactive item renders ONLY if this instance
+  // completed it — never as a phantom skip on instances that never had it.
+  const items: ChecklistDetailItem[] = titems.filter((ti) => ti.active || compByItem.has(ti.id)).map((ti) => {
     const c = compByItem.get(ti.id);
     const countValue = c?.count_value ?? null;
     return {
@@ -579,14 +584,15 @@ async function loadOpeningDetail(
   // (the same loader loadOpeningState materializes + reads from).
   const closerSnapshots = await loadOpeningCloserCountSnapshots(service, args.instanceId);
 
-  // HISTORICAL read (spec §2.2): render a PAST opening report instance's items by
-  // template_id WITHOUT the active filter — an item disabled after this instance
-  // ran must still render for the completions it captured.
-  const titems = await selectAllRows<{ id: string; station: string; label: string; display_order: number }>(
+  // HISTORICAL read (spec §2.2, UNION semantics): read ALL items by template_id
+  // (no active filter), then render each iff active OR completed on THIS
+  // instance — no erased history, no phantom skips on instances created after
+  // an in-place removal. PR-3's version-every-publish makes this exact.
+  const titems = await selectAllRows<{ id: string; station: string; label: string; display_order: number; active: boolean }>(
     (from, to) =>
       service
         .from("checklist_template_items")
-        .select("id, station, label, display_order")
+        .select("id, station, label, display_order, active")
         .eq("template_id", inst.template_id)
         .order("display_order", { ascending: true })
         .order("id", { ascending: true })
@@ -640,7 +646,9 @@ async function loadOpeningDetail(
   let spotCheckCount = 0;
   let nullBaselineCount = 0;
 
-  const items: OpeningDetailItem[] = titems.map((ti) => {
+  // UNION filter (spec §2.2): inactive items render only when this instance
+  // completed them — never as phantom skips.
+  const items: OpeningDetailItem[] = titems.filter((ti) => ti.active || compByItem.has(ti.id)).map((ti) => {
     const c = compByItem.get(ti.id);
     const countValue = c?.count_value ?? null;
     const snap = closerSnapshots.get(ti.id);
