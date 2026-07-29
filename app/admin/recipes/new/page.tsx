@@ -16,6 +16,7 @@ import { getRoleLevel } from "@/lib/roles";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { RECIPE_READ_MIN } from "@/lib/recipes";
 import { RecipeBuilder } from "@/components/admin/recipes/RecipeBuilder";
+import { PageHeader } from "@/components/ui/PageHeader";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
 import type { RecipeType } from "@/lib/recipes";
 import { serverT } from "@/lib/i18n/server";
@@ -100,12 +101,10 @@ export default async function AdminRecipesNewPage({
 
   return (
     <div>
-      <h1 className="text-xl font-extrabold leading-tight text-co-text">
-        {serverT(lang, rk("recipes.new.title"))}
-      </h1>
-      <p className="mt-1 text-sm text-co-text-muted">
-        {serverT(lang, rk("recipes.new.subtitle"))}
-      </p>
+      <PageHeader
+        title={serverT(lang, rk("recipes.new.title"))}
+        subtitle={serverT(lang, rk("recipes.new.subtitle"))}
+      />
       <RecipeBuilder
         recipe={null}
         skus={skus}

@@ -46,7 +46,7 @@ export default async function AdminHubPage() {
           >
             {serverT(lang, s.i18nKey)}
             {(counts[s.id] ?? 0) > 0 ? (
-              <AlertPill tone="danger" className="ml-2">
+              <AlertPill tone="danger" uppercase={false} className="ml-2">
                 {serverT(lang, "readiness.hub.count", { count: counts[s.id]! })}
               </AlertPill>
             ) : null}

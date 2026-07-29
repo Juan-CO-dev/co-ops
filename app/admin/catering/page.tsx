@@ -16,6 +16,8 @@ import { serverT } from "@/lib/i18n/server";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { loadPackageLocations } from "@/lib/admin/catering/packages";
 import { loadPerishableSurplus, SURPLUS_READ_MIN } from "@/lib/catering/surplus";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { AlertPill } from "@/components/ui/AlertPill";
 
 const EDITORS: { id: string; i18nKey: TranslationKey; href: string; minLevel: number }[] = [
   { id: "packages",    i18nKey: "admin.catering.hub.packages",    href: "/admin/catering/packages",    minLevel: 6 },
@@ -60,18 +62,18 @@ export default async function AdminCateringHubPage() {
 
   return (
     <div>
-      <h1 className="text-xl font-extrabold leading-tight text-co-text">
-        {serverT(lang, "admin.catering.title")}
-      </h1>
-      <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "admin.catering.subtitle")}</p>
+      <PageHeader
+        title={serverT(lang, "admin.catering.title")}
+        subtitle={serverT(lang, "admin.catering.subtitle")}
+      />
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {visible.map((e) => (
           <Link key={e.id} href={e.href} className="co-card co-card-interactive flex items-center justify-between gap-2 p-4 text-co-text">
             <span className="font-semibold">{serverT(lang, e.i18nKey)}</span>
             {e.id === "prep-demand" && surplusCount > 0 && (
-              <span className="inline-flex shrink-0 items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-amber-800">
+              <AlertPill tone="warn" className="shrink-0">
                 {serverT(lang, "admin.catering.hub.surplus_count" as TranslationKey, { n: surplusCount })}
-              </span>
+              </AlertPill>
             )}
           </Link>
         ))}
