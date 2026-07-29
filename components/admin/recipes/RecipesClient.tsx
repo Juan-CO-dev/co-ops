@@ -39,7 +39,7 @@ export function RecipesClient({
     filter === "all" ? recipes : recipes.filter((r) => r.recipeType === filter);
 
   const chipCls = (active: boolean) =>
-    `inline-flex min-h-[36px] items-center rounded-lg border-2 px-3 text-sm font-bold transition ${
+    `inline-flex min-h-[44px] items-center rounded-lg border-2 px-3 text-sm font-bold transition ${
       active
         ? "border-co-gold-deep bg-co-gold text-co-text"
         : "border-co-border bg-co-surface text-co-text hover:border-co-text"
@@ -71,7 +71,7 @@ export function RecipesClient({
               <Link
                 key={r.id}
                 href={`/admin/recipes/${r.id}`}
-                className="flex items-center justify-between rounded-lg border-2 border-co-border bg-co-surface px-4 py-3 hover:border-co-text transition"
+                className="co-card co-card-interactive flex items-center justify-between px-4 py-3"
               >
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">

@@ -7,20 +7,24 @@
  * shipped recipes.badge.incomplete chip (RecipesClient.tsx).
  */
 import { useTranslation } from "@/lib/i18n/provider";
+import { AlertPill, type AlertPillTone } from "@/components/ui/AlertPill";
 import type { Reason } from "@/lib/readiness";
 import type { TranslationKey } from "@/lib/i18n/types";
 
-const CLS = {
-  incomplete: "rounded bg-co-cta/15 px-2 py-0.5 text-xs font-bold text-co-cta",
-  upstream_gaps: "rounded bg-amber-500/15 px-2 py-0.5 text-xs font-bold text-amber-700",
-} as const;
+// Component API preserved (status → badge); rendering delegates to the shared
+// AlertPill primitive on co- tokens. incomplete = danger (was co-cta red),
+// upstream_gaps = warn (was raw amber).
+const TONE: Record<"incomplete" | "upstream_gaps", AlertPillTone> = {
+  incomplete: "danger",
+  upstream_gaps: "warn",
+};
 
-export function StatusBadge({ status }: { status: keyof typeof CLS }) {
+export function StatusBadge({ status }: { status: keyof typeof TONE }) {
   const { t } = useTranslation();
   return (
-    <span className={CLS[status]}>
+    <AlertPill tone={TONE[status]} uppercase={false}>
       {t(status === "incomplete" ? "readiness.badge.not_ready" : "readiness.badge.upstream")}
-    </span>
+    </AlertPill>
   );
 }
 
