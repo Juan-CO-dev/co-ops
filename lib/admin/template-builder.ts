@@ -684,49 +684,6 @@ export async function publishTemplateVersion(
 
   const currentlyEffectiveId = resolveEffectiveVersionId(lineage, today);
 
-  // 4a. PRE-MINT RETIREMENT — retire any OTHER active row that would COLLIDE with the
-  // mint on the active-name-ef unique index (location_id, type, name, prep_subtype,
-  // effective_from), i.e. an active row whose effective_from EQUALS effectiveFrom.
-  // This runs BEFORE the mint and is always correctness-safe:
-  //   - next_day: the colliding row is a PENDING version (effective_from = tomorrow).
-  //     A pending row was NEVER served (no instance bound it), so retiring it cannot
-  //     rewrite history — the invariant ("correctness never depends on retirement of
-  //     a SERVED version") is untouched. This is the re-publish-a-pending case.
-  //   - apply_now: the colliding row (effective_from = today) is proven-unserved by
-  //     the apply-now gate (0 instances today), so retiring it pre-mint is safe too.
-  // The currently-effective LEGACY row (effective_from NULL) never collides with a
-  // concrete effectiveFrom and is retired POST-mint (apply-now only) — so a mint
-  // failure never strands the live list.
-  for (const row of lineage) {
-    if (!row.active) continue;
-    if (row.effective_from !== effectiveFrom) continue; // no unique-index collision
-
-    const isPending = row.effective_from !== null && row.effective_from > today;
-    const { count: retCount, error: retErr } = await sb
-      .from("checklist_templates")
-      .update({ active: false }, { count: "exact" })
-      .eq("id", row.id)
-      .eq("active", true);
-    if (retErr) throw new Error(`publishTemplateVersion retire colliding ${row.id}: ${retErr.message}`);
-    if ((retCount ?? 0) === 0) continue;
-
-    await audit({
-      actorId: actor.user.id,
-      actorRole: actor.user.role,
-      action: "checklist_template.delete_or_deactivate",
-      resourceTable: "checklist_templates",
-      resourceId: row.id,
-      metadata: {
-        publish_op: isPending ? "pending_replaced" : "superseded",
-        template_type: src.type,
-        location_id: src.location_id,
-        effective_from: row.effective_from,
-      },
-      ipAddress: null,
-      userAgent: null,
-    });
-  }
-
   // 4c. MINT the new version. effective_from set, supersedes = source id;
   // active=true. Never copies id (fresh) — INSERT.
   const { data: minted, error: mintErr } = await sb
@@ -741,7 +698,11 @@ export async function publishTemplateVersion(
       reminder_time: src.reminder_time,
       submission_gate_predicate: src.submission_gate_predicate,
       edit_gate_predicate: src.edit_gate_predicate,
-      active: true,
+      // ACTIVATE-LAST (R0 partial-failure fix): the version is born INACTIVE and
+      // flips active only after the item copy completes. A mid-copy failure leaves
+      // an invisible inactive orphan (every resolver + the builder view filter
+      // active=true) — never a truncated ACTIVE version waiting for tomorrow.
+      active: false,
       effective_from: effectiveFrom,
       supersedes_template_id: src.id,
       created_by: actor.user.id,
@@ -786,6 +747,59 @@ export async function publishTemplateVersion(
     edits: args.edits,
     templateType: src.type,
   });
+
+  // 4a. PRE-ACTIVATION RETIREMENT (runs AFTER the copy, R0 ordering fix) — retire
+  // any OTHER active row COLLIDING on the active-name-ef unique index (an active row
+  // whose effective_from EQUALS effectiveFrom). The index is partial (WHERE active),
+  // so the INACTIVE mint above never collided — collision only matters at the
+  // ACTIVATION step below. Doing this after the copy means a mid-copy failure leaves
+  // the manager's PREVIOUS pending version fully intact (nothing was retired yet).
+  // Correctness-safe both modes:
+  //   - next_day: the colliding row is a PENDING version — never served (no instance
+  //     bound it), so retiring it cannot rewrite history (re-publish-a-pending case).
+  //   - apply_now: the colliding row (effective_from = today) is proven-unserved by
+  //     the apply-now gate (0 instances today).
+  for (const row of lineage) {
+    if (!row.active) continue;
+    if (row.effective_from !== effectiveFrom) continue; // no unique-index collision
+
+    const isPending = row.effective_from !== null && row.effective_from > today;
+    const { count: retCount, error: retErr } = await sb
+      .from("checklist_templates")
+      .update({ active: false }, { count: "exact" })
+      .eq("id", row.id)
+      .eq("active", true);
+    if (retErr) throw new Error(`publishTemplateVersion retire colliding ${row.id}: ${retErr.message}`);
+    if ((retCount ?? 0) === 0) continue;
+
+    await audit({
+      actorId: actor.user.id,
+      actorRole: actor.user.role,
+      action: "checklist_template.delete_or_deactivate",
+      resourceTable: "checklist_templates",
+      resourceId: row.id,
+      metadata: {
+        publish_op: isPending ? "pending_replaced" : "superseded",
+        template_type: src.type,
+        location_id: src.location_id,
+        effective_from: row.effective_from,
+      },
+      ipAddress: null,
+      userAgent: null,
+    });
+  }
+
+  // ACTIVATE (the commit point). Concurrency: a racing publish that activated the
+  // same (name, effective_from) first makes this violate the partial unique index —
+  // a loud DB error, never a silent double-activation.
+  const { count: actCount, error: actErr } = await sb
+    .from("checklist_templates")
+    .update({ active: true }, { count: "exact" })
+    .eq("id", newTemplateId)
+    .eq("active", false);
+  if (actErr) throw new Error(`publishTemplateVersion activate: ${actErr.message}`);
+  if ((actCount ?? 0) === 0) throw new Error("publishTemplateVersion activate: no row flipped");
+
 
   // 4b. CLEANUP — the currently-effective (served-or-legacy) row + any OTHER active
   // non-pending, non-effective rows. Runs AFTER the mint+copy so the new version is
