@@ -42,6 +42,9 @@ import {
   applyEditsToItems,
   classifyEdits,
   resolveGateTier,
+  buildReconcileAddEdit,
+  buildBothLocationAdds,
+  makeTempId,
   RECONCILED_REPORT_REF_TYPES,
   type TemplateItemEdit,
   type TemplatePatch,
@@ -52,6 +55,8 @@ import {
   type TemplateBuilderType,
   type ReferenceTargetsView,
   type ReconciledReportRefType,
+  type ReconcileSource,
+  type DriftFinding,
 } from "@/lib/admin/template-builder-shared";
 import type { LinkTarget } from "@/lib/admin/needs-link-shared";
 import type { GatePredicate, ChecklistType } from "@/lib/types";
@@ -79,6 +84,37 @@ function useRoleLabelForLevel() {
   };
 }
 
+/** Resolve a drift source item (by normalized English label — the system key the
+ *  Doctor diffs on) from the PRESENT location's template into the ReconcileSource
+ *  shape buildReconcileAddEdit consumes. Returns null when no active non-mirror row
+ *  matches (mirrors are already excluded from drift; this is belt-and-braces). The
+ *  FIRST active match wins (a location can't legitimately carry two same-label rows). */
+function findReconcileSource(
+  present: TemplateBuilderTemplate,
+  label: string,
+): ReconcileSource | null {
+  const norm = (s: string) => s.trim().toLowerCase();
+  const target = norm(label);
+  const row = present.items.find((it) => it.active && norm(it.label) === target);
+  if (!row) return null;
+  return {
+    label: row.label,
+    description: row.description,
+    station: row.station,
+    minRoleLevel: row.minRoleLevel,
+    required: row.required,
+    hardGate: row.hardGate,
+    expectsCount: row.expectsCount,
+    expectsPhoto: row.expectsPhoto,
+    itemId: row.itemId,
+    vendorItemId: row.vendorItemId,
+    isMirror: isMirrorItem(row.prepMeta),
+    es: row.translations?.es
+      ? { label: row.translations.es.label ?? null, description: row.translations.es.description ?? null }
+      : null,
+  };
+}
+
 export function TemplateBuilderClient({
   view,
   doctor,
@@ -100,6 +136,12 @@ export function TemplateBuilderClient({
   // useState only (D9 — no URL/localStorage).
   const [activeTplId, setActiveTplId] = useState<string>(view.templates[0]?.id ?? "");
   const active = view.templates.find((tpl) => tpl.id === activeTplId) ?? view.templates[0] ?? null;
+
+  // PR-5 (spec §8): the OTHER location's template (the both-locations partner). Two
+  // locations is the CO shape; more than two → no single "other" (the both-locations
+  // toggle still fans out to ALL, but the publish guidance names only a single peer).
+  const otherTemplate = active ? view.templates.find((t) => t.id !== active.id) ?? null : null;
+  const otherLocationName = otherTemplate?.name ?? null;
 
   // Deep-link target: when the Doctor "fix" link fires, expand that item's drawer
   // and scroll to it. Held in a shared piece of state the item list reads.
@@ -124,6 +166,85 @@ export function TemplateBuilderClient({
   const pushEdit = (templateId: string, edit: TemplateItemEdit) => {
     setDrafts((prev) => ({ ...prev, [templateId]: [...(prev[templateId] ?? []), edit] }));
   };
+
+  // PR-5 (spec §8): the SCOPE of each draft-added row — "both" (fanned to both
+  // locations) or "one" (this location only / a reconcile add, which lands on B only).
+  // Keyed by the synthetic row id (`draft-<tempId>`) so ItemRow can show the indicator
+  // chip. useState only (D9); no persistence (scope is a draft-time affordance).
+  const [addScope, setAddScope] = useState<Record<string, "both" | "one">>({});
+
+  // PR-5 (spec §8) — LOCATION SYNC dispatch. All fan-outs/reconciles push {op:"add"}
+  // into a DRAFT (never a direct write); publish stays PER TEMPLATE (two taps).
+  //
+  // The next display order for a template = max over its DRAFTED items (source + this
+  // draft applied), so a fan-out/reconcile add lands at the drafted tail (never colliding
+  // with a pending draft-add's order). Computed from `prevDrafts` inside the setter so
+  // concurrent pushes see each other.
+  const nextOrderFor = (
+    tpl: TemplateBuilderTemplate,
+    prevDrafts: DraftState,
+  ): number => {
+    const items = applyEditsToItems(tpl.items, prevDrafts[tpl.id] ?? []);
+    return items.reduce((m, it) => Math.max(m, it.displayOrder), 0) + 1;
+  };
+
+  // BOTH-LOCATIONS ADD (default-ON, spec §8): one authored add → a draft add in EVERY
+  // template (distinct tempIds, per-template display orders). "This location only" =
+  // the caller passes just the active template. One setDrafts so the fan-out is atomic.
+  const dispatchAdd = (
+    base: Omit<Extract<TemplateItemEdit, { op: "add" }>, "op" | "tempId" | "displayOrder">,
+    bothLocations: boolean,
+  ) => {
+    if (!active) return;
+    const scope: "both" | "one" = bothLocations && view.templates.length > 1 ? "both" : "one";
+    setDrafts((prev) => {
+      const targets = bothLocations ? view.templates : [active];
+      const fanned = buildBothLocationAdds(
+        base,
+        targets.map((t) => ({ templateId: t.id, nextDisplayOrder: nextOrderFor(t, prev) })),
+        () => makeTempId(Date.now(), Math.random().toString(36).slice(2, 8)),
+      );
+      setAddScope((s) => {
+        const nextScope = { ...s };
+        for (const f of fanned) nextScope[`draft-${f.edit.tempId}`] = scope;
+        return nextScope;
+      });
+      const next = { ...prev };
+      for (const f of fanned) next[f.templateId] = [...(next[f.templateId] ?? []), f.edit];
+      return next;
+    });
+  };
+
+  // RECONCILE "Make <B> match <A>" (spec §8): resolve the drift source row FROM A's
+  // items (normalized-label match, mirror-excluded already at the Doctor) and push a
+  // reconcile add into B's draft. Returns the block reason when the source can't be
+  // reconciled (mirror / unlinked-count) so the panel can surface it, else null on OK.
+  const reconcileOne = (finding: DriftFinding): "ok" | "mirror" | "unlinked_count" | "no_source" => {
+    const present = view.templates.find((t) => t.id === templateAtLocation(finding.presentLocationId));
+    const missing = view.templates.find((t) => t.id === templateAtLocation(finding.missingLocationId));
+    if (!present || !missing) return "no_source";
+    const source = findReconcileSource(present, finding.label);
+    if (!source) return "no_source";
+    let outcome: "ok" | "mirror" | "unlinked_count" = "ok";
+    setDrafts((prev) => {
+      const result = buildReconcileAddEdit(source, {
+        tempId: makeTempId(Date.now(), Math.random().toString(36).slice(2, 8)),
+        displayOrder: nextOrderFor(missing, prev),
+      });
+      if (!result.ok) {
+        outcome = result.reason;
+        return prev;
+      }
+      // A reconcile add lands on the MISSING location only → scope "one".
+      setAddScope((s) => ({ ...s, [`draft-${result.edit.tempId}`]: "one" }));
+      return { ...prev, [missing.id]: [...(prev[missing.id] ?? []), result.edit] };
+    });
+    return outcome;
+  };
+
+  // Resolve the template id at a location (drift findings carry location ids).
+  const templateAtLocation = (locationId: string): string =>
+    view.templates.find((t) => t.locationId === locationId)?.id ?? "";
   // Remove a draft-added row entirely (adversarial review M1): a disable edit
   // against a draft-add is a no-op in BOTH the preview (applyEditsToItems keys
   // persisted ids) and the publish copy (adds insert active=true) — so the honest
@@ -177,6 +298,7 @@ export function TemplateBuilderClient({
       {/* Template Doctor — compact header chip (D2/D3), expands inline. */}
       <TemplateDoctorPanel
         doctor={doctor}
+        canReconcile={canFill}
         onFix={(templateId, itemId) => {
           setActiveTplId(templateId);
           setFocusItemId(itemId);
@@ -185,6 +307,7 @@ export function TemplateBuilderClient({
             document.getElementById(`tb-item-${itemId}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
           });
         }}
+        onReconcile={reconcileOne}
       />
 
       {/* PENDING-VERSION banner (D2, never collapses): the loaded version is a pending
@@ -254,6 +377,10 @@ export function TemplateBuilderClient({
             focusItemId={focusItemId}
             onEdit={(edit) => pushEdit(active.id, edit)}
             onRemoveDraftAdd={(tempId) => removeDraftAdd(active.id, tempId)}
+            onAdd={dispatchAdd}
+            multiLocation={view.templates.length > 1}
+            otherLocationName={otherLocationName}
+            addScope={addScope}
           />
         </div>
       )}
@@ -278,6 +405,14 @@ export function TemplateBuilderClient({
           templatePatch={patchForActive}
           openInstancesToday={doctor.publish?.openInstancesToday ?? 0}
           onPublished={() => clearDraft(active.id)}
+          // PR-5 (spec §8): when the OTHER location's draft is also dirty, the publish
+          // bar surfaces "also publish <other>" guidance — publish stays PER TEMPLATE
+          // (two taps; no cross-lineage atomic publish — the two lineages version
+          // independently). Named only when there's exactly one peer (the CO shape).
+          otherLocationDirty={
+            otherTemplate ? (drafts[otherTemplate.id]?.length ?? 0) > 0 : false
+          }
+          otherLocationName={otherLocationName}
         />
       )}
 
@@ -294,10 +429,17 @@ export function TemplateBuilderClient({
 
 function TemplateDoctorPanel({
   doctor,
+  canReconcile,
   onFix,
+  onReconcile,
 }: {
   doctor: TemplateDoctorReport;
+  /** GM+ (canFill) may reconcile drift (it drafts a versioned add). AGM readers can't. */
+  canReconcile: boolean;
   onFix: (templateId: string, itemId: string) => void;
+  /** PR-5 (spec §8): "Make B match A" — returns the outcome so the panel can flag a
+   *  blocked reconcile (a mirror / an unlinked count source) instead of silently no-op. */
+  onReconcile: (finding: DriftFinding) => "ok" | "mirror" | "unlinked_count" | "no_source";
 }) {
   const { t } = useTranslation();
   // Same ACTIONABLE definition as the tab badges, plus drift (a location-pair
@@ -342,21 +484,14 @@ function TemplateDoctorPanel({
           {clean && hasHardGated && (
             <p className="text-sm text-co-text-muted">{t("admin.templates.doctor.all_clear_body")}</p>
           )}
-          {/* Location drift — NAMED per item (spec §6). */}
+          {/* Location drift — NAMED per item (spec §6) + reconcile (spec §8, PR-5). */}
           {doctor.drift.length > 0 && (
-            <DoctorGroup title={t("admin.templates.doctor.drift_heading", { n: String(doctor.drift.length) })}>
-              <ul className="flex flex-col gap-1">
-                {doctor.drift.map((d, i) => (
-                  <li key={`${d.label}-${i}`} className="text-sm text-co-text">
-                    {t("admin.templates.doctor.drift_line", {
-                      present: locName(d.presentLocationId),
-                      label: d.label,
-                      missing: locName(d.missingLocationId),
-                    })}
-                  </li>
-                ))}
-              </ul>
-            </DoctorGroup>
+            <DriftReconcileGroup
+              drift={doctor.drift}
+              locName={locName}
+              canReconcile={canReconcile}
+              onReconcile={onReconcile}
+            />
           )}
 
           {/* Per-template findings: needs-link, es fill, role-floor. */}
@@ -375,6 +510,124 @@ function DoctorGroup({ title, children }: { title: string; children: React.React
       <h3 className="text-xs font-extrabold uppercase tracking-[0.1em] text-co-text-muted">{title}</h3>
       <div className="mt-1">{children}</div>
     </div>
+  );
+}
+
+/**
+ * DriftReconcileGroup (spec §8, PR-5) — location drift NAMED per item, grouped by
+ * DIRECTION (A→B vs B→A, so the manager reads "these are in P St, not Cap Hill" as one
+ * block), each with a one-tap "Add to <missing>" reconcile + a per-direction "Add all N".
+ * ADDITIVE ONLY (append-only law): no removal reconcile — an unwanted extra on B is a
+ * manual disable (already possible). Intentional drift is legitimate (schema-free this
+ * arc; the copy says so) → reconcile is opt-in per item. A blocked source (a mirror, or
+ * a count line with no spine link) surfaces its reason inline; it is NEVER silently added.
+ */
+function DriftReconcileGroup({
+  drift,
+  locName,
+  canReconcile,
+  onReconcile,
+}: {
+  drift: DriftFinding[];
+  locName: (id: string) => string;
+  canReconcile: boolean;
+  onReconcile: (finding: DriftFinding) => "ok" | "mirror" | "unlinked_count" | "no_source";
+}) {
+  const { t } = useTranslation();
+  // A stable key per finding (direction + label). Tracks the post-action state so a
+  // reconciled row shows "added (publish to make live)" and a blocked one shows why.
+  const keyOf = (d: DriftFinding) => `${d.presentLocationId}→${d.missingLocationId}::${d.label}`;
+  const [state, setState] = useState<Record<string, "added" | "mirror" | "unlinked_count" | "no_source">>({});
+
+  // Group by direction so A→B and B→A read as separate blocks (direction clarity).
+  const byDirection = useMemo(() => {
+    const groups = new Map<string, DriftFinding[]>();
+    for (const d of drift) {
+      const k = `${d.presentLocationId}→${d.missingLocationId}`;
+      const arr = groups.get(k) ?? [];
+      arr.push(d);
+      groups.set(k, arr);
+    }
+    return [...groups.entries()];
+  }, [drift]);
+
+  const runReconcile = (d: DriftFinding) => {
+    const outcome = onReconcile(d);
+    setState((prev) => ({ ...prev, [keyOf(d)]: outcome === "ok" ? "added" : outcome }));
+  };
+
+  const blockKey = (r: "mirror" | "unlinked_count" | "no_source"): TranslationKey =>
+    r === "unlinked_count"
+      ? tk("admin.templates.doctor.reconcile_blocked_unlinked")
+      : r === "mirror"
+        ? tk("admin.templates.doctor.reconcile_blocked_mirror")
+        : tk("admin.templates.doctor.reconcile_blocked_missing");
+
+  return (
+    <DoctorGroup title={t("admin.templates.doctor.drift_heading", { n: String(drift.length) })}>
+      {/* Intentional-drift acknowledgment (spec §8): differences can be legitimate —
+          reconcile only what should match. No persisted "intentional" mark this arc. */}
+      <p className="mb-2 text-xs text-co-text-muted">{t("admin.templates.doctor.drift_intentional_note")}</p>
+
+      <div className="flex flex-col gap-3">
+        {byDirection.map(([dirKey, findings]) => {
+          const first = findings[0]!;
+          const presentName = locName(first.presentLocationId);
+          const missingName = locName(first.missingLocationId);
+          // Findings not yet acted on (available for the bulk action).
+          const pending = findings.filter((d) => state[keyOf(d)] === undefined);
+          return (
+            <div key={dirKey} className="rounded-lg border border-co-border/60 bg-co-surface p-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-bold uppercase tracking-[0.06em] text-co-text-muted">
+                  {t("admin.templates.doctor.drift_direction", { present: presentName, missing: missingName })}
+                </p>
+                {canReconcile && pending.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => pending.forEach(runReconcile)}
+                    className="inline-flex min-h-[32px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
+                  >
+                    {t("admin.templates.doctor.reconcile_all", { n: String(pending.length), missing: missingName })}
+                  </button>
+                )}
+              </div>
+              <ul className="mt-1 flex flex-col gap-1">
+                {findings.map((d) => {
+                  const s = state[keyOf(d)];
+                  return (
+                    <li key={keyOf(d)} className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-sm text-co-text">
+                        {t("admin.templates.doctor.drift_line", {
+                          present: presentName,
+                          label: d.label,
+                          missing: missingName,
+                        })}
+                      </span>
+                      {s === "added" ? (
+                        <span className="inline-flex items-center rounded-full bg-co-success/15 px-2 py-0.5 text-[11px] font-bold text-co-success">
+                          {t("admin.templates.doctor.reconcile_added")}
+                        </span>
+                      ) : s !== undefined ? (
+                        <span className="text-xs font-semibold text-co-cta">{t(blockKey(s))}</span>
+                      ) : canReconcile ? (
+                        <button
+                          type="button"
+                          onClick={() => runReconcile(d)}
+                          className="inline-flex min-h-[32px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
+                        >
+                          {t("admin.templates.doctor.reconcile_add", { missing: missingName })}
+                        </button>
+                      ) : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          );
+        })}
+      </div>
+    </DoctorGroup>
   );
 }
 
@@ -511,6 +764,9 @@ function ItemList({
   focusItemId,
   onEdit,
   onRemoveDraftAdd,
+  onAdd,
+  multiLocation,
+  otherLocationName,
 }: {
   template: TemplateBuilderTemplate;
   /** source items + draft edits applied (mirror rows untouched). */
@@ -521,6 +777,17 @@ function ItemList({
   focusItemId: string | null;
   onEdit: (edit: TemplateItemEdit) => void;
   onRemoveDraftAdd: (tempId: string) => void;
+  /** PR-5 (spec §8): the both-locations add fan-out. `bothLocations` = the toggle. */
+  onAdd: (
+    base: Omit<Extract<TemplateItemEdit, { op: "add" }>, "op" | "tempId" | "displayOrder">,
+    bothLocations: boolean,
+  ) => void;
+  /** true when >1 location is visible → the "Both locations" toggle shows. */
+  multiLocation: boolean;
+  /** the peer location's name (for the toggle + the draft-added indicator chip). */
+  otherLocationName: string | null;
+  /** PR-5 (spec §8): per-draft-add scope ("both" / "one") keyed by `draft-<tempId>`. */
+  addScope: Record<string, "both" | "one">;
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState<Set<string>>(() =>
@@ -560,8 +827,17 @@ function ItemList({
       </h2>
 
       {/* Quick-add (spec §7): sticky-ish add bar; label + section + role + required,
-          defaults carried; count toggle reveals the required spine-link picker. */}
-      {canFill && <QuickAdd draftedItems={draftedItems} linkTargets={linkTargets} onEdit={onEdit} />}
+          defaults carried; count toggle reveals the required spine-link picker. PR-5:
+          a "Both locations" toggle (default ON) fans the add into both drafts. */}
+      {canFill && (
+        <QuickAdd
+          draftedItems={draftedItems}
+          linkTargets={linkTargets}
+          onAdd={onAdd}
+          multiLocation={multiLocation}
+          otherLocationName={otherLocationName}
+        />
+      )}
 
       {draftedItems.length === 0 ? (
         <div className="mt-2 rounded-2xl border-2 border-dashed border-co-border p-6 text-center text-sm text-co-text-muted">
@@ -591,6 +867,8 @@ function ItemList({
                 onMoveUp={() => move(item, -1)}
                 onMoveDown={() => move(item, 1)}
                 isFirst={i === 0}
+                addScope={addScope[item.id] ?? null}
+                otherLocationName={otherLocationName}
               />
             </li>
           ))}
@@ -645,6 +923,8 @@ function ItemRow({
   canMoveDown,
   onMoveUp,
   onMoveDown,
+  addScope,
+  otherLocationName,
 }: {
   templateId: string;
   locationId: string;
@@ -661,6 +941,11 @@ function ItemRow({
   onMoveUp: () => void;
   onMoveDown: () => void;
   isFirst: boolean;
+  /** PR-5 (spec §8): the scope of THIS row if it's a draft-add ("both" / "one"); null
+   *  for persisted rows. Drives the "both locations / this location only" indicator chip. */
+  addScope: "both" | "one" | null;
+  /** the peer location's name (for the "both locations" chip copy). */
+  otherLocationName: string | null;
 }) {
   const { t } = useTranslation();
   const roleLabel = useRoleLabelForLevel();
@@ -744,6 +1029,15 @@ function ItemRow({
           {needsLink && (
             <span className="inline-flex items-center rounded-full bg-co-cta/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-cta">
               {t("admin.templates.builder.badge.needs_link")}
+            </span>
+          )}
+          {/* PR-5 (spec §8): the location-scope indicator on draft-added rows — "both
+              locations" (fanned) or "this location only". Informational; not an alert. */}
+          {isDraftAdd && addScope !== null && (
+            <span className="inline-flex items-center rounded-full bg-co-gold/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-text">
+              {addScope === "both"
+                ? t("admin.templates.builder.badge.both_locations")
+                : t("admin.templates.builder.badge.this_location_only")}
             </span>
           )}
         </>
@@ -1191,15 +1485,24 @@ function SubmissionGateSetting({
 
 /** Quick-add (spec §7): the 60-second add flow. Label + section + role + required,
  *  defaults carried from the last item; the count toggle reveals a REQUIRED spine-
- *  link picker (dismiss reverts the toggle). Emits an `add` TemplateItemEdit. */
+ *  link picker (dismiss reverts the toggle). PR-5 (spec §8): a "Both locations" toggle
+ *  (default ON) fans the add into BOTH templates' drafts; unchecking = "this location
+ *  only". Emits via onAdd(base, bothLocations) — the parent handles the fan-out. */
 function QuickAdd({
   draftedItems,
   linkTargets,
-  onEdit,
+  onAdd,
+  multiLocation,
+  otherLocationName,
 }: {
   draftedItems: ChecklistTemplateItem[];
   linkTargets: LinkTarget[];
-  onEdit: (edit: TemplateItemEdit) => void;
+  onAdd: (
+    base: Omit<Extract<TemplateItemEdit, { op: "add" }>, "op" | "tempId" | "displayOrder">,
+    bothLocations: boolean,
+  ) => void;
+  multiLocation: boolean;
+  otherLocationName: string | null;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -1213,7 +1516,9 @@ function QuickAdd({
   const [spine, setSpine] = useState<LinkTarget | null>(null);
   const [query, setQuery] = useState("");
   const [error, setError] = useState<TranslationKey | null>(null);
-  const maxOrder = draftedItems.reduce((m, it) => Math.max(m, it.displayOrder), 0);
+  // PR-5 (spec §8): both-locations default ON (explicit, shown). Only meaningful when
+  // >1 location is visible; single-location tenants never see the toggle (always "one").
+  const [bothLocations, setBothLocations] = useState(true);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -1222,22 +1527,24 @@ function QuickAdd({
 
   const reset = () => {
     setLabel(""); setExpectsCount(false); setSpine(null); setQuery(""); setError(null);
+    // bothLocations scope PERSISTS across repeat-adds (defaults carry, spec §7).
   };
 
   const add = () => {
     if (!label.trim()) return;
     if (expectsCount && !spine) { setError("admin.templates.builder.add_count_link_required"); return; }
-    onEdit({
-      op: "add",
-      tempId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      label: label.trim(),
-      station: station || null,
-      displayOrder: maxOrder + 1,
-      minRoleLevel: role,
-      required,
-      expectsCount,
-      spineLink: expectsCount ? spine : null,
-    });
+    onAdd(
+      {
+        label: label.trim(),
+        station: station || null,
+        minRoleLevel: role,
+        required,
+        expectsCount,
+        // Map the picked LinkTarget (kind+id+name+…) to the wire SpineLinkTarget (kind+id).
+        spineLink: expectsCount && spine ? { kind: spine.kind, id: spine.id } : null,
+      },
+      multiLocation ? bothLocations : false,
+    );
     reset();
     // Keep the panel open for rapid repeat-adds (defaults carry).
   };
@@ -1343,6 +1650,28 @@ function QuickAdd({
             </>
           )}
         </div>
+      )}
+
+      {/* PR-5 (spec §8): Both-locations toggle (default ON, explicit + shown). Unchecking
+          = "this location only" (the per-item intentional-drift choice at add time). Only
+          shown when >1 location is visible. */}
+      {multiLocation && (
+        <label className="flex items-start gap-2 rounded-lg border border-co-gold-deep/40 bg-co-gold/5 p-2 text-sm text-co-text">
+          <input
+            type="checkbox"
+            checked={bothLocations}
+            onChange={(e) => setBothLocations(e.target.checked)}
+            className="mt-0.5 h-5 w-5"
+          />
+          <span>
+            {t("admin.templates.builder.add_both_locations")}
+            <span className="mt-0.5 block text-xs text-co-text-muted">
+              {bothLocations
+                ? t("admin.templates.builder.add_both_locations_on", { other: otherLocationName ?? "" })
+                : t("admin.templates.builder.add_this_location_only")}
+            </span>
+          </span>
+        </label>
       )}
 
       {error && <p className="text-sm font-semibold text-co-cta">{t(error)}</p>}
@@ -1627,6 +1956,8 @@ function PublishBar({
   templatePatch,
   openInstancesToday,
   onPublished,
+  otherLocationDirty,
+  otherLocationName,
 }: {
   template: TemplateBuilderTemplate;
   edits: TemplateItemEdit[];
@@ -1634,6 +1965,10 @@ function PublishBar({
   templatePatch: TemplatePatch | undefined;
   openInstancesToday: number;
   onPublished: () => void;
+  /** PR-5 (spec §8): the peer location's draft is also dirty → surface "also publish
+   *  <other>" guidance. Publish stays PER TEMPLATE (two taps; no cross-lineage atomic). */
+  otherLocationDirty: boolean;
+  otherLocationName: string | null;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -1707,7 +2042,16 @@ function PublishBar({
     <>
       {/* Dirty banner (D2 — never collapses). */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border-2 border-co-cta/40 bg-co-cta/5 px-3 py-2">
-        <span className="text-sm font-semibold text-co-text">{t("admin.templates.builder.dirty_banner")}</span>
+        <div className="flex flex-col gap-0.5">
+          <span className="text-sm font-semibold text-co-text">{t("admin.templates.builder.dirty_banner")}</span>
+          {/* PR-5 (spec §8): the peer location's draft is also dirty. Publish is PER
+              TEMPLATE (two taps) — remind the manager to publish the other location too. */}
+          {otherLocationDirty && (
+            <span className="text-xs font-semibold text-co-cta">
+              {t("admin.templates.builder.also_publish_other", { other: otherLocationName ?? "" })}
+            </span>
+          )}
+        </div>
         <button
           type="button"
           onClick={() => { setConfirmOpen(true); setApplyNow(false); setErrorKey(null); }}
