@@ -23,6 +23,7 @@
   "user_menu.blurb.too_long": "Blurb must be 500 characters or fewer.",
   "nav.dashboard": "Dashboard",
   "nav.back_to_dashboard_aria": "Back to dashboard",
+  "nav.back_to_aria": "Back to {label}",
   "nav.aria_label": "Site navigation",
   "nav.section_label": "Explore",
   "nav.reports_hub": "Reports Hub",

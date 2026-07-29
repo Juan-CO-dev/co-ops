@@ -23,6 +23,7 @@
   "user_menu.blurb.too_long": "La frase debe tener 500 caracteres o menos.",
   "nav.dashboard": "Panel",
   "nav.back_to_dashboard_aria": "Volver al panel",
+  "nav.back_to_aria": "Volver a {label}",
   "nav.aria_label": "Navegación",
   "nav.section_label": "Explorar",
   "nav.reports_hub": "Centro de reportes",
