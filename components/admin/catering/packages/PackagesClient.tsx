@@ -724,7 +724,7 @@ function LineItemsSubList({
                             disabled={busy}
                             onClick={() => { setAddingOptionFor(li.id); setOptionPickerRef(""); }}
                             aria-label={t("admin.catering.packages.add_option_aria" as TranslationKey, { slot: li.description ?? "" })}
-                            className="mt-2 inline-flex min-h-[36px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
+                            className="mt-2 inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
                           >
                             {t("admin.catering.packages.add_option" as TranslationKey)}
                           </button>

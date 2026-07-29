@@ -169,7 +169,7 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
   }, [router]);
 
   const chip = (active: boolean) =>
-    `inline-flex min-h-[36px] items-center rounded-full border-2 px-3 text-xs font-bold transition ${
+    `inline-flex min-h-[44px] items-center rounded-full border-2 px-3 text-xs font-bold transition ${
       active ? "border-co-gold-deep bg-co-gold/25 text-co-text" : "border-co-border-2 bg-co-surface text-co-text-dim hover:text-co-text"
     }`;
   const inputCls = "min-h-[40px] w-full max-w-sm rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text";
@@ -458,7 +458,7 @@ function CatalogRow({
                 disabled={busy}
                 value={e.itemType}
                 onChange={(ev) => onItemType(ev.target.value as ItemType)}
-                className="mt-1 min-h-[36px] rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-xs font-bold text-co-text disabled:opacity-50"
+                className="mt-1 min-h-[44px] rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-xs font-bold text-co-text disabled:opacity-50"
               >
                 {ITEM_TYPES.map((it) => (
                   <option key={it} value={it}>{t(tk(`admin.catalog.type.${it}`))}</option>
@@ -473,7 +473,7 @@ function CatalogRow({
                 type="button"
                 disabled={busy}
                 onClick={() => onSeasonal(!e.seasonal)}
-                className="inline-flex min-h-[36px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15 disabled:opacity-50"
+                className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15 disabled:opacity-50"
               >
                 {busy
                   ? t("admin.catalog.seasonal.working")

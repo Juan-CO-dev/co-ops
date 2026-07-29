@@ -112,8 +112,8 @@ export function ToastTab({ state, ezcater, canWrite }: { state: ToastMapState; e
     void api("/api/admin/toast-map/location", "POST", { locationId: locId, toastRestaurantGuid: value === "" ? null : value }, () => router.refresh(), `${locId}:guid`).finally(() => setBusy(null));
   };
 
-  const btn = "inline-flex min-h-[36px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 text-xs font-bold text-co-text-dim transition hover:text-co-text disabled:opacity-50";
-  const inputCls = "min-h-[36px] w-full max-w-md rounded-lg border-2 border-co-border-2 bg-co-surface px-2 text-sm text-co-text";
+  const btn = "inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 text-xs font-bold text-co-text-dim transition hover:text-co-text disabled:opacity-50";
+  const inputCls = "min-h-[44px] w-full max-w-md rounded-lg border-2 border-co-border-2 bg-co-surface px-2 text-sm text-co-text";
 
   return (
     <div className="mt-4 flex flex-col gap-6">

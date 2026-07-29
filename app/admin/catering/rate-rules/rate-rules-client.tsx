@@ -189,7 +189,7 @@ function RateInput({
           aria-label={t("admin.catering.rate.edit_aria" as TranslationKey)}
           onClick={() => setEditing(true)}
           disabled={disabled}
-          className="inline-flex min-h-[36px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
+          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
         >
           {t(
             (currentBps != null
@@ -203,7 +203,7 @@ function RateInput({
             aria-label={t("admin.catering.rate.remove_aria" as TranslationKey)}
             onClick={() => setConfirmDelete(true)}
             disabled={disabled}
-            className="inline-flex min-h-[36px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
+            className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
           >
             {t("admin.catering.rate.remove" as TranslationKey)}
           </button>
@@ -214,7 +214,7 @@ function RateInput({
               type="button"
               disabled={busy}
               onClick={() => setConfirmDelete(false)}
-              className="inline-flex min-h-[36px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
             >
               {t("admin.catering.rate.cancel" as TranslationKey)}
             </button>
@@ -222,7 +222,7 @@ function RateInput({
               type="button"
               disabled={busy}
               onClick={() => void remove()}
-              className="inline-flex min-h-[36px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta transition hover:border-co-cta focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta transition hover:border-co-cta focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
             >
               {t("admin.catering.rate.confirm_remove" as TranslationKey)}
             </button>
@@ -241,7 +241,7 @@ function RateInput({
           onClick={() => setMode("pct")}
           disabled={busy}
           aria-pressed={mode === "pct"}
-          className={`inline-flex min-h-[36px] items-center rounded-lg border-2 px-3 text-xs font-bold transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50 ${
+          className={`inline-flex min-h-[44px] items-center rounded-lg border-2 px-3 text-xs font-bold transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50 ${
             mode === "pct"
               ? "border-co-gold bg-co-gold text-co-text"
               : "border-co-border bg-co-surface text-co-text hover:border-co-text"
@@ -254,7 +254,7 @@ function RateInput({
           onClick={() => setMode("price")}
           disabled={busy || regularPriceCents == null}
           aria-pressed={mode === "price"}
-          className={`inline-flex min-h-[36px] items-center rounded-lg border-2 px-3 text-xs font-bold transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50 ${
+          className={`inline-flex min-h-[44px] items-center rounded-lg border-2 px-3 text-xs font-bold transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50 ${
             mode === "price"
               ? "border-co-gold bg-co-gold text-co-text"
               : "border-co-border bg-co-surface text-co-text hover:border-co-text"

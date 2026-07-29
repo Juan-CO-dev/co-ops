@@ -233,7 +233,7 @@ export function UserMenu({ userName, userEmail, actorLevel, initialBlurb }: User
                   onClick={() => void handleBlurbSave()}
                   disabled={blurbSaving || blurb.trim() === savedBlurb.trim()}
                   className="
-                    inline-flex min-h-[36px] items-center rounded-lg border-2 border-co-gold-deep
+                    inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep
                     bg-co-gold px-3 text-sm font-bold uppercase tracking-[0.1em] text-co-text
                     transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
                     disabled:cursor-not-allowed disabled:opacity-50

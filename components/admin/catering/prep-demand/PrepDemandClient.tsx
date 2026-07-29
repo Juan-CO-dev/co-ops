@@ -596,7 +596,7 @@ function ItemLine({
           </span>
           <a
             href={`/admin/pars`}
-            className="inline-flex min-h-[36px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
+            className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
           >
             {t("admin.catering.prep_demand.raise_par" as TranslationKey)}
           </a>

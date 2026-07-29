@@ -858,7 +858,7 @@ export function AmPrepForm({
               type="button"
               onClick={handleDiscard}
               className="
-                inline-flex min-h-[36px] items-center justify-center self-center
+                inline-flex min-h-[44px] items-center justify-center self-center
                 px-3 text-xs font-semibold uppercase tracking-[0.12em] text-co-text-muted
                 transition hover:text-co-text
                 focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/40
@@ -878,7 +878,7 @@ export function AmPrepForm({
               type="button"
               onClick={handleCancelEdit}
               className="
-                inline-flex min-h-[36px] items-center justify-center self-center
+                inline-flex min-h-[44px] items-center justify-center self-center
                 px-3 text-xs font-semibold uppercase tracking-[0.12em] text-co-text-muted
                 transition hover:text-co-text
                 focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/40
