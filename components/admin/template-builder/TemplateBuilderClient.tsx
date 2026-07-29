@@ -120,7 +120,12 @@ export function TemplateBuilderClient({
         <div role="tablist" aria-label={t("admin.templates.builder.location_tabs")} className="flex flex-wrap gap-2">
           {view.templates.map((tpl) => {
             const d = doctor.templates.find((x) => x.templateId === tpl.id);
-            const alerts = d ? d.needsLink.length + (d.esFill.total - d.esFill.filled) : 0;
+            // ONE issue definition everywhere (adversarial review MED): ACTIONABLE
+            // items only — unlinked count lines + impossible role floors. Spanish
+            // is PROGRESS (the es_fill line), never an "issue" count.
+            const alerts = d
+              ? d.needsLink.length + d.roleFloor.filter((f) => f.severity === "impossible").length
+              : 0;
             return (
               <button
                 key={tpl.id}
@@ -177,8 +182,12 @@ function TemplateDoctorPanel({
   onFix: (templateId: string, itemId: string) => void;
 }) {
   const { t } = useTranslation();
-  const { needsLink, esMissing, roleFloorImpossible, drift } = doctor.totals;
-  const issueCount = needsLink + esMissing + roleFloorImpossible + drift;
+  // Same ACTIONABLE definition as the tab badges, plus drift (a location-pair
+  // fact itemized in the panel). esMissing is intentionally EXCLUDED — Spanish
+  // renders as fill-count progress, not an issue (header must never claim an
+  // issue the panel can't itemize — the PR-0 header/panel-disagreement class).
+  const { needsLink, roleFloorImpossible, drift } = doctor.totals;
+  const issueCount = needsLink + roleFloorImpossible + drift;
   const clean = issueCount === 0;
 
   const badge = clean ? (
