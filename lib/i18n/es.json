@@ -757,7 +757,6 @@
   "admin.templates.type.prep": "Prep",
   "admin.templates.type.deep_cleaning": "Limpieza profunda",
   "admin.templates.lists_heading": "Listas",
-  "admin.templates.reports_heading": "Reportes escritos",
   "admin.templates.editor_pending": "Editor próximamente",
   "admin.templates.needs_link.title": "Falta enlazar",
   "admin.templates.needs_link.subtitle": "Estas líneas de conteo aún no apuntan a un ítem o SKU de la lista maestra. Enlaza cada una para que los conteos lleguen al inventario.",

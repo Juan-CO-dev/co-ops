@@ -381,13 +381,18 @@ async function loadChecklistDetail(
 
   const showNotes = args.viewer.level >= REPORTS_HUB_NOTES_LEVEL;
 
-  const titems = await selectAllRows<{ id: string; station: string; label: string; display_order: number }>(
+  // HISTORICAL read (spec §2.2, UNION semantics): read ALL items by template_id
+  // (no active filter), then render each iff active OR completed on THIS
+  // instance. Include-all alone paints a phantom "not done" row on instances
+  // created AFTER an in-place removal; the active filter alone erases history
+  // (the owner's named failure). The union is right on both sides; PR-3's
+  // version-every-publish makes it exact. Filter applied where items map below.
+  const titems = await selectAllRows<{ id: string; station: string; label: string; display_order: number; active: boolean }>(
     (from, to) =>
       service
         .from("checklist_template_items")
-        .select("id, station, label, display_order")
+        .select("id, station, label, display_order, active")
         .eq("template_id", inst.template_id)
-        .eq("active", true)
         .order("display_order", { ascending: true })
         .order("id", { ascending: true })
         .range(from, to),
@@ -431,7 +436,9 @@ async function loadChecklistDetail(
       nameById.set(u.id, u.name);
   }
 
-  const items: ChecklistDetailItem[] = titems.map((ti) => {
+  // UNION filter (spec §2.2): an inactive item renders ONLY if this instance
+  // completed it — never as a phantom skip on instances that never had it.
+  const items: ChecklistDetailItem[] = titems.filter((ti) => ti.active || compByItem.has(ti.id)).map((ti) => {
     const c = compByItem.get(ti.id);
     const countValue = c?.count_value ?? null;
     return {
@@ -577,13 +584,16 @@ async function loadOpeningDetail(
   // (the same loader loadOpeningState materializes + reads from).
   const closerSnapshots = await loadOpeningCloserCountSnapshots(service, args.instanceId);
 
-  const titems = await selectAllRows<{ id: string; station: string; label: string; display_order: number }>(
+  // HISTORICAL read (spec §2.2, UNION semantics): read ALL items by template_id
+  // (no active filter), then render each iff active OR completed on THIS
+  // instance — no erased history, no phantom skips on instances created after
+  // an in-place removal. PR-3's version-every-publish makes this exact.
+  const titems = await selectAllRows<{ id: string; station: string; label: string; display_order: number; active: boolean }>(
     (from, to) =>
       service
         .from("checklist_template_items")
-        .select("id, station, label, display_order")
+        .select("id, station, label, display_order, active")
         .eq("template_id", inst.template_id)
-        .eq("active", true)
         .order("display_order", { ascending: true })
         .order("id", { ascending: true })
         .range(from, to),
@@ -636,7 +646,9 @@ async function loadOpeningDetail(
   let spotCheckCount = 0;
   let nullBaselineCount = 0;
 
-  const items: OpeningDetailItem[] = titems.map((ti) => {
+  // UNION filter (spec §2.2): inactive items render only when this instance
+  // completed them — never as phantom skips.
+  const items: OpeningDetailItem[] = titems.filter((ti) => ti.active || compByItem.has(ti.id)).map((ti) => {
     const c = compByItem.get(ti.id);
     const countValue = c?.count_value ?? null;
     const snap = closerSnapshots.get(ti.id);
@@ -1147,12 +1159,16 @@ export async function computeReportSignals(
     .maybeSingle<{ template_id: string }>();
   if (!inst) return { signals: empty, prepValues: [], checks: [] };
 
-  const items = await selectAllRows<{ id: string; label: string; required: boolean }>((from, to) =>
+  // HISTORICAL read (spec §2.2): label map for a PAST instance's signals —
+  // read by template_id WITHOUT the active filter so a completion whose item was
+  // later disabled still resolves its label. The required-COUNT math below
+  // applies the UNION guard (active OR completed-on-this-instance) so the
+  // header total/skipped agrees with the union-filtered detail item list.
+  const items = await selectAllRows<{ id: string; label: string; required: boolean; active: boolean }>((from, to) =>
     service
       .from("checklist_template_items")
-      .select("id, label, required")
+      .select("id, label, required, active")
       .eq("template_id", inst.template_id)
-      .eq("active", true)
       .order("id", { ascending: true })
       .range(from, to),
   );
@@ -1174,7 +1190,10 @@ export async function computeReportSignals(
   );
   const completedIds = new Set(rows.map((r) => r.template_item_id));
 
-  const requiredItems = items.filter((i) => i.required);
+  // UNION guard (spec §2.2): an inactive required item counts ONLY where this
+  // instance completed it — never a phantom skip on instances created after an
+  // in-place removal (mirrors the trends denominator).
+  const requiredItems = items.filter((i) => i.required && (i.active || completedIds.has(i.id)));
   const done = requiredItems.filter((i) => completedIds.has(i.id)).length;
   const total = requiredItems.length;
   const skipped = total - done;

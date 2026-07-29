@@ -136,9 +136,12 @@ export async function buildSearchCorpus(
     // item label keyed by template_item_id.
     const labelByTemplateItem = new Map<string, string>();
     if (templateIds.length) {
+      // HISTORICAL read (spec §2.2): index PAST report search by template_id
+      // WITHOUT the active filter — an in-place item disable must never erase the
+      // item from historical search (the owner's named live failure).
       const titems = await selectAllRows<{ id: string; template_id: string; label: string; station: string }>(
         (from, to) => service.from("checklist_template_items").select("id, template_id, label, station")
-          .in("template_id", templateIds).eq("active", true)
+          .in("template_id", templateIds)
           .order("template_id", { ascending: true }).range(from, to),
       );
       for (const ti of titems) {
