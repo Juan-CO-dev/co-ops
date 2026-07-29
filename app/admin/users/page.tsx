@@ -6,6 +6,7 @@ import { serverT } from "@/lib/i18n/server";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { listUsers, type ListUsersFilters } from "@/lib/admin/users";
 import { UserAdminClient } from "@/components/admin/users/UserAdminClient";
+import { PageHeader } from "@/components/ui/PageHeader";
 import type { RoleCode } from "@/lib/roles";
 
 export default async function AdminUsersPage({
@@ -33,8 +34,10 @@ export default async function AdminUsersPage({
 
   return (
     <div>
-      <h1 className="text-xl font-extrabold leading-tight text-co-text">{serverT(lang, "admin.users.title")}</h1>
-      <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "admin.users.subtitle")}</p>
+      <PageHeader
+        title={serverT(lang, "admin.users.title")}
+        subtitle={serverT(lang, "admin.users.subtitle")}
+      />
       <UserAdminClient
         users={users}
         allLocations={allLocations}

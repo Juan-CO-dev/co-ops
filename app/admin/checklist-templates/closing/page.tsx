@@ -6,6 +6,7 @@ import { serverT } from "@/lib/i18n/server";
 import { loadTemplateBuilderView, runTemplateDoctor, loadReferenceTargets } from "@/lib/admin/template-builder";
 import { loadLinkTargets } from "@/lib/admin/needs-link";
 import { TemplateBuilderClient } from "@/components/admin/template-builder/TemplateBuilderClient";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 /**
  * /admin/checklist-templates/closing — the Template Builder on CLOSING (spec
@@ -37,10 +38,10 @@ export default async function AdminClosingBuilderPage() {
 
   return (
     <div>
-      <h1 className="mt-2 text-xl font-extrabold leading-tight text-co-text">
-        {serverT(lang, "admin.templates.type.closing")}
-      </h1>
-      <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "admin.templates.subtitle")}</p>
+      <PageHeader
+        title={serverT(lang, "admin.templates.type.closing")}
+        subtitle={serverT(lang, "admin.templates.subtitle")}
+      />
 
       <TemplateBuilderClient
         view={view}

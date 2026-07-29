@@ -17,6 +17,7 @@ import type { TranslationKey } from "@/lib/i18n/types";
 import { loadPackages, loadPackageLocations, PACKAGE_READ_MIN } from "@/lib/admin/catering/packages";
 import { loadPackagePickerMenu } from "@/lib/admin/catering/package-pricing";
 import { PackagesClient } from "@/components/admin/catering/packages/PackagesClient";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export default async function AdminCateringPackagesPage() {
   const auth = await requireSessionFromHeaders("/admin");
@@ -32,12 +33,10 @@ export default async function AdminCateringPackagesPage() {
 
   return (
     <div>
-      <h1 className="text-xl font-extrabold leading-tight text-co-text">
-        {serverT(lang, "admin.catering.packages.title" as TranslationKey)}
-      </h1>
-      <p className="mt-1 text-sm text-co-text-muted">
-        {serverT(lang, "admin.catering.packages.subtitle" as TranslationKey)}
-      </p>
+      <PageHeader
+        title={serverT(lang, "admin.catering.packages.title" as TranslationKey)}
+        subtitle={serverT(lang, "admin.catering.packages.subtitle" as TranslationKey)}
+      />
       <PackagesClient packages={packages} locations={locations} pickerMenu={pickerMenu} actorLevel={level} />
     </div>
   );

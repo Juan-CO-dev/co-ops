@@ -13,6 +13,7 @@ import { serverT } from "@/lib/i18n/server";
 import { loadCategories, loadOrderTypes } from "@/lib/admin/vendors";
 import { CategoryListClient } from "@/components/admin/vendors/CategoryListClient";
 import { OrderTypeListClient } from "@/components/admin/vendors/OrderTypeListClient";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export default async function AdminCategoriesPage() {
   const auth = await requireSessionFromHeaders("/admin");
@@ -24,10 +25,10 @@ export default async function AdminCategoriesPage() {
 
   return (
     <div>
-      <h1 className="text-xl font-extrabold leading-tight text-co-text">
-        {serverT(lang, "admin.categories.title")}
-      </h1>
-      <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "admin.categories.subtitle")}</p>
+      <PageHeader
+        title={serverT(lang, "admin.categories.title")}
+        subtitle={serverT(lang, "admin.categories.subtitle")}
+      />
 
       <section className="mt-6">
         <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">

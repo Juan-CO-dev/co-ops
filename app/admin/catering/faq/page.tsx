@@ -14,6 +14,7 @@ import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { loadFaqs, loadFaqLocations } from "@/lib/admin/catering/faq";
 import { FaqClient } from "@/components/admin/catering/faq/FaqClient";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 const MIN = 6;
 
@@ -30,12 +31,10 @@ export default async function AdminCateringFaqPage() {
 
   return (
     <div>
-      <h1 className="text-xl font-extrabold leading-tight text-co-text">
-        {serverT(lang, "admin.catering.faq.title" as TranslationKey)}
-      </h1>
-      <p className="mt-1 text-sm text-co-text-muted">
-        {serverT(lang, "admin.catering.faq.subtitle" as TranslationKey)}
-      </p>
+      <PageHeader
+        title={serverT(lang, "admin.catering.faq.title" as TranslationKey)}
+        subtitle={serverT(lang, "admin.catering.faq.subtitle" as TranslationKey)}
+      />
       <FaqClient faqs={faqs} locations={locations} actorLevel={level} />
     </div>
   );

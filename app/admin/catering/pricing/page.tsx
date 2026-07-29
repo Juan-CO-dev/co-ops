@@ -16,6 +16,7 @@ import { serverT } from "@/lib/i18n/server";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { loadPricingRules, PRICING_MIN } from "@/lib/admin/catering/pricing";
 import { PricingClient } from "@/components/admin/catering/pricing/PricingClient";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export default async function AdminCateringPricingPage() {
   const auth = await requireSessionFromHeaders("/admin");
@@ -27,12 +28,10 @@ export default async function AdminCateringPricingPage() {
 
   return (
     <div>
-      <h1 className="text-xl font-extrabold leading-tight text-co-text">
-        {serverT(lang, "admin.catering.pricing.title" as TranslationKey)}
-      </h1>
-      <p className="mt-1 text-sm text-co-text-muted">
-        {serverT(lang, "admin.catering.pricing.subtitle" as TranslationKey)}
-      </p>
+      <PageHeader
+        title={serverT(lang, "admin.catering.pricing.title" as TranslationKey)}
+        subtitle={serverT(lang, "admin.catering.pricing.subtitle" as TranslationKey)}
+      />
       <PricingClient rules={rules} actorLevel={level} />
     </div>
   );

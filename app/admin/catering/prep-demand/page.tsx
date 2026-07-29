@@ -22,6 +22,7 @@ import { loadCateringPrepDemand, PREP_DEMAND_READ_MIN } from "@/lib/catering/pre
 import { loadCateringSkuDemand, type CateringSkuDemand } from "@/lib/catering/sku-demand";
 import { loadCateringSurplus, type SurplusDay } from "@/lib/catering/surplus";
 import { PrepDemandClient } from "@/components/admin/catering/prep-demand/PrepDemandClient";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 /** YYYY-MM-DD of today (request-time) in operational TZ. */
 function todayYmd(): string {
@@ -74,12 +75,10 @@ export default async function AdminCateringPrepDemandPage({
 
   return (
     <div>
-      <h1 className="text-xl font-extrabold leading-tight text-co-text">
-        {serverT(lang, "admin.catering.prep_demand.title" as TranslationKey)}
-      </h1>
-      <p className="mt-1 text-sm text-co-text-muted">
-        {serverT(lang, "admin.catering.prep_demand.subtitle" as TranslationKey)}
-      </p>
+      <PageHeader
+        title={serverT(lang, "admin.catering.prep_demand.title" as TranslationKey)}
+        subtitle={serverT(lang, "admin.catering.prep_demand.subtitle" as TranslationKey)}
+      />
       <PrepDemandClient
         days={days}
         locations={locations}

@@ -14,6 +14,7 @@ import { getRoleLevel } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { loadLabelData, QUOTE_READ_MIN, type LineAllergen } from "@/lib/catering/quotes";
 import { PrintButton } from "@/components/catering/quotes/PrintButton";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export default async function CateringQuoteLabelPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -29,13 +30,13 @@ export default async function CateringQuoteLabelPage({ params }: { params: Promi
 
   return (
     <div className="mx-auto max-w-3xl">
-      <div className="print:hidden mb-4 flex items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-extrabold leading-tight text-co-text">{serverT(lang, "catering.labels.title")}</h1>
-          <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "catering.labels.subtitle")}</p>
-        </div>
+      <PageHeader
+        className="print:hidden mb-4"
+        title={serverT(lang, "catering.labels.title")}
+        subtitle={serverT(lang, "catering.labels.subtitle")}
+      >
         <PrintButton />
-      </div>
+      </PageHeader>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 print:grid-cols-2">
         {data.items.map((item) => {

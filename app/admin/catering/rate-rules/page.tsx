@@ -18,6 +18,7 @@ import { loadRateRules, RATE_MIN } from "@/lib/admin/catering/rate-rules";
 import { loadCateringMenuItems } from "@/lib/catering/menu";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { RateRulesClient } from "./rate-rules-client";
+import { PageHeader } from "@/components/ui/PageHeader";
 import type { RateRuleView } from "@/lib/admin/catering/rate-rules";
 import type { CateringMenuItem } from "@/lib/catering/menu";
 
@@ -75,12 +76,10 @@ export default async function AdminCateringRateRulesPage() {
 
   return (
     <div>
-      <h1 className="text-xl font-extrabold leading-tight text-co-text">
-        {serverT(lang, "admin.catering.rate.title" as TranslationKey)}
-      </h1>
-      <p className="mt-1 text-sm text-co-text-muted">
-        {serverT(lang, "admin.catering.rate.subtitle" as TranslationKey)}
-      </p>
+      <PageHeader
+        title={serverT(lang, "admin.catering.rate.title" as TranslationKey)}
+        subtitle={serverT(lang, "admin.catering.rate.subtitle" as TranslationKey)}
+      />
       <RateRulesClient locationData={locationData} actorLevel={level} />
     </div>
   );

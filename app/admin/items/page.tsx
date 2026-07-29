@@ -19,6 +19,7 @@ import type { Readiness } from "@/lib/readiness";
 import { ItemsClient } from "@/components/admin/items/ItemsClient";
 import { CatalogClient } from "@/components/admin/catalog/CatalogClient";
 import { ItemsPageTabs } from "@/components/admin/catalog/ItemsPageTabs";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export default async function AdminItemsPage() {
   const auth = await requireSessionFromHeaders("/admin/items");
@@ -43,12 +44,10 @@ export default async function AdminItemsPage() {
 
   return (
     <div>
-      <h1 className="text-xl font-extrabold leading-tight text-co-text">
-        {serverT(lang, "admin.catalog.title")}
-      </h1>
-      <p className="mt-1 text-sm text-co-text-muted">
-        {serverT(lang, "admin.catalog.subtitle")}
-      </p>
+      <PageHeader
+        title={serverT(lang, "admin.catalog.title")}
+        subtitle={serverT(lang, "admin.catalog.subtitle")}
+      />
       <ItemsPageTabs
         catalog={<CatalogClient entities={entities} actorLevel={level} />}
         registry={<ItemsClient view={view} itemReadiness={itemReadiness} />}

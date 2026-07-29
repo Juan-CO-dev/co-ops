@@ -21,6 +21,7 @@ import { loadSkuPackChains } from "@/lib/prep-consumption";
 import { buildPackChain, isChainUnverified, type PackChainLevel } from "@/lib/pack-chain-shared";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
 import { VendorDetailClient } from "@/components/admin/vendors/VendorDetailClient";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export default async function AdminVendorDetailPage({
   params,
@@ -93,8 +94,10 @@ export default async function AdminVendorDetailPage({
 
   return (
     <div>
-      <h1 className="text-xl font-extrabold leading-tight text-co-text">{vendor.name}</h1>
-      <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "admin.vendors.detail.subtitle")}</p>
+      <PageHeader
+        title={vendor.name}
+        subtitle={serverT(lang, "admin.vendors.detail.subtitle")}
+      />
       <VendorDetailClient
         vendor={vendor}
         categories={categories}

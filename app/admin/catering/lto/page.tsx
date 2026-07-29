@@ -17,6 +17,7 @@ import { loadPackageLocations } from "@/lib/admin/catering/packages";
 import { loadPerishableSurplus, SURPLUS_READ_MIN } from "@/lib/catering/surplus";
 import { listLtoEvents, LTO_MIN } from "@/lib/catering/lto";
 import { LtoClient } from "@/components/admin/catering/lto/LtoClient";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 /** YYYY-MM-DD of today (request-time) in operational TZ. */
 function todayYmd(): string {
@@ -68,12 +69,10 @@ export default async function AdminCateringLtoPage({
 
   return (
     <div>
-      <h1 className="text-xl font-extrabold leading-tight text-co-text">
-        {serverT(lang, "admin.catering.lto.title" as TranslationKey)}
-      </h1>
-      <p className="mt-1 text-sm text-co-text-muted">
-        {serverT(lang, "admin.catering.lto.subtitle" as TranslationKey)}
-      </p>
+      <PageHeader
+        title={serverT(lang, "admin.catering.lto.title" as TranslationKey)}
+        subtitle={serverT(lang, "admin.catering.lto.subtitle" as TranslationKey)}
+      />
       <LtoClient
         surplus={surplus}
         events={events}

@@ -16,6 +16,7 @@ import { loadVendors, loadCategories, loadOrderTypes, loadVendorOrderingWeek } f
 import { operationalDayOfWeek } from "@/lib/items";
 import { VendorListClient } from "@/components/admin/vendors/VendorListClient";
 import { OrderingCalendar } from "@/components/admin/vendors/OrderingCalendar";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export default async function AdminVendorsPage() {
   const auth = await requireSessionFromHeaders("/admin");
@@ -38,10 +39,10 @@ export default async function AdminVendorsPage() {
 
   return (
     <div>
-      <h1 className="text-xl font-extrabold leading-tight text-co-text">
-        {serverT(lang, "admin.vendors.title")}
-      </h1>
-      <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "admin.vendors.subtitle")}</p>
+      <PageHeader
+        title={serverT(lang, "admin.vendors.title")}
+        subtitle={serverT(lang, "admin.vendors.subtitle")}
+      />
       <div className="mt-4">
         <OrderingCalendar entries={orderingWeek} todayWeekday={todayWeekday} language={lang} />
       </div>

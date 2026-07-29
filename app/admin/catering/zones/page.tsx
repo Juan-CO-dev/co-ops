@@ -16,6 +16,7 @@ import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { loadZoneGroups } from "@/lib/admin/catering/zones";
 import { ZonesClient } from "@/components/admin/catering/zones/ZonesClient";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 const MIN = 7;
 
@@ -29,12 +30,10 @@ export default async function AdminCateringZonesPage() {
 
   return (
     <div>
-      <h1 className="text-xl font-extrabold leading-tight text-co-text">
-        {serverT(lang, "admin.catering.zones.title" as TranslationKey)}
-      </h1>
-      <p className="mt-1 text-sm text-co-text-muted">
-        {serverT(lang, "admin.catering.zones.subtitle" as TranslationKey)}
-      </p>
+      <PageHeader
+        title={serverT(lang, "admin.catering.zones.title" as TranslationKey)}
+        subtitle={serverT(lang, "admin.catering.zones.subtitle" as TranslationKey)}
+      />
       <ZonesClient groups={groups} actorLevel={level} />
     </div>
   );
