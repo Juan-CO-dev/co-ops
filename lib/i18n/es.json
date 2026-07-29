@@ -1405,6 +1405,7 @@
   "auth.pin_modal.error_unknown": "No se pudo confirmar. Intenta de nuevo.",
   "auth.pin_modal.error_network": "Error de red. Intenta de nuevo.",
   "auth.pin_modal.error_cash_required": "Envía el depósito de efectivo antes de finalizar.",
+  "auth.pin_modal.error_hard_gate": "Termina los ítems bloqueados obligatorios antes de enviar.",
   "dashboard.header.label": "Panel",
   "dashboard.header.greeting": "Hola, {name}.",
   "dashboard.location.all": "Todas las ubicaciones",

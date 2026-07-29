@@ -1405,6 +1405,7 @@
   "auth.pin_modal.error_unknown": "Unable to confirm. Please try again.",
   "auth.pin_modal.error_network": "Network error. Try again.",
   "auth.pin_modal.error_cash_required": "Submit the cash deposit before finalizing.",
+  "auth.pin_modal.error_hard_gate": "Finish the required blocked items before submitting.",
   "dashboard.header.label": "Dashboard",
   "dashboard.header.greeting": "Hi, {name}.",
   "dashboard.location.all": "All locations",
