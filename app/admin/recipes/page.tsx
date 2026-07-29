@@ -15,7 +15,6 @@ import { serverT } from "@/lib/i18n/server";
 import { loadRecipes, RECIPE_READ_MIN } from "@/lib/recipes";
 import { loadGraphReadiness } from "@/lib/admin/readiness-load";
 import type { Readiness } from "@/lib/readiness";
-import { AdminBackLink } from "@/components/admin/AdminBackLink";
 import { RecipesClient } from "@/components/admin/recipes/RecipesClient";
 import type { TranslationKey } from "@/lib/i18n/types";
 
@@ -42,7 +41,6 @@ export default async function AdminRecipesPage() {
 
   return (
     <div>
-      <AdminBackLink />
       <h1 className="text-xl font-extrabold leading-tight text-co-text">
         {serverT(lang, rk("recipes.hub.title"))}
       </h1>

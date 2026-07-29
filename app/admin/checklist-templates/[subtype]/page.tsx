@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
@@ -24,9 +23,6 @@ export default async function AdminChecklistSubtypePage({
 
   return (
     <div>
-      <Link href="/admin/checklist-templates" className="text-sm font-bold text-co-text-muted hover:text-co-text">
-        ← {serverT(lang, "admin.templates.back_to_list")}
-      </Link>
       <h1 className="mt-2 text-xl font-extrabold leading-tight text-co-text">
         {serverT(lang, `admin.templates.subtype.${subtype}` as TranslationKey)}
       </h1>
