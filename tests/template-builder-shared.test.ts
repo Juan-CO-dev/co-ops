@@ -52,25 +52,37 @@ describe("assertNotMirrorItem — the read-only guard", () => {
 });
 
 describe("mergeEsFill — same-day Spanish-translation fill", () => {
-  it("writes only the present es keys, leaving en + absent es keys intact", () => {
+  it("STRICT FILL: an existing es value is NEVER overwritten (adversarial review MED)", () => {
+    // Spec §1: fills fix MISSING data. Changing existing Spanish is a content
+    // edit → PR-3's versioning engine, never this path.
     const existing: ChecklistTemplateItemTranslations = {
       en: { label: "Tomatoes" },
       es: { label: "Tomates", description: "Viejo" },
     };
-    const merged = mergeEsFill(existing, { descriptionEs: "Nuevo" });
+    const merged = mergeEsFill(existing, { labelEs: "Jitomates", descriptionEs: "Nuevo" });
     expect(merged.en).toEqual({ label: "Tomatoes" }); // en untouched
-    expect(merged.es?.label).toBe("Tomates"); // absent-key es preserved
-    expect(merged.es?.description).toBe("Nuevo"); // present key written
+    expect(merged.es?.label).toBe("Tomates"); // existing value WINS
+    expect(merged.es?.description).toBe("Viejo"); // existing value WINS
   });
 
-  it("trims and normalizes empty strings: label drops, description/SI become null", () => {
+  it("fills only the MISSING es keys (blank existing counts as missing)", () => {
+    const merged = mergeEsFill(
+      { es: { label: "Tomates", description: "  " } },
+      { descriptionEs: "Nuevo", specialInstructionEs: "Con cuidado" },
+    );
+    expect(merged.es?.label).toBe("Tomates"); // untouched
+    expect(merged.es?.description).toBe("Nuevo"); // blank existing → filled
+    expect(merged.es?.specialInstruction).toBe("Con cuidado"); // missing → filled
+  });
+
+  it("blank incoming values are NO-OPS — never delete or null an existing value", () => {
     const merged = mergeEsFill(
       { es: { label: "Prev", description: "d", specialInstruction: "si" } },
       { labelEs: "   ", descriptionEs: "  ", specialInstructionEs: "" },
     );
-    expect(merged.es?.label).toBeUndefined(); // empty label DROPS (never clobbers)
-    expect(merged.es?.description).toBeNull();
-    expect(merged.es?.specialInstruction).toBeNull();
+    expect(merged.es?.label).toBe("Prev");
+    expect(merged.es?.description).toBe("d");
+    expect(merged.es?.specialInstruction).toBe("si");
   });
 
   it("sets a real es label when provided (and trims it)", () => {

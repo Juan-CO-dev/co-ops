@@ -171,9 +171,11 @@ async function loadAuthorizedItem(
 
 /**
  * SAME-DAY FILL #1 (spec §1): fill Spanish translation fields (label/description/
- * specialInstruction) IN PLACE. Data-completeness only — changes no behavior and
- * no capture, so it does NOT version. Only the PRESENT fields are written; empty
- * label normalizes to a drop (never clobbers a real es label).
+ * specialInstruction) IN PLACE — STRICT FILL: a field writes ONLY where it is
+ * currently missing/empty (mergeEsFill enforces); an existing es value is never
+ * overwritten or deleted here. Changing existing Spanish is a content edit and
+ * belongs to PR-3's versioning engine. Data-completeness only — changes no
+ * behavior and no capture, so it does NOT version.
  *
  * Rejects mirror rows (spec §2.3). Count-checked UPDATE (UPDATE-denials-are-
  * silent) + audited.
@@ -241,6 +243,12 @@ export async function fillItemSpineLink(
 
   // Spec §2.3 — Opening Phase-2 mirrors are read-only (managed by AM Prep).
   assertNotMirrorItem(item.prepMeta);
+
+  // Spec §4 — the spine-link fill targets COUNT-BEARING lines (parity with
+  // needs-link's linkTemplateItem): a plain tick never carries a link.
+  if (!item.expectsCount) {
+    throw new TemplateBuilderError(409, "not_countable", "Only count-bearing lines take a spine link");
+  }
 
   if (item.itemId !== null || item.vendorItemId !== null) {
     throw new TemplateBuilderError(409, "already_linked", "This line is already linked");

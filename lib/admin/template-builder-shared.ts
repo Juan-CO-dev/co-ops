@@ -78,10 +78,12 @@ export type SpineLinkTarget =
   | { kind: "sku"; id: string };
 
 /**
- * Merge an es-translation fill into an existing translations blob — shape-
- * agnostic, only touches the `es` bucket, only writes present keys. Empty
- * strings normalize to null (label to undefined-drop so an empty label never
- * clobbers a real one). Pure; the server write persists the result.
+ * Merge an es-translation fill into an existing translations blob — STRICT
+ * FILL semantics (spec §1: fills "fix MISSING data"): a field writes ONLY when
+ * it is currently missing/empty. An existing es value is NEVER overwritten and
+ * NEVER deleted here — changing existing Spanish is a content edit, which
+ * belongs to PR-3's draft/publish (versioning) engine. Blank incoming values
+ * are no-ops. Pure; the server write persists the result.
  */
 export function mergeEsFill(
   existing: ChecklistTemplateItemTranslations | null,
@@ -89,13 +91,19 @@ export function mergeEsFill(
 ): ChecklistTemplateItemTranslations {
   const next: ChecklistTemplateItemTranslations = { ...(existing ?? {}) };
   const es = { ...(next.es ?? {}) };
+  const hasValue = (v: unknown): boolean => typeof v === "string" && v.trim() !== "";
   if (fill.labelEs !== undefined) {
     const v = fill.labelEs?.trim() || null;
-    if (v) es.label = v;
-    else delete es.label;
+    if (v && !hasValue(es.label)) es.label = v;
   }
-  if (fill.descriptionEs !== undefined) es.description = fill.descriptionEs?.trim() || null;
-  if (fill.specialInstructionEs !== undefined) es.specialInstruction = fill.specialInstructionEs?.trim() || null;
+  if (fill.descriptionEs !== undefined) {
+    const v = fill.descriptionEs?.trim() || null;
+    if (v && !hasValue(es.description)) es.description = v;
+  }
+  if (fill.specialInstructionEs !== undefined) {
+    const v = fill.specialInstructionEs?.trim() || null;
+    if (v && !hasValue(es.specialInstruction)) es.specialInstruction = v;
+  }
   next.es = es;
   return next;
 }
