@@ -557,9 +557,9 @@ function SpanishBlock({
     }
     try {
       const res = await fetch(
-        `/api/admin/checklist-templates/builder/${templateId}/items/${item.id}/translations`,
+        `/api/admin/template-builder/${templateId}/items/${item.id}/translations`,
         {
-          method: "POST",
+          method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
           redirect: "manual",
@@ -663,7 +663,7 @@ function SpineLinkBlock({
     setBusy(true);
     try {
       const res = await fetch(
-        `/api/admin/checklist-templates/builder/${templateId}/items/${item.id}/spine-link`,
+        `/api/admin/template-builder/${templateId}/items/${item.id}/spine-link`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
