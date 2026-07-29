@@ -224,6 +224,46 @@ export function itemNeedsLink(
   return item.expectsCount && item.itemId === null && item.vendorItemId === null;
 }
 
+/**
+ * PR-4 (spec §6): list every ACTIVE hard-gated item (the Doctor lists them so a manager
+ * can see, at a glance, which lines can BLOCK a submission — the owner's guardrail). Not
+ * an error; a standing inventory. Mirror rows are excluded (they can't be hard-gated —
+ * the seal rejects gate edits). Pure over the item list.
+ */
+export function classifyHardGated(
+  items: Array<Pick<ChecklistTemplateItem, "id" | "label" | "hardGate" | "active" | "prepMeta">>,
+): Array<{ itemId: string; label: string }> {
+  const out: Array<{ itemId: string; label: string }> = [];
+  for (const it of items) {
+    if (!it.active || !it.hardGate) continue;
+    if (isMirrorItem(it.prepMeta)) continue;
+    out.push({ itemId: it.id, label: it.label });
+  }
+  return out;
+}
+
+/**
+ * PR-4 (spec §6): flag ref_track items whose referenced target is gone / inactive on
+ * the referenced list — a dangling cross-list reference (the auto-tick can never fire).
+ * `validTargetIds` is the set of currently-active reference-target item ids the OTHER
+ * list still exposes (from ReferenceTargetsView). An item that tracks (refTrack=true +
+ * a referencesTemplateItemId) whose target isn't in that set is dangling. Pure.
+ */
+export function classifyDanglingRefs(
+  items: Array<Pick<ChecklistTemplateItem, "id" | "label" | "active" | "refTrackItemCompletion" | "referencesTemplateItemId" | "prepMeta">>,
+  validTargetIds: ReadonlySet<string>,
+): Array<{ itemId: string; label: string }> {
+  const out: Array<{ itemId: string; label: string }> = [];
+  for (const it of items) {
+    if (!it.active || !it.refTrackItemCompletion) continue;
+    if (isMirrorItem(it.prepMeta)) continue; // mirror ref is AM-Prep-managed, not tracked here
+    if (it.referencesTemplateItemId === null || !validTargetIds.has(it.referencesTemplateItemId)) {
+      out.push({ itemId: it.id, label: it.label });
+    }
+  }
+  return out;
+}
+
 /** One named location-drift finding (Doctor invariant: "P St has 'X' Cap Hill doesn't"). */
 export interface DriftFinding {
   /** the location that HAS the label the other lacks. */
@@ -330,12 +370,37 @@ export interface TemplateBuilderTemplate {
   effectiveFrom?: string | null;
   /** PR-3: true when effective_from > today — the "live tomorrow morning" banner. */
   isPending?: boolean;
+  /** PR-4 (spec §5): the template-level submission gate predicate ("this list requires
+   *  <other artifact> submitted"). NULL = no gate. Editing it rides the publish flow
+   *  (templatePatch). Optional so PR-1/PR-2 loads that predate this field still type. */
+  submissionGatePredicate?: GatePredicate | null;
 }
 
 /** Every active template of a type at the actor's visible locations. */
 export interface TemplateBuilderView {
   type: TemplateBuilderType;
   templates: TemplateBuilderTemplate[];
+}
+
+/**
+ * PR-4 (spec §5): a candidate item on the OTHER list (the referenceable lineage) that
+ * a ref_track item may point at. The picker offers these per LOCATION (a closing item
+ * references its own location's opening item). `templateId` scopes the candidates to a
+ * location's current-version reference lineage so the client filters by the active
+ * template's location.
+ */
+export interface ReferenceTarget {
+  itemId: string;
+  label: string;
+  locationId: string;
+}
+
+/** PR-4: the reference-target set keyed by location (the OTHER list's current items).
+ *  Empty when the referenceable type has no templates (e.g. deep_cleaning). */
+export interface ReferenceTargetsView {
+  /** the type these targets belong to (opening when the builder is closing, etc). */
+  referencedType: TemplateBuilderType;
+  targets: ReferenceTarget[];
 }
 
 /** Per-template Doctor findings (one per location's active template of the type). */
@@ -350,6 +415,11 @@ export interface TemplateDoctorTemplate {
   esFill: { filled: number; total: number };
   /** role-floor sanity (the never-confirmable trap + advisory above-floor). */
   roleFloor: RoleFloorFinding[];
+  /** PR-4 (spec §6): every hard-gated item LISTED (was SKIPPED in PR-1, no column). */
+  hardGated: Array<{ itemId: string; label: string }>;
+  /** PR-4 (spec §6): ref_track items whose referenced target no longer exists / is
+   *  inactive on the referenced list — a dangling reference (fail-loud, advisory). */
+  danglingRefs: Array<{ itemId: string; label: string }>;
 }
 
 /** The whole Doctor report for a type across the actor's visible locations. */
@@ -361,7 +431,17 @@ export interface TemplateDoctorReport {
   /** the confirm floor used for role-floor sanity (KH=4 for closing). */
   confirmFloorLevel: number;
   /** convenience rollups for the header chip (D2/D3). */
-  totals: { needsLink: number; esMissing: number; roleFloorImpossible: number; drift: number };
+  totals: {
+    needsLink: number;
+    esMissing: number;
+    roleFloorImpossible: number;
+    drift: number;
+    /** PR-4: total ACTIVE hard-gated items across the visible templates (inventory,
+     *  not an issue — surfaced but never counted into issueCount). */
+    hardGated: number;
+    /** PR-4: dangling ref_track references (an actionable fail-loud finding). */
+    danglingRefs: number;
+  };
   /**
    * PR-3 publish signals for this type's active lineages (per location's current
    * template). openInstancesToday powers the apply-now gate message (spec §1);

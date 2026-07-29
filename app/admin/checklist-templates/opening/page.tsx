@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { ROLES, getRoleLevel } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
-import { loadTemplateBuilderView, runTemplateDoctor } from "@/lib/admin/template-builder";
+import { loadTemplateBuilderView, runTemplateDoctor, loadReferenceTargets } from "@/lib/admin/template-builder";
 import { loadLinkTargets } from "@/lib/admin/needs-link";
 import { TemplateBuilderClient } from "@/components/admin/template-builder/TemplateBuilderClient";
 
@@ -40,10 +40,11 @@ export default async function AdminOpeningBuilderPage() {
   const lang = auth.user.language;
   const level = getRoleLevel(auth.user.role);
 
-  const [view, doctor, linkTargets] = await Promise.all([
+  const [view, doctor, linkTargets, referenceTargets] = await Promise.all([
     loadTemplateBuilderView(auth, "opening"),
     runTemplateDoctor(auth, "opening"),
     loadLinkTargets(auth),
+    loadReferenceTargets(auth, "opening"),
   ]);
 
   return (
@@ -60,6 +61,7 @@ export default async function AdminOpeningBuilderPage() {
         view={view}
         doctor={doctor}
         linkTargets={linkTargets}
+        referenceTargets={referenceTargets}
         canFill={level >= 7}
       />
     </div>

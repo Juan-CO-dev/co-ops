@@ -35,20 +35,25 @@ import {
   rowToTemplateItem,
 } from "@/lib/template-items";
 import type { AuthContext } from "@/lib/session";
-import type { ChecklistTemplateItem } from "@/lib/types";
+import type { ChecklistTemplateItem, GatePredicate } from "@/lib/types";
 import {
   TemplateBuilderError,
   assertNotMirrorItem,
+  isMirrorItem,
   mergeEsFill,
   esFillCount,
   itemNeedsLink,
   diffLocationItems,
   classifyRoleFloor,
+  classifyHardGated,
+  classifyDanglingRefs,
   confirmFloorForType,
   classifyEdits,
   nextOperationalDay,
   versionOutranks,
   resolveEffectiveVersionId,
+  type ReferenceTarget,
+  type ReferenceTargetsView,
   type ItemTranslationFill,
   type SpineLinkTarget,
   type DriftFinding,
@@ -99,6 +104,8 @@ export type {
   TemplateDiffSummary,
   TemplatePatch,
   ReconciledReportRefType,
+  ReferenceTarget,
+  ReferenceTargetsView,
   PublishEffectiveMode,
 } from "@/lib/admin/template-builder-shared";
 
@@ -116,6 +123,8 @@ interface LineageTplRow {
   effective_from: string | null;
   created_at: string;
   prep_subtype: string | null;
+  /** PR-4: the template-level submission gate predicate (spec §5). */
+  submission_gate_predicate: GatePredicate | null;
 }
 
 /** Lineage key for the builder view: one edit target per (location, name, subtype). */
@@ -166,7 +175,7 @@ export async function loadTemplateBuilderView(
 
   const { data: tplRows, error: tErr } = await sb
     .from("checklist_templates")
-    .select("id, name, type, location_id, active, effective_from, created_at, prep_subtype")
+    .select("id, name, type, location_id, active, effective_from, created_at, prep_subtype, submission_gate_predicate")
     .eq("type", type)
     .eq("active", true)
     .order("location_id", { ascending: true })
@@ -210,8 +219,46 @@ export async function loadTemplateBuilderView(
       // client shows the "live tomorrow morning" banner.
       effectiveFrom: t.effective_from,
       isPending: t.effective_from !== null && t.effective_from > today,
+      // PR-4: the template-level submission gate ("this list requires <other> submitted").
+      submissionGatePredicate: t.submission_gate_predicate ?? null,
     })),
   };
+}
+
+/**
+ * PR-4 (spec §5): load the REFERENCE TARGETS for a builder of `type` — the OTHER
+ * list's current-version items (a closing item references an opening item, and vice
+ * versa). Reuses loadTemplateBuilderView on the referenced type (lineage-latest, active
+ * items, actor-scoped) and flattens to (itemId, label, locationId). Excludes mirror
+ * rows (an opening Phase-2 mirror is AM-Prep-managed — not a stable reference target).
+ * deep_cleaning is not referenceable (no templates) → empty. Two queries (via the view).
+ */
+export async function loadReferenceTargets(
+  actor: AuthContext,
+  type: TemplateBuilderType,
+): Promise<ReferenceTargetsView> {
+  const referencedType = referenceableType(type);
+  if (referencedType === null) {
+    return { referencedType: type, targets: [] };
+  }
+  const view = await loadTemplateBuilderView(actor, referencedType);
+  const targets: ReferenceTarget[] = [];
+  for (const tpl of view.templates) {
+    for (const it of tpl.items) {
+      if (!it.active) continue;
+      if (isMirrorItem(it.prepMeta)) continue; // mirrors aren't stable ref targets
+      targets.push({ itemId: it.id, label: it.label, locationId: tpl.locationId });
+    }
+  }
+  return { referencedType, targets };
+}
+
+/** The referenceable OTHER type for a builder type (spec §5: closing ↔ opening). null
+ *  when there is no cross-list reference partner (deep_cleaning). */
+function referenceableType(type: TemplateBuilderType): TemplateBuilderType | null {
+  if (type === "closing") return "opening";
+  if (type === "opening") return "closing";
+  return null;
 }
 
 /**
@@ -424,6 +471,12 @@ export async function runTemplateDoctor(
 
   const confirmFloorLevel = confirmFloorForType(type);
 
+  // PR-4 (spec §6): the reference-target id set (the OTHER list's active items) — used
+  // to flag DANGLING ref_track references (a tracked target that no longer exists). One
+  // batched view read (loadReferenceTargets); empty for deep_cleaning.
+  const refTargets = await loadReferenceTargets(actor, type);
+  const validTargetIds = new Set(refTargets.targets.map((r) => r.itemId));
+
   const templates: TemplateDoctorTemplate[] = view.templates.map((tpl) => {
     const needsLink = tpl.items
       .filter((it) => itemNeedsLink(it))
@@ -436,6 +489,8 @@ export async function runTemplateDoctor(
       needsLink,
       esFill: esFillCount(tpl.items),
       roleFloor: classifyRoleFloor(tpl.items, confirmFloorLevel),
+      hardGated: classifyHardGated(tpl.items),
+      danglingRefs: classifyDanglingRefs(tpl.items, validTargetIds),
     };
   });
 
@@ -461,6 +516,8 @@ export async function runTemplateDoctor(
       0,
     ),
     drift: drift.length,
+    hardGated: templates.reduce((n, t) => n + t.hardGated.length, 0),
+    danglingRefs: templates.reduce((n, t) => n + t.danglingRefs.length, 0),
   };
 
   // PR-3 publish signals: TODAY's open instances across the visible lineages (powers
