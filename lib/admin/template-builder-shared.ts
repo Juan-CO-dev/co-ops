@@ -706,6 +706,7 @@ export function classifyEdits(
   const disabled = new Map<string, boolean>(); // true=disable, false=enable
   const reorderedIds = new Set<string>();
   const adds: Array<{ tempId: string; label: string }> = [];
+  const gateAddSignposts: TemplateDiffSummary["gateChanged"] = [];
   // PR-4: coalesced final gate tier (required + hardGate) per item, and the set of
   // items whose reference/ref-track changed.
   const gate = new Map<string, { required: boolean; hardGate: boolean }>();
@@ -744,6 +745,11 @@ export function classifyEdits(
         break;
       case "add":
         adds.push({ tempId: e.tempId, label: e.label });
+        // A hard-gated ADD must be signposted in the confirm modal like any other
+        // gate change (PR-5 review L3b) — a hard gate never ships silently.
+        if (e.hardGate === true) {
+          gateAddSignposts.push({ itemId: `draft-${e.tempId}`, label: e.label, to: "hard_gate" });
+        }
         break;
       // describe / station / translate don't appear in the manager-facing summary.
       default:
@@ -791,7 +797,7 @@ export function classifyEdits(
   // PR-4: gate-tier changes — the RESOLVED tier per item, reported only when it
   // differs from the source tier (hardGate wins). A bare `required` flip is ALSO a
   // tier change (Optional↔must-complete), so fold required-only changes in too.
-  const gateChanged: TemplateDiffSummary["gateChanged"] = [];
+  const gateChanged: TemplateDiffSummary["gateChanged"] = [...gateAddSignposts];
   const gateTouched = new Set<string>([...gate.keys(), ...required.keys()]);
   for (const id of gateTouched) {
     const src = srcById.get(id);

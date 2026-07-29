@@ -955,3 +955,21 @@ describe("mirror-drift exclusion (spec §8 seal) — a mirror label is never a d
     expect(findings).toEqual([{ presentLocationId: "A", missingLocationId: "B", label: "P-only step" }]);
   });
 });
+
+// ── PR-5 review L3b: a hard-gated ADD is signposted in the gate summary ────────
+describe("classifyEdits — hard-gated add signpost", () => {
+  it("an add carrying hardGate surfaces in gateChanged (never ships silently)", () => {
+    const diff = classifyEdits([], [
+      { op: "add", tempId: "t1", label: "Arm alarm", station: "General", displayOrder: 1, minRoleLevel: 4, required: true, expectsCount: false, hardGate: true },
+    ]);
+    expect(diff.added.length).toBe(1);
+    expect(diff.gateChanged).toEqual([{ itemId: "draft-t1", label: "Arm alarm", to: "hard_gate" }]);
+  });
+
+  it("a plain add does NOT touch gateChanged", () => {
+    const diff = classifyEdits([], [
+      { op: "add", tempId: "t2", label: "Wipe counters", station: "General", displayOrder: 1, minRoleLevel: 3, required: true, expectsCount: false },
+    ]);
+    expect(diff.gateChanged).toEqual([]);
+  });
+});

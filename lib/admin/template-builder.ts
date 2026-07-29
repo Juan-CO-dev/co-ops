@@ -506,8 +506,10 @@ export async function runTemplateDoctor(
   //
   // PR-5 (spec §8 seal): MIRROR rows are EXCLUDED from both label lists. A mirror is
   // derived per location by AM Prep (createOpeningMirror), NOT authored — a mirror
-  // present on one location only is an AM-Prep-managed orphan (the Doctor has its own
-  // orphaned-mirror check), never a drift the manager reconciles. Excluding them here
+  // present on one location only is an AM-Prep-managed orphan — never a drift the
+  // manager reconciles. ⚠ Orphaned mirrors are currently UNDETECTED by the Doctor
+  // (the dedicated check is a tracked fast-follow; do not rely on drift to catch
+  // them — this filter deliberately removed that accidental coverage). Excluding them here
   // means a mirror label can NEVER become a drift finding → the reconcile action can
   // never source/target a mirror (belt; buildReconcileAddEdit's guard is braces).
   let drift: DriftFinding[] = [];
