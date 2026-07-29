@@ -50,6 +50,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { ChecklistInstance, PrepInputs } from "@/lib/types";
 
 import { AmPrepForm } from "@/components/prep/AmPrepForm";
+import { BackLink } from "@/components/nav/BackLink";
 
 const OPERATIONAL_TZ = "America/New_York";
 
@@ -199,23 +200,8 @@ export default async function AmPrepPage({ searchParams }: PageProps) {
 
   return (
     <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
-      {/* Persistent back-to-dashboard CTA — same shape as closing-client. */}
-      <div className="mb-3">
-        <a
-          href="/dashboard"
-          aria-label={serverT(auth.user.language, "am_prep.page.dashboard_back_aria")}
-          className="
-            inline-flex min-h-[44px] items-center gap-1.5 -ml-2 px-2 py-2
-            text-xs font-bold uppercase tracking-[0.14em] text-co-text-muted
-            transition hover:text-co-text
-            focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
-            rounded-md
-          "
-        >
-          <ChevronLeftIcon />
-          <span>{serverT(auth.user.language, "am_prep.page.dashboard_back")}</span>
-        </a>
-      </div>
+      {/* Back-to-dashboard — the one BackLink primitive (registry-driven). */}
+      <BackLink />
 
       {/* Header — visual parallel to closing-client header. */}
       <div>
@@ -365,23 +351,5 @@ function NoTemplateView({
         </a>
       </section>
     </main>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Inline SVG icon (matches closing-client.tsx ChevronLeftIcon)
-// ─────────────────────────────────────────────────────────────────────────────
-
-function ChevronLeftIcon() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden>
-      <path
-        d="M10 3L5 8L10 13"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
   );
 }

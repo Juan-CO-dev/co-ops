@@ -14,7 +14,6 @@ import { loadRecipe, RECIPE_READ_MIN } from "@/lib/recipes";
 import { loadGraphReadiness } from "@/lib/admin/readiness-load";
 import type { Readiness } from "@/lib/readiness";
 import { RECIPE_WRITE_MIN } from "@/lib/recipes-shared";
-import { AdminBackLink } from "@/components/admin/AdminBackLink";
 import { RecipeBuilder } from "@/components/admin/recipes/RecipeBuilder";
 import { RecipeCateringFlags, type RecipeMenuOutputFlags } from "@/components/admin/recipes/RecipeCateringFlags";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
@@ -129,7 +128,6 @@ export default async function AdminRecipeDetailPage({
 
   return (
     <div>
-      <AdminBackLink />
       <RecipeBuilder
         recipe={recipe}
         skus={skus}

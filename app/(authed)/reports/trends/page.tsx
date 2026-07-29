@@ -14,7 +14,7 @@ import { loadTeamOperatingHealth, TEAM_VIEW_LEVEL } from "@/lib/team-metrics";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
-import { DashboardBackLink } from "@/components/DashboardBackLink";
+import { BackLink } from "@/components/nav/BackLink";
 import { TrendsLanding } from "@/components/team/TrendsLanding";
 
 interface PageProps {
@@ -54,9 +54,7 @@ export default async function TrendsLandingPage({ searchParams }: PageProps) {
 
   return (
     <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
-      <div className="mb-3">
-        <DashboardBackLink />
-      </div>
+      <BackLink search={`?location=${locationParam}`} />
       <h1 className="mb-4 text-lg font-bold text-co-text">{serverT(language, "reports.trends.landing.title")}</h1>
       <TrendsLanding
         locationId={locationParam}

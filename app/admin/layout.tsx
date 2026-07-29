@@ -16,7 +16,7 @@
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
 
-import { AdminBackLink } from "@/components/admin/AdminBackLink";
+import { BackLink } from "@/components/nav/BackLink";
 import { StepUpProvider } from "@/components/admin/StepUpProvider";
 import { UserMenu } from "@/components/UserMenu";
 import { CanvasWatermark } from "@/components/layout/CanvasWatermark";
@@ -50,7 +50,7 @@ export default async function AdminLayout({ children }: { children: ReactNode })
         unlockedAt={auth.session.stepUpUnlockedAt}
       >
         <div className="mx-auto w-full max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 py-6">
-          <AdminBackLink />
+          <BackLink />
           {children}
         </div>
       </StepUpProvider>

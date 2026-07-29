@@ -12,7 +12,7 @@ import { getRoleLevel } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { loadCompanies, COMPANY_READ_MIN } from "@/lib/catering/companies";
 import { CompaniesClient } from "@/components/catering/companies/CompaniesClient";
-import { CateringBackLink } from "@/components/catering/CateringBackLink";
+import { BackLink } from "@/components/nav/BackLink";
 
 export default async function CateringCompaniesPage() {
   const auth = await requireSessionFromHeaders("/catering/companies");
@@ -25,7 +25,7 @@ export default async function CateringCompaniesPage() {
   return (
     <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3">
-        <CateringBackLink />
+        <BackLink />
       </div>
       <h1 className="text-lg font-bold text-co-text">{serverT(lang, "catering.companies.title")}</h1>
       <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "catering.companies.subtitle")}</p>

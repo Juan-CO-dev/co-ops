@@ -15,7 +15,6 @@ import { requireSessionFromHeaders } from "@/lib/session";
 import { getRoleLevel } from "@/lib/roles";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { RECIPE_READ_MIN } from "@/lib/recipes";
-import { AdminBackLink } from "@/components/admin/AdminBackLink";
 import { RecipeBuilder } from "@/components/admin/recipes/RecipeBuilder";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
 import type { RecipeType } from "@/lib/recipes";
@@ -101,7 +100,6 @@ export default async function AdminRecipesNewPage({
 
   return (
     <div>
-      <AdminBackLink />
       <h1 className="text-xl font-extrabold leading-tight text-co-text">
         {serverT(lang, rk("recipes.new.title"))}
       </h1>

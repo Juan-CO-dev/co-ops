@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { serverT } from "@/lib/i18n/server";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { loadDeliveryDetail, ReceivingError } from "@/lib/receiving";
-import { DashboardBackLink } from "@/components/DashboardBackLink";
+import { BackLink } from "@/components/nav/BackLink";
 import type { DeliveryDetail } from "@/lib/receiving";
 
 export default async function DeliveryDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -21,7 +21,7 @@ export default async function DeliveryDetailPage({ params }: { params: Promise<{
 
   return (
     <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
-      <div className="mb-3"><DashboardBackLink /></div>
+      <BackLink />
       <h1 className="text-lg font-bold text-co-text">{detail.vendorName}</h1>
       <p className="mt-1 text-sm text-co-text-muted">
         {detail.deliveryDate}

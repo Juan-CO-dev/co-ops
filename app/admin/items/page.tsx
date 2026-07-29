@@ -16,7 +16,6 @@ import { loadItemsAdminView, ITEMS_READ_MIN } from "@/lib/admin/items";
 import { loadCatalogView } from "@/lib/admin/catalog";
 import { loadGraphReadiness } from "@/lib/admin/readiness-load";
 import type { Readiness } from "@/lib/readiness";
-import { AdminBackLink } from "@/components/admin/AdminBackLink";
 import { ItemsClient } from "@/components/admin/items/ItemsClient";
 import { CatalogClient } from "@/components/admin/catalog/CatalogClient";
 import { ItemsPageTabs } from "@/components/admin/catalog/ItemsPageTabs";
@@ -44,7 +43,6 @@ export default async function AdminItemsPage() {
 
   return (
     <div>
-      <AdminBackLink />
       <h1 className="text-xl font-extrabold leading-tight text-co-text">
         {serverT(lang, "admin.catalog.title")}
       </h1>
