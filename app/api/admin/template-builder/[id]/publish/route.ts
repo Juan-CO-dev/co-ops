@@ -147,6 +147,14 @@ function coerceEdit(raw: unknown): TemplateItemEdit | null {
       if ("description" in o) { if (!strOrNull(o.description)) return null; edit.description = o.description; }
       if ("station" in o) { if (!strOrNull(o.station)) return null; edit.station = o.station; }
       if ("expectsPhoto" in o) { if (!bool(o.expectsPhoto)) return null; edit.expectsPhoto = o.expectsPhoto; }
+      // PR-5 (spec §8): a RECONCILE add carries the source's hard gate. hardGate IMPLIES
+      // required (parity with the gate_tier guard — a hard-gated-but-optional line would
+      // block confirmInstance while invisible to the Doctor's role-floor trap).
+      if ("hardGate" in o) {
+        if (!bool(o.hardGate)) return null;
+        if (o.hardGate === true && edit.required !== true) return null;
+        edit.hardGate = o.hardGate;
+      }
       if ("spineLink" in o && o.spineLink !== null) {
         const sl = o.spineLink;
         if (typeof sl !== "object" || sl === null) return null;

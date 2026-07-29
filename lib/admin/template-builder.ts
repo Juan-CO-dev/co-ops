@@ -76,6 +76,9 @@ export {
   esFillCount,
   itemNeedsLink,
   diffLocationItems,
+  buildReconcileAddEdit,
+  buildBothLocationAdds,
+  makeTempId,
   classifyRoleFloor,
   classifyEdits,
   nextOperationalDay,
@@ -94,6 +97,9 @@ export type {
   ItemTranslationFill,
   SpineLinkTarget,
   DriftFinding,
+  ReconcileSource,
+  ReconcileBlockReason,
+  ReconcileAddResult,
   RoleFloorFinding,
   TemplateBuilderType,
   TemplateBuilderTemplate,
@@ -497,13 +503,22 @@ export async function runTemplateDoctor(
   // Location drift: diff the two locations' active item label sets. Only defined
   // when exactly two locations are visible (the CO shape); with 0/1 there is no
   // cross-location diff to make.
+  //
+  // PR-5 (spec §8 seal): MIRROR rows are EXCLUDED from both label lists. A mirror is
+  // derived per location by AM Prep (createOpeningMirror), NOT authored — a mirror
+  // present on one location only is an AM-Prep-managed orphan — never a drift the
+  // manager reconciles. ⚠ Orphaned mirrors are currently UNDETECTED by the Doctor
+  // (the dedicated check is a tracked fast-follow; do not rely on drift to catch
+  // them — this filter deliberately removed that accidental coverage). Excluding them here
+  // means a mirror label can NEVER become a drift finding → the reconcile action can
+  // never source/target a mirror (belt; buildReconcileAddEdit's guard is braces).
   let drift: DriftFinding[] = [];
   if (view.templates.length === 2) {
     const [a, b] = view.templates;
     if (a && b) {
       drift = diffLocationItems(
-        { locationId: a.locationId, labels: a.items.map((it) => it.label) },
-        { locationId: b.locationId, labels: b.items.map((it) => it.label) },
+        { locationId: a.locationId, labels: a.items.filter((it) => !isMirrorItem(it.prepMeta)).map((it) => it.label) },
+        { locationId: b.locationId, labels: b.items.filter((it) => !isMirrorItem(it.prepMeta)).map((it) => it.label) },
       );
     }
   }
@@ -1064,9 +1079,11 @@ async function copyItemsToVersion(
       prep_meta: null,
       report_reference_type: null,
       references_template_item_id: null,
-      // PR-4: a fresh quick-add is a plain new line — gate/ref off (set later via a
-      // gate_tier / set_report_ref op once the row is persisted in this version).
-      hard_gate: false,
+      // PR-4: a fresh quick-add is a plain new line — ref off (set later via a
+      // set_report_ref / ref_track op once the row is persisted in this version).
+      // PR-5 (spec §8): a RECONCILE add carries the source's hard gate so "Make B match
+      // A" reproduces A's gate faithfully; a plain quick-add omits it → false.
+      hard_gate: a.hardGate === true,
       ref_track_item_completion: false,
     });
   }

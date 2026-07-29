@@ -309,6 +309,124 @@ export function diffLocationItems(
   return findings;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// PR-5 (spec §8) — LOCATION SYNC. Two pure constructions the client composes:
+//  1. buildBothLocationAdds — the both-locations add fan-out (one authored add →
+//     two draft adds, distinct tempIds, same content). Default-ON in QuickAdd.
+//  2. buildReconcileAddEdit — the "Make <B> match <A>" reconcile: turn ONE drift
+//     source row (A has 'X' that B lacks) into an {op:"add"} for B copying A's full
+//     AUTHORABLE shape (label/description/es/station/role/required/hardGate + spine
+//     link when count-bearing). ADDITIVE ONLY (append-only law, spec §8): no removal
+//     reconcile. Cross-list CONNECTIONS (report-ref / ref-track) are deliberately NOT
+//     copied — they are per-location references (a closing item references ITS location's
+//     opening item by id); copying A's target id to B would dangle. Connections stay a
+//     manual per-location step (the Doctor flags dangling refs). Zero I/O.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A fresh client-side temp id for an added row (matches QuickAdd's shape). Pure over
+ *  an injectable now/rand so tests are deterministic; the client passes real ones. */
+export function makeTempId(now: number, rand: string): string {
+  return `${now}-${rand}`;
+}
+
+/** The AUTHORABLE shape of a source item a reconcile add copies. This is exactly the
+ *  set of fields "Make B match A" reproduces (spec §8 additive reconcile). Mirror rows
+ *  and un-authorable derived state are excluded by the caller / the builder guard. */
+export interface ReconcileSource {
+  label: string;
+  description: string | null;
+  station: string | null;
+  minRoleLevel: number;
+  required: boolean;
+  hardGate: boolean;
+  expectsCount: boolean;
+  expectsPhoto: boolean;
+  /** the source's registry item link (count-bearing rows). */
+  itemId: string | null;
+  /** the source's SKU link (count-bearing rows). */
+  vendorItemId: string | null;
+  /** whether this row is an Opening Phase-2 mirror — a mirror is NEVER a reconcile
+   *  source (the §5 seal): a mirror is derived by AM Prep, not authored per location. */
+  isMirror: boolean;
+  es: { label?: string | null; description?: string | null } | null;
+}
+
+/** Why a reconcile add was BLOCKED (never silently added). */
+export type ReconcileBlockReason =
+  /** the source is an Opening Phase-2 mirror — the seal (never reconcile a mirror). */
+  | "mirror"
+  /** the source is a count-bearing line with no spine link — the spine-link law (§4)
+   *  would reject the publish; block EARLY in the UI ("link it first"). */
+  | "unlinked_count";
+
+export type ReconcileAddResult =
+  | { ok: true; edit: Extract<TemplateItemEdit, { op: "add" }> }
+  | { ok: false; reason: ReconcileBlockReason };
+
+/**
+ * Build the reconcile {op:"add"} that makes location B carry A's row `source`.
+ * ADDITIVE (spec §8). Copies A's full authorable shape. BLOCKS (never silently adds):
+ *   - a MIRROR source (the §5 seal — a mirror is AM-Prep-managed, not per-location
+ *     authored; the caller also excludes mirror labels from drift so this is belt+braces);
+ *   - a count-bearing source with NO spine link (spine-link law §4: the server publish
+ *     would reject it → fail early with "link it first" in the UI).
+ * `tempId` + `displayOrder` are supplied by the caller (B's own draft context — the add
+ * lands at B's tail). Pure.
+ */
+export function buildReconcileAddEdit(
+  source: ReconcileSource,
+  ctx: { tempId: string; displayOrder: number },
+): ReconcileAddResult {
+  if (source.isMirror) return { ok: false, reason: "mirror" };
+  if (source.expectsCount && source.itemId === null && source.vendorItemId === null) {
+    return { ok: false, reason: "unlinked_count" };
+  }
+  const spineLink: SpineLinkTarget | null = !source.expectsCount
+    ? null
+    : source.itemId !== null
+      ? { kind: "item", id: source.itemId }
+      : source.vendorItemId !== null
+        ? { kind: "sku", id: source.vendorItemId }
+        : null;
+
+  const edit: Extract<TemplateItemEdit, { op: "add" }> = {
+    op: "add",
+    tempId: ctx.tempId,
+    label: source.label,
+    description: source.description,
+    station: source.station,
+    displayOrder: ctx.displayOrder,
+    minRoleLevel: source.minRoleLevel,
+    required: source.required,
+    expectsCount: source.expectsCount,
+    expectsPhoto: source.expectsPhoto,
+    spineLink,
+    hardGate: source.hardGate,
+    ...(source.es ? { es: source.es } : {}),
+  };
+  return { ok: true, edit };
+}
+
+/**
+ * The both-locations fan-out (spec §8, default-ON): one authored add becomes TWO draft
+ * adds (one per template), same content, DISTINCT tempIds + per-draft displayOrders.
+ * Publishing stays PER TEMPLATE (two taps — honest about the two lineages). `mkTempId`
+ * yields a fresh id per call (the caller passes a real time/rand generator). Pure over it.
+ *
+ * `base` is the authored add WITHOUT its tempId/displayOrder (those are per-template).
+ * Returns [{ templateId, edit }] for exactly the templates given. Order preserved.
+ */
+export function buildBothLocationAdds(
+  base: Omit<Extract<TemplateItemEdit, { op: "add" }>, "op" | "tempId" | "displayOrder">,
+  templates: Array<{ templateId: string; nextDisplayOrder: number }>,
+  mkTempId: () => string,
+): Array<{ templateId: string; edit: Extract<TemplateItemEdit, { op: "add" }> }> {
+  return templates.map((t) => ({
+    templateId: t.templateId,
+    edit: { op: "add", tempId: mkTempId(), displayOrder: t.nextDisplayOrder, ...base },
+  }));
+}
+
 /** Severity of a role-floor finding for one required item. */
 export type RoleFloorSeverity =
   /** min_role_level > MAX_ROLE_LEVEL → no one can ever complete it. */
@@ -518,6 +636,10 @@ export type TemplateItemEdit =
       /** REQUIRED when expectsCount (spine-link law §4) — set exactly one. */
       spineLink?: SpineLinkTarget | null;
       es?: { label?: string | null; description?: string | null };
+      /** PR-5 (spec §8): the owner-ruled hard gate carried on the add. A plain quick-add
+       *  is always false; a RECONCILE add (buildReconcileAddEdit) copies the source row's
+       *  hard-gate so "Make B match A" reproduces A's gate faithfully. `undefined` = false. */
+      hardGate?: boolean;
     };
 
 /**
@@ -584,6 +706,7 @@ export function classifyEdits(
   const disabled = new Map<string, boolean>(); // true=disable, false=enable
   const reorderedIds = new Set<string>();
   const adds: Array<{ tempId: string; label: string }> = [];
+  const gateAddSignposts: TemplateDiffSummary["gateChanged"] = [];
   // PR-4: coalesced final gate tier (required + hardGate) per item, and the set of
   // items whose reference/ref-track changed.
   const gate = new Map<string, { required: boolean; hardGate: boolean }>();
@@ -622,6 +745,11 @@ export function classifyEdits(
         break;
       case "add":
         adds.push({ tempId: e.tempId, label: e.label });
+        // A hard-gated ADD must be signposted in the confirm modal like any other
+        // gate change (PR-5 review L3b) — a hard gate never ships silently.
+        if (e.hardGate === true) {
+          gateAddSignposts.push({ itemId: `draft-${e.tempId}`, label: e.label, to: "hard_gate" });
+        }
         break;
       // describe / station / translate don't appear in the manager-facing summary.
       default:
@@ -669,7 +797,7 @@ export function classifyEdits(
   // PR-4: gate-tier changes — the RESOLVED tier per item, reported only when it
   // differs from the source tier (hardGate wins). A bare `required` flip is ALSO a
   // tier change (Optional↔must-complete), so fold required-only changes in too.
-  const gateChanged: TemplateDiffSummary["gateChanged"] = [];
+  const gateChanged: TemplateDiffSummary["gateChanged"] = [...gateAddSignposts];
   const gateTouched = new Set<string>([...gate.keys(), ...required.keys()]);
   for (const id of gateTouched) {
     const src = srcById.get(id);
@@ -738,9 +866,10 @@ export function applyEditsToItems(
         reportReferenceType: null,
         referencesTemplateItemId: null,
         itemId: e.expectsCount && e.spineLink?.kind === "item" ? e.spineLink.id : null,
-        // A quick-add row is a plain new line — hard gate + ref-track default off
-        // (set later via a gate_tier / set_report_ref op on the persisted row).
-        hardGate: false,
+        // A quick-add row is a plain new line — ref-track defaults off (set later via a
+        // set_report_ref / ref_track op on the persisted row). PR-5: a RECONCILE add
+        // carries the source's hard gate so the drafted preview mirrors A faithfully.
+        hardGate: e.hardGate === true,
         refTrackItemCompletion: false,
       });
       continue;
