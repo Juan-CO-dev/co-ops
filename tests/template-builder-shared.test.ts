@@ -32,8 +32,12 @@ import {
   classifyDanglingRefs,
   isReconciledReportRefType,
   RECONCILED_REPORT_REF_TYPES,
+  buildReconcileAddEdit,
+  buildBothLocationAdds,
+  makeTempId,
   type TemplateItemEdit,
   type LineageVersionRow,
+  type ReconcileSource,
 } from "@/lib/admin/template-builder-shared";
 import type { ChecklistTemplateItem, ChecklistTemplateItemTranslations } from "@/lib/types";
 
@@ -749,5 +753,205 @@ describe("isReconciledReportRefType — only reconcile-backed values are exposed
     expect(isReconciledReportRefType("special_report")).toBe(false);
     expect(isReconciledReportRefType(null)).toBe(false);
     expect(isReconciledReportRefType("nonsense")).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PR-5 (spec §8) — LOCATION SYNC. buildReconcileAddEdit (the "Make B match A" add
+// construction incl. unlinked-source blocking + the mirror seal), buildBothLocationAdds
+// (the both-locations fan-out), the add-op hardGate carry, and the mirror-drift
+// exclusion (a mirror label can never become a drift finding).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A minimal reconcile source (a plain, authorable non-count row on location A). */
+function reconcileSrc(over: Partial<ReconcileSource> = {}): ReconcileSource {
+  return {
+    label: "Wipe the slicer",
+    description: null,
+    station: "Line",
+    minRoleLevel: 3,
+    required: true,
+    hardGate: false,
+    expectsCount: false,
+    expectsPhoto: false,
+    itemId: null,
+    vendorItemId: null,
+    isMirror: false,
+    es: null,
+    ...over,
+  };
+}
+
+describe("buildReconcileAddEdit — the additive 'Make B match A' reconcile (spec §8)", () => {
+  it("copies A's full authorable shape into an {op:add} for B", () => {
+    const r = buildReconcileAddEdit(
+      reconcileSrc({
+        label: "Lock the walk-in",
+        description: "chain + padlock",
+        station: "Close",
+        minRoleLevel: 4,
+        required: true,
+        hardGate: true,
+        expectsPhoto: true,
+        es: { label: "Cerrar el walk-in", description: null },
+      }),
+      { tempId: "t-b", displayOrder: 12 },
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.edit).toEqual({
+      op: "add",
+      tempId: "t-b",
+      label: "Lock the walk-in",
+      description: "chain + padlock",
+      station: "Close",
+      displayOrder: 12,
+      minRoleLevel: 4,
+      required: true,
+      expectsCount: false,
+      expectsPhoto: true,
+      spineLink: null,
+      hardGate: true,
+      es: { label: "Cerrar el walk-in", description: null },
+    });
+  });
+
+  it("carries the spine link for a count-bearing source (item)", () => {
+    const r = buildReconcileAddEdit(
+      reconcileSrc({ label: "Count subs", expectsCount: true, itemId: "item-9" }),
+      { tempId: "t", displayOrder: 1 },
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.edit.expectsCount).toBe(true);
+      expect(r.edit.spineLink).toEqual({ kind: "item", id: "item-9" });
+    }
+  });
+
+  it("carries the spine link for a count-bearing source (sku)", () => {
+    const r = buildReconcileAddEdit(
+      reconcileSrc({ label: "Count cups", expectsCount: true, vendorItemId: "sku-4" }),
+      { tempId: "t", displayOrder: 1 },
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.edit.spineLink).toEqual({ kind: "sku", id: "sku-4" });
+  });
+
+  it("BLOCKS an unlinked count-bearing source (spine-link law §4 — fail EARLY)", () => {
+    const r = buildReconcileAddEdit(
+      reconcileSrc({ label: "Count unlinked", expectsCount: true, itemId: null, vendorItemId: null }),
+      { tempId: "t", displayOrder: 1 },
+    );
+    expect(r).toEqual({ ok: false, reason: "unlinked_count" });
+  });
+
+  it("BLOCKS a mirror source (the §5 seal — never reconcile-add a mirror row)", () => {
+    const r = buildReconcileAddEdit(reconcileSrc({ isMirror: true }), { tempId: "t", displayOrder: 1 });
+    expect(r).toEqual({ ok: false, reason: "mirror" });
+  });
+
+  it("omits the es field when the source has no Spanish (no empty es blob)", () => {
+    const r = buildReconcileAddEdit(reconcileSrc({ es: null }), { tempId: "t", displayOrder: 1 });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect("es" in r.edit).toBe(false);
+  });
+});
+
+describe("buildBothLocationAdds — the both-locations fan-out (spec §8)", () => {
+  const base = {
+    label: "New step",
+    station: "Line",
+    minRoleLevel: 3,
+    required: true,
+    expectsCount: false as const,
+    spineLink: null,
+  };
+
+  it("fans one authored add into one draft add PER template, distinct tempIds", () => {
+    let n = 0;
+    const out = buildBothLocationAdds(
+      base,
+      [
+        { templateId: "tpl-A", nextDisplayOrder: 5 },
+        { templateId: "tpl-B", nextDisplayOrder: 9 },
+      ],
+      () => `tmp-${n++}`,
+    );
+    expect(out).toHaveLength(2);
+    expect(out[0]!.templateId).toBe("tpl-A");
+    expect(out[0]!.edit.tempId).toBe("tmp-0");
+    expect(out[0]!.edit.displayOrder).toBe(5);
+    expect(out[1]!.templateId).toBe("tpl-B");
+    expect(out[1]!.edit.tempId).toBe("tmp-1");
+    expect(out[1]!.edit.displayOrder).toBe(9);
+    // Same content on both (label/role/required), distinct only in tempId + order.
+    expect(out[0]!.edit.label).toBe("New step");
+    expect(out[1]!.edit.label).toBe("New step");
+    expect(out[0]!.edit.tempId).not.toBe(out[1]!.edit.tempId);
+  });
+
+  it("'this location only' = a single-template fan-out (one add)", () => {
+    const out = buildBothLocationAdds(base, [{ templateId: "tpl-A", nextDisplayOrder: 1 }], () => "x");
+    expect(out).toHaveLength(1);
+    expect(out[0]!.templateId).toBe("tpl-A");
+  });
+
+  it("carries a reconcile-shaped base (hardGate + spine link) through unchanged", () => {
+    const out = buildBothLocationAdds(
+      { ...base, hardGate: true, expectsCount: true, spineLink: { kind: "item", id: "i1" } },
+      [{ templateId: "a", nextDisplayOrder: 2 }],
+      () => "t",
+    );
+    expect(out[0]!.edit.hardGate).toBe(true);
+    expect(out[0]!.edit.spineLink).toEqual({ kind: "item", id: "i1" });
+  });
+});
+
+describe("makeTempId — deterministic temp id over injected now/rand", () => {
+  it("composes now-rand", () => {
+    expect(makeTempId(1234, "ab12")).toBe("1234-ab12");
+  });
+});
+
+describe("applyEditsToItems — PR-5 add carries hardGate", () => {
+  it("a reconcile-shaped add (hardGate true) lands hard-gated in the drafted row", () => {
+    const out = applyEditsToItems([], [
+      { op: "add", tempId: "t", label: "Deposit", displayOrder: 1, minRoleLevel: 4, required: true, expectsCount: false, hardGate: true },
+    ]);
+    expect(out.find((it) => it.id === "draft-t")!.hardGate).toBe(true);
+  });
+  it("a plain quick-add (no hardGate field) defaults hardGate false", () => {
+    const out = applyEditsToItems([], [
+      { op: "add", tempId: "t", label: "Sweep", displayOrder: 1, minRoleLevel: 3, required: true, expectsCount: false },
+    ]);
+    expect(out.find((it) => it.id === "draft-t")!.hardGate).toBe(false);
+  });
+});
+
+describe("mirror-drift exclusion (spec §8 seal) — a mirror label is never a drift finding", () => {
+  // The Doctor (runTemplateDoctor) now filters mirror rows out of BOTH label lists
+  // before diffLocationItems. Simulate that filter: a mirror present on ONE location
+  // only must NOT surface as drift (so the reconcile can never target/source a mirror).
+  it("a one-location-only mirror produces no drift once mirror labels are filtered", () => {
+    const aItems = [
+      item({ id: "p1", label: "Sweep" }),
+      mirrorItem({ id: "m1", label: "Sliced tomatoes" }), // mirror on A only
+    ];
+    const bItems = [item({ id: "p2", label: "Sweep" })];
+    const findings = diffLocationItems(
+      { locationId: "A", labels: aItems.filter((it) => !isMirrorItem(it.prepMeta)).map((it) => it.label) },
+      { locationId: "B", labels: bItems.filter((it) => !isMirrorItem(it.prepMeta)).map((it) => it.label) },
+    );
+    expect(findings).toHaveLength(0);
+  });
+
+  it("a real per-location difference still drifts after the mirror filter", () => {
+    const aItems = [item({ id: "p1", label: "P-only step" }), mirrorItem({ id: "m1", label: "Mir" })];
+    const bItems = [mirrorItem({ id: "m2", label: "Mir" })];
+    const findings = diffLocationItems(
+      { locationId: "A", labels: aItems.filter((it) => !isMirrorItem(it.prepMeta)).map((it) => it.label) },
+      { locationId: "B", labels: bItems.filter((it) => !isMirrorItem(it.prepMeta)).map((it) => it.label) },
+    );
+    expect(findings).toEqual([{ presentLocationId: "A", missingLocationId: "B", label: "P-only step" }]);
   });
 });

@@ -218,10 +218,10 @@ export function TemplateBuilderClient({
   // RECONCILE "Make <B> match <A>" (spec §8): resolve the drift source row FROM A's
   // items (normalized-label match, mirror-excluded already at the Doctor) and push a
   // reconcile add into B's draft. Returns the block reason when the source can't be
-  // reconciled (mirror / unlinked-count) so the panel can surface it, else null on OK.
+  // reconciled (mirror / unlinked-count) so the panel can surface it, else "ok".
   const reconcileOne = (finding: DriftFinding): "ok" | "mirror" | "unlinked_count" | "no_source" => {
-    const present = view.templates.find((t) => t.id === templateAtLocation(finding.presentLocationId));
-    const missing = view.templates.find((t) => t.id === templateAtLocation(finding.missingLocationId));
+    const present = view.templates.find((t) => t.locationId === finding.presentLocationId);
+    const missing = view.templates.find((t) => t.locationId === finding.missingLocationId);
     if (!present || !missing) return "no_source";
     const source = findReconcileSource(present, finding.label);
     if (!source) return "no_source";
@@ -241,10 +241,6 @@ export function TemplateBuilderClient({
     });
     return outcome;
   };
-
-  // Resolve the template id at a location (drift findings carry location ids).
-  const templateAtLocation = (locationId: string): string =>
-    view.templates.find((t) => t.locationId === locationId)?.id ?? "";
   // Remove a draft-added row entirely (adversarial review M1): a disable edit
   // against a draft-add is a no-op in BOTH the preview (applyEditsToItems keys
   // persisted ids) and the publish copy (adds insert active=true) — so the honest
@@ -259,9 +255,19 @@ export function TemplateBuilderClient({
           !("itemId" in e && e.itemId === `draft-${tempId}`),
       ),
     }));
+    // PR-5: drop the removed row's scope entry (no stale indicator chip on a re-used id).
+    setAddScope((s) => {
+      const next = { ...s };
+      delete next[`draft-${tempId}`];
+      return next;
+    });
   };
   const clearDraft = (templateId: string) => {
+    let clearedTempIds: string[] = [];
     setDrafts((prev) => {
+      clearedTempIds = (prev[templateId] ?? [])
+        .filter((e): e is Extract<TemplateItemEdit, { op: "add" }> => e.op === "add")
+        .map((e) => e.tempId);
       const next = { ...prev };
       delete next[templateId];
       return next;
@@ -269,6 +275,13 @@ export function TemplateBuilderClient({
     setGatePatch((prev) => {
       const next = { ...prev };
       delete next[templateId];
+      return next;
+    });
+    // PR-5: prune the published draft's scope entries (this template's draft-adds are
+    // now real rows on the next version — the scope chip belonged only to the draft).
+    setAddScope((s) => {
+      const next = { ...s };
+      for (const id of clearedTempIds) delete next[`draft-${id}`];
       return next;
     });
   };
@@ -767,6 +780,7 @@ function ItemList({
   onAdd,
   multiLocation,
   otherLocationName,
+  addScope,
 }: {
   template: TemplateBuilderTemplate;
   /** source items + draft edits applied (mirror rows untouched). */
