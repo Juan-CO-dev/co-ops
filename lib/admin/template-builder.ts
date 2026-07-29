@@ -28,6 +28,7 @@ import "server-only";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
 import { isAllLocationsAccess, lockLocationContext } from "@/lib/locations";
+import { operationalNow } from "@/lib/midshift";
 import {
   TEMPLATE_ITEM_COLUMNS,
   type TemplateItemRow,
@@ -44,6 +45,9 @@ import {
   diffLocationItems,
   classifyRoleFloor,
   confirmFloorForType,
+  classifyEdits,
+  nextOperationalDay,
+  applyEffectiveResolution,
   type ItemTranslationFill,
   type SpineLinkTarget,
   type DriftFinding,
@@ -51,6 +55,9 @@ import {
   type TemplateBuilderView,
   type TemplateDoctorTemplate,
   type TemplateDoctorReport,
+  type TemplateItemEdit,
+  type TemplateDiffSummary,
+  type PublishEffectiveMode,
 } from "@/lib/admin/template-builder-shared";
 
 // Re-export the client-safe surface so server consumers keep one import path.
@@ -63,6 +70,10 @@ export {
   itemNeedsLink,
   diffLocationItems,
   classifyRoleFloor,
+  classifyEdits,
+  nextOperationalDay,
+  shiftOperationalDay,
+  applyEffectiveResolution,
   CLOSING_CONFIRM_FLOOR_LEVEL,
   OPENING_CONFIRM_FLOOR_LEVEL,
   confirmFloorForType,
@@ -77,20 +88,73 @@ export type {
   TemplateBuilderView,
   TemplateDoctorTemplate,
   TemplateDoctorReport,
+  TemplateItemEdit,
+  TemplateDiffSummary,
+  PublishEffectiveMode,
 } from "@/lib/admin/template-builder-shared";
 
 function actorLocationShape(actor: AuthContext) {
   return { role: actor.user.role, locations: actor.locations };
 }
 
+/** One active template row (lineage-latest candidate) for the builder loader. */
+interface LineageTplRow {
+  id: string;
+  name: string;
+  type: string;
+  location_id: string;
+  active: boolean;
+  effective_from: string | null;
+  created_at: string;
+  prep_subtype: string | null;
+}
+
+/** Lineage key for the builder view: one edit target per (location, name, subtype). */
+function lineageKey(t: { location_id: string; name: string; prep_subtype: string | null }): string {
+  return `${t.location_id}::${t.name}::${t.prep_subtype ?? ""}`;
+}
+
 /**
- * Load every ACTIVE template of `type` at locations the actor may access, each
- * with its items ordered for display. Batch: two queries total (templates, then
- * all items in one `.in()`), reusing TEMPLATE_ITEM_COLUMNS/rowToTemplateItem.
+ * Collapse all active rows of a type to the LINEAGE-LATEST per (location, name,
+ * subtype): the newest by (effective_from DESC NULLS LAST, created_at DESC). PR-3:
+ * when a PENDING version exists (effective_from > today) it wins — the pending
+ * version is the EDIT TARGET (a manager editing the current list is really editing
+ * the pending one it already published, not spawning a third). effective_from NULL
+ * (legacy) sorts last but wins when it's the only active row. Pure over the rows.
+ */
+function pickLineageLatest(rows: LineageTplRow[]): LineageTplRow[] {
+  const byLineage = new Map<string, LineageTplRow>();
+  for (const r of rows) {
+    if (!r.active) continue;
+    const k = lineageKey(r);
+    const cur = byLineage.get(k);
+    if (!cur || newerVersion(r, cur)) byLineage.set(k, r);
+  }
+  return [...byLineage.values()];
+}
+
+/** TRUE when `a` outranks `b` under (effective_from DESC NULLS LAST, created_at DESC). */
+function newerVersion(a: LineageTplRow, b: LineageTplRow): boolean {
+  if (a.effective_from !== b.effective_from) {
+    if (a.effective_from === null) return false; // NULL sorts LAST
+    if (b.effective_from === null) return true;
+    return a.effective_from > b.effective_from;
+  }
+  return a.created_at > b.created_at;
+}
+
+/**
+ * Load the LINEAGE-LATEST template of `type` at each location the actor may access,
+ * each with its ACTIVE items ordered for display. Batch: two queries (templates,
+ * then all items in one `.in()`), reusing TEMPLATE_ITEM_COLUMNS/rowToTemplateItem.
  *
- * NOTE — this is a BUILDER (forward-authoring) read, so it filters active items:
- * the manager edits the CURRENT list. It is NOT a historical render path, so the
- * active filter is correct here (contrast §2.2 historical reads, which drop it).
+ * PR-3 change: the edit target is the lineage-latest (pending version when one
+ * exists) — NOT merely "every active row" (which would double the location tabs
+ * during a both-active window). The client banners when the loaded version's
+ * effective_from > today ("changes go live tomorrow morning").
+ *
+ * NOTE — this is a BUILDER (forward-authoring) read, so it filters active items.
+ * It is NOT a historical render path (contrast §2.2 historical reads).
  */
 export async function loadTemplateBuilderView(
   actor: AuthContext,
@@ -100,15 +164,16 @@ export async function loadTemplateBuilderView(
 
   const { data: tplRows, error: tErr } = await sb
     .from("checklist_templates")
-    .select("id, name, type, location_id, active")
+    .select("id, name, type, location_id, active, effective_from, created_at, prep_subtype")
     .eq("type", type)
     .eq("active", true)
     .order("location_id", { ascending: true })
-    .returns<Array<{ id: string; name: string; type: string; location_id: string; active: boolean }>>();
+    .returns<LineageTplRow[]>();
   if (tErr) throw new Error(`loadTemplateBuilderView templates: ${tErr.message}`);
 
   const actorAll = isAllLocationsAccess(actorLocationShape(actor));
-  const visible = (tplRows ?? []).filter((t) => actorAll || actor.locations.includes(t.location_id));
+  const accessible = (tplRows ?? []).filter((t) => actorAll || actor.locations.includes(t.location_id));
+  const visible = pickLineageLatest(accessible);
   const templateIds = visible.map((t) => t.id);
 
   const itemsByTemplate = new Map<string, ChecklistTemplateItem[]>();
@@ -130,6 +195,7 @@ export async function loadTemplateBuilderView(
     }
   }
 
+  const today = operationalNow(new Date()).date;
   return {
     type,
     templates: visible.map((t) => ({
@@ -138,6 +204,10 @@ export async function loadTemplateBuilderView(
       type: t.type,
       locationId: t.location_id,
       items: itemsByTemplate.get(t.id) ?? [],
+      // PR-3: the loaded version is PENDING when its effective date is future — the
+      // client shows the "live tomorrow morning" banner.
+      effectiveFrom: t.effective_from,
+      isPending: t.effective_from !== null && t.effective_from > today,
     })),
   };
 }
@@ -391,5 +461,533 @@ export async function runTemplateDoctor(
     drift: drift.length,
   };
 
-  return { type, templates, drift, confirmFloorLevel, totals };
+  // PR-3 publish signals: TODAY's open instances across the visible lineages (powers
+  // the apply-now gate message) + whether any loaded version is pending. Instances
+  // are counted across the WHOLE lineage (all versions at each location), because the
+  // apply-now gate blocks on any instance today regardless of which version bound it.
+  let openInstancesToday = 0;
+  const hasPendingVersion = view.templates.some((t) => t.isPending === true);
+  const today = operationalNow(new Date()).date;
+  if (view.templates.length > 0) {
+    const sb = getServiceRoleClient();
+    // Resolve the whole lineage id-set for the visible templates (one query, batched
+    // by the visible location+name+subtype set).
+    const locationIds = [...new Set(view.templates.map((t) => t.locationId))];
+    const names = [...new Set(view.templates.map((t) => t.name))];
+    const { data: lineageRows, error: lgErr } = await sb
+      .from("checklist_templates")
+      .select("id, location_id, name")
+      .eq("type", type)
+      .in("location_id", locationIds)
+      .in("name", names)
+      .returns<Array<{ id: string; location_id: string; name: string }>>();
+    if (lgErr) throw new Error(`runTemplateDoctor lineage ids: ${lgErr.message}`);
+    // Keep only ids whose (location,name) matches a visible template (defensive —
+    // .in() is a cross-product; a name shared across locations stays scoped).
+    const visibleKeys = new Set(view.templates.map((t) => `${t.locationId}::${t.name}`));
+    const lineageIds = (lineageRows ?? [])
+      .filter((r) => visibleKeys.has(`${r.location_id}::${r.name}`))
+      .map((r) => r.id);
+    if (lineageIds.length > 0) {
+      const { count, error: instErr } = await sb
+        .from("checklist_instances")
+        .select("id", { count: "exact", head: true })
+        .in("template_id", lineageIds)
+        .eq("date", today);
+      if (instErr) throw new Error(`runTemplateDoctor open instances: ${instErr.message}`);
+      openInstancesToday = count ?? 0;
+    }
+  }
+
+  return {
+    type,
+    templates,
+    drift,
+    confirmFloorLevel,
+    totals,
+    publish: { openInstancesToday, hasPendingVersion },
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PR-3 — THE PUBLISH ENGINE (spec §1 THE RECONCILIATION CONTRACT + §10 PR-3).
+//
+// Every publish MINTS A NEW checklist_templates row (a new version) with a fresh
+// copy of the item rows, effective NEXT OPERATIONAL DAY (apply-now = today, gated).
+// No in-place mutation of a version that has ever served an instance — history is
+// immutable by construction (instances bind template_id at creation).
+//
+// ── ATOMICITY (codebase pattern) ─────────────────────────────────────────────────
+// supabase-js has no client-side multi-statement transaction; this module follows
+// lib/admin/templates.ts's established Path-A pattern (sequenced service-role writes
+// + rowcount checks), but ORDERED so a mid-sequence failure can NEVER strand the
+// operational read:
+//   1. MINT the new version FIRST (a fully-formed version always exists);
+//   2. copy items onto it;
+//   3. retire OTHER active lineage rows LAST.
+// The date-aware resolver picks the newest effective version (effective_from DESC
+// NULLS LAST, created_at DESC) — so even if step 3 partially fails, the new version
+// still wins the resolution (its effective_from is >= the ones it replaces, and its
+// created_at is newest). This is exactly why the invariant is "correctness NEVER
+// depends on retirement sweeps" (0162 header). Retirement is hygiene, not the rule.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The template-copyable metadata columns (0162 mint — spec §1). NOT the item
+ *  columns; those copy via SELECT * (see copyItemsToVersion). */
+const TEMPLATE_COPY_COLUMNS =
+  "id, name, type, location_id, prep_subtype, description, single_submission_only, reminder_time, submission_gate_predicate, edit_gate_predicate, active, effective_from";
+
+interface SourceTemplateRow {
+  id: string;
+  name: string;
+  type: string;
+  location_id: string;
+  prep_subtype: string | null;
+  description: string | null;
+  single_submission_only: boolean;
+  reminder_time: string | null;
+  submission_gate_predicate: unknown | null;
+  edit_gate_predicate: unknown | null;
+  active: boolean;
+  effective_from: string | null;
+}
+
+/** A raw item row for the SELECT-* copy — the shape is intentionally open (the copy
+ *  MUST carry columns TEMPLATE_ITEM_COLUMNS omits, e.g. section_question_id /
+ *  item_question_id — verified present in prod, absent from the column constant). */
+type RawItemRow = Record<string, unknown> & {
+  id: string;
+  template_id: string;
+  label: string;
+  active: boolean;
+  min_role_level: number;
+  required: boolean;
+  display_order: number;
+  expects_count: boolean;
+  item_id: string | null;
+  vendor_item_id: string | null;
+  prep_meta: unknown | null;
+  translations: Record<string, unknown> | null;
+};
+
+export interface PublishResult {
+  newTemplateId: string;
+  effectiveFrom: string;
+  diff: TemplateDiffSummary;
+}
+
+/**
+ * publishTemplateVersion — spec §1/§10 PR-3. GM+ (enforced at the route: level>=7 +
+ * Tier-A step-up) + re-checked here for the IDOR location-bind. Mints a new version
+ * of the source template's lineage with `edits` applied, effective today (apply_now,
+ * gated) or the next operational day (default).
+ *
+ * Retirement rules (adjudication a2):
+ *   a. Pending-replacement — any OTHER active lineage row with effective_from > today
+ *      (a never-served pending version) is retired (it never bound an instance, so
+ *      retiring it cannot rewrite history).
+ *   b. Cleanup — retire every OTHER active lineage row EXCEPT the currently-effective
+ *      one (date-aware resolution identifies it). For apply_now, retire ALL other
+ *      active rows including the currently-effective one (the gate proved no instance
+ *      today, so no operator is mid-list on it).
+ *
+ * Returns { newTemplateId, effectiveFrom, diff }.
+ */
+export async function publishTemplateVersion(
+  actor: AuthContext,
+  args: {
+    templateId: string;
+    edits: readonly TemplateItemEdit[];
+    effectiveMode: PublishEffectiveMode;
+  },
+): Promise<PublishResult> {
+  const sb = getServiceRoleClient();
+  const today = operationalNow(new Date()).date;
+
+  // 1. Load + IDOR-bind the source template; assert an editable non-prep type.
+  const { data: src, error: srcErr } = await sb
+    .from("checklist_templates")
+    .select(TEMPLATE_COPY_COLUMNS)
+    .eq("id", args.templateId)
+    .maybeSingle<SourceTemplateRow>();
+  if (srcErr) throw new Error(`publishTemplateVersion source read: ${srcErr.message}`);
+  if (!src) throw new TemplateBuilderError(404, "template_not_found", "Template not found");
+  if (!lockLocationContext(actorLocationShape(actor), src.location_id)) {
+    throw new TemplateBuilderError(404, "template_not_found", "Template not found");
+  }
+  if (src.type !== "opening" && src.type !== "closing") {
+    // deep_cleaning has no rows/type in prod (spec §9); prep versions on its own path.
+    throw new TemplateBuilderError(409, "type_not_publishable", "Only opening/closing lists publish here");
+  }
+
+  // 2. effectiveFrom.
+  const applyNow = args.effectiveMode === "apply_now";
+  const effectiveFrom = applyNow ? today : nextOperationalDay(today);
+
+  // Enumerate the whole lineage's template ids (all versions — active or not) at
+  // this location for the apply-now gate + the retirement pass. Lineage key =
+  // (location_id, type, name, prep_subtype); prep_subtype is NULL for opening/closing
+  // so the .is() form matches.
+  let lineageQuery = sb
+    .from("checklist_templates")
+    .select("id, active, effective_from, created_at")
+    .eq("location_id", src.location_id)
+    .eq("type", src.type)
+    .eq("name", src.name);
+  lineageQuery =
+    src.prep_subtype === null
+      ? lineageQuery.is("prep_subtype", null)
+      : lineageQuery.eq("prep_subtype", src.prep_subtype);
+  const { data: lineageRows, error: lErr } = await lineageQuery.returns<
+    Array<{ id: string; active: boolean; effective_from: string | null; created_at: string }>
+  >();
+  if (lErr) throw new Error(`publishTemplateVersion lineage read: ${lErr.message}`);
+  const lineage = lineageRows ?? [];
+  const lineageIds = lineage.map((r) => r.id);
+
+  // 3. APPLY-NOW GATE — a live-today publish is blocked if TODAY's list is already
+  // in use on ANY version of the lineage (a mid-shift swap would strand closers).
+  if (applyNow && lineageIds.length > 0) {
+    const { count: todayCount, error: instErr } = await sb
+      .from("checklist_instances")
+      .select("id", { count: "exact", head: true })
+      .in("template_id", lineageIds)
+      .eq("location_id", src.location_id)
+      .eq("date", today);
+    if (instErr) throw new Error(`publishTemplateVersion apply-now gate: ${instErr.message}`);
+    if ((todayCount ?? 0) > 0) {
+      throw new TemplateBuilderError(
+        409,
+        "apply_now_blocked_open_instance",
+        "Today's list is already in use — publish for tomorrow morning",
+      );
+    }
+  }
+
+  // Load the source items (SELECT * — MUST carry columns TEMPLATE_ITEM_COLUMNS omits).
+  const { data: srcItemsRaw, error: iErr } = await sb
+    .from("checklist_template_items")
+    .select("*")
+    .eq("template_id", src.id)
+    .order("display_order", { ascending: true })
+    .returns<RawItemRow[]>();
+  if (iErr) throw new Error(`publishTemplateVersion source items: ${iErr.message}`);
+  const srcItems = srcItemsRaw ?? [];
+
+  // The diff summary (confirm-modal + audit metadata ONLY — never gates the write).
+  const diff = classifyEdits(
+    srcItems.map((r) => ({
+      id: r.id,
+      label: r.label,
+      minRoleLevel: Number(r.min_role_level),
+      required: r.required,
+      active: r.active,
+    })),
+    args.edits,
+  );
+
+  // 4c. MINT the new version FIRST (ordering rationale above). effective_from set,
+  // supersedes = source id; active=true. Never copies id (fresh) — INSERT.
+  const { data: minted, error: mintErr } = await sb
+    .from("checklist_templates")
+    .insert({
+      name: src.name,
+      type: src.type,
+      location_id: src.location_id,
+      prep_subtype: src.prep_subtype,
+      description: src.description,
+      single_submission_only: src.single_submission_only,
+      reminder_time: src.reminder_time,
+      submission_gate_predicate: src.submission_gate_predicate,
+      edit_gate_predicate: src.edit_gate_predicate,
+      active: true,
+      effective_from: effectiveFrom,
+      supersedes_template_id: src.id,
+      created_by: actor.user.id,
+    })
+    .select("id")
+    .maybeSingle<{ id: string }>();
+  if (mintErr) throw new Error(`publishTemplateVersion mint: ${mintErr.message}`);
+  if (!minted) throw new Error("publishTemplateVersion mint: no row returned");
+  const newTemplateId = minted.id;
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "checklist_template.create",
+    resourceTable: "checklist_templates",
+    resourceId: newTemplateId,
+    metadata: {
+      publish_op: "version_mint",
+      template_type: src.type,
+      location_id: src.location_id,
+      supersedes_template_id: src.id,
+      effective_from: effectiveFrom,
+      apply_now: applyNow,
+      diff_summary: {
+        added: diff.added.length,
+        removed: diff.removed.length,
+        relabeled: diff.relabeled.length,
+        reordered: diff.reordered,
+        roleChanged: diff.roleChanged.length,
+        requiredChanged: diff.requiredChanged.length,
+      },
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+
+  // 4d. Copy items (SELECT * verbatim) onto the new version, applying edits.
+  await copyItemsToVersion(sb, {
+    actor,
+    newTemplateId,
+    srcItems,
+    edits: args.edits,
+    templateType: src.type,
+  });
+
+  // 4a + 4b. RETIREMENT (ordering: after mint+copy so the new version is complete).
+  // - Pending replacement: retire OTHER active rows with effective_from > today.
+  // - Cleanup: retire every OTHER active row EXCEPT the currently-effective one;
+  //   for apply_now, retire the currently-effective one too (gate proved none today).
+  const currentlyEffectiveId = resolveCurrentlyEffective(lineage, today);
+  for (const row of lineage) {
+    if (row.id === newTemplateId) continue; // never retire the row we just minted
+    if (!row.active) continue;
+
+    const isPending = row.effective_from !== null && row.effective_from > today;
+    const isCurrentlyEffective = row.id === currentlyEffectiveId;
+
+    // Keep the currently-effective row UNLESS apply_now (then it's replaced today).
+    if (isCurrentlyEffective && !applyNow) continue;
+
+    const { count: retCount, error: retErr } = await sb
+      .from("checklist_templates")
+      .update({ active: false }, { count: "exact" })
+      .eq("id", row.id)
+      .eq("active", true); // re-assert active for concurrency (UPDATE-denials-are-silent)
+    if (retErr) throw new Error(`publishTemplateVersion retire ${row.id}: ${retErr.message}`);
+    if ((retCount ?? 0) === 0) continue; // already retired by a concurrent publish — fine
+
+    await audit({
+      actorId: actor.user.id,
+      actorRole: actor.user.role,
+      action: "checklist_template.delete_or_deactivate",
+      resourceTable: "checklist_templates",
+      resourceId: row.id,
+      metadata: {
+        publish_op: isPending ? "pending_replaced" : "superseded",
+        template_type: src.type,
+        location_id: src.location_id,
+        superseded_by_template_id: newTemplateId,
+        effective_from: row.effective_from,
+      },
+      ipAddress: null,
+      userAgent: null,
+    });
+  }
+
+  return { newTemplateId, effectiveFrom, diff };
+}
+
+/**
+ * Resolve which lineage row is CURRENTLY effective on `opDate` — the date-aware
+ * rule applied in-memory over the loaded lineage (newest active version whose
+ * effective_from is NULL or <= opDate; ties broken by created_at DESC). Mirrors
+ * applyEffectiveResolution's SQL ordering exactly. Returns null when none is
+ * effective yet (only pending versions exist — a fresh lineage state).
+ */
+function resolveCurrentlyEffective(
+  lineage: Array<{ id: string; active: boolean; effective_from: string | null; created_at: string }>,
+  opDate: string,
+): string | null {
+  const eligible = lineage.filter(
+    (r) => r.active && (r.effective_from === null || r.effective_from <= opDate),
+  );
+  if (eligible.length === 0) return null;
+  eligible.sort((a, b) => {
+    // effective_from DESC NULLS LAST
+    if (a.effective_from !== b.effective_from) {
+      if (a.effective_from === null) return 1;
+      if (b.effective_from === null) return -1;
+      return a.effective_from < b.effective_from ? 1 : -1;
+    }
+    // created_at DESC
+    return a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0;
+  });
+  return eligible[0]?.id ?? null;
+}
+
+/**
+ * Copy the source item rows onto the new version, applying the draft edits.
+ * SELECT-* verbatim (spec §1: every column copies except id (new) + template_id
+ * (new version)); edits mutate label/description/translations/station/display_order/
+ * min_role_level/required; a "disable" edit lands the copied row active=false (the
+ * version's row set is TOTAL — a disabled row renders nowhere but keeps the lineage
+ * story complete, orchestrator ruling). Mirror rows (openingPhase2) copy VERBATIM,
+ * ignoring any edit addressed to them (they're managed by AM Prep — belt-and-braces
+ * over the client seal). Added items INSERT fresh; expects_count REQUIRES a spine
+ * link at write (spine-link law §4, re-enforced server-side).
+ */
+async function copyItemsToVersion(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  args: {
+    actor: AuthContext;
+    newTemplateId: string;
+    srcItems: RawItemRow[];
+    edits: readonly TemplateItemEdit[];
+    templateType: string;
+  },
+): Promise<void> {
+  const { newTemplateId, srcItems, edits } = args;
+
+  // Index edits by source item id (mirror rows ignore edits; see below).
+  const editsById = new Map<string, TemplateItemEdit[]>();
+  const addEdits: Extract<TemplateItemEdit, { op: "add" }>[] = [];
+  for (const e of edits) {
+    if (e.op === "add") {
+      addEdits.push(e);
+      continue;
+    }
+    const arr = editsById.get(e.itemId) ?? [];
+    arr.push(e);
+    editsById.set(e.itemId, arr);
+  }
+
+  // Build the copied rows.
+  const copiedRows: Record<string, unknown>[] = [];
+  for (const raw of srcItems) {
+    // Strip identity columns — the new row gets a fresh id + the new template_id.
+    const { id: _oldId, template_id: _oldTpl, ...rest } = raw;
+    const row: Record<string, unknown> = { ...rest, template_id: newTemplateId };
+
+    const isMirror = isMirrorItemRaw(raw.prep_meta);
+    if (!isMirror) {
+      // Apply the coalesced edits addressed to this source item.
+      for (const e of editsById.get(raw.id) ?? []) {
+        applyEditToRow(row, e);
+      }
+    }
+    // Mirror rows: copy VERBATIM (incl. references_template_item_id + prep_meta) —
+    // no edits ever apply (spec §5 derivation + PR-0 seal).
+    copiedRows.push(row);
+  }
+
+  // Added items → fresh rows with the spine-link guard.
+  let maxOrder = srcItems.reduce((m, r) => Math.max(m, Number(r.display_order) || 0), 0);
+  for (const a of addEdits) {
+    if (a.expectsCount) {
+      const link = a.spineLink ?? null;
+      if (!link) {
+        throw new TemplateBuilderError(
+          400,
+          "spine_link_required",
+          `Count-bearing item "${a.label}" needs an item or SKU link`,
+        );
+      }
+    }
+    maxOrder += 1;
+    const es = a.es ?? {};
+    const translations =
+      es.label || es.description ? { es: { label: es.label ?? null, description: es.description ?? null } } : null;
+    copiedRows.push({
+      template_id: newTemplateId,
+      station: a.station ?? null,
+      display_order: a.displayOrder || maxOrder,
+      label: a.label,
+      description: a.description ?? null,
+      min_role_level: a.minRoleLevel,
+      required: a.required,
+      expects_count: a.expectsCount,
+      expects_photo: a.expectsPhoto ?? false,
+      item_id: a.expectsCount && a.spineLink?.kind === "item" ? a.spineLink.id : null,
+      vendor_item_id: a.expectsCount && a.spineLink?.kind === "sku" ? a.spineLink.id : null,
+      active: true,
+      translations,
+      prep_meta: null,
+      report_reference_type: null,
+      references_template_item_id: null,
+    });
+  }
+
+  if (copiedRows.length === 0) return;
+
+  const { data: inserted, error: insErr } = await sb
+    .from("checklist_template_items")
+    .insert(copiedRows)
+    .select("id")
+    .returns<Array<{ id: string }>>();
+  if (insErr) throw new Error(`copyItemsToVersion insert: ${insErr.message}`);
+  if (!inserted || inserted.length !== copiedRows.length) {
+    throw new Error(
+      `copyItemsToVersion: expected ${copiedRows.length} rows, inserted ${inserted?.length ?? 0}`,
+    );
+  }
+
+  // One audit row for the item-set copy (batch — per-row would flood the log).
+  await audit({
+    actorId: args.actor.user.id,
+    actorRole: args.actor.user.role,
+    action: "checklist_template_item.create",
+    resourceTable: "checklist_template_items",
+    resourceId: newTemplateId,
+    metadata: {
+      publish_op: "version_items_copy",
+      template_type: args.templateType,
+      new_template_id: newTemplateId,
+      copied_count: copiedRows.length,
+      added_count: addEdits.length,
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+}
+
+/** Mutate a copied item row in place per one edit. Pure column writes; never touches
+ *  id/template_id (already set by the copy). */
+function applyEditToRow(row: Record<string, unknown>, e: TemplateItemEdit): void {
+  switch (e.op) {
+    case "relabel":
+      row.label = e.label;
+      break;
+    case "describe":
+      row.description = e.description;
+      break;
+    case "station":
+      row.station = e.station;
+      break;
+    case "reorder":
+      row.display_order = e.displayOrder;
+      break;
+    case "role":
+      row.min_role_level = e.minRoleLevel;
+      break;
+    case "required":
+      row.required = e.required;
+      break;
+    case "disable":
+      row.active = false;
+      break;
+    case "enable":
+      row.active = true;
+      break;
+    case "translate": {
+      const cur = (row.translations as Record<string, unknown> | null) ?? {};
+      const es = { ...((cur.es as Record<string, unknown>) ?? {}) };
+      if (e.es.label !== undefined) es.label = e.es.label;
+      if (e.es.description !== undefined) es.description = e.es.description;
+      if (e.es.specialInstruction !== undefined) es.specialInstruction = e.es.specialInstruction;
+      row.translations = { ...cur, es };
+      break;
+    }
+    case "add":
+      // handled separately (fresh insert) — never reaches here.
+      break;
+  }
+}
+
+/** Raw-JSONB mirror check (the copy works on snake_case rows, not the mapped item). */
+function isMirrorItemRaw(prepMeta: unknown): boolean {
+  if (typeof prepMeta !== "object" || prepMeta === null) return false;
+  return (prepMeta as { openingPhase2?: unknown }).openingPhase2 === true;
 }

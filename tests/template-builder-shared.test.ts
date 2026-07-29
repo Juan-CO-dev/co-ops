@@ -21,6 +21,10 @@ import {
   OPENING_CONFIRM_FLOOR_LEVEL,
   confirmFloorForType,
   TemplateBuilderError,
+  classifyEdits,
+  shiftOperationalDay,
+  nextOperationalDay,
+  type TemplateItemEdit,
 } from "@/lib/admin/template-builder-shared";
 import type { ChecklistTemplateItem, ChecklistTemplateItemTranslations } from "@/lib/types";
 
@@ -333,5 +337,128 @@ describe("Opening Phase-2 mirror — end-to-end read-only + Doctor exclusion (PR
       { locationId: "C", labels: [mirrorItem().label, "Lock door"] },
     );
     expect(findings).toHaveLength(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PR-3 — classifyEdits (the diff classifier truth-table; CI-owned per spec §6).
+// The classifier feeds the confirm modal + audit metadata ONLY — it never gates
+// the write path (everything versions). Order-independent, coalescing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Source items for classifier tests: two active rows + one already-inactive. */
+function src() {
+  return [
+    item({ id: "a", label: "Sweep floor", minRoleLevel: 3, required: true, active: true }),
+    item({ id: "b", label: "Count cash", minRoleLevel: 4, required: false, active: true }),
+    item({ id: "c", label: "Old thing", minRoleLevel: 3, required: true, active: false }),
+  ];
+}
+
+describe("classifyEdits — the diff classifier truth-table", () => {
+  it("empty edits → the zero summary", () => {
+    expect(classifyEdits(src(), [])).toEqual({
+      added: [],
+      removed: [],
+      relabeled: [],
+      reordered: 0,
+      roleChanged: [],
+      requiredChanged: [],
+    });
+  });
+
+  it("counts a genuine relabel; ignores a no-op relabel to the same label", () => {
+    const edits: TemplateItemEdit[] = [
+      { op: "relabel", itemId: "a", label: "Sweep the floor" },
+      { op: "relabel", itemId: "b", label: "Count cash" }, // unchanged
+    ];
+    const d = classifyEdits(src(), edits);
+    expect(d.relabeled).toEqual([{ itemId: "a", from: "Sweep floor", to: "Sweep the floor" }]);
+  });
+
+  it("coalesces multiple relabels of one item (last-write-wins A→B→C = A→C)", () => {
+    const edits: TemplateItemEdit[] = [
+      { op: "relabel", itemId: "a", label: "B" },
+      { op: "relabel", itemId: "a", label: "C" },
+    ];
+    expect(classifyEdits(src(), edits).relabeled).toEqual([{ itemId: "a", from: "Sweep floor", to: "C" }]);
+  });
+
+  it("disable of an active row → removed; disable of an already-inactive row → NOT removed", () => {
+    const d = classifyEdits(src(), [
+      { op: "disable", itemId: "a" },
+      { op: "disable", itemId: "c" }, // c is already inactive
+    ]);
+    expect(d.removed).toEqual([{ itemId: "a", label: "Sweep floor" }]);
+  });
+
+  it("disable then enable nets to no removal (order-independent coalesce)", () => {
+    expect(classifyEdits(src(), [{ op: "disable", itemId: "a" }, { op: "enable", itemId: "a" }]).removed).toEqual([]);
+  });
+
+  it("counts adds by tempId + label", () => {
+    const d = classifyEdits(src(), [
+      { op: "add", tempId: "t1", label: "New step", displayOrder: 99, minRoleLevel: 3, required: true, expectsCount: false },
+    ]);
+    expect(d.added).toEqual([{ tempId: "t1", label: "New step" }]);
+  });
+
+  it("role change reported only when the level differs from source", () => {
+    const d = classifyEdits(src(), [
+      { op: "role", itemId: "a", minRoleLevel: 5 },
+      { op: "role", itemId: "b", minRoleLevel: 4 }, // unchanged
+    ]);
+    expect(d.roleChanged).toEqual([{ itemId: "a", label: "Sweep floor", from: 3, to: 5 }]);
+  });
+
+  it("required change reported only when it differs from source", () => {
+    const d = classifyEdits(src(), [
+      { op: "required", itemId: "b", required: true }, // false → true
+      { op: "required", itemId: "a", required: true }, // unchanged
+    ]);
+    expect(d.requiredChanged).toEqual([{ itemId: "b", label: "Count cash", to: true }]);
+  });
+
+  it("reorder counts distinct moved ids, but not ids that are also disabled", () => {
+    const d = classifyEdits(src(), [
+      { op: "reorder", itemId: "a", displayOrder: 2 },
+      { op: "reorder", itemId: "b", displayOrder: 1 },
+      { op: "reorder", itemId: "b", displayOrder: 3 }, // same id twice = 1
+      { op: "disable", itemId: "b" }, // disabled → its reorder doesn't count
+    ]);
+    expect(d.reordered).toBe(1); // only "a" survives
+  });
+
+  it("is order-independent for the full mixed draft", () => {
+    const edits: TemplateItemEdit[] = [
+      { op: "relabel", itemId: "a", label: "Sweep the floor" },
+      { op: "role", itemId: "a", minRoleLevel: 5 },
+      { op: "required", itemId: "b", required: true },
+      { op: "disable", itemId: "b" },
+      { op: "add", tempId: "t1", label: "New step", displayOrder: 99, minRoleLevel: 3, required: true, expectsCount: false },
+    ];
+    const forward = classifyEdits(src(), edits);
+    const backward = classifyEdits(src(), [...edits].reverse());
+    expect(forward).toEqual(backward);
+    expect(forward.added).toHaveLength(1);
+    expect(forward.removed).toEqual([{ itemId: "b", label: "Count cash" }]);
+    expect(forward.relabeled).toHaveLength(1);
+    expect(forward.roleChanged).toHaveLength(1);
+    // b's required change: b ends disabled/removed but the requiredChanged classifier
+    // reports the field delta regardless — the modal shows both facts honestly.
+    expect(forward.requiredChanged).toEqual([{ itemId: "b", label: "Count cash", to: true }]);
+  });
+});
+
+describe("operational-date primitives (pure UTC-anchored day math)", () => {
+  it("shiftOperationalDay adds/subtracts whole days across month + year boundaries", () => {
+    expect(shiftOperationalDay("2026-07-28", 1)).toBe("2026-07-29");
+    expect(shiftOperationalDay("2026-07-31", 1)).toBe("2026-08-01");
+    expect(shiftOperationalDay("2026-12-31", 1)).toBe("2027-01-01");
+    expect(shiftOperationalDay("2026-03-01", -1)).toBe("2026-02-28");
+    expect(shiftOperationalDay("2024-02-28", 1)).toBe("2024-02-29"); // leap year
+  });
+  it("nextOperationalDay = tomorrow", () => {
+    expect(nextOperationalDay("2026-07-28")).toBe("2026-07-29");
   });
 });
