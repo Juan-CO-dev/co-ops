@@ -48,6 +48,8 @@ import {
   classifyEdits,
   nextOperationalDay,
   applyEffectiveResolution,
+  versionOutranks,
+  resolveEffectiveVersionId,
   type ItemTranslationFill,
   type SpineLinkTarget,
   type DriftFinding,
@@ -74,6 +76,8 @@ export {
   nextOperationalDay,
   shiftOperationalDay,
   applyEffectiveResolution,
+  versionOutranks,
+  resolveEffectiveVersionId,
   CLOSING_CONFIRM_FLOOR_LEVEL,
   OPENING_CONFIRM_FLOOR_LEVEL,
   confirmFloorForType,
@@ -128,19 +132,12 @@ function pickLineageLatest(rows: LineageTplRow[]): LineageTplRow[] {
     if (!r.active) continue;
     const k = lineageKey(r);
     const cur = byLineage.get(k);
-    if (!cur || newerVersion(r, cur)) byLineage.set(k, r);
+    // versionOutranks: effective_from DESC NULLS LAST, then created_at DESC — the
+    // ONE shared comparator (template-builder-shared) so the loader's "edit target"
+    // pick agrees with the resolver + the publish currently-effective pick.
+    if (!cur || versionOutranks(r, cur)) byLineage.set(k, r);
   }
   return [...byLineage.values()];
-}
-
-/** TRUE when `a` outranks `b` under (effective_from DESC NULLS LAST, created_at DESC). */
-function newerVersion(a: LineageTplRow, b: LineageTplRow): boolean {
-  if (a.effective_from !== b.effective_from) {
-    if (a.effective_from === null) return false; // NULL sorts LAST
-    if (b.effective_from === null) return true;
-    return a.effective_from > b.effective_from;
-  }
-  return a.created_at > b.created_at;
 }
 
 /**
@@ -686,8 +683,53 @@ export async function publishTemplateVersion(
     args.edits,
   );
 
-  // 4c. MINT the new version FIRST (ordering rationale above). effective_from set,
-  // supersedes = source id; active=true. Never copies id (fresh) — INSERT.
+  const currentlyEffectiveId = resolveEffectiveVersionId(lineage, today);
+
+  // 4a. PRE-MINT RETIREMENT — retire any OTHER active row that would COLLIDE with the
+  // mint on the active-name-ef unique index (location_id, type, name, prep_subtype,
+  // effective_from), i.e. an active row whose effective_from EQUALS effectiveFrom.
+  // This runs BEFORE the mint and is always correctness-safe:
+  //   - next_day: the colliding row is a PENDING version (effective_from = tomorrow).
+  //     A pending row was NEVER served (no instance bound it), so retiring it cannot
+  //     rewrite history — the invariant ("correctness never depends on retirement of
+  //     a SERVED version") is untouched. This is the re-publish-a-pending case.
+  //   - apply_now: the colliding row (effective_from = today) is proven-unserved by
+  //     the apply-now gate (0 instances today), so retiring it pre-mint is safe too.
+  // The currently-effective LEGACY row (effective_from NULL) never collides with a
+  // concrete effectiveFrom and is retired POST-mint (apply-now only) — so a mint
+  // failure never strands the live list.
+  for (const row of lineage) {
+    if (!row.active) continue;
+    if (row.effective_from !== effectiveFrom) continue; // no unique-index collision
+
+    const isPending = row.effective_from !== null && row.effective_from > today;
+    const { count: retCount, error: retErr } = await sb
+      .from("checklist_templates")
+      .update({ active: false }, { count: "exact" })
+      .eq("id", row.id)
+      .eq("active", true);
+    if (retErr) throw new Error(`publishTemplateVersion retire colliding ${row.id}: ${retErr.message}`);
+    if ((retCount ?? 0) === 0) continue;
+
+    await audit({
+      actorId: actor.user.id,
+      actorRole: actor.user.role,
+      action: "checklist_template.delete_or_deactivate",
+      resourceTable: "checklist_templates",
+      resourceId: row.id,
+      metadata: {
+        publish_op: isPending ? "pending_replaced" : "superseded",
+        template_type: src.type,
+        location_id: src.location_id,
+        effective_from: row.effective_from,
+      },
+      ipAddress: null,
+      userAgent: null,
+    });
+  }
+
+  // 4c. MINT the new version. effective_from set, supersedes = source id;
+  // active=true. Never copies id (fresh) — INSERT.
   const { data: minted, error: mintErr } = await sb
     .from("checklist_templates")
     .insert({
@@ -746,18 +788,20 @@ export async function publishTemplateVersion(
     templateType: src.type,
   });
 
-  // 4a + 4b. RETIREMENT (ordering: after mint+copy so the new version is complete).
-  // - Pending replacement: retire OTHER active rows with effective_from > today.
-  // - Cleanup: retire every OTHER active row EXCEPT the currently-effective one;
-  //   for apply_now, retire the currently-effective one too (gate proved none today).
-  const currentlyEffectiveId = resolveCurrentlyEffective(lineage, today);
+  // 4b. CLEANUP — the currently-effective (served-or-legacy) row + any OTHER active
+  // non-pending, non-effective rows. Runs AFTER the mint+copy so the new version is
+  // complete before anything live is retired (mint failure → the live list stays).
+  // - next_day: KEEP the currently-effective row (it must serve TODAY until the new
+  //   version's effective date arrives) → retire only stray non-current non-pending
+  //   active rows (belt-and-braces; steady state there are none).
+  // - apply_now: retire the currently-effective row too (the gate proved no instance
+  //   today, so no operator is mid-list on it) — the new version takes over today.
   for (const row of lineage) {
     if (row.id === newTemplateId) continue; // never retire the row we just minted
     if (!row.active) continue;
+    if (row.effective_from === effectiveFrom) continue; // already retired pre-mint (4a)
 
-    const isPending = row.effective_from !== null && row.effective_from > today;
     const isCurrentlyEffective = row.id === currentlyEffectiveId;
-
     // Keep the currently-effective row UNLESS apply_now (then it's replaced today).
     if (isCurrentlyEffective && !applyNow) continue;
 
@@ -769,6 +813,10 @@ export async function publishTemplateVersion(
     if (retErr) throw new Error(`publishTemplateVersion retire ${row.id}: ${retErr.message}`);
     if ((retCount ?? 0) === 0) continue; // already retired by a concurrent publish — fine
 
+    // A non-colliding pending row (effective_from > today, different date) is a
+    // never-served pending version → label it pending_replaced; everything else here
+    // is a superseded currently-effective row.
+    const isPending = row.effective_from !== null && row.effective_from > today;
     await audit({
       actorId: actor.user.id,
       actorRole: actor.user.role,
@@ -788,34 +836,6 @@ export async function publishTemplateVersion(
   }
 
   return { newTemplateId, effectiveFrom, diff };
-}
-
-/**
- * Resolve which lineage row is CURRENTLY effective on `opDate` — the date-aware
- * rule applied in-memory over the loaded lineage (newest active version whose
- * effective_from is NULL or <= opDate; ties broken by created_at DESC). Mirrors
- * applyEffectiveResolution's SQL ordering exactly. Returns null when none is
- * effective yet (only pending versions exist — a fresh lineage state).
- */
-function resolveCurrentlyEffective(
-  lineage: Array<{ id: string; active: boolean; effective_from: string | null; created_at: string }>,
-  opDate: string,
-): string | null {
-  const eligible = lineage.filter(
-    (r) => r.active && (r.effective_from === null || r.effective_from <= opDate),
-  );
-  if (eligible.length === 0) return null;
-  eligible.sort((a, b) => {
-    // effective_from DESC NULLS LAST
-    if (a.effective_from !== b.effective_from) {
-      if (a.effective_from === null) return 1;
-      if (b.effective_from === null) return -1;
-      return a.effective_from < b.effective_from ? 1 : -1;
-    }
-    // created_at DESC
-    return a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0;
-  });
-  return eligible[0]?.id ?? null;
 }
 
 /**

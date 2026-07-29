@@ -602,6 +602,45 @@ export function nextOperationalDay(today: string): string {
   return shiftOperationalDay(today, 1);
 }
 
+/** Minimal lineage row for the pure resolution rule (id + version-sort keys). */
+export interface LineageVersionRow {
+  id: string;
+  active: boolean;
+  effective_from: string | null;
+  created_at: string;
+}
+
+/**
+ * `a` outranks `b` under the resolution order — effective_from DESC NULLS LAST, then
+ * created_at DESC. THE ONE comparator both the SQL resolver (applyEffectiveResolution)
+ * and the in-memory pickers (loader lineage-latest + publish currently-effective)
+ * agree on. Pure. Returns true when a should sort BEFORE b (a wins).
+ */
+export function versionOutranks(a: LineageVersionRow, b: LineageVersionRow): boolean {
+  if (a.effective_from !== b.effective_from) {
+    if (a.effective_from === null) return false; // NULL sorts LAST
+    if (b.effective_from === null) return true;
+    return a.effective_from > b.effective_from;
+  }
+  return a.created_at > b.created_at;
+}
+
+/**
+ * The CURRENTLY-EFFECTIVE version on `opDate` from a lineage's rows — the newest
+ * ACTIVE row whose effective_from is NULL or <= opDate (pending rows invisible),
+ * ordered by versionOutranks. Returns null when only pending versions exist (a fresh
+ * lineage). Mirrors applyEffectiveResolution's SQL exactly; pure + CI-testable.
+ */
+export function resolveEffectiveVersionId(rows: LineageVersionRow[], opDate: string): string | null {
+  let best: LineageVersionRow | null = null;
+  for (const r of rows) {
+    if (!r.active) continue;
+    if (r.effective_from !== null && r.effective_from > opDate) continue; // pending
+    if (best === null || versionOutranks(r, best)) best = r;
+  }
+  return best?.id ?? null;
+}
+
 /** Minimal structural view of the PostgREST filter/transform builder methods
  *  applyEffectiveResolution chains — declared NON-recursively (each method returns
  *  this same interface, not the caller's deep generic) to avoid TS2589

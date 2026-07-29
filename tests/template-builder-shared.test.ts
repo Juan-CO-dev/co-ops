@@ -25,7 +25,10 @@ import {
   applyEditsToItems,
   shiftOperationalDay,
   nextOperationalDay,
+  versionOutranks,
+  resolveEffectiveVersionId,
   type TemplateItemEdit,
+  type LineageVersionRow,
 } from "@/lib/admin/template-builder-shared";
 import type { ChecklistTemplateItem, ChecklistTemplateItemTranslations } from "@/lib/types";
 
@@ -517,6 +520,64 @@ describe("applyEditsToItems — in-memory draft render (preview + list)", () => 
       { op: "add", tempId: "ts", label: "Count SKU", displayOrder: 3, minRoleLevel: 3, required: true, expectsCount: true, spineLink: { kind: "sku", id: "sku-9" } },
     ]);
     expect(outSku.find((it) => it.id === "draft-ts")!.vendorItemId).toBe("sku-9");
+  });
+});
+
+describe("versionOutranks + resolveEffectiveVersionId — the date-aware resolution rule", () => {
+  const row = (over: Partial<LineageVersionRow> & { id: string }): LineageVersionRow => ({
+    active: true,
+    effective_from: null,
+    created_at: "2026-01-01T00:00:00Z",
+    ...over,
+  });
+
+  it("effective_from DESC, NULLS LAST", () => {
+    const legacy = row({ id: "legacy", effective_from: null });
+    const dated = row({ id: "dated", effective_from: "2026-07-20" });
+    expect(versionOutranks(dated, legacy)).toBe(true); // a dated version beats a NULL
+    expect(versionOutranks(legacy, dated)).toBe(false);
+  });
+
+  it("newer effective_from wins; ties break on created_at DESC", () => {
+    const older = row({ id: "o", effective_from: "2026-07-20" });
+    const newer = row({ id: "n", effective_from: "2026-07-28" });
+    expect(versionOutranks(newer, older)).toBe(true);
+    const t1 = row({ id: "t1", effective_from: "2026-07-28", created_at: "2026-07-27T10:00:00Z" });
+    const t2 = row({ id: "t2", effective_from: "2026-07-28", created_at: "2026-07-27T12:00:00Z" });
+    expect(versionOutranks(t2, t1)).toBe(true); // later created_at wins the tie
+  });
+
+  it("legacy-only lineage → legacy is currently effective (no publish yet)", () => {
+    expect(resolveEffectiveVersionId([row({ id: "legacy" })], "2026-07-28")).toBe("legacy");
+  });
+
+  it("current + pending: today resolves current, the pending is invisible until its day", () => {
+    const rows = [
+      row({ id: "current", effective_from: null }),
+      row({ id: "pending", effective_from: "2026-07-29" }),
+    ];
+    expect(resolveEffectiveVersionId(rows, "2026-07-28")).toBe("current"); // pending hidden
+    expect(resolveEffectiveVersionId(rows, "2026-07-29")).toBe("pending"); // its day arrived
+  });
+
+  it("apply-now (effective today) wins over the prior current from today onward", () => {
+    const rows = [
+      row({ id: "legacy", effective_from: null, created_at: "2026-01-01T00:00:00Z" }),
+      row({ id: "applied", effective_from: "2026-07-28", created_at: "2026-07-28T09:00:00Z" }),
+    ];
+    expect(resolveEffectiveVersionId(rows, "2026-07-28")).toBe("applied");
+  });
+
+  it("only-pending lineage → null (nothing effective yet)", () => {
+    expect(resolveEffectiveVersionId([row({ id: "p", effective_from: "2026-08-01" })], "2026-07-28")).toBeNull();
+  });
+
+  it("inactive rows are never resolved", () => {
+    const rows = [
+      row({ id: "dead", effective_from: "2026-07-28", active: false }),
+      row({ id: "live", effective_from: null }),
+    ];
+    expect(resolveEffectiveVersionId(rows, "2026-07-28")).toBe("live");
   });
 });
 
