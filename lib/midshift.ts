@@ -145,23 +145,33 @@ async function loadInstanceStatus(
   service: SupabaseClient,
   args: { locationId: string; date: string; type: "opening" | "closing" },
 ): Promise<{ status: string | null; confirmedAt: string | null; confirmedByName: string | null }> {
-  const { data: tmpl } = await service
+  // PLURAL template lookup (PR-3 adversarial review H1): under template
+  // versioning a lineage can hold current + pending active rows — a
+  // created_at-DESC single resolver would grab the PENDING version and report
+  // today's completed list as "not started" (the stranding class). Match the
+  // instance across ALL active rows of the type instead (the am-prep page
+  // pattern) — version-immune for today AND for the historical dates the
+  // reports hub passes.
+  const { data: tmpls } = await service
     .from("checklist_templates")
     .select("id")
     .eq("location_id", args.locationId)
     .eq("type", args.type)
     .eq("active", true)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle<{ id: string }>();
-  if (!tmpl) return { status: null, confirmedAt: null, confirmedByName: null };
+    .returns<Array<{ id: string }>>();
+  const tmplIds = (tmpls ?? []).map((t) => t.id);
+  if (tmplIds.length === 0) return { status: null, confirmedAt: null, confirmedByName: null };
 
   const { data: inst } = await service
     .from("checklist_instances")
     .select("status, confirmed_at, confirmed_by")
-    .eq("template_id", tmpl.id)
+    .in("template_id", tmplIds)
     .eq("location_id", args.locationId)
     .eq("date", args.date)
+    // Newest wins if a duplicate day-instance ever exists (designed-against but
+    // maybeSingle would THROW on 2 rows — degrade deterministically instead).
+    .order("created_at", { ascending: false })
+    .limit(1)
     .maybeSingle<{ status: string; confirmed_at: string | null; confirmed_by: string | null }>();
   if (!inst) return { status: null, confirmedAt: null, confirmedByName: null };
 

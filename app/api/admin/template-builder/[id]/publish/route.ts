@@ -63,6 +63,11 @@ function coerceEdit(raw: unknown): TemplateItemEdit | null {
   const str = (v: unknown): v is string => typeof v === "string";
   const strOrNull = (v: unknown): v is string | null => v === null || typeof v === "string";
   const num = (v: unknown): v is number => typeof v === "number" && Number.isFinite(v);
+  // Role floors are integers 0..10 (ROLES registry max) — an out-of-range floor
+  // ships an unconfirmable required item (adversarial review L4). Reject, don't
+  // silently clamp (the client never sends these; a hand-crafted payload should
+  // fail loudly).
+  const role = (v: unknown): v is number => num(v) && Number.isInteger(v) && v >= 0 && v <= 10;
   const bool = (v: unknown): v is boolean => typeof v === "boolean";
 
   switch (op) {
@@ -75,7 +80,7 @@ function coerceEdit(raw: unknown): TemplateItemEdit | null {
     case "reorder":
       return str(o.itemId) && num(o.displayOrder) ? { op, itemId: o.itemId, displayOrder: o.displayOrder } : null;
     case "role":
-      return str(o.itemId) && num(o.minRoleLevel) ? { op, itemId: o.itemId, minRoleLevel: o.minRoleLevel } : null;
+      return str(o.itemId) && role(o.minRoleLevel) ? { op, itemId: o.itemId, minRoleLevel: o.minRoleLevel } : null;
     case "required":
       return str(o.itemId) && bool(o.required) ? { op, itemId: o.itemId, required: o.required } : null;
     case "disable":
@@ -92,7 +97,7 @@ function coerceEdit(raw: unknown): TemplateItemEdit | null {
       return { op, itemId: o.itemId, es: out };
     }
     case "add": {
-      if (!str(o.tempId) || !str(o.label) || !num(o.displayOrder) || !num(o.minRoleLevel) || !bool(o.required) || !bool(o.expectsCount)) {
+      if (!str(o.tempId) || !str(o.label) || !num(o.displayOrder) || !role(o.minRoleLevel) || !bool(o.required) || !bool(o.expectsCount)) {
         return null;
       }
       const edit: Extract<TemplateItemEdit, { op: "add" }> = {

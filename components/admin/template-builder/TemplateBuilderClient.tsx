@@ -105,6 +105,21 @@ export function TemplateBuilderClient({
   const pushEdit = (templateId: string, edit: TemplateItemEdit) => {
     setDrafts((prev) => ({ ...prev, [templateId]: [...(prev[templateId] ?? []), edit] }));
   };
+  // Remove a draft-added row entirely (adversarial review M1): a disable edit
+  // against a draft-add is a no-op in BOTH the preview (applyEditsToItems keys
+  // persisted ids) and the publish copy (adds insert active=true) — so the honest
+  // affordance for an unwanted add is REMOVE: drop the add op + any edits that
+  // targeted its synthetic draft id.
+  const removeDraftAdd = (templateId: string, tempId: string) => {
+    setDrafts((prev) => ({
+      ...prev,
+      [templateId]: (prev[templateId] ?? []).filter(
+        (e) =>
+          !(e.op === "add" && e.tempId === tempId) &&
+          !("itemId" in e && e.itemId === `draft-${tempId}`),
+      ),
+    }));
+  };
   const clearDraft = (templateId: string) => {
     setDrafts((prev) => {
       const next = { ...prev };
@@ -213,6 +228,7 @@ export function TemplateBuilderClient({
             canFill={canFill}
             focusItemId={focusItemId}
             onEdit={(edit) => pushEdit(active.id, edit)}
+            onRemoveDraftAdd={(tempId) => removeDraftAdd(active.id, tempId)}
           />
         </div>
       )}
@@ -402,6 +418,7 @@ function ItemList({
   canFill,
   focusItemId,
   onEdit,
+  onRemoveDraftAdd,
 }: {
   template: TemplateBuilderTemplate;
   /** source items + draft edits applied (mirror rows untouched). */
@@ -410,6 +427,7 @@ function ItemList({
   canFill: boolean;
   focusItemId: string | null;
   onEdit: (edit: TemplateItemEdit) => void;
+  onRemoveDraftAdd: (tempId: string) => void;
 }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState<Set<string>>(() =>
@@ -468,6 +486,7 @@ function ItemList({
                 expanded={expanded.has(item.id)}
                 onToggle={() => toggle(item.id)}
                 onEdit={onEdit}
+                onRemoveDraftAdd={onRemoveDraftAdd}
                 canMoveUp={editable.length > 1 && editable.findIndex((it) => it.id === item.id) > 0}
                 canMoveDown={
                   editable.length > 1 &&
@@ -516,6 +535,7 @@ function ItemRow({
   expanded,
   onToggle,
   onEdit,
+  onRemoveDraftAdd,
   canMoveUp,
   canMoveDown,
   onMoveUp,
@@ -528,6 +548,7 @@ function ItemRow({
   expanded: boolean;
   onToggle: () => void;
   onEdit: (edit: TemplateItemEdit) => void;
+  onRemoveDraftAdd: (tempId: string) => void;
   canMoveUp: boolean;
   canMoveDown: boolean;
   onMoveUp: () => void;
@@ -625,6 +646,7 @@ function ItemRow({
         mirror={mirror}
         isDraftAdd={isDraftAdd}
         onEdit={onEdit}
+        onRemoveDraftAdd={onRemoveDraftAdd}
       />
     </SummaryRow>
   );
@@ -643,6 +665,7 @@ function ItemDrawer({
   mirror,
   isDraftAdd,
   onEdit,
+  onRemoveDraftAdd,
 }: {
   templateId: string;
   item: ChecklistTemplateItem;
@@ -651,6 +674,7 @@ function ItemDrawer({
   mirror: boolean;
   isDraftAdd: boolean;
   onEdit: (edit: TemplateItemEdit) => void;
+  onRemoveDraftAdd: (tempId: string) => void;
 }) {
   const { t } = useTranslation();
 
@@ -675,7 +699,9 @@ function ItemDrawer({
           {/* Structural edits (PR-3 draft): relabel/describe, gate-flip, role, and
               disable/enable. All version at publish. Draft-added rows edit their own
               draft edit; persisted rows emit an edit against their id. */}
-          {canFill && <StructuralEdits item={item} isDraftAdd={isDraftAdd} onEdit={onEdit} />}
+          {canFill && (
+            <StructuralEdits item={item} isDraftAdd={isDraftAdd} onEdit={onEdit} onRemoveDraftAdd={onRemoveDraftAdd} />
+          )}
 
           {/* Same-day fills (PR-0) — persisted rows only (a draft-add isn't linked
               yet; its Spanish + spine link are set at add time / by re-adding). */}
@@ -703,20 +729,23 @@ function StructuralEdits({
   item,
   isDraftAdd,
   onEdit,
+  onRemoveDraftAdd,
 }: {
   item: ChecklistTemplateItem;
   isDraftAdd: boolean;
   onEdit: (edit: TemplateItemEdit) => void;
+  onRemoveDraftAdd: (tempId: string) => void;
 }) {
   const { t } = useTranslation();
   const [label, setLabel] = useState(item.label);
   const [description, setDescription] = useState(item.description ?? "");
   const disabled = !item.active;
 
-  // Draft-added rows: their id is `draft-…` and can't be a server edit target. Only
-  // the disable/enable toggle is meaningful (it flips the draft item's active), and
-  // we key it via a synthetic enable/disable on the same id which applyEditsToItems
-  // honours in memory. Relabel/role/required on a draft-add are set at add-time.
+  // Draft-added rows: their id is `draft-…` and can't be a server edit target —
+  // and a disable edit against it is a NO-OP in both the preview and the publish
+  // copy (adversarial review M1). The honest affordance for an unwanted add is
+  // REMOVE (drops the add from the draft entirely). Relabel/role/required on a
+  // draft-add are set at add-time.
   const idForEdit = item.id;
 
   return (
@@ -772,18 +801,28 @@ function StructuralEdits({
           </label>
         </>
       )}
-      <button
-        type="button"
-        onClick={() => onEdit(disabled ? { op: "enable", itemId: idForEdit } : { op: "disable", itemId: idForEdit })}
-        className={
-          "inline-flex min-h-[40px] items-center justify-center rounded-lg border-2 px-4 text-sm font-bold " +
-          (disabled
-            ? "border-co-gold-deep bg-co-gold text-co-text"
-            : "border-co-cta/50 bg-co-surface text-co-cta")
-        }
-      >
-        {disabled ? t("admin.templates.builder.enable") : t("admin.templates.builder.disable")}
-      </button>
+      {isDraftAdd ? (
+        <button
+          type="button"
+          onClick={() => onRemoveDraftAdd(item.id.slice("draft-".length))}
+          className="inline-flex min-h-[40px] items-center justify-center rounded-lg border-2 border-co-cta/50 bg-co-surface px-4 text-sm font-bold text-co-cta"
+        >
+          {t("admin.templates.builder.remove_draft_add")}
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => onEdit(disabled ? { op: "enable", itemId: idForEdit } : { op: "disable", itemId: idForEdit })}
+          className={
+            "inline-flex min-h-[40px] items-center justify-center rounded-lg border-2 px-4 text-sm font-bold " +
+            (disabled
+              ? "border-co-gold-deep bg-co-gold text-co-text"
+              : "border-co-cta/50 bg-co-surface text-co-cta")
+          }
+        >
+          {disabled ? t("admin.templates.builder.enable") : t("admin.templates.builder.disable")}
+        </button>
+      )}
     </div>
   );
 }
@@ -1255,10 +1294,16 @@ function PublishBar({
   const publish = async () => {
     if (busy) return;
     setErrorKey(null);
+    // busy flips BEFORE the async step-up (adversarial review L5): two fast taps
+    // could otherwise both pass the guard during the step-up await and publish
+    // twice. Reset on a declined step-up.
+    setBusy(true);
     // Apply-now requires its OWN step-up (Tier-A) on top of the drawer's; a next-day
     // publish also steps up (GM+ Tier-A at the route). Request once here.
-    if ((await requestStepUp("A")) !== "ok") return;
-    setBusy(true);
+    if ((await requestStepUp("A")) !== "ok") {
+      setBusy(false);
+      return;
+    }
     try {
       const res = await fetch(`/api/admin/template-builder/${template.id}/publish`, {
         method: "POST",

@@ -81,8 +81,16 @@ ALTER TABLE checklist_templates
 -- current + pending coexist (distinct effective_from); same-effective-date double
 -- publish is blocked; prep_subtype keeps am_prep vs mid_day_prep distinct within a
 -- location's prep lineage.
+--
+-- ⚠ COALESCE, not a bare (prep_subtype) — adversarial review H2: prep_subtype is
+-- NULL for every non-prep type (0059 CHECK), and Postgres default NULL semantics
+-- treat NULL index entries as DISTINCT, so a bare-column index would enforce
+-- NOTHING for opening/closing (the only types the publish engine serves) — a
+-- concurrent double-publish would silently double-activate. COALESCE('') makes
+-- the NULL subtype a real comparable value; the lineage query's .is(null) form
+-- is unaffected (the index is a guard, not a lookup contract).
 CREATE UNIQUE INDEX IF NOT EXISTS checklist_templates_active_name_ef_uk
-  ON checklist_templates (location_id, type, name, (prep_subtype), effective_from)
+  ON checklist_templates (location_id, type, name, (COALESCE(prep_subtype, '')), effective_from)
   WHERE active;
 
 -- Resolution accelerator for the date-aware lineage pick.

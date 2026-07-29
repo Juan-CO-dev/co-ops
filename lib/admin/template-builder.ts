@@ -713,31 +713,6 @@ export async function publishTemplateVersion(
   if (!minted) throw new Error("publishTemplateVersion mint: no row returned");
   const newTemplateId = minted.id;
 
-  await audit({
-    actorId: actor.user.id,
-    actorRole: actor.user.role,
-    action: "checklist_template.create",
-    resourceTable: "checklist_templates",
-    resourceId: newTemplateId,
-    metadata: {
-      publish_op: "version_mint",
-      template_type: src.type,
-      location_id: src.location_id,
-      supersedes_template_id: src.id,
-      effective_from: effectiveFrom,
-      apply_now: applyNow,
-      diff_summary: {
-        added: diff.added.length,
-        removed: diff.removed.length,
-        relabeled: diff.relabeled.length,
-        reordered: diff.reordered,
-        roleChanged: diff.roleChanged.length,
-        requiredChanged: diff.requiredChanged.length,
-      },
-    },
-    ipAddress: null,
-    userAgent: null,
-  });
 
   // 4d. Copy items (SELECT * verbatim) onto the new version, applying edits.
   await copyItemsToVersion(sb, {
@@ -799,6 +774,35 @@ export async function publishTemplateVersion(
     .eq("active", false);
   if (actErr) throw new Error(`publishTemplateVersion activate: ${actErr.message}`);
   if ((actCount ?? 0) === 0) throw new Error("publishTemplateVersion activate: no row flipped");
+
+  // Mint audit fires AFTER activation (adversarial review L3): the log records a
+  // version that actually went LIVE — a mid-copy failure leaves an inactive
+  // orphan and NO create row (forensically honest).
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "checklist_template.create",
+    resourceTable: "checklist_templates",
+    resourceId: newTemplateId,
+    metadata: {
+      publish_op: "version_mint",
+      template_type: src.type,
+      location_id: src.location_id,
+      supersedes_template_id: src.id,
+      effective_from: effectiveFrom,
+      apply_now: applyNow,
+      diff_summary: {
+        added: diff.added.length,
+        removed: diff.removed.length,
+        relabeled: diff.relabeled.length,
+        reordered: diff.reordered,
+        roleChanged: diff.roleChanged.length,
+        requiredChanged: diff.requiredChanged.length,
+      },
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
 
 
   // 4b. CLEANUP — the currently-effective (served-or-legacy) row + any OTHER active

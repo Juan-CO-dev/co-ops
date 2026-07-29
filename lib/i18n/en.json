@@ -824,6 +824,7 @@
   "admin.templates.builder.move_up": "Move up",
   "admin.templates.builder.move_down": "Move down",
   "admin.templates.builder.disable": "Disable",
+  "admin.templates.builder.remove_draft_add": "Remove this new item",
   "admin.templates.builder.enable": "Enable",
   "admin.templates.builder.disabled_badge": "Disabled",
   "admin.templates.builder.required_toggle": "Must complete",

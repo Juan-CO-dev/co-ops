@@ -824,6 +824,7 @@
   "admin.templates.builder.move_up": "Subir",
   "admin.templates.builder.move_down": "Bajar",
   "admin.templates.builder.disable": "Desactivar",
+  "admin.templates.builder.remove_draft_add": "Quitar este artículo nuevo",
   "admin.templates.builder.enable": "Activar",
   "admin.templates.builder.disabled_badge": "Desactivado",
   "admin.templates.builder.required_toggle": "Debe completarse",
