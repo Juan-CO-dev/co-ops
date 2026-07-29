@@ -87,10 +87,14 @@ export function TemplateBuilderClient({
   // and scroll to it. Held in a shared piece of state the item list reads.
   const [focusItemId, setFocusItemId] = useState<string | null>(null);
 
+  // Type-parameterized empty copy (PR-1 review debt: the key was closing-only).
+  // `view.type` is the TemplateBuilderType; the per-type keys exist for all three.
+  const noTemplatesKey = tk(`admin.templates.builder.no_templates.${view.type}`);
+
   if (view.templates.length === 0) {
     return (
       <div className="mt-5 rounded-2xl border-2 border-dashed border-co-border p-6 text-center text-sm text-co-text-muted">
-        {t("admin.templates.builder.no_templates")}
+        {t(noTemplatesKey)}
       </div>
     );
   }
@@ -129,8 +133,10 @@ export function TemplateBuilderClient({
             return (
               <button
                 key={tpl.id}
+                id={`tb-tab-${tpl.id}`}
                 role="tab"
                 aria-selected={tpl.id === active?.id}
+                aria-controls="tb-item-panel"
                 type="button"
                 onClick={() => {
                   setActiveTplId(tpl.id);
@@ -156,12 +162,18 @@ export function TemplateBuilderClient({
       )}
 
       {active && (
-        <ItemList
-          template={active}
-          linkTargets={linkTargets}
-          canFill={canFill}
-          focusItemId={focusItemId}
-        />
+        <div
+          id="tb-item-panel"
+          role={view.templates.length > 1 ? "tabpanel" : undefined}
+          aria-labelledby={view.templates.length > 1 ? `tb-tab-${active.id}` : undefined}
+        >
+          <ItemList
+            template={active}
+            linkTargets={linkTargets}
+            canFill={canFill}
+            focusItemId={focusItemId}
+          />
+        </div>
       )}
 
       {/* Phone preview (spec §7, REQUIRED) — renders the live active template. */}
@@ -768,19 +780,102 @@ function SpineLinkBlock({
 // resolver, en/es toggle. Presentational only (no instance, no submissions).
 // ─────────────────────────────────────────────────────────────────────────────
 
+const STATION_FALLBACK = "General";
+
+/** Group items by station (English system key, C.38), preserving first-seen order. */
+function groupByStation(items: ChecklistTemplateItem[]): Array<[string, ChecklistTemplateItem[]]> {
+  const map = new Map<string, ChecklistTemplateItem[]>();
+  for (const it of items) {
+    const key = it.station ?? STATION_FALLBACK;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push(it);
+  }
+  return [...map.entries()];
+}
+
+/** One station-grouped block of preview rows (the shared render used by both the
+ *  flat closing preview and each opening phase). `mirror` flags Phase-2 rows. */
+function PreviewStationGroups({
+  items,
+  lang,
+  mirror,
+}: {
+  items: ChecklistTemplateItem[];
+  lang: Language;
+  mirror: boolean;
+}) {
+  const { t } = useTranslation();
+  const groups = useMemo(() => groupByStation(items), [items]);
+  return (
+    <div className="flex flex-col gap-3">
+      {groups.map(([station, groupItems]) => (
+        <section key={station}>
+          <h5 className="text-sm font-extrabold text-co-text">
+            {/* Station header: resolve via the first item (all share the station). */}
+            {resolveTemplateItemContent(groupItems[0]!, lang).station ??
+              t("admin.templates.builder.preview.general")}
+          </h5>
+          <ul className="mt-1 flex flex-col gap-1.5">
+            {groupItems.map((it) => {
+              const c = resolveTemplateItemContent(it, lang);
+              return (
+                <li key={it.id} className="flex items-start gap-2 rounded-lg border border-co-border/60 bg-co-surface px-3 py-2">
+                  <span aria-hidden className="mt-0.5 text-co-text-dim">☐</span>
+                  <span className="flex-1 text-sm text-co-text">
+                    <span className="font-semibold">{c.label}</span>
+                    {c.description && <span className="block text-xs text-co-text-muted">{c.description}</span>}
+                    <span className="mt-0.5 flex flex-wrap gap-1.5">
+                      {/* Phase-2 rows are the AM-Prep counts (spec §7) — badge them
+                          so the manager sees which lines mirror from AM Prep. */}
+                      {mirror && (
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-co-text-muted">
+                          {t("admin.templates.builder.preview.mirror_flag")}
+                        </span>
+                      )}
+                      {it.required && (
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-co-cta">
+                          {t("admin.templates.builder.preview.required")}
+                        </span>
+                      )}
+                      {it.expectsCount && (
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-co-text-dim">
+                          {t("admin.templates.builder.flag.count")}
+                        </span>
+                      )}
+                      {it.expectsPhoto && (
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-co-text-dim">
+                          {t("admin.templates.builder.flag.photo")}
+                        </span>
+                      )}
+                    </span>
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 function PhonePreview({ template }: { template: TemplateBuilderTemplate }) {
   const { t } = useTranslation();
   const [lang, setLang] = useState<Language>("en");
 
-  const STATION_FALLBACK = "General";
-  const groups = useMemo(() => {
-    const map = new Map<string, ChecklistTemplateItem[]>();
+  // Opening staff see PHASES (operator surface = a Phase-1 verification tab +
+  // a Phase-2 prep-entry tab, opening-client.tsx). Match that fidelity: split
+  // the preview into Phase 1 (non-mirror, station-grouped) and Phase 2 (the
+  // AM-Prep mirror counts). A list with NO mirror rows (closing) renders the
+  // flat station-grouped list exactly as PR-1 did — no phase headers leak in.
+  const { phase1, phase2, hasPhases } = useMemo(() => {
+    const p1: ChecklistTemplateItem[] = [];
+    const p2: ChecklistTemplateItem[] = [];
     for (const it of template.items) {
-      const key = it.station ?? STATION_FALLBACK; // English system key (C.38)
-      if (!map.has(key)) map.set(key, []);
-      map.get(key)!.push(it);
+      if (isMirrorItem(it.prepMeta)) p2.push(it);
+      else p1.push(it);
     }
-    return [...map.entries()];
+    return { phase1: p1, phase2: p2, hasPhases: p2.length > 0 };
   }, [template.items]);
 
   const langChip = (activeChip: boolean) =>
@@ -808,48 +903,31 @@ function PhonePreview({ template }: { template: TemplateBuilderTemplate }) {
           <p className="px-1 pb-2 pt-1 text-center text-xs font-bold uppercase tracking-[0.12em] text-co-text-dim">
             {t("admin.templates.builder.preview.frame_note")}
           </p>
-          <div className="flex flex-col gap-3">
-            {groups.map(([station, items]) => (
-              <section key={station}>
-                <h4 className="text-sm font-extrabold text-co-text">
-                  {/* Station header: resolve via the first item (all share the station). */}
-                  {resolveTemplateItemContent(items[0]!, lang).station ??
-                    t("admin.templates.builder.preview.general")}
+          {hasPhases ? (
+            <div className="flex flex-col gap-4">
+              <section>
+                <h4 className="text-xs font-extrabold uppercase tracking-[0.08em] text-co-cta">
+                  {t("admin.templates.builder.preview.phase1")}
                 </h4>
-                <ul className="mt-1 flex flex-col gap-1.5">
-                  {items.map((it) => {
-                    const c = resolveTemplateItemContent(it, lang);
-                    return (
-                      <li key={it.id} className="flex items-start gap-2 rounded-lg border border-co-border/60 bg-co-surface px-3 py-2">
-                        <span aria-hidden className="mt-0.5 text-co-text-dim">☐</span>
-                        <span className="flex-1 text-sm text-co-text">
-                          <span className="font-semibold">{c.label}</span>
-                          {c.description && <span className="block text-xs text-co-text-muted">{c.description}</span>}
-                          <span className="mt-0.5 flex flex-wrap gap-1.5">
-                            {it.required && (
-                              <span className="text-[10px] font-bold uppercase tracking-wide text-co-cta">
-                                {t("admin.templates.builder.preview.required")}
-                              </span>
-                            )}
-                            {it.expectsCount && (
-                              <span className="text-[10px] font-bold uppercase tracking-wide text-co-text-dim">
-                                {t("admin.templates.builder.flag.count")}
-                              </span>
-                            )}
-                            {it.expectsPhoto && (
-                              <span className="text-[10px] font-bold uppercase tracking-wide text-co-text-dim">
-                                {t("admin.templates.builder.flag.photo")}
-                              </span>
-                            )}
-                          </span>
-                        </span>
-                      </li>
-                    );
-                  })}
-                </ul>
+                <div className="mt-1">
+                  <PreviewStationGroups items={phase1} lang={lang} mirror={false} />
+                </div>
               </section>
-            ))}
-          </div>
+              <section>
+                <h4 className="text-xs font-extrabold uppercase tracking-[0.08em] text-co-cta">
+                  {t("admin.templates.builder.preview.phase2")}
+                </h4>
+                <p className="mt-0.5 text-xs text-co-text-muted">
+                  {t("admin.templates.builder.preview.phase2_note")}
+                </p>
+                <div className="mt-1">
+                  <PreviewStationGroups items={phase2} lang={lang} mirror={true} />
+                </div>
+              </section>
+            </div>
+          ) : (
+            <PreviewStationGroups items={phase1} lang={lang} mirror={false} />
+          )}
         </div>
       </div>
     </CollapsibleSection>
