@@ -2240,12 +2240,19 @@ export async function resolveClosingReportRefItemId(
   }
   if (!tmplRow) return null;
 
+  // Deterministic single pick (PR-4 adversarial review MED-1 belt-and-braces):
+  // the publish guard rejects duplicate report_reference_type within a template,
+  // but a bare maybeSingle would THROW on any legacy/raced duplicate — killing
+  // every closing auto-tick (incl. the cash gate → unfinalizable close). Order +
+  // limit degrades deterministically instead.
   const { data: itemRow, error: itemErr } = await service
     .from("checklist_template_items")
     .select("id")
     .eq("template_id", tmplRow.id)
     .eq("report_reference_type", args.reportType)
     .eq("active", true)
+    .order("id", { ascending: true })
+    .limit(1)
     .maybeSingle<{ id: string }>();
   if (itemErr) {
     throw new Error(`resolveClosingReportRefItemId: load item: ${itemErr.message}`);

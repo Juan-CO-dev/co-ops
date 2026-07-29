@@ -99,11 +99,14 @@ function coerceEdit(raw: unknown): TemplateItemEdit | null {
     case "required":
       return str(o.itemId) && bool(o.required) ? { op, itemId: o.itemId, required: o.required } : null;
     case "gate_tier":
-      // PR-4: the 3-way tier. Both booleans required; hardGate implies must-complete at
-      // the UI, but the wire carries them independently (the lib writes both columns).
-      return str(o.itemId) && bool(o.required) && bool(o.hardGate)
-        ? { op, itemId: o.itemId, required: o.required, hardGate: o.hardGate }
-        : null;
+      // PR-4: the 3-way tier. Both booleans required. hardGate IMPLIES required
+      // (adversarial review MED-2): a hard-gated-but-optional item would block
+      // confirmInstance while staying invisible to the Doctor's role-floor trap
+      // (classifyRoleFloor skips non-required) — the UI never emits that shape;
+      // the server rejects it so the API can't either.
+      if (!(str(o.itemId) && bool(o.required) && bool(o.hardGate))) return null;
+      if (o.hardGate === true && o.required !== true) return null;
+      return { op, itemId: o.itemId, required: o.required, hardGate: o.hardGate };
     case "set_report_ref":
       // PR-4: the report_reference_type picker — only the reconcile-backed values (or
       // null). An unrecognized value fails loudly (never silently drop the edit).

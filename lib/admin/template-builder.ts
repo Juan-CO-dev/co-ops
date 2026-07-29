@@ -762,6 +762,38 @@ export async function publishTemplateVersion(
     args.edits,
   );
 
+  // DUPLICATE-REF GUARD (adversarial review MED-1, fail-loud per the contract):
+  // two ACTIVE items carrying the same report_reference_type on one version would
+  // make resolveClosingReportRefItemId ambiguous — pre-guard the FINAL post-edit
+  // state so the publish rejects loudly instead of publishing a broken reconcile.
+  {
+    const refByItem = new Map<string, string | null>();
+    for (const r of srcItems) refByItem.set(r.id, (r.report_reference_type as string | null) ?? null);
+    const removed = new Set<string>();
+    const enabled = new Set<string>();
+    for (const e of args.edits) {
+      if (e.op === "set_report_ref") refByItem.set(e.itemId, e.refType);
+      if (e.op === "disable") { removed.add(e.itemId); enabled.delete(e.itemId); }
+      if (e.op === "enable") { removed.delete(e.itemId); enabled.add(e.itemId); }
+    }
+    const seen = new Set<string>();
+    for (const r of srcItems) {
+      // Active on the NEW version = (was active and not draft-disabled) OR draft-re-enabled.
+      const activeOnNew = (r.active && !removed.has(r.id)) || enabled.has(r.id);
+      if (!activeOnNew) continue;
+      const ref = refByItem.get(r.id);
+      if (!ref) continue;
+      if (seen.has(ref)) {
+        throw new TemplateBuilderError(
+          409,
+          "duplicate_report_ref",
+          `Two items would carry the same report reference (${ref}) — each reference kind may appear on ONE line only`,
+        );
+      }
+      seen.add(ref);
+    }
+  }
+
   const currentlyEffectiveId = resolveEffectiveVersionId(lineage, today);
 
   // 4c. MINT the new version. effective_from set, supersedes = source id;
