@@ -1759,7 +1759,162 @@ export async function reconcileClosingReportRefs(
     }
   }
 
+  // ── PR-4 (spec §5): ref_track_item_completion — the ONE new mechanism ──
+  // Auto-tick each closing item that TRACKS a specific referenced item's completion
+  // (ref_track_item_completion=true + references_template_item_id set), when that
+  // referenced item has a live completion on today's instance of ITS lineage.
+  ticked += await reconcileRefTrackItems(service, args);
+
   return { ticked };
+}
+
+/**
+ * reconcileRefTrackItems — PR-4 (spec §5), the ONE new reference mechanism. For each
+ * ACTIVE closing item on this closing instance's template that carries
+ * `ref_track_item_completion=true` AND a `references_template_item_id`, auto-tick it
+ * when the SPECIFICALLY-referenced item has a live (non-superseded, non-revoked)
+ * completion on TODAY's instance of the referenced item's template lineage.
+ *
+ * Contrast with the report_reference_type family above: those tick a closing ref when
+ * an ARTIFACT TYPE finalizes (opening / am-prep / cash / pm). This ticks when a SINGLE
+ * NAMED ITEM on another list completes — item grain, not report grain. The referenced
+ * item lives on a DIFFERENT template (e.g. a closing item tracks an opening item); we
+ * resolve its instance date-aware (the same operational date), so a mid-shift version
+ * flip never strands the lookup.
+ *
+ * Idempotent + reopen-aware via ensureClosingRefCompletion (never re-ticks over a
+ * C.55 revoke). Returns the number of ticks made this pass.
+ */
+async function reconcileRefTrackItems(
+  service: SupabaseClient,
+  args: { locationId: string; date: string; closingInstanceId: string; actor: PrepActor },
+): Promise<number> {
+  // 1. Resolve the closing template VERSION effective on the report date (date-aware),
+  //    then load its ACTIVE ref-tracking items. Sibling of resolveClosingReportRefItemId.
+  const closingBase = service
+    .from("checklist_templates")
+    .select("id")
+    .eq("location_id", args.locationId)
+    .eq("type", "closing") as unknown as EffectiveResolvableBuilder;
+  const { data: cTmpl, error: ctErr } = await applyEffectiveResolution(closingBase, args.date).maybeSingle<{ id: string }>();
+  if (ctErr) throw new Error(`reconcileRefTrackItems: closing template: ${ctErr.message}`);
+  if (!cTmpl) return 0;
+
+  const { data: trackItems, error: tiErr } = await service
+    .from("checklist_template_items")
+    .select("id, references_template_item_id")
+    .eq("template_id", cTmpl.id)
+    .eq("active", true)
+    .eq("ref_track_item_completion", true)
+    .not("references_template_item_id", "is", null)
+    .returns<Array<{ id: string; references_template_item_id: string }>>();
+  if (tiErr) throw new Error(`reconcileRefTrackItems: track items: ${tiErr.message}`);
+  const tracks = trackItems ?? [];
+  if (tracks.length === 0) return 0;
+
+  // 2. Batch-resolve each referenced item → its template (one .in() over the set), so
+  //    we can resolve the referenced lineage's instance for today. The referenced item
+  //    id points at ONE version's row; its template_id + type let us resolve the
+  //    CURRENTLY-EFFECTIVE version's instance date-aware (a versioned lineage may have
+  //    superseded the exact referenced row, but the same LABEL lives on the effective
+  //    version — so we resolve by (location,type) date-aware, not by the frozen id).
+  const refItemIds = [...new Set(tracks.map((t) => t.references_template_item_id))];
+  const { data: refRows, error: rErr } = await service
+    .from("checklist_template_items")
+    .select("id, template_id, label")
+    .in("id", refItemIds)
+    .returns<Array<{ id: string; template_id: string; label: string }>>();
+  if (rErr) throw new Error(`reconcileRefTrackItems: ref rows: ${rErr.message}`);
+  const refById = new Map((refRows ?? []).map((r) => [r.id, r]));
+
+  const refTemplateIds = [...new Set((refRows ?? []).map((r) => r.template_id))];
+  const { data: refTmplRows, error: rtErr } = await service
+    .from("checklist_templates")
+    .select("id, location_id, type, name")
+    .in("id", refTemplateIds)
+    .returns<Array<{ id: string; location_id: string; type: string; name: string }>>();
+  if (rtErr) throw new Error(`reconcileRefTrackItems: ref templates: ${rtErr.message}`);
+  const refTmplById = new Map((refTmplRows ?? []).map((r) => [r.id, r]));
+
+  let ticked = 0;
+  for (const track of tracks) {
+    const refItem = refById.get(track.references_template_item_id);
+    if (!refItem) continue; // dangling ref (FK is ON DELETE SET NULL; a race) — skip
+    const refTmpl = refTmplById.get(refItem.template_id);
+    if (!refTmpl) continue;
+
+    // Resolve the referenced lineage's CURRENTLY-EFFECTIVE version on the report date
+    // (date-aware) so a versioned referenced list resolves to the version staff used
+    // today. Scope by (location, type) — the closing + its referenced list share a
+    // location (a closing item references its OWN location's opening item).
+    const refLineageBase = service
+      .from("checklist_templates")
+      .select("id")
+      .eq("location_id", refTmpl.location_id)
+      .eq("type", refTmpl.type) as unknown as EffectiveResolvableBuilder;
+    const { data: effRefTmpl, error: erErr } = await applyEffectiveResolution(
+      refLineageBase,
+      args.date,
+    ).maybeSingle<{ id: string }>();
+    if (erErr) throw new Error(`reconcileRefTrackItems: eff ref template: ${erErr.message}`);
+    if (!effRefTmpl) continue;
+
+    // Resolve today's instance of the referenced lineage.
+    const { data: refInst, error: riErr } = await service
+      .from("checklist_instances")
+      .select("id")
+      .eq("template_id", effRefTmpl.id)
+      .eq("location_id", refTmpl.location_id)
+      .eq("date", args.date)
+      .order("triggered_at", { ascending: false, nullsFirst: false })
+      .limit(1)
+      .maybeSingle<{ id: string }>();
+    if (riErr) throw new Error(`reconcileRefTrackItems: ref instance: ${riErr.message}`);
+    if (!refInst) continue;
+
+    // The referenced item on the EFFECTIVE version (versioning re-mints item ids, so
+    // the frozen references_template_item_id may not exist on today's version — match
+    // by label, the system key, on the effective template).
+    const { data: effRefItem, error: eiErr } = await service
+      .from("checklist_template_items")
+      .select("id")
+      .eq("template_id", effRefTmpl.id)
+      .eq("label", refItem.label)
+      .eq("active", true)
+      .limit(1)
+      .maybeSingle<{ id: string }>();
+    if (eiErr) throw new Error(`reconcileRefTrackItems: eff ref item: ${eiErr.message}`);
+    const effRefItemId = effRefItem?.id ?? refItem.id;
+
+    // Is the referenced item live-completed on today's referenced instance?
+    const { data: comp, error: cErr } = await service
+      .from("checklist_completions")
+      .select("id, completed_at")
+      .eq("instance_id", refInst.id)
+      .eq("template_item_id", effRefItemId)
+      .is("superseded_at", null)
+      .is("revoked_at", null)
+      .limit(1)
+      .maybeSingle<{ id: string; completed_at: string }>();
+    if (cErr) throw new Error(`reconcileRefTrackItems: ref completion: ${cErr.message}`);
+    if (!comp) continue;
+
+    const r = await ensureClosingRefCompletion(service, {
+      closingInstanceId: args.closingInstanceId,
+      refItemId: track.id,
+      actor: args.actor,
+      meta: {
+        refTrack: true,
+        referencedTemplateItemId: track.references_template_item_id,
+        referencedInstanceId: refInst.id,
+        referencedCompletionId: comp.id,
+        reportSubmittedAt: comp.completed_at,
+      },
+    });
+    if (r !== "skipped") ticked += 1;
+  }
+
+  return ticked;
 }
 
 /**

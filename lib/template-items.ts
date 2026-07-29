@@ -76,7 +76,7 @@ import type {
 
 /** Column list for SELECTs against `checklist_template_items` — single source of truth. */
 export const TEMPLATE_ITEM_COLUMNS =
-  "id, template_id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, vendor_item_id, active, translations, prep_meta, report_reference_type, references_template_item_id, item_id";
+  "id, template_id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, vendor_item_id, active, translations, prep_meta, report_reference_type, references_template_item_id, item_id, hard_gate, ref_track_item_completion";
 
 /**
  * Snake_case row shape returned by `SELECT TEMPLATE_ITEM_COLUMNS FROM
@@ -101,6 +101,10 @@ export interface TemplateItemRow {
   report_reference_type: ReportType | null;
   references_template_item_id: string | null;
   item_id: string | null;
+  /** PR-4 (migration 0163): owner-ruled per-line hard gate. Legacy rows = false. */
+  hard_gate: boolean;
+  /** PR-4 (migration 0163): auto-tick when the referenced item completes. Legacy = false. */
+  ref_track_item_completion: boolean;
 }
 
 /**
@@ -134,5 +138,7 @@ export function rowToTemplateItem(r: TemplateItemRow): ChecklistTemplateItem {
     reportReferenceType: r.report_reference_type,
     referencesTemplateItemId: r.references_template_item_id,
     itemId: r.item_id,
+    hardGate: r.hard_gate,
+    refTrackItemCompletion: r.ref_track_item_completion,
   };
 }

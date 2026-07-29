@@ -12,7 +12,12 @@
 //
 // Canonical spec: docs/superpowers/specs/2026-07-28-template-builder-design.md
 
-import type { ChecklistTemplateItem, ChecklistTemplateItemTranslations } from "@/lib/types";
+import type {
+  ChecklistTemplateItem,
+  ChecklistTemplateItemTranslations,
+  GatePredicate,
+  ReportType,
+} from "@/lib/types";
 
 /** Non-prep template types the builder governs. Prep has its own editor. */
 export type TemplateBuilderType = "opening" | "closing" | "deep_cleaning";
@@ -79,6 +84,34 @@ export interface ItemTranslationFill {
 export type SpineLinkTarget =
   | { kind: "item"; id: string }
   | { kind: "sku"; id: string };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PR-4 (spec §5) — CROSS-LIST REFERENCES. The report_reference_type enum
+// (report_type_enum in the DB) has 7 values; reconcileClosingReportRefs (lib/prep.ts)
+// actually PULL-ticks 5 of them (opening_report / am_prep / mid_day_prep / cash_report /
+// pm_report). training_report + special_report have NO reconcile writer, so exposing
+// them in the builder picker would create a ref that never auto-ticks (a "reader of a
+// contract nobody produces" — AGENTS.md). The builder exposes ONLY the 5 wired values
+// (+ "none" = null) so every selectable ref is honestly auto-tickable. Verified against
+// the live enum (project bgcvurheqzylyfehqgzh, 2026-07-28).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The report-reference types the builder EXPOSES — exactly the ones
+ *  reconcileClosingReportRefs pull-ticks (a picker value must be auto-tickable). */
+export const RECONCILED_REPORT_REF_TYPES = [
+  "opening_report",
+  "am_prep",
+  "mid_day_prep",
+  "cash_report",
+  "pm_report",
+] as const satisfies readonly ReportType[];
+
+export type ReconciledReportRefType = (typeof RECONCILED_REPORT_REF_TYPES)[number];
+
+/** TRUE when a report-ref type is one the builder may expose (reconcile-backed). */
+export function isReconciledReportRefType(v: unknown): v is ReconciledReportRefType {
+  return typeof v === "string" && (RECONCILED_REPORT_REF_TYPES as readonly string[]).includes(v);
+}
 
 /**
  * Merge an es-translation fill into an existing translations blob — STRICT
@@ -376,6 +409,18 @@ export type TemplateItemEdit =
   | { op: "reorder"; itemId: string; displayOrder: number }
   | { op: "role"; itemId: string; minRoleLevel: number }
   | { op: "required"; itemId: string; required: boolean }
+  // PR-4 (spec §3): the 3-way gate tier as ONE op. `required` = the "must complete —
+  // or explain" tier; `hardGate` = the owner-ruled NO-OVERRIDE tier. Optional = both
+  // false. Mutually-consistent by construction at the UI (hardGate implies the item is
+  // effectively must-complete, but the two columns are written independently server-side).
+  | { op: "gate_tier"; itemId: string; required: boolean; hardGate: boolean }
+  // PR-4 (spec §5): the report_reference_type picker in the drawer Connections section —
+  // STRUCTURAL (changes submit/reconcile behavior) → versions. null clears the ref.
+  | { op: "set_report_ref"; itemId: string; refType: ReconciledReportRefType | null }
+  // PR-4 (spec §5): the ONE new mechanism — auto-tick this item when a specific OTHER
+  // item completes. `targetItemId` = the referenced item (references_template_item_id);
+  // null both clears the target and turns tracking off.
+  | { op: "ref_track"; itemId: string; targetItemId: string | null }
   | { op: "disable"; itemId: string }
   | { op: "enable"; itemId: string }
   | {
@@ -408,6 +453,35 @@ export interface TemplateDiffSummary {
   reordered: number;
   roleChanged: Array<{ itemId: string; label: string; from: number; to: number }>;
   requiredChanged: Array<{ itemId: string; label: string; to: boolean }>;
+  /** PR-4: gate-tier changes (Optional / must-complete / hard gate) — reports the
+   *  RESOLVED tier so the confirm modal + audit name the transition per item. */
+  gateChanged: Array<{ itemId: string; label: string; to: "optional" | "must_complete" | "hard_gate" }>;
+  /** PR-4: report-reference / ref-track changes — a count for the confirm modal
+   *  (which items are noise; the connection kind is what the manager cares about). */
+  referenceChanged: number;
+}
+
+/** PR-4: the RESOLVED gate tier for one item (Optional / must-complete / hard gate).
+ *  Pure derivation from the two boolean columns. hardGate wins (a hard gate is by
+ *  definition also must-complete; the label reflects the strongest tier). */
+export function resolveGateTier(
+  item: Pick<ChecklistTemplateItem, "required" | "hardGate">,
+): "optional" | "must_complete" | "hard_gate" {
+  if (item.hardGate) return "hard_gate";
+  if (item.required) return "must_complete";
+  return "optional";
+}
+
+/**
+ * PR-4 (spec §5) — the TEMPLATE-LEVEL patch that rides the SAME publish flow as the
+ * item edits (orchestrator ruling): editing the submission gate predicate is a
+ * template-level structural change, so it versions via the publish mint. `undefined`
+ * = no change (the source predicate copies verbatim); an explicit `null` clears the
+ * gate; a GatePredicate sets it. Only submissionGatePredicate is builder-editable this
+ * PR (edit_gate_predicate stays whatever the source carried).
+ */
+export interface TemplatePatch {
+  submissionGatePredicate?: GatePredicate | null;
 }
 
 /**
@@ -418,7 +492,7 @@ export interface TemplateDiffSummary {
  * actually differs from the source. Used by the modal + audit ONLY.
  */
 export function classifyEdits(
-  srcItems: Array<Pick<ChecklistTemplateItem, "id" | "label" | "minRoleLevel" | "required" | "active">>,
+  srcItems: Array<Pick<ChecklistTemplateItem, "id" | "label" | "minRoleLevel" | "required" | "active" | "hardGate">>,
   edits: readonly TemplateItemEdit[],
 ): TemplateDiffSummary {
   const srcById = new Map(srcItems.map((it) => [it.id, it]));
@@ -430,6 +504,10 @@ export function classifyEdits(
   const disabled = new Map<string, boolean>(); // true=disable, false=enable
   const reorderedIds = new Set<string>();
   const adds: Array<{ tempId: string; label: string }> = [];
+  // PR-4: coalesced final gate tier (required + hardGate) per item, and the set of
+  // items whose reference/ref-track changed.
+  const gate = new Map<string, { required: boolean; hardGate: boolean }>();
+  const referenceIds = new Set<string>();
 
   for (const e of edits) {
     switch (e.op) {
@@ -441,6 +519,17 @@ export function classifyEdits(
         break;
       case "required":
         required.set(e.itemId, e.required);
+        break;
+      case "gate_tier":
+        // gate_tier carries BOTH booleans — it's the authoritative tier setter. Also
+        // reflect its `required` into the required map so a plain requiredChanged is
+        // still surfaced when only the reason-tier flipped.
+        gate.set(e.itemId, { required: e.required, hardGate: e.hardGate });
+        required.set(e.itemId, e.required);
+        break;
+      case "set_report_ref":
+      case "ref_track":
+        referenceIds.add(e.itemId);
         break;
       case "reorder":
         reorderedIds.add(e.itemId);
@@ -497,7 +586,39 @@ export function classifyEdits(
     reordered += 1;
   }
 
-  return { added: adds, removed, relabeled, reordered, roleChanged, requiredChanged };
+  // PR-4: gate-tier changes — the RESOLVED tier per item, reported only when it
+  // differs from the source tier (hardGate wins). A bare `required` flip is ALSO a
+  // tier change (Optional↔must-complete), so fold required-only changes in too.
+  const gateChanged: TemplateDiffSummary["gateChanged"] = [];
+  const gateTouched = new Set<string>([...gate.keys(), ...required.keys()]);
+  for (const id of gateTouched) {
+    const src = srcById.get(id);
+    if (!src) continue;
+    const g = gate.get(id);
+    const nextRequired = g ? g.required : (required.get(id) ?? src.required);
+    const nextHard = g ? g.hardGate : src.hardGate;
+    const to = resolveGateTier({ required: nextRequired, hardGate: nextHard });
+    const from = resolveGateTier({ required: src.required, hardGate: src.hardGate });
+    if (to !== from) gateChanged.push({ itemId: id, label: src.label, to });
+  }
+
+  // PR-4: reference/ref-track changes — count the distinct surviving (non-removed) ids.
+  let referenceChanged = 0;
+  for (const id of referenceIds) {
+    if (disabled.get(id) === true) continue;
+    referenceChanged += 1;
+  }
+
+  return {
+    added: adds,
+    removed,
+    relabeled,
+    reordered,
+    roleChanged,
+    requiredChanged,
+    gateChanged,
+    referenceChanged,
+  };
 }
 
 /**
@@ -537,6 +658,10 @@ export function applyEditsToItems(
         reportReferenceType: null,
         referencesTemplateItemId: null,
         itemId: e.expectsCount && e.spineLink?.kind === "item" ? e.spineLink.id : null,
+        // A quick-add row is a plain new line — hard gate + ref-track default off
+        // (set later via a gate_tier / set_report_ref op on the persisted row).
+        hardGate: false,
+        refTrackItemCompletion: false,
       });
       continue;
     }
@@ -561,6 +686,19 @@ export function applyEditsToItems(
         break;
       case "required":
         target.required = e.required;
+        break;
+      case "gate_tier":
+        target.required = e.required;
+        target.hardGate = e.hardGate;
+        break;
+      case "set_report_ref":
+        target.reportReferenceType = e.refType;
+        break;
+      case "ref_track":
+        // The target item + the tracking flag move together: a null target turns
+        // tracking off, a set target turns it on (the persisted write mirrors this).
+        target.referencesTemplateItemId = e.targetItemId;
+        target.refTrackItemCompletion = e.targetItemId !== null;
         break;
       case "disable":
         target.active = false;

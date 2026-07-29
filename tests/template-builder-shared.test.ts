@@ -53,6 +53,8 @@ function item(over: Partial<ChecklistTemplateItem>): ChecklistTemplateItem {
     reportReferenceType: null,
     referencesTemplateItemId: null,
     itemId: null,
+    hardGate: false,
+    refTrackItemCompletion: false,
     ...over,
   };
 }

@@ -58,6 +58,7 @@ import {
   type TemplateDoctorReport,
   type TemplateItemEdit,
   type TemplateDiffSummary,
+  type TemplatePatch,
   type PublishEffectiveMode,
 } from "@/lib/admin/template-builder-shared";
 
@@ -77,6 +78,9 @@ export {
   applyEffectiveResolution,
   versionOutranks,
   resolveEffectiveVersionId,
+  resolveGateTier,
+  RECONCILED_REPORT_REF_TYPES,
+  isReconciledReportRefType,
   CLOSING_CONFIRM_FLOOR_LEVEL,
   OPENING_CONFIRM_FLOOR_LEVEL,
   confirmFloorForType,
@@ -93,6 +97,8 @@ export type {
   TemplateDoctorReport,
   TemplateItemEdit,
   TemplateDiffSummary,
+  TemplatePatch,
+  ReconciledReportRefType,
   PublishEffectiveMode,
 } from "@/lib/admin/template-builder-shared";
 
@@ -564,6 +570,8 @@ type RawItemRow = Record<string, unknown> & {
   vendor_item_id: string | null;
   prep_meta: unknown | null;
   translations: Record<string, unknown> | null;
+  /** PR-4: the owner-ruled hard gate (migration 0163) — present via SELECT *. */
+  hard_gate: boolean;
 };
 
 export interface PublishResult {
@@ -595,6 +603,10 @@ export async function publishTemplateVersion(
     templateId: string;
     edits: readonly TemplateItemEdit[];
     effectiveMode: PublishEffectiveMode;
+    /** PR-4 (spec §5): a TEMPLATE-level structural change riding the same publish flow
+     *  (orchestrator ruling). `undefined` field = copy the source verbatim; explicit
+     *  null clears the submission gate; a GatePredicate sets it. Applied at mint. */
+    templatePatch?: TemplatePatch;
   },
 ): Promise<PublishResult> {
   const sb = getServiceRoleClient();
@@ -619,6 +631,16 @@ export async function publishTemplateVersion(
   // 2. effectiveFrom.
   const applyNow = args.effectiveMode === "apply_now";
   const effectiveFrom = applyNow ? today : nextOperationalDay(today);
+
+  // PR-4 (spec §5): resolve the submission gate predicate the minted version carries.
+  // A `templatePatch.submissionGatePredicate` present in the payload overrides the
+  // source (explicit null clears the gate); absent field copies the source verbatim.
+  // The evaluator (evaluateGatePredicate) throws on an unknown shape at EVALUATION
+  // time — we don't re-validate the shape here (it's the same lib that consumes it).
+  const nextSubmissionGate =
+    args.templatePatch && "submissionGatePredicate" in args.templatePatch
+      ? args.templatePatch.submissionGatePredicate ?? null
+      : src.submission_gate_predicate;
 
   // Enumerate the whole lineage's template ids (all versions — active or not) at
   // this location for the apply-now gate + the retirement pass. Lineage key =
@@ -678,6 +700,7 @@ export async function publishTemplateVersion(
       minRoleLevel: Number(r.min_role_level),
       required: r.required,
       active: r.active,
+      hardGate: r.hard_gate === true,
     })),
     args.edits,
   );
@@ -696,7 +719,8 @@ export async function publishTemplateVersion(
       description: src.description,
       single_submission_only: src.single_submission_only,
       reminder_time: src.reminder_time,
-      submission_gate_predicate: src.submission_gate_predicate,
+      // PR-4: the submission gate predicate may be patched at publish (spec §5).
+      submission_gate_predicate: nextSubmissionGate,
       edit_gate_predicate: src.edit_gate_predicate,
       // ACTIVATE-LAST (R0 partial-failure fix): the version is born INACTIVE and
       // flips active only after the item copy completes. A mid-copy failure leaves
@@ -798,7 +822,12 @@ export async function publishTemplateVersion(
         reordered: diff.reordered,
         roleChanged: diff.roleChanged.length,
         requiredChanged: diff.requiredChanged.length,
+        gateChanged: diff.gateChanged.length,
+        referenceChanged: diff.referenceChanged,
       },
+      // PR-4: record a submission-gate predicate change on the version (spec §5).
+      submission_gate_predicate_changed:
+        args.templatePatch !== undefined && "submissionGatePredicate" in args.templatePatch,
     },
     ipAddress: null,
     userAgent: null,
@@ -946,6 +975,10 @@ async function copyItemsToVersion(
       prep_meta: null,
       report_reference_type: null,
       references_template_item_id: null,
+      // PR-4: a fresh quick-add is a plain new line — gate/ref off (set later via a
+      // gate_tier / set_report_ref op once the row is persisted in this version).
+      hard_gate: false,
+      ref_track_item_completion: false,
     });
   }
 
@@ -1003,6 +1036,22 @@ function applyEditToRow(row: Record<string, unknown>, e: TemplateItemEdit): void
       break;
     case "required":
       row.required = e.required;
+      break;
+    case "gate_tier":
+      // PR-4 (spec §3): the 3-way tier writes both columns. required = the
+      // must-complete-or-explain tier; hard_gate = the owner-ruled NO-OVERRIDE tier.
+      row.required = e.required;
+      row.hard_gate = e.hardGate;
+      break;
+    case "set_report_ref":
+      // PR-4 (spec §5): the report_reference_type picker. null clears it.
+      row.report_reference_type = e.refType;
+      break;
+    case "ref_track":
+      // PR-4 (spec §5): the ONE new mechanism. The referenced item + the tracking
+      // flag move together (a null target turns tracking off).
+      row.references_template_item_id = e.targetItemId;
+      row.ref_track_item_completion = e.targetItemId !== null;
       break;
     case "disable":
       row.active = false;

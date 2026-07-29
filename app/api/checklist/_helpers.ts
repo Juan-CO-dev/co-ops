@@ -50,6 +50,7 @@ import {
   ChecklistRevocationNoteRequiredError,
   ChecklistConcurrentModificationError,
   ChecklistCashDepositRequiredError,
+  ChecklistHardGateIncompleteError,
 } from "@/lib/checklists";
 import { jsonError } from "@/lib/api-helpers";
 import type { NextResponse } from "next/server";
@@ -176,6 +177,12 @@ export function mapChecklistError(err: ChecklistError): NextResponse {
   // discriminator; PinConfirmModal switches on it to show the cash-required banner.
   if (err instanceof ChecklistCashDepositRequiredError) {
     return jsonError(422, err.code, { message: err.message });
+  }
+  // Hard gate (Template Builder PR-4, spec §3) — 422 Unprocessable Entity (business-
+  // rule precondition, no reason path). The code "hard_gate_incomplete" is the stable
+  // discriminator; the confirm UI shows which hard-gated items are still blocking.
+  if (err instanceof ChecklistHardGateIncompleteError) {
+    return jsonError(422, err.code, { message: err.message, labels: err.labels });
   }
   // Generic ChecklistError with an in-band code (empty_batch,
   // completion_not_found, completion_wrong_instance, completion_wrong_author,
