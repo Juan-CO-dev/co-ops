@@ -8,6 +8,7 @@ import { listLtoEvents } from "@/lib/catering/lto";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import { BackLink } from "@/components/nav/BackLink";
 import { PlaceholderCard } from "@/components/PlaceholderCard";
+import { AlertPill } from "@/components/ui/AlertPill";
 
 export const dynamic = "force-dynamic";
 
@@ -113,14 +114,12 @@ export default async function LtoPage() {
                 return (
                   <li
                     key={ev.id}
-                    className="flex flex-wrap items-start gap-2 rounded-lg border-2 border-co-border bg-co-surface px-3 py-2 text-sm text-co-text"
+                    className="co-card flex flex-wrap items-start gap-2 px-3 py-2 text-sm text-co-text"
                   >
                     <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-semibold">{ev.name}</span>
-                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-amber-800">
-                          {ev.kind}
-                        </span>
+                        <AlertPill tone="warn">{ev.kind}</AlertPill>
                         {terms && (
                           <span className="text-xs font-medium text-co-text-muted">{terms}</span>
                         )}
