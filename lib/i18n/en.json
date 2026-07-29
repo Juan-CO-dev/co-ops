@@ -757,7 +757,6 @@
   "admin.templates.type.prep": "Prep",
   "admin.templates.type.deep_cleaning": "Deep cleaning",
   "admin.templates.lists_heading": "Lists",
-  "admin.templates.reports_heading": "Written reports",
   "admin.templates.editor_pending": "Editor coming soon",
   "admin.templates.needs_link.title": "Needs link",
   "admin.templates.needs_link.subtitle": "These count lines don't point to a master-list item or SKU yet. Link each one so counts flow to inventory.",

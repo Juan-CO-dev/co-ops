@@ -12,12 +12,12 @@ import {
 import { NeedsLinkQueue } from "@/components/admin/templates/NeedsLinkQueue";
 
 /**
- * Lists & Reports hub (The Master List, spec §3). The single authoring surface
- * for every list type + written-report definition, plus the needs-link queue at
- * the root (spec §4). Prep subtypes (am_prep / mid_day_prep) open their existing
- * editor; opening / closing / deep_cleaning + report definitions are listed here
- * with their editors delegated to a follow-up (the prep machinery in
- * lib/admin/templates.ts is carried over, not rebuilt).
+ * Lists hub (The Master List, spec §3; Template Builder spec §0). The single
+ * authoring surface for every list type, plus the needs-link queue at the root
+ * (spec §4). Prep subtypes (am_prep / mid_day_prep) open their existing editor;
+ * opening / closing / deep_cleaning are listed here with their editors delegated
+ * to the builder arc (PR-1/PR-2). The "report definitions" ghost card is gone
+ * (Template Builder §0 lie 2 — the checklist template IS the report template).
  */
 
 /** Prep subtypes have a live per-list editor at /[subtype]. */
@@ -86,14 +86,9 @@ export default async function AdminListsReportsPage() {
               </div>
             </li>
           ))}
-          <li>
-            <div className={cardCls + " cursor-default opacity-70"}>
-              <span className="block text-base font-extrabold text-co-text">
-                {serverT(lang, "admin.templates.reports_heading")}
-              </span>
-              <span className="text-sm text-co-text-muted">{serverT(lang, "admin.templates.editor_pending")}</span>
-            </div>
-          </li>
+          {/* The "report definitions" ghost card is deleted (spec §0 lie 2): the
+              checklist template IS the report template — report knobs live inside
+              the template editor, not a phantom entity. */}
         </ul>
       </section>
     </div>
