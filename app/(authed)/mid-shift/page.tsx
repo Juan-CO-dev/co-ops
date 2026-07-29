@@ -7,11 +7,13 @@
  */
 
 import { DashboardBackLink } from "@/components/DashboardBackLink";
+import { AccessDeniedBanner } from "@/components/ui/AccessDeniedBanner";
 import { AttentionBanner } from "@/components/midshift/AttentionBanner";
 import { ReportStatusList } from "@/components/midshift/ReportStatusList";
 import { FridgeStrip } from "@/components/midshift/FridgeStrip";
 import { ActiveToday } from "@/components/midshift/ActiveToday";
 import { SalesPlaceholder } from "@/components/midshift/SalesPlaceholder";
+import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { MIDSHIFT_BASE_LEVEL, loadMidShiftPulse, operationalNow } from "@/lib/midshift";
 import { serverT } from "@/lib/i18n/server";
 import { lockLocationContext } from "@/lib/locations";
@@ -29,12 +31,7 @@ export default async function MidShiftPage({
   if (auth.level < MIDSHIFT_BASE_LEVEL) {
     return (
       <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
-        <div className="mb-3">
-          <DashboardBackLink />
-        </div>
-        <p className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-3 text-sm font-semibold text-co-text">
-          {serverT(language, "midshift.page.title")}
-        </p>
+        <AccessDeniedBanner language={language} />
       </main>
     );
   }
@@ -71,6 +68,16 @@ export default async function MidShiftPage({
   const now = new Date();
   const { date } = operationalNow(now);
   const service = getServiceRoleClient();
+
+  // Which store's pulse is this? A multi-location manager can't tell without a
+  // label (sonnet finding 8) — resolve the code + name for a muted header chip.
+  const { data: locRow } = await service
+    .from("locations")
+    .select("code, name")
+    .eq("id", locationId)
+    .maybeSingle();
+  const loc = locRow as { code: string; name: string } | null;
+
   const pulse = await loadMidShiftPulse(service, {
     locationId,
     date,
@@ -83,8 +90,13 @@ export default async function MidShiftPage({
       <div className="mb-3">
         <DashboardBackLink />
       </div>
-      <h1 className="text-lg font-bold text-co-text">
+      <h1 className="flex flex-wrap items-baseline gap-2 text-lg font-bold text-co-text">
         {serverT(language, "midshift.page.title")}
+        {loc && (
+          <span className="text-sm font-semibold text-co-text-muted">
+            {loc.code} &middot; {loc.name}
+          </span>
+        )}
       </h1>
       <AttentionBanner items={pulse.attention} language={language} />
       <ReportStatusList reports={pulse.reports} language={language} />
@@ -95,7 +107,16 @@ export default async function MidShiftPage({
         language={language}
       />
       <ActiveToday staff={pulse.activeToday} language={language} />
-      <SalesPlaceholder language={language} />
+      {/* Sales is a Toast-gated placeholder — collapse it so it stops dominating
+          the live scroll (sonnet finding D). Default-collapsed; the heading stays
+          tappable for the curious. */}
+      <CollapsibleSection
+        idBase="midshift-sales"
+        title={serverT(language, "midshift.sales.heading")}
+        defaultOpen={false}
+      >
+        <SalesPlaceholder language={language} hideHeading />
+      </CollapsibleSection>
     </main>
   );
 }

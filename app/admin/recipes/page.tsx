@@ -16,6 +16,7 @@ import { loadRecipes, RECIPE_READ_MIN } from "@/lib/recipes";
 import { loadGraphReadiness } from "@/lib/admin/readiness-load";
 import type { Readiness } from "@/lib/readiness";
 import { RecipesClient } from "@/components/admin/recipes/RecipesClient";
+import { PageHeader } from "@/components/ui/PageHeader";
 import type { TranslationKey } from "@/lib/i18n/types";
 
 /** Cast a recipes.* key to TranslationKey — keys are added in a separate i18n task. */
@@ -41,12 +42,10 @@ export default async function AdminRecipesPage() {
 
   return (
     <div>
-      <h1 className="text-xl font-extrabold leading-tight text-co-text">
-        {serverT(lang, rk("recipes.hub.title"))}
-      </h1>
-      <p className="mt-1 text-sm text-co-text-muted">
-        {serverT(lang, rk("recipes.hub.subtitle"))}
-      </p>
+      <PageHeader
+        title={serverT(lang, rk("recipes.hub.title"))}
+        subtitle={serverT(lang, rk("recipes.hub.subtitle"))}
+      />
       <RecipesClient recipes={recipes} level={level} readiness={recipeReadiness} />
     </div>
   );

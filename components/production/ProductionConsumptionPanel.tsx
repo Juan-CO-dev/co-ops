@@ -203,7 +203,7 @@ export function ProductionConsumptionPanel(props: {
                     <button
                       type="button"
                       onClick={() => handleUnitSwitch(d, "case")}
-                      className={`min-h-[36px] min-w-[44px] rounded-l-md px-2 font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60 ${unit === "case" ? "bg-co-gold text-co-text" : "text-co-text-dim hover:bg-co-gold/10"}`}
+                      className={`min-h-[44px] min-w-[44px] rounded-l-md px-2 font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60 ${unit === "case" ? "bg-co-gold text-co-text" : "text-co-text-dim hover:bg-co-gold/10"}`}
                     >
                       {t("production.panel.unit_case")}
                     </button>
@@ -212,7 +212,7 @@ export function ProductionConsumptionPanel(props: {
                     <button
                       type="button"
                       onClick={() => handleUnitSwitch(d, "each")}
-                      className={`min-h-[36px] min-w-[44px] px-2 font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60 ${canCase ? "" : "rounded-l-md"} ${unit === "each" ? "bg-co-gold text-co-text" : "text-co-text-dim hover:bg-co-gold/10"}`}
+                      className={`min-h-[44px] min-w-[44px] px-2 font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60 ${canCase ? "" : "rounded-l-md"} ${unit === "each" ? "bg-co-gold text-co-text" : "text-co-text-dim hover:bg-co-gold/10"}`}
                     >
                       {t("production.panel.unit_each")}
                     </button>
@@ -220,7 +220,7 @@ export function ProductionConsumptionPanel(props: {
                   <button
                     type="button"
                     onClick={() => handleUnitSwitch(d, "oz")}
-                    className={`min-h-[36px] min-w-[44px] px-2 font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60 ${canCase || canEach ? "hidden" : "rounded-md"} ${unit === "oz" ? "bg-co-gold text-co-text" : "text-co-text-dim hover:bg-co-gold/10"}`}
+                    className={`min-h-[44px] min-w-[44px] px-2 font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60 ${canCase || canEach ? "hidden" : "rounded-md"} ${unit === "oz" ? "bg-co-gold text-co-text" : "text-co-text-dim hover:bg-co-gold/10"}`}
                   >
                     oz
                   </button>

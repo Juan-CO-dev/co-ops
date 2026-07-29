@@ -23,6 +23,7 @@ import { loadSkuPackChains } from "@/lib/prep-consumption";
 import { buildPackChain, isChainUnverified, type PackChainLevel } from "@/lib/pack-chain-shared";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
 import { SkuCatalogClient } from "@/components/admin/skus/SkuCatalogClient";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export default async function AdminSkusPage() {
   const auth = await requireSessionFromHeaders("/admin");
@@ -99,10 +100,10 @@ export default async function AdminSkusPage() {
 
   return (
     <div>
-      <h1 className="text-xl font-extrabold leading-tight text-co-text">
-        {serverT(lang, "admin.skus.title")}
-      </h1>
-      <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "admin.skus.subtitle")}</p>
+      <PageHeader
+        title={serverT(lang, "admin.skus.title")}
+        subtitle={serverT(lang, "admin.skus.subtitle")}
+      />
       <SkuCatalogClient
         skus={skus}
         vendors={activeVendors}

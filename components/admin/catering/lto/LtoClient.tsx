@@ -17,6 +17,7 @@ import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { useStepUp } from "@/components/admin/StepUpProvider";
 import { postJson, resolveErrorKey } from "@/components/admin/catering/shared";
+import { AlertPill, type AlertPillTone } from "@/components/ui/AlertPill";
 import type { SurplusLine } from "@/lib/catering/surplus";
 import type { LtoEventView, LtoKind } from "@/lib/catering/lto";
 import type { PackageLocationOption } from "@/lib/admin/catering/packages";
@@ -155,16 +156,14 @@ function LineCard({ line, locationId, busy, setBusy, onSuccess }: LineCardProps)
         </span>
         <span className="text-xs text-co-text-muted">{line.needDate}</span>
         {line.refKind === "choice" && (
-          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-amber-700">
-            choice — no action
-          </span>
+          <AlertPill tone="warn">{t("lto.choice_no_action")}</AlertPill>
         )}
         {actionable && !open && (
           <button
             type="button"
             disabled={busy}
             onClick={() => setOpen(true)}
-            className="ml-auto inline-flex min-h-[36px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-3 text-xs font-bold uppercase tracking-[0.08em] text-co-text transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
+            className="ml-auto inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-3 text-xs font-bold uppercase tracking-[0.08em] text-co-text transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
           >
             {t("admin.catering.lto.run_action" as TranslationKey)}
           </button>
@@ -355,29 +354,20 @@ function EventRow({ ev, busy, setBusy, onSuccess }: EventRowProps) {
           ? `$${(ev.promoPriceCents / 100).toFixed(2)}`
           : "—";
 
-  const statusColors: Record<string, string> = {
-    active: "bg-emerald-100 text-emerald-800",
-    cancelled: "bg-red-100 text-red-700",
-    expired: "bg-gray-100 text-gray-600",
+  const statusTone: Record<string, AlertPillTone> = {
+    active: "ok",
+    cancelled: "danger",
+    expired: "info",
   };
 
   return (
-    <li className="rounded-xl border-2 border-co-border bg-co-surface p-3">
+    <li className="co-card p-3">
       <div className="flex flex-wrap items-start gap-2">
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-semibold text-co-text">{ev.name}</span>
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-amber-800">
-              {ev.kind}
-            </span>
-            <span
-              className={[
-                "rounded-full px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em]",
-                statusColors[ev.status] ?? "bg-gray-100 text-gray-600",
-              ].join(" ")}
-            >
-              {ev.status}
-            </span>
+            <AlertPill tone="warn">{ev.kind}</AlertPill>
+            <AlertPill tone={statusTone[ev.status] ?? "info"}>{ev.status}</AlertPill>
           </div>
           <p className="mt-1 text-xs text-co-text-muted">
             {terms} · {ev.startsOn} – {ev.endsOn}
@@ -394,7 +384,7 @@ function EventRow({ ev, busy, setBusy, onSuccess }: EventRowProps) {
             type="button"
             disabled={busy}
             onClick={() => void handleCancel()}
-            className="shrink-0 inline-flex min-h-[36px] items-center rounded-lg border-2 border-co-border px-3 text-xs font-bold uppercase tracking-[0.08em] text-co-cta transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
+            className="shrink-0 inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border px-3 text-xs font-bold uppercase tracking-[0.08em] text-co-cta transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
           >
             {t("admin.catering.lto.cancel_event" as TranslationKey)}
           </button>
@@ -491,7 +481,7 @@ export function LtoClient({
                 /* read-only view for actors below LTO_MIN (shouldn't reach here; defensive) */
                 <li
                   key={`${line.refId}-${line.needDate}-${i}`}
-                  className="flex flex-wrap items-center gap-2 rounded-xl border-2 border-co-border bg-co-surface px-3 py-2 text-sm text-co-text-muted"
+                  className="co-card flex flex-wrap items-center gap-2 px-3 py-2 text-sm text-co-text-muted"
                 >
                   {line.qty > 0 ? `${line.qty} × ` : ""}
                   {line.portion ? `${line.portion} ` : ""}

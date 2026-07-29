@@ -9,6 +9,8 @@ import { countNotReady } from "@/lib/admin/readiness-load";
 import { adminSectionsFor } from "@/lib/admin/sections";
 import { serverT } from "@/lib/i18n/server";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { AlertPill } from "@/components/ui/AlertPill";
 
 export default async function AdminHubPage() {
   const auth = await requireSessionFromHeaders("/admin");
@@ -30,25 +32,23 @@ export default async function AdminHubPage() {
 
   return (
     <div>
-      <h1 className="text-xl font-extrabold leading-tight text-co-text">
-        {serverT(lang, "admin.hub.heading")}
-      </h1>
-      <p className="mt-1 text-sm text-co-text-muted">
-        {serverT(lang, "admin.hub.subtitle")}
-      </p>
+      <PageHeader
+        title={serverT(lang, "admin.hub.heading")}
+        subtitle={serverT(lang, "admin.hub.subtitle")}
+      />
 
       <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {sections.map((s) => (
           <a
             key={s.id}
             href={s.href}
-            className="rounded-xl border-2 border-co-border bg-co-surface p-4 text-base font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
+            className="co-card co-card-interactive p-4 text-base font-bold text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
           >
             {serverT(lang, s.i18nKey)}
             {(counts[s.id] ?? 0) > 0 ? (
-              <span className="ml-2 rounded bg-co-cta/15 px-2 py-0.5 text-xs font-bold text-co-cta">
+              <AlertPill tone="danger" uppercase={false} className="ml-2">
                 {serverT(lang, "readiness.hub.count", { count: counts[s.id]! })}
-              </span>
+              </AlertPill>
             ) : null}
           </a>
         ))}

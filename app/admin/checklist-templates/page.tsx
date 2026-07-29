@@ -10,6 +10,7 @@ import {
   NEEDS_LINK_WRITE_MIN,
 } from "@/lib/admin/needs-link";
 import { NeedsLinkQueue } from "@/components/admin/templates/NeedsLinkQueue";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 /**
  * Lists hub (The Master List, spec §3; Template Builder spec §0). The single
@@ -46,12 +47,14 @@ export default async function AdminListsReportsPage() {
   ]);
 
   const cardCls =
-    "flex items-center justify-between rounded-xl border-2 border-co-border bg-co-surface p-4 transition hover:border-co-text";
+    "co-card co-card-interactive flex items-center justify-between p-4";
 
   return (
     <div>
-      <h1 className="text-xl font-extrabold leading-tight text-co-text">{serverT(lang, "admin.templates.title")}</h1>
-      <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "admin.templates.subtitle")}</p>
+      <PageHeader
+        title={serverT(lang, "admin.templates.title")}
+        subtitle={serverT(lang, "admin.templates.subtitle")}
+      />
 
       {/* Needs-link queue (spec §4). */}
       <section className="mt-6">
@@ -97,7 +100,7 @@ export default async function AdminListsReportsPage() {
           ))}
           {MODULE_PENDING_TYPES.map((type) => (
             <li key={type} aria-disabled="true">
-              <div className={cardCls + " cursor-default opacity-60 hover:border-co-border"}>
+              <div className="co-card flex cursor-default items-center justify-between p-4 opacity-60">
                 <span className="block text-base font-extrabold text-co-text-muted">
                   {serverT(lang, `admin.templates.type.${type}` as TranslationKey)}
                 </span>

@@ -16,6 +16,7 @@ import { loadAdminCateringMenu, MENU_ADMIN_MIN } from "@/lib/admin/catering/menu
 import { loadToastMapState } from "@/lib/admin/toast-map";
 import { loadEzcaterAdminState } from "@/lib/admin/ezcater-map";
 import { MenuTabs } from "@/components/admin/catering/menu/MenuTabs";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export default async function AdminCateringMenuPage() {
   const auth = await requireSessionFromHeaders("/admin");
@@ -27,8 +28,10 @@ export default async function AdminCateringMenuPage() {
 
   return (
     <div>
-      <h1 className="text-xl font-extrabold leading-tight text-co-text">{serverT(lang, "admin.catering.menu.title" as TranslationKey)}</h1>
-      <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "admin.catering.menu.subtitle" as TranslationKey)}</p>
+      <PageHeader
+        title={serverT(lang, "admin.catering.menu.title" as TranslationKey)}
+        subtitle={serverT(lang, "admin.catering.menu.subtitle" as TranslationKey)}
+      />
       <MenuTabs items={items} toastState={toastState} ezcaterState={ezcaterState} canWrite={level >= MENU_ADMIN_MIN} />
     </div>
   );

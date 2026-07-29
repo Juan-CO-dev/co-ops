@@ -78,7 +78,7 @@ export default async function MyPerformancePage({ searchParams }: PageProps) {
               return (
                 <Link key={l.id} href={href} scroll={false} aria-current={on ? "page" : undefined}
                   className={[
-                    "inline-flex min-h-[36px] items-center rounded-full px-3 text-xs font-bold uppercase tracking-[0.1em] transition",
+                    "inline-flex min-h-[44px] items-center rounded-full px-3 text-xs font-bold uppercase tracking-[0.1em] transition",
                     on ? "border-2 border-co-text bg-co-gold text-co-text" : "border-2 border-co-border-2 bg-co-surface text-co-text-muted hover:border-co-text",
                   ].join(" ")}>
                   {l.code}

@@ -2780,5 +2780,8 @@
   "admin.catering.lto.location_label": "Ubicación",
   "admin.catering.lto.error.percent_required": "El porcentaje de descuento es obligatorio para descuentos.",
   "lto.active_title": "LTOs y descuentos activos",
-  "lto.active_empty": "Sin LTOs ni descuentos activos ahora."
+  "lto.active_empty": "Sin LTOs ni descuentos activos ahora.",
+  "access.denied.title": "No tienes acceso a esta página",
+  "access.denied.body": "Pídele acceso a tu gerente si lo necesitas.",
+  "lto.choice_no_action": "elección — sin acción"
 }

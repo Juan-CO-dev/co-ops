@@ -5,6 +5,7 @@ import { serverT } from "@/lib/i18n/server";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { loadChecklistAdminView, type PrepSubtype } from "@/lib/admin/templates";
 import { ChecklistTabs } from "@/components/admin/templates/ChecklistTabs";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 function isPrepSubtype(v: string): v is PrepSubtype {
   return v === "am_prep" || v === "mid_day_prep";
@@ -23,10 +24,10 @@ export default async function AdminChecklistSubtypePage({
 
   return (
     <div>
-      <h1 className="mt-2 text-xl font-extrabold leading-tight text-co-text">
-        {serverT(lang, `admin.templates.subtype.${subtype}` as TranslationKey)}
-      </h1>
-      <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "admin.templates.subtitle")}</p>
+      <PageHeader
+        title={serverT(lang, `admin.templates.subtype.${subtype}` as TranslationKey)}
+        subtitle={serverT(lang, "admin.templates.subtitle")}
+      />
       <ChecklistTabs view={view} />
     </div>
   );

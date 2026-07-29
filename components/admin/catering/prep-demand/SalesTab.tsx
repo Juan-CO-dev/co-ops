@@ -97,8 +97,8 @@ export function SalesTab({ locationId, canPull }: { locationId: string | null; c
     }
   }, [load]);
 
-  const btn = "inline-flex min-h-[36px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 text-xs font-bold text-co-text-dim transition hover:text-co-text disabled:opacity-50";
-  const inputCls = "min-h-[36px] rounded-lg border-2 border-co-border-2 bg-co-surface px-2 text-sm text-co-text";
+  const btn = "inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 text-xs font-bold text-co-text-dim transition hover:text-co-text disabled:opacity-50";
+  const inputCls = "min-h-[44px] rounded-lg border-2 border-co-border-2 bg-co-surface px-2 text-sm text-co-text";
   const h3 = "mb-2 text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim";
 
   if (!locationId) return <p className="mt-5 text-sm text-co-text-muted">{t("admin.toastsales.no_location")}</p>;

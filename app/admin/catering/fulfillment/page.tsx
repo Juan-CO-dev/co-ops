@@ -15,6 +15,7 @@ import { serverT } from "@/lib/i18n/server";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { loadFulfillmentNodes, FULFILLMENT_MIN } from "@/lib/admin/catering/fulfillment";
 import { FulfillmentClient } from "@/components/admin/catering/fulfillment/FulfillmentClient";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 export default async function AdminCateringFulfillmentPage() {
   const auth = await requireSessionFromHeaders("/admin");
@@ -26,12 +27,10 @@ export default async function AdminCateringFulfillmentPage() {
 
   return (
     <div>
-      <h1 className="text-xl font-extrabold leading-tight text-co-text">
-        {serverT(lang, "admin.catering.fulfillment.title" as TranslationKey)}
-      </h1>
-      <p className="mt-1 text-sm text-co-text-muted">
-        {serverT(lang, "admin.catering.fulfillment.subtitle" as TranslationKey)}
-      </p>
+      <PageHeader
+        title={serverT(lang, "admin.catering.fulfillment.title" as TranslationKey)}
+        subtitle={serverT(lang, "admin.catering.fulfillment.subtitle" as TranslationKey)}
+      />
       <FulfillmentClient nodes={nodes} actorLevel={level} />
     </div>
   );

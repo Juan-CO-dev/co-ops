@@ -92,7 +92,7 @@ export function PriceAdvicePanel({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="mt-1 inline-flex min-h-[36px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text-muted transition hover:border-co-text hover:text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
+        className="mt-1 inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text-muted transition hover:border-co-text hover:text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
       >
         {t("admin.catering.packages.price_advice.show" as TranslationKey)}
       </button>
@@ -112,7 +112,7 @@ export function PriceAdvicePanel({
         <button
           type="button"
           onClick={() => setOpen(false)}
-          className="inline-flex min-h-[36px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
+          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
         >
           {t("admin.catering.packages.price_advice.hide" as TranslationKey)}
         </button>
@@ -171,7 +171,7 @@ export function PriceAdvicePanel({
               )}
             </span>
             <span
-              className={`font-bold ${isDiscount ? "text-green-600" : "text-amber-600"}`}
+              className={`font-bold ${isDiscount ? "text-co-success" : "text-co-warning"}`}
             >
               {discountPct != null ? `${discountPct}%` : "—"}
             </span>

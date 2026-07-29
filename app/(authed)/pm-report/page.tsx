@@ -30,6 +30,7 @@ import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 
 import { DashboardBackLink } from "@/components/DashboardBackLink";
+import { AccessDeniedBanner } from "@/components/ui/AccessDeniedBanner";
 import { PmReportClient } from "./pm-report-client";
 
 const OPERATIONAL_TZ = "America/New_York";
@@ -55,15 +56,9 @@ export default async function PmReportPage({ searchParams }: PageProps) {
 
   // Gate: KH+ only
   if (auth.level < PM_REPORT_BASE_LEVEL) {
-    const lang = auth.user.language;
     return (
       <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
-        <div className="mb-3">
-          <DashboardBackLink />
-        </div>
-        <p className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-3 text-sm font-semibold text-co-text">
-          {serverT(lang, "pm.page.title")}
-        </p>
+        <AccessDeniedBanner language={auth.user.language} />
       </main>
     );
   }

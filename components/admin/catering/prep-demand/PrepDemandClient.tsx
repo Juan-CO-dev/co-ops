@@ -18,6 +18,7 @@ import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
+import { AlertPill } from "@/components/ui/AlertPill";
 import { SalesTab } from "./SalesTab";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { Language } from "@/lib/i18n/types";
@@ -293,7 +294,7 @@ function SkuRow({
 
         {/* Short / order-more chip */}
         {row.short && (
-          <span className="inline-flex flex-wrap items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-amber-800">
+          <AlertPill tone="warn" className="flex-wrap">
             <span>
               {t("admin.catering.prep_demand.sku.on_hand_approx" as TranslationKey, {
                 packs: r1(row.onHandPacks),
@@ -309,7 +310,7 @@ function SkuRow({
                 </span>
               </>
             )}
-          </span>
+          </AlertPill>
         )}
       </div>
 
@@ -410,9 +411,9 @@ function SurplusPrepLine({
       <span className="text-xs text-co-text-muted">
         {t("catering.surplus.days_out" as TranslationKey, { n: line.daysOut })}
       </span>
-      <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-amber-800">
+      <AlertPill tone="warn">
         {t("catering.surplus.hint.perishable" as TranslationKey)}
-      </span>
+      </AlertPill>
     </div>
   );
 }
@@ -473,9 +474,9 @@ function DaySection({
       defaultOpen={defaultOpen}
       badge={
         hasOverPar ? (
-          <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-amber-800">
+          <AlertPill tone="warn">
             {t("admin.catering.prep_demand.over_par_badge" as TranslationKey)}
-          </span>
+          </AlertPill>
         ) : null
       }
     >
@@ -576,12 +577,12 @@ function ItemLine({
           {line.name}
         </span>
         {line.overPar ? (
-          <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-amber-800">
+          <AlertPill tone="warn">
             {t("admin.catering.prep_demand.over_par" as TranslationKey, {
               par: line.parValue != null ? String(line.parValue) : t("admin.catering.prep_demand.no_par" as TranslationKey),
               needed: String(Math.ceil(line.wholeEquivDemand)),
             })}
-          </span>
+          </AlertPill>
         ) : null}
       </div>
 
@@ -595,7 +596,7 @@ function ItemLine({
           </span>
           <a
             href={`/admin/pars`}
-            className="inline-flex min-h-[36px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
+            className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
           >
             {t("admin.catering.prep_demand.raise_par" as TranslationKey)}
           </a>

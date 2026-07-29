@@ -122,7 +122,7 @@ export function MenuClient({ items: initial, canWrite }: { items: AdminMenuItem[
                       </span>
                       <span className="flex shrink-0 items-center gap-2">
                         <ServesBox it={it} canWrite={canWrite} onSave={(x, v) => setFlags(x, { serves: v })} t={t} />
-                        <button type="button" onClick={() => toggleExpand(it.id)} className="inline-flex min-h-[36px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 text-xs font-bold text-co-text-dim transition hover:text-co-text">
+                        <button type="button" onClick={() => toggleExpand(it.id)} className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 text-xs font-bold text-co-text-dim transition hover:text-co-text">
                           {t("admin.catering.menu.sizes")} ({it.sizes.length}){expanded.has(it.id) ? " ▾" : " ▸"}
                         </button>
                         <Toggle label={t("admin.catering.menu.available")} on={it.cateringAvailable} disabled={!canWrite} onClick={() => setFlags(it, { cateringAvailable: !it.cateringAvailable })} />
@@ -241,7 +241,7 @@ function Toggle({ label, on, disabled, onClick }: { label: string; on: boolean; 
       onClick={onClick}
       disabled={disabled}
       aria-pressed={on}
-      className={`inline-flex min-h-[36px] items-center rounded-full border-2 px-3 text-xs font-bold uppercase tracking-wide transition disabled:opacity-50 ${
+      className={`inline-flex min-h-[44px] items-center rounded-full border-2 px-3 text-xs font-bold uppercase tracking-wide transition disabled:opacity-50 ${
         on ? "border-co-gold bg-co-gold/20 text-co-text" : "border-co-border-2 bg-co-surface text-co-text-dim hover:text-co-text"
       }`}
     >

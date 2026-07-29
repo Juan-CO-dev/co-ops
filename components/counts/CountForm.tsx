@@ -92,7 +92,7 @@ export function CountForm({ skus, locationId }: { skus: CountSkuOption[]; locati
                 </label>
                 <label className="inline-flex items-center gap-2 text-[12px] text-co-text">
                   <span>{t("counts.form.partial")}</span>
-                  <input className="min-h-[36px] w-20 rounded-lg border-2 border-co-border bg-co-surface px-2 text-sm text-co-text disabled:opacity-60" type="number" min={0} max={1} step="any" inputMode="decimal" value={l.partial} disabled={busy} onChange={(e) => setLine(i, { partial: e.target.value })} placeholder={t("counts.form.partial_hint")} aria-label={t("counts.form.partial")} />
+                  <input className="min-h-[44px] w-20 rounded-lg border-2 border-co-border bg-co-surface px-2 text-sm text-co-text disabled:opacity-60" type="number" min={0} max={1} step="any" inputMode="decimal" value={l.partial} disabled={busy} onChange={(e) => setLine(i, { partial: e.target.value })} placeholder={t("counts.form.partial_hint")} aria-label={t("counts.form.partial")} />
                 </label>
               </div>
               {lines.length > 1 ? (
