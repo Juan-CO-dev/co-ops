@@ -53,6 +53,7 @@ import {
 } from "@/lib/prep-consumption";
 import { isPrepData } from "./prep";
 import type { RoleCode } from "./roles";
+import { OPENING_CONFIRM_FLOOR_LEVEL } from "@/lib/admin/template-builder-shared";
 import {
   TEMPLATE_ITEM_COLUMNS,
   type TemplateItemRow,
@@ -99,8 +100,14 @@ export interface OpeningActor {
 /**
  * KH+ minimum per C.41 reconciliation. All opening template items have
  * min_role_level=3; this base level matches.
+ *
+ * ONE SOURCE OF TRUTH (Template Builder PR-2 review): defined FROM the pure
+ * shared constant the Doctor's role-floor classifier uses, so the operator
+ * gate and the builder's never-confirmable check can never silently diverge
+ * (the "preserved-from-prior" class — a hardcoded twin here would drift).
+ * template-builder-shared is pure (zero I/O), safe to import here.
  */
-export const OPENING_BASE_LEVEL = 4;
+export const OPENING_BASE_LEVEL = OPENING_CONFIRM_FLOOR_LEVEL;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Typed errors
