@@ -122,6 +122,35 @@ export function mergeEsFill(
  *  different floor; the classifier stays pure over it. */
 export const CLOSING_CONFIRM_FLOOR_LEVEL = 4;
 
+/** The confirm floor for opening lists: KH+ (level 4). This is `OPENING_BASE_LEVEL`
+ *  in lib/opening.ts — the pre-flight gate on submitPhase1Atomic / submitPhase2Atomic
+ *  / finalize (`actor.level >= OPENING_BASE_LEVEL`). Verified equal to closing's
+ *  floor (both KH+), but named PER TYPE so the Doctor never silently applies
+ *  closing's constant to opening — a future divergence stays a one-line change here
+ *  (the C.54 "preserved from prior must be re-verified" lesson, applied forward). */
+export const OPENING_CONFIRM_FLOOR_LEVEL = 4;
+
+/**
+ * Resolve the role-floor the Template Doctor uses for a confirmable list type.
+ * closing / opening confirm at KH+ (level 4). deep_cleaning has NO confirm gate
+ * (it is a placeholder type, no operator surface / no templates — Module #15,
+ * unbuilt), so role-floor findings there are advisory-only; the floor is still
+ * returned (the classifier only ever DOWN-grades findings to advisory when the
+ * min_role exceeds it — an empty template yields no findings regardless).
+ */
+export function confirmFloorForType(type: TemplateBuilderType): number {
+  switch (type) {
+    case "opening":
+      return OPENING_CONFIRM_FLOOR_LEVEL;
+    case "closing":
+      return CLOSING_CONFIRM_FLOOR_LEVEL;
+    case "deep_cleaning":
+      // No confirm gate; reuse the KH floor as a benign default (findings are
+      // advisory-only and there are no templates to classify).
+      return CLOSING_CONFIRM_FLOOR_LEVEL;
+  }
+}
+
 /** The maximum role level in the product (CGS, lib/roles.ts). A required item
  *  whose min_role_level exceeds this can NEVER be completed → the list can never
  *  fully confirm. Kept here (not imported from roles.ts) so the classifier is a

@@ -15,17 +15,24 @@ import { NeedsLinkQueue } from "@/components/admin/templates/NeedsLinkQueue";
  * Lists hub (The Master List, spec §3; Template Builder spec §0). The single
  * authoring surface for every list type, plus the needs-link queue at the root
  * (spec §4). Prep subtypes (am_prep / mid_day_prep) open their existing editor;
- * opening / closing / deep_cleaning are listed here with their editors delegated
- * to the builder arc (PR-1/PR-2). The "report definitions" ghost card is gone
- * (Template Builder §0 lie 2 — the checklist template IS the report template).
+ * closing + opening open the live builder (PR-1/PR-2). The "report definitions"
+ * ghost card is gone (Template Builder §0 lie 2 — the checklist template IS the
+ * report template).
+ *
+ * deep_cleaning is NOT a pending EDITOR — /deep-cleaning is a placeholder surface
+ * (Module #15, unbuilt: no templates in prod, no operator surface). Its card is
+ * kept (the type is planned) but rendered HONESTLY (spec §0 lie 1): muted, no
+ * link, "Arrives with Deep Cleaning (Module #15)" — not the misleading "editor
+ * coming soon" (which implies an editor is the only thing missing).
  */
 
 /** Prep subtypes have a live per-list editor at /[subtype]. */
 const PREP_SUBTYPES = ["am_prep", "mid_day_prep"] as const;
-/** Types with a LIVE builder page (static segment). PR-1: closing. */
-const LIVE_BUILDER_TYPES = ["closing"] as const;
-/** Types whose builder is still pending (PR-2: opening + deep_cleaning). */
-const OTHER_LIST_TYPES = ["opening", "deep_cleaning"] as const;
+/** Types with a LIVE builder page (static segment). PR-1: closing. PR-2: opening. */
+const LIVE_BUILDER_TYPES = ["closing", "opening"] as const;
+/** Types with a planned card but no editor + no operator surface yet. Rendered
+ *  muted, no link, module-honest (deep_cleaning = Module #15, unbuilt). */
+const MODULE_PENDING_TYPES = ["deep_cleaning"] as const;
 
 export default async function AdminListsReportsPage() {
   const auth = await requireSessionFromHeaders("/admin");
@@ -88,13 +95,15 @@ export default async function AdminListsReportsPage() {
               </Link>
             </li>
           ))}
-          {OTHER_LIST_TYPES.map((type) => (
-            <li key={type}>
-              <div className={cardCls + " cursor-default opacity-70"}>
-                <span className="block text-base font-extrabold text-co-text">
+          {MODULE_PENDING_TYPES.map((type) => (
+            <li key={type} aria-disabled="true">
+              <div className={cardCls + " cursor-default opacity-60 hover:border-co-border"}>
+                <span className="block text-base font-extrabold text-co-text-muted">
                   {serverT(lang, `admin.templates.type.${type}` as TranslationKey)}
                 </span>
-                <span className="text-sm text-co-text-muted">{serverT(lang, "admin.templates.editor_pending")}</span>
+                <span className="text-sm text-co-text-muted">
+                  {serverT(lang, "admin.templates.arrives_with_module")}
+                </span>
               </div>
             </li>
           ))}

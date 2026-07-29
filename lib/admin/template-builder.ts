@@ -43,7 +43,7 @@ import {
   itemNeedsLink,
   diffLocationItems,
   classifyRoleFloor,
-  CLOSING_CONFIRM_FLOOR_LEVEL,
+  confirmFloorForType,
   type ItemTranslationFill,
   type SpineLinkTarget,
   type DriftFinding,
@@ -64,6 +64,8 @@ export {
   diffLocationItems,
   classifyRoleFloor,
   CLOSING_CONFIRM_FLOOR_LEVEL,
+  OPENING_CONFIRM_FLOOR_LEVEL,
+  confirmFloorForType,
 } from "@/lib/admin/template-builder-shared";
 export type {
   ItemTranslationFill,
@@ -323,9 +325,12 @@ export async function fillItemSpineLink(
  * existence + orphaned-mirror checks arrive with the PRs that build those
  * mechanisms (§5 refs = PR-4); hard-gated listing = SKIP (no column yet, §3).
  *
- * For `closing` the confirm floor is KH+ (CLOSING_CONFIRM_FLOOR_LEVEL). Opening
- * (PR-2) is also confirmable and reuses the same floor; deep_cleaning has no
- * confirm gate → role-floor findings degrade to advisory only.
+ * The confirm floor is resolved PER TYPE (confirmFloorForType): closing and
+ * opening both confirm at KH+ (level 4 — CLOSING_CONFIRM_FLOOR_LEVEL /
+ * OPENING_CONFIRM_FLOOR_LEVEL, verified equal but named per type so a future
+ * divergence is a one-line change and closing's constant is never silently
+ * applied to opening). deep_cleaning has no confirm gate → role-floor findings
+ * degrade to advisory only (and it has no templates to classify anyway).
  */
 export async function runTemplateDoctor(
   actor: AuthContext,
@@ -345,7 +350,7 @@ export async function runTemplateDoctor(
     for (const l of locRows ?? []) locationNameById.set(l.id, l.name);
   }
 
-  const confirmFloorLevel = CLOSING_CONFIRM_FLOOR_LEVEL;
+  const confirmFloorLevel = confirmFloorForType(type);
 
   const templates: TemplateDoctorTemplate[] = view.templates.map((tpl) => {
     const needsLink = tpl.items

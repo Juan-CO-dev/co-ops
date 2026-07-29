@@ -18,6 +18,8 @@ import {
   classifyRoleFloor,
   MAX_ROLE_LEVEL,
   CLOSING_CONFIRM_FLOOR_LEVEL,
+  OPENING_CONFIRM_FLOOR_LEVEL,
+  confirmFloorForType,
   TemplateBuilderError,
 } from "@/lib/admin/template-builder-shared";
 import type { ChecklistTemplateItem, ChecklistTemplateItemTranslations } from "@/lib/types";
@@ -45,6 +47,32 @@ function item(over: Partial<ChecklistTemplateItem>): ChecklistTemplateItem {
     itemId: null,
     ...over,
   };
+}
+
+/** A Phase-2 mirror row exactly as createOpeningMirror (lib/admin/templates.ts)
+ *  writes it: prep_meta.openingPhase2 = true, expects_count = false, item_id
+ *  SHARED from the AM-prep line, references_template_item_id set, translations
+ *  absent (they mirror from AM Prep). The end-to-end fixture the Doctor + client
+ *  classify on the opening page. */
+function mirrorItem(over: Partial<ChecklistTemplateItem> = {}): ChecklistTemplateItem {
+  return item({
+    id: "mirror-1",
+    station: "Veg",
+    label: "Sliced tomatoes",
+    // Mirrors share the AM-prep item's registry id (createOpeningMirror line 355).
+    itemId: "shared-item-id",
+    required: true,
+    expectsCount: false, // mirrors never carry expects_count
+    translations: null, // no es on the row — mirrors from AM Prep
+    prepMeta: {
+      openingPhase2: true,
+      section: "Veg",
+      parValue: 4,
+      parUnit: "qt",
+    } as unknown as ChecklistTemplateItem["prepMeta"],
+    referencesTemplateItemId: "am-prep-item-1",
+    ...over,
+  });
 }
 
 describe("isMirrorItem — Opening Phase-2 mirror classifier", () => {
@@ -229,5 +257,81 @@ describe("classifyRoleFloor — never-confirmable trap (spec §6)", () => {
     expect(
       classifyRoleFloor([{ id: "o", label: "Optional GM note", required: false, minRoleLevel: 8 }], CLOSING_CONFIRM_FLOOR_LEVEL),
     ).toHaveLength(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-type confirm floor (PR-2) — the Doctor must NOT silently apply closing's
+// constant to opening. Verified: opening confirms at KH+ = OPENING_BASE_LEVEL
+// (4, lib/opening.ts) — equal to closing, but resolved per type.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("confirmFloorForType — per-type role floor (PR-2)", () => {
+  it("opening = OPENING_CONFIRM_FLOOR_LEVEL (KH+, = OPENING_BASE_LEVEL 4)", () => {
+    expect(confirmFloorForType("opening")).toBe(OPENING_CONFIRM_FLOOR_LEVEL);
+    expect(OPENING_CONFIRM_FLOOR_LEVEL).toBe(4);
+  });
+  it("closing = CLOSING_CONFIRM_FLOOR_LEVEL (KH+, 4)", () => {
+    expect(confirmFloorForType("closing")).toBe(CLOSING_CONFIRM_FLOOR_LEVEL);
+  });
+  it("opening and closing floors are EQUAL today (verified KH+), but named per type", () => {
+    // If a future amendment diverges them, this equality assertion is the tripwire
+    // that forces re-reading the two gates (the C.54 preserved-from-prior lesson).
+    expect(OPENING_CONFIRM_FLOOR_LEVEL).toBe(CLOSING_CONFIRM_FLOOR_LEVEL);
+  });
+  it("deep_cleaning returns a benign floor (no confirm gate; advisory-only)", () => {
+    expect(confirmFloorForType("deep_cleaning")).toBe(CLOSING_CONFIRM_FLOOR_LEVEL);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Opening Phase-2 mirror rows — END-TO-END behavior on the opening builder page
+// (PR-2): a createOpeningMirror-shaped row must (1) be read-only (assertNotMirror
+// rejects both fills), (2) be EXCLUDED from the needs-link + es-fill Doctor
+// counts, and (3) NOT drive a spine-link picker. Tests the exact prod row shape.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("Opening Phase-2 mirror — end-to-end read-only + Doctor exclusion (PR-2)", () => {
+  it("the createOpeningMirror-shaped row IS a mirror", () => {
+    expect(isMirrorItem(mirrorItem().prepMeta)).toBe(true);
+  });
+
+  it("both same-day fills REJECT the mirror row (assertNotMirrorItem throws 409)", () => {
+    // The lib guards fillItemTranslations + fillItemSpineLink with this call.
+    expect(() => assertNotMirrorItem(mirrorItem().prepMeta)).toThrow(TemplateBuilderError);
+    try {
+      assertNotMirrorItem(mirrorItem().prepMeta);
+    } catch (e) {
+      const err = e as TemplateBuilderError;
+      expect(err.status).toBe(409);
+      expect(err.code).toBe("mirror_item_readonly");
+    }
+  });
+
+  it("is EXCLUDED from needs-link even if it were count-bearing + unlinked", () => {
+    // Real mirrors are expects_count:false (never needs-link), but the classifier
+    // must be mirror-aware regardless — a mirror never drives a spine-link picker.
+    expect(itemNeedsLink(mirrorItem({ expectsCount: true, itemId: null }))).toBe(false);
+    expect(itemNeedsLink(mirrorItem())).toBe(false);
+  });
+
+  it("counts as FILLED in the es fill-count despite null translations (managed by AM Prep)", () => {
+    const items = [
+      mirrorItem({ id: "m1", translations: null }),
+      mirrorItem({ id: "m2", translations: null }),
+      item({ id: "p1", translations: { es: { label: "Cerrar" } } }), // a real Phase-1 row
+      item({ id: "p2", translations: null }), // a real Phase-1 gap
+    ];
+    // 2 mirrors (filled) + 1 real filled + 1 real gap = 3/4.
+    expect(esFillCount(items)).toEqual({ filled: 3, total: 4 });
+  });
+
+  it("does NOT read as location drift against a matching label (system-key diff)", () => {
+    // A mirror on both locations with the same label is NOT drift.
+    const findings = diffLocationItems(
+      { locationId: "P", labels: [mirrorItem().label, "Lock door"] },
+      { locationId: "C", labels: [mirrorItem().label, "Lock door"] },
+    );
+    expect(findings).toHaveLength(0);
   });
 });
