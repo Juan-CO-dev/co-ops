@@ -49,6 +49,11 @@ import {
   type SpineLinkTarget,
   type DriftFinding,
   type RoleFloorFinding,
+  type TemplateBuilderType,
+  type TemplateBuilderTemplate,
+  type TemplateBuilderView,
+  type TemplateDoctorTemplate,
+  type TemplateDoctorReport,
 } from "@/lib/admin/template-builder-shared";
 
 // Re-export the client-safe surface so server consumers keep one import path.
@@ -68,26 +73,15 @@ export type {
   SpineLinkTarget,
   DriftFinding,
   RoleFloorFinding,
+  TemplateBuilderType,
+  TemplateBuilderTemplate,
+  TemplateBuilderView,
+  TemplateDoctorTemplate,
+  TemplateDoctorReport,
 } from "@/lib/admin/template-builder-shared";
-
-/** Non-prep template types this builder governs. Prep has its own editor. */
-export type TemplateBuilderType = "opening" | "closing" | "deep_cleaning";
 
 function actorLocationShape(actor: AuthContext) {
   return { role: actor.user.role, locations: actor.locations };
-}
-
-export interface TemplateBuilderTemplate {
-  id: string;
-  name: string;
-  type: string;
-  locationId: string;
-  items: ChecklistTemplateItem[];
-}
-
-export interface TemplateBuilderView {
-  type: TemplateBuilderType;
-  templates: TemplateBuilderTemplate[];
 }
 
 /**
@@ -319,35 +313,10 @@ export async function fillItemSpineLink(
 // The Template Doctor (spec §6) — derive-on-read integrity report. NO writes.
 // Composes the PURE classifiers (template-builder-shared) over the batch-loaded
 // view; the ONLY extra I/O is location names (one `.in()`). Reported, never
-// gating (only a future open-instances check blocks a publish — PR-3).
+// gating (only a future open-instances check blocks a publish — PR-3). The
+// report SHAPES (TemplateDoctorReport / TemplateDoctorTemplate) live in
+// template-builder-shared so the client renders them without server proximity.
 // ─────────────────────────────────────────────────────────────────────────────
-
-/** Per-template Doctor findings (one per location's active template of the type). */
-export interface TemplateDoctorTemplate {
-  templateId: string;
-  templateName: string;
-  locationId: string;
-  locationName: string | null;
-  /** count-bearing lines still unlinked (spec §4 campaign) — item ids + labels. */
-  needsLink: Array<{ itemId: string; label: string }>;
-  /** Spanish fill progress for the operator-facing label (spec §6). */
-  esFill: { filled: number; total: number };
-  /** role-floor sanity (the never-confirmable trap + advisory above-floor). */
-  roleFloor: RoleFloorFinding[];
-}
-
-/** The whole Doctor report for a type across the actor's visible locations. */
-export interface TemplateDoctorReport {
-  type: TemplateBuilderType;
-  templates: TemplateDoctorTemplate[];
-  /** location drift NAMED per item (spec §6) — diff of the two locations' active
-   *  item label sets. Empty when <2 locations visible or no drift. */
-  drift: DriftFinding[];
-  /** the confirm floor used for role-floor sanity (KH=4 for closing). */
-  confirmFloorLevel: number;
-  /** convenience rollups for the header chip (D2/D3). */
-  totals: { needsLink: number; esMissing: number; roleFloorImpossible: number; drift: number };
-}
 
 /**
  * Run the Template Doctor for a type across the actor's visible locations.

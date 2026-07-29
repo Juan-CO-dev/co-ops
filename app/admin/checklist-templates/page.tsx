@@ -22,8 +22,10 @@ import { NeedsLinkQueue } from "@/components/admin/templates/NeedsLinkQueue";
 
 /** Prep subtypes have a live per-list editor at /[subtype]. */
 const PREP_SUBTYPES = ["am_prep", "mid_day_prep"] as const;
-/** Other template TYPES surfaced in the hub navigation (editors pending). */
-const OTHER_LIST_TYPES = ["opening", "closing", "deep_cleaning"] as const;
+/** Types with a LIVE builder page (static segment). PR-1: closing. */
+const LIVE_BUILDER_TYPES = ["closing"] as const;
+/** Types whose builder is still pending (PR-2: opening + deep_cleaning). */
+const OTHER_LIST_TYPES = ["opening", "deep_cleaning"] as const;
 
 export default async function AdminListsReportsPage() {
   const auth = await requireSessionFromHeaders("/admin");
@@ -71,6 +73,16 @@ export default async function AdminListsReportsPage() {
               <Link href={`/admin/checklist-templates/${subtype}`} className={cardCls}>
                 <span className="block text-base font-extrabold text-co-text">
                   {serverT(lang, `admin.templates.subtype.${subtype}` as TranslationKey)}
+                </span>
+                <span className="text-sm text-co-text-muted">{serverT(lang, "admin.templates.open")}</span>
+              </Link>
+            </li>
+          ))}
+          {LIVE_BUILDER_TYPES.map((type) => (
+            <li key={type}>
+              <Link href={`/admin/checklist-templates/${type}`} className={cardCls}>
+                <span className="block text-base font-extrabold text-co-text">
+                  {serverT(lang, `admin.templates.type.${type}` as TranslationKey)}
                 </span>
                 <span className="text-sm text-co-text-muted">{serverT(lang, "admin.templates.open")}</span>
               </Link>

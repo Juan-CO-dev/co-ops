@@ -14,6 +14,9 @@
 
 import type { ChecklistTemplateItem, ChecklistTemplateItemTranslations } from "@/lib/types";
 
+/** Non-prep template types the builder governs. Prep has its own editor. */
+export type TemplateBuilderType = "opening" | "closing" | "deep_cleaning";
+
 /**
  * Typed error the routes map to jsonError(status, code). Mirrors the shape of
  * AdminTemplateError (lib/admin/templates.ts) so the two write layers surface
@@ -246,4 +249,51 @@ export function classifyRoleFloor(
     }
   }
   return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// View + Doctor report SHAPES (client-safe types the server module fills and the
+// client component renders). Pure interfaces — no I/O; live here so the client
+// imports them without any server-only proximity.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One template (a location's active template of a type) with its display items. */
+export interface TemplateBuilderTemplate {
+  id: string;
+  name: string;
+  type: string;
+  locationId: string;
+  items: ChecklistTemplateItem[];
+}
+
+/** Every active template of a type at the actor's visible locations. */
+export interface TemplateBuilderView {
+  type: TemplateBuilderType;
+  templates: TemplateBuilderTemplate[];
+}
+
+/** Per-template Doctor findings (one per location's active template of the type). */
+export interface TemplateDoctorTemplate {
+  templateId: string;
+  templateName: string;
+  locationId: string;
+  locationName: string | null;
+  /** count-bearing lines still unlinked (spec §4 campaign) — item ids + labels. */
+  needsLink: Array<{ itemId: string; label: string }>;
+  /** Spanish fill progress for the operator-facing label (spec §6). */
+  esFill: { filled: number; total: number };
+  /** role-floor sanity (the never-confirmable trap + advisory above-floor). */
+  roleFloor: RoleFloorFinding[];
+}
+
+/** The whole Doctor report for a type across the actor's visible locations. */
+export interface TemplateDoctorReport {
+  type: TemplateBuilderType;
+  templates: TemplateDoctorTemplate[];
+  /** location drift NAMED per item (spec §6). */
+  drift: DriftFinding[];
+  /** the confirm floor used for role-floor sanity (KH=4 for closing). */
+  confirmFloorLevel: number;
+  /** convenience rollups for the header chip (D2/D3). */
+  totals: { needsLink: number; esMissing: number; roleFloorImpossible: number; drift: number };
 }
