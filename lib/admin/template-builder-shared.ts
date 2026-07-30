@@ -654,6 +654,12 @@ export type TemplateItemEdit =
   // item completes. `targetItemId` = the referenced item (references_template_item_id);
   // null both clears the target and turns tracking off.
   | { op: "ref_track"; itemId: string; targetItemId: string | null }
+  // Fulledit PR-2 (migration 0165): the per-line QUESTION input type — yes_no /
+  // free_text / null (= plain tick). STRUCTURAL (changes what the operator form
+  // asks + what a completion means) → versions. Never legal on a count line
+  // (expects_count) — the server + DB CHECK both reject; switching TO count is
+  // not an op (count needs a spine link → add-time-only, like today's drawer).
+  | { op: "input_type"; itemId: string; inputType: "yes_no" | "free_text" | null }
   | { op: "disable"; itemId: string }
   | { op: "enable"; itemId: string }
   | {
@@ -675,6 +681,9 @@ export type TemplateItemEdit =
        *  is always false; a RECONCILE add (buildReconcileAddEdit) copies the source row's
        *  hard-gate so "Make B match A" reproduces A's gate faithfully. `undefined` = false. */
       hardGate?: boolean;
+      /** Fulledit PR-2: the question input type on a fresh add (undefined = plain
+       *  tick). Mutually exclusive with expectsCount (server + DB CHECK reject). */
+      inputType?: "yes_no" | "free_text";
     };
 
 /**
@@ -696,6 +705,9 @@ export interface TemplateDiffSummary {
   /** PR-4: report-reference / ref-track changes — a count for the confirm modal
    *  (which items are noise; the connection kind is what the manager cares about). */
   referenceChanged: number;
+  /** Fulledit PR-2: input-type changes (tick / yes_no / free_text) — reported per
+   *  item, only when the resolved type differs from the source. */
+  inputTypeChanged: Array<{ itemId: string; label: string; to: "tick" | "yes_no" | "free_text" }>;
 }
 
 /** PR-4: the RESOLVED gate tier for one item (Optional / must-complete / hard gate).
@@ -729,7 +741,7 @@ export interface TemplatePatch {
  * actually differs from the source. Used by the modal + audit ONLY.
  */
 export function classifyEdits(
-  srcItems: Array<Pick<ChecklistTemplateItem, "id" | "label" | "minRoleLevel" | "required" | "active" | "hardGate">>,
+  srcItems: Array<Pick<ChecklistTemplateItem, "id" | "label" | "minRoleLevel" | "required" | "active" | "hardGate" | "inputType">>,
   edits: readonly TemplateItemEdit[],
 ): TemplateDiffSummary {
   const srcById = new Map(srcItems.map((it) => [it.id, it]));
@@ -746,6 +758,7 @@ export function classifyEdits(
   // items whose reference/ref-track changed.
   const gate = new Map<string, { required: boolean; hardGate: boolean }>();
   const referenceIds = new Set<string>();
+  const inputType = new Map<string, "yes_no" | "free_text" | null>();
 
   for (const e of edits) {
     switch (e.op) {
@@ -768,6 +781,9 @@ export function classifyEdits(
       case "set_report_ref":
       case "ref_track":
         referenceIds.add(e.itemId);
+        break;
+      case "input_type":
+        inputType.set(e.itemId, e.inputType);
         break;
       case "reorder":
         reorderedIds.add(e.itemId);
@@ -852,6 +868,17 @@ export function classifyEdits(
     referenceChanged += 1;
   }
 
+  // Fulledit PR-2: input-type changes — resolved per item, only when differing
+  // from the source (coalesced last-write-wins like every other classifier map).
+  const inputTypeChanged: TemplateDiffSummary["inputTypeChanged"] = [];
+  for (const [id, to] of inputType) {
+    if (disabled.get(id) === true) continue;
+    const src = srcById.get(id);
+    if (src && (src.inputType ?? null) !== to) {
+      inputTypeChanged.push({ itemId: id, label: src.label, to: to ?? "tick" });
+    }
+  }
+
   return {
     added: adds,
     removed,
@@ -861,6 +888,7 @@ export function classifyEdits(
     requiredChanged,
     gateChanged,
     referenceChanged,
+    inputTypeChanged,
   };
 }
 
@@ -906,6 +934,7 @@ export function applyEditsToItems(
         // carries the source's hard gate so the drafted preview mirrors A faithfully.
         hardGate: e.hardGate === true,
         refTrackItemCompletion: false,
+        inputType: e.inputType ?? null,
       });
       continue;
     }
@@ -943,6 +972,11 @@ export function applyEditsToItems(
         // tracking off, a set target turns it on (the persisted write mirrors this).
         target.referencesTemplateItemId = e.targetItemId;
         target.refTrackItemCompletion = e.targetItemId !== null;
+        break;
+      case "input_type":
+        // Count lines never take a question type (server + DB CHECK reject); the
+        // drafted preview just doesn't apply the illegal shape.
+        if (!target.expectsCount) target.inputType = e.inputType;
         break;
       case "disable":
         target.active = false;

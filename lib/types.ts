@@ -643,6 +643,15 @@ export interface ChecklistTemplateItem {
    * Phase-2 mirror's use of that column. Legacy rows = false.
    */
   refTrackItemCompletion: boolean;
+  /**
+   * Fulledit PR-2 (migration 0165): explicit QUESTION input type for
+   * closing/opening lines — "yes_no" (answer stores as completion count_value
+   * 1/0; NO is a recorded answer distinct from unanswered) or "free_text"
+   * (answer stores as completion notes). NULL = legacy vocabulary (plain tick,
+   * or count via expectsCount). Never coexists with expectsCount or prepMeta
+   * (DB CHECKs 0165); prep lines author their input via prep_meta.columns.
+   */
+  inputType: "yes_no" | "free_text" | null;
 }
 
 /**

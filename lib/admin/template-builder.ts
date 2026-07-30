@@ -807,6 +807,7 @@ export async function publishTemplateVersion(
       required: r.required,
       active: r.active,
       hardGate: r.hard_gate === true,
+      inputType: (r.input_type ?? null) as "yes_no" | "free_text" | null,
     })),
     args.edits,
   );
@@ -1091,6 +1092,15 @@ async function copyItemsToVersion(
           `Count-bearing item "${a.label}" needs an item or SKU link`,
         );
       }
+      // Fulledit PR-2: a line is a count line or a question line, never both
+      // (mirrors DB CHECK cti_input_type_not_count).
+      if (a.inputType) {
+        throw new TemplateBuilderError(
+          400,
+          "input_type_conflicts_count",
+          `"${a.label}" cannot be both a count line and a question line`,
+        );
+      }
     }
     maxOrder += 1;
     const es = a.es ?? {};
@@ -1119,6 +1129,7 @@ async function copyItemsToVersion(
       // A" reproduces A's gate faithfully; a plain quick-add omits it → false.
       hard_gate: a.hardGate === true,
       ref_track_item_completion: false,
+      input_type: a.inputType ?? null,
     });
   }
 
@@ -1192,6 +1203,18 @@ function applyEditToRow(row: Record<string, unknown>, e: TemplateItemEdit): void
       // flag move together (a null target turns tracking off).
       row.references_template_item_id = e.targetItemId;
       row.ref_track_item_completion = e.targetItemId !== null;
+      break;
+    case "input_type":
+      // Fulledit PR-2 (migration 0165): the question input type. A count line never
+      // takes one — reject loudly rather than let the DB CHECK produce a raw 500.
+      if (row.expects_count === true && e.inputType !== null) {
+        throw new TemplateBuilderError(
+          400,
+          "input_type_conflicts_count",
+          "A count line cannot carry a question input type",
+        );
+      }
+      row.input_type = e.inputType;
       break;
     case "disable":
       row.active = false;

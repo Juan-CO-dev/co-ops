@@ -65,6 +65,7 @@ function item(over: Partial<ChecklistTemplateItem>): ChecklistTemplateItem {
     itemId: null,
     hardGate: false,
     refTrackItemCompletion: false,
+    inputType: null,
     ...over,
   };
 }
@@ -382,6 +383,7 @@ describe("classifyEdits — the diff classifier truth-table", () => {
       requiredChanged: [],
       gateChanged: [],
       referenceChanged: 0,
+      inputTypeChanged: [],
     });
   });
 
