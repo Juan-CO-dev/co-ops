@@ -35,6 +35,7 @@ import type {
   ChecklistTemplateItemTranslations,
   LineInputType,
   ParMode,
+  PrepColumn,
   PrepMeta,
   PrepSection,
   PrepSectionDefn,
@@ -1140,6 +1141,98 @@ export async function changePrepItemSection(
   });
 
   return { mirrorSyncedIds };
+}
+
+/** The five per-line input types the explicit toggle accepts (= LineInputType). */
+const LINE_INPUT_TYPES: readonly LineInputType[] = ["on_hand", "portioned", "line", "yes_no", "free_text"];
+
+/**
+ * EXPLICIT per-line input-type change (fulledit floor, cut C). The INPUT-TYPE
+ * FREEZE (#214) blocks IMPLICIT conversion (section moves re-deriving columns);
+ * this is the deliberate path: an admin converts a line between question shapes
+ * (yes_no / free_text) and the numeric shapes (on_hand / portioned / line).
+ * Columns derive from the requested type via shapeToColumns — the same
+ * vocabulary the section registry uses (per-line input types, PR #89).
+ *
+ * Converting an INVENTORY line to a QUESTION prefills the line label (en + es)
+ * from the linked registry item so the question never starts blank/stale — the
+ * read law switches display to the line label the moment the shape flips.
+ * Mirror rows (openingPhase2 meta) are not prep-meta lines → 400.
+ */
+export async function setPrepItemInputType(
+  actor: AuthContext,
+  args: { templateId: string; itemId: string; inputType: LineInputType; includeNote?: boolean },
+): Promise<{ columns: PrepColumn[] }> {
+  const tmpl = await loadAuthorizedPrepTemplate(actor, args.templateId);
+  if (!LINE_INPUT_TYPES.includes(args.inputType)) {
+    throw new AdminTemplateError(400, "invalid_input_type", "Unknown input type");
+  }
+  const sb = getServiceRoleClient();
+
+  const { data: rawRow, error: rErr } = await sb
+    .from("checklist_template_items")
+    .select(TEMPLATE_ITEM_COLUMNS)
+    .eq("id", args.itemId)
+    .eq("template_id", args.templateId)
+    .eq("active", true)
+    .maybeSingle<TemplateItemRow>();
+  if (rErr) throw new Error(`setPrepItemInputType read failed: ${rErr.message}`);
+  if (!rawRow) throw new AdminTemplateError(404, "item_not_found", "Template item not found");
+  const item = rowToTemplateItem(rawRow);
+  if (!isPrepMeta(item.prepMeta)) throw new AdminTemplateError(400, "not_a_prep_item", "Item has no prep metadata");
+  const base: PrepMeta = item.prepMeta;
+
+  // yes_no keeps an existing note column by default; explicit flag overrides.
+  const includeNote = args.includeNote ?? (args.inputType === "yes_no" && base.columns.includes("free_text"));
+  const nextColumns = shapeToColumns(args.inputType, includeNote);
+  const wasQuestion = isQuestionShapedColumns(base.columns);
+  const becomesQuestion = isQuestionShapedColumns(nextColumns);
+  if (base.columns.join(",") === nextColumns.join(",")) return { columns: nextColumns }; // no-op
+
+  // Inventory → question with a live registry link: prefill the line label from
+  // the item so the question starts as the item's name, ready to be edited.
+  const colUpdate: Record<string, unknown> = {};
+  if (!wasQuestion && becomesQuestion && item.itemId) {
+    const { data: reg, error: gErr } = await sb
+      .from("items")
+      .select("name, name_es, active")
+      .eq("id", item.itemId)
+      .maybeSingle<{ name: string; name_es: string | null; active: boolean }>();
+    if (gErr) throw new Error(`setPrepItemInputType item read failed: ${gErr.message}`);
+    if (reg?.active) {
+      colUpdate.label = reg.name;
+      if (reg.name_es) {
+        colUpdate.translations = mergeEsTranslation(item.translations, { label: reg.name_es });
+      }
+    }
+  }
+  if (Object.keys(colUpdate).length > 0) {
+    const { error: uErr } = await sb.from("checklist_template_items").update(colUpdate).eq("id", args.itemId);
+    if (uErr) throw new Error(`setPrepItemInputType label prefill failed: ${uErr.message}`);
+  }
+
+  const nextMeta: PrepMeta = { ...base, columns: nextColumns };
+  await setPrepItemMeta(sb, { templateItemId: args.itemId, meta: nextMeta });
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "checklist_template_item.update",
+    resourceTable: "checklist_template_items",
+    resourceId: args.itemId,
+    metadata: {
+      template_id: args.templateId,
+      prep_subtype: tmpl.prep_subtype,
+      field: "input_type",
+      before: { columns: base.columns },
+      after: { columns: nextColumns, input_type: args.inputType },
+      ...(colUpdate.label !== undefined ? { label_prefilled: colUpdate.label } : {}),
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+
+  return { columns: nextColumns };
 }
 
 /**
