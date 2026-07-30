@@ -55,7 +55,7 @@ import { audit } from "./audit";
 import { getServiceRoleClient } from "./supabase-server";
 import { getRoleLevel, type RoleCode } from "./roles";
 import { CLOSING_CONFIRM_FLOOR_LEVEL } from "./admin/template-builder-shared";
-import { WALK_OUT_VERIFICATION_STATION } from "./checklist-constants";
+import { evaluateLockUpGate } from "./checklist-constants";
 import {
   applyEffectiveResolution,
   type EffectiveResolvableBuilder,
@@ -1185,33 +1185,30 @@ export async function confirmInstance(
     .eq("id", instance.template_id)
     .maybeSingle<{ type: string }>();
   if (tErr) throw new Error(`confirmInstance load template type: ${tErr.message}`);
-  if (tmplRow?.type === "closing") {
-    if (actor.level < CLOSING_CONFIRM_FLOOR_LEVEL) {
-      void audit({
-        actorId: actor.userId, actorRole: actor.role, action: "checklist.confirm",
-        resourceTable: "checklist_instances", resourceId: instanceId,
-        metadata: { outcome: "finalize_role_insufficient", instance_id: instanceId, attempted_role_level: actor.level, floor: CLOSING_CONFIRM_FLOOR_LEVEL },
-        ipAddress: args.ipAddress ?? null, userAgent: args.userAgent ?? null,
-      });
-      throw new ChecklistFinalizeGateError("role", `Locking up requires a key holder (level ≥ ${CLOSING_CONFIRM_FLOOR_LEVEL}).`);
-    }
-    // Walk-Out Verification: every ACTIVE item in that station must be
-    // live-completed — no reason-override (the client treats it as a hard
-    // finalize condition). Enforced only when the station HAS items (an empty
-    // station is a template misconfig the Doctor flags; blocking on it would
-    // brick a valid close). System-key match on the English station string
-    // (C.38) — MUST match closing-client.tsx WALK_OUT_VERIFICATION_STATION.
-    const walkOutItems = allItems.filter((it) => it.station === WALK_OUT_VERIFICATION_STATION);
-    const walkOutIncomplete = walkOutItems.filter((it) => !completedItemIds.has(it.id));
-    if (walkOutItems.length > 0 && walkOutIncomplete.length > 0) {
-      void audit({
-        actorId: actor.userId, actorRole: actor.role, action: "checklist.confirm",
-        resourceTable: "checklist_instances", resourceId: instanceId,
-        metadata: { outcome: "walk_out_incomplete", instance_id: instanceId, walk_out_item_ids: walkOutIncomplete.map((it) => it.id) },
-        ipAddress: args.ipAddress ?? null, userAgent: args.userAgent ?? null,
-      });
-      throw new ChecklistFinalizeGateError("walk_out", `Walk-Out Verification is incomplete (${walkOutIncomplete.length} item(s)).`);
-    }
+  // The gate LOGIC is the pure evaluateLockUpGate (CI-covered in
+  // checklists-finalize-gate.test.ts); here we do the I/O — audit + typed throw.
+  const gate = evaluateLockUpGate({
+    templateType: tmplRow?.type ?? "",
+    actorLevel: actor.level,
+    floorLevel: CLOSING_CONFIRM_FLOOR_LEVEL,
+    items: allItems,
+    completedItemIds,
+  });
+  if (!gate.ok) {
+    void audit({
+      actorId: actor.userId, actorRole: actor.role, action: "checklist.confirm",
+      resourceTable: "checklist_instances", resourceId: instanceId,
+      metadata: gate.reason === "role"
+        ? { outcome: "finalize_role_insufficient", instance_id: instanceId, attempted_role_level: actor.level, floor: CLOSING_CONFIRM_FLOOR_LEVEL }
+        : { outcome: "walk_out_incomplete", instance_id: instanceId, walk_out_item_ids: gate.incompleteItemIds },
+      ipAddress: args.ipAddress ?? null, userAgent: args.userAgent ?? null,
+    });
+    throw new ChecklistFinalizeGateError(
+      gate.reason,
+      gate.reason === "role"
+        ? `Locking up requires a key holder (level ≥ ${CLOSING_CONFIRM_FLOOR_LEVEL}).`
+        : `Walk-Out Verification is incomplete (${gate.incompleteItemIds.length} item(s)).`,
+    );
   }
 
   // Cash deposit HARD gate — no reason-override path, always required.
