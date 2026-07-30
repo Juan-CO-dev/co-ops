@@ -18,13 +18,22 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
 import { isQuestionShapedLine } from "@/lib/items";
-import { orderedSectionSlugs, sectionLabelByLang } from "@/lib/prep-sections";
-import type { ChecklistTemplateItem, PrepSection, PrepSectionDefn } from "@/lib/types";
+import { orderedSectionSlugs, sectionLabelByLang, shapeFromColumns } from "@/lib/prep-sections";
+import type { ChecklistTemplateItem, LineInputType, PrepSection, PrepSectionDefn } from "@/lib/types";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { ChecklistLocationView, ChecklistRegistryItem, PrepSubtype } from "@/lib/admin/templates";
 import { ParGrid } from "./ParGrid";
 import { AddPrepItemForm } from "./AddPrepItemForm";
 import { postJson, resolveErrorKey } from "./shared";
+
+/** The five per-line input types offered by the input-type toggle. */
+const LINE_INPUT_TYPE_OPTIONS: Array<{ value: LineInputType; key: TranslationKey }> = [
+  { value: "on_hand", key: "admin.templates.section_shape.on_hand" },
+  { value: "portioned", key: "admin.templates.section_shape.portioned" },
+  { value: "line", key: "admin.templates.section_shape.line" },
+  { value: "yes_no", key: "admin.templates.section_shape.yes_no" },
+  { value: "free_text", key: "admin.templates.section_shape.free_text" },
+];
 
 export function LocationChecklistTab({
   view,
@@ -81,12 +90,14 @@ export function LocationChecklistTab({
               {t("admin.templates.section_label")}: {sectionLabelByLang(sections, section, language)}
             </h2>
             <div className="mt-2 flex flex-col gap-2">
-              {sectionItems.map((it) => (
+              {sectionItems.map((it, idx) => (
                 <LocationItemRow
                   key={it.id}
                   templateId={templateId}
                   item={it}
                   locationId={view.locationId}
+                  prevItem={idx > 0 ? sectionItems[idx - 1] ?? null : null}
+                  nextItem={idx < sectionItems.length - 1 ? sectionItems[idx + 1] ?? null : null}
                   parCtx={
                     view.parContext[it.id] ?? {
                       itemId: null,
@@ -121,11 +132,15 @@ function LocationItemRow({
   templateId,
   item,
   locationId,
+  prevItem,
+  nextItem,
   parCtx,
 }: {
   templateId: string;
   item: ChecklistTemplateItem;
   locationId: string;
+  prevItem: ChecklistTemplateItem | null;
+  nextItem: ChecklistTemplateItem | null;
   parCtx: Parameters<typeof ParGrid>[0]["parCtx"];
 }) {
   const { t } = useTranslation();
@@ -135,13 +150,126 @@ function LocationItemRow({
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  const isQuestion = isQuestionShapedLine(item);
+  // A line whose label is edited on the LINE (question-shaped or unlinked) shows
+  // editable en/es inputs; a linked inventory line's name is the GLOBAL
+  // definition — read-only here with the "edit in Global" hint (write law).
+  const labelEditsLine = isQuestion || !parCtx.itemId;
+
+  // Content field state (prefilled from the line/registry/prep_meta).
+  const [labelEn, setLabelEn] = useState(item.label);
+  const [labelEs, setLabelEs] = useState(item.translations?.es?.label ?? "");
+  const [descriptionEn, setDescriptionEn] = useState(item.description ?? "");
+  const [descriptionEs, setDescriptionEs] = useState(item.translations?.es?.description ?? "");
+  const [specialInstruction, setSpecialInstruction] = useState(item.prepMeta?.specialInstruction ?? "");
+  const [specialInstructionEs, setSpecialInstructionEs] = useState(item.translations?.es?.specialInstruction ?? "");
+
+  // Input-type state (current value derived from the line's columns).
+  const currentInputType = shapeFromColumns(item.prepMeta?.columns ?? []);
+  const [inputType, setInputType] = useState<LineInputType>(currentInputType);
+  const [includeNote, setIncludeNote] = useState((item.prepMeta?.columns ?? []).includes("free_text"));
+
   // Display the resolved item NAME (global definition), not the stale line label —
   // EXCEPT question-shaped lines, whose label IS the question and must never be
   // replaced by the registry name (same law as resolveLineDefinition).
-  const displayName = isQuestionShapedLine(item) ? item.label : (parCtx.itemName ?? item.label);
+  const displayName = isQuestion ? item.label : (parCtx.itemName ?? item.label);
   const baseRow = parCtx.overrides.find((o) => o.dayOfWeek === null);
   const headerPar = baseRow && baseRow.parMode === "manual" ? baseRow.parValue : parCtx.recommendedPar;
   const headerParUnit = baseRow?.parUnit ?? parCtx.recommendedParUnit;
+
+  const patchContent = async (body: Record<string, unknown>) => {
+    if (submitting) return;
+    setErrorMsg(null);
+    if ((await requestStepUp("A")) !== "ok") return;
+    setSubmitting(true);
+    const result = await postJson(
+      `/api/admin/checklist-templates/${templateId}/items/${item.id}`,
+      body,
+      "PATCH",
+    );
+    setSubmitting(false);
+    if (result.ok) router.refresh();
+    else setErrorMsg(t(resolveErrorKey(result.code)));
+  };
+
+  const saveContent = () => {
+    if (labelEditsLine && !labelEn.trim()) {
+      setErrorMsg(t(resolveErrorKey("invalid_label")));
+      return;
+    }
+    const body: Record<string, unknown> = {
+      description: descriptionEn.trim() || null,
+      descriptionEs: descriptionEs.trim() || null,
+      specialInstruction: specialInstruction.trim() || null,
+      specialInstructionEs: specialInstructionEs.trim() || null,
+    };
+    // Label only travels when it lands on the LINE — a linked inventory name is
+    // edited on the Global tab (the route 403s a label edit for it anyway).
+    if (labelEditsLine) {
+      body.label = labelEn.trim();
+      body.labelEs = labelEs.trim() || null;
+    }
+    void patchContent(body);
+  };
+
+  // Reorder: swap displayOrder with the adjacent line in the SAME section via two
+  // sequential content PATCHes, then refresh. No new API — the existing
+  // displayOrder field carries it.
+  const reorder = async (neighbor: ChecklistTemplateItem | null) => {
+    if (submitting || !neighbor) return;
+    setErrorMsg(null);
+    if ((await requestStepUp("A")) !== "ok") return;
+    setSubmitting(true);
+    const first = await postJson(
+      `/api/admin/checklist-templates/${templateId}/items/${item.id}`,
+      { displayOrder: neighbor.displayOrder },
+      "PATCH",
+    );
+    if (!first.ok) {
+      setSubmitting(false);
+      setErrorMsg(t(resolveErrorKey(first.code)));
+      return;
+    }
+    const second = await postJson(
+      `/api/admin/checklist-templates/${templateId}/items/${neighbor.id}`,
+      { displayOrder: item.displayOrder },
+      "PATCH",
+    );
+    setSubmitting(false);
+    if (second.ok) router.refresh();
+    else setErrorMsg(t(resolveErrorKey(second.code)));
+  };
+
+  const changeInputType = async () => {
+    if (submitting) return;
+    setErrorMsg(null);
+    if ((await requestStepUp("B")) !== "ok") return;
+    setSubmitting(true);
+    const result = await postJson(
+      `/api/admin/checklist-templates/${templateId}/items/${item.id}/input-type`,
+      { inputType, includeNote: inputType === "yes_no" ? includeNote : undefined },
+      "PATCH",
+    );
+    setSubmitting(false);
+    if (result.ok) router.refresh();
+    else setErrorMsg(t(resolveErrorKey(result.code)));
+  };
+
+  const unlink = async () => {
+    if (submitting) return;
+    setErrorMsg(null);
+    if (!window.confirm(t("admin.templates.unlink_confirm"))) return;
+    if ((await requestStepUp("B")) !== "ok") return;
+    setSubmitting(true);
+    const result = await postJson(
+      `/api/admin/checklist-templates/${templateId}/items/${item.id}/unlink`,
+      {},
+      "POST",
+    );
+    setSubmitting(false);
+    if (result.ok) router.refresh();
+    else setErrorMsg(t(resolveErrorKey(result.code)));
+  };
 
   const disableItem = async () => {
     if (submitting) return;
@@ -161,13 +289,17 @@ function LocationItemRow({
 
   const smallBtn =
     "inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-text disabled:opacity-50";
+  const iconBtn =
+    "inline-flex h-9 w-9 items-center justify-center rounded-lg border-2 border-co-border bg-co-surface text-sm font-bold text-co-text hover:border-co-text disabled:opacity-40";
+  const field =
+    "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60";
 
   return (
     <div className="rounded-lg border-2 border-co-border bg-co-surface p-3">
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-bold text-co-text">
           {displayName}
-          {headerPar != null ? (
+          {headerPar != null && !isQuestion ? (
             <span className="ml-2 text-co-text-muted">
               {t("admin.templates.field.par_value")}: {headerPar}
               {headerParUnit ? ` ${headerParUnit}` : ""}
@@ -179,17 +311,136 @@ function LocationItemRow({
             </span>
           ) : null}
         </span>
-        <button type="button" onClick={() => setOpen((v) => !v)} className={smallBtn}>
-          {t("admin.templates.edit")}
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            disabled={submitting || prevItem === null}
+            onClick={() => void reorder(prevItem)}
+            aria-label={t("admin.templates.line_reorder.move_up")}
+            className={iconBtn}
+          >
+            ▲
+          </button>
+          <button
+            type="button"
+            disabled={submitting || nextItem === null}
+            onClick={() => void reorder(nextItem)}
+            aria-label={t("admin.templates.line_reorder.move_down")}
+            className={iconBtn}
+          >
+            ▼
+          </button>
+          <button type="button" onClick={() => setOpen((v) => !v)} className={smallBtn}>
+            {t("admin.templates.edit")}
+          </button>
+        </div>
       </div>
 
       {open ? (
         <div className="mt-3 flex flex-col gap-3">
           {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
-          <p className="text-xs text-co-text-muted">{t("admin.templates.edit_in_global_hint")}</p>
 
-          <ParGrid templateId={templateId} lineId={item.id} locationId={locationId} parCtx={parCtx} />
+          {/* Label / question — editable on the line, or read-only w/ Global hint. */}
+          {labelEditsLine ? (
+            <>
+              <label className="block">
+                <span className="text-sm font-bold text-co-text">
+                  {isQuestion ? t("admin.templates.line_edit.question_en") : t("admin.templates.field.label_en")}
+                </span>
+                <input className={field} value={labelEn} onChange={(e) => setLabelEn(e.target.value)} />
+              </label>
+              <label className="block">
+                <span className="text-sm font-bold text-co-text">
+                  {isQuestion ? t("admin.templates.line_edit.question_es") : t("admin.templates.field.label_es")}
+                </span>
+                <input className={field} value={labelEs} onChange={(e) => setLabelEs(e.target.value)} />
+              </label>
+            </>
+          ) : (
+            <p className="text-xs text-co-text-muted">{t("admin.templates.edit_in_global_hint")}</p>
+          )}
+
+          {/* Description (en + es) + special instruction (en + es) — line fields. */}
+          <label className="block">
+            <span className="text-sm font-bold text-co-text">{t("admin.templates.field.description_en")}</span>
+            <input className={field} value={descriptionEn} onChange={(e) => setDescriptionEn(e.target.value)} />
+          </label>
+          <label className="block">
+            <span className="text-sm font-bold text-co-text">{t("admin.templates.field.description_es")}</span>
+            <input className={field} value={descriptionEs} onChange={(e) => setDescriptionEs(e.target.value)} />
+          </label>
+          <label className="block">
+            <span className="text-sm font-bold text-co-text">{t("admin.templates.field.special_instruction")}</span>
+            <input className={field} value={specialInstruction} onChange={(e) => setSpecialInstruction(e.target.value)} />
+          </label>
+          <label className="block">
+            <span className="text-sm font-bold text-co-text">{t("admin.templates.field.special_instruction_es")}</span>
+            <input className={field} value={specialInstructionEs} onChange={(e) => setSpecialInstructionEs(e.target.value)} />
+          </label>
+
+          <div className="flex justify-end">
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={saveContent}
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50"
+            >
+              {t("admin.templates.save")}
+            </button>
+          </div>
+
+          {/* Par grid — only inventory (non-question) lines carry par. */}
+          {isQuestion ? null : (
+            <ParGrid templateId={templateId} lineId={item.id} locationId={locationId} parCtx={parCtx} />
+          )}
+
+          {/* Input type — deliberate per-line conversion (Tier B). */}
+          <div className="rounded-lg border-2 border-co-border p-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+              <label className="block flex-1">
+                <span className="text-sm font-bold text-co-text">{t("admin.templates.line_edit.input_type")}</span>
+                <select className={field} value={inputType} onChange={(e) => setInputType(e.target.value as LineInputType)}>
+                  {LINE_INPUT_TYPE_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>{t(o.key)}</option>
+                  ))}
+                </select>
+              </label>
+              {inputType === "yes_no" ? (
+                <label className="flex items-center gap-2 text-sm font-bold text-co-text sm:pb-2">
+                  <input
+                    type="checkbox"
+                    className="h-5 w-5 accent-co-gold"
+                    checked={includeNote}
+                    onChange={(e) => setIncludeNote(e.target.checked)}
+                  />
+                  {t("admin.templates.field.include_note")}
+                </label>
+              ) : null}
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => void changeInputType()}
+                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-surface px-4 text-sm font-bold text-co-text disabled:opacity-50 sm:w-auto"
+              >
+                {t("admin.templates.line_edit.change_input_type")}
+              </button>
+            </div>
+          </div>
+
+          {/* Unlink — only when linked to a registry item (Tier B, danger). */}
+          {parCtx.itemId ? (
+            <div className="rounded-lg border-2 border-co-border p-3">
+              <p className="mb-2 text-xs text-co-text-muted">{t("admin.templates.line_edit.unlink_hint")}</p>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => void unlink()}
+                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-surface px-3 text-xs font-bold text-co-cta hover:bg-co-cta hover:text-co-surface disabled:opacity-50"
+              >
+                {t("admin.templates.line_edit.unlink")}
+              </button>
+            </div>
+          ) : null}
 
           <div className="rounded-lg border-2 border-co-border p-3">
             <button
