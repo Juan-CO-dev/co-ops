@@ -1168,7 +1168,6 @@
   "admin.templates.line_edit.unlink": "Desvincular del ítem",
   "admin.templates.line_edit.unlink_hint": "Rompe el vínculo con el ítem de la lista maestra. El nombre actual se queda en esta línea.",
   "admin.templates.unlink_confirm": "¿Desvincular esta línea de su ítem? El nombre se queda, pero el par y las ediciones compartidas dejan de aplicar.",
-  "admin.templates.line_question_edit.title": "Editar pregunta",
   "admin.templates.default_badge": "Predeterminado",
   "admin.templates.default_toggle_hint": "Los ítems predeterminados se agregan a todos los locales automáticamente.",
   "admin.templates.opening_verify_hint": "Cuando está activo, este ítem se incluye en la verificación de Apertura de la mañana siguiente.",
