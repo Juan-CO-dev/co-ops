@@ -958,6 +958,7 @@
   "admin.templates.builder.input_type.yes_no": "Yes/No",
   "admin.templates.builder.input_type.free_text": "Free text",
   "admin.templates.builder.input_type.count_locked_hint": "Count lines keep their linked count. To change the answer type, add a new line.",
+  "admin.templates.builder.input_type.photo_locked_hint": "Photo lines can't become questions yet - add a new line instead.",
   "admin.templates.builder.connections.title": "Connections",
   "admin.templates.builder.connections.report_ref_label": "Auto-tick when this report is done",
   "admin.templates.builder.connections.report_ref_none": "No report connection",

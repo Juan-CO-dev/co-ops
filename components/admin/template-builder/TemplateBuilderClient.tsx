@@ -823,6 +823,11 @@ function ItemList({
   addScope: Record<string, "both" | "one">;
 }) {
   const { t } = useTranslation();
+  // Fulledit PR-2 v1 boundary: QUESTION input types are CLOSING-ONLY — opening's
+  // Phase-1 answer path (submitPhase1Atomic) has no input_type awareness yet, so
+  // authoring a question there would ship an unanswerable line. Server-enforced
+  // too (publish rejects input_type edits on non-closing templates).
+  const questionTypesAllowed = template.type === "closing";
   const [expanded, setExpanded] = useState<Set<string>>(() =>
     focusItemId ? new Set([focusItemId]) : new Set(),
   );
@@ -869,6 +874,7 @@ function ItemList({
           onAdd={onAdd}
           multiLocation={multiLocation}
           otherLocationName={otherLocationName}
+          questionTypesAllowed={questionTypesAllowed}
         />
       )}
 
@@ -902,6 +908,7 @@ function ItemList({
                 isFirst={i === 0}
                 addScope={addScope[item.id] ?? null}
                 otherLocationName={otherLocationName}
+                questionTypesAllowed={questionTypesAllowed}
               />
             </li>
           ))}
@@ -958,6 +965,7 @@ function ItemRow({
   onMoveDown,
   addScope,
   otherLocationName,
+  questionTypesAllowed,
 }: {
   templateId: string;
   locationId: string;
@@ -979,6 +987,8 @@ function ItemRow({
   addScope: "both" | "one" | null;
   /** the peer location's name (for the "both locations" chip copy). */
   otherLocationName: string | null;
+  /** Fulledit PR-2: question input types are closing-only in v1. */
+  questionTypesAllowed: boolean;
 }) {
   const { t } = useTranslation();
   const roleLabel = useRoleLabelForLevel();
@@ -1090,6 +1100,7 @@ function ItemRow({
         isDraftAdd={isDraftAdd}
         onEdit={onEdit}
         onRemoveDraftAdd={onRemoveDraftAdd}
+        questionTypesAllowed={questionTypesAllowed}
       />
     </SummaryRow>
   );
@@ -1111,6 +1122,7 @@ function ItemDrawer({
   isDraftAdd,
   onEdit,
   onRemoveDraftAdd,
+  questionTypesAllowed,
 }: {
   templateId: string;
   locationId: string;
@@ -1122,6 +1134,8 @@ function ItemDrawer({
   isDraftAdd: boolean;
   onEdit: (edit: TemplateItemEdit) => void;
   onRemoveDraftAdd: (tempId: string) => void;
+  /** Fulledit PR-2: question input types are closing-only in v1. */
+  questionTypesAllowed: boolean;
 }) {
   const { t } = useTranslation();
 
@@ -1154,6 +1168,7 @@ function ItemDrawer({
               referenceTargets={referenceTargets}
               onEdit={onEdit}
               onRemoveDraftAdd={onRemoveDraftAdd}
+              questionTypesAllowed={questionTypesAllowed}
             />
           )}
 
@@ -1186,6 +1201,7 @@ function StructuralEdits({
   referenceTargets,
   onEdit,
   onRemoveDraftAdd,
+  questionTypesAllowed,
 }: {
   item: ChecklistTemplateItem;
   locationId: string;
@@ -1193,6 +1209,8 @@ function StructuralEdits({
   referenceTargets: ReferenceTargetsView;
   onEdit: (edit: TemplateItemEdit) => void;
   onRemoveDraftAdd: (tempId: string) => void;
+  /** Fulledit PR-2: question input types are closing-only in v1. */
+  questionTypesAllowed: boolean;
 }) {
   const { t } = useTranslation();
   const [label, setLabel] = useState(item.label);
@@ -1281,45 +1299,53 @@ function StructuralEdits({
 
           {/* Fulledit PR-2: the input-type control for existing lines — Tick / Yes/No /
               Free text (null = tick). Emits the input_type edit op into the draft;
-              versions at publish. Count lines can't switch here (a count needs a spine
-              link → add-time-only, matching how the drawer can't toggle expects_count
-              either): show the control DISABLED with a short hint. */}
-          <label className="block text-sm">
-            <span className="text-xs font-bold uppercase tracking-[0.08em] text-co-text-muted">
-              {t("admin.templates.builder.input_type.drawer_label")}
-            </span>
-            {item.expectsCount ? (
-              <>
+              versions at publish. CLOSING-ONLY in v1 (opening's answer path has no
+              input_type awareness — the control doesn't render there). Count lines
+              can't switch here (a count needs a spine link → add-time-only, matching
+              how the drawer can't toggle expects_count either) and PHOTO lines can't
+              either (the Yes/No save carries no photo, so a question+photo line would
+              be unanswerable): both show the control DISABLED with a short hint. */}
+          {questionTypesAllowed ? (
+            <label className="block text-sm">
+              <span className="text-xs font-bold uppercase tracking-[0.08em] text-co-text-muted">
+                {t("admin.templates.builder.input_type.drawer_label")}
+              </span>
+              {item.expectsCount || item.expectsPhoto ? (
+                <>
+                  <select
+                    value={item.expectsCount ? "count" : "tick"}
+                    disabled
+                    className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text-muted disabled:opacity-70"
+                  >
+                    <option value="count">{t("admin.templates.builder.input_type.count")}</option>
+                    <option value="tick">{t("admin.templates.builder.input_type.tick")}</option>
+                  </select>
+                  <span className="mt-1 block text-xs text-co-text-muted">
+                    {item.expectsCount
+                      ? t("admin.templates.builder.input_type.count_locked_hint")
+                      : t("admin.templates.builder.input_type.photo_locked_hint")}
+                  </span>
+                </>
+              ) : (
                 <select
-                  value="count"
-                  disabled
-                  className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text-muted disabled:opacity-70"
+                  value={item.inputType ?? "tick"}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    onEdit({
+                      op: "input_type",
+                      itemId: idForEdit,
+                      inputType: v === "tick" ? null : (v as "yes_no" | "free_text"),
+                    });
+                  }}
+                  className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
                 >
-                  <option value="count">{t("admin.templates.builder.input_type.count")}</option>
+                  <option value="tick">{t("admin.templates.builder.input_type.tick")}</option>
+                  <option value="yes_no">{t("admin.templates.builder.input_type.yes_no")}</option>
+                  <option value="free_text">{t("admin.templates.builder.input_type.free_text")}</option>
                 </select>
-                <span className="mt-1 block text-xs text-co-text-muted">
-                  {t("admin.templates.builder.input_type.count_locked_hint")}
-                </span>
-              </>
-            ) : (
-              <select
-                value={item.inputType ?? "tick"}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  onEdit({
-                    op: "input_type",
-                    itemId: idForEdit,
-                    inputType: v === "tick" ? null : (v as "yes_no" | "free_text"),
-                  });
-                }}
-                className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
-              >
-                <option value="tick">{t("admin.templates.builder.input_type.tick")}</option>
-                <option value="yes_no">{t("admin.templates.builder.input_type.yes_no")}</option>
-                <option value="free_text">{t("admin.templates.builder.input_type.free_text")}</option>
-              </select>
-            )}
-          </label>
+              )}
+            </label>
+          ) : null}
 
           {/* Connections (spec §5, PR-4): the report-reference picker + the ref-track
               picker. Persisted non-mirror rows only. */}
@@ -1572,6 +1598,7 @@ function QuickAdd({
   onAdd,
   multiLocation,
   otherLocationName,
+  questionTypesAllowed,
 }: {
   draftedItems: ChecklistTemplateItem[];
   linkTargets: LinkTarget[];
@@ -1581,6 +1608,8 @@ function QuickAdd({
   ) => void;
   multiLocation: boolean;
   otherLocationName: string | null;
+  /** Fulledit PR-2: question input types are closing-only in v1. */
+  questionTypesAllowed: boolean;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -1704,7 +1733,7 @@ function QuickAdd({
           {t("admin.templates.builder.input_type.label")}
         </legend>
         <div className="mt-1 flex flex-wrap gap-2" role="radiogroup" aria-label={t("admin.templates.builder.input_type.label")}>
-          {(["tick", "count", "yes_no", "free_text"] as const).map((it) => {
+          {(questionTypesAllowed ? (["tick", "count", "yes_no", "free_text"] as const) : (["tick", "count"] as const)).map((it) => {
             const activeChip = inputType === it;
             return (
               <button

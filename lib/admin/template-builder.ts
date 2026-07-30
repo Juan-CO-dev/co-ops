@@ -733,6 +733,25 @@ export async function publishTemplateVersion(
     // deep_cleaning has no rows/type in prod (spec §9); prep versions on its own path.
     throw new TemplateBuilderError(409, "type_not_publishable", "Only opening/closing lists publish here");
   }
+  // Fulledit PR-2 v1 boundary: QUESTION input types are CLOSING-ONLY — opening's
+  // Phase-1 answer path (submitPhase1Atomic) has no input_type awareness, so a
+  // question line there would render but never be answerable. The client hides the
+  // authoring; this rejects a hand-crafted payload. Lift when opening's answer
+  // path learns input_type.
+  if (src.type !== "closing") {
+    const questionEdit = args.edits.some(
+      (e) =>
+        (e.op === "input_type" && e.inputType !== null) ||
+        (e.op === "add" && e.inputType !== undefined),
+    );
+    if (questionEdit) {
+      throw new TemplateBuilderError(
+        400,
+        "input_type_closing_only",
+        "Question input types are closing-only until the opening answer path supports them",
+      );
+    }
+  }
 
   // 2. effectiveFrom.
   const applyNow = args.effectiveMode === "apply_now";
@@ -1212,6 +1231,15 @@ function applyEditToRow(row: Record<string, unknown>, e: TemplateItemEdit): void
           400,
           "input_type_conflicts_count",
           "A count line cannot carry a question input type",
+        );
+      }
+      // A photo line can't either (v1): the Yes/No save carries no photoId, so a
+      // question+photo line would 400 missing_photo on every answer — unanswerable.
+      if (row.expects_photo === true && e.inputType !== null) {
+        throw new TemplateBuilderError(
+          400,
+          "input_type_conflicts_photo",
+          "A photo line cannot carry a question input type (v1)",
         );
       }
       row.input_type = e.inputType;

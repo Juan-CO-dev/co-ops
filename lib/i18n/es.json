@@ -958,6 +958,7 @@
   "admin.templates.builder.input_type.yes_no": "Sí/No",
   "admin.templates.builder.input_type.free_text": "Texto libre",
   "admin.templates.builder.input_type.count_locked_hint": "Las líneas de conteo mantienen su conteo vinculado. Para cambiar el tipo de respuesta, agrega una línea nueva.",
+  "admin.templates.builder.input_type.photo_locked_hint": "Las líneas con foto aún no pueden convertirse en preguntas - agrega una línea nueva.",
   "admin.templates.builder.connections.title": "Conexiones",
   "admin.templates.builder.connections.report_ref_label": "Marcar automáticamente cuando este reporte esté hecho",
   "admin.templates.builder.connections.report_ref_none": "Sin conexión de reporte",
