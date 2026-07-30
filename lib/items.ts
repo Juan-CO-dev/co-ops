@@ -56,11 +56,38 @@ export function pickOverride(rows: ItemParRow[], dayOfWeek: number): ItemOverrid
   return { parValue: chosen.parValue, parUnit: chosen.parUnit, parMode: chosen.parMode };
 }
 
+/**
+ * A QUESTION-SHAPED prep line (yes_no / free_text input) — its LABEL IS THE
+ * QUESTION ("Meatball mix - ready?"), so the registry item's name must NEVER
+ * replace it (hotfix 2026-07-30: linking the meatball/bacon yes_no lines to
+ * their registry items made every one of them render as the bare item name —
+ * the question text vanished from the operator form, the submit snapshot AND
+ * the admin editor). Pure; used by resolveLineDefinition below and exported
+ * for the durable label-law design to build on.
+ */
+export function isQuestionShapedLine(line: ChecklistTemplateItem): boolean {
+  const cols = line.prepMeta?.columns;
+  if (!Array.isArray(cols)) return false;
+  return cols.includes("yes_no") || cols.includes("free_text");
+}
+
 export function resolveLineDefinition(
   line: ChecklistTemplateItem,
   item: ItemDefn | null,
   override: ItemOverride | null = null,
 ): ResolvedDefinition {
+  // QUESTION lines keep their own label — the label IS the question. The
+  // registry link still stands (depletion/costing use it); only the DISPLAY
+  // authority differs. Par resolution is irrelevant here (question lines carry
+  // no par), so the label-preserving fallback shape is exactly right.
+  if (item && isQuestionShapedLine(line)) {
+    return {
+      name: line.label,
+      nameEs: line.translations?.es?.label ?? null,
+      par: line.prepMeta?.parValue ?? null,
+      parUnit: line.prepMeta?.parUnit ?? null,
+    };
+  }
   if (!item) {
     console.warn(`[items] resolveLineDefinition: line ${line.id} has no linked item; falling back to prep_meta/label`);
     return {

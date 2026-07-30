@@ -544,9 +544,20 @@ async function propagateItemDefinitionToLines(
         if (hasSection) {
           // Re-derive columns from the new section's SHAPE (migration 0086).
           // Preserve the Misc free_text note column if the line carried it.
-          const sectionDef = sectionMap?.get(nextSection);
-          const keepNote = base.columns.includes("free_text");
-          nextColumns = sectionDef ? shapeToColumns(sectionDef.shape, keepNote) : base.columns;
+          // INPUT-TYPE FREEZE (hotfix 2026-07-30, second death vector): a
+          // QUESTION-SHAPED line (yes_no / free_text input) must NEVER have its
+          // columns re-derived from a section shape — that silently converts a
+          // question into a numeric par line (the input itself vanishes, the
+          // same class that ate the meatball question labels). Question lines
+          // keep their columns verbatim across section moves.
+          const isQuestionShaped = base.columns.includes("yes_no") || base.columns.includes("free_text");
+          if (isQuestionShaped) {
+            nextColumns = base.columns;
+          } else {
+            const sectionDef = sectionMap?.get(nextSection);
+            const keepNote = base.columns.includes("free_text");
+            nextColumns = sectionDef ? shapeToColumns(sectionDef.shape, keepNote) : base.columns;
+          }
         }
         const nextMeta: PrepMeta = {
           section: nextSection,
