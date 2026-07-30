@@ -36,7 +36,11 @@ export default async function AdminClosingBuilderPage() {
     runTemplateDoctor(auth, "closing"),
     loadLinkTargets(auth),
     loadReferenceTargets(auth, "closing"),
-    loadPrepOverview(auth),
+    // ADVISORY panel — best-effort: its failure never takes down the builder.
+    loadPrepOverview(auth).catch((e) => {
+      console.error("[builder] prep overview load failed (advisory, non-fatal):", e);
+      return null;
+    }),
   ]);
 
   return (

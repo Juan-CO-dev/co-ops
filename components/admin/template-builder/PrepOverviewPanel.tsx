@@ -46,13 +46,16 @@ function inputTypeKey(t: LineInputType): TranslationKey {
   return tk(`admin.templates.prep.input_type.${t}`);
 }
 
-export function PrepOverviewPanel({ overview }: { overview: PrepOverviewReport }) {
+export function PrepOverviewPanel({ overview }: { overview: PrepOverviewReport | null }) {
   const { t } = useTranslation();
+
+  // ADVISORY panel: a null overview = the best-effort load failed (the page
+  // logged it) — render nothing rather than take down the builder. Also nothing
+  // to show when no prep templates exist at the actor's locations.
+  if (overview === null || overview.templates.length === 0) return null;
+
   const { needsLink, esMissing, inputTypeDrift } = overview.totals;
   const findingCount = needsLink + esMissing + inputTypeDrift;
-
-  // Nothing to show if there are no prep templates at the actor's locations.
-  if (overview.templates.length === 0) return null;
 
   const badge =
     findingCount === 0 ? (
