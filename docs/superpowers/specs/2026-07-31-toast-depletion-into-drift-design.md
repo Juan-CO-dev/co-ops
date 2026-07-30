@@ -53,9 +53,14 @@ backfill script covers the banked 07-23..present days.
 - **Ledger lag:** today's sales exist only after tonight's pull — the sales term
   is complete through the last materialized business date; the UI hint names the
   coverage date.
-- **Count-dimension SKUs** (packaging/etc., units not oz): sales term converts
-  oz → units via `avg_oz_per_each`; missing weight → null-taint (existing
-  advisory-null doctrine, never a silent 0).
+- **Count-dimension SKUs: DEFERRED (amended at build time, adversarial C1).**
+  The count lane has no consumed term BY DESIGN — `computeOnHandUnits` is
+  anchor + received, and "used or lost" semantically absorbs consumption.
+  Folding a sales term in would change that lane's pure-math contracts and its
+  meaning mid-flight. The materializer still WRITES direct_oz for count-
+  anchored SKUs (stored, unread), so the lane can light up later without
+  re-deriving history. Consequence accepted: a register-sold count-anchored
+  SKU shows its sales inside "used or lost" unattributed, exactly as today.
 - Variance (`computeVariance`) inherits the same consumed term — no math change,
   just the richer input.
 
@@ -73,8 +78,11 @@ introduced. Outside-platform catering remains the named gap from the ingest spec
    `directOz` + `flattenedOz` (sum preserved as `oz` — existing consumers
    unchanged); export a pure `dailyDepletionRows(consumption)` for the writer.
 2. **Migration 0166 + writer**: table + `materializeDailyDepletion` + cron hook
-   (after successful pull, per location; failure logs, never fails the pull) +
-   `scripts/backfill-toast-depletion.ts` for the banked days.
+   (after successful pull, per location; failure logs, never fails the pull).
+   Backfill (amended at build time): NO script — the cron route already accepts
+   `?date=`, so the banked days are swept by invoking the route per day (the
+   pull dedupes, the materializer is idempotent, and the sweep exercises the
+   exact deployed path). Run against the PR preview BEFORE merge.
 3. **Drift merge**: `sumSalesDirectOzSince(sb, skuIds, locationId, anchorDates)`
    + merge into `loadOnHand`'s consumed term + the counts UI hint (sales term
    shown in the row detail: "sold −N oz (through <date>)").
