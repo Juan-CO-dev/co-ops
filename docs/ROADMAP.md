@@ -34,6 +34,14 @@ Reports + Settings (#212), ops guardrails (#213 — cron visibility, backup runb
 adoption card, mark-paid wiring, orphaned-mirror check). The board now waits on the
 owner keystones below; the next NOW column gets written when one of them turns.
 
+**✅ OWNER-INTERRUPT ARC (2026-07-30, same day):** the checklist FULL-EDIT arc —
+meatball-question hotfix (#214) → prep full-edit floor (#215) → question input
+types for closing lists (#216, mig 0165) → prep overview + Doctor in the builder
+(#217). Council session `.claude/council/2026-07-30-checklist-fulledit/`. Named
+follow-up with trigger: question input types on OPENING lists (fire when the
+opening Phase-1 answer path learns input_type). Trust-recovery errand (Juan):
+paper-audit the AM prep template + walk the opener through it once.
+
 ## NEXT (the moment Toast goes live)
 
 - **First-real-data hardening pass** (budgeted: expect crosswalk/spec-vs-reality gaps
