@@ -17,6 +17,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
+import { isQuestionShapedLine } from "@/lib/items";
 import { orderedSectionSlugs, sectionLabelByLang } from "@/lib/prep-sections";
 import type { ChecklistTemplateItem, PrepSection, PrepSectionDefn } from "@/lib/types";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -134,8 +135,10 @@ function LocationItemRow({
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Display the resolved item NAME (global definition), not the stale line label.
-  const displayName = parCtx.itemName ?? item.label;
+  // Display the resolved item NAME (global definition), not the stale line label —
+  // EXCEPT question-shaped lines, whose label IS the question and must never be
+  // replaced by the registry name (same law as resolveLineDefinition).
+  const displayName = isQuestionShapedLine(item) ? item.label : (parCtx.itemName ?? item.label);
   const baseRow = parCtx.overrides.find((o) => o.dayOfWeek === null);
   const headerPar = baseRow && baseRow.parMode === "manual" ? baseRow.parValue : parCtx.recommendedPar;
   const headerParUnit = baseRow?.parUnit ?? parCtx.recommendedParUnit;
