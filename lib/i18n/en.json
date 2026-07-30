@@ -2322,6 +2322,7 @@
   "counts.onhand.title": "On hand",
   "counts.onhand.none": "No count recorded yet — record one above to anchor on-hand.",
   "counts.onhand.anchor_at": "Anchored to the count on {date}.",
+  "counts.onhand.sales_through": "Register sales counted through {date}.",
   "counts.onhand.on_hand": "{oz} oz on hand",
   "counts.onhand.advisory": "advisory",
   "counts.onhand.anchor": "counted",

@@ -6,7 +6,7 @@ import { timingSafeEqual } from "node:crypto";
 import { type NextRequest } from "next/server";
 import { jsonError, jsonOk } from "@/lib/api-helpers";
 import { audit } from "@/lib/audit";
-import { pullSalesForAllLocations } from "@/lib/catering/toast-sales";
+import { pullSalesForAllLocations, materializeDailyDepletion } from "@/lib/catering/toast-sales";
 
 /** Truncate a caught error message so a giant stack never bloats the audit row. */
 function truncateErr(e: unknown): string {
@@ -39,6 +39,25 @@ export async function GET(req: NextRequest) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(businessDate)) return jsonError(400, "invalid_date");
   try {
     const results = await pullSalesForAllLocations(businessDate);
+
+    // Drift spec 2026-07-31: materialize the day's depletion ledger for every
+    // location whose pull succeeded. Best-effort per location — a materialize
+    // failure NEVER fails the pull (the ledger is a re-derivable cache; the
+    // next run or a manual backfill recovers it) but is surfaced in the
+    // heartbeat metadata.
+    let depletionFailures = 0;
+    const depletionRows: Record<string, number> = {};
+    for (const r of results) {
+      if (!r.ok) continue;
+      try {
+        const { rows } = await materializeDailyDepletion(r.locationId, businessDate);
+        depletionRows[r.locationId] = rows;
+      } catch (e) {
+        depletionFailures += 1;
+        console.error(`[cron toast-sales-pull] depletion materialize failed for ${r.locationId}:`, truncateErr(e));
+      }
+    }
+
     // Heartbeat (fail-open): a cron.success row lets the admin hub show "last run OK".
     // rowsPulled = total appended selections across locations (a cheap "did it do work"
     // signal); perLocationFailures counts locations that errored inside the batch (the
@@ -51,7 +70,7 @@ export async function GET(req: NextRequest) {
       action: "cron.success",
       resourceTable: "cron",
       resourceId: null,
-      metadata: { job: "toast-sales-pull", business_date: businessDate, rows_pulled: rowsPulled, per_location_failures: perLocationFailures },
+      metadata: { job: "toast-sales-pull", business_date: businessDate, rows_pulled: rowsPulled, per_location_failures: perLocationFailures, depletion_rows: depletionRows, depletion_failures: depletionFailures },
       ipAddress: null,
       userAgent: null,
     });

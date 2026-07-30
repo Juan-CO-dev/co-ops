@@ -20,6 +20,9 @@ export function OnHandPanel({ view, lang }: { view: OnHandView; lang: Language }
     <div className="mt-2">
       <p className="text-[11px] text-co-text-dim">
         {serverT(lang, "counts.onhand.anchor_at", { date: view.anchorAt.slice(0, 10) })}
+        {view.salesThrough != null
+          ? ` · ${serverT(lang, "counts.onhand.sales_through", { date: view.salesThrough })}`
+          : ""}
       </p>
       <ul className="mt-2 flex flex-col gap-1.5">
         {view.rows.map((r) =>

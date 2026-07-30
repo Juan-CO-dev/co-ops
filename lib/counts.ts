@@ -60,6 +60,7 @@ import {
   computeVariance,
   computeUsedOrLost,
   chainLabelsInWalkOrder,
+  etBusinessDate,
   type CountLineInput,
   type OnHandResult,
   type OnHandUnitsResult,
@@ -247,6 +248,10 @@ export interface OnHandView {
    *  yet. Per-SKU anchor timestamps live on each row (anchorAt); this is only the
    *  location-level "last counted" header hint. */
   anchorAt: string | null;
+  /** Drift spec 2026-07-31: the latest materialized sales business_date at this
+   *  location — the consumed side's sales term is complete THROUGH this date
+   *  (the ledger lags one day behind the register). Null = no ledger yet. */
+  salesThrough: string | null;
   rows: OnHandRow[];
 }
 
@@ -268,6 +273,7 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
   requireLevel(actor, COUNT_READ_MIN);
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new CountError(404, "not_found", "Location not found");
   const sb = getServiceRoleClient();
+  const salesThrough = await salesLedgerThrough(sb, locationId);
 
   // ALL active count events at this location, newest first — every event is a live
   // session (F1: no supersede). We resolve each SKU's anchor across all of them.
@@ -278,7 +284,7 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
     .order("counted_at", { ascending: false })
     .returns<Array<{ id: string; counted_at: string }>>();
   const evList = events ?? [];
-  if (evList.length === 0) return { locationId, anchorAt: null, rows: [] };
+  if (evList.length === 0) return { locationId, anchorAt: null, salesThrough, rows: [] };
   const eventAt = new Map(evList.map((e) => [e.id, e.counted_at]));
   const locationLastCountedAt = evList[0]!.counted_at; // header hint only.
 
@@ -326,7 +332,7 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
   const weightSkuIds = [...anchorBySku.keys()];
   const countSkuIds = [...unitAnchorBySku.keys()];
   const skuIds = [...new Set([...weightSkuIds, ...countSkuIds])];
-  if (skuIds.length === 0) return { locationId, anchorAt: locationLastCountedAt, rows: [] };
+  if (skuIds.length === 0) return { locationId, anchorAt: locationLastCountedAt, salesThrough, rows: [] };
 
   // SKU names + chains (count rows derive received-units read-time from the chain).
   const [{ data: skuRows }, chainsBySku, measures] = await Promise.all([
@@ -340,18 +346,23 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
   const weightRows: OnHandRow[] = await Promise.all(
     weightSkuIds.map(async (skuId): Promise<OnHandRow> => {
       const a = anchorBySku.get(skuId)!;
-      const [receivedSince, consumedSince, anchorStale] = await Promise.all([
+      const [receivedSince, consumedSince, salesSince, anchorStale] = await Promise.all([
         sumReceivedOzSince(sb, [skuId], locationId, a.anchorAt),
         sumConsumedOzSince(sb, [skuId], locationId, a.anchorAt),
+        sumSalesDirectOzSince(sb, [skuId], locationId, a.anchorAt),
         detectRetroEditStaleness(sb, locationId, a.anchorAt, now),
       ]);
+      // Drift spec 2026-07-31: consumed = prep production + DIRECT sales lane.
+      // The production term keeps null-taint authority (a tainted SKU stays
+      // advisory-null); the sales term is 0-or-positive, never null.
+      const prodSince = consumedSince.get(skuId) ?? null;
       const onHand = computeOnHand(
         {
           skuId,
           anchorOz: a.anchorOz,
           anchorAt: a.anchorAt,
           receivedSinceOz: receivedSince.get(skuId) ?? null,
-          consumedSinceOz: consumedSince.get(skuId) ?? null,
+          consumedSinceOz: prodSince == null ? null : prodSince + (salesSince.get(skuId) ?? 0),
           anchorStale,
         },
         now,
@@ -359,12 +370,14 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
       let receivedBetweenOz: number | null = null;
       let consumedBetweenOz: number | null = null;
       if (a.prevAt != null) {
-        const [rB, cB] = await Promise.all([
+        const [rB, cB, sB] = await Promise.all([
           sumReceivedOzBetween(sb, [skuId], locationId, a.prevAt, a.anchorAt),
           sumConsumedOzBetween(sb, [skuId], locationId, a.prevAt, a.anchorAt),
+          sumSalesDirectOzBetween(sb, [skuId], locationId, a.prevAt, a.anchorAt),
         ]);
         receivedBetweenOz = rB.get(skuId) ?? null;
-        consumedBetweenOz = cB.get(skuId) ?? null;
+        const prodBetween = cB.get(skuId) ?? null;
+        consumedBetweenOz = prodBetween == null ? null : prodBetween + (sB.get(skuId) ?? 0);
       }
       const variance = computeVariance({
         skuId,
@@ -423,7 +436,7 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
   );
 
   const rows = [...weightRows, ...countRows].sort((a, b) => a.skuName.localeCompare(b.skuName));
-  return { locationId, anchorAt: locationLastCountedAt, rows };
+  return { locationId, anchorAt: locationLastCountedAt, salesThrough, rows };
 }
 
 // ── Ledger oz aggregations (A3, oz-native, advisory-null) ─────────────────────────
@@ -588,6 +601,72 @@ async function sumConsumedOzBetween(
   untilIso: string,
 ): Promise<Map<string, number | null>> {
   return sumConsumedOzWindow(sb, skuIds, locationId, afterIso, untilIso);
+}
+
+// ── Sales direct-lane depletion (drift spec 2026-07-31) ───────────────────────
+/**
+ * SUM(direct_oz) per SKU from the materialized toast_daily_depletion ledger —
+ * ONLY the direct lane (the double-count law: flattened_oz depletes at
+ * production, never here). Day-grain window per etBusinessDate's tiling:
+ * business_date >= fromDate, and < untilDateExclusive when given. Absence of
+ * rows = 0 (a materialized day with no direct sales for a SKU writes no row);
+ * this term is never null — null-tainting stays the production term's job.
+ */
+async function sumSalesDirectOzWindow(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  skuIds: string[],
+  locationId: string,
+  fromDate: string,
+  untilDateExclusive: string | null,
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>(skuIds.map((id) => [id, 0]));
+  let q = sb.from("toast_daily_depletion")
+    .select("sku_id, direct_oz")
+    .eq("location_id", locationId)
+    .in("sku_id", skuIds)
+    .gte("business_date", fromDate);
+  if (untilDateExclusive != null) q = q.lt("business_date", untilDateExclusive);
+  const { data, error } = await q.returns<Array<{ sku_id: string; direct_oz: number | string }>>();
+  if (error) throw new Error(`sumSalesDirectOzWindow: ${error.message}`);
+  for (const r of data ?? []) {
+    out.set(r.sku_id, (out.get(r.sku_id) ?? 0) + (num(r.direct_oz) ?? 0));
+  }
+  return out;
+}
+
+async function sumSalesDirectOzSince(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  skuIds: string[],
+  locationId: string,
+  anchorIso: string,
+): Promise<Map<string, number>> {
+  return sumSalesDirectOzWindow(sb, skuIds, locationId, etBusinessDate(anchorIso), null);
+}
+
+async function sumSalesDirectOzBetween(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  skuIds: string[],
+  locationId: string,
+  prevIso: string,
+  anchorIso: string,
+): Promise<Map<string, number>> {
+  return sumSalesDirectOzWindow(sb, skuIds, locationId, etBusinessDate(prevIso), etBusinessDate(anchorIso));
+}
+
+/** The latest materialized sales business_date at a location (the coverage hint
+ *  the counts UI renders: "sales counted through <date>"). Null = no ledger yet. */
+async function salesLedgerThrough(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+): Promise<string | null> {
+  const { data, error } = await sb.from("toast_daily_depletion")
+    .select("business_date")
+    .eq("location_id", locationId)
+    .order("business_date", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ business_date: string }>();
+  if (error) throw new Error(`salesLedgerThrough: ${error.message}`);
+  return data?.business_date ?? null;
 }
 async function sumConsumedOzWindow(
   sb: ReturnType<typeof getServiceRoleClient>,

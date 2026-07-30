@@ -355,6 +355,21 @@ export function anchorAgeDays(anchorAt: string | null, now: number): number | nu
 }
 
 /**
+ * The ET business date of a timestamp (drift spec 2026-07-31). Toast business
+ * dates are Eastern-calendar days (mirrors the sales cron's yesterdayYmd
+ * formatting). The sales-depletion window TILES by this date:
+ *   since-window   = business_date >= etBusinessDate(anchorAt) — the anchor's
+ *     own day is INCLUDED (morning-count bias: counts precede the day's sales;
+ *     an evening count over-subtracts at most that day's direct sales —
+ *     documented advisory slop; events carry no per-event timestamp).
+ *   between-window = [etBusinessDate(prevAt), etBusinessDate(anchorAt)) —
+ *     half-open, so consecutive count periods never double-claim a day.
+ */
+export function etBusinessDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+}
+
+/**
  * Compute on-hand for one SKU (Juan's feed/verify model). Drift is oz-native
  * (A3). Any null on the derive side → driftOz null → onHandOz null (advisory,
  * never a fabricated number). A SKU never counted (anchorOz null) has no anchor
