@@ -13,10 +13,47 @@
  * opening was a recount-because-no-prior-day-submission).
  */
 
+import { interpretAnswer } from "@/lib/checklist-answers";
 import { formatDateLabel } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import type { OpeningDetailItem, OpeningReportDetail } from "@/lib/reports-hub";
+
+/**
+ * Fulledit PR-2 (0165): render a question line's ANSWER via interpretAnswer —
+ * yes → "Yes" ✓ (success tone) · no → "No" ✗ (danger tone) · free_text → the
+ * notes string. Reconstructed from the item's redaction-respecting fields (note
+ * is null below L5). Null for non-question lines. (Opening question lines are
+ * rare — the phase-1 submit path carries no input_type today — but the report
+ * renders them symmetrically with closing.)
+ */
+function QuestionAnswer({
+  item,
+  t,
+}: {
+  item: Pick<OpeningDetailItem, "inputType" | "countValue" | "note" | "done">;
+  t: (key: TranslationKey) => string;
+}) {
+  if (item.inputType !== "yes_no" && item.inputType !== "free_text") return null;
+  if (!item.done) return null;
+  const answer = interpretAnswer(
+    { inputType: item.inputType, expectsCount: false },
+    { countValue: item.countValue, notes: item.note },
+  );
+  if (!answer) return null;
+  if (answer.kind === "yes") {
+    return <span className="font-bold text-co-success">{t("reports.detail.answer_yes")}</span>;
+  }
+  if (answer.kind === "no") {
+    return <span className="font-bold text-co-cta">{t("reports.detail.answer_no")}</span>;
+  }
+  if (answer.kind === "text") {
+    const text = typeof answer.value === "string" ? answer.value : "";
+    if (text.trim() === "") return null;
+    return <span className="text-co-text">{text}</span>;
+  }
+  return null;
+}
 
 const STATUS_LABEL_KEYS: Partial<Record<string, TranslationKey>> = {
   open: "reports.status.open",
@@ -142,14 +179,20 @@ export function OpeningReportDetailView({ detail, language }: Props) {
                       </span>
                     </div>
 
-                    {/* by-name + temp reading (when present) */}
-                    {(item.byName !== null || item.countValue !== null) && (
+                    {/* by-name + answer/temp reading. Question lines (yes_no /
+                        free_text) render their ANSWER via interpretAnswer; other
+                        lines keep the temp reading (Fulledit PR-2). */}
+                    {(item.byName !== null || item.countValue !== null || item.inputType !== null) && (
                       <div className="mt-0.5 flex flex-wrap gap-2 text-xs text-co-text-muted">
                         {item.byName !== null && <span>{item.byName}</span>}
-                        {item.countValue !== null && (
-                          <span>
-                            {t("reports.opening.temp_reading", { value: item.countValue })}
-                          </span>
+                        {item.inputType !== null ? (
+                          <QuestionAnswer item={item} t={t} />
+                        ) : (
+                          item.countValue !== null && (
+                            <span>
+                              {t("reports.opening.temp_reading", { value: item.countValue })}
+                            </span>
+                          )
                         )}
                       </div>
                     )}
@@ -201,8 +244,9 @@ export function OpeningReportDetailView({ detail, language }: Props) {
                       </div>
                     )}
 
-                    {/* Note — only when non-null (loader redacts below L5) */}
-                    {item.note !== null && (
+                    {/* Note — only when non-null (loader redacts below L5). Suppressed
+                        on free_text lines: their notes ARE the answer (shown above). */}
+                    {item.note !== null && item.inputType !== "free_text" && (
                       <div className="mt-1 rounded bg-co-bg px-2 py-1 text-xs text-co-text">
                         <span className="font-semibold">{t("reports.detail.note")}: </span>
                         {item.note}

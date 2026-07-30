@@ -329,6 +329,9 @@ export interface ChecklistDetailItem {
   countValue: number | null;
   note: string | null; // null unless viewer.level >= REPORTS_HUB_NOTES_LEVEL
   isTempFlag: boolean; // true when item is in location's tempItemIds AND count_value > FRIDGE_DEFAULT_SAFE_MAX_F
+  /** Fulledit PR-2 (0165): the line's question input type — drives how the
+   *  completion's count_value/notes read in the report (via interpretAnswer). */
+  inputType: "yes_no" | "free_text" | null;
   /** Attached completion photo id (photo uploader seam, 0164); null when none.
    *  Rendered as a /api/photos/{id} link — visible to any viewer of the report. */
   photoId: string | null;
@@ -390,11 +393,11 @@ async function loadChecklistDetail(
   // created AFTER an in-place removal; the active filter alone erases history
   // (the owner's named failure). The union is right on both sides; PR-3's
   // version-every-publish makes it exact. Filter applied where items map below.
-  const titems = await selectAllRows<{ id: string; station: string; label: string; display_order: number; active: boolean }>(
+  const titems = await selectAllRows<{ id: string; station: string; label: string; display_order: number; active: boolean; input_type: "yes_no" | "free_text" | null }>(
     (from, to) =>
       service
         .from("checklist_template_items")
-        .select("id, station, label, display_order, active")
+        .select("id, station, label, display_order, active, input_type")
         .eq("template_id", inst.template_id)
         .order("display_order", { ascending: true })
         .order("id", { ascending: true })
@@ -456,6 +459,7 @@ async function loadChecklistDetail(
       // tempItemIds already loaded above (after the IDOR guard).
       isTempFlag: tempItemIds.has(ti.id) && countValue !== null && countValue > FRIDGE_DEFAULT_SAFE_MAX_F,
       photoId: c?.photo_id ?? null,
+      inputType: ti.input_type,
     };
   });
 
@@ -514,6 +518,9 @@ export interface OpeningDetailItem {
   resolution: OpeningResolution;
   /** Attached completion photo id (photo uploader seam, 0164); null when none. */
   photoId: string | null;
+  /** Fulledit PR-2 (0165): the line's question input type — drives how the
+   *  completion's count_value/notes read in the report (via interpretAnswer). */
+  inputType: "yes_no" | "free_text" | null;
 }
 
 export interface OpeningReportDetail {
@@ -595,11 +602,11 @@ async function loadOpeningDetail(
   // (no active filter), then render each iff active OR completed on THIS
   // instance — no erased history, no phantom skips on instances created after
   // an in-place removal. PR-3's version-every-publish makes this exact.
-  const titems = await selectAllRows<{ id: string; station: string; label: string; display_order: number; active: boolean }>(
+  const titems = await selectAllRows<{ id: string; station: string; label: string; display_order: number; active: boolean; input_type: "yes_no" | "free_text" | null }>(
     (from, to) =>
       service
         .from("checklist_template_items")
-        .select("id, station, label, display_order, active")
+        .select("id, station, label, display_order, active, input_type")
         .eq("template_id", inst.template_id)
         .order("display_order", { ascending: true })
         .order("id", { ascending: true })
@@ -693,6 +700,7 @@ async function loadOpeningDetail(
       prepNeed: p1?.prepNeed ?? null,
       resolution,
       photoId: c?.photo_id ?? null,
+      inputType: ti.input_type,
     };
   });
 

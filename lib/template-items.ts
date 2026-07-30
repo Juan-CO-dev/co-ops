@@ -76,7 +76,7 @@ import type {
 
 /** Column list for SELECTs against `checklist_template_items` — single source of truth. */
 export const TEMPLATE_ITEM_COLUMNS =
-  "id, template_id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, vendor_item_id, active, translations, prep_meta, report_reference_type, references_template_item_id, item_id, hard_gate, ref_track_item_completion";
+  "id, template_id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, vendor_item_id, active, translations, prep_meta, report_reference_type, references_template_item_id, item_id, hard_gate, ref_track_item_completion, input_type";
 
 /**
  * Snake_case row shape returned by `SELECT TEMPLATE_ITEM_COLUMNS FROM
@@ -105,6 +105,15 @@ export interface TemplateItemRow {
   hard_gate: boolean;
   /** PR-4 (migration 0163): auto-tick when the referenced item completes. Legacy = false. */
   ref_track_item_completion: boolean;
+  /**
+   * Fulledit PR-2 (migration 0165): explicit QUESTION input type for
+   * closing/opening lines. NULL = legacy vocabulary (tick, or count via
+   * expects_count). CHECK-constrained never to coexist with expects_count or
+   * prep_meta. Answers store on existing completion columns (yes_no →
+   * count_value 1/0, free_text → notes) — honest because versioned templates
+   * pin the input_type a completion was answered under.
+   */
+  input_type: "yes_no" | "free_text" | null;
 }
 
 /**
@@ -140,5 +149,6 @@ export function rowToTemplateItem(r: TemplateItemRow): ChecklistTemplateItem {
     itemId: r.item_id,
     hardGate: r.hard_gate,
     refTrackItemCompletion: r.ref_track_item_completion,
+    inputType: r.input_type,
   };
 }

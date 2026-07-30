@@ -118,6 +118,14 @@ function coerceEdit(raw: unknown): TemplateItemEdit | null {
       return str(o.itemId) && strOrNull(o.targetItemId)
         ? { op, itemId: o.itemId, targetItemId: o.targetItemId }
         : null;
+    case "input_type":
+      // Fulledit PR-2: the question input type — yes_no / free_text / null (tick).
+      // An unrecognized value fails loudly (never silently drop the edit).
+      if (!str(o.itemId)) return null;
+      if (o.inputType === null || o.inputType === "yes_no" || o.inputType === "free_text") {
+        return { op, itemId: o.itemId, inputType: o.inputType };
+      }
+      return null;
     case "disable":
       return str(o.itemId) ? { op, itemId: o.itemId } : null;
     case "enable":
@@ -154,6 +162,14 @@ function coerceEdit(raw: unknown): TemplateItemEdit | null {
         if (!bool(o.hardGate)) return null;
         if (o.hardGate === true && edit.required !== true) return null;
         edit.hardGate = o.hardGate;
+      }
+      // Fulledit PR-2: the question input type on a fresh add. Mutually exclusive
+      // with expectsCount AND expectsPhoto (parity with the lib guards — the photo
+      // case has no DB CHECK and would plant an unanswerable line; adversarial C1).
+      if ("inputType" in o && o.inputType !== undefined && o.inputType !== null) {
+        if (o.inputType !== "yes_no" && o.inputType !== "free_text") return null;
+        if (edit.expectsCount || edit.expectsPhoto) return null;
+        edit.inputType = o.inputType;
       }
       if ("spineLink" in o && o.spineLink !== null) {
         const sl = o.spineLink;

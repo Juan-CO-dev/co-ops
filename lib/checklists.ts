@@ -165,6 +165,20 @@ export class ChecklistMissingPhotoError extends ChecklistError {
   }
 }
 
+/** Fulledit PR-2: the answer doesn't fit the line's declared input_type
+ *  (yes_no needs countValue exactly 0|1; free_text needs non-empty notes). */
+export class ChecklistInvalidAnswerError extends ChecklistError {
+  constructor(public readonly templateItemId: string, detail: string) {
+    super(`Item ${templateItemId}: ${detail}`, "invalid_answer");
+    this.name = "ChecklistInvalidAnswerError";
+  }
+}
+
+// Fulledit PR-2: the pure answer validator lives in lib/checklist-answers.ts
+// (client-safe — the form pre-validates with the exact server rule).
+import { validateAnswerForInputType } from "@/lib/checklist-answers";
+export { validateAnswerForInputType };
+
 export class ChecklistPinMismatchError extends ChecklistError {
   constructor() {
     super("PIN does not match.", "pin_mismatch");
@@ -517,6 +531,8 @@ interface TemplateItemRow {
   expects_count: boolean;
   expects_photo: boolean;
   active: boolean;
+  /** Fulledit PR-2 (0165): the QUESTION input type; NULL = legacy tick/count. */
+  input_type: "yes_no" | "free_text" | null;
 }
 
 const rowToSubmission = (r: SubmissionRow): ChecklistSubmission => ({
@@ -569,7 +585,7 @@ async function loadTemplateItemOrThrow(
 ): Promise<TemplateItemRow> {
   const { data, error } = await authed
     .from("checklist_template_items")
-    .select("id, template_id, min_role_level, required, expects_count, expects_photo, active")
+    .select("id, template_id, min_role_level, required, expects_count, expects_photo, active, input_type")
     .eq("id", templateItemId)
     .maybeSingle<TemplateItemRow>();
   if (error) throw new Error(`load template_item ${templateItemId}: ${error.message}`);
@@ -846,6 +862,12 @@ export async function completeItem(
   }
   if (item.expects_photo && (args.photoId === undefined || args.photoId === null)) {
     throw new ChecklistMissingPhotoError(templateItemId);
+  }
+  // Fulledit PR-2: question lines validate their answer against the declared
+  // input_type (yes_no → countValue exactly 0|1; free_text → non-empty notes).
+  const answerProblem = validateAnswerForInputType(item.input_type, args.countValue, args.notes);
+  if (answerProblem !== null) {
+    throw new ChecklistInvalidAnswerError(templateItemId, answerProblem);
   }
 
   // Find prior live completion (if any) for this item on this instance.

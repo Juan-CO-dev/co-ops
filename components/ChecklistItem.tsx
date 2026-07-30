@@ -62,6 +62,7 @@
 import { useState } from "react";
 
 import { PhotoCapture } from "@/components/photos/PhotoCapture";
+import { interpretAnswer, validateAnswerForInputType, type InterpretedAnswer } from "@/lib/checklist-answers";
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
 import { formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
@@ -450,6 +451,13 @@ export function ChecklistItem({
   const isSelfAuthor = completionAuthor?.isSelf === true;
   const isActorCompletedBy = liveCompletion?.completedBy === actorUserId;
   const isTagged = liveCompletion?.actualCompleterId != null;
+  // Fulledit PR-2 (migration 0165): the per-line QUESTION input types. yes_no and
+  // free_text are DATA-CARRYING answers (countValue 1/0 · notes) — they reuse the
+  // existing count-save flow (performSave with a payload), NEVER the bare-tap
+  // optimistic path. A count line (expectsCount) never carries a question type.
+  const isYesNo = templateItem.inputType === "yes_no";
+  const isFreeText = templateItem.inputType === "free_text";
+  const isQuestion = isYesNo || isFreeText;
   const roleGated = actorLevel < templateItem.minRoleLevel;
   const instanceLocked = instanceStatus !== "open";
   const interactable = !roleGated && !instanceLocked && !readOnly && !inFlight;
@@ -572,7 +580,38 @@ export function ChecklistItem({
       return;
     }
 
+    // Fulledit PR-2: free_text answers via a tap-to-expand text entry (mirrors
+    // the count-entry UX). yes_no answers via its always-visible Yes/No buttons,
+    // so a bare row tap there is a no-op. Neither ever records via the bare tap.
+    if (isFreeText) {
+      setExpanded((prev) => !prev);
+      if (!expanded) setNotesDraft(liveCompletion?.notes ?? "");
+      return;
+    }
+    if (isYesNo) return;
+
     void performSave({ templateItemId: templateItem.id });
+  };
+
+  // Fulledit PR-2: yes_no answer — Yes = countValue 1, No = countValue 0. Both
+  // record a completion; they reuse the DATA-CARRYING save flow (payload with
+  // countValue) so the optimistic bare-tap path never fires for a question line.
+  // Re-answering supersedes exactly like re-counting.
+  const handleYesNoSave = (answer: 0 | 1) => {
+    void performSave({ templateItemId: templateItem.id, countValue: answer });
+  };
+
+  // Fulledit PR-2: free_text answer — save the trimmed notesDraft (the same
+  // expand-managed draft the count path uses) as notes. Pre-validated non-empty
+  // via the shared write gate so the operator gets an actionable message rather
+  // than a 400 invalid_answer. Mirrors the count-entry UX; re-answering supersedes.
+  const handleFreeTextSave = () => {
+    const text = notesDraft.trim();
+    if (validateAnswerForInputType("free_text", null, text) !== null) {
+      setError({ code: "invalid_answer", message: t("closing.answer.free_text_required") });
+      return;
+    }
+    void performSave({ templateItemId: templateItem.id, notes: text });
   };
 
   const handleCountSave = () => {
@@ -910,12 +949,20 @@ export function ChecklistItem({
     if (!showMetaStack || !liveCompletion) return null;
     const who = isSelfAuthor ? t("common.you") : completionAuthor?.name ?? "—";
     const when = formatTime(liveCompletion.completedAt, language);
-    const countSuffix =
-      liveCompletion.countValue !== null && liveCompletion.countValue !== undefined
-        ? `${liveCompletion.countValue}° · `
-        : "";
-    return `${countSuffix}${who}${when ? ` · ${when}` : ""}`;
+    // Fulledit PR-2: interpret the answer for the display prefix — the ONE place
+    // answer semantics live. yes_no → "Yes"/"No"; free_text → the answer text
+    // (shown separately below via the note stack, so no prefix here); count → the
+    // existing degree-suffix. Never show the degree format for a yes/no line.
+    const answer = interpretAnswer(templateItem, liveCompletion);
+    let prefix = "";
+    if (answer?.kind === "yes") prefix = `${t("closing.answer.yes")} · `;
+    else if (answer?.kind === "no") prefix = `${t("closing.answer.no")} · `;
+    else if (answer?.kind === "count" && answer.value !== null) prefix = `${answer.value}° · `;
+    return `${prefix}${who}${when ? ` · ${when}` : ""}`;
   })();
+  // Fulledit PR-2: a NO answer surfaces in the danger tone (a recorded NO is a
+  // real answer that reads red in the meta stack, mirroring the report).
+  const metaIsDanger = interpretAnswer(templateItem, liveCompletion)?.kind === "no";
   const taggedAnnotationText = (() => {
     if (!showMetaStack || !isTagged || !actualCompleterAuthor) return null;
     const who = actualCompleterAuthor.isSelf ? t("common.you") : actualCompleterAuthor.name;
@@ -999,6 +1046,19 @@ export function ChecklistItem({
           ) : null}
         </button>
 
+        {/* Fulledit PR-2: yes_no answering — two thumb-sized Yes / No buttons in
+            place of the bare tap-to-tick row action. Both record a completion
+            (countValue 1/0) via the data-carrying save flow; re-answering
+            supersedes exactly like re-counting. The current answer is highlighted
+            (Yes = success tone, No = danger tone) when the row is completed. */}
+        {isYesNo && interactable && expandMode === "none" ? (
+          <YesNoButtons
+            current={interpretAnswer(templateItem, liveCompletion)}
+            disabled={inFlight}
+            onAnswer={handleYesNoSave}
+          />
+        ) : null}
+
         {/* Right-side action affordances (Undo / Tag / Mark-not-done / Correct)
             — sibling of row button. When both Tag and Mark-not-done are live
             (KH+ at-or-below the completer, past 60s), a single "Correct…" menu
@@ -1031,7 +1091,9 @@ export function ChecklistItem({
       {(metaPrimaryText || taggedAnnotationText || noteText) ? (
         <div className="ml-15 mt-1 flex flex-col gap-0.5 text-[11px] leading-tight">
           {metaPrimaryText ? (
-            <span className="tabular-nums text-co-text-dim">{metaPrimaryText}</span>
+            <span className={metaIsDanger ? "tabular-nums font-semibold text-co-cta" : "tabular-nums text-co-text-dim"}>
+              {metaPrimaryText}
+            </span>
           ) : null}
           {taggedAnnotationText ? (
             <span className="font-semibold text-co-gold-deep">{taggedAnnotationText}</span>
@@ -1040,6 +1102,21 @@ export function ChecklistItem({
             <span className="italic text-co-text-muted">{noteText}</span>
           ) : null}
         </div>
+      ) : null}
+
+      {/* Fulledit PR-2: free_text answering — a tap-to-expand text entry + save,
+          mirroring the count-entry UX. Posts { notes } via the data-carrying save
+          flow; the completed answer also renders in the meta stack (noteText) above. */}
+      {expanded && isFreeText ? (
+        <FreeTextAnswerPanel
+          notesDraft={notesDraft}
+          setNotesDraft={setNotesDraft}
+          isCompleted={isCompleted}
+          inFlight={inFlight}
+          label={resolved.label}
+          onSave={handleFreeTextSave}
+          onCancel={() => setExpanded(false)}
+        />
       ) : null}
 
       {/* Expand panel for data-carrying items (count + notes) — unchanged. */}
@@ -1186,12 +1263,15 @@ export function ChecklistItem({
         />
       ) : null}
 
-      {/* Notes-edit affordance (existing) — unchanged per design lock #9. */}
+      {/* Notes-edit affordance (existing) — unchanged per design lock #9. Excluded
+          on question lines (Fulledit PR-2): free_text's notes ARE the answer (edited
+          via its own panel), and yes_no carries no separate note. */}
       {expandMode === "none" &&
       !expanded &&
       isCompleted &&
       !templateItem.expectsCount &&
       !templateItem.expectsPhoto &&
+      !isQuestion &&
       interactable ? (
         <NotesEditAffordance
           completion={liveCompletion}
@@ -1755,6 +1835,146 @@ function NotesEditAffordance({
         <button
           type="button"
           onClick={() => setOpen(false)}
+          disabled={inFlight}
+          className="
+            inline-flex min-h-[48px] items-center justify-center rounded-md
+            border-2 border-co-border bg-white px-4 text-sm font-semibold text-co-text-muted
+            transition hover:border-co-border-2
+            focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/40
+            disabled:cursor-wait disabled:opacity-60
+          "
+        >
+          {t("common.cancel")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Fulledit PR-2: question-line answering affordances ────────────────────
+
+/**
+ * YesNoButtons — the yes_no answering affordance (two thumb-sized buttons). Both
+ * record a completion via the data-carrying save flow (Yes = countValue 1, No = 0).
+ * The current answer (via interpretAnswer) highlights: Yes in the success tone, No
+ * in the danger tone. Re-answering supersedes exactly like re-counting.
+ */
+function YesNoButtons({
+  current,
+  disabled,
+  onAnswer,
+}: {
+  current: InterpretedAnswer | null;
+  disabled: boolean;
+  onAnswer: (answer: 0 | 1) => void;
+}) {
+  const { t } = useTranslation();
+  const isYes = current?.kind === "yes";
+  const isNo = current?.kind === "no";
+  const base =
+    "shrink-0 inline-flex min-h-[48px] min-w-[56px] items-center justify-center rounded-lg border-2 px-3 text-sm font-bold uppercase tracking-[0.08em] transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-50";
+  return (
+    <div className="flex shrink-0 items-stretch gap-1.5">
+      <button
+        type="button"
+        onClick={() => onAnswer(1)}
+        disabled={disabled}
+        aria-pressed={isYes}
+        aria-label={t("closing.answer.yes")}
+        className={
+          base +
+          " " +
+          (isYes
+            ? "border-co-success bg-co-success/15 text-co-success"
+            : "border-co-border bg-co-surface text-co-text-muted hover:border-co-success/60 hover:text-co-success")
+        }
+      >
+        {t("closing.answer.yes")}
+      </button>
+      <button
+        type="button"
+        onClick={() => onAnswer(0)}
+        disabled={disabled}
+        aria-pressed={isNo}
+        aria-label={t("closing.answer.no")}
+        className={
+          base +
+          " " +
+          (isNo
+            ? "border-co-cta bg-co-cta/10 text-co-cta"
+            : "border-co-border bg-co-surface text-co-text-muted hover:border-co-cta/60 hover:text-co-cta")
+        }
+      >
+        {t("closing.answer.no")}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * FreeTextAnswerPanel — the free_text answering affordance. A text entry + save
+ * mirroring the count-entry expand. Posts { notes }; the save handler pre-validates
+ * non-empty via the shared write gate. Uses the parent's expand-managed notesDraft.
+ */
+function FreeTextAnswerPanel({
+  notesDraft,
+  setNotesDraft,
+  isCompleted,
+  inFlight,
+  label,
+  onSave,
+  onCancel,
+}: {
+  notesDraft: string;
+  setNotesDraft: (s: string) => void;
+  isCompleted: boolean;
+  inFlight: boolean;
+  label: string;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div
+      className="mt-1 rounded-lg border border-co-border-2 bg-co-surface-2 p-3"
+      role="region"
+      aria-label={t("closing.answer.free_text_aria", { label })}
+    >
+      <label className="block">
+        <span className="block text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
+          {t("closing.answer.free_text_label")}
+        </span>
+        <textarea
+          value={notesDraft}
+          onChange={(e) => setNotesDraft(e.target.value)}
+          rows={2}
+          placeholder={t("closing.answer.free_text_placeholder")}
+          autoFocus
+          className="
+            mt-1 w-full rounded-md border-2 border-co-border bg-white px-3 py-2
+            text-sm text-co-text
+            focus:outline-none focus:border-co-gold focus-visible:ring-4 focus-visible:ring-co-gold/40
+          "
+        />
+      </label>
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          onClick={onSave}
+          disabled={inFlight || notesDraft.trim().length === 0}
+          className="
+            inline-flex min-h-[48px] flex-1 items-center justify-center rounded-md
+            bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.12em] text-co-text
+            transition hover:bg-co-gold-deep
+            focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
+            disabled:cursor-not-allowed disabled:opacity-50
+          "
+        >
+          {inFlight ? t("common.saving") : isCompleted ? t("closing.expand.update") : t("closing.expand.save")}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
           disabled={inFlight}
           className="
             inline-flex min-h-[48px] items-center justify-center rounded-md

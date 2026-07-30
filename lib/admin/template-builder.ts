@@ -733,6 +733,25 @@ export async function publishTemplateVersion(
     // deep_cleaning has no rows/type in prod (spec §9); prep versions on its own path.
     throw new TemplateBuilderError(409, "type_not_publishable", "Only opening/closing lists publish here");
   }
+  // Fulledit PR-2 v1 boundary: QUESTION input types are CLOSING-ONLY — opening's
+  // Phase-1 answer path (submitPhase1Atomic) has no input_type awareness, so a
+  // question line there would render but never be answerable. The client hides the
+  // authoring; this rejects a hand-crafted payload. Lift when opening's answer
+  // path learns input_type.
+  if (src.type !== "closing") {
+    const questionEdit = args.edits.some(
+      (e) =>
+        (e.op === "input_type" && e.inputType !== null) ||
+        (e.op === "add" && e.inputType !== undefined),
+    );
+    if (questionEdit) {
+      throw new TemplateBuilderError(
+        400,
+        "input_type_closing_only",
+        "Question input types are closing-only until the opening answer path supports them",
+      );
+    }
+  }
 
   // 2. effectiveFrom.
   const applyNow = args.effectiveMode === "apply_now";
@@ -807,6 +826,7 @@ export async function publishTemplateVersion(
       required: r.required,
       active: r.active,
       hardGate: r.hard_gate === true,
+      inputType: (r.input_type ?? null) as "yes_no" | "free_text" | null,
     })),
     args.edits,
   );
@@ -962,6 +982,7 @@ export async function publishTemplateVersion(
         requiredChanged: diff.requiredChanged.length,
         gateChanged: diff.gateChanged.length,
         referenceChanged: diff.referenceChanged,
+        inputTypeChanged: diff.inputTypeChanged.length,
       },
       // PR-4: record a submission-gate predicate change on the version (spec §5).
       submission_gate_predicate_changed:
@@ -1091,6 +1112,25 @@ async function copyItemsToVersion(
           `Count-bearing item "${a.label}" needs an item or SKU link`,
         );
       }
+      // Fulledit PR-2: a line is a count line or a question line, never both
+      // (mirrors DB CHECK cti_input_type_not_count).
+      if (a.inputType) {
+        throw new TemplateBuilderError(
+          400,
+          "input_type_conflicts_count",
+          `"${a.label}" cannot be both a count line and a question line`,
+        );
+      }
+    }
+    // Photo + question is app-guarded ONLY (no DB CHECK): the Yes/No save carries
+    // no photoId, so the line would be permanently unanswerable (adversarial C1 —
+    // mirrors the drawer path's input_type_conflicts_photo guard).
+    if (a.inputType && a.expectsPhoto) {
+      throw new TemplateBuilderError(
+        400,
+        "input_type_conflicts_photo",
+        `"${a.label}" cannot be both a photo line and a question line`,
+      );
     }
     maxOrder += 1;
     const es = a.es ?? {};
@@ -1119,6 +1159,7 @@ async function copyItemsToVersion(
       // A" reproduces A's gate faithfully; a plain quick-add omits it → false.
       hard_gate: a.hardGate === true,
       ref_track_item_completion: false,
+      input_type: a.inputType ?? null,
     });
   }
 
@@ -1192,6 +1233,27 @@ function applyEditToRow(row: Record<string, unknown>, e: TemplateItemEdit): void
       // flag move together (a null target turns tracking off).
       row.references_template_item_id = e.targetItemId;
       row.ref_track_item_completion = e.targetItemId !== null;
+      break;
+    case "input_type":
+      // Fulledit PR-2 (migration 0165): the question input type. A count line never
+      // takes one — reject loudly rather than let the DB CHECK produce a raw 500.
+      if (row.expects_count === true && e.inputType !== null) {
+        throw new TemplateBuilderError(
+          400,
+          "input_type_conflicts_count",
+          "A count line cannot carry a question input type",
+        );
+      }
+      // A photo line can't either (v1): the Yes/No save carries no photoId, so a
+      // question+photo line would 400 missing_photo on every answer — unanswerable.
+      if (row.expects_photo === true && e.inputType !== null) {
+        throw new TemplateBuilderError(
+          400,
+          "input_type_conflicts_photo",
+          "A photo line cannot carry a question input type (v1)",
+        );
+      }
+      row.input_type = e.inputType;
       break;
     case "disable":
       row.active = false;
