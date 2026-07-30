@@ -13,6 +13,8 @@ export interface ItemDefn {
   nameEs: string | null;
   defaultPar: number | null;
   defaultParUnit: string | null;
+  /** Registry lifecycle: a deactivated item no longer speaks for its lines. */
+  active: boolean;
 }
 
 /** An item_par_levels row as the resolver helpers need it (day-bearing). */
@@ -97,8 +99,14 @@ export function resolveLineDefinition(
       parUnit: line.prepMeta?.parUnit ?? null,
     };
   }
-  if (!item) {
-    console.warn(`[items] resolveLineDefinition: line ${line.id} has no linked item; falling back to prep_meta/label`);
+  // A linked-but-DEACTIVATED item no longer speaks for the line (fulledit floor):
+  // fall back to the line's own label/prep_meta. Deliberate registry lifecycle,
+  // not a data error — only the truly-unlinked case warns.
+  const liveItem = item && item.active === false ? null : item;
+  if (!liveItem) {
+    if (item === null) {
+      console.warn(`[items] resolveLineDefinition: line ${line.id} has no linked item; falling back to prep_meta/label`);
+    }
     return {
       name: line.label,
       nameEs: line.translations?.es?.label ?? null,
@@ -106,13 +114,13 @@ export function resolveLineDefinition(
       parUnit: line.prepMeta?.parUnit ?? null,
     };
   }
-  const par = override && override.parMode === "manual" ? override.parValue : item.defaultPar;
+  const par = override && override.parMode === "manual" ? override.parValue : liveItem.defaultPar;
   // Unit is an ITEM-GLOBAL attribute now (Units Registry slice): it always comes
   // from the item, never the per-location override. ItemOverride still carries a
   // parUnit field (harmless/vestigial) — item_par_levels.par_unit is no longer
   // written and not read here.
-  const parUnit = item.defaultParUnit;
-  return { name: item.name, nameEs: item.nameEs, par, parUnit };
+  const parUnit = liveItem.defaultParUnit;
+  return { name: liveItem.name, nameEs: liveItem.nameEs, par, parUnit };
 }
 
 /** Batch-load ItemDefn by id for a set of item_ids (service-role). */
@@ -125,11 +133,11 @@ export async function loadItemDefns(
   if (ids.length === 0) return map;
   const { data, error } = await service
     .from("items")
-    .select("id, name, name_es, default_par, default_par_unit")
+    .select("id, name, name_es, default_par, default_par_unit, active")
     .in("id", ids);
   if (error) throw new Error(`loadItemDefns: ${error.message}`);
-  for (const r of (data ?? []) as Array<{ id: string; name: string; name_es: string | null; default_par: number | null; default_par_unit: string | null }>) {
-    map.set(r.id, { name: r.name, nameEs: r.name_es, defaultPar: r.default_par, defaultParUnit: r.default_par_unit });
+  for (const r of (data ?? []) as Array<{ id: string; name: string; name_es: string | null; default_par: number | null; default_par_unit: string | null; active: boolean }>) {
+    map.set(r.id, { name: r.name, nameEs: r.name_es, defaultPar: r.default_par, defaultParUnit: r.default_par_unit, active: r.active });
   }
   return map;
 }
