@@ -23,6 +23,7 @@ import {
   rowToTemplateItem,
 } from "@/lib/template-items";
 import { setPrepItemMeta, setPrepItemSection, narrowPrepTemplateItem, isPrepMeta, seedPrepItem } from "@/lib/prep";
+import { isQuestionShapedColumns } from "@/lib/items";
 import { operationalNow } from "@/lib/midshift";
 import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 import { shapeToColumns, isPrepSectionName } from "@/lib/prep-sections";
@@ -544,9 +545,19 @@ async function propagateItemDefinitionToLines(
         if (hasSection) {
           // Re-derive columns from the new section's SHAPE (migration 0086).
           // Preserve the Misc free_text note column if the line carried it.
-          const sectionDef = sectionMap?.get(nextSection);
-          const keepNote = base.columns.includes("free_text");
-          nextColumns = sectionDef ? shapeToColumns(sectionDef.shape, keepNote) : base.columns;
+          // INPUT-TYPE FREEZE (hotfix 2026-07-30, second death vector): a
+          // QUESTION-SHAPED line (yes_no / free_text input) must NEVER have its
+          // columns re-derived from a section shape — that silently converts a
+          // question into a numeric par line (the input itself vanishes, the
+          // same class that ate the meatball question labels). Question lines
+          // keep their columns verbatim across section moves.
+          if (isQuestionShapedColumns(base.columns)) {
+            nextColumns = base.columns;
+          } else {
+            const sectionDef = sectionMap?.get(nextSection);
+            const keepNote = base.columns.includes("free_text");
+            nextColumns = sectionDef ? shapeToColumns(sectionDef.shape, keepNote) : base.columns;
+          }
         }
         const nextMeta: PrepMeta = {
           section: nextSection,
@@ -1053,13 +1064,19 @@ export async function changePrepItemSection(
 
   // 2) Re-derive columns from the new section's SHAPE (migration 0086). Preserve
   // par/unit/specialInstruction scalars + the Misc free_text note column if held.
+  // INPUT-TYPE FREEZE (same law as propagateItemDefinitionToLines): a
+  // question-shaped line keeps its columns verbatim across section moves —
+  // re-deriving would silently convert the question into a numeric par line.
+  // This path also serves the remove-section → re-home-to-Misc flow.
   const keepNote = item.prepMeta.columns.includes("free_text");
   const nextMeta: PrepMeta = {
     section: args.section,
     parValue: item.prepMeta.parValue,
     parUnit: item.prepMeta.parUnit,
     specialInstruction: item.prepMeta.specialInstruction,
-    columns: shapeToColumns(sectionDef.shape, keepNote),
+    columns: isQuestionShapedColumns(item.prepMeta.columns)
+      ? item.prepMeta.columns
+      : shapeToColumns(sectionDef.shape, keepNote),
   };
   // setPrepItemMeta asserts meta.section === existing station (now args.section). OK.
   await setPrepItemMeta(sb, { templateItemId: args.itemId, meta: nextMeta });
