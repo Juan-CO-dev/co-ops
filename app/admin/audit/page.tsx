@@ -1,18 +1,22 @@
 import { PlaceholderCard } from "@/components/PlaceholderCard";
+import { serverT } from "@/lib/i18n/server";
+import { requireSessionFromHeaders } from "@/lib/session";
 
-export default function AdminAuditPage() {
+export default async function AdminAuditPage() {
+  const auth = await requireSessionFromHeaders("/admin/audit");
+  const lang = auth.user.language;
   return (
     <PlaceholderCard
       showBackLink={false}
-      title="Audit Log"
-      description="Foundation admin tool. Read-only, level 9+."
+      title={serverT(lang, "admin.audit.ph.title")}
+      description={serverT(lang, "admin.audit.ph.description")}
       features={[
-        "Filter by actor, resource_table, action, time range",
-        "Highlight destructive=true entries",
-        "JSON before / after diff per entry",
-        "Cannot be modified or deleted — RLS enforced",
+        serverT(lang, "admin.audit.ph.feature.filter"),
+        serverT(lang, "admin.audit.ph.feature.highlight"),
+        serverT(lang, "admin.audit.ph.feature.diff"),
+        serverT(lang, "admin.audit.ph.feature.immutable"),
       ]}
-      shippingIn="Phase 5 (Foundation Admin Tools)"
+      shippingIn={serverT(lang, "admin.audit.ph.shipping")}
     />
   );
 }

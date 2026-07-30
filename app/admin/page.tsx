@@ -38,20 +38,38 @@ export default async function AdminHubPage() {
       />
 
       <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {sections.map((s) => (
-          <a
-            key={s.id}
-            href={s.href}
-            className="co-card co-card-interactive p-4 text-base font-bold text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
-          >
-            {serverT(lang, s.i18nKey)}
-            {(counts[s.id] ?? 0) > 0 ? (
-              <AlertPill tone="danger" uppercase={false} className="ml-2">
-                {serverT(lang, "readiness.hub.count", { count: counts[s.id]! })}
-              </AlertPill>
-            ) : null}
-          </a>
-        ))}
+        {sections.map((s) =>
+          s.comingSoon ? (
+            // Honest muted card — the section is a live PlaceholderCard stub, so
+            // the hub does not pretend it links anywhere (council convergence 4;
+            // mirrors checklist-templates deep_cleaning). No <a>, aria-disabled.
+            <div
+              key={s.id}
+              aria-disabled="true"
+              className="co-card flex cursor-default items-center justify-between p-4 opacity-60"
+            >
+              <span className="text-base font-bold text-co-text-muted">
+                {serverT(lang, s.i18nKey)}
+              </span>
+              <span className="text-sm text-co-text-muted">
+                {serverT(lang, "admin.hub.arrives")}
+              </span>
+            </div>
+          ) : (
+            <a
+              key={s.id}
+              href={s.href}
+              className="co-card co-card-interactive p-4 text-base font-bold text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
+            >
+              {serverT(lang, s.i18nKey)}
+              {(counts[s.id] ?? 0) > 0 ? (
+                <AlertPill tone="danger" uppercase={false} className="ml-2">
+                  {serverT(lang, "readiness.hub.count", { count: counts[s.id]! })}
+                </AlertPill>
+              ) : null}
+            </a>
+          ),
+        )}
       </div>
     </div>
   );
