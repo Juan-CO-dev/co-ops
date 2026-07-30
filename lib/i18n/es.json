@@ -1941,6 +1941,8 @@
   "reports.detail.back": "Volver a reportes",
   "reports.detail.done": "✓",
   "reports.detail.not_done": "—",
+  "reports.detail.answer_yes": "Sí ✓",
+  "reports.detail.answer_no": "No ✗",
   "reports.detail.note": "Nota",
   "reports.detail.photo": "Foto",
   "reports.detail.checks_heading": "Chequeos",

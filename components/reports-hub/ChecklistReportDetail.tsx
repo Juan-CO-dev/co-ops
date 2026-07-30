@@ -11,10 +11,47 @@
  * Prep values table: per-item label / par / on-hand / total (prep only).
  */
 
+import { interpretAnswer } from "@/lib/checklist-answers";
 import { formatDateLabel } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import type { ChecklistCheckRow, ChecklistDetailItem, ChecklistReportDetail, PrepValueRow, ReportTypeKey } from "@/lib/reports-hub";
+
+/**
+ * Fulledit PR-2 (0165): render a question line's ANSWER keyed on its inputType
+ * via interpretAnswer (the ONE place answer semantics live). yes → "Yes" ✓
+ * (success tone) · no → "No" ✗ (danger tone) · free_text → the notes string.
+ * The completion is reconstructed from the item's already-redaction-respecting
+ * fields (note is null below L5), so a free-text answer stays L5-gated. Returns
+ * null for non-question lines (count/tick keep their existing rendering).
+ */
+function QuestionAnswer({
+  item,
+  t,
+}: {
+  item: Pick<ChecklistDetailItem, "inputType" | "countValue" | "note" | "done">;
+  t: (key: TranslationKey) => string;
+}) {
+  if (item.inputType !== "yes_no" && item.inputType !== "free_text") return null;
+  if (!item.done) return null;
+  const answer = interpretAnswer(
+    { inputType: item.inputType, expectsCount: false },
+    { countValue: item.countValue, notes: item.note },
+  );
+  if (!answer) return null;
+  if (answer.kind === "yes") {
+    return <span className="font-bold text-co-success">{t("reports.detail.answer_yes")}</span>;
+  }
+  if (answer.kind === "no") {
+    return <span className="font-bold text-co-cta">{t("reports.detail.answer_no")}</span>;
+  }
+  if (answer.kind === "text") {
+    const text = typeof answer.value === "string" ? answer.value : "";
+    if (text.trim() === "") return null; // redacted below L5 or empty
+    return <span className="text-co-text">{text}</span>;
+  }
+  return null;
+}
 
 const TYPE_LABEL_KEYS: Record<ReportTypeKey, TranslationKey> = {
   opening: "reports.type.opening",
@@ -200,7 +237,9 @@ export function ChecklistReportDetailView({ detail, language }: Props) {
       {/* Counts & readings — items with a count_value, for opening/closing types (or when no prep values).
           Rendered ABOVE the station body so temperature/count readings surface first. */}
       {(() => {
-        const countItems = detail.items.filter((i) => i.countValue !== null);
+        // Fulledit PR-2: a yes_no line stores count_value 0/1 — NOT a reading.
+        // Exclude question lines from the counts/readings surface.
+        const countItems = detail.items.filter((i) => i.countValue !== null && i.inputType === null);
         const showReadings =
           countItems.length > 0 &&
           ((detail.type !== "am_prep" && detail.type !== "mid_day") || prepValues.length === 0);
@@ -252,16 +291,23 @@ export function ChecklistReportDetailView({ detail, language }: Props) {
                     </span>
                   </div>
 
-                  {/* by-name + count_value (when present) */}
-                  {(item.byName !== null || item.countValue !== null) && (
+                  {/* by-name + answer/count. Question lines (yes_no / free_text)
+                      render their ANSWER via interpretAnswer; count/tick lines keep
+                      the raw count_value (Fulledit PR-2). */}
+                  {(item.byName !== null || item.countValue !== null || item.inputType !== null) && (
                     <div className="mt-0.5 flex flex-wrap gap-2 text-xs text-co-text-muted">
                       {item.byName !== null && <span>{item.byName}</span>}
-                      {item.countValue !== null && <span>{item.countValue}</span>}
+                      {item.inputType !== null ? (
+                        <QuestionAnswer item={item} t={t} />
+                      ) : (
+                        item.countValue !== null && <span>{item.countValue}</span>
+                      )}
                     </div>
                   )}
 
-                  {/* Note — only rendered when non-null (loader already redacted below L5) */}
-                  {item.note !== null && (
+                  {/* Note — only when non-null (loader redacts below L5). Suppressed
+                      on free_text lines: their notes ARE the answer (shown above). */}
+                  {item.note !== null && item.inputType !== "free_text" && (
                     <div className="mt-1 rounded bg-co-bg px-2 py-1 text-xs text-co-text">
                       <span className="font-semibold">{t("reports.detail.note")}: </span>
                       {item.note}
