@@ -44,15 +44,20 @@ follow-up with trigger: question input types on OPENING lists (fire when the
 opening Phase-1 answer path learns input_type). Trust-recovery errand (Juan):
 paper-audit the AM prep template + walk the opener through it once.
 
-## NEXT (Toast IS live — this queue is unblocked NOW)
+## NEXT
 
-- **Toast-depletion-into-drift** (read-track spec #3): depletion feeds counts'
-  consumed side → TRUE variance. Drift is already correct for prep-consumed items;
-  retail-sold items are blind until this. A WEEK of real sales is already banked
-  (~8k events since 07-23) — the derivation has data to verify against on day one.
-- **First-real-data audit** (lighter than the planned hardening pass — the pull has
-  run clean daily since 07-23; audit the banked events vs crosswalk coverage
-  instead of budgeting for first-payload breakage).
+- ✅ **Toast-depletion-into-drift DONE (PR #220 `a2ec9bd`, 2026-07-31; mig 0166).**
+  Register sales now feed counts' consumed side via the direct-lane daily ledger
+  (the double-count law: direct-sale SKUs vs production-covered SKUs, never both).
+  Backfilled + lane-verified against the banked week (Sub Roll 4,728 oz direct /
+  0 flattened at Cap Hill — ~150 rolls/day).
+- ⭐ **THE FIRST PHYSICAL SKU COUNT (Juan — now the #1 errand).** `sku_count_events`
+  is EMPTY: every pipe is connected (receiving in, production + register sales
+  out) but variance has no starting line until a count anchors it. First count →
+  on-hand/variance goes live for every SKU touched.
+- **Dynamic Pars — design session** (owner-called) once a count cycle + sales
+  velocity have a couple of weeks of data. Then EZCater 2c-b when the ezManage
+  token lands.
 - **Dynamic Pars — design session** (owner-called). Build AFTER consumption data
   flows; weather bootstraps from the existing manual weather field on the daily
   report before any feed is built. Then EZCater 2c-b when the ezManage token lands.
