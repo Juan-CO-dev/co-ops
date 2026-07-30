@@ -54,6 +54,8 @@ import { verifyPin } from "./auth";
 import { audit } from "./audit";
 import { getServiceRoleClient } from "./supabase-server";
 import { getRoleLevel, type RoleCode } from "./roles";
+import { CLOSING_CONFIRM_FLOOR_LEVEL } from "./admin/template-builder-shared";
+import { evaluateLockUpGate } from "./checklist-constants";
 import {
   applyEffectiveResolution,
   type EffectiveResolvableBuilder,
@@ -435,6 +437,24 @@ export class ChecklistHardGateIncompleteError extends ChecklistError {
       "hard_gate_incomplete",
     );
     this.name = "ChecklistHardGateIncompleteError";
+  }
+}
+
+/**
+ * Hardening 2026-07-31 (council P1): thrown by confirmInstance when a CLOSING
+ * template's lock-up gate is not met. The documented C.26 invariant — "only a
+ * key-holder (level ≥ 4) locks up, and Walk-Out Verification is the finalize
+ * signal" — was enforced client-side ONLY (closing-client.tsx canFinalize);
+ * a direct POST to /api/checklist/confirm bypassed it (the server checked only
+ * cash/hard_gate/highestCompletedMinRole/reasons/PIN, and the Walk-Out items are
+ * min_role_level 3, so a level-3 completer passed the role-floor check). This
+ * makes the server enforce exactly what the client documents. `reason` = "role"
+ * (below the key-holder floor) or "walk_out" (verification station incomplete).
+ */
+export class ChecklistFinalizeGateError extends ChecklistError {
+  constructor(public readonly reason: "role" | "walk_out", message: string) {
+    super(message, "finalize_not_authorized");
+    this.name = "ChecklistFinalizeGateError";
   }
 }
 
@@ -1137,19 +1157,59 @@ export async function confirmInstance(
   // Required template items for this template.
   const { data: items, error: itemsErr } = await authed
     .from("checklist_template_items")
-    .select("id, label, min_role_level, required, active, report_reference_type, hard_gate")
+    .select("id, label, station, min_role_level, required, active, report_reference_type, hard_gate")
     .eq("template_id", instance.template_id)
     .eq("active", true);
   if (itemsErr) throw new Error(`confirmInstance load template items: ${itemsErr.message}`);
   const allItems = (items ?? []) as Array<{
     id: string;
     label: string;
+    station: string | null;
     min_role_level: number;
     required: boolean;
     active: boolean;
     report_reference_type: string | null;
     hard_gate: boolean;
   }>;
+
+  // ── Lock-up gate (hardening 2026-07-31, council P1): enforce SERVER-SIDE the
+  // C.26 invariant the client bundles into canFinalize — "only a key-holder
+  // (level ≥ 4) locks up, and Walk-Out Verification is the finalize signal".
+  // Scoped to CLOSING templates (the confirm surface that carries the lock-up
+  // semantics; opening confirms via its own atomic RPCs which already gate
+  // level ≥ 4). Runs alongside the cash/hard_gate gates so a direct
+  // /api/checklist/confirm POST can no longer bypass the browser check.
+  const { data: tmplRow, error: tErr } = await authed
+    .from("checklist_templates")
+    .select("type")
+    .eq("id", instance.template_id)
+    .maybeSingle<{ type: string }>();
+  if (tErr) throw new Error(`confirmInstance load template type: ${tErr.message}`);
+  // The gate LOGIC is the pure evaluateLockUpGate (CI-covered in
+  // checklists-finalize-gate.test.ts); here we do the I/O — audit + typed throw.
+  const gate = evaluateLockUpGate({
+    templateType: tmplRow?.type ?? "",
+    actorLevel: actor.level,
+    floorLevel: CLOSING_CONFIRM_FLOOR_LEVEL,
+    items: allItems,
+    completedItemIds,
+  });
+  if (!gate.ok) {
+    void audit({
+      actorId: actor.userId, actorRole: actor.role, action: "checklist.confirm",
+      resourceTable: "checklist_instances", resourceId: instanceId,
+      metadata: gate.reason === "role"
+        ? { outcome: "finalize_role_insufficient", instance_id: instanceId, attempted_role_level: actor.level, floor: CLOSING_CONFIRM_FLOOR_LEVEL }
+        : { outcome: "walk_out_incomplete", instance_id: instanceId, walk_out_item_ids: gate.incompleteItemIds },
+      ipAddress: args.ipAddress ?? null, userAgent: args.userAgent ?? null,
+    });
+    throw new ChecklistFinalizeGateError(
+      gate.reason,
+      gate.reason === "role"
+        ? `Locking up requires a key holder (level ≥ ${CLOSING_CONFIRM_FLOOR_LEVEL}).`
+        : `Walk-Out Verification is incomplete (${gate.incompleteItemIds.length} item(s)).`,
+    );
+  }
 
   // Cash deposit HARD gate — no reason-override path, always required.
   // The closing cannot finalize unless the cash report-reference item is

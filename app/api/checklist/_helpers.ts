@@ -52,6 +52,7 @@ import {
   ChecklistConcurrentModificationError,
   ChecklistCashDepositRequiredError,
   ChecklistHardGateIncompleteError,
+  ChecklistFinalizeGateError,
 } from "@/lib/checklists";
 import { jsonError } from "@/lib/api-helpers";
 import type { NextResponse } from "next/server";
@@ -192,6 +193,12 @@ export function mapChecklistError(err: ChecklistError): NextResponse {
   // discriminator; the confirm UI shows which hard-gated items are still blocking.
   if (err instanceof ChecklistHardGateIncompleteError) {
     return jsonError(422, err.code, { message: err.message, labels: err.labels });
+  }
+  // Lock-up gate (hardening 2026-07-31) — 403: a non-key-holder or an incomplete
+  // Walk-Out Verification tried to finalize a closing via direct API. reason
+  // discriminates the two so the client can message precisely.
+  if (err instanceof ChecklistFinalizeGateError) {
+    return jsonError(403, err.code, { message: err.message, reason: err.reason });
   }
   // Generic ChecklistError with an in-band code (empty_batch,
   // completion_not_found, completion_wrong_instance, completion_wrong_author,

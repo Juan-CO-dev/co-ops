@@ -276,8 +276,14 @@ export async function updateUserProfile(
   const { error } = await sb.from("users").update(update).eq("id", id);
   if (error) throw new Error(`updateUserProfile failed: ${error.message}`);
   if (emailChanged) {
+    // Session revocation on email change (hardening 2026-07-31, council P1):
+    // email is the LOGIN IDENTIFIER for email-auth roles — per AGENTS.md, any
+    // admin mutation affecting authorization must revoke the target's sessions
+    // in the same operation. setCredential / changeRole / setLocations /
+    // setActive already do this; updateUserProfile's email path did not.
+    const { count } = await revokeAllUserSessions(id);
     await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "user.change_email",
-      resourceTable: "users", resourceId: id, metadata: { fields: Object.keys(update) }, ipAddress: null, userAgent: null });
+      resourceTable: "users", resourceId: id, metadata: { fields: Object.keys(update), sessions_revoked: count }, ipAddress: null, userAgent: null });
   }
 }
 

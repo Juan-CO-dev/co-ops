@@ -70,6 +70,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
     if (hasNotes) {
       if (level < 7) return jsonError(403, "forbidden");
+      // Step-up parity (hardening 2026-07-31, council P1): notes was the ONLY
+      // vendor write path with no re-auth — every sibling (contacts, ordering
+      // details, schedule, categories, order-types) requires Tier A. Match them.
+      const su = assertStepUp(ctx, "A");
+      if (!su.ok) return jsonError(403, su.code);
       const notes = b.notes === null ? null : typeof b.notes === "string" ? b.notes : undefined;
       if (notes === undefined) return jsonError(400, "invalid_payload", { field: "notes" });
       await updateVendorNotes(ctx, { id, notes });
