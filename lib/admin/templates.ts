@@ -23,7 +23,7 @@ import {
   rowToTemplateItem,
 } from "@/lib/template-items";
 import { setPrepItemMeta, setPrepItemSection, narrowPrepTemplateItem, isPrepMeta, seedPrepItem } from "@/lib/prep";
-import { isQuestionShapedColumns } from "@/lib/items";
+import { isQuestionShapedColumns, isQuestionShapedLine, resolvePrepLabelWriteTarget } from "@/lib/items";
 import { operationalNow } from "@/lib/midshift";
 import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 import { shapeToColumns, isPrepSectionName } from "@/lib/prep-sections";
@@ -614,10 +614,15 @@ export interface PrepItemContentPatch {
 
 function mergeEsTranslation(
   existing: ChecklistTemplateItemTranslations | null,
-  patch: { description?: string | null; specialInstruction?: string | null },
+  patch: { label?: string | null; description?: string | null; specialInstruction?: string | null },
 ): ChecklistTemplateItemTranslations {
   const next: ChecklistTemplateItemTranslations = { ...(existing ?? {}) };
   const es = { ...(next.es ?? {}) };
+  if (patch.label !== undefined) {
+    // es.label is typed non-null; a null patch clears it by omission.
+    if (patch.label === null) delete es.label;
+    else es.label = patch.label;
+  }
   if (patch.description !== undefined) es.description = patch.description;
   if (patch.specialInstruction !== undefined) es.specialInstruction = patch.specialInstruction;
   next.es = es;
@@ -625,17 +630,22 @@ function mergeEsTranslation(
 }
 
 /**
- * In-place content edit of a prep template item (Tier A). Par + name (label/
- * labelEs) write the linked registry `items` row (edit-once-everywhere — they
- * apply to the item on every list it appears on). Line-level fields
- * (description/descriptionEs, specialInstruction/specialInstructionEs,
- * required, displayOrder) write the line via direct UPDATE + setPrepItemMeta.
- * Audits checklist_template_item.update with before/after (incl. item before/
- * after + item_id when par/name changed).
+ * In-place content edit of a prep template item (Tier A). WRITE-SIDE LABEL LAW
+ * (fulledit floor — mirrors resolveLineDefinition's read law):
+ *   - linked INVENTORY line: label/labelEs + par write the registry `items` row
+ *     (edit-once-everywhere) — requires `allowRegistryWrite` (the ≥8 definition
+ *     route sets it; the ≥7 content route does not).
+ *   - QUESTION-SHAPED line (linked or not) + unlinked lines: label/labelEs
+ *     write the LINE (label column + translations.es.label) — the label IS the
+ *     question. Par edits on question lines are rejected (they carry no par).
+ * Line-level fields (description/descriptionEs, specialInstruction/
+ * specialInstructionEs, required, displayOrder) write the line via direct
+ * UPDATE + setPrepItemMeta. Audits checklist_template_item.update with
+ * before/after (incl. item before/after + item_id when par/name changed).
  */
 export async function updatePrepItemContent(
   actor: AuthContext,
-  args: { templateId: string; itemId: string; patch: PrepItemContentPatch },
+  args: { templateId: string; itemId: string; patch: PrepItemContentPatch; allowRegistryWrite?: boolean },
 ): Promise<void> {
   const tmpl = await loadAuthorizedPrepTemplate(actor, args.templateId);
   const sb = getServiceRoleClient();
@@ -655,17 +665,34 @@ export async function updatePrepItemContent(
   const before: Record<string, unknown> = {};
   const after: Record<string, unknown> = {};
 
-  // ── Registry item (par + name → the item; edit-once-everywhere) ───────────
-  // Par and name (label/labelEs) write the linked `items` row, not the line —
-  // they apply to the item on every list it appears on. Validation of label
-  // emptiness mirrors the prior line-level check.
+  // ── The write-side label law ──────────────────────────────────────────────
+  const questionShaped = isQuestionShapedLine(item);
+  if (questionShaped && (patch.parValue !== undefined || patch.parUnit !== undefined)) {
+    throw new AdminTemplateError(400, "question_line_has_no_par", "Question lines carry no par");
+  }
+  const labelToLine = resolvePrepLabelWriteTarget(item) === "line";
+  const wantsRegistryWrite =
+    (!labelToLine && (patch.label !== undefined || patch.labelEs !== undefined)) ||
+    patch.parValue !== undefined ||
+    patch.parUnit !== undefined;
+  if (wantsRegistryWrite && !args.allowRegistryWrite) {
+    throw new AdminTemplateError(
+      403,
+      "label_is_global_definition",
+      "Name/par on a linked inventory line is the global definition — use the definition route",
+    );
+  }
+
+  // ── Registry item (par + linked-inventory name → the item) ────────────────
+  // Edit-once-everywhere: these apply to the item on every list it appears on.
+  // Question-shaped/unlinked lines route label to the LINE instead (below).
   const itemUpdate: Record<string, unknown> = {};
-  if (patch.label !== undefined) {
+  if (!labelToLine && patch.label !== undefined) {
     const v = patch.label.trim();
     if (!v) throw new AdminTemplateError(400, "invalid_label", "Label cannot be empty");
     itemUpdate.name = v;
   }
-  if (patch.labelEs !== undefined) itemUpdate.name_es = patch.labelEs?.trim() || null;
+  if (!labelToLine && patch.labelEs !== undefined) itemUpdate.name_es = patch.labelEs?.trim() || null;
   if (patch.parValue !== undefined) {
     if (patch.parValue !== null && (!Number.isFinite(patch.parValue) || patch.parValue < 0)) {
       throw new AdminTemplateError(400, "invalid_par", "Par must be a non-negative number or empty");
@@ -676,6 +703,12 @@ export async function updatePrepItemContent(
 
   // ── Top-level columns + en translations ──────────────────────────────────
   const colUpdate: Record<string, unknown> = {};
+  // Question/unlinked lines: the label edit IS the line edit (the question).
+  if (labelToLine && patch.label !== undefined) {
+    const v = patch.label.trim();
+    if (!v) throw new AdminTemplateError(400, "invalid_label", "Label cannot be empty");
+    if (v !== item.label) { before.label = item.label; after.label = v; colUpdate.label = v; }
+  }
   if (patch.description !== undefined) {
     const v = patch.description?.trim() || null;
     if (v !== item.description) { before.description = item.description; after.description = v; colUpdate.description = v; }
@@ -694,8 +727,10 @@ export async function updatePrepItemContent(
   }
 
   // es translations (description/specialInstruction stay line-level; label_es
-  // now lives on the item as name_es — see itemUpdate above).
-  const esPatch: { description?: string | null; specialInstruction?: string | null } = {};
+  // lives on the item as name_es for linked INVENTORY lines — see itemUpdate —
+  // and on translations.es.label for question/unlinked lines, per the law).
+  const esPatch: { label?: string | null; description?: string | null; specialInstruction?: string | null } = {};
+  if (labelToLine && patch.labelEs !== undefined) esPatch.label = patch.labelEs?.trim() || null;
   if (patch.descriptionEs !== undefined) esPatch.description = patch.descriptionEs?.trim() || null;
   if (patch.specialInstructionEs !== undefined) esPatch.specialInstruction = patch.specialInstructionEs?.trim() || null;
   if (Object.keys(esPatch).length > 0) {

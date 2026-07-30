@@ -82,6 +82,20 @@ export function isQuestionShapedColumns(columns: readonly string[]): boolean {
   return columns.includes("yes_no") || columns.includes("free_text");
 }
 
+/**
+ * The WRITE half of the label law (fulledit floor — mirrors the read law
+ * above): where does a label/labelEs edit land?
+ *   - question-shaped line (linked or not) → the LINE — the label IS the
+ *     question, edited in place; the item link is untouched.
+ *   - unlinked line → the LINE (there is no registry row to write; blocking
+ *     the edit never fixed linkage — the Doctor flags needs-link separately).
+ *   - linked inventory line → the registry ITEM (edit-once-everywhere).
+ */
+export function resolvePrepLabelWriteTarget(line: ChecklistTemplateItem): "line" | "item" {
+  if (!line.itemId || isQuestionShapedLine(line)) return "line";
+  return "item";
+}
+
 export function resolveLineDefinition(
   line: ChecklistTemplateItem,
   item: ItemDefn | null,
