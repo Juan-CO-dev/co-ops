@@ -17,6 +17,14 @@ export interface AdminSection {
   i18nKey: TranslationKey;
   href: string;
   minLevel: number;
+  /**
+   * When true, the section is a live PlaceholderCard stub (no real surface yet).
+   * The hub renders it HONESTLY — muted, no link, "arrives" copy — instead of a
+   * normal card that dead-ends (council convergence 4; mirrors the
+   * checklist-templates deep_cleaning idiom). The stub page stays reachable by
+   * direct URL for anyone who bookmarks it.
+   */
+  comingSoon?: boolean;
 }
 
 // Order = display order, and it walks the derivation pipeline (Juan's model):
@@ -30,9 +38,15 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   { id: "catering",            i18nKey: "admin.section.catering" as TranslationKey,            href: "/admin/catering",            minLevel: 6 },
   { id: "checklist-templates", i18nKey: "admin.section.checklist-templates", href: "/admin/checklist-templates", minLevel: 7 },
   { id: "categories",          i18nKey: "admin.section.categories",          href: "/admin/categories",          minLevel: 8 },
-  { id: "pars",                i18nKey: "admin.section.pars",                href: "/admin/pars",                minLevel: 7 },
-  { id: "locations",           i18nKey: "admin.section.locations",           href: "/admin/locations",           minLevel: 9 },
-  { id: "audit",               i18nKey: "admin.section.audit",               href: "/admin/audit",               minLevel: 9 },
+  // TODO(i18n-type-safety, builder finding 12): the `as TranslationKey` casts on
+  // recipes/items/catering above bypass compile-time key checking — an orphaned
+  // es key (or a typo'd English key) won't fail the build. These keys DO exist in
+  // en/es; the cast is legacy from before they were added. Prefer registering the
+  // key in TranslationKey (lib/i18n/types) and dropping the cast so the compiler
+  // enforces en/es parity. Same pattern flagged in RecipesClient.tsx rk().
+  { id: "pars",                i18nKey: "admin.section.pars",                href: "/admin/pars",                minLevel: 7, comingSoon: true },
+  { id: "locations",           i18nKey: "admin.section.locations",           href: "/admin/locations",           minLevel: 9, comingSoon: true },
+  { id: "audit",               i18nKey: "admin.section.audit",               href: "/admin/audit",               minLevel: 9, comingSoon: true },
 ];
 
 /** Sections the given role level may reach, in display order. */

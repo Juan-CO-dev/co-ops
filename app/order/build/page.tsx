@@ -43,6 +43,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { CateringMenuItem } from "@/lib/catering/menu";
+import { TranslationProvider, useTranslation } from "@/lib/i18n/provider";
 
 type Cat = "main" | "side" | "sweet" | "drink";
 /** Portion selector for portionable subs. Matches the draft-lines API portion values. */
@@ -210,7 +211,23 @@ function pkgPicksSummary(entry: PkgEntry): string {
   return parts.join(" · ");
 }
 
-export default function OrderBuild() {
+/**
+ * The storefront is not yet i18n'd (that arc is deferred). This provider exists
+ * so a11y strings (aria-labels on the icon-only qty steppers, the pickable card
+ * button) can resolve through t() with proper en+es keys — WITHOUT touching any
+ * visible storefront copy. initialLanguage="en" mirrors order/start; when the
+ * storefront-i18n arc lands it will inject the viewer's real language here.
+ */
+export default function OrderBuildPage() {
+  return (
+    <TranslationProvider initialLanguage="en">
+      <OrderBuild />
+    </TranslationProvider>
+  );
+}
+
+function OrderBuild() {
+  const { t } = useTranslation();
   const router = useRouter();
   const [draftId, setDraftId] = useState<string | null>(null);
   const [draft, setDraft] = useState<DraftLoad | null>(null);
@@ -537,7 +554,7 @@ export default function OrderBuild() {
                   const affordanceText = portionable ? "Choose portion →" : "Customize →";
                   return (
                     <div key={card.key} className="flex items-center justify-between gap-4">
-                      <button type="button" onClick={() => setModalKey(card.key)} className="flex-1 p-4 text-left transition hover:bg-co-bg/40">
+                      <button type="button" onClick={() => setModalKey(card.key)} aria-label={t("order.build.customize_item", { item: card.label })} className="flex-1 rounded-md p-4 text-left transition hover:bg-co-bg/40 focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">
                         <div className="flex items-center gap-2">
                           <h3 className="text-sm font-extrabold text-co-text">{card.label}</h3>
                           {it.cateringOnly && <span className="rounded-full bg-co-gold/70 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-co-text">Catering</span>}
@@ -546,7 +563,7 @@ export default function OrderBuild() {
                       </button>
                       <div className="flex shrink-0 items-center gap-3 pr-4">
                         <span className="text-sm font-bold text-co-cta">{priceDisplay}</span>
-                        <button type="button" onClick={() => quickAdd(card.key)} aria-label={`Quick add ${card.label}`} className="grid h-9 w-9 place-items-center rounded-full bg-co-text text-xl font-bold text-co-cta transition hover:bg-co-text/90">+</button>
+                        <button type="button" onClick={() => quickAdd(card.key)} aria-label={t("order.build.quick_add", { item: card.label })} className="grid h-9 w-9 place-items-center rounded-full bg-co-text text-xl font-bold text-co-cta transition hover:bg-co-text/90 focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">+</button>
                       </div>
                     </div>
                   );
@@ -577,7 +594,7 @@ export default function OrderBuild() {
                         <button
                           type="button"
                           onClick={() => openPkgAdd(pkg)}
-                          className="inline-flex min-h-[36px] items-center justify-center rounded-full bg-co-text px-4 text-xs font-bold uppercase tracking-[0.08em] text-co-cta transition hover:bg-co-text/90"
+                          className="inline-flex min-h-[36px] items-center justify-center rounded-full bg-co-text px-4 text-xs font-bold uppercase tracking-[0.08em] text-co-cta transition hover:bg-co-text/90 focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
                         >
                           Choose / Build →
                         </button>
@@ -629,7 +646,7 @@ export default function OrderBuild() {
             <div className="mx-auto max-h-[68vh] max-w-6xl overflow-y-auto rounded-t-3xl border border-co-border bg-co-surface p-4 pb-2 shadow-2xl">
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-co-text">At-a-glance coverage</h2>
-                <button type="button" onClick={() => setCoverageOpen(false)} aria-label="Close coverage guide" className="grid h-8 w-8 place-items-center rounded-full bg-co-bg text-lg font-bold text-co-text-dim">×</button>
+                <button type="button" onClick={() => setCoverageOpen(false)} aria-label="Close coverage guide" className="grid h-8 w-8 place-items-center rounded-full bg-co-bg text-lg font-bold text-co-text-dim focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">×</button>
               </div>
               <div className="-mt-5"><CoveragePanel coverage={coverage} headcount={headcount} setHeadcount={setHeadcount} gapNudge={computeGapNudge(lines, coverage, headcount)} /></div>
             </div>
@@ -640,7 +657,7 @@ export default function OrderBuild() {
               type="button"
               onClick={() => setCoverageOpen((v) => !v)}
               aria-expanded={coverageOpen}
-              className="flex w-full items-center justify-between gap-3 border-b border-co-border/60 px-5 py-2 text-left"
+              className="flex w-full items-center justify-between gap-3 border-b border-co-border/60 px-5 py-2 text-left focus:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-co-gold/60"
             >
               <span key={hintIdx} className="min-w-0 flex-1 truncate text-xs font-semibold text-co-text transition-opacity duration-500">{hints.length > 0 ? hints[hintIdx % hints.length] : "See who's covered — sizes vs your guest count"}</span>
               <span
@@ -656,7 +673,7 @@ export default function OrderBuild() {
             </button>
             <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-5 py-3">
               <div className="text-sm"><span className="font-bold text-co-text">{count} item{count === 1 ? "" : "s"}</span><span className="ml-2 text-co-text-muted">{money(displaySubtotalCents)}</span></div>
-              <button type="button" onClick={goToReview} disabled={!hasItems} className={`inline-flex min-h-[46px] items-center justify-center rounded-full px-6 text-sm font-bold uppercase tracking-[0.08em] transition ${hasItems ? "bg-co-text text-co-cta hover:bg-co-text/90" : "cursor-not-allowed bg-co-border text-co-text-dim"}`}>Continue →</button>
+              <button type="button" onClick={goToReview} disabled={!hasItems} className={`inline-flex min-h-[46px] items-center justify-center rounded-full px-6 text-sm font-bold uppercase tracking-[0.08em] transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 ${hasItems ? "bg-co-text text-co-cta hover:bg-co-text/90" : "cursor-not-allowed bg-co-border text-co-text-dim"}`}>Continue →</button>
             </div>
           </div>
         </div>
@@ -758,6 +775,7 @@ function Cart({ lines, pkgEntries, subtotalCents, headcount, setHeadcount, cover
   coverage: { main: number; side: number; sweet: number; drink: number }; onCustomize: (key: string) => void; dec: (key: string) => void; add: (key: string) => void; onContinue: () => void;
   onPkgEdit: (key: string, pkg: PkgView) => void; onPkgDec: (key: string) => void; onPkgInc: (key: string) => void;
 }) {
+  const { t } = useTranslation();
   const gapNudge = computeGapNudge(lines, coverage, headcount);
   const hasItems = lines.length > 0 || pkgEntries.length > 0;
 
@@ -777,13 +795,13 @@ function Cart({ lines, pkgEntries, subtotalCents, headcount, setHeadcount, cover
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0"><p className="truncate text-sm font-semibold text-co-text">{e.item.name}</p><p className="text-xs text-co-text-dim">{money(displayCents)} each</p></div>
                     <div className="flex shrink-0 items-center gap-2">
-                      <button type="button" onClick={() => dec(e.key)} className="grid h-6 w-6 place-items-center rounded-full bg-co-bg text-sm font-bold text-co-text">−</button>
+                      <button type="button" onClick={() => dec(e.key)} aria-label={t("order.build.decrease_qty", { item: e.item.name })} className="grid h-6 w-6 place-items-center rounded-full bg-co-bg text-sm font-bold text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">−</button>
                       <span className="w-4 text-center text-sm font-bold tabular-nums">{e.line.qty}</span>
-                      <button type="button" onClick={() => add(e.key)} className="grid h-6 w-6 place-items-center rounded-full bg-co-text text-sm font-bold text-co-cta">+</button>
+                      <button type="button" onClick={() => add(e.key)} aria-label={t("order.build.increase_qty", { item: e.item.name })} className="grid h-6 w-6 place-items-center rounded-full bg-co-text text-sm font-bold text-co-cta focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">+</button>
                     </div>
                   </div>
                   {lineSummary(e) && <p className="mt-0.5 text-[11px] text-co-text-dim">{lineSummary(e)}</p>}
-                  <button type="button" onClick={() => onCustomize(e.key)} className="mt-0.5 text-[11px] font-bold uppercase tracking-wide text-co-text-dim underline">{portionable ? "Portion & notes" : "Customize"}</button>
+                  <button type="button" onClick={() => onCustomize(e.key)} className="mt-0.5 rounded-md text-[11px] font-bold uppercase tracking-wide text-co-text-dim underline focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">{portionable ? "Portion & notes" : "Customize"}</button>
                 </li>
               );
             })}
@@ -799,9 +817,9 @@ function Cart({ lines, pkgEntries, subtotalCents, headcount, setHeadcount, cover
                       <p className="text-xs text-co-text-dim">{money(e.pkg.priceCents)} each</p>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
-                      <button type="button" onClick={() => onPkgDec(e.key)} className="grid h-6 w-6 place-items-center rounded-full bg-co-bg text-sm font-bold text-co-text">−</button>
+                      <button type="button" onClick={() => onPkgDec(e.key)} aria-label={t("order.build.decrease_qty", { item: e.pkg.labelEn })} className="grid h-6 w-6 place-items-center rounded-full bg-co-bg text-sm font-bold text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">−</button>
                       <span className="w-4 text-center text-sm font-bold tabular-nums">{e.quantity}</span>
-                      <button type="button" onClick={() => onPkgInc(e.key)} className="grid h-6 w-6 place-items-center rounded-full bg-co-text text-sm font-bold text-co-cta">+</button>
+                      <button type="button" onClick={() => onPkgInc(e.key)} aria-label={t("order.build.increase_qty", { item: e.pkg.labelEn })} className="grid h-6 w-6 place-items-center rounded-full bg-co-text text-sm font-bold text-co-cta focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">+</button>
                     </div>
                   </div>
                   {hasOptions && summary && <p className="mt-0.5 text-[11px] text-co-text-dim">{summary}</p>}
@@ -809,7 +827,7 @@ function Cart({ lines, pkgEntries, subtotalCents, headcount, setHeadcount, cover
                     <button
                       type="button"
                       onClick={() => onPkgEdit(e.key, e.pkg)}
-                      className="text-[11px] font-bold uppercase tracking-wide text-co-text-dim underline"
+                      className="rounded-md text-[11px] font-bold uppercase tracking-wide text-co-text-dim underline focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
                     >
                       {!hasOptions ? "Choose your subs →" : "Configure"}
                     </button>
@@ -827,7 +845,7 @@ function Cart({ lines, pkgEntries, subtotalCents, headcount, setHeadcount, cover
 
         {hasItems && <p className="mt-3 rounded-xl bg-co-bg px-3 py-2 text-xs text-co-text-muted">Deposit locks your date; balance due 48h before. We confirm within a few hours — no charge until we do.</p>}
 
-        <button type="button" onClick={onContinue} disabled={!hasItems} className={`mt-5 flex min-h-[52px] w-full items-center justify-center rounded-full text-base font-bold uppercase tracking-[0.08em] transition ${hasItems ? "bg-co-text text-co-cta hover:bg-co-text/90" : "cursor-not-allowed bg-co-border text-co-text-dim"}`}>Continue to review →</button>
+        <button type="button" onClick={onContinue} disabled={!hasItems} className={`mt-5 flex min-h-[52px] w-full items-center justify-center rounded-full text-base font-bold uppercase tracking-[0.08em] transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 ${hasItems ? "bg-co-text text-co-cta hover:bg-co-text/90" : "cursor-not-allowed bg-co-border text-co-text-dim"}`}>Continue to review →</button>
       </div>
     </div>
   );
@@ -845,6 +863,7 @@ function PackageConfigurator({ pkg, existing, leadHeadcount, onClose, onSave }: 
   onClose: () => void;
   onSave: (save: { quantity: number; options: PkgOption[] }) => void;
 }) {
+  const { t } = useTranslation();
   const defaultQty = existing?.quantity ?? (pkg.pricingMode === "per_head" ? Math.max(1, leadHeadcount) : 1);
   const [quantity, setQuantity] = useState(defaultQty);
 
@@ -934,7 +953,7 @@ function PackageConfigurator({ pkg, existing, leadHeadcount, onClose, onSave }: 
               <h2 className="text-xl font-extrabold text-co-text">{pkg.labelEn}</h2>
               <p className="mt-0.5 text-sm font-bold text-co-cta">from {money(pkg.priceCents)}</p>
             </div>
-            <button type="button" onClick={onClose} aria-label="Close" className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-co-surface text-lg font-bold text-co-text-dim">×</button>
+            <button type="button" onClick={onClose} aria-label="Close" className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-co-surface text-lg font-bold text-co-text-dim focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">×</button>
           </div>
 
           {/* Slots */}
@@ -968,7 +987,7 @@ function PackageConfigurator({ pkg, existing, leadHeadcount, onClose, onSave }: 
                             role="radio"
                             aria-checked={selected}
                             onClick={() => setRadio(slot.packageItemId, opt.refId)}
-                            className={`rounded-2xl border-2 px-3 py-1.5 text-sm font-semibold transition ${
+                            className={`rounded-2xl border-2 px-3 py-1.5 text-sm font-semibold transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 ${
                               selected
                                 ? "border-co-text bg-co-text text-co-bg"
                                 : "border-co-border-2 bg-co-surface text-co-text-muted hover:border-co-text/40 hover:text-co-text"
@@ -993,14 +1012,16 @@ function PackageConfigurator({ pkg, existing, leadHeadcount, onClose, onSave }: 
                                 type="button"
                                 onClick={() => adjAlloc(slot.packageItemId, opt.refId, -1, slot.pickN)}
                                 disabled={cur === 0}
-                                className={`grid h-7 w-7 place-items-center rounded-full text-sm font-bold ${cur === 0 ? "cursor-not-allowed bg-co-border text-co-text-dim" : "bg-co-bg text-co-text"}`}
+                                aria-label={t("order.build.decrease_qty", { item: opt.name })}
+                                className={`grid h-7 w-7 place-items-center rounded-full text-sm font-bold focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 ${cur === 0 ? "cursor-not-allowed bg-co-border text-co-text-dim" : "bg-co-bg text-co-text"}`}
                               >−</button>
                               <span className="w-5 text-center text-sm font-bold tabular-nums">{cur}</span>
                               <button
                                 type="button"
                                 onClick={() => adjAlloc(slot.packageItemId, opt.refId, 1, slot.pickN)}
                                 disabled={!canInc}
-                                className={`grid h-7 w-7 place-items-center rounded-full text-sm font-bold ${!canInc ? "cursor-not-allowed bg-co-border text-co-text-dim" : "bg-co-text text-co-cta"}`}
+                                aria-label={t("order.build.increase_qty", { item: opt.name })}
+                                className={`grid h-7 w-7 place-items-center rounded-full text-sm font-bold focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 ${!canInc ? "cursor-not-allowed bg-co-border text-co-text-dim" : "bg-co-text text-co-cta"}`}
                               >+</button>
                             </div>
                           </div>
@@ -1018,9 +1039,9 @@ function PackageConfigurator({ pkg, existing, leadHeadcount, onClose, onSave }: 
             <p className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim">Quantity</p>
             <div className="mt-2 flex items-center gap-4">
               <div className="inline-flex items-center gap-3 rounded-full border-2 border-co-border-2 px-2 py-1.5">
-                <button type="button" onClick={() => setQuantity((q) => Math.max(1, q - 1))} className="grid h-8 w-8 place-items-center rounded-full bg-co-surface text-xl font-bold text-co-text">−</button>
+                <button type="button" onClick={() => setQuantity((q) => Math.max(1, q - 1))} aria-label={t("order.build.decrease_qty_generic")} className="grid h-8 w-8 place-items-center rounded-full bg-co-surface text-xl font-bold text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">−</button>
                 <span className="min-w-6 text-center text-base font-bold tabular-nums">{quantity}</span>
-                <button type="button" onClick={() => setQuantity((q) => q + 1)} className="grid h-8 w-8 place-items-center rounded-full bg-co-text text-xl font-bold text-co-cta">+</button>
+                <button type="button" onClick={() => setQuantity((q) => q + 1)} aria-label={t("order.build.increase_qty_generic")} className="grid h-8 w-8 place-items-center rounded-full bg-co-text text-xl font-bold text-co-cta focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">+</button>
               </div>
             </div>
           </div>
@@ -1031,7 +1052,7 @@ function PackageConfigurator({ pkg, existing, leadHeadcount, onClose, onSave }: 
               type="button"
               disabled={!isComplete}
               onClick={() => { if (isComplete) onSave({ quantity, options: buildOptions() }); }}
-              className={`flex min-h-[52px] w-full items-center justify-center rounded-full text-base font-bold uppercase tracking-[0.08em] transition ${
+              className={`flex min-h-[52px] w-full items-center justify-center rounded-full text-base font-bold uppercase tracking-[0.08em] transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 ${
                 isComplete
                   ? "bg-co-text text-co-cta hover:bg-co-text/90"
                   : "cursor-not-allowed bg-co-border text-co-text-dim"
@@ -1043,7 +1064,7 @@ function PackageConfigurator({ pkg, existing, leadHeadcount, onClose, onSave }: 
               <p className="mt-2 text-center text-xs text-co-text-muted">Complete all selections above to continue.</p>
             )}
           </div>
-          <button type="button" onClick={onClose} className="mt-3 w-full py-2 text-center text-sm font-semibold text-co-text-muted">Cancel</button>
+          <button type="button" onClick={onClose} className="mt-3 w-full rounded-md py-2 text-center text-sm font-semibold text-co-text-muted focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">Cancel</button>
         </div>
       </div>
     </div>
@@ -1078,7 +1099,7 @@ function PortionSelector({ item, portion, onChange }: {
               aria-checked={selected}
               aria-label={`${info.aria} — ${money(priceCents)}`}
               onClick={() => onChange(p)}
-              className={`flex min-w-[72px] flex-col items-center rounded-2xl border-2 px-3 py-2 text-center transition ${
+              className={`flex min-w-[72px] flex-col items-center rounded-2xl border-2 px-3 py-2 text-center transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 ${
                 selected
                   ? "border-co-text bg-co-text text-co-bg"
                   : "border-co-border-2 bg-co-surface text-co-text-muted hover:border-co-text/40 hover:text-co-text"
@@ -1100,7 +1121,7 @@ function Chips({ options, selected, onToggle }: { options: string[]; selected: s
     <div className="mt-2 flex flex-wrap gap-2">
       {options.map((o) => {
         const on = selected.includes(o);
-        return <button key={o} type="button" onClick={() => onToggle(o)} aria-pressed={on} className={`rounded-full border-2 px-3 py-1 text-xs font-bold transition ${on ? "border-co-text bg-co-text/10 text-co-text" : "border-co-border-2 bg-co-surface text-co-text-muted hover:text-co-text"}`}>{o}</button>;
+        return <button key={o} type="button" onClick={() => onToggle(o)} aria-pressed={on} className={`rounded-full border-2 px-3 py-1 text-xs font-bold transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 ${on ? "border-co-text bg-co-text/10 text-co-text" : "border-co-border-2 bg-co-surface text-co-text-muted hover:text-co-text"}`}>{o}</button>;
       })}
     </div>
   );
@@ -1113,6 +1134,7 @@ function Chips({ options, selected, onToggle }: { options: string[]; selected: s
  * they have no server home in 3a and are NOT part of the persisted payload.
  */
 function CustomizeModal({ card, existing, onClose, onSave }: { card: MenuCard; existing: Line | null; onClose: () => void; onSave: (line: Line) => void }) {
+  const { t } = useTranslation();
   const item = card.item;
   const portionable = isPortionable(item);
   const sized = card.sizeId != null;
@@ -1167,13 +1189,13 @@ function CustomizeModal({ card, existing, onClose, onSave }: { card: MenuCard; e
 
           <div className="mt-6 flex items-center gap-4">
             <div className="inline-flex items-center gap-3 rounded-full border-2 border-co-border-2 px-2 py-1.5">
-              <button type="button" onClick={() => set({ qty: Math.max(1, line.qty - 1) })} className="grid h-8 w-8 place-items-center rounded-full bg-co-surface text-xl font-bold text-co-text">−</button>
+              <button type="button" onClick={() => set({ qty: Math.max(1, line.qty - 1) })} aria-label={t("order.build.decrease_qty", { item: card.label })} className="grid h-8 w-8 place-items-center rounded-full bg-co-surface text-xl font-bold text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">−</button>
               <span className="min-w-6 text-center text-base font-bold tabular-nums">{line.qty}</span>
-              <button type="button" onClick={() => set({ qty: line.qty + 1 })} className="grid h-8 w-8 place-items-center rounded-full bg-co-text text-xl font-bold text-co-cta">+</button>
+              <button type="button" onClick={() => set({ qty: line.qty + 1 })} aria-label={t("order.build.increase_qty", { item: card.label })} className="grid h-8 w-8 place-items-center rounded-full bg-co-text text-xl font-bold text-co-cta focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">+</button>
             </div>
-            <button type="button" onClick={() => onSave({ ...line, notes: line.notes.trim() })} className="flex min-h-[52px] flex-1 items-center justify-center rounded-full bg-co-text text-base font-bold uppercase tracking-[0.08em] text-co-cta transition hover:bg-co-text/90">{existing ? "Update" : "Add"} · {money(unit * line.qty)}</button>
+            <button type="button" onClick={() => onSave({ ...line, notes: line.notes.trim() })} className="flex min-h-[52px] flex-1 items-center justify-center rounded-full bg-co-text text-base font-bold uppercase tracking-[0.08em] text-co-cta transition hover:bg-co-text/90 focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">{existing ? "Update" : "Add"} · {money(unit * line.qty)}</button>
           </div>
-          <button type="button" onClick={onClose} className="mt-3 w-full py-2 text-center text-sm font-semibold text-co-text-muted">Cancel</button>
+          <button type="button" onClick={onClose} className="mt-3 w-full rounded-md py-2 text-center text-sm font-semibold text-co-text-muted focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">Cancel</button>
         </div>
       </div>
     </div>

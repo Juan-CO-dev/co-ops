@@ -1,18 +1,22 @@
 import { PlaceholderCard } from "@/components/PlaceholderCard";
+import { serverT } from "@/lib/i18n/server";
+import { requireSessionFromHeaders } from "@/lib/session";
 
-export default function AdminLocationsPage() {
+export default async function AdminLocationsPage() {
+  const auth = await requireSessionFromHeaders("/admin/locations");
+  const lang = auth.user.language;
   return (
     <PlaceholderCard
       showBackLink={false}
-      title="Location Management"
-      description="Foundation admin tool. Owner+ only (level 9+)."
+      title={serverT(lang, "admin.locations.ph.title")}
+      description={serverT(lang, "admin.locations.ph.description")}
       features={[
-        "Add / edit / activate / deactivate locations",
-        "Type: permanent or dark_kitchen",
-        "Auto-assigns Owner + CGS to new locations",
-        "All destructive operations require step-up",
+        serverT(lang, "admin.locations.ph.feature.crud"),
+        serverT(lang, "admin.locations.ph.feature.type"),
+        serverT(lang, "admin.locations.ph.feature.autoassign"),
+        serverT(lang, "admin.locations.ph.feature.stepup"),
       ]}
-      shippingIn="Phase 5 (Foundation Admin Tools)"
+      shippingIn={serverT(lang, "admin.locations.ph.shipping")}
     />
   );
 }

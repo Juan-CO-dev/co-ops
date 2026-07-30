@@ -1,18 +1,22 @@
 import { PlaceholderCard } from "@/components/PlaceholderCard";
+import { serverT } from "@/lib/i18n/server";
+import { requireSessionFromHeaders } from "@/lib/session";
 
-export default function AdminParsPage() {
+export default async function AdminParsPage() {
+  const auth = await requireSessionFromHeaders("/admin/pars");
+  const lang = auth.user.language;
   return (
     <PlaceholderCard
       showBackLink={false}
-      title="Par Levels"
-      description="Foundation admin tool. Per-location par values referencing vendor_items."
+      title={serverT(lang, "admin.pars.ph.title")}
+      description={serverT(lang, "admin.pars.ph.description")}
       features={[
-        "Location selector",
-        "Items grouped by category (matches vendor_item categories)",
-        "All-days par + day-of-week overrides",
-        "Inline edit, save per row (each save = step-up)",
+        serverT(lang, "admin.pars.ph.feature.location"),
+        serverT(lang, "admin.pars.ph.feature.grouped"),
+        serverT(lang, "admin.pars.ph.feature.overrides"),
+        serverT(lang, "admin.pars.ph.feature.inline"),
       ]}
-      shippingIn="Phase 5 (Foundation Admin Tools)"
+      shippingIn={serverT(lang, "admin.pars.ph.shipping")}
     />
   );
 }

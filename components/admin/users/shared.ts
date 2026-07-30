@@ -74,6 +74,12 @@ const KNOWN_ERROR_CODES = new Set([
   "forbidden",
   "step_up_required",
   "step_up_stale",
+  // polish-c: routes/lib emit these but the client used to fall to generic
+  // ("Something went wrong") for what are actually specific validation failures.
+  "invalid_payload",
+  "invalid_name",
+  "invalid_password",
+  "not_found",
 ]);
 
 export function resolveErrorKey(code: string): TranslationKey {
