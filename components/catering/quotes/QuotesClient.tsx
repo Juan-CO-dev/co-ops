@@ -19,6 +19,7 @@ import type { TranslationKey } from "@/lib/i18n/types";
 import { PasswordModal } from "@/components/auth/PasswordModal";
 import type { Quote, QuoteItem, DeliveryZone, ChargeRates, ChargeStack } from "@/lib/catering/quotes";
 import type { CateringMenuItem, CateringPackage } from "@/lib/catering/menu";
+import type { Payment } from "@/lib/catering/payments";
 import { postJson, resolveErrorKey, isStepUpCode } from "./shared";
 
 const WRITE_MIN = 6;
@@ -549,6 +550,69 @@ function ChargeStackTable({ stack, money, t }: { stack: ChargeStack; money: (c: 
   );
 }
 
+/**
+ * PaymentsSection — the staff seam for markPaymentPaid (Ops guardrails NOW #3, piece 4).
+ * Lists the quote's payment intents; a `due` intent gets a confirm-guarded "Mark paid"
+ * button (GM+ only — canMarkPaid; the route re-checks the level-6 floor + location gate).
+ * A due intent with no provider IS the unpaid check/cash case (a real provider webhook
+ * would advance it instead). paid/refunded/void rows render read-only.
+ */
+function PaymentsSection({
+  payments,
+  canMarkPaid,
+  payingId,
+  onMarkPaid,
+  money,
+  t,
+}: {
+  payments: Payment[];
+  canMarkPaid: boolean;
+  payingId: string | null;
+  onMarkPaid: (paymentId: string) => void;
+  money: (c: number) => string;
+  t: (k: TranslationKey) => string;
+}) {
+  const kindLabel = (k: Payment["kind"]) => t(`catering.quotes.payments.kind.${k}` as TranslationKey);
+  const statusLabel = (s: Payment["status"]) => t(`catering.quotes.payments.status.${s}` as TranslationKey);
+  const statusTone: Record<Payment["status"], string> = {
+    due: "text-co-warning",
+    paid: "text-co-success",
+    refunded: "text-co-text-muted",
+    void: "text-co-text-dim",
+  };
+  return (
+    <div className="co-card flex flex-col gap-2 p-4">
+      <h3 className="text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">
+        {t("catering.quotes.payments.heading")}
+      </h3>
+      {payments.map((p) => (
+        <div key={p.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+          <span className="min-w-0 text-co-text">
+            {kindLabel(p.kind)}
+            <span className="text-co-text-dim"> · </span>
+            <span className={`font-semibold ${statusTone[p.status]}`}>{statusLabel(p.status)}</span>
+          </span>
+          <span className="flex items-center gap-3">
+            <span className="tabular-nums text-co-text-muted">{money(p.amountCents)}</span>
+            {p.status === "due" && canMarkPaid && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (window.confirm(t("catering.quotes.payments.mark_paid"))) onMarkPaid(p.id);
+                }}
+                disabled={payingId !== null}
+                className="inline-flex min-h-[36px] items-center rounded-full border-2 border-co-success/50 bg-co-success/10 px-3 text-xs font-bold text-co-success disabled:opacity-50"
+              >
+                {payingId === p.id ? t("catering.quotes.payments.marking") : t("catering.quotes.payments.mark_paid")}
+              </button>
+            )}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Detail panel ─────────────────────────────────────────────────────────────
 function QuoteDetailPanel({
   id,
@@ -564,8 +628,10 @@ function QuoteDetailPanel({
   const { t, language } = useTranslation();
   const money = (c: number) => formatCents(c, language);
   const [detail, setDetail] = useState<QuoteDetail | null>(null);
+  const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [payingId, setPayingId] = useState<string | null>(null);
   const [errorKey, setErrorKey] = useState<TranslationKey | null>(null);
   const [flashKey, setFlashKey] = useState<TranslationKey | null>(null);
   const [stepUpOpen, setStepUpOpen] = useState(false);
@@ -582,8 +648,41 @@ function QuoteDetailPanel({
     setLoading(false);
   }, [id]);
 
+  // Payments load separately (a viewer at the read floor may see them; a 403 for a
+  // lower role degrades to "no payments" without blocking the quote detail).
+  const loadPayments = useCallback(async () => {
+    try {
+      const r = await fetch(`/api/catering/quotes/${id}/payments`, { redirect: "manual" });
+      if (r.ok) {
+        const body = (await r.json()) as { payments: Payment[] };
+        setPayments(body.payments);
+      } else {
+        setPayments([]);
+      }
+    } catch {
+      setPayments([]);
+    }
+  }, [id]);
+
+  const markPaid = useCallback(
+    async (paymentId: string) => {
+      setPayingId(paymentId);
+      setErrorKey(null);
+      const res = await postJson(`/api/catering/quotes/${id}/payments`, { paymentId }, "POST");
+      setPayingId(null);
+      if (res.ok) {
+        setFlashKey("catering.quotes.payments.marked");
+        await loadPayments();
+      } else {
+        setErrorKey(resolveErrorKey(res.code));
+      }
+    },
+    [id, loadPayments],
+  );
+
   useEffect(() => {
     void load();
+    void loadPayments();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
@@ -668,6 +767,17 @@ function QuoteDetailPanel({
       </div>
 
       <ChargeStackTable stack={q} money={money} t={t} />
+
+      {payments.length > 0 && (
+        <PaymentsSection
+          payments={payments}
+          canMarkPaid={canWrite}
+          payingId={payingId}
+          onMarkPaid={(pid) => void markPaid(pid)}
+          money={money}
+          t={t}
+        />
+      )}
 
       {flashKey && <p className="rounded-lg border-2 border-co-success/40 bg-co-success/10 px-3 py-2 text-sm font-semibold text-co-success">{t(flashKey)}</p>}
       {errorKey && <p className="text-sm font-semibold text-co-cta">{t(errorKey)}</p>}
