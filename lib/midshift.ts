@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { operationalDayUtcRange } from "@/lib/operational-day";
 
 export const MIDSHIFT_BASE_LEVEL = 4; // KH+ (key_holder = 4 in lib/roles.ts)
 
@@ -347,13 +348,17 @@ export async function loadMidShiftPulse(
   }));
   const fridgeFlagCount = fridges.filter((f) => f.outOfRange).length;
 
-  // Maintenance notes logged today.
+  // Maintenance notes logged today. created_at is a UTC timestamptz; args.date
+  // is the ET operational day — bare `${date}T…` bounds were read as UTC and
+  // bucketed late-evening ET notes to the wrong day (hardening 2026-07-31,
+  // council P1). Convert to the day's real UTC instant range.
+  const { startIso, endExclusiveIso } = operationalDayUtcRange(args.date);
   const { count: notesCount } = await service
     .from("maintenance_notes")
     .select("id", { count: "exact", head: true })
     .eq("location_id", args.locationId)
-    .gte("created_at", `${args.date}T00:00:00`)
-    .lte("created_at", `${args.date}T23:59:59`);
+    .gte("created_at", startIso)
+    .lt("created_at", endExclusiveIso);
   const maintenanceNotesToday = notesCount ?? 0;
 
   const activeToday = await loadActiveToday(service, { locationId: args.locationId, date: args.date });
