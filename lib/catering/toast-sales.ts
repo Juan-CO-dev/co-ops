@@ -238,7 +238,11 @@ export async function deactivateExclusion(actor: AuthContext, id: string): Promi
 export interface SalesConsumption {
   soldLines: Array<{ name: string; quantity: number; kind: "menu_item" | "item" | "package" }>;
   prepConsumed: Array<{ itemId: string; name: string; units: number; removedUnits: number }>;
-  skuConsumed: Array<{ skuId: string; name: string; oz: number; removedOz: number }>;
+  /** oz = directOz + flattenedOz. directOz = at-sale consumption (the ONLY lane
+   *  that may feed counts' drift — the double-count law, drift spec 2026-07-31);
+   *  flattenedOz = production-covered raw SKUs via the item flatten (display/
+   *  forecast only). */
+  skuConsumed: Array<{ skuId: string; name: string; oz: number; directOz: number; flattenedOz: number; removedOz: number }>;
   unmappedToastItems: Array<{ name: string; quantity: number; toastItemGuid: string; isModifier: boolean }>;
   excludedCount: number;
   suspectedCatering: Array<{ checkGuid: string; diningOption: string | null; totalQty: number; reason: "name" | "quantity" }>;
@@ -342,7 +346,15 @@ export async function salesConsumption(actor: AuthContext, locationId: string, b
   const menuItemUnits = new Map<string, number>();   // signed whole-sub units per menu_item
   const itemUnits = new Map<string, number>();       // signed par-units per item
   const removedByItem = new Map<string, number>();   // visible removal truth
-  const sku = new Map<string, number>();             // menu_item lane SKUs (direct)
+  // THE DOUBLE-COUNT LAW (drift spec 2026-07-31): the two SKU lanes stay SPLIT.
+  // skuDirect = SKUs consumed AT SALE (menu_item direct inputs + SKU-modifiers)
+  //   — the only lane that may feed counts' drift (raw stock leaves the shelf
+  //   here OR at production, never both).
+  // skuFlattened = raw SKUs reached by flattening ITEM par-units through the
+  //   recipe graph — those SKUs deplete at PRODUCTION (production_inputs);
+  //   this lane is display/forecast truth only and must NEVER feed drift.
+  const skuDirect = new Map<string, number>();
+  const skuFlattened = new Map<string, number>();
   // SKU-target modifiers (Part 2): a raw SKU with no prep item (Sub Roll for a
   // salad "No bread"; Arugula/Pepperoncini/Dijon). Applications are collected
   // here (portion + sign) and converted to oz AFTER the SKU avg_oz_per_each
@@ -497,7 +509,7 @@ export async function salesConsumption(actor: AuthContext, locationId: string, b
   for (const [menuItemId, units] of menuItemUnits) {
     const clamped = Math.max(units, 0);
     if (clamped > 0) {
-      for (const [skuId, oz] of perUnitDirectSkuOzForMenuItem(graph, menuItemId)) sku.set(skuId, (sku.get(skuId) ?? 0) + oz * clamped);
+      for (const [skuId, oz] of perUnitDirectSkuOzForMenuItem(graph, menuItemId)) skuDirect.set(skuId, (skuDirect.get(skuId) ?? 0) + oz * clamped);
       for (const [itemId, units2] of firstLevelItemConsumption(graph, menuItemId)) itemUnits.set(itemId, (itemUnits.get(itemId) ?? 0) + units2 * clamped);
     }
   }
@@ -508,7 +520,8 @@ export async function salesConsumption(actor: AuthContext, locationId: string, b
     const clamped = Math.max(units, 0);
     prep.set(itemId, clamped);
     if (clamped > 0) {
-      for (const [skuId, oz] of perUnitSkuOzForItemFromGraph(graph, itemId)) sku.set(skuId, (sku.get(skuId) ?? 0) + oz * clamped);
+      // FLATTENED lane — production-covered raw SKUs; never feeds drift.
+      for (const [skuId, oz] of perUnitSkuOzForItemFromGraph(graph, itemId)) skuFlattened.set(skuId, (skuFlattened.get(skuId) ?? 0) + oz * clamped);
     }
   }
 
@@ -519,7 +532,7 @@ export async function salesConsumption(actor: AuthContext, locationId: string, b
   // SKU names+weights cover the flattened SKUs AND the SKU-modifier targets
   // (whose ids may not appear in the flatten yet — a pure "No bread" removal on
   // a check with no other SKU demand). avg_oz_per_each rides here (each→oz).
-  const skuIds = [...new Set([...sku.keys(), ...skuModApplications.map((a) => a.skuId)])];
+  const skuIds = [...new Set([...skuDirect.keys(), ...skuFlattened.keys(), ...skuModApplications.map((a) => a.skuId)])];
   const [menuNames, itemNames, skuNames, packageNames] = await Promise.all([
     menuItemIds.length ? sb.from("menu_items").select("id, name").in("id", menuItemIds).returns<Array<{ id: string; name: string }>>() : Promise.resolve({ data: [], error: null }),
     itemIds.length ? sb.from("items").select("id, name").in("id", itemIds).returns<Array<{ id: string; name: string }>>() : Promise.resolve({ data: [], error: null }),
@@ -549,11 +562,15 @@ export async function salesConsumption(actor: AuthContext, locationId: string, b
       continue;
     }
     const delta = a.sign * oz * a.qty;
-    sku.set(a.skuId, (sku.get(a.skuId) ?? 0) + delta);
+    // SKU-modifiers are AT-SALE consumption → the DIRECT lane. Removals net here
+    // too (a "No bread" nets the bread the sub would have used — a direct input).
+    skuDirect.set(a.skuId, (skuDirect.get(a.skuId) ?? 0) + delta);
     if (a.sign < 0) removedBySku.set(a.skuId, (removedBySku.get(a.skuId) ?? 0) + oz * a.qty);
     if (a.sign > 0) modifierStats.depleted += a.qty; else modifierStats.removed += a.qty;
   }
-  for (const [skuId, oz] of sku) sku.set(skuId, Math.max(oz, 0)); // clamp ≥0 (removals never go negative)
+  // Clamp the DIRECT lane ≥0 per SKU (removals never go negative). The flattened
+  // lane needs no clamp — it is built from clamped item units × non-negative oz.
+  for (const [skuId, oz] of skuDirect) skuDirect.set(skuId, Math.max(oz, 0));
 
   // Suspected-catering advisory over NON-excluded checks.
   const byCheck = new Map<string, { qty: number; dining: string | null; nameHit: boolean }>();
@@ -581,8 +598,12 @@ export async function salesConsumption(actor: AuthContext, locationId: string, b
       .filter(([itemId, units]) => units > 0 || (removedByItem.get(itemId) ?? 0) > 0)
       .map(([itemId, units]) => ({ itemId, name: iName.get(itemId) ?? "(item)", units, removedUnits: removedByItem.get(itemId) ?? 0 }))
       .sort((a, b) => b.units - a.units),
-    skuConsumed: [...new Set([...sku.keys(), ...removedBySku.keys()])]
-      .map((skuId) => ({ skuId, name: sName.get(skuId) ?? "(sku)", oz: sku.get(skuId) ?? 0, removedOz: removedBySku.get(skuId) ?? 0 }))
+    skuConsumed: [...new Set([...skuDirect.keys(), ...skuFlattened.keys(), ...removedBySku.keys()])]
+      .map((skuId) => {
+        const directOz = skuDirect.get(skuId) ?? 0;
+        const flattenedOz = skuFlattened.get(skuId) ?? 0;
+        return { skuId, name: sName.get(skuId) ?? "(sku)", oz: directOz + flattenedOz, directOz, flattenedOz, removedOz: removedBySku.get(skuId) ?? 0 };
+      })
       .filter((r) => r.oz > 0 || r.removedOz > 0)
       .sort((a, b) => b.oz - a.oz),
     unmappedToastItems: [...unmapped.entries()]
