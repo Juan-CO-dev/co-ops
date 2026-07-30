@@ -267,6 +267,18 @@ export function ChecklistReportDetailView({ detail, language }: Props) {
                       {item.note}
                     </div>
                   )}
+
+                  {/* Attached photo link — visible to any viewer of the report (0164). */}
+                  {item.photoId !== null && (
+                    <a
+                      href={`/api/photos/${item.photoId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-1 inline-flex text-xs font-semibold text-co-cta underline"
+                    >
+                      {t("reports.detail.photo")}
+                    </a>
+                  )}
                 </li>
               ))}
             </ul>
