@@ -37,6 +37,7 @@ import {
   ChecklistRoleViolationError,
   ChecklistMissingCountError,
   ChecklistMissingPhotoError,
+  ChecklistInvalidAnswerError,
   ChecklistPinMismatchError,
   ChecklistMissingReasonError,
   ChecklistExtraReasonError,
@@ -88,6 +89,14 @@ export function mapChecklistError(err: ChecklistError): NextResponse {
       message: err.message,
       template_item_id: err.templateItemId,
       field: "photoId",
+    });
+  }
+  // Fulledit PR-2: the answer doesn't fit the line's input_type (yes_no needs
+  // countValue exactly 0|1; free_text needs non-empty notes).
+  if (err instanceof ChecklistInvalidAnswerError) {
+    return jsonError(400, err.code, {
+      message: err.message,
+      template_item_id: err.templateItemId,
     });
   }
   if (err instanceof ChecklistPinMismatchError) {

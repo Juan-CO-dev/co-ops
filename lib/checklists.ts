@@ -165,6 +165,39 @@ export class ChecklistMissingPhotoError extends ChecklistError {
   }
 }
 
+/** Fulledit PR-2: the answer doesn't fit the line's declared input_type
+ *  (yes_no needs countValue exactly 0|1; free_text needs non-empty notes). */
+export class ChecklistInvalidAnswerError extends ChecklistError {
+  constructor(public readonly templateItemId: string, detail: string) {
+    super(`Item ${templateItemId}: ${detail}`, "invalid_answer");
+    this.name = "ChecklistInvalidAnswerError";
+  }
+}
+
+/**
+ * Fulledit PR-2 — the pure answer validator for QUESTION input types (0165).
+ * Returns null when valid, else the human detail for ChecklistInvalidAnswerError.
+ * The council's guardrail lives here: a yes_no answer is EXACTLY 0 or 1 in
+ * count_value (NO is a recorded answer, distinct from unanswered); a free_text
+ * answer is non-empty trimmed notes. NULL input_type = legacy vocabulary,
+ * no constraint beyond the expects_count/expects_photo checks.
+ */
+export function validateAnswerForInputType(
+  inputType: "yes_no" | "free_text" | null,
+  countValue: number | null | undefined,
+  notes: string | null | undefined,
+): string | null {
+  if (inputType === "yes_no") {
+    if (countValue !== 0 && countValue !== 1) return "yes/no answer must set countValue to exactly 0 or 1";
+    return null;
+  }
+  if (inputType === "free_text") {
+    if (typeof notes !== "string" || notes.trim().length === 0) return "free-text answer requires non-empty notes";
+    return null;
+  }
+  return null;
+}
+
 export class ChecklistPinMismatchError extends ChecklistError {
   constructor() {
     super("PIN does not match.", "pin_mismatch");
@@ -517,6 +550,8 @@ interface TemplateItemRow {
   expects_count: boolean;
   expects_photo: boolean;
   active: boolean;
+  /** Fulledit PR-2 (0165): the QUESTION input type; NULL = legacy tick/count. */
+  input_type: "yes_no" | "free_text" | null;
 }
 
 const rowToSubmission = (r: SubmissionRow): ChecklistSubmission => ({
@@ -569,7 +604,7 @@ async function loadTemplateItemOrThrow(
 ): Promise<TemplateItemRow> {
   const { data, error } = await authed
     .from("checklist_template_items")
-    .select("id, template_id, min_role_level, required, expects_count, expects_photo, active")
+    .select("id, template_id, min_role_level, required, expects_count, expects_photo, active, input_type")
     .eq("id", templateItemId)
     .maybeSingle<TemplateItemRow>();
   if (error) throw new Error(`load template_item ${templateItemId}: ${error.message}`);
@@ -846,6 +881,12 @@ export async function completeItem(
   }
   if (item.expects_photo && (args.photoId === undefined || args.photoId === null)) {
     throw new ChecklistMissingPhotoError(templateItemId);
+  }
+  // Fulledit PR-2: question lines validate their answer against the declared
+  // input_type (yes_no → countValue exactly 0|1; free_text → non-empty notes).
+  const answerProblem = validateAnswerForInputType(item.input_type, args.countValue, args.notes);
+  if (answerProblem !== null) {
+    throw new ChecklistInvalidAnswerError(templateItemId, answerProblem);
   }
 
   // Find prior live completion (if any) for this item on this instance.
