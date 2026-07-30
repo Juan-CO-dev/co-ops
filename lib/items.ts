@@ -68,7 +68,16 @@ export function pickOverride(rows: ItemParRow[], dayOfWeek: number): ItemOverrid
 export function isQuestionShapedLine(line: ChecklistTemplateItem): boolean {
   const cols = line.prepMeta?.columns;
   if (!Array.isArray(cols)) return false;
-  return cols.includes("yes_no") || cols.includes("free_text");
+  return isQuestionShapedColumns(cols);
+}
+
+/**
+ * Column-level primitive of the same law, for callers holding a PrepMeta
+ * rather than a full line (the section-change paths). ONE definition — every
+ * question-shape guard routes through here so the predicate can never drift.
+ */
+export function isQuestionShapedColumns(columns: readonly string[]): boolean {
+  return columns.includes("yes_no") || columns.includes("free_text");
 }
 
 export function resolveLineDefinition(

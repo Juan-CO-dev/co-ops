@@ -9,7 +9,7 @@
  * own label even when linked; par lines keep registry-name authority.
  */
 import { describe, it, expect } from "vitest";
-import { isQuestionShapedLine, resolveLineDefinition, type ItemDefn } from "@/lib/items";
+import { isQuestionShapedColumns, isQuestionShapedLine, resolveLineDefinition, type ItemDefn } from "@/lib/items";
 import type { ChecklistTemplateItem } from "@/lib/types";
 
 const baseLine = (over: Partial<ChecklistTemplateItem>): ChecklistTemplateItem =>
@@ -52,6 +52,14 @@ describe("isQuestionShapedLine", () => {
         baseLine({ prepMeta: { section: "Misc", columns: ["free_text"], parValue: null, parUnit: null, specialInstruction: null } }),
       ),
     ).toBe(true);
+  });
+
+  it("the columns primitive is the single definition (section-change guards route through it)", () => {
+    expect(isQuestionShapedColumns(["yes_no"])).toBe(true);
+    expect(isQuestionShapedColumns(["free_text"])).toBe(true);
+    expect(isQuestionShapedColumns(["yes_no", "free_text"])).toBe(true);
+    expect(isQuestionShapedColumns(["par", "on_hand", "back_up", "total"])).toBe(false);
+    expect(isQuestionShapedColumns([])).toBe(false);
   });
 
   it("par/count lines and meta-less lines are NOT", () => {
