@@ -61,6 +61,7 @@ import {
   computeUsedOrLost,
   chainLabelsInWalkOrder,
   etBusinessDate,
+  salesWindowUntrustworthy,
   type CountLineInput,
   type OnHandResult,
   type OnHandUnitsResult,
@@ -342,27 +343,40 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
   ]);
   const skuName = new Map((skuRows ?? []).map((s) => [s.id, s.name]));
 
-  // ── Weight rows (oz drift + variance — unchanged path) ──
+  // Sales-coverage gap dates (hardening 2026-07-31): loaded ONCE for the whole
+  // location from the earliest weight-SKU window start, then membership-tested
+  // in memory per SKU — no per-SKU query. Empty set when no weight SKUs / no
+  // ledger. `prevAt ?? anchorAt` picks the earliest date any window reaches.
+  const earliestSalesDate = weightSkuIds.length
+    ? weightSkuIds
+        .map((id) => etBusinessDate(anchorBySku.get(id)!.prevAt ?? anchorBySku.get(id)!.anchorAt))
+        .reduce((min, d) => (d < min ? d : min))
+    : null;
+  const gapDates = earliestSalesDate ? await loadSalesGapDates(sb, locationId, earliestSalesDate) : new Set<string>();
+
+  // ── Weight rows (oz drift + variance) ──
   const weightRows: OnHandRow[] = await Promise.all(
     weightSkuIds.map(async (skuId): Promise<OnHandRow> => {
       const a = anchorBySku.get(skuId)!;
       const [receivedSince, consumedSince, salesSince, anchorStale] = await Promise.all([
         sumReceivedOzSince(sb, [skuId], locationId, a.anchorAt),
         sumConsumedOzSince(sb, [skuId], locationId, a.anchorAt),
-        sumSalesDirectOzSince(sb, [skuId], locationId, a.anchorAt),
+        sumSalesDirectOzSince(sb, [skuId], locationId, a.anchorAt, gapDates),
         detectRetroEditStaleness(sb, locationId, a.anchorAt, now),
       ]);
       // Drift spec 2026-07-31: consumed = prep production + DIRECT sales lane.
-      // The production term keeps null-taint authority (a tainted SKU stays
-      // advisory-null); the sales term is 0-or-positive, never null.
+      // BOTH terms may null-taint now (production when it can't derive; sales
+      // when its window has a materialization gap or collapsed — hardening
+      // 2026-07-31). Either null → consumed null → drift advisory. Honest-null.
       const prodSince = consumedSince.get(skuId) ?? null;
+      const salesSinceOz = salesSince.get(skuId) ?? null;
       const onHand = computeOnHand(
         {
           skuId,
           anchorOz: a.anchorOz,
           anchorAt: a.anchorAt,
           receivedSinceOz: receivedSince.get(skuId) ?? null,
-          consumedSinceOz: prodSince == null ? null : prodSince + (salesSince.get(skuId) ?? 0),
+          consumedSinceOz: prodSince == null || salesSinceOz == null ? null : prodSince + salesSinceOz,
           anchorStale,
         },
         now,
@@ -373,11 +387,12 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
         const [rB, cB, sB] = await Promise.all([
           sumReceivedOzBetween(sb, [skuId], locationId, a.prevAt, a.anchorAt),
           sumConsumedOzBetween(sb, [skuId], locationId, a.prevAt, a.anchorAt),
-          sumSalesDirectOzBetween(sb, [skuId], locationId, a.prevAt, a.anchorAt),
+          sumSalesDirectOzBetween(sb, [skuId], locationId, a.prevAt, a.anchorAt, gapDates),
         ]);
         receivedBetweenOz = rB.get(skuId) ?? null;
         const prodBetween = cB.get(skuId) ?? null;
-        consumedBetweenOz = prodBetween == null ? null : prodBetween + (sB.get(skuId) ?? 0);
+        const salesBetween = sB.get(skuId) ?? null;
+        consumedBetweenOz = prodBetween == null || salesBetween == null ? null : prodBetween + salesBetween;
       }
       const variance = computeVariance({
         skuId,
@@ -618,8 +633,14 @@ async function sumSalesDirectOzWindow(
   locationId: string,
   fromDate: string,
   untilDateExclusive: string | null,
-): Promise<Map<string, number>> {
-  const out = new Map<string, number>(skuIds.map((id) => [id, 0]));
+  gapDates: ReadonlySet<string>,
+): Promise<Map<string, number | null>> {
+  // Untrustworthy window (gap or collapsed) → the sales term is null (advisory),
+  // exactly like the production term when it can't derive. Honest-null > silent-0.
+  if (salesWindowUntrustworthy(gapDates, fromDate, untilDateExclusive)) {
+    return new Map<string, number | null>(skuIds.map((id) => [id, null]));
+  }
+  const out = new Map<string, number | null>(skuIds.map((id) => [id, 0]));
   let q = sb.from("toast_daily_depletion")
     .select("sku_id, direct_oz")
     .eq("location_id", locationId)
@@ -639,8 +660,9 @@ async function sumSalesDirectOzSince(
   skuIds: string[],
   locationId: string,
   anchorIso: string,
-): Promise<Map<string, number>> {
-  return sumSalesDirectOzWindow(sb, skuIds, locationId, etBusinessDate(anchorIso), null);
+  gapDates: ReadonlySet<string>,
+): Promise<Map<string, number | null>> {
+  return sumSalesDirectOzWindow(sb, skuIds, locationId, etBusinessDate(anchorIso), null, gapDates);
 }
 
 async function sumSalesDirectOzBetween(
@@ -649,8 +671,38 @@ async function sumSalesDirectOzBetween(
   locationId: string,
   prevIso: string,
   anchorIso: string,
-): Promise<Map<string, number>> {
-  return sumSalesDirectOzWindow(sb, skuIds, locationId, etBusinessDate(prevIso), etBusinessDate(anchorIso));
+  gapDates: ReadonlySet<string>,
+): Promise<Map<string, number | null>> {
+  return sumSalesDirectOzWindow(sb, skuIds, locationId, etBusinessDate(prevIso), etBusinessDate(anchorIso), gapDates);
+}
+
+/**
+ * Sales-coverage GAP dates for a location on/after `sinceDate` (hardening
+ * 2026-07-31): business_dates that HAVE toast_sales_events but ZERO
+ * toast_daily_depletion rows — the cron pulled that day but never materialized
+ * its depletion (or the materialize failed). Two distinct-date queries, unioned
+ * in memory; run ONCE per loadOnHand (not per SKU). Known conservative edge: a
+ * day whose sales were ALL excluded/unmapped also materializes to zero rows and
+ * reads as a gap → that window's SKUs go advisory-null. Acceptable (honest
+ * pessimism; a fully-excluded day at a sub shop is effectively never) and safe.
+ */
+async function loadSalesGapDates(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+  sinceDate: string,
+): Promise<Set<string>> {
+  const [evRes, deplRes] = await Promise.all([
+    sb.from("toast_sales_events").select("business_date").eq("location_id", locationId).gte("business_date", sinceDate)
+      .returns<Array<{ business_date: string }>>(),
+    sb.from("toast_daily_depletion").select("business_date").eq("location_id", locationId).gte("business_date", sinceDate)
+      .returns<Array<{ business_date: string }>>(),
+  ]);
+  if (evRes.error) throw new Error(`loadSalesGapDates events: ${evRes.error.message}`);
+  if (deplRes.error) throw new Error(`loadSalesGapDates depletion: ${deplRes.error.message}`);
+  const materialized = new Set((deplRes.data ?? []).map((r) => r.business_date));
+  const gaps = new Set<string>();
+  for (const r of evRes.data ?? []) if (!materialized.has(r.business_date)) gaps.add(r.business_date);
+  return gaps;
 }
 
 /** The latest materialized sales business_date at a location (the coverage hint

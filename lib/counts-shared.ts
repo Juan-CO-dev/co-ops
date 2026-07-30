@@ -370,6 +370,33 @@ export function etBusinessDate(iso: string): string {
 }
 
 /**
+ * Is the sales-depletion term for a window UNTRUSTWORTHY? (hardening 2026-07-31,
+ * council P1 — the silent-zero taint). The materialized ledger is written one
+ * day per nightly cron, best-effort — a MISSING day (pull succeeded, materialize
+ * failed / never ran) reads as zero sales and silently inflates on-hand. Two
+ * cases force the sales term to null (advisory), matching how the production
+ * term already null-taints when it can't derive cleanly:
+ *   1. a GAP date (a day with sales events but no depletion rows) falls in the
+ *      window [fromDate, untilExclusive) — coverage is incomplete.
+ *   2. a BETWEEN window collapsed to empty (untilExclusive <= fromDate — two
+ *      counts on the same ET day): the intra-day sales fraction is unknowable
+ *      at day grain, so variance stays advisory rather than counting 0.
+ * `untilExclusive` null = the open since-window (case 2 never applies). Dates
+ * are YYYY-MM-DD (lexicographically sortable). Pure.
+ */
+export function salesWindowUntrustworthy(
+  gapDates: ReadonlySet<string>,
+  fromDate: string,
+  untilExclusive: string | null,
+): boolean {
+  if (untilExclusive !== null && untilExclusive <= fromDate) return true; // collapsed between-window
+  for (const g of gapDates) {
+    if (g >= fromDate && (untilExclusive === null || g < untilExclusive)) return true;
+  }
+  return false;
+}
+
+/**
  * Compute on-hand for one SKU (Juan's feed/verify model). Drift is oz-native
  * (A3). Any null on the derive side → driftOz null → onHandOz null (advisory,
  * never a fabricated number). A SKU never counted (anchorOz null) has no anchor
