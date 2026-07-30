@@ -69,7 +69,9 @@ New PATCH `/[id]/items/[itemId]/input-type` (≥7, Tier B) → new
 The INPUT-TYPE FREEZE (#214) blocks *implicit* conversion only; this route is the
 *explicit* one. Converting inventory→question prefills the line label with the
 current resolved display name so the question never starts blank. Mirror rows
-(openingPhase2) are rejected 400 (`mirror_rows_sealed`).
+(openingPhase2 meta, no columns) are rejected 400 via the `not_a_prep_item`
+guard — sealed either way; `mirror_rows_sealed` stays whitelisted client-side
+for any future explicit check.
 
 ### D. Section-question edit-in-place (`SectionsTab`)
 New `updateSectionQuestion` + PATCH `/section-questions/{id}` (≥8, Tier B):

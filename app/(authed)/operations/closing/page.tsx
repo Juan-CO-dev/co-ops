@@ -507,7 +507,9 @@ export default async function ClosingPage({ searchParams }: PageProps) {
         const { count, error: acErr } = await sb
           .from("checklist_completions")
           .select("id", { count: "exact", head: true })
-          .in("instance_id", amInstanceIds);
+          .in("instance_id", amInstanceIds)
+          .is("superseded_at", null)
+          .is("revoked_at", null);
         if (acErr) throw new Error(`am-prep gap completion count: ${acErr.message}`);
         amPrepGap = (count ?? 0) === 0;
       }
