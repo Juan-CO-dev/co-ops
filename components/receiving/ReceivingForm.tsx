@@ -2,10 +2,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
+import { PhotoCapture } from "@/components/photos/PhotoCapture";
 import type { ReceivingFormData, ReceivingSkuOption } from "@/lib/receiving";
 
-interface LineDraft { skuId: string; level: string; qty: string; price: string; observed: string; note: string; }
-const emptyLine = (): LineDraft => ({ skuId: "", level: "", qty: "", price: "", observed: "", note: "" });
+interface LineDraft { skuId: string; level: string; qty: string; price: string; observed: string; note: string; photoId: string | null; }
+const emptyLine = (): LineDraft => ({ skuId: "", level: "", qty: "", price: "", observed: "", note: "", photoId: null });
 const field = "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-60";
 
 export function ReceivingForm({ formData, locationId, today }: { formData: ReceivingFormData; locationId: string; today: string }) {
@@ -16,6 +17,7 @@ export function ReceivingForm({ formData, locationId, today }: { formData: Recei
   const [invoiceNumber, setInvoiceNumber] = useState("");
   const [invoiceTotal, setInvoiceTotal] = useState("");
   const [notes, setNotes] = useState("");
+  const [receiptPhotoId, setReceiptPhotoId] = useState<string | null>(null);
   const [lines, setLines] = useState<LineDraft[]>([emptyLine()]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -35,14 +37,18 @@ export function ReceivingForm({ formData, locationId, today }: { formData: Recei
       invoiceNumber: invoiceNumber.trim() || null,
       invoiceTotal: num(invoiceTotal),
       notes: notes.trim() || null,
+      // FORK 1: store the canonical app URL in the existing receipt_url/photo_url
+      // TEXT columns — it renders directly as an href and needs no DDL.
+      receiptUrl: receiptPhotoId ? `/api/photos/${receiptPhotoId}` : null,
       lines: lines.filter((l) => l.skuId !== "" && l.qty.trim() !== "").map((l) => ({
         skuId: l.skuId, qtyReceived: Number(l.qty), unitPrice: num(l.price), observedOzPerEach: num(l.observed),
         notes: l.note.trim() || null, receivedLevelLabel: l.level.trim() || null,
+        photoUrl: l.photoId ? `/api/photos/${l.photoId}` : null,
       })),
     };
     const res = await fetch("/api/operations/receiving", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
     setBusy(false);
-    if (res.ok) { router.refresh(); setVendorId(""); setInvoiceNumber(""); setInvoiceTotal(""); setNotes(""); setLines([emptyLine()]); }
+    if (res.ok) { router.refresh(); setVendorId(""); setInvoiceNumber(""); setInvoiceTotal(""); setNotes(""); setReceiptPhotoId(null); setLines([emptyLine()]); }
     else { const j = await res.json().catch(() => ({} as { code?: string })); setErr(t(("receiving.error." + (j?.code ?? "generic")) as never)); }
   };
 
@@ -66,14 +72,12 @@ export function ReceivingForm({ formData, locationId, today }: { formData: Recei
       <label className="mt-3 block"><span className="text-sm font-bold text-co-text">{t("receiving.form.notes")}</span>
         <textarea className={`${field} min-h-[72px] py-2`} value={notes} disabled={busy} onChange={(e) => setNotes(e.target.value)} placeholder={t("receiving.form.notes_hint")} aria-label={t("receiving.form.notes")} /></label>
 
-      {/* Receipt attachment — DISABLED Phase-6 stub (A1): column + plumbing land in
-          this PR (vendor_deliveries.receipt_url); no bucket/uploader yet. */}
+      {/* Receipt attachment — LIVE (photo uploader seam, 0164). Stores the
+          canonical /api/photos/{id} URL in vendor_deliveries.receipt_url (FORK 1). */}
       <div className="mt-3">
         <span className="block text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">{t("receiving.form.receipt_label")}</span>
-        <button type="button" disabled aria-label={t("receiving.form.receipt_stub")}
-          className="mt-1 inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 border-dashed border-co-border-2 bg-white px-4 text-sm font-semibold text-co-text-dim opacity-70">
-          {t("receiving.form.receipt_stub")}
-        </button>
+        <PhotoCapture className="mt-1" locationId={locationId} label={t("receiving.form.receipt_capture")}
+          initialPhotoId={receiptPhotoId} onUploaded={setReceiptPhotoId} />
       </div>
 
       <h3 className="mt-4 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">{t("receiving.form.lines")}</h3>
@@ -106,11 +110,10 @@ export function ReceivingForm({ formData, locationId, today }: { formData: Recei
                 <input className={field} type="number" min={0} step="any" inputMode="decimal" placeholder={t("receiving.form.observed")} value={l.observed} disabled={busy} onChange={(e) => setLine(i, { observed: e.target.value })} aria-label={t("receiving.form.observed")} />
               </div>
               <input className={field} value={l.note} disabled={busy} onChange={(e) => setLine(i, { note: e.target.value })} placeholder={t("receiving.form.line_note")} aria-label={t("receiving.form.line_note")} />
-              {/* Per-line photo — DISABLED Phase-6 stub (A1). */}
-              <button type="button" disabled aria-label={t("receiving.form.photo_stub")}
-                className="mt-2 inline-flex min-h-[40px] items-center justify-center rounded-lg border-2 border-dashed border-co-border-2 bg-white px-3 text-xs font-semibold text-co-text-dim opacity-70">
-                {t("receiving.form.photo_stub")}
-              </button>
+              {/* Per-line photo — LIVE (photo uploader seam, 0164). Stores the
+                  canonical /api/photos/{id} URL in vendor_delivery_items.photo_url. */}
+              <PhotoCapture className="mt-2" locationId={locationId} label={t("receiving.form.photo_capture")}
+                initialPhotoId={l.photoId} onUploaded={(pid) => setLine(i, { photoId: pid })} />
               {lines.length > 1 ? (
                 <button type="button" disabled={busy} onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))} className="mt-2 ml-3 text-xs font-bold text-co-cta">{t("receiving.form.remove_line")}</button>
               ) : null}

@@ -329,6 +329,9 @@ export interface ChecklistDetailItem {
   countValue: number | null;
   note: string | null; // null unless viewer.level >= REPORTS_HUB_NOTES_LEVEL
   isTempFlag: boolean; // true when item is in location's tempItemIds AND count_value > FRIDGE_DEFAULT_SAFE_MAX_F
+  /** Attached completion photo id (photo uploader seam, 0164); null when none.
+   *  Rendered as a /api/photos/{id} link — visible to any viewer of the report. */
+  photoId: string | null;
 }
 
 /**
@@ -403,10 +406,11 @@ async function loadChecklistDetail(
     completed_by: string | null;
     count_value: number | null;
     notes: string | null;
+    photo_id: string | null;
   }>((from, to) =>
     service
       .from("checklist_completions")
-      .select("template_item_id, completed_by, count_value, notes")
+      .select("template_item_id, completed_by, count_value, notes, photo_id")
       .eq("instance_id", args.instanceId)
       .is("superseded_at", null)
       .is("revoked_at", null)
@@ -416,7 +420,7 @@ async function loadChecklistDetail(
 
   const compByItem = new Map<
     string,
-    { completed_by: string | null; count_value: number | null; notes: string | null }
+    { completed_by: string | null; count_value: number | null; notes: string | null; photo_id: string | null }
   >();
   for (const c of comps) {
     compByItem.set(c.template_item_id, c);
@@ -451,6 +455,7 @@ async function loadChecklistDetail(
       // isTempFlag: item is in the location's fridge temp registry AND its count exceeds the safe max.
       // tempItemIds already loaded above (after the IDOR guard).
       isTempFlag: tempItemIds.has(ti.id) && countValue !== null && countValue > FRIDGE_DEFAULT_SAFE_MAX_F,
+      photoId: c?.photo_id ?? null,
     };
   });
 
@@ -507,6 +512,8 @@ export interface OpeningDetailItem {
   prepNeed: number | null;
   /** How this spot-check resolved; null for non-spot-check items. */
   resolution: OpeningResolution;
+  /** Attached completion photo id (photo uploader seam, 0164); null when none. */
+  photoId: string | null;
 }
 
 export interface OpeningReportDetail {
@@ -607,10 +614,11 @@ async function loadOpeningDetail(
     count_value: number | null;
     notes: string | null;
     prep_data: unknown;
+    photo_id: string | null;
   }>((from, to) =>
     service
       .from("checklist_completions")
-      .select("template_item_id, completed_by, count_value, notes, prep_data")
+      .select("template_item_id, completed_by, count_value, notes, prep_data, photo_id")
       .eq("instance_id", args.instanceId)
       .is("superseded_at", null)
       .is("revoked_at", null)
@@ -623,7 +631,7 @@ async function loadOpeningDetail(
   // so the phase1 row is preferred when both exist for one item.
   const compByItem = new Map<
     string,
-    { completed_by: string | null; count_value: number | null; notes: string | null; prep_data: unknown }
+    { completed_by: string | null; count_value: number | null; notes: string | null; prep_data: unknown; photo_id: string | null }
   >();
   for (const c of comps) {
     const existing = compByItem.get(c.template_item_id);
@@ -684,6 +692,7 @@ async function loadOpeningDetail(
       groundTruth: p1?.groundTruth ?? null,
       prepNeed: p1?.prepNeed ?? null,
       resolution,
+      photoId: c?.photo_id ?? null,
     };
   });
 
