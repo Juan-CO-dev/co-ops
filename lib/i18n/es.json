@@ -2322,6 +2322,7 @@
   "counts.onhand.title": "Existencias",
   "counts.onhand.none": "Aún no hay conteo — registra uno arriba para anclar las existencias.",
   "counts.onhand.anchor_at": "Anclado al conteo del {date}.",
+  "counts.onhand.sales_through": "Ventas de caja contadas hasta el {date}.",
   "counts.onhand.on_hand": "{oz} oz en existencia",
   "counts.onhand.advisory": "referencial",
   "counts.onhand.anchor": "contado",

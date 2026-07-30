@@ -179,12 +179,61 @@ export async function pullSalesForAllLocations(businessDate: string): Promise<Ar
   return out;
 }
 
+// ─── Daily depletion materializer (drift spec 2026-07-31) ────────────────────
+
+/**
+ * Materialize one (location, business_date) day of the sales-consumption
+ * derivation into toast_daily_depletion — the cache counts' drift reads
+ * (SUM(direct_oz) over the anchor window; flattened_oz stored for transparency,
+ * never summed into drift — the double-count law). Idempotent: deletes the
+ * day's rows, re-derives, re-inserts — safe on re-pulls and void revisions.
+ * Actor-less (cron/backfill path); audited with actor_context "cron".
+ */
+export async function materializeDailyDepletion(
+  locationId: string,
+  businessDate: string,
+): Promise<{ rows: number }> {
+  requireYmd(businessDate);
+  const consumption = await deriveSalesConsumption(locationId, businessDate);
+  const rows = consumption.skuConsumed
+    .filter((r) => r.directOz > 0 || r.flattenedOz > 0)
+    .map((r) => ({
+      location_id: locationId,
+      business_date: businessDate,
+      sku_id: r.skuId,
+      direct_oz: r.directOz,
+      flattened_oz: r.flattenedOz,
+    }));
+
+  const sb = getServiceRoleClient();
+  const { error: delErr } = await sb.from("toast_daily_depletion")
+    .delete().eq("location_id", locationId).eq("business_date", businessDate);
+  if (delErr) throw new Error(`toast-depletion delete-day: ${delErr.message}`);
+  if (rows.length > 0) {
+    const { error: insErr } = await sb.from("toast_daily_depletion").insert(rows);
+    if (insErr) throw new Error(`toast-depletion insert: ${insErr.message}`);
+  }
+  void audit({
+    actorId: null, actorRole: null,
+    action: "toast_depletion.materialize", resourceTable: "toast_daily_depletion", resourceId: locationId,
+    metadata: { business_date: businessDate, rows: rows.length, actor_context: "cron" },
+    ipAddress: null, userAgent: null,
+  });
+  return { rows: rows.length };
+}
+
 // ─── Exclusions (append-only active-flag config) ─────────────────────────────
 
 export interface ExclusionView extends IngestExclusion { createdAt: string }
 
 export async function listExclusions(actor: AuthContext): Promise<ExclusionView[]> {
   requireLevel(actor, TOAST_SALES_READ_MIN);
+  return loadActiveExclusions();
+}
+
+/** Actor-less exclusions core (the cron/backfill materializer path — mirrors
+ *  the doPull(…, actor|null) convention). */
+async function loadActiveExclusions(): Promise<ExclusionView[]> {
   const sb = getServiceRoleClient();
   const { data, error } = await sb.from("toast_ingest_exclusions")
     .select("id, location_id, kind, value, note, created_at").eq("active", true)
@@ -254,11 +303,17 @@ export interface SalesConsumption {
 
 export async function salesConsumption(actor: AuthContext, locationId: string, businessDate: string): Promise<SalesConsumption> {
   requireLevel(actor, TOAST_SALES_READ_MIN);
+  return deriveSalesConsumption(locationId, businessDate);
+}
+
+/** Actor-less derivation core — the admin surface gates via salesConsumption;
+ *  the daily-depletion materializer (cron/backfill) calls this directly. */
+export async function deriveSalesConsumption(locationId: string, businessDate: string): Promise<SalesConsumption> {
   requireYmd(businessDate);
   const sb = getServiceRoleClient();
   const [latest, exclusions] = await Promise.all([
     loadLatestVersions(locationId, businessDate),
-    listExclusions(actor),
+    loadActiveExclusions(),
   ]);
 
   const live = [...latest.values()].filter((r) => !r.voided);
