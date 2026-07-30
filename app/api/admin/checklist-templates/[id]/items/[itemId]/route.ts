@@ -18,10 +18,14 @@ export async function PATCH(
   const su = assertStepUp(ctx, "A");
   if (!su.ok) return jsonError(403, su.code);
 
-  // LINE CONTENT ONLY. Name (label/labelEs) + par (parValue/parUnit) are the
-  // GLOBAL DEFINITION and move to .../[itemId]/definition (MoO+, Tier B).
+  // LINE CONTENT. Label/labelEs are accepted and routed by the write-side
+  // label law in updatePrepItemContent: question-shaped/unlinked lines edit
+  // the LINE (the question); a linked inventory line's name/par is the GLOBAL
+  // DEFINITION and 403s here — it lives on .../[itemId]/definition (MoO+, B).
   const b = parsed as Record<string, unknown>;
   const patch: PrepItemContentPatch = {};
+  if (typeof b.label === "string") patch.label = b.label;
+  if (b.labelEs === null || typeof b.labelEs === "string") patch.labelEs = b.labelEs as string | null;
   if (b.description === null || typeof b.description === "string") patch.description = b.description as string | null;
   if (b.descriptionEs === null || typeof b.descriptionEs === "string") patch.descriptionEs = b.descriptionEs as string | null;
   if (typeof b.displayOrder === "number") patch.displayOrder = b.displayOrder;

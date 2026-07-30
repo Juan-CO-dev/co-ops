@@ -475,6 +475,47 @@ export default async function ClosingPage({ searchParams }: PageProps) {
     auth.user.language,
   );
 
+  // Fulledit floor cut F — the AM-prep GAP advisory. Closing's auto-complete
+  // machinery makes an empty AM prep invisible (nobody is forced to open it);
+  // the closing screen is the one surface a manager reliably sees at day's
+  // end, so it carries the signal: today's AM prep exists with ZERO saved
+  // completions (or was never opened). Advisory only — never blocks finalize.
+  let amPrepGap = false;
+  if (!isHistorical) {
+    const { data: amTmpls, error: atErr } = await sb
+      .from("checklist_templates")
+      .select("id")
+      .eq("type", "prep")
+      .eq("prep_subtype", "am_prep")
+      .eq("location_id", locationParam)
+      .returns<Array<{ id: string }>>();
+    if (atErr) throw new Error(`am-prep gap template lookup: ${atErr.message}`);
+    const amTmplIds = (amTmpls ?? []).map((t) => t.id);
+    if (amTmplIds.length > 0) {
+      const { data: amInstances, error: aiErr } = await sb
+        .from("checklist_instances")
+        .select("id")
+        .in("template_id", amTmplIds)
+        .eq("location_id", locationParam)
+        .eq("date", targetDate)
+        .returns<Array<{ id: string }>>();
+      if (aiErr) throw new Error(`am-prep gap instance lookup: ${aiErr.message}`);
+      const amInstanceIds = (amInstances ?? []).map((i) => i.id);
+      if (amInstanceIds.length === 0) {
+        amPrepGap = true; // never opened
+      } else {
+        const { count, error: acErr } = await sb
+          .from("checklist_completions")
+          .select("id", { count: "exact", head: true })
+          .in("instance_id", amInstanceIds)
+          .is("superseded_at", null)
+          .is("revoked_at", null);
+        if (acErr) throw new Error(`am-prep gap completion count: ${acErr.message}`);
+        amPrepGap = (count ?? 0) === 0;
+      }
+    }
+  }
+
   const initialState: ClosingInitialState = {
     location: locationRow,
     instance: rowToInstance(instanceRow),
@@ -488,6 +529,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
     todayDate: today,
     reportRefChains,
     reportRefCanEdit,
+    amPrepGap,
   };
 
   return <ClosingClient initialState={initialState} />;

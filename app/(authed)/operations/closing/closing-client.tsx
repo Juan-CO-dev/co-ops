@@ -119,6 +119,12 @@ export interface ClosingInitialState {
    * report-reference template_item_id. Drives Edit affordance rendering.
    */
   reportRefCanEdit: Record<string, boolean>;
+  /**
+   * Fulledit floor cut F — today's AM prep exists with ZERO saved completions
+   * (or was never opened). Renders an ADVISORY pill only; never blocks
+   * finalize (council: no hard gate on AM prep). False on historical views.
+   */
+  amPrepGap: boolean;
   // NOTE: actorName / actorEmail / actorLanguage no longer carried here —
   // UserMenu mounts at the (authed) route group layout (per
   // SPEC_AMENDMENTS.md C.39); TranslationProvider is layout-owned and
@@ -220,6 +226,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
     banner: initialBanner,
     reportRefChains,
     reportRefCanEdit,
+    amPrepGap,
   } = initialState;
 
   // Live state.
@@ -898,6 +905,17 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
        * depth so any future code path that tries to setPinOpen(true) for
        * a non-finalizing actor finds no modal to open.
        */}
+
+      {/* AM-prep GAP advisory (fulledit floor cut F) — today's AM prep has zero
+        * saved completions (or was never opened). The closing screen is the one
+        * surface a manager reliably sees at day's end; closing's auto-complete
+        * machinery otherwise makes an empty AM prep invisible. ADVISORY only —
+        * never gates finalize (council: no hard gate on AM prep). */}
+      {!readOnly && amPrepGap ? (
+        <div className="mt-6 rounded-2xl border-2 border-co-warning bg-co-warning-surface p-4">
+          <p className="text-sm font-bold text-co-text">{t("closing.am_prep_gap.banner")}</p>
+        </div>
+      ) : null}
 
       {/* Cash deposit required banner — shown when the closer is KH+, Walk-Out
         * Verification is complete, but the cash deposit hasn't been submitted yet.

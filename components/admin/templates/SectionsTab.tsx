@@ -510,11 +510,56 @@ function SectionQuestionRow({
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [confirmingDisable, setConfirmingDisable] = useState(false);
+  const [editing, setEditing] = useState(false);
+
+  // Edit-form state, prefilled from the question's current values.
+  const [label, setLabel] = useState(question.label);
+  const [labelEs, setLabelEs] = useState(question.labelEs ?? "");
+  const [inputType, setInputType] = useState<LineInputType>(question.inputType);
+  const [includeNote, setIncludeNote] = useState(question.includeNote);
+  const [minRole, setMinRole] = useState(question.minRoleLevel != null ? question.minRoleLevel.toString() : "");
+  const [required, setRequired] = useState(question.required);
 
   const sectionLabel = sectionLabelByLang(sections, question.sectionSlug, language);
   const inputTypeKey =
     INPUT_TYPE_OPTIONS.find((o) => o.value === question.inputType)?.key ??
     ("admin.templates.section_shape.free_text" as TranslationKey);
+
+  const field =
+    "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60";
+
+  const resetEdit = () => {
+    setLabel(question.label);
+    setLabelEs(question.labelEs ?? "");
+    setInputType(question.inputType);
+    setIncludeNote(question.includeNote);
+    setMinRole(question.minRoleLevel != null ? question.minRoleLevel.toString() : "");
+    setRequired(question.required);
+    setErrorMsg(null);
+  };
+
+  const save = async () => {
+    if (submitting) return;
+    setErrorMsg(null);
+    if (!label.trim()) { setErrorMsg(t(resolveErrorKey("invalid_label"))); return; }
+    if ((await requestStepUp("B")) !== "ok") return;
+    setSubmitting(true);
+    const result = await postJson(
+      `/api/admin/checklist-templates/section-questions/${question.questionId}`,
+      {
+        label: label.trim(),
+        labelEs: labelEs.trim() || null,
+        inputType,
+        includeNote: inputType === "yes_no" ? includeNote : undefined,
+        minRoleLevel: minRole.trim() === "" ? null : Number(minRole),
+        required,
+      },
+      "PATCH",
+    );
+    setSubmitting(false);
+    if (result.ok) { setEditing(false); router.refresh(); }
+    else setErrorMsg(t(resolveErrorKey(result.code)));
+  };
 
   const disable = async () => {
     if (submitting) return;
@@ -543,15 +588,95 @@ function SectionQuestionRow({
             </span>
           </p>
         </div>
-        <button
-          type="button"
-          disabled={submitting}
-          onClick={() => setConfirmingDisable((v) => !v)}
-          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta hover:border-co-cta disabled:opacity-50"
-        >
-          {t("admin.templates.section_questions_panel.disable")}
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={() => { if (!editing) resetEdit(); setEditing((v) => !v); setConfirmingDisable(false); }}
+            className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-text disabled:opacity-50"
+          >
+            {t("admin.templates.edit")}
+          </button>
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={() => { setConfirmingDisable((v) => !v); setEditing(false); }}
+            className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta hover:border-co-cta disabled:opacity-50"
+          >
+            {t("admin.templates.section_questions_panel.disable")}
+          </button>
+        </div>
       </div>
+
+      {editing ? (
+        <div className="mt-3 flex flex-col gap-3 rounded-lg border-2 border-co-gold-deep bg-co-surface p-3">
+          <label className="block">
+            <span className="text-sm font-bold text-co-text">{t("admin.templates.section_questions_panel.add_label_en")}</span>
+            <input className={field} value={label} onChange={(e) => setLabel(e.target.value)} />
+          </label>
+          <label className="block">
+            <span className="text-sm font-bold text-co-text">{t("admin.templates.section_questions_panel.add_label_es")}</span>
+            <input className={field} value={labelEs} onChange={(e) => setLabelEs(e.target.value)} />
+          </label>
+          <label className="block">
+            <span className="text-sm font-bold text-co-text">{t("admin.templates.section_questions_panel.add_input_type")}</span>
+            <select className={field} value={inputType} onChange={(e) => setInputType(e.target.value as LineInputType)}>
+              {INPUT_TYPE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{t(o.key)}</option>
+              ))}
+            </select>
+          </label>
+          {inputType === "yes_no" ? (
+            <label className="flex items-center gap-2 text-sm font-bold text-co-text">
+              <input
+                type="checkbox"
+                className="h-5 w-5 accent-co-gold"
+                checked={includeNote}
+                onChange={(e) => setIncludeNote(e.target.checked)}
+              />
+              {t("admin.templates.sections_panel.add_include_note")}
+            </label>
+          ) : null}
+          <label className="block">
+            <span className="text-sm font-bold text-co-text">{t("admin.templates.section_questions_panel.add_min_role")}</span>
+            <select className={field} value={minRole} onChange={(e) => setMinRole(e.target.value)}>
+              <option value="">—</option>
+              {roleLevelOptions().map((o) => (
+                <option key={o.level} value={o.level}>{o.label} ({o.level})</option>
+              ))}
+            </select>
+          </label>
+          <p className="-mt-1 text-xs text-co-text-muted">{t("admin.templates.min_role.hint")}</p>
+          <label className="flex items-center gap-2 text-sm font-bold text-co-text">
+            <input
+              type="checkbox"
+              className="h-5 w-5 accent-co-gold"
+              checked={required}
+              onChange={(e) => setRequired(e.target.checked)}
+            />
+            {t("admin.templates.section_questions_panel.add_required")}
+          </label>
+          {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => { resetEdit(); setEditing(false); }}
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text disabled:opacity-50"
+            >
+              {t("admin.templates.cancel")}
+            </button>
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => void save()}
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50"
+            >
+              {t("admin.templates.save")}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {confirmingDisable ? (
         <div className="mt-3 rounded-lg border-2 border-co-cta bg-co-cta/10 p-3">

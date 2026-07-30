@@ -29,7 +29,7 @@ export async function PATCH(
 
   if (Object.keys(patch).length === 0) return jsonError(400, "invalid_payload", { message: "no editable fields" });
   try {
-    await updatePrepItemContent(ctx, { templateId: id, itemId, patch });
+    await updatePrepItemContent(ctx, { templateId: id, itemId, patch, allowRegistryWrite: true });
     return jsonOk({ ok: true });
   } catch (e) {
     if (e instanceof AdminTemplateError) return jsonError(e.status, e.code, { message: e.message });

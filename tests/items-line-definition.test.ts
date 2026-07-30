@@ -42,6 +42,7 @@ const meatballsItem: ItemDefn = {
   nameEs: "Albóndigas",
   defaultPar: 2,
   defaultParUnit: "1/6 Pan",
+  active: true,
 } as ItemDefn;
 
 describe("isQuestionShapedLine", () => {
@@ -92,5 +93,16 @@ describe("resolveLineDefinition — question lines keep their label when linked"
   it("an UNLINKED question line falls back to its label (unchanged behavior)", () => {
     const r = resolveLineDefinition(baseLine({ itemId: null }), null);
     expect(r.name).toBe("Meatball mix - ready?");
+  });
+
+  it("a DEACTIVATED item no longer speaks for its line (fulledit floor)", () => {
+    const deadItem: ItemDefn = { ...meatballsItem, active: false };
+    const parLine = baseLine({
+      label: "Old label",
+      prepMeta: { section: "Veg", columns: ["par", "on_hand", "back_up", "total"], parValue: 7, parUnit: "1/3 Pan", specialInstruction: null },
+    });
+    const r = resolveLineDefinition(parLine, deadItem);
+    expect(r.name).toBe("Old label");
+    expect(r.par).toBe(7);
   });
 });

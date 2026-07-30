@@ -23,7 +23,7 @@ import {
   rowToTemplateItem,
 } from "@/lib/template-items";
 import { setPrepItemMeta, setPrepItemSection, narrowPrepTemplateItem, isPrepMeta, seedPrepItem } from "@/lib/prep";
-import { isQuestionShapedColumns } from "@/lib/items";
+import { isQuestionShapedColumns, isQuestionShapedLine, resolvePrepLabelWriteTarget } from "@/lib/items";
 import { operationalNow } from "@/lib/midshift";
 import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 import { shapeToColumns, isPrepSectionName } from "@/lib/prep-sections";
@@ -35,6 +35,7 @@ import type {
   ChecklistTemplateItemTranslations,
   LineInputType,
   ParMode,
+  PrepColumn,
   PrepMeta,
   PrepSection,
   PrepSectionDefn,
@@ -614,10 +615,15 @@ export interface PrepItemContentPatch {
 
 function mergeEsTranslation(
   existing: ChecklistTemplateItemTranslations | null,
-  patch: { description?: string | null; specialInstruction?: string | null },
+  patch: { label?: string | null; description?: string | null; specialInstruction?: string | null },
 ): ChecklistTemplateItemTranslations {
   const next: ChecklistTemplateItemTranslations = { ...(existing ?? {}) };
   const es = { ...(next.es ?? {}) };
+  if (patch.label !== undefined) {
+    // es.label is typed non-null; a null patch clears it by omission.
+    if (patch.label === null) delete es.label;
+    else es.label = patch.label;
+  }
   if (patch.description !== undefined) es.description = patch.description;
   if (patch.specialInstruction !== undefined) es.specialInstruction = patch.specialInstruction;
   next.es = es;
@@ -625,17 +631,22 @@ function mergeEsTranslation(
 }
 
 /**
- * In-place content edit of a prep template item (Tier A). Par + name (label/
- * labelEs) write the linked registry `items` row (edit-once-everywhere — they
- * apply to the item on every list it appears on). Line-level fields
- * (description/descriptionEs, specialInstruction/specialInstructionEs,
- * required, displayOrder) write the line via direct UPDATE + setPrepItemMeta.
- * Audits checklist_template_item.update with before/after (incl. item before/
- * after + item_id when par/name changed).
+ * In-place content edit of a prep template item (Tier A). WRITE-SIDE LABEL LAW
+ * (fulledit floor — mirrors resolveLineDefinition's read law):
+ *   - linked INVENTORY line: label/labelEs + par write the registry `items` row
+ *     (edit-once-everywhere) — requires `allowRegistryWrite` (the ≥8 definition
+ *     route sets it; the ≥7 content route does not).
+ *   - QUESTION-SHAPED line (linked or not) + unlinked lines: label/labelEs
+ *     write the LINE (label column + translations.es.label) — the label IS the
+ *     question. Par edits on question lines are rejected (they carry no par).
+ * Line-level fields (description/descriptionEs, specialInstruction/
+ * specialInstructionEs, required, displayOrder) write the line via direct
+ * UPDATE + setPrepItemMeta. Audits checklist_template_item.update with
+ * before/after (incl. item before/after + item_id when par/name changed).
  */
 export async function updatePrepItemContent(
   actor: AuthContext,
-  args: { templateId: string; itemId: string; patch: PrepItemContentPatch },
+  args: { templateId: string; itemId: string; patch: PrepItemContentPatch; allowRegistryWrite?: boolean },
 ): Promise<void> {
   const tmpl = await loadAuthorizedPrepTemplate(actor, args.templateId);
   const sb = getServiceRoleClient();
@@ -655,17 +666,34 @@ export async function updatePrepItemContent(
   const before: Record<string, unknown> = {};
   const after: Record<string, unknown> = {};
 
-  // ── Registry item (par + name → the item; edit-once-everywhere) ───────────
-  // Par and name (label/labelEs) write the linked `items` row, not the line —
-  // they apply to the item on every list it appears on. Validation of label
-  // emptiness mirrors the prior line-level check.
+  // ── The write-side label law ──────────────────────────────────────────────
+  const questionShaped = isQuestionShapedLine(item);
+  if (questionShaped && (patch.parValue !== undefined || patch.parUnit !== undefined)) {
+    throw new AdminTemplateError(400, "question_line_has_no_par", "Question lines carry no par");
+  }
+  const labelToLine = resolvePrepLabelWriteTarget(item) === "line";
+  const wantsRegistryWrite =
+    (!labelToLine && (patch.label !== undefined || patch.labelEs !== undefined)) ||
+    patch.parValue !== undefined ||
+    patch.parUnit !== undefined;
+  if (wantsRegistryWrite && !args.allowRegistryWrite) {
+    throw new AdminTemplateError(
+      403,
+      "label_is_global_definition",
+      "Name/par on a linked inventory line is the global definition — use the definition route",
+    );
+  }
+
+  // ── Registry item (par + linked-inventory name → the item) ────────────────
+  // Edit-once-everywhere: these apply to the item on every list it appears on.
+  // Question-shaped/unlinked lines route label to the LINE instead (below).
   const itemUpdate: Record<string, unknown> = {};
-  if (patch.label !== undefined) {
+  if (!labelToLine && patch.label !== undefined) {
     const v = patch.label.trim();
     if (!v) throw new AdminTemplateError(400, "invalid_label", "Label cannot be empty");
     itemUpdate.name = v;
   }
-  if (patch.labelEs !== undefined) itemUpdate.name_es = patch.labelEs?.trim() || null;
+  if (!labelToLine && patch.labelEs !== undefined) itemUpdate.name_es = patch.labelEs?.trim() || null;
   if (patch.parValue !== undefined) {
     if (patch.parValue !== null && (!Number.isFinite(patch.parValue) || patch.parValue < 0)) {
       throw new AdminTemplateError(400, "invalid_par", "Par must be a non-negative number or empty");
@@ -676,6 +704,12 @@ export async function updatePrepItemContent(
 
   // ── Top-level columns + en translations ──────────────────────────────────
   const colUpdate: Record<string, unknown> = {};
+  // Question/unlinked lines: the label edit IS the line edit (the question).
+  if (labelToLine && patch.label !== undefined) {
+    const v = patch.label.trim();
+    if (!v) throw new AdminTemplateError(400, "invalid_label", "Label cannot be empty");
+    if (v !== item.label) { before.label = item.label; after.label = v; colUpdate.label = v; }
+  }
   if (patch.description !== undefined) {
     const v = patch.description?.trim() || null;
     if (v !== item.description) { before.description = item.description; after.description = v; colUpdate.description = v; }
@@ -694,8 +728,10 @@ export async function updatePrepItemContent(
   }
 
   // es translations (description/specialInstruction stay line-level; label_es
-  // now lives on the item as name_es — see itemUpdate above).
-  const esPatch: { description?: string | null; specialInstruction?: string | null } = {};
+  // lives on the item as name_es for linked INVENTORY lines — see itemUpdate —
+  // and on translations.es.label for question/unlinked lines, per the law).
+  const esPatch: { label?: string | null; description?: string | null; specialInstruction?: string | null } = {};
+  if (labelToLine && patch.labelEs !== undefined) esPatch.label = patch.labelEs?.trim() || null;
   if (patch.descriptionEs !== undefined) esPatch.description = patch.descriptionEs?.trim() || null;
   if (patch.specialInstructionEs !== undefined) esPatch.specialInstruction = patch.specialInstructionEs?.trim() || null;
   if (Object.keys(esPatch).length > 0) {
@@ -1105,6 +1141,185 @@ export async function changePrepItemSection(
   });
 
   return { mirrorSyncedIds };
+}
+
+/**
+ * UNLINK a prep line from its registry item (fulledit floor, cut B server).
+ * The read law flips display to the line's own label the moment item_id nulls,
+ * so for INVENTORY lines (display was the registry name) the item's name/name_es
+ * is copied into the line label first — display continuity; nothing changes on
+ * screen except the "global" badge. Question lines keep their label untouched.
+ * A deactivated item's name is NOT copied (its line already displays the line
+ * label post-#214-E). Opening mirrors (references_template_item_id = this line)
+ * unlink too — otherwise registry propagation would keep touching a mirror
+ * whose source line has left the registry. Audited.
+ */
+export async function unlinkPrepItem(
+  actor: AuthContext,
+  args: { templateId: string; itemId: string },
+): Promise<{ unlinkedMirrorIds: string[] }> {
+  const tmpl = await loadAuthorizedPrepTemplate(actor, args.templateId);
+  const sb = getServiceRoleClient();
+
+  const { data: rawRow, error: rErr } = await sb
+    .from("checklist_template_items")
+    .select(TEMPLATE_ITEM_COLUMNS)
+    .eq("id", args.itemId)
+    .eq("template_id", args.templateId)
+    .eq("active", true)
+    .maybeSingle<TemplateItemRow>();
+  if (rErr) throw new Error(`unlinkPrepItem read failed: ${rErr.message}`);
+  if (!rawRow) throw new AdminTemplateError(404, "item_not_found", "Template item not found");
+  const item = rowToTemplateItem(rawRow);
+  if (!item.itemId) throw new AdminTemplateError(400, "not_linked", "Line has no registry link");
+
+  // Display continuity for inventory lines: freeze the current registry name
+  // into the line label before the link goes away.
+  const colUpdate: Record<string, unknown> = { item_id: null };
+  if (!isQuestionShapedLine(item)) {
+    const { data: reg, error: gErr } = await sb
+      .from("items")
+      .select("name, name_es, active")
+      .eq("id", item.itemId)
+      .maybeSingle<{ name: string; name_es: string | null; active: boolean }>();
+    if (gErr) throw new Error(`unlinkPrepItem item read failed: ${gErr.message}`);
+    if (reg?.active) {
+      colUpdate.label = reg.name;
+      if (reg.name_es) colUpdate.translations = mergeEsTranslation(item.translations, { label: reg.name_es });
+    }
+  }
+  const { error: uErr } = await sb.from("checklist_template_items").update(colUpdate).eq("id", args.itemId);
+  if (uErr) throw new Error(`unlinkPrepItem update failed: ${uErr.message}`);
+
+  // Unlink the opening mirrors (am_prep only; keyed by the LINE id).
+  let unlinkedMirrorIds: string[] = [];
+  if (tmpl.prep_subtype === "am_prep") {
+    const openingIds = await resolveAllActiveOpeningTemplateIds(sb, tmpl.location_id);
+    if (openingIds.length > 0) {
+      const { data: mirrors, error: mErr } = await sb
+        .from("checklist_template_items")
+        .update({ item_id: null })
+        .in("template_id", openingIds)
+        .eq("references_template_item_id", args.itemId)
+        .eq("active", true)
+        .select("id")
+        .returns<Array<{ id: string }>>();
+      if (mErr) throw new Error(`unlinkPrepItem mirror unlink failed: ${mErr.message}`);
+      unlinkedMirrorIds = (mirrors ?? []).map((m) => m.id);
+    }
+  }
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "checklist_template_item.update",
+    resourceTable: "checklist_template_items",
+    resourceId: args.itemId,
+    metadata: {
+      template_id: args.templateId,
+      prep_subtype: tmpl.prep_subtype,
+      field: "item_link",
+      before: { item_id: item.itemId },
+      after: { item_id: null, ...(colUpdate.label !== undefined ? { label_frozen: colUpdate.label } : {}) },
+      unlinked_mirror_ids: unlinkedMirrorIds,
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+
+  return { unlinkedMirrorIds };
+}
+
+/** The five per-line input types the explicit toggle accepts (= LineInputType). */
+const LINE_INPUT_TYPES: readonly LineInputType[] = ["on_hand", "portioned", "line", "yes_no", "free_text"];
+
+/**
+ * EXPLICIT per-line input-type change (fulledit floor, cut C). The INPUT-TYPE
+ * FREEZE (#214) blocks IMPLICIT conversion (section moves re-deriving columns);
+ * this is the deliberate path: an admin converts a line between question shapes
+ * (yes_no / free_text) and the numeric shapes (on_hand / portioned / line).
+ * Columns derive from the requested type via shapeToColumns — the same
+ * vocabulary the section registry uses (per-line input types, PR #89).
+ *
+ * Converting an INVENTORY line to a QUESTION prefills the line label (en + es)
+ * from the linked registry item so the question never starts blank/stale — the
+ * read law switches display to the line label the moment the shape flips.
+ * Mirror rows (openingPhase2 meta) are not prep-meta lines → 400.
+ */
+export async function setPrepItemInputType(
+  actor: AuthContext,
+  args: { templateId: string; itemId: string; inputType: LineInputType; includeNote?: boolean },
+): Promise<{ columns: PrepColumn[] }> {
+  const tmpl = await loadAuthorizedPrepTemplate(actor, args.templateId);
+  if (!LINE_INPUT_TYPES.includes(args.inputType)) {
+    throw new AdminTemplateError(400, "invalid_input_type", "Unknown input type");
+  }
+  const sb = getServiceRoleClient();
+
+  const { data: rawRow, error: rErr } = await sb
+    .from("checklist_template_items")
+    .select(TEMPLATE_ITEM_COLUMNS)
+    .eq("id", args.itemId)
+    .eq("template_id", args.templateId)
+    .eq("active", true)
+    .maybeSingle<TemplateItemRow>();
+  if (rErr) throw new Error(`setPrepItemInputType read failed: ${rErr.message}`);
+  if (!rawRow) throw new AdminTemplateError(404, "item_not_found", "Template item not found");
+  const item = rowToTemplateItem(rawRow);
+  if (!isPrepMeta(item.prepMeta)) throw new AdminTemplateError(400, "not_a_prep_item", "Item has no prep metadata");
+  const base: PrepMeta = item.prepMeta;
+
+  // yes_no keeps an existing note column by default; explicit flag overrides.
+  const includeNote = args.includeNote ?? (args.inputType === "yes_no" && base.columns.includes("free_text"));
+  const nextColumns = shapeToColumns(args.inputType, includeNote);
+  const wasQuestion = isQuestionShapedColumns(base.columns);
+  const becomesQuestion = isQuestionShapedColumns(nextColumns);
+  if (base.columns.join(",") === nextColumns.join(",")) return { columns: nextColumns }; // no-op
+
+  // Inventory → question with a live registry link: prefill the line label from
+  // the item so the question starts as the item's name, ready to be edited.
+  const colUpdate: Record<string, unknown> = {};
+  if (!wasQuestion && becomesQuestion && item.itemId) {
+    const { data: reg, error: gErr } = await sb
+      .from("items")
+      .select("name, name_es, active")
+      .eq("id", item.itemId)
+      .maybeSingle<{ name: string; name_es: string | null; active: boolean }>();
+    if (gErr) throw new Error(`setPrepItemInputType item read failed: ${gErr.message}`);
+    if (reg?.active) {
+      colUpdate.label = reg.name;
+      if (reg.name_es) {
+        colUpdate.translations = mergeEsTranslation(item.translations, { label: reg.name_es });
+      }
+    }
+  }
+  if (Object.keys(colUpdate).length > 0) {
+    const { error: uErr } = await sb.from("checklist_template_items").update(colUpdate).eq("id", args.itemId);
+    if (uErr) throw new Error(`setPrepItemInputType label prefill failed: ${uErr.message}`);
+  }
+
+  const nextMeta: PrepMeta = { ...base, columns: nextColumns };
+  await setPrepItemMeta(sb, { templateItemId: args.itemId, meta: nextMeta });
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "checklist_template_item.update",
+    resourceTable: "checklist_template_items",
+    resourceId: args.itemId,
+    metadata: {
+      template_id: args.templateId,
+      prep_subtype: tmpl.prep_subtype,
+      field: "input_type",
+      before: { columns: base.columns },
+      after: { columns: nextColumns, input_type: args.inputType },
+      ...(colUpdate.label !== undefined ? { label_prefilled: colUpdate.label } : {}),
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+
+  return { columns: nextColumns };
 }
 
 /**
@@ -3538,4 +3753,224 @@ export async function disableItemQuestion(
   });
 
   return { deactivatedLineCount: lineIds.length };
+}
+
+// ─── Question edit-in-place (fulledit floor, cut D) ─────────────────────────
+
+/** The editable fields of a section/item question (all optional = unchanged). */
+export interface QuestionEditPatch {
+  label?: string;
+  labelEs?: string | null;
+  inputType?: LineInputType;
+  includeNote?: boolean;
+  minRoleLevel?: number | null;
+  required?: boolean;
+}
+
+/** Parse a QuestionEditPatch from a raw JSON body (the routes' shared
+ * whitelist; value validation happens downstream in validateQuestionEditPatch). */
+export function parseQuestionEditPatch(b: Record<string, unknown>): QuestionEditPatch {
+  const patch: QuestionEditPatch = {};
+  if (typeof b.label === "string") patch.label = b.label;
+  if (b.labelEs === null || typeof b.labelEs === "string") patch.labelEs = b.labelEs as string | null;
+  if (typeof b.inputType === "string") patch.inputType = b.inputType as LineInputType;
+  if (typeof b.includeNote === "boolean") patch.includeNote = b.includeNote;
+  if (b.minRoleLevel === null || typeof b.minRoleLevel === "number") patch.minRoleLevel = b.minRoleLevel as number | null;
+  if (typeof b.required === "boolean") patch.required = b.required;
+  return patch;
+}
+
+/** Validate a QuestionEditPatch's field values (shared by both question kinds). */
+function validateQuestionEditPatch(patch: QuestionEditPatch): void {
+  if (patch.label !== undefined && !patch.label.trim()) {
+    throw new AdminTemplateError(400, "invalid_label", "Label cannot be empty");
+  }
+  if (patch.inputType !== undefined && !SECTION_QUESTION_INPUT_TYPES.includes(patch.inputType)) {
+    throw new AdminTemplateError(400, "invalid_input_type", "Unknown input type");
+  }
+  if (
+    patch.minRoleLevel !== undefined &&
+    patch.minRoleLevel !== null &&
+    (!Number.isInteger(patch.minRoleLevel) || patch.minRoleLevel < 0 || patch.minRoleLevel > 10)
+  ) {
+    throw new AdminTemplateError(400, "invalid_min_role", "min_role_level must be 0..10");
+  }
+}
+
+/**
+ * Push an edited question definition onto every ACTIVE line that carries it
+ * (prep live-edit law: questions edit in place and re-propagate — the freeze
+ * guards only IMPLICIT conversion; a question's own input-type edit is the
+ * deliberate path). Per line: label → line label, labelEs → translations.es
+ * .label, required → line required, minRole → line min_role_level (null falls
+ * back to the line's template default), inputType/includeNote → prep_meta
+ * .columns via setPrepItemMeta (section/par/SI preserved). Returns line ids.
+ */
+async function applyQuestionEditToLines(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  linkColumn: "section_question_id" | "item_question_id",
+  questionId: string,
+  next: { label: string; labelEs: string | null; inputType: LineInputType; includeNote: boolean; minRoleLevel: number | null; required: boolean },
+  changed: { label: boolean; labelEs: boolean; inputType: boolean; minRole: boolean; required: boolean },
+): Promise<string[]> {
+  const { data: lineRows, error: lErr } = await sb
+    .from("checklist_template_items")
+    .select(TEMPLATE_ITEM_COLUMNS)
+    .eq(linkColumn, questionId)
+    .eq("active", true)
+    .returns<TemplateItemRow[]>();
+  if (lErr) throw new Error(`applyQuestionEditToLines lookup failed: ${lErr.message}`);
+  const lines = (lineRows ?? []).map(rowToTemplateItem);
+
+  const updatedIds: string[] = [];
+  for (const line of lines) {
+    const colUpdate: Record<string, unknown> = {};
+    if (changed.label && line.label !== next.label) colUpdate.label = next.label;
+    if (changed.labelEs) colUpdate.translations = mergeEsTranslation(line.translations, { label: next.labelEs });
+    if (changed.required && line.required !== next.required) colUpdate.required = next.required;
+    if (changed.minRole) {
+      const lineMinRole = next.minRoleLevel ?? (await resolveDefaultMinRole(sb, line.templateId));
+      if (line.minRoleLevel !== lineMinRole) colUpdate.min_role_level = lineMinRole;
+    }
+    if (Object.keys(colUpdate).length > 0) {
+      const { error: uErr } = await sb.from("checklist_template_items").update(colUpdate).eq("id", line.id);
+      if (uErr) throw new Error(`applyQuestionEditToLines update ${line.id} failed: ${uErr.message}`);
+    }
+    if (changed.inputType && isPrepMeta(line.prepMeta)) {
+      const nextColumns = shapeToColumns(next.inputType, next.includeNote);
+      if (line.prepMeta.columns.join(",") !== nextColumns.join(",")) {
+        await setPrepItemMeta(sb, { templateItemId: line.id, meta: { ...line.prepMeta, columns: nextColumns } });
+      }
+    }
+    if (Object.keys(colUpdate).length > 0 || changed.inputType) updatedIds.push(line.id);
+  }
+  return updatedIds;
+}
+
+/** Row shape shared by section_questions and item_questions edits. */
+type QuestionRow = {
+  id: string;
+  label: string;
+  label_es: string | null;
+  input_type: LineInputType;
+  include_note: boolean;
+  min_role_level: number | null;
+  required: boolean;
+};
+
+/**
+ * Edit a section question IN PLACE (MoO+, Tier B — prep live-edit law; the
+ * add+disable-only gap was a council finding). Writes the section_questions
+ * row, then re-propagates the changed fields to every active line carrying
+ * section_question_id. Audits section_question.update with before/after.
+ */
+export async function updateSectionQuestion(
+  actor: AuthContext,
+  args: { questionId: string; patch: QuestionEditPatch },
+): Promise<{ updatedLineCount: number }> {
+  return updateQuestionCore(actor, {
+    table: "section_questions",
+    linkColumn: "section_question_id",
+    auditAction: "section_question.update",
+    notFoundCode: "section_question_not_found",
+    questionId: args.questionId,
+    patch: args.patch,
+  });
+}
+
+/** Edit an item question IN PLACE — mirrors updateSectionQuestion. */
+export async function updateItemQuestion(
+  actor: AuthContext,
+  args: { questionId: string; patch: QuestionEditPatch },
+): Promise<{ updatedLineCount: number }> {
+  return updateQuestionCore(actor, {
+    table: "item_questions",
+    linkColumn: "item_question_id",
+    auditAction: "item_question.update",
+    notFoundCode: "item_question_not_found",
+    questionId: args.questionId,
+    patch: args.patch,
+  });
+}
+
+async function updateQuestionCore(
+  actor: AuthContext,
+  args: {
+    table: "section_questions" | "item_questions";
+    linkColumn: "section_question_id" | "item_question_id";
+    auditAction: string;
+    notFoundCode: string;
+    questionId: string;
+    patch: QuestionEditPatch;
+  },
+): Promise<{ updatedLineCount: number }> {
+  const { patch } = args;
+  validateQuestionEditPatch(patch);
+  const sb = getServiceRoleClient();
+
+  const { data: row, error: rErr } = await sb
+    .from(args.table)
+    .select("id, label, label_es, input_type, include_note, min_role_level, required")
+    .eq("id", args.questionId)
+    .eq("active", true)
+    .maybeSingle<QuestionRow>();
+  if (rErr) throw new Error(`${args.auditAction} read failed: ${rErr.message}`);
+  if (!row) throw new AdminTemplateError(404, args.notFoundCode, "Question not found");
+
+  const next = {
+    label: patch.label !== undefined ? patch.label.trim() : row.label,
+    labelEs: patch.labelEs !== undefined ? patch.labelEs?.trim() || null : row.label_es,
+    inputType: patch.inputType ?? row.input_type,
+    includeNote: patch.includeNote ?? row.include_note,
+    minRoleLevel: patch.minRoleLevel !== undefined ? patch.minRoleLevel : row.min_role_level,
+    required: patch.required ?? row.required,
+  };
+  const changed = {
+    label: next.label !== row.label,
+    labelEs: next.labelEs !== row.label_es,
+    inputType: next.inputType !== row.input_type || next.includeNote !== row.include_note,
+    minRole: next.minRoleLevel !== row.min_role_level,
+    required: next.required !== row.required,
+  };
+  if (!changed.label && !changed.labelEs && !changed.inputType && !changed.minRole && !changed.required) {
+    return { updatedLineCount: 0 }; // no-op
+  }
+
+  const { error: qErr } = await sb
+    .from(args.table)
+    .update({
+      label: next.label,
+      label_es: next.labelEs,
+      input_type: next.inputType,
+      include_note: next.includeNote,
+      min_role_level: next.minRoleLevel,
+      required: next.required,
+      updated_by: actor.user.id,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", args.questionId);
+  if (qErr) throw new Error(`${args.auditAction} write failed: ${qErr.message}`);
+
+  const updatedLineIds = await applyQuestionEditToLines(sb, args.linkColumn, args.questionId, next, changed);
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: args.auditAction,
+    resourceTable: args.table,
+    resourceId: args.questionId,
+    metadata: {
+      before: {
+        label: row.label, label_es: row.label_es, input_type: row.input_type,
+        include_note: row.include_note, min_role_level: row.min_role_level, required: row.required,
+      },
+      after: next,
+      updated_line_ids: updatedLineIds,
+      updated_line_count: updatedLineIds.length,
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+
+  return { updatedLineCount: updatedLineIds.length };
 }
