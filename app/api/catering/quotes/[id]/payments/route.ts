@@ -55,7 +55,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   try {
-    await markPaymentPaid(ctx, paymentId);
+    await markPaymentPaid(ctx, paymentId, id);
     return jsonOk({ ok: true });
   } catch (e) {
     if (e instanceof CateringPaymentError) return jsonError(e.status, e.code, { message: e.message });
