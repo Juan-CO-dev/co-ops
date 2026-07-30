@@ -3667,3 +3667,223 @@ export async function disableItemQuestion(
 
   return { deactivatedLineCount: lineIds.length };
 }
+
+// ─── Question edit-in-place (fulledit floor, cut D) ─────────────────────────
+
+/** The editable fields of a section/item question (all optional = unchanged). */
+export interface QuestionEditPatch {
+  label?: string;
+  labelEs?: string | null;
+  inputType?: LineInputType;
+  includeNote?: boolean;
+  minRoleLevel?: number | null;
+  required?: boolean;
+}
+
+/** Parse a QuestionEditPatch from a raw JSON body (the routes' shared
+ * whitelist; value validation happens downstream in validateQuestionEditPatch). */
+export function parseQuestionEditPatch(b: Record<string, unknown>): QuestionEditPatch {
+  const patch: QuestionEditPatch = {};
+  if (typeof b.label === "string") patch.label = b.label;
+  if (b.labelEs === null || typeof b.labelEs === "string") patch.labelEs = b.labelEs as string | null;
+  if (typeof b.inputType === "string") patch.inputType = b.inputType as LineInputType;
+  if (typeof b.includeNote === "boolean") patch.includeNote = b.includeNote;
+  if (b.minRoleLevel === null || typeof b.minRoleLevel === "number") patch.minRoleLevel = b.minRoleLevel as number | null;
+  if (typeof b.required === "boolean") patch.required = b.required;
+  return patch;
+}
+
+/** Validate a QuestionEditPatch's field values (shared by both question kinds). */
+function validateQuestionEditPatch(patch: QuestionEditPatch): void {
+  if (patch.label !== undefined && !patch.label.trim()) {
+    throw new AdminTemplateError(400, "invalid_label", "Label cannot be empty");
+  }
+  if (patch.inputType !== undefined && !SECTION_QUESTION_INPUT_TYPES.includes(patch.inputType)) {
+    throw new AdminTemplateError(400, "invalid_input_type", "Unknown input type");
+  }
+  if (
+    patch.minRoleLevel !== undefined &&
+    patch.minRoleLevel !== null &&
+    (!Number.isInteger(patch.minRoleLevel) || patch.minRoleLevel < 0 || patch.minRoleLevel > 10)
+  ) {
+    throw new AdminTemplateError(400, "invalid_min_role", "min_role_level must be 0..10");
+  }
+}
+
+/**
+ * Push an edited question definition onto every ACTIVE line that carries it
+ * (prep live-edit law: questions edit in place and re-propagate — the freeze
+ * guards only IMPLICIT conversion; a question's own input-type edit is the
+ * deliberate path). Per line: label → line label, labelEs → translations.es
+ * .label, required → line required, minRole → line min_role_level (null falls
+ * back to the line's template default), inputType/includeNote → prep_meta
+ * .columns via setPrepItemMeta (section/par/SI preserved). Returns line ids.
+ */
+async function applyQuestionEditToLines(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  linkColumn: "section_question_id" | "item_question_id",
+  questionId: string,
+  next: { label: string; labelEs: string | null; inputType: LineInputType; includeNote: boolean; minRoleLevel: number | null; required: boolean },
+  changed: { label: boolean; labelEs: boolean; inputType: boolean; minRole: boolean; required: boolean },
+): Promise<string[]> {
+  const { data: lineRows, error: lErr } = await sb
+    .from("checklist_template_items")
+    .select(TEMPLATE_ITEM_COLUMNS)
+    .eq(linkColumn, questionId)
+    .eq("active", true)
+    .returns<TemplateItemRow[]>();
+  if (lErr) throw new Error(`applyQuestionEditToLines lookup failed: ${lErr.message}`);
+  const lines = (lineRows ?? []).map(rowToTemplateItem);
+
+  const updatedIds: string[] = [];
+  for (const line of lines) {
+    const colUpdate: Record<string, unknown> = {};
+    if (changed.label && line.label !== next.label) colUpdate.label = next.label;
+    if (changed.labelEs) colUpdate.translations = mergeEsTranslation(line.translations, { label: next.labelEs });
+    if (changed.required && line.required !== next.required) colUpdate.required = next.required;
+    if (changed.minRole) {
+      const lineMinRole = next.minRoleLevel ?? (await resolveDefaultMinRole(sb, line.templateId));
+      if (line.minRoleLevel !== lineMinRole) colUpdate.min_role_level = lineMinRole;
+    }
+    if (Object.keys(colUpdate).length > 0) {
+      const { error: uErr } = await sb.from("checklist_template_items").update(colUpdate).eq("id", line.id);
+      if (uErr) throw new Error(`applyQuestionEditToLines update ${line.id} failed: ${uErr.message}`);
+    }
+    if (changed.inputType && isPrepMeta(line.prepMeta)) {
+      const nextColumns = shapeToColumns(next.inputType, next.includeNote);
+      if (line.prepMeta.columns.join(",") !== nextColumns.join(",")) {
+        await setPrepItemMeta(sb, { templateItemId: line.id, meta: { ...line.prepMeta, columns: nextColumns } });
+      }
+    }
+    if (Object.keys(colUpdate).length > 0 || changed.inputType) updatedIds.push(line.id);
+  }
+  return updatedIds;
+}
+
+/** Row shape shared by section_questions and item_questions edits. */
+type QuestionRow = {
+  id: string;
+  label: string;
+  label_es: string | null;
+  input_type: LineInputType;
+  include_note: boolean;
+  min_role_level: number | null;
+  required: boolean;
+};
+
+/**
+ * Edit a section question IN PLACE (MoO+, Tier B — prep live-edit law; the
+ * add+disable-only gap was a council finding). Writes the section_questions
+ * row, then re-propagates the changed fields to every active line carrying
+ * section_question_id. Audits section_question.update with before/after.
+ */
+export async function updateSectionQuestion(
+  actor: AuthContext,
+  args: { questionId: string; patch: QuestionEditPatch },
+): Promise<{ updatedLineCount: number }> {
+  return updateQuestionCore(actor, {
+    table: "section_questions",
+    linkColumn: "section_question_id",
+    auditAction: "section_question.update",
+    notFoundCode: "section_question_not_found",
+    questionId: args.questionId,
+    patch: args.patch,
+  });
+}
+
+/** Edit an item question IN PLACE — mirrors updateSectionQuestion. */
+export async function updateItemQuestion(
+  actor: AuthContext,
+  args: { questionId: string; patch: QuestionEditPatch },
+): Promise<{ updatedLineCount: number }> {
+  return updateQuestionCore(actor, {
+    table: "item_questions",
+    linkColumn: "item_question_id",
+    auditAction: "item_question.update",
+    notFoundCode: "item_question_not_found",
+    questionId: args.questionId,
+    patch: args.patch,
+  });
+}
+
+async function updateQuestionCore(
+  actor: AuthContext,
+  args: {
+    table: "section_questions" | "item_questions";
+    linkColumn: "section_question_id" | "item_question_id";
+    auditAction: string;
+    notFoundCode: string;
+    questionId: string;
+    patch: QuestionEditPatch;
+  },
+): Promise<{ updatedLineCount: number }> {
+  const { patch } = args;
+  validateQuestionEditPatch(patch);
+  const sb = getServiceRoleClient();
+
+  const { data: row, error: rErr } = await sb
+    .from(args.table)
+    .select("id, label, label_es, input_type, include_note, min_role_level, required")
+    .eq("id", args.questionId)
+    .eq("active", true)
+    .maybeSingle<QuestionRow>();
+  if (rErr) throw new Error(`${args.auditAction} read failed: ${rErr.message}`);
+  if (!row) throw new AdminTemplateError(404, args.notFoundCode, "Question not found");
+
+  const next = {
+    label: patch.label !== undefined ? patch.label.trim() : row.label,
+    labelEs: patch.labelEs !== undefined ? patch.labelEs?.trim() || null : row.label_es,
+    inputType: patch.inputType ?? row.input_type,
+    includeNote: patch.includeNote ?? row.include_note,
+    minRoleLevel: patch.minRoleLevel !== undefined ? patch.minRoleLevel : row.min_role_level,
+    required: patch.required ?? row.required,
+  };
+  const changed = {
+    label: next.label !== row.label,
+    labelEs: next.labelEs !== row.label_es,
+    inputType: next.inputType !== row.input_type || next.includeNote !== row.include_note,
+    minRole: next.minRoleLevel !== row.min_role_level,
+    required: next.required !== row.required,
+  };
+  if (!changed.label && !changed.labelEs && !changed.inputType && !changed.minRole && !changed.required) {
+    return { updatedLineCount: 0 }; // no-op
+  }
+
+  const { error: qErr } = await sb
+    .from(args.table)
+    .update({
+      label: next.label,
+      label_es: next.labelEs,
+      input_type: next.inputType,
+      include_note: next.includeNote,
+      min_role_level: next.minRoleLevel,
+      required: next.required,
+      updated_by: actor.user.id,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", args.questionId);
+  if (qErr) throw new Error(`${args.auditAction} write failed: ${qErr.message}`);
+
+  const updatedLineIds = await applyQuestionEditToLines(sb, args.linkColumn, args.questionId, next, changed);
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: args.auditAction,
+    resourceTable: args.table,
+    resourceId: args.questionId,
+    metadata: {
+      before: {
+        label: row.label, label_es: row.label_es, input_type: row.input_type,
+        include_note: row.include_note, min_role_level: row.min_role_level, required: row.required,
+      },
+      after: next,
+      updated_line_ids: updatedLineIds,
+      updated_line_count: updatedLineIds.length,
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+
+  return { updatedLineCount: updatedLineIds.length };
+}
