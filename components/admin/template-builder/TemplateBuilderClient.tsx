@@ -462,7 +462,7 @@ function TemplateDoctorPanel({
   // ACTIONABLE issues drive the count/chip: needs-link, impossible role floors, drift,
   // and PR-4 dangling ref_track references (a broken cross-list reference). Hard-gated
   // items are an INVENTORY (surfaced in the panel, never counted as an "issue").
-  const { needsLink, roleFloorImpossible, drift, hardGated, danglingRefs } = doctor.totals;
+  const { needsLink, roleFloorImpossible, drift, hardGated, danglingRefs, orphanedMirrors } = doctor.totals;
   const issueCount = needsLink + roleFloorImpossible + drift + danglingRefs;
   const clean = issueCount === 0;
 
@@ -481,7 +481,8 @@ function TemplateDoctorPanel({
 
   // PR-4: the hard-gated inventory shows even when there are no ACTIONABLE issues
   // (the owner's guardrail — always visible if any line can block a submission).
-  const hasHardGated = hardGated > 0;
+  // Orphaned mirrors are the same shape: ADVISORY (not in issueCount) but still shown.
+  const hasAdvisory = hardGated > 0 || orphanedMirrors > 0;
 
   return (
     <CollapsibleSection
@@ -490,11 +491,11 @@ function TemplateDoctorPanel({
       badge={badge}
       defaultOpen={!clean}
     >
-      {clean && !hasHardGated ? (
+      {clean && !hasAdvisory ? (
         <p className="text-sm text-co-text-muted">{t("admin.templates.doctor.all_clear_body")}</p>
       ) : (
         <div className="flex flex-col gap-4">
-          {clean && hasHardGated && (
+          {clean && hasAdvisory && (
             <p className="text-sm text-co-text-muted">{t("admin.templates.doctor.all_clear_body")}</p>
           )}
           {/* Location drift — NAMED per item (spec §6) + reconcile (spec §8, PR-5). */}
@@ -663,7 +664,8 @@ function DoctorTemplateBlock({
     esMissing === 0 &&
     tpl.roleFloor.length === 0 &&
     tpl.hardGated.length === 0 &&
-    tpl.danglingRefs.length === 0;
+    tpl.danglingRefs.length === 0 &&
+    tpl.orphanedMirrors.length === 0;
   if (nothing) return null;
 
   return (
@@ -755,6 +757,23 @@ function DoctorTemplateBlock({
             <ul className="mt-1 flex flex-col gap-1">
               {tpl.hardGated.map((hg) => (
                 <li key={hg.itemId} className="text-sm text-co-text">{hg.label}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Orphaned mirrors (spec §6) — an active opening Phase-2 mirror whose AM-prep
+            source is inactive/missing. ADVISORY: it's fixed in AM Prep (mirrors are
+            read-only here), so no Fix button + not counted as an actionable issue. */}
+        {tpl.orphanedMirrors.length > 0 && (
+          <div>
+            <p className="text-sm font-semibold text-co-text-muted">
+              {t("admin.templates.doctor.orphaned_mirrors_n", { n: String(tpl.orphanedMirrors.length) })}
+            </p>
+            <p className="text-xs text-co-text-dim">{t("admin.templates.doctor.orphaned_mirrors_hint")}</p>
+            <ul className="mt-1 flex flex-col gap-1">
+              {tpl.orphanedMirrors.map((om) => (
+                <li key={om.itemId} className="text-sm text-co-text">{om.label}</li>
               ))}
             </ul>
           </div>

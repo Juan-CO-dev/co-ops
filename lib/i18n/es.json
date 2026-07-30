@@ -990,6 +990,8 @@
   "admin.templates.doctor.role_floor_above": "{n} ítems obligatorios necesitan más de {role} para completarse — solo un gerente puede confirmar esta lista cuando estén hechos.",
   "admin.templates.doctor.dangling_refs_n": "{n} conexiones rotas (el ítem seguido ya no existe)",
   "admin.templates.doctor.hard_gated_n": "{n} ítems con bloqueo (impiden el envío hasta completarse)",
+  "admin.templates.doctor.orphaned_mirrors_n": "{n} espejos de verificación huérfanos",
+  "admin.templates.doctor.orphaned_mirrors_hint": "El ítem de prep AM detrás de estos ya no existe o está inactivo — corrígelo en Prep AM.",
   "admin.templates.doctor.fix": "Corregir",
   "admin.templates.item_count": "{count} ítems",
   "admin.templates.open": "Abrir",

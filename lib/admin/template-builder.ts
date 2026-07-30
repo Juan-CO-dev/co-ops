@@ -47,6 +47,7 @@ import {
   classifyRoleFloor,
   classifyHardGated,
   classifyDanglingRefs,
+  classifyOrphanedMirrors,
   confirmFloorForType,
   classifyEdits,
   nextOperationalDay,
@@ -80,6 +81,7 @@ export {
   buildBothLocationAdds,
   makeTempId,
   classifyRoleFloor,
+  classifyOrphanedMirrors,
   classifyEdits,
   nextOperationalDay,
   shiftOperationalDay,
@@ -445,10 +447,11 @@ export async function fillItemSpineLink(
 /**
  * Run the Template Doctor for a type across the actor's visible locations.
  * Derive-on-read: reuses loadTemplateBuilderView (2 queries) + one batch
- * location-name lookup. Invariants v1 (spec §6): needs-link, es fill-counts,
- * role-floor sanity, and location drift NAMED per item. Reference/gate-target
- * existence + orphaned-mirror checks arrive with the PRs that build those
- * mechanisms (§5 refs = PR-4); hard-gated listing = SKIP (no column yet, §3).
+ * location-name lookup (+ one mirror-source lookup for opening). Invariants
+ * (spec §6): needs-link, es fill-counts, role-floor sanity, location drift NAMED
+ * per item, dangling ref_track references (PR-4), hard-gated inventory (PR-4), and
+ * ORPHANED MIRRORS (an active opening Phase-2 mirror whose AM-prep source is
+ * inactive/missing — advisory, opening-only).
  *
  * The confirm floor is resolved PER TYPE (confirmFloorForType): closing and
  * opening both confirm at KH+ (level 4 — CLOSING_CONFIRM_FLOOR_LEVEL /
@@ -483,6 +486,35 @@ export async function runTemplateDoctor(
   const refTargets = await loadReferenceTargets(actor, type);
   const validTargetIds = new Set(refTargets.targets.map((r) => r.itemId));
 
+  // ORPHANED-MIRROR check (spec §6): the check the doctor docstring promised. Mirrors
+  // only live on OPENING templates (createOpeningMirror). Collect every active mirror's
+  // AM-prep source id, then ONE batch query resolves which of those sources are still
+  // ACTIVE — a source that comes back is valid; a missing one (deactivated or deleted)
+  // makes its mirror an orphan. Both INACTIVE and MISSING collapse to "not in the set".
+  const validAmPrepItemIds = new Set<string>();
+  if (type === "opening") {
+    const referencedIds = [
+      ...new Set(
+        view.templates.flatMap((tpl) =>
+          tpl.items
+            .filter((it) => it.active && isMirrorItem(it.prepMeta) && it.referencesTemplateItemId !== null)
+            .map((it) => it.referencesTemplateItemId as string),
+        ),
+      ),
+    ];
+    if (referencedIds.length > 0) {
+      const sb = getServiceRoleClient();
+      const { data: srcRows, error: srcErr } = await sb
+        .from("checklist_template_items")
+        .select("id")
+        .in("id", referencedIds)
+        .eq("active", true)
+        .returns<Array<{ id: string }>>();
+      if (srcErr) throw new Error(`runTemplateDoctor mirror sources: ${srcErr.message}`);
+      for (const r of srcRows ?? []) validAmPrepItemIds.add(r.id);
+    }
+  }
+
   const templates: TemplateDoctorTemplate[] = view.templates.map((tpl) => {
     const needsLink = tpl.items
       .filter((it) => itemNeedsLink(it))
@@ -497,6 +529,7 @@ export async function runTemplateDoctor(
       roleFloor: classifyRoleFloor(tpl.items, confirmFloorLevel),
       hardGated: classifyHardGated(tpl.items),
       danglingRefs: classifyDanglingRefs(tpl.items, validTargetIds),
+      orphanedMirrors: classifyOrphanedMirrors(tpl.items, validAmPrepItemIds),
     };
   });
 
@@ -507,11 +540,11 @@ export async function runTemplateDoctor(
   // PR-5 (spec §8 seal): MIRROR rows are EXCLUDED from both label lists. A mirror is
   // derived per location by AM Prep (createOpeningMirror), NOT authored — a mirror
   // present on one location only is an AM-Prep-managed orphan — never a drift the
-  // manager reconciles. ⚠ Orphaned mirrors are currently UNDETECTED by the Doctor
-  // (the dedicated check is a tracked fast-follow; do not rely on drift to catch
-  // them — this filter deliberately removed that accidental coverage). Excluding them here
-  // means a mirror label can NEVER become a drift finding → the reconcile action can
-  // never source/target a mirror (belt; buildReconcileAddEdit's guard is braces).
+  // manager reconciles. Orphaned mirrors (an active mirror whose AM-prep source is
+  // inactive/missing) are now their OWN Doctor check (classifyOrphanedMirrors, above) —
+  // drift deliberately does not cover them. Excluding them here means a mirror label
+  // can NEVER become a drift finding → the reconcile action can never source/target a
+  // mirror (belt; buildReconcileAddEdit's guard is braces).
   let drift: DriftFinding[] = [];
   if (view.templates.length === 2) {
     const [a, b] = view.templates;
@@ -533,6 +566,7 @@ export async function runTemplateDoctor(
     drift: drift.length,
     hardGated: templates.reduce((n, t) => n + t.hardGated.length, 0),
     danglingRefs: templates.reduce((n, t) => n + t.danglingRefs.length, 0),
+    orphanedMirrors: templates.reduce((n, t) => n + t.orphanedMirrors.length, 0),
   };
 
   // PR-3 publish signals: TODAY's open instances across the visible lineages (powers

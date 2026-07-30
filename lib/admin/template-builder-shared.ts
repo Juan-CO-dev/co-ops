@@ -264,6 +264,34 @@ export function classifyDanglingRefs(
   return out;
 }
 
+/**
+ * ORPHANED-MIRROR check (Doctor, spec §6 — the check the doctor docstring promised).
+ * An ACTIVE opening Phase-2 mirror row (isMirrorItem === true) whose AM-prep SOURCE item
+ * (references_template_item_id) is INACTIVE or MISSING. In steady state deactivateOpeningMirror
+ * removes a mirror when its source AM-prep item is removed; an orphan is a mirror that survived
+ * (a partial-failure, a source deactivated by another path, or a null reference). It renders in
+ * the opening list forever with no live source → ADVISORY (fixed by AM-prep edits, not builder
+ * edits; the seal makes mirrors read-only here). Excluded from the actionable header total.
+ *
+ * `validAmPrepItemIds` = the set of currently-ACTIVE am_prep source item ids (the doctor batch-
+ * loads them). A mirror is orphaned when its referencesTemplateItemId is null OR absent from
+ * that set. Non-mirror rows are skipped (this is a mirror-only integrity check). Pure.
+ */
+export function classifyOrphanedMirrors(
+  items: Array<Pick<ChecklistTemplateItem, "id" | "label" | "active" | "referencesTemplateItemId" | "prepMeta">>,
+  validAmPrepItemIds: ReadonlySet<string>,
+): Array<{ itemId: string; label: string }> {
+  const out: Array<{ itemId: string; label: string }> = [];
+  for (const it of items) {
+    if (!it.active) continue;
+    if (!isMirrorItem(it.prepMeta)) continue; // mirror-only check
+    if (it.referencesTemplateItemId === null || !validAmPrepItemIds.has(it.referencesTemplateItemId)) {
+      out.push({ itemId: it.id, label: it.label });
+    }
+  }
+  return out;
+}
+
 /** One named location-drift finding (Doctor invariant: "P St has 'X' Cap Hill doesn't"). */
 export interface DriftFinding {
   /** the location that HAS the label the other lacks. */
@@ -538,6 +566,10 @@ export interface TemplateDoctorTemplate {
   /** PR-4 (spec §6): ref_track items whose referenced target no longer exists / is
    *  inactive on the referenced list — a dangling reference (fail-loud, advisory). */
   danglingRefs: Array<{ itemId: string; label: string }>;
+  /** ACTIVE opening Phase-2 mirrors whose AM-prep source item is inactive/missing — an
+   *  orphaned mirror (spec §6). ADVISORY: fixed by AM-prep edits, not builder edits, so
+   *  NOT counted in the actionable header total. Only ever non-empty for opening. */
+  orphanedMirrors: Array<{ itemId: string; label: string }>;
 }
 
 /** The whole Doctor report for a type across the actor's visible locations. */
@@ -559,6 +591,9 @@ export interface TemplateDoctorReport {
     hardGated: number;
     /** PR-4: dangling ref_track references (an actionable fail-loud finding). */
     danglingRefs: number;
+    /** Orphaned opening Phase-2 mirrors (source AM-prep item inactive/missing). ADVISORY —
+     *  surfaced but never counted into issueCount (fixed via AM Prep, not the builder). */
+    orphanedMirrors: number;
   };
   /**
    * PR-3 publish signals for this type's active lineages (per location's current

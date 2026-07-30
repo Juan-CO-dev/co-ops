@@ -990,6 +990,8 @@
   "admin.templates.doctor.role_floor_above": "{n} required items need above {role} to complete — only a manager can confirm this list once they're done.",
   "admin.templates.doctor.dangling_refs_n": "{n} broken connections (the tracked item is gone)",
   "admin.templates.doctor.hard_gated_n": "{n} hard-gated items (block submission until done)",
+  "admin.templates.doctor.orphaned_mirrors_n": "{n} orphaned verification mirrors",
+  "admin.templates.doctor.orphaned_mirrors_hint": "The AM-prep item behind these is gone or inactive — fix it in AM Prep.",
   "admin.templates.doctor.fix": "Fix",
   "admin.templates.item_count": "{count} items",
   "admin.templates.open": "Open",
