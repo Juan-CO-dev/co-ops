@@ -1143,6 +1143,93 @@ export async function changePrepItemSection(
   return { mirrorSyncedIds };
 }
 
+/**
+ * UNLINK a prep line from its registry item (fulledit floor, cut B server).
+ * The read law flips display to the line's own label the moment item_id nulls,
+ * so for INVENTORY lines (display was the registry name) the item's name/name_es
+ * is copied into the line label first — display continuity; nothing changes on
+ * screen except the "global" badge. Question lines keep their label untouched.
+ * A deactivated item's name is NOT copied (its line already displays the line
+ * label post-#214-E). Opening mirrors (references_template_item_id = this line)
+ * unlink too — otherwise registry propagation would keep touching a mirror
+ * whose source line has left the registry. Audited.
+ */
+export async function unlinkPrepItem(
+  actor: AuthContext,
+  args: { templateId: string; itemId: string },
+): Promise<{ unlinkedMirrorIds: string[] }> {
+  const tmpl = await loadAuthorizedPrepTemplate(actor, args.templateId);
+  const sb = getServiceRoleClient();
+
+  const { data: rawRow, error: rErr } = await sb
+    .from("checklist_template_items")
+    .select(TEMPLATE_ITEM_COLUMNS)
+    .eq("id", args.itemId)
+    .eq("template_id", args.templateId)
+    .eq("active", true)
+    .maybeSingle<TemplateItemRow>();
+  if (rErr) throw new Error(`unlinkPrepItem read failed: ${rErr.message}`);
+  if (!rawRow) throw new AdminTemplateError(404, "item_not_found", "Template item not found");
+  const item = rowToTemplateItem(rawRow);
+  if (!item.itemId) throw new AdminTemplateError(400, "not_linked", "Line has no registry link");
+
+  // Display continuity for inventory lines: freeze the current registry name
+  // into the line label before the link goes away.
+  const colUpdate: Record<string, unknown> = { item_id: null };
+  if (!isQuestionShapedLine(item)) {
+    const { data: reg, error: gErr } = await sb
+      .from("items")
+      .select("name, name_es, active")
+      .eq("id", item.itemId)
+      .maybeSingle<{ name: string; name_es: string | null; active: boolean }>();
+    if (gErr) throw new Error(`unlinkPrepItem item read failed: ${gErr.message}`);
+    if (reg?.active) {
+      colUpdate.label = reg.name;
+      if (reg.name_es) colUpdate.translations = mergeEsTranslation(item.translations, { label: reg.name_es });
+    }
+  }
+  const { error: uErr } = await sb.from("checklist_template_items").update(colUpdate).eq("id", args.itemId);
+  if (uErr) throw new Error(`unlinkPrepItem update failed: ${uErr.message}`);
+
+  // Unlink the opening mirrors (am_prep only; keyed by the LINE id).
+  let unlinkedMirrorIds: string[] = [];
+  if (tmpl.prep_subtype === "am_prep") {
+    const openingIds = await resolveAllActiveOpeningTemplateIds(sb, tmpl.location_id);
+    if (openingIds.length > 0) {
+      const { data: mirrors, error: mErr } = await sb
+        .from("checklist_template_items")
+        .update({ item_id: null })
+        .in("template_id", openingIds)
+        .eq("references_template_item_id", args.itemId)
+        .eq("active", true)
+        .select("id")
+        .returns<Array<{ id: string }>>();
+      if (mErr) throw new Error(`unlinkPrepItem mirror unlink failed: ${mErr.message}`);
+      unlinkedMirrorIds = (mirrors ?? []).map((m) => m.id);
+    }
+  }
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "checklist_template_item.update",
+    resourceTable: "checklist_template_items",
+    resourceId: args.itemId,
+    metadata: {
+      template_id: args.templateId,
+      prep_subtype: tmpl.prep_subtype,
+      field: "item_link",
+      before: { item_id: item.itemId },
+      after: { item_id: null, ...(colUpdate.label !== undefined ? { label_frozen: colUpdate.label } : {}) },
+      unlinked_mirror_ids: unlinkedMirrorIds,
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+
+  return { unlinkedMirrorIds };
+}
+
 /** The five per-line input types the explicit toggle accepts (= LineInputType). */
 const LINE_INPUT_TYPES: readonly LineInputType[] = ["on_hand", "portioned", "line", "yes_no", "free_text"];
 
