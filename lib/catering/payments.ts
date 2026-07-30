@@ -119,6 +119,10 @@ function canSeeLocation(actor: AuthContext, locationId: string): boolean {
 async function loadPaymentQuoteContext(
   sb: ReturnType<typeof getServiceRoleClient>,
   paymentId: string,
+  /** When set, the payment MUST belong to this quote (URL/body coherence on the
+   *  money route — adversarial review cosmetic; the location gate remains the
+   *  security authority). Mismatch → the same IDOR-safe 404. */
+  expectedQuoteId?: string,
 ): Promise<{ status: string; locationId: string }> {
   const { data: pay, error } = await sb
     .from("catering_payments")
@@ -127,6 +131,9 @@ async function loadPaymentQuoteContext(
     .maybeSingle<{ id: string; status: string; quote_id: string }>();
   if (error) throw new Error(`loadPaymentQuoteContext payment: ${error.message}`);
   if (!pay) throw new CateringPaymentError(404, "not_found", "Payment not found");
+  if (expectedQuoteId !== undefined && pay.quote_id !== expectedQuoteId) {
+    throw new CateringPaymentError(404, "not_found", "Payment not found");
+  }
 
   const { data: quote, error: qErr } = await sb
     .from("catering_quotes")
@@ -195,9 +202,13 @@ export async function createPaymentDue(
  * count of 0 means the row was already advanced (or not `due`), surfaced as a 409. A real
  * provider webhook replaces this manual advance.
  */
-export async function markPaymentPaid(actor: AuthContext, paymentId: string): Promise<void> {
+export async function markPaymentPaid(
+  actor: AuthContext,
+  paymentId: string,
+  expectedQuoteId?: string,
+): Promise<void> {
   const sb = getServiceRoleClient();
-  const { status, locationId } = await loadPaymentQuoteContext(sb, paymentId);
+  const { status, locationId } = await loadPaymentQuoteContext(sb, paymentId, expectedQuoteId);
   assertCanWrite(actor, locationId);
   if (status !== "due") {
     throw new CateringPaymentError(409, "not_due", "Only a due payment can be marked paid");

@@ -30,6 +30,7 @@ import {
   resolveGateTier,
   classifyHardGated,
   classifyDanglingRefs,
+  classifyOrphanedMirrors,
   isReconciledReportRefType,
   RECONCILED_REPORT_REF_TYPES,
   buildReconcileAddEdit,
@@ -740,6 +741,44 @@ describe("classifyDanglingRefs — broken ref_track references (spec §6)", () =
       mirrorItem({ id: "m", refTrackItemCompletion: true, referencesTemplateItemId: "gone" }),
     ];
     expect(classifyDanglingRefs(items, new Set())).toEqual([]);
+  });
+});
+
+describe("classifyOrphanedMirrors — mirror whose AM-prep source is inactive/missing (spec §6)", () => {
+  it("flags an ACTIVE mirror whose source is not in the valid am-prep set", () => {
+    const items = [
+      mirrorItem({ id: "m-live", label: "Live tomato", referencesTemplateItemId: "am-live" }),
+      mirrorItem({ id: "m-gone", label: "Gone onion", referencesTemplateItemId: "am-gone" }), // source inactive/missing
+      mirrorItem({ id: "m-null", label: "No source", referencesTemplateItemId: null }), // null ref = orphan
+    ];
+    const out = classifyOrphanedMirrors(items, new Set(["am-live"]));
+    expect(out).toEqual([
+      { itemId: "m-gone", label: "Gone onion" },
+      { itemId: "m-null", label: "No source" },
+    ]);
+  });
+
+  it("skips NON-mirror rows entirely (mirror-only check)", () => {
+    const items = [
+      // a plain item that happens to reference a missing id is NOT an orphaned mirror
+      item({ id: "plain", label: "Plain", referencesTemplateItemId: "am-gone", refTrackItemCompletion: true }),
+    ];
+    expect(classifyOrphanedMirrors(items, new Set())).toEqual([]);
+  });
+
+  it("skips INACTIVE mirrors (a deactivated mirror is not a live orphan)", () => {
+    const items = [
+      mirrorItem({ id: "m-off", label: "Deactivated", active: false, referencesTemplateItemId: "am-gone" }),
+    ];
+    expect(classifyOrphanedMirrors(items, new Set())).toEqual([]);
+  });
+
+  it("returns nothing when every mirror's source is active", () => {
+    const items = [
+      mirrorItem({ id: "m1", referencesTemplateItemId: "am-1" }),
+      mirrorItem({ id: "m2", referencesTemplateItemId: "am-2" }),
+    ];
+    expect(classifyOrphanedMirrors(items, new Set(["am-1", "am-2"]))).toEqual([]);
   });
 });
 

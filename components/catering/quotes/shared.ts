@@ -53,6 +53,7 @@ const KNOWN_ERROR_CODES = new Set([
   "invalid_status",
   "step_up_required",
   "step_up_stale",
+  "not_due",
   "generic",
 ]);
 
