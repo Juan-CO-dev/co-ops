@@ -1015,6 +1015,9 @@ function ItemRow({
             <span className={chip}>{roleLabel(item.minRoleLevel)}</span>
             {item.expectsCount && <span className={chip}>{t("admin.templates.builder.flag.count")}</span>}
             {item.expectsPhoto && <span className={chip}>{t("admin.templates.builder.flag.photo")}</span>}
+            {/* Fulledit PR-2: the question input-type on the identity line (D1). */}
+            {item.inputType === "yes_no" && <span className={chip}>{t("admin.templates.builder.input_type.yes_no")}</span>}
+            {item.inputType === "free_text" && <span className={chip}>{t("admin.templates.builder.input_type.free_text")}</span>}
           </div>
           {/* Reorder (phone-first up/down; spec §7) — non-mirror rows only. */}
           {canFill && !mirror && (
@@ -1273,6 +1276,48 @@ function StructuralEdits({
               <span className="mt-1 block text-xs font-semibold text-co-cta">
                 {t("admin.templates.builder.gate.hard_gate_warning")}
               </span>
+            )}
+          </label>
+
+          {/* Fulledit PR-2: the input-type control for existing lines — Tick / Yes/No /
+              Free text (null = tick). Emits the input_type edit op into the draft;
+              versions at publish. Count lines can't switch here (a count needs a spine
+              link → add-time-only, matching how the drawer can't toggle expects_count
+              either): show the control DISABLED with a short hint. */}
+          <label className="block text-sm">
+            <span className="text-xs font-bold uppercase tracking-[0.08em] text-co-text-muted">
+              {t("admin.templates.builder.input_type.drawer_label")}
+            </span>
+            {item.expectsCount ? (
+              <>
+                <select
+                  value="count"
+                  disabled
+                  className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text-muted disabled:opacity-70"
+                >
+                  <option value="count">{t("admin.templates.builder.input_type.count")}</option>
+                </select>
+                <span className="mt-1 block text-xs text-co-text-muted">
+                  {t("admin.templates.builder.input_type.count_locked_hint")}
+                </span>
+              </>
+            ) : (
+              <select
+                value={item.inputType ?? "tick"}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  onEdit({
+                    op: "input_type",
+                    itemId: idForEdit,
+                    inputType: v === "tick" ? null : (v as "yes_no" | "free_text"),
+                  });
+                }}
+                className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
+              >
+                <option value="tick">{t("admin.templates.builder.input_type.tick")}</option>
+                <option value="yes_no">{t("admin.templates.builder.input_type.yes_no")}</option>
+                <option value="free_text">{t("admin.templates.builder.input_type.free_text")}</option>
+              </select>
             )}
           </label>
 
@@ -1545,7 +1590,13 @@ function QuickAdd({
   const [station, setStation] = useState<string>(last?.station ?? "");
   const [role, setRole] = useState<number>(last?.minRoleLevel ?? 3);
   const [required, setRequired] = useState(true);
-  const [expectsCount, setExpectsCount] = useState(false);
+  // Fulledit PR-2: the line's INPUT TYPE — the single source of truth for what
+  // kind of step this is. "count" maps to the existing expects_count + spine-link
+  // flow (unchanged); "yes_no" / "free_text" set inputType on the add op and hide
+  // the count controls (client mirror of the DB CHECK — a line is a count line OR
+  // a question line, never both). "tick" is the plain default.
+  const [inputType, setInputType] = useState<"tick" | "count" | "yes_no" | "free_text">("tick");
+  const expectsCount = inputType === "count";
   const [spine, setSpine] = useState<LinkTarget | null>(null);
   const [query, setQuery] = useState("");
   const [error, setError] = useState<TranslationKey | null>(null);
@@ -1559,7 +1610,7 @@ function QuickAdd({
   }, [linkTargets, query]);
 
   const reset = () => {
-    setLabel(""); setExpectsCount(false); setSpine(null); setQuery(""); setError(null);
+    setLabel(""); setInputType("tick"); setSpine(null); setQuery(""); setError(null);
     // bothLocations scope PERSISTS across repeat-adds (defaults carry, spec §7).
   };
 
@@ -1575,6 +1626,9 @@ function QuickAdd({
         expectsCount,
         // Map the picked LinkTarget (kind+id+name+…) to the wire SpineLinkTarget (kind+id).
         spineLink: expectsCount && spine ? { kind: spine.kind, id: spine.id } : null,
+        // Fulledit PR-2: a question line carries its input type; count/tick lines
+        // leave it undefined (the wire guard rejects inputType + expectsCount together).
+        ...(inputType === "yes_no" || inputType === "free_text" ? { inputType } : {}),
       },
       multiLocation ? bothLocations : false,
     );
@@ -1641,17 +1695,43 @@ function QuickAdd({
         <input type="checkbox" checked={required} onChange={(e) => setRequired(e.target.checked)} className="h-5 w-5" />
         {t("admin.templates.builder.add_required_label")}
       </label>
-      <label className="flex items-center gap-2 text-sm text-co-text">
-        <input
-          type="checkbox"
-          checked={expectsCount}
-          onChange={(e) => { setExpectsCount(e.target.checked); if (!e.target.checked) { setSpine(null); setError(null); } }}
-          className="h-5 w-5"
-        />
-        {t("admin.templates.builder.add_count_label")}
-      </label>
 
-      {/* Spine-link picker — appears ONLY when the count toggle is on (required). */}
+      {/* Fulledit PR-2: input-type selector — Tick (default) · Count · Yes/No ·
+          Free text. "Count" = the existing expects_count + spine-link flow; picking
+          Yes/No or Free text hides the count controls (client mirror of the DB CHECK). */}
+      <fieldset>
+        <legend className="text-xs font-bold uppercase tracking-[0.08em] text-co-text-muted">
+          {t("admin.templates.builder.input_type.label")}
+        </legend>
+        <div className="mt-1 flex flex-wrap gap-2" role="radiogroup" aria-label={t("admin.templates.builder.input_type.label")}>
+          {(["tick", "count", "yes_no", "free_text"] as const).map((it) => {
+            const activeChip = inputType === it;
+            return (
+              <button
+                key={it}
+                type="button"
+                role="radio"
+                aria-checked={activeChip}
+                onClick={() => {
+                  setInputType(it);
+                  // Leaving count resets the spine + any count-link error.
+                  if (it !== "count") { setSpine(null); setError(null); }
+                }}
+                className={
+                  "inline-flex min-h-[36px] items-center rounded-full border-2 px-3 text-sm font-bold transition " +
+                  (activeChip
+                    ? "border-co-gold-deep bg-co-gold/25 text-co-text"
+                    : "border-co-border-2 bg-co-surface text-co-text-dim hover:text-co-text")
+                }
+              >
+                {t(tk(`admin.templates.builder.input_type.${it}`))}
+              </button>
+            );
+          })}
+        </div>
+      </fieldset>
+
+      {/* Spine-link picker — appears ONLY when the count input type is chosen (required). */}
       {expectsCount && (
         <div className="rounded-lg border border-co-border/60 bg-co-bg p-2">
           {spine ? (
@@ -2025,6 +2105,7 @@ function PublishBar({
   if (diff.roleChanged.length) diffChips.push(t("admin.templates.builder.publish_diff_role", { n: String(diff.roleChanged.length) }));
   if (diff.requiredChanged.length) diffChips.push(t("admin.templates.builder.publish_diff_required", { n: String(diff.requiredChanged.length) }));
   if (diff.gateChanged.length) diffChips.push(t("admin.templates.builder.publish_diff_gate", { n: String(diff.gateChanged.length) }));
+  if (diff.inputTypeChanged.length) diffChips.push(t("admin.templates.builder.publish_diff_input_type", { n: String(diff.inputTypeChanged.length) }));
   if (diff.referenceChanged) diffChips.push(t("admin.templates.builder.publish_diff_reference", { n: String(diff.referenceChanged) }));
   if (templatePatch !== undefined) diffChips.push(t("admin.templates.builder.publish_diff_gate_setting"));
 
@@ -2239,6 +2320,18 @@ function PreviewStationGroups({
                       {it.expectsPhoto && (
                         <span className="text-[10px] font-bold uppercase tracking-wide text-co-text-dim">
                           {t("admin.templates.builder.flag.photo")}
+                        </span>
+                      )}
+                      {/* Fulledit PR-2: a question line's input type — shown so the
+                          manager sees the preview asks Yes/No or a text answer, not a tick. */}
+                      {it.inputType === "yes_no" && (
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-co-text-dim">
+                          {t("admin.templates.builder.input_type.yes_no")}
+                        </span>
+                      )}
+                      {it.inputType === "free_text" && (
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-co-text-dim">
+                          {t("admin.templates.builder.input_type.free_text")}
                         </span>
                       )}
                     </span>
