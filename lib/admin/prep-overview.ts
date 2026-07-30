@@ -145,10 +145,14 @@ export async function loadPrepOverview(actor: AuthContext): Promise<PrepOverview
   const sb = getServiceRoleClient();
   const opDate = operationalNow(new Date()).date;
 
-  // Actor-visible locations (the CO shape = two; the drift classifier needs both).
+  // Actor-visible ACTIVE locations (the CO shape = two; the drift classifier
+  // needs both). Active filter matches every sibling location query in lib/ —
+  // a deactivated location must not surface here while absent from the prep
+  // editor this panel deep-links to (adversarial C1).
   const { data: locRows, error: lErr } = await sb
     .from("locations")
     .select("id, name")
+    .eq("active", true)
     .order("name", { ascending: true })
     .returns<Array<{ id: string; name: string }>>();
   if (lErr) throw new Error(`loadPrepOverview locations: ${lErr.message}`);
