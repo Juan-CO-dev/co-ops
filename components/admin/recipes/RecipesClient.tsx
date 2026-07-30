@@ -16,7 +16,16 @@ import type { Readiness } from "@/lib/readiness";
 import { StatusBadge, ReadinessReasons } from "@/components/admin/StatusBadge";
 import type { TranslationKey } from "@/lib/i18n/types";
 
-/** Cast a recipes.* key — translated by the separate i18n task. */
+/**
+ * Cast a recipes.* key — translated by the separate i18n task.
+ *
+ * TODO(i18n-type-safety, builder council finding 12): `as TranslationKey` here
+ * bypasses compile-time key checking — a typo'd or orphaned key won't fail the
+ * build (TranslationKey = keyof typeof en.json, so a real registered key would be
+ * enforced). Prefer passing already-registered literal keys directly (no rk())
+ * so the compiler catches drift and orphan detection works. Any keys added going
+ * forward should be registered in en/es and referenced without this cast.
+ */
 const rk = (k: string): TranslationKey => k as TranslationKey;
 
 type FilterType = RecipeType | "all";

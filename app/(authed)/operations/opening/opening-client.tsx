@@ -245,7 +245,9 @@ function saveStateToFormValue(
         directedBy: s.directed_by,
         freeText: s.over_under_reason_text,
       };
-    } else {
+    } else if (process.env.NODE_ENV === "development") {
+      // Dev-only observability (projects F7): operators/managers should not see
+      // this hydration noise in DevTools during support calls.
       console.warn(
         `[opening] Phase 2 hydration: invalid over-par reasonCategory ${JSON.stringify(
           cat,
@@ -262,7 +264,8 @@ function saveStateToFormValue(
         reasonCategory: cat,
         freeText: s.over_under_reason_text ?? "",
       };
-    } else {
+    } else if (process.env.NODE_ENV === "development") {
+      // Dev-only observability (projects F7) — see the over-par branch above.
       console.warn(
         `[opening] Phase 2 hydration: invalid under-par reasonCategory ${JSON.stringify(
           cat,
