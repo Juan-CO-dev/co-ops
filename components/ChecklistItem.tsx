@@ -61,6 +61,7 @@
 
 import { useState } from "react";
 
+import { PhotoCapture } from "@/components/photos/PhotoCapture";
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
 import { formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
@@ -154,6 +155,9 @@ interface ChecklistItemProps {
   actorUserId: string;
   /** Instance status — disables interaction when not 'open'. */
   instanceStatus: ChecklistStatus;
+  /** Location id — threaded to PhotoCapture for expects_photo items (photo
+   *  uploader seam, 0164); the upload is location-bound. */
+  locationId: string;
   /** Read-only override (per Build #1 step 9). */
   readOnly?: boolean;
   /** Async completion callback (existing). */
@@ -381,6 +385,7 @@ export function ChecklistItem({
   actorLevel,
   actorUserId,
   instanceStatus,
+  locationId,
   readOnly = false,
   onComplete,
   onRevoke,
@@ -412,6 +417,9 @@ export function ChecklistItem({
   const [expanded, setExpanded] = useState(false);
   const [countDraft, setCountDraft] = useState<string>("");
   const [notesDraft, setNotesDraft] = useState<string>("");
+  // Photo captured for an expects_photo item (photo uploader seam, 0164). Threaded
+  // into the completion payload on save; cleared alongside the other drafts.
+  const [photoDraft, setPhotoDraft] = useState<string | null>(null);
 
   // Revoke / tag expand state.
   const [expandMode, setExpandMode] = useState<ExpandMode>("none");
@@ -537,6 +545,7 @@ export function ChecklistItem({
         setExpanded(false);
         setCountDraft("");
         setNotesDraft("");
+        setPhotoDraft(null);
       }
     } catch (caught) {
       setError({
@@ -572,6 +581,12 @@ export function ChecklistItem({
       setError({ code: "missing_count", message: t("closing.error.missing_count") });
       return;
     }
+    // Photo is required on expects_photo items (server enforces at completeItem;
+    // reject early so the operator gets an actionable message, not a 4xx).
+    if (templateItem.expectsPhoto && photoDraft === null) {
+      setError({ code: "missing_photo", message: t("closing.error.missing_photo") });
+      return;
+    }
     const parsed = trimmed === "" ? null : Number(trimmed);
     if (parsed !== null && Number.isNaN(parsed)) {
       setError({ code: "invalid_payload", message: t("closing.error.invalid_number") });
@@ -580,6 +595,7 @@ export function ChecklistItem({
     void performSave({
       templateItemId: templateItem.id,
       countValue: parsed,
+      photoId: photoDraft,
       notes: notesDraft.trim() === "" ? null : notesDraft.trim(),
     });
   };
@@ -1058,21 +1074,12 @@ export function ChecklistItem({
               <span className="block text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
                 {t("closing.expand.photo_label")}
               </span>
-              <button
-                type="button"
-                onClick={() =>
-                  setError({
-                    code: "photo_not_wired",
-                    message: t("closing.error.photo_not_wired"),
-                  })
-                }
-                className="
-                  mt-1 inline-flex min-h-[48px] items-center justify-center rounded-md
-                  border-2 border-dashed border-co-border-2 bg-white px-4 text-sm font-semibold text-co-text-dim
-                "
-              >
-                {t("closing.expand.photo_stub")}
-              </button>
+              <PhotoCapture
+                className="mt-1"
+                locationId={locationId}
+                initialPhotoId={liveCompletion?.photoId ?? null}
+                onUploaded={setPhotoDraft}
+              />
             </div>
           ) : null}
 

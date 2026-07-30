@@ -1231,6 +1231,7 @@ function StationGroup({
                 actorUserId={actor.userId}
                 completerLevel={c ? (completerLevels[c.completedBy] ?? null) : null}
                 instanceStatus={instanceStatus}
+                locationId={locationId}
                 readOnly={readOnly}
                 onComplete={onComplete}
                 onRevoke={onRevoke}
