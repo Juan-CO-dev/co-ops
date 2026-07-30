@@ -10,6 +10,7 @@ import {
   NEEDS_LINK_WRITE_MIN,
 } from "@/lib/admin/needs-link";
 import { NeedsLinkQueue } from "@/components/admin/templates/NeedsLinkQueue";
+import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { PageHeader } from "@/components/ui/PageHeader";
 
 /**
@@ -56,24 +57,9 @@ export default async function AdminListsReportsPage() {
         subtitle={serverT(lang, "admin.templates.subtitle")}
       />
 
-      {/* Needs-link queue (spec §4). */}
+      {/* All list types FIRST — the primary navigation (owner ruling 2026-07-30:
+          the needs-link queue was pushing the editors below an endless scroll). */}
       <section className="mt-6">
-        <div className="flex items-center gap-2">
-          <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
-            {serverT(lang, "admin.templates.needs_link.title")}
-          </h2>
-          {needsLinkRows.length > 0 && (
-            <span className="inline-flex items-center rounded-full border border-co-cta/50 bg-co-cta/10 px-2 py-0.5 text-[11px] font-bold text-co-cta">
-              {needsLinkRows.length}
-            </span>
-          )}
-        </div>
-        <p className="mb-3 mt-1 text-xs text-co-text-muted">{serverT(lang, "admin.templates.needs_link.subtitle")}</p>
-        <NeedsLinkQueue rows={needsLinkRows} targets={linkTargets} canLink={level >= NEEDS_LINK_WRITE_MIN} />
-      </section>
-
-      {/* All list types + report definitions. */}
-      <section className="mt-8">
         <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
           {serverT(lang, "admin.templates.lists_heading")}
         </h2>
@@ -114,6 +100,26 @@ export default async function AdminListsReportsPage() {
               checklist template IS the report template — report knobs live inside
               the template editor, not a phantom entity. */}
         </ul>
+      </section>
+
+      {/* Needs-link queue (spec §4) — COLLAPSED by default (owner ruling
+          2026-07-30: "those should be collapsed and opened as needed"). The
+          count chip stays visible in the collapsed header (D2 alert slot). */}
+      <section className="mt-8">
+        <CollapsibleSection
+          idBase="hub-needs-link"
+          title={serverT(lang, "admin.templates.needs_link.title")}
+          badge={
+            needsLinkRows.length > 0 ? (
+              <span className="inline-flex items-center rounded-full border border-co-cta/50 bg-co-cta/10 px-2 py-0.5 text-[11px] font-bold text-co-cta">
+                {needsLinkRows.length}
+              </span>
+            ) : null
+          }
+        >
+          <p className="mb-3 text-xs text-co-text-muted">{serverT(lang, "admin.templates.needs_link.subtitle")}</p>
+          <NeedsLinkQueue rows={needsLinkRows} targets={linkTargets} canLink={level >= NEEDS_LINK_WRITE_MIN} />
+        </CollapsibleSection>
       </section>
     </div>
   );

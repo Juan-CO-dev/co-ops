@@ -490,7 +490,11 @@ function TemplateDoctorPanel({
       idBase="tb-doctor"
       title={t("admin.templates.doctor.title")}
       badge={badge}
-      defaultOpen={!clean}
+      // COLLAPSED by default even with findings (owner ruling 2026-07-30: the
+      // standing needs-link backlog kept this permanently open, pushing the item
+      // editor below an endless scroll). The issue-count badge stays visible in
+      // the collapsed header (D2 never-collapse alert slot) — open as needed.
+      defaultOpen={false}
     >
       {clean && !hasAdvisory ? (
         <p className="text-sm text-co-text-muted">{t("admin.templates.doctor.all_clear_body")}</p>
