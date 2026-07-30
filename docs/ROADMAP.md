@@ -13,9 +13,11 @@ built and dormant behind owner externals. Converting dormant→live outranks new
 
 ## JUAN'S ERRANDS (the highest-leverage list in this file)
 
-1. **Toast prod credentials** → first-live re-verification → sales-pull cron live.
-   Unlocks: real consumption → true count variance → depletion-into-drift →
-   Dynamic Pars velocity → (eventually) Store Ordering. The keystone.
+1. ✅ **DONE — Toast is LIVE (verified 2026-07-31 against prod: live auth probe +
+   daily cron.success + ~8k toast_sales_events since 07-23, both shops; GUIDs set
+   07-25; crosswalk confirmed 07-25..27).** This errand was stale — the keystone
+   already turned. What it unlocks is now a BUILD queue, not an errand: sales are
+   banked but nothing consumes them yet → **depletion-into-drift is the real NEXT.**
 2. **Resend DNS** → magic links reach real customers (today the allowlist gates them
    to juan@). Unlocks: real catering leads → the W1/W4 moat finally breathes.
 3. **Two-minute decisions:** photo storage target (recommended: Supabase Storage);
@@ -42,13 +44,15 @@ follow-up with trigger: question input types on OPENING lists (fire when the
 opening Phase-1 answer path learns input_type). Trust-recovery errand (Juan):
 paper-audit the AM prep template + walk the opener through it once.
 
-## NEXT (the moment Toast goes live)
+## NEXT (Toast IS live — this queue is unblocked NOW)
 
-- **First-real-data hardening pass** (budgeted: expect crosswalk/spec-vs-reality gaps
-  on the first real payloads).
 - **Toast-depletion-into-drift** (read-track spec #3): depletion feeds counts'
   consumed side → TRUE variance. Drift is already correct for prep-consumed items;
-  retail-sold items are blind until this.
+  retail-sold items are blind until this. A WEEK of real sales is already banked
+  (~8k events since 07-23) — the derivation has data to verify against on day one.
+- **First-real-data audit** (lighter than the planned hardening pass — the pull has
+  run clean daily since 07-23; audit the banked events vs crosswalk coverage
+  instead of budgeting for first-payload breakage).
 - **Dynamic Pars — design session** (owner-called). Build AFTER consumption data
   flows; weather bootstraps from the existing manual weather field on the daily
   report before any feed is built. Then EZCater 2c-b when the ezManage token lands.
