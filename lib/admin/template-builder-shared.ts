@@ -369,6 +369,9 @@ export interface ReconcileSource {
   hardGate: boolean;
   expectsCount: boolean;
   expectsPhoto: boolean;
+  /** Fulledit PR-2: the source's question input type — reconcile reproduces it
+   *  (adversarial C3: "Make B match A" must not flatten a question to a tick). */
+  inputType: "yes_no" | "free_text" | null;
   /** the source's registry item link (count-bearing rows). */
   itemId: string | null;
   /** the source's SKU link (count-bearing rows). */
@@ -430,6 +433,12 @@ export function buildReconcileAddEdit(
     expectsPhoto: source.expectsPhoto,
     spineLink,
     hardGate: source.hardGate,
+    // Fulledit PR-2 (adversarial C3): carry the question input type so the
+    // reconciled row matches A faithfully. Guarded: a legal source can't be
+    // count/photo + question, but never emit the illegal combination anyway.
+    ...(source.inputType && !source.expectsCount && !source.expectsPhoto
+      ? { inputType: source.inputType }
+      : {}),
     ...(source.es ? { es: source.es } : {}),
   };
   return { ok: true, edit };

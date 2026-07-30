@@ -982,6 +982,7 @@ export async function publishTemplateVersion(
         requiredChanged: diff.requiredChanged.length,
         gateChanged: diff.gateChanged.length,
         referenceChanged: diff.referenceChanged,
+        inputTypeChanged: diff.inputTypeChanged.length,
       },
       // PR-4: record a submission-gate predicate change on the version (spec §5).
       submission_gate_predicate_changed:
@@ -1120,6 +1121,16 @@ async function copyItemsToVersion(
           `"${a.label}" cannot be both a count line and a question line`,
         );
       }
+    }
+    // Photo + question is app-guarded ONLY (no DB CHECK): the Yes/No save carries
+    // no photoId, so the line would be permanently unanswerable (adversarial C1 —
+    // mirrors the drawer path's input_type_conflicts_photo guard).
+    if (a.inputType && a.expectsPhoto) {
+      throw new TemplateBuilderError(
+        400,
+        "input_type_conflicts_photo",
+        `"${a.label}" cannot be both a photo line and a question line`,
+      );
     }
     maxOrder += 1;
     const es = a.es ?? {};

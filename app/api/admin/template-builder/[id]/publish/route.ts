@@ -164,10 +164,11 @@ function coerceEdit(raw: unknown): TemplateItemEdit | null {
         edit.hardGate = o.hardGate;
       }
       // Fulledit PR-2: the question input type on a fresh add. Mutually exclusive
-      // with expectsCount (parity with the lib guard — reject at the wire too).
+      // with expectsCount AND expectsPhoto (parity with the lib guards — the photo
+      // case has no DB CHECK and would plant an unanswerable line; adversarial C1).
       if ("inputType" in o && o.inputType !== undefined && o.inputType !== null) {
         if (o.inputType !== "yes_no" && o.inputType !== "free_text") return null;
-        if (edit.expectsCount) return null;
+        if (edit.expectsCount || edit.expectsPhoto) return null;
         edit.inputType = o.inputType;
       }
       if ("spineLink" in o && o.spineLink !== null) {

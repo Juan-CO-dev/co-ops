@@ -106,6 +106,7 @@ function findReconcileSource(
     hardGate: row.hardGate,
     expectsCount: row.expectsCount,
     expectsPhoto: row.expectsPhoto,
+    inputType: row.inputType,
     itemId: row.itemId,
     vendorItemId: row.vendorItemId,
     isMirror: isMirrorItem(row.prepMeta),

@@ -815,6 +815,7 @@ function reconcileSrc(over: Partial<ReconcileSource> = {}): ReconcileSource {
     hardGate: false,
     expectsCount: false,
     expectsPhoto: false,
+    inputType: null,
     itemId: null,
     vendorItemId: null,
     isMirror: false,
