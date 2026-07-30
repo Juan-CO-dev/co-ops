@@ -1,5 +1,10 @@
 # CO-OPS — Remaining Scope to "Done"
 
+> ⚠️ **SUPERSEDED (2026-07-29) by [`docs/ROADMAP.md`](./ROADMAP.md).** This file is a
+> historical snapshot from 2026-06-13 and lists systems as pending that are now LIVE
+> (mid-day prep, cash, maintenance, reports hub, admin console, and more). Do NOT plan
+> from it. Kept for provenance only.
+
 **Written 2026-06-13.** Shared map: where the build is, what's left, and the order to finish.
 Supersedes the scattered "C.54-ish?" mental model. This is the board we plan from.
 
