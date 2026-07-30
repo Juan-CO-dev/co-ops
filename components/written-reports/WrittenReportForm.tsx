@@ -51,6 +51,7 @@ export function WrittenReportForm({
   translateRole,
   onSubmit,
   onCancel,
+  viewerLevel,
 }: {
   initial?: WrittenReportFormValues;
   busy: boolean;
@@ -60,6 +61,8 @@ export function WrittenReportForm({
   translateRole: (role: RoleCode) => string;
   onSubmit: (values: WrittenReportFormValues) => void;
   onCancel: () => void;
+  /** Author's role level — clamps the offered visibility floors (MED-1). */
+  viewerLevel: number;
 }) {
   const { t } = useTranslation();
 
@@ -70,7 +73,7 @@ export function WrittenReportForm({
     initial?.visibilityMinLevel ?? WRITTEN_REPORT_DEFAULT_VISIBILITY,
   );
 
-  const floors = visibilityFloorOptions();
+  const floors = visibilityFloorOptions(viewerLevel);
   const canSubmit = body.trim() !== "" && !busy;
 
   const submit = () => {

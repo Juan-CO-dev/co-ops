@@ -11,6 +11,7 @@
 import { serverT } from "@/lib/i18n/server";
 import { accessibleLocations, type LocationActor } from "@/lib/locations";
 import { requireSessionFromHeaders } from "@/lib/session";
+import { getRoleLevel } from "@/lib/roles";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { listWrittenReports, WRITTEN_REPORT_WRITE_MIN_LEVEL } from "@/lib/written-reports";
 
@@ -46,7 +47,7 @@ export default async function WrittenReportsPage() {
         subtitle={serverT(lang, "written_reports.page.subtitle")}
         className="mb-4"
       />
-      <WrittenReportsClient reports={reports} canWrite={canWrite} />
+      <WrittenReportsClient reports={reports} canWrite={canWrite} viewerLevel={getRoleLevel(auth.user.role)} />
     </main>
   );
 }

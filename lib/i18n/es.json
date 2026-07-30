@@ -73,6 +73,7 @@
   "written_reports.error.invalid_visibility": "Elige un nivel de visibilidad válido.",
   "written_reports.error.window_closed": "Este reporte ya no se puede editar.",
   "written_reports.error.forbidden": "Tu rol no puede escribir reportes.",
+  "settings.error.generic": "No se pudo guardar — inténtalo de nuevo.",
   "settings.page.title": "Configuración",
   "settings.page.subtitle": "Tus preferencias de la app.",
   "settings.language.title": "Idioma",

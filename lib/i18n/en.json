@@ -73,6 +73,7 @@
   "written_reports.error.invalid_visibility": "Pick a valid visibility level.",
   "written_reports.error.window_closed": "This report can no longer be edited.",
   "written_reports.error.forbidden": "Your role cannot write reports.",
+  "settings.error.generic": "Could not save — try again.",
   "settings.page.title": "Settings",
   "settings.page.subtitle": "Your app preferences.",
   "settings.language.title": "Language",

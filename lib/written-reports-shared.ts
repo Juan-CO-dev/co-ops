@@ -93,7 +93,8 @@ export interface VisibilityFloorOption {
   role: RoleCode;
 }
 
-export function visibilityFloorOptions(): VisibilityFloorOption[] {
+export function visibilityFloorOptions(maxLevel?: number): VisibilityFloorOption[] {
+
   const byLevel = new Map<number, RoleCode>();
   for (const r of Object.values(ROLES)) {
     // Only integer levels >= the default floor; first (highest-listed) wins.
@@ -101,9 +102,14 @@ export function visibilityFloorOptions(): VisibilityFloorOption[] {
     if (!Number.isInteger(r.level)) continue;
     if (!byLevel.has(r.level)) byLevel.set(r.level, r.code);
   }
-  return [...byLevel.entries()]
+  const all = [...byLevel.entries()]
     .map(([level, role]) => ({ level, role }))
     .sort((a, b) => a.level - b.level);
+  // Floor clamp (adversarial review MED-1): an author may never set a floor ABOVE
+  // their own level — they could write a report they can never read back (and the
+  // doc contract promises server enforcement). maxLevel filters the OFFERED floors.
+  return maxLevel == null ? all : all.filter((o) => o.level <= maxLevel);
+
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -148,6 +154,8 @@ export function validateWrittenReportDraft(raw: {
   body?: unknown;
   category?: unknown;
   visibilityMinLevel?: unknown;
+  /** The AUTHOR's role level — clamps the legal visibility floors (MED-1). */
+  authorLevel: number;
 }): WrittenReportValidationResult {
   // body — required
   const bodyStr = typeof raw.body === "string" ? raw.body.trim() : "";
@@ -175,8 +183,10 @@ export function validateWrittenReportDraft(raw: {
     category = raw.category;
   }
 
-  // visibility — must be one of the offered floors
-  const allowed = new Set(visibilityFloorOptions().map((o) => o.level));
+  // visibility — must be one of the offered floors, clamped to the AUTHOR's own
+  // level (MED-1: floor > author level = a report the author can never read back;
+  // the server is the authority, the picker mirrors it).
+  const allowed = new Set(visibilityFloorOptions(raw.authorLevel).map((o) => o.level));
   const vis =
     typeof raw.visibilityMinLevel === "number"
       ? raw.visibilityMinLevel

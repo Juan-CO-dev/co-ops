@@ -17,7 +17,9 @@
 import { type NextRequest } from "next/server";
 
 import { extractIp, jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
+import { audit } from "@/lib/audit";
 import { requireSession, SESSION_COOKIE_NAME } from "@/lib/session";
+import { getRoleLevel } from "@/lib/roles";
 import { createAuthedClient } from "@/lib/supabase-server";
 import { updateWrittenReport, validateWrittenReportDraft } from "@/lib/written-reports";
 
@@ -40,6 +42,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     body: raw.body,
     category: raw.category,
     visibilityMinLevel: raw.visibilityMinLevel,
+    authorLevel: getRoleLevel(ctx.user.role),
   });
   if (!result.ok || !result.draft) {
     return jsonError(400, result.error ?? "invalid_payload", {
@@ -62,6 +65,21 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         message: "This report can no longer be edited.",
       });
     }
+    // MED-2: audit the within-window edit — who changed an incident report's
+    // body/visibility, when (the edit path is the security-relevant one).
+    void audit({
+      actorId: ctx.user.id,
+      actorRole: ctx.role,
+      action: "written_report.update",
+      resourceTable: "written_reports",
+      resourceId: id,
+      metadata: {
+        category: result.draft.category,
+        visibility_min_level: result.draft.visibilityMinLevel,
+      },
+      ipAddress: extractIp(req),
+      userAgent: null,
+    });
     return jsonOk({ ok: true });
   } catch (err) {
     const ip = extractIp(req);

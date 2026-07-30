@@ -19,7 +19,9 @@
 import { type NextRequest } from "next/server";
 
 import { extractIp, jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
+import { audit } from "@/lib/audit";
 import { requireSession, SESSION_COOKIE_NAME } from "@/lib/session";
+import { getRoleLevel } from "@/lib/roles";
 import { createAuthedClient } from "@/lib/supabase-server";
 import { createWrittenReport, validateWrittenReportDraft } from "@/lib/written-reports";
 import { WRITTEN_REPORT_WRITE_MIN_LEVEL } from "@/lib/written-reports-shared";
@@ -44,6 +46,7 @@ export async function POST(req: NextRequest) {
     body: raw.body,
     category: raw.category,
     visibilityMinLevel: raw.visibilityMinLevel,
+    authorLevel: getRoleLevel(ctx.user.role),
   });
   if (!result.ok || !result.draft) {
     return jsonError(400, result.error ?? "invalid_payload", {
@@ -76,6 +79,22 @@ export async function POST(req: NextRequest) {
       authorRole: ctx.role,
       locationId,
       draft: result.draft,
+    });
+    // MED-2 (adversarial review): written reports are staff-relevant free text —
+    // audit the submit, mirroring the pm_report.submit precedent. Fail-open.
+    void audit({
+      actorId: ctx.user.id,
+      actorRole: ctx.role,
+      action: "written_report.submit",
+      resourceTable: "written_reports",
+      resourceId: id,
+      metadata: {
+        location_id: locationId,
+        category: result.draft.category,
+        visibility_min_level: result.draft.visibilityMinLevel,
+      },
+      ipAddress: extractIp(req),
+      userAgent: null,
     });
     return jsonOk({ ok: true, id });
   } catch (err) {

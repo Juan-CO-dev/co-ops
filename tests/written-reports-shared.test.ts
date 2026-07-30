@@ -63,68 +63,67 @@ describe("visibilityFloorOptions", () => {
 
 describe("validateWrittenReportDraft — required body + normalization", () => {
   it("body_required when body is empty/whitespace/missing", () => {
-    expect(validateWrittenReportDraft({ body: "" }).error).toBe("body_required");
-    expect(validateWrittenReportDraft({ body: "   \n\t" }).error).toBe("body_required");
-    expect(validateWrittenReportDraft({}).error).toBe("body_required");
+    expect(validateWrittenReportDraft({ body: "", authorLevel: 9 }).error).toBe("body_required");
+    expect(validateWrittenReportDraft({ body: "   \n\t", authorLevel: 9 }).error).toBe("body_required");
+    expect(validateWrittenReportDraft({ authorLevel: 9 }).error).toBe("body_required");
   });
 
   it("trims body and title; whitespace-only title normalizes to null", () => {
-    const r = validateWrittenReportDraft({ title: "   ", body: "  the walk-in was warm  " });
+    const r = validateWrittenReportDraft({ title: "   ", body: "  the walk-in was warm  ", authorLevel: 9 });
     expect(r.ok).toBe(true);
     expect(r.draft?.title).toBeNull();
     expect(r.draft?.body).toBe("the walk-in was warm");
   });
 
   it("keeps a real title trimmed", () => {
-    const r = validateWrittenReportDraft({ title: "  Fridge issue ", body: "x" });
+    const r = validateWrittenReportDraft({ title: "  Fridge issue ", body: "x", authorLevel: 9 });
     expect(r.draft?.title).toBe("Fridge issue");
   });
 
   it("enforces length limits", () => {
     expect(
-      validateWrittenReportDraft({ body: "a".repeat(WRITTEN_REPORT_LIMITS.bodyMax + 1) }).error,
+      validateWrittenReportDraft({ body: "a".repeat(WRITTEN_REPORT_LIMITS.bodyMax + 1), authorLevel: 9 }).error,
     ).toBe("body_too_long");
     expect(
       validateWrittenReportDraft({
         title: "a".repeat(WRITTEN_REPORT_LIMITS.titleMax + 1),
-        body: "x",
-      }).error,
+        body: "x", authorLevel: 9 }).error,
     ).toBe("title_too_long");
   });
 });
 
 describe("validateWrittenReportDraft — category + visibility", () => {
   it("null/empty category passes and normalizes to null", () => {
-    expect(validateWrittenReportDraft({ body: "x", category: null }).draft?.category).toBeNull();
-    expect(validateWrittenReportDraft({ body: "x", category: "" }).draft?.category).toBeNull();
-    expect(validateWrittenReportDraft({ body: "x" }).draft?.category).toBeNull();
+    expect(validateWrittenReportDraft({ body: "x", category: null, authorLevel: 9 }).draft?.category).toBeNull();
+    expect(validateWrittenReportDraft({ body: "x", category: "", authorLevel: 9 }).draft?.category).toBeNull();
+    expect(validateWrittenReportDraft({ body: "x", authorLevel: 9 }).draft?.category).toBeNull();
   });
 
   it("valid category survives; invalid rejected", () => {
-    expect(validateWrittenReportDraft({ body: "x", category: "incident" }).draft?.category).toBe(
+    expect(validateWrittenReportDraft({ body: "x", category: "incident", authorLevel: 9 }).draft?.category).toBe(
       "incident",
     );
-    expect(validateWrittenReportDraft({ body: "x", category: "nope" }).error).toBe(
+    expect(validateWrittenReportDraft({ body: "x", category: "nope", authorLevel: 9 }).error).toBe(
       "invalid_category",
     );
   });
 
   it("visibility defaults to 3 when omitted", () => {
-    expect(validateWrittenReportDraft({ body: "x" }).draft?.visibilityMinLevel).toBe(
+    expect(validateWrittenReportDraft({ body: "x", authorLevel: 9 }).draft?.visibilityMinLevel).toBe(
       WRITTEN_REPORT_DEFAULT_VISIBILITY,
     );
   });
 
   it("visibility must be an offered floor level", () => {
-    expect(validateWrittenReportDraft({ body: "x", visibilityMinLevel: 6 }).ok).toBe(true);
-    expect(validateWrittenReportDraft({ body: "x", visibilityMinLevel: 2 }).error).toBe(
+    expect(validateWrittenReportDraft({ body: "x", visibilityMinLevel: 6, authorLevel: 9 }).ok).toBe(true);
+    expect(validateWrittenReportDraft({ body: "x", visibilityMinLevel: 2, authorLevel: 9 }).error).toBe(
       "invalid_visibility",
     );
-    expect(validateWrittenReportDraft({ body: "x", visibilityMinLevel: 99 }).error).toBe(
+    expect(validateWrittenReportDraft({ body: "x", visibilityMinLevel: 99, authorLevel: 9 }).error).toBe(
       "invalid_visibility",
     );
     // decimal / non-offered level rejected
-    expect(validateWrittenReportDraft({ body: "x", visibilityMinLevel: 6.5 }).error).toBe(
+    expect(validateWrittenReportDraft({ body: "x", visibilityMinLevel: 6.5, authorLevel: 9 }).error).toBe(
       "invalid_visibility",
     );
   });
@@ -145,5 +144,25 @@ describe("isWithinEditWindow — mirrors the RLS 3h UPDATE window", () => {
 
   it("accepts Date instances", () => {
     expect(isWithinEditWindow(new Date("2026-07-29T11:00:00Z"), now)).toBe(true);
+  });
+});
+
+// ── MED-1 (adversarial review): the author-level floor clamp ───────────────────
+describe("visibility floor clamp — an author never sets a floor above their own level", () => {
+  it("an L3 author cannot submit floor 6 (self-lockout rejected)", () => {
+    const r = validateWrittenReportDraft({ body: "x", visibilityMinLevel: 6, authorLevel: 3 });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toBe("invalid_visibility");
+  });
+
+  it("an L6 author can set floor 6 but not 7", () => {
+    expect(validateWrittenReportDraft({ body: "x", visibilityMinLevel: 6, authorLevel: 6 }).ok).toBe(true);
+    expect(validateWrittenReportDraft({ body: "x", visibilityMinLevel: 7, authorLevel: 6 }).ok).toBe(false);
+  });
+
+  it("visibilityFloorOptions(maxLevel) offers only floors ≤ the author's level", () => {
+    const floors = visibilityFloorOptions(6).map((o) => o.level);
+    expect(Math.max(...floors)).toBeLessThanOrEqual(6);
+    expect(floors).toContain(3);
   });
 });

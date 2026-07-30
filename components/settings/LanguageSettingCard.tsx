@@ -34,10 +34,10 @@ export function LanguageSettingCard() {
       if (res.ok) {
         setLanguage(next);
       } else {
-        setError(t("written_reports.error.generic"));
+        setError(t("settings.error.generic"));
       }
     } catch {
-      setError(t("written_reports.error.generic"));
+      setError(t("settings.error.generic"));
     } finally {
       setUpdating(false);
     }

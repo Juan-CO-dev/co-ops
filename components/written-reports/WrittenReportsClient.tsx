@@ -49,9 +49,11 @@ function stampLabel(iso: string, language: "en" | "es"): string {
 export function WrittenReportsClient({
   reports,
   canWrite,
+  viewerLevel,
 }: {
   reports: WrittenReportListItem[];
   canWrite: boolean;
+  viewerLevel: number;
 }) {
   const { t, language } = useTranslation();
   const router = useRouter();
@@ -124,6 +126,7 @@ export function WrittenReportsClient({
       {canWrite ? (
         adding ? (
           <WrittenReportForm
+            viewerLevel={viewerLevel}
             busy={busy}
             errorMsg={errorMsg}
             submitLabel={t("written_reports.submit_new")}
@@ -165,6 +168,7 @@ export function WrittenReportsClient({
                       category: (r.category as WrittenReportFormValues["category"]) ?? null,
                       visibilityMinLevel: r.visibilityMinLevel,
                     }}
+                    viewerLevel={viewerLevel}
                     busy={busy}
                     errorMsg={errorMsg}
                     submitLabel={t("written_reports.submit_edit")}
@@ -212,7 +216,7 @@ export function WrittenReportsClient({
                             setAdding(false);
                             setErrorMsg(null);
                           }}
-                          className="ml-auto inline-flex min-h-[36px] items-center rounded-md px-2 text-xs font-bold uppercase tracking-[0.1em] text-co-text-muted transition hover:text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
+                          className="ml-auto inline-flex min-h-[44px] items-center rounded-md px-2 text-xs font-bold uppercase tracking-[0.1em] text-co-text-muted transition hover:text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
                         >
                           {t("written_reports.edit")}
                         </button>
