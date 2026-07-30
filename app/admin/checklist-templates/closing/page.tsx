@@ -4,8 +4,10 @@ import { requireSessionFromHeaders } from "@/lib/session";
 import { ROLES, getRoleLevel } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { loadTemplateBuilderView, runTemplateDoctor, loadReferenceTargets } from "@/lib/admin/template-builder";
+import { loadPrepOverview } from "@/lib/admin/prep-overview";
 import { loadLinkTargets } from "@/lib/admin/needs-link";
 import { TemplateBuilderClient } from "@/components/admin/template-builder/TemplateBuilderClient";
+import { PrepOverviewPanel } from "@/components/admin/template-builder/PrepOverviewPanel";
 import { PageHeader } from "@/components/ui/PageHeader";
 
 /**
@@ -29,11 +31,16 @@ export default async function AdminClosingBuilderPage() {
   const lang = auth.user.language;
   const level = getRoleLevel(auth.user.role);
 
-  const [view, doctor, linkTargets, referenceTargets] = await Promise.all([
+  const [view, doctor, linkTargets, referenceTargets, prepOverview] = await Promise.all([
     loadTemplateBuilderView(auth, "closing"),
     runTemplateDoctor(auth, "closing"),
     loadLinkTargets(auth),
     loadReferenceTargets(auth, "closing"),
+    // ADVISORY panel — best-effort: its failure never takes down the builder.
+    loadPrepOverview(auth).catch((e) => {
+      console.error("[builder] prep overview load failed (advisory, non-fatal):", e);
+      return null;
+    }),
   ]);
 
   return (
@@ -50,6 +57,12 @@ export default async function AdminClosingBuilderPage() {
         referenceTargets={referenceTargets}
         canFill={level >= 7}
       />
+
+      {/* Read-only prep overview + prep Doctor (PR-3/4) — LAST + advisory; every fix
+          deep-links to the prep editor. Not folded into the closing Doctor totals. */}
+      <div className="mt-6">
+        <PrepOverviewPanel overview={prepOverview} />
+      </div>
     </div>
   );
 }
