@@ -23,6 +23,28 @@ export interface InterpretedAnswer {
   value: number | string | null;
 }
 
+/**
+ * The WRITE gate of the same law — what an answer must look like to save.
+ * Returns null when valid, else the human detail for the route's 400.
+ * Lives here (pure, client-safe) so the form can pre-validate with the exact
+ * server rule; lib/checklists.ts completeItem enforces it server-side.
+ */
+export function validateAnswerForInputType(
+  inputType: "yes_no" | "free_text" | null,
+  countValue: number | null | undefined,
+  notes: string | null | undefined,
+): string | null {
+  if (inputType === "yes_no") {
+    if (countValue !== 0 && countValue !== 1) return "yes/no answer must set countValue to exactly 0 or 1";
+    return null;
+  }
+  if (inputType === "free_text") {
+    if (typeof notes !== "string" || notes.trim().length === 0) return "free-text answer requires non-empty notes";
+    return null;
+  }
+  return null;
+}
+
 export function interpretAnswer(
   item: Pick<ChecklistTemplateItem, "inputType" | "expectsCount">,
   completion: Pick<ChecklistCompletion, "countValue" | "notes"> | null,

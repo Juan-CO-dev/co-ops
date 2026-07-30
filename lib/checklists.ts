@@ -174,29 +174,10 @@ export class ChecklistInvalidAnswerError extends ChecklistError {
   }
 }
 
-/**
- * Fulledit PR-2 — the pure answer validator for QUESTION input types (0165).
- * Returns null when valid, else the human detail for ChecklistInvalidAnswerError.
- * The council's guardrail lives here: a yes_no answer is EXACTLY 0 or 1 in
- * count_value (NO is a recorded answer, distinct from unanswered); a free_text
- * answer is non-empty trimmed notes. NULL input_type = legacy vocabulary,
- * no constraint beyond the expects_count/expects_photo checks.
- */
-export function validateAnswerForInputType(
-  inputType: "yes_no" | "free_text" | null,
-  countValue: number | null | undefined,
-  notes: string | null | undefined,
-): string | null {
-  if (inputType === "yes_no") {
-    if (countValue !== 0 && countValue !== 1) return "yes/no answer must set countValue to exactly 0 or 1";
-    return null;
-  }
-  if (inputType === "free_text") {
-    if (typeof notes !== "string" || notes.trim().length === 0) return "free-text answer requires non-empty notes";
-    return null;
-  }
-  return null;
-}
+// Fulledit PR-2: the pure answer validator lives in lib/checklist-answers.ts
+// (client-safe — the form pre-validates with the exact server rule).
+import { validateAnswerForInputType } from "@/lib/checklist-answers";
+export { validateAnswerForInputType };
 
 export class ChecklistPinMismatchError extends ChecklistError {
   constructor() {

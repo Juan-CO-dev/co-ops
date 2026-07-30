@@ -8,8 +8,7 @@
  * "unanswered" — conflating those was the failure mode the council rejected.
  */
 import { describe, it, expect } from "vitest";
-import { validateAnswerForInputType } from "@/lib/checklists";
-import { interpretAnswer } from "@/lib/checklist-answers";
+import { interpretAnswer, validateAnswerForInputType } from "@/lib/checklist-answers";
 
 describe("validateAnswerForInputType — the write gate", () => {
   it("yes_no accepts exactly 0 and 1", () => {
