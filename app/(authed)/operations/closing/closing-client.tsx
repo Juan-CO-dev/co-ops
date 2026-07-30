@@ -63,6 +63,7 @@ import { DashboardBackLink } from "@/components/DashboardBackLink";
 import { PinConfirmModal } from "@/components/auth/PinConfirmModal";
 import { ReportReferenceItem } from "@/components/ReportReferenceItem";
 import type { ChecklistChainEntry } from "@/lib/checklists";
+import { WALK_OUT_VERIFICATION_STATION } from "@/lib/checklist-constants";
 import { resolveTemplateItemContent } from "@/lib/i18n/content";
 import { formatTime } from "@/lib/i18n/format";
 import { useTranslation } from "@/lib/i18n/provider";
@@ -150,7 +151,8 @@ const STATION_FALLBACK = "General";
 // matching key would break the Walk-Out gate for Spanish-language users
 // (Spanish "Verificación de Salida" wouldn't equal English
 // "Walk-Out Verification" and the finalize affordance would never appear).
-const WALK_OUT_VERIFICATION_STATION = "Walk-Out Verification";
+// WALK_OUT_VERIFICATION_STATION is imported at the top from lib/checklist-constants
+// (shared with the SERVER lock-up gate in lib/checklists.ts — the two must never drift).
 
 function groupByStation(items: ChecklistTemplateItem[]): Map<string, ChecklistTemplateItem[]> {
   const out = new Map<string, ChecklistTemplateItem[]>();
