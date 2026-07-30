@@ -6,9 +6,13 @@
  */
 
 import { countNotReady } from "@/lib/admin/readiness-load";
+import { loadCronHealth, loadAdoption, type CronHealth } from "@/lib/admin/ops-health";
+import type { AdoptionSurfaceCount } from "@/lib/admin/ops-health-shared";
 import { adminSectionsFor } from "@/lib/admin/sections";
 import { serverT } from "@/lib/i18n/server";
+import { formatDateLabel } from "@/lib/i18n/format";
 import { requireSessionFromHeaders } from "@/lib/session";
+import type { Language } from "@/lib/i18n/types";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { AlertPill } from "@/components/ui/AlertPill";
 
@@ -30,12 +34,30 @@ export default async function AdminHubPage() {
     }
   }
 
+  // Ops-health cards (derive-on-read over audit_log). Each fails SOFT — an ops signal
+  // must never take down the admin hub (mirrors the readiness-counts posture above).
+  let cronHealth: CronHealth | null = null;
+  try {
+    cronHealth = await loadCronHealth();
+  } catch (e) {
+    console.error("hub cron health failed (rendering without card)", e);
+  }
+  let adoption: AdoptionSurfaceCount[] = [];
+  try {
+    adoption = await loadAdoption();
+  } catch (e) {
+    console.error("hub adoption failed (rendering without card)", e);
+  }
+
   return (
     <div>
       <PageHeader
         title={serverT(lang, "admin.hub.heading")}
         subtitle={serverT(lang, "admin.hub.subtitle")}
       />
+
+      <CronHealthCard health={cronHealth} lang={lang} />
+      <AdoptionCard surfaces={adoption} lang={lang} />
 
       <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {sections.map((s) =>
@@ -71,6 +93,72 @@ export default async function AdminHubPage() {
           ),
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Cron-failure visibility (Ops guardrails NOW #3). Renders ONLY when there is something
+ * to say: a recent (≤48h) toast-sales-pull failure → a danger AlertPill line; else, if
+ * the cron has ever succeeded, a quiet "last run OK <date>" heartbeat. DORMANT (never
+ * run) → renders nothing (no false alarm before Toast creds land).
+ */
+function CronHealthCard({ health, lang }: { health: CronHealth | null; lang: Language }) {
+  if (!health) return null;
+  if (health.hasRecentFailure) {
+    const dateLabel = health.lastFailureAt ? formatDateLabel(health.lastFailureAt.slice(0, 10), lang) : "";
+    return (
+      <div className="co-card mt-5 flex flex-col gap-1 border-2 border-co-danger-surface p-4">
+        <div className="flex items-center gap-2">
+          <AlertPill tone="danger" uppercase={false}>
+            {serverT(lang, "admin.hub.cron.failed")}
+          </AlertPill>
+          <span className="text-sm font-bold text-co-text">
+            {serverT(lang, "admin.hub.cron.failed_line", { date: dateLabel })}
+          </span>
+        </div>
+        {health.lastFailureError ? (
+          <p className="text-xs text-co-text-muted break-words">{health.lastFailureError}</p>
+        ) : null}
+      </div>
+    );
+  }
+  if (health.lastSuccessAt) {
+    return (
+      <p className="mt-4 text-xs text-co-text-dim">
+        {serverT(lang, "admin.hub.cron.ok_line", { date: formatDateLabel(health.lastSuccessAt.slice(0, 10), lang) })}
+      </p>
+    );
+  }
+  return null;
+}
+
+/**
+ * Adoption card ("Used this week", Ops guardrails NOW #3). Answers "is anyone using it?"
+ * — the curated surfaces with their 7-day event counts. Zero-count surfaces render muted
+ * (the roster stays stable). Renders nothing when the derive failed (empty list).
+ */
+function AdoptionCard({ surfaces, lang }: { surfaces: AdoptionSurfaceCount[]; lang: Language }) {
+  if (surfaces.length === 0) return null;
+  return (
+    <div className="co-card mt-4 p-4">
+      <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim">
+        {serverT(lang, "admin.hub.adoption.title")}
+      </h2>
+      <ul className="mt-2 flex flex-col gap-1">
+        {surfaces.map((s) => {
+          const zero = s.count === 0;
+          return (
+            <li
+              key={s.id}
+              className={`flex items-center justify-between gap-3 text-sm ${zero ? "text-co-text-dim" : "text-co-text"}`}
+            >
+              <span>{serverT(lang, s.labelKey)}</span>
+              <span className="tabular-nums font-bold">{s.count}</span>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }
