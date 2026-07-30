@@ -33,6 +33,8 @@ const KNOWN_ERROR_CODES = new Set([
   "invalid_price",
   "invalid_date",
   "invalid_sku",
+  // polish-c: emitted by createSku/updateSku but used to fall to generic.
+  "invalid_sku_class",
   // Pack-chain (0159) route/lib codes.
   "empty_chain",
   "label_is_measure_unit",

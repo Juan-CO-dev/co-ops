@@ -80,6 +80,9 @@ const KNOWN_ERROR_CODES = new Set([
   "allergen_exists",
   "food_fact_exists",
   "last_active_row",
+  // polish-c: package-slot lib codes that used to fall to generic.
+  "invalid_ref",
+  "not_choice",
 ]);
 
 /** Resolve an error `code` to a localized message, falling back to generic. */
