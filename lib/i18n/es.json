@@ -1484,6 +1484,7 @@
   "closing.review.station_label_separator": " · ",
   "closing.cash_required.banner": "Se requiere el depósito de efectivo antes de finalizar el cierre.",
   "closing.cash_required.cta": "Hacer el depósito de efectivo",
+  "closing.am_prep_gap.banner": "La preparación AM tuvo 0 artículos guardados hoy - consulta con el que abrió.",
   "closing.review.cannot_finalize_yet": "Falta verificar la salida — se podrá finalizar cuando los 5 ítems de salida estén listos.",
   "closing.review.role_too_low": "Solo Key Holder o superior puede finalizar el cierre.",
   "closing.finalize_pill.aria": "Finalizar cierre",

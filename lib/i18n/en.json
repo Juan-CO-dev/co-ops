@@ -1484,6 +1484,7 @@
   "closing.review.station_label_separator": " · ",
   "closing.cash_required.banner": "Cash deposit required before you can finalize the closing.",
   "closing.cash_required.cta": "Do the cash deposit",
+  "closing.am_prep_gap.banner": "AM Prep had 0 items saved today - check with the opener.",
   "closing.review.cannot_finalize_yet": "Walk-Out Verification not complete — finalize unlocks once all 5 walk-out items are checked off.",
   "closing.review.role_too_low": "Only Key Holder or higher can finalize the closing.",
   "closing.finalize_pill.aria": "Finalize closing",
