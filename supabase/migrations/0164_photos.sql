@@ -16,7 +16,7 @@
 --      earlier migration) points here; receiving stores the canonical app URL
 --      /api/photos/{id} in the EXISTING vendor_delivery_items.photo_url /
 --      vendor_deliveries.receipt_url TEXT columns (FORK 1 ruling — no DDL there).
---  (2) The `photos` Storage bucket (private) + restrictive storage.objects policies
+--  (2) The `photos` Storage bucket (private); NO storage.objects policies — deny-by-default
 --      denying all non-service-role access. Service-role (lib/photos.ts) is the sole
 --      writer; reads happen through short-lived signed URLs minted server-side after a
 --      location-bind check — the client never touches Storage directly.
@@ -34,7 +34,7 @@
 --   1. Dashboard → Storage → New bucket → name `photos`, Public = OFF, file-size limit
 --      8 MB, allowed MIME: image/jpeg, image/png, image/webp, image/heic.
 --      (Or via SQL editor as the postgres/service role — the exact statements below.)
---   2. Confirm the four restrictive storage.objects policies exist for bucket_id='photos'
+--   2. Confirm NO storage.objects policies match bucket_id='photos' (deny-by-default is the design)
 --      (SELECT/INSERT/UPDATE/DELETE all USING/ WITH CHECK false for the anon+authenticated
 --      roles). Service-role bypasses RLS, so lib/photos.ts still works.
 -- The `on conflict do nothing` + `drop policy if exists` guards make the block
@@ -66,7 +66,7 @@ CREATE POLICY photos_no_user_insert ON public.photos FOR INSERT WITH CHECK (fals
 CREATE POLICY photos_no_user_update ON public.photos FOR UPDATE USING (false) WITH CHECK (false);
 CREATE POLICY photos_no_user_delete ON public.photos FOR DELETE USING (false);
 
--- ── (2) THE PRIVATE STORAGE BUCKET + RESTRICTIVE OBJECT POLICIES ────────────────────
+-- ── (2) THE PRIVATE STORAGE BUCKET (deny-by-default; no object policies) ────────────
 -- Private bucket (public=false). See MANUAL FALLBACK above if this block cannot run
 -- via the migration runner.
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
@@ -76,20 +76,18 @@ VALUES (
 )
 ON CONFLICT (id) DO NOTHING;
 
--- storage.objects already has RLS enabled by Supabase. Add RESTRICTIVE policies that
--- deny every non-service-role operation on the `photos` bucket. (Service-role bypasses
--- RLS entirely, so lib/photos.ts upload + createSignedUrl keep working.) DROP-IF-EXISTS
--- first so the block is idempotent on re-run.
+-- storage.objects has RLS enabled by Supabase's default and the `photos` bucket is
+-- private; the ONLY reader/writer is the service-role client in lib/photos.ts, which
+-- bypasses RLS. NO storage.objects policy is created (adversarial review 2026-07-29
+-- HIGH): with RLS on and no permissive policy matching bucket_id='photos', every
+-- non-service role is denied BY DEFAULT ("Storage does not allow any operations
+-- without RLS policies"). A permissive USING (bucket_id <> 'photos') policy — the
+-- rejected draft — would have applied to PUBLIC (anon included) and PRE-GRANTED full
+-- CRUD on every FUTURE non-photos bucket: the law-book's OR-stack-permissive footgun
+-- transposed to storage. Deny-by-default is the correct posture; do not add policies
+-- here. The drops below make a re-run converge on the no-policy state if an earlier
+-- apply of the rejected draft ever ran.
 DROP POLICY IF EXISTS photos_objects_no_user_select ON storage.objects;
 DROP POLICY IF EXISTS photos_objects_no_user_insert ON storage.objects;
 DROP POLICY IF EXISTS photos_objects_no_user_update ON storage.objects;
 DROP POLICY IF EXISTS photos_objects_no_user_delete ON storage.objects;
-
-CREATE POLICY photos_objects_no_user_select ON storage.objects
-  FOR SELECT USING (bucket_id <> 'photos');
-CREATE POLICY photos_objects_no_user_insert ON storage.objects
-  FOR INSERT WITH CHECK (bucket_id <> 'photos');
-CREATE POLICY photos_objects_no_user_update ON storage.objects
-  FOR UPDATE USING (bucket_id <> 'photos') WITH CHECK (bucket_id <> 'photos');
-CREATE POLICY photos_objects_no_user_delete ON storage.objects
-  FOR DELETE USING (bucket_id <> 'photos');

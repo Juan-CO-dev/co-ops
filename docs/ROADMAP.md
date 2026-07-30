@@ -32,7 +32,7 @@ built and dormant behind owner externals. Converting dormant→live outranks new
 1. **Photo uploader seam** — IN FLIGHT (branch `claude/photo-uploader`, 2026-07-29):
    migration 0164 (photos registry + private bucket) + lib/photos-shared (pure, tested)
    + lib/photos + POST/GET /api/photos (replaces the 501) + PhotoCapture component +
-   wired ChecklistItem (closing/am_prep/mid_day) + ReceivingForm (line photo + receipt)
+   wired the shared ChecklistItem (live consumer: closing-client) + ReceivingForm (line photo + receipt)
    + reports detail photo links. Opening capture UI = fast-follow (see DEBT). One PR + smoke.
 2. **Written Reports (#2) + Settings** — the two council-named highest-value stubs.
    Written Reports' DB schema + types ALREADY EXIST (build = lib + routes + page;

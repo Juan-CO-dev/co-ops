@@ -33,7 +33,16 @@ export default async function DeliveryDetailPage({ params }: { params: Promise<{
       ) : null}
       {detail.notes ? <p className="mt-2 rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2 text-sm text-co-text">{detail.notes}</p> : null}
       {detail.receiptUrl ? (
-        <p className="mt-2 text-[11px] text-co-text-dim">{serverT(lang, "receiving.detail.receipt_attached")}</p>
+        <p className="mt-2 text-[11px] text-co-text-dim">
+          <a
+            href={detail.receiptUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-bold text-co-text-muted underline underline-offset-2 hover:text-co-text"
+          >
+            {serverT(lang, "receiving.detail.receipt_attached")}
+          </a>
+        </p>
       ) : null}
 
       <h2 className="mt-5 text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">{serverT(lang, "receiving.detail.items")}</h2>
@@ -52,7 +61,19 @@ export default async function DeliveryDetailPage({ params }: { params: Promise<{
               {l.unitPrice != null ? `$${l.unitPrice.toFixed(2)}/pack` : serverT(lang, "receiving.detail.no_price")}
               {l.resolvedOz != null ? ` · ${serverT(lang, "receiving.detail.resolved_oz", { oz: l.resolvedOz.toFixed(1) })}` : ""}
               {l.observedOzPerEach != null ? ` · ${l.observedOzPerEach} oz/each` : ""}
-              {l.photoUrl ? ` · ${serverT(lang, "receiving.detail.has_photo")}` : ""}
+              {l.photoUrl ? (
+                <>
+                  {" · "}
+                  <a
+                    href={l.photoUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-bold underline underline-offset-2 hover:text-co-text"
+                  >
+                    {serverT(lang, "receiving.detail.has_photo")}
+                  </a>
+                </>
+              ) : null}
               {l.notes ? ` · ${l.notes}` : ""}
             </div>
           </li>
