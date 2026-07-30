@@ -29,20 +29,10 @@ built and dormant behind owner externals. Converting dormant→live outranks new
 
 ## NOW (build — small, unblocked, dormant→live)
 
-1. **Photo uploader seam** — IN FLIGHT (branch `claude/photo-uploader`, 2026-07-29):
-   migration 0164 (photos registry + private bucket) + lib/photos-shared (pure, tested)
-   + lib/photos + POST/GET /api/photos (replaces the 501) + PhotoCapture component +
-   wired the shared ChecklistItem (live consumer: closing-client) + ReceivingForm (line photo + receipt)
-   + reports detail photo links. Opening capture UI = fast-follow (see DEBT). One PR + smoke.
-2. **Written Reports (#2) + Settings** — the two council-named highest-value stubs.
-   Written Reports' DB schema + types ALREADY EXIST (build = lib + routes + page;
-   incident/observation capture that today lives in text messages). Settings first
-   or parallel (small; establishes the user-preferences pattern).
-3. **Ops guardrails mini-arc** — cron-failure alert (toast-sales-pull fails silently),
-   backup/restore runbook + drill, adoption card (audit-log-derived "surfaces used
-   this week"), markPaymentPaid wiring (built fn, zero UI — staff cannot record a
-   check/cash payment as paid), orphaned-mirror Doctor check (code comment claims it
-   exists; it does not).
+**✅ NOW COLUMN COMPLETE (2026-07-30):** photo uploader (#211, mig 0164), Written
+Reports + Settings (#212), ops guardrails (#213 — cron visibility, backup runbook,
+adoption card, mark-paid wiring, orphaned-mirror check). The board now waits on the
+owner keystones below; the next NOW column gets written when one of them turns.
 
 ## NEXT (the moment Toast goes live)
 
