@@ -12,7 +12,7 @@ import { redirect } from "next/navigation";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getRoleLevel } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
-import { formatCents } from "@/lib/i18n/format";
+import { formatCents, formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { loadCateringInsights, INSIGHTS_READ_MIN } from "@/lib/catering/insights";
 import { BackLink } from "@/components/nav/BackLink";
@@ -121,7 +121,7 @@ export default async function CateringInsightsPage() {
                         {serverT(lang, "catering.insights.follow_up")}
                       </span>
                     )}
-                    {f.submittedAt ? new Date(f.submittedAt).toLocaleDateString(lang === "es" ? "es-US" : "en-US") : ""}
+                    {f.submittedAt ? formatDateLabel(f.submittedAt.slice(0, 10), lang) : ""}
                   </span>
                 </div>
                 {f.comment && <p className="mt-1 text-sm text-co-text-muted">{f.comment}</p>}
