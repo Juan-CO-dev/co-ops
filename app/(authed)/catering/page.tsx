@@ -23,10 +23,19 @@ const CARDS: Array<{ href: string; titleKey: TranslationKey; descKey: Translatio
   { href: "/catering/companies", titleKey: "catering.companies.title", descKey: "catering.hub.companies_desc" },
 ];
 
+const ADMIN_CATERING_MIN = 6; // the /admin/catering KB hub's floor
+
 export default async function CateringHubPage() {
   const auth = await requireSessionFromHeaders("/catering");
-  if (getRoleLevel(auth.user.role) < CATERING_HUB_MIN) redirect("/dashboard");
+  const level = getRoleLevel(auth.user.role);
+  if (level < CATERING_HUB_MIN) redirect("/dashboard");
   const lang = auth.user.language;
+
+  // Cross-link to the admin catering KB (packages/menu/pricing/zones/rates) for
+  // viewers who can reach it — the two hubs were siloed (council E finding).
+  const cards = level >= ADMIN_CATERING_MIN
+    ? [...CARDS, { href: "/admin/catering", titleKey: "catering.hub.admin_link_title" as TranslationKey, descKey: "catering.hub.admin_link_desc" as TranslationKey }]
+    : CARDS;
 
   return (
     <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
@@ -36,7 +45,7 @@ export default async function CateringHubPage() {
       <h1 className="text-lg font-bold text-co-text">{serverT(lang, "catering.hub.title")}</h1>
       <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "catering.hub.subtitle")}</p>
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {CARDS.map((c) => (
+        {cards.map((c) => (
           <Link key={c.href} href={c.href} className="co-card-interactive group flex items-start justify-between gap-3 p-5">
             <span className="flex flex-col gap-1">
               <span className="text-base font-extrabold text-co-text">{serverT(lang, c.titleKey)}</span>

@@ -374,6 +374,11 @@ function LocationCard({
 
   const locationRule = ruleByKey.get("location:");
 
+  // Seeded-baseline nudge: every location ships with a 100% (10000 bps) default
+  // rule so catering prices == regular. If NOTHING has been marked up yet, prompt
+  // the manager to set a real catering margin before go-live (council E finding).
+  const atBaseline = rules.length > 0 && rules.every((r) => r.rateBps === 10000);
+
   // Per-section: unique section names from the menu items.
   const sections = useMemo(() => {
     const seen = new Set<string>();
@@ -408,6 +413,12 @@ function LocationCard({
 
       {errorMsg ? (
         <p className="mt-2 text-sm text-co-cta">{errorMsg}</p>
+      ) : null}
+
+      {canManage && atBaseline ? (
+        <p className="mt-2 rounded-md border-2 border-co-gold/50 bg-co-gold/5 px-3 py-2 text-xs text-co-text">
+          {t("admin.catering.rate.baseline_nudge" as TranslationKey)}
+        </p>
       ) : null}
 
       {/* ── Default (location-scope) rate ── */}

@@ -21,6 +21,17 @@ import type { NeedsLinkRow, LinkTarget } from "@/lib/admin/needs-link-shared";
 
 const tk = (k: string): TranslationKey => k as TranslationKey;
 
+// Map the server's machine-stable error `code` → a specific message key, so the
+// operator learns WHY a link failed (already linked / not a count line / stale
+// line / bad target / forbidden) instead of the generic "try again".
+const ERROR_KEY_BY_CODE: Record<string, TranslationKey> = {
+  forbidden: "admin.templates.needs_link.error_forbidden",
+  line_not_found: "admin.templates.needs_link.error_line_not_found",
+  not_countable: "admin.templates.needs_link.error_not_countable",
+  already_linked: "admin.templates.needs_link.error_already_linked",
+  invalid_target: "admin.templates.needs_link.error_invalid_target",
+};
+
 export function NeedsLinkQueue({
   rows,
   targets,
@@ -53,7 +64,9 @@ export function NeedsLinkQueue({
         router.refresh();
         return;
       }
-      setErrorKey("admin.templates.needs_link.error");
+      const body = (await res.json().catch(() => null)) as { code?: unknown } | null;
+      const code = typeof body?.code === "string" ? body.code : null;
+      setErrorKey((code && ERROR_KEY_BY_CODE[code]) || "admin.templates.needs_link.error");
     } catch {
       setErrorKey("admin.templates.needs_link.error");
     } finally {
