@@ -257,25 +257,22 @@ export async function listReports(service: SupabaseClient, f: ListFilters): Prom
   const hasSf = sf &&
     (sf.underPar || sf.overPar || sf.skipped || sf.tempFlag || sf.cashOver || sf.cashShort);
   const tempItemIds = await loadLocationTempItemIds(service, f.locationId);
-  const itemsWithSignals: ReportListItemInternal[] = await Promise.all(
-    items.map(async (item) => {
-      const { signals } = await computeReportSignals(service, {
-        type: item.type,
-        id: item.id,
-        tempItemIds,
-      });
-      return {
-        ...item,
-        signalSummary: {
-          underPar: signals.underPar,
-          overPar: signals.overPar,
-          skipped: signals.skipped,
-          tempFlags: signals.tempFlags,
-          cashOverShortCents: signals.cashOverShortCents,
-        },
-      };
-    }),
-  );
+  // Batched signals (council P3, 2026-07-31): one bulk pass instead of ~3
+  // queries per report. Math is identical (shared computeChecklistSignalsFromData).
+  const signalsById = await computeReportSignalsBatch(service, items.map((i) => ({ type: i.type, id: i.id })), tempItemIds);
+  const itemsWithSignals: ReportListItemInternal[] = items.map((item) => {
+    const signals = signalsById.get(item.id) ?? { underPar: 0, overPar: 0, skipped: 0, tempFlags: 0, cashOverShortCents: null };
+    return {
+      ...item,
+      signalSummary: {
+        underPar: signals.underPar,
+        overPar: signals.overPar,
+        skipped: signals.skipped,
+        tempFlags: signals.tempFlags,
+        cashOverShortCents: signals.cashOverShortCents,
+      },
+    };
+  });
 
   // Merge maintenance + non-maintenance, then apply signal filters uniformly.
   // The standard filter already yields the right maintenance behavior: a
@@ -1189,7 +1186,6 @@ export async function computeReportSignals(
       .order("id", { ascending: true })
       .range(from, to),
   );
-  const labelById = new Map(items.map((i) => [i.id, i.label]));
 
   const rows = await selectAllRows<{
     template_item_id: string;
@@ -1205,6 +1201,23 @@ export async function computeReportSignals(
       .order("id", { ascending: true })
       .range(from, to),
   );
+  return computeChecklistSignalsFromData(args.type, items, rows, args.tempItemIds);
+}
+
+/**
+ * PURE signal computation from already-loaded template items + completions
+ * (extracted 2026-07-31, council P3 batching): the single-instance
+ * computeReportSignals AND the bulk computeReportSignalsBatch both call this, so
+ * the signal math stays byte-identical whether a report is scored one-at-a-time
+ * (detail view) or in bulk (list view). No I/O.
+ */
+function computeChecklistSignalsFromData(
+  type: ReportTypeKey,
+  items: Array<{ id: string; label: string; required: boolean; active: boolean }>,
+  rows: Array<{ template_item_id: string; count_value: number | null; prep_data: unknown }>,
+  tempItemIds: Set<string>,
+): { signals: ReportSignals; prepValues: PrepValueRow[]; checks: ChecklistCheckRow[] } {
+  const labelById = new Map(items.map((i) => [i.id, i.label]));
   const completedIds = new Set(rows.map((r) => r.template_item_id));
 
   // UNION guard (spec §2.2): an inactive required item counts ONLY where this
@@ -1225,7 +1238,7 @@ export async function computeReportSignals(
     // Temp-flag: ONLY on completions whose template_item_id is in the registry
     // tempItemIds set AND count_value > 41. Never "any count_value > 41" —
     // prep totals can exceed 41 and would false-positive.
-    if (args.tempItemIds.has(r.template_item_id) && isOutOfRangeTemp(r.count_value)) {
+    if (tempItemIds.has(r.template_item_id) && isOutOfRangeTemp(r.count_value)) {
       tempFlags++;
     }
 
@@ -1247,7 +1260,7 @@ export async function computeReportSignals(
       const par = r.prep_data.snapshot.parValue; // number | null
       const totalVal = r.prep_data.inputs.total ?? null;
       const onHand = r.prep_data.inputs.onHand ?? null;
-      const isMidDay = args.type === "mid_day";
+      const isMidDay = type === "mid_day";
       // Shared derivation — mid_day total is a DELTA, am_prep total is FINAL.
       const have = derivePrepHave({ isMidDay, onHand, total: totalVal });
       const displayTotal = isMidDay ? have : totalVal;
@@ -1269,4 +1282,66 @@ export async function computeReportSignals(
     prepValues,
     checks,
   };
+}
+
+/**
+ * BATCH signal SUMMARIES for the list view (council P3 batching, 2026-07-31):
+ * replaces listReports' per-report computeReportSignals N+1 (~3 queries × N
+ * reports = ~168 for a 14-day window) with a fixed ~5 bulk queries. Returns
+ * signals per report id; prepValues/checks are detail-only and NOT computed
+ * here. Math is identical to computeReportSignals (both call
+ * computeChecklistSignalsFromData).
+ */
+export async function computeReportSignalsBatch(
+  service: SupabaseClient,
+  reports: Array<{ type: ReportTypeKey; id: string }>,
+  tempItemIds: Set<string>,
+): Promise<Map<string, ReportSignals>> {
+  const empty: ReportSignals = { done: 0, total: 0, skipped: 0, underPar: 0, overPar: 0, tempFlags: 0, cashOverShortCents: null };
+  const out = new Map<string, ReportSignals>();
+
+  // Cash — one query for all cash reports in the batch.
+  const cashIds = reports.filter((r) => r.type === "cash").map((r) => r.id);
+  if (cashIds.length > 0) {
+    const { data } = await service.from("cash_reports").select("id, over_short_cents")
+      .in("id", cashIds).is("superseded_at", null)
+      .returns<Array<{ id: string; over_short_cents: number | null }>>();
+    const byId = new Map((data ?? []).map((r) => [r.id, r.over_short_cents]));
+    for (const id of cashIds) out.set(id, { ...empty, total: 1, done: 1, cashOverShortCents: byId.get(id) ?? null });
+  }
+  // pm — no signals in the list (its gradient tally is detail-only).
+  for (const r of reports) if (r.type === "pm") out.set(r.id, empty);
+
+  // Checklist types — bulk-load instances → templates → completions.
+  const checklist = reports.filter((r) => r.type === "opening" || r.type === "closing" || r.type === "am_prep" || r.type === "mid_day");
+  if (checklist.length > 0) {
+    const instanceIds = checklist.map((r) => r.id);
+    const { data: insts } = await service.from("checklist_instances").select("id, template_id")
+      .in("id", instanceIds).returns<Array<{ id: string; template_id: string }>>();
+    const tmplByInstance = new Map((insts ?? []).map((r) => [r.id, r.template_id]));
+    const templateIds = [...new Set((insts ?? []).map((r) => r.template_id))];
+
+    const allItems = templateIds.length === 0 ? [] : await selectAllRows<{ id: string; label: string; required: boolean; active: boolean; template_id: string }>((from, to) =>
+      service.from("checklist_template_items").select("id, label, required, active, template_id")
+        .in("template_id", templateIds).order("id", { ascending: true }).range(from, to),
+    );
+    const itemsByTemplate = new Map<string, Array<{ id: string; label: string; required: boolean; active: boolean }>>();
+    for (const it of allItems) { const arr = itemsByTemplate.get(it.template_id) ?? []; arr.push(it); itemsByTemplate.set(it.template_id, arr); }
+
+    const allRows = await selectAllRows<{ instance_id: string; template_item_id: string; count_value: number | null; prep_data: unknown }>((from, to) =>
+      service.from("checklist_completions").select("instance_id, template_item_id, count_value, prep_data")
+        .in("instance_id", instanceIds).is("superseded_at", null).is("revoked_at", null)
+        .order("id", { ascending: true }).range(from, to),
+    );
+    const rowsByInstance = new Map<string, Array<{ template_item_id: string; count_value: number | null; prep_data: unknown }>>();
+    for (const row of allRows) { const arr = rowsByInstance.get(row.instance_id) ?? []; arr.push(row); rowsByInstance.set(row.instance_id, arr); }
+
+    for (const r of checklist) {
+      const tmplId = tmplByInstance.get(r.id);
+      if (!tmplId) { out.set(r.id, empty); continue; }
+      out.set(r.id, computeChecklistSignalsFromData(r.type, itemsByTemplate.get(tmplId) ?? [], rowsByInstance.get(r.id) ?? [], tempItemIds).signals);
+    }
+  }
+
+  return out;
 }
