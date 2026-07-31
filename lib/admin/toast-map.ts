@@ -17,6 +17,7 @@
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
+import { lockLocationContext } from "@/lib/locations";
 import type { AuthContext } from "@/lib/session";
 import { toastConfigured } from "@/lib/toast/client";
 import { fetchToastMenuItems, fetchToastModifierOptions } from "@/lib/toast/menus";
@@ -44,6 +45,19 @@ export class AdminToastMapError extends Error {
 }
 function requireLevel(actor: AuthContext, min: number): void {
   if (getRoleLevel(actor.user.role) < min) throw new AdminToastMapError(403, "forbidden", "Insufficient role level");
+}
+
+/**
+ * Location-access IDOR bind (hardening 2026-07-31, council P1): this lib had ZERO
+ * location scoping — a location-scoped GM could auto-match / confirm / drift /
+ * set-guid another location's crosswalk (masked today only by the solo admin's
+ * all-locations shape). Every location-taking function calls this; the mapId
+ * functions bind the loaded row's location. Mirrors lib/admin/templates.ts.
+ */
+function assertLocationAccess(actor: AuthContext, locationId: string): void {
+  if (!lockLocationContext({ role: actor.user.role, locations: actor.locations }, locationId)) {
+    throw new AdminToastMapError(403, "forbidden", "You do not manage that location");
+  }
 }
 
 export interface ToastMapRow {
