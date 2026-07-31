@@ -8,6 +8,7 @@
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
+import { etCalendarDate } from "@/lib/operational-day";
 import type { AuthContext } from "@/lib/session";
 import { PORTION_FRACTION, type Portion } from "@/lib/catering/pricing-derivation";
 import { resolveRefs } from "@/lib/catering/prep-demand";
@@ -43,10 +44,16 @@ function num(v: number | string | null): number {
   const n = typeof v === "string" ? Number(v) : v;
   return Number.isFinite(n) ? n : 0;
 }
-/** Whole calendar days between an ISO release timestamp and a YYYY-MM-DD need date (need − released). */
+/** Whole ET-calendar days between a release timestamp and a YYYY-MM-DD need date
+ *  (need − released). The release timestamp is reduced to its ET calendar date
+ *  FIRST so the integer-day arithmetic is robust to the DC UTC−4/−5 offset
+ *  (hardening 2026-07-31, council P1: a late-night ET cancel previously
+ *  misclassified ±1 day — need-date anchored to UTC midnight but released_at was
+ *  a UTC wall-clock instant). Both operands are now ET calendar dates at UTC
+ *  midnight, so the difference is a clean whole-day count. */
 function daysBetween(releasedAtIso: string, needDate: string): number {
-  const rel = new Date(releasedAtIso).getTime();
-  const need = new Date(`${needDate}T00:00:00Z`).getTime();
+  const rel = Date.parse(`${etCalendarDate(releasedAtIso)}T00:00:00Z`);
+  const need = Date.parse(`${needDate}T00:00:00Z`);
   return Math.floor((need - rel) / 86_400_000);
 }
 
