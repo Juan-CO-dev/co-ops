@@ -17,7 +17,6 @@ import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import { isAllLocationsAccess } from "@/lib/locations";
 import { deriveCatalogType, type CatalogType, type ItemType, type SkuClass } from "@/lib/admin/catalog-shared";
-import { loadRecipeGraph } from "@/lib/prep-consumption";
 import type { AuthContext } from "@/lib/session";
 
 export { needsLink } from "@/lib/admin/needs-link-shared";
@@ -119,9 +118,29 @@ export async function loadNeedsLinkQueue(actor: AuthContext): Promise<NeedsLinkR
   return out;
 }
 
-/** The count of needs-link rows (for the hub badge). Cheap wrapper over the loader. */
+/**
+ * The count of needs-link rows (for the hub badge). Batching win (council P3,
+ * 2026-07-31): was `loadNeedsLinkQueue().length` — the FULL queue build (all
+ * line rows + location names + object construction) on every admin-hub load.
+ * Now a single head COUNT over the SAME filter (active count-lines with both
+ * refs null on the visible templates), scoped by the visible-template ids.
+ */
 export async function countNeedsLink(actor: AuthContext): Promise<number> {
-  return (await loadNeedsLinkQueue(actor)).length;
+  if (getRoleLevel(actor.user.role) < NEEDS_LINK_READ_MIN) throw new AdminNeedsLinkError(403, "forbidden");
+  const sb = getServiceRoleClient();
+  const { data: tplRows, error: tErr } = await sb
+    .from("checklist_templates").select("id, location_id").eq("active", true)
+    .returns<Array<{ id: string; location_id: string }>>();
+  if (tErr) throw new Error(`countNeedsLink templates: ${tErr.message}`);
+  const actorAll = isAllLocationsAccess({ role: actor.user.role, locations: actor.locations });
+  const templateIds = (tplRows ?? []).filter((t) => actorAll || actor.locations.includes(t.location_id)).map((t) => t.id);
+  if (templateIds.length === 0) return 0;
+  const { count, error } = await sb
+    .from("checklist_template_items").select("id", { count: "exact", head: true })
+    .in("template_id", templateIds).eq("active", true).eq("expects_count", true)
+    .is("item_id", null).is("vendor_item_id", null);
+  if (error) throw new Error(`countNeedsLink: ${error.message}`);
+  return count ?? 0;
 }
 
 /**
@@ -134,7 +153,7 @@ export async function loadLinkTargets(actor: AuthContext): Promise<LinkTarget[]>
   if (getRoleLevel(actor.user.role) < NEEDS_LINK_READ_MIN) throw new AdminNeedsLinkError(403, "forbidden");
   const sb = getServiceRoleClient();
 
-  const [{ data: itemRows, error: iErr }, { data: skuRows, error: sErr }, graph] = await Promise.all([
+  const [{ data: itemRows, error: iErr }, { data: skuRows, error: sErr }] = await Promise.all([
     sb.from("items").select("id, name, item_type")
       .is("location_id", null).eq("active", true)
       .order("name", { ascending: true })
@@ -143,7 +162,6 @@ export async function loadLinkTargets(actor: AuthContext): Promise<LinkTarget[]>
       .eq("active", true)
       .order("name", { ascending: true })
       .returns<Array<{ id: string; name: string; sku_class: SkuClass | null }>>(),
-    loadRecipeGraph(),
   ]);
   if (iErr) throw new Error(`loadLinkTargets items: ${iErr.message}`);
   if (sErr) throw new Error(`loadLinkTargets skus: ${sErr.message}`);
@@ -156,9 +174,6 @@ export async function loadLinkTargets(actor: AuthContext): Promise<LinkTarget[]>
   for (const sk of skuRows ?? []) {
     targets.push({ kind: "sku", id: sk.id, name: sk.name, typeLabel: sk.sku_class ?? "raw" });
   }
-  // graph is loaded to keep the loader batched-consistent with the catalog law;
-  // targets don't currently need recipe edges, but a future "made" hint would.
-  void graph;
   return targets;
 }
 
