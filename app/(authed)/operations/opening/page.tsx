@@ -91,10 +91,13 @@ interface PriorClosingState {
 }
 
 /**
- * Manual gate check for PR 2: looks up closing(N-1) status. PR 4 will
- * wire the formal gate predicate evaluator from PR 1 (when opening
- * template's submission_gate_predicate gets populated). Until then, this
- * function stands in for the predicate.
+ * Bespoke opening gate: looks up the prior night's closing(N-1) status so
+ * opening can block while it is still "open". This is deliberately hand-coded
+ * (blessed 2026-07-31). The general submission_gate_predicate ENGINE
+ * (lib/checklists.ts evaluateGatePredicate) IS wired into getOrCreateInstance
+ * and ready — but no template carries a predicate today, so this one real gate
+ * stays a direct check. To converge it onto the engine later, author a
+ * predicate on the opening template and delete this function.
  */
 async function loadPriorClosingState(
   sb: ReturnType<typeof getServiceRoleClient>,
@@ -161,8 +164,8 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
   const { today, yesterday } = todayAndYesterday();
 
   // Gate check: prior night's closing must be in any non-open state for
-  // opening to proceed. (PR 4 will wire the formal predicate evaluator;
-  // for PR 2 this manual check stands in.)
+  // opening to proceed. Deliberately a direct check (see loadPriorClosingState)
+  // — the predicate engine is wired but no template configures a gate.
   const priorClosing = await loadPriorClosingState(sb, {
     locationId: selectedLocation.id,
     yesterdayDate: yesterday,
