@@ -13,6 +13,8 @@ import {
   type ReviseQuoteInput,
   type QuoteStatus,
 } from "@/lib/catering/quotes";
+import { resyncPrepDemand } from "@/lib/catering/prep-demand";
+import { audit } from "@/lib/audit";
 
 // GET — one quote (any revision) + its line items (view >= 5).
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -72,8 +74,31 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       notes: optStr(b.notes),
       expiresAt: optStr(b.expiresAt),
     };
-    const { id: newId, version } = await reviseQuote(ctx, id, input);
-    return jsonOk({ id: newId, version });
+    const { id: newId, version, pipelineId } = await reviseQuote(ctx, id, input);
+    // Keep the kitchen's W4a/W4b prep-demand in sync with the revised quote
+    // (hardening 2026-07-31, council P1). resyncPrepDemand self-guards on stage
+    // (no-ops unless the lead is confirmed). BEST-EFFORT: the revise already
+    // committed, so a resync failure must NOT 500 the request (that would
+    // mislead the user into re-revising) — the demand ledger is advisory and
+    // self-heals on the next moveStage. Logged, and surfaced in the response.
+    let prepDemandResynced = true;
+    if (pipelineId) {
+      try {
+        await resyncPrepDemand(ctx, pipelineId);
+      } catch (e) {
+        prepDemandResynced = false;
+        // Durable failure trail (adversarial review C3, 2026-07-31) — parity with
+        // moveStage's best-effort demand-sync catch. A console.error alone is
+        // ephemeral; the audit row is queryable so a stale-demand lead is findable.
+        void audit({
+          actorId: ctx.user.id, actorRole: ctx.user.role,
+          action: "catering.prep_demand.sync_failed", resourceTable: "catering_pipeline", resourceId: pipelineId,
+          metadata: { context: "quote_revise", quote_id: newId, error: e instanceof Error ? e.message : String(e) },
+          ipAddress: null, userAgent: null,
+        });
+      }
+    }
+    return jsonOk({ id: newId, version, prepDemandResynced });
   } catch (e) {
     if (e instanceof CateringQuoteError) return jsonError(e.status, e.code, { message: e.message });
     throw e;

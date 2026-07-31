@@ -246,6 +246,9 @@ function OrderBuild() {
   const [hintIdx, setHintIdx] = useState(0);
   // Server-authoritative subtotal (cents) from the last persisted lines POST. Falls back to draft.stack.
   const [subtotalCents, setSubtotalCents] = useState(0);
+  // Portal session expired mid-cart (a 401 on a persist POST). Renders a sticky
+  // banner so the customer isn't silently losing cart writes (hardening 2026-07-31).
+  const [sessionExpired, setSessionExpired] = useState(false);
 
   // ── Load the draft (Next 16: read ?draft from window.location.search in an effect, not useSearchParams). ──
   useEffect(() => {
@@ -466,7 +469,13 @@ function OrderBuild() {
             headers: { "content-type": "application/json" },
             body: JSON.stringify({ quoteId: draftId, lines: linesPayload }),
           });
-          if (!res.ok) return; // server rejected (e.g. no longer a draft) — keep the local echo.
+          // Session expiry (hardening 2026-07-31, council P1): a 401 means the
+          // portal session cookie expired — cart writes are silently dropping.
+          // Surface it (a sticky banner) instead of leaving the customer to
+          // believe their cart is persisting. The draft row survives, so
+          // /order/start resumes it.
+          if (res.status === 401) { setSessionExpired(true); return; }
+          if (!res.ok) return; // other server reject (e.g. no longer a draft) — keep the local echo.
           const body = (await res.json()) as { ok?: boolean; stack?: DraftStack };
           if (body?.ok && body.stack) setSubtotalCents(body.stack.subtotalCents);
         } catch { /* transient — the local subtotal echo still shows the customer their cart */ }
@@ -521,6 +530,12 @@ function OrderBuild() {
 
   return (
     <div className="min-h-screen bg-co-bg pb-28 text-co-text lg:pb-0">
+      {sessionExpired ? (
+        <div className="sticky top-0 z-40 bg-co-cta px-5 py-3 text-center text-sm font-bold text-white">
+          Your session timed out — new items aren&apos;t saving.{" "}
+          <a href="/order/start" className="underline underline-offset-2">Tap to sign back in →</a>
+        </div>
+      ) : null}
       <div className="sticky top-0 z-30">
         <header className="border-b border-white/10 bg-co-text/90 text-co-bg backdrop-blur-md">
           <div className="mx-auto flex max-w-6xl items-center justify-between px-5 py-3.5">
