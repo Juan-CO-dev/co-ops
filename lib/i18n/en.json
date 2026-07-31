@@ -1951,6 +1951,8 @@
   "reports.search.snippet_field.area_to_improve": "Feedback",
   "reports.search.snippet_field.pm_note": "Note",
   "reports.search.snippet_field.mvp_note": "MVP note",
+  "reports.search.snippet_field.equipment": "Equipment",
+  "reports.search.snippet_field.maintenance_note": "Maintenance note",
   "reports.search.snippet_field.answer": "Answer",
   "reports.col.date": "Date",
   "reports.col.type": "Type",

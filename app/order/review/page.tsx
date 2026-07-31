@@ -205,7 +205,7 @@ export default function OrderReview() {
     <div className="min-h-screen bg-co-bg pb-32 text-co-text">
       <header className="sticky top-0 z-30 border-b border-white/10 bg-co-text/90 text-co-bg backdrop-blur-md">
         <div className="mx-auto flex max-w-2xl items-center justify-between px-5 py-3.5">
-          <Link href="/order/build" className="text-sm font-semibold text-co-bg/70 transition hover:text-co-bg">‹ Order</Link>
+          <Link href={`/order/build?draft=${draft.quoteId}`} className="text-sm font-semibold text-co-bg/70 transition hover:text-co-bg">‹ Order</Link>
           <span className="text-sm font-extrabold uppercase tracking-[0.22em]">Review &amp; reserve</span>
           <span className="w-12" />
         </div>
@@ -248,7 +248,7 @@ export default function OrderReview() {
           <section className="overflow-hidden rounded-3xl border border-co-border/70 bg-co-surface shadow-sm">
             <div className="flex items-center justify-between border-b border-co-border/60 px-6 py-4">
               <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-co-text-dim">Your order</h2>
-              <Link href="/order/build" className="text-xs font-bold uppercase tracking-wide text-co-text underline decoration-co-gold decoration-2 underline-offset-4">Edit order</Link>
+              <Link href={`/order/build?draft=${draft.quoteId}`} className="text-xs font-bold uppercase tracking-wide text-co-text underline decoration-co-gold decoration-2 underline-offset-4">Edit order</Link>
             </div>
             <ul className="divide-y divide-co-border/50">
               {draft.items.map((line) => {
