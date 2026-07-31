@@ -5,7 +5,6 @@ import type { TranslationKey } from "@/lib/i18n/types";
 import { loadPackageLocations } from "@/lib/admin/catering/packages";
 import { loadPerishableSurplus, SURPLUS_READ_MIN } from "@/lib/catering/surplus";
 import { listLtoEvents } from "@/lib/catering/lto";
-import { TranslationProvider } from "@/lib/i18n/provider";
 import { BackLink } from "@/components/nav/BackLink";
 import { PlaceholderCard } from "@/components/PlaceholderCard";
 import { AlertPill } from "@/components/ui/AlertPill";
@@ -87,9 +86,8 @@ export default async function LtoPage() {
   }
 
   return (
-    <TranslationProvider initialLanguage={lang}>
-      <main className="mx-auto flex w-full max-w-2xl flex-col gap-5 px-4 py-6">
-        <BackLink />
+    <main className="mx-auto flex w-full max-w-2xl flex-col gap-5 px-4 py-6">
+      <BackLink />
       {/* ─── Active LTOs & discounts (catering_mgr+ only) ───────────── */}
       {level >= SURPLUS_READ_MIN && (
         <section className="co-card p-4">
@@ -187,6 +185,5 @@ export default async function LtoPage() {
         shippingIn="Module #17 (LTO Performance)"
       />
       </main>
-    </TranslationProvider>
   );
 }
