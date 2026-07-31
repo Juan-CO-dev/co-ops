@@ -201,6 +201,7 @@ export async function runAutoMatch(
   locationId: string,
 ): Promise<{ pulled: number; candidates: number; skippedExisting: number; modifierCandidates: number }> {
   requireLevel(actor, TOAST_MAP_MIN);
+  assertLocationAccess(actor, locationId);
   const guid = await requireLocationGuid(locationId);
   const [toastItems, modifierOptions] = await Promise.all([
     fetchToastMenuItems(guid),
@@ -281,7 +282,7 @@ export async function runAutoMatch(
     }
   }
 
-  void audit({
+  await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "toast_map.auto_match", resourceTable: "toast_menu_map", resourceId: locationId,
     metadata: { location_id: locationId, pulled: toastItems.length, candidates: inserted, skipped_existing: skipped, modifier_options: modifierOptions.length, modifier_candidates: modifierInserted },
@@ -306,6 +307,7 @@ async function loadRow(mapId: string): Promise<DbMapRow & { active: boolean }> {
 export async function confirmMapping(actor: AuthContext, mapId: string): Promise<void> {
   requireLevel(actor, TOAST_MAP_MIN);
   const row = await loadRow(mapId);
+  assertLocationAccess(actor, row.location_id);
   if (row.match_status !== "candidate") throw new AdminToastMapError(409, "not_candidate", "Only candidates confirm");
   const sb = getServiceRoleClient();
 
@@ -328,7 +330,7 @@ export async function confirmMapping(actor: AuthContext, mapId: string): Promise
     .eq("id", mapId).eq("active", true).eq("match_status", "candidate");
   if (error) throw new Error(`toast-map confirm: ${error.message}`);
   if (count === 0) throw new AdminToastMapError(409, "conflict", "Concurrent change — reload and retry");
-  void audit({
+  await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "toast_map.confirm", resourceTable: "toast_menu_map", resourceId: mapId,
     metadata: { location_id: row.location_id, entity_id: entityId, toast_item_guid: row.toast_item_guid, superseded: (rivals ?? []).length },
@@ -340,6 +342,7 @@ export async function confirmMapping(actor: AuthContext, mapId: string): Promise
 export async function rejectMapping(actor: AuthContext, mapId: string): Promise<void> {
   requireLevel(actor, TOAST_MAP_MIN);
   const row = await loadRow(mapId);
+  assertLocationAccess(actor, row.location_id);
   if (row.match_status !== "candidate") throw new AdminToastMapError(409, "not_candidate", "Only candidates reject");
   const sb = getServiceRoleClient();
   const { error, count } = await sb.from("toast_menu_map")
@@ -347,7 +350,7 @@ export async function rejectMapping(actor: AuthContext, mapId: string): Promise<
     .eq("id", mapId).eq("active", true).eq("match_status", "candidate");
   if (error) throw new Error(`toast-map reject: ${error.message}`);
   if (count === 0) throw new AdminToastMapError(409, "conflict", "Concurrent change — reload and retry");
-  void audit({
+  await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "toast_map.reject", resourceTable: "toast_menu_map", resourceId: mapId,
     metadata: { location_id: row.location_id, toast_item_guid: row.toast_item_guid },
@@ -359,6 +362,7 @@ export async function rejectMapping(actor: AuthContext, mapId: string): Promise<
 export async function unmapConfirmed(actor: AuthContext, mapId: string): Promise<void> {
   requireLevel(actor, TOAST_MAP_MIN);
   const row = await loadRow(mapId);
+  assertLocationAccess(actor, row.location_id);
   if (row.match_status !== "confirmed" && row.match_status !== "stale") {
     throw new AdminToastMapError(409, "not_confirmed", "Only confirmed/stale mappings unmap");
   }
@@ -367,7 +371,7 @@ export async function unmapConfirmed(actor: AuthContext, mapId: string): Promise
     .update({ active: false }, { count: "exact" }).eq("id", mapId).eq("active", true);
   if (error) throw new Error(`toast-map unmap: ${error.message}`);
   if (count === 0) throw new AdminToastMapError(409, "conflict", "Concurrent change — reload and retry");
-  void audit({
+  await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "toast_map.unmap", resourceTable: "toast_menu_map", resourceId: mapId,
     metadata: { location_id: row.location_id, toast_item_guid: row.toast_item_guid },
@@ -387,6 +391,7 @@ export interface DriftReport {
  *  flipping vanished mappings to 'stale' (audited) — read-time-classifier precedent (W4c-a). */
 export async function driftReport(actor: AuthContext, locationId: string): Promise<DriftReport> {
   requireLevel(actor, TOAST_MAP_MIN);
+  assertLocationAccess(actor, locationId);
   const guid = await requireLocationGuid(locationId);
   const toastItems = await fetchToastMenuItems(guid);
   const byGuid = new Map(toastItems.map((t) => [t.itemGuid, t]));
@@ -420,7 +425,7 @@ export async function driftReport(actor: AuthContext, locationId: string): Promi
         .eq("id", r.id).eq("active", true).eq("match_status", "confirmed");
       if (error) throw new Error(`toast-map stale flip: ${error.message}`);
       if (count === 1) {
-        void audit({
+        await audit({
           actorId: actor.user.id, actorRole: actor.user.role,
           action: "toast_map.stale", resourceTable: "toast_menu_map", resourceId: r.id,
           metadata: { location_id: locationId, toast_item_guid: r.toast_item_guid },
@@ -451,6 +456,7 @@ export async function setLocationToastGuid(
   guid: string | null,
 ): Promise<void> {
   requireLevel(actor, TOAST_MAP_MIN);
+  assertLocationAccess(actor, locationId);
   const trimmed = guid?.trim() || null;
   if (trimmed != null && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(trimmed)) {
     throw new AdminToastMapError(400, "invalid_guid", "Toast restaurant GUID must be a UUID");
@@ -461,7 +467,7 @@ export async function setLocationToastGuid(
     .eq("id", locationId).eq("active", true);
   if (error) throw new Error(`toast-map set guid: ${error.message}`);
   if (count === 0) throw new AdminToastMapError(404, "location_not_found", "Location not found");
-  void audit({
+  await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "toast_map.set_location_guid", resourceTable: "locations", resourceId: locationId,
     metadata: { toast_restaurant_guid_set: trimmed != null },
@@ -506,6 +512,7 @@ export async function manualMap(
   },
 ): Promise<{ id: string }> {
   requireLevel(actor, TOAST_MAP_MIN);
+  assertLocationAccess(actor, input.locationId);
   const sb = getServiceRoleClient();
   const name = input.toastItemName.trim();
   if (name.length === 0 || name.length > 200) throw new AdminToastMapError(400, "invalid_payload", "Toast item name required");
@@ -613,7 +620,7 @@ export async function manualMap(
   if (error) throw new Error(`toast-map manual insert: ${error.message}`);
   if (!inserted) throw new Error("toast-map manual insert returned no row");
 
-  void audit({
+  await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "toast_map.manual_map", resourceTable: "toast_menu_map", resourceId: inserted.id,
     metadata: {
