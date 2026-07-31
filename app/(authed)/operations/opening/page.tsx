@@ -19,7 +19,6 @@
 import Link from "next/link";
 
 import { AuthShell } from "@/components/auth/AuthShell";
-import { IdleTimeoutWarning } from "@/components/auth/IdleTimeoutWarning";
 import { LogoutButton } from "@/components/auth/LogoutButton";
 import { accessibleLocations, type LocationActor } from "@/lib/locations";
 import { formatDateLabel, formatTime } from "@/lib/i18n/format";
@@ -155,7 +154,6 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
         <ScaffoldHeader language={language} />
         <NoLocationView language={language} />
         <FooterActions />
-        <IdleTimeoutWarning />
       </AuthShell>
     );
   }
@@ -181,7 +179,6 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
           language={language}
         />
         <FooterActions />
-        <IdleTimeoutWarning />
       </AuthShell>
     );
   }
@@ -199,7 +196,6 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
         <ScaffoldHeader language={language} />
         <NoTemplateView location={selectedLocation} language={language} />
         <FooterActions />
-        <IdleTimeoutWarning />
       </AuthShell>
     );
   }
@@ -220,7 +216,6 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
           language={language}
         />
         <FooterActions />
-        <IdleTimeoutWarning />
       </AuthShell>
     );
   }
@@ -271,7 +266,6 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
         saverNames={{ ...state.authors, [auth.user.id]: auth.user.name }}
         language={language}
       />
-      <IdleTimeoutWarning />
     </AuthShell>
   );
 }
