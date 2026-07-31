@@ -15,6 +15,7 @@ import { requireSessionFromHeaders } from "@/lib/session";
 import type { Language } from "@/lib/i18n/types";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { AlertPill } from "@/components/ui/AlertPill";
+import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 
 export default async function AdminHubPage() {
   const auth = await requireSessionFromHeaders("/admin");
@@ -140,25 +141,47 @@ function CronHealthCard({ health, lang }: { health: CronHealth | null; lang: Lan
  */
 function AdoptionCard({ surfaces, lang }: { surfaces: AdoptionSurfaceCount[]; lang: Language }) {
   if (surfaces.length === 0) return null;
+  const list = (
+    <ul className="flex flex-col gap-1">
+      {surfaces.map((s) => {
+        const zero = s.count === 0;
+        return (
+          <li
+            key={s.id}
+            className={`flex items-center justify-between gap-3 text-sm ${zero ? "text-co-text-dim" : "text-co-text"}`}
+          >
+            <span>{serverT(lang, s.labelKey)}</span>
+            <span className="tabular-nums font-bold">{s.count}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+
+  // When NOTHING moved in 7 days the card is low-signal secondary content →
+  // collapse it by default (Disclosure Doctrine D3) so a quiet week doesn't
+  // clutter the hub. With any activity, show the full card.
+  if (surfaces.every((s) => s.count === 0)) {
+    return (
+      <div className="mt-4">
+        <CollapsibleSection
+          idBase="admin-hub-adoption"
+          title={serverT(lang, "admin.hub.adoption.title")}
+          count={serverT(lang, "admin.hub.adoption.all_quiet")}
+          defaultOpen={false}
+        >
+          {list}
+        </CollapsibleSection>
+      </div>
+    );
+  }
+
   return (
     <div className="co-card mt-4 p-4">
       <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim">
         {serverT(lang, "admin.hub.adoption.title")}
       </h2>
-      <ul className="mt-2 flex flex-col gap-1">
-        {surfaces.map((s) => {
-          const zero = s.count === 0;
-          return (
-            <li
-              key={s.id}
-              className={`flex items-center justify-between gap-3 text-sm ${zero ? "text-co-text-dim" : "text-co-text"}`}
-            >
-              <span>{serverT(lang, s.labelKey)}</span>
-              <span className="tabular-nums font-bold">{s.count}</span>
-            </li>
-          );
-        })}
-      </ul>
+      <div className="mt-2">{list}</div>
     </div>
   );
 }
