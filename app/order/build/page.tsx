@@ -532,8 +532,8 @@ function OrderBuild() {
     <div className="min-h-screen bg-co-bg pb-28 text-co-text lg:pb-0">
       {sessionExpired ? (
         <div className="sticky top-0 z-40 bg-co-cta px-5 py-3 text-center text-sm font-bold text-white">
-          Your session timed out — your saved order is safe.{" "}
-          <a href="/order/start?session_expired=1" className="underline underline-offset-2">Tap to continue →</a>
+          Your session timed out — new items aren&apos;t saving.{" "}
+          <a href="/order/start" className="underline underline-offset-2">Tap to sign back in →</a>
         </div>
       ) : null}
       <div className="sticky top-0 z-30">
