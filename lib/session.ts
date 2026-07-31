@@ -535,7 +535,8 @@ export function clearSessionCookie(res: NextResponse): NextResponse {
   return res;
 }
 
-/** Housekeeping for future cron use — not invoked anywhere in v1. */
+/** Housekeeping: stamp revoked_at on sessions past expires_at to bound table
+ * growth. Wired to the nightly /api/cron/prune-sessions Vercel Cron. */
 export async function pruneExpiredSessions(): Promise<{ revoked: number }> {
   const sb = getServiceRoleClient();
   const { data, error } = await sb
