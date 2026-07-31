@@ -616,7 +616,7 @@ export interface ReviseQuoteInput {
  * validated + the new stack computed BEFORE the supersede UPDATE, so a failed insert can't
  * strand the family without a live revision.
  */
-export async function reviseQuote(actor: AuthContext, quoteId: string, input: ReviseQuoteInput): Promise<{ id: string; version: number }> {
+export async function reviseQuote(actor: AuthContext, quoteId: string, input: ReviseQuoteInput): Promise<{ id: string; version: number; pipelineId: string | null }> {
   const sb = getServiceRoleClient();
   const { data: current, error: lErr } = await sb
     .from("catering_quotes")
@@ -679,7 +679,7 @@ export async function reviseQuote(actor: AuthContext, quoteId: string, input: Re
     ipAddress: null,
     userAgent: null,
   });
-  return { id: inserted.id, version: inserted.version };
+  return { id: inserted.id, version: inserted.version, pipelineId: current.pipeline_id };
 }
 
 /** Transition a live quote's status (accept / decline / mark expired). Level-gated + audited. */

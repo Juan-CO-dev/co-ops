@@ -196,9 +196,25 @@ export async function releasePrepDemand(actor: AuthContext, pipelineId: string):
   void audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "catering.prep_demand.release", resourceTable: "catering_prep_demand", resourceId: pipelineId, metadata: {}, ipAddress: null, userAgent: null });
 }
 
-/** Re-resolve a confirmed lead's demand from its current quote (quote re-versioned edge). */
+/**
+ * Re-resolve a lead's reserved demand from its CURRENT quote after a quote
+ * revision (hardening 2026-07-31, council P1: this existed but was never called,
+ * so a revise on a confirmed lead left the kitchen's W4a/W4b demand pointing at
+ * the pre-revision quantities). SELF-GUARDING on stage: only a CONFIRMED lead
+ * carries reserved demand — reserving here for a non-confirmed lead would create
+ * demand before the lead is confirmed, so we no-op unless confirmed. reserve
+ * already release-then-reinserts (idempotent), and reads the CURRENT quote, so
+ * it picks up the new revision automatically.
+ */
 export async function resyncPrepDemand(actor: AuthContext, pipelineId: string): Promise<void> {
-  await reservePrepDemand(actor, pipelineId); // reserve already release-then-reinserts
+  requireLevel(actor, PREP_DEMAND_READ_MIN);
+  const sb = getServiceRoleClient();
+  const { data: lead, error } = await sb
+    .from("catering_pipeline").select("stage").eq("id", pipelineId)
+    .maybeSingle<{ stage: string }>();
+  if (error) throw new Error(`resyncPrepDemand load stage: ${error.message}`);
+  if (lead?.stage !== "confirmed") return; // no reserved demand to resync
+  await reservePrepDemand(actor, pipelineId);
 }
 
 // ── Read: overlay (over-par) + per-lead breakdown ───────────────────────────────────
