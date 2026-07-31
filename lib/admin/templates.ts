@@ -152,18 +152,32 @@ export async function listPrepTemplates(
     .returns<Array<{ id: string; name: string; prep_subtype: PrepSubtype }>>();
   if (error) throw new Error(`listPrepTemplates failed: ${error.message}`);
   const templates = data ?? [];
+  if (templates.length === 0) return [];
 
-  const out: AdminPrepTemplateListItem[] = [];
-  for (const t of templates) {
-    const { count, error: cErr } = await sb
-      .from("checklist_template_items")
-      .select("id", { count: "exact", head: true })
-      .eq("template_id", t.id)
-      .eq("active", true);
-    if (cErr) throw new Error(`listPrepTemplates count failed: ${cErr.message}`);
-    out.push({ id: t.id, name: t.name, prepSubtype: t.prep_subtype, activeItemCount: count ?? 0 });
+  // Batching (council P3, 2026-07-31): ONE grouped fetch of active item rows
+  // across all these templates, tallied in memory — replaces the per-template
+  // head COUNT (an N+1 over the location's prep templates). A single location's
+  // prep bench is a few dozen items total (well under PostgREST's 1000-row cap),
+  // so an un-paginated fetch counts exactly here.
+  const templateIds = templates.map((t) => t.id);
+  const { data: itemRows, error: cErr } = await sb
+    .from("checklist_template_items")
+    .select("template_id")
+    .in("template_id", templateIds)
+    .eq("active", true)
+    .returns<Array<{ template_id: string }>>();
+  if (cErr) throw new Error(`listPrepTemplates count failed: ${cErr.message}`);
+  const countByTemplate = new Map<string, number>();
+  for (const r of itemRows ?? []) {
+    countByTemplate.set(r.template_id, (countByTemplate.get(r.template_id) ?? 0) + 1);
   }
-  return out;
+
+  return templates.map((t) => ({
+    id: t.id,
+    name: t.name,
+    prepSubtype: t.prep_subtype,
+    activeItemCount: countByTemplate.get(t.id) ?? 0,
+  }));
 }
 
 /** A prep template's active items (typed, invariant-checked), ordered for display. */
