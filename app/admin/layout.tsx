@@ -20,6 +20,7 @@ import { BackLink } from "@/components/nav/BackLink";
 import { StepUpProvider } from "@/components/admin/StepUpProvider";
 import { UserMenu } from "@/components/UserMenu";
 import { CanvasWatermark } from "@/components/layout/CanvasWatermark";
+import { IdleTimeoutWarning } from "@/components/auth/IdleTimeoutWarning";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import { ROLES } from "@/lib/roles";
 import { requireSessionFromHeaders } from "@/lib/session";
@@ -45,6 +46,9 @@ export default async function AdminLayout({ children }: { children: ReactNode })
         />
       </div>
       <CanvasWatermark />
+      {/* Idle-timeout guard also covers the admin section (its own top-level
+          route group, not under (authed)). */}
+      <IdleTimeoutWarning />
       <StepUpProvider
         unlocked={auth.session.stepUpUnlocked}
         unlockedAt={auth.session.stepUpUnlockedAt}

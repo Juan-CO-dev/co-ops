@@ -27,7 +27,6 @@ import Link from "next/link";
 
 import { AuthShell } from "@/components/auth/AuthShell";
 import { BrandMark } from "@/components/BrandMark";
-import { IdleTimeoutWarning } from "@/components/auth/IdleTimeoutWarning";
 import { LogoutButton } from "@/components/auth/LogoutButton";
 import { NotificationBell } from "@/components/dashboard/NotificationBell";
 import { ROLES } from "@/lib/roles";
@@ -701,8 +700,6 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
           <LogoutButton />
         </div>
       </div>
-
-      <IdleTimeoutWarning />
     </AuthShell>
   );
 }

@@ -29,6 +29,7 @@ import type { ReactNode } from "react";
 
 import { UserMenu } from "@/components/UserMenu";
 import { CanvasWatermark } from "@/components/layout/CanvasWatermark";
+import { IdleTimeoutWarning } from "@/components/auth/IdleTimeoutWarning";
 import { TranslationProvider } from "@/lib/i18n/provider";
 import { ROLES } from "@/lib/roles";
 import { requireSessionFromHeaders } from "@/lib/session";
@@ -60,6 +61,9 @@ export default async function AuthedLayout({ children }: { children: ReactNode }
         />
       </div>
       <CanvasWatermark />
+      {/* Idle-timeout guard for ALL authenticated pages — hoisted here (was
+          mounted on only 2 pages) so the 10-min idle logout warning is global. */}
+      <IdleTimeoutWarning />
       {children}
     </TranslationProvider>
   );
