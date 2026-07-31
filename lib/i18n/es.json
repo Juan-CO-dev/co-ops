@@ -1951,6 +1951,8 @@
   "reports.search.snippet_field.area_to_improve": "Comentario",
   "reports.search.snippet_field.pm_note": "Nota",
   "reports.search.snippet_field.mvp_note": "Nota MVP",
+  "reports.search.snippet_field.equipment": "Equipo",
+  "reports.search.snippet_field.maintenance_note": "Nota de mantenimiento",
   "reports.search.snippet_field.answer": "Respuesta",
   "reports.col.date": "Fecha",
   "reports.col.type": "Tipo",
