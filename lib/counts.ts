@@ -61,6 +61,7 @@ import {
   computeUsedOrLost,
   chainLabelsInWalkOrder,
   etBusinessDate,
+  isGapEligibleDate,
   salesWindowUntrustworthy,
   type CountLineInput,
   type OnHandResult,
@@ -352,7 +353,9 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
         .map((id) => etBusinessDate(anchorBySku.get(id)!.prevAt ?? anchorBySku.get(id)!.anchorAt))
         .reduce((min, d) => (d < min ? d : min))
     : null;
-  const gapDates = earliestSalesDate ? await loadSalesGapDates(sb, locationId, earliestSalesDate) : new Set<string>();
+  const gapDates = earliestSalesDate
+    ? await loadSalesGapDates(sb, locationId, earliestSalesDate, etBusinessDate(new Date(now).toISOString()))
+    : new Set<string>();
 
   // ── Weight rows (oz drift + variance) ──
   const weightRows: OnHandRow[] = await Promise.all(
@@ -685,11 +688,17 @@ async function sumSalesDirectOzBetween(
  * day whose sales were ALL excluded/unmapped also materializes to zero rows and
  * reads as a gap → that window's SKUs go advisory-null. Acceptable (honest
  * pessimism; a fully-excluded day at a sub shop is effectively never) and safe.
+ *
+ * The OPEN (current) business day is NEVER gap-eligible (`openEtDate` guard,
+ * council 2026-07-31 Fable C3): same-day event pulls land events hours before
+ * the close/nightly materialize — counting today as a gap would advisory-null
+ * every SKU all afternoon. See isGapEligibleDate (counts-shared).
  */
 async function loadSalesGapDates(
   sb: ReturnType<typeof getServiceRoleClient>,
   locationId: string,
   sinceDate: string,
+  openEtDate: string,
 ): Promise<Set<string>> {
   const [evRes, deplRes] = await Promise.all([
     sb.from("toast_sales_events").select("business_date").eq("location_id", locationId).gte("business_date", sinceDate)
@@ -701,7 +710,11 @@ async function loadSalesGapDates(
   if (deplRes.error) throw new Error(`loadSalesGapDates depletion: ${deplRes.error.message}`);
   const materialized = new Set((deplRes.data ?? []).map((r) => r.business_date));
   const gaps = new Set<string>();
-  for (const r of evRes.data ?? []) if (!materialized.has(r.business_date)) gaps.add(r.business_date);
+  for (const r of evRes.data ?? []) {
+    if (!materialized.has(r.business_date) && isGapEligibleDate(r.business_date, openEtDate)) {
+      gaps.add(r.business_date);
+    }
+  }
   return gaps;
 }
 

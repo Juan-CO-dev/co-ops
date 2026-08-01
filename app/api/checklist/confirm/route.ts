@@ -33,12 +33,13 @@
  * table.
  */
 
-import { type NextRequest } from "next/server";
+import { after, type NextRequest } from "next/server";
 
 import { ChecklistError, confirmInstance } from "@/lib/checklists";
+import { pullSalesSystemTrigger } from "@/lib/catering/toast-sales";
 import { extractIp, jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { requireSession, SESSION_COOKIE_NAME } from "@/lib/session";
-import { createAuthedClient } from "@/lib/supabase-server";
+import { createAuthedClient, getServiceRoleClient } from "@/lib/supabase-server";
 
 import { mapChecklistError } from "../_helpers";
 
@@ -92,6 +93,32 @@ export async function POST(req: NextRequest) {
       ipAddress: extractIp(req),
       userAgent: req.headers.get("user-agent"),
     });
+
+    // End-of-night Toast pull (council 2026-07-31): a CLOSING confirm marks the
+    // business day operationally over — pull today's sales + materialize the
+    // depletion ledger, AFTER the response (zero confirm latency; best-effort,
+    // never throws — the nightly cron re-pulls + re-materializes as the
+    // reconciler for late voids/refunds). Only closing triggers this; the
+    // template-type read runs inside after(), off the response path.
+    const confirmed = result.instance;
+    after(async () => {
+      try {
+        const sb = getServiceRoleClient();
+        const { data: tmpl } = await sb
+          .from("checklist_templates")
+          .select("type")
+          .eq("id", confirmed.templateId)
+          .maybeSingle<{ type: string }>();
+        if (tmpl?.type !== "closing") return;
+        await pullSalesSystemTrigger(confirmed.locationId, confirmed.date, {
+          context: "closing_confirm",
+          materialize: true,
+        });
+      } catch (e) {
+        console.error("[/api/checklist/confirm] closing sales trigger failed:", e instanceof Error ? e.message : String(e));
+      }
+    });
+
     return jsonOk({
       instance: result.instance,
       status: result.status,

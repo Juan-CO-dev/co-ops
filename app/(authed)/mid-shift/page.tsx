@@ -6,15 +6,18 @@
  * No writes anywhere — this module is read-only.
  */
 
+import { after } from "next/server";
+
 import { DashboardBackLink } from "@/components/DashboardBackLink";
 import { AccessDeniedBanner } from "@/components/ui/AccessDeniedBanner";
 import { AttentionBanner } from "@/components/midshift/AttentionBanner";
 import { ReportStatusList } from "@/components/midshift/ReportStatusList";
 import { FridgeStrip } from "@/components/midshift/FridgeStrip";
 import { ActiveToday } from "@/components/midshift/ActiveToday";
-import { SalesPlaceholder } from "@/components/midshift/SalesPlaceholder";
-import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
+import { SalesPanel } from "@/components/midshift/SalesPanel";
 import { MIDSHIFT_BASE_LEVEL, loadMidShiftPulse, operationalNow } from "@/lib/midshift";
+import { loadSalesPulse } from "@/lib/midshift-sales";
+import { maybeRefreshTodaySales } from "@/lib/catering/toast-sales";
 import { serverT } from "@/lib/i18n/server";
 import { lockLocationContext } from "@/lib/locations";
 import { requireSessionFromHeaders } from "@/lib/session";
@@ -78,12 +81,21 @@ export default async function MidShiftPage({
     .maybeSingle();
   const loc = locRow as { code: string; name: string } | null;
 
-  const pulse = await loadMidShiftPulse(service, {
-    locationId,
-    date,
-    now,
-    actor: { userId: auth.user.id, role: auth.role, level: auth.level },
-  });
+  const [pulse, salesPulse] = await Promise.all([
+    loadMidShiftPulse(service, {
+      locationId,
+      date,
+      now,
+      actor: { userId: auth.user.id, role: auth.role, level: auth.level },
+    }),
+    loadSalesPulse(service, { locationId, todayYmd: date }),
+  ]);
+
+  // Same-day freshness trigger (council 2026-07-31): AFTER the response, pull
+  // today's Toast events if the last pull is stale (debounced in the lib; a
+  // failure is logged, never surfaced). The refreshed numbers appear on the
+  // manager's next glance — honest "as of HH:MM" freshness, not fake realtime.
+  after(() => maybeRefreshTodaySales(locationId, date));
 
   return (
     <main className="mx-auto flex max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl flex-col gap-5 px-4 pb-32 pt-4 sm:px-6">
@@ -107,16 +119,9 @@ export default async function MidShiftPage({
         language={language}
       />
       <ActiveToday staff={pulse.activeToday} language={language} />
-      {/* Sales is a Toast-gated placeholder — collapse it so it stops dominating
-          the live scroll (sonnet finding D). Default-collapsed; the heading stays
-          tappable for the curious. */}
-      <CollapsibleSection
-        idBase="midshift-sales"
-        title={serverT(language, "midshift.sales.heading")}
-        defaultOpen={false}
-      >
-        <SalesPlaceholder language={language} hideHeading />
-      </CollapsibleSection>
+      {/* Live Toast sales (council 2026-07-31) — replaces the pre-Toast
+          placeholder; open by default now that it carries real content. */}
+      <SalesPanel pulse={salesPulse} language={language} />
     </main>
   );
 }

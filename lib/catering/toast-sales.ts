@@ -89,8 +89,15 @@ async function resolveLocationGuid(locationId: string): Promise<string> {
 
 export interface PullResult { selections: number; appended: number; unchanged: number; voids: number }
 
-/** Core pull (shared by admin route + cron). actor null = system/cron context. */
-async function doPull(locationId: string, businessDate: string, actor: AuthContext | null): Promise<PullResult> {
+/** Core pull (shared by admin route + cron + system triggers). actor null =
+ * system context; `systemContext` names WHICH system path in the audit row
+ * ("cron" default · "closing_confirm" · "midshift_on_visit"). */
+async function doPull(
+  locationId: string,
+  businessDate: string,
+  actor: AuthContext | null,
+  systemContext: string = "cron",
+): Promise<PullResult> {
   requireYmd(businessDate);
   const guid = await resolveLocationGuid(locationId);
   const [lines, menuItems, diningNames, latest] = await Promise.all([
@@ -148,7 +155,7 @@ async function doPull(locationId: string, businessDate: string, actor: AuthConte
     resourceId: locationId,
     metadata: {
       business_date: businessDate, selections: lines.length, appended: inserts.length,
-      unchanged, voids, ...(actor ? {} : { actor_context: "cron" }),
+      unchanged, voids, ...(actor ? {} : { actor_context: systemContext }),
     },
     ipAddress: null, userAgent: null,
   });
@@ -177,6 +184,81 @@ export async function pullSalesForAllLocations(businessDate: string): Promise<Ar
     }
   }
   return out;
+}
+
+// ─── System pull triggers (mid-shift pulse, council 2026-07-31) ──────────────
+
+/**
+ * Best-effort system-triggered pull for ONE location — the same-day lanes of
+ * the mid-shift pulse. NEVER throws (runs inside next/server after(), post-
+ * response; a Toast hiccup must not surface anywhere user-facing). Skips
+ * locations without a Toast GUID. The actorless path is a DELIBERATE call
+ * (council 2026-07-31, Fable seat): the trigger's effect is read-only ingest
+ * on behalf of a viewer below TOAST_SALES_WRITE_MIN, debounced upstream, and
+ * audited with a distinct actor_context.
+ *
+ * `materialize` MUST stay false for intraday contexts: a partial-day ledger
+ * row would read as "covered" to the counts gap/taint logic and silently
+ * understate drift (the double-count law's display/drift boundary). Only the
+ * closing-confirm trigger — when the business day is operationally over —
+ * materializes; the nightly cron re-pulls + re-materializes as the reconciler.
+ */
+export async function pullSalesSystemTrigger(
+  locationId: string,
+  businessDate: string,
+  opts: { context: "closing_confirm" | "midshift_on_visit"; materialize?: boolean },
+): Promise<void> {
+  try {
+    const sb = getServiceRoleClient();
+    const { data } = await sb
+      .from("locations")
+      .select("toast_restaurant_guid")
+      .eq("id", locationId)
+      .maybeSingle<{ toast_restaurant_guid: string | null }>();
+    if (!data?.toast_restaurant_guid) return; // no Toast at this location — no-op
+    await doPull(locationId, businessDate, null, opts.context);
+    if (opts.materialize) await materializeDailyDepletion(locationId, businessDate);
+  } catch (e) {
+    console.error(
+      `[toast-sales ${opts.context}] pull failed for ${locationId} ${businessDate}:`,
+      e instanceof Error ? e.message : String(e),
+    );
+  }
+}
+
+/** Debounce window for the mid-shift on-visit refresh. */
+const ON_VISIT_DEBOUNCE_MS = 45 * 60 * 1000;
+
+/**
+ * Mid-shift on-visit freshness trigger: pull today's events IF the last pull
+ * for this location is older than the debounce window (or was for a different
+ * business date). The marker is the latest `toast_sales.pull` audit row —
+ * independent of whether the pull inserted rows, so a zero-sales morning
+ * doesn't re-pull on every page load. Best-effort; never throws.
+ */
+export async function maybeRefreshTodaySales(locationId: string, businessDate: string): Promise<void> {
+  try {
+    const sb = getServiceRoleClient();
+    const { data } = await sb
+      .from("audit_log")
+      .select("created_at, metadata")
+      .eq("action", "toast_sales.pull")
+      .eq("resource_id", locationId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle<{ created_at: string; metadata: { business_date?: string } | null }>();
+    const fresh =
+      data != null &&
+      data.metadata?.business_date === businessDate &&
+      Date.now() - new Date(data.created_at).getTime() < ON_VISIT_DEBOUNCE_MS;
+    if (fresh) return;
+    await pullSalesSystemTrigger(locationId, businessDate, { context: "midshift_on_visit" });
+  } catch (e) {
+    console.error(
+      `[toast-sales midshift_on_visit] debounce check failed for ${locationId}:`,
+      e instanceof Error ? e.message : String(e),
+    );
+  }
 }
 
 // ─── Daily depletion materializer (drift spec 2026-07-31) ────────────────────
