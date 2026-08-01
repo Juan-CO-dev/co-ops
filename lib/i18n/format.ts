@@ -168,6 +168,20 @@ export function formatChainAttribution(
  * 2 decimals; negative renders with a leading minus (caller decides
  * short/over framing).
  */
+/**
+ * Full weekday name for a YYYY-MM-DD date string. Language-aware and
+ * UTC-pinned like formatDateLabel — the ymd IS the operational date, so no
+ * timezone math may shift it.
+ */
+export function formatWeekday(yyyymmdd: string, language: Language): string {
+  const [y, m, d] = yyyymmdd.split("-").map(Number);
+  if (!y || !m || !d) return yyyymmdd;
+  return new Intl.DateTimeFormat(language === "es" ? "es-US" : "en-US", {
+    weekday: "long",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(y, m - 1, d)));
+}
+
 export function formatCents(cents: number, language: Language): string {
   return new Intl.NumberFormat(language === "es" ? "es-US" : "en-US", {
     style: "currency",

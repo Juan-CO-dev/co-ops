@@ -22,6 +22,7 @@ import {
   EXPECTED_BY,
   isSubmitted,
   operationalNow,
+  timeWindowMinutes,
   type ActiveStaff,
   type AttentionItem,
   type CateringDueItem,
@@ -279,14 +280,17 @@ async function loadActiveToday(
 /** Confirmed catering events due out today (stage confirmed/out), soonest
  *  window first — the mid-shift "what's coming" strip (council 2026-07-31,
  *  Fable I1 + Juan). Names only, no revenue: this renders at the pulse's KH+
- *  floor, below the catering hub's commercial surfaces. */
+ *  floor, below the catering hub's commercial surfaces. Note the pipeline
+ *  BOARD's read floor is Shift Lead (5); event/customer NAMES at KH (4) here
+ *  are a deliberate, owner-ratified exception (Juan 2026-08-01) — the name is
+ *  how floor staff identify and label the outgoing order. Revenue stays 5+. */
 async function loadCateringDueToday(
   service: SupabaseClient,
   args: { locationId: string; date: string },
 ): Promise<CateringDueItem[]> {
   const { data } = await service
     .from("catering_pipeline")
-    .select("id, event_name, company, contact_name, headcount, time_window, delivery_address, stage")
+    .select("id, event_name, company, contact_name, headcount, time_window, delivery_address")
     .eq("location_id", args.locationId)
     .eq("event_date", args.date)
     .in("stage", ["confirmed", "out"])
@@ -299,7 +303,6 @@ async function loadCateringDueToday(
         headcount: number | null;
         time_window: string | null;
         delivery_address: string | null;
-        stage: string;
       }>
     >();
   return (data ?? [])
@@ -310,7 +313,13 @@ async function loadCateringDueToday(
       headcount: r.headcount,
       isDelivery: r.delivery_address != null && r.delivery_address !== "",
     }))
-    .sort((a, b) => (a.timeWindow ?? "￿").localeCompare(b.timeWindow ?? "￿"));
+    // Chronological, not lexicographic — "1:00 PM" must not beat "10:00 AM".
+    // Unparseable/null windows sort last; equal keys tiebreak on the raw text.
+    .sort(
+      (a, b) =>
+        timeWindowMinutes(a.timeWindow) - timeWindowMinutes(b.timeWindow) ||
+        (a.timeWindow ?? "").localeCompare(b.timeWindow ?? ""),
+    );
 }
 
 export async function loadMidShiftPulse(
@@ -373,7 +382,7 @@ export async function loadMidShiftPulse(
   // pulseScore; the rest are YELLOW).
   const attention: AttentionItem[] = [];
   for (const r of reports) if (r.overdue === "overdue") attention.push({ kind: "overdue", reportKey: r.key });
-  for (const f of fridges) if (f.outOfRange) attention.push({ kind: "fridge", fridgeName: f.name });
+  for (const f of fridges) if (f.outOfRange) attention.push({ kind: "fridge", fridgeName: f.name, equipId: f.equipId });
   if (fridgeUncheckedAlert) attention.push({ kind: "fridge_unchecked", count: uncheckedFridges });
   if (maintenanceNotesToday > 0) attention.push({ kind: "maintenance_note", count: maintenanceNotesToday });
 

@@ -184,6 +184,6 @@ export default async function LtoPage() {
         ]}
         shippingIn="Module #17 (LTO Performance)"
       />
-      </main>
+    </main>
   );
 }

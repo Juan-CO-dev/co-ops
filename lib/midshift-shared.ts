@@ -66,7 +66,8 @@ export interface AttentionItem {
   kind: "overdue" | "fridge" | "fridge_unchecked" | "maintenance_note";
   /** i18n key + params resolved at render; we pass a stable shape. */
   reportKey?: ReportKey; // for overdue
-  fridgeName?: string; // for fridge
+  fridgeName?: string; // for fridge (display)
+  equipId?: string; // for fridge — the stable React key (names can collide)
   count?: number; // for maintenance_note / fridge_unchecked
 }
 
@@ -83,6 +84,32 @@ const RED_KINDS: ReadonlySet<AttentionItem["kind"]> = new Set(["overdue", "fridg
 export function pulseScore(items: AttentionItem[]): PulseScore {
   if (items.length === 0) return "green";
   return items.some((i) => RED_KINDS.has(i.kind)) ? "red" : "yellow";
+}
+
+/**
+ * Parse a delivery/pickup window's LEADING clock time to minutes-of-day for
+ * chronological sorting. Handles the fixed-dropdown shapes ("10:00–10:30 AM",
+ * "1:00–1:30 PM" — the first time inherits the range's trailing meridiem) and
+ * 24-hour free text ("13:00-14:00"). `time_window` is free text (ezCater
+ * handoff strings etc.), so anything unparseable — and null — sorts LAST
+ * (Infinity), never interleaved by lexicographic accident.
+ */
+export function timeWindowMinutes(window: string | null): number {
+  if (window == null) return Infinity;
+  const m = /(\d{1,2}):(\d{2})/.exec(window);
+  if (!m) return Infinity;
+  let hour = Number(m[1]);
+  const minute = Number(m[2]);
+  if (hour > 23 || minute > 59) return Infinity;
+  // The meridiem governing the FIRST time is the first AM/PM at-or-after it
+  // ("11:30 AM–1:00 PM" → AM; "1:00–1:30 PM" → the range's PM).
+  const meridiem = /\b([AP])\.?M\.?\b/i.exec(window.slice((m.index ?? 0) + m[0].length));
+  if (meridiem && hour >= 1 && hour <= 12) {
+    const isPm = meridiem[1]?.toUpperCase() === "P";
+    if (isPm && hour !== 12) hour += 12;
+    if (!isPm && hour === 12) hour = 0;
+  }
+  return hour * 60 + minute;
 }
 
 /** A confirmed catering event due out today (the mid-shift "what's coming"
