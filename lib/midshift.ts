@@ -280,7 +280,10 @@ async function loadActiveToday(
 /** Confirmed catering events due out today (stage confirmed/out), soonest
  *  window first — the mid-shift "what's coming" strip (council 2026-07-31,
  *  Fable I1 + Juan). Names only, no revenue: this renders at the pulse's KH+
- *  floor, below the catering hub's commercial surfaces. */
+ *  floor, below the catering hub's commercial surfaces. Note the pipeline
+ *  BOARD's read floor is Shift Lead (5); event/customer NAMES at KH (4) here
+ *  are a deliberate, owner-ratified exception (Juan 2026-08-01) — the name is
+ *  how floor staff identify and label the outgoing order. Revenue stays 5+. */
 async function loadCateringDueToday(
   service: SupabaseClient,
   args: { locationId: string; date: string },
