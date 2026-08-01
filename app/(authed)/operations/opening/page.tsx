@@ -4,8 +4,8 @@
  * Server Component. Branches by gate state + instance status:
  *   1. No template at location → "Template not configured" empty state
  *   2. Gate not satisfied (prior closing(N-1) still 'open') → "Waiting on
- *      prior closing finalization" banner. PR 4 wires opener-release UI;
- *      PR 2 just shows the message.
+ *      prior closing finalization" banner. (An opener-release UI is a
+ *      deferred future build; today the message is the whole affordance.)
  *   3. Instance status='confirmed' or 'auto_finalized' → read-only banner
  *      with submitter attribution.
  *   4. Instance status='open' (or new) → render OpeningClient form.

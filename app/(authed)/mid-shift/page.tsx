@@ -9,8 +9,8 @@
  * Location tabs (council 2026-07-31 + Juan): the page is per-location; a
  * manager with access to more than one store gets a tab row that swaps the
  * whole pulse via ?location=. This also fixes the all-locations dead page —
- * a level-7+ actor with the empty-locations override previously resolved NO
- * default location and got a broken body with the wrong i18n key.
+ * a level-9+ (owner/CGS) actor with the all-locations override previously
+ * resolved NO default location and got a broken body with the wrong i18n key.
  */
 
 import { after } from "next/server";
@@ -25,7 +25,7 @@ import { FridgeStrip } from "@/components/midshift/FridgeStrip";
 import { ActiveToday } from "@/components/midshift/ActiveToday";
 import { SalesPanel } from "@/components/midshift/SalesPanel";
 import { MIDSHIFT_BASE_LEVEL, loadMidShiftPulse, operationalNow } from "@/lib/midshift";
-import { loadSalesPulse } from "@/lib/midshift-sales";
+import { emptySalesPulse, loadSalesPulse } from "@/lib/midshift-sales";
 import { maybeRefreshTodaySales } from "@/lib/catering/toast-sales";
 import { serverT } from "@/lib/i18n/server";
 import { formatTime } from "@/lib/i18n/format";
@@ -53,7 +53,7 @@ export default async function MidShiftPage({
   const service = getServiceRoleClient();
 
   // Accessible locations drive BOTH the tab row and the default resolution.
-  // All-locations actors (level-7+ empty-assignment override) see every active
+  // All-locations actors (level-9+ owner/CGS override) see every active
   // location; assigned actors see their assignment list. One query serves the
   // tabs, the default, and the header label.
   const actorAll = isAllLocationsAccess({ role: auth.role, locations: auth.locations });
@@ -103,7 +103,12 @@ export default async function MidShiftPage({
       now,
       actor: { userId: auth.user.id, role: auth.role, level: auth.level },
     }),
-    loadSalesPulse(service, { locationId, todayYmd: date }),
+    // Sales is a SECONDARY lane — a Toast/DB read hiccup degrades to the
+    // panel's honest empty state, never a page-wide error over the pulse.
+    loadSalesPulse(service, { locationId, todayYmd: date }).catch((err) => {
+      console.error("midshift sales pulse failed", err);
+      return emptySalesPulse(date);
+    }),
   ]);
 
   // Same-day freshness trigger (council 2026-07-31): AFTER the response, pull

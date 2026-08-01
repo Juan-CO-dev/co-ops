@@ -8,9 +8,11 @@
  *   YESTERDAY & PACE — yesterday's final numbers + Δ% vs the same weekday
  *     last week, and a trailing same-weekday baseline for today's context.
  *
- * One small indexed query per business date (7 total, parallel) — each day is
- * ~300 rows, comfortably under the PostgREST row cap; the pure math lives in
- * midshift-sales-shared (tested).
+ * One indexed read per business date (7 total, parallel) — typical days are
+ * a few hundred rows, but the table is append-only snapshot-versioned (edits/
+ * voids append new versions), so each read pages past the PostgREST 1000-row
+ * cap on a stable order rather than trusting the typical case (the PR #63
+ * lesson). The pure math lives in midshift-sales-shared (tested).
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -52,26 +54,54 @@ interface QueriedRow extends Omit<SalesEventRow, "quantity"> {
   pulled_at: string;
 }
 
+const PAGE_SIZE = 1000;
+
 async function loadDayRows(
   service: SupabaseClient,
   locationId: string,
   businessDate: string,
 ): Promise<{ rows: SalesEventRow[]; maxPulledAt: string | null }> {
-  const { data, error } = await service
-    .from("toast_sales_events")
-    .select(
-      "business_date, check_guid, selection_guid, parent_selection_guid, item_name, quantity, price_cents, voided, snapshot_version, pulled_at",
-    )
-    .eq("location_id", locationId)
-    .eq("business_date", businessDate)
-    .returns<QueriedRow[]>();
-  if (error) throw new Error(`midshift sales ${businessDate}: ${error.message}`);
+  // Inline pagination (not selectAllRows) to preserve the error throw — the
+  // page boundary catches it and degrades to the honest empty panel.
+  const raw: QueriedRow[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await service
+      .from("toast_sales_events")
+      .select(
+        "business_date, check_guid, selection_guid, parent_selection_guid, item_name, quantity, price_cents, voided, snapshot_version, pulled_at",
+      )
+      .eq("location_id", locationId)
+      .eq("business_date", businessDate)
+      .order("id", { ascending: true })
+      .range(from, from + PAGE_SIZE - 1)
+      .returns<QueriedRow[]>();
+    if (error) throw new Error(`midshift sales ${businessDate}: ${error.message}`);
+    const page = data ?? [];
+    raw.push(...page);
+    if (page.length < PAGE_SIZE) break;
+  }
   let maxPulledAt: string | null = null;
-  const rows = (data ?? []).map((r) => {
+  const rows = raw.map((r) => {
     if (maxPulledAt == null || r.pulled_at > maxPulledAt) maxPulledAt = r.pulled_at;
     return { ...r, quantity: Number(r.quantity) };
   });
   return { rows, maxPulledAt };
+}
+
+/** The all-null pulse — the render fallback when the sales read fails, so a
+ *  Toast/DB hiccup on this SECONDARY lane degrades to the panel's honest
+ *  empty state instead of taking down the operational pulse. */
+export function emptySalesPulse(todayYmd: string): SalesPulse {
+  return {
+    todayYmd,
+    today: null,
+    yesterday: null,
+    yesterdayDeltaPct: null,
+    baselineAvgCents: null,
+    baselineWeeks: 0,
+    topToday: [],
+    lastPulledAt: null,
+  };
 }
 
 export async function loadSalesPulse(

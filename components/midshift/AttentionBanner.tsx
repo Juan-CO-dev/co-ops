@@ -74,8 +74,9 @@ export function AttentionBanner({
       </h2>
       <ul className="flex flex-col gap-1">
         {items.map((item) => {
-          // Stable key from the item's identity (council E: never the index).
-          const key = `${item.kind}-${item.reportKey ?? item.fridgeName ?? item.count ?? ""}`;
+          // Stable key from the item's identity (council E: never the index;
+          // fridges key on equipId — names can collide).
+          const key = `${item.kind}-${item.reportKey ?? item.equipId ?? item.count ?? ""}`;
           if (item.kind === "overdue" && item.reportKey !== undefined) {
             const reportLabel = serverT(language, REPORT_LABEL_KEY[item.reportKey]);
             return (

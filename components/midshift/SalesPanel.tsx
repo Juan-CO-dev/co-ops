@@ -14,22 +14,8 @@
 
 import type { Language } from "@/lib/i18n/types";
 import { serverT } from "@/lib/i18n/server";
-import { formatTime } from "@/lib/i18n/format";
+import { formatCents, formatTime, formatWeekday } from "@/lib/i18n/format";
 import type { SalesPulse } from "@/lib/midshift-sales";
-
-function money(cents: number, language: Language): string {
-  return (cents / 100).toLocaleString(language === "es" ? "es-US" : "en-US", {
-    style: "currency",
-    currency: "USD",
-  });
-}
-
-function weekdayName(ymd: string, language: Language): string {
-  return new Date(`${ymd}T00:00:00Z`).toLocaleDateString(language === "es" ? "es-US" : "en-US", {
-    weekday: "long",
-    timeZone: "UTC",
-  });
-}
 
 function checksLabel(count: number, language: Language): string {
   return count === 1
@@ -60,7 +46,7 @@ export function SalesPanel({ pulse, language }: { pulse: SalesPulse; language: L
           {today ? (
             <p className="text-sm font-semibold text-co-text">
               {serverT(language, "midshift.sales.today_line", {
-                amount: money(today.netCents, language),
+                amount: formatCents(today.netCents, language),
                 checks: checksLabel(today.checks, language),
               })}
             </p>
@@ -70,9 +56,9 @@ export function SalesPanel({ pulse, language }: { pulse: SalesPulse; language: L
           {baselineAvgCents != null && (
             <p className="text-xs text-co-text-muted">
               {serverT(language, "midshift.sales.baseline_line", {
-                weekday: weekdayName(pulse.todayYmd, language),
+                weekday: formatWeekday(pulse.todayYmd, language),
                 weeks: baselineWeeks,
-                amount: money(baselineAvgCents, language),
+                amount: formatCents(baselineAvgCents, language),
               })}
             </p>
           )}
@@ -88,9 +74,9 @@ export function SalesPanel({ pulse, language }: { pulse: SalesPulse; language: L
           {yesterday && (
             <p className="mt-1 border-t border-co-border/50 pt-2 text-sm text-co-text">
               {serverT(language, "midshift.sales.yesterday_line", {
-                amount: money(yesterday.netCents, language),
+                amount: formatCents(yesterday.netCents, language),
                 checks: checksLabel(yesterday.checks, language),
-                avg: yesterday.avgTicketCents != null ? money(yesterday.avgTicketCents, language) : "—",
+                avg: yesterday.avgTicketCents != null ? formatCents(yesterday.avgTicketCents, language) : "—",
               })}
               {yesterdayDeltaPct != null && (
                 <span
@@ -98,7 +84,7 @@ export function SalesPanel({ pulse, language }: { pulse: SalesPulse; language: L
                 >
                   {serverT(language, "midshift.sales.yesterday_delta", {
                     delta: `${yesterdayDeltaPct >= 0 ? "+" : "−"}${Math.abs(yesterdayDeltaPct)}%`,
-                    weekday: weekdayName(yesterday.businessDate, language),
+                    weekday: formatWeekday(yesterday.businessDate, language),
                   })}
                 </span>
               )}

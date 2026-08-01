@@ -22,6 +22,7 @@ import {
   EXPECTED_BY,
   isSubmitted,
   operationalNow,
+  timeWindowMinutes,
   type ActiveStaff,
   type AttentionItem,
   type CateringDueItem,
@@ -286,7 +287,7 @@ async function loadCateringDueToday(
 ): Promise<CateringDueItem[]> {
   const { data } = await service
     .from("catering_pipeline")
-    .select("id, event_name, company, contact_name, headcount, time_window, delivery_address, stage")
+    .select("id, event_name, company, contact_name, headcount, time_window, delivery_address")
     .eq("location_id", args.locationId)
     .eq("event_date", args.date)
     .in("stage", ["confirmed", "out"])
@@ -299,7 +300,6 @@ async function loadCateringDueToday(
         headcount: number | null;
         time_window: string | null;
         delivery_address: string | null;
-        stage: string;
       }>
     >();
   return (data ?? [])
@@ -310,7 +310,13 @@ async function loadCateringDueToday(
       headcount: r.headcount,
       isDelivery: r.delivery_address != null && r.delivery_address !== "",
     }))
-    .sort((a, b) => (a.timeWindow ?? "￿").localeCompare(b.timeWindow ?? "￿"));
+    // Chronological, not lexicographic — "1:00 PM" must not beat "10:00 AM".
+    // Unparseable/null windows sort last; equal keys tiebreak on the raw text.
+    .sort(
+      (a, b) =>
+        timeWindowMinutes(a.timeWindow) - timeWindowMinutes(b.timeWindow) ||
+        (a.timeWindow ?? "").localeCompare(b.timeWindow ?? ""),
+    );
 }
 
 export async function loadMidShiftPulse(
@@ -373,7 +379,7 @@ export async function loadMidShiftPulse(
   // pulseScore; the rest are YELLOW).
   const attention: AttentionItem[] = [];
   for (const r of reports) if (r.overdue === "overdue") attention.push({ kind: "overdue", reportKey: r.key });
-  for (const f of fridges) if (f.outOfRange) attention.push({ kind: "fridge", fridgeName: f.name });
+  for (const f of fridges) if (f.outOfRange) attention.push({ kind: "fridge", fridgeName: f.name, equipId: f.equipId });
   if (fridgeUncheckedAlert) attention.push({ kind: "fridge_unchecked", count: uncheckedFridges });
   if (maintenanceNotesToday > 0) attention.push({ kind: "maintenance_note", count: maintenanceNotesToday });
 
