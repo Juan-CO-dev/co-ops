@@ -715,6 +715,13 @@ async function loadSalesGapDates(
       gaps.add(r.business_date);
     }
   }
+  // Defense-in-depth (adversarial review 2026-07-31 C1): a ledger row for the
+  // OPEN (or future) business date is anomalous — no legitimate writer
+  // materializes an unclosed day (the nightly T-1 cron is the sole
+  // materializer; system triggers are events-only). If one ever appears, its
+  // coverage is partial by construction: treat the date as a GAP so it
+  // null-taints (advisory) instead of feeding drift as trusted.
+  for (const d of materialized) if (d >= openEtDate) gaps.add(d);
   return gaps;
 }
 

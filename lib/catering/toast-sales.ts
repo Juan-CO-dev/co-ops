@@ -197,16 +197,22 @@ export async function pullSalesForAllLocations(businessDate: string): Promise<Ar
  * on behalf of a viewer below TOAST_SALES_WRITE_MIN, debounced upstream, and
  * audited with a distinct actor_context.
  *
- * `materialize` MUST stay false for intraday contexts: a partial-day ledger
- * row would read as "covered" to the counts gap/taint logic and silently
- * understate drift (the double-count law's display/drift boundary). Only the
- * closing-confirm trigger — when the business day is operationally over —
- * materializes; the nightly cron re-pulls + re-materializes as the reconciler.
+ * System triggers are EVENTS-ONLY — they NEVER materialize the depletion
+ * ledger (adversarial review 2026-07-31 C1): the nightly T-1 cron is the SOLE
+ * ledger materializer, so a ledger row can only ever describe a CLOSED
+ * business day. An open-day row — even from a "day is over" closing confirm —
+ * is one wrong-tap away from a partial row that drift would read as trusted
+ * (the open date is excluded from gap-taint by design), silently overstating
+ * on-hand. Display reads events; drift reads final-day ledger rows. Law.
+ *
+ * A FAILED attempt writes a `toast_sales.pull_failed` audit row (review C2):
+ * the on-visit debounce keys off the latest pull attempt — success OR failure
+ * — so a Toast outage cannot storm the API on every page load.
  */
 export async function pullSalesSystemTrigger(
   locationId: string,
   businessDate: string,
-  opts: { context: "closing_confirm" | "midshift_on_visit"; materialize?: boolean },
+  opts: { context: "closing_confirm" | "midshift_on_visit" },
 ): Promise<void> {
   try {
     const sb = getServiceRoleClient();
@@ -217,12 +223,25 @@ export async function pullSalesSystemTrigger(
       .maybeSingle<{ toast_restaurant_guid: string | null }>();
     if (!data?.toast_restaurant_guid) return; // no Toast at this location — no-op
     await doPull(locationId, businessDate, null, opts.context);
-    if (opts.materialize) await materializeDailyDepletion(locationId, businessDate);
   } catch (e) {
-    console.error(
-      `[toast-sales ${opts.context}] pull failed for ${locationId} ${businessDate}:`,
-      e instanceof Error ? e.message : String(e),
-    );
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`[toast-sales ${opts.context}] pull failed for ${locationId} ${businessDate}:`, msg);
+    // Failure marker (fail-open like all audits): debounces retry attempts
+    // during an outage and gives the admin hub a forensic trail.
+    void audit({
+      actorId: null,
+      actorRole: null,
+      action: "toast_sales.pull_failed",
+      resourceTable: "toast_sales_events",
+      resourceId: locationId,
+      metadata: {
+        business_date: businessDate,
+        actor_context: opts.context,
+        error: msg.length > 500 ? `${msg.slice(0, 500)}…` : msg,
+      },
+      ipAddress: null,
+      userAgent: null,
+    });
   }
 }
 
@@ -231,10 +250,12 @@ const ON_VISIT_DEBOUNCE_MS = 45 * 60 * 1000;
 
 /**
  * Mid-shift on-visit freshness trigger: pull today's events IF the last pull
- * for this location is older than the debounce window (or was for a different
- * business date). The marker is the latest `toast_sales.pull` audit row —
- * independent of whether the pull inserted rows, so a zero-sales morning
- * doesn't re-pull on every page load. Best-effort; never throws.
+ * ATTEMPT for this location is older than the debounce window (or was for a
+ * different business date). The marker is the latest `toast_sales.pull` OR
+ * `toast_sales.pull_failed` audit row — independent of whether rows were
+ * inserted (a zero-sales morning doesn't re-pull per load) AND of outcome
+ * (a Toast outage doesn't storm the API per load — review C2). Best-effort;
+ * never throws.
  */
 export async function maybeRefreshTodaySales(locationId: string, businessDate: string): Promise<void> {
   try {
@@ -242,16 +263,16 @@ export async function maybeRefreshTodaySales(locationId: string, businessDate: s
     const { data } = await sb
       .from("audit_log")
       .select("created_at, metadata")
-      .eq("action", "toast_sales.pull")
+      .in("action", ["toast_sales.pull", "toast_sales.pull_failed"])
       .eq("resource_id", locationId)
       .order("created_at", { ascending: false })
       .limit(1)
       .maybeSingle<{ created_at: string; metadata: { business_date?: string } | null }>();
-    const fresh =
+    const attemptedRecently =
       data != null &&
       data.metadata?.business_date === businessDate &&
       Date.now() - new Date(data.created_at).getTime() < ON_VISIT_DEBOUNCE_MS;
-    if (fresh) return;
+    if (attemptedRecently) return;
     await pullSalesSystemTrigger(locationId, businessDate, { context: "midshift_on_visit" });
   } catch (e) {
     console.error(
