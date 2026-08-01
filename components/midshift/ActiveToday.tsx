@@ -1,6 +1,14 @@
-import type { Language } from "@/lib/i18n/types";
+import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { serverT } from "@/lib/i18n/server";
-import type { ActiveStaff } from "@/lib/midshift";
+import type { ActiveStaff, ReportKey } from "@/lib/midshift";
+
+const REPORT_LABEL_KEY: Record<ReportKey, TranslationKey> = {
+  opening: "midshift.report.opening",
+  am_prep: "midshift.report.am_prep",
+  mid_day: "midshift.report.mid_day",
+  cash: "midshift.report.cash",
+  closing: "midshift.report.closing",
+};
 
 export function ActiveToday({
   staff,
@@ -28,6 +36,13 @@ export function ActiveToday({
                 className="rounded-md border border-co-border bg-co-surface px-2 py-1 text-xs font-semibold text-co-text"
               >
                 {member.name}
+                {/* What they touched (council 2026-07-31 — this shipped as an
+                    always-empty array; the section's stated job is "who + what"). */}
+                {member.reports.length > 0 && (
+                  <span className="ml-1 font-normal text-co-text-muted">
+                    · {member.reports.map((k) => serverT(language, REPORT_LABEL_KEY[k])).join(", ")}
+                  </span>
+                )}
               </span>
             ))}
           </div>

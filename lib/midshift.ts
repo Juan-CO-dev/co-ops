@@ -1,139 +1,52 @@
+/**
+ * Mid-Shift Pulse — the SERVER data layer. Composes the shipped dashboard-state
+ * loaders + maintenance + activity into one read-only MidShiftPulse. The pure
+ * core (types, overdue model, operational clock) lives in lib/midshift-shared
+ * (vitest-covered) and is re-exported here so consumers keep one import path.
+ *
+ * Perf shape (council 2026-07-31): every independent load runs in Promise.all —
+ * the 5 report loaders, the top-level maintenance/notes/activity block, and the
+ * batched confirmer-name lookup. A phone at 6pm gets ~3 parallel groups, not
+ * ~15 serial round-trips.
+ */
+
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { operationalDayUtcRange } from "@/lib/operational-day";
-
-export const MIDSHIFT_BASE_LEVEL = 4; // KH+ (key_holder = 4 in lib/roles.ts)
-
-/** Operational timezone — CO is DC-only; hardcoded per the dashboard's convention. */
-const OPERATIONAL_TZ = "America/New_York";
-
-export type ReportKey = "opening" | "am_prep" | "mid_day" | "cash" | "closing";
-
-/** Instance statuses that count as "submitted/done" for pulse purposes. */
-const SUBMITTED_STATUSES = new Set([
-  "phase2_complete",
-  "confirmed",
-  "incomplete_confirmed",
-  "auto_finalized",
-]);
-export function isSubmitted(status: string | null | undefined): boolean {
-  return status != null && SUBMITTED_STATUSES.has(status);
-}
-
-export type ReportProgress = "done" | "in_progress" | "not_started";
-export type OverdueState = "ok" | "overdue" | "not_due_yet";
-
-export interface ReportStatusRow {
-  key: ReportKey;
-  progress: ReportProgress;
-  doneAt: string | null; // ISO timestamp when finalized, if done
-  doneByName: string | null;
-  overdue: OverdueState;
-  /** mid_day only: how many instances done today (for "#1 done · #2 none"). */
-  count?: number;
-}
-
-export interface ActiveStaff {
-  userId: string;
-  name: string;
-  reports: ReportKey[]; // which report types they touched today
-}
-
-export interface PulseFridge {
-  name: string;
-  latestF: number | null;
-  outOfRange: boolean; // any reading today > safe max
-}
-
-export interface MidShiftPulse {
-  locationId: string;
-  today: string;
-  reports: ReportStatusRow[];
-  fridges: PulseFridge[];
-  fridgeFlagCount: number; // fridges out of range today
-  maintenanceNotesToday: number;
-  activeToday: ActiveStaff[];
-  /** Derived attention items, highest priority first, for the banner. */
-  attention: AttentionItem[];
-}
-
-export interface AttentionItem {
-  kind: "overdue" | "fridge" | "maintenance_note";
-  /** i18n key + params resolved at render; we pass a stable shape. */
-  reportKey?: ReportKey; // for overdue
-  fridgeName?: string; // for fridge
-  count?: number; // for maintenance_note
-}
-
-/**
- * Expected-by clock times (minutes-of-day, operational TZ) per Juan:
- *   - opening overdue after 10:30 (store opens 10:30a)
- *   - mid_day due window 14:00–15:30; overdue after 15:30
- *   - closing overdue after 21:00 (store closes 20:00)
- * am_prep + cash are NOT clock-based — they're "expected when closing is done"
- * (computed in computeOverdue against closing's done-ness).
- */
-export const EXPECTED_BY = {
-  openingOverdueAfter: 10 * 60 + 30, // 630
-  midDayDueFrom: 14 * 60, // 840
-  midDayOverdueAfter: 15 * 60 + 30, // 930
-  closingOverdueAfter: 21 * 60, // 1260
-} as const;
-
-/** Operational-TZ "now": the date string + minutes-of-day. Pure, takes a Date. */
-export function operationalNow(now: Date): { date: string; minutesOfDay: number } {
-  const fmt = new Intl.DateTimeFormat("en-US", {
-    timeZone: OPERATIONAL_TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
-  const parts = fmt.formatToParts(now);
-  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
-  const date = `${get("year")}-${get("month")}-${get("day")}`;
-  let hour = parseInt(get("hour"), 10);
-  if (Number.isNaN(hour) || hour === 24) hour = 0;
-  const minute = parseInt(get("minute"), 10) || 0;
-  return { date, minutesOfDay: hour * 60 + minute };
-}
-
-/** Overdue for one report given its done-ness, the clock, and closing's done-ness. */
-export function computeOverdue(args: {
-  key: ReportKey;
-  done: boolean;
-  minutesOfDay: number;
-  closingDone: boolean;
-  midDayDoneCount: number;
-}): OverdueState {
-  const { key, done, minutesOfDay, closingDone, midDayDoneCount } = args;
-  if (done) return "ok";
-  switch (key) {
-    case "opening":
-      return minutesOfDay > EXPECTED_BY.openingOverdueAfter ? "overdue" : "ok";
-    case "mid_day":
-      if (midDayDoneCount > 0) return "ok";
-      if (minutesOfDay < EXPECTED_BY.midDayDueFrom) return "not_due_yet";
-      return minutesOfDay > EXPECTED_BY.midDayOverdueAfter ? "overdue" : "ok";
-    case "closing":
-      return minutesOfDay > EXPECTED_BY.closingOverdueAfter ? "overdue" : "ok";
-    case "am_prep":
-    case "cash":
-      // Closing-dependent: only overdue once closing is done but this isn't.
-      return closingDone ? "overdue" : "ok";
-    default:
-      return "ok";
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Task 2: report-status composition
-// ─────────────────────────────────────────────────────────────────────────────
-
 import { loadAmPrepDashboardState, loadMidDayPrepDashboardState } from "@/lib/prep";
 import { loadCashDashboardState } from "@/lib/cash";
+import { loadMaintenanceOverview } from "@/lib/maintenance";
 import type { RoleCode } from "@/lib/roles";
+
+import {
+  computeOverdue,
+  isSubmitted,
+  operationalNow,
+  type ActiveStaff,
+  type AttentionItem,
+  type MidShiftPulse,
+  type PulseFridge,
+  type ReportKey,
+  type ReportProgress,
+  type ReportStatusRow,
+} from "@/lib/midshift-shared";
+
+export {
+  computeOverdue,
+  EXPECTED_BY,
+  isSubmitted,
+  MIDSHIFT_BASE_LEVEL,
+  operationalNow,
+} from "@/lib/midshift-shared";
+export type {
+  ActiveStaff,
+  AttentionItem,
+  MidShiftPulse,
+  OverdueState,
+  PulseFridge,
+  ReportKey,
+  ReportProgress,
+  ReportStatusRow,
+} from "@/lib/midshift-shared";
 
 export interface MidShiftActor {
   userId: string;
@@ -141,11 +54,17 @@ export interface MidShiftActor {
   level: number;
 }
 
-/** Inline status for a single-template report type (opening or closing). */
+// ─────────────────────────────────────────────────────────────────────────────
+// Report-status composition
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Inline status for a single-template report type (opening or closing).
+ *  Returns the confirmer's user id — name resolution is BATCHED by the caller
+ *  (one users query for both types, not one per instance). */
 async function loadInstanceStatus(
   service: SupabaseClient,
   args: { locationId: string; date: string; type: "opening" | "closing" },
-): Promise<{ status: string | null; confirmedAt: string | null; confirmedByName: string | null }> {
+): Promise<{ status: string | null; confirmedAt: string | null; confirmedBy: string | null }> {
   // PLURAL template lookup (PR-3 adversarial review H1): under template
   // versioning a lineage can hold current + pending active rows — a
   // created_at-DESC single resolver would grab the PENDING version and report
@@ -161,7 +80,7 @@ async function loadInstanceStatus(
     .eq("active", true)
     .returns<Array<{ id: string }>>();
   const tmplIds = (tmpls ?? []).map((t) => t.id);
-  if (tmplIds.length === 0) return { status: null, confirmedAt: null, confirmedByName: null };
+  if (tmplIds.length === 0) return { status: null, confirmedAt: null, confirmedBy: null };
 
   const { data: inst } = await service
     .from("checklist_instances")
@@ -174,18 +93,8 @@ async function loadInstanceStatus(
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle<{ status: string; confirmed_at: string | null; confirmed_by: string | null }>();
-  if (!inst) return { status: null, confirmedAt: null, confirmedByName: null };
-
-  let confirmedByName: string | null = null;
-  if (inst.confirmed_by) {
-    const { data: u } = await service
-      .from("users")
-      .select("name")
-      .eq("id", inst.confirmed_by)
-      .maybeSingle<{ name: string }>();
-    confirmedByName = u?.name ?? null;
-  }
-  return { status: inst.status ?? null, confirmedAt: inst.confirmed_at ?? null, confirmedByName };
+  if (!inst) return { status: null, confirmedAt: null, confirmedBy: null };
+  return { status: inst.status ?? null, confirmedAt: inst.confirmed_at ?? null, confirmedBy: inst.confirmed_by ?? null };
 }
 
 function progressFor(status: string | null, hasAny: boolean): ReportProgress {
@@ -201,11 +110,27 @@ export async function loadReportStatuses(
 ): Promise<{ rows: Omit<ReportStatusRow, "overdue">[]; closingDone: boolean; midDayDoneCount: number }> {
   const actor = args.actor;
 
-  const opening = await loadInstanceStatus(service, { locationId: args.locationId, date: args.date, type: "opening" });
-  const closing = await loadInstanceStatus(service, { locationId: args.locationId, date: args.date, type: "closing" });
-  const amPrep = await loadAmPrepDashboardState(service, { locationId: args.locationId, date: args.date, actor });
-  const midDay = await loadMidDayPrepDashboardState(service, { locationId: args.locationId, date: args.date, actor });
-  const cash = await loadCashDashboardState(service, { locationId: args.locationId, date: args.date, actor });
+  // All five loaders are independent — run them together (council perf pass).
+  const [opening, closing, amPrep, midDay, cash] = await Promise.all([
+    loadInstanceStatus(service, { locationId: args.locationId, date: args.date, type: "opening" }),
+    loadInstanceStatus(service, { locationId: args.locationId, date: args.date, type: "closing" }),
+    loadAmPrepDashboardState(service, { locationId: args.locationId, date: args.date, actor }),
+    loadMidDayPrepDashboardState(service, { locationId: args.locationId, date: args.date, actor }),
+    loadCashDashboardState(service, { locationId: args.locationId, date: args.date, actor }),
+  ]);
+
+  // Batched confirmer-name resolution for the two inline statuses (was one
+  // users query PER instance inside loadInstanceStatus).
+  const confirmerIds = [...new Set([opening.confirmedBy, closing.confirmedBy].filter((v): v is string => v != null))];
+  const nameById = new Map<string, string>();
+  if (confirmerIds.length > 0) {
+    const { data: users } = await service
+      .from("users")
+      .select("id, name")
+      .in("id", confirmerIds)
+      .returns<Array<{ id: string; name: string }>>();
+    for (const u of users ?? []) nameById.set(u.id, u.name);
+  }
 
   const midDayDoneCount = midDay.instances.filter((i) => isSubmitted(i.status)).length;
   const midDayLatestDone = [...midDay.instances].reverse().find((i) => isSubmitted(i.status)) ?? null;
@@ -216,7 +141,7 @@ export async function loadReportStatuses(
       key: "opening",
       progress: progressFor(opening.status, false),
       doneAt: opening.confirmedAt,
-      doneByName: opening.confirmedByName,
+      doneByName: opening.confirmedBy ? nameById.get(opening.confirmedBy) ?? null : null,
     },
     {
       key: "am_prep",
@@ -241,7 +166,7 @@ export async function loadReportStatuses(
       key: "closing",
       progress: progressFor(closing.status, false),
       doneAt: closing.confirmedAt,
-      doneByName: closing.confirmedByName,
+      doneByName: closing.confirmedBy ? nameById.get(closing.confirmedBy) ?? null : null,
     },
   ];
 
@@ -249,67 +174,101 @@ export async function loadReportStatuses(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Task 3: fridges, active-today, attention, loadMidShiftPulse
+// Active-today (with per-report attribution) + the pulse composer
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { loadMaintenanceOverview } from "@/lib/maintenance";
+/** template type + prep_subtype → the pulse's ReportKey. */
+function reportKeyForTemplate(type: string, prepSubtype: string | null): ReportKey | null {
+  if (type === "opening") return "opening";
+  if (type === "closing") return "closing";
+  if (type === "prep") return prepSubtype === "mid_day_prep" ? "mid_day" : "am_prep";
+  return null; // deep_cleaning etc. — not a pulse report row
+}
 
-/** Staff who completed/submitted any report today (proxy for on-shift). */
+/** Staff who completed/submitted any report today (proxy for on-shift), WITH
+ *  which report types they touched (council 2026-07-31 — the `reports` field
+ *  shipped empty for a month; the attribution was always in the fetched rows). */
 async function loadActiveToday(
   service: SupabaseClient,
   args: { locationId: string; date: string },
 ): Promise<ActiveStaff[]> {
-  // Report-instance confirmers for today (opening/closing/am/mid-day) + cash signer.
-  const { data: insts } = await service
-    .from("checklist_instances")
-    .select("confirmed_by, template_id")
-    .eq("location_id", args.locationId)
-    .eq("date", args.date)
-    .not("confirmed_by", "is", null);
-  const { data: cash } = await service
-    .from("cash_reports")
-    .select("signed_by")
-    .eq("location_id", args.locationId)
-    .eq("report_date", args.date)
-    .is("superseded_at", null);
-
-  // Build the set of today's instance ids for this location to scope completions.
-  const { data: todayInstances } = await service
-    .from("checklist_instances")
-    .select("id")
-    .eq("location_id", args.locationId)
-    .eq("date", args.date);
-  const todayInstanceIdList = (todayInstances ?? []).map((r) => (r as { id: string }).id);
-
-  // Completions on today's instances, scoped by instance_id (BUG 3 fix). The
-  // prior `.limit(2000)` global scan + JS filter truncated once live
-  // completions exceeded the limit, undercounting active staff.
-  let comps: { completed_by: string | null; instance_id: string }[] = [];
-  if (todayInstanceIdList.length > 0) {
-    const { data } = await service
-      .from("checklist_completions")
-      .select("completed_by, instance_id")
-      .in("instance_id", todayInstanceIdList)
+  // Today's instances (id + template + confirmer, one query) ∥ cash signers.
+  const [{ data: insts }, { data: cash }] = await Promise.all([
+    service
+      .from("checklist_instances")
+      .select("id, template_id, confirmed_by")
+      .eq("location_id", args.locationId)
+      .eq("date", args.date)
+      .returns<Array<{ id: string; template_id: string; confirmed_by: string | null }>>(),
+    service
+      .from("cash_reports")
+      .select("signed_by")
+      .eq("location_id", args.locationId)
+      .eq("report_date", args.date)
       .is("superseded_at", null)
-      .is("revoked_at", null);
-    comps = (data ?? []) as { completed_by: string | null; instance_id: string }[];
-  }
+      .returns<Array<{ signed_by: string | null }>>(),
+  ]);
 
-  const userIds = new Set<string>();
-  for (const r of (insts ?? []) as { confirmed_by: string | null }[]) if (r.confirmed_by) userIds.add(r.confirmed_by);
-  for (const r of comps) {
-    if (r.completed_by) userIds.add(r.completed_by);
-  }
-  for (const r of (cash ?? []) as { signed_by: string | null }[]) if (r.signed_by) userIds.add(r.signed_by);
+  const instRows = insts ?? [];
+  const instanceIds = instRows.map((r) => r.id);
+  const templateIds = [...new Set(instRows.map((r) => r.template_id))];
 
-  if (userIds.size === 0) return [];
-  const { data: users } = await service.from("users").select("id, name").in("id", [...userIds]);
-  const nameById = new Map<string, string>();
-  for (const u of (users ?? []) as { id: string; name: string }[]) nameById.set(u.id, u.name);
+  // Completions on today's instances ∥ the template-type map for attribution.
+  const [comps, tmplRows] = await Promise.all([
+    instanceIds.length > 0
+      ? service
+          .from("checklist_completions")
+          .select("completed_by, instance_id")
+          .in("instance_id", instanceIds)
+          .is("superseded_at", null)
+          .is("revoked_at", null)
+          .returns<Array<{ completed_by: string | null; instance_id: string }>>()
+          .then((r) => r.data ?? [])
+      : Promise.resolve([] as Array<{ completed_by: string | null; instance_id: string }>),
+    templateIds.length > 0
+      ? service
+          .from("checklist_templates")
+          .select("id, type, prep_subtype")
+          .in("id", templateIds)
+          .returns<Array<{ id: string; type: string; prep_subtype: string | null }>>()
+          .then((r) => r.data ?? [])
+      : Promise.resolve([] as Array<{ id: string; type: string; prep_subtype: string | null }>),
+  ]);
 
-  // v1: list names + a generic "report" tag (per-report attribution is a v1.1 refinement;
-  // keep the query cheap — the proxy's value is "who's been active," not exact report breakdown).
-  return [...userIds].map((id) => ({ userId: id, name: nameById.get(id) ?? "—", reports: [] as ReportKey[] }));
+  const keyByTemplate = new Map<string, ReportKey | null>(
+    tmplRows.map((t) => [t.id, reportKeyForTemplate(t.type, t.prep_subtype)]),
+  );
+  const keyByInstance = new Map<string, ReportKey | null>(
+    instRows.map((r) => [r.id, keyByTemplate.get(r.template_id) ?? null]),
+  );
+
+  // userId → the report types they touched today.
+  const touched = new Map<string, Set<ReportKey>>();
+  const touch = (userId: string | null, key: ReportKey | null) => {
+    if (!userId) return;
+    const set = touched.get(userId) ?? new Set<ReportKey>();
+    if (key) set.add(key);
+    touched.set(userId, set);
+  };
+  for (const r of instRows) touch(r.confirmed_by, keyByTemplate.get(r.template_id) ?? null);
+  for (const c of comps) touch(c.completed_by, keyByInstance.get(c.instance_id) ?? null);
+  for (const r of cash ?? []) touch(r.signed_by, "cash");
+
+  if (touched.size === 0) return [];
+  const { data: users } = await service
+    .from("users")
+    .select("id, name")
+    .in("id", [...touched.keys()])
+    .returns<Array<{ id: string; name: string }>>();
+  const nameById = new Map((users ?? []).map((u) => [u.id, u.name]));
+
+  // Stable render order: report keys in the pulse's canonical row order.
+  const KEY_ORDER: ReportKey[] = ["opening", "am_prep", "mid_day", "cash", "closing"];
+  return [...touched.entries()].map(([userId, keys]) => ({
+    userId,
+    name: nameById.get(userId) ?? "—",
+    reports: KEY_ORDER.filter((k) => keys.has(k)),
+  }));
 }
 
 export async function loadMidShiftPulse(
@@ -318,11 +277,25 @@ export async function loadMidShiftPulse(
 ): Promise<MidShiftPulse> {
   const { minutesOfDay } = operationalNow(args.now);
 
-  const { rows, closingDone, midDayDoneCount } = await loadReportStatuses(service, {
-    locationId: args.locationId,
-    date: args.date,
-    actor: args.actor,
-  });
+  // Maintenance notes logged today. created_at is a UTC timestamptz; args.date
+  // is the ET operational day — bare `${date}T…` bounds were read as UTC and
+  // bucketed late-evening ET notes to the wrong day (hardening 2026-07-31,
+  // council P1). Convert to the day's real UTC instant range.
+  const { startIso, endExclusiveIso } = operationalDayUtcRange(args.date);
+
+  // The four top-level loads are independent — one parallel group.
+  const [statuses, overview, notesRes, activeToday] = await Promise.all([
+    loadReportStatuses(service, { locationId: args.locationId, date: args.date, actor: args.actor }),
+    loadMaintenanceOverview(service, { locationId: args.locationId, today: args.date, sinceDate: args.date }),
+    service
+      .from("maintenance_notes")
+      .select("id", { count: "exact", head: true })
+      .eq("location_id", args.locationId)
+      .gte("created_at", startIso)
+      .lt("created_at", endExclusiveIso),
+    loadActiveToday(service, { locationId: args.locationId, date: args.date }),
+  ]);
+  const { rows, closingDone, midDayDoneCount } = statuses;
 
   const reports: ReportStatusRow[] = rows.map((r) => ({
     ...r,
@@ -335,33 +308,15 @@ export async function loadMidShiftPulse(
     }),
   }));
 
-  // Fridges + flags from the maintenance overview (sinceDate = today; we only need today's status).
-  const overview = await loadMaintenanceOverview(service, {
-    locationId: args.locationId,
-    today: args.date,
-    sinceDate: args.date,
-  });
   const fridges: PulseFridge[] = overview.fridges.map((f) => ({
+    equipId: f.equip.id,
     name: f.equip.name,
     latestF: f.latest?.valueF ?? null,
     outOfRange: f.status === "out_of_range",
   }));
   const fridgeFlagCount = fridges.filter((f) => f.outOfRange).length;
 
-  // Maintenance notes logged today. created_at is a UTC timestamptz; args.date
-  // is the ET operational day — bare `${date}T…` bounds were read as UTC and
-  // bucketed late-evening ET notes to the wrong day (hardening 2026-07-31,
-  // council P1). Convert to the day's real UTC instant range.
-  const { startIso, endExclusiveIso } = operationalDayUtcRange(args.date);
-  const { count: notesCount } = await service
-    .from("maintenance_notes")
-    .select("id", { count: "exact", head: true })
-    .eq("location_id", args.locationId)
-    .gte("created_at", startIso)
-    .lt("created_at", endExclusiveIso);
-  const maintenanceNotesToday = notesCount ?? 0;
-
-  const activeToday = await loadActiveToday(service, { locationId: args.locationId, date: args.date });
+  const maintenanceNotesToday = notesRes.count ?? 0;
 
   // Attention items, priority order: overdue → fridge → maintenance notes.
   const attention: AttentionItem[] = [];

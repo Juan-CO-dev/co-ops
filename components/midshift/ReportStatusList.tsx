@@ -41,7 +41,8 @@ export function ReportStatusList({
   language: Language;
 }) {
   return (
-    <section>
+    // id = the attention banner's tap-through anchor target.
+    <section id="midshift-reports">
       <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
         {serverT(language, "midshift.reports.heading")}
       </h2>
@@ -68,6 +69,19 @@ export function ReportStatusList({
                 {row.overdue === "not_due_yet" && row.progress !== "done" && (
                   <span className="text-xs font-semibold text-co-text-muted">
                     {serverT(language, "midshift.overdue.not_due_yet")}
+                  </span>
+                )}
+                {/* due_now: the mid-day 14:00–15:30 window nudge (was silent). */}
+                {row.overdue === "due_now" && (
+                  <span className="text-xs font-semibold text-co-gold-deep">
+                    {serverT(language, "midshift.overdue.due_now")}
+                  </span>
+                )}
+                {/* waiting_on_closing: names the closing-dependent neutral state
+                    so am-prep/cash don't read as "all good" pre-close. */}
+                {row.overdue === "waiting_on_closing" && row.progress !== "done" && (
+                  <span className="text-xs font-semibold text-co-text-dim">
+                    {serverT(language, "midshift.overdue.waiting_on_closing")}
                   </span>
                 )}
                 {/* Progress chip */}
