@@ -32,7 +32,7 @@ export function FridgeStrip({
         <div className="mb-3 flex flex-wrap gap-2">
           {fridges.map((fridge) => (
             <span
-              key={fridge.name}
+              key={fridge.equipId}
               className={[
                 "rounded-md border px-2 py-1 text-xs font-semibold",
                 fridge.outOfRange
