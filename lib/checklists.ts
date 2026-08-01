@@ -1138,6 +1138,10 @@ export async function confirmInstance(
   instance: ChecklistInstance;
   status: ChecklistStatus;
   incompleteReasonRows: ChecklistIncompleteReason[];
+  /** The instance's template type (already loaded for the lock-up gate) —
+   *  threaded out so the route's closing-confirm sales trigger needs no
+   *  second read (adversarial review 2026-07-31 N3). */
+  templateType: string;
 }> {
   const { instanceId, actor, pin, incompleteReasons } = args;
 
@@ -1451,6 +1455,7 @@ export async function confirmInstance(
     instance: rowToInstance(updatedRow),
     status: newStatus,
     incompleteReasonRows: reasonRows,
+    templateType: tmplRow?.type ?? "",
   };
 }
 

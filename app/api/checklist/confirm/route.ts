@@ -33,9 +33,10 @@
  * table.
  */
 
-import { type NextRequest } from "next/server";
+import { after, type NextRequest } from "next/server";
 
 import { ChecklistError, confirmInstance } from "@/lib/checklists";
+import { pullSalesSystemTrigger } from "@/lib/catering/toast-sales";
 import { extractIp, jsonError, jsonOk, parseJsonBody } from "@/lib/api-helpers";
 import { requireSession, SESSION_COOKIE_NAME } from "@/lib/session";
 import { createAuthedClient } from "@/lib/supabase-server";
@@ -92,6 +93,19 @@ export async function POST(req: NextRequest) {
       ipAddress: extractIp(req),
       userAgent: req.headers.get("user-agent"),
     });
+
+    // End-of-night Toast pull (council 2026-07-31): a CLOSING confirm marks the
+    // business day operationally over — pull today's sales AFTER the response
+    // (zero confirm latency; best-effort, never throws). EVENTS ONLY: the
+    // nightly cron is the SOLE ledger materializer (adversarial review C1 —
+    // an open-day ledger row is one wrong-tap away from partial drift
+    // corruption) and remains the reconciler for late voids/refunds. Template
+    // type rides out of confirmInstance (already loaded for the lock-up gate).
+    if (result.templateType === "closing") {
+      const confirmed = result.instance;
+      after(() => pullSalesSystemTrigger(confirmed.locationId, confirmed.date, { context: "closing_confirm" }));
+    }
+
     return jsonOk({
       instance: result.instance,
       status: result.status,

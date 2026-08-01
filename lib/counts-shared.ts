@@ -397,6 +397,21 @@ export function salesWindowUntrustworthy(
 }
 
 /**
+ * May `businessDate` count as a sales-coverage GAP? Only CLOSED business days
+ * are gap-eligible. The OPEN (current) ET business date always has events
+ * before its ledger row exists — same-day event pulls (mid-shift on-visit /
+ * closing-confirm triggers, council 2026-07-31 Fable C3) land events hours
+ * before the nightly/close materialize. Without this exclusion the FIRST
+ * same-day pull would flag today as a gap and advisory-null every SKU's
+ * on-hand until the ledger materializes. Closed days keep strict gap
+ * semantics (a missing ledger day there is a real coverage hole). Pure;
+ * dates are YYYY-MM-DD (lexicographically sortable).
+ */
+export function isGapEligibleDate(businessDate: string, openEtDate: string): boolean {
+  return businessDate < openEtDate;
+}
+
+/**
  * Compute on-hand for one SKU (Juan's feed/verify model). Drift is oz-native
  * (A3). Any null on the derive side → driftOz null → onHandOz null (advisory,
  * never a fabricated number). A SKU never counted (anchorOz null) has no anchor
