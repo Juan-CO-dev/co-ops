@@ -63,11 +63,36 @@ export interface PulseFridge {
 }
 
 export interface AttentionItem {
-  kind: "overdue" | "fridge" | "maintenance_note";
+  kind: "overdue" | "fridge" | "fridge_unchecked" | "maintenance_note";
   /** i18n key + params resolved at render; we pass a stable shape. */
   reportKey?: ReportKey; // for overdue
   fridgeName?: string; // for fridge
-  count?: number; // for maintenance_note
+  count?: number; // for maintenance_note / fridge_unchecked
+}
+
+/**
+ * The Pulse Score (council 2026-07-31, aggie seat): one glanceable 3-state
+ * summary derived from the attention items — "see green and move on; see red
+ * and scroll". RED = an overdue report or a temp excursion (act now).
+ * YELLOW = softer signals (unchecked fridges, maintenance notes). GREEN =
+ * nothing needs attention. Pure; severity classes are fixed here so the
+ * banner and any future badge agree.
+ */
+export type PulseScore = "green" | "yellow" | "red";
+const RED_KINDS: ReadonlySet<AttentionItem["kind"]> = new Set(["overdue", "fridge"]);
+export function pulseScore(items: AttentionItem[]): PulseScore {
+  if (items.length === 0) return "green";
+  return items.some((i) => RED_KINDS.has(i.kind)) ? "red" : "yellow";
+}
+
+/** A confirmed catering event due out today (the mid-shift "what's coming"
+ *  strip — time front and center). No revenue on this surface. */
+export interface CateringDueItem {
+  id: string;
+  timeWindow: string | null;
+  name: string;
+  headcount: number | null;
+  isDelivery: boolean;
 }
 
 export interface MidShiftPulse {
@@ -78,6 +103,8 @@ export interface MidShiftPulse {
   fridgeFlagCount: number; // fridges out of range today
   maintenanceNotesToday: number;
   activeToday: ActiveStaff[];
+  /** Confirmed catering events due out today, soonest window first. */
+  cateringToday: CateringDueItem[];
   /** Derived attention items, highest priority first, for the banner. */
   attention: AttentionItem[];
 }

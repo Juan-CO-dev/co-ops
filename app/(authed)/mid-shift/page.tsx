@@ -19,6 +19,7 @@ import Link from "next/link";
 import { DashboardBackLink } from "@/components/DashboardBackLink";
 import { AccessDeniedBanner } from "@/components/ui/AccessDeniedBanner";
 import { AttentionBanner } from "@/components/midshift/AttentionBanner";
+import { CateringToday } from "@/components/midshift/CateringToday";
 import { ReportStatusList } from "@/components/midshift/ReportStatusList";
 import { FridgeStrip } from "@/components/midshift/FridgeStrip";
 import { ActiveToday } from "@/components/midshift/ActiveToday";
@@ -154,6 +155,7 @@ export default async function MidShiftPage({
         )}
       </div>
       <AttentionBanner items={pulse.attention} locationId={locationId} language={language} />
+      <CateringToday items={pulse.cateringToday} language={language} />
       <ReportStatusList reports={pulse.reports} language={language} />
       <FridgeStrip
         fridges={pulse.fridges}

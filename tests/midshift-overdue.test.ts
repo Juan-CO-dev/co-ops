@@ -6,7 +6,7 @@
  * unchanged: am_prep/cash become overdue only once closing is done.
  */
 import { describe, it, expect } from "vitest";
-import { computeOverdue, EXPECTED_BY } from "@/lib/midshift-shared";
+import { computeOverdue, EXPECTED_BY, pulseScore } from "@/lib/midshift-shared";
 
 const base = { done: false, closingDone: false, midDayDoneCount: 0 };
 
@@ -58,5 +58,33 @@ describe("computeOverdue", () => {
       expect(computeOverdue({ ...base, key: "am_prep", closingDone: true, minutesOfDay: 21 * 60 })).toBe("overdue");
       expect(computeOverdue({ ...base, key: "cash", closingDone: true, minutesOfDay: 21 * 60 })).toBe("overdue");
     });
+  });
+});
+
+/**
+ * The Pulse Score (council 2026-07-31, aggie): red = overdue report or temp
+ * excursion (act now); yellow = softer signals only; green = nothing.
+ */
+describe("pulseScore", () => {
+  it("green on no attention items", () => {
+    expect(pulseScore([])).toBe("green");
+  });
+
+  it("red on any overdue report", () => {
+    expect(pulseScore([{ kind: "overdue", reportKey: "opening" }])).toBe("red");
+  });
+
+  it("red on a temp excursion, even among yellow items", () => {
+    expect(
+      pulseScore([
+        { kind: "maintenance_note", count: 2 },
+        { kind: "fridge", fridgeName: "Line 3" },
+      ]),
+    ).toBe("red");
+  });
+
+  it("yellow when only soft signals exist (notes, unchecked fridges)", () => {
+    expect(pulseScore([{ kind: "maintenance_note", count: 1 }])).toBe("yellow");
+    expect(pulseScore([{ kind: "fridge_unchecked", count: 3 }])).toBe("yellow");
   });
 });

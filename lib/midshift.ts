@@ -19,10 +19,12 @@ import type { RoleCode } from "@/lib/roles";
 
 import {
   computeOverdue,
+  EXPECTED_BY,
   isSubmitted,
   operationalNow,
   type ActiveStaff,
   type AttentionItem,
+  type CateringDueItem,
   type MidShiftPulse,
   type PulseFridge,
   type ReportKey,
@@ -36,13 +38,16 @@ export {
   isSubmitted,
   MIDSHIFT_BASE_LEVEL,
   operationalNow,
+  pulseScore,
 } from "@/lib/midshift-shared";
 export type {
   ActiveStaff,
   AttentionItem,
+  CateringDueItem,
   MidShiftPulse,
   OverdueState,
   PulseFridge,
+  PulseScore,
   ReportKey,
   ReportProgress,
   ReportStatusRow,
@@ -271,6 +276,43 @@ async function loadActiveToday(
   }));
 }
 
+/** Confirmed catering events due out today (stage confirmed/out), soonest
+ *  window first — the mid-shift "what's coming" strip (council 2026-07-31,
+ *  Fable I1 + Juan). Names only, no revenue: this renders at the pulse's KH+
+ *  floor, below the catering hub's commercial surfaces. */
+async function loadCateringDueToday(
+  service: SupabaseClient,
+  args: { locationId: string; date: string },
+): Promise<CateringDueItem[]> {
+  const { data } = await service
+    .from("catering_pipeline")
+    .select("id, event_name, company, contact_name, headcount, time_window, delivery_address, stage")
+    .eq("location_id", args.locationId)
+    .eq("event_date", args.date)
+    .in("stage", ["confirmed", "out"])
+    .returns<
+      Array<{
+        id: string;
+        event_name: string | null;
+        company: string | null;
+        contact_name: string;
+        headcount: number | null;
+        time_window: string | null;
+        delivery_address: string | null;
+        stage: string;
+      }>
+    >();
+  return (data ?? [])
+    .map((r) => ({
+      id: r.id,
+      timeWindow: r.time_window,
+      name: r.event_name ?? r.company ?? r.contact_name,
+      headcount: r.headcount,
+      isDelivery: r.delivery_address != null && r.delivery_address !== "",
+    }))
+    .sort((a, b) => (a.timeWindow ?? "￿").localeCompare(b.timeWindow ?? "￿"));
+}
+
 export async function loadMidShiftPulse(
   service: SupabaseClient,
   args: { locationId: string; date: string; now: Date; actor: MidShiftActor },
@@ -283,8 +325,8 @@ export async function loadMidShiftPulse(
   // council P1). Convert to the day's real UTC instant range.
   const { startIso, endExclusiveIso } = operationalDayUtcRange(args.date);
 
-  // The four top-level loads are independent — one parallel group.
-  const [statuses, overview, notesRes, activeToday] = await Promise.all([
+  // The five top-level loads are independent — one parallel group.
+  const [statuses, overview, notesRes, activeToday, cateringToday] = await Promise.all([
     loadReportStatuses(service, { locationId: args.locationId, date: args.date, actor: args.actor }),
     loadMaintenanceOverview(service, { locationId: args.locationId, today: args.date, sinceDate: args.date }),
     service
@@ -294,6 +336,7 @@ export async function loadMidShiftPulse(
       .gte("created_at", startIso)
       .lt("created_at", endExclusiveIso),
     loadActiveToday(service, { locationId: args.locationId, date: args.date }),
+    loadCateringDueToday(service, { locationId: args.locationId, date: args.date }),
   ]);
   const { rows, closingDone, midDayDoneCount } = statuses;
 
@@ -318,10 +361,20 @@ export async function loadMidShiftPulse(
 
   const maintenanceNotesToday = notesRes.count ?? 0;
 
-  // Attention items, priority order: overdue → fridge → maintenance notes.
+  // Fridges with NO reading yet today (council 2026-07-31 F4): "nobody has
+  // temped the fridges" is itself attention-worthy — but only once the store
+  // is meaningfully open (after the opening-overdue hour), else the 9am view
+  // is all noise.
+  const uncheckedFridges = overview.fridges.filter((f) => f.status === "no_reading_today").length;
+  const fridgeUncheckedAlert = uncheckedFridges > 0 && minutesOfDay > EXPECTED_BY.openingOverdueAfter;
+
+  // Attention items, priority order: overdue → temp excursion → unchecked
+  // fridges → maintenance notes (the first two are the RED class in
+  // pulseScore; the rest are YELLOW).
   const attention: AttentionItem[] = [];
   for (const r of reports) if (r.overdue === "overdue") attention.push({ kind: "overdue", reportKey: r.key });
   for (const f of fridges) if (f.outOfRange) attention.push({ kind: "fridge", fridgeName: f.name });
+  if (fridgeUncheckedAlert) attention.push({ kind: "fridge_unchecked", count: uncheckedFridges });
   if (maintenanceNotesToday > 0) attention.push({ kind: "maintenance_note", count: maintenanceNotesToday });
 
   return {
@@ -332,6 +385,7 @@ export async function loadMidShiftPulse(
     fridgeFlagCount,
     maintenanceNotesToday,
     activeToday,
+    cateringToday,
     attention,
   };
 }
