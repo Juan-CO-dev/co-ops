@@ -18,11 +18,22 @@
  * House laws honored: useState-only disclosure (no effects for prop-driven
  * resets); router.refresh() does NOT reset client state, so success resets
  * explicitly; type-only server imports; no server module leaks.
+ *
+ * D1 Task 6 — offline-draft persistence:
+ *   - Debounced (500 ms) save to localStorage key
+ *     `coops.intake.draft.<locationId>` on every relevant state change.
+ *   - On mount, if a draft exists: renders a resume banner; user taps Resume
+ *     or Discard. No auto-hydration.
+ *   - "Saved on device HH:MM" pill shown after the first write.
+ *   - Draft cleared before router.refresh() on success.
+ *   - localStorage access fully try/catch guarded (private-mode Safari).
+ *   - Corrupt/unparseable draft = treated as absent + cleared.
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useTranslation } from "@/lib/i18n/provider";
+import { formatTime } from "@/lib/i18n/format";
 import { PhotoCapture } from "@/components/photos/PhotoCapture";
 import { IntakeLineRow, type IntakeLine } from "@/components/receiving/IntakeLineRow";
 import type { ReceivingFormData, ReceivingSkuOption } from "@/lib/receiving";
@@ -56,6 +67,63 @@ const addedLine = (): LineDraft => ({
   observed: "",
 });
 
+// ── Draft persistence (D1 Task 6) ─────────────────────────────────────────
+
+/** Shape persisted to localStorage. `savedAt` is an ISO timestamp. */
+interface IntakeDraft {
+  vendorId: string;
+  date: string;
+  invoiceNumber: string;
+  invoiceTotal: string;
+  notes: string;
+  photoLater: boolean;
+  receiptPhotoId: string | null;
+  lines: LineDraft[];
+  savedAt: string;
+}
+
+function draftKey(locationId: string): string {
+  return `coops.intake.draft.${locationId}`;
+}
+
+function readDraft(locationId: string): IntakeDraft | null {
+  try {
+    const raw = localStorage.getItem(draftKey(locationId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as unknown;
+    // Minimal shape guard — if any required field is missing, treat as corrupt.
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      typeof (parsed as Record<string, unknown>).vendorId !== "string" ||
+      typeof (parsed as Record<string, unknown>).savedAt !== "string"
+    ) {
+      clearDraft(locationId);
+      return null;
+    }
+    return parsed as IntakeDraft;
+  } catch {
+    clearDraft(locationId);
+    return null;
+  }
+}
+
+function writeDraft(locationId: string, draft: IntakeDraft): void {
+  try {
+    localStorage.setItem(draftKey(locationId), JSON.stringify(draft));
+  } catch {
+    // Private-mode Safari or storage full — silently ignore.
+  }
+}
+
+function clearDraft(locationId: string): void {
+  try {
+    localStorage.removeItem(draftKey(locationId));
+  } catch {
+    // Private-mode Safari — silently ignore.
+  }
+}
+
 const field =
   "min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-60";
 const stepHeadClass = "flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep";
@@ -71,7 +139,7 @@ export function ReceivingForm({
   locationId: string;
   today: string;
 }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const router = useRouter();
   const [vendorId, setVendorId] = useState("");
   const [date, setDate] = useState(today);
@@ -85,6 +153,60 @@ export function ReceivingForm({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [dupId, setDupId] = useState<string | null>(null);
+
+  // Draft persistence state (D1 Task 6).
+  // `pendingDraft` = a draft found on mount awaiting Resume/Discard decision.
+  // `savedAt` = ISO timestamp of the last successful localStorage write this
+  // session — drives the "Saved on device HH:MM" indicator.
+  const [pendingDraft, setPendingDraft] = useState<IntakeDraft | null>(null);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isFirstRender = useRef(true);
+
+  // On mount: check for a saved draft and offer Resume/Discard.
+  useEffect(() => {
+    const draft = readDraft(locationId);
+    if (draft) setPendingDraft(draft);
+  }, [locationId]);
+
+  // Debounced draft save. Fires 500 ms after the last state change.
+  // Skipped when the form is pristine (no vendor + no edited lines).
+  useEffect(() => {
+    // Skip the very first render (initial mount with default state).
+    if (isFirstRender.current) {
+      isFirstRender.current = false;
+      return;
+    }
+    // Pristine guard: no vendor and the single line is blank.
+    const isPristine =
+      vendorId === "" &&
+      lines.length === 1 &&
+      lines[0] !== undefined &&
+      lines[0].skuId === "" &&
+      lines[0].qty === "";
+    if (isPristine) return;
+
+    if (debounceRef.current !== null) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      const now = new Date().toISOString();
+      writeDraft(locationId, {
+        vendorId,
+        date,
+        invoiceNumber,
+        invoiceTotal,
+        notes,
+        photoLater,
+        receiptPhotoId,
+        lines,
+        savedAt: now,
+      });
+      setSavedAt(now);
+    }, 500);
+
+    return () => {
+      if (debounceRef.current !== null) clearTimeout(debounceRef.current);
+    };
+  }, [vendorId, date, invoiceNumber, invoiceTotal, notes, photoLater, receiptPhotoId, lines, locationId]);
 
   const skuById = new Map<string, ReceivingSkuOption>(formData.skus.map((s) => [s.id, s]));
   const vendorSkus = formData.skus.filter((s) => s.vendorId === vendorId || s.vendorId === null);
@@ -114,6 +236,27 @@ export function ReceivingForm({
     setLines([addedLine()]);
     setErr(null);
     setDupId(null);
+    // Clear any pending banner too.
+    setPendingDraft(null);
+    setSavedAt(null);
+  };
+
+  const resumeDraft = (draft: IntakeDraft) => {
+    setVendorId(draft.vendorId);
+    setDate(draft.date);
+    setInvoiceNumber(draft.invoiceNumber);
+    setInvoiceTotal(draft.invoiceTotal);
+    setNotes(draft.notes);
+    setPhotoLater(draft.photoLater);
+    setReceiptPhotoId(draft.receiptPhotoId);
+    setLines(draft.lines.length > 0 ? draft.lines : [addedLine()]);
+    setPendingDraft(null);
+    setSavedAt(draft.savedAt);
+  };
+
+  const discardDraft = () => {
+    clearDraft(locationId);
+    setPendingDraft(null);
   };
 
   // On vendor select: reset the line list, then fetch the prefill template and
@@ -193,6 +336,9 @@ export function ReceivingForm({
     });
     setBusy(false);
     if (res.ok) {
+      // Clear the draft BEFORE router.refresh() so it can't be resumed
+      // after a successful submit (D1 Task 6 law: clear on success).
+      clearDraft(locationId);
       resetForm();
       router.refresh();
       return;
@@ -211,11 +357,53 @@ export function ReceivingForm({
 
   return (
     <div className="pb-24">
+      {/* ── Draft resume banner (D1 Task 6) ────────────────────────────── */}
+      {pendingDraft ? (
+        <div
+          role="status"
+          className="mb-3 flex items-center justify-between gap-3 rounded-xl border-2 border-co-gold-deep bg-co-gold/20 px-4 py-3"
+        >
+          <span className="text-sm font-bold text-co-text">
+            {t("receiving.door.draft_resume_banner", {
+              time: formatTime(pendingDraft.savedAt, language),
+            })}
+          </span>
+          <div className="flex shrink-0 gap-2">
+            <button
+              type="button"
+              onClick={discardDraft}
+              aria-label={t("receiving.door.draft_discard_aria", {
+                time: formatTime(pendingDraft.savedAt, language),
+              })}
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-sm font-bold text-co-text-dim hover:border-co-text"
+            >
+              {t("receiving.door.draft_discard")}
+            </button>
+            <button
+              type="button"
+              onClick={() => resumeDraft(pendingDraft)}
+              aria-label={t("receiving.door.draft_resume_aria", {
+                time: formatTime(pendingDraft.savedAt, language),
+              })}
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-3 text-sm font-bold text-co-text hover:bg-co-gold-deep"
+            >
+              {t("receiving.door.draft_resume")}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {/* ── STEP 1 · Count the delivery ─────────────────────────────────── */}
       <section className="rounded-xl border-2 border-co-border bg-co-surface p-4">
         <div className={stepHeadClass}>
           <span className={stepNumClass}>1</span>
           <span>{t("receiving.door.step1")}</span>
+          {/* Saved indicator — shows after first draft write this session. */}
+          {savedAt ? (
+            <span className="ml-auto rounded-full border border-co-border bg-co-surface-2 px-2 py-0.5 text-[11px] font-normal normal-case tracking-normal text-co-text-dim">
+              {t("receiving.door.draft_saved", { time: formatTime(savedAt, language) })}
+            </span>
+          ) : null}
         </div>
 
         <label className="mt-3 block">
