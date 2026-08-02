@@ -65,7 +65,41 @@ const addedLine = (): LineDraft => ({
   expanded: true,
   unitPrice: "",
   observed: "",
+  offered: false,
 });
+
+/**
+ * An OFFERED fallback row (Juan's no-template refinement): one of the selected
+ * vendor's own usage-ranked SKUs, presented collapsed with an EMPTY qty. It has no
+ * expected number to ✓ into — tapping it opens the stepper. Rows still empty at
+ * submit are omitted (offered, not received). `offered: true` distinguishes it from
+ * a manually-added overage line for the collapsed/expanded rendering.
+ */
+const offeredLine = (sku: ReceivingSkuOption): LineDraft => ({
+  key: nextKey(),
+  skuId: sku.id,
+  skuName: sku.name,
+  level: "",
+  qty: "",
+  expectedQty: null,
+  discrepancy: null,
+  note: "",
+  photoId: null,
+  confirmed: false,
+  expanded: false,
+  unitPrice: "",
+  observed: "",
+  offered: true,
+});
+
+/** Usage-first ordering: SKUs with real trailing-30-day depletion first (desc oz),
+ *  then alphabetical. Used for BOTH the offered-row fallback and the Add-item picker. */
+function byUsageThenName(a: ReceivingSkuOption, b: ReceivingSkuOption): number {
+  const ar = a.usageRank ?? -1;
+  const br = b.usageRank ?? -1;
+  if (ar !== br) return br - ar; // higher usage first; nulls (-1) sink to the bottom.
+  return a.name.localeCompare(b.name);
+}
 
 // ── Draft persistence (D1 Task 6) ─────────────────────────────────────────
 
@@ -209,7 +243,12 @@ export function ReceivingForm({
   }, [vendorId, date, invoiceNumber, invoiceTotal, notes, photoLater, receiptPhotoId, lines, locationId]);
 
   const skuById = new Map<string, ReceivingSkuOption>(formData.skus.map((s) => [s.id, s]));
-  const vendorSkus = formData.skus.filter((s) => s.vendorId === vendorId || s.vendorId === null);
+  // Picker + fallback are ALWAYS scoped to the selected vendor's OWN SKUs (never the
+  // cross-vendor catalog, never null-vendor SKUs), usage-ranked then name (Juan's
+  // door refinement). Empty until a vendor is picked.
+  const vendorSkus = vendorId
+    ? formData.skus.filter((s) => s.vendorId === vendorId).sort(byUsageThenName)
+    : [];
   const levelsFor = (skuId: string): string[] => (skuId ? (skuById.get(skuId)?.chainLabels ?? []) : []);
 
   const setLine = (i: number, patch: Partial<IntakeLine>) =>
@@ -259,8 +298,19 @@ export function ReceivingForm({
     setPendingDraft(null);
   };
 
-  // On vendor select: reset the line list, then fetch the prefill template and
-  // seed collapsed expected rows from it. No template → one blank added line.
+  // The selected vendor's OWN usage-ranked SKUs having real depletion (usageRank set),
+  // most-consumed first. Computed from an explicit vendorId (state hasn't flushed yet
+  // inside onVendorChange). Drives the no-template offered-row fallback.
+  const usageRankedFor = (vId: string): ReceivingSkuOption[] =>
+    formData.skus
+      .filter((s) => s.vendorId === vId && s.usageRank != null)
+      .sort(byUsageThenName);
+
+  // On vendor select: reset the line list, then fetch the prefill template.
+  //   template present  → seed collapsed EXPECTED rows (the last-delivery happy path).
+  //   no template       → POPULATE offered rows from the vendor's usage-ranked SKUs
+  //                       (Juan's refinement); if the vendor has none (e.g. packaging
+  //                       vendors), keep today's single blank added line.
   const onVendorChange = async (nextVendorId: string) => {
     setVendorId(nextVendorId);
     setErr(null);
@@ -268,15 +318,21 @@ export function ReceivingForm({
     setLines([addedLine()]);
     if (!nextVendorId) return;
     setPrefilling(true);
+    // Fallback we drop to whenever there's no usable template: the vendor's usage-ranked
+    // SKUs as empty offered rows, else the single blank added line.
+    const fallbackLines = (): LineDraft[] => {
+      const ranked = usageRankedFor(nextVendorId);
+      return ranked.length > 0 ? ranked.map(offeredLine) : [addedLine()];
+    };
     try {
       const res = await fetch(
         `/api/operations/receiving/template?locationId=${encodeURIComponent(locationId)}&vendorId=${encodeURIComponent(nextVendorId)}`,
         { headers: { accept: "application/json" } },
       );
-      if (!res.ok) return; // no template / error → keep the blank added line
+      if (!res.ok) { setLines(fallbackLines()); return; } // no template / error → offered fallback
       const body = (await res.json()) as { template: LastDeliveryTemplate | null };
       const tpl = body?.template;
-      if (!tpl || tpl.lines.length === 0) return;
+      if (!tpl || tpl.lines.length === 0) { setLines(fallbackLines()); return; }
       const seeded: LineDraft[] = tpl.lines.map((tl) => ({
         key: nextKey(),
         skuId: tl.skuId,
@@ -291,10 +347,12 @@ export function ReceivingForm({
         expanded: false,
         unitPrice: "",
         observed: "",
+        offered: false,
       }));
       setLines(seeded);
     } catch {
-      // Network hiccup → silently fall back to the blank line (already set).
+      // Network hiccup → offered fallback (empty rows, still faster than scrolling).
+      setLines(fallbackLines());
     } finally {
       setPrefilling(false);
     }

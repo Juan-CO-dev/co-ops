@@ -104,6 +104,11 @@ export interface ReceivingSkuOption {
   vendorId: string | null;
   chainLabels: string[];
   packFormat: string | null;
+  /** Trailing-30-day consumed oz for this SKU at this location = production_inputs.input_oz
+   *  (live productions) + toast_daily_depletion.direct_oz. Higher = more used → ranked first
+   *  when a vendor has no last-delivery template. null = no usage in the window (a SKU never
+   *  consumed here → not offered as a pre-filled line; only reachable via the Add-item picker). */
+  usageRank: number | null;
 }
 export interface ReceivingFormData {
   vendors: Array<{ id: string; name: string }>;
@@ -155,7 +160,11 @@ export async function loadReceivingFormData(actor: AuthContext, locationId: stri
   const skuList = skus ?? [];
   // ONE batch query for every active SKU's chain levels (loadRecipeGraph law).
   // Chain labels are ordered root→leaf for the level picker (display_ordinal).
-  const chainsBySku = await loadSkuPackChains(skuList.map((s) => s.id));
+  // Usage rank is a SECOND batch pair (production + sales lanes) — never per-SKU.
+  const [chainsBySku, usageBySku] = await Promise.all([
+    loadSkuPackChains(skuList.map((s) => s.id)),
+    loadSkuUsageRank(sb, locationId),
+  ]);
   return {
     vendors: vendors ?? [],
     skus: skuList.map((s) => ({
@@ -164,8 +173,70 @@ export async function loadReceivingFormData(actor: AuthContext, locationId: stri
       vendorId: s.vendor_id,
       packFormat: s.pack_format,
       chainLabels: chainLabelsInWalkOrder(chainsBySku.get(s.id) ?? []),
+      usageRank: usageBySku.get(s.id) ?? null,
     })),
   };
+}
+
+/**
+ * Trailing-30-day consumed oz per SKU at a location (the "most used per the depletion
+ * mechanic" rank — Juan's door refinement). Mirrors the counts drift consumed term
+ * (lib/counts.ts) EXACTLY — the SAME two tables/columns the double-count law sums:
+ *   production lane = SUM(production_inputs.input_oz) over LIVE productions
+ *                     (superseded_at/revoked_at NULL) at this location, produced in
+ *                     the last 30 days (raw SKU depletes at production, BC-026 oz-native).
+ *   sales lane      = SUM(toast_daily_depletion.direct_oz) at this location for
+ *                     business_dates in the last 30 days (the ONLY sales lane that
+ *                     depletes raw stock; flattened_oz is production-covered, never summed).
+ * Two grouped queries (batch, date-filtered server-side), summed in memory. A SKU with
+ * no consumption in either lane is absent from the map → its usageRank reads null (never
+ * offered as a pre-filled line; still reachable via the Add-item picker). This is a
+ * RANK ONLY — advisory, never a fabricated on-hand number.
+ */
+async function loadSkuUsageRank(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+): Promise<Map<string, number>> {
+  const usage = new Map<string, number>();
+  const add = (skuId: string, oz: number) => {
+    if (!Number.isFinite(oz) || oz <= 0) return;
+    usage.set(skuId, (usage.get(skuId) ?? 0) + oz);
+  };
+
+  // 30-day window. Productions compare on produced_at (timestamptz); the depletion
+  // ledger compares on business_date (a bare date) — derive both from the same instant.
+  const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const cutoffIso = cutoff.toISOString();
+  const cutoffDate = cutoffIso.slice(0, 10); // YYYY-MM-DD for the business_date filter.
+
+  // Production lane — live productions at this location in the window, then their inputs.
+  const { data: prodHdrs, error: phErr } = await sb.from("productions")
+    .select("id")
+    .eq("location_id", locationId)
+    .is("superseded_at", null).is("revoked_at", null)
+    .gt("produced_at", cutoffIso)
+    .returns<Array<{ id: string }>>();
+  if (phErr) throw new Error(`loadSkuUsageRank productions: ${phErr.message}`);
+  const prodIds = (prodHdrs ?? []).map((h) => h.id);
+  if (prodIds.length > 0) {
+    const { data: inputs, error: piErr } = await sb.from("production_inputs")
+      .select("input_sku_id, input_oz")
+      .in("production_id", prodIds)
+      .returns<Array<{ input_sku_id: string; input_oz: number | string | null }>>();
+    if (piErr) throw new Error(`loadSkuUsageRank production_inputs: ${piErr.message}`);
+    for (const r of inputs ?? []) add(r.input_sku_id, num(r.input_oz) ?? 0);
+  }
+
+  // Sales direct lane — the materialized depletion ledger over the window (0166).
+  const { data: sales, error: sErr } = await sb.from("toast_daily_depletion")
+    .select("sku_id, direct_oz")
+    .eq("location_id", locationId)
+    .gte("business_date", cutoffDate)
+    .returns<Array<{ sku_id: string; direct_oz: number | string }>>();
+  if (sErr) throw new Error(`loadSkuUsageRank toast_daily_depletion: ${sErr.message}`);
+  for (const r of sales ?? []) add(r.sku_id, num(r.direct_oz) ?? 0);
+
+  return usage;
 }
 
 /** Chain level labels ordered root→leaf by following contains_level_id (falls back

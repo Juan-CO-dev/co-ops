@@ -34,8 +34,16 @@ export interface IntakeLine {
   note: string;
   photoId: string | null;
   confirmed: boolean;
-  /** Collapsed only when it has an expected qty AND the operator hasn't opened it. */
+  /** Collapsed only when the operator hasn't opened it. Expected rows collapse with a
+   *  ✓; offered rows (see `offered`) collapse to a tap-to-count summary; added lines
+   *  are born expanded. */
   expanded: boolean;
+  /** True for a no-template FALLBACK row: one of the vendor's own usage-ranked SKUs,
+   *  offered with an empty qty (Juan's door refinement). Distinguishes it from a
+   *  manually-ADDED overage line — both have `expectedQty == null`, but an offered row
+   *  reads as "offered, not received" (omitted at submit until a qty is entered) and
+   *  gets a tap-to-count collapsed state instead of the "Added" badge. */
+  offered: boolean;
   /** Optional unit price string — parsed to number on submit; empty = omit. */
   unitPrice: string;
   /** Optional observed oz/each string — parsed to number on submit; empty = omit. */
@@ -85,8 +93,21 @@ export function IntakeLineRow({
   const expectedLabel = line.level.trim() || t("receiving.door.level_generic");
   const suggested = suggestFlag(line.qty, line.expectedQty);
 
-  // Collapsed fast path: an expected line the operator hasn't opened or confirmed.
-  const collapsed = line.expectedQty != null && !line.expanded;
+  // Collapsed fast path: a line the operator hasn't opened (or confirmed).
+  //   - EXPECTED (expectedQty != null): the template pre-fill — big ✓ accepts the
+  //     expected qty (the 60-90s happy path).
+  //   - OFFERED (expectedQty == null && !expanded): Juan's no-template fallback —
+  //     the vendor's own usage-ranked SKUs, offered with an EMPTY qty. There is no
+  //     expected number to ✓ into, so these have NO confirm button; tapping the body
+  //     opens the stepper (expand-on-tap only). A qty entered while expanded, then
+  //     collapsed, shows as the received count. `hasQty` distinguishes a still-empty
+  //     offer from one the operator has started filling.
+  //   (An ADDED overage line is expectedQty == null && expanded → never collapsed.)
+  const isOffered = line.offered;
+  // Collapsed only for EXPECTED (template) or OFFERED (fallback) rows — a manually-added
+  // overage line has no expected number and is born expanded, so it never collapses.
+  const collapsed = !line.expanded && (line.expectedQty != null || isOffered);
+  const hasQty = line.qty.trim() !== "" && Number(line.qty) > 0;
 
   const confirm = () => {
     // Tap ✓ → accept the expected qty exactly, mark confirmed, stays collapsed.
@@ -130,28 +151,44 @@ export function IntakeLineRow({
           >
             <span className="block text-base font-bold text-co-text">{line.skuName}</span>
             <span className="block text-[13px] text-co-text-dim">
-              {t("receiving.door.expected_line", {
-                qty: line.expectedQty ?? 0,
-                level: expectedLabel,
-              })}
+              {isOffered
+                ? // Offered fallback row: no expected number. Show the entered qty once
+                  // the operator has typed one, otherwise a "—" hint to tap-to-count.
+                  hasQty
+                  ? t("receiving.door.offered_counted", { qty: line.qty, level: expectedLabel })
+                  : t("receiving.door.offered_line", { level: expectedLabel })
+                : t("receiving.door.expected_line", {
+                    qty: line.expectedQty ?? 0,
+                    level: expectedLabel,
+                  })}
             </span>
           </button>
-          {/* LARGE confirm target — the 60-90s happy path is tap-tap-tap down this list. */}
-          <button
-            type="button"
-            disabled={busy}
-            onClick={confirm}
-            aria-pressed={line.confirmed}
-            aria-label={t("receiving.door.confirm_aria", { sku: line.skuName })}
-            className={
-              "inline-flex h-12 min-h-[44px] w-14 items-center justify-center rounded-lg border-2 text-xl font-bold transition " +
-              (line.confirmed
-                ? "border-co-success bg-co-success text-white"
-                : "border-co-gold-deep bg-co-gold text-co-text hover:bg-co-gold-deep")
-            }
-          >
-            ✓
-          </button>
+          {/* EXPECTED rows get the LARGE confirm target (tap-✓ down the list). OFFERED
+              rows have no expected qty to accept → tap the body to open the stepper. */}
+          {isOffered ? (
+            <span
+              aria-hidden="true"
+              className="inline-flex h-12 min-h-[44px] w-14 items-center justify-center rounded-lg border-2 border-dashed border-co-border-2 text-xl font-bold text-co-text-muted"
+            >
+              —
+            </span>
+          ) : (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={confirm}
+              aria-pressed={line.confirmed}
+              aria-label={t("receiving.door.confirm_aria", { sku: line.skuName })}
+              className={
+                "inline-flex h-12 min-h-[44px] w-14 items-center justify-center rounded-lg border-2 text-xl font-bold transition " +
+                (line.confirmed
+                  ? "border-co-success bg-co-success text-white"
+                  : "border-co-gold-deep bg-co-gold text-co-text hover:bg-co-gold-deep")
+              }
+            >
+              ✓
+            </button>
+          )}
         </div>
       </div>
     );
@@ -174,13 +211,19 @@ export function IntakeLineRow({
             <span className="block text-[12px] text-co-text-dim">
               {t("receiving.door.expected_line", { qty: line.expectedQty, level: expectedLabel })}
             </span>
+          ) : isOffered ? (
+            <span className="block text-[12px] font-semibold text-co-gold-deep">
+              {t("receiving.door.offered_badge")}
+            </span>
           ) : (
             <span className="block text-[12px] font-semibold text-co-gold-deep">
               {t("receiving.door.added_badge")}
             </span>
           )}
         </div>
-        {line.expectedQty != null ? (
+        {/* Expected + offered rows both collapse back to their summary; a manually-added
+            overage line has no collapsed state (it is born expanded). */}
+        {line.expectedQty != null || isOffered ? (
           <button
             type="button"
             disabled={busy}
