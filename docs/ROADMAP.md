@@ -65,6 +65,21 @@ active-today attribution + parallel loaders (~3-4×) + named overdue states ·
 empty — owner-confirmed) + unchecked-fridge alert. Session:
 `.claude/council/2026-07-31-midshift-pulse/report.md`.
 
+**✅ POST-HANDOFF AUDIT (2026-08-01):** full verification pass over the
+2026-07-31 work (the arc was finished by a different model after a
+mid-session handoff). 3 adversarial reviews (#235/#236/#237) + 1 review
+(#232–#234) + a Batch A–D survivorship sweep: **every load-bearing law
+verified CLEAN** (events-only lane, open-day guardrail × taint, price SUM,
+IDOR binds, *-shared split, i18n parity) and **A–D ALL-INTACT**. Four real
+P2s fixed in #238 (`ec7de7c`, deployed): sales-lane isolation (a Toast read
+error no longer 500s /mid-shift), paginated+ordered day reads (snapshot-
+versioned table vs the 1000-row cap), chronological catering-strip sort
+(`timeWindowMinutes`, test-pinned — lexicographic put 1 PM before 10 AM),
+and the **names-at-KH ratification** (owner 2026-08-01: strip shows
+event/customer names at level 4, a deliberate exception to the pipeline's
+level-5 floor; revenue stays 5+; recorded in `loadCateringDueToday`).
+Logged-deferred → DEBT table.
+
 ## NEXT
 
 - ✅ **Toast-depletion-into-drift DONE (PR #220 `a2ec9bd`, 2026-07-31; mig 0166).**
@@ -138,3 +153,6 @@ offline/dead-zone resilience (walk-ins, basements) · customer-facing menu displ
 | 108 `as TranslationKey` casts (folds into the rk() row) | i18n key-map churn |
 | gate-predicate convergence (author opening predicate, delete loadPriorClosingState) | if/when configurable gates get a 2nd customer |
 | midshift per-location EXPECTED_BY hours | when MEP/EM store hours diverge |
+| catering_pipeline (location_id, event_date) index | real catering volume (table tiny today) |
+| maybeRefreshTodaySales audit_log debounce — one-time EXPLAIN | audit_log growth felt on /mid-shift loads |
+| loadMaintenanceOverview per-fridge serial loads | next maintenance-lib touch |
