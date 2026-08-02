@@ -14,6 +14,8 @@ import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getVendor, loadCategories, loadOrderTypes } from "@/lib/admin/vendors";
+import { loadVendorOutstandingCredits } from "@/lib/credits";
+import { formatCents } from "@/lib/i18n/format";
 import { loadSkus, loadPackFormats, loadMeasureUnits } from "@/lib/admin/skus";
 import { loadCurrentSkuPrices, computeSkuCostPerOz, loadSkuUsageMap, loadSkuReceivingLedger, loadSkuConsumption, type SkuConsumption } from "@/lib/admin/cost";
 import { skuPackComplete, skuReadiness, type Readiness } from "@/lib/readiness";
@@ -35,7 +37,7 @@ export default async function AdminVendorDetailPage({
   const level = ROLES[auth.user.role].level;
 
   const sb = getServiceRoleClient();
-  const [vendor, categories, orderTypes, skus, packFormats, measureUnits, locRes] =
+  const [vendor, categories, orderTypes, skus, packFormats, measureUnits, locRes, outstandingCredits] =
     await Promise.all([
       getVendor(auth, id),
       loadCategories(auth),
@@ -44,6 +46,7 @@ export default async function AdminVendorDetailPage({
       loadPackFormats(auth),
       loadMeasureUnits(auth),
       sb.from("locations").select("id, name").eq("active", true).order("name"),
+      loadVendorOutstandingCredits(auth, id), // AGM+ (matches this page's ≥6 gate)
     ]);
   if (!vendor) notFound();
   const skuLocations = (locRes.data ?? []).map((r) => ({
@@ -98,6 +101,17 @@ export default async function AdminVendorDetailPage({
         title={vendor.name}
         subtitle={serverT(lang, "admin.vendors.detail.subtitle")}
       />
+      {/* Outstanding vendor credits (spec D3) — visible before the next order.
+          Rendered only when there are open credits; a null total shows a dash
+          (money law: never a false $0.00). */}
+      {outstandingCredits ? (
+        <p className="mt-3 rounded-lg border-2 border-co-warning bg-co-warning-surface px-3 py-2 text-sm text-co-text">
+          {serverT(lang, "admin.vendors.credits.outstanding", {
+            amount: outstandingCredits.totalCents != null ? formatCents(outstandingCredits.totalCents, lang) : "—",
+            n: outstandingCredits.deliveriesCount,
+          })}
+        </p>
+      ) : null}
       <VendorDetailClient
         vendor={vendor}
         categories={categories}

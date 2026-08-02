@@ -4,7 +4,10 @@ import { serverT } from "@/lib/i18n/server";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { loadReceivingFormData, loadRecentDeliveries } from "@/lib/receiving";
+import { loadOpenCreditsSummary } from "@/lib/credits";
 import { ReceivingForm } from "@/components/receiving/ReceivingForm";
+import { OpenCreditsPanel } from "@/components/receiving/OpenCreditsPanel";
+import { AlertPill } from "@/components/ui/AlertPill";
 import { DashboardBackLink } from "@/components/DashboardBackLink";
 
 const OPERATIONAL_TZ = "America/New_York";
@@ -21,9 +24,10 @@ export default async function ReceivingPage({ searchParams }: { searchParams: Pr
   if (!lockLocationContext(locActor, location)) redirect("/dashboard");
 
   const lang = auth.user.language;
-  const [formData, recent] = await Promise.all([
+  const [formData, recent, openCredits] = await Promise.all([
     loadReceivingFormData(auth, location),
     loadRecentDeliveries(auth, location, 20),
+    loadOpenCreditsSummary(auth, location),
   ]);
 
   return (
@@ -31,6 +35,8 @@ export default async function ReceivingPage({ searchParams }: { searchParams: Pr
       <div className="mb-3"><DashboardBackLink /></div>
       <h1 className="mb-4 text-lg font-bold text-co-text">{serverT(lang, "receiving.page.title")}</h1>
       <ReceivingForm formData={formData} locationId={location} today={nyDate()} />
+
+      <OpenCreditsPanel summary={openCredits} />
 
       <h2 className="mt-6 text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">{serverT(lang, "receiving.page.recent")}</h2>
       {recent.length === 0 ? (
@@ -44,7 +50,22 @@ export default async function ReceivingPage({ searchParams }: { searchParams: Pr
                   <span className="font-semibold text-co-text">{d.vendorName}</span>
                   <span className="text-xs text-co-text-muted">{d.deliveryDate}</span>
                 </div>
-                <div className="text-[11px] text-co-text-dim">
+                {/* Alert badges (D2 — always visible, never collapsed): in-progress
+                    door, two-way-match discrepancy, missing receipt photo. */}
+                {d.deliveryStatus === "in_progress" || d.matchState === "discrepant" || d.receiptUrl === null ? (
+                  <div className="mt-1 flex flex-wrap gap-1.5">
+                    {d.deliveryStatus === "in_progress" ? (
+                      <AlertPill tone="info">{serverT(lang, "receiving.badge.in_progress")}</AlertPill>
+                    ) : null}
+                    {d.matchState === "discrepant" ? (
+                      <AlertPill tone="warn">{serverT(lang, "receiving.badge.discrepant")}</AlertPill>
+                    ) : null}
+                    {d.receiptUrl === null ? (
+                      <AlertPill tone="warn">{serverT(lang, "receiving.badge.photo_missing")}</AlertPill>
+                    ) : null}
+                  </div>
+                ) : null}
+                <div className="mt-1 text-[11px] text-co-text-dim">
                   {serverT(lang, "receiving.page.line_count", { n: d.lineCount })}
                   {d.invoiceNumber ? ` · #${d.invoiceNumber}` : ""}
                   {d.receivedByName ? ` · ${d.receivedByName}` : ""}

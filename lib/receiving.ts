@@ -109,6 +109,9 @@ export interface ReceivingFormData {
   vendors: Array<{ id: string; name: string }>;
   skus: ReceivingSkuOption[];
 }
+export type DeliveryMatchState = "counted_only" | "matched" | "discrepant" | "override";
+export type DeliveryStatus = "in_progress" | "complete";
+
 export interface DeliveryView {
   id: string;
   vendorName: string;
@@ -116,12 +119,17 @@ export interface DeliveryView {
   invoiceNumber: string | null;
   lineCount: number;
   receivedByName: string | null;
+  /** Two-way-match lifecycle (0168); 'discrepant' drives the list warn badge. */
+  matchState: DeliveryMatchState;
+  /** Door lifecycle (0168); 'in_progress' drives the continue-intake affordance. */
+  deliveryStatus: DeliveryStatus;
+  /** Null → the missing-receipt badge (photo-later / no attachment). */
+  receiptUrl: string | null;
 }
 export interface DeliveryDetail extends DeliveryView {
   locationId: string;
   invoiceTotal: number | null;
   notes: string | null;
-  receiptUrl: string | null;
   lines: Array<{
     skuName: string;
     qtyReceived: number;
@@ -131,6 +139,8 @@ export interface DeliveryDetail extends DeliveryView {
     receivedLevelLabel: string | null;
     resolvedOz: number | null;
     photoUrl: string | null;
+    /** Operator-flagged discrepancy (0168); null = clean line. Drives per-line chips. */
+    discrepancyType: "short" | "over" | "damaged" | "substitution" | null;
   }>;
 }
 
@@ -419,9 +429,9 @@ export async function loadRecentDeliveries(actor: AuthContext, locationId: strin
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new ReceivingError(404, "not_found", "Location not found");
   const sb = getServiceRoleClient();
   const { data: rows, error } = await sb.from("vendor_deliveries")
-    .select("id, vendor_id, delivery_date, invoice_number, received_by")
+    .select("id, vendor_id, delivery_date, invoice_number, received_by, match_state, delivery_status, receipt_url")
     .eq("location_id", locationId).order("delivery_date", { ascending: false }).order("created_at", { ascending: false }).limit(limit)
-    .returns<Array<{ id: string; vendor_id: string; delivery_date: string; invoice_number: string | null; received_by: string | null }>>();
+    .returns<Array<{ id: string; vendor_id: string; delivery_date: string; invoice_number: string | null; received_by: string | null; match_state: DeliveryMatchState; delivery_status: DeliveryStatus; receipt_url: string | null }>>();
   if (error) throw new Error(`loadRecentDeliveries: ${error.message}`);
   const list = rows ?? [];
   if (list.length === 0) return [];
@@ -441,6 +451,7 @@ export async function loadRecentDeliveries(actor: AuthContext, locationId: strin
     id: r.id, vendorName: vName.get(r.vendor_id) ?? "(vendor)", deliveryDate: r.delivery_date,
     invoiceNumber: r.invoice_number, lineCount: lineCount.get(r.id) ?? 0,
     receivedByName: r.received_by ? (uName.get(r.received_by) ?? null) : null,
+    matchState: r.match_state, deliveryStatus: r.delivery_status, receiptUrl: r.receipt_url,
   }));
 }
 
@@ -448,13 +459,13 @@ export async function loadDeliveryDetail(actor: AuthContext, deliveryId: string)
   requireReceive(actor);
   const sb = getServiceRoleClient();
   const { data: h, error } = await sb.from("vendor_deliveries")
-    .select("id, vendor_id, location_id, delivery_date, invoice_number, invoice_total, notes, receipt_url, received_by")
+    .select("id, vendor_id, location_id, delivery_date, invoice_number, invoice_total, notes, receipt_url, received_by, match_state, delivery_status")
     .eq("id", deliveryId)
-    .maybeSingle<{ id: string; vendor_id: string; location_id: string; delivery_date: string; invoice_number: string | null; invoice_total: number | string | null; notes: string | null; receipt_url: string | null; received_by: string | null }>();
+    .maybeSingle<{ id: string; vendor_id: string; location_id: string; delivery_date: string; invoice_number: string | null; invoice_total: number | string | null; notes: string | null; receipt_url: string | null; received_by: string | null; match_state: DeliveryMatchState; delivery_status: DeliveryStatus }>();
   if (error) throw new Error(`loadDeliveryDetail: ${error.message}`);
   if (!h) throw new ReceivingError(404, "not_found", "Delivery not found");
   if (!lockLocationContext(actorLoc(actor), h.location_id)) throw new ReceivingError(404, "not_found", "Delivery not found");
-  const { data: lineRows } = await sb.from("vendor_delivery_items").select("vendor_item_id, qty_received, unit_price, observed_oz_per_each, notes, received_level_label, resolved_oz, photo_url").eq("delivery_id", deliveryId).order("created_at", { ascending: true }).returns<Array<{ vendor_item_id: string; qty_received: number | string; unit_price: number | string | null; observed_oz_per_each: number | string | null; notes: string | null; received_level_label: string | null; resolved_oz: number | string | null; photo_url: string | null }>>();
+  const { data: lineRows } = await sb.from("vendor_delivery_items").select("vendor_item_id, qty_received, unit_price, observed_oz_per_each, notes, received_level_label, resolved_oz, photo_url, discrepancy_type").eq("delivery_id", deliveryId).order("created_at", { ascending: true }).returns<Array<{ vendor_item_id: string; qty_received: number | string; unit_price: number | string | null; observed_oz_per_each: number | string | null; notes: string | null; received_level_label: string | null; resolved_oz: number | string | null; photo_url: string | null; discrepancy_type: "short" | "over" | "damaged" | "substitution" | null }>>();
   const [{ data: vend }, { data: rx }] = await Promise.all([
     sb.from("vendors").select("name").eq("id", h.vendor_id).maybeSingle<{ name: string }>(),
     h.received_by ? sb.from("users").select("name").eq("id", h.received_by).maybeSingle<{ name: string }>() : Promise.resolve({ data: null }),
@@ -466,10 +477,12 @@ export async function loadDeliveryDetail(actor: AuthContext, deliveryId: string)
     id: h.id, vendorName: vend?.name ?? "(vendor)", deliveryDate: h.delivery_date, invoiceNumber: h.invoice_number,
     lineCount: (lineRows ?? []).length, receivedByName: rx?.name ?? null, locationId: h.location_id,
     invoiceTotal: num(h.invoice_total), notes: h.notes, receiptUrl: h.receipt_url,
+    matchState: h.match_state, deliveryStatus: h.delivery_status,
     lines: (lineRows ?? []).map((l) => ({
       skuName: skuName.get(l.vendor_item_id) ?? "(sku)", qtyReceived: num(l.qty_received) ?? 0,
       unitPrice: num(l.unit_price), observedOzPerEach: num(l.observed_oz_per_each), notes: l.notes,
       receivedLevelLabel: l.received_level_label, resolvedOz: num(l.resolved_oz), photoUrl: l.photo_url,
+      discrepancyType: l.discrepancy_type,
     })),
   };
 }

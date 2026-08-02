@@ -104,6 +104,67 @@ export async function loadOpenCreditsSummary(actor: AuthContext, locationId: str
     .sort((a, b) => b.openCount - a.openCount);
 }
 
+// ── Per-vendor outstanding-credits aggregate (AGM+): the vendor admin line ────────
+export interface VendorOutstandingCredits {
+  openCount: number;
+  totalCents: number | null; // null-law: null when NO open row carried an amount (never a false $0.00)
+  oldestDays: number | null;
+  deliveriesCount: number; // DISTINCT non-null delivery_id count ("across N deliveries")
+}
+
+/**
+ * One-vendor rollup of unresolved credits (status open|in_progress) for the vendor
+ * admin detail page ("$X outstanding across N deliveries" — visible before the next
+ * order, spec D3). Scoped to the actor's locations (location_id IN actor.locations) —
+ * the admin surface has no single-location context, so we aggregate across every
+ * location the actor can see. BC-009: returns null for a deactivated vendor (a dead
+ * vendor carries no live outstanding balance). Returns null when openCount is 0 so
+ * the caller renders nothing. AGM+ read gate (mirrors the /admin/vendors page's ≥6).
+ */
+export async function loadVendorOutstandingCredits(
+  actor: AuthContext, vendorId: string,
+): Promise<VendorOutstandingCredits | null> {
+  requireLevel(actor, CREDIT_RESOLVE_MIN); // AGM+ (6) — matches the admin vendor page gate
+  const sb = getServiceRoleClient();
+
+  // BC-009: a deactivated vendor never shows an outstanding balance.
+  const { data: vend, error: vErr } = await sb.from("vendors")
+    .select("id").eq("id", vendorId).eq("active", true)
+    .maybeSingle<{ id: string }>();
+  if (vErr) throw new Error(`loadVendorOutstandingCredits vendor: ${vErr.message}`);
+  if (!vend) return null;
+
+  const locations = actor.locations;
+  if (locations.length === 0) return null; // an actor with no locations sees nothing
+  const { data: rows, error } = await sb.from("vendor_credits")
+    .select("amount_cents, delivery_id, created_at")
+    .eq("vendor_id", vendorId).in("location_id", locations).in("status", ["open", "in_progress"])
+    .returns<Array<{ amount_cents: number | string | null; delivery_id: string | null; created_at: string }>>();
+  if (error) throw new Error(`loadVendorOutstandingCredits: ${error.message}`);
+  const list = rows ?? [];
+  if (list.length === 0) return null;
+
+  const now = Date.now();
+  let totalCents = 0;
+  let sawAmount = false;
+  let oldestMs = now;
+  const deliveryIds = new Set<string>();
+  for (const r of list) {
+    const cents = num(r.amount_cents);
+    if (cents != null) { totalCents += cents; sawAmount = true; } // null-safe sum
+    const ms = Date.parse(r.created_at);
+    if (Number.isFinite(ms) && ms < oldestMs) oldestMs = ms;
+    if (r.delivery_id != null) deliveryIds.add(r.delivery_id);
+  }
+  return {
+    openCount: list.length,
+    // null (not 0) when NO row carried an amount — a false $0.00 would read as "nothing owed".
+    totalCents: sawAmount ? totalCents : null,
+    oldestDays: Math.floor((now - oldestMs) / 86_400_000),
+    deliveriesCount: deliveryIds.size,
+  };
+}
+
 // ── Credits for one delivery (KH+): the delivery detail credit list ───────────────
 export interface CreditRow {
   id: string;
