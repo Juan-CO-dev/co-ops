@@ -37,6 +37,7 @@ import type { AuthContext } from "@/lib/session";
 import { loadMeasures, loadSkuPackChains } from "@/lib/prep-consumption";
 import { ozForRecipeInput, skuContentOz, type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
+import { deriveCreditDrafts, type IntakeLineForCredits } from "@/lib/receiving-shared";
 
 export const RECEIVE_MIN = 4; // key_holder+
 
@@ -73,6 +74,12 @@ export interface DeliveryLineInput {
   /** Per-line receiving photo url. Plumbing only this PR — the UI is a disabled
    *  Phase-6 stub; the shipped form never sets this. */
   photoUrl?: string | null;
+  /** Qty pre-filled at the door from the PO/ordered list (level units); null =
+   *  unexpected/added line. Feeds credit derivation (short/over). */
+  expectedQty?: number | null;
+  /** Operator-flagged discrepancy on this line. Drives idempotent credit drafts
+   *  (deriveCreditDrafts); null = no discrepancy. */
+  discrepancyType?: "short" | "over" | "damaged" | "substitution" | null;
 }
 export interface RecordDeliveryInput {
   vendorId: string;
@@ -83,6 +90,9 @@ export interface RecordDeliveryInput {
   notes?: string | null;
   /** Delivery receipt attachment url. Plumbing only this PR — disabled UI stub. */
   receiptUrl?: string | null;
+  /** Door-ceremony lifecycle. "in_progress" = a partial delivery still being built
+   *  (addDeliveryLines / completeDelivery); defaults to "complete" at write. */
+  deliveryStatus?: "in_progress" | "complete";
   lines: DeliveryLineInput[];
 }
 /** One SKU option for the receiving form, carrying its active chain-level labels
@@ -178,12 +188,7 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.deliveryDate) || Number.isNaN(Date.parse(input.deliveryDate))) {
     throw new ReceivingError(400, "invalid_date", "Delivery date must be YYYY-MM-DD");
   }
-  if (!Array.isArray(input.lines) || input.lines.length === 0) throw new ReceivingError(400, "no_lines", "At least one line is required");
-  for (const l of input.lines) {
-    if (!Number.isFinite(l.qtyReceived) || l.qtyReceived <= 0) throw new ReceivingError(400, "invalid_qty", "Quantity must be positive");
-    if (l.unitPrice != null && (!Number.isFinite(l.unitPrice) || l.unitPrice <= 0)) throw new ReceivingError(400, "invalid_price", "Price must be positive");
-    if (l.observedOzPerEach != null && (!Number.isFinite(l.observedOzPerEach) || l.observedOzPerEach <= 0)) throw new ReceivingError(400, "invalid_observed", "Observed oz must be positive");
-  }
+  // Line validation + SKU-active check + oz resolution is shared with addDeliveryLines.
   // A-WB4-02: the header invoice total was written unvalidated (line prices were validated). Bound it.
   if (input.invoiceTotal != null && (!Number.isFinite(input.invoiceTotal) || input.invoiceTotal < 0)) {
     throw new ReceivingError(400, "invalid_invoice_total", "Invoice total must be zero or greater");
@@ -192,22 +197,27 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
 
   const { data: vend } = await sb.from("vendors").select("id").eq("id", input.vendorId).eq("active", true).maybeSingle<{ id: string }>();
   if (!vend) throw new ReceivingError(400, "invalid_vendor", "Vendor not found or inactive");
-  const skuIds = [...new Set(input.lines.map((l) => l.skuId))];
-  const { data: activeSkus } = await sb.from("vendor_items")
-    .select("id, pack_format, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each")
-    .in("id", skuIds).eq("active", true)
-    .returns<Array<{ id: string; pack_format: string | null; each_container_label: string | null; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>>();
-  const activeSet = new Set((activeSkus ?? []).map((s) => s.id));
-  for (const id of skuIds) if (!activeSet.has(id)) throw new ReceivingError(400, "invalid_sku", "A SKU is not found or inactive");
 
-  // Resolve each line's received oz at write time (council L3): (level, qty) walked
-  // through the SKU's pack chain (or legacy content-oz × qty). Batch-load measures +
-  // chains once for the whole delivery (loadRecipeGraph law). A chained SKU without
-  // an active chain OR an unresolvable line → resolved_oz null (advisory, A3).
-  const [measures, chainsBySku] = await Promise.all([loadMeasures(), loadSkuPackChains(skuIds)]);
-  const skuById = new Map((activeSkus ?? []).map((s) => [s.id, s]));
-  const chained = new Set([...chainsBySku.entries()].filter(([, lv]) => lv.length > 0).map(([id]) => id));
-  const resolvedOzByLineIdx = input.lines.map((l) => resolveReceivedOz(l, skuById.get(l.skuId), chainsBySku.get(l.skuId) ?? null, measures));
+  // Dedupe guard (spec D1 dedupeKey): vendor + location + date + case-insensitive
+  // invoice identity. A driver re-handing amended paperwork must NOT double-file.
+  // An in-progress hit means "continue that one", a complete hit means "already received".
+  const invoiceNumber = input.invoiceNumber?.trim() || null;
+  if (invoiceNumber) {
+    const { data: dup, error: dupErr } = await sb.from("vendor_deliveries")
+      .select("id, delivery_status")
+      .eq("vendor_id", input.vendorId).eq("location_id", input.locationId).eq("delivery_date", input.deliveryDate)
+      .ilike("invoice_number", invoiceNumber)
+      .maybeSingle<{ id: string; delivery_status: string | null }>();
+    if (dupErr) throw new Error(`recordDelivery dedupe: ${dupErr.message}`);
+    if (dup) {
+      const msg = dup.delivery_status === "in_progress"
+        ? "This delivery is already in progress — continue it instead."
+        : "This invoice was already received for this vendor today.";
+      throw new ReceivingError(409, "duplicate_delivery", `${msg} (delivery ${dup.id})`);
+    }
+  }
+
+  const resolved = await validateAndResolveDeliveryLines(sb, input.lines);
 
   // 0160 columns — apply 0160 BEFORE deploying this code (additive; old code unaffected).
   // The 0160 `note` columns are the brief-canonical fields; the legacy `notes`
@@ -217,25 +227,22 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   const headerNote = input.notes?.trim() || null;
   const { data: header, error: hErr } = await sb.from("vendor_deliveries").insert({
     vendor_id: input.vendorId, location_id: input.locationId, delivery_date: input.deliveryDate,
-    invoice_number: input.invoiceNumber?.trim() || null, invoice_total: input.invoiceTotal ?? null,
+    invoice_number: invoiceNumber, invoice_total: input.invoiceTotal ?? null,
     notes: headerNote, note: headerNote, receipt_url: input.receiptUrl?.trim() || null, received_by: actor.user.id,
+    delivery_status: input.deliveryStatus ?? "complete",
   }).select("id").maybeSingle<{ id: string }>();
   if (hErr) throw new Error(`recordDelivery header: ${hErr.message}`);
   if (!header) throw new Error("recordDelivery header returned no row");
 
   const { error: lErr } = await sb.from("vendor_delivery_items").insert(
-    input.lines.map((l, i) => ({
-      delivery_id: header.id, vendor_item_id: l.skuId, qty_received: l.qtyReceived,
-      unit_price: l.unitPrice ?? null, observed_oz_per_each: l.observedOzPerEach ?? null,
-      notes: l.notes?.trim() || null, created_by: actor.user.id,
-      received_level_label: l.receivedLevelLabel?.trim() || null,
-      received_qty_at_level: l.receivedLevelLabel?.trim() ? l.qtyReceived : null,
-      resolved_oz: resolvedOzByLineIdx[i],
-      note: l.notes?.trim() || null,
-      photo_url: l.photoUrl?.trim() || null,
-    })),
+    buildLineRows(header.id, input.lines, resolved.resolvedOzByLineIdx, actor.user.id),
   );
   if (lErr) throw new Error(`recordDelivery lines: ${lErr.message}`);
+
+  // Idempotent vendor credits from any discrepancy-flagged lines (spec D1: the
+  // intake unit_price is the credit price authority). Retry-safe via the 0168
+  // (delivery_item_id, reason) unique index — ignoreDuplicates on re-run.
+  await deriveAndUpsertCredits(sb, header.id, input.vendorId, input.locationId, actor.user.id);
 
   const priced = input.lines.filter((l) => l.unitPrice != null);
   if (priced.length > 0) {
@@ -254,7 +261,7 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   const avgUpdated: string[] = [];
   const avgSkippedChained: string[] = [];
   for (const id of observedSkuIds) {
-    if (chained.has(id)) { avgSkippedChained.push(id); continue; }
+    if (resolved.chained.has(id)) { avgSkippedChained.push(id); continue; }
     const { data: obs } = await sb.from("vendor_delivery_items").select("observed_oz_per_each").eq("vendor_item_id", id).not("observed_oz_per_each", "is", null).returns<Array<{ observed_oz_per_each: number | string }>>();
     const vals = (obs ?? []).map((o) => num(o.observed_oz_per_each)).filter((v): v is number => v != null);
     if (vals.length === 0) continue;
@@ -311,6 +318,100 @@ function resolveReceivedOz(
     measures,
   );
   return contentOz == null ? null : line.qtyReceived * contentOz;
+}
+
+type ServiceClient = ReturnType<typeof getServiceRoleClient>;
+
+interface ResolvedLines {
+  /** resolved_oz per input line, index-aligned with the passed lines (advisory-null). */
+  resolvedOzByLineIdx: Array<number | null>;
+  /** SKU ids that have an active pack chain (avg-refinement gate, council L8). */
+  chained: Set<string>;
+}
+
+/**
+ * Shared line-validation + oz-resolution path for recordDelivery AND addDeliveryLines
+ * (item 6 — one resolution path, no duplication). Validates each line's qty/price/
+ * observed, confirms every referenced SKU is active, then batch-loads measures +
+ * chains once (loadRecipeGraph law) and resolves each line's received oz (council L3).
+ * Throws ReceivingError on any validation failure; the caller owns the header/insert.
+ */
+async function validateAndResolveDeliveryLines(sb: ServiceClient, lines: DeliveryLineInput[]): Promise<ResolvedLines> {
+  if (!Array.isArray(lines) || lines.length === 0) throw new ReceivingError(400, "no_lines", "At least one line is required");
+  for (const l of lines) {
+    if (!Number.isFinite(l.qtyReceived) || l.qtyReceived <= 0) throw new ReceivingError(400, "invalid_qty", "Quantity must be positive");
+    if (l.unitPrice != null && (!Number.isFinite(l.unitPrice) || l.unitPrice <= 0)) throw new ReceivingError(400, "invalid_price", "Price must be positive");
+    if (l.observedOzPerEach != null && (!Number.isFinite(l.observedOzPerEach) || l.observedOzPerEach <= 0)) throw new ReceivingError(400, "invalid_observed", "Observed oz must be positive");
+    if (l.expectedQty != null && (!Number.isFinite(l.expectedQty) || l.expectedQty < 0)) throw new ReceivingError(400, "invalid_expected", "Expected qty must be zero or greater");
+  }
+  const skuIds = [...new Set(lines.map((l) => l.skuId))];
+  const { data: activeSkus } = await sb.from("vendor_items")
+    .select("id, pack_format, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each")
+    .in("id", skuIds).eq("active", true)
+    .returns<Array<{ id: string; pack_format: string | null; each_container_label: string | null; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>>();
+  const activeSet = new Set((activeSkus ?? []).map((s) => s.id));
+  for (const id of skuIds) if (!activeSet.has(id)) throw new ReceivingError(400, "invalid_sku", "A SKU is not found or inactive");
+
+  const [measures, chainsBySku] = await Promise.all([loadMeasures(), loadSkuPackChains(skuIds)]);
+  const skuById = new Map((activeSkus ?? []).map((s) => [s.id, s]));
+  const chained = new Set([...chainsBySku.entries()].filter(([, lv]) => lv.length > 0).map(([id]) => id));
+  const resolvedOzByLineIdx = lines.map((l) => resolveReceivedOz(l, skuById.get(l.skuId), chainsBySku.get(l.skuId) ?? null, measures));
+  return { resolvedOzByLineIdx, chained };
+}
+
+/** Build the vendor_delivery_items rows for a set of input lines (shared shape for
+ *  recordDelivery + addDeliveryLines). resolvedOzByLineIdx is index-aligned with lines. */
+function buildLineRows(deliveryId: string, lines: DeliveryLineInput[], resolvedOzByLineIdx: Array<number | null>, createdBy: string) {
+  return lines.map((l, i) => ({
+    delivery_id: deliveryId, vendor_item_id: l.skuId, qty_received: l.qtyReceived,
+    unit_price: l.unitPrice ?? null, observed_oz_per_each: l.observedOzPerEach ?? null,
+    notes: l.notes?.trim() || null, created_by: createdBy,
+    received_level_label: l.receivedLevelLabel?.trim() || null,
+    received_qty_at_level: l.receivedLevelLabel?.trim() ? l.qtyReceived : null,
+    resolved_oz: resolvedOzByLineIdx[i] ?? null,
+    note: l.notes?.trim() || null,
+    photo_url: l.photoUrl?.trim() || null,
+    expected_qty: l.expectedQty ?? null,
+    discrepancy_type: l.discrepancyType ?? null,
+  }));
+}
+
+/**
+ * Idempotent vendor-credit derivation for a delivery's lines (spec D1). Selects the
+ * persisted lines back (so credits key off real delivery_item_ids), feeds the pure
+ * deriveCreditDrafts, and UPSERTs into vendor_credits with the 0168 (delivery_item_id,
+ * reason) unique index → ignoreDuplicates makes an intake re-run a no-op. On any
+ * write error we surface a 500 (credit_write_failed) — a swallowed credit is a real loss.
+ */
+async function deriveAndUpsertCredits(
+  sb: ServiceClient, deliveryId: string, vendorId: string, locationId: string, createdBy: string,
+): Promise<void> {
+  const { data: itemRows, error: iErr } = await sb.from("vendor_delivery_items")
+    .select("id, vendor_item_id, received_qty_at_level, qty_received, expected_qty, unit_price, discrepancy_type")
+    .eq("delivery_id", deliveryId)
+    .returns<Array<{ id: string; vendor_item_id: string; received_qty_at_level: number | string | null; qty_received: number | string | null; expected_qty: number | string | null; unit_price: number | string | null; discrepancy_type: "short" | "over" | "damaged" | "substitution" | null }>>();
+  if (iErr) throw new Error(`deriveAndUpsertCredits select: ${iErr.message}`);
+  const forCredits: IntakeLineForCredits[] = (itemRows ?? [])
+    .filter((r) => r.discrepancy_type != null)
+    .map((r) => ({
+      deliveryItemId: r.id,
+      skuId: r.vendor_item_id,
+      // received_qty_at_level is the level-unit qty when a level was named; fall back to qty_received.
+      qtyReceived: num(r.received_qty_at_level) ?? num(r.qty_received) ?? 0,
+      expectedQty: num(r.expected_qty),
+      unitPrice: num(r.unit_price),
+      discrepancyType: r.discrepancy_type,
+    }));
+  const drafts = deriveCreditDrafts(forCredits);
+  if (drafts.length === 0) return;
+  const { error: cErr } = await sb.from("vendor_credits").upsert(
+    drafts.map((d) => ({
+      location_id: locationId, vendor_id: vendorId, delivery_id: deliveryId, delivery_item_id: d.deliveryItemId,
+      reason: d.reason, sku_id: d.skuId, qty: d.qty, amount_cents: d.amountCents, created_by: createdBy,
+    })),
+    { onConflict: "delivery_item_id,reason", ignoreDuplicates: true },
+  );
+  if (cErr) throw new ReceivingError(500, "credit_write_failed", `Credit write failed: ${cErr.message}`);
 }
 
 export async function loadRecentDeliveries(actor: AuthContext, locationId: string, limit = 20): Promise<DeliveryView[]> {
@@ -371,4 +472,112 @@ export async function loadDeliveryDetail(actor: AuthContext, deliveryId: string)
       receivedLevelLabel: l.received_level_label, resolvedOz: num(l.resolved_oz), photoUrl: l.photo_url,
     })),
   };
+}
+
+// ── Last-delivery template (prefill the door form from the vendor's last drop) ──────
+export interface LastDeliveryTemplate {
+  lines: Array<{ skuId: string; level: string | null; qty: number }>;
+}
+
+/**
+ * Latest delivery for this vendor+location, projected into a prefill template
+ * (skuId + received level + qty in level units). Returns null when the vendor has
+ * no prior delivery here. RECEIVE_MIN + location-bind, mirroring the other loaders.
+ */
+export async function loadLastDeliveryTemplate(
+  actor: AuthContext, locationId: string, vendorId: string,
+): Promise<LastDeliveryTemplate | null> {
+  requireReceive(actor);
+  if (!lockLocationContext(actorLoc(actor), locationId)) throw new ReceivingError(404, "not_found", "Location not found");
+  const sb = getServiceRoleClient();
+  const { data: h, error } = await sb.from("vendor_deliveries")
+    .select("id")
+    .eq("location_id", locationId).eq("vendor_id", vendorId)
+    .order("delivery_date", { ascending: false }).order("created_at", { ascending: false }).limit(1)
+    .maybeSingle<{ id: string }>();
+  if (error) throw new Error(`loadLastDeliveryTemplate header: ${error.message}`);
+  if (!h) return null;
+  const { data: lineRows, error: lErr } = await sb.from("vendor_delivery_items")
+    .select("vendor_item_id, received_level_label, received_qty_at_level, qty_received")
+    .eq("delivery_id", h.id).order("created_at", { ascending: true })
+    .returns<Array<{ vendor_item_id: string; received_level_label: string | null; received_qty_at_level: number | string | null; qty_received: number | string | null }>>();
+  if (lErr) throw new Error(`loadLastDeliveryTemplate lines: ${lErr.message}`);
+  return {
+    lines: (lineRows ?? []).map((l) => ({
+      skuId: l.vendor_item_id, level: l.received_level_label,
+      qty: num(l.received_qty_at_level) ?? num(l.qty_received) ?? 0,
+    })),
+  };
+}
+
+// ── Partial deliveries (build a delivery across multiple visits) ────────────────────
+
+/**
+ * Append lines to an IN-PROGRESS delivery (partial-receiving). The delivery must
+ * exist, be location-bound to the actor, and carry delivery_status 'in_progress'
+ * (409 delivery_complete otherwise — a completed delivery is closed). Reuses the
+ * shared validation/oz-resolution path (no duplicated resolution logic), appends the
+ * rows, records price history, and derives+upserts credits for the whole delivery
+ * (idempotent — prior lines' credits ignoreDuplicate on the unique index).
+ */
+export async function addDeliveryLines(
+  actor: AuthContext, deliveryId: string, lines: DeliveryLineInput[],
+): Promise<{ added: number }> {
+  requireReceive(actor);
+  const sb = getServiceRoleClient();
+  const { data: h, error } = await sb.from("vendor_deliveries")
+    .select("id, vendor_id, location_id, delivery_date, delivery_status")
+    .eq("id", deliveryId)
+    .maybeSingle<{ id: string; vendor_id: string; location_id: string; delivery_date: string; delivery_status: string | null }>();
+  if (error) throw new Error(`addDeliveryLines header: ${error.message}`);
+  if (!h) throw new ReceivingError(404, "not_found", "Delivery not found");
+  if (!lockLocationContext(actorLoc(actor), h.location_id)) throw new ReceivingError(404, "not_found", "Delivery not found");
+  if (h.delivery_status !== "in_progress") throw new ReceivingError(409, "delivery_complete", "This delivery is complete — reopen or start a new one");
+
+  const resolved = await validateAndResolveDeliveryLines(sb, lines);
+
+  const { error: lErr } = await sb.from("vendor_delivery_items").insert(
+    buildLineRows(h.id, lines, resolved.resolvedOzByLineIdx, actor.user.id),
+  );
+  if (lErr) throw new Error(`addDeliveryLines lines: ${lErr.message}`);
+
+  const priced = lines.filter((l) => l.unitPrice != null);
+  if (priced.length > 0) {
+    const { error: pErr } = await sb.from("vendor_price_history").insert(
+      priced.map((l) => ({ vendor_item_id: l.skuId, unit_price: l.unitPrice, effective_date: h.delivery_date, recorded_by: actor.user.id })),
+    );
+    if (pErr) throw new Error(`addDeliveryLines prices: ${pErr.message}`);
+  }
+
+  await deriveAndUpsertCredits(sb, h.id, h.vendor_id, h.location_id, actor.user.id);
+
+  await audit({
+    actorId: actor.user.id, actorRole: actor.user.role,
+    action: "delivery.received", resourceTable: "vendor_deliveries", resourceId: h.id,
+    metadata: { location_id: h.location_id, added_lines: lines.length, partial: true },
+    ipAddress: null, userAgent: null,
+  });
+
+  return { added: lines.length };
+}
+
+/**
+ * Flip an in-progress delivery to 'complete'. Location-bound; checks rowcount
+ * (silent-UPDATE law) and 404s on zero rows.
+ */
+export async function completeDelivery(actor: AuthContext, deliveryId: string): Promise<void> {
+  requireReceive(actor);
+  const sb = getServiceRoleClient();
+  const { data: h, error } = await sb.from("vendor_deliveries")
+    .select("id, location_id")
+    .eq("id", deliveryId)
+    .maybeSingle<{ id: string; location_id: string }>();
+  if (error) throw new Error(`completeDelivery load: ${error.message}`);
+  if (!h) throw new ReceivingError(404, "not_found", "Delivery not found");
+  if (!lockLocationContext(actorLoc(actor), h.location_id)) throw new ReceivingError(404, "not_found", "Delivery not found");
+  const { error: uErr, count } = await sb.from("vendor_deliveries")
+    .update({ delivery_status: "complete" }, { count: "exact" })
+    .eq("id", deliveryId);
+  if (uErr) throw new Error(`completeDelivery update: ${uErr.message}`);
+  if (count === 0) throw new ReceivingError(404, "not_found", "Delivery not found");
 }
