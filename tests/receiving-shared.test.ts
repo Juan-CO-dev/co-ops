@@ -2,12 +2,13 @@
  * Unit spine — lib/receiving-shared.ts pure math (zero I/O, no server imports).
  * Pins: credit derivation for short/over/damaged/substitution lines, qty-delta
  * arithmetic, amount-cents derivation from intake price (spec D1), and the
- * vendor-invoice deduplication key normalisation.
+ * addDeliveryLines double-submit multiset guard (isDuplicateAppend).
  */
 import { describe, it, expect } from "vitest";
 import {
   deriveCreditDrafts,
-  dedupeKey,
+  isDuplicateAppend,
+  type AppendLine,
   type IntakeLineForCredits,
 } from "../lib/receiving-shared";
 
@@ -65,14 +66,29 @@ describe("deriveCreditDrafts", () => {
   });
 });
 
-describe("dedupeKey", () => {
-  it("normalizes invoice casing/whitespace", () => {
-    expect(dedupeKey("v1", " INV-001 ", "2026-08-02")).toBe(
-      "v1|inv-001|2026-08-02",
-    );
+describe("isDuplicateAppend", () => {
+  const l = (skuId: string, level: string | null, qty: number): AppendLine => ({ skuId, level, qty });
+
+  it("exact multiset match → true (retry of the identical batch)", () => {
+    const batch = [l("sku-1", "case", 2), l("sku-2", null, 5)];
+    // different array order, same tuples + counts → still an exact multiset match
+    const recent = [l("sku-2", null, 5), l("sku-1", "case", 2)];
+    expect(isDuplicateAppend(batch, recent)).toBe(true);
   });
 
-  it("null invoice yields a date-scoped key", () => {
-    expect(dedupeKey("v1", null, "2026-08-02")).toBe("v1||2026-08-02");
+  it("differing qty → false", () => {
+    const batch = [l("sku-1", "case", 2)];
+    const recent = [l("sku-1", "case", 3)];
+    expect(isDuplicateAppend(batch, recent)).toBe(false);
+  });
+
+  it("subset → false (incoming smaller than recent)", () => {
+    const batch = [l("sku-1", "case", 2)];
+    const recent = [l("sku-1", "case", 2), l("sku-2", null, 5)];
+    expect(isDuplicateAppend(batch, recent)).toBe(false);
+  });
+
+  it("empty recent → false (nothing appended in the window)", () => {
+    expect(isDuplicateAppend([l("sku-1", "case", 2)], [])).toBe(false);
   });
 });

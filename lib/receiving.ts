@@ -37,7 +37,7 @@ import type { AuthContext } from "@/lib/session";
 import { loadMeasures, loadSkuPackChains } from "@/lib/prep-consumption";
 import { ozForRecipeInput, skuContentOz, type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
-import { deriveCreditDrafts, type IntakeLineForCredits } from "@/lib/receiving-shared";
+import { deriveCreditDrafts, isDuplicateAppend, type AppendLine, type IntakeLineForCredits } from "@/lib/receiving-shared";
 
 export const RECEIVE_MIN = 4; // key_holder+
 
@@ -241,7 +241,16 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
     notes: headerNote, note: headerNote, receipt_url: input.receiptUrl?.trim() || null, received_by: actor.user.id,
     delivery_status: input.deliveryStatus ?? "complete",
   }).select("id").maybeSingle<{ id: string }>();
-  if (hErr) throw new Error(`recordDelivery header: ${hErr.message}`);
+  if (hErr) {
+    // The app-level dedupe guard above is the fast path (friendly message), but it
+    // races under concurrent POSTs — migration 0169's partial unique index
+    // (vendor_deliveries_dedupe_uq) is the real arbiter. A 23505 on it means another
+    // request already inserted this (vendor, location, date, lower(invoice)) → 409.
+    if (hErr.code === "23505" || /vendor_deliveries_dedupe_uq/.test(hErr.message ?? "")) {
+      throw new ReceivingError(409, "duplicate_delivery", "This invoice was already received for this vendor today.");
+    }
+    throw new Error(`recordDelivery header: ${hErr.message}`);
+  }
   if (!header) throw new Error("recordDelivery header returned no row");
 
   const { error: lErr } = await sb.from("vendor_delivery_items").insert(
@@ -549,6 +558,28 @@ export async function addDeliveryLines(
 
   const resolved = await validateAndResolveDeliveryLines(sb, lines);
 
+  // Double-submit guard (P1 pragmatic window): a network retry / double-tap on the
+  // append route would duplicate every line (and each dup spawns its own credit).
+  // If the incoming batch is an EXACT multiset match of a batch already appended to
+  // THIS delivery in the last 60s, reject it. No UI drives this route yet
+  // (continue-mode deferred); a proper client idempotency token ships with that UI.
+  const appendCutoff = new Date(Date.now() - 60_000).toISOString();
+  const { data: recentRows, error: rErr } = await sb.from("vendor_delivery_items")
+    .select("vendor_item_id, received_level_label, received_qty_at_level, qty_received")
+    .eq("delivery_id", h.id).gte("created_at", appendCutoff)
+    .returns<Array<{ vendor_item_id: string; received_level_label: string | null; received_qty_at_level: number | string | null; qty_received: number | string | null }>>();
+  if (rErr) throw new Error(`addDeliveryLines recent: ${rErr.message}`);
+  const recentAppend: AppendLine[] = (recentRows ?? []).map((r) => ({
+    skuId: r.vendor_item_id, level: r.received_level_label,
+    qty: num(r.received_qty_at_level) ?? num(r.qty_received) ?? 0,
+  }));
+  const incomingAppend: AppendLine[] = lines.map((l) => ({
+    skuId: l.skuId, level: l.receivedLevelLabel?.trim() || null, qty: l.qtyReceived,
+  }));
+  if (isDuplicateAppend(incomingAppend, recentAppend)) {
+    throw new ReceivingError(409, "duplicate_append", "These lines were just added to this delivery — refresh before appending again.");
+  }
+
   const { error: lErr } = await sb.from("vendor_delivery_items").insert(
     buildLineRows(h.id, lines, resolved.resolvedOzByLineIdx, actor.user.id),
   );
@@ -582,15 +613,23 @@ export async function completeDelivery(actor: AuthContext, deliveryId: string): 
   requireReceive(actor);
   const sb = getServiceRoleClient();
   const { data: h, error } = await sb.from("vendor_deliveries")
-    .select("id, location_id")
+    .select("id, location_id, delivery_status")
     .eq("id", deliveryId)
-    .maybeSingle<{ id: string; location_id: string }>();
+    .maybeSingle<{ id: string; location_id: string; delivery_status: string | null }>();
   if (error) throw new Error(`completeDelivery load: ${error.message}`);
   if (!h) throw new ReceivingError(404, "not_found", "Delivery not found");
   if (!lockLocationContext(actorLoc(actor), h.location_id)) throw new ReceivingError(404, "not_found", "Delivery not found");
+  if (h.delivery_status === "complete") throw new ReceivingError(409, "already_complete", "This delivery is already complete");
   const { error: uErr, count } = await sb.from("vendor_deliveries")
     .update({ delivery_status: "complete" }, { count: "exact" })
     .eq("id", deliveryId);
   if (uErr) throw new Error(`completeDelivery update: ${uErr.message}`);
   if (count === 0) throw new ReceivingError(404, "not_found", "Delivery not found");
+
+  await audit({
+    actorId: actor.user.id, actorRole: actor.user.role,
+    action: "delivery.completed", resourceTable: "vendor_deliveries", resourceId: deliveryId,
+    metadata: { location_id: h.location_id },
+    ipAddress: null, userAgent: null,
+  });
 }

@@ -218,8 +218,8 @@ export async function resolveCredit(
   requireLevel(actor, CREDIT_RESOLVE_MIN);
   const sb = getServiceRoleClient();
   const { data: c, error } = await sb.from("vendor_credits")
-    .select("id, location_id, status").eq("id", creditId)
-    .maybeSingle<{ id: string; location_id: string; status: string }>();
+    .select("id, location_id, status, notes").eq("id", creditId)
+    .maybeSingle<{ id: string; location_id: string; status: string; notes: string | null }>();
   if (error) throw new Error(`resolveCredit load: ${error.message}`);
   if (!c) throw new CreditError(404, "not_found", "Credit not found");
   if (!lockLocationContext(actorLoc(actor), c.location_id)) throw new CreditError(404, "not_found", "Credit not found");
@@ -231,7 +231,9 @@ export async function resolveCredit(
   const update: { status: CreditOutcome; resolved_at: string; notes?: string } = {
     status: outcome, resolved_at: new Date().toISOString(),
   };
-  if (trimmedNotes != null) update.notes = trimmedNotes; // never clobber existing notes with null
+  // Append resolution notes to any existing notes — never clobber (and never
+  // overwrite existing notes with null when no new note is supplied).
+  if (trimmedNotes != null) update.notes = c.notes ? c.notes + "\n" + trimmedNotes : trimmedNotes;
   const { error: uErr, count } = await sb.from("vendor_credits")
     .update(update, { count: "exact" })
     .eq("id", creditId);
