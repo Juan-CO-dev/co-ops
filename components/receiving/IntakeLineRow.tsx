@@ -36,6 +36,10 @@ export interface IntakeLine {
   confirmed: boolean;
   /** Collapsed only when it has an expected qty AND the operator hasn't opened it. */
   expanded: boolean;
+  /** Optional unit price string — parsed to number on submit; empty = omit. */
+  unitPrice: string;
+  /** Optional observed oz/each string — parsed to number on submit; empty = omit. */
+  observed: string;
 }
 
 const FLAGS: readonly DiscrepancyFlag[] = ["short", "over", "damaged", "substitution"] as const;
@@ -289,6 +293,42 @@ export function IntakeLineRow({
             {t("receiving.door.suggest_hint", { flag: t(flagKey[suggested]) })}
           </p>
         ) : null}
+      </div>
+
+      {/* Optional unit price + observed oz/each — expanded only; collapsed path untouched. */}
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <label className="block">
+          <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
+            {t("receiving.form.price")}
+          </span>
+          <input
+            className={`mt-1 ${field}`}
+            type="number"
+            min={0}
+            step="any"
+            inputMode="decimal"
+            value={line.unitPrice}
+            disabled={busy}
+            onChange={(e) => onChange({ unitPrice: e.target.value })}
+            aria-label={t("receiving.form.price")}
+          />
+        </label>
+        <label className="block">
+          <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
+            {t("receiving.form.observed")}
+          </span>
+          <input
+            className={`mt-1 ${field}`}
+            type="number"
+            min={0}
+            step="any"
+            inputMode="decimal"
+            value={line.observed}
+            disabled={busy}
+            onChange={(e) => onChange({ observed: e.target.value })}
+            aria-label={t("receiving.form.observed")}
+          />
+        </label>
       </div>
 
       {/* Small note + per-line photo. */}

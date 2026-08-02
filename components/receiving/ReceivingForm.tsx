@@ -52,6 +52,8 @@ const addedLine = (): LineDraft => ({
   photoId: null,
   confirmed: false,
   expanded: true,
+  unitPrice: "",
+  observed: "",
 });
 
 const field =
@@ -144,6 +146,8 @@ export function ReceivingForm({
         photoId: null,
         confirmed: false,
         expanded: false,
+        unitPrice: "",
+        observed: "",
       }));
       setLines(seeded);
     } catch {
@@ -178,6 +182,8 @@ export function ReceivingForm({
         photoUrl: l.photoId ? `/api/photos/${l.photoId}` : null,
         expectedQty: l.expectedQty,
         discrepancyType: l.discrepancy,
+        unitPrice: num(l.unitPrice),
+        observedOzPerEach: num(l.observed),
       })),
     };
     const res = await fetch("/api/operations/receiving", {
