@@ -87,13 +87,18 @@ Logged-deferred → DEBT table.
   (the double-count law: direct-sale SKUs vs production-covered SKUs, never both).
   Backfilled + lane-verified against the banked week (Sub Roll 4,728 oz direct /
   0 flattened at Cap Hill — ~150 rolls/day).
-- ⭐ **THE FIRST PHYSICAL SKU COUNT (Juan — now the #1 errand).** `sku_count_events`
-  is EMPTY: every pipe is connected (receiving in, production + register sales
-  out) but variance has no starting line until a count anchors it. First count →
-  on-hand/variance goes live for every SKU touched — AND fires two queued builds:
-  the mid-shift low-stock/under-par attention item (designed, council 2026-07-31)
-  and the counts `loadOnHand` per-SKU batching pass (deferred until real count
-  data exists to verify against).
+- ⭐ **TRUTH MODEL REFRAMED (Juan, 2026-08-02) — the "first physical count" errand is
+  SUPERSEDED.** The shop never census-counts; the mandatory-count gate is dead by
+  design (spec: `docs/superpowers/specs/2026-08-02-delivery-intake-ordering-design.md`).
+  Ground truth = delivery intake (in) + depletion (out) + par-pass order signals, with
+  source-tagged anchors `census > par_estimate > inferred`. The counts page becomes the
+  on-demand **Inventory Audit tool** (owner-invoked, gates unchanged); cold start comes
+  from a prep-activity inference base that real intakes accrue onto. Variance computes
+  between census anchors only; estimate divergence surfaces as a shrinkage signal.
+  **P1 (door ceremony) is BUILT** — count-by-exception intake, required receipt photo,
+  discrepancy flags → `vendor_credits` ledger, offline drafts, dedupe/partial guards
+  (migration 0168). The two queued builds (mid-shift low-stock item; counts `loadOnHand`
+  batching) now fire on the FIRST PAR-PASS or audit instead (P3/P2 of the spec).
 - **Dynamic Pars — design session** (owner-called) once a count cycle + sales
   velocity have a couple of weeks of data. Weather bootstraps from the existing
   manual weather field on the daily report before any feed is built. Then

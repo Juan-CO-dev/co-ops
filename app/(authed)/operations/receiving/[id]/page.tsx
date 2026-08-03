@@ -1,9 +1,23 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { serverT } from "@/lib/i18n/server";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { loadDeliveryDetail, ReceivingError } from "@/lib/receiving";
+import { loadCreditsForDelivery, CreditError } from "@/lib/credits";
 import { BackLink } from "@/components/nav/BackLink";
+import { AlertPill } from "@/components/ui/AlertPill";
+import { CreditResolveControls } from "@/components/receiving/CreditResolveControls";
 import type { DeliveryDetail } from "@/lib/receiving";
+import type { CreditRow } from "@/lib/credits";
+import type { TranslationKey } from "@/lib/i18n/types";
+
+/** Per-line discrepancy flag → its i18n label key (shared with the door form flags). */
+const FLAG_KEY: Record<NonNullable<DeliveryDetail["lines"][number]["discrepancyType"]>, TranslationKey> = {
+  short: "receiving.flag.short",
+  over: "receiving.flag.over",
+  damaged: "receiving.flag.damaged",
+  substitution: "receiving.flag.sub",
+};
 
 export default async function DeliveryDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const auth = await requireSessionFromHeaders("/operations/receiving");
@@ -16,6 +30,16 @@ export default async function DeliveryDetailPage({ params }: { params: Promise<{
     detail = await loadDeliveryDetail(auth, id);
   } catch (e) {
     if (e instanceof ReceivingError) redirect("/dashboard");
+    throw e;
+  }
+
+  // Credits filed against this delivery (KH+ read gate in the lib). A CreditError
+  // here means the same 404/location-bind failure as the delivery load → dashboard.
+  let credits: CreditRow[] = [];
+  try {
+    credits = await loadCreditsForDelivery(auth, id);
+  } catch (e) {
+    if (e instanceof CreditError) redirect("/dashboard");
     throw e;
   }
 
@@ -45,12 +69,50 @@ export default async function DeliveryDetailPage({ params }: { params: Promise<{
         </p>
       ) : null}
 
+      {/* Header alert badges (D2 — always visible): match discrepancy, missing
+          receipt photo, in-progress door. */}
+      {detail.matchState === "discrepant" || detail.receiptUrl === null || detail.deliveryStatus === "in_progress" ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {detail.matchState === "discrepant" ? (
+            <AlertPill tone="warn">{serverT(lang, "receiving.badge.discrepant")}</AlertPill>
+          ) : null}
+          {detail.receiptUrl === null ? (
+            <AlertPill tone="warn">{serverT(lang, "receiving.badge.photo_missing")}</AlertPill>
+          ) : null}
+          {detail.deliveryStatus === "in_progress" ? (
+            <AlertPill tone="info">{serverT(lang, "receiving.badge.in_progress")}</AlertPill>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* Continue-intake affordance (decision 3 — link + note only). Full continue-
+          mode hydration (seeding the door form with this in-progress delivery's lines)
+          is DEFERRED: this ships the note + a Link back to the receiving form for the
+          same location, where the manager re-opens the delivery. */}
+      {detail.deliveryStatus === "in_progress" ? (
+        <div className="mt-3 rounded-lg border-2 border-co-warning bg-co-warning-surface px-3 py-2">
+          <p className="text-[13px] text-co-text">{serverT(lang, "receiving.detail.continue_note")}</p>
+          <Link
+            href={`/operations/receiving?location=${encodeURIComponent(detail.locationId)}`}
+            className="mt-1 inline-flex min-h-[44px] items-center font-bold text-co-cta underline"
+          >
+            {serverT(lang, "receiving.detail.continue_intake")}
+          </Link>
+        </div>
+      ) : null}
+
       <h2 className="mt-5 text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">{serverT(lang, "receiving.detail.items")}</h2>
       <ul className="mt-2 flex flex-col gap-1.5">
         {detail.lines.map((l, i) => (
           <li key={i} className="rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2 text-sm">
             <div className="flex items-center justify-between gap-2">
-              <span className="font-semibold text-co-text">{l.skuName}</span>
+              <span className="flex flex-wrap items-center gap-2">
+                <span className="font-semibold text-co-text">{l.skuName}</span>
+                {/* Per-line discrepancy chip (D2 — always visible). */}
+                {l.discrepancyType ? (
+                  <AlertPill tone="warn">{serverT(lang, FLAG_KEY[l.discrepancyType])}</AlertPill>
+                ) : null}
+              </span>
               <span className="text-xs text-co-text-muted">
                 {l.receivedLevelLabel
                   ? `${l.qtyReceived} ${l.receivedLevelLabel}`
@@ -79,6 +141,9 @@ export default async function DeliveryDetailPage({ params }: { params: Promise<{
           </li>
         ))}
       </ul>
+
+      {/* Vendor credits for this delivery + AGM+ resolve controls (client island). */}
+      <CreditResolveControls credits={credits} actorLevel={auth.level} />
     </main>
   );
 }
