@@ -59,6 +59,7 @@ import {
   computeOnHandUnits,
   computeVariance,
   computeUsedOrLost,
+  computeInferredBaselineOz,
   chainLabelsInWalkOrder,
   etBusinessDate,
   isGapEligibleDate,
@@ -67,6 +68,11 @@ import {
   type OnHandResult,
   type OnHandUnitsResult,
 } from "@/lib/counts-shared";
+
+/** Trailing calendar window (days) for the inference bootstrap (spec D6, locked). */
+const INFERRED_WINDOW_DAYS = 28;
+/** Forward coverage (days) an inferred baseline represents (spec D6, locked). */
+const INFERRED_COVERAGE_DAYS = 7;
 
 export const COUNT_READ_MIN = 6; // AGM+
 export const COUNT_WRITE_MIN = 6; // AGM+ (Tier-A step-up enforced at the route)
@@ -257,6 +263,226 @@ export interface OnHandView {
   rows: OnHandRow[];
 }
 
+// ── Inference bootstrap (spec D6) ────────────────────────────────────────────────
+/**
+ * Trailing-28-day consumed oz per SKU at a location — the run-rate the inference
+ * bootstrap projects (spec D6). Mirrors lib/receiving.ts `loadSkuUsageRank` and the
+ * counts drift consumed term EXACTLY (the SAME two tables/columns the double-count
+ * law sums), except the window is INFERRED_WINDOW_DAYS (28) not 30:
+ *   production lane = SUM(production_inputs.input_oz) over LIVE productions
+ *                     (superseded_at/revoked_at NULL) at this location, produced_at
+ *                     in the last 28d (raw SKU depletes at production, BC-026 oz).
+ *   sales lane      = SUM(toast_daily_depletion.direct_oz) at this location for
+ *                     business_dates in the last 28d (ONLY the direct lane depletes
+ *                     raw stock; flattened_oz is production-covered — NEVER summed).
+ * Two grouped batch queries (loadRecipeGraph law — never per-SKU), returning per-SKU
+ * lane totals so the writer can persist the lane breakdown in `basis`. A SKU absent
+ * from both lanes is absent from the map (advisory-null — gets NO baseline).
+ */
+async function loadInferredConsumedOz(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+  now: number,
+): Promise<Map<string, { productionOz: number; directOz: number }>> {
+  const lanes = new Map<string, { productionOz: number; directOz: number }>();
+  const addProd = (skuId: string, oz: number) => {
+    if (!Number.isFinite(oz) || oz <= 0) return;
+    const e = lanes.get(skuId) ?? { productionOz: 0, directOz: 0 };
+    e.productionOz += oz;
+    lanes.set(skuId, e);
+  };
+  const addDirect = (skuId: string, oz: number) => {
+    if (!Number.isFinite(oz) || oz <= 0) return;
+    const e = lanes.get(skuId) ?? { productionOz: 0, directOz: 0 };
+    e.directOz += oz;
+    lanes.set(skuId, e);
+  };
+
+  // 28-day window. Productions compare on produced_at (timestamptz); the depletion
+  // ledger compares on business_date (a bare date) — derive both from one instant.
+  const cutoff = new Date(now - INFERRED_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const cutoffIso = cutoff.toISOString();
+  const cutoffDate = cutoffIso.slice(0, 10); // YYYY-MM-DD for the business_date filter.
+
+  // Production lane — live productions at this location in the window, then inputs.
+  const { data: prodHdrs, error: phErr } = await sb.from("productions")
+    .select("id")
+    .eq("location_id", locationId)
+    .is("superseded_at", null).is("revoked_at", null)
+    .gt("produced_at", cutoffIso)
+    .returns<Array<{ id: string }>>();
+  if (phErr) throw new Error(`loadInferredConsumedOz productions: ${phErr.message}`);
+  const prodIds = (prodHdrs ?? []).map((h) => h.id);
+  if (prodIds.length > 0) {
+    const { data: inputs, error: piErr } = await sb.from("production_inputs")
+      .select("input_sku_id, input_oz")
+      .in("production_id", prodIds)
+      .returns<Array<{ input_sku_id: string; input_oz: number | string | null }>>();
+    if (piErr) throw new Error(`loadInferredConsumedOz production_inputs: ${piErr.message}`);
+    for (const r of inputs ?? []) addProd(r.input_sku_id, num(r.input_oz) ?? 0);
+  }
+
+  // Sales direct lane — the materialized depletion ledger over the window (0166).
+  const { data: sales, error: sErr } = await sb.from("toast_daily_depletion")
+    .select("sku_id, direct_oz")
+    .eq("location_id", locationId)
+    .gte("business_date", cutoffDate)
+    .returns<Array<{ sku_id: string; direct_oz: number | string }>>();
+  if (sErr) throw new Error(`loadInferredConsumedOz toast_daily_depletion: ${sErr.message}`);
+  for (const r of sales ?? []) addDirect(r.sku_id, num(r.direct_oz) ?? 0);
+
+  return lanes;
+}
+
+/**
+ * INFERRED ON-HAND ROWS (spec D6). For active SKUs at this location that have NO
+ * census anchor (`censusSkuIds` — passed so an inferred baseline NEVER shadows a
+ * counted SKU) but real consumption history, surface a cold-start baseline:
+ *   1. batch-load any pre-existing sku_inferred_baselines for this location;
+ *   2. for SKUs missing a baseline, compute the two 28d consumption lanes
+ *      (loadInferredConsumedOz) and, for each with positive total consumed oz,
+ *      compute the baseline (computeInferredBaselineOz) and INSERT it upsert-
+ *      ignoreDuplicates — computed ONCE, race-safe, never regenerated (D6);
+ *   3. anchor each baseline SKU at inferred_oz / computed_at (anchorSource
+ *      "inferred") and accrue received/consumed-since from that anchor EXACTLY like
+ *      a census weight row (same ledger helpers, same gap-taint) — the drift math is
+ *      source-blind. varianceOz is ALWAYS null (an inferred baseline is not a counted
+ *      ground truth — it can never be a variance reference; VARIANCE IS CENSUS-ONLY).
+ *
+ * MERGE-IN-MEMORY (D6 controller note): for a SKU whose baseline we just computed,
+ * we use the in-memory inferred_oz + anchorAt = now(ISO) directly rather than
+ * re-reading the row we wrote. The persisted row only matters for FUTURE loads;
+ * ignoreDuplicates makes the insert race-safe (a concurrent request that wrote first
+ * wins — the compute is deterministic over the same window, so any winner is fine).
+ * Pre-existing baselines anchor at their stored computed_at.
+ */
+async function loadInferredRows(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+  censusSkuIds: ReadonlySet<string>,
+  now: number,
+): Promise<OnHandRow[]> {
+  // Active SKU roster (global; the item spine is location-scoped via deliveries, not
+  // the vendor_items row) minus any SKU already carrying a census anchor.
+  const { data: activeSkus, error: aErr } = await sb.from("vendor_items")
+    .select("id, name")
+    .eq("active", true)
+    .returns<Array<{ id: string; name: string }>>();
+  if (aErr) throw new Error(`loadInferredRows active skus: ${aErr.message}`);
+  const roster = (activeSkus ?? []).filter((s) => !censusSkuIds.has(s.id));
+  if (roster.length === 0) return [];
+  const skuName = new Map(roster.map((s) => [s.id, s.name]));
+  const rosterIds = roster.map((s) => s.id);
+
+  // (a) Pre-existing baselines for this location (batch).
+  const { data: existing, error: bErr } = await sb.from("sku_inferred_baselines")
+    .select("sku_id, inferred_oz, computed_at")
+    .eq("location_id", locationId)
+    .in("sku_id", rosterIds)
+    .returns<Array<{ sku_id: string; inferred_oz: number | string; computed_at: string }>>();
+  if (bErr) throw new Error(`loadInferredRows baselines: ${bErr.message}`);
+  const baselineBySku = new Map<string, { inferredOz: number; anchorAt: string }>();
+  for (const r of existing ?? []) {
+    const oz = num(r.inferred_oz);
+    if (oz == null) continue; // defensive — column is NOT NULL, but never fabricate.
+    baselineBySku.set(r.sku_id, { inferredOz: oz, anchorAt: r.computed_at });
+  }
+
+  // (b) For SKUs missing a baseline, compute lanes over 28d and lazily persist a
+  //     baseline for each with positive consumption. Zero-consumption SKUs get NO
+  //     row (advisory-null). Computed once (upsert ignoreDuplicates); merge in memory.
+  const needsBaseline = rosterIds.filter((id) => !baselineBySku.has(id));
+  if (needsBaseline.length > 0) {
+    const lanes = await loadInferredConsumedOz(sb, locationId, now);
+    const nowIso = new Date(now).toISOString();
+    const toInsert: Array<{
+      location_id: string;
+      sku_id: string;
+      inferred_oz: number;
+      basis: Record<string, unknown>;
+    }> = [];
+    for (const id of needsBaseline) {
+      const lane = lanes.get(id);
+      if (!lane) continue; // no consumption in the window → no baseline (advisory-null).
+      const total = lane.productionOz + lane.directOz;
+      const baseline = computeInferredBaselineOz(total, INFERRED_WINDOW_DAYS, INFERRED_COVERAGE_DAYS);
+      if (baseline == null) continue; // total <= 0 / non-finite → no baseline.
+      baselineBySku.set(id, { inferredOz: baseline.inferredOz, anchorAt: nowIso });
+      toInsert.push({
+        location_id: locationId,
+        sku_id: id,
+        inferred_oz: baseline.inferredOz,
+        basis: {
+          method: "consumption_runrate",
+          window_days: INFERRED_WINDOW_DAYS,
+          coverage_days: INFERRED_COVERAGE_DAYS,
+          daily_avg_oz: baseline.dailyAvgOz,
+          lanes: { production_oz: lane.productionOz, direct_oz: lane.directOz },
+        },
+      });
+    }
+    if (toInsert.length > 0) {
+      // Computed ONCE, race-safe: a concurrent loader that wrote first keeps its row;
+      // ignoreDuplicates makes our insert a no-op there. We keep our in-memory values
+      // for THIS render (they only matter for future loads — see the merge note).
+      const { error: insErr } = await sb.from("sku_inferred_baselines")
+        .upsert(toInsert, { onConflict: "location_id,sku_id", ignoreDuplicates: true });
+      if (insErr) throw new Error(`loadInferredRows persist baselines: ${insErr.message}`);
+    }
+  }
+
+  const inferredIds = [...baselineBySku.keys()];
+  if (inferredIds.length === 0) return [];
+
+  // Sales-coverage gap dates for the inferred anchors' earliest window start — loaded
+  // ONCE (not per SKU), same taint discipline as the census path.
+  const earliestSalesDate = inferredIds
+    .map((id) => etBusinessDate(baselineBySku.get(id)!.anchorAt))
+    .reduce((min, d) => (d < min ? d : min));
+  const gapDates = await loadSalesGapDates(
+    sb, locationId, earliestSalesDate, etBusinessDate(new Date(now).toISOString()),
+  );
+
+  // Build a weight row per inferred SKU: anchor + received-since − consumed-since,
+  // accrued from computed_at exactly like a census weight row (drift is source-blind).
+  return Promise.all(
+    inferredIds.map(async (skuId): Promise<OnHandRow> => {
+      const b = baselineBySku.get(skuId)!;
+      const [receivedSince, consumedSince, salesSince, anchorStale] = await Promise.all([
+        sumReceivedOzSince(sb, [skuId], locationId, b.anchorAt),
+        sumConsumedOzSince(sb, [skuId], locationId, b.anchorAt),
+        sumSalesDirectOzSince(sb, [skuId], locationId, b.anchorAt, gapDates),
+        detectRetroEditStaleness(sb, locationId, b.anchorAt, now),
+      ]);
+      const prodSince = consumedSince.get(skuId) ?? null;
+      const salesSinceOz = salesSince.get(skuId) ?? null;
+      const onHand = computeOnHand(
+        {
+          skuId,
+          anchorOz: b.inferredOz,
+          anchorAt: b.anchorAt,
+          receivedSinceOz: receivedSince.get(skuId) ?? null,
+          consumedSinceOz: prodSince == null || salesSinceOz == null ? null : prodSince + salesSinceOz,
+          anchorStale,
+          anchorSource: "inferred", // DISPLAY provenance — never touches the math.
+        },
+        now,
+      );
+      return {
+        dimension: "weight",
+        ...onHand,
+        skuName: skuName.get(skuId) ?? "(sku)",
+        // VARIANCE IS CENSUS-ONLY (D6): an inferred baseline is not a counted ground
+        // truth, so it can never be a variance reference. Always null here. We do NOT
+        // call computeVariance for inferred rows.
+        varianceOz: null,
+        looseLineCount: 0,
+        partialLineCount: 0,
+      };
+    }),
+  );
+}
+
 /**
  * Load the on-hand panel for a location with PER-SKU anchors (F1). Events are
  * immutable sessions; there is no single "anchor event". For each SKU:
@@ -269,7 +495,8 @@ export interface OnHandView {
  *     the pure computeVariance (F2): a SKU never previously counted → prevCountOz
  *     null → variance null (advisory "first count"), NEVER 0.
  * Retro-edit staleness (a backdated delivery landing after a SKU's anchor) flags
- * that SKU stale.
+ * that SKU stale. SKUs with NO census anchor but real consumption history get an
+ * INFERRED baseline row (spec D6, anchorSource "inferred") — see loadInferredRows.
  */
 export async function loadOnHand(actor: AuthContext, locationId: string, now: number = Date.now()): Promise<OnHandView> {
   requireLevel(actor, COUNT_READ_MIN);
@@ -286,7 +513,15 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
     .order("counted_at", { ascending: false })
     .returns<Array<{ id: string; counted_at: string }>>();
   const evList = events ?? [];
-  if (evList.length === 0) return { locationId, anchorAt: null, salesThrough, rows: [] };
+  if (evList.length === 0) {
+    // COLD START (spec D6): no physical count has EVER anchored this location. Still
+    // surface inferred on-hand baselines for SKUs with consumption history so the
+    // panel isn't empty on day one. No census SKUs → inference sees the full active
+    // roster.
+    const inferredRows = await loadInferredRows(sb, locationId, new Set<string>(), now);
+    const rows = inferredRows.sort((a, b) => a.skuName.localeCompare(b.skuName));
+    return { locationId, anchorAt: null, salesThrough, rows };
+  }
   const eventAt = new Map(evList.map((e) => [e.id, e.counted_at]));
   const locationLastCountedAt = evList[0]!.counted_at; // header hint only.
 
@@ -334,7 +569,12 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
   const weightSkuIds = [...anchorBySku.keys()];
   const countSkuIds = [...unitAnchorBySku.keys()];
   const skuIds = [...new Set([...weightSkuIds, ...countSkuIds])];
-  if (skuIds.length === 0) return { locationId, anchorAt: locationLastCountedAt, salesThrough, rows: [] };
+  if (skuIds.length === 0) {
+    // Events exist but resolved to no anchors (edge) — still run the inference tier.
+    const inferredRows = await loadInferredRows(sb, locationId, new Set<string>(), now);
+    const rows = inferredRows.sort((a, b) => a.skuName.localeCompare(b.skuName));
+    return { locationId, anchorAt: locationLastCountedAt, salesThrough, rows };
+  }
 
   // SKU names + chains (count rows derive received-units read-time from the chain).
   const [{ data: skuRows }, chainsBySku, measures] = await Promise.all([
@@ -381,6 +621,10 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
           receivedSinceOz: receivedSince.get(skuId) ?? null,
           consumedSinceOz: prodSince == null || salesSinceOz == null ? null : prodSince + salesSinceOz,
           anchorStale,
+          // CENSUS provenance: this row's anchor is a real physical count event
+          // (anchorBySku is resolved from sku_count_lines). Inferred anchors are
+          // composed in a SEPARATE pass below and never reach this variance loop.
+          anchorSource: "census",
         },
         now,
       );
@@ -397,6 +641,13 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
         const salesBetween = sB.get(skuId) ?? null;
         consumedBetweenOz = prodBetween == null || salesBetween == null ? null : prodBetween + salesBetween;
       }
+      // VARIANCE IS CENSUS-ONLY (spec D6, LOAD-BEARING). computeVariance verifies a
+      // NEW physical count against the PREVIOUS one + intervening ledger. Both
+      // newCountOz and prevCountOz here come from `a` (anchorBySku → resolved
+      // strictly from sku_count_lines), so this call NEVER receives an inferred
+      // anchor. Inferred rows (composed below) carry varianceOz = null by law — an
+      // inferred baseline is not a counted ground truth and cannot be a variance
+      // reference. Do NOT wire an inferred anchor into this call.
       const variance = computeVariance({
         skuId,
         newCountOz: a.anchorOz,
@@ -453,7 +704,12 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
     }),
   );
 
-  const rows = [...weightRows, ...countRows].sort((a, b) => a.skuName.localeCompare(b.skuName));
+  // ── Inferred rows (spec D6) ── for active SKUs with NO census anchor (weight or
+  // count) but real consumption history: a cold-start baseline. `skuIds` is every
+  // census-anchored SKU this pass — pass it so inference NEVER shadows a counted SKU.
+  const inferredRows = await loadInferredRows(sb, locationId, new Set(skuIds), now);
+
+  const rows = [...weightRows, ...countRows, ...inferredRows].sort((a, b) => a.skuName.localeCompare(b.skuName));
   return { locationId, anchorAt: locationLastCountedAt, salesThrough, rows };
 }
 
