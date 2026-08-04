@@ -152,6 +152,10 @@ export interface InboundReceiptInput {
   subject: string | null;
   rawEml: { bytes: Uint8Array | Buffer; contentType: string } | null;
   attachments: Array<{ filename: string; contentType: string; bytes: Uint8Array | Buffer }>;
+  /** IDEMPOTENCY KEY (the svix-id). When present, a receipt already stored under this
+   *  external_id short-circuits before any storage/DB write (Resend retries on our 500s;
+   *  a replay must NOT duplicate the row). Backed by 0171 email_receipts_external_uq. */
+  externalId?: string | null;
 }
 
 /**
@@ -165,6 +169,20 @@ export interface InboundReceiptInput {
  */
 export async function ingestInboundReceipt(input: InboundReceiptInput): Promise<{ receiptId: string }> {
   const sb = getServiceRoleClient();
+
+  // IDEMPOTENT REPLAY: when an externalId (svix-id) is present, a prior receipt under
+  // that key means Resend re-delivered (it retries on our 500s). Return the existing id
+  // BEFORE storing anything — no duplicate bytes, no duplicate row.
+  const externalId = input.externalId?.trim() || null;
+  if (externalId) {
+    const { data: existing, error: exErr } = await sb
+      .from("email_receipts")
+      .select("id")
+      .eq("external_id", externalId)
+      .maybeSingle<{ id: string }>();
+    if (exErr) throw new Error(`ingestInboundReceipt idempotency lookup: ${exErr.message}`);
+    if (existing) return { receiptId: existing.id };
+  }
 
   // Location attribution by the to-address (case-insensitive, active locations).
   const locationId = await attributeLocationByToAddress(sb, input.toAddress);
@@ -200,11 +218,26 @@ export async function ingestInboundReceipt(input: InboundReceiptInput): Promise<
       raw_storage_path: rawStoragePath,
       attachment_paths: attachmentPaths,
       vendor_guess_id: vendorGuessId,
+      external_id: externalId,
       created_by: null, // machine — no actor
     })
     .select("id")
     .maybeSingle<{ id: string }>();
-  if (insErr) throw new Error(`ingestInboundReceipt insert: ${insErr.message}`);
+  if (insErr) {
+    // IDEMPOTENCY RACE: a concurrent retry inserted the same external_id first and won
+    // the 0171 email_receipts_external_uq index (23505). Re-select by external_id and
+    // return the winner's id — our stored bytes are orphaned but harmless (append-only).
+    if (externalId && insErr.code === PG_UNIQUE_VIOLATION) {
+      const { data: raced, error: raceErr } = await sb
+        .from("email_receipts")
+        .select("id")
+        .eq("external_id", externalId)
+        .maybeSingle<{ id: string }>();
+      if (raceErr) throw new Error(`ingestInboundReceipt idempotency re-select: ${raceErr.message}`);
+      if (raced) return { receiptId: raced.id };
+    }
+    throw new Error(`ingestInboundReceipt insert: ${insErr.message}`);
+  }
   if (!inserted) throw new Error("ingestInboundReceipt insert returned no row");
 
   // Best-effort auto-link (never throws to the caller on zero/many candidates).
@@ -340,14 +373,21 @@ export async function uploadManualReceipt(
   if (!inserted) throw new Error("uploadManualReceipt insert returned no row");
 
   if (delivery) {
-    // Set the delivery side too (both-ways link). Rowcount-checked (silent-UPDATE law).
+    // LINK ORDER (race-safe): the RECEIPT side was already claimed by the INSERT above
+    // (linked_delivery_id set at birth) — so the receipt-first ordering holds. Now the
+    // DELIVERY side, count-checked + 23505-guarded (the 0171 vendor_deliveries_email_
+    // receipt_uq index is the DB arbiter). If the delivery side loses (count 0 OR 23505),
+    // COMPENSATE by releasing the receipt claim, then 409.
     const { error: uErr, count } = await sb
       .from("vendor_deliveries")
       .update({ email_receipt_id: inserted.id }, { count: "exact" })
       .eq("id", delivery.id)
       .is("email_receipt_id", null); // guard against a race stealing the slot
-    if (uErr) throw new Error(`uploadManualReceipt delivery link: ${uErr.message}`);
-    if (count === 0) throw new EmailReceiptError(409, "already_linked", "This delivery already has a receipt");
+    if (uErr || count === 0) {
+      await compensateReceiptClaim(sb, inserted.id, delivery.id);
+      if (uErr && uErr.code !== PG_UNIQUE_VIOLATION) throw new Error(`uploadManualReceipt delivery link: ${uErr.message}`);
+      throw new EmailReceiptError(409, "already_linked", "This delivery already has a receipt");
+    }
 
     await audit({
       actorId: actor.user.id, actorRole: actor.user.role,
@@ -359,6 +399,29 @@ export async function uploadManualReceipt(
 
   return { receiptId: inserted.id };
 }
+
+// ── LINK-RACE COMPENSATION ──────────────────────────────────────────────────────────
+/**
+ * Release a receipt→delivery claim that was made on the RECEIPT side but could not be
+ * completed on the DELIVERY side (the delivery lost the race or tripped the 0171 unique
+ * index). BEST-EFFORT: a failure here is logged, never thrown — the receipt reverts to
+ * unlinked for manual triage, which is the safe state (worst case the row keeps a stale
+ * linked_delivery_id, discoverable and re-linkable). Guarded on the exact (id,
+ * linked_delivery_id) we set, so we never clobber a claim some other writer made.
+ */
+async function compensateReceiptClaim(sb: ServiceClient, receiptId: string, deliveryId: string): Promise<void> {
+  const { error } = await sb
+    .from("email_receipts")
+    .update({ linked_delivery_id: null })
+    .eq("id", receiptId)
+    .eq("linked_delivery_id", deliveryId);
+  if (error) {
+    console.error(`[email-receipts] compensateReceiptClaim failed for receipt=${receiptId} delivery=${deliveryId}:`, error.message);
+  }
+}
+
+/** Postgres unique-violation code (per pg docs) — the 0171 partial-unique index arbiter. */
+const PG_UNIQUE_VIOLATION = "23505";
 
 // ── (3) AUTO-LINK — internal, best-effort ───────────────────────────────────────────
 
@@ -400,22 +463,32 @@ export async function attemptAutoLink(receiptId: string): Promise<void> {
   if (list.length !== 1) return; // zero or many → leave unlinked for manual triage
   const deliveryId = list[0]!.id;
 
-  // Set the delivery side first (guarded), then the receipt side. If the delivery-side
-  // guard loses a race (count 0), we abort without touching the receipt.
+  // LINK ORDER: claim the RECEIPT side FIRST (count-checked — a loser aborts having
+  // touched nothing), THEN the delivery side (count-checked + 23505-guarded by the
+  // 0171 vendor_deliveries_email_receipt_uq index). If the delivery side loses the
+  // race, COMPENSATE by unsetting the receipt side (best-effort) and return silently —
+  // this is the internal best-effort path (never throws to the caller).
+  const { error: ruErr, count: rCount } = await sb
+    .from("email_receipts")
+    .update({ linked_delivery_id: deliveryId }, { count: "exact" })
+    .eq("id", r.id)
+    .is("linked_delivery_id", null);
+  if (ruErr || rCount === 0) return; // lost the receipt side (or read error) — abort untouched.
+
   const { error: duErr, count } = await sb
     .from("vendor_deliveries")
     .update({ email_receipt_id: r.id }, { count: "exact" })
     .eq("id", deliveryId)
     .is("email_receipt_id", null);
-  if (duErr || count === 0) return;
+  if (duErr || count === 0) {
+    // Delivery side lost (count 0) or tripped the unique index (23505): compensate by
+    // releasing the receipt claim we made, then bail silently for manual triage.
+    await compensateReceiptClaim(sb, r.id, deliveryId);
+    return;
+  }
 
-  const { error: ruErr } = await sb
-    .from("email_receipts")
-    .update({ linked_delivery_id: deliveryId })
-    .eq("id", r.id)
-    .is("linked_delivery_id", null);
-  if (ruErr) return; // best-effort; the delivery side is set, the pair is discoverable
-
+  // audit() is fail-open by contract (lib/audit.ts wraps the insert in try/catch and
+  // never throws) — safe to await here without poisoning this best-effort auto-link.
   await audit({
     actorId: null, actorRole: null,
     action: "delivery.receipt_linked", resourceTable: "vendor_deliveries", resourceId: deliveryId,
@@ -592,16 +665,11 @@ export async function linkReceipt(actor: AuthContext, receiptId: string, deliver
     throw new EmailReceiptError(409, "location_mismatch", "Receipt and delivery are at different locations");
   }
 
-  // Set the delivery side (guarded + rowcount-checked).
-  const { error: duErr, count } = await sb
-    .from("vendor_deliveries")
-    .update({ email_receipt_id: r.id }, { count: "exact" })
-    .eq("id", d.id)
-    .is("email_receipt_id", null);
-  if (duErr) throw new Error(`linkReceipt delivery update: ${duErr.message}`);
-  if (count === 0) throw new EmailReceiptError(409, "already_linked", "This delivery already has a receipt");
-
-  // Set the receipt side; an unattributed receipt inherits the delivery's location.
+  // LINK ORDER (race-safe): claim the RECEIPT side FIRST, count-checked — a loser aborts
+  // having touched nothing. An unattributed receipt inherits the delivery's location on
+  // this same claim. THEN the delivery side, count-checked + 23505-guarded (the 0171
+  // vendor_deliveries_email_receipt_uq index is the DB arbiter). If the delivery side
+  // loses (count 0 OR 23505), COMPENSATE by releasing the receipt claim, then 409.
   const receiptUpdate: { linked_delivery_id: string; location_id?: string } = { linked_delivery_id: deliveryId };
   if (r.location_id == null) receiptUpdate.location_id = d.location_id;
   const { error: ruErr, count: rCount } = await sb
@@ -611,6 +679,17 @@ export async function linkReceipt(actor: AuthContext, receiptId: string, deliver
     .is("linked_delivery_id", null);
   if (ruErr) throw new Error(`linkReceipt receipt update: ${ruErr.message}`);
   if (rCount === 0) throw new EmailReceiptError(409, "already_linked", "This receipt is already linked");
+
+  const { error: duErr, count } = await sb
+    .from("vendor_deliveries")
+    .update({ email_receipt_id: r.id }, { count: "exact" })
+    .eq("id", d.id)
+    .is("email_receipt_id", null);
+  if (duErr || count === 0) {
+    await compensateReceiptClaim(sb, r.id, deliveryId);
+    if (duErr && duErr.code !== PG_UNIQUE_VIOLATION) throw new Error(`linkReceipt delivery update: ${duErr.message}`);
+    throw new EmailReceiptError(409, "already_linked", "This delivery already has a receipt");
+  }
 
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,

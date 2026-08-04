@@ -3,89 +3,16 @@
 // RESEND_INBOUND_SECRET unset → 503 dormant-safe (cron pattern). Invalid sig → 401.
 // email.received → ingestInboundReceipt; other types → 200 ignored. Ledger failure → 500
 // (ledger-first law: we want Resend to retry when the storage/DB write failed).
-import { timingSafeEqual, createHmac } from "node:crypto";
 import { type NextRequest } from "next/server";
 import { jsonError, jsonOk } from "@/lib/api-helpers";
 import { ingestInboundReceipt } from "@/lib/email-receipts";
+import { verifySvixSignature } from "@/lib/webhook-verify-shared";
 
-// ── SVIX VERIFICATION (node:crypto only, no new deps) ──────────────────────────────────
+// ── SVIX VERIFICATION ──────────────────────────────────────────────────────────────────
 //
-// Signed content : "${svix-id}.${svix-timestamp}.${rawBody}"
-// Key            : base64-decode of the secret after stripping the "whsec_" prefix.
-// Expected       : base64(HMAC-SHA256(key, signedContent))
-// Header         : svix-signature contains space-separated "v1,<base64>" entries.
-// Freshness      : |now − svix-timestamp| > 300s → reject (EZCater convention).
-
-const SVIX_FRESHNESS_SEC = 300;
-const SVIX_PREFIX = "whsec_";
-
-/**
- * Decode the svix secret to a signing key. The secret is a base64-encoded 32-byte key
- * with a "whsec_" prefix. Returns null when the format is invalid.
- */
-function decodeSvixSecret(secret: string): Buffer | null {
-  if (!secret.startsWith(SVIX_PREFIX)) return null;
-  const b64 = secret.slice(SVIX_PREFIX.length);
-  try {
-    return Buffer.from(b64, "base64");
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Verify a Resend/Svix webhook signature.
- *
- * Returns true iff at least one "v1,<base64>" entry in svix-signature is a valid
- * HMAC-SHA256 of "${svixId}.${svixTimestamp}.${rawBody}" under the decoded secret key,
- * AND the timestamp is within the freshness window.
- *
- * Each candidate is compared with timingSafeEqual to prevent timing attacks. When
- * multiple candidates are present (key rotation), any match passes.
- */
-function verifySvixSignature(
-  secret: string,
-  svixId: string | null,
-  svixTimestamp: string | null,
-  svixSignature: string | null,
-  rawBody: string,
-  nowSec: number = Math.floor(Date.now() / 1000),
-): boolean {
-  if (!svixId || !svixTimestamp || !svixSignature) return false;
-
-  // Freshness — numeric timestamp in seconds.
-  const ts = Number(svixTimestamp);
-  if (!Number.isFinite(ts) || ts <= 0) return false;
-  if (Math.abs(nowSec - ts) > SVIX_FRESHNESS_SEC) return false;
-
-  const key = decodeSvixSecret(secret);
-  if (!key) return false;
-
-  const signedContent = `${svixId}.${svixTimestamp}.${rawBody}`;
-  const expected = createHmac("sha256", key).update(signedContent).digest("base64");
-  const expectedBuf = Buffer.from(expected);
-
-  // svix-signature is space-separated "v1,<base64>" entries (key rotation support).
-  const candidates = svixSignature.split(" ").filter(Boolean);
-  for (const entry of candidates) {
-    // Strip the "v1," prefix (version tag). Unknown version prefixes are skipped.
-    if (!entry.startsWith("v1,")) continue;
-    const candidateB64 = entry.slice(3); // after "v1,"
-    let candidateBuf: Buffer;
-    try {
-      candidateBuf = Buffer.from(candidateB64, "base64");
-    } catch {
-      continue;
-    }
-    // Timing-safe compare: buffers must be the same length (base64 encodes to a fixed
-    // length for a given HMAC size, so a length mismatch means a different algorithm —
-    // not a timing oracle, just a short-circuit skip).
-    if (candidateBuf.length === expectedBuf.length && timingSafeEqual(candidateBuf, expectedBuf)) {
-      return true;
-    }
-  }
-  return false;
-}
+// The pure verifier lives in lib/webhook-verify-shared.ts (zero I/O — unit-tested in the
+// vitest spine). Signed content is "${svix-id}.${svix-timestamp}.${rawBody}", HMAC-SHA256
+// under the base64-decoded whsec_ secret, base64-compared timing-safe, 300s freshness.
 
 // ── PAYLOAD DEFENSIVENESS ──────────────────────────────────────────────────────────────
 //
@@ -193,6 +120,9 @@ export async function POST(req: NextRequest) {
   }
 
   // LEDGER-FIRST: ingestInboundReceipt throws on storage or DB failure → 500 → Resend retries.
+  // IDEMPOTENCY: the svix-id uniquely identifies a Resend delivery attempt; passing it as
+  // externalId dedupes retries (Resend re-delivers on our 500s) so a replay never creates a
+  // duplicate receipt row (migration 0171 email_receipts_external_uq).
   try {
     const { receiptId } = await ingestInboundReceipt({
       toAddress,
@@ -200,6 +130,7 @@ export async function POST(req: NextRequest) {
       subject,
       rawEml,
       attachments,
+      externalId: svixId,
     });
     return jsonOk({ receiptId });
   } catch (e) {

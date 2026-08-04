@@ -305,11 +305,15 @@ async function loadInferredConsumedOz(
   const cutoffDate = cutoffIso.slice(0, 10); // YYYY-MM-DD for the business_date filter.
 
   // Production lane — live productions at this location in the window, then inputs.
+  // WINDOW BOUNDARY: inclusive (.gte) on the cutoff instant so both lanes intend the
+  // SAME calendar window — the sales lane filters business_date >= cutoffDate (a bare
+  // date, inherently inclusive of that whole day), so production uses .gte(cutoffIso)
+  // to match (a production exactly at the cutoff instant belongs to the 28-day window).
   const { data: prodHdrs, error: phErr } = await sb.from("productions")
     .select("id")
     .eq("location_id", locationId)
     .is("superseded_at", null).is("revoked_at", null)
-    .gt("produced_at", cutoffIso)
+    .gte("produced_at", cutoffIso)
     .returns<Array<{ id: string }>>();
   if (phErr) throw new Error(`loadInferredConsumedOz productions: ${phErr.message}`);
   const prodIds = (prodHdrs ?? []).map((h) => h.id);
@@ -443,44 +447,61 @@ async function loadInferredRows(
     sb, locationId, earliestSalesDate, etBusinessDate(new Date(now).toISOString()),
   );
 
-  // Build a weight row per inferred SKU: anchor + received-since − consumed-since,
-  // accrued from computed_at exactly like a census weight row (drift is source-blind).
-  return Promise.all(
-    inferredIds.map(async (skuId): Promise<OnHandRow> => {
-      const b = baselineBySku.get(skuId)!;
+  // BATCHED (mirrors the census path's array-taking calls): the since-helpers all take
+  // a full skuIds array + one anchorAt, and detectRetroEditStaleness is location+time
+  // scoped (identical for every SKU sharing an anchorAt). Group inferred SKUs by their
+  // EXACT anchorAt, then make ONE call per since-helper per group and ONE staleness
+  // probe per distinct anchorAt — N×4 per-SKU queries collapse to 4 per anchor-group.
+  // Day-one cold start = every SKU anchored at now() → a SINGLE group.
+  const idsByAnchorAt = new Map<string, string[]>();
+  for (const id of inferredIds) {
+    const at = baselineBySku.get(id)!.anchorAt;
+    let group = idsByAnchorAt.get(at);
+    if (!group) { group = []; idsByAnchorAt.set(at, group); }
+    group.push(id);
+  }
+
+  const rowGroups = await Promise.all(
+    [...idsByAnchorAt.entries()].map(async ([anchorAt, groupIds]): Promise<OnHandRow[]> => {
       const [receivedSince, consumedSince, salesSince, anchorStale] = await Promise.all([
-        sumReceivedOzSince(sb, [skuId], locationId, b.anchorAt),
-        sumConsumedOzSince(sb, [skuId], locationId, b.anchorAt),
-        sumSalesDirectOzSince(sb, [skuId], locationId, b.anchorAt, gapDates),
-        detectRetroEditStaleness(sb, locationId, b.anchorAt, now),
+        sumReceivedOzSince(sb, groupIds, locationId, anchorAt),
+        sumConsumedOzSince(sb, groupIds, locationId, anchorAt),
+        sumSalesDirectOzSince(sb, groupIds, locationId, anchorAt, gapDates),
+        detectRetroEditStaleness(sb, locationId, anchorAt, now),
       ]);
-      const prodSince = consumedSince.get(skuId) ?? null;
-      const salesSinceOz = salesSince.get(skuId) ?? null;
-      const onHand = computeOnHand(
-        {
-          skuId,
-          anchorOz: b.inferredOz,
-          anchorAt: b.anchorAt,
-          receivedSinceOz: receivedSince.get(skuId) ?? null,
-          consumedSinceOz: prodSince == null || salesSinceOz == null ? null : prodSince + salesSinceOz,
-          anchorStale,
-          anchorSource: "inferred", // DISPLAY provenance — never touches the math.
-        },
-        now,
-      );
-      return {
-        dimension: "weight",
-        ...onHand,
-        skuName: skuName.get(skuId) ?? "(sku)",
-        // VARIANCE IS CENSUS-ONLY (D6): an inferred baseline is not a counted ground
-        // truth, so it can never be a variance reference. Always null here. We do NOT
-        // call computeVariance for inferred rows.
-        varianceOz: null,
-        looseLineCount: 0,
-        partialLineCount: 0,
-      };
+      // Build a weight row per SKU in the group: anchor + received-since − consumed-since,
+      // accrued from computed_at exactly like a census weight row (drift is source-blind).
+      return groupIds.map((skuId): OnHandRow => {
+        const b = baselineBySku.get(skuId)!;
+        const prodSince = consumedSince.get(skuId) ?? null;
+        const salesSinceOz = salesSince.get(skuId) ?? null;
+        const onHand = computeOnHand(
+          {
+            skuId,
+            anchorOz: b.inferredOz,
+            anchorAt: b.anchorAt,
+            receivedSinceOz: receivedSince.get(skuId) ?? null,
+            consumedSinceOz: prodSince == null || salesSinceOz == null ? null : prodSince + salesSinceOz,
+            anchorStale,
+            anchorSource: "inferred", // DISPLAY provenance — never touches the math.
+          },
+          now,
+        );
+        return {
+          dimension: "weight",
+          ...onHand,
+          skuName: skuName.get(skuId) ?? "(sku)",
+          // VARIANCE IS CENSUS-ONLY (D6): an inferred baseline is not a counted ground
+          // truth, so it can never be a variance reference. Always null here. We do NOT
+          // call computeVariance for inferred rows.
+          varianceOz: null,
+          looseLineCount: 0,
+          partialLineCount: 0,
+        };
+      });
     }),
   );
+  return rowGroups.flat();
 }
 
 /**
