@@ -4,11 +4,18 @@ import { serverT } from "@/lib/i18n/server";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { loadDeliveryDetail, ReceivingError } from "@/lib/receiving";
 import { loadCreditsForDelivery, CreditError } from "@/lib/credits";
+import {
+  loadReceiptForDelivery,
+  listUnlinkedReceipts,
+  EmailReceiptError,
+} from "@/lib/email-receipts";
 import { BackLink } from "@/components/nav/BackLink";
 import { AlertPill } from "@/components/ui/AlertPill";
 import { CreditResolveControls } from "@/components/receiving/CreditResolveControls";
+import { VendorClaimPanel } from "@/components/receiving/VendorClaimPanel";
 import type { DeliveryDetail } from "@/lib/receiving";
 import type { CreditRow } from "@/lib/credits";
+import type { DeliveryReceiptView, UnlinkedReceiptView } from "@/lib/email-receipts";
 import type { TranslationKey } from "@/lib/i18n/types";
 
 /** Per-line discrepancy flag → its i18n label key (shared with the door form flags). */
@@ -33,15 +40,42 @@ export default async function DeliveryDetailPage({ params }: { params: Promise<{
     throw e;
   }
 
-  // Credits filed against this delivery (KH+ read gate in the lib). A CreditError
-  // here means the same 404/location-bind failure as the delivery load → dashboard.
+  // Credits filed against this delivery + the linked email receipt (vendor claim). Both
+  // are KH+ read gates in their libs; a CreditError/EmailReceiptError here is the same
+  // 404/location-bind failure as the delivery load → dashboard.
   let credits: CreditRow[] = [];
+  let receipt: DeliveryReceiptView | null = null;
   try {
-    credits = await loadCreditsForDelivery(auth, id);
+    [credits, receipt] = await Promise.all([
+      loadCreditsForDelivery(auth, id),
+      loadReceiptForDelivery(auth, id),
+    ]);
   } catch (e) {
-    if (e instanceof CreditError) redirect("/dashboard");
+    if (e instanceof CreditError || e instanceof EmailReceiptError) redirect("/dashboard");
     throw e;
   }
+
+  // The two-way-match compare panel. When NO receipt is linked, load the location's
+  // unlinked-receipt triage queue server-side so the manager can link an existing one
+  // (the panel keeps that list default-collapsed per the disclosure doctrine). When a
+  // receipt IS linked, the queue is irrelevant → don't spend the query.
+  let unlinked: UnlinkedReceiptView[] = [];
+  if (receipt === null) {
+    try {
+      unlinked = await listUnlinkedReceipts(auth, detail.locationId);
+    } catch (e) {
+      if (e instanceof EmailReceiptError) redirect("/dashboard");
+      throw e;
+    }
+  }
+
+  // "What we counted" summary for the compare panel — the already-loaded detail lines,
+  // shaped to the panel's contract (server builds it; the client only displays).
+  const countedSummary = detail.lines.map((l) => ({
+    skuName: l.skuName,
+    qty: l.qtyReceived,
+    level: l.receivedLevelLabel,
+  }));
 
   return (
     <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
@@ -100,6 +134,19 @@ export default async function DeliveryDetailPage({ params }: { params: Promise<{
           </Link>
         </div>
       ) : null}
+
+      {/* Vendor-claim two-way-match compare + link/attest (client island). Server-fed
+          receipt + counted summary + unlinked queue; the island drives the API. */}
+      <VendorClaimPanel
+        deliveryId={detail.id}
+        locationId={detail.locationId}
+        actorLevel={auth.level}
+        receipt={receipt}
+        countedSummary={countedSummary}
+        matchState={detail.matchState}
+        unlinked={unlinked}
+        lang={lang}
+      />
 
       <h2 className="mt-5 text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">{serverT(lang, "receiving.detail.items")}</h2>
       <ul className="mt-2 flex flex-col gap-1.5">
