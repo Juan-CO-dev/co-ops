@@ -34,7 +34,12 @@ export async function GET(req: NextRequest) {
 
   try {
     // eventId branch: one par-pass detail (its own location_id binds the read).
+    // Exclusive with locationId — reject the ambiguous ?eventId=&locationId= combination
+    // before any locationId handling (mirrors the credits route's exclusive-param idiom).
     if (typeof eventId === "string" && eventId) {
+      if (typeof locationId === "string" && locationId) {
+        return jsonError(400, "invalid_payload", { message: "Provide eventId OR locationId, not both" });
+      }
       const detail = await loadParPassDetail(ctx, eventId);
       return jsonOk({ detail });
     }

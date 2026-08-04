@@ -62,6 +62,28 @@ const SOURCE_KEY: Record<string, TranslationKey> = {
   inferred: "ordering.source.inferred",
 };
 
+// ── Href hygiene helpers (security-adjacent; Fix 3) ──────────────────────────────
+/** True when `addr` is a syntactically safe email address for a mailto: href.
+ *  encodeURIComponent is wrong for the address part (it encodes @); we validate
+ *  with a conservative regex instead and render the link only when it passes. */
+function isValidEmail(addr: string): boolean {
+  return /^[^\s@?#&]+@[^\s@?#&]+$/.test(addr);
+}
+/** True when `raw` is an http/https URL. Render the anchor only when valid. */
+function isValidHttpUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+/** True when `raw` is a plausible telephone value (digits/+/parens/dash/space, ≥7 digits). */
+function isValidTel(raw: string): boolean {
+  const stripped = raw.replace(/[^\d]/g, "");
+  return /^[\d+()\-\s]+$/.test(raw) && stripped.length >= 7;
+}
+
 /** Parse a raw qty string → a non-negative finite number, or null when blank/invalid. */
 function parseQty(raw: string): number | null {
   const v = raw.trim();
@@ -704,31 +726,44 @@ function DeliveryRow({
   const { t } = useTranslation();
   const label = detail.label ?? methodLabel(detail.method, t);
 
-  // mailto: subject + body are URL-encoded via encodeURIComponent (mailto injection
-  // guard — a rogue vendor value can't smuggle headers). The address itself is the
-  // raw value; only the query params are encoded.
-  const mailtoHref = `mailto:${detail.value}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-  const telHref = `tel:${detail.value}`;
-
+  // Href hygiene: each method renders its action link ONLY when the value passes
+  // a conservative validation check. Copy is always available as a fallback.
+  // mailto: subject + body are URL-encoded (injection guard — rogue values can't
+  // smuggle headers); the address is validated with isValidEmail (encodeURIComponent
+  // encodes @ and is wrong for the address segment).
   let action: React.ReactNode;
   if (detail.method === "email") {
-    action = (
-      <a href={mailtoHref} className={linkBtn}>
-        {t("ordering.deliver.email")}
-      </a>
-    );
+    if (isValidEmail(detail.value)) {
+      const mailtoHref = `mailto:${detail.value}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+      action = (
+        <a href={mailtoHref} className={linkBtn}>
+          {t("ordering.deliver.email")}
+        </a>
+      );
+    } else {
+      action = null; // invalid address → Copy-only.
+    }
   } else if (detail.method === "url" || detail.method === "portal") {
-    action = (
-      <a href={detail.value} target="_blank" rel="noopener noreferrer" className={linkBtn}>
-        {t("ordering.deliver.open")}
-      </a>
-    );
+    if (isValidHttpUrl(detail.value)) {
+      action = (
+        <a href={detail.value} target="_blank" rel="noopener noreferrer" className={linkBtn}>
+          {t("ordering.deliver.open")}
+        </a>
+      );
+    } else {
+      action = null; // non-http(s) value → Copy-only.
+    }
   } else if (detail.method === "phone") {
-    action = (
-      <a href={telHref} className={linkBtn}>
-        {t("ordering.deliver.call")}
-      </a>
-    );
+    if (isValidTel(detail.value)) {
+      const telHref = `tel:${detail.value.replace(/[^\d+()\-\s]/g, "")}`;
+      action = (
+        <a href={telHref} className={linkBtn}>
+          {t("ordering.deliver.call")}
+        </a>
+      );
+    } else {
+      action = null; // implausible tel → Copy-only.
+    }
   } else {
     // other / none → copy only (no navigable affordance).
     action = null;

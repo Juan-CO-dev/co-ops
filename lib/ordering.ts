@@ -92,6 +92,22 @@ function isWeekendParDay(d: Date): boolean {
 }
 
 /**
+ * ET-anchored walk-day derivation — the SINGLE authority for both loadWalkerData and
+ * submitParPass. Vercel runs UTC, and evening walks (exactly when shops order) must not
+ * roll into tomorrow's weekday. etBusinessDate gives the ET calendar date; parsing it
+ * at local midnight preserves the date components, so getDay() is that ET date's weekday
+ * regardless of server TZ. Both functions MUST use this helper — never call new Date()
+ * or isWeekendParDay() in day-rule context.
+ */
+function etWalkDay(): { walkDateEt: string; weekend: boolean; todayDow: number } {
+  const walkDateEt = etBusinessDate(new Date().toISOString());
+  const etDate = new Date(`${walkDateEt}T00:00:00`);
+  const weekend = isWeekendParDay(etDate);
+  const todayDow = etDate.getDay(); // 0=Sun..6=Sat (order_days convention).
+  return { walkDateEt, weekend, todayDow };
+}
+
+/**
  * The par that applies on the walk day: weekend_par when it is a weekend-par day AND
  * weekend_par is set, else weekday_par. Returns { par, isWeekend } — par is null only
  * when NEITHER par is set (such a SKU is excluded from the walk by the caller).
@@ -265,14 +281,9 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
     throw new OrderingError(404, "not_found", "Location not found");
   }
   const sb = getServiceRoleClient();
-  // ET-anchored walk day: Vercel runs UTC, and evening walks (exactly when shops
-  // order) must not roll into tomorrow's weekday. etBusinessDate gives the ET
-  // calendar date; parsing it at local midnight preserves the date components, so
-  // getDay() is that ET date's weekday regardless of server TZ.
-  const walkDateEt = etBusinessDate(new Date().toISOString());
-  const etDate = new Date(`${walkDateEt}T00:00:00`);
-  const weekend = isWeekendParDay(etDate);
-  const todayDow = etDate.getDay(); // 0=Sun..6=Sat (order_days convention).
+  // ET-anchored walk day (single authority — etWalkDay()). Never inline this derivation
+  // again; all day-rule consumers must call etWalkDay() to stay in sync with the display.
+  const { walkDateEt, weekend, todayDow } = etWalkDay();
 
   // Active par'd SKUs (global rows; item spine is location-scoped via the ledgers, not
   // the vendor_items row — same as counts/receiving). A SKU with neither par is excluded.
@@ -481,6 +492,8 @@ export async function submitParPass(
   }
   for (const l of lines) {
     if (typeof l.skuId !== "string" || !l.skuId) throw new OrderingError(400, "invalid_sku", "Each line needs a SKU");
+    // Fractional order_qty is TOLERATED by design: seeded pars are fractional (e.g.
+    // 0.25 jug) and submit must accept the matching fractional input without rounding.
     if (!Number.isFinite(l.orderQty) || l.orderQty < 0) throw new OrderingError(400, "invalid_qty", "Order qty must be zero or greater");
   }
   // Reject duplicate SKUs in one submission (a line grain is per-SKU; two rows for one
@@ -491,8 +504,8 @@ export async function submitParPass(
   }
 
   const sb = getServiceRoleClient();
-  const now = new Date();
-  const weekend = isWeekendParDay(now);
+  // ET-anchored weekend rule — must match what loadWalkerData showed the manager.
+  const { weekend } = etWalkDay();
 
   // Load the referenced SKUs (active + par shape + pack fields for oz). A SKU missing,
   // inactive, or with no applicable par today is rejected loudly (can't order to no par).
@@ -656,10 +669,13 @@ async function buildDraftOrders(
 // ── loadShrinkageSignals: cheap read-time divergence for the mid-shift pulse ──────
 /**
  * Shrinkage signal for the mid-shift pulse (Task 3 caller). The LATEST submitted
- * par-pass event within 48h at this location; recompute the divergence set for its
+ * par-pass event within 72h at this location; recompute the divergence set for its
  * lines against the CURRENT computed on-hand (same threshold as submit). Older than
- * 48h (or no event) → count 0. KH+ read + location-bind. CHEAP: one event lookup +
+ * 72h (or no event) → count 0. KH+ read + location-bind. CHEAP: one event lookup +
  * its lines + ONE loadOnHand pass (the pulse loader budget). Persists nothing.
+ *
+ * 72h (not 48h): a Friday-evening walk must still surface on Monday morning. The
+ * Friday→Monday gap is ~60h at worst; 72h clears it with a comfortable buffer.
  */
 export async function loadShrinkageSignals(
   actor: AuthContext,
@@ -670,7 +686,9 @@ export async function loadShrinkageSignals(
     throw new OrderingError(404, "not_found", "Location not found");
   }
   const sb = getServiceRoleClient();
-  const cutoffIso = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+  // 72h window: Friday-evening walks must still surface on Monday morning (the
+  // Friday→Monday gap is ~60h; 72h clears it with a comfortable buffer).
+  const cutoffIso = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
 
   const { data: ev, error: evErr } = await sb.from("par_pass_events")
     .select("id")
