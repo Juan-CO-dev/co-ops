@@ -60,6 +60,10 @@ export interface SkuView {
   itemNumber: string | null;
   sourceUrl: string | null;
   leadTimeDays: number | null;
+  /** Ordering par in purchase units (Mon–Thu default). Drives the ordering walk. */
+  weekdayPar: number | null;
+  /** Ordering par in purchase units for Fri–Sun. Falls back to weekdayPar when null. */
+  weekendPar: number | null;
   notes: string | null;
   active: boolean;
   /** Taxonomy class (0157): raw | packaging | cleaning | misc. */
@@ -129,6 +133,15 @@ function normalizeEachSize(v: number | null | undefined): number | null {
   return v;
 }
 
+/** weekday_par / weekend_par: null clears; a value must be a finite non-negative number. */
+function normalizePar(v: number | null | undefined, field: string): number | null {
+  if (v === null || v === undefined) return null;
+  if (!Number.isFinite(v) || v < 0) {
+    throw new AdminSkuError(400, `invalid_${field}`, `${field} must be a non-negative number`);
+  }
+  return v;
+}
+
 /** avg_oz_per_each: null clears; a value must be a positive number. */
 function normalizeAvgOzPerEach(v: number | null | undefined): number | null {
   if (v === null || v === undefined) return null;
@@ -178,6 +191,8 @@ interface DbSkuRow {
   item_number: string | null;
   source_url: string | null;
   lead_time_days: number | null;
+  weekday_par: number | string | null;
+  weekend_par: number | string | null;
   notes: string | null;
   active: boolean | null;
   sku_class: SkuClass | null;
@@ -185,7 +200,7 @@ interface DbSkuRow {
 
 // sku_class rides the STAGED 0157 migration (merges with it in this PR).
 const SKU_COLS =
-  "id, vendor_id, location_id, name, pack_format, units_per_pack, each_size, each_measure, each_container_label, item_number, source_url, lead_time_days, notes, active, avg_oz_per_each, sku_class";
+  "id, vendor_id, location_id, name, pack_format, units_per_pack, each_size, each_measure, each_container_label, item_number, source_url, lead_time_days, weekday_par, weekend_par, notes, active, avg_oz_per_each, sku_class";
 
 function toNum(v: number | string | null): number | null {
   if (v === null) return null;
@@ -240,6 +255,8 @@ async function hydrateSkus(rows: DbSkuRow[]): Promise<SkuView[]> {
     itemNumber: r.item_number,
     sourceUrl: r.source_url,
     leadTimeDays: r.lead_time_days,
+    weekdayPar: toNum(r.weekday_par),
+    weekendPar: toNum(r.weekend_par),
     notes: r.notes,
     active: r.active ?? true, // nullable in DB → treat null as active
     skuClass: r.sku_class ?? "raw", // default to raw (matches the 0157 column default)
@@ -508,6 +525,8 @@ export interface UpdateSkuChanges {
   itemNumber?: string | null;
   sourceUrl?: string | null;
   leadTimeDays?: number | null;
+  weekdayPar?: number | null;
+  weekendPar?: number | null;
   notes?: string | null;
   skuClass?: SkuClass;
 }
@@ -547,6 +566,8 @@ export async function updateSku(
   if (changes.itemNumber !== undefined) update.item_number = normalizeOptional(changes.itemNumber);
   if (changes.sourceUrl !== undefined) update.source_url = normalizeOptional(changes.sourceUrl);
   if (changes.leadTimeDays !== undefined) update.lead_time_days = normalizeLeadTime(changes.leadTimeDays);
+  if (changes.weekdayPar !== undefined) update.weekday_par = normalizePar(changes.weekdayPar, "weekday_par");
+  if (changes.weekendPar !== undefined) update.weekend_par = normalizePar(changes.weekendPar, "weekend_par");
   if (changes.notes !== undefined) update.notes = normalizeOptional(changes.notes);
   if (changes.skuClass !== undefined) {
     if (!isSkuClass(changes.skuClass)) throw new AdminSkuError(400, "invalid_sku_class", "Unknown SKU class");

@@ -77,6 +77,8 @@ export interface SkuFormValues {
   itemNumber: string | null;
   sourceUrl: string | null;
   leadTimeDays: number | null;
+  weekdayPar: number | null;
+  weekendPar: number | null;
   notes: string | null;
   skuClass: SkuClass;
 }
@@ -214,6 +216,8 @@ export function SkuBuilder({
   const [itemNumber, setItemNumber] = useState(initial?.itemNumber ?? "");
   const [sourceUrl, setSourceUrl] = useState(initial?.sourceUrl ?? "");
   const [leadTime, setLeadTime] = useState(initial?.leadTimeDays != null ? String(initial.leadTimeDays) : "");
+  const [weekdayPar, setWeekdayPar] = useState(initial?.weekdayPar != null ? String(initial.weekdayPar) : "");
+  const [weekendPar, setWeekendPar] = useState(initial?.weekendPar != null ? String(initial.weekendPar) : "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
 
   // ── Section B wizard state (unchained path — add + unchained edit) ──
@@ -263,6 +267,8 @@ export function SkuBuilder({
     itemNumber: itemNumber.trim() || null,
     sourceUrl: sourceUrl.trim() || null,
     leadTimeDays: parseNum(leadTime),
+    weekdayPar: parseNum(weekdayPar),
+    weekendPar: parseNum(weekendPar),
     notes: notes.trim() || null,
     skuClass,
   });
@@ -391,6 +397,35 @@ export function SkuBuilder({
         <Labeled label={t("admin.skus.field.lead_time")}>
           <input className={fieldCls} type="number" min={0} step={1} inputMode="numeric" value={leadTime} disabled={busy} onChange={(e) => setLeadTime(e.target.value)} />
         </Labeled>
+        <div className="grid grid-cols-2 gap-3">
+          <Labeled label={t("admin.skus.field.weekday_par")}>
+            <input
+              className={fieldCls}
+              type="number"
+              min={0}
+              step="any"
+              inputMode="decimal"
+              value={weekdayPar}
+              disabled={busy}
+              aria-label={t("admin.skus.field.weekday_par")}
+              onChange={(e) => setWeekdayPar(e.target.value)}
+            />
+          </Labeled>
+          <Labeled label={t("admin.skus.field.weekend_par")}>
+            <input
+              className={fieldCls}
+              type="number"
+              min={0}
+              step="any"
+              inputMode="decimal"
+              value={weekendPar}
+              disabled={busy}
+              aria-label={t("admin.skus.field.weekend_par")}
+              onChange={(e) => setWeekendPar(e.target.value)}
+            />
+          </Labeled>
+        </div>
+        <p className="text-xs text-co-text-muted">{t("admin.skus.par_hint")}</p>
         <Labeled label={t("admin.skus.field.notes")}>
           <textarea className={fieldCls} rows={2} value={notes} disabled={busy} onChange={(e) => setNotes(e.target.value)} />
         </Labeled>
