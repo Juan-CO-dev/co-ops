@@ -22,6 +22,7 @@ import {
   computeOnHandUnits,
   computeVariance,
   computeUsedOrLost,
+  computeInferredBaselineOz,
   anchorAgeDays,
   chainLabelsInWalkOrder,
   type CountLineForAnchor,
@@ -211,7 +212,7 @@ describe("computeOnHand — Juan's feed/verify model (oz-native)", () => {
   const now = Date.parse("2026-07-27T12:00:00Z");
   it("on-hand = anchor + received − consumed", () => {
     const r = computeOnHand(
-      { skuId: "cap", anchorOz: 374, anchorAt: "2026-07-25T12:00:00Z", receivedSinceOz: 136, consumedSinceOz: 100, anchorStale: false },
+      { skuId: "cap", anchorOz: 374, anchorAt: "2026-07-25T12:00:00Z", receivedSinceOz: 136, consumedSinceOz: 100, anchorStale: false, anchorSource: "census" },
       now,
     );
     expect(r.driftOz).toBe(36); // 136 − 100
@@ -221,7 +222,7 @@ describe("computeOnHand — Juan's feed/verify model (oz-native)", () => {
 
   it("null received → null drift → null on-hand (advisory, never fabricated)", () => {
     const r = computeOnHand(
-      { skuId: "cap", anchorOz: 374, anchorAt: "2026-07-25T12:00:00Z", receivedSinceOz: null, consumedSinceOz: 100, anchorStale: false },
+      { skuId: "cap", anchorOz: 374, anchorAt: "2026-07-25T12:00:00Z", receivedSinceOz: null, consumedSinceOz: 100, anchorStale: false, anchorSource: "census" },
       now,
     );
     expect(r.driftOz).toBeNull();
@@ -230,7 +231,7 @@ describe("computeOnHand — Juan's feed/verify model (oz-native)", () => {
 
   it("null consumed → null drift → null on-hand", () => {
     const r = computeOnHand(
-      { skuId: "cap", anchorOz: 374, anchorAt: "2026-07-25T12:00:00Z", receivedSinceOz: 136, consumedSinceOz: null, anchorStale: false },
+      { skuId: "cap", anchorOz: 374, anchorAt: "2026-07-25T12:00:00Z", receivedSinceOz: 136, consumedSinceOz: null, anchorStale: false, anchorSource: "census" },
       now,
     );
     expect(r.driftOz).toBeNull();
@@ -239,7 +240,7 @@ describe("computeOnHand — Juan's feed/verify model (oz-native)", () => {
 
   it("never-counted SKU (null anchor) → null on-hand even with clean drift", () => {
     const r = computeOnHand(
-      { skuId: "cap", anchorOz: null, anchorAt: null, receivedSinceOz: 136, consumedSinceOz: 100, anchorStale: false },
+      { skuId: "cap", anchorOz: null, anchorAt: null, receivedSinceOz: 136, consumedSinceOz: 100, anchorStale: false, anchorSource: null },
       now,
     );
     expect(r.driftOz).toBe(36);
@@ -249,10 +250,57 @@ describe("computeOnHand — Juan's feed/verify model (oz-native)", () => {
 
   it("carries the retro-edit staleness flag through", () => {
     const r = computeOnHand(
-      { skuId: "cap", anchorOz: 100, anchorAt: "2026-07-25T12:00:00Z", receivedSinceOz: 0, consumedSinceOz: 0, anchorStale: true },
+      { skuId: "cap", anchorOz: 100, anchorAt: "2026-07-25T12:00:00Z", receivedSinceOz: 0, consumedSinceOz: 0, anchorStale: true, anchorSource: "census" },
       now,
     );
     expect(r.anchorStale).toBe(true);
+  });
+
+  it("carries anchorSource through UNTOUCHED (display provenance) and the math stays source-blind", () => {
+    // Identical numeric inputs, only anchorSource differs → identical math, differing provenance.
+    const base = { skuId: "cap", anchorOz: 374, anchorAt: "2026-07-25T12:00:00Z", receivedSinceOz: 136, consumedSinceOz: 100, anchorStale: false } as const;
+    const census = computeOnHand({ ...base, anchorSource: "census" }, now);
+    const inferred = computeOnHand({ ...base, anchorSource: "inferred" }, now);
+    expect(census.anchorSource).toBe("census");
+    expect(inferred.anchorSource).toBe("inferred");
+    // Source is display-only: the numbers must be byte-identical regardless of provenance.
+    expect(census.onHandOz).toBe(inferred.onHandOz);
+    expect(census.driftOz).toBe(inferred.driftOz);
+    expect(census.onHandOz).toBe(410);
+  });
+});
+
+// ── Inference bootstrap (spec D6; WINDOW_DAYS=28, COVERAGE_DAYS=7) ──────────────
+// computeInferredBaselineOz gives an on-hand cold-start from consumption run-rate:
+// dailyAvg = totalConsumedOz / windowDays (CALENDAR window), inferredOz = dailyAvg
+// × coverageDays. Null when there's no positive, finite consumption to run-rate
+// from (advisory-null law — zero-consumption SKUs get NO baseline, never fabricated).
+describe("computeInferredBaselineOz — consumption run-rate baseline (D6)", () => {
+  it("280 oz over 28d → dailyAvg 10, inferred 70 (7 coverage days)", () => {
+    const r = computeInferredBaselineOz(280);
+    expect(r).not.toBeNull();
+    expect(r!.dailyAvgOz).toBe(10); // 280 / 28
+    expect(r!.inferredOz).toBe(70); // 10 × 7
+  });
+
+  it("zero consumption → null (no baseline; advisory-null stays)", () => {
+    expect(computeInferredBaselineOz(0)).toBeNull();
+  });
+
+  it("negative total → null (never fabricate from garbage)", () => {
+    expect(computeInferredBaselineOz(-5)).toBeNull();
+  });
+
+  it("non-finite total (NaN / Infinity) → null", () => {
+    expect(computeInferredBaselineOz(Number.NaN)).toBeNull();
+    expect(computeInferredBaselineOz(Number.POSITIVE_INFINITY)).toBeNull();
+  });
+
+  it("respects custom window/coverage params (calendar window normalization)", () => {
+    // 140 oz over a 14d window = 10/day; cover 3 days → 30 oz.
+    const r = computeInferredBaselineOz(140, 14, 3);
+    expect(r!.dailyAvgOz).toBe(10);
+    expect(r!.inferredOz).toBe(30);
   });
 });
 

@@ -1,6 +1,9 @@
 import { serverT } from "@/lib/i18n/server";
+import { formatDateLabel } from "@/lib/i18n/format";
 import type { Language } from "@/lib/i18n/types";
+import type { AnchorSource } from "@/lib/counts-shared";
 import type { OnHandView, OnHandRow, OnHandWeightRow, OnHandCountRow } from "@/lib/counts";
+import { AlertPill } from "@/components/ui/AlertPill";
 
 /**
  * On-hand panel (server-rendered). PER-SKU anchors (F1): each row's anchor timestamp
@@ -13,13 +16,18 @@ import type { OnHandView, OnHandRow, OnHandWeightRow, OnHandCountRow } from "@/l
  * verify, the difference is variance (weight) / "used or lost" (count).
  */
 export function OnHandPanel({ view, lang }: { view: OnHandView; lang: Language }) {
-  if (view.anchorAt == null || view.rows.length === 0) {
+  // Show the panel whenever there are rows — a location may have NO census event yet
+  // and still surface inferred baselines (spec D6 cold-start). The `anchorAt` header
+  // hint is census-only (the last physical count) and is omitted when null.
+  if (view.rows.length === 0) {
     return <p className="mt-2 text-[11px] italic text-co-text-muted">{serverT(lang, "counts.onhand.none")}</p>;
   }
   return (
     <div className="mt-2">
       <p className="text-[11px] text-co-text-dim">
-        {serverT(lang, "counts.onhand.anchor_at", { date: view.anchorAt.slice(0, 10) })}
+        {view.anchorAt != null
+          ? serverT(lang, "counts.onhand.anchor_at", { date: view.anchorAt.slice(0, 10) })
+          : serverT(lang, "counts.onhand.inferred_header")}
         {view.salesThrough != null
           ? ` · ${serverT(lang, "counts.onhand.sales_through", { date: view.salesThrough })}`
           : ""}
@@ -46,6 +54,28 @@ function disjointAnnotations(r: OnHandRow, lang: Language) {
   );
 }
 
+/**
+ * Per-row anchor-provenance chip (spec D6). A census anchor shows "Audited {date}"
+ * (the house date formatter); an inferred baseline shows "Inferred" in the info
+ * tone (neutral — a cold-start estimate, not a fault). Count rows are always census
+ * (packaging has no consumption ledger to infer from) → treated as census here.
+ */
+function SourceChip({ source, anchorAt, lang }: { source: AnchorSource; anchorAt: string | null; lang: Language }) {
+  if (source === "inferred") {
+    return (
+      <AlertPill tone="info" uppercase={false} className="shrink-0">
+        {serverT(lang, "counts.onhand.source_inferred")}
+      </AlertPill>
+    );
+  }
+  // Census (explicit or the count-row default) — an audited on-hand as of the anchor.
+  return (
+    <span className="shrink-0 text-[11px] font-medium text-co-text-muted">
+      {serverT(lang, "counts.onhand.source_audited", { date: anchorAt != null ? formatDateLabel(anchorAt.slice(0, 10), lang) : "—" })}
+    </span>
+  );
+}
+
 /** Weight-anchored row (raw SKU) — oz drift + variance, unchanged voice. */
 function WeightRow({ r, lang }: { r: OnHandWeightRow; lang: Language }) {
   const oz = (v: number | null): string => (v == null ? "—" : `${v.toFixed(1)} oz`);
@@ -57,8 +87,11 @@ function WeightRow({ r, lang }: { r: OnHandWeightRow; lang: Language }) {
     <li className="rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2 text-sm">
       <div className="flex items-center justify-between gap-2">
         <span className="font-semibold text-co-text">{r.skuName}</span>
-        <span className="text-xs text-co-text-muted">
-          {r.onHandOz != null ? serverT(lang, "counts.onhand.on_hand", { oz: r.onHandOz.toFixed(1) }) : serverT(lang, "counts.onhand.advisory")}
+        <span className="flex items-center gap-2">
+          <SourceChip source={r.anchorSource} anchorAt={r.anchorAt} lang={lang} />
+          <span className="text-xs text-co-text-muted">
+            {r.onHandOz != null ? serverT(lang, "counts.onhand.on_hand", { oz: r.onHandOz.toFixed(1) }) : serverT(lang, "counts.onhand.advisory")}
+          </span>
         </span>
       </div>
       <div className="text-[11px] text-co-text-dim">
@@ -86,10 +119,14 @@ function CountRow({ r, lang }: { r: OnHandCountRow; lang: Language }) {
     <li className="rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2 text-sm">
       <div className="flex items-center justify-between gap-2">
         <span className="font-semibold text-co-text">{r.skuName}</span>
-        <span className="text-xs text-co-text-muted">
-          {r.onHandUnits != null
-            ? serverT(lang, "counts.onhand.on_hand_units", { n: round(r.onHandUnits), unit: r.unitLabel })
-            : serverT(lang, "counts.onhand.advisory")}
+        <span className="flex items-center gap-2">
+          {/* Count rows are always census — packaging has no consumption ledger to infer from. */}
+          <SourceChip source="census" anchorAt={r.anchorAt} lang={lang} />
+          <span className="text-xs text-co-text-muted">
+            {r.onHandUnits != null
+              ? serverT(lang, "counts.onhand.on_hand_units", { n: round(r.onHandUnits), unit: r.unitLabel })
+              : serverT(lang, "counts.onhand.advisory")}
+          </span>
         </span>
       </div>
       <div className="text-[11px] text-co-text-dim">

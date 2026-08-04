@@ -128,8 +128,14 @@ export interface DeliveryView {
   matchState: DeliveryMatchState;
   /** Door lifecycle (0168); 'in_progress' drives the continue-intake affordance. */
   deliveryStatus: DeliveryStatus;
-  /** Null → the missing-receipt badge (photo-later / no attachment). */
+  /** Null → the missing-receipt-photo badge (photo-later / no attachment). */
   receiptUrl: string | null;
+  /** Linked email-receipt id (0170); null → no vendor claim on file. Feeds the
+   *  derived "missing email" badge on the list (complete + counted_only + null +
+   *  aged past 48h). */
+  emailReceiptId: string | null;
+  /** Row creation timestamp (ISO); the age input for the 48h missing-email window. */
+  createdAt: string;
 }
 export interface DeliveryDetail extends DeliveryView {
   locationId: string;
@@ -509,9 +515,9 @@ export async function loadRecentDeliveries(actor: AuthContext, locationId: strin
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new ReceivingError(404, "not_found", "Location not found");
   const sb = getServiceRoleClient();
   const { data: rows, error } = await sb.from("vendor_deliveries")
-    .select("id, vendor_id, delivery_date, invoice_number, received_by, match_state, delivery_status, receipt_url")
+    .select("id, vendor_id, delivery_date, invoice_number, received_by, match_state, delivery_status, receipt_url, email_receipt_id, created_at")
     .eq("location_id", locationId).order("delivery_date", { ascending: false }).order("created_at", { ascending: false }).limit(limit)
-    .returns<Array<{ id: string; vendor_id: string; delivery_date: string; invoice_number: string | null; received_by: string | null; match_state: DeliveryMatchState; delivery_status: DeliveryStatus; receipt_url: string | null }>>();
+    .returns<Array<{ id: string; vendor_id: string; delivery_date: string; invoice_number: string | null; received_by: string | null; match_state: DeliveryMatchState; delivery_status: DeliveryStatus; receipt_url: string | null; email_receipt_id: string | null; created_at: string }>>();
   if (error) throw new Error(`loadRecentDeliveries: ${error.message}`);
   const list = rows ?? [];
   if (list.length === 0) return [];
@@ -532,6 +538,7 @@ export async function loadRecentDeliveries(actor: AuthContext, locationId: strin
     invoiceNumber: r.invoice_number, lineCount: lineCount.get(r.id) ?? 0,
     receivedByName: r.received_by ? (uName.get(r.received_by) ?? null) : null,
     matchState: r.match_state, deliveryStatus: r.delivery_status, receiptUrl: r.receipt_url,
+    emailReceiptId: r.email_receipt_id, createdAt: r.created_at,
   }));
 }
 
@@ -539,9 +546,9 @@ export async function loadDeliveryDetail(actor: AuthContext, deliveryId: string)
   requireReceive(actor);
   const sb = getServiceRoleClient();
   const { data: h, error } = await sb.from("vendor_deliveries")
-    .select("id, vendor_id, location_id, delivery_date, invoice_number, invoice_total, notes, receipt_url, received_by, match_state, delivery_status")
+    .select("id, vendor_id, location_id, delivery_date, invoice_number, invoice_total, notes, receipt_url, received_by, match_state, delivery_status, email_receipt_id, created_at")
     .eq("id", deliveryId)
-    .maybeSingle<{ id: string; vendor_id: string; location_id: string; delivery_date: string; invoice_number: string | null; invoice_total: number | string | null; notes: string | null; receipt_url: string | null; received_by: string | null; match_state: DeliveryMatchState; delivery_status: DeliveryStatus }>();
+    .maybeSingle<{ id: string; vendor_id: string; location_id: string; delivery_date: string; invoice_number: string | null; invoice_total: number | string | null; notes: string | null; receipt_url: string | null; received_by: string | null; match_state: DeliveryMatchState; delivery_status: DeliveryStatus; email_receipt_id: string | null; created_at: string }>();
   if (error) throw new Error(`loadDeliveryDetail: ${error.message}`);
   if (!h) throw new ReceivingError(404, "not_found", "Delivery not found");
   if (!lockLocationContext(actorLoc(actor), h.location_id)) throw new ReceivingError(404, "not_found", "Delivery not found");
@@ -558,6 +565,7 @@ export async function loadDeliveryDetail(actor: AuthContext, deliveryId: string)
     lineCount: (lineRows ?? []).length, receivedByName: rx?.name ?? null, locationId: h.location_id,
     invoiceTotal: num(h.invoice_total), notes: h.notes, receiptUrl: h.receipt_url,
     matchState: h.match_state, deliveryStatus: h.delivery_status,
+    emailReceiptId: h.email_receipt_id, createdAt: h.created_at,
     lines: (lineRows ?? []).map((l) => ({
       skuName: skuName.get(l.vendor_item_id) ?? "(sku)", qtyReceived: num(l.qty_received) ?? 0,
       unitPrice: num(l.unit_price), observedOzPerEach: num(l.observed_oz_per_each), notes: l.notes,

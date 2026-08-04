@@ -316,6 +316,18 @@ export function reconcileAnchorDimensions<
   }
 }
 
+/**
+ * Provenance of a SKU's on-hand anchor (spec D6 — DISPLAY-ONLY):
+ *   "census"   — a real physical count event anchored this SKU (the ground truth).
+ *   "inferred" — no census yet; the anchor is a lazily-persisted baseline computed
+ *                from consumption run-rate (computeInferredBaselineOz). A cold-start.
+ *   null       — no anchor at all (never counted, no baseline → advisory-null path).
+ * This is a DISPLAY seam threaded through the math UNTOUCHED: computeOnHand must
+ * stay source-blind (an inferred anchor drifts by the SAME feed/verify math as a
+ * census one). Variance, however, is CENSUS-ONLY — see computeVariance / loadOnHand.
+ */
+export type AnchorSource = "census" | "inferred" | null;
+
 /** Per-SKU on-hand computation inputs (all in oz; nulls make drift advisory). */
 export interface OnHandInput {
   skuId: string;
@@ -330,6 +342,9 @@ export interface OnHandInput {
   /** True when a ledger row exists dated between the anchor and now that could
    *  invalidate the drift derivation (retro-edit staleness flag, L5). */
   anchorStale: boolean;
+  /** DISPLAY-ONLY provenance of the anchor (D6). The math never branches on it —
+   *  computeOnHand carries it straight through so the UI can render a source chip. */
+  anchorSource: AnchorSource;
 }
 
 export interface OnHandResult {
@@ -342,6 +357,8 @@ export interface OnHandResult {
   /** anchor + drift. null when anchor OR drift is null (advisory). */
   onHandOz: number | null;
   anchorStale: boolean;
+  /** DISPLAY-ONLY provenance carried through from the input, unchanged (D6). */
+  anchorSource: AnchorSource;
 }
 
 /** Whole-day count between two ISO timestamps (floor); null if either missing. */
@@ -432,7 +449,32 @@ export function computeOnHand(input: OnHandInput, now: number): OnHandResult {
     driftOz,
     onHandOz,
     anchorStale: input.anchorStale,
+    // Source is provenance ONLY — carried straight through, the math above never
+    // reads it. An inferred anchor drifts by the identical feed/verify formula.
+    anchorSource: input.anchorSource,
   };
+}
+
+/**
+ * INFERENCE BOOTSTRAP (spec D6, constants locked: WINDOW_DAYS=28, COVERAGE_DAYS=7).
+ * Cold-start an on-hand anchor from consumption run-rate when a SKU has NEVER been
+ * physically counted. Given the SKU's TOTAL consumed oz over the trailing calendar
+ * window (the two depletion lanes — production + direct sales — summed lib-side),
+ * the daily average is total / windowDays (a CALENDAR normalization, NOT active
+ * days), and the inferred on-hand baseline is that daily average projected over
+ * coverageDays of forward stock. Returns null when there is no positive, finite
+ * consumption to run-rate from — a zero-consumption SKU gets NO baseline
+ * (advisory-null law: never fabricate a number). PURE (zero I/O).
+ */
+export function computeInferredBaselineOz(
+  totalConsumedOz: number,
+  windowDays = 28,
+  coverageDays = 7,
+): { inferredOz: number; dailyAvgOz: number } | null {
+  if (!Number.isFinite(totalConsumedOz) || totalConsumedOz <= 0) return null;
+  const dailyAvgOz = totalConsumedOz / windowDays;
+  const inferredOz = dailyAvgOz * coverageDays;
+  return { inferredOz, dailyAvgOz };
 }
 
 /** Per-SKU variance of a NEW count vs what the PREVIOUS count + ledger predicted. */
