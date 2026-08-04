@@ -505,6 +505,142 @@ async function loadInferredRows(
 }
 
 /**
+ * PAR-ESTIMATE ON-HAND ROWS (spec D6 — the middle truth tier, census > par_estimate
+ * > inferred). For active SKUs at this location that have NO census anchor
+ * (`censusSkuIds` — passed so a par-pass estimate NEVER shadows a counted SKU) but a
+ * par-pass line carrying a non-null `implied_on_hand_oz` (par − order_qty, oz — the
+ * shelf-walk soft snapshot), surface a par_estimate baseline:
+ *   1. batch-load the LATEST par_pass_lines row per roster SKU (by created_at) whose
+ *      implied_on_hand_oz is non-null, SCOPED TO THIS LOCATION through par_pass_events
+ *      (two-step: submitted events at this location → lines in those events; house law
+ *      — embedded-select .eq() on a relation is fragile under RLS). The sku_ix
+ *      (sku_id, created_at desc) serves the latest-per-SKU pick.
+ *   2. anchor each such SKU at implied_on_hand_oz / line.created_at (anchorSource
+ *      "par_estimate") and accrue received/consumed-since from that anchor EXACTLY like
+ *      a census weight row (same ledger helpers, same anchor-group batching, same
+ *      gap-taint) — the drift math is source-blind. varianceOz is ALWAYS null (a
+ *      par-pass estimate is not a counted ground truth — it can never be a variance
+ *      reference; VARIANCE IS CENSUS-ONLY).
+ *
+ * Patterned on loadInferredRows: batch-load the anchors, group SKUs by their EXACT
+ * anchorAt, then ONE call per since-helper per anchor-group (N×4 per-SKU queries
+ * collapse to 4 per group). Persists NOTHING (the par-pass event already stored the
+ * line — this is a derive-on-read tier).
+ */
+async function loadParEstimateRows(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+  censusSkuIds: ReadonlySet<string>,
+  now: number,
+): Promise<{ rows: OnHandRow[]; skuIds: string[] }> {
+  // Active SKU roster (global; the item spine is location-scoped via the ledgers, not
+  // the vendor_items row) minus any SKU already carrying a census anchor.
+  const { data: activeSkus, error: aErr } = await sb.from("vendor_items")
+    .select("id, name")
+    .eq("active", true)
+    .returns<Array<{ id: string; name: string }>>();
+  if (aErr) throw new Error(`loadParEstimateRows active skus: ${aErr.message}`);
+  const roster = (activeSkus ?? []).filter((s) => !censusSkuIds.has(s.id));
+  if (roster.length === 0) return { rows: [], skuIds: [] };
+  const skuName = new Map(roster.map((s) => [s.id, s.name]));
+  const rosterIds = roster.map((s) => s.id);
+
+  // (a) Location-scoped par-pass event ids (two-step — NOT an embedded .eq() on the
+  //     lines→events relation, which is RLS-fragile per house law). Submitted events
+  //     only (a draft walk is not a truth anchor).
+  const { data: evRows, error: evErr } = await sb.from("par_pass_events")
+    .select("id")
+    .eq("location_id", locationId)
+    .eq("status", "submitted")
+    .returns<Array<{ id: string }>>();
+  if (evErr) throw new Error(`loadParEstimateRows events: ${evErr.message}`);
+  const eventIds = (evRows ?? []).map((e) => e.id);
+  if (eventIds.length === 0) return { rows: [], skuIds: [] };
+
+  // (b) Latest par_pass line per roster SKU with a non-null implied_on_hand_oz, among
+  //     those events. Ordered created_at desc (the sku_ix) → first seen per SKU wins.
+  const { data: lineRows, error: lErr } = await sb.from("par_pass_lines")
+    .select("sku_id, implied_on_hand_oz, created_at")
+    .in("event_id", eventIds)
+    .in("sku_id", rosterIds)
+    .not("implied_on_hand_oz", "is", null)
+    .order("created_at", { ascending: false })
+    .returns<Array<{ sku_id: string; implied_on_hand_oz: number | string | null; created_at: string }>>();
+  if (lErr) throw new Error(`loadParEstimateRows lines: ${lErr.message}`);
+  const anchorBySku = new Map<string, { impliedOz: number; anchorAt: string }>();
+  for (const r of lineRows ?? []) {
+    if (anchorBySku.has(r.sku_id)) continue; // desc order → first seen is the latest.
+    const oz = num(r.implied_on_hand_oz);
+    if (oz == null) continue; // defensive — filtered above, but never fabricate.
+    anchorBySku.set(r.sku_id, { impliedOz: oz, anchorAt: r.created_at });
+  }
+  const parSkuIds = [...anchorBySku.keys()];
+  if (parSkuIds.length === 0) return { rows: [], skuIds: [] };
+
+  // Sales-coverage gap dates for the earliest par-estimate window start — loaded ONCE
+  // (not per SKU), same taint discipline as the census + inferred paths.
+  const earliestSalesDate = parSkuIds
+    .map((id) => etBusinessDate(anchorBySku.get(id)!.anchorAt))
+    .reduce((min, d) => (d < min ? d : min));
+  const gapDates = await loadSalesGapDates(
+    sb, locationId, earliestSalesDate, etBusinessDate(new Date(now).toISOString()),
+  );
+
+  // BATCHED (mirrors loadInferredRows): group par-estimate SKUs by their EXACT anchorAt,
+  // then make ONE call per since-helper per group + ONE staleness probe per distinct
+  // anchorAt. A single walk = every SKU anchored at that event's line created_at → one group.
+  const idsByAnchorAt = new Map<string, string[]>();
+  for (const id of parSkuIds) {
+    const at = anchorBySku.get(id)!.anchorAt;
+    let group = idsByAnchorAt.get(at);
+    if (!group) { group = []; idsByAnchorAt.set(at, group); }
+    group.push(id);
+  }
+
+  const rowGroups = await Promise.all(
+    [...idsByAnchorAt.entries()].map(async ([anchorAt, groupIds]): Promise<OnHandRow[]> => {
+      const [receivedSince, consumedSince, salesSince, anchorStale] = await Promise.all([
+        sumReceivedOzSince(sb, groupIds, locationId, anchorAt),
+        sumConsumedOzSince(sb, groupIds, locationId, anchorAt),
+        sumSalesDirectOzSince(sb, groupIds, locationId, anchorAt, gapDates),
+        detectRetroEditStaleness(sb, locationId, anchorAt, now),
+      ]);
+      // Build a weight row per SKU: anchor + received-since − consumed-since, accrued
+      // from the par-pass line's created_at exactly like a census weight row (source-blind).
+      return groupIds.map((skuId): OnHandRow => {
+        const b = anchorBySku.get(skuId)!;
+        const prodSince = consumedSince.get(skuId) ?? null;
+        const salesSinceOz = salesSince.get(skuId) ?? null;
+        const onHand = computeOnHand(
+          {
+            skuId,
+            anchorOz: b.impliedOz,
+            anchorAt: b.anchorAt,
+            receivedSinceOz: receivedSince.get(skuId) ?? null,
+            consumedSinceOz: prodSince == null || salesSinceOz == null ? null : prodSince + salesSinceOz,
+            anchorStale,
+            anchorSource: "par_estimate", // DISPLAY provenance — never touches the math.
+          },
+          now,
+        );
+        return {
+          dimension: "weight",
+          ...onHand,
+          skuName: skuName.get(skuId) ?? "(sku)",
+          // VARIANCE IS CENSUS-ONLY (D6): a par-pass estimate is not a counted ground
+          // truth, so it can never be a variance reference. Always null here. We do NOT
+          // call computeVariance for par_estimate rows.
+          varianceOz: null,
+          looseLineCount: 0,
+          partialLineCount: 0,
+        };
+      });
+    }),
+  );
+  return { rows: rowGroups.flat(), skuIds: parSkuIds };
+}
+
+/**
  * Load the on-hand panel for a location with PER-SKU anchors (F1). Events are
  * immutable sessions; there is no single "anchor event". For each SKU:
  *   - its ANCHOR is the summed resolved oz of the lines from the most-recent event
@@ -536,11 +672,13 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
   const evList = events ?? [];
   if (evList.length === 0) {
     // COLD START (spec D6): no physical count has EVER anchored this location. Still
-    // surface inferred on-hand baselines for SKUs with consumption history so the
-    // panel isn't empty on day one. No census SKUs → inference sees the full active
-    // roster.
-    const inferredRows = await loadInferredRows(sb, locationId, new Set<string>(), now);
-    const rows = inferredRows.sort((a, b) => a.skuName.localeCompare(b.skuName));
+    // surface soft baselines so the panel isn't empty on day one — par_estimate first
+    // (the shelf-walk snapshot, firmer than a run-rate guess), then inferred for the
+    // rest. No census SKUs → both tiers see the full active roster; inference EXCLUDES
+    // whatever par_estimate already anchored.
+    const parEstimate = await loadParEstimateRows(sb, locationId, new Set<string>(), now);
+    const inferredRows = await loadInferredRows(sb, locationId, new Set(parEstimate.skuIds), now);
+    const rows = [...parEstimate.rows, ...inferredRows].sort((a, b) => a.skuName.localeCompare(b.skuName));
     return { locationId, anchorAt: null, salesThrough, rows };
   }
   const eventAt = new Map(evList.map((e) => [e.id, e.counted_at]));
@@ -591,9 +729,11 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
   const countSkuIds = [...unitAnchorBySku.keys()];
   const skuIds = [...new Set([...weightSkuIds, ...countSkuIds])];
   if (skuIds.length === 0) {
-    // Events exist but resolved to no anchors (edge) — still run the inference tier.
-    const inferredRows = await loadInferredRows(sb, locationId, new Set<string>(), now);
-    const rows = inferredRows.sort((a, b) => a.skuName.localeCompare(b.skuName));
+    // Events exist but resolved to no anchors (edge) — still run the par_estimate then
+    // inference tiers (par_estimate first; inference excludes what it anchored).
+    const parEstimate = await loadParEstimateRows(sb, locationId, new Set<string>(), now);
+    const inferredRows = await loadInferredRows(sb, locationId, new Set(parEstimate.skuIds), now);
+    const rows = [...parEstimate.rows, ...inferredRows].sort((a, b) => a.skuName.localeCompare(b.skuName));
     return { locationId, anchorAt: locationLastCountedAt, salesThrough, rows };
   }
 
@@ -643,8 +783,9 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
           consumedSinceOz: prodSince == null || salesSinceOz == null ? null : prodSince + salesSinceOz,
           anchorStale,
           // CENSUS provenance: this row's anchor is a real physical count event
-          // (anchorBySku is resolved from sku_count_lines). Inferred anchors are
-          // composed in a SEPARATE pass below and never reach this variance loop.
+          // (anchorBySku is resolved from sku_count_lines). Par_estimate AND inferred
+          // anchors are composed in SEPARATE passes below and never reach this variance
+          // loop — only census rows do.
           anchorSource: "census",
         },
         now,
@@ -665,10 +806,11 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
       // VARIANCE IS CENSUS-ONLY (spec D6, LOAD-BEARING). computeVariance verifies a
       // NEW physical count against the PREVIOUS one + intervening ledger. Both
       // newCountOz and prevCountOz here come from `a` (anchorBySku → resolved
-      // strictly from sku_count_lines), so this call NEVER receives an inferred
-      // anchor. Inferred rows (composed below) carry varianceOz = null by law — an
-      // inferred baseline is not a counted ground truth and cannot be a variance
-      // reference. Do NOT wire an inferred anchor into this call.
+      // strictly from sku_count_lines), so this call NEVER receives a par_estimate OR
+      // an inferred anchor. Par_estimate rows (loadParEstimateRows) and inferred rows
+      // (loadInferredRows) BOTH carry varianceOz = null by law — a par-pass estimate
+      // and a run-rate baseline are not counted ground truths and cannot be a variance
+      // reference. Do NOT wire either non-census anchor into this call.
       const variance = computeVariance({
         skuId,
         newCountOz: a.anchorOz,
@@ -725,12 +867,20 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
     }),
   );
 
-  // ── Inferred rows (spec D6) ── for active SKUs with NO census anchor (weight or
-  // count) but real consumption history: a cold-start baseline. `skuIds` is every
-  // census-anchored SKU this pass — pass it so inference NEVER shadows a counted SKU.
-  const inferredRows = await loadInferredRows(sb, locationId, new Set(skuIds), now);
+  // ── Par-estimate rows (spec D6, middle tier) ── for active SKUs with NO census
+  // anchor (weight or count) but a par-pass line's implied on-hand: a soft shelf-walk
+  // snapshot. `skuIds` is every census-anchored SKU this pass — pass it so a par
+  // estimate NEVER shadows a counted SKU.
+  const parEstimate = await loadParEstimateRows(sb, locationId, new Set(skuIds), now);
 
-  const rows = [...weightRows, ...countRows, ...inferredRows].sort((a, b) => a.skuName.localeCompare(b.skuName));
+  // ── Inferred rows (spec D6, cold-start tier) ── for active SKUs with NEITHER a census
+  // anchor NOR a par_estimate anchor but real consumption history. Exclude BOTH sets so
+  // inference never shadows a counted OR par-pass-estimated SKU (census > par_estimate >
+  // inferred precedence).
+  const inferredExcluded = new Set([...skuIds, ...parEstimate.skuIds]);
+  const inferredRows = await loadInferredRows(sb, locationId, inferredExcluded, now);
+
+  const rows = [...weightRows, ...countRows, ...parEstimate.rows, ...inferredRows].sort((a, b) => a.skuName.localeCompare(b.skuName));
   return { locationId, anchorAt: locationLastCountedAt, salesThrough, rows };
 }
 
