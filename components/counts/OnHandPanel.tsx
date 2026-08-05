@@ -55,10 +55,12 @@ function disjointAnnotations(r: OnHandRow, lang: Language) {
 }
 
 /**
- * Per-row anchor-provenance chip (spec D6). A census anchor shows "Audited {date}"
- * (the house date formatter); an inferred baseline shows "Inferred" in the info
- * tone (neutral — a cold-start estimate, not a fault). Count rows are always census
- * (packaging has no consumption ledger to infer from) → treated as census here.
+ * Per-row anchor-provenance chip (spec D6 — the truth tiers census > par_estimate >
+ * inferred). A census anchor shows "Audited {date}" (the house date formatter); a
+ * par_estimate anchor shows "Par-pass {date}" (the shelf-walk snapshot as of that
+ * walk); an inferred baseline shows "Inferred" in the info tone (neutral — a
+ * cold-start estimate, not a fault). Count rows are always census (packaging has no
+ * consumption ledger to infer from) → treated as census here.
  */
 function SourceChip({ source, anchorAt, lang }: { source: AnchorSource; anchorAt: string | null; lang: Language }) {
   if (source === "inferred") {
@@ -66,6 +68,15 @@ function SourceChip({ source, anchorAt, lang }: { source: AnchorSource; anchorAt
       <AlertPill tone="info" uppercase={false} className="shrink-0">
         {serverT(lang, "counts.onhand.source_inferred")}
       </AlertPill>
+    );
+  }
+  if (source === "par_estimate") {
+    // A soft on-hand as of the last par-pass shelf-walk (firmer than inferred, softer
+    // than a count). Same muted date-chip shape as census — a light provenance note.
+    return (
+      <span className="shrink-0 text-[11px] font-medium text-co-text-muted">
+        {serverT(lang, "counts.onhand.source_par_estimate", { date: anchorAt != null ? formatDateLabel(anchorAt.slice(0, 10), lang) : "—" })}
+      </span>
     );
   }
   // Census (explicit or the count-row default) — an audited on-hand as of the anchor.

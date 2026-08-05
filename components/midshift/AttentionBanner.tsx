@@ -114,6 +114,22 @@ export function AttentionBanner({
               </li>
             );
           }
+          if (item.kind === "shrinkage") {
+            // Advisory (YELLOW-tier): the last par-pass sees less than the computed
+            // feed/verify model → possible unrecorded waste. Links to the Inventory
+            // Audit page (where on-hand provenance lives). ?location= is required there.
+            const count = item.count ?? 0;
+            return (
+              <li key={key} className="text-sm text-co-text">
+                <Link
+                  href={`/operations/counts?location=${locationId}`}
+                  className="underline decoration-co-border underline-offset-2"
+                >
+                  {serverT(language, "midshift.attention.shrinkage", { n: count })}
+                </Link>
+              </li>
+            );
+          }
           const count = item.count ?? 0;
           return (
             <li key={key} className="text-sm text-co-text">

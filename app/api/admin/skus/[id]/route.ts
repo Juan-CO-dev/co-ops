@@ -24,6 +24,8 @@ const UPDATE_KEYS = [
   "itemNumber",
   "sourceUrl",
   "leadTimeDays",
+  "weekdayPar",
+  "weekendPar",
   "notes",
   "skuClass",
 ] as const;
@@ -107,6 +109,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if ("leadTimeDays" in b) {
       if (b.leadTimeDays !== null && typeof b.leadTimeDays !== "number") return jsonError(400, "invalid_payload", { field: "leadTimeDays" });
       changes.leadTimeDays = b.leadTimeDays as number | null;
+    }
+    if ("weekdayPar" in b) {
+      if (b.weekdayPar !== null && typeof b.weekdayPar !== "number") return jsonError(400, "invalid_payload", { field: "weekdayPar" });
+      changes.weekdayPar = b.weekdayPar as number | null;
+    }
+    if ("weekendPar" in b) {
+      if (b.weekendPar !== null && typeof b.weekendPar !== "number") return jsonError(400, "invalid_payload", { field: "weekendPar" });
+      changes.weekendPar = b.weekendPar as number | null;
     }
     if ("notes" in b) {
       if (b.notes !== null && typeof b.notes !== "string") return jsonError(400, "invalid_payload", { field: "notes" });

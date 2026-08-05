@@ -317,16 +317,22 @@ export function reconcileAnchorDimensions<
 }
 
 /**
- * Provenance of a SKU's on-hand anchor (spec D6 — DISPLAY-ONLY):
- *   "census"   — a real physical count event anchored this SKU (the ground truth).
- *   "inferred" — no census yet; the anchor is a lazily-persisted baseline computed
- *                from consumption run-rate (computeInferredBaselineOz). A cold-start.
- *   null       — no anchor at all (never counted, no baseline → advisory-null path).
+ * Provenance of a SKU's on-hand anchor (spec D6 — DISPLAY-ONLY). Order is the
+ * truth-tier PRECEDENCE (census > par_estimate > inferred):
+ *   "census"       — a real physical count event anchored this SKU (the ground truth).
+ *   "par_estimate" — no census yet; the anchor is the latest par-pass line's implied
+ *                    on-hand (par − order_qty, in oz — the shelf-walk soft snapshot,
+ *                    lib/ordering.ts). Softer than a count, firmer than a run-rate guess.
+ *   "inferred"     — neither census NOR par_estimate; the anchor is a lazily-persisted
+ *                    baseline computed from consumption run-rate (computeInferredBaselineOz).
+ *                    A cold-start.
+ *   null           — no anchor at all (never counted, no baseline → advisory-null path).
  * This is a DISPLAY seam threaded through the math UNTOUCHED: computeOnHand must
- * stay source-blind (an inferred anchor drifts by the SAME feed/verify math as a
- * census one). Variance, however, is CENSUS-ONLY — see computeVariance / loadOnHand.
+ * stay source-blind (a par_estimate / inferred anchor drifts by the SAME feed/verify
+ * math as a census one). Variance, however, is CENSUS-ONLY — see computeVariance /
+ * loadOnHand (a par_estimate anchor can NEVER be a variance reference).
  */
-export type AnchorSource = "census" | "inferred" | null;
+export type AnchorSource = "census" | "par_estimate" | "inferred" | null;
 
 /** Per-SKU on-hand computation inputs (all in oz; nulls make drift advisory). */
 export interface OnHandInput {

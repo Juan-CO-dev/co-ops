@@ -63,21 +63,22 @@ export interface PulseFridge {
 }
 
 export interface AttentionItem {
-  kind: "overdue" | "fridge" | "fridge_unchecked" | "maintenance_note";
+  kind: "overdue" | "fridge" | "fridge_unchecked" | "maintenance_note" | "shrinkage";
   /** i18n key + params resolved at render; we pass a stable shape. */
   reportKey?: ReportKey; // for overdue
   fridgeName?: string; // for fridge (display)
   equipId?: string; // for fridge — the stable React key (names can collide)
-  count?: number; // for maintenance_note / fridge_unchecked
+  count?: number; // for maintenance_note / fridge_unchecked / shrinkage
 }
 
 /**
  * The Pulse Score (council 2026-07-31, aggie seat): one glanceable 3-state
  * summary derived from the attention items — "see green and move on; see red
  * and scroll". RED = an overdue report or a temp excursion (act now).
- * YELLOW = softer signals (unchecked fridges, maintenance notes). GREEN =
- * nothing needs attention. Pure; severity classes are fixed here so the
- * banner and any future badge agree.
+ * YELLOW = softer signals (unchecked fridges, maintenance notes, shrinkage —
+ * an advisory par-pass-vs-computed divergence, same weight as a maintenance
+ * note; NOT red-tier). GREEN = nothing needs attention. Pure; severity classes
+ * are fixed here so the banner and any future badge agree.
  */
 export type PulseScore = "green" | "yellow" | "red";
 const RED_KINDS: ReadonlySet<AttentionItem["kind"]> = new Set(["overdue", "fridge"]);

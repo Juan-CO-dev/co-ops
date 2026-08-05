@@ -102,6 +102,9 @@ export default async function MidShiftPage({
       date,
       now,
       actor: { userId: auth.user.id, role: auth.role, level: auth.level },
+      // Full AuthContext so the pulse can surface the shrinkage signal (par-pass vs
+      // computed on-hand). Best-effort inside the loader — a failure never breaks the pulse.
+      authContext: auth,
     }),
     // Sales is a SECONDARY lane — a Toast/DB read hiccup degrades to the
     // panel's honest empty state, never a page-wide error over the pulse.

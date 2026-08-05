@@ -258,13 +258,18 @@ describe("computeOnHand — Juan's feed/verify model (oz-native)", () => {
 
   it("carries anchorSource through UNTOUCHED (display provenance) and the math stays source-blind", () => {
     // Identical numeric inputs, only anchorSource differs → identical math, differing provenance.
+    // All THREE truth tiers (census > par_estimate > inferred) drift by the SAME formula.
     const base = { skuId: "cap", anchorOz: 374, anchorAt: "2026-07-25T12:00:00Z", receivedSinceOz: 136, consumedSinceOz: 100, anchorStale: false } as const;
     const census = computeOnHand({ ...base, anchorSource: "census" }, now);
+    const parEstimate = computeOnHand({ ...base, anchorSource: "par_estimate" }, now);
     const inferred = computeOnHand({ ...base, anchorSource: "inferred" }, now);
     expect(census.anchorSource).toBe("census");
+    expect(parEstimate.anchorSource).toBe("par_estimate");
     expect(inferred.anchorSource).toBe("inferred");
     // Source is display-only: the numbers must be byte-identical regardless of provenance.
+    expect(census.onHandOz).toBe(parEstimate.onHandOz);
     expect(census.onHandOz).toBe(inferred.onHandOz);
+    expect(census.driftOz).toBe(parEstimate.driftOz);
     expect(census.driftOz).toBe(inferred.driftOz);
     expect(census.onHandOz).toBe(410);
   });

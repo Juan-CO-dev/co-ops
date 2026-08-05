@@ -15,6 +15,8 @@ import { operationalDayUtcRange } from "@/lib/operational-day";
 import { loadAmPrepDashboardState, loadMidDayPrepDashboardState } from "@/lib/prep";
 import { loadCashDashboardState } from "@/lib/cash";
 import { loadMaintenanceOverview } from "@/lib/maintenance";
+import { loadShrinkageSignals } from "@/lib/ordering";
+import type { AuthContext } from "@/lib/session";
 import type { RoleCode } from "@/lib/roles";
 
 import {
@@ -324,7 +326,17 @@ async function loadCateringDueToday(
 
 export async function loadMidShiftPulse(
   service: SupabaseClient,
-  args: { locationId: string; date: string; now: Date; actor: MidShiftActor },
+  args: {
+    locationId: string;
+    date: string;
+    now: Date;
+    actor: MidShiftActor;
+    /** Full request AuthContext — REQUIRED only to surface the shrinkage attention
+     *  item (loadShrinkageSignals needs the role/locations gate + the loadOnHand pass).
+     *  Optional so pm-report's loadReportStatuses reuse (and any other caller) is
+     *  untouched; when absent, the shrinkage signal is simply omitted (fail-open). */
+    authContext?: AuthContext;
+  },
 ): Promise<MidShiftPulse> {
   const { minutesOfDay } = operationalNow(args.now);
 
@@ -385,6 +397,22 @@ export async function loadMidShiftPulse(
   for (const f of fridges) if (f.outOfRange) attention.push({ kind: "fridge", fridgeName: f.name, equipId: f.equipId });
   if (fridgeUncheckedAlert) attention.push({ kind: "fridge_unchecked", count: uncheckedFridges });
   if (maintenanceNotesToday > 0) attention.push({ kind: "maintenance_note", count: maintenanceNotesToday });
+
+  // Shrinkage (delivery-intake P3): the latest par-pass within 48h whose implied
+  // on-hand diverges from the computed feed/verify model — possible unrecorded waste.
+  // BEST-EFFORT + fail-open: a shrinkage read failure must NEVER break the pulse (the
+  // par-pass tables/lib may be absent or a loadOnHand pass may hiccup), so we swallow
+  // and omit the item. Only runs when the caller threaded a full AuthContext (the
+  // signal needs the KH+ gate + location-bind that loadShrinkageSignals enforces). A
+  // YELLOW advisory — never red-tier (see pulseScore / RED_KINDS).
+  if (args.authContext) {
+    try {
+      const shrinkage = await loadShrinkageSignals(args.authContext, args.locationId);
+      if (shrinkage.count > 0) attention.push({ kind: "shrinkage", count: shrinkage.count });
+    } catch (err) {
+      console.error("midshift shrinkage signal failed", err);
+    }
+  }
 
   return {
     locationId: args.locationId,
