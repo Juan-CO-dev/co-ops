@@ -694,12 +694,26 @@ export async function loadOpenPoTemplate(
     .returns<Array<{ sku_id: string; order_qty: number | string; order_unit_label: string | null }>>();
   if (lErr) throw new Error(`loadOpenPoTemplate lines: ${lErr.message}`);
 
+  // LEVEL CONTRACT (matches the sibling loadLastDeliveryTemplate): the door form's
+  // level picker for a SKU is EXACTLY its chain labels (chainLabelsInWalkOrder →
+  // ReceivingForm.levelsFor), which is EMPTY for an UNCHAINED SKU. The PO stores
+  // order_unit_label = the chain ROOT label for chained SKUs but the SKU's
+  // pack_format for UNCHAINED ones (orderUnitLabelFor). Pre-filling a pack_format
+  // level on an unchained SKU would seed a value that isn't in the (empty) picker —
+  // an orphaned selection, and it would submit received_level_label on a chainless
+  // SKU (loadLastDeliveryTemplate correctly nulls that case). So: level =
+  // order_unit_label ONLY when the SKU has an active chain (its root label is
+  // guaranteed to be the first member of chainLabelsInWalkOrder), else null.
+  const poSkuIds = [...new Set((lineRows ?? []).map((l) => l.sku_id))];
+  const chainsBySku = await loadSkuPackChains(poSkuIds);
+  const isChained = (skuId: string): boolean => (chainsBySku.get(skuId)?.length ?? 0) > 0;
+
   const usableLines = (lineRows ?? [])
     .map((l) => ({
       skuId: l.sku_id,
-      // The PO stores the ordered unit label (e.g. "case") so the form knows
-      // which level to pre-select on the line. It maps to receivedLevelLabel.
-      level: l.order_unit_label,
+      // Chained → the PO's ordered unit label (the chain root) pre-selects that level;
+      // unchained → null (no chain, no level picker), matching loadLastDeliveryTemplate.
+      level: isChained(l.sku_id) ? l.order_unit_label : null,
       qty: Number(l.order_qty),
     }))
     .filter((l) => Number.isFinite(l.qty) && l.qty > 0);

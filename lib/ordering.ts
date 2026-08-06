@@ -67,6 +67,7 @@ import {
   type DraftLineInput,
 } from "@/lib/purchase-orders";
 import { etCalendarDate, operationalDayUtcRange } from "@/lib/operational-day";
+import { etDayFromDate } from "@/lib/et-day-shared";
 import { formatTime } from "@/lib/i18n/format";
 
 /** KH+ read/write floor for the par-pass. NO step-up (operational capture, spec D5). */
@@ -93,26 +94,18 @@ function actorLoc(actor: AuthContext): LocationActor {
   return { role: actor.user.role, locations: actor.locations };
 }
 
-// ── The weekend-par day rule (semantics block, locked) ──────────────────────────
-/** Fri/Sat/Sun = getDay() ∈ {5,6,0} (JS getDay convention, matches vendors.order_days). */
-function isWeekendParDay(d: Date): boolean {
-  const day = d.getDay();
-  return day === 5 || day === 6 || day === 0;
-}
-
 /**
  * ET-anchored walk-day derivation — the SINGLE authority for both loadWalkerData and
  * submitParPass. Vercel runs UTC, and evening walks (exactly when shops order) must not
- * roll into tomorrow's weekday. etBusinessDate gives the ET calendar date; parsing it
- * at local midnight preserves the date components, so getDay() is that ET date's weekday
- * regardless of server TZ. Both functions MUST use this helper — never call new Date()
- * or isWeekendParDay() in day-rule context.
+ * roll into tomorrow's weekday. etBusinessDate gives the ET calendar date; the dow +
+ * weekend-par flag derive from it via the shared lib/et-day-shared.etDayFromDate (the
+ * ONE home for that derivation — purchase-orders.ts's etToday delegates to the same
+ * helper, no import cycle). Both functions MUST use this helper — never inline a
+ * new Date().getDay() in day-rule context.
  */
 function etWalkDay(): { walkDateEt: string; weekend: boolean; todayDow: number } {
   const walkDateEt = etBusinessDate(new Date().toISOString());
-  const etDate = new Date(`${walkDateEt}T00:00:00`);
-  const weekend = isWeekendParDay(etDate);
-  const todayDow = etDate.getDay(); // 0=Sun..6=Sat (order_days convention).
+  const { dow: todayDow, weekend } = etDayFromDate(walkDateEt);
   return { walkDateEt, weekend, todayDow };
 }
 
@@ -356,14 +349,17 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
   // again; all day-rule consumers must call etWalkDay() to stay in sync with the display.
   const { walkDateEt, weekend, todayDow } = etWalkDay();
 
-  // Active par'd SKUs (global rows; item spine is location-scoped via the ledgers, not
-  // the vendor_items row — same as counts/receiving). A SKU with neither par is excluded.
+  // Par'd SKUs (global rows; item spine is location-scoped via the ledgers, not the
+  // vendor_items row — same as counts/receiving). A SKU with neither par is excluded.
+  // NOTE: we do NOT filter `.eq("active", true)` here — inclusion is governed by
+  // resolveActive(overlay.activeOverride, s.active) below, so a promotional overlay
+  // (active_override = true on a globally-INACTIVE SKU, spec §2.1) surfaces. Filtering
+  // on the global flag first would make that override dead. `active` is selected.
   const { data: skuRows, error: sErr } = await sb.from("vendor_items")
-    .select("id, name, vendor_id, item_number, pack_format, weekday_par, weekend_par, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each")
-    .eq("active", true)
+    .select("id, name, vendor_id, item_number, active, pack_format, weekday_par, weekend_par, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each")
     .or("weekday_par.not.is.null,weekend_par.not.is.null")
     .returns<Array<{
-      id: string; name: string; vendor_id: string | null; item_number: string | null;
+      id: string; name: string; vendor_id: string | null; item_number: string | null; active: boolean;
       pack_format: string | null; weekday_par: number | string | null; weekend_par: number | string | null;
       each_container_label: string | null; units_per_pack: number | null;
       each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null;
@@ -407,7 +403,11 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
     const overlayForPar: LocationSkuOverlay | null = overlayRow
       ? { weekdayPar: overlayRow.weekdayPar, weekendPar: overlayRow.weekendPar }
       : null;
-    if (!resolveActive(overlayRow?.activeOverride, true)) continue; // deactivated at this location.
+    // Inclusion governed by the overlay-over-global active resolution (D1): an overlay
+    // active_override wins over the global `active` flag — so a promotional SKU
+    // (override true, globally inactive) is INCLUDED and a locally-deactivated SKU
+    // (override false, globally active) is EXCLUDED. Global inactive + no override → excluded.
+    if (!resolveActive(overlayRow?.activeOverride, s.active)) continue;
     const par = resolvePar(overlayForPar, { weekdayPar: num(s.weekday_par), weekendPar: num(s.weekend_par) }, weekend);
     if (par == null) continue; // neither resolved par applies today (excluded from walk).
 
@@ -658,15 +658,17 @@ export async function submitParPass(
   // ET-anchored weekend rule — must match what loadWalkerData showed the manager.
   const { weekend } = etWalkDay();
 
-  // Load the referenced SKUs (active + par shape + pack fields for oz). A SKU missing,
-  // inactive (globally AND not overlay-activated), or with no applicable resolved par today
-  // is rejected loudly (can't order to no par). overlayBySku batch-loads per-location
-  // active/par overrides (D1); empty map = day-one (pure inheritance, no behavior change).
+  // Load the referenced SKUs (par shape + pack fields for oz + the global `active` flag).
+  // We do NOT filter `.eq("active", true)` here — resolveActive(overlay.activeOverride,
+  // sku.active) below governs each SKU's usability, so a promotional overlay (active_override
+  // = true on a globally-inactive SKU, spec §2.1) is submittable while a locally-deactivated
+  // SKU is rejected. A SKU row simply MISSING (bad id) is still rejected loudly. overlayBySku
+  // batch-loads per-location active/par overrides (D1); empty map = day-one (pure inheritance).
   const { data: skuRows, error: sErr } = await sb.from("vendor_items")
-    .select("id, name, vendor_id, item_number, pack_format, weekday_par, weekend_par, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each")
-    .in("id", skuIds).eq("active", true)
+    .select("id, name, vendor_id, item_number, active, pack_format, weekday_par, weekend_par, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each")
+    .in("id", skuIds)
     .returns<Array<{
-      id: string; name: string; vendor_id: string | null; item_number: string | null;
+      id: string; name: string; vendor_id: string | null; item_number: string | null; active: boolean;
       pack_format: string | null; weekday_par: number | string | null; weekend_par: number | string | null;
       each_container_label: string | null; units_per_pack: number | null;
       each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null;
@@ -696,7 +698,10 @@ export async function submitParPass(
     // Resolve active + par through the per-location overlay (D1). A SKU deactivated at this
     // location is rejected just like a globally inactive one (can't order a deactivated SKU).
     const overlayRow = overlayBySku.get(sku.id) ?? null;
-    if (!resolveActive(overlayRow?.activeOverride, true)) {
+    // Overlay-over-global active resolution (D1): a promotional override (true on a
+    // globally-inactive SKU) is submittable; a locally-deactivated one (override false)
+    // is rejected just like a globally inactive SKU with no override.
+    if (!resolveActive(overlayRow?.activeOverride, sku.active)) {
       throw new OrderingError(400, "invalid_sku", "A SKU is not found or inactive");
     }
     const overlayForPar: LocationSkuOverlay | null = overlayRow
@@ -1183,7 +1188,13 @@ export async function generateDraftForVendor(
 
   let created: CreatedDraft[];
   try {
-    created = await createDraftsFromLines(actor, locationId, byVendor, null);
+    // noCodeSuffixRetry: the pre-check above is the fast path (a placed/draft PO today
+    // → early 409). It CANNOT close the double-call race (two concurrent generates both
+    // pass the pre-check). Passing the flag turns the display-code unique index into the
+    // day-idempotency arbiter: the loser of the base-code INSERT gets 409 `po_exists`
+    // instead of minting a duplicate -2 second order. See createDraftsFromLines' opts doc
+    // for the placed-earlier-today tradeoff (acceptable: an order already went out).
+    created = await createDraftsFromLines(actor, locationId, byVendor, null, { noCodeSuffixRetry: true });
   } catch (err) {
     // Surface the PO lib's typed errors as OrderingErrors so the route maps them uniformly.
     if (err instanceof PurchaseOrderError) throw new OrderingError(err.status, err.code, err.message);

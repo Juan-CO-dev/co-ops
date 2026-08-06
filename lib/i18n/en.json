@@ -2718,6 +2718,7 @@
   "ordering.po.reconcile": "Mark reconciled",
   "ordering.po.reconcile_arm": "Tap again to reconcile",
   "ordering.po.error.not_draft": "This order is no longer a draft.",
+  "ordering.po.error.confirmed_during_edit": "This order was confirmed while you were editing — your last change did not make it into the confirmed snapshot.",
   "ordering.po.error.not_confirmed": "Confirm the order before marking it placed.",
   "ordering.po.error.not_received": "This order isn't received yet.",
   "ordering.po.error.already_placed": "This order is already placed.",

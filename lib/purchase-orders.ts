@@ -40,6 +40,7 @@ import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { formatTime } from "@/lib/i18n/format";
 import { etCalendarDate, operationalDayUtcRange } from "@/lib/operational-day";
+import { etDayFromDate } from "@/lib/et-day-shared";
 import { loadCreditsForDelivery } from "@/lib/credits";
 
 /** KH+ read/write floor for the PO lifecycle (draft/confirm/place/receive + reads). */
@@ -74,14 +75,15 @@ function actorLoc(actor: AuthContext): LocationActor {
 /**
  * The ET calendar date + its day-of-week for cutoff evaluation and PO codes.
  * Vercel runs UTC; evening orders (exactly when shops order) must not roll into
- * tomorrow's date/dow. etCalendarDate gives the ET date; parsing it at local
- * midnight preserves the date components, so getDay() is that ET date's weekday
- * regardless of server TZ (identical derivation to ordering.ts). NEVER inline a
- * `new Date().getDay()` in day-rule context — always go through here.
+ * tomorrow's date/dow. etCalendarDate gives the ET date; the dow derives from it
+ * via the shared lib/et-day-shared.etDayFromDate — the ONE home for that
+ * derivation (ordering.ts's etWalkDay delegates to the same helper; no import
+ * cycle since et-day-shared is a pure leaf). NEVER inline a `new Date().getDay()`
+ * in day-rule context — always go through here.
  */
 function etToday(): { dateEt: string; dow: number; compactYmd: string } {
   const dateEt = etCalendarDate(new Date().toISOString()); // YYYY-MM-DD (America/New_York)
-  const dow = new Date(`${dateEt}T00:00:00`).getDay(); // 0=Sun..6=Sat (order_day convention)
+  const { dow } = etDayFromDate(dateEt); // 0=Sun..6=Sat (order_day convention)
   const compactYmd = dateEt.replace(/-/g, ""); // YYYYMMDD for the display code
   return { dateEt, dow, compactYmd };
 }
@@ -164,12 +166,24 @@ export interface CreatedDraft {
  *   - one PO header + its lines, error-checked and sequential (house pattern).
  * Emits ONE `po.draft_created` audit row for the whole batch with the po_ids +
  * source. Vendors with no lines are skipped. Append-only.
+ *
+ * opts.noCodeSuffixRetry (generateDraftForVendor path): repurpose the display-code
+ * unique index as the DAY-IDEMPOTENCY arbiter for a single-vendor generate. Instead
+ * of retrying the 23505 at the next suffix (-2, -3…), attempt ONLY the unsuffixed
+ * base code and, on a unique-violation, throw PurchaseOrderError(409, "po_exists").
+ * This closes the double-call race generateDraftForVendor's pre-check can't (two
+ * concurrent generates both pass the pre-check, then only ONE wins the base code).
+ * TRADEOFF (documented): a PO that was PLACED earlier today already holds the base
+ * code → a later generate 409s. Accepted — an order already went out for this
+ * vendor today, so re-generating is exactly what we want to block; the walker path
+ * (multi-vendor births, retry ON) is unaffected and still handles genuine seconds.
  */
 export async function createDraftsFromLines(
   actor: AuthContext,
   locationId: string,
   byVendor: Map<string, DraftLineInput[]>,
   parPassEventId: string | null,
+  opts?: { noCodeSuffixRetry?: boolean },
 ): Promise<CreatedDraft[]> {
   requireLevel(actor, PO_MIN);
   if (!lockLocationContext(actorLoc(actor), locationId)) {
@@ -230,6 +244,9 @@ export async function createDraftsFromLines(
     // 23505 race retry: another request may claim a code between our in-memory scan
     // and the INSERT. On a unique-violation we add that code to takenCodes and
     // re-scan — nextFreeCode then skips it and yields the next free suffix. Bounded.
+    // opts.noCodeSuffixRetry (generate path): ONE attempt at the base code only; a
+    // 23505 means a PO already holds today's base code for this vendor → treat the
+    // unique index as the day-idempotency arbiter and 409 `po_exists` (never suffix).
     for (let attempt = 0; attempt < 25; attempt++) {
       const code = nextFreeCode(base, takenCodes);
       const { data: po, error: poErr } = await sb.from("purchase_orders").insert({
@@ -241,9 +258,15 @@ export async function createDraftsFromLines(
         created_by: actor.user.id,
       }).select("id").maybeSingle<{ id: string }>();
       if (poErr) {
-        // 23505 = unique_violation on the display_code unique index → someone else
-        // took this code; mark it taken and re-scan for the next free suffix.
+        // 23505 = unique_violation on the display_code unique index.
         if ((poErr as { code?: string }).code === "23505") {
+          if (opts?.noCodeSuffixRetry) {
+            // The base code is already taken today → an order for this vendor already
+            // exists (draft/confirmed/placed). Day-idempotency: reject the duplicate
+            // generate rather than mint a -2 second order for the same day.
+            throw new PurchaseOrderError(409, "po_exists", "A draft or confirmed order already exists today for this vendor");
+          }
+          // Walker path: mark taken and re-scan for the next free suffix.
           takenCodes.add(code);
           continue;
         }
@@ -378,6 +401,24 @@ export async function updateDraftLines(
     );
     if (iErr) throw new Error(`updateDraftLines insert: ${iErr.message}`);
   }
+
+  // TOCTOU close (Fix 3): our draft-only guard above is a check-then-act — a concurrent
+  // confirmPO can flip draft→confirmed AFTER we passed the guard but our po_lines writes
+  // may still land. confirmPO's snapshot is frozen at its (earlier) linearizing flip, so
+  // a write that landed after the flip is in po_lines but NOT in the confirmed snapshot
+  // (which is authoritative for transmission/disputes). Re-read the status after writing;
+  // if the PO is no longer a draft, tell the editor their last change missed the snapshot.
+  const { data: after, error: aErr } = await sb.from("purchase_orders")
+    .select("status").eq("id", poId)
+    .maybeSingle<{ status: string }>();
+  if (aErr) throw new Error(`updateDraftLines recheck: ${aErr.message}`);
+  if (after && after.status !== "draft") {
+    throw new PurchaseOrderError(
+      409,
+      "confirmed_during_edit",
+      "This order was confirmed while you were editing — your last change did not make it into the confirmed snapshot",
+    );
+  }
 }
 
 // ── confirmPO: freeze the snapshot + governing cutoff ─────────────────────────────
@@ -406,8 +447,16 @@ interface ConfirmedSnapshot {
  * unit_price is DOLLARS → round to cents), UPDATEs the lines with the frozen price,
  * builds the confirmed_snapshot jsonb (spec §2.2 shape), and stamps
  * cutoff_at_confirm when a vendor_cutoffs row governs today's ET day-of-week.
- * The status flip is a single guarded UPDATE (`.eq("status","draft")` + rowcount)
- * so a concurrent double-confirm loses the race. Audited `po.confirmed`.
+ *
+ * ── LINEARIZATION: the status flip is STEP 1 (TOCTOU fix) ───────────────────────
+ * The guarded draft→confirmed UPDATE (`.eq("status","draft")` + rowcount) runs
+ * FIRST — it is the linearization point. Only after the row is ours do we load the
+ * lines, price them, and write the snapshot (a SECOND, unguarded UPDATE — we own
+ * the row now). This way any updateDraftLines writes that landed BEFORE the flip
+ * are INCLUDED in the snapshot, and updateDraftLines' own post-write status
+ * re-check (409 `confirmed_during_edit`) tells an editor whose write landed AFTER
+ * the flip that it missed the snapshot. A concurrent double-confirm still loses the
+ * race here (the second flip sees no draft row → 409). Audited `po.confirmed`.
  */
 export async function confirmPO(actor: AuthContext, poId: string): Promise<void> {
   requireLevel(actor, PO_MIN);
@@ -425,7 +474,19 @@ export async function confirmPO(actor: AuthContext, poId: string): Promise<void>
     throw new PurchaseOrderError(409, "not_draft", "Only draft orders can be confirmed");
   }
 
-  // Load the lines to price + snapshot.
+  // STEP 1 — the LINEARIZATION POINT: guarded draft→confirmed flip FIRST. Only a
+  // still-draft row transitions (race-safe: a concurrent double-confirm loses here).
+  // Everything below runs on a row we now exclusively own — no further status guard
+  // is needed for the snapshot write, and any updateDraftLines edit that raced ahead
+  // of this flip is already visible to the line load that follows.
+  const confirmedAt = new Date().toISOString();
+  const { error: flipErr, count: flipCount } = await sb.from("purchase_orders")
+    .update({ status: "confirmed", confirmed_by: actor.user.id, confirmed_at: confirmedAt }, { count: "exact" })
+    .eq("id", poId).eq("status", "draft");
+  if (flipErr) throw new Error(`confirmPO flip: ${flipErr.message}`);
+  if (flipCount === 0) throw new PurchaseOrderError(409, "not_draft", "Order is no longer a draft");
+
+  // Load the lines to price + snapshot (post-flip: includes any pre-flip edits).
   const { data: lineRows, error: lErr } = await sb.from("po_lines")
     .select("id, sku_id, order_qty, order_unit_label, guide_position_snapshot")
     .eq("po_id", poId).order("created_at", { ascending: true })
@@ -457,14 +518,23 @@ export async function confirmPO(actor: AuthContext, poId: string): Promise<void>
       .update({ price_cents_at_order: priceCents }, { count: "exact" })
       .eq("id", l.id);
     if (puErr) throw new Error(`confirmPO price update: ${puErr.message}`);
-    if (count === 0) throw new PurchaseOrderError(404, "not_found", "Line not found");
+    // count === 0 tolerated: po_lines are append-only (a line cannot vanish) and we are
+    // PAST the status flip — throwing here would strand the row confirmed-without-snapshot.
+    // A missing price on one line is advisory-null anyway; log and continue.
+    if (count === 0) console.error(`confirmPO: line ${l.id} missing during price freeze (po ${poId}) — continuing`);
   }
 
   // Governing cutoff for today's ET day-of-week (location null-or-match, active).
   const { dateEt, dow } = etToday();
   const cutoffAtConfirm = await resolveGoverningCutoffIso(sb, po.vendor_id, po.location_id, dateEt, dow);
 
-  const confirmedAt = new Date().toISOString();
+  // THE SNAPSHOT IS AUTHORITATIVE for transmission/disputes. It is built here from the
+  // lines as they stood AFTER the linearizing status flip above. po_lines rows serve
+  // queries and may diverge from the snapshot in the narrow race window (an
+  // updateDraftLines write that lands AFTER the flip touches po_lines but never the
+  // frozen snapshot) — updateDraftLines' post-write status re-check throws
+  // `confirmed_during_edit` in exactly that case so the editor learns their last change
+  // did not make it in. Never treat po_lines as the confirmed truth; read the snapshot.
   const snapshot: ConfirmedSnapshot = {
     displayCode: po.display_code,
     vendor: { id: po.vendor_id, name: vend?.name ?? "(vendor)" },
@@ -485,18 +555,20 @@ export async function confirmPO(actor: AuthContext, poId: string): Promise<void>
     confirmedAtEt: formatTime(confirmedAt, actor.user.language),
   };
 
-  // Single guarded status flip (race-safe: only a still-draft row transitions).
-  const { error: cErr, count } = await sb.from("purchase_orders")
+  // STEP 2 — write the snapshot + cutoff onto the row we already own (status flipped
+  // to confirmed in step 1). NO status guard needed here: the linearization already
+  // happened, so this UPDATE cannot lose a race (only this call owns the confirmed
+  // transition). confirmed_by/at were stamped in step 1; we set them again idempotently
+  // for a single coherent confirmed record.
+  const { error: cErr } = await sb.from("purchase_orders")
     .update({
-      status: "confirmed",
       confirmed_snapshot: snapshot,
       confirmed_by: actor.user.id,
       confirmed_at: confirmedAt,
       cutoff_at_confirm: cutoffAtConfirm,
-    }, { count: "exact" })
-    .eq("id", poId).eq("status", "draft");
-  if (cErr) throw new Error(`confirmPO confirm: ${cErr.message}`);
-  if (count === 0) throw new PurchaseOrderError(409, "not_draft", "Order is no longer a draft");
+    })
+    .eq("id", poId);
+  if (cErr) throw new Error(`confirmPO snapshot: ${cErr.message}`);
 
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
@@ -526,7 +598,11 @@ async function loadLatestPriceCentsBySku(sb: ServiceClient, skuIds: string[]): P
   for (const r of data ?? []) {
     if (out.has(r.vendor_item_id)) continue; // desc order → first seen is the latest.
     const dollars = num(r.unit_price);
-    if (dollars != null) out.set(r.vendor_item_id, Math.round(dollars * 100));
+    // Epsilon-safe dollars→cents: bare `dollars * 100` inherits binary-float error
+    // (the 0.1 + 0.2 class — e.g. 19.99 * 100 = 1998.9999999999998), and Math.round
+    // usually saves it but not at every value. Fix the scaled value to 4 decimals
+    // FIRST (killing the sub-cent float noise) then round to an integer cent.
+    if (dollars != null) out.set(r.vendor_item_id, Math.round(Number((dollars * 100).toFixed(4))));
   }
   return out;
 }
@@ -1008,6 +1084,8 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
 
   // Credits summary across the linked deliveries. Reuse lib/credits.ts loader
   // (same KH+ read + per-delivery location-bind) — no parallel query path.
+  // V1 = single delivery per PO (spec non-goal); batch this loop when multi-delivery
+  // lands (V2) — a per-delivery await is fine at V1's one-delivery cardinality.
   let openCount = 0;
   let totalCount = 0;
   for (const did of deliveryIds) {

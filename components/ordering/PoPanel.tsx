@@ -186,7 +186,7 @@ export function PoPanel({
   const doAction = async (
     body: Record<string, unknown>,
     method: "POST" | "PATCH",
-  ): Promise<boolean> => {
+  ): Promise<{ ok: boolean; code?: string }> => {
     setBusy(true);
     setErr(null);
     try {
@@ -200,12 +200,12 @@ export function PoPanel({
         // Surface the open-credits count when the lib packs it into the message (409 open_credits).
         const countMatch = j.message?.match(/^(\d+)/);
         setErrFromCode(j.code, j.code === "open_credits" && countMatch ? Number(countMatch[1]) : undefined);
-        return false;
+        return { ok: false, code: j.code };
       }
-      return true;
+      return { ok: true };
     } catch {
       setErr(t("ordering.po.error.generic"));
-      return false;
+      return { ok: false };
     } finally {
       setBusy(false);
     }
@@ -213,8 +213,13 @@ export function PoPanel({
 
   const saveDraft = async () => {
     if (anyInvalid || editPayload.length === 0) return;
-    const ok = await doAction({ poId, lines: editPayload }, "PATCH");
-    if (ok) {
+    const res = await doAction({ poId, lines: editPayload }, "PATCH");
+    if (res.ok) {
+      await load();
+      onChanged();
+    } else if (res.code === "confirmed_during_edit") {
+      // The PO was confirmed mid-edit — reload so the editor sees the confirmed state
+      // (and the authoritative snapshot); the error message already explains the miss.
       await load();
       onChanged();
     }
@@ -228,10 +233,17 @@ export function PoPanel({
     // Save any pending edits FIRST (freeze what the manager sees), then confirm.
     if (!anyInvalid && editPayload.length > 0) {
       const saved = await doAction({ poId, lines: editPayload }, "PATCH");
-      if (!saved) return;
+      if (!saved.ok) {
+        // If someone else confirmed while we were editing, reload into the confirmed state.
+        if (saved.code === "confirmed_during_edit") {
+          await load();
+          onChanged();
+        }
+        return;
+      }
     }
-    const ok = await doAction({ action: "confirm", poId }, "POST");
-    if (ok) {
+    const res = await doAction({ action: "confirm", poId }, "POST");
+    if (res.ok) {
       await load();
       onChanged();
     }
@@ -245,11 +257,11 @@ export function PoPanel({
   };
 
   const place = async () => {
-    const ok = await doAction(
+    const res = await doAction(
       { action: "place", poId, channel: placeChannel, target: placeTarget.trim() || null, note: placeNote.trim() || null },
       "POST",
     );
-    if (ok) {
+    if (res.ok) {
       await load();
       onChanged();
     }
@@ -260,8 +272,8 @@ export function PoPanel({
       setArmReconcile(true);
       return;
     }
-    const ok = await doAction({ action: "reconcile", poId }, "POST");
-    if (ok) {
+    const res = await doAction({ action: "reconcile", poId }, "POST");
+    if (res.ok) {
       await load();
       onChanged();
     }
