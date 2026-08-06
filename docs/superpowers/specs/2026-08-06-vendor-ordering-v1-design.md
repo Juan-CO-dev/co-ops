@@ -38,6 +38,15 @@
 - **SKU admin:** per-location tab/section on the SKU editor for overlay values (activation toggle + par pair per shop) — reads/writes `location_sku_settings`; global fields unchanged.
 - **Walker/anchors:** walker reads `parFor(location, …)` + `activeAt(location, …)` everywhere it currently reads global pars/active. `submitParPass` snapshots the RESOLVED per-location par (anchor math unchanged — implied oz already snapshots par_qty).
 
+## 5b. Inbound attribution — the two-store email problem (Juan, 2026-08-06)
+
+Juan's gap: both stores' vendor documents arriving at one address must sort correctly. The scheme (his proposal, which the shipped P2 architecture already anticipates — `locations.receipt_email_address` exists, and `locations` carries `address` + `code`):
+
+1. **Per-store aliases are the primary attribution key.** `pstreet@complimentsonlysubs.com` / `8thstreet@…` (final names Juan's call at DNS time) → each set as that location's `receipt_email_address`. Resend inbound routes any address on the domain to the one webhook; ingestion already attributes by to-address match. A primary `vendors@…` catch-all is legitimate: mail to it lands UNATTRIBUTED (location_id null) in the existing triage/link queue — sorted by a human, never lost, never guessed.
+2. **Outbound sends FROM the store's alias (V2 adapter law):** the email adapter sets from/reply-to = the ordering location's alias, so vendor replies (confirmations, invoices) return self-sorted to the right store. Attribution starts at transmission, not ingestion.
+3. **Location-prefixed PO codes in every subject:** confirmed POs get a display code `{location.code}-{YYYYMMDD}-{vendor short}` rendered into transmission subjects/bodies (V1 does this already in the manual/assisted rendered sheets). Inbound documents quoting it match deterministically to both the order AND the location — the strongest key, human-readable in disputes.
+4. **Ship-to address as the V2 parse-time fallback:** vendor invoices carry the delivery address; the LLM parse extracts ship-to and matches against `locations.address` when neither alias nor PO code resolves. Matching-key precedence: PO code > to-alias > ship-to > vendor+date window (single-candidate rule, per the shipped P2 law: auto-attach only when unambiguous, else triage).
+
 ## 6. Non-goals (V1)
 
 Email/SMS transmission (V2, post-DNS) · inbound confirmation/invoice matching to POs + LLM parse (V2) · guide-sequence seeding beyond the column (V3 does the data entry + MOXē import eval) · PFG EDI (V4; Juan emails their integration team meanwhile) · multiple deliveries per PO · per-location guide positions · full-auto ordering (not designed; adapter seam doesn't preclude).
