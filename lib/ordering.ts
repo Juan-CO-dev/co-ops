@@ -59,6 +59,7 @@ import {
 } from "@/lib/pack-chain-shared";
 import { loadOnHand, type OnHandRow } from "@/lib/counts";
 import { etBusinessDate } from "@/lib/counts-shared";
+import { resolvePar, resolveActive, type LocationSkuOverlay } from "@/lib/location-sku-shared";
 
 /** KH+ read/write floor for the par-pass. NO step-up (operational capture, spec D5). */
 export const PAR_PASS_MIN = 4; // key_holder+
@@ -107,13 +108,6 @@ function etWalkDay(): { walkDateEt: string; weekend: boolean; todayDow: number }
   return { walkDateEt, weekend, todayDow };
 }
 
-/**
- * The par that applies on the walk day: weekend_par when it is a weekend-par day AND
- * weekend_par is set, else weekday_par. Returns { par, isWeekend } — par is null only
- * when NEITHER par is set (such a SKU is excluded from the walk by the caller).
- */
-function parForDay(
-  weekdayPar: number | null,
   weekendPar: number | null,
   weekend: boolean,
 ): { par: number | null; isWeekend: boolean } {
@@ -270,7 +264,7 @@ export interface WalkerData {
  * Load the par-pass walker payload for a location (KH+ + location-bind). Vendors with
  * ≥1 active par'd SKU, ordered isOrderDay-first then name; each vendor's SKUs ordered
  * by usage rank desc then name. A SKU is INCLUDED iff it is active, carries a vendor,
- * and has weekday_par OR weekend_par set (parForDay resolves which applies today).
+ * and has weekday_par OR weekend_par set (resolvePar in location-sku-shared resolves which applies today, overlay-first).
  *
  * BATCH: one loadOnHand, one chains load, one measures load, one usage-rank pass, one
  * last-order-qty query (via the sku_ix), and one vendor lookup. No per-SKU I/O.
@@ -308,7 +302,8 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
   const vendorIds = [...new Set(skus.map((s) => s.vendor_id as string))];
 
   // BATCH loads (one each — loadRecipeGraph law).
-  const [chainsBySku, measures, usageBySku, onHandView, { data: vendorRows, error: vErr }, lastOrderBySku] =
+  // overlayBySku: per-location active/par overrides; empty map = day-one (pure inheritance).
+  const [chainsBySku, measures, usageBySku, onHandView, { data: vendorRows, error: vErr }, lastOrderBySku, overlayBySku] =
     await Promise.all([
       loadSkuPackChains(skuIds),
       loadMeasures(),
@@ -317,6 +312,7 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
       sb.from("vendors").select("id, name, order_days").in("id", vendorIds).eq("active", true)
         .returns<Array<{ id: string; name: string; order_days: number[] | null }>>(),
       loadLatestOrderQtyBySku(sb, skuIds),
+      loadOverlayBySku(sb, locationId),
     ]);
   if (vErr) throw new Error(`loadWalkerData vendors: ${vErr.message}`);
   const vendorById = new Map((vendorRows ?? []).map((v) => [v.id, v]));
@@ -327,8 +323,15 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
   for (const s of skus) {
     const vendorId = s.vendor_id as string;
     if (!vendorById.has(vendorId)) continue; // vendor inactive/missing → SKU dropped with it.
-    const { par, isWeekend } = parForDay(num(s.weekday_par), num(s.weekend_par), weekend);
-    if (par == null) continue; // neither par applies today (only weekend_par set, weekday walk).
+    // Resolve active + par through the per-location overlay (D1). Day-one: no overlay rows →
+    // resolveActive/resolvePar reduce to the global values, byte-identical to prior behavior.
+    const overlayRow = overlayBySku.get(s.id) ?? null;
+    const overlayForPar: LocationSkuOverlay | null = overlayRow
+      ? { weekdayPar: overlayRow.weekdayPar, weekendPar: overlayRow.weekendPar }
+      : null;
+    if (!resolveActive(overlayRow?.activeOverride, true)) continue; // deactivated at this location.
+    const par = resolvePar(overlayForPar, { weekdayPar: num(s.weekday_par), weekendPar: num(s.weekend_par) }, weekend);
+    if (par == null) continue; // neither resolved par applies today (excluded from walk).
 
     const chain = chainsBySku.get(s.id) ?? null;
     const skuShape: RecipeInputSku = {
@@ -352,13 +355,17 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
       }
     }
 
+    // parIsWeekend: true when the resolved par came from the weekend_par slot. Mirrors
+    // The day rule (weekend pair member w/ weekday fallback) applied to already-resolved values.
+    const resolvedWeekendPar = overlayForPar?.weekendPar ?? num(s.weekend_par);
+    const parIsWeekend = weekend && resolvedWeekendPar != null;
     const row: WalkerSku = {
       skuId: s.id,
       name: s.name,
       itemNumber: s.item_number,
       orderUnitLabel: orderUnitLabelFor(s.pack_format, chain),
       parToday: par,
-      parIsWeekend: isWeekend,
+      parIsWeekend,
       lastOrderQty: lastOrderBySku.get(s.id) ?? null,
       advisoryOnHand,
       suggestedQty,
@@ -416,6 +423,37 @@ async function loadLatestOrderQtyBySku(
     if (out.has(r.sku_id)) continue; // desc order → first seen is the latest.
     const q = num(r.order_qty);
     if (q != null) out.set(r.sku_id, q);
+  }
+  return out;
+}
+
+// ── Location SKU overlay batch-load ─────────────────────────────────────────────
+/**
+ * One query: all location_sku_settings rows for a location, keyed by sku_id.
+ * Returns an empty map when no overlay rows exist (day-one behavior — pure inheritance).
+ * BATCH LAW: one query per loadWalkerData / submitParPass call; never per-SKU.
+ */
+async function loadOverlayBySku(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+): Promise<Map<string, { activeOverride: boolean | null; weekdayPar: number | null; weekendPar: number | null }>> {
+  const { data, error } = await sb.from("location_sku_settings")
+    .select("sku_id, active_override, weekday_par, weekend_par")
+    .eq("location_id", locationId)
+    .returns<Array<{
+      sku_id: string;
+      active_override: boolean | null;
+      weekday_par: number | string | null;
+      weekend_par: number | string | null;
+    }>>();
+  if (error) throw new Error(`loadOverlayBySku: ${error.message}`);
+  const out = new Map<string, { activeOverride: boolean | null; weekdayPar: number | null; weekendPar: number | null }>();
+  for (const r of data ?? []) {
+    out.set(r.sku_id, {
+      activeOverride: r.active_override,
+      weekdayPar: num(r.weekday_par),
+      weekendPar: num(r.weekend_par),
+    });
   }
   return out;
 }
@@ -508,7 +546,9 @@ export async function submitParPass(
   const { weekend } = etWalkDay();
 
   // Load the referenced SKUs (active + par shape + pack fields for oz). A SKU missing,
-  // inactive, or with no applicable par today is rejected loudly (can't order to no par).
+  // inactive (globally AND not overlay-activated), or with no applicable resolved par today
+  // is rejected loudly (can't order to no par). overlayBySku batch-loads per-location
+  // active/par overrides (D1); empty map = day-one (pure inheritance, no behavior change).
   const { data: skuRows, error: sErr } = await sb.from("vendor_items")
     .select("id, name, vendor_id, item_number, pack_format, weekday_par, weekend_par, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each")
     .in("id", skuIds).eq("active", true)
@@ -522,9 +562,10 @@ export async function submitParPass(
   const skuById = new Map((skuRows ?? []).map((s) => [s.id, s]));
   for (const id of skuIds) if (!skuById.has(id)) throw new OrderingError(400, "invalid_sku", "A SKU is not found or inactive");
 
-  const [chainsBySku, measures] = await Promise.all([
+  const [chainsBySku, measures, overlayBySku] = await Promise.all([
     loadSkuPackChains(skuIds),
     loadMeasures(),
+    loadOverlayBySku(sb, locationId),
   ]);
 
   // Resolve each line: snapshot par, per-order-unit oz, implied on-hand oz.
@@ -539,7 +580,16 @@ export async function submitParPass(
   const resolved: ResolvedLine[] = [];
   for (const l of lines) {
     const sku = skuById.get(l.skuId)!;
-    const { par } = parForDay(num(sku.weekday_par), num(sku.weekend_par), weekend);
+    // Resolve active + par through the per-location overlay (D1). A SKU deactivated at this
+    // location is rejected just like a globally inactive one (can't order a deactivated SKU).
+    const overlayRow = overlayBySku.get(sku.id) ?? null;
+    if (!resolveActive(overlayRow?.activeOverride, true)) {
+      throw new OrderingError(400, "invalid_sku", "A SKU is not found or inactive");
+    }
+    const overlayForPar: LocationSkuOverlay | null = overlayRow
+      ? { weekdayPar: overlayRow.weekdayPar, weekendPar: overlayRow.weekendPar }
+      : null;
+    const par = resolvePar(overlayForPar, { weekdayPar: num(sku.weekday_par), weekendPar: num(sku.weekend_par) }, weekend);
     if (par == null) throw new OrderingError(400, "no_par", "A SKU has no par set for today");
     const chain = chainsBySku.get(sku.id) ?? null;
     const skuShape: RecipeInputSku = {
