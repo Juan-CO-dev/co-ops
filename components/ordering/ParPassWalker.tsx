@@ -36,12 +36,12 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { AlertPill } from "@/components/ui/AlertPill";
+import { CopyButton, DeliveryRow } from "@/components/ordering/delivery-affordances";
 import type {
   WalkerData,
   WalkerVendor,
   WalkerSku,
   DraftOrder,
-  DraftOrderDelivery,
   ShrinkageNotice,
   ParPassSummary,
 } from "@/lib/ordering";
@@ -61,28 +61,6 @@ const SOURCE_KEY: Record<string, TranslationKey> = {
   par_estimate: "ordering.source.par_pass",
   inferred: "ordering.source.inferred",
 };
-
-// ── Href hygiene helpers (security-adjacent; Fix 3) ──────────────────────────────
-/** True when `addr` is a syntactically safe email address for a mailto: href.
- *  encodeURIComponent is wrong for the address part (it encodes @); we validate
- *  with a conservative regex instead and render the link only when it passes. */
-function isValidEmail(addr: string): boolean {
-  return /^[^\s@?#&]+@[^\s@?#&]+$/.test(addr);
-}
-/** True when `raw` is an http/https URL. Render the anchor only when valid. */
-function isValidHttpUrl(raw: string): boolean {
-  try {
-    const u = new URL(raw);
-    return u.protocol === "http:" || u.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-/** True when `raw` is a plausible telephone value (digits/+/parens/dash/space, ≥7 digits). */
-function isValidTel(raw: string): boolean {
-  const stripped = raw.replace(/[^\d]/g, "");
-  return /^[\d+()\-\s]+$/.test(raw) && stripped.length >= 7;
-}
 
 /** Parse a raw qty string → a non-negative finite number, or null when blank/invalid. */
 function parseQty(raw: string): number | null {
@@ -111,7 +89,7 @@ export function ParPassWalker({
   shopLabel: string;
   dateLabel: string;
 }) {
-  const { t, language } = useTranslation();
+  const { t } = useTranslation();
   const router = useRouter();
 
   // Observation map, keyed by skuId. Born empty (nothing observed yet).
@@ -739,134 +717,6 @@ function DraftOrderCard({
       </div>
     </section>
   );
-}
-
-// ── One delivery affordance row (method → link + Copy) ────────────────────────────
-function DeliveryRow({
-  detail,
-  subject,
-  body,
-  copyText,
-}: {
-  detail: DraftOrderDelivery;
-  subject: string;
-  body: string;
-  copyText: string;
-}) {
-  const { t } = useTranslation();
-  const label = detail.label ?? methodLabel(detail.method, t);
-
-  // Href hygiene: each method renders its action link ONLY when the value passes
-  // a conservative validation check. Copy is always available as a fallback.
-  // mailto: subject + body are URL-encoded (injection guard — rogue values can't
-  // smuggle headers); the address is validated with isValidEmail (encodeURIComponent
-  // encodes @ and is wrong for the address segment).
-  let action: React.ReactNode;
-  if (detail.method === "email") {
-    if (isValidEmail(detail.value)) {
-      const mailtoHref = `mailto:${detail.value}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-      action = (
-        <a href={mailtoHref} className={linkBtn}>
-          {t("ordering.deliver.email")}
-        </a>
-      );
-    } else {
-      action = null; // invalid address → Copy-only.
-    }
-  } else if (detail.method === "url" || detail.method === "portal") {
-    if (isValidHttpUrl(detail.value)) {
-      action = (
-        <a href={detail.value} target="_blank" rel="noopener noreferrer" className={linkBtn}>
-          {t("ordering.deliver.open")}
-        </a>
-      );
-    } else {
-      action = null; // non-http(s) value → Copy-only.
-    }
-  } else if (detail.method === "phone") {
-    if (isValidTel(detail.value)) {
-      const telHref = `tel:${detail.value.replace(/[^\d+()\-\s]/g, "")}`;
-      action = (
-        <a href={telHref} className={linkBtn}>
-          {t("ordering.deliver.call")}
-        </a>
-      );
-    } else {
-      action = null; // implausible tel → Copy-only.
-    }
-  } else {
-    // other / none → copy only (no navigable affordance).
-    action = null;
-  }
-
-  return (
-    <div className="flex items-center justify-between gap-2 rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2">
-      <div className="min-w-0">
-        <span className="block text-[13px] font-bold text-co-text">{label}</span>
-        <span className="block truncate text-[12px] text-co-text-dim">{detail.value}</span>
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        {action}
-        <CopyButton text={detail.method === "email" ? copyText : detail.value} />
-      </div>
-    </div>
-  );
-}
-
-const linkBtn =
-  "inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-3 text-sm font-bold text-co-text hover:bg-co-gold-deep";
-
-/** Copy-to-clipboard with a textual fallback (older/insecure contexts have no
- *  navigator.clipboard). Shows a transient "Copied" state. */
-function CopyButton({ text }: { text: string }) {
-  const { t } = useTranslation();
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
-      } else {
-        // Fallback: a hidden textarea + execCommand (deprecated but the last resort).
-        const ta = document.createElement("textarea");
-        ta.value = text;
-        ta.style.position = "fixed";
-        ta.style.opacity = "0";
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand("copy");
-        document.body.removeChild(ta);
-      }
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
-    } catch {
-      // Clipboard blocked — silently no-op (the link affordances still work).
-    }
-  };
-  return (
-    <button
-      type="button"
-      onClick={() => void copy()}
-      className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-sm font-bold text-co-text-dim hover:border-co-text"
-    >
-      {copied ? t("ordering.deliver.copied") : t("ordering.deliver.copy")}
-    </button>
-  );
-}
-
-/** Fallback method label when a detail carries no explicit label. */
-function methodLabel(method: string, t: (k: TranslationKey) => string): string {
-  switch (method) {
-    case "email":
-      return t("ordering.deliver.method_email");
-    case "url":
-      return t("ordering.deliver.method_url");
-    case "portal":
-      return t("ordering.deliver.method_portal");
-    case "phone":
-      return t("ordering.deliver.method_phone");
-    default:
-      return t("ordering.deliver.method_other");
-  }
 }
 
 // ── History panel: recent par-passes (collapsible, default-collapsed) ─────────────

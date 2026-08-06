@@ -852,6 +852,32 @@ export interface PoStatusEvent {
   status: string;
   at: string;
 }
+/** One vendor contact for the manual-tier transmit card (accepts_text_orders badged, D5). */
+export interface PoTransmitContact {
+  id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  acceptsTextOrders: boolean;
+}
+/** One vendor ordering-detail affordance (method/value/label) — reused by the transmit block. */
+export interface PoTransmitOrderingDetail {
+  method: string; // email | url | phone | portal | other
+  value: string;
+  label: string | null;
+}
+/**
+ * The tier-appropriate transmit context for the CONFIRMED state (spec §3). The panel
+ * renders: manual → contact cards (accepts_text_orders badged) + ordering-detail
+ * affordances; assisted → portal deep link + guide-position-sorted lines. All fields are
+ * read-only vendor config — the panel never mutates them. Contacts/details are active-only.
+ */
+export interface PoTransmit {
+  tier: "auto" | "assisted" | "manual";
+  portalUrl: string | null;
+  contacts: PoTransmitContact[];
+  orderingDetails: PoTransmitOrderingDetail[];
+}
 export interface PoDetail {
   poId: string;
   displayCode: string;
@@ -873,6 +899,9 @@ export interface PoDetail {
   credits: { openCount: number; totalCount: number };
   /** Status timeline derived from the row's OWN timestamps (not the audit log). */
   timeline: PoStatusEvent[];
+  /** Tier-appropriate transmit context (vendor config; read-only). Powers the confirmed
+   *  state's contact card / portal deep link (spec §3). */
+  transmit: PoTransmit;
 }
 
 /**
@@ -902,24 +931,60 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
     throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
   }
 
-  // Lines + transmissions + vendor + linked deliveries (batched).
-  const [{ data: lineRows, error: lErr }, { data: txRows, error: tErr }, { data: vend, error: vErr }, { data: delivRows, error: dErr }] =
-    await Promise.all([
-      sb.from("po_lines")
-        .select("sku_id, order_qty, order_unit_label, price_cents_at_order, guide_position_snapshot, note")
-        .eq("po_id", poId).order("guide_position_snapshot", { ascending: true, nullsFirst: false }).order("created_at", { ascending: true })
-        .returns<Array<{ sku_id: string; order_qty: number | string; order_unit_label: string | null; price_cents_at_order: number | null; guide_position_snapshot: number | null; note: string | null }>>(),
-      sb.from("po_transmissions")
-        .select("id, channel, target, sent_at, sent_by, note")
-        .eq("po_id", poId).order("sent_at", { ascending: true })
-        .returns<Array<{ id: string; channel: string; target: string | null; sent_at: string; sent_by: string | null; note: string | null }>>(),
-      sb.from("vendors").select("id, name").eq("id", po.vendor_id).maybeSingle<{ id: string; name: string }>(),
-      sb.from("vendor_deliveries").select("id").eq("purchase_order_id", poId).returns<Array<{ id: string }>>(),
-    ]);
+  // Lines + transmissions + vendor (w/ transmit config) + linked deliveries + the vendor's
+  // active contacts + ordering details (batched — the transmit block's read is server-side).
+  const [
+    { data: lineRows, error: lErr },
+    { data: txRows, error: tErr },
+    { data: vend, error: vErr },
+    { data: delivRows, error: dErr },
+    { data: contactRows, error: ctErr },
+    { data: orderingRows, error: orErr },
+  ] = await Promise.all([
+    sb.from("po_lines")
+      .select("sku_id, order_qty, order_unit_label, price_cents_at_order, guide_position_snapshot, note")
+      .eq("po_id", poId).order("guide_position_snapshot", { ascending: true, nullsFirst: false }).order("created_at", { ascending: true })
+      .returns<Array<{ sku_id: string; order_qty: number | string; order_unit_label: string | null; price_cents_at_order: number | null; guide_position_snapshot: number | null; note: string | null }>>(),
+    sb.from("po_transmissions")
+      .select("id, channel, target, sent_at, sent_by, note")
+      .eq("po_id", poId).order("sent_at", { ascending: true })
+      .returns<Array<{ id: string; channel: string; target: string | null; sent_at: string; sent_by: string | null; note: string | null }>>(),
+    sb.from("vendors").select("id, name, transmission_tier, portal_url").eq("id", po.vendor_id)
+      .maybeSingle<{ id: string; name: string; transmission_tier: string | null; portal_url: string | null }>(),
+    sb.from("vendor_deliveries").select("id").eq("purchase_order_id", poId).returns<Array<{ id: string }>>(),
+    sb.from("vendor_contacts")
+      .select("id, name, email, phone, accepts_text_orders, display_order")
+      .eq("vendor_id", po.vendor_id).eq("active", true).order("display_order", { ascending: true })
+      .returns<Array<{ id: string; name: string; email: string | null; phone: string | null; accepts_text_orders: boolean | null; display_order: number }>>(),
+    sb.from("vendor_ordering_details")
+      .select("method, value, label, display_order")
+      .eq("vendor_id", po.vendor_id).eq("active", true).order("display_order", { ascending: true })
+      .returns<Array<{ method: string; value: string; label: string | null; display_order: number }>>(),
+  ]);
   if (lErr) throw new Error(`loadPoDetail lines: ${lErr.message}`);
   if (tErr) throw new Error(`loadPoDetail transmissions: ${tErr.message}`);
   if (vErr) throw new Error(`loadPoDetail vendor: ${vErr.message}`);
   if (dErr) throw new Error(`loadPoDetail deliveries: ${dErr.message}`);
+  if (ctErr) throw new Error(`loadPoDetail contacts: ${ctErr.message}`);
+  if (orErr) throw new Error(`loadPoDetail ordering details: ${orErr.message}`);
+
+  // The transmit block (spec §3): tier + portal + active contacts (accepts_text_orders
+  // badged) + ordering-detail affordances. Tier defaults to manual (D4 — every vendor
+  // seeds at the lowest pipe); an unexpected value falls back to manual, never crashes.
+  const rawTier = vend?.transmission_tier ?? "manual";
+  const tier: PoTransmit["tier"] = rawTier === "assisted" || rawTier === "auto" ? rawTier : "manual";
+  const transmit: PoTransmit = {
+    tier,
+    portalUrl: vend?.portal_url ?? null,
+    contacts: (contactRows ?? []).map((c) => ({
+      id: c.id,
+      name: c.name,
+      email: c.email,
+      phone: c.phone,
+      acceptsTextOrders: c.accepts_text_orders === true,
+    })),
+    orderingDetails: (orderingRows ?? []).map((o) => ({ method: o.method, value: o.value, label: o.label })),
+  };
   const lines = lineRows ?? [];
   const txs = txRows ?? [];
   const deliveryIds = (delivRows ?? []).map((d) => d.id);
@@ -1001,5 +1066,6 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
     deliveryIds,
     credits: { openCount, totalCount },
     timeline,
+    transmit,
   };
 }

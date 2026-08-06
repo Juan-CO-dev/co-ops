@@ -26,7 +26,9 @@ import { redirect } from "next/navigation";
 
 import { DashboardBackLink } from "@/components/DashboardBackLink";
 import { ParPassWalker } from "@/components/ordering/ParPassWalker";
-import { loadWalkerData, loadRecentParPasses, PAR_PASS_MIN } from "@/lib/ordering";
+import { OrderingSurfaces } from "@/components/ordering/OrderingSurfaces";
+import { loadWalkerData, loadRecentParPasses, loadOrderingAttention, PAR_PASS_MIN } from "@/lib/ordering";
+import { loadTodaysOrders, loadPoHistory } from "@/lib/purchase-orders";
 import { serverT } from "@/lib/i18n/server";
 import { formatDateLabel } from "@/lib/i18n/format";
 import { TranslationProvider } from "@/lib/i18n/provider";
@@ -84,9 +86,12 @@ export default async function OrderingPage({
   }
 
   const loc = accessible.find((l) => l.id === locationId) ?? null;
-  const [walker, recent] = await Promise.all([
+  const [walker, recent, todaysOrders, poHistory, cutoffAttention] = await Promise.all([
     loadWalkerData(auth, locationId),
     loadRecentParPasses(auth, locationId),
+    loadTodaysOrders(auth, locationId),
+    loadPoHistory(auth, locationId, 20),
+    loadOrderingAttention(auth, locationId),
   ]);
 
   // The shop label carried into the mailto body header + the walk header (never a
@@ -141,6 +146,17 @@ export default async function OrderingPage({
             </nav>
           )}
         </div>
+
+        <OrderingSurfaces
+          todaysOrders={todaysOrders}
+          history={poHistory}
+          cutoffAttention={cutoffAttention.vendors}
+          locationId={locationId}
+          actorLevel={auth.level}
+          language={language}
+          shopLabel={shopLabel}
+          dateLabel={dateLabel}
+        />
 
         <ParPassWalker
           walker={walker}
