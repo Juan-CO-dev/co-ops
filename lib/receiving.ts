@@ -38,6 +38,7 @@ import { loadMeasures, loadSkuPackChains } from "@/lib/prep-consumption";
 import { ozForRecipeInput, skuContentOz, type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import { deriveCreditDrafts, isDuplicateAppend, type AppendLine, type IntakeLineForCredits } from "@/lib/receiving-shared";
+import { advanceToReceived } from "@/lib/purchase-orders";
 
 export const RECEIVE_MIN = 4; // key_holder+
 
@@ -94,6 +95,15 @@ export interface RecordDeliveryInput {
    *  (addDeliveryLines / completeDelivery); defaults to "complete" at write. */
   deliveryStatus?: "in_progress" | "complete";
   lines: DeliveryLineInput[];
+  /**
+   * When the intake is being received against an open PO (spec §3 "received"),
+   * the form carries the PO id here. Validated: PO must exist, be `placed`, and
+   * have matching vendor_id + location_id. On success the delivery links
+   * vendor_deliveries.purchase_order_id; completing the delivery advances the PO
+   * to `received` via advanceToReceived. 409 codes: `po_mismatch` |
+   * `po_not_placed` | `po_already_received`.
+   */
+  purchaseOrderId?: string | null;
 }
 /** One SKU option for the receiving form, carrying its active chain-level labels
  *  (root → leaf) so the line UI can offer a level picker. Empty chainLabels →
@@ -285,6 +295,29 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   const { data: vend } = await sb.from("vendors").select("id").eq("id", input.vendorId).eq("active", true).maybeSingle<{ id: string }>();
   if (!vend) throw new ReceivingError(400, "invalid_vendor", "Vendor not found or inactive");
 
+  // ── PO linkage validation (spec §3 "received"; optional) ─────────────────
+  // When purchaseOrderId is supplied: the PO must exist, be in `placed` status,
+  // and its vendor_id + location_id must match the delivery. Error codes are the
+  // three 409s the form maps: po_mismatch | po_not_placed | po_already_received.
+  const poId = input.purchaseOrderId?.trim() || null;
+  if (poId) {
+    const { data: po, error: poValErr } = await sb.from("purchase_orders")
+      .select("id, vendor_id, location_id, status")
+      .eq("id", poId)
+      .maybeSingle<{ id: string; vendor_id: string; location_id: string; status: string }>();
+    if (poValErr) throw new Error(`recordDelivery PO validation: ${poValErr.message}`);
+    if (!po) throw new ReceivingError(404, "po_not_found", "Purchase order not found");
+    if (po.vendor_id !== input.vendorId || po.location_id !== input.locationId) {
+      throw new ReceivingError(409, "po_mismatch", "Purchase order does not match this vendor or location");
+    }
+    if (po.status === "received" || po.status === "reconciled") {
+      throw new ReceivingError(409, "po_already_received", "This purchase order has already been received");
+    }
+    if (po.status !== "placed") {
+      throw new ReceivingError(409, "po_not_placed", "Purchase order must be in placed status to receive against it");
+    }
+  }
+
   // Dedupe guard (spec D1 dedupeKey): vendor + location + date + case-insensitive
   // invoice identity. A driver re-handing amended paperwork must NOT double-file.
   // An in-progress hit means "continue that one", a complete hit means "already received".
@@ -317,6 +350,7 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
     invoice_number: invoiceNumber, invoice_total: input.invoiceTotal ?? null,
     notes: headerNote, note: headerNote, receipt_url: input.receiptUrl?.trim() || null, received_by: actor.user.id,
     delivery_status: input.deliveryStatus ?? "complete",
+    purchase_order_id: poId,
   }).select("id").maybeSingle<{ id: string }>();
   if (hErr) {
     // The app-level dedupe guard above is the fast path (friendly message), but it
@@ -370,9 +404,15 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "delivery.received", resourceTable: "vendor_deliveries", resourceId: header.id,
-    metadata: { vendor_id: input.vendorId, location_id: input.locationId, line_count: input.lines.length, priced_lines: priced.length, avg_oz_updated: avgUpdated, avg_skipped_chained: avgSkippedChained },
+    metadata: { vendor_id: input.vendorId, location_id: input.locationId, line_count: input.lines.length, priced_lines: priced.length, avg_oz_updated: avgUpdated, avg_skipped_chained: avgSkippedChained, purchase_order_id: poId },
     ipAddress: null, userAgent: null,
   });
+
+  // Advance the linked PO to `received` when the delivery is complete (spec §3).
+  // For in_progress deliveries the PO stays at placed until completeDelivery fires.
+  if (poId && (input.deliveryStatus ?? "complete") === "complete") {
+    await advanceToReceived(sb, poId);
+  }
 
   return { deliveryId: header.id };
 }
@@ -611,6 +651,64 @@ export async function loadLastDeliveryTemplate(
   };
 }
 
+// ── Open-PO template (top-of-hierarchy prefill from the latest placed PO) ─────────
+export interface OpenPoTemplate {
+  poId: string;
+  displayCode: string;
+  lines: Array<{ skuId: string; level: string | null; qty: number }>;
+}
+
+/**
+ * Latest `placed` PO for this vendor+location, projected into a prefill template.
+ * Returns null when no placed PO exists. PLACED-ONLY: a confirmed-but-not-placed PO
+ * hasn't been transmitted to the vendor — receiving against it would be premature.
+ * Lines with orderQty ≤ 0 are omitted (0-qty lines are "removed" in the draft-edit
+ * convention and should not pre-fill the door form). Same RECEIVE_MIN + location-bind
+ * gates as the sibling loadLastDeliveryTemplate.
+ */
+export async function loadOpenPoTemplate(
+  actor: AuthContext, locationId: string, vendorId: string,
+): Promise<OpenPoTemplate | null> {
+  requireReceive(actor);
+  if (!lockLocationContext(actorLoc(actor), locationId)) throw new ReceivingError(404, "not_found", "Location not found");
+  const sb = getServiceRoleClient();
+
+  // Latest placed PO for this vendor+location (most recently placed).
+  const { data: po, error: poErr } = await sb.from("purchase_orders")
+    .select("id, display_code")
+    .eq("location_id", locationId)
+    .eq("vendor_id", vendorId)
+    .eq("status", "placed")
+    .order("placed_at", { ascending: false, nullsFirst: false })
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle<{ id: string; display_code: string }>();
+  if (poErr) throw new Error(`loadOpenPoTemplate po: ${poErr.message}`);
+  if (!po) return null;
+
+  const { data: lineRows, error: lErr } = await sb.from("po_lines")
+    .select("sku_id, order_qty, order_unit_label")
+    .eq("po_id", po.id)
+    .order("guide_position_snapshot", { ascending: true, nullsFirst: false })
+    .order("created_at", { ascending: true })
+    .returns<Array<{ sku_id: string; order_qty: number | string; order_unit_label: string | null }>>();
+  if (lErr) throw new Error(`loadOpenPoTemplate lines: ${lErr.message}`);
+
+  const usableLines = (lineRows ?? [])
+    .map((l) => ({
+      skuId: l.sku_id,
+      // The PO stores the ordered unit label (e.g. "case") so the form knows
+      // which level to pre-select on the line. It maps to receivedLevelLabel.
+      level: l.order_unit_label,
+      qty: Number(l.order_qty),
+    }))
+    .filter((l) => Number.isFinite(l.qty) && l.qty > 0);
+
+  if (usableLines.length === 0) return null;
+
+  return { poId: po.id, displayCode: po.display_code, lines: usableLines };
+}
+
 // ── Partial deliveries (build a delivery across multiple visits) ────────────────────
 
 /**
@@ -686,15 +784,17 @@ export async function addDeliveryLines(
 
 /**
  * Flip an in-progress delivery to 'complete'. Location-bound; checks rowcount
- * (silent-UPDATE law) and 404s on zero rows.
+ * (silent-UPDATE law) and 404s on zero rows. When the delivery is linked to a
+ * placed PO (purchase_order_id set), advances the PO to `received` after the
+ * status flip (spec §3 — partial deliveries keep the PO at placed until complete).
  */
 export async function completeDelivery(actor: AuthContext, deliveryId: string): Promise<void> {
   requireReceive(actor);
   const sb = getServiceRoleClient();
   const { data: h, error } = await sb.from("vendor_deliveries")
-    .select("id, location_id, delivery_status")
+    .select("id, location_id, delivery_status, purchase_order_id")
     .eq("id", deliveryId)
-    .maybeSingle<{ id: string; location_id: string; delivery_status: string | null }>();
+    .maybeSingle<{ id: string; location_id: string; delivery_status: string | null; purchase_order_id: string | null }>();
   if (error) throw new Error(`completeDelivery load: ${error.message}`);
   if (!h) throw new ReceivingError(404, "not_found", "Delivery not found");
   if (!lockLocationContext(actorLoc(actor), h.location_id)) throw new ReceivingError(404, "not_found", "Delivery not found");
@@ -708,7 +808,13 @@ export async function completeDelivery(actor: AuthContext, deliveryId: string): 
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "delivery.completed", resourceTable: "vendor_deliveries", resourceId: deliveryId,
-    metadata: { location_id: h.location_id },
+    metadata: { location_id: h.location_id, purchase_order_id: h.purchase_order_id },
     ipAddress: null, userAgent: null,
   });
+
+  // Advance the linked PO to `received` now that the delivery is complete.
+  // advanceToReceived is a silent no-op when the PO is already received (race-safe).
+  if (h.purchase_order_id) {
+    await advanceToReceived(sb, h.purchase_order_id);
+  }
 }
