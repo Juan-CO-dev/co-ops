@@ -108,12 +108,6 @@ function etWalkDay(): { walkDateEt: string; weekend: boolean; todayDow: number }
   return { walkDateEt, weekend, todayDow };
 }
 
-  weekendPar: number | null,
-  weekend: boolean,
-): { par: number | null; isWeekend: boolean } {
-  if (weekend && weekendPar != null) return { par: weekendPar, isWeekend: true };
-  return { par: weekdayPar, isWeekend: false };
-}
 
 // ── Per-order-unit oz conversion (chain root, else pack content) ─────────────────
 /**
