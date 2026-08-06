@@ -120,8 +120,13 @@ export function ParPassWalker({
   const [phase, setPhase] = useState<"walk" | "review" | "done">("walk");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  // Filled from the POST response after a successful submit.
-  const [result, setResult] = useState<{ draftOrders: DraftOrder[]; shrinkage: ShrinkageNotice[] } | null>(null);
+  // Filled from the POST response after a successful submit. poError = the walk saved but
+  // draft-PO creation failed (the observation data is sacred; codes/POs can be regenerated).
+  const [result, setResult] = useState<{
+    draftOrders: DraftOrder[];
+    shrinkage: ShrinkageNotice[];
+    poError: boolean;
+  } | null>(null);
 
   const setSku = (skuId: string, patch: Partial<Obs>) =>
     setObs((m) => ({ ...m, [skuId]: { qty: "", marked: false, ...m[skuId], ...patch } }));
@@ -181,6 +186,7 @@ export function ParPassWalker({
       const j = (await res.json().catch(() => ({}))) as {
         draftOrders?: DraftOrder[];
         shrinkage?: ShrinkageNotice[];
+        poError?: boolean;
         code?: string;
       };
       if (!res.ok) {
@@ -188,7 +194,7 @@ export function ParPassWalker({
         setBusy(false);
         return;
       }
-      setResult({ draftOrders: j.draftOrders ?? [], shrinkage: j.shrinkage ?? [] });
+      setResult({ draftOrders: j.draftOrders ?? [], shrinkage: j.shrinkage ?? [], poError: j.poError ?? false });
       setPhase("done");
       window.scrollTo({ top: 0 });
     } catch {
@@ -220,6 +226,14 @@ export function ParPassWalker({
         >
           {t("ordering.done.recorded", { n: submitLines.length })}
         </div>
+
+        {result.poError && (
+          // The walk saved but draft-PO creation failed — the observation data is sacred;
+          // the codes/POs can be regenerated from the cutoff path. Advisory, non-blocking.
+          <div role="status" className="rounded-xl border-2 border-co-warning bg-co-warning-surface px-4 py-3 text-[13px] text-co-text">
+            {t("ordering.done.po_error")}
+          </div>
+        )}
 
         {result.shrinkage.length > 0 && (
           <div className="rounded-xl border-2 border-co-warning bg-co-warning-surface p-4">
@@ -448,6 +462,11 @@ function VendorSection({
       badge={
         <>
           {vendor.isOrderDay && <AlertPill tone="info">{t("ordering.vendor.order_day")}</AlertPill>}
+          {vendor.cutoffTimeToday && (
+            <AlertPill tone={vendor.cutoffSoon ? "warn" : "info"} uppercase={false}>
+              {t("ordering.vendor.cutoff", { time: vendor.cutoffTimeToday })}
+            </AlertPill>
+          )}
           {markedHere > 0 && (
             <AlertPill tone="ok" uppercase={false}>
               {t("ordering.vendor.marked", { n: markedHere })}
@@ -653,8 +672,12 @@ function DraftOrderCard({
 }) {
   const { t } = useTranslation();
 
-  // The plaintext order body: a header line (shop + date) then one line per SKU.
+  // The plaintext order body: an optional "PO {code}" first line (spec §5b.3 — the
+  // deterministic attribution key in every transmitted body), then the shop+date header,
+  // then one line per SKU. The PO line is omitted when the draft PO failed to create
+  // (displayCode null) — the order text still sends; only the code is missing.
   const bodyText = useMemo(() => {
+    const poLine = order.displayCode ? `${t("ordering.email.body_po", { code: order.displayCode })}\n` : "";
     const header = t("ordering.email.body_header", { shop: shopLabel, date: dateLabel });
     const lines = order.lines.map((l) =>
       t("ordering.email.body_line", {
@@ -664,14 +687,21 @@ function DraftOrderCard({
         item: l.itemNumber ?? "—",
       }),
     );
-    return `${header}\n\n${lines.join("\n")}`;
+    return `${poLine}${header}\n\n${lines.join("\n")}`;
   }, [order, shopLabel, dateLabel, t]);
 
   const subject = t("ordering.email.subject", { shop: shopLabel, date: dateLabel });
 
   return (
     <section className="co-card p-4">
-      <h3 className="text-base font-bold text-co-text">{order.vendorName}</h3>
+      <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1">
+        <h3 className="text-base font-bold text-co-text">{order.vendorName}</h3>
+        {order.displayCode && (
+          <span className="rounded-md bg-co-surface-2 px-2 py-0.5 font-mono text-[12px] font-bold tracking-wide text-co-text-dim">
+            {t("ordering.done.po_code", { code: order.displayCode })}
+          </span>
+        )}
+      </div>
 
       <table className="mt-2 w-full text-[13px]">
         <thead>

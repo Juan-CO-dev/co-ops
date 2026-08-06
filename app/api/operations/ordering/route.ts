@@ -76,7 +76,16 @@ export async function POST(req: NextRequest) {
 
   try {
     const res = await submitParPass(ctx, b.locationId, lines);
-    return jsonOk({ eventId: res.eventId, draftOrders: res.draftOrders, shrinkage: res.shrinkage }, 201);
+    return jsonOk(
+      {
+        eventId: res.eventId,
+        draftOrders: res.draftOrders,
+        shrinkage: res.shrinkage,
+        pos: res.pos,
+        poError: res.poError,
+      },
+      201,
+    );
   } catch (e) {
     if (e instanceof OrderingError) return jsonError(e.status, e.code, { message: e.message });
     throw e;

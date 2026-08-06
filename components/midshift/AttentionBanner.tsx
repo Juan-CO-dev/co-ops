@@ -130,6 +130,40 @@ export function AttentionBanner({
               </li>
             );
           }
+          if (item.kind === "ordering_cutoff") {
+            // Vendor cutoff today with no order placed. YELLOW-tier. The earliest vendor
+            // (loader-sorted first) names the line; hasDraft picks "draft ready" vs "no
+            // draft yet"; pluralizes on the total count. Links to /ordering (?location=).
+            const count = item.count ?? 0;
+            const earliest = item.cutoffVendors?.[0];
+            const draftKey = earliest?.hasDraft
+              ? "midshift.attention.ordering_cutoff_draft"
+              : "midshift.attention.ordering_cutoff_nodraft";
+            const draftState = serverT(language, draftKey);
+            const label =
+              count === 1
+                ? serverT(language, "midshift.attention.ordering_cutoff_one", {
+                    vendor: earliest?.name ?? "—",
+                    time: earliest?.time ?? "—",
+                    state: draftState,
+                  })
+                : serverT(language, "midshift.attention.ordering_cutoff_other", {
+                    vendor: earliest?.name ?? "—",
+                    time: earliest?.time ?? "—",
+                    state: draftState,
+                    count,
+                  });
+            return (
+              <li key={key} className="text-sm text-co-text">
+                <Link
+                  href={`/ordering?location=${locationId}`}
+                  className="underline decoration-co-border underline-offset-2"
+                >
+                  {label}
+                </Link>
+              </li>
+            );
+          }
           const count = item.count ?? 0;
           return (
             <li key={key} className="text-sm text-co-text">
