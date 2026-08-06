@@ -9,6 +9,7 @@
 - **D2 — Walker births draft POs.** One artifact chain: walk → draft POs per vendor → Confirm freezes → transmit. `par_pass_events/lines` remain the observation layer feeding the anchor tiers, unchanged.
 - **D3 — `acknowledged` = metadata on `placed` in V1;** becomes a distinct state in V2 when inbound confirmations flow.
 - **D4 — Every vendor seeds at MANUAL tier** ("everyone starts at the lowest pipe"); the vendor profile gets tier/cutoff/adapter config so upgrades are per-vendor flips as the real paths get confirmed (known already: PFG orders via their site → assisted when set).
+- **D5 — Text ordering is a first-class channel (Juan, same session):** some reps work best texted; numbers that accept text orders are EXPLICITLY marked on the vendor card; outbound SMS automates later; inbound text confirmations ingest; and one PO must link a text order + text confirmation + email invoice in one trail. **The PO is the spine; channels are legs.**
 
 ## 2. Data model (migration 0174)
 
@@ -47,9 +48,18 @@ Juan's gap: both stores' vendor documents arriving at one address must sort corr
 3. **Location-prefixed PO codes in every subject:** confirmed POs get a display code `{location.code}-{YYYYMMDD}-{vendor short}` rendered into transmission subjects/bodies (V1 does this already in the manual/assisted rendered sheets). Inbound documents quoting it match deterministically to both the order AND the location — the strongest key, human-readable in disputes.
 4. **Ship-to address as the V2 parse-time fallback:** vendor invoices carry the delivery address; the LLM parse extracts ship-to and matches against `locations.address` when neither alias nor PO code resolves. Matching-key precedence: PO code > to-alias > ship-to > vendor+date window (single-candidate rule, per the shipped P2 law: auto-attach only when unambiguous, else triage).
 
+## 5c. Cross-channel: text ordering (D5)
+
+The PO is the SPINE; every channel is a leg attached to it. Concretely:
+
+1. **V1 schema seams (ride migration 0174, dormant until used):** `vendor_contacts.accepts_text_orders boolean default false` (the explicit vendor-card marking) · **`po_transmissions`** (po_id, channel `email|sms|phone|portal|in_person`, target text, sent_at, sent_by null-for-automated, provider_message_id null, note) — EVERY placement records how it went out, including manual tiers: "Mark placed" writes a transmission row (channel + target picked from the affordance used). This is the adapter contract's "transmission result" made durable, and the outbound half of Juan's linking requirement.
+2. **V1 behavior:** manual text ordering already works — the walker's draft cards render `tel:` for textable contacts (now filtered/badged by `accepts_text_orders`) + Copy of the order text (with the PO code in it). The manager texts from their phone; Mark placed records channel=sms + the number. No provider needed yet.
+3. **V2 — automated SMS (new Juan errand: provision a Twilio number):** outbound adapter sends the rendered order (PO code included in the body — the same deterministic key as email subjects); inbound Twilio webhook → **`sms_messages`** ledger (ledger-first, same discipline as email_receipts: from_number, body, media paths, direction, vendor guess via E.164 match against `vendor_contacts.phone`, linked_po_id) → confirmations attach to the PO by PO-code match > number+open-PO window (single-candidate) > triage. `email_receipts` stays email-shaped; the PO detail renders the UNIFIED trail: transmissions + confirmations + invoices + delivery + credits, regardless of channel mix (text order + text confirmation + email invoice on one PO — Juan's exact case).
+4. **Attribution precedence extends unchanged:** PO code is channel-agnostic and rides both email subjects and SMS bodies; number-matching is SMS's equivalent of the email alias key.
+
 ## 6. Non-goals (V1)
 
-Email/SMS transmission (V2, post-DNS) · inbound confirmation/invoice matching to POs + LLM parse (V2) · guide-sequence seeding beyond the column (V3 does the data entry + MOXē import eval) · PFG EDI (V4; Juan emails their integration team meanwhile) · multiple deliveries per PO · per-location guide positions · full-auto ordering (not designed; adapter seam doesn't preclude).
+Email/SMS transmission (V2, post-DNS) · inbound confirmation/invoice matching to POs + LLM parse (V2) · guide-sequence seeding beyond the column (V3 does the data entry + MOXē import eval) · PFG EDI (V4; Juan emails their integration team meanwhile) · automated SMS + sms_messages ingestion (V2, gated on a Twilio number — Juan errand) · multiple deliveries per PO · per-location guide positions · full-auto ordering (not designed; adapter seam doesn't preclude).
 
 ## 7. Migration/rollout notes
 
