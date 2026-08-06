@@ -48,6 +48,10 @@ const KNOWN_ERROR_CODES = new Set([
   "chain_unreachable",
   "leaf_needs_avg",
   "chain_invalid",
+  // VO-7 (per-location SKU overlay).
+  "invalid_active_override",
+  "invalid_weekday_par",
+  "invalid_weekend_par",
 ]);
 
 /** Resolve an error `code` to a localized message, falling back to generic. */

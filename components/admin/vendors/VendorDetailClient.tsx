@@ -25,13 +25,16 @@ import type {
   OrderTypeView,
   VendorContact,
   VendorOrderingDetail,
+  VendorCutoff,
 } from "@/lib/admin/vendors";
 import { VENDOR_COLOR_PALETTE } from "@/lib/admin/vendors-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { postJson, resolveErrorKey, ORDERING_METHODS } from "./shared";
 import { MultiSelectChips } from "./MultiSelectChips";
+import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import type { RegistryOption, MeasureUnitOption, SkuView } from "@/lib/admin/skus";
 import type { SkuFormLocationOption } from "@/components/admin/skus/SkuBuilder";
+import type { LocationSkuOverlayView } from "@/components/admin/skus/SkuLocationOverlay";
 import { VendorSkusCard } from "@/components/admin/skus/VendorSkusCard";
 import type { SkuCostInfo } from "@/components/admin/skus/SkuCostPanel";
 import type { SkuReceivingLedger, SkuConsumption } from "@/lib/admin/cost";
@@ -47,6 +50,8 @@ export function VendorDetailClient({
   vendor,
   categories,
   orderTypes,
+  cutoffs,
+  locations,
   skus,
   skuLocations,
   skuPackFormats,
@@ -57,11 +62,16 @@ export function VendorDetailClient({
   skuReadiness,
   skuChains,
   skuChainUnverified,
+  skuOverlays,
   actorLevel,
 }: {
   vendor: VendorView;
   categories: CategoryView[];
   orderTypes: OrderTypeView[];
+  /** VO-7: this vendor's active order cutoffs. */
+  cutoffs: VendorCutoff[];
+  /** Active locations (Both/each) for the cutoff + transmission location selects. */
+  locations: SkuFormLocationOption[];
   skus: SkuView[];
   skuLocations: SkuFormLocationOption[];
   skuPackFormats: RegistryOption[];
@@ -74,6 +84,8 @@ export function VendorDetailClient({
   skuChains: Record<string, PackChainLevel[]>;
   /** Server class-aware "chain unverified" flag per SKU. */
   skuChainUnverified: Record<string, boolean>;
+  /** VO-7: per-location overlay rows per SKU (edit-mode overlay section). */
+  skuOverlays: Record<string, LocationSkuOverlayView[]>;
   actorLevel: number;
 }) {
   const { t } = useTranslation();
@@ -97,6 +109,16 @@ export function VendorDetailClient({
         requestStepUp={requestStepUp}
       />
       <ScheduleCard vendor={vendor} canEdit={canEditSchedule} requestStepUp={requestStepUp} />
+      {actorLevel >= 7 ? (
+        <TransmissionCard
+          vendor={vendor}
+          cutoffs={cutoffs}
+          locations={locations}
+          canEdit={canManage}
+          canAppend={canAppend}
+          requestStepUp={requestStepUp}
+        />
+      ) : null}
       <NotesCard vendor={vendor} canEdit={canEditNotes} />
       <ContactsCard
         vendorId={vendor.id}
@@ -124,6 +146,7 @@ export function VendorDetailClient({
         skuReadiness={skuReadiness}
         chainsBySku={skuChains}
         chainUnverifiedBySku={skuChainUnverified}
+        overlaysBySku={skuOverlays}
         actorLevel={actorLevel}
         canManage={canManage}
       />
@@ -603,6 +626,281 @@ function ScheduleCard({
   );
 }
 
+// ── Transmission card (GM+): tier + portal URL, with the cutoffs editor beneath ─
+const TRANSMISSION_TIERS = ["auto", "assisted", "manual"] as const;
+type TransmissionTierOption = (typeof TRANSMISSION_TIERS)[number];
+
+function TransmissionCard({
+  vendor,
+  cutoffs,
+  locations,
+  canEdit,
+  canAppend,
+  requestStepUp,
+}: {
+  vendor: VendorView;
+  cutoffs: VendorCutoff[];
+  locations: SkuFormLocationOption[];
+  canEdit: boolean; // GM+ — tier/portal + cutoff deactivate
+  canAppend: boolean; // AGM+ — cutoff add
+  requestStepUp: StepUp;
+}) {
+  const { t } = useTranslation();
+  const router = useRouter();
+  const [tier, setTier] = useState<TransmissionTierOption>(vendor.transmissionTier);
+  const [portalUrl, setPortalUrl] = useState(vendor.portalUrl ?? "");
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  const save = async () => {
+    if (submitting) return;
+    setErrorMsg(null);
+    setSaved(false);
+    if ((await requestStepUp("A")) !== "ok") return;
+    setSubmitting(true);
+    const result = await postJson(
+      `/api/admin/vendors/${vendor.id}/transmission`,
+      { transmissionTier: tier, portalUrl: tier === "assisted" ? portalUrl.trim() || null : null },
+      "PATCH",
+    );
+    setSubmitting(false);
+    if (result.ok) {
+      setSaved(true);
+      router.refresh();
+    } else {
+      setErrorMsg(t(resolveErrorKey(result.code)));
+    }
+  };
+
+  return (
+    <Card title={t("admin.vendors.transmission.title")}>
+      <div className="flex flex-col gap-4">
+        <div>
+          <Labeled label={t("admin.vendors.transmission.tier")}>
+            <select
+              className={fieldCls}
+              value={tier}
+              disabled={!canEdit}
+              onChange={(e) => {
+                setSaved(false);
+                setTier(e.target.value as TransmissionTierOption);
+              }}
+            >
+              {TRANSMISSION_TIERS.map((tr) => (
+                <option key={tr} value={tr} disabled={tr === "auto" && vendor.transmissionTier !== "auto"}>
+                  {t(`admin.vendors.transmission.tier.${tr}` as TranslationKey)}
+                </option>
+              ))}
+            </select>
+          </Labeled>
+          {/* `auto` requires an email adapter (V2). It's disabled in the picker
+              unless already set — a config-readiness guardrail, not authz. */}
+          <p className="mt-1 text-xs italic text-co-text-muted">{t("admin.vendors.transmission.auto_hint")}</p>
+        </div>
+
+        {tier === "assisted" ? (
+          <Labeled label={t("admin.vendors.transmission.portal_url")}>
+            <input
+              className={fieldCls}
+              type="url"
+              inputMode="url"
+              value={portalUrl}
+              disabled={!canEdit}
+              placeholder="https://"
+              aria-label={t("admin.vendors.transmission.portal_url")}
+              onChange={(e) => {
+                setSaved(false);
+                setPortalUrl(e.target.value);
+              }}
+            />
+          </Labeled>
+        ) : null}
+
+        {!canEdit ? (
+          <p className="text-xs italic text-co-text-muted">{t("admin.vendors.transmission.readonly_note")}</p>
+        ) : null}
+        {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+        {saved ? <p className="text-sm text-co-gold-deep">{t("admin.vendors.saved")}</p> : null}
+
+        {canEdit ? (
+          <div className="flex justify-end">
+            <PrimaryBtn label={t("admin.vendors.save")} disabled={submitting} onClick={() => void save()} />
+          </div>
+        ) : null}
+
+        {/* Cutoffs editor beneath (default-collapsed CollapsibleSection, D3). */}
+        <CutoffsSection
+          vendorId={vendor.id}
+          cutoffs={cutoffs}
+          locations={locations}
+          canAppend={canAppend}
+          canManage={canEdit}
+          requestStepUp={requestStepUp}
+        />
+      </div>
+    </Card>
+  );
+}
+
+// ── Cutoffs editor (VO-7): day + time rows, add (AGM+) / deactivate (GM+) ───────
+const CUTOFF_DAYS = [0, 1, 2, 3, 4, 5, 6] as const;
+const BOTH_LOCATIONS = "__both__";
+
+function CutoffsSection({
+  vendorId,
+  cutoffs,
+  locations,
+  canAppend,
+  canManage,
+  requestStepUp,
+}: {
+  vendorId: string;
+  cutoffs: VendorCutoff[];
+  locations: SkuFormLocationOption[];
+  canAppend: boolean;
+  canManage: boolean;
+  requestStepUp: StepUp;
+}) {
+  const { t } = useTranslation();
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Add-form fields.
+  const [day, setDay] = useState<number>(1); // default Monday
+  const [time, setTime] = useState("");
+  const [locId, setLocId] = useState<string>(BOTH_LOCATIONS);
+
+  const resetAdd = () => {
+    setDay(1);
+    setTime("");
+    setLocId(BOTH_LOCATIONS);
+    setAdding(false);
+  };
+
+  const dayLabel = (d: number) => t(`admin.vendors.cutoff.day.${d}` as TranslationKey);
+  const locName = (id: string | null) =>
+    id === null ? t("admin.vendors.cutoff.both") : locations.find((l) => l.id === id)?.name ?? id;
+
+  const add = async () => {
+    if (busy || !time.trim()) return;
+    setErrorMsg(null);
+    if ((await requestStepUp("A")) !== "ok") return;
+    setBusy(true);
+    const result = await postJson(`/api/admin/vendors/${vendorId}/cutoffs`, {
+      orderDay: day,
+      cutoffTime: time,
+      locationId: locId === BOTH_LOCATIONS ? null : locId,
+    });
+    setBusy(false);
+    if (result.ok) {
+      resetAdd();
+      router.refresh();
+    } else setErrorMsg(t(resolveErrorKey(result.code)));
+  };
+
+  const remove = async (id: string) => {
+    if (busy) return;
+    setErrorMsg(null);
+    if ((await requestStepUp("A")) !== "ok") return;
+    setBusy(true);
+    const result = await postJson(`/api/admin/vendors/${vendorId}/cutoffs/${id}`, {}, "DELETE");
+    setBusy(false);
+    if (result.ok) {
+      setConfirmRemoveId(null);
+      router.refresh();
+    } else setErrorMsg(t(resolveErrorKey(result.code)));
+  };
+
+  return (
+    <CollapsibleSection
+      idBase={`vendor-cutoffs-${vendorId}`}
+      title={t("admin.vendors.cutoff.title")}
+      count={t("admin.vendors.cutoff.count", { n: String(cutoffs.length) })}
+      open={open}
+      onToggle={() => setOpen((v) => !v)}
+    >
+      <div className="flex flex-col gap-2">
+        {cutoffs.length === 0 ? (
+          <p className="text-sm text-co-text-muted">{t("admin.vendors.cutoff.empty")}</p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {cutoffs.map((c) => (
+              <li key={c.id} className="rounded-lg border-2 border-co-border p-3">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="text-sm text-co-text">
+                    <div className="font-bold">
+                      {dayLabel(c.orderDay)} · {c.cutoffTime}
+                    </div>
+                    <div className="text-co-text-muted">{locName(c.locationId)}</div>
+                  </div>
+                  {canManage ? (
+                    <div className="flex gap-2">
+                      {confirmRemoveId === c.id ? (
+                        <>
+                          <PlainBtn label={t("admin.vendors.cancel")} disabled={busy} onClick={() => setConfirmRemoveId(null)} />
+                          <PlainBtn label={t("admin.vendors.confirm_remove")} disabled={busy} onClick={() => void remove(c.id)} />
+                        </>
+                      ) : (
+                        <PlainBtn label={t("admin.vendors.remove")} onClick={() => setConfirmRemoveId(c.id)} />
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {errorMsg ? <p className="mt-1 text-sm text-co-cta">{errorMsg}</p> : null}
+
+        {canAppend ? (
+          adding ? (
+            <div className="mt-1 flex flex-col gap-2 rounded-lg border-2 border-dashed border-co-border p-3">
+              <Labeled label={t("admin.vendors.cutoff.day_label")}>
+                <select className={fieldCls} value={String(day)} onChange={(e) => setDay(Number(e.target.value))}>
+                  {CUTOFF_DAYS.map((d) => (
+                    <option key={d} value={d}>{dayLabel(d)}</option>
+                  ))}
+                </select>
+              </Labeled>
+              <Labeled label={t("admin.vendors.cutoff.time_label")}>
+                <input
+                  className={fieldCls}
+                  type="time"
+                  value={time}
+                  aria-label={t("admin.vendors.cutoff.time_label")}
+                  onChange={(e) => setTime(e.target.value)}
+                />
+              </Labeled>
+              <Labeled label={t("admin.vendors.cutoff.location_label")}>
+                <select className={fieldCls} value={locId} onChange={(e) => setLocId(e.target.value)}>
+                  <option value={BOTH_LOCATIONS}>{t("admin.vendors.cutoff.both")}</option>
+                  {locations.map((l) => (
+                    <option key={l.id} value={l.id}>{l.name}</option>
+                  ))}
+                </select>
+              </Labeled>
+              <div className="flex justify-end gap-2">
+                <PlainBtn label={t("admin.vendors.cancel")} disabled={busy} onClick={resetAdd} />
+                <PrimaryBtn label={t("admin.vendors.add")} disabled={busy || !time.trim()} onClick={() => void add()} />
+              </div>
+            </div>
+          ) : (
+            <div className="mt-1">
+              <PlainBtn label={t("admin.vendors.cutoff.add")} onClick={() => setAdding(true)} />
+            </div>
+          )
+        ) : null}
+      </div>
+    </CollapsibleSection>
+  );
+}
+
 // ── Notes card (GM+) ──────────────────────────────────────────────────────────
 function NotesCard({ vendor, canEdit }: { vendor: VendorView; canEdit: boolean }) {
   const { t } = useTranslation();
@@ -682,6 +980,7 @@ function ContactsCard({
   const [eName, setEName] = useState("");
   const [eEmail, setEEmail] = useState("");
   const [ePhone, setEPhone] = useState("");
+  const [eAcceptsText, setEAcceptsText] = useState(false);
 
   const resetAdd = () => {
     setName("");
@@ -695,6 +994,7 @@ function ContactsCard({
     setEName(c.name);
     setEEmail(c.email ?? "");
     setEPhone(c.phone ?? "");
+    setEAcceptsText(c.acceptsTextOrders);
     setErrorMsg(null);
   };
 
@@ -722,7 +1022,7 @@ function ContactsCard({
     setBusy(true);
     const result = await postJson(
       `/api/admin/vendors/${vendorId}/contacts/${id}`,
-      { name: eName.trim(), email: eEmail.trim() || null, phone: ePhone.trim() || null },
+      { name: eName.trim(), email: eEmail.trim() || null, phone: ePhone.trim() || null, acceptsTextOrders: eAcceptsText },
       "PATCH",
     );
     setBusy(false);
@@ -755,6 +1055,15 @@ function ContactsCard({
                 <input className={fieldCls} value={eName} onChange={(e) => setEName(e.target.value)} placeholder={t("admin.vendors.contact.name")} />
                 <input className={fieldCls} type="email" value={eEmail} onChange={(e) => setEEmail(e.target.value)} placeholder={t("admin.vendors.contact.email")} />
                 <input className={fieldCls} type="tel" value={ePhone} onChange={(e) => setEPhone(e.target.value)} placeholder={t("admin.vendors.contact.phone")} />
+                <label className="flex min-h-[44px] items-center gap-2 text-sm text-co-text">
+                  <input
+                    type="checkbox"
+                    className="h-5 w-5 rounded border-2 border-co-border accent-co-gold"
+                    checked={eAcceptsText}
+                    onChange={(e) => setEAcceptsText(e.target.checked)}
+                  />
+                  <span>{t("admin.vendors.contact.accepts_text_orders")}</span>
+                </label>
                 <div className="flex justify-end gap-2">
                   <PlainBtn label={t("admin.vendors.cancel")} disabled={busy} onClick={() => setEditingId(null)} />
                   <PrimaryBtn label={t("admin.vendors.save")} disabled={busy || !eName.trim()} onClick={() => void saveEdit(c.id)} />
@@ -763,7 +1072,14 @@ function ContactsCard({
             ) : (
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="text-sm text-co-text">
-                  <div className="font-bold">{c.name}</div>
+                  <div className="flex flex-wrap items-center gap-2 font-bold">
+                    {c.name}
+                    {c.acceptsTextOrders ? (
+                      <span className="inline-flex items-center rounded-full bg-co-gold/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-gold-deep">
+                        {t("admin.vendors.contact.accepts_text_badge")}
+                      </span>
+                    ) : null}
+                  </div>
                   {c.email ? <div className="text-co-text-muted">{c.email}</div> : null}
                   {c.phone ? <div className="text-co-text-muted">{c.phone}</div> : null}
                 </div>

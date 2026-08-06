@@ -24,9 +24,21 @@
  *                        column — set-membership hard rows; replace = delete the
  *                        rows not in the set + insert the new ones).
  *   vendor_order_types — vendor_id, order_type_id join (same shape as above).
- *   vendor_contacts    — vendor_id, name, email, phone, display_order, active.
+ *   vendor_contacts    — vendor_id, name, email, phone, display_order, active,
+ *                        accepts_text_orders (VO-7, migration 0174 — this number
+ *                        accepts text orders; D5).
  *   vendor_ordering_details — vendor_id, method (email|url|phone|portal|other),
  *                             value, label, display_order, active.
+ *
+ * Vendor-ordering V1 (VO-7, migration 0174) additive surfaces:
+ *   vendors.transmission_tier (auto|assisted|manual, default manual) + portal_url
+ *                        — the transmission config the ordering flow reads. `auto`
+ *                        is display-only until email adapters ship (V2) — the UI
+ *                        disables it, but the lib STILL validates it as a legal
+ *                        enum value (a future adapter flips it without a lib change).
+ *   vendor_cutoffs     — vendor_id, location_id (null = both shops), order_day
+ *                        (0=Sun..6=Sat), cutoff_time (bare TIME, ET-evaluated),
+ *                        active. Append-only: deactivate flips active=false.
  */
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -42,6 +54,12 @@ const MOO_MIN = 8; // edit core fields, deactivate vendor, add category
 
 const ORDERING_METHODS = ["email", "url", "phone", "portal", "other"] as const;
 export type OrderingMethod = (typeof ORDERING_METHODS)[number];
+
+// Transmission tiers (VO-7; migration 0174 CHECK). `auto` is display-only until
+// email adapters ship (V2) — the UI disables it; the lib still validates it so a
+// future adapter can flip a vendor without a lib change.
+const TRANSMISSION_TIERS = ["auto", "assisted", "manual"] as const;
+export type TransmissionTier = (typeof TRANSMISSION_TIERS)[number];
 
 // ── Types ───────────────────────────────────────────────────────────────────
 export interface CategoryView {
@@ -64,6 +82,18 @@ export interface VendorContact {
   email: string | null;
   phone: string | null;
   displayOrder: number;
+  /** VO-7 (migration 0174): this contact's number accepts text orders (D5). */
+  acceptsTextOrders: boolean;
+}
+
+/** A vendor order cutoff (VO-7; migration 0174). Weekday 0=Sun..6=Sat; cutoffTime
+ *  is a bare "HH:MM" wall-clock intent, evaluated in ET at the ordering layer.
+ *  locationId null = applies to both shops. */
+export interface VendorCutoff {
+  id: string;
+  locationId: string | null;
+  orderDay: number;
+  cutoffTime: string; // "HH:MM" (24h)
 }
 
 export interface VendorOrderingDetail {
@@ -94,6 +124,10 @@ export interface VendorView {
   orderDays: number[];
   deliveryDays: number[];
   color: string | null;
+  /** Transmission config (VO-7; migration 0174). tier drives the ordering flow's
+   *  transmit block; portalUrl deep-links the assisted tier. */
+  transmissionTier: TransmissionTier;
+  portalUrl: string | null;
 }
 
 import { VENDOR_COLOR_PALETTE } from "./vendors-shared";
@@ -128,6 +162,26 @@ function normalizeOptional(s: string | null | undefined): string | null {
   return t || null;
 }
 
+/** portal_url (VO-7). Trim → null when empty; else require a parseable absolute
+ *  http:/https: URL (a bare "vendor.com" or a mailto:/ftp: is rejected). Returns
+ *  the trimmed string on success. The brief's http(s) requirement is authoritative
+ *  here (a source_url-style no-op would validate nothing). */
+export function normalizePortalUrl(s: string | null | undefined): string | null {
+  if (typeof s !== "string") return null;
+  const t = s.trim();
+  if (!t) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(t);
+  } catch {
+    throw new AdminVendorError(400, "invalid_url", "Portal URL must be a valid http(s) link");
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new AdminVendorError(400, "invalid_url", "Portal URL must start with http:// or https://");
+  }
+  return t;
+}
+
 interface DbVendorRow {
   id: string;
   name: string;
@@ -139,6 +193,8 @@ interface DbVendorRow {
   order_days: number[] | null;
   delivery_days: number[] | null;
   color: string | null;
+  transmission_tier: string | null;
+  portal_url: string | null;
 }
 interface DbContactRow {
   id: string;
@@ -147,6 +203,7 @@ interface DbContactRow {
   email: string | null;
   phone: string | null;
   display_order: number;
+  accepts_text_orders: boolean | null;
 }
 interface DbOrderingRow {
   id: string;
@@ -177,7 +234,7 @@ interface DbVendorOrderTypeRow {
   order_type_id: string;
 }
 
-const VENDOR_COLS = "id, name, payment_terms, account_number, notes, active, category_id, order_days, delivery_days, color";
+const VENDOR_COLS = "id, name, payment_terms, account_number, notes, active, category_id, order_days, delivery_days, color, transmission_tier, portal_url";
 
 // ── Categories ────────────────────────────────────────────────────────────────
 export async function loadCategories(actor: AuthContext): Promise<CategoryView[]> {
@@ -433,7 +490,7 @@ async function hydrateVendors(rows: DbVendorRow[]): Promise<VendorView[]> {
 
   const { data: contacts, error: ctErr } = await sb
     .from("vendor_contacts")
-    .select("id, vendor_id, name, email, phone, display_order")
+    .select("id, vendor_id, name, email, phone, display_order, accepts_text_orders")
     .in("vendor_id", vendorIds)
     .eq("active", true)
     .order("display_order", { ascending: true })
@@ -452,7 +509,14 @@ async function hydrateVendors(rows: DbVendorRow[]): Promise<VendorView[]> {
   const contactsByVendor = new Map<string, VendorContact[]>();
   for (const c of contacts ?? []) {
     const arr = contactsByVendor.get(c.vendor_id) ?? [];
-    arr.push({ id: c.id, name: c.name, email: c.email, phone: c.phone, displayOrder: c.display_order });
+    arr.push({
+      id: c.id,
+      name: c.name,
+      email: c.email,
+      phone: c.phone,
+      displayOrder: c.display_order,
+      acceptsTextOrders: c.accepts_text_orders ?? false,
+    });
     contactsByVendor.set(c.vendor_id, arr);
   }
   const orderingByVendor = new Map<string, VendorOrderingDetail[]>();
@@ -485,6 +549,10 @@ async function hydrateVendors(rows: DbVendorRow[]): Promise<VendorView[]> {
       orderDays: r.order_days ?? [],
       deliveryDays: r.delivery_days ?? [],
       color: r.color ?? null,
+      transmissionTier: (TRANSMISSION_TIERS as readonly string[]).includes(r.transmission_tier ?? "")
+        ? (r.transmission_tier as TransmissionTier)
+        : "manual", // legacy null / unknown → the default seed tier
+      portalUrl: r.portal_url ?? null,
     };
   });
 }
@@ -543,6 +611,36 @@ export async function getVendor(actor: AuthContext, id: string): Promise<VendorV
   if (!data) return null;
   const [view] = await hydrateVendors([data]);
   return view ?? null;
+}
+
+interface DbCutoffRow {
+  id: string;
+  location_id: string | null;
+  order_day: number;
+  cutoff_time: string; // "HH:MM:SS" from PostgREST
+}
+
+/** Load a vendor's ACTIVE order cutoffs (VO-7; migration 0174), ordered by day then
+ *  time. AGM+ read (mirrors the vendor detail load floor). cutoff_time arrives as
+ *  "HH:MM:SS"; we surface "HH:MM" (the editor + inputs are minute-grain). */
+export async function loadVendorCutoffs(actor: AuthContext, vendorId: string): Promise<VendorCutoff[]> {
+  requireLevel(actor, READ_MIN);
+  const sb = getServiceRoleClient();
+  const { data, error } = await sb
+    .from("vendor_cutoffs")
+    .select("id, location_id, order_day, cutoff_time")
+    .eq("vendor_id", vendorId)
+    .eq("active", true)
+    .order("order_day", { ascending: true })
+    .order("cutoff_time", { ascending: true })
+    .returns<DbCutoffRow[]>();
+  if (error) throw new Error(`loadVendorCutoffs failed: ${error.message}`);
+  return (data ?? []).map((r) => ({
+    id: r.id,
+    locationId: r.location_id,
+    orderDay: r.order_day,
+    cutoffTime: r.cutoff_time.slice(0, 5), // "HH:MM:SS" → "HH:MM"
+  }));
 }
 
 /** Validate a non-empty set of category ids: ≥1 required, all must exist+active.
@@ -926,6 +1024,168 @@ export async function setVendorSchedule(
   });
 }
 
+// ── Transmission (GM+, Tier A): tier + portal_url (VO-7) ──────────────────────
+//
+// Rides vendor.full_profile_edit with metadata.scope: "transmission" (per the
+// schedule-edit precedent above). GM+ (7) + Tier A step-up, matching the
+// classification / schedule floor. `auto` is a legal enum value even though the UI
+// disables it (a future email adapter flips a vendor without a lib change), so the
+// lib accepts it; the UI's disable is a config-readiness guardrail, not authz.
+export async function updateVendorTransmission(
+  actor: AuthContext,
+  args: { vendorId: string; transmissionTier: string; portalUrl: string | null },
+): Promise<void> {
+  requireLevel(actor, GM_MIN);
+  const before = await getVendor(actor, args.vendorId);
+  if (!before) throw new AdminVendorError(404, "vendor_not_found", "Vendor not found");
+
+  if (!(TRANSMISSION_TIERS as readonly string[]).includes(args.transmissionTier)) {
+    throw new AdminVendorError(400, "invalid_tier", "Transmission tier must be auto, assisted, or manual");
+  }
+  const tier = args.transmissionTier as TransmissionTier;
+  // portal_url is only meaningful for the assisted deep-link; for manual/auto we
+  // clear it so a stale link never rides an order. (Throws invalid_url on a bad
+  // assisted value via normalizePortalUrl.)
+  const portalUrl = tier === "assisted" ? normalizePortalUrl(args.portalUrl) : null;
+
+  const sb = getServiceRoleClient();
+  const { error, count } = await sb
+    .from("vendors")
+    .update(
+      { transmission_tier: tier, portal_url: portalUrl, updated_by: actor.user.id, updated_at: new Date().toISOString() },
+      { count: "exact" },
+    )
+    .eq("id", args.vendorId);
+  if (error) throw new Error(`updateVendorTransmission failed: ${error.message}`);
+  if (count === 0) throw new AdminVendorError(404, "vendor_not_found", "Vendor not found");
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "vendor.full_profile_edit",
+    resourceTable: "vendors",
+    resourceId: args.vendorId,
+    metadata: {
+      scope: "transmission",
+      before: { transmission_tier: before.transmissionTier, portal_url: before.portalUrl },
+      after: { transmission_tier: tier, portal_url: portalUrl },
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+}
+
+// ── Cutoffs (VO-7; append-only) ───────────────────────────────────────────────
+//
+// vendor_cutoffs are append-only: add = INSERT (AGM+ 6), deactivate = active=false
+// (GM+ 7) — matching the vendor.contact_change add/remove floors. Both ride the new
+// vendor.cutoff_change action with metadata.op = add|deactivate. Tier A step-up at
+// the route (mirrors contacts). location_id null = both shops.
+export async function addVendorCutoff(
+  actor: AuthContext,
+  args: { vendorId: string; locationId: string | null; orderDay: number; cutoffTime: string },
+): Promise<{ id: string }> {
+  requireLevel(actor, AGM_MIN);
+  await requireVendorRow(args.vendorId);
+
+  if (!Number.isInteger(args.orderDay) || args.orderDay < 0 || args.orderDay > 6) {
+    throw new AdminVendorError(400, "invalid_day", "Order day must be 0..6");
+  }
+  // Accept "HH:MM" or "HH:MM:SS"; normalize to the DB's "HH:MM:SS" TIME literal.
+  const timeMatch = /^([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?$/.exec(args.cutoffTime.trim());
+  if (!timeMatch) {
+    throw new AdminVendorError(400, "invalid_time", "Cutoff time must be a valid HH:MM");
+  }
+  const cutoffTime = `${timeMatch[1]}:${timeMatch[2]}:${timeMatch[3] ?? "00"}`;
+
+  let locationId: string | null = null;
+  if (args.locationId != null) {
+    if (typeof args.locationId !== "string" || !args.locationId) {
+      throw new AdminVendorError(400, "invalid_location", "Location not valid");
+    }
+    const sbLoc = getServiceRoleClient();
+    const { data: loc, error: lErr } = await sbLoc
+      .from("locations")
+      .select("id")
+      .eq("id", args.locationId)
+      .eq("active", true)
+      .maybeSingle<{ id: string }>();
+    if (lErr) throw new Error(`addVendorCutoff location check failed: ${lErr.message}`);
+    if (!loc) throw new AdminVendorError(400, "invalid_location", "Location not found or inactive");
+    locationId = args.locationId;
+  }
+
+  const sb = getServiceRoleClient();
+  const { data: inserted, error: iErr } = await sb
+    .from("vendor_cutoffs")
+    .insert({
+      vendor_id: args.vendorId,
+      location_id: locationId,
+      order_day: args.orderDay,
+      cutoff_time: cutoffTime,
+      active: true,
+    })
+    .select("id")
+    .maybeSingle<{ id: string }>();
+  if (iErr) throw new Error(`addVendorCutoff insert failed: ${iErr.message}`);
+  if (!inserted) throw new Error("addVendorCutoff insert returned no row");
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "vendor.cutoff_change",
+    resourceTable: "vendor_cutoffs",
+    resourceId: inserted.id,
+    metadata: { op: "add", vendor_id: args.vendorId, location_id: locationId, order_day: args.orderDay, cutoff_time: cutoffTime },
+    ipAddress: null,
+    userAgent: null,
+  });
+
+  return { id: inserted.id };
+}
+
+async function requireCutoffRow(cutoffId: string): Promise<{ id: string; vendor_id: string }> {
+  const sb = getServiceRoleClient();
+  const { data, error } = await sb
+    .from("vendor_cutoffs")
+    .select("id, vendor_id")
+    .eq("id", cutoffId)
+    .maybeSingle<{ id: string; vendor_id: string }>();
+  if (error) throw new Error(`requireCutoffRow failed: ${error.message}`);
+  if (!data) throw new AdminVendorError(404, "not_found", "Cutoff not found");
+  return data;
+}
+
+/** Deactivate a cutoff (GM+, append-only). Idempotent on already-inactive rows via
+ *  the `.eq("active", true)` guard + rowcount law. */
+export async function deactivateVendorCutoff(
+  actor: AuthContext,
+  args: { cutoffId: string },
+): Promise<void> {
+  requireLevel(actor, GM_MIN);
+  const row = await requireCutoffRow(args.cutoffId);
+
+  const sb = getServiceRoleClient();
+  const { error, count } = await sb
+    .from("vendor_cutoffs")
+    .update({ active: false }, { count: "exact" })
+    .eq("id", args.cutoffId)
+    .eq("active", true);
+  if (error) throw new Error(`deactivateVendorCutoff failed: ${error.message}`);
+  if (count === 0) throw new AdminVendorError(404, "not_found", "Cutoff not found or already inactive");
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "vendor.cutoff_change",
+    resourceTable: "vendor_cutoffs",
+    resourceId: args.cutoffId,
+    metadata: { op: "deactivate", vendor_id: row.vendor_id },
+    ipAddress: null,
+    userAgent: null,
+  });
+}
+
 export async function updateVendorNotes(
   actor: AuthContext,
   args: { id: string; notes: string | null },
@@ -1032,6 +1292,8 @@ export interface UpdateContactChanges {
   name?: string;
   email?: string | null;
   phone?: string | null;
+  /** VO-7: this number accepts text orders (D5). Rides vendor.contact_change op:update. */
+  acceptsTextOrders?: boolean;
 }
 
 async function requireContactRow(contactId: string): Promise<{ id: string; vendor_id: string }> {
@@ -1062,6 +1324,12 @@ export async function updateVendorContact(
   }
   if (changes.email !== undefined) update.email = normalizeEmail(changes.email);
   if (changes.phone !== undefined) update.phone = normalizeOptional(changes.phone);
+  if (changes.acceptsTextOrders !== undefined) {
+    if (typeof changes.acceptsTextOrders !== "boolean") {
+      throw new AdminVendorError(400, "invalid_payload", "accepts_text_orders must be a boolean");
+    }
+    update.accepts_text_orders = changes.acceptsTextOrders;
+  }
   if (Object.keys(update).length === 0) return;
   update.updated_by = actor.user.id;
   update.updated_at = new Date().toISOString();

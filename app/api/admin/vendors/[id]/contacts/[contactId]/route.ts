@@ -33,6 +33,10 @@ export async function PATCH(
   }
   if ("email" in b) changes.email = b.email === null ? null : typeof b.email === "string" ? b.email : null;
   if ("phone" in b) changes.phone = b.phone === null ? null : typeof b.phone === "string" ? b.phone : null;
+  if ("acceptsTextOrders" in b) {
+    if (typeof b.acceptsTextOrders !== "boolean") return jsonError(400, "invalid_payload", { field: "acceptsTextOrders" });
+    changes.acceptsTextOrders = b.acceptsTextOrders;
+  }
 
   try {
     await updateVendorContact(ctx, { contactId, changes });

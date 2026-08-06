@@ -15,7 +15,7 @@ import { requireSessionFromHeaders } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { loadSkus, loadPackFormats, loadMeasureUnits } from "@/lib/admin/skus";
+import { loadSkus, loadPackFormats, loadMeasureUnits, loadLocationSkuSettings } from "@/lib/admin/skus";
 import { loadVendors } from "@/lib/admin/vendors";
 import { loadCurrentSkuPrices, computeSkuCostPerOz, loadSkuUsageMap, loadSkuReceivingLedger, loadSkuConsumption, type SkuConsumption } from "@/lib/admin/cost";
 import { skuPackComplete, skuReadiness, type Readiness } from "@/lib/readiness";
@@ -57,6 +57,11 @@ export default async function AdminSkusPage() {
   const skuLedger: Record<string, import("@/lib/admin/cost").SkuReceivingLedger> = Object.fromEntries([...ledgerMap.entries()]);
   const consumptionMap = await loadSkuConsumption(auth, skus.map((s) => s.id));
   const skuConsumption: Record<string, SkuConsumption> = Object.fromEntries([...consumptionMap.entries()]);
+
+  // Per-location overlay rows (VO-7) so the SkuBuilder edit view seeds Section D.
+  const overlayMap = await loadLocationSkuSettings(auth, skus.map((s) => s.id));
+  const overlaysBySku: Record<string, import("@/components/admin/skus/SkuLocationOverlay").LocationSkuOverlayView[]> =
+    Object.fromEntries([...overlayMap.entries()]);
 
   // ── Pack chains (batch, ONE query — loadRecipeGraph law) so the SkuBuilder
   //    seeds Section B without a lazy GET, the catalog can show "unchained (N)" +
@@ -116,6 +121,7 @@ export default async function AdminSkusPage() {
         skuReadiness={skuReadinessMap}
         chainsBySku={chainsBySku}
         chainUnverifiedBySku={chainUnverifiedBySku}
+        overlaysBySku={overlaysBySku}
         actorLevel={level}
         canManage={level >= 7}
       />

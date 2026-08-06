@@ -22,6 +22,11 @@
  *                  LEFT UNTOUCHED), notes, active, audit.
  *   sku_pack_formats / measure_units — MoO+ registries (deny-all RLS, label-keyed),
  *                  mirror public.units (migration 0084).
+ *   location_sku_settings — per-(location,sku) overlay (VO-7, migration 0174):
+ *                  active_override (null=inherit / true=on / false=off),
+ *                  weekday_par / weekend_par (null=inherit global). UNIQUE
+ *                  (location_id, sku_id). Upsert-in-place; NEVER deleted (a
+ *                  revert-to-all-inherit nulls the three fields, keeping the row).
  *
  * SKU cost is deferred to the C3 cost/yield slice (vendor_price_history).
  */
@@ -625,6 +630,161 @@ export async function deactivateSku(
     resourceTable: "vendor_items",
     resourceId: args.id,
     metadata: {},
+    ipAddress: null,
+    userAgent: null,
+  });
+}
+
+// ── Per-location SKU overlay (VO-7; migration 0174) ────────────────────────────
+//
+// location_sku_settings carries the per-(location,sku) activation + par overrides
+// the ordering walk resolves through lib/location-sku-shared.ts. Tri-state:
+//   activeOverride null = inherit global / true = on here / false = off here
+//   weekdayPar / weekendPar null = inherit the global vendor_items par
+// Upsert-in-place keyed on the (location_id, sku_id) UNIQUE; revert-to-all-inherit
+// nulls the three fields (append-only — the row is never DELETEd). GM+ (SKU write
+// floor), Tier A at the route (mirrors a SKU edit). Rides vendor_item.update audit
+// with metadata.scope: "location_settings" (parallels updateSku's vocabulary).
+
+/** An existing overlay row as loaded per SKU, keyed for the editor tri-state. */
+export interface LocationSkuSetting {
+  locationId: string;
+  activeOverride: boolean | null;
+  weekdayPar: number | null;
+  weekendPar: number | null;
+}
+
+interface DbLocationSkuSettingRow {
+  location_id: string;
+  active_override: boolean | null;
+  weekday_par: number | string | null;
+  weekend_par: number | string | null;
+}
+
+/** Batch-load overlay rows for a set of SKUs (≥6 read). Returns a map skuId →
+ *  rows[]; a SKU absent from the map (or with an empty array) has no overlays. */
+export async function loadLocationSkuSettings(
+  actor: AuthContext,
+  skuIds: string[],
+): Promise<Map<string, LocationSkuSetting[]>> {
+  requireLevel(actor, SKU_READ_MIN);
+  const out = new Map<string, LocationSkuSetting[]>();
+  const ids = [...new Set(skuIds.filter((s): s is string => typeof s === "string" && !!s))];
+  if (ids.length === 0) return out;
+
+  const sb = getServiceRoleClient();
+  const rows = await selectAllRows<DbLocationSkuSettingRow & { sku_id: string }>((from, to) =>
+    sb
+      .from("location_sku_settings")
+      .select("sku_id, location_id, active_override, weekday_par, weekend_par")
+      .in("sku_id", ids)
+      .range(from, to)
+      .returns<Array<DbLocationSkuSettingRow & { sku_id: string }>>(),
+  );
+  for (const r of rows) {
+    const arr = out.get(r.sku_id) ?? [];
+    arr.push({
+      locationId: r.location_id,
+      activeOverride: r.active_override,
+      weekdayPar: toNum(r.weekday_par),
+      weekendPar: toNum(r.weekend_par),
+    });
+    out.set(r.sku_id, arr);
+  }
+  return out;
+}
+
+export interface UpsertLocationSkuSettingsInput {
+  skuId: string;
+  locationId: string;
+  /** null = inherit global active / true = on here / false = off here. */
+  activeOverride: boolean | null;
+  /** null = inherit global par. */
+  weekdayPar: number | null;
+  weekendPar: number | null;
+}
+
+/**
+ * Insert-or-update the (location, sku) overlay row (GM+). Any non-inherit value
+ * upserts; a revert-to-all-inherit (all three null) nulls the fields on an existing
+ * row (never a delete — append-only). Idempotent on the (location_id, sku_id)
+ * UNIQUE. normalizePar reused for the pars; activeOverride tri-state validated.
+ */
+export async function upsertLocationSkuSettings(
+  actor: AuthContext,
+  input: UpsertLocationSkuSettingsInput,
+): Promise<void> {
+  requireLevel(actor, SKU_WRITE_MIN);
+
+  if (input.activeOverride !== null && typeof input.activeOverride !== "boolean") {
+    throw new AdminSkuError(400, "invalid_active_override", "Active override must be true, false, or null");
+  }
+  const weekdayPar = normalizePar(input.weekdayPar, "weekday_par");
+  const weekendPar = normalizePar(input.weekendPar, "weekend_par");
+  const activeOverride = input.activeOverride;
+
+  // The SKU + location must both exist + be valid (the SKU can be inactive globally —
+  // a promotional per-location ON is a legitimate override — so no active filter on
+  // the SKU; the location must be active, matching assertLocationActive).
+  const sb = getServiceRoleClient();
+  const { data: sku, error: sErr } = await sb
+    .from("vendor_items")
+    .select("id")
+    .eq("id", input.skuId)
+    .maybeSingle<{ id: string }>();
+  if (sErr) throw new Error(`upsertLocationSkuSettings sku check failed: ${sErr.message}`);
+  if (!sku) throw new AdminSkuError(404, "sku_not_found", "SKU not found");
+  await assertLocationActive(input.locationId);
+
+  // Find the existing (location, sku) row (the UNIQUE guarantees at most one).
+  const { data: existing, error: exErr } = await sb
+    .from("location_sku_settings")
+    .select("id")
+    .eq("location_id", input.locationId)
+    .eq("sku_id", input.skuId)
+    .maybeSingle<{ id: string }>();
+  if (exErr) throw new Error(`upsertLocationSkuSettings lookup failed: ${exErr.message}`);
+
+  const payloadFields = {
+    active_override: activeOverride,
+    weekday_par: weekdayPar,
+    weekend_par: weekendPar,
+    updated_by: actor.user.id,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (existing) {
+    // Update-in-place — a revert-to-all-inherit nulls the three fields, keeping the
+    // row (never delete; append-only).
+    const { error, count } = await sb
+      .from("location_sku_settings")
+      .update(payloadFields, { count: "exact" })
+      .eq("id", existing.id);
+    if (error) throw new Error(`upsertLocationSkuSettings update failed: ${error.message}`);
+    if (count === 0) throw new AdminSkuError(404, "sku_not_found", "Overlay row vanished");
+  } else {
+    // Insert only when there's something to store — a first write that's all-inherit
+    // is a no-op (nothing overrides the global; no row needed).
+    if (activeOverride === null && weekdayPar === null && weekendPar === null) return;
+    const { error } = await sb
+      .from("location_sku_settings")
+      .insert({ location_id: input.locationId, sku_id: input.skuId, ...payloadFields });
+    if (error) throw new Error(`upsertLocationSkuSettings insert failed: ${error.message}`);
+  }
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "vendor_item.update",
+    resourceTable: "vendor_items",
+    resourceId: input.skuId,
+    metadata: {
+      scope: "location_settings",
+      location_id: input.locationId,
+      active_override: activeOverride,
+      weekday_par: weekdayPar,
+      weekend_par: weekendPar,
+    },
     ipAddress: null,
     userAgent: null,
   });
