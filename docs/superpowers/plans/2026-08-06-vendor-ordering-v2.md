@@ -1,0 +1,59 @@
+# Vendor Ordering V2 Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: superpowers:subagent-driven-development. Implementers have NO shell — write files; controller runs tests/commits/migrations. Confirm-before-authoring: READ every referenced live file before writing; the live system wins over this prose. Report mismatches and STOP for ratification before authoring against them.
+
+**Goal:** Wake the channels on the V1 PO spine: two-tap auto email (dormant-until-DNS) → inbound confirmation/invoice matching → LLM parse + three-way match → redelivery credit closure (live day one) → dormant SMS legs.
+
+**Spec:** `docs/superpowers/specs/2026-08-06-vendor-ordering-v2-design.md` (V2-D1..D5 + §6 dormancy matrix). Everything additive; branch `claude/vendor-ordering-v2`; highest migration 0174 → next **0175**.
+
+**Shipped foundations (implementers read them):** `lib/purchase-orders.ts` (lifecycle, markPlaced, po_transmissions, PoDetail transmit block) · `lib/email.ts` + `lib/email-templates/_layout.ts` · `lib/email-receipts.ts` (ingest, attribution, triage, linkReceipt) · `app/api/webhooks/resend-inbound/route.ts` + `lib/webhook-verify-shared.ts` (svix pattern + test style) · `lib/credits.ts` (statuses, CREDIT_*_MIN, resolveCredit) · `lib/receiving.ts` + `components/receiving/ReceivingForm.tsx` · `components/ordering/PoPanel.tsx` · `app/api/cron/*` (CRON_SECRET pattern, cron.success heartbeat) · `vercel.json` crons array.
+
+**Conventions locked here:** PO-code regex `[A-Z0-9]{1,8}-\d{8}-[A-Z0-9]{1,6}(?:-\d+)?` (validate candidates against real POs, vendor/location agreement when known). Audit actions: `po.email_sent`, `receipt.po_linked`, `receipt.parsed`, `credit.resolved` (existing action, outcome=redelivered in metadata), `sms.received`. Errors: `email_dormant`, `no_email_target`, `po_not_confirmed` (409s). Parse model env `AI_PARSE_MODEL` default `claude-sonnet-4-6`.
+
+---
+
+### Task 1: Migration 0175 — channels schema (sonnet)
+`supabase/migrations/0175_vendor_ordering_v2.sql`, house style (read 0174 for idiom; provenance header citing spec §2; RLS enable + two-statement revokes on new tables):
+- `sms_messages`: id pk, direction check (inbound|outbound), provider_sid text null + partial unique where not null, from_number text not null, to_number text not null, body text null, media jsonb null, location_id FK null, vendor_guess_id FK vendors null, linked_po_id FK purchase_orders null, occurred_at timestamptz not null, created_at default now(); index (linked_po_id), index (from_number).
+- `email_receipts`: add `linked_po_id uuid null references purchase_orders(id)` + index; add `doc_kind text null check (doc_kind in ('confirmation','invoice','statement','other'))`.
+- `vendor_credits`: add `resolved_by_delivery_id uuid null references vendor_deliveries(id)`; replace status CHECK to add `resolved_redelivered` (drop constraint by name + re-add — verify live constraint name first).
+Controller pre-flights against live schema + applies via MCP + commits.
+
+### Task 2: Redelivery credit closure — live day one (sonnet)
+- `lib/credits.ts`: `resolveCreditsRedelivered(actor, deliveryId, creditIds[])` — KH+ (CREDIT_READ_MIN; document the evidence-backed gate split vs AGM+ judgment outcomes in the module header); validates delivery exists + location-bind + same vendor as each credit; per-credit guarded UPDATE `.eq("status","open")` → `resolved_redelivered` + resolved_at + resolved_by_delivery_id, rowcount-checked; already-resolved race → skip + report skipped ids (never throw — intake is sacred); audit `credit.resolved {outcome: "redelivered", resolving_delivery_id, skipped}` once per batch.
+- `lib/receiving.ts` recordDelivery: accept optional `makeUpCreditIds?: string[]` → after successful delivery write, call resolveCreditsRedelivered in try/catch (delivery data sacred — closure failure flags response, never fails intake).
+- `components/receiving/ReceivingForm.tsx`: default-collapsed "Makes up a short?" CollapsibleSection (D-doctrine, i18n'd count) shown when open credits exist for vendor+location (data via the template/prefill fetch — extend its payload with `loadVendorOutstandingCredits` rows: item name, qty, age, origin delivery/PO code); checkbox rows → ids ride the submit payload.
+- Route: thread the new field through `app/api/operations/receiving/route.ts` (whitelist + validate array of uuids ≤ open-credit count). i18n en+es.
+
+### Task 3: Outbound email adapter — two-tap (opus)
+- `lib/email.ts`: extend `sendEmail` input with optional `to: string | string[]`, `from?`, `replyTo?` — existing callers unchanged (defaults = current behavior). Return keeps `{id} | {error}`.
+- NEW `lib/po-email.ts` (server-only): `orderEmailPreview(actor, poId)` → {to[], from, replyTo, subject, textBody, htmlBody} (subject `Order {display_code} — {TENANT_NAME} {location.name}`; body from confirmed_snapshot lines qty·unit·name·itemNumber + PO code in-body + location ship-to block; escape everything; renderEmailLayout shell) and `sendOrderEmail(actor, poId)` → 409 `po_not_confirmed` unless status confirmed; 409 `email_dormant` unless gate (below); 409 `no_email_target` when zero active email-type ordering details; sendEmail → on success record placement EXACTLY like markPlaced (status confirmed→placed guarded, po_transmissions row channel=email, target=recipients joined, sent_by=actor, provider_message_id=resend id, audit `po.email_sent` + `po.placed`); on send failure → surface error, PO untouched.
+- **Dormancy gate (spec §6), one derivation fn** in `lib/po-email.ts` (pure part → tests): `emailOrderingAvailable(location: {receiptEmailAddress}, emailFrom: string)` = alias present AND emailFrom domain ≠ resend.dev. Server checks at send; UI receives the flag via loadPoDetail extension.
+- `lib/purchase-orders.ts` loadPoDetail: transmit block gains `emailOrderingAvailable` + `orderEmailRecipients` (active email-type details) for auto tier.
+- `components/ordering/PoPanel.tsx`: auto-tier block = preview card (to/from/subject + line summary) + "Send to vendor" (busy-guarded; server re-check makes double-tap 409) + manual affordances ALWAYS rendered below (law). Admin tier selector (`components/admin/vendors/VendorDetailClient.tsx` TransmissionCard): auto option's static disabled state becomes dynamic — enabled when ANY location qualifies via the gate fn (server-derived, threaded through the vendors admin load); keep tooltip when disabled. Routes: POST send action on `app/api/operations/ordering/po/route.ts` idiom. i18n en+es.
+
+### Task 4: Inbound matching — PO links + effects (opus)
+- `lib/email-receipts.ts`: pure `extractPoCode(subjectAndBody: string): string[]` (regex above; exported for SMS reuse + tests) · `matchReceiptToPo(sb, receipt)` implementing precedence: (1) extracted codes → purchase_orders by display_code, require vendor/location agreement with receipt attribution when present; (2) location alias attribution + (3) parsed shipTo vs locations.address (when parse ran) narrowing; (4) vendor_guess + open-PO (placed|invoiced) ±date window, SINGLE-candidate only; else null (triage). Writes `linked_po_id` (guarded, rowcount).
+- `applyReceiptPoEffects(sb, receiptId)` — idempotent: doc_kind confirmation → fill `purchase_orders.ack` when null ({receiptId, matchedBy, at, from, excerpt}), later confirmations append `ack.additional[]`; doc_kind invoice → guarded placed→invoiced flip (`.eq("status","placed")`, rowcount 0 tolerated = no regression law), always keep link; audit `receipt.po_linked`.
+- Call sites: end of `ingestInboundReceipt` (code/alias/window keys — parse-independent, try/catch fail-open: ingest is ledger-first) + post-parse (Task 5 calls it).
+- Triage surface (`listUnlinkedReceipts` consumers): show PO-link state; add manual "Attach to PO" (KH+; picker of open POs for the vendor/location) → same link+effects path; audit. i18n en+es.
+
+### Task 5: Parse engine + cron (opus)
+- NEW `lib/receipt-parse.ts` (server-only): `parseReceipt(sb, receiptId)` — load raw eml + attachments from receipts bucket → Anthropic API (ANTHROPIC_API_KEY; model AI_PARSE_MODEL default claude-sonnet-4-6; PDFs/images as native content blocks; eml → text extract) with a strict-JSON extraction prompt for `{docKind, poCode?, invoiceNumber?, shipTo?, vendorName?, totalCents?, lines[{description,qty?,unit?,unitPriceCents?,extendedCents?}]}`; validate types + finite/non-negative numbers; write parsed_json + parse_state parsed|failed(+reason) + doc_kind (guarded rowcount); then `matchReceiptToPo` + `applyReceiptPoEffects` (Task 4 exports). LLM output = UNTRUSTED: never DOM-mounted, never used as href, text render only.
+- `app/api/cron/parse-receipts/route.ts`: CRON_SECRET pattern (read prune-sessions), 503 when CRON_SECRET or ANTHROPIC_API_KEY unset; sweep inbound unparsed oldest-first LIMIT 10/run; per-row try/catch; heartbeat audit `cron.success {job, parsed, failed}`. Add `{ "path": "/api/cron/parse-receipts", "schedule": "*/30 * * * *" }` to vercel.json.
+- "Parse now" (KH+) affordance on the triage queue rows (route POST → parseReceipt). i18n en+es.
+
+### Task 6: Three-way match view (opus)
+NEW `lib/po-match.ts`: `buildThreeWayView(actor, poId)` — read-time derive, NO schema: ordered (confirmed_snapshot lines) vs received (linked delivery lines via receiving loaders) vs billed (linked invoice receipt parsed_json.lines; fuzzy-join item number exact → name contains, unjoined = advisory rows). Output per-line {sku/name, orderedQty, receivedQty|null, billedQty|null, billedCents|null, flags[]} + totals + missing-leg markers ("no invoice yet" — advisory-null law, never fabricate). PO detail ([Three-way] section in PoPanel detail view): 3 columns + variance chips (billed>received flag; short+open-credit chip links credit). Pure join/compare logic → `lib/po-match-shared.ts` + vitest. i18n en+es.
+
+### Task 7: SMS dormant legs (sonnet)
+- `lib/webhook-verify-shared.ts`: add pure `verifyTwilioSignature(authToken, url, params, signature)` (HMAC-SHA1 per Twilio spec) + test vectors (mirror svix suite).
+- NEW `app/api/webhooks/twilio-inbound/route.ts`: 503 unless TWILIO_AUTH_TOKEN; verify signature (401 bad); parse form-encoded webhook (From, To, Body, MessageSid, NumMedia/MediaUrlN — store media URLs in media jsonb, no fetch v1); ledger-first insert into sms_messages (provider_sid idempotency — 23505 → 200 replay); vendor guess = E.164 normalize vs vendor_contacts.phone; PO match via `extractPoCode(body)` → open placed/invoiced PO for vendor, single-candidate window fallback; linked confirmation fills ack via `applyReceiptPoEffects`-equivalent (small sms variant: source "sms"); audit `sms.received`.
+- NEW `lib/po-sms.ts`: `sendOrderSms` SEAM ONLY — 501-style `{error: "sms_dormant"}` until TWILIO_* config (documented); no UI button (spec §8).
+- PO detail unified trail: sms_messages rows for the PO render alongside transmissions/receipts (extend loadPoDetail). i18n en+es.
+
+### Task 8: Verify + cross-family review + PR (controller)
+Full gates (tsc, vitest, build) · i18n parity sweep · READ-ONLY builder verifier card (comment-persisted): hunt send-path double-fire (two-tap race, provider retry), dormancy-gate bypass (server re-checks vs UI-only), PO-code regex false-positives (credit memo quoting old PO), matching single-candidate violations, ack/invoiced idempotency, redelivery closure races (credit resolved mid-intake), Twilio signature correctness, untrusted-LLM-output surfaces, IDOR on new routes/params · resolve findings · PR "Vendor ordering V2 — channels wake on the PO spine"; Juan merges.
+
+## Self-review (write time)
+Spec coverage: §2→T1, §3→T3, §4→T4(+T5 call), §5→T6, §6 gates→T3/T5/T7, §7→T2, V2-D5→T7. Task 2 is dependency-free after T1 (ships value even if DNS stalls). T4 exports (extractPoCode, matchReceiptToPo, applyReceiptPoEffects) are the shared spine for T5/T7 — T4 lands before T5/T7 start. No placeholders; every extension names its pattern file.
