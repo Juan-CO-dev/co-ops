@@ -17,6 +17,13 @@
  * PARSING is deferred to P4 (parse_state stays 'unparsed'); MATCH VERDICTS (attestMatch /
  * overrideMatch) are MANAGER ATTESTATION on a visual compare — not a computed diff (P2).
  *
+ * PO-MATCHING (V2 §4, section 3b): a SEPARATE linking axis from the delivery two-way match.
+ * On ingest (and on parse completion / manual attach) a receipt may resolve to the purchase
+ * order it confirms or invoices — linked_po_id, distinct from linked_delivery_id (a receipt
+ * can carry both, one, or neither). matchReceiptToPo writes the link (PO-code key, then a
+ * vendor+window single-candidate fallback); applyReceiptPoEffects fills the PO's ack (V2-D2)
+ * or flips placed→invoiced by doc_kind. All best-effort/fail-open — never poisons the ingest.
+ *
  * APPEND-ONLY: no DELETEs anywhere. Notes append (read-append; never clobber — mirrors
  * lib/credits.ts resolveCredit). Every UPDATE checks error AND rowcount (silent-UPDATE
  * law); Supabase `.update()` swallows constraint violations, so we never infer success
@@ -34,9 +41,14 @@ import { randomUUID } from "node:crypto";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
-import { lockLocationContext, type LocationActor } from "@/lib/locations";
+import { lockLocationContext, accessibleLocations, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
+import { extractPoCodes } from "@/lib/email-receipts-matching-shared";
+
+// Re-export the pure code extractor so server callers keep their `@/lib/email-receipts`
+// import path (the *-shared.ts law). Task 7's SMS leg imports the leaf directly (client-safe).
+export { extractPoCodes } from "@/lib/email-receipts-matching-shared";
 
 export const RECEIPT_MIN = 4; // key_holder+ — read + manual-upload + link + attest
 export const RECEIPT_OVERRIDE_MIN = 6; // AGM+ — override a match verdict
@@ -243,7 +255,43 @@ export async function ingestInboundReceipt(input: InboundReceiptInput): Promise<
   // Best-effort auto-link (never throws to the caller on zero/many candidates).
   await attemptAutoLink(inserted.id);
 
+  // Best-effort PO matching (V2 §4) — SEPARATE axis from the delivery auto-link above.
+  // FAIL-OPEN (ledger-first): matching NEVER poisons the ingest — a failure here logs and
+  // returns, the row is already durable. The body text is only in memory now (email_receipts
+  // has no body column) — decode it from the raw eml bytes when they are text-ish (text/plain
+  // or text/html; a PDF/image raw is not usable as match text → null). doc_kind is null here
+  // (pre-parse) so applyReceiptPoEffects is a no-op until parse classifies the document; we
+  // still call it so an already-classified re-run is covered by one code path.
+  try {
+    const bodyText = decodeReceiptBodyText(input.rawEml);
+    const match = await matchReceiptToPo(sb, {
+      id: inserted.id,
+      subject: input.subject?.trim() || null,
+      body: bodyText,
+      vendorGuessId,
+      locationId,
+      receivedAt: new Date().toISOString(),
+    });
+    await applyReceiptPoEffects(sb, inserted.id, match?.matchedBy);
+  } catch (poErr) {
+    console.error(`[email-receipts] PO matching failed for receipt=${inserted.id} (ingest unaffected):`, poErr instanceof Error ? poErr.message : poErr);
+  }
+
   return { receiptId: inserted.id };
+}
+
+/** Decode a rawEml asset to match text when it is a text-ish content type (text/plain or
+ *  text/html — the body forms the Resend webhook stores). A PDF/image raw is not usable as
+ *  match text → null. utf-8 decode; a decode failure → null (best-effort, never throws). */
+function decodeReceiptBodyText(rawEml: { bytes: Uint8Array | Buffer; contentType: string } | null): string | null {
+  if (!rawEml) return null;
+  const base = rawEml.contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (base !== "text/plain" && base !== "text/html") return null;
+  try {
+    return new TextDecoder("utf-8").decode(rawEml.bytes);
+  } catch {
+    return null;
+  }
 }
 
 /** Match a to-address against locations.receipt_email_address (case-insensitive, active
@@ -497,6 +545,254 @@ export async function attemptAutoLink(receiptId: string): Promise<void> {
   });
 }
 
+// ── (3b) PO MATCHING — receipt → purchase_order link + effects ───────────────────────
+//
+// The confirmation/invoice→PO edge (V2 §4). SEPARATE AXIS from the delivery auto-link
+// above: a receipt can carry BOTH a linked_delivery_id (the two-way match) AND a
+// linked_po_id (the order it acknowledges/invoices). Neither implies the other. Called
+// on ingest AND on parse completion (Task 5); pure extraction (extractPoCodes) is also
+// reused by the SMS leg (Task 7).
+
+/** PO statuses a receipt link may legitimately attach to. A draft/reconciled PO is NOT a
+ *  valid target for an inbound confirmation/invoice (nothing was placed yet / it's closed).
+ *  Kept as a Set for O(1) membership. */
+const PO_LINKABLE_STATUSES = new Set(["placed", "invoiced", "received", "reconciled"]);
+/** ±3 days: the vendor+window fallback tolerance around a receipt's received-at date vs a
+ *  candidate PO's placed_at (V2 §4 step 4 — the single-candidate rule). */
+const PO_MATCH_DAY_WINDOW = 3;
+
+/** The text a matcher inspects for a receipt — subject + whatever body text the caller
+ *  holds (email_receipts has NO body column; at ingest the body is the webhook's in-memory
+ *  text, post-parse it is the parse output). */
+export interface MatchReceiptInput {
+  id: string;
+  subject: string | null;
+  body?: string | null;
+  vendorGuessId: string | null;
+  locationId: string | null;
+  receivedAt: string;
+}
+
+/**
+ * Resolve the ONE purchase order an inbound receipt links to, if any, and WRITE the link
+ * (V2 §4). Precedence (deterministic, batch-only):
+ *   (1) PO DISPLAY CODE in subject+body → the strongest key. extractPoCodes → one batched
+ *       `.in("display_code", …)` lookup → a candidate is VALID iff its status is linkable
+ *       AND (vendor agrees when vendorGuessId known) AND (location agrees when locationId
+ *       known). Exactly one DISTINCT valid PO → match `po_code`. Two-or-more distinct →
+ *       null (ambiguous → triage; we never guess).
+ *   (2) VENDOR + WINDOW fallback → only when a vendor is known: placed|invoiced POs for
+ *       that vendor (+ location when known) whose placed_at is within ±3 days of receivedAt.
+ *       EXACTLY ONE → match `vendor_window`; else null (the shipped single-candidate P2 law).
+ * The link WRITE is a guarded UPDATE (`linked_po_id IS NULL`, count exact) so a concurrent
+ * writer (a re-run on parse, a manual attach) never double-links or double-audits: count 0
+ * → someone already linked → return null. Audits `receipt.po_linked` once per NEW link.
+ * NEVER throws to the caller on a query error — matching is best-effort (ledger-first); a
+ * read failure returns null and the receipt stays in triage.
+ */
+export async function matchReceiptToPo(
+  sb: ServiceClient,
+  receipt: MatchReceiptInput,
+): Promise<{ poId: string; matchedBy: "po_code" | "vendor_window" } | null> {
+  const matched = await resolvePoMatch(sb, receipt);
+  if (!matched) return null;
+
+  // GUARDED LINK WRITE (silent-UPDATE law): claim linked_po_id only while it is still null.
+  // count 0 = a rival writer linked first → do NOT audit again (no double-audit), return null.
+  const { error: uErr, count } = await sb
+    .from("email_receipts")
+    .update({ linked_po_id: matched.poId }, { count: "exact" })
+    .eq("id", receipt.id)
+    .is("linked_po_id", null);
+  if (uErr) {
+    console.error(`[email-receipts] matchReceiptToPo link write failed for receipt=${receipt.id}:`, uErr.message);
+    return null;
+  }
+  if (count === 0) return null; // already linked (raced or re-run) — no new link, no audit.
+
+  // doc_kind may be null at ingest (pre-parse) — recorded as-is for forensics.
+  const { data: rowForKind } = await sb
+    .from("email_receipts")
+    .select("doc_kind")
+    .eq("id", receipt.id)
+    .maybeSingle<{ doc_kind: string | null }>();
+  await audit({
+    actorId: null, actorRole: null,
+    action: "receipt.po_linked", resourceTable: "email_receipts", resourceId: receipt.id,
+    metadata: { receipt_id: receipt.id, po_id: matched.poId, matched_by: matched.matchedBy, doc_kind: rowForKind?.doc_kind ?? null },
+    ipAddress: null, userAgent: null,
+  });
+  return matched;
+}
+
+/**
+ * The pure(ish) resolution half of matchReceiptToPo — computes the target PO WITHOUT
+ * writing (so the write + audit live in one place above). Batch queries only; every call
+ * error-checked but a failure returns null (best-effort). Split out so the precedence is
+ * readable and testable in isolation from the link write.
+ */
+async function resolvePoMatch(
+  sb: ServiceClient,
+  receipt: MatchReceiptInput,
+): Promise<{ poId: string; matchedBy: "po_code" | "vendor_window" } | null> {
+  // ── (1) PO display code in subject + body ──────────────────────────────────────────
+  const codes = extractPoCodes(`${receipt.subject ?? ""} ${receipt.body ?? ""}`);
+  if (codes.length > 0) {
+    const { data: pos, error } = await sb
+      .from("purchase_orders")
+      .select("id, status, vendor_id, location_id")
+      .in("display_code", codes)
+      .returns<Array<{ id: string; status: string; vendor_id: string; location_id: string }>>();
+    if (error) {
+      console.error(`[email-receipts] resolvePoMatch code lookup failed for receipt=${receipt.id}:`, error.message);
+      return null;
+    }
+    const valid = (pos ?? []).filter(
+      (p) =>
+        PO_LINKABLE_STATUSES.has(p.status) &&
+        (receipt.vendorGuessId == null || p.vendor_id === receipt.vendorGuessId) &&
+        (receipt.locationId == null || p.location_id === receipt.locationId),
+    );
+    const distinct = new Set(valid.map((p) => p.id));
+    if (distinct.size === 1) return { poId: [...distinct][0]!, matchedBy: "po_code" };
+    if (distinct.size > 1) return null; // ambiguous → triage; the code key never guesses.
+    // zero valid candidates from the codes → fall through to the vendor+window fallback.
+  }
+
+  // ── (2) Vendor + window fallback (single-candidate rule) ───────────────────────────
+  if (!receipt.vendorGuessId) return null; // no vendor → no fallback (never fan out wide).
+  const receivedMs = Date.parse(receipt.receivedAt);
+  if (!Number.isFinite(receivedMs)) return null;
+  const lo = new Date(receivedMs - PO_MATCH_DAY_WINDOW * 86_400_000).toISOString();
+  const hi = new Date(receivedMs + PO_MATCH_DAY_WINDOW * 86_400_000).toISOString();
+
+  let q = sb
+    .from("purchase_orders")
+    .select("id")
+    .eq("vendor_id", receipt.vendorGuessId)
+    .in("status", ["placed", "invoiced"])
+    .gte("placed_at", lo)
+    .lte("placed_at", hi);
+  if (receipt.locationId != null) q = q.eq("location_id", receipt.locationId);
+  const { data: windowPos, error: wErr } = await q.returns<Array<{ id: string }>>();
+  if (wErr) {
+    console.error(`[email-receipts] resolvePoMatch window lookup failed for receipt=${receipt.id}:`, wErr.message);
+    return null;
+  }
+  const list = windowPos ?? [];
+  if (list.length !== 1) return null; // zero or many → triage (single-candidate law).
+  return { poId: list[0]!.id, matchedBy: "vendor_window" };
+}
+
+/**
+ * Apply the PO-side EFFECTS of a receipt→PO link (V2-D2 / §4). IDEMPOTENT + guarded:
+ * safe to call on ingest, on parse completion, and on a manual attach — it converges on
+ * the same PO state without double-writing. Loads the receipt's (linked_po_id, doc_kind,
+ * from_address, received_at); a receipt with no link OR no doc_kind is a NO-OP (nothing to
+ * apply yet — the ack/invoice effect needs to know WHICH document kind linked).
+ *
+ * `matchedBy` is a PARAMETER, not a stored column: the caller passes it when it knows how
+ * the link formed ("po_code" | "vendor_window" | "manual"); a re-run over a pre-existing
+ * link that doesn't know → null/omitted → ack.matchedBy lands null. It never drives control
+ * flow, only the recorded evidence.
+ *
+ * EFFECTS by doc_kind:
+ *   'confirmation' → fill purchase_orders.ack (V2-D2). FIRST confirmation wins the top-level
+ *      ack via a guarded `.is("ack", null)` UPDATE (count exact). If that write lost the race
+ *      (count 0) OR ack was already non-null, AND this receiptId is not already recorded
+ *      (top-level receiptId or an ack.additional[] entry), read-modify-write append to
+ *      ack.additional[]. NEAR-SINGLE-WRITER: the parse cron (single-threaded) is the routine
+ *      writer of this path; manual attach (a human tap) is the only co-writer. The RMW
+ *      append is not CAS-guarded, so a cron×manual race could drop ONE ack.additional
+ *      entry — advisory forensic evidence only; the durable link itself is written by the
+ *      guarded linked_po_id UPDATE and can never be lost here.
+ *   'invoice' → guarded placed→invoiced status flip (`.eq("status","placed")`, count exact).
+ *      count 0 is TOLERATED: a PO already received/reconciled just keeps the link (invoices
+ *      often arrive after the truck) — the link is enough, no status regression, no throw.
+ * NO audit here (the link write above already audited receipt.po_linked). Best-effort reads
+ * error-checked; nothing here throws to the ingest (ledger-first).
+ */
+export async function applyReceiptPoEffects(
+  sb: ServiceClient,
+  receiptId: string,
+  matchedBy?: "po_code" | "vendor_window" | "manual" | null,
+): Promise<void> {
+  const { data: r, error } = await sb
+    .from("email_receipts")
+    .select("id, linked_po_id, doc_kind, from_address, received_at")
+    .eq("id", receiptId)
+    .maybeSingle<{ id: string; linked_po_id: string | null; doc_kind: string | null; from_address: string | null; received_at: string }>();
+  if (error) {
+    console.error(`[email-receipts] applyReceiptPoEffects load failed for receipt=${receiptId}:`, error.message);
+    return;
+  }
+  if (!r || !r.linked_po_id || !r.doc_kind) return; // no link / no classification → nothing to apply.
+
+  if (r.doc_kind === "confirmation") {
+    const ackEntry = {
+      receiptId: r.id,
+      matchedBy: matchedBy ?? null,
+      at: r.received_at,
+      from: r.from_address,
+      source: "email",
+    };
+    // FIRST confirmation wins the top-level ack (guarded — only while ack IS NULL).
+    const { error: fillErr, count } = await sb
+      .from("purchase_orders")
+      .update({ ack: ackEntry }, { count: "exact" })
+      .eq("id", r.linked_po_id)
+      .is("ack", null);
+    if (fillErr) {
+      console.error(`[email-receipts] applyReceiptPoEffects ack fill failed for po=${r.linked_po_id}:`, fillErr.message);
+      return;
+    }
+    if (count === 0) {
+      // ack was already set (a prior confirmation, or a raced concurrent fill). Append this
+      // receipt to ack.additional[] unless it is ALREADY recorded (idempotent re-run).
+      // NEAR-SINGLE-WRITER (parse cron + manual attach) → RMW not CAS-guarded; a race can
+      // drop one advisory ack.additional entry, never the durable link (documented above).
+      const { data: poRow, error: readErr } = await sb
+        .from("purchase_orders")
+        .select("ack")
+        .eq("id", r.linked_po_id)
+        .maybeSingle<{ ack: { receiptId?: string; additional?: Array<{ receiptId?: string }> } | null }>();
+      if (readErr) {
+        console.error(`[email-receipts] applyReceiptPoEffects ack read failed for po=${r.linked_po_id}:`, readErr.message);
+        return;
+      }
+      const ack = poRow?.ack ?? null;
+      const already =
+        ack != null &&
+        (ack.receiptId === r.id || (ack.additional ?? []).some((a) => a.receiptId === r.id));
+      if (ack == null || already) return; // nothing to append (raced-away or duplicate).
+      const additional = [...(ack.additional ?? []), ackEntry];
+      const { error: appendErr } = await sb
+        .from("purchase_orders")
+        .update({ ack: { ...ack, additional } })
+        .eq("id", r.linked_po_id);
+      if (appendErr) {
+        console.error(`[email-receipts] applyReceiptPoEffects ack append failed for po=${r.linked_po_id}:`, appendErr.message);
+      }
+    }
+    return;
+  }
+
+  if (r.doc_kind === "invoice") {
+    // Guarded placed→invoiced flip. count 0 TOLERATED: an already received/reconciled PO
+    // (or one already invoiced) keeps the link with no status regression — invoices routinely
+    // arrive after the truck. The link (written by matchReceiptToPo) is the durable edge.
+    const { error: flipErr } = await sb
+      .from("purchase_orders")
+      .update({ status: "invoiced" }, { count: "exact" })
+      .eq("id", r.linked_po_id)
+      .eq("status", "placed");
+    if (flipErr) {
+      console.error(`[email-receipts] applyReceiptPoEffects invoiced flip failed for po=${r.linked_po_id}:`, flipErr.message);
+    }
+  }
+  // 'statement' / 'other' → no PO effect (the link alone is the record).
+}
+
 // ── (4) READS — unlinked queue + per-delivery receipt (with signed URLs) ────────────
 
 export interface ReceiptAsset {
@@ -515,6 +811,12 @@ export interface UnlinkedReceiptView {
   /** A short-lived signed URL for the first displayable asset (raw eml or first
    *  attachment) — the queue thumbnail/preview. Null when nothing is displayable. */
   previewUrl: string | null;
+  /** V2 §4/§5: the PO this receipt is linked to, if any (the confirmation/invoice→PO
+   *  edge — an INDEPENDENT axis from the delivery link that keeps the row in this queue).
+   *  All null when no PO is linked ("no order matched" state in the UI). */
+  linkedPoId: string | null;
+  poDisplayCode: string | null;
+  poStatus: string | null;
 }
 
 /**
@@ -522,35 +824,220 @@ export interface UnlinkedReceiptView {
  * null — inbound receipts whose to-address matched nothing land here for any bound
  * viewer to triage), newest first. Each carries a short-lived signed URL for its first
  * displayable asset (raw eml text or first stored attachment — mirrors lib/photos.ts).
+ *
+ * QUEUE PREDICATE (V2, unchanged on purpose): `linked_delivery_id IS NULL`. The DELIVERY
+ * link and the PO link are INDEPENDENT axes — a receipt that matched a PO but not a
+ * delivery still belongs in this triage queue (the manager may still attach it to a door
+ * count). We surface the PO link as row metadata (batch-joined) but never gate the queue
+ * on it.
  */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function listUnlinkedReceipts(actor: AuthContext, locationId: string): Promise<UnlinkedReceiptView[]> {
   requireLevel(actor, RECEIPT_MIN);
+  // UUID guard BEFORE the .or() interpolation below — lockLocationContext returns true
+  // unconditionally for all-locations actors, so without this a crafted locationId could
+  // reach the PostgREST filter string (menu.ts:19 idiom; closes the injection class).
+  if (!UUID_RE.test(locationId)) {
+    throw new EmailReceiptError(404, "not_found", "Location not found");
+  }
   if (!lockLocationContext(actorLoc(actor), locationId)) {
     throw new EmailReceiptError(404, "not_found", "Location not found");
   }
   const sb = getServiceRoleClient();
   const { data: rows, error } = await sb
     .from("email_receipts")
-    .select("id, source, from_address, subject, received_at, location_id, vendor_guess_id, raw_storage_path, attachment_paths")
+    .select("id, source, from_address, subject, received_at, location_id, vendor_guess_id, raw_storage_path, attachment_paths, linked_po_id")
     .is("linked_delivery_id", null)
     .or(`location_id.eq.${locationId},location_id.is.null`)
     .order("received_at", { ascending: false })
-    .returns<Array<{ id: string; source: "inbound" | "upload"; from_address: string | null; subject: string | null; received_at: string; location_id: string | null; vendor_guess_id: string | null; raw_storage_path: string | null; attachment_paths: AttachmentPathEntry[] | null }>>();
+    .returns<Array<{ id: string; source: "inbound" | "upload"; from_address: string | null; subject: string | null; received_at: string; location_id: string | null; vendor_guess_id: string | null; raw_storage_path: string | null; attachment_paths: AttachmentPathEntry[] | null; linked_po_id: string | null }>>();
   if (error) throw new Error(`listUnlinkedReceipts: ${error.message}`);
 
   const list = rows ?? [];
+  // Batch-join the linked POs' display_code + status (one query over the distinct po ids;
+  // never per-row). A missing PO row (deactivated/superseded) degrades to null metadata.
+  const poIds = [...new Set(list.map((r) => r.linked_po_id).filter((v): v is string => v != null))];
+  const poById = new Map<string, { display_code: string; status: string }>();
+  if (poIds.length > 0) {
+    const { data: poRows, error: poErr } = await sb
+      .from("purchase_orders")
+      .select("id, display_code, status")
+      .in("id", poIds)
+      .returns<Array<{ id: string; display_code: string; status: string }>>();
+    if (poErr) throw new Error(`listUnlinkedReceipts pos: ${poErr.message}`);
+    for (const p of poRows ?? []) poById.set(p.id, { display_code: p.display_code, status: p.status });
+  }
+
   return Promise.all(
-    list.map(async (r) => ({
-      id: r.id,
-      source: r.source,
-      fromAddress: r.from_address,
-      subject: r.subject,
-      receivedAt: r.received_at,
-      locationId: r.location_id,
-      vendorGuessId: r.vendor_guess_id,
-      previewUrl: await signReceiptPath(sb, firstDisplayablePath(r.raw_storage_path, r.attachment_paths)),
-    })),
+    list.map(async (r) => {
+      const po = r.linked_po_id ? poById.get(r.linked_po_id) ?? null : null;
+      return {
+        id: r.id,
+        source: r.source,
+        fromAddress: r.from_address,
+        subject: r.subject,
+        receivedAt: r.received_at,
+        locationId: r.location_id,
+        vendorGuessId: r.vendor_guess_id,
+        previewUrl: await signReceiptPath(sb, firstDisplayablePath(r.raw_storage_path, r.attachment_paths)),
+        linkedPoId: r.linked_po_id,
+        poDisplayCode: po?.display_code ?? null,
+        poStatus: po?.status ?? null,
+      };
+    }),
   );
+}
+
+// ── (5b) MANUAL PO ATTACH — KH+ (triage surface) ────────────────────────────────────
+
+/** A candidate PO the manager may attach a receipt to (the Attach-to-order picker). */
+export interface PoAttachCandidate {
+  poId: string;
+  displayCode: string;
+  status: string;
+  vendorId: string;
+  vendorName: string;
+  createdAt: string;
+}
+
+/**
+ * KH+ + bind: the candidate POs a receipt may be attached to (V2 §5). Scoped to the
+ * receipt's vendor guess (when known) and location (when known — an unattributed receipt
+ * widens to any bound location), status ∈ {placed, invoiced, received} (a draft isn't
+ * placed yet; a reconciled PO is closed), recent-first, capped. IDOR: the receipt itself
+ * is location-masked (unattributed is reachable by any bound actor; an attributed receipt
+ * out of reach → 404). Batches the vendor-name lookup. Server-loaded — the picker only
+ * displays; attachReceiptToPo re-validates on submit.
+ */
+export async function loadPoCandidatesForReceipt(
+  actor: AuthContext,
+  receiptId: string,
+  limit = 20,
+): Promise<PoAttachCandidate[]> {
+  requireLevel(actor, RECEIPT_MIN);
+  const sb = getServiceRoleClient();
+
+  const { data: r, error: rErr } = await sb
+    .from("email_receipts")
+    .select("id, location_id, vendor_guess_id")
+    .eq("id", receiptId)
+    .maybeSingle<{ id: string; location_id: string | null; vendor_guess_id: string | null }>();
+  if (rErr) throw new Error(`loadPoCandidatesForReceipt receipt: ${rErr.message}`);
+  if (!r) throw new EmailReceiptError(404, "not_found", "Receipt not found");
+  // An attributed receipt must be in the actor's reach; an unattributed one is reachable.
+  if (r.location_id != null && !lockLocationContext(actorLoc(actor), r.location_id)) {
+    throw new EmailReceiptError(404, "not_found", "Receipt not found");
+  }
+
+  let q = sb
+    .from("purchase_orders")
+    .select("id, display_code, status, vendor_id, created_at")
+    .in("status", ["placed", "invoiced", "received"])
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (r.vendor_guess_id != null) q = q.eq("vendor_id", r.vendor_guess_id);
+  if (r.location_id != null) {
+    q = q.eq("location_id", r.location_id);
+  } else {
+    // Unattributed receipt: restrict to the actor's REACHABLE locations (never leak POs
+    // from a location the actor can't reach). `accessibleLocations` returns the sentinel
+    // "all" for level-9+ (empty locations but full reach) → no location filter; otherwise
+    // the concrete assignment list → `.in()`. A non-all actor with ZERO assignments gets a
+    // filter on the empty set (no candidates), NOT an unfiltered leak.
+    const reach = accessibleLocations(actorLoc(actor));
+    if (reach !== "all") q = q.in("location_id", reach);
+  }
+  const { data: pos, error: pErr } = await q.returns<
+    Array<{ id: string; display_code: string; status: string; vendor_id: string; created_at: string }>
+  >();
+  if (pErr) throw new Error(`loadPoCandidatesForReceipt pos: ${pErr.message}`);
+  const list = pos ?? [];
+  if (list.length === 0) return [];
+
+  const vendorIds = [...new Set(list.map((p) => p.vendor_id))];
+  const { data: vendorRows, error: vErr } = await sb
+    .from("vendors").select("id, name").in("id", vendorIds)
+    .returns<Array<{ id: string; name: string }>>();
+  if (vErr) throw new Error(`loadPoCandidatesForReceipt vendors: ${vErr.message}`);
+  const vName = new Map((vendorRows ?? []).map((v) => [v.id, v.name]));
+
+  return list.map((p) => ({
+    poId: p.id,
+    displayCode: p.display_code,
+    status: p.status,
+    vendorId: p.vendor_id,
+    vendorName: vName.get(p.vendor_id) ?? "(vendor)",
+    createdAt: p.created_at,
+  }));
+}
+
+/**
+ * KH+ manual attach of a receipt to a PO from the triage queue (V2 §5). Validates the PO
+ * exists, is location-bound (404-masked), status ∈ {placed, invoiced, received}, and — when
+ * the receipt carries them — agrees on vendor + location (409 `mismatch`). The link is a
+ * GUARDED write (`linked_po_id IS NULL`, count exact) so a concurrent auto-match/attach
+ * never double-links (409 `already_linked` on the loser). On a fresh link: applyReceiptPoEffects
+ * (matchedBy "manual") + audit receipt.po_linked {matched_by: "manual"}. Does NOT touch the
+ * delivery link — the two axes are independent.
+ */
+export async function attachReceiptToPo(actor: AuthContext, receiptId: string, poId: string): Promise<void> {
+  requireLevel(actor, RECEIPT_MIN);
+  const sb = getServiceRoleClient();
+
+  const { data: r, error: rErr } = await sb
+    .from("email_receipts")
+    .select("id, location_id, vendor_guess_id, linked_po_id")
+    .eq("id", receiptId)
+    .maybeSingle<{ id: string; location_id: string | null; vendor_guess_id: string | null; linked_po_id: string | null }>();
+  if (rErr) throw new Error(`attachReceiptToPo receipt: ${rErr.message}`);
+  if (!r) throw new EmailReceiptError(404, "not_found", "Receipt not found");
+  if (r.location_id != null && !lockLocationContext(actorLoc(actor), r.location_id)) {
+    throw new EmailReceiptError(404, "not_found", "Receipt not found");
+  }
+  if (r.linked_po_id) throw new EmailReceiptError(409, "already_linked", "This receipt is already linked to an order");
+
+  const { data: po, error: pErr } = await sb
+    .from("purchase_orders")
+    .select("id, location_id, vendor_id, status")
+    .eq("id", poId)
+    .maybeSingle<{ id: string; location_id: string; vendor_id: string; status: string }>();
+  if (pErr) throw new Error(`attachReceiptToPo po: ${pErr.message}`);
+  // Missing OR out-of-reach → same masked 404 (no IDOR oracle).
+  if (!po || !lockLocationContext(actorLoc(actor), po.location_id)) {
+    throw new EmailReceiptError(404, "not_found", "Order not found");
+  }
+  if (!["placed", "invoiced", "received"].includes(po.status)) {
+    throw new EmailReceiptError(409, "not_attachable", "That order can't take a receipt in its current state");
+  }
+  // Agreement checks (only when the receipt actually carries the dimension).
+  if (r.vendor_guess_id != null && r.vendor_guess_id !== po.vendor_id) {
+    throw new EmailReceiptError(409, "mismatch", "That receipt is from a different vendor");
+  }
+  if (r.location_id != null && r.location_id !== po.location_id) {
+    throw new EmailReceiptError(409, "mismatch", "That receipt is from a different location");
+  }
+
+  // GUARDED link write (silent-UPDATE law): claim linked_po_id only while still null.
+  const { error: uErr, count } = await sb
+    .from("email_receipts")
+    .update({ linked_po_id: poId }, { count: "exact" })
+    .eq("id", receiptId)
+    .is("linked_po_id", null);
+  if (uErr) throw new Error(`attachReceiptToPo link: ${uErr.message}`);
+  if (count === 0) throw new EmailReceiptError(409, "already_linked", "This receipt is already linked to an order");
+
+  await applyReceiptPoEffects(sb, receiptId, "manual");
+
+  const { data: kindRow } = await sb
+    .from("email_receipts").select("doc_kind").eq("id", receiptId)
+    .maybeSingle<{ doc_kind: string | null }>();
+  await audit({
+    actorId: actor.user.id, actorRole: actor.user.role,
+    action: "receipt.po_linked", resourceTable: "email_receipts", resourceId: receiptId,
+    metadata: { receipt_id: receiptId, po_id: poId, matched_by: "manual", doc_kind: kindRow?.doc_kind ?? null, location_id: po.location_id },
+    ipAddress: null, userAgent: null,
+  });
 }
 
 /** First displayable object path: the raw .eml if present, else the first attachment

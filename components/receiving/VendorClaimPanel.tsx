@@ -37,7 +37,7 @@ import { useTranslation } from "@/lib/i18n/provider";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { AlertPill, type AlertPillTone } from "@/components/ui/AlertPill";
 import type { TranslationKey } from "@/lib/i18n/types";
-import type { DeliveryReceiptView, UnlinkedReceiptView, ReceiptAsset } from "@/lib/email-receipts";
+import type { DeliveryReceiptView, UnlinkedReceiptView, ReceiptAsset, PoAttachCandidate } from "@/lib/email-receipts";
 import type { DeliveryMatchState } from "@/lib/receiving";
 
 /** Mirror of lib/email-receipts.ts RECEIPT_OVERRIDE_MIN (server-only module). */
@@ -177,6 +177,166 @@ function VendorClaimColumn({ receipt, t }: { receipt: DeliveryReceiptView; t: (k
         <p className="text-[11px] italic text-co-text-muted">{t("receiving.claim.no_assets")}</p>
       )}
     </div>
+  );
+}
+
+/** PO status → its pill tone (received = ok/closed-loop; placed/invoiced = in-flight info). */
+function poStatusTone(status: string | null): AlertPillTone {
+  switch (status) {
+    case "received":
+    case "reconciled": return "ok";
+    default: return "info";
+  }
+}
+
+/**
+ * One row in the unlinked-receipt triage queue. Beyond the existing Link-to-delivery
+ * action it now surfaces the PO axis (V2 §5): a chip for the linked order (display_code +
+ * status) OR a "no order matched" state, plus an Attach-to-order affordance that lazily
+ * loads candidate POs (GET ?candidatesForReceipt) then attaches (PATCH action=attach_po).
+ * Self-contained per-row state — the parent stays flat. Vendor content (subject/from) is
+ * TEXT only (house untrusted-content law); PO codes are our own data, safe to render.
+ */
+function UnlinkedReceiptRow({
+  r,
+  busy,
+  onLinkDelivery,
+  t,
+  router,
+}: {
+  r: UnlinkedReceiptView;
+  busy: boolean;
+  onLinkDelivery: (receiptId: string) => void;
+  t: (k: TranslationKey, p?: Record<string, string | number>) => string;
+  router: ReturnType<typeof useRouter>;
+}) {
+  const [picking, setPicking] = useState(false);
+  const [loadingCandidates, setLoadingCandidates] = useState(false);
+  const [candidates, setCandidates] = useState<PoAttachCandidate[] | null>(null);
+  const [attachErr, setAttachErr] = useState<string | null>(null);
+  const [attaching, setAttaching] = useState(false);
+
+  const alreadyLinkedToPo = r.linkedPoId != null;
+
+  const openPicker = async () => {
+    if (picking) {
+      setPicking(false);
+      return;
+    }
+    setPicking(true);
+    setAttachErr(null);
+    if (candidates === null) {
+      setLoadingCandidates(true);
+      const res = await fetch(`${API}?candidatesForReceipt=${encodeURIComponent(r.id)}`, { method: "GET" });
+      setLoadingCandidates(false);
+      if (res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { candidates?: PoAttachCandidate[] };
+        setCandidates(j.candidates ?? []);
+      } else {
+        const j = (await res.json().catch(() => ({}))) as { code?: string };
+        setAttachErr(t(("receiving.claim.error." + (j?.code ?? "generic")) as TranslationKey));
+        setCandidates([]);
+      }
+    }
+  };
+
+  const attach = async (poId: string) => {
+    if (attaching) return;
+    setAttaching(true);
+    setAttachErr(null);
+    const res = await fetch(API, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "attach_po", receiptId: r.id, poId }),
+    });
+    setAttaching(false);
+    if (res.ok) {
+      router.refresh();
+      return;
+    }
+    const j = (await res.json().catch(() => ({}))) as { code?: string };
+    setAttachErr(t(("receiving.claim.error." + (j?.code ?? "generic")) as TranslationKey));
+  };
+
+  return (
+    <li className="flex flex-col gap-2 rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <span className="block truncate text-sm font-semibold text-co-text">
+            {r.subject || t("receiving.claim.link_no_subject")}
+          </span>
+          <span className="block text-[11px] text-co-text-dim">
+            {r.fromAddress ? `${r.fromAddress} · ` : ""}
+            {r.receivedAt.slice(0, 10)}
+            {r.locationId == null ? ` · ${t("receiving.claim.link_unattributed")}` : ""}
+          </span>
+          {/* PO chip — the order axis (D2: this alert-adjacent status is always visible). */}
+          <span className="mt-1 inline-flex">
+            {alreadyLinkedToPo ? (
+              <AlertPill tone={poStatusTone(r.poStatus)}>
+                {t("receiving.claim.po_chip", { code: r.poDisplayCode ?? "—", status: r.poStatus ?? "—" })}
+              </AlertPill>
+            ) : (
+              <AlertPill tone="info">{t("receiving.claim.po_none")}</AlertPill>
+            )}
+          </span>
+        </div>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => onLinkDelivery(r.id)}
+          className="inline-flex min-h-[44px] shrink-0 items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text disabled:opacity-50"
+        >
+          {t("receiving.claim.link_action")}
+        </button>
+      </div>
+
+      {/* Attach-to-order — only when NOT already linked to a PO. */}
+      {!alreadyLinkedToPo ? (
+        <div className="flex flex-col gap-2">
+          <button
+            type="button"
+            disabled={attaching}
+            onClick={() => void openPicker()}
+            aria-expanded={picking}
+            className="inline-flex min-h-[44px] w-fit items-center rounded-lg border-2 border-dashed border-co-border px-3 text-[11px] font-bold text-co-text-dim transition hover:border-co-text disabled:opacity-50"
+          >
+            {picking ? t("receiving.claim.attach_po_hide") : t("receiving.claim.attach_po_open")}
+          </button>
+          {picking ? (
+            <div className="rounded-lg border-2 border-co-border-2 bg-co-bg p-2">
+              {loadingCandidates ? (
+                <p className="text-[11px] text-co-text-dim">{t("receiving.claim.attach_po_loading")}</p>
+              ) : !candidates || candidates.length === 0 ? (
+                <p className="text-[11px] italic text-co-text-muted">{t("receiving.claim.attach_po_empty")}</p>
+              ) : (
+                <ul className="flex flex-col gap-1.5">
+                  {candidates.map((c) => (
+                    <li key={c.poId} className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <span className="block truncate text-xs font-semibold text-co-text">{c.displayCode}</span>
+                        <span className="block text-[11px] text-co-text-dim">
+                          {c.vendorName} · {t("receiving.claim.po_status_at_date", { status: c.status, date: c.createdAt.slice(0, 10) })}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={attaching}
+                        onClick={() => void attach(c.poId)}
+                        className="inline-flex min-h-[44px] shrink-0 items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-3 text-[11px] font-bold text-co-text transition hover:bg-co-gold-deep disabled:opacity-50"
+                      >
+                        {t("receiving.claim.attach_po_action")}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {attachErr ? <p className="mt-1 text-[11px] text-co-danger">{attachErr}</p> : null}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </li>
   );
 }
 
@@ -517,29 +677,14 @@ export function VendorClaimPanel({
             ) : (
               <ul className="flex flex-col gap-1.5">
                 {unlinked.map((r) => (
-                  <li
+                  <UnlinkedReceiptRow
                     key={r.id}
-                    className="flex items-center justify-between gap-3 rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2"
-                  >
-                    <div className="min-w-0">
-                      <span className="block truncate text-sm font-semibold text-co-text">
-                        {r.subject || t("receiving.claim.link_no_subject")}
-                      </span>
-                      <span className="block text-[11px] text-co-text-dim">
-                        {r.fromAddress ? `${r.fromAddress} · ` : ""}
-                        {r.receivedAt.slice(0, 10)}
-                        {r.locationId == null ? ` · ${t("receiving.claim.link_unattributed")}` : ""}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void linkReceipt(r.id)}
-                      className="inline-flex min-h-[44px] shrink-0 items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text disabled:opacity-50"
-                    >
-                      {t("receiving.claim.link_action")}
-                    </button>
-                  </li>
+                    r={r}
+                    busy={busy}
+                    onLinkDelivery={(id) => void linkReceipt(id)}
+                    t={t}
+                    router={router}
+                  />
                 ))}
               </ul>
             )}
