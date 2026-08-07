@@ -43,6 +43,7 @@ import {
   linkBtn,
 } from "@/components/ordering/delivery-affordances";
 import type { PoDetail } from "@/lib/purchase-orders";
+import type { OrderEmailPreview } from "@/lib/po-email-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
 
 type Channel = "email" | "sms" | "phone" | "portal" | "in_person";
@@ -94,6 +95,9 @@ export function PoPanel({
   const { t } = useTranslation();
 
   const [detail, setDetail] = useState<PoDetail | null>(null);
+  // The server-rendered email preview for the auto tier (null unless confirmed + the
+  // location's auto leg is awake). The server is the sole author — this is display-only.
+  const [emailPreview, setEmailPreview] = useState<OrderEmailPreview | null>(null);
   const [loadState, setLoadState] = useState<"loading" | "loaded" | "error">("loading");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -130,12 +134,13 @@ export function PoPanel({
         setLoadState("error");
         return;
       }
-      const j = (await res.json()) as { detail?: PoDetail };
+      const j = (await res.json()) as { detail?: PoDetail; emailPreview?: OrderEmailPreview | null };
       if (!j.detail) {
         setLoadState("error");
         return;
       }
       setDetail(j.detail);
+      setEmailPreview(j.emailPreview ?? null);
       seedEdits(j.detail);
       // Reset transient action arming after every (re)load — never carry a stale arm.
       setArmConfirm(false);
@@ -279,6 +284,19 @@ export function PoPanel({
     }
   };
 
+  // Auto tier (V2): send the confirmed PO to the vendor by email. The server re-derives +
+  // gates (409 email_dormant / no_email_target / po status raced; 502 send_failed) and, on
+  // success, places the PO — so we just reload into the placed trail. Busy-guarded; the
+  // mapped 409/502 message surfaces via doAction's setErrFromCode. Manual affordances stay
+  // below regardless (no pipe blocks ordering).
+  const sendEmail = async () => {
+    const res = await doAction({ action: "send_email", poId }, "POST");
+    if (res.ok) {
+      await load();
+      onChanged();
+    }
+  };
+
   // ── The plaintext order body (PO code first line, then shop/date, then lines) ────
   const bodyText = useMemo(() => {
     if (!detail) return "";
@@ -362,6 +380,9 @@ export function PoPanel({
                 detail={detail}
                 subject={subject}
                 body={bodyText}
+                emailPreview={emailPreview}
+                busy={busy}
+                onSend={() => void sendEmail()}
                 onUse={openPlace}
                 onOpenPlace={() => openPlace("in_person", null)}
               />
@@ -524,12 +545,19 @@ function ConfirmedView({
   detail,
   subject,
   body,
+  emailPreview,
+  busy,
+  onSend,
   onUse,
   onOpenPlace,
 }: {
   detail: PoDetail;
   subject: string;
   body: string;
+  /** Server-rendered auto-tier email preview (null unless the auto leg is awake). */
+  emailPreview: OrderEmailPreview | null;
+  busy: boolean;
+  onSend: () => void;
   onUse: (channel: "email" | "sms" | "phone" | "portal" | "in_person", target: string | null) => void;
   onOpenPlace: () => void;
 }) {
@@ -580,6 +608,66 @@ function ConfirmedView({
           </tbody>
         </table>
       </section>
+
+      {/* AUTO tier (V2 §3, two-tap): the Send-to-vendor preview + button. Rendered ONLY
+          when the location's auto-email leg is awake (server-derived). When dormant, a
+          note explains why. Either way, the manual transmit block below ALWAYS renders —
+          no pipe blocks ordering (house law). */}
+      {transmit.emailOrderingAvailable ? (
+        <section className="co-card p-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-co-text-dim">{t("ordering.po.auto.title")}</h3>
+            <AlertPill tone="ok" uppercase={false}>{t("ordering.po.tier.auto")}</AlertPill>
+          </div>
+          {emailPreview && emailPreview.to.length > 0 ? (
+            <>
+              <dl className="mt-3 flex flex-col gap-1 text-[13px]">
+                <div className="flex gap-2">
+                  <dt className="shrink-0 font-bold text-co-text-dim">{t("ordering.po.auto.to")}</dt>
+                  <dd className="min-w-0 break-words text-co-text">{emailPreview.to.join(", ")}</dd>
+                </div>
+                <div className="flex gap-2">
+                  <dt className="shrink-0 font-bold text-co-text-dim">{t("ordering.po.auto.from")}</dt>
+                  <dd className="min-w-0 break-words text-co-text">{emailPreview.from}</dd>
+                </div>
+                <div className="flex gap-2">
+                  <dt className="shrink-0 font-bold text-co-text-dim">{t("ordering.po.auto.subject")}</dt>
+                  <dd className="min-w-0 break-words text-co-text">{emailPreview.subject}</dd>
+                </div>
+              </dl>
+              <p className="mt-2 text-[12px] text-co-text-dim">
+                {t("ordering.po.auto.line_summary", {
+                  n: detail.lines.filter((l) => l.orderQty > 0).length,
+                  count: emailPreview.to.length,
+                })}
+              </p>
+              <button
+                type="button"
+                onClick={onSend}
+                disabled={busy}
+                className="mt-3 inline-flex min-h-[48px] w-full items-center justify-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50"
+              >
+                {t("ordering.po.auto.send")}
+              </button>
+              <p className="mt-2 text-[12px] italic text-co-text-muted">{t("ordering.po.auto.send_help")}</p>
+            </>
+          ) : emailPreview ? (
+            // Auto leg awake, but the vendor has no email on file → no target.
+            <p className="mt-3 text-[13px] text-co-text-dim">{t("ordering.po.auto.no_target")}</p>
+          ) : (
+            // Auto leg awake but the server-side preview derivation failed (transient) —
+            // distinct from no-target: recipients may exist. Manual affordances below.
+            <p className="mt-3 text-[13px] text-co-text-dim">{t("ordering.po.auto.preview_unavailable")}</p>
+          )}
+        </section>
+      ) : (
+        <section className="co-card p-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-co-text-dim">{t("ordering.po.auto.title")}</h3>
+          </div>
+          <p className="mt-3 text-[13px] text-co-text-dim">{t("ordering.po.auto.dormant")}</p>
+        </section>
+      )}
 
       {/* TRANSMIT block — tier-appropriate. */}
       <section className="co-card p-4">

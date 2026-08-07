@@ -45,6 +45,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
+import { emailFromDomain, RESEND_DEFAULT_DOMAIN } from "@/lib/po-email-shared";
 
 // ── Authority floors (the lib is the authority per-action) ──────────────────
 const READ_MIN = 6; // AGM+
@@ -128,6 +129,13 @@ export interface VendorView {
    *  transmit block; portalUrl deep-links the assisted tier. */
   transmissionTier: TransmissionTier;
   portalUrl: string | null;
+  /** V2 §6: is the AUTO email tier selectable for THIS tenant? True when a verified
+   *  sending domain is set (EMAIL_FROM domain ≠ resend.dev) AND ≥1 active location has a
+   *  receipt_email_address alias. Server-derived per load (not per vendor — it's a
+   *  tenant-config readiness flag); replaces V1's static-disabled auto option. Editing
+   *  auto stays possible when it was ALREADY set (existing-data honesty), independent of
+   *  this flag. */
+  autoTierAvailable: boolean;
 }
 
 import { VENDOR_COLOR_PALETTE } from "./vendors-shared";
@@ -412,11 +420,35 @@ export async function addOrderType(
   return { id: inserted.id, slug };
 }
 
+// ── Auto-tier availability (V2 §6) ─────────────────────────────────────────────
+/** Is the AUTO email tier selectable for this tenant? (spec §6 row 1.) TRUE iff the
+ *  EMAIL_FROM sending domain is verified (≠ resend.dev) AND ≥1 ACTIVE location has a
+ *  receipt_email_address alias set. Short-circuits the location query when the domain is
+ *  still dormant. Mirrors lib/po-email-shared.emailOrderingAvailable's two conditions at
+ *  the tenant (any-location) grain. */
+async function deriveAutoTierAvailable(sb: ReturnType<typeof getServiceRoleClient>): Promise<boolean> {
+  const domain = emailFromDomain(process.env.EMAIL_FROM ?? null);
+  if (!domain || domain === RESEND_DEFAULT_DOMAIN) return false;
+  const { count, error } = await sb
+    .from("locations")
+    .select("id", { count: "exact", head: true })
+    .eq("active", true)
+    .not("receipt_email_address", "is", null);
+  if (error) throw new Error(`deriveAutoTierAvailable failed: ${error.message}`);
+  return (count ?? 0) > 0;
+}
+
 // ── Vendor reads (hydrate categories + order types + active contacts/ordering) ─
 async function hydrateVendors(rows: DbVendorRow[]): Promise<VendorView[]> {
   if (rows.length === 0) return [];
   const sb = getServiceRoleClient();
   const vendorIds = rows.map((r) => r.id);
+
+  // AUTO-tier availability (V2 §6): a tenant-config readiness flag, computed ONCE per load
+  // (not per vendor). True iff a verified sending domain is set (EMAIL_FROM domain ≠
+  // resend.dev) AND ≥1 active location carries a receipt_email_address alias. When the
+  // domain is dormant we skip the location query entirely (cheap short-circuit).
+  const autoTierAvailable = await deriveAutoTierAvailable(sb);
 
   // ── Categories via the vendor_categories join (batched .in() over vendor ids).
   const { data: vcJoins, error: vcErr } = await sb
@@ -553,6 +585,7 @@ async function hydrateVendors(rows: DbVendorRow[]): Promise<VendorView[]> {
         ? (r.transmission_tier as TransmissionTier)
         : "manual", // legacy null / unknown → the default seed tier
       portalUrl: r.portal_url ?? null,
+      autoTierAvailable,
     };
   });
 }
