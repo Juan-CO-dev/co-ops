@@ -216,7 +216,17 @@ function UnlinkedReceiptRow({
   const [attachErr, setAttachErr] = useState<string | null>(null);
   const [attaching, setAttaching] = useState(false);
 
+  // Parse-now state (V2 §4). Local, per-row — the parent stays flat. parseState/docKind start
+  // from the server prop and update in place after a Parse-now tap (no router.refresh needed for
+  // the chip, but we refresh so a newly-matched PO chip appears too).
+  const [parseState, setParseState] = useState(r.parseState);
+  const [docKind, setDocKind] = useState<string | null>(r.docKind);
+  const [parsing, setParsing] = useState(false);
+  const [parseErr, setParseErr] = useState<string | null>(null);
+
   const alreadyLinkedToPo = r.linkedPoId != null;
+  // Parse-now is offered while the row hasn't successfully parsed (unparsed OR failed → retryable).
+  const canParse = parseState === "unparsed" || parseState === "failed";
 
   const openPicker = async () => {
     if (picking) {
@@ -258,6 +268,34 @@ function UnlinkedReceiptRow({
     setAttachErr(t(("receiving.claim.error." + (j?.code ?? "generic")) as TranslationKey));
   };
 
+  const parseNow = async () => {
+    if (parsing) return;
+    setParsing(true);
+    setParseErr(null);
+    const res = await fetch(API, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "parse_now", receiptId: r.id }),
+    });
+    setParsing(false);
+    if (res.ok) {
+      const j = (await res.json().catch(() => ({}))) as { parseState?: "unparsed" | "parsed" | "failed"; docKind?: string | null };
+      // Reflect the true post-parse state locally, then refresh so a newly-matched PO chip
+      // (parse can trigger a PO link) appears from the server on the next load.
+      setParseState(j.parseState ?? parseState);
+      setDocKind(j.docKind ?? null);
+      if (j.parseState === "failed") {
+        // A failed parse is retryable — keep the button, show a soft error.
+        setParseErr(t("receiving.claim.parse_failed"));
+      } else {
+        router.refresh();
+      }
+      return;
+    }
+    const j = (await res.json().catch(() => ({}))) as { code?: string };
+    setParseErr(t(("receiving.claim.error." + (j?.code ?? "generic")) as TranslationKey));
+  };
+
   return (
     <li className="flex flex-col gap-2 rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2">
       <div className="flex items-center justify-between gap-3">
@@ -270,8 +308,10 @@ function UnlinkedReceiptRow({
             {r.receivedAt.slice(0, 10)}
             {r.locationId == null ? ` · ${t("receiving.claim.link_unattributed")}` : ""}
           </span>
-          {/* PO chip — the order axis (D2: this alert-adjacent status is always visible). */}
-          <span className="mt-1 inline-flex">
+          {/* PO chip — the order axis (D2: this alert-adjacent status is always visible). +
+              the parse doc_kind chip when the receipt has been classified (V2 §4). Both are
+              OUR data, safe to render (never vendor markup). */}
+          <span className="mt-1 inline-flex flex-wrap items-center gap-1.5">
             {alreadyLinkedToPo ? (
               <AlertPill tone={poStatusTone(r.poStatus)}>
                 {t("receiving.claim.po_chip", { code: r.poDisplayCode ?? "—", status: r.poStatus ?? "—" })}
@@ -279,6 +319,11 @@ function UnlinkedReceiptRow({
             ) : (
               <AlertPill tone="info">{t("receiving.claim.po_none")}</AlertPill>
             )}
+            {parseState === "parsed" && docKind ? (
+              <AlertPill tone="ok">
+                {t("receiving.claim.doc_kind_chip", { kind: t(("receiving.claim.doc_kind." + docKind) as TranslationKey) })}
+              </AlertPill>
+            ) : null}
           </span>
         </div>
         <button
@@ -290,6 +335,27 @@ function UnlinkedReceiptRow({
           {t("receiving.claim.link_action")}
         </button>
       </div>
+
+      {/* Parse-now (V2 §4, KH+) — offered while the receipt hasn't successfully parsed
+          (unparsed OR failed → retryable). Runs the LLM extraction on demand (the cron only
+          sweeps inbound; this covers manual uploads + a nudge on any unparsed row). */}
+      {canParse ? (
+        <div className="flex flex-col gap-1">
+          <button
+            type="button"
+            disabled={parsing}
+            onClick={() => void parseNow()}
+            className="inline-flex min-h-[44px] w-fit items-center rounded-lg border-2 border-dashed border-co-border px-3 text-[11px] font-bold text-co-text-dim transition hover:border-co-text disabled:opacity-50"
+          >
+            {parsing
+              ? t("receiving.claim.parse_now_busy")
+              : parseState === "failed"
+                ? t("receiving.claim.parse_now_retry")
+                : t("receiving.claim.parse_now")}
+          </button>
+          {parseErr ? <p className="text-[11px] text-co-danger">{parseErr}</p> : null}
+        </div>
+      ) : null}
 
       {/* Attach-to-order — only when NOT already linked to a PO. */}
       {!alreadyLinkedToPo ? (

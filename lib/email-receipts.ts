@@ -817,6 +817,11 @@ export interface UnlinkedReceiptView {
   linkedPoId: string | null;
   poDisplayCode: string | null;
   poStatus: string | null;
+  /** V2 §4: parse state ('unparsed' | 'parsed' | 'failed') + the classification when parsed.
+   *  Drives the KH+ "Parse now" affordance (shown while unparsed/failed) + the doc_kind chip
+   *  (shown when parsed). Batched into the existing select — no extra query. */
+  parseState: "unparsed" | "parsed" | "failed";
+  docKind: string | null;
 }
 
 /**
@@ -847,11 +852,11 @@ export async function listUnlinkedReceipts(actor: AuthContext, locationId: strin
   const sb = getServiceRoleClient();
   const { data: rows, error } = await sb
     .from("email_receipts")
-    .select("id, source, from_address, subject, received_at, location_id, vendor_guess_id, raw_storage_path, attachment_paths, linked_po_id")
+    .select("id, source, from_address, subject, received_at, location_id, vendor_guess_id, raw_storage_path, attachment_paths, linked_po_id, parse_state, doc_kind")
     .is("linked_delivery_id", null)
     .or(`location_id.eq.${locationId},location_id.is.null`)
     .order("received_at", { ascending: false })
-    .returns<Array<{ id: string; source: "inbound" | "upload"; from_address: string | null; subject: string | null; received_at: string; location_id: string | null; vendor_guess_id: string | null; raw_storage_path: string | null; attachment_paths: AttachmentPathEntry[] | null; linked_po_id: string | null }>>();
+    .returns<Array<{ id: string; source: "inbound" | "upload"; from_address: string | null; subject: string | null; received_at: string; location_id: string | null; vendor_guess_id: string | null; raw_storage_path: string | null; attachment_paths: AttachmentPathEntry[] | null; linked_po_id: string | null; parse_state: "unparsed" | "parsed" | "failed"; doc_kind: string | null }>>();
   if (error) throw new Error(`listUnlinkedReceipts: ${error.message}`);
 
   const list = rows ?? [];
@@ -884,6 +889,8 @@ export async function listUnlinkedReceipts(actor: AuthContext, locationId: strin
         linkedPoId: r.linked_po_id,
         poDisplayCode: po?.display_code ?? null,
         poStatus: po?.status ?? null,
+        parseState: r.parse_state,
+        docKind: r.doc_kind,
       };
     }),
   );

@@ -1,6 +1,7 @@
 {
   "crons": [
     { "path": "/api/cron/toast-sales-pull", "schedule": "0 9 * * *" },
-    { "path": "/api/cron/prune-sessions", "schedule": "30 8 * * *" }
+    { "path": "/api/cron/prune-sessions", "schedule": "30 8 * * *" },
+    { "path": "/api/cron/parse-receipts", "schedule": "*/30 * * * *" }
   ]
 }
