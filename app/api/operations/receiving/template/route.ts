@@ -3,6 +3,7 @@ import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { jsonError, jsonOk } from "@/lib/api-helpers";
 import { loadLastDeliveryTemplate, loadOpenPoTemplate, ReceivingError, RECEIVE_MIN } from "@/lib/receiving";
+import { loadOpenCreditRowsForVendor } from "@/lib/credits";
 
 // GET ?locationId=<uuid>&vendorId=<uuid> — prefill template for the door form.
 //
@@ -13,10 +14,14 @@ import { loadLastDeliveryTemplate, loadOpenPoTemplate, ReceivingError, RECEIVE_M
 //      drop; lines are what was received then.
 //   3. null (source null) — no prior data; the form falls back to offered rows.
 //
-// Response: { template: ...|null, source: "po"|"last_delivery"|null, poId?, displayCode? }
-// Old callers that only read `template` continue to work (source/poId/displayCode
-// are additive; the form must not crash when they are absent — tested: the form
-// reads them only when present).
+// Response: { template: ...|null, source: "po"|"last_delivery"|null, poId?, displayCode?, openCredits: [] }
+// Old callers that only read `template` continue to work (source/poId/displayCode/
+// openCredits are additive; the form must not crash when they are absent — tested: the
+// form reads them only when present).
+//
+// V2-D4: openCredits = the vendor's OPEN credits at this location (KH+ evidence-backed
+// closure prefill). Present on EVERY branch (even when there's no template) so the
+// "Makes up a short?" section shows regardless of prefill source.
 //
 // KH+ (≥4), location-bound (checked in each loader).
 export async function GET(req: NextRequest) {
@@ -30,6 +35,10 @@ export async function GET(req: NextRequest) {
   if (typeof vendorId !== "string" || !vendorId) return jsonError(400, "invalid_payload", { field: "vendorId" });
 
   try {
+    // Open credits ride EVERY branch — computed once alongside the template. Two
+    // independent reads, so run them concurrently with the template lookup below.
+    const openCreditsP = loadOpenCreditRowsForVendor(ctx, locationId, vendorId);
+
     // 1. Try the open placed PO first.
     const poTemplate = await loadOpenPoTemplate(ctx, locationId, vendorId);
     if (poTemplate) {
@@ -38,17 +47,18 @@ export async function GET(req: NextRequest) {
         source: "po" as const,
         poId: poTemplate.poId,
         displayCode: poTemplate.displayCode,
+        openCredits: await openCreditsP,
       });
     }
 
     // 2. Fall back to last delivery.
     const lastTemplate = await loadLastDeliveryTemplate(ctx, locationId, vendorId);
     if (lastTemplate) {
-      return jsonOk({ template: lastTemplate, source: "last_delivery" as const });
+      return jsonOk({ template: lastTemplate, source: "last_delivery" as const, openCredits: await openCreditsP });
     }
 
     // 3. No prior data.
-    return jsonOk({ template: null, source: null });
+    return jsonOk({ template: null, source: null, openCredits: await openCreditsP });
   } catch (e) {
     if (e instanceof ReceivingError) return jsonError(e.status, e.code, { message: e.message });
     throw e;

@@ -39,6 +39,7 @@ import { ozForRecipeInput, skuContentOz, type MeasureUnitFactor, type RecipeInpu
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import { deriveCreditDrafts, isDuplicateAppend, type AppendLine, type IntakeLineForCredits } from "@/lib/receiving-shared";
 import { advanceToReceived } from "@/lib/purchase-orders";
+import { resolveCreditsRedelivered, loadOpenCreditRowsForVendor, type OpenCreditRow } from "@/lib/credits";
 
 export const RECEIVE_MIN = 4; // key_holder+
 
@@ -104,6 +105,15 @@ export interface RecordDeliveryInput {
    * `po_not_placed` | `po_already_received`.
    */
   purchaseOrderId?: string | null;
+  /**
+   * V2-D4 redelivery closure: ids of the vendor's OPEN credits this delivery makes up
+   * ("makes up a short"). AFTER the delivery is durably recorded, each is closed
+   * `resolved_redelivered` with resolved_by_delivery_id = the new delivery (KH+ gate,
+   * evidence-backed by the delivery itself). Best-effort: a closure failure NEVER
+   * fails the intake (walk-data-sacred) — it surfaces as creditClosureError on the
+   * result. Empty/absent = no closure attempted.
+   */
+  makeUpCreditIds?: string[];
 }
 /** One SKU option for the receiving form, carrying its active chain-level labels
  *  (root → leaf) so the line UI can offer a level picker. Empty chainLabels →
@@ -279,7 +289,18 @@ function chainLabelsInWalkOrder(levels: PackChainLevel[]): string[] {
   return out;
 }
 
-export async function recordDelivery(actor: AuthContext, input: RecordDeliveryInput): Promise<{ deliveryId: string }> {
+export interface RecordDeliveryResult {
+  deliveryId: string;
+  /** V2-D4: credit ids closed `resolved_redelivered` by this delivery. */
+  resolvedCredits: string[];
+  /** V2-D4: credit ids that could not close (raced/already-resolved/mismatched). */
+  skippedCredits: string[];
+  /** V2-D4: true when the closure PASS itself errored (best-effort; the intake still
+   *  succeeded). The form shows a non-blocking advisory. */
+  creditClosureError: boolean;
+}
+
+export async function recordDelivery(actor: AuthContext, input: RecordDeliveryInput): Promise<RecordDeliveryResult> {
   requireReceive(actor);
   if (!lockLocationContext(actorLoc(actor), input.locationId)) throw new ReceivingError(404, "not_found", "Location not found");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.deliveryDate) || Number.isNaN(Date.parse(input.deliveryDate))) {
@@ -414,7 +435,28 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
     await advanceToReceived(sb, poId);
   }
 
-  return { deliveryId: header.id };
+  // ── V2-D4 REDELIVERY CLOSURE (best-effort, walk-data-sacred) ─────────────────
+  // The delivery is now durably recorded (header + lines + credits + audit above).
+  // Close any credits this truck makes up. This runs LAST and in try/catch: a
+  // closure failure must NEVER fail an intake that already succeeded — the manager's
+  // count is sacred. Failure → creditClosureError flag + console.error; the credit
+  // stays open for a later manual resolve.
+  let resolvedCredits: string[] = [];
+  let skippedCredits: string[] = [];
+  let creditClosureError = false;
+  const makeUpIds = input.makeUpCreditIds ?? [];
+  if (makeUpIds.length > 0) {
+    try {
+      const closure = await resolveCreditsRedelivered(actor, header.id, makeUpIds);
+      resolvedCredits = closure.resolved;
+      skippedCredits = closure.skipped;
+    } catch (e) {
+      creditClosureError = true;
+      console.error(`recordDelivery credit closure failed (delivery ${header.id}):`, e instanceof Error ? e.message : e);
+    }
+  }
+
+  return { deliveryId: header.id, resolvedCredits, skippedCredits, creditClosureError };
 }
 
 /**
