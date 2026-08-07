@@ -11,7 +11,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { createHmac, randomBytes } from "node:crypto";
-import { verifySvixSignature, SVIX_FRESHNESS_SEC } from "@/lib/webhook-verify-shared";
+import { verifySvixSignature, verifyTwilioSignature, SVIX_FRESHNESS_SEC } from "@/lib/webhook-verify-shared";
 
 // A well-formed whsec_ secret: base64 of a random 32-byte key (the real svix shape).
 const KEY = randomBytes(32);
@@ -81,5 +81,93 @@ describe("verifySvixSignature", () => {
     // Non-numeric / non-positive timestamps.
     expect(verifySvixSignature(SECRET, SVIX_ID, "not-a-number", sign(BODY), BODY, TS)).toBe(false);
     expect(verifySvixSignature(SECRET, SVIX_ID, "0", sign(BODY, 0), BODY, TS)).toBe(false);
+  });
+});
+
+/**
+ * Unit spine — verifyTwilioSignature (Vendor Ordering V2 §5c, SMS inbound webhook).
+ * Twilio scheme: signature = base64(HMAC-SHA1(authToken, url + concat(sortedKeys.map(k =>
+ * k + params[k])))). Vectors are computed IN-TEST with node:crypto the way Twilio's sender
+ * computes them, so the suite is self-consistent (no external fixtures) and the
+ * regression guard is `(a) verifies a correctly signed request`.
+ */
+const TW_TOKEN = randomBytes(16).toString("hex"); // Twilio auth tokens are 32 hex chars; any string works.
+const TW_URL = "https://co-ops.example.com/api/webhooks/twilio-inbound";
+const TW_PARAMS: Record<string, string> = {
+  From: "+13015550142",
+  To: "+18445550100",
+  Body: "Order XPST-20260806-SYSCO confirmed, out for delivery",
+  MessageSid: "SM0123456789abcdef0123456789abcdef",
+  NumMedia: "0",
+};
+
+/** Compute a valid X-Twilio-Signature the way Twilio's sender does. */
+function twSign(url: string, params: Record<string, string>, token: string = TW_TOKEN): string {
+  const data = Object.keys(params)
+    .sort()
+    .reduce((acc, k) => acc + k + (params[k] ?? ""), url);
+  return createHmac("sha1", token).update(data, "utf8").digest("base64");
+}
+
+describe("verifyTwilioSignature", () => {
+  it("(a) verifies a correctly signed request (regression: base64 SHA-1 decode + key-sorted concat)", () => {
+    expect(verifyTwilioSignature(TW_TOKEN, TW_URL, TW_PARAMS, twSign(TW_URL, TW_PARAMS))).toBe(true);
+  });
+
+  it("(b) rejects a wrong auth token", () => {
+    const otherToken = randomBytes(16).toString("hex");
+    // Signed under the real token, verified under a different one.
+    expect(verifyTwilioSignature(otherToken, TW_URL, TW_PARAMS, twSign(TW_URL, TW_PARAMS))).toBe(false);
+    // A signature computed under the wrong token also fails against the real token.
+    expect(verifyTwilioSignature(TW_TOKEN, TW_URL, TW_PARAMS, twSign(TW_URL, TW_PARAMS, otherToken))).toBe(false);
+  });
+
+  it("(c) rejects a wrong URL (the URL is part of the signed data — proxy/host tampering)", () => {
+    const otherUrl = "https://evil.example.com/api/webhooks/twilio-inbound";
+    expect(verifyTwilioSignature(TW_TOKEN, otherUrl, TW_PARAMS, twSign(TW_URL, TW_PARAMS))).toBe(false);
+    // A trailing-path or scheme change also breaks the signature.
+    expect(verifyTwilioSignature(TW_TOKEN, TW_URL + "/", TW_PARAMS, twSign(TW_URL, TW_PARAMS))).toBe(false);
+  });
+
+  it("(d) is invariant to param INSERTION ORDER (Twilio sorts by key — object key order must not matter)", () => {
+    // Build a differently-ordered object with the SAME key/value pairs; the sort inside the
+    // verifier + signer must produce the identical digest.
+    const reordered: Record<string, string> = {
+      NumMedia: TW_PARAMS.NumMedia!,
+      MessageSid: TW_PARAMS.MessageSid!,
+      Body: TW_PARAMS.Body!,
+      To: TW_PARAMS.To!,
+      From: TW_PARAMS.From!,
+    };
+    // Sign over the canonical order, verify against the reordered object → still valid.
+    expect(verifyTwilioSignature(TW_TOKEN, TW_URL, reordered, twSign(TW_URL, TW_PARAMS))).toBe(true);
+    // And the signature computed FROM the reordered object equals the canonical one.
+    expect(twSign(TW_URL, reordered)).toBe(twSign(TW_URL, TW_PARAMS));
+  });
+
+  it("(e) rejects a MISSING param (a dropped/added field changes the signed data)", () => {
+    const missingBody = { ...TW_PARAMS };
+    delete missingBody.Body;
+    // Signature was over the full param set; verifying with a param dropped fails.
+    expect(verifyTwilioSignature(TW_TOKEN, TW_URL, missingBody, twSign(TW_URL, TW_PARAMS))).toBe(false);
+    // An EXTRA param (tamper-injected) also fails.
+    const extra = { ...TW_PARAMS, Injected: "1" };
+    expect(verifyTwilioSignature(TW_TOKEN, TW_URL, extra, twSign(TW_URL, TW_PARAMS))).toBe(false);
+  });
+
+  it("(f) verifies with EMPTY params (a bare GET-style URL sig; data = url only)", () => {
+    const empty: Record<string, string> = {};
+    expect(verifyTwilioSignature(TW_TOKEN, TW_URL, empty, twSign(TW_URL, empty))).toBe(true);
+    // But an empty-params signature must NOT validate a request that actually carried params.
+    expect(verifyTwilioSignature(TW_TOKEN, TW_URL, TW_PARAMS, twSign(TW_URL, empty))).toBe(false);
+  });
+
+  it("(g) fails closed on missing token / url / signature", () => {
+    expect(verifyTwilioSignature("", TW_URL, TW_PARAMS, twSign(TW_URL, TW_PARAMS))).toBe(false);
+    expect(verifyTwilioSignature(TW_TOKEN, "", TW_PARAMS, twSign(TW_URL, TW_PARAMS))).toBe(false);
+    expect(verifyTwilioSignature(TW_TOKEN, TW_URL, TW_PARAMS, null)).toBe(false);
+    expect(verifyTwilioSignature(TW_TOKEN, TW_URL, TW_PARAMS, "")).toBe(false);
+    // Garbage signature (still base64-decodable but wrong length/bytes) → false, no throw.
+    expect(verifyTwilioSignature(TW_TOKEN, TW_URL, TW_PARAMS, "garbage")).toBe(false);
   });
 });

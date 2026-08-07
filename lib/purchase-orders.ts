@@ -63,6 +63,14 @@ function num(v: number | string | null): number | null {
   const n = typeof v === "string" ? Number(v) : v;
   return Number.isFinite(n) ? n : null;
 }
+/** Truncate an untrusted body to a max length for the trail preview (adds an ellipsis when cut).
+ *  Null-safe. The full body stays in the ledger; the trail only previews it. */
+function truncateBody(body: string | null, max: number): string | null {
+  if (body == null) return null;
+  const trimmed = body.trim();
+  if (trimmed.length <= max) return trimmed || null;
+  return trimmed.slice(0, max) + "…";
+}
 function requireLevel(actor: AuthContext, min: number): void {
   if (getRoleLevel(actor.user.role) < min) {
     throw new PurchaseOrderError(403, "forbidden", "Insufficient role level for purchase orders");
@@ -990,6 +998,16 @@ export interface PoTransmissionRow {
   sentByName: string | null;
   note: string | null;
 }
+/** One sms_messages row linked to this PO — the SMS half of the unified trail (V2 §5c).
+ *  body is TRUNCATED (~200 chars) and rendered TEXT-ONLY at the panel (untrusted vendor
+ *  content — never markup/href). direction is 'inbound' in V1 (outbound is a dormant seam). */
+export interface PoSmsRow {
+  id: string;
+  direction: "inbound" | "outbound";
+  fromNumber: string;
+  body: string | null;
+  occurredAt: string;
+}
 export interface PoStatusEvent {
   status: string;
   at: string;
@@ -1047,6 +1065,9 @@ export interface PoDetail {
   placedNote: string | null;
   lines: PoDetailLine[];
   transmissions: PoTransmissionRow[];
+  /** SMS messages linked to this PO (V2 §5c) — rendered in the unified trail alongside
+   *  transmissions/receipts. Empty until the Twilio leg is fed; body is text-only. */
+  smsMessages: PoSmsRow[];
   deliveryIds: string[];
   /** Open-credit summary across the linked deliveries (open|in_progress count). */
   credits: { openCount: number; totalCount: number };
@@ -1094,6 +1115,7 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
     { data: contactRows, error: ctErr },
     { data: orderingRows, error: orErr },
     { data: locRow, error: locErr },
+    { data: smsRows, error: smsErr },
   ] = await Promise.all([
     sb.from("po_lines")
       .select("sku_id, order_qty, order_unit_label, price_cents_at_order, guide_position_snapshot, note")
@@ -1118,6 +1140,12 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
     // emailOrderingAvailable gate (V2-D3, §6 row 1). Bound by po.location_id (own row).
     sb.from("locations").select("receipt_email_address").eq("id", po.location_id)
       .maybeSingle<{ receipt_email_address: string | null }>(),
+    // SMS messages linked to this PO (V2 §5c) — the SMS half of the unified trail. Oldest-first
+    // to match the transmissions ordering. Empty until the Twilio leg is fed (dormant).
+    sb.from("sms_messages")
+      .select("id, direction, from_number, body, occurred_at")
+      .eq("linked_po_id", poId).order("occurred_at", { ascending: true })
+      .returns<Array<{ id: string; direction: "inbound" | "outbound"; from_number: string; body: string | null; occurred_at: string }>>(),
   ]);
   if (lErr) throw new Error(`loadPoDetail lines: ${lErr.message}`);
   if (tErr) throw new Error(`loadPoDetail transmissions: ${tErr.message}`);
@@ -1126,6 +1154,7 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
   if (ctErr) throw new Error(`loadPoDetail contacts: ${ctErr.message}`);
   if (orErr) throw new Error(`loadPoDetail ordering details: ${orErr.message}`);
   if (locErr) throw new Error(`loadPoDetail location: ${locErr.message}`);
+  if (smsErr) throw new Error(`loadPoDetail sms: ${smsErr.message}`);
 
   // The transmit block (spec §3): tier + portal + active contacts (accepts_text_orders
   // badged) + ordering-detail affordances. Tier defaults to manual (D4 — every vendor
@@ -1241,6 +1270,15 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
       sentAt: t.sent_at,
       sentByName: t.sent_by ? userName.get(t.sent_by) ?? null : null,
       note: t.note,
+    })),
+    // SMS trail rows (V2 §5c): body TRUNCATED to ~200 chars for the trail preview (the full
+    // body lives in the ledger). Rendered text-only at the panel (untrusted vendor content).
+    smsMessages: (smsRows ?? []).map((s) => ({
+      id: s.id,
+      direction: s.direction,
+      fromNumber: s.from_number,
+      body: truncateBody(s.body, 200),
+      occurredAt: s.occurred_at,
     })),
     deliveryIds,
     credits: { openCount, totalCount },

@@ -889,6 +889,32 @@ function TrailView({
         </section>
       )}
 
+      {/* SMS messages (V2 §5c) — the text channel's half of the unified trail. The body is
+          UNTRUSTED vendor content: rendered as a plain text node (React auto-escapes) — never
+          markup, never a link/href. Direction badge distinguishes an inbound vendor reply from
+          an outbound order (outbound is dormant in V1, so these are inbound today). */}
+      {detail.smsMessages.length > 0 && (
+        <section className="co-card p-4">
+          <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-co-text-dim">{t("ordering.po.sms.heading")}</h3>
+          <ul className="mt-2 flex flex-col gap-2">
+            {detail.smsMessages.map((sms) => (
+              <li key={sms.id} className="rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2 text-[13px]">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-bold text-co-text">
+                    {t(("ordering.po.sms.direction." + sms.direction) as TranslationKey)}
+                  </span>
+                  <span className="text-[12px] text-co-text-dim">{formatTime(sms.occurredAt, language)}</span>
+                </div>
+                <span className="block text-[12px] text-co-text-muted">
+                  {t("ordering.po.sms.from", { number: sms.fromNumber })}
+                </span>
+                {sms.body && <span className="mt-1 block whitespace-pre-wrap text-[13px] text-co-text">{sms.body}</span>}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {/* Linked delivery + credits summary. */}
       {detail.deliveryIds.length > 0 && (
         <section className="co-card p-4">
