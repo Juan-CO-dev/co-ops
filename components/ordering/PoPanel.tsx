@@ -42,8 +42,10 @@ import {
   isValidTel,
   linkBtn,
 } from "@/components/ordering/delivery-affordances";
+import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import type { PoDetail } from "@/lib/purchase-orders";
 import type { OrderEmailPreview } from "@/lib/po-email-shared";
+import type { ThreeWayView, ThreeWayLine, ThreeWayFlag } from "@/lib/po-match-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
 
 type Channel = "email" | "sms" | "phone" | "portal" | "in_person";
@@ -98,6 +100,11 @@ export function PoPanel({
   // The server-rendered email preview for the auto tier (null unless confirmed + the
   // location's auto leg is awake). The server is the sole author — this is display-only.
   const [emailPreview, setEmailPreview] = useState<OrderEmailPreview | null>(null);
+  // The three-way match view (V2 §5) + the SKUs carrying an open credit on the linked
+  // deliveries. Server-derived, advisory; a null threeWay = derivation unavailable (the
+  // section simply doesn't render — no pipe failure blocks the PO trail).
+  const [threeWay, setThreeWay] = useState<ThreeWayView | null>(null);
+  const [openCreditSkuIds, setOpenCreditSkuIds] = useState<string[]>([]);
   const [loadState, setLoadState] = useState<"loading" | "loaded" | "error">("loading");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -134,13 +141,20 @@ export function PoPanel({
         setLoadState("error");
         return;
       }
-      const j = (await res.json()) as { detail?: PoDetail; emailPreview?: OrderEmailPreview | null };
+      const j = (await res.json()) as {
+        detail?: PoDetail;
+        emailPreview?: OrderEmailPreview | null;
+        threeWay?: ThreeWayView | null;
+        openCreditSkuIds?: string[];
+      };
       if (!j.detail) {
         setLoadState("error");
         return;
       }
       setDetail(j.detail);
       setEmailPreview(j.emailPreview ?? null);
+      setThreeWay(j.threeWay ?? null);
+      setOpenCreditSkuIds(j.openCreditSkuIds ?? []);
       seedEdits(j.detail);
       // Reset transient action arming after every (re)load — never carry a stale arm.
       setArmConfirm(false);
@@ -396,6 +410,8 @@ export function PoPanel({
                 armReconcile={armReconcile}
                 busy={busy}
                 onReconcile={() => void reconcile()}
+                threeWay={threeWay}
+                openCreditSkuIds={openCreditSkuIds}
               />
             )}
           </>
@@ -794,6 +810,8 @@ function TrailView({
   armReconcile,
   busy,
   onReconcile,
+  threeWay,
+  openCreditSkuIds,
 }: {
   detail: PoDetail;
   language: "en" | "es";
@@ -801,6 +819,10 @@ function TrailView({
   armReconcile: boolean;
   busy: boolean;
   onReconcile: () => void;
+  /** Server-derived three-way match (V2 §5); null when derivation was unavailable. */
+  threeWay: ThreeWayView | null;
+  /** SKUs carrying an open credit on the linked deliveries (chips a short line's credit). */
+  openCreditSkuIds: string[];
 }) {
   const { t } = useTranslation();
   const canReconcile = actorLevel >= 6; // AGM+
@@ -824,6 +846,13 @@ function TrailView({
           </tbody>
         </table>
       </section>
+
+      {/* Three-way match (V2 §5): ordered / received / billed per line + variance chips.
+          Advisory-only; collapsible per D-doctrine. Renders only when derivation was
+          available (threeWay non-null). */}
+      {threeWay && (
+        <ThreeWaySection view={threeWay} openCreditSkuIds={openCreditSkuIds} />
+      )}
 
       {/* Status timeline (from the row's own timestamps). */}
       <section className="co-card p-4">
@@ -906,6 +935,141 @@ function TrailView({
         </button>
       )}
     </div>
+  );
+}
+
+// ── THREE-WAY MATCH (V2 §5): ordered / received / billed + variance chips ────────────
+/** Flag → AlertPill tone. billed_over_received is the loud one (money charged for goods
+ *  that didn't arrive); the rest are advisory-warn / info. */
+const FLAG_TONE: Record<ThreeWayFlag, AlertPillTone> = {
+  billed_over_received: "danger",
+  short_received: "warn",
+  not_billed: "info",
+  unmatched_invoice_line: "info",
+};
+
+/** Qty display: advisory-null → em dash (never a fabricated 0 — the null-leg law). */
+function qtyOrDash(v: number | null): string {
+  return v == null ? "—" : String(v);
+}
+
+function ThreeWaySection({
+  view,
+  openCreditSkuIds,
+}: {
+  view: ThreeWayView;
+  openCreditSkuIds: string[];
+}) {
+  const { t } = useTranslation();
+  const creditSkus = useMemo(() => new Set(openCreditSkuIds), [openCreditSkuIds]);
+
+  // The collapsed-header count = number of lines carrying at least one variance flag
+  // (D5 i18n'd count). Zero flags → a clean "all matched" count; the section still opens.
+  const flaggedCount = useMemo(() => view.lines.filter((l) => l.flags.length > 0).length, [view.lines]);
+
+  return (
+    <CollapsibleSection
+      idBase="po-three-way"
+      title={t("ordering.po.three_way.title")}
+      count={t("ordering.po.three_way.count", { n: flaggedCount })}
+    >
+      {/* Advisory notes when a leg is missing (advisory-null law — an absent leg is
+          STATED, never implied as zero). */}
+      {!view.hasDelivery && (
+        <p className="mb-2 text-[13px] italic text-co-text-dim">{t("ordering.po.three_way.no_delivery")}</p>
+      )}
+      {!view.hasInvoice && (
+        <p className="mb-2 text-[13px] italic text-co-text-dim">{t("ordering.po.three_way.no_invoice")}</p>
+      )}
+
+      {view.lines.length === 0 ? (
+        <p className="text-[13px] text-co-text-dim">{t("ordering.po.three_way.empty")}</p>
+      ) : (
+        <ul className="flex flex-col gap-2" aria-label={t("ordering.po.three_way.title")}>
+          {view.lines.map((l) => (
+            <ThreeWayRow key={l.key} line={l} hasOpenCredit={creditSkus.has(l.key)} />
+          ))}
+        </ul>
+      )}
+
+      {/* Totals footer (advisory-null: em dash when a total couldn't be computed). */}
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-co-border/50 pt-2 text-[12px]">
+        <span className="text-co-text-dim">
+          {t("ordering.po.three_way.total_ordered", { amount: money(view.totals.orderedCents) })}
+        </span>
+        <span className="text-co-text-dim">
+          {t("ordering.po.three_way.total_billed", { amount: money(view.totals.billedCents) })}
+        </span>
+      </div>
+    </CollapsibleSection>
+  );
+}
+
+/** One three-way line: name/item + the three stacked-on-narrow columns (ordered /
+ *  received / billed) + variance chips. Phone-first: the three legs stack in a
+ *  responsive grid (1 col on narrow, 3 cols ≥ sm). Untrusted invoice descriptions
+ *  render as TEXT ONLY (house untrusted-content law). */
+function ThreeWayRow({ line, hasOpenCredit }: { line: ThreeWayLine; hasOpenCredit: boolean }) {
+  const { t } = useTranslation();
+  return (
+    <li className="rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[14px] font-bold text-co-text">{line.name}</span>
+        {line.itemNumber && (
+          <span className="font-mono text-[11px] text-co-text-dim">#{line.itemNumber}</span>
+        )}
+      </div>
+
+      {/* Ordered / Received / Billed — stack on narrow, three columns ≥ sm. */}
+      <dl className="mt-2 grid grid-cols-1 gap-1 sm:grid-cols-3 sm:gap-3">
+        <div className="flex items-baseline justify-between gap-2 sm:flex-col sm:items-start sm:gap-0">
+          <dt className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-text-dim">
+            {t("ordering.po.three_way.ordered")}
+          </dt>
+          <dd className="text-[14px] font-semibold text-co-text">
+            {qtyOrDash(line.orderedQty)}
+            {line.orderedUnit ? <span className="text-[11px] font-normal text-co-text-dim"> {line.orderedUnit}</span> : null}
+          </dd>
+        </div>
+        <div className="flex items-baseline justify-between gap-2 sm:flex-col sm:items-start sm:gap-0">
+          <dt className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-text-dim">
+            {t("ordering.po.three_way.received")}
+          </dt>
+          <dd className="text-[14px] font-semibold text-co-text">
+            {qtyOrDash(line.receivedQty)}
+            {line.receivedLevel ? <span className="text-[11px] font-normal text-co-text-dim"> {line.receivedLevel}</span> : null}
+          </dd>
+        </div>
+        <div className="flex items-baseline justify-between gap-2 sm:flex-col sm:items-start sm:gap-0">
+          <dt className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-text-dim">
+            {t("ordering.po.three_way.billed")}
+          </dt>
+          <dd className="text-[14px] font-semibold text-co-text">
+            {qtyOrDash(line.billedQty)}
+            {line.billedCents != null ? (
+              <span className="text-[11px] font-normal text-co-text-dim"> {money(line.billedCents)}</span>
+            ) : null}
+          </dd>
+        </div>
+      </dl>
+
+      {/* Variance chips (per flag). A short line with an open credit on the linked
+          delivery shows the credit chip too — already-tracked, not a new alert. */}
+      {line.flags.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {line.flags.map((f) => (
+            <AlertPill key={f} tone={FLAG_TONE[f]} uppercase={false}>
+              {t(("ordering.po.three_way.flag." + f) as TranslationKey)}
+            </AlertPill>
+          ))}
+          {line.flags.includes("short_received") && hasOpenCredit && (
+            <AlertPill tone="info" uppercase={false}>
+              {t("ordering.po.three_way.credit_tracked")}
+            </AlertPill>
+          )}
+        </div>
+      )}
+    </li>
   );
 }
 

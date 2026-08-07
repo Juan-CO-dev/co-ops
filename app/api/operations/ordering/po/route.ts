@@ -18,6 +18,8 @@ import {
 } from "@/lib/purchase-orders";
 import { generateDraftForVendor, OrderingError } from "@/lib/ordering";
 import { orderEmailPreview, sendOrderEmail } from "@/lib/po-email";
+import { buildThreeWayView, type ThreeWayView } from "@/lib/po-match";
+import { loadCreditsForDelivery } from "@/lib/credits";
 
 // The purchase-order lifecycle surface (sibling of ../route.ts — same house idiom: KH+ front
 // gate, typed error → jsonError). All authorization + location-bind (IDOR) is enforced inside
@@ -79,7 +81,30 @@ export async function GET(req: NextRequest) {
           emailPreview = null;
         }
       }
-      return jsonOk({ detail, emailPreview });
+      // Attach the THREE-WAY match view (V2 §5) + the SKUs with an open credit on the
+      // linked deliveries (so a short_received row can chip its already-tracked credit).
+      // BOTH are best-effort in their OWN try/catch: a three-way derivation or credit
+      // read failure NEVER breaks the PO detail load (advisory read; house standing law).
+      let threeWay: ThreeWayView | null = null;
+      try {
+        threeWay = await buildThreeWayView(ctx, poId);
+      } catch {
+        threeWay = null;
+      }
+      let openCreditSkuIds: string[] = [];
+      try {
+        const seen = new Set<string>();
+        for (const did of detail.deliveryIds) {
+          const rows = await loadCreditsForDelivery(ctx, did);
+          for (const r of rows) {
+            if ((r.status === "open" || r.status === "in_progress") && r.skuId) seen.add(r.skuId);
+          }
+        }
+        openCreditSkuIds = [...seen];
+      } catch {
+        openCreditSkuIds = [];
+      }
+      return jsonOk({ detail, emailPreview, threeWay, openCreditSkuIds });
     }
     if (typeof locationId !== "string" || !locationId) {
       return jsonError(400, "invalid_payload", { field: "locationId" });
