@@ -47,6 +47,17 @@ interface LastDeliveryTemplate {
   lines: Array<{ skuId: string; level: string | null; qty: number }>;
 }
 
+/** Extended response from the template route (VO-6: additive fields). */
+interface TemplateResponse {
+  template: LastDeliveryTemplate | null;
+  /** "po" = pre-filled from a placed PO; "last_delivery" = prior drop; null = no data. */
+  source?: "po" | "last_delivery" | null;
+  /** PO id, present when source === "po". Carried into the submit payload. */
+  poId?: string | null;
+  /** Human-readable PO code shown in the Step-1 header, present when source === "po". */
+  displayCode?: string | null;
+}
+
 let keySeq = 0;
 const nextKey = () => `l${keySeq++}`;
 
@@ -197,6 +208,12 @@ export function ReceivingForm({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isFirstRender = useRef(true);
 
+  // PO context — set when the template route returns source "po".
+  // Cleared on vendor change or form reset. poId is carried into the submit
+  // payload; displayCode is shown in the Step-1 header banner.
+  const [linkedPoId, setLinkedPoId] = useState<string | null>(null);
+  const [linkedPoCode, setLinkedPoCode] = useState<string | null>(null);
+
   // On mount: check for a saved draft and offer Resume/Discard.
   useEffect(() => {
     const draft = readDraft(locationId);
@@ -278,6 +295,8 @@ export function ReceivingForm({
     // Clear any pending banner too.
     setPendingDraft(null);
     setSavedAt(null);
+    setLinkedPoId(null);
+    setLinkedPoCode(null);
   };
 
   const resumeDraft = (draft: IntakeDraft) => {
@@ -316,6 +335,9 @@ export function ReceivingForm({
     setErr(null);
     setDupId(null);
     setLines([addedLine()]);
+    // Clear any prior PO linkage when the vendor changes.
+    setLinkedPoId(null);
+    setLinkedPoCode(null);
     if (!nextVendorId) return;
     setPrefilling(true);
     // Fallback we drop to whenever there's no usable template: the vendor's usage-ranked
@@ -330,9 +352,17 @@ export function ReceivingForm({
         { headers: { accept: "application/json" } },
       );
       if (!res.ok) { setLines(fallbackLines()); return; } // no template / error → offered fallback
-      const body = (await res.json()) as { template: LastDeliveryTemplate | null };
+      const body = (await res.json()) as TemplateResponse;
       const tpl = body?.template;
       if (!tpl || tpl.lines.length === 0) { setLines(fallbackLines()); return; }
+
+      // When the template came from a placed PO, capture the PO context so the
+      // form can show the banner and include purchaseOrderId in the submit payload.
+      if (body.source === "po" && body.poId) {
+        setLinkedPoId(body.poId);
+        setLinkedPoCode(body.displayCode ?? null);
+      }
+
       const seeded: LineDraft[] = tpl.lines.map((tl) => ({
         key: nextKey(),
         skuId: tl.skuId,
@@ -375,6 +405,8 @@ export function ReceivingForm({
       deliveryStatus,
       // FORK 1: store the canonical /api/photos/{id} URL in receipt_url (TEXT).
       receiptUrl: receiptPhotoId ? `/api/photos/${receiptPhotoId}` : null,
+      // VO-6: carry the linked PO id so recordDelivery can validate + link it.
+      purchaseOrderId: linkedPoId ?? null,
       lines: readyLines.map((l) => ({
         skuId: l.skuId,
         qtyReceived: Number(l.qty),
@@ -408,6 +440,14 @@ export function ReceivingForm({
       const m = /\(delivery ([^)]+)\)/.exec(text);
       if (m && m[1]) setDupId(m[1].trim());
       setErr(text || t("receiving.error.duplicate_delivery"));
+      return;
+    }
+    // VO-6: PO linkage errors — clear the PO context so the form can resubmit
+    // without an invalid PO id (operator can re-pick the vendor to refresh).
+    if (res.status === 409 && (j?.code === "po_mismatch" || j?.code === "po_not_placed" || j?.code === "po_already_received")) {
+      setLinkedPoId(null);
+      setLinkedPoCode(null);
+      setErr(t(("receiving.error." + j.code) as never));
       return;
     }
     setErr(t(("receiving.error." + (j?.code ?? "generic")) as never));
@@ -463,6 +503,16 @@ export function ReceivingForm({
             </span>
           ) : null}
         </div>
+
+        {/* VO-6: PO context banner — shown when template source is "po". */}
+        {linkedPoCode ? (
+          <div
+            role="status"
+            className="mt-3 rounded-lg border-2 border-co-gold-deep bg-co-gold/20 px-3 py-2 text-sm font-bold text-co-text"
+          >
+            {t("receiving.door.receiving_against_po", { code: linkedPoCode })}
+          </div>
+        ) : null}
 
         <label className="mt-3 block">
           <span className="text-sm font-bold text-co-text">{t("receiving.form.vendor")}</span>

@@ -13,10 +13,10 @@ import { requireSessionFromHeaders } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { getVendor, loadCategories, loadOrderTypes } from "@/lib/admin/vendors";
+import { getVendor, loadCategories, loadOrderTypes, loadVendorCutoffs } from "@/lib/admin/vendors";
 import { loadVendorOutstandingCredits } from "@/lib/credits";
 import { formatCents } from "@/lib/i18n/format";
-import { loadSkus, loadPackFormats, loadMeasureUnits } from "@/lib/admin/skus";
+import { loadSkus, loadPackFormats, loadMeasureUnits, loadLocationSkuSettings } from "@/lib/admin/skus";
 import { loadCurrentSkuPrices, computeSkuCostPerOz, loadSkuUsageMap, loadSkuReceivingLedger, loadSkuConsumption, type SkuConsumption } from "@/lib/admin/cost";
 import { skuPackComplete, skuReadiness, type Readiness } from "@/lib/readiness";
 import { loadSkuPackChains } from "@/lib/prep-consumption";
@@ -37,7 +37,7 @@ export default async function AdminVendorDetailPage({
   const level = ROLES[auth.user.role].level;
 
   const sb = getServiceRoleClient();
-  const [vendor, categories, orderTypes, skus, packFormats, measureUnits, locRes, outstandingCredits] =
+  const [vendor, categories, orderTypes, skus, packFormats, measureUnits, locRes, outstandingCredits, cutoffs] =
     await Promise.all([
       getVendor(auth, id),
       loadCategories(auth),
@@ -47,6 +47,7 @@ export default async function AdminVendorDetailPage({
       loadMeasureUnits(auth),
       sb.from("locations").select("id, name").eq("active", true).order("name"),
       loadVendorOutstandingCredits(auth, id), // AGM+ (matches this page's ≥6 gate)
+      loadVendorCutoffs(auth, id), // VO-7 cutoffs (AGM+)
     ]);
   if (!vendor) notFound();
   const skuLocations = (locRes.data ?? []).map((r) => ({
@@ -63,6 +64,11 @@ export default async function AdminVendorDetailPage({
   const skuLedger: Record<string, import("@/lib/admin/cost").SkuReceivingLedger> = Object.fromEntries([...ledgerMap.entries()]);
   const consumptionMap = await loadSkuConsumption(auth, skus.map((s) => s.id));
   const skuConsumption: Record<string, SkuConsumption> = Object.fromEntries([...consumptionMap.entries()]);
+
+  // Per-location overlay rows (VO-7) so VendorSkusCard's SkuBuilder edit view seeds Section D.
+  const overlayMap = await loadLocationSkuSettings(auth, skus.map((s) => s.id));
+  const overlaysBySku: Record<string, import("@/components/admin/skus/SkuLocationOverlay").LocationSkuOverlayView[]> =
+    Object.fromEntries([...overlayMap.entries()]);
 
   // ── Pack chains (batch, ONE query — loadRecipeGraph law) so VendorSkusCard's
   //    SkuBuilder (PR-C) seeds Section B without a lazy GET + shows the class-aware
@@ -116,6 +122,8 @@ export default async function AdminVendorDetailPage({
         vendor={vendor}
         categories={categories}
         orderTypes={orderTypes}
+        cutoffs={cutoffs}
+        locations={skuLocations}
         skus={skus}
         skuLocations={skuLocations}
         skuPackFormats={packFormats}
@@ -126,6 +134,7 @@ export default async function AdminVendorDetailPage({
         skuReadiness={skuReadinessMap}
         skuChains={chainsBySku}
         skuChainUnverified={chainUnverifiedBySku}
+        skuOverlays={overlaysBySku}
         actorLevel={level}
       />
     </div>

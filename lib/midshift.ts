@@ -15,7 +15,7 @@ import { operationalDayUtcRange } from "@/lib/operational-day";
 import { loadAmPrepDashboardState, loadMidDayPrepDashboardState } from "@/lib/prep";
 import { loadCashDashboardState } from "@/lib/cash";
 import { loadMaintenanceOverview } from "@/lib/maintenance";
-import { loadShrinkageSignals } from "@/lib/ordering";
+import { loadShrinkageSignals, loadOrderingAttention } from "@/lib/ordering";
 import type { AuthContext } from "@/lib/session";
 import type { RoleCode } from "@/lib/roles";
 
@@ -411,6 +411,25 @@ export async function loadMidShiftPulse(
       if (shrinkage.count > 0) attention.push({ kind: "shrinkage", count: shrinkage.count });
     } catch (err) {
       console.error("midshift shrinkage signal failed", err);
+    }
+
+    // Ordering cutoff (vendor ordering V1, spec §4): vendors whose cutoff governs today
+    // with NO order placed yet. Same BEST-EFFORT + fail-open discipline as shrinkage — a
+    // read failure (missing cutoff data, a query hiccup) must NEVER break the pulse, so we
+    // swallow + omit. Needs the full AuthContext (KH+ gate + location-bind in the loader).
+    // A YELLOW advisory (ordering_cutoff ∉ RED_KINDS). The banner names the EARLIEST vendor
+    // + its cutoff time and distinguishes "draft ready" from "no draft yet" per hasDraft.
+    try {
+      const cutoff = await loadOrderingAttention(args.authContext, args.locationId);
+      if (cutoff.count > 0) {
+        attention.push({
+          kind: "ordering_cutoff",
+          count: cutoff.count,
+          cutoffVendors: cutoff.vendors.map((v) => ({ name: v.vendorName, time: v.cutoffTime, hasDraft: v.hasDraft })),
+        });
+      }
+    } catch (err) {
+      console.error("midshift ordering cutoff signal failed", err);
     }
   }
 

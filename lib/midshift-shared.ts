@@ -63,12 +63,17 @@ export interface PulseFridge {
 }
 
 export interface AttentionItem {
-  kind: "overdue" | "fridge" | "fridge_unchecked" | "maintenance_note" | "shrinkage";
+  kind: "overdue" | "fridge" | "fridge_unchecked" | "maintenance_note" | "shrinkage" | "ordering_cutoff";
   /** i18n key + params resolved at render; we pass a stable shape. */
   reportKey?: ReportKey; // for overdue
   fridgeName?: string; // for fridge (display)
   equipId?: string; // for fridge — the stable React key (names can collide)
-  count?: number; // for maintenance_note / fridge_unchecked / shrinkage
+  count?: number; // for maintenance_note / fridge_unchecked / shrinkage / ordering_cutoff
+  /** ordering_cutoff only: the vendors whose cutoff is today with no placed PO yet,
+   *  earliest cutoff first. `count` mirrors this array's length; the banner names the
+   *  EARLIEST vendor + its formatted cutoff time and pluralizes on `count`. hasDraft
+   *  distinguishes "draft ready" from "no draft yet" per the earliest vendor. */
+  cutoffVendors?: Array<{ name: string; time: string; hasDraft: boolean }>;
 }
 
 /**

@@ -50,6 +50,11 @@ export const DESTRUCTIVE_ACTIONS = [
   //   blocked at the lib).
   "vendor.contact_change",
   "vendor.ordering_change",
+  // — vendor.cutoff_change covers add/deactivate of a vendor_cutoffs row (VO-7;
+  //   migration 0174). op carried in metadata.op = add|deactivate. Parallels
+  //   vendor.contact_change; add = AGM+, deactivate = GM+ (contact floors).
+  //   Append-only (deactivate = active=false). Auto-derive destructive=true.
+  "vendor.cutoff_change",
 
   // SKU catalog lifecycle (Item/Inventory Spine — vendor mini-arc, Slice C1).
   // — vendor_items are the purchasable units. create/update/deactivate/activate

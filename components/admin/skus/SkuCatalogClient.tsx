@@ -33,6 +33,7 @@ import type {
   SkuFormValues,
   SkuFormVendorOption,
 } from "./SkuBuilder";
+import type { LocationSkuOverlayView } from "./SkuLocationOverlay";
 
 // Vendor-select sentinels distinct from any real vendor id.
 const FILTER_ALL = "__all__";
@@ -58,6 +59,7 @@ export function SkuCatalogClient({
   skuReadiness,
   chainsBySku,
   chainUnverifiedBySku,
+  overlaysBySku,
   actorLevel,
   canManage,
 }: {
@@ -74,6 +76,8 @@ export function SkuCatalogClient({
   chainsBySku: Record<string, PackChainLevel[]>;
   /** Server flag: the chain fails reachability/termination ("chain unverified"). */
   chainUnverifiedBySku: Record<string, boolean>;
+  /** VO-7: per-location overlay rows per SKU (edit-mode overlay section). */
+  overlaysBySku: Record<string, LocationSkuOverlayView[]>;
   actorLevel: number;
   canManage: boolean; // GM+
 }) {
@@ -263,6 +267,7 @@ export function SkuCatalogClient({
           cost={skuCost[s.id] ?? { currentPrice: null, costPerOz: null, usedBy: [] }}
           ledger={skuLedger[s.id] ?? null}
           consumption={skuConsumption[s.id] ?? null}
+          overlays={overlaysBySku[s.id] ?? []}
           onSubmit={(values) => void saveEdit(s.id, values)}
           onSaveChain={(levels, avg) => saveChain(s.id, levels, avg)}
           onCancel={() => {

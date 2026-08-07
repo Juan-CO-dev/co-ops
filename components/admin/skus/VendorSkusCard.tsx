@@ -33,6 +33,7 @@ import { StatusBadge, ReadinessReasons } from "@/components/admin/StatusBadge";
 import { SkuCostPanel, type SkuCostInfo } from "./SkuCostPanel";
 import { SkuBuilder } from "./SkuBuilder";
 import type { SkuFormLocationOption, SkuFormValues } from "./SkuBuilder";
+import type { LocationSkuOverlayView } from "./SkuLocationOverlay";
 
 export function VendorSkusCard({
   vendorId,
@@ -46,6 +47,7 @@ export function VendorSkusCard({
   skuReadiness,
   chainsBySku,
   chainUnverifiedBySku,
+  overlaysBySku,
   actorLevel,
   canManage,
 }: {
@@ -62,6 +64,8 @@ export function VendorSkusCard({
   chainsBySku: Record<string, PackChainLevel[]>;
   /** Server class-aware "chain unverified" flag per SKU. */
   chainUnverifiedBySku: Record<string, boolean>;
+  /** VO-7: per-location overlay rows per SKU (edit-mode overlay section). */
+  overlaysBySku: Record<string, LocationSkuOverlayView[]>;
   actorLevel: number;
   canManage: boolean; // GM+
 }) {
@@ -186,6 +190,7 @@ export function VendorSkusCard({
                     cost={skuCost[s.id] ?? { currentPrice: null, costPerOz: null, usedBy: [] }}
                     ledger={skuLedger[s.id] ?? null}
                     consumption={skuConsumption[s.id] ?? null}
+                    overlays={overlaysBySku[s.id] ?? []}
                     onSubmit={(values) => void saveEdit(s.id, values)}
                     onSaveChain={(levels, avg) => saveChain(s.id, levels, avg)}
                     onCancel={() => {

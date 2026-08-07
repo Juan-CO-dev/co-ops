@@ -71,6 +71,11 @@ const KNOWN_ERROR_CODES = new Set([
   "invalid_method",
   "invalid_day",
   "invalid_color",
+  // VO-7 (transmission + cutoffs).
+  "invalid_url",
+  "invalid_tier",
+  "invalid_time",
+  "invalid_location",
   "step_up_required",
   "step_up_stale",
 ]);

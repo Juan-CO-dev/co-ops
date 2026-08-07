@@ -2,11 +2,23 @@ import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { jsonError, jsonOk } from "@/lib/api-helpers";
-import { loadLastDeliveryTemplate, ReceivingError, RECEIVE_MIN } from "@/lib/receiving";
+import { loadLastDeliveryTemplate, loadOpenPoTemplate, ReceivingError, RECEIVE_MIN } from "@/lib/receiving";
 
-// GET ?locationId=<uuid>&vendorId=<uuid> — prefill template from the vendor's last
-// delivery at this location. Returns { template: LastDeliveryTemplate | null }.
-// KH+ (≥4), location-bound (checked in loadLastDeliveryTemplate).
+// GET ?locationId=<uuid>&vendorId=<uuid> — prefill template for the door form.
+//
+// Pre-fill hierarchy (spec §3 "received"):
+//   1. Latest `placed` PO for this vendor+location (source "po") — the door
+//      ceremony is receiving against a known order; lines are the PO's line qtys.
+//   2. Last delivery template (source "last_delivery") — the vendor's most recent
+//      drop; lines are what was received then.
+//   3. null (source null) — no prior data; the form falls back to offered rows.
+//
+// Response: { template: ...|null, source: "po"|"last_delivery"|null, poId?, displayCode? }
+// Old callers that only read `template` continue to work (source/poId/displayCode
+// are additive; the form must not crash when they are absent — tested: the form
+// reads them only when present).
+//
+// KH+ (≥4), location-bound (checked in each loader).
 export async function GET(req: NextRequest) {
   const ctx = await requireSession(req, "/api/operations/receiving/template");
   if (ctx instanceof Response) return ctx;
@@ -18,8 +30,25 @@ export async function GET(req: NextRequest) {
   if (typeof vendorId !== "string" || !vendorId) return jsonError(400, "invalid_payload", { field: "vendorId" });
 
   try {
-    const template = await loadLastDeliveryTemplate(ctx, locationId, vendorId);
-    return jsonOk({ template });
+    // 1. Try the open placed PO first.
+    const poTemplate = await loadOpenPoTemplate(ctx, locationId, vendorId);
+    if (poTemplate) {
+      return jsonOk({
+        template: { lines: poTemplate.lines },
+        source: "po" as const,
+        poId: poTemplate.poId,
+        displayCode: poTemplate.displayCode,
+      });
+    }
+
+    // 2. Fall back to last delivery.
+    const lastTemplate = await loadLastDeliveryTemplate(ctx, locationId, vendorId);
+    if (lastTemplate) {
+      return jsonOk({ template: lastTemplate, source: "last_delivery" as const });
+    }
+
+    // 3. No prior data.
+    return jsonOk({ template: null, source: null });
   } catch (e) {
     if (e instanceof ReceivingError) return jsonError(e.status, e.code, { message: e.message });
     throw e;

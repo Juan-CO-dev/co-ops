@@ -45,6 +45,7 @@ import {
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import { PackChainWizard } from "./PackChainWizard";
 import { SkuCostPanel, type SkuCostInfo } from "./SkuCostPanel";
+import { SkuLocationOverlay, type LocationSkuOverlayView } from "./SkuLocationOverlay";
 import type { SkuReceivingLedger, SkuConsumption } from "@/lib/admin/cost";
 
 // SKU form value/prop types (SKU top-tier PR-C: SkuForm was deleted — these moved
@@ -160,6 +161,7 @@ export function SkuBuilder({
   cost,
   ledger,
   consumption,
+  overlays,
   onSubmit,
   onSaveChain,
   onCancel,
@@ -186,6 +188,10 @@ export function SkuBuilder({
   cost?: SkuCostInfo;
   ledger?: SkuReceivingLedger | null;
   consumption?: SkuConsumption | null;
+  /** VO-7 per-location overlay rows for THIS SKU (edit mode). Presence of this prop
+   *  (+ locations + editing an existing SKU) renders the location overlay section.
+   *  Absent = the overlay is not surfaced (e.g. add flow). */
+  overlays?: LocationSkuOverlayView[];
   /** Hands identity + quick-pack values + an optional chain draft (add flow). */
   onSubmit: (values: SkuFormValues, chain: StarterChainLevel[] | null) => void;
   /** Edit-mode chain save (SKU exists → pack-chain route). Returns ok. When
@@ -556,6 +562,15 @@ export function SkuBuilder({
             canRecord={actorLevel >= 6}
           />
         </section>
+      ) : null}
+
+      {/* ── Section D — Per-location overlay (VO-7; edit mode only, its own
+          default-collapsed CollapsibleSection). Renders only when overlays +
+          locations are present and we're editing an existing SKU. ── */}
+      {isEdit && overlays !== undefined && locations.length > 0 ? (
+        <div className="border-t-2 border-co-border pt-3">
+          <SkuLocationOverlay skuId={initial!.id} locations={locations} overlays={overlays} />
+        </div>
       ) : null}
 
       {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
