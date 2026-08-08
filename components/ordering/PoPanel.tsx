@@ -42,7 +42,10 @@ import {
   isValidTel,
   linkBtn,
 } from "@/components/ordering/delivery-affordances";
+import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import type { PoDetail } from "@/lib/purchase-orders";
+import type { OrderEmailPreview } from "@/lib/po-email-shared";
+import type { ThreeWayView, ThreeWayLine, ThreeWayFlag } from "@/lib/po-match-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
 
 type Channel = "email" | "sms" | "phone" | "portal" | "in_person";
@@ -94,6 +97,14 @@ export function PoPanel({
   const { t } = useTranslation();
 
   const [detail, setDetail] = useState<PoDetail | null>(null);
+  // The server-rendered email preview for the auto tier (null unless confirmed + the
+  // location's auto leg is awake). The server is the sole author — this is display-only.
+  const [emailPreview, setEmailPreview] = useState<OrderEmailPreview | null>(null);
+  // The three-way match view (V2 §5) + the SKUs carrying an open credit on the linked
+  // deliveries. Server-derived, advisory; a null threeWay = derivation unavailable (the
+  // section simply doesn't render — no pipe failure blocks the PO trail).
+  const [threeWay, setThreeWay] = useState<ThreeWayView | null>(null);
+  const [openCreditSkuIds, setOpenCreditSkuIds] = useState<string[]>([]);
   const [loadState, setLoadState] = useState<"loading" | "loaded" | "error">("loading");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -130,12 +141,20 @@ export function PoPanel({
         setLoadState("error");
         return;
       }
-      const j = (await res.json()) as { detail?: PoDetail };
+      const j = (await res.json()) as {
+        detail?: PoDetail;
+        emailPreview?: OrderEmailPreview | null;
+        threeWay?: ThreeWayView | null;
+        openCreditSkuIds?: string[];
+      };
       if (!j.detail) {
         setLoadState("error");
         return;
       }
       setDetail(j.detail);
+      setEmailPreview(j.emailPreview ?? null);
+      setThreeWay(j.threeWay ?? null);
+      setOpenCreditSkuIds(j.openCreditSkuIds ?? []);
       seedEdits(j.detail);
       // Reset transient action arming after every (re)load — never carry a stale arm.
       setArmConfirm(false);
@@ -279,6 +298,19 @@ export function PoPanel({
     }
   };
 
+  // Auto tier (V2): send the confirmed PO to the vendor by email. The server re-derives +
+  // gates (409 email_dormant / no_email_target / po status raced; 502 send_failed) and, on
+  // success, places the PO — so we just reload into the placed trail. Busy-guarded; the
+  // mapped 409/502 message surfaces via doAction's setErrFromCode. Manual affordances stay
+  // below regardless (no pipe blocks ordering).
+  const sendEmail = async () => {
+    const res = await doAction({ action: "send_email", poId }, "POST");
+    if (res.ok) {
+      await load();
+      onChanged();
+    }
+  };
+
   // ── The plaintext order body (PO code first line, then shop/date, then lines) ────
   const bodyText = useMemo(() => {
     if (!detail) return "";
@@ -332,6 +364,14 @@ export function PoPanel({
               <AlertPill tone={STATUS_TONE[detail.status] ?? "info"} uppercase={false}>
                 {t(("ordering.po.status." + detail.status) as TranslationKey)}
               </AlertPill>
+              {/* V2-D2: acknowledgment is EVIDENCE on placed, not a status — the ✓ chip
+                  appears the moment a matched confirmation fills the ack (any channel). */}
+              {detail.ack && (
+                <AlertPill tone="ok" uppercase={false}>
+                  {t("ordering.po.ack.confirmed")}
+                  {detail.ack.additionalCount > 0 ? ` +${detail.ack.additionalCount}` : ""}
+                </AlertPill>
+              )}
               <span className="rounded-md bg-co-surface-2 px-2 py-0.5 font-mono text-[12px] font-bold tracking-wide text-co-text-dim">
                 {detail.displayCode}
               </span>
@@ -362,6 +402,9 @@ export function PoPanel({
                 detail={detail}
                 subject={subject}
                 body={bodyText}
+                emailPreview={emailPreview}
+                busy={busy}
+                onSend={() => void sendEmail()}
                 onUse={openPlace}
                 onOpenPlace={() => openPlace("in_person", null)}
               />
@@ -375,6 +418,8 @@ export function PoPanel({
                 armReconcile={armReconcile}
                 busy={busy}
                 onReconcile={() => void reconcile()}
+                threeWay={threeWay}
+                openCreditSkuIds={openCreditSkuIds}
               />
             )}
           </>
@@ -524,12 +569,19 @@ function ConfirmedView({
   detail,
   subject,
   body,
+  emailPreview,
+  busy,
+  onSend,
   onUse,
   onOpenPlace,
 }: {
   detail: PoDetail;
   subject: string;
   body: string;
+  /** Server-rendered auto-tier email preview (null unless the auto leg is awake). */
+  emailPreview: OrderEmailPreview | null;
+  busy: boolean;
+  onSend: () => void;
   onUse: (channel: "email" | "sms" | "phone" | "portal" | "in_person", target: string | null) => void;
   onOpenPlace: () => void;
 }) {
@@ -580,6 +632,66 @@ function ConfirmedView({
           </tbody>
         </table>
       </section>
+
+      {/* AUTO tier (V2 §3, two-tap): the Send-to-vendor preview + button. Rendered ONLY
+          when the location's auto-email leg is awake (server-derived). When dormant, a
+          note explains why. Either way, the manual transmit block below ALWAYS renders —
+          no pipe blocks ordering (house law). */}
+      {transmit.emailOrderingAvailable ? (
+        <section className="co-card p-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-co-text-dim">{t("ordering.po.auto.title")}</h3>
+            <AlertPill tone="ok" uppercase={false}>{t("ordering.po.tier.auto")}</AlertPill>
+          </div>
+          {emailPreview && emailPreview.to.length > 0 ? (
+            <>
+              <dl className="mt-3 flex flex-col gap-1 text-[13px]">
+                <div className="flex gap-2">
+                  <dt className="shrink-0 font-bold text-co-text-dim">{t("ordering.po.auto.to")}</dt>
+                  <dd className="min-w-0 break-words text-co-text">{emailPreview.to.join(", ")}</dd>
+                </div>
+                <div className="flex gap-2">
+                  <dt className="shrink-0 font-bold text-co-text-dim">{t("ordering.po.auto.from")}</dt>
+                  <dd className="min-w-0 break-words text-co-text">{emailPreview.from}</dd>
+                </div>
+                <div className="flex gap-2">
+                  <dt className="shrink-0 font-bold text-co-text-dim">{t("ordering.po.auto.subject")}</dt>
+                  <dd className="min-w-0 break-words text-co-text">{emailPreview.subject}</dd>
+                </div>
+              </dl>
+              <p className="mt-2 text-[12px] text-co-text-dim">
+                {t("ordering.po.auto.line_summary", {
+                  n: detail.lines.filter((l) => l.orderQty > 0).length,
+                  count: emailPreview.to.length,
+                })}
+              </p>
+              <button
+                type="button"
+                onClick={onSend}
+                disabled={busy}
+                className="mt-3 inline-flex min-h-[48px] w-full items-center justify-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50"
+              >
+                {t("ordering.po.auto.send")}
+              </button>
+              <p className="mt-2 text-[12px] italic text-co-text-muted">{t("ordering.po.auto.send_help")}</p>
+            </>
+          ) : emailPreview ? (
+            // Auto leg awake, but the vendor has no email on file → no target.
+            <p className="mt-3 text-[13px] text-co-text-dim">{t("ordering.po.auto.no_target")}</p>
+          ) : (
+            // Auto leg awake but the server-side preview derivation failed (transient) —
+            // distinct from no-target: recipients may exist. Manual affordances below.
+            <p className="mt-3 text-[13px] text-co-text-dim">{t("ordering.po.auto.preview_unavailable")}</p>
+          )}
+        </section>
+      ) : (
+        <section className="co-card p-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-co-text-dim">{t("ordering.po.auto.title")}</h3>
+          </div>
+          <p className="mt-3 text-[13px] text-co-text-dim">{t("ordering.po.auto.dormant")}</p>
+        </section>
+      )}
 
       {/* TRANSMIT block — tier-appropriate. */}
       <section className="co-card p-4">
@@ -706,6 +818,8 @@ function TrailView({
   armReconcile,
   busy,
   onReconcile,
+  threeWay,
+  openCreditSkuIds,
 }: {
   detail: PoDetail;
   language: "en" | "es";
@@ -713,6 +827,10 @@ function TrailView({
   armReconcile: boolean;
   busy: boolean;
   onReconcile: () => void;
+  /** Server-derived three-way match (V2 §5); null when derivation was unavailable. */
+  threeWay: ThreeWayView | null;
+  /** SKUs carrying an open credit on the linked deliveries (chips a short line's credit). */
+  openCreditSkuIds: string[];
 }) {
   const { t } = useTranslation();
   const canReconcile = actorLevel >= 6; // AGM+
@@ -737,6 +855,13 @@ function TrailView({
         </table>
       </section>
 
+      {/* Three-way match (V2 §5): ordered / received / billed per line + variance chips.
+          Advisory-only; collapsible per D-doctrine. Renders only when derivation was
+          available (threeWay non-null). */}
+      {threeWay && (
+        <ThreeWaySection view={threeWay} openCreditSkuIds={openCreditSkuIds} />
+      )}
+
       {/* Status timeline (from the row's own timestamps). */}
       <section className="co-card p-4">
         <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-co-text-dim">{t("ordering.po.timeline")}</h3>
@@ -748,6 +873,17 @@ function TrailView({
             </li>
           ))}
         </ol>
+        {/* V2-D2 evidence line: who confirmed, via which channel, when. from renders as
+            plain text (vendor-supplied address/number — untrusted content law). */}
+        {detail.ack && (
+          <p className="mt-2 text-[12px] text-co-text-dim">
+            {t("ordering.po.ack.detail", {
+              from: detail.ack.from ?? "—",
+              channel: detail.ack.source ?? "—",
+            })}
+            {detail.ack.at ? ` · ${formatTime(detail.ack.at, language)}` : ""}
+          </p>
+        )}
       </section>
 
       {/* Transmissions list. */}
@@ -766,6 +902,35 @@ function TrailView({
                   {t("ordering.po.tx_by", { name: tx.sentByName ?? t("ordering.po.tx_automated") })}
                 </span>
                 {tx.note && <span className="block text-[12px] italic text-co-text-dim">{tx.note}</span>}
+                {tx.providerMessageId && (
+                  <span className="block break-all font-mono text-[11px] text-co-text-muted">{tx.providerMessageId}</span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {/* SMS messages (V2 §5c) — the text channel's half of the unified trail. The body is
+          UNTRUSTED vendor content: rendered as a plain text node (React auto-escapes) — never
+          markup, never a link/href. Direction badge distinguishes an inbound vendor reply from
+          an outbound order (outbound is dormant in V1, so these are inbound today). */}
+      {detail.smsMessages.length > 0 && (
+        <section className="co-card p-4">
+          <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-co-text-dim">{t("ordering.po.sms.heading")}</h3>
+          <ul className="mt-2 flex flex-col gap-2">
+            {detail.smsMessages.map((sms) => (
+              <li key={sms.id} className="rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2 text-[13px]">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-bold text-co-text">
+                    {t(("ordering.po.sms.direction." + sms.direction) as TranslationKey)}
+                  </span>
+                  <span className="text-[12px] text-co-text-dim">{formatTime(sms.occurredAt, language)}</span>
+                </div>
+                <span className="block text-[12px] text-co-text-muted">
+                  {t("ordering.po.sms.from", { number: sms.fromNumber })}
+                </span>
+                {sms.body && <span className="mt-1 block whitespace-pre-wrap text-[13px] text-co-text">{sms.body}</span>}
               </li>
             ))}
           </ul>
@@ -818,6 +983,141 @@ function TrailView({
         </button>
       )}
     </div>
+  );
+}
+
+// ── THREE-WAY MATCH (V2 §5): ordered / received / billed + variance chips ────────────
+/** Flag → AlertPill tone. billed_over_received is the loud one (money charged for goods
+ *  that didn't arrive); the rest are advisory-warn / info. */
+const FLAG_TONE: Record<ThreeWayFlag, AlertPillTone> = {
+  billed_over_received: "danger",
+  short_received: "warn",
+  not_billed: "info",
+  unmatched_invoice_line: "info",
+};
+
+/** Qty display: advisory-null → em dash (never a fabricated 0 — the null-leg law). */
+function qtyOrDash(v: number | null): string {
+  return v == null ? "—" : String(v);
+}
+
+function ThreeWaySection({
+  view,
+  openCreditSkuIds,
+}: {
+  view: ThreeWayView;
+  openCreditSkuIds: string[];
+}) {
+  const { t } = useTranslation();
+  const creditSkus = useMemo(() => new Set(openCreditSkuIds), [openCreditSkuIds]);
+
+  // The collapsed-header count = number of lines carrying at least one variance flag
+  // (D5 i18n'd count). Zero flags → a clean "all matched" count; the section still opens.
+  const flaggedCount = useMemo(() => view.lines.filter((l) => l.flags.length > 0).length, [view.lines]);
+
+  return (
+    <CollapsibleSection
+      idBase="po-three-way"
+      title={t("ordering.po.three_way.title")}
+      count={t("ordering.po.three_way.count", { n: flaggedCount })}
+    >
+      {/* Advisory notes when a leg is missing (advisory-null law — an absent leg is
+          STATED, never implied as zero). */}
+      {!view.hasDelivery && (
+        <p className="mb-2 text-[13px] italic text-co-text-dim">{t("ordering.po.three_way.no_delivery")}</p>
+      )}
+      {!view.hasInvoice && (
+        <p className="mb-2 text-[13px] italic text-co-text-dim">{t("ordering.po.three_way.no_invoice")}</p>
+      )}
+
+      {view.lines.length === 0 ? (
+        <p className="text-[13px] text-co-text-dim">{t("ordering.po.three_way.empty")}</p>
+      ) : (
+        <ul className="flex flex-col gap-2" aria-label={t("ordering.po.three_way.title")}>
+          {view.lines.map((l) => (
+            <ThreeWayRow key={l.key} line={l} hasOpenCredit={creditSkus.has(l.key)} />
+          ))}
+        </ul>
+      )}
+
+      {/* Totals footer (advisory-null: em dash when a total couldn't be computed). */}
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-co-border/50 pt-2 text-[12px]">
+        <span className="text-co-text-dim">
+          {t("ordering.po.three_way.total_ordered", { amount: money(view.totals.orderedCents) })}
+        </span>
+        <span className="text-co-text-dim">
+          {t("ordering.po.three_way.total_billed", { amount: money(view.totals.billedCents) })}
+        </span>
+      </div>
+    </CollapsibleSection>
+  );
+}
+
+/** One three-way line: name/item + the three stacked-on-narrow columns (ordered /
+ *  received / billed) + variance chips. Phone-first: the three legs stack in a
+ *  responsive grid (1 col on narrow, 3 cols ≥ sm). Untrusted invoice descriptions
+ *  render as TEXT ONLY (house untrusted-content law). */
+function ThreeWayRow({ line, hasOpenCredit }: { line: ThreeWayLine; hasOpenCredit: boolean }) {
+  const { t } = useTranslation();
+  return (
+    <li className="rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[14px] font-bold text-co-text">{line.name}</span>
+        {line.itemNumber && (
+          <span className="font-mono text-[11px] text-co-text-dim">#{line.itemNumber}</span>
+        )}
+      </div>
+
+      {/* Ordered / Received / Billed — stack on narrow, three columns ≥ sm. */}
+      <dl className="mt-2 grid grid-cols-1 gap-1 sm:grid-cols-3 sm:gap-3">
+        <div className="flex items-baseline justify-between gap-2 sm:flex-col sm:items-start sm:gap-0">
+          <dt className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-text-dim">
+            {t("ordering.po.three_way.ordered")}
+          </dt>
+          <dd className="text-[14px] font-semibold text-co-text">
+            {qtyOrDash(line.orderedQty)}
+            {line.orderedUnit ? <span className="text-[11px] font-normal text-co-text-dim"> {line.orderedUnit}</span> : null}
+          </dd>
+        </div>
+        <div className="flex items-baseline justify-between gap-2 sm:flex-col sm:items-start sm:gap-0">
+          <dt className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-text-dim">
+            {t("ordering.po.three_way.received")}
+          </dt>
+          <dd className="text-[14px] font-semibold text-co-text">
+            {qtyOrDash(line.receivedQty)}
+            {line.receivedLevel ? <span className="text-[11px] font-normal text-co-text-dim"> {line.receivedLevel}</span> : null}
+          </dd>
+        </div>
+        <div className="flex items-baseline justify-between gap-2 sm:flex-col sm:items-start sm:gap-0">
+          <dt className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-text-dim">
+            {t("ordering.po.three_way.billed")}
+          </dt>
+          <dd className="text-[14px] font-semibold text-co-text">
+            {qtyOrDash(line.billedQty)}
+            {line.billedCents != null ? (
+              <span className="text-[11px] font-normal text-co-text-dim"> {money(line.billedCents)}</span>
+            ) : null}
+          </dd>
+        </div>
+      </dl>
+
+      {/* Variance chips (per flag). A short line with an open credit on the linked
+          delivery shows the credit chip too — already-tracked, not a new alert. */}
+      {line.flags.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {line.flags.map((f) => (
+            <AlertPill key={f} tone={FLAG_TONE[f]} uppercase={false}>
+              {t(("ordering.po.three_way.flag." + f) as TranslationKey)}
+            </AlertPill>
+          ))}
+          {line.flags.includes("short_received") && hasOpenCredit && (
+            <AlertPill tone="info" uppercase={false}>
+              {t("ordering.po.three_way.credit_tracked")}
+            </AlertPill>
+          )}
+        </div>
+      )}
+    </li>
   );
 }
 

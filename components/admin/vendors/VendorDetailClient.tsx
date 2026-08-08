@@ -688,15 +688,26 @@ function TransmissionCard({
               }}
             >
               {TRANSMISSION_TIERS.map((tr) => (
-                <option key={tr} value={tr} disabled={tr === "auto" && vendor.transmissionTier !== "auto"}>
+                <option
+                  key={tr}
+                  value={tr}
+                  // `auto` is selectable once the email leg is awake (V2 §6:
+                  // autoTierAvailable = verified sending domain + a location alias). It
+                  // stays selectable when ALREADY set (existing-data honesty), so an
+                  // already-auto vendor is never forced off it. Otherwise disabled — a
+                  // config-readiness guardrail, not authz.
+                  disabled={tr === "auto" && !vendor.autoTierAvailable && vendor.transmissionTier !== "auto"}
+                >
                   {t(`admin.vendors.transmission.tier.${tr}` as TranslationKey)}
                 </option>
               ))}
             </select>
           </Labeled>
-          {/* `auto` requires an email adapter (V2). It's disabled in the picker
-              unless already set — a config-readiness guardrail, not authz. */}
-          <p className="mt-1 text-xs italic text-co-text-muted">{t("admin.vendors.transmission.auto_hint")}</p>
+          {/* Hint reflects readiness: the "coming soon" copy only shows while auto is
+              dormant; once available a shorter note explains the tier. */}
+          <p className="mt-1 text-xs italic text-co-text-muted">
+            {t(vendor.autoTierAvailable ? "admin.vendors.transmission.auto_ready_hint" : "admin.vendors.transmission.auto_hint")}
+          </p>
         </div>
 
         {tier === "assisted" ? (

@@ -42,6 +42,7 @@ import { formatTime } from "@/lib/i18n/format";
 import { etCalendarDate, operationalDayUtcRange } from "@/lib/operational-day";
 import { etDayFromDate } from "@/lib/et-day-shared";
 import { loadCreditsForDelivery } from "@/lib/credits";
+import { emailOrderingAvailable, isPlausibleEmail } from "@/lib/po-email-shared";
 
 /** KH+ read/write floor for the PO lifecycle (draft/confirm/place/receive + reads). */
 export const PO_MIN = 4; // key_holder+
@@ -61,6 +62,14 @@ function num(v: number | string | null): number | null {
   if (v === null) return null;
   const n = typeof v === "string" ? Number(v) : v;
   return Number.isFinite(n) ? n : null;
+}
+/** Truncate an untrusted body to a max length for the trail preview (adds an ellipsis when cut).
+ *  Null-safe. The full body stays in the ledger; the trail only previews it. */
+function truncateBody(body: string | null, max: number): string | null {
+  if (body == null) return null;
+  const trimmed = body.trim();
+  if (trimmed.length <= max) return trimmed || null;
+  return trimmed.slice(0, max) + "…";
 }
 function requireLevel(actor: AuthContext, min: number): void {
   if (getRoleLevel(actor.user.role) < min) {
@@ -641,7 +650,7 @@ async function resolveGoverningCutoffIso(
   return etWallClockToUtcIso(dateEt, pool[0]!.cutoff_time);
 }
 
-// ── markPlaced: record transmission + placed metadata ────────────────────────────
+// ── markPlaced / recordPlacement: record transmission + placed metadata ───────────
 export interface MarkPlacedInput {
   channel: "email" | "sms" | "phone" | "portal" | "in_person";
   target?: string | null;
@@ -650,15 +659,48 @@ export interface MarkPlacedInput {
 const PLACEMENT_CHANNELS = new Set(["email", "sms", "phone", "portal", "in_person"]);
 
 /**
- * Mark a confirmed PO as placed (KH+ + location-bind). CONFIRMED-ONLY: a PO in any
- * other status 409s with a code naming the ACTUAL status (e.g. `not_confirmed` for
- * a draft, `already_placed` for a placed one). Writes placed_by/at/note in a single
- * guarded UPDATE (`.eq("status","confirmed")` + rowcount, race-safe), then INSERTs
- * a po_transmissions row (channel/target/sent_by) — the durable outbound record
- * (spec §5c.1; every placement records how it went out, including manual tiers).
- * Audited `po.placed` { channel }.
+ * The one-and-only confirmed→placed placement machinery (spec V2 §3). Extends
+ * MarkPlacedInput with an optional `providerMessageId` (Resend id from the auto-email
+ * adapter; null for every manual placement). lib/po-email.ts's sendOrderEmail emits
+ * its own `po.email_sent` audit AFTER placement completes (send→place causally; the
+ * audit rows land place→email, both fail-open) — the flip logic exists EXACTLY ONCE.
  */
-export async function markPlaced(actor: AuthContext, poId: string, input: MarkPlacedInput): Promise<void> {
+export interface RecordPlacementInput extends MarkPlacedInput {
+  /** Resend message id when placed by the auto-email adapter; null for manual tiers. */
+  providerMessageId?: string | null;
+}
+
+/**
+ * SHARED placement core (KH+ + location-bind) — the guarded confirmed→placed flip +
+ * po_transmissions insert + `po.placed` audit, in ONE place. CONFIRMED-ONLY: a PO in
+ * any other status 409s with a code naming the ACTUAL status (e.g. `not_confirmed` for
+ * a draft, `already_placed` for a placed one). Writes placed_by/at/note in a single
+ * guarded UPDATE (`.eq("status","confirmed")` + rowcount, race-safe), then INSERTs a
+ * po_transmissions row (channel/target/sent_by/provider_message_id) — the durable
+ * outbound record (spec §5c.1; every placement records how it went out, including
+ * manual tiers). Audited `po.placed` { channel }.
+ *
+ * ── FLIP-FIRST LAW (V2-D1) ────────────────────────────────────────────────────────
+ * When a `transmit` callback is supplied (the auto-email adapter), the guarded flip is
+ * the LINEARIZATION POINT and runs BEFORE the transmission: of two concurrent sends,
+ * exactly one wins the flip; the loser 409s having sent NOTHING — a double-tap can
+ * never email a vendor twice. On transmit failure the claim is REVERTED (guarded
+ * placed→confirmed, scoped to this actor's own claim) and the failure rethrown, so the
+ * PO is back where it started with no transmission row. A transmission-row/audit
+ * failure AFTER a successful transmit is tolerated with console.error (the email is
+ * irreversible; placed is TRUE — a missing transmission row is a data gap, not a lie).
+ * Without a callback (manual tiers) behavior is unchanged: no side effect precedes the
+ * flip, and a transmission-insert failure still throws.
+ *
+ * Callers: markPlaced (manual tiers, providerMessageId null, no callback) and
+ * sendOrderEmail (auto tier, transmit = the Resend send, which returns the provider id).
+ */
+export async function recordPlacement(
+  actor: AuthContext,
+  poId: string,
+  input: RecordPlacementInput,
+  transmit?: () => Promise<{ providerMessageId: string }>,
+): Promise<void> {
   requireLevel(actor, PO_MIN);
   if (!input || !PLACEMENT_CHANNELS.has(input.channel)) {
     throw new PurchaseOrderError(400, "invalid_channel", "A valid placement channel is required");
@@ -668,7 +710,7 @@ export async function markPlaced(actor: AuthContext, poId: string, input: MarkPl
   const { data: po, error: poErr } = await sb.from("purchase_orders")
     .select("id, location_id, status").eq("id", poId)
     .maybeSingle<{ id: string; location_id: string; status: string }>();
-  if (poErr) throw new Error(`markPlaced load: ${poErr.message}`);
+  if (poErr) throw new Error(`recordPlacement load: ${poErr.message}`);
   if (!po) throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
   if (!lockLocationContext(actorLoc(actor), po.location_id)) {
     throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
@@ -687,22 +729,54 @@ export async function markPlaced(actor: AuthContext, poId: string, input: MarkPl
   const { error: uErr, count } = await sb.from("purchase_orders")
     .update({ status: "placed", placed_by: actor.user.id, placed_at: placedAt, placed_note: note }, { count: "exact" })
     .eq("id", poId).eq("status", "confirmed");
-  if (uErr) throw new Error(`markPlaced update: ${uErr.message}`);
+  if (uErr) throw new Error(`recordPlacement update: ${uErr.message}`);
   if (count === 0) throw new PurchaseOrderError(409, "not_confirmed", "Order is no longer confirmed");
 
-  // Durable transmission record (append-only). Failure here is a real error — the
-  // placement's channel/target is the outbound half of the linking requirement.
+  let providerMessageId = input.providerMessageId?.trim() || null;
+  if (transmit) {
+    try {
+      providerMessageId = (await transmit()).providerMessageId;
+    } catch (sendErr) {
+      // Revert OUR claim only (status + placed_by must both match — never undo a rival's
+      // placement). Rowcount 0 = the PO advanced in the microsecond window (practically
+      // impossible; requires a completed intake) — log loudly, still rethrow the send error.
+      const { error: rErr, count: rCount } = await sb.from("purchase_orders")
+        .update({ status: "confirmed", placed_by: null, placed_at: null, placed_note: null }, { count: "exact" })
+        .eq("id", poId).eq("status", "placed").eq("placed_by", actor.user.id);
+      if (rErr || rCount === 0) {
+        console.error(`recordPlacement: claim revert failed for po ${poId} (count=${rCount ?? 0}${rErr ? `, ${rErr.message}` : ""}) — status may need attention`);
+      }
+      throw sendErr;
+    }
+  }
+
+  // Durable transmission record (append-only) — the outbound half of the linking
+  // requirement. After a successful transmit the email is irreversible, so a failure
+  // here is tolerated (logged); on the manual path it remains a real error.
   const { error: tErr } = await sb.from("po_transmissions").insert({
     po_id: poId, channel: input.channel, target, sent_by: actor.user.id, note,
+    provider_message_id: providerMessageId,
   });
-  if (tErr) throw new Error(`markPlaced transmission: ${tErr.message}`);
+  if (tErr) {
+    if (transmit) console.error(`recordPlacement: transmission row failed for po ${poId} after successful send — ${tErr.message}`);
+    else throw new Error(`recordPlacement transmission: ${tErr.message}`);
+  }
 
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "po.placed", resourceTable: "purchase_orders", resourceId: poId,
-    metadata: { location_id: po.location_id, channel: input.channel, target },
+    metadata: { location_id: po.location_id, channel: input.channel, target, provider_message_id: providerMessageId },
     ipAddress: null, userAgent: null,
   });
+}
+
+/**
+ * Mark a confirmed PO as placed via a MANUAL tier (KH+ + location-bind). Thin wrapper
+ * over recordPlacement with no provider_message_id — the status-flip logic lives once,
+ * in recordPlacement. Existing callers (route `place` action) are unchanged.
+ */
+export async function markPlaced(actor: AuthContext, poId: string, input: MarkPlacedInput): Promise<void> {
+  await recordPlacement(actor, poId, { ...input, providerMessageId: null });
 }
 
 // ── advanceToReceived: service-internal placed→received (called by receiving) ─────
@@ -923,6 +997,19 @@ export interface PoTransmissionRow {
   sentAt: string;
   sentByName: string | null;
   note: string | null;
+  /** Provider message id (Resend id / Twilio SID) when the leg was automated — the
+   *  forensic link between this placement and the outbound message. Null for manual. */
+  providerMessageId: string | null;
+}
+/** One sms_messages row linked to this PO — the SMS half of the unified trail (V2 §5c).
+ *  body is TRUNCATED (~200 chars) and rendered TEXT-ONLY at the panel (untrusted vendor
+ *  content — never markup/href). direction is 'inbound' in V1 (outbound is a dormant seam). */
+export interface PoSmsRow {
+  id: string;
+  direction: "inbound" | "outbound";
+  fromNumber: string;
+  body: string | null;
+  occurredAt: string;
 }
 export interface PoStatusEvent {
   status: string;
@@ -953,7 +1040,29 @@ export interface PoTransmit {
   portalUrl: string | null;
   contacts: PoTransmitContact[];
   orderingDetails: PoTransmitOrderingDetail[];
+  /** V2 §3/§6: is the auto-email leg awake for THIS PO's location? Derived from the
+   *  location alias + EMAIL_FROM domain via the pure emailOrderingAvailable (no env
+   *  leaks to the client). The panel shows the Send-to-vendor preview when true;
+   *  the server re-checks at send time (409 `email_dormant`). Manual affordances
+   *  render regardless (no pipe blocks ordering). */
+  emailOrderingAvailable: boolean;
+  /** V2-D3: the ACTIVE email-method ordering-detail addresses (plausible-email
+   *  filtered) — the auto tier's recipients (rep + orders desk both see it). The
+   *  panel shows the count + first N; the AUTHORITATIVE recipient list is re-derived
+   *  server-side in sendOrderEmail (client never composes the send). */
+  orderEmailRecipients: string[];
 }
+/** The vendor-acknowledgment evidence on a placed PO (V2-D2) — a READ view of the ack
+ *  jsonb both channel legs write (email: applyReceiptPoEffects; SMS: fillPoAckFromSms).
+ *  Parsed DEFENSIVELY: the jsonb is service-written but shapes differ per channel
+ *  (receiptId vs smsId) — the panel only needs source/at/from + the extras count. */
+export interface PoAckInfo {
+  source: string | null; // 'email' | 'sms' (null on an unexpected shape)
+  at: string | null;
+  from: string | null;
+  additionalCount: number;
+}
+
 export interface PoDetail {
   poId: string;
   displayCode: string;
@@ -970,6 +1079,12 @@ export interface PoDetail {
   placedNote: string | null;
   lines: PoDetailLine[];
   transmissions: PoTransmissionRow[];
+  /** V2-D2: "placed · vendor confirmed ✓" — null until a matched confirmation fills the
+   *  ack jsonb. This is the READ side of what both channel legs write. */
+  ack: PoAckInfo | null;
+  /** SMS messages linked to this PO (V2 §5c) — rendered in the unified trail alongside
+   *  transmissions/receipts. Empty until the Twilio leg is fed; body is text-only. */
+  smsMessages: PoSmsRow[];
   deliveryIds: string[];
   /** Open-credit summary across the linked deliveries (open|in_progress count). */
   credits: { openCount: number; totalCount: number };
@@ -978,6 +1093,22 @@ export interface PoDetail {
   /** Tier-appropriate transmit context (vendor config; read-only). Powers the confirmed
    *  state's contact card / portal deep link (spec §3). */
   transmit: PoTransmit;
+}
+
+/** Defensive read of the ack jsonb (V2-D2). Both channel writers produce
+ *  {…, at, from, source, additional?: […]}; anything off-shape degrades to nulls —
+ *  never a crash on a jsonb read (the write side owns the shape, the read side trusts
+ *  nothing). */
+function parseAckInfo(raw: unknown): PoAckInfo | null {
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : null);
+  return {
+    source: str(o.source),
+    at: str(o.at),
+    from: str(o.from),
+    additionalCount: Array.isArray(o.additional) ? o.additional.length : 0,
+  };
 }
 
 /**
@@ -994,12 +1125,13 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
   const sb = getServiceRoleClient();
 
   const { data: po, error: poErr } = await sb.from("purchase_orders")
-    .select("id, location_id, vendor_id, display_code, status, par_pass_event_id, confirmed_snapshot, cutoff_at_confirm, created_at, confirmed_at, placed_at, placed_note")
+    .select("id, location_id, vendor_id, display_code, status, par_pass_event_id, confirmed_snapshot, cutoff_at_confirm, created_at, confirmed_at, placed_at, placed_note, ack")
     .eq("id", poId)
     .maybeSingle<{
       id: string; location_id: string; vendor_id: string; display_code: string; status: string;
       par_pass_event_id: string | null; confirmed_snapshot: unknown | null; cutoff_at_confirm: string | null;
       created_at: string; confirmed_at: string | null; placed_at: string | null; placed_note: string | null;
+      ack: unknown | null;
     }>();
   if (poErr) throw new Error(`loadPoDetail load: ${poErr.message}`);
   if (!po) throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
@@ -1016,15 +1148,17 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
     { data: delivRows, error: dErr },
     { data: contactRows, error: ctErr },
     { data: orderingRows, error: orErr },
+    { data: locRow, error: locErr },
+    { data: smsRows, error: smsErr },
   ] = await Promise.all([
     sb.from("po_lines")
       .select("sku_id, order_qty, order_unit_label, price_cents_at_order, guide_position_snapshot, note")
       .eq("po_id", poId).order("guide_position_snapshot", { ascending: true, nullsFirst: false }).order("created_at", { ascending: true })
       .returns<Array<{ sku_id: string; order_qty: number | string; order_unit_label: string | null; price_cents_at_order: number | null; guide_position_snapshot: number | null; note: string | null }>>(),
     sb.from("po_transmissions")
-      .select("id, channel, target, sent_at, sent_by, note")
+      .select("id, channel, target, sent_at, sent_by, note, provider_message_id")
       .eq("po_id", poId).order("sent_at", { ascending: true })
-      .returns<Array<{ id: string; channel: string; target: string | null; sent_at: string; sent_by: string | null; note: string | null }>>(),
+      .returns<Array<{ id: string; channel: string; target: string | null; sent_at: string; sent_by: string | null; note: string | null; provider_message_id: string | null }>>(),
     sb.from("vendors").select("id, name, transmission_tier, portal_url").eq("id", po.vendor_id)
       .maybeSingle<{ id: string; name: string; transmission_tier: string | null; portal_url: string | null }>(),
     sb.from("vendor_deliveries").select("id").eq("purchase_order_id", poId).returns<Array<{ id: string }>>(),
@@ -1036,6 +1170,16 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
       .select("method, value, label, display_order")
       .eq("vendor_id", po.vendor_id).eq("active", true).order("display_order", { ascending: true })
       .returns<Array<{ method: string; value: string; label: string | null; display_order: number }>>(),
+    // The PO location's outbound alias — FROM/reply-to for the auto tier + half the
+    // emailOrderingAvailable gate (V2-D3, §6 row 1). Bound by po.location_id (own row).
+    sb.from("locations").select("receipt_email_address").eq("id", po.location_id)
+      .maybeSingle<{ receipt_email_address: string | null }>(),
+    // SMS messages linked to this PO (V2 §5c) — the SMS half of the unified trail. Oldest-first
+    // to match the transmissions ordering. Empty until the Twilio leg is fed (dormant).
+    sb.from("sms_messages")
+      .select("id, direction, from_number, body, occurred_at")
+      .eq("linked_po_id", poId).order("occurred_at", { ascending: true })
+      .returns<Array<{ id: string; direction: "inbound" | "outbound"; from_number: string; body: string | null; occurred_at: string }>>(),
   ]);
   if (lErr) throw new Error(`loadPoDetail lines: ${lErr.message}`);
   if (tErr) throw new Error(`loadPoDetail transmissions: ${tErr.message}`);
@@ -1043,12 +1187,30 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
   if (dErr) throw new Error(`loadPoDetail deliveries: ${dErr.message}`);
   if (ctErr) throw new Error(`loadPoDetail contacts: ${ctErr.message}`);
   if (orErr) throw new Error(`loadPoDetail ordering details: ${orErr.message}`);
+  if (locErr) throw new Error(`loadPoDetail location: ${locErr.message}`);
+  if (smsErr) throw new Error(`loadPoDetail sms: ${smsErr.message}`);
 
   // The transmit block (spec §3): tier + portal + active contacts (accepts_text_orders
   // badged) + ordering-detail affordances. Tier defaults to manual (D4 — every vendor
   // seeds at the lowest pipe); an unexpected value falls back to manual, never crashes.
   const rawTier = vend?.transmission_tier ?? "manual";
   const tier: PoTransmit["tier"] = rawTier === "assisted" || rawTier === "auto" ? rawTier : "manual";
+  const orderingDetails = (orderingRows ?? []).map((o) => ({ method: o.method, value: o.value, label: o.label }));
+  // Auto-tier availability + recipients (V2-D3, §6 row 1). Availability is the pure
+  // location-alias × EMAIL_FROM-domain gate; recipients are the active email-method
+  // ordering details, plausible-email filtered + de-duped (case-insensitive). The
+  // client gets these for the preview; sendOrderEmail re-derives authoritatively.
+  const recipientSeen = new Set<string>();
+  const orderEmailRecipients: string[] = [];
+  for (const o of orderingDetails) {
+    if (o.method !== "email") continue;
+    const v = o.value.trim();
+    if (!isPlausibleEmail(v)) continue;
+    const key = v.toLowerCase();
+    if (recipientSeen.has(key)) continue;
+    recipientSeen.add(key);
+    orderEmailRecipients.push(v);
+  }
   const transmit: PoTransmit = {
     tier,
     portalUrl: vend?.portal_url ?? null,
@@ -1059,7 +1221,9 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
       phone: c.phone,
       acceptsTextOrders: c.accepts_text_orders === true,
     })),
-    orderingDetails: (orderingRows ?? []).map((o) => ({ method: o.method, value: o.value, label: o.label })),
+    orderingDetails,
+    emailOrderingAvailable: emailOrderingAvailable(locRow?.receipt_email_address ?? null, process.env.EMAIL_FROM ?? null),
+    orderEmailRecipients,
   };
   const lines = lineRows ?? [];
   const txs = txRows ?? [];
@@ -1140,6 +1304,17 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
       sentAt: t.sent_at,
       sentByName: t.sent_by ? userName.get(t.sent_by) ?? null : null,
       note: t.note,
+      providerMessageId: t.provider_message_id,
+    })),
+    ack: parseAckInfo(po.ack),
+    // SMS trail rows (V2 §5c): body TRUNCATED to ~200 chars for the trail preview (the full
+    // body lives in the ledger). Rendered text-only at the panel (untrusted vendor content).
+    smsMessages: (smsRows ?? []).map((s) => ({
+      id: s.id,
+      direction: s.direction,
+      fromNumber: s.from_number,
+      body: truncateBody(s.body, 200),
+      occurredAt: s.occurred_at,
     })),
     deliveryIds,
     credits: { openCount, totalCount },

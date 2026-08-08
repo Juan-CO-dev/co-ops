@@ -36,7 +36,9 @@ import { useTranslation } from "@/lib/i18n/provider";
 import { formatTime } from "@/lib/i18n/format";
 import { PhotoCapture } from "@/components/photos/PhotoCapture";
 import { IntakeLineRow, type IntakeLine } from "@/components/receiving/IntakeLineRow";
+import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import type { ReceivingFormData, ReceivingSkuOption } from "@/lib/receiving";
+import type { OpenCreditRow } from "@/lib/credits";
 
 interface LineDraft extends IntakeLine {
   /** local key so React reconciles rows across add/remove without index churn. */
@@ -56,6 +58,9 @@ interface TemplateResponse {
   poId?: string | null;
   /** Human-readable PO code shown in the Step-1 header, present when source === "po". */
   displayCode?: string | null;
+  /** V2-D4: the vendor's open credits at this location (KH+ redelivery-closure
+   *  prefill). Present on every branch; absent/[] when the vendor has none. */
+  openCredits?: OpenCreditRow[];
 }
 
 let keySeq = 0;
@@ -214,6 +219,16 @@ export function ReceivingForm({
   const [linkedPoId, setLinkedPoId] = useState<string | null>(null);
   const [linkedPoCode, setLinkedPoCode] = useState<string | null>(null);
 
+  // V2-D4 redelivery closure — the vendor's open credits (loaded with the template)
+  // and the set the manager checks as "this truck makes up these shorts". Checked ids
+  // ride the submit payload as makeUpCreditIds. State-only (useState), reset on vendor
+  // change / form reset — no effects for prop resets (house law).
+  const [openCredits, setOpenCredits] = useState<OpenCreditRow[]>([]);
+  const [checkedCreditIds, setCheckedCreditIds] = useState<Set<string>>(new Set());
+  // Success/advisory state for the last submit's closure result.
+  const [closedCount, setClosedCount] = useState<number>(0);
+  const [closureError, setClosureError] = useState<boolean>(false);
+
   // On mount: check for a saved draft and offer Resume/Discard.
   useEffect(() => {
     const draft = readDraft(locationId);
@@ -297,6 +312,10 @@ export function ReceivingForm({
     setSavedAt(null);
     setLinkedPoId(null);
     setLinkedPoCode(null);
+    setOpenCredits([]);
+    setCheckedCreditIds(new Set());
+    // NOTE: closedCount / closureError are the success-state notice — NOT cleared here.
+    // resetForm runs on a successful submit; the notice must survive to be shown.
   };
 
   const resumeDraft = (draft: IntakeDraft) => {
@@ -338,6 +357,11 @@ export function ReceivingForm({
     // Clear any prior PO linkage when the vendor changes.
     setLinkedPoId(null);
     setLinkedPoCode(null);
+    // Clear any prior credit prefill + the last-submit closure notice.
+    setOpenCredits([]);
+    setCheckedCreditIds(new Set());
+    setClosedCount(0);
+    setClosureError(false);
     if (!nextVendorId) return;
     setPrefilling(true);
     // Fallback we drop to whenever there's no usable template: the vendor's usage-ranked
@@ -353,6 +377,9 @@ export function ReceivingForm({
       );
       if (!res.ok) { setLines(fallbackLines()); return; } // no template / error → offered fallback
       const body = (await res.json()) as TemplateResponse;
+      // V2-D4: capture the vendor's open credits regardless of the template branch —
+      // "Makes up a short?" shows even when there's no prefill template.
+      setOpenCredits(Array.isArray(body.openCredits) ? body.openCredits : []);
       const tpl = body?.template;
       if (!tpl || tpl.lines.length === 0) { setLines(fallbackLines()); return; }
 
@@ -407,6 +434,9 @@ export function ReceivingForm({
       receiptUrl: receiptPhotoId ? `/api/photos/${receiptPhotoId}` : null,
       // VO-6: carry the linked PO id so recordDelivery can validate + link it.
       purchaseOrderId: linkedPoId ?? null,
+      // V2-D4: the open credits this truck makes up (checked in "Makes up a short?").
+      // Filtered to ids still present in openCredits so a stale check can't leak.
+      makeUpCreditIds: openCredits.filter((c) => checkedCreditIds.has(c.id)).map((c) => c.id),
       lines: readyLines.map((l) => ({
         skuId: l.skuId,
         qtyReceived: Number(l.qty),
@@ -424,15 +454,25 @@ export function ReceivingForm({
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
     });
-    setBusy(false);
     if (res.ok) {
+      // V2-D4: read the closure result BEFORE resetForm so we can show the
+      // "N short(s) closed" / advisory notice. resetForm intentionally preserves
+      // closedCount/closureError; router.refresh() does NOT reset client useState.
+      const ok = (await res.json().catch(() => ({}))) as {
+        resolvedCredits?: string[];
+        creditClosureError?: boolean;
+      };
+      setBusy(false);
       // Clear the draft BEFORE router.refresh() so it can't be resumed
       // after a successful submit (D1 Task 6 law: clear on success).
       clearDraft(locationId);
       resetForm();
+      setClosedCount(Array.isArray(ok.resolvedCredits) ? ok.resolvedCredits.length : 0);
+      setClosureError(ok.creditClosureError === true);
       router.refresh();
       return;
     }
+    setBusy(false);
     const j = (await res.json().catch(() => ({}))) as { code?: string; message?: string; error?: string };
     if (res.status === 409 && j?.code === "duplicate_delivery") {
       // The message carries "(delivery <id>)" — parse it for a deep link.
@@ -663,6 +703,83 @@ export function ReceivingForm({
           />
         </label>
       </section>
+
+      {/* ── V2-D4 · "Makes up a short?" (default-collapsed, D-doctrine) ─────
+          Shown only when the selected vendor has open credits. Each row is a
+          checkbox: item · qty · reason · age · origin PO/delivery code. Checked
+          ids ride the submit payload as makeUpCreditIds → resolved_redelivered. */}
+      {vendorId !== "" && !prefilling && openCredits.length > 0 ? (
+        <div className="mt-4">
+          <CollapsibleSection
+            idBase="receiving-make-up-short"
+            title={t("receiving.makeup.title")}
+            count={t("receiving.makeup.count", { n: openCredits.length })}
+          >
+            <p className="mb-2 text-[12px] text-co-text-dim">{t("receiving.makeup.help")}</p>
+            <ul className="flex flex-col gap-1.5">
+              {openCredits.map((c) => {
+                const checked = checkedCreditIds.has(c.id);
+                const itemLabel = c.skuName ?? t("receiving.makeup.unknown_item");
+                const reasonLabel = t(("receiving.makeup.reason." + c.reason) as never);
+                const origin = c.originPoCode
+                  ? t("receiving.makeup.origin_po", { code: c.originPoCode })
+                  : c.originDeliveryId
+                    ? t("receiving.makeup.origin_delivery")
+                    : null;
+                return (
+                  <li key={c.id}>
+                    <label className="flex min-h-[44px] cursor-pointer items-start gap-3 rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5 h-5 w-5 shrink-0"
+                        checked={checked}
+                        disabled={busy}
+                        onChange={(e) => {
+                          const on = e.target.checked;
+                          setCheckedCreditIds((prev) => {
+                            const next = new Set(prev);
+                            if (on) next.add(c.id);
+                            else next.delete(c.id);
+                            return next;
+                          });
+                        }}
+                        aria-label={t("receiving.makeup.check_aria", { item: itemLabel })}
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-sm font-semibold text-co-text">{itemLabel}</span>
+                        <span className="block text-[11px] text-co-text-dim">
+                          {c.qty != null ? `${t("receiving.makeup.qty", { n: c.qty })} · ` : ""}
+                          {reasonLabel}
+                          {` · ${t("receiving.makeup.age_days", { n: c.ageDays })}`}
+                          {origin ? ` · ${origin}` : ""}
+                        </span>
+                      </span>
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+          </CollapsibleSection>
+        </div>
+      ) : null}
+
+      {/* V2-D4 success / advisory notice for the last submit's credit closure. */}
+      {closedCount > 0 ? (
+        <div
+          role="status"
+          className="mt-4 rounded-lg border-2 border-co-gold-deep bg-co-gold/20 px-3 py-3 text-sm font-bold text-co-text"
+        >
+          {t("receiving.makeup.closed_notice", { n: closedCount })}
+        </div>
+      ) : null}
+      {closureError ? (
+        <div
+          role="status"
+          className="mt-4 rounded-lg border-2 border-co-warning bg-co-warning-surface px-3 py-3 text-sm text-co-text"
+        >
+          {t("receiving.makeup.closure_error")}
+        </div>
+      ) : null}
 
       {/* Inline error / duplicate banner (never an alert()). */}
       {err ? (

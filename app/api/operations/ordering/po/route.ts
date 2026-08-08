@@ -17,6 +17,9 @@ import {
   type MarkPlacedInput,
 } from "@/lib/purchase-orders";
 import { generateDraftForVendor, OrderingError } from "@/lib/ordering";
+import { orderEmailPreview, sendOrderEmail } from "@/lib/po-email";
+import { buildThreeWayView, type ThreeWayView } from "@/lib/po-match";
+import { loadCreditsForDelivery } from "@/lib/credits";
 
 // The purchase-order lifecycle surface (sibling of ../route.ts — same house idiom: KH+ front
 // gate, typed error → jsonError). All authorization + location-bind (IDOR) is enforced inside
@@ -29,7 +32,13 @@ import { generateDraftForVendor, OrderingError } from "@/lib/ordering";
 //   POST { action: "place",    poId, channel, target?, note? } → markPlaced
 //   POST { action: "reconcile", poId }                      → markReconciled (AGM+; lib re-checks)
 //   POST { action: "generate_draft", locationId, vendorId } → generateDraftForVendor
+//   POST { action: "send_email", poId }                     → sendOrderEmail (V2 auto tier; two-tap)
 //   PATCH { poId, lines }                → updateDraftLines (draft-only, enforced in lib)
+//
+// The GET ?poId= detail payload also carries `emailPreview` (server-rendered to/from/
+// subject + bodies) when the PO is confirmed AND its location's auto-email leg is awake —
+// the panel's Send-to-vendor preview card reads it (no separate endpoint; the server is
+// the sole email author). Preview derivation failures NEVER break the detail load.
 
 const PLACEMENT_CHANNELS = new Set(["email", "sms", "phone", "portal", "in_person"]);
 
@@ -61,7 +70,41 @@ export async function GET(req: NextRequest) {
         return jsonError(400, "invalid_payload", { message: "Provide poId OR locationId, not both" });
       }
       const detail = await loadPoDetail(ctx, poId);
-      return jsonOk({ detail });
+      // Attach the server-rendered email preview when the auto leg is awake for a
+      // confirmed PO (V2 §3) — the panel's Send-to-vendor card reads it. Best-effort:
+      // a preview failure must never break the detail load (manual flow stays intact).
+      let emailPreview = null;
+      if (detail.status === "confirmed" && detail.transmit.emailOrderingAvailable) {
+        try {
+          emailPreview = await orderEmailPreview(ctx, poId);
+        } catch {
+          emailPreview = null;
+        }
+      }
+      // Attach the THREE-WAY match view (V2 §5) + the SKUs with an open credit on the
+      // linked deliveries (so a short_received row can chip its already-tracked credit).
+      // BOTH are best-effort in their OWN try/catch: a three-way derivation or credit
+      // read failure NEVER breaks the PO detail load (advisory read; house standing law).
+      let threeWay: ThreeWayView | null = null;
+      try {
+        threeWay = await buildThreeWayView(ctx, poId);
+      } catch {
+        threeWay = null;
+      }
+      let openCreditSkuIds: string[] = [];
+      try {
+        const seen = new Set<string>();
+        for (const did of detail.deliveryIds) {
+          const rows = await loadCreditsForDelivery(ctx, did);
+          for (const r of rows) {
+            if ((r.status === "open" || r.status === "in_progress") && r.skuId) seen.add(r.skuId);
+          }
+        }
+        openCreditSkuIds = [...seen];
+      } catch {
+        openCreditSkuIds = [];
+      }
+      return jsonOk({ detail, emailPreview, threeWay, openCreditSkuIds });
     }
     if (typeof locationId !== "string" || !locationId) {
       return jsonError(400, "invalid_payload", { field: "locationId" });
@@ -121,6 +164,15 @@ export async function POST(req: NextRequest) {
         if (typeof b.vendorId !== "string" || !b.vendorId) return jsonError(400, "invalid_payload", { field: "vendorId" });
         const created = await generateDraftForVendor(ctx, b.locationId, b.vendorId);
         return jsonOk({ poId: created.poId, displayCode: created.displayCode }, 201);
+      }
+      case "send_email": {
+        // V2 auto tier (two-tap). The server is the sole email author — the tap carries
+        // only poId; sendOrderEmail re-derives + gates (409 po_not_confirmed/email_dormant/
+        // no_email_target, 502 send_failed) and, on success, places the PO. mapLibError maps
+        // every PurchaseOrderError status (incl. the 502) to the house error shape.
+        if (typeof b.poId !== "string" || !b.poId) return jsonError(400, "invalid_payload", { field: "poId" });
+        const sent = await sendOrderEmail(ctx, b.poId);
+        return jsonOk({ poId: b.poId, status: "placed", providerMessageId: sent.providerMessageId });
       }
       default:
         return jsonError(400, "invalid_payload", { field: "action" });
