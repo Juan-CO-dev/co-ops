@@ -142,6 +142,11 @@ export function ParPassWalker({
   };
   const setSuggested = (skuId: string, n: number) => setSku(skuId, { qty: String(n), marked: true });
   const setFull = (skuId: string) => setSku(skuId, { qty: "0", marked: true });
+  // "Empty" = the shelf-is-bare one-tap: order the FULL par (ceil to whole order units,
+  // matching the suggest math). The complement of "We're full · 0" — the two extremes of
+  // the walk. (Born of the first smoke: "Full" alone read as "order a full par".)
+  const setOrderPar = (skuId: string, par: number) =>
+    setSku(skuId, { qty: String(Math.max(Math.ceil(par), 0)), marked: true });
   const clearSku = (skuId: string) => setSku(skuId, { qty: "", marked: false });
 
   const goReview = () => {
@@ -384,6 +389,7 @@ export function ParPassWalker({
             onInput={(skuId, qty) => setSku(skuId, { qty, marked: true })}
             onSuggest={setSuggested}
             onFull={setFull}
+            onOrderPar={setOrderPar}
             onClear={clearSku}
           />
         ))
@@ -417,6 +423,7 @@ function VendorSection({
   onInput,
   onSuggest,
   onFull,
+  onOrderPar,
   onClear,
 }: {
   vendor: WalkerVendor;
@@ -425,6 +432,7 @@ function VendorSection({
   onInput: (skuId: string, qty: string) => void;
   onSuggest: (skuId: string, n: number) => void;
   onFull: (skuId: string) => void;
+  onOrderPar: (skuId: string, par: number) => void;
   onClear: (skuId: string) => void;
 }) {
   const { t } = useTranslation();
@@ -463,6 +471,7 @@ function VendorSection({
             onInput={(q) => onInput(s.skuId, q)}
             onSuggest={() => s.suggestedQty != null && onSuggest(s.skuId, s.suggestedQty)}
             onFull={() => onFull(s.skuId)}
+            onOrderPar={() => onOrderPar(s.skuId, s.parToday)}
             onClear={() => onClear(s.skuId)}
           />
         ))}
@@ -479,6 +488,7 @@ function SkuRow({
   onInput,
   onSuggest,
   onFull,
+  onOrderPar,
   onClear,
 }: {
   sku: WalkerSku;
@@ -487,6 +497,7 @@ function SkuRow({
   onInput: (qty: string) => void;
   onSuggest: () => void;
   onFull: () => void;
+  onOrderPar: () => void;
   onClear: () => void;
 }) {
   const { t } = useTranslation();
@@ -589,8 +600,10 @@ function SkuRow({
           </button>
         </div>
 
-        {/* One-tap chips: Suggest (fills the suggested qty) · Full (explicit 0) · Clear
-            (un-observe — back to EMPTY, so the line is not submitted). */}
+        {/* One-tap chips — the two shelf extremes + the anchored middle: Suggest (par −
+            on-hand, when an anchor exists) · Empty (order the FULL par — the bare-shelf
+            tap) · We're-full (explicit 0: shelf at par, orders nothing, anchors on-hand)
+            · Clear (un-observe — back to EMPTY, so the line is not submitted). */}
         <div className="mt-2 flex flex-wrap gap-2">
           {sku.suggestedQty != null && (
             <button
@@ -602,6 +615,14 @@ function SkuRow({
               {t("ordering.row.suggest", { n: sku.suggestedQty })}
             </button>
           )}
+          <button
+            type="button"
+            onClick={onOrderPar}
+            aria-label={t("ordering.row.order_par_aria", { sku: sku.name, n: Math.ceil(sku.parToday) })}
+            className={`${chip} border-co-border bg-co-surface text-co-text hover:border-co-text`}
+          >
+            {t("ordering.row.order_par", { n: Math.ceil(sku.parToday) })}
+          </button>
           <button
             type="button"
             onClick={onFull}
