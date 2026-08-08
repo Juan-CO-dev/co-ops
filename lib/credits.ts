@@ -265,6 +265,16 @@ export async function resolveCredit(
 }
 
 // ── Open-credit ROWS for a vendor+location (KH+): the redelivery-closure prefill ──
+
+/**
+ * The goods-shaped reasons a physical redelivery can close (V2-D4). SINGLE SOURCE OF
+ * TRUTH for both the prefill loader AND resolveCreditsRedelivered's server-side check —
+ * the UI filter alone is not enforcement (a crafted request could smuggle a money-shaped
+ * credit id past it; the resolver must reject those at KH+, keeping 'over' and
+ * 'price_discrepancy' exclusively on the AGM+ judgment path).
+ */
+export const REDELIVERY_CLOSEABLE_REASONS = ["short", "damaged", "substitution"] as const;
+
 export interface OpenCreditRow {
   id: string;
   skuName: string | null; // vendor_items.name via sku_id; null when the credit named no SKU
@@ -298,14 +308,15 @@ export async function loadOpenCreditRowsForVendor(
   // in_progress credit is mid-resolution on the AGM+ judgment path — leave it to that
   // flow (offering it here would produce a check that silently no-ops to `skipped`).
   //
-  // GOODS-SHAPED reasons only: redelivery closes short, damaged, and substitution credits
+  // GOODS-SHAPED reasons only (REDELIVERY_CLOSEABLE_REASONS — the resolver enforces the
+  // same set server-side): redelivery closes short, damaged, and substitution credits
   // because a later truck can make up a short, replace damaged goods, or correct a
   // substitution. 'over' and 'price_discrepancy' are money-shaped and resolve exclusively
   // through the AGM+ judgment path (resolveCredit) — never by a physical redelivery.
   const { data: rows, error } = await sb.from("vendor_credits")
     .select("id, sku_id, reason, qty, created_at, delivery_id")
     .eq("vendor_id", vendorId).eq("location_id", locationId).eq("status", "open")
-    .in("reason", ["short", "damaged", "substitution"])
+    .in("reason", [...REDELIVERY_CLOSEABLE_REASONS])
     .limit(100) // bounded render/prefill guard — mirrors the route's MAX_MAKE_UP_CREDITS rationale
     .order("created_at", { ascending: true })
     .returns<Array<{ id: string; sku_id: string | null; reason: string; qty: number | string | null; created_at: string; delivery_id: string | null }>>();
@@ -403,23 +414,26 @@ export async function resolveCreditsRedelivered(
   if (!d) throw new CreditError(404, "not_found", "Delivery not found");
   if (!lockLocationContext(actorLoc(actor), d.location_id)) throw new CreditError(404, "not_found", "Delivery not found");
 
-  // Load the candidate credits ONCE (batch) so we can validate vendor+location
+  // Load the candidate credits ONCE (batch) so we can validate vendor+location+reason
   // membership without a per-credit round trip.
   const { data: creditRows, error: cErr } = await sb.from("vendor_credits")
-    .select("id, vendor_id, location_id, status").in("id", ids)
-    .returns<Array<{ id: string; vendor_id: string; location_id: string; status: string }>>();
+    .select("id, vendor_id, location_id, status, reason").in("id", ids)
+    .returns<Array<{ id: string; vendor_id: string; location_id: string; status: string; reason: string }>>();
   if (cErr) throw new Error(`resolveCreditsRedelivered credits: ${cErr.message}`);
   const byId = new Map((creditRows ?? []).map((c) => [c.id, c]));
 
   const resolved: string[] = [];
   const skipped: string[] = [];
   const nowIso = new Date().toISOString();
+  const closeableReasons: readonly string[] = REDELIVERY_CLOSEABLE_REASONS;
 
   for (const id of ids) {
     const c = byId.get(id);
-    // Unknown id, or a credit that isn't this delivery's vendor+location → skip (a
-    // mismatched/stale checkbox must never fail the whole intake).
-    if (!c || c.vendor_id !== d.vendor_id || c.location_id !== d.location_id) {
+    // Unknown id, wrong vendor+location, or a money-shaped reason → skip (a mismatched/
+    // stale checkbox must never fail the whole intake). The reason check is ENFORCEMENT,
+    // not UX: the prefill only offers goods-shaped credits, but a crafted request could
+    // smuggle an 'over'/'price_discrepancy' id — those close ONLY via AGM+ resolveCredit.
+    if (!c || c.vendor_id !== d.vendor_id || c.location_id !== d.location_id || !closeableReasons.includes(c.reason)) {
       skipped.push(id);
       continue;
     }

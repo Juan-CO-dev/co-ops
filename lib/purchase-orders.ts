@@ -997,6 +997,9 @@ export interface PoTransmissionRow {
   sentAt: string;
   sentByName: string | null;
   note: string | null;
+  /** Provider message id (Resend id / Twilio SID) when the leg was automated — the
+   *  forensic link between this placement and the outbound message. Null for manual. */
+  providerMessageId: string | null;
 }
 /** One sms_messages row linked to this PO — the SMS half of the unified trail (V2 §5c).
  *  body is TRUNCATED (~200 chars) and rendered TEXT-ONLY at the panel (untrusted vendor
@@ -1049,6 +1052,17 @@ export interface PoTransmit {
    *  server-side in sendOrderEmail (client never composes the send). */
   orderEmailRecipients: string[];
 }
+/** The vendor-acknowledgment evidence on a placed PO (V2-D2) — a READ view of the ack
+ *  jsonb both channel legs write (email: applyReceiptPoEffects; SMS: fillPoAckFromSms).
+ *  Parsed DEFENSIVELY: the jsonb is service-written but shapes differ per channel
+ *  (receiptId vs smsId) — the panel only needs source/at/from + the extras count. */
+export interface PoAckInfo {
+  source: string | null; // 'email' | 'sms' (null on an unexpected shape)
+  at: string | null;
+  from: string | null;
+  additionalCount: number;
+}
+
 export interface PoDetail {
   poId: string;
   displayCode: string;
@@ -1065,6 +1079,9 @@ export interface PoDetail {
   placedNote: string | null;
   lines: PoDetailLine[];
   transmissions: PoTransmissionRow[];
+  /** V2-D2: "placed · vendor confirmed ✓" — null until a matched confirmation fills the
+   *  ack jsonb. This is the READ side of what both channel legs write. */
+  ack: PoAckInfo | null;
   /** SMS messages linked to this PO (V2 §5c) — rendered in the unified trail alongside
    *  transmissions/receipts. Empty until the Twilio leg is fed; body is text-only. */
   smsMessages: PoSmsRow[];
@@ -1076,6 +1093,22 @@ export interface PoDetail {
   /** Tier-appropriate transmit context (vendor config; read-only). Powers the confirmed
    *  state's contact card / portal deep link (spec §3). */
   transmit: PoTransmit;
+}
+
+/** Defensive read of the ack jsonb (V2-D2). Both channel writers produce
+ *  {…, at, from, source, additional?: […]}; anything off-shape degrades to nulls —
+ *  never a crash on a jsonb read (the write side owns the shape, the read side trusts
+ *  nothing). */
+function parseAckInfo(raw: unknown): PoAckInfo | null {
+  if (raw == null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  const str = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : null);
+  return {
+    source: str(o.source),
+    at: str(o.at),
+    from: str(o.from),
+    additionalCount: Array.isArray(o.additional) ? o.additional.length : 0,
+  };
 }
 
 /**
@@ -1092,12 +1125,13 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
   const sb = getServiceRoleClient();
 
   const { data: po, error: poErr } = await sb.from("purchase_orders")
-    .select("id, location_id, vendor_id, display_code, status, par_pass_event_id, confirmed_snapshot, cutoff_at_confirm, created_at, confirmed_at, placed_at, placed_note")
+    .select("id, location_id, vendor_id, display_code, status, par_pass_event_id, confirmed_snapshot, cutoff_at_confirm, created_at, confirmed_at, placed_at, placed_note, ack")
     .eq("id", poId)
     .maybeSingle<{
       id: string; location_id: string; vendor_id: string; display_code: string; status: string;
       par_pass_event_id: string | null; confirmed_snapshot: unknown | null; cutoff_at_confirm: string | null;
       created_at: string; confirmed_at: string | null; placed_at: string | null; placed_note: string | null;
+      ack: unknown | null;
     }>();
   if (poErr) throw new Error(`loadPoDetail load: ${poErr.message}`);
   if (!po) throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
@@ -1122,9 +1156,9 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
       .eq("po_id", poId).order("guide_position_snapshot", { ascending: true, nullsFirst: false }).order("created_at", { ascending: true })
       .returns<Array<{ sku_id: string; order_qty: number | string; order_unit_label: string | null; price_cents_at_order: number | null; guide_position_snapshot: number | null; note: string | null }>>(),
     sb.from("po_transmissions")
-      .select("id, channel, target, sent_at, sent_by, note")
+      .select("id, channel, target, sent_at, sent_by, note, provider_message_id")
       .eq("po_id", poId).order("sent_at", { ascending: true })
-      .returns<Array<{ id: string; channel: string; target: string | null; sent_at: string; sent_by: string | null; note: string | null }>>(),
+      .returns<Array<{ id: string; channel: string; target: string | null; sent_at: string; sent_by: string | null; note: string | null; provider_message_id: string | null }>>(),
     sb.from("vendors").select("id, name, transmission_tier, portal_url").eq("id", po.vendor_id)
       .maybeSingle<{ id: string; name: string; transmission_tier: string | null; portal_url: string | null }>(),
     sb.from("vendor_deliveries").select("id").eq("purchase_order_id", poId).returns<Array<{ id: string }>>(),
@@ -1270,7 +1304,9 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
       sentAt: t.sent_at,
       sentByName: t.sent_by ? userName.get(t.sent_by) ?? null : null,
       note: t.note,
+      providerMessageId: t.provider_message_id,
     })),
+    ack: parseAckInfo(po.ack),
     // SMS trail rows (V2 §5c): body TRUNCATED to ~200 chars for the trail preview (the full
     // body lives in the ledger). Rendered text-only at the panel (untrusted vendor content).
     smsMessages: (smsRows ?? []).map((s) => ({

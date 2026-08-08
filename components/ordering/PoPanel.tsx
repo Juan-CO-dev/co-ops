@@ -364,6 +364,14 @@ export function PoPanel({
               <AlertPill tone={STATUS_TONE[detail.status] ?? "info"} uppercase={false}>
                 {t(("ordering.po.status." + detail.status) as TranslationKey)}
               </AlertPill>
+              {/* V2-D2: acknowledgment is EVIDENCE on placed, not a status — the ✓ chip
+                  appears the moment a matched confirmation fills the ack (any channel). */}
+              {detail.ack && (
+                <AlertPill tone="ok" uppercase={false}>
+                  {t("ordering.po.ack.confirmed")}
+                  {detail.ack.additionalCount > 0 ? ` +${detail.ack.additionalCount}` : ""}
+                </AlertPill>
+              )}
               <span className="rounded-md bg-co-surface-2 px-2 py-0.5 font-mono text-[12px] font-bold tracking-wide text-co-text-dim">
                 {detail.displayCode}
               </span>
@@ -865,6 +873,17 @@ function TrailView({
             </li>
           ))}
         </ol>
+        {/* V2-D2 evidence line: who confirmed, via which channel, when. from renders as
+            plain text (vendor-supplied address/number — untrusted content law). */}
+        {detail.ack && (
+          <p className="mt-2 text-[12px] text-co-text-dim">
+            {t("ordering.po.ack.detail", {
+              from: detail.ack.from ?? "—",
+              channel: detail.ack.source ?? "—",
+            })}
+            {detail.ack.at ? ` · ${formatTime(detail.ack.at, language)}` : ""}
+          </p>
+        )}
       </section>
 
       {/* Transmissions list. */}
@@ -883,6 +902,9 @@ function TrailView({
                   {t("ordering.po.tx_by", { name: tx.sentByName ?? t("ordering.po.tx_automated") })}
                 </span>
                 {tx.note && <span className="block text-[12px] italic text-co-text-dim">{tx.note}</span>}
+                {tx.providerMessageId && (
+                  <span className="block break-all font-mono text-[11px] text-co-text-muted">{tx.providerMessageId}</span>
+                )}
               </li>
             ))}
           </ul>

@@ -2790,6 +2790,8 @@
   "ordering.po.auto.line_summary": "{n} línea(s) · {count} destinatario(s)",
   "ordering.po.auto.send": "Enviar al proveedor",
   "ordering.po.auto.send_help": "Envía el correo del pedido y lo marca como enviado.",
+  "ordering.po.ack.confirmed": "Proveedor confirmó ✓",
+  "ordering.po.ack.detail": "El proveedor confirmó desde {from} por {channel}",
   "ordering.po.auto.no_target": "No hay correo del proveedor registrado — envía el pedido de otra forma abajo.",
   "ordering.po.auto.preview_unavailable": "No se pudo cargar la vista previa del correo — vuelve a abrir este pedido para reintentar, o envíalo de otra forma abajo.",
   "ordering.po.auto.dormant": "El correo automático aún no está configurado para esta tienda — envía el pedido de otra forma abajo.",

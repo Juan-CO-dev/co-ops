@@ -2790,6 +2790,8 @@
   "ordering.po.auto.line_summary": "{n} line(s) · {count} recipient(s)",
   "ordering.po.auto.send": "Send to vendor",
   "ordering.po.auto.send_help": "Sends the order email and marks it placed.",
+  "ordering.po.ack.confirmed": "Vendor confirmed ✓",
+  "ordering.po.ack.detail": "Vendor confirmed from {from} via {channel}",
   "ordering.po.auto.no_target": "No vendor email on file — send the order another way below.",
   "ordering.po.auto.preview_unavailable": "Email preview couldn't load — reopen this order to retry, or send another way below.",
   "ordering.po.auto.dormant": "Automatic email isn't set up for this store yet — send the order another way below.",
