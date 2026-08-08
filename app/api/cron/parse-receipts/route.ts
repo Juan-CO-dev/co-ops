@@ -1,4 +1,8 @@
-// GET periodic receipt-parse sweep (Vercel Cron; every 30 min). Sweeps the OLDEST
+// GET periodic receipt-parse sweep (Vercel Cron; DAILY at 9:45 ET-ish — Hobby plan allows
+// daily crons only, and sub-daily parse latency isn't needed while the email leg is
+// dormant: the KH+ "Parse now" affordance covers on-demand. When the account is Pro AND
+// inbound volume is real, tighten the vercel.json schedule (e.g. */30) — the sweep is
+// already batch-capped + idempotent, so cadence is purely a config choice. Sweeps the OLDEST
 // unparsed INBOUND receipts (parse_state='unparsed' AND source='inbound') and runs the
 // LLM parse engine (lib/receipt-parse.ts) on each — classifying doc_kind, extracting
 // fields into parsed_json, then re-running the Task-4 PO match+effects so a parsed
