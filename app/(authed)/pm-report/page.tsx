@@ -57,7 +57,7 @@ export default async function PmReportPage({ searchParams }: PageProps) {
   // Gate: KH+ only
   if (auth.level < PM_REPORT_BASE_LEVEL) {
     return (
-      <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
+      <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
         <AccessDeniedBanner language={auth.user.language} />
       </main>
     );
@@ -128,7 +128,7 @@ export default async function PmReportPage({ searchParams }: PageProps) {
   const submitted = report?.status === "submitted";
 
   return (
-    <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
+    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3">
         <DashboardBackLink />
       </div>

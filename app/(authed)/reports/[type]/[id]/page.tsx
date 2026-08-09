@@ -75,7 +75,7 @@ export default async function ReportDetailPage({ params, searchParams }: PagePro
   // List-visibility gate at detail (defence-in-depth)
   if (type === "cash" && level < REPORTS_HUB_CASH_LEVEL) {
     return (
-      <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
+      <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
         <a href={backHref} className="mb-4 block text-sm text-co-text-muted hover:underline">
           {t("reports.detail.back")}
         </a>
@@ -91,7 +91,7 @@ export default async function ReportDetailPage({ params, searchParams }: PagePro
 
   if (!detail) {
     return (
-      <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
+      <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
         <a href={backHref} className="mb-4 block text-sm text-co-text-muted hover:underline">
           {t("reports.detail.back")}
         </a>
@@ -103,7 +103,7 @@ export default async function ReportDetailPage({ params, searchParams }: PagePro
   }
 
   return (
-    <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
+    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
       <BackLink search={`?location=${locationParam}`} labelKey="reports.detail.back" />
 
       {/* Opening detail view — surfaces recount numbers + NULL-sentinel indicator */}

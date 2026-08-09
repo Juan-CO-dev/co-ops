@@ -61,7 +61,7 @@ export default async function ReceivingPage({ searchParams }: { searchParams: Pr
   const missingEmailIds = deriveMissingEmailIds(recent);
 
   return (
-    <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
+    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3"><DashboardBackLink /></div>
       <h1 className="mb-4 text-lg font-bold text-co-text">{serverT(lang, "receiving.page.title")}</h1>
       <ReceivingForm formData={formData} locationId={location} today={nyDate()} />

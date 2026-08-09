@@ -1575,7 +1575,7 @@ export function OpeningClient({
           px-4 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.06)] sm:px-6
         "
       >
-        <div className="mx-auto flex max-w-3xl flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="mx-auto flex max-w-md flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-col gap-0.5">
             <p className="text-xs font-medium text-co-text-muted">
               <span className="font-bold text-co-text">

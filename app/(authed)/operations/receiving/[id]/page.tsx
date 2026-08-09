@@ -78,7 +78,7 @@ export default async function DeliveryDetailPage({ params }: { params: Promise<{
   }));
 
   return (
-    <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
+    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
       <BackLink />
       <h1 className="text-lg font-bold text-co-text">{detail.vendorName}</h1>
       <p className="mt-1 text-sm text-co-text-muted">

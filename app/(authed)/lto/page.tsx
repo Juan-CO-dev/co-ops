@@ -86,7 +86,7 @@ export default async function LtoPage() {
   }
 
   return (
-    <main className="mx-auto flex w-full max-w-2xl flex-col gap-5 px-4 py-6">
+    <main className="mx-auto flex w-full max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl flex-col gap-5 px-4 py-6">
       <BackLink />
       {/* ─── Active LTOs & discounts (catering_mgr+ only) ───────────── */}
       {level >= SURPLUS_READ_MIN && (
