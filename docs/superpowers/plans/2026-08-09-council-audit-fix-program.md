@@ -1,0 +1,31 @@
+# Council-audit fix program — plan (2026-08-09)
+
+Spec source: `.claude/council/2026-08-08-full-audit/report.md` (deep-tier 6-seat council; 12 P1-class claims head-verified). Juan ratified CC's wave recommendation 2026-08-09: "run it subagent driven how we always do, you touch the most important parts... on auto."
+
+**Shape: ONE branch `claude/council-audit-fixes`, ONE PR** (Wave 0 correctness first in sequence, Wave 1 consistency after), cross-family verifier at the end, CI-green, STOP for Juan's merge click. No migrations in scope (Wave-2 items needing schema are deferred by design). Auto-mode boundary: build to green PR, never merge.
+
+Owner key: **CC** = my hands (coupled/lifecycle/judgment per fleet doctrine Q1) · **opus** = heavy implementer subagent · **sonnet** = standard implementer subagent. Every subagent task: files-only (controller runs gates/commits), confirm-before-authoring embedded, two-stage review (spec then quality).
+
+## Wave 0 — defuse before the errands land
+
+- **T1 (CC): `invoiced` joins the living lifecycle.** `recordDelivery` accepts `placed|invoiced` (`lib/receiving.ts:334-339`); `advanceToReceived` guard → `.in("status",["placed","invoiced"])` (`lib/purchase-orders.ts:~797`); receiving intake's placed-PO pre-fill list includes invoiced; PoPanel renders receive affordance for invoiced; fix stale invariant comment (`purchase-orders.ts:22`); add `ordering.po.error.already_invoiced` en+es. Verify `markReconciled` needs no change (received-only is still right once receiving works).
+- **T2 (CC): cron business-date math.** `yesterdayYmd()` in `app/api/cron/toast-sales-pull/route.ts:29-33` → derive via the ET calendar-date primitive (string date-math, no local-zone round-trip); same fix at `components/admin/catering/prep-demand/SalesTab.tsx:23`. Unit-test the derivation in EST + EDT.
+- **T3 (CC): batch `loadOnHand` census tier** (`lib/counts.ts:762-830`): group per-anchor like the two secondary tiers already do; helpers take arrays. Verify opus's N+1 claim in situ first.
+- **T4 (opus): unchecked-read batch + truncation.** counts.ts 666/690/741/904/951/1010/1186/1225 → destructure error, throw (drift math must error, never fabricate); `app/ordering/page.tsx:55` render error not "no location". `selectAllRows` + deterministic `.order()` on `loadSkuUsageRank` (lib/ordering.ts:259), `loadInferredConsumedOz` (counts.ts:330), `loadLatestOrderQtyBySku`/`loadLatestPriceCentsBySku` (purchase-orders.ts:600).
+- **T5 (opus): unchecked-write batch + guards.** `prep-consumption.ts:249` (error+count, throw before audit); `prep.ts:1448-1451` supersede check (mirror `:1526`); `completeDelivery` UPDATE gains `.eq("delivery_status","in_progress")` + count→409 already_complete; `setQuoteStatus` blocks `expired→accepted`; `moveStage` stale-audit guard (`.eq("stage", fromStage)` + count); UUID_RE guards in `lib/portal/quotes.ts` (loadCustomerQuoteDetail/initiatePayment) + `lib/po-match.ts:214`; tighten mailto `isValidEmail` (reject `%`, `:`).
+- **T6 (CC): `confirmInstance` flip-first** (lib/checklists.ts:1374-1434) — claim via status flip, dependents after, scoped revert on dependent failure (recordPlacement pattern). Verify builder's claim in situ first.
+- **T7 (sonnet): portal safety.** Delete `app/order/checkout` + `app/order/confirmation` (grep zero inbound refs incl. `co_order_paid`); Sign-in `href="#"` → `/order/start` (`app/order/page.tsx:166`); pay-surface terminology: customer-facing "quote" strings on `/order/quote/[id]` → order-voice (keys only, no lib renames).
+- **T8 (sonnet): CountForm honesty.** Incomplete lines → amber notice "N lines incomplete — not saved" (i18n en+es), submit stays enabled; dropped-count surfaced in success state.
+- **T9 (sonnet): i18n key repairs.** `ordering.po.error.no_par` (copy exists at `ordering.error.no_par`); `opening.error.phase1_not_eligible` (+ `phase3_not_eligible`, `out_of_range_reason_missing` per projects' watch note); `<html lang>` follows user language (effect in the authed TranslationProvider sets `document.documentElement.lang`).
+
+## Wave 1 — one product
+
+- **T10 (opus): `(authed)` layout shell + width sweep.** Mirror `admin/layout.tsx:56`; strip per-page width wrappers in `(authed)`; root-level authed pages (`app/ordering`, `app/lto`→already authed?, `app/recipes`, stubs) get the ladder individually; AuthShell surfaces (opening flow, dashboard) get a scoped decision: dashboard moves to the house ladder, opening checklist flow keeps phone-first but footer/content widths reconciled. CC reviews the full diff page-by-page.
+- **T11 (sonnet): adoption sweeps.** EmptyState on curated top-traffic empties (~10 sites, incl. counts/receiving/PO history); `loading.tsx` for `/order`, `/ordering`, root group + fix the 2 existing ones painting over the gradient; `.co-card` on ItemsClient/UserAdminClient/VendorListClient; PlaceholderCard → t() props + contrast fix (kill `text-[#aaa]`/10px) + house width.
+- **T12 (sonnet): format consolidation (curated, not blind).** ~14 ET-today copies → `operational-day` import; `UserAdminClient:151` + `QuotesClient:751` → `formatDateLabel` (real locale + ET timeZone); `receiving/[id]:170` "/pack" key; leave customer-portal en-US sites (English-by-design, note in code).
+- **T13 (CC spec + sonnet build): silence explains itself.** (a) walker blackout banner when yesterday is gap-tainted ("sales still processing — advisory back by ~5 AM"); (b) missing-weight hint chip on walker rows whose SKU can't anchor (no oz conversion); (c) three-way view note when unparsed receipts exist ("invoices parse daily ~5:45 AM"); (d) email-dormant one-liner in PoPanel transmit block. All en+es.
+
+## Close
+- **T14:** full gates (discipline + `npm test` + `next build`), cross-family verifier card (builder lane, read-only clone, findings as card comment), fix findings, PR with council-report link, STOP.
+
+Deferred to Wave 2 (design-gated, NOT in this PR): confirmPO snapshot atomicity RPC; crosswalk-version snapshotting; par-overlay "none" semantics; portal Spanish; pm-eval partial unique index (migration); tap-target floor; po-match substitution join rework.
