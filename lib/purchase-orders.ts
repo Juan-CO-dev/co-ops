@@ -592,11 +592,12 @@ export async function confirmPO(actor: AuthContext, poId: string): Promise<void>
 }
 
 /**
- * Latest price (in CENTS) per SKU from vendor_price_history. ONE batched query
- * over the SKU set, ordered newest-first by effective_date then recorded_at; the
- * FIRST row seen per vendor_item wins. unit_price is DOLLARS (numeric) → cents via
- * Math.round(× 100). A SKU with no price row is absent from the map (→ advisory
- * null at the call site — never fabricated). Bounded by the SKU set; no per-SKU I/O.
+ * Latest price (in CENTS) per SKU from vendor_price_history. One batched, PAGED
+ * scan over the SKU set (never per-SKU I/O), ordered newest-first by
+ * effective_date then recorded_at; the FIRST row seen per vendor_item wins.
+ * unit_price is DOLLARS (numeric) → cents via Math.round(× 100). A SKU with no
+ * price row is absent from the map (→ advisory null at the call site — never
+ * fabricated).
  */
 async function loadLatestPriceCentsBySku(sb: ServiceClient, skuIds: string[]): Promise<Map<string, number>> {
   const out = new Map<string, number>();

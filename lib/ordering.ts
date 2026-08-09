@@ -530,10 +530,10 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
 }
 
 /**
- * The latest (by created_at) par_pass_lines.order_qty per SKU — one batched query over
- * the sku_ix (sku_id, created_at desc). We pull the recent rows for the SKU set and
- * keep the FIRST seen per SKU in created_at-desc order (the latest). Bounded by the
- * SKU set; no per-SKU query.
+ * The latest (by created_at) par_pass_lines.order_qty per SKU — one batched, PAGED
+ * scan over the sku_ix (sku_id, created_at desc; never per-SKU I/O). We pull the
+ * rows for the SKU set and keep the FIRST seen per SKU in created_at-desc order
+ * (the latest).
  */
 async function loadLatestOrderQtyBySku(
   sb: ReturnType<typeof getServiceRoleClient>,

@@ -30,6 +30,7 @@
  * sku_pack_levels from receiving.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
@@ -236,31 +237,55 @@ async function loadSkuUsageRank(
   const cutoffDate = cutoffIso.slice(0, 10); // YYYY-MM-DD for the business_date filter.
 
   // Production lane — live productions at this location in the window, then their inputs.
-  const { data: prodHdrs, error: phErr } = await sb.from("productions")
-    .select("id")
-    .eq("location_id", locationId)
-    .is("superseded_at", null).is("revoked_at", null)
-    .gt("produced_at", cutoffIso)
-    .returns<Array<{ id: string }>>();
-  if (phErr) throw new Error(`loadSkuUsageRank productions: ${phErr.message}`);
-  const prodIds = (prodHdrs ?? []).map((h) => h.id);
+  // PAGED (the PR #63 lesson; mirrors lib/ordering.ts's twin of this function): 30 days
+  // of rows overrun the 1000-row cap and a truncated page silently under-ranks. All
+  // three reads are order-insensitive sums — `id` (the PK) is the stable total order.
+  const prodHdrs = await selectAllRows<{ id: string }>(
+    async (from, to) => {
+      const { data, error } = await sb.from("productions")
+        .select("id")
+        .eq("location_id", locationId)
+        .is("superseded_at", null).is("revoked_at", null)
+        .gt("produced_at", cutoffIso)
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<{ id: string }>>();
+      if (error) throw new Error(`loadSkuUsageRank productions: ${error.message}`);
+      return { data };
+    },
+  );
+  const prodIds = prodHdrs.map((h) => h.id);
   if (prodIds.length > 0) {
-    const { data: inputs, error: piErr } = await sb.from("production_inputs")
-      .select("input_sku_id, input_oz")
-      .in("production_id", prodIds)
-      .returns<Array<{ input_sku_id: string; input_oz: number | string | null }>>();
-    if (piErr) throw new Error(`loadSkuUsageRank production_inputs: ${piErr.message}`);
-    for (const r of inputs ?? []) add(r.input_sku_id, num(r.input_oz) ?? 0);
+    const inputs = await selectAllRows<{ input_sku_id: string; input_oz: number | string | null }>(
+      async (from, to) => {
+        const { data, error } = await sb.from("production_inputs")
+          .select("input_sku_id, input_oz")
+          .in("production_id", prodIds)
+          .order("id", { ascending: true })
+          .range(from, to)
+          .returns<Array<{ input_sku_id: string; input_oz: number | string | null }>>();
+        if (error) throw new Error(`loadSkuUsageRank production_inputs: ${error.message}`);
+        return { data };
+      },
+    );
+    for (const r of inputs) add(r.input_sku_id, num(r.input_oz) ?? 0);
   }
 
   // Sales direct lane — the materialized depletion ledger over the window (0166).
-  const { data: sales, error: sErr } = await sb.from("toast_daily_depletion")
-    .select("sku_id, direct_oz")
-    .eq("location_id", locationId)
-    .gte("business_date", cutoffDate)
-    .returns<Array<{ sku_id: string; direct_oz: number | string }>>();
-  if (sErr) throw new Error(`loadSkuUsageRank toast_daily_depletion: ${sErr.message}`);
-  for (const r of sales ?? []) add(r.sku_id, num(r.direct_oz) ?? 0);
+  const sales = await selectAllRows<{ sku_id: string; direct_oz: number | string }>(
+    async (from, to) => {
+      const { data, error } = await sb.from("toast_daily_depletion")
+        .select("sku_id, direct_oz")
+        .eq("location_id", locationId)
+        .gte("business_date", cutoffDate)
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<{ sku_id: string; direct_oz: number | string }>>();
+      if (error) throw new Error(`loadSkuUsageRank toast_daily_depletion: ${error.message}`);
+      return { data };
+    },
+  );
+  for (const r of sales) add(r.sku_id, num(r.direct_oz) ?? 0);
 
   return usage;
 }
