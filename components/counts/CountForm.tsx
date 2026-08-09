@@ -29,6 +29,16 @@ export function CountForm({ skus, locationId }: { skus: CountSkuOption[]; locati
     !busy &&
     lines.some((l) => l.skuId !== "" && l.level.trim() !== "" && l.qty.trim() !== "");
 
+  // Council P2: submit() silently drops any line that's only partially filled (started
+  // but not finished) — the operator got a clean success having lost lines. A line with
+  // ALL THREE fields blank is an untouched spare row, never counted/warned about; a line
+  // with SOME but not all of skuId/level/qty filled is what gets silently dropped below.
+  const incompleteCount = lines.filter((l) => {
+    const isEmpty = l.skuId === "" && l.level.trim() === "" && l.qty.trim() === "";
+    const isComplete = l.skuId !== "" && l.level.trim() !== "" && l.qty.trim() !== "";
+    return !isEmpty && !isComplete;
+  }).length;
+
   const submit = async () => {
     if (!canSubmit) return;
     setErr(null); setBusy(true);
@@ -108,6 +118,14 @@ export function CountForm({ skus, locationId }: { skus: CountSkuOption[]; locati
         <textarea className={`${field} min-h-[60px] py-2`} value={note} disabled={busy} onChange={(e) => setNote(e.target.value)} placeholder={t("counts.form.note_hint")} aria-label={t("counts.form.note")} /></label>
 
       {err ? <p className="mt-3 text-sm text-co-cta">{err}</p> : null}
+      {/* Pre-submit visibility for the drop that submit() still performs (council P2):
+          submit stays enabled — an operator may legitimately skip a line they started —
+          but the notice surfaces the drop BEFORE they tap Record. */}
+      {incompleteCount > 0 ? (
+        <div role="status" className="mt-3 rounded-lg border-2 border-co-warning bg-co-warning-surface px-3 py-3 text-sm text-co-text">
+          {t("counts.form.incomplete_lines", { n: incompleteCount })}
+        </div>
+      ) : null}
       <div className="mt-4 flex justify-end">
         <button type="button" disabled={!canSubmit} onClick={() => void submit()} className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50">{t("counts.form.submit")}</button>
       </div>
