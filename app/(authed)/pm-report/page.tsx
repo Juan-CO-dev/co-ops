@@ -33,17 +33,6 @@ import { DashboardBackLink } from "@/components/DashboardBackLink";
 import { AccessDeniedBanner } from "@/components/ui/AccessDeniedBanner";
 import { PmReportClient } from "./pm-report-client";
 
-const OPERATIONAL_TZ = "America/New_York";
-
-function nyDateString(d: Date): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: OPERATIONAL_TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(d);
-}
-
 interface PageProps {
   searchParams: Promise<{ location?: string }>;
 }

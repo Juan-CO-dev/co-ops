@@ -30,6 +30,7 @@ import {
   loadOpeningState,
   type OpeningCloserCountSnapshotRow,
 } from "@/lib/opening";
+import { etCalendarDate } from "@/lib/operational-day";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
@@ -41,25 +42,14 @@ import { DashboardBackLink } from "@/components/DashboardBackLink";
 
 import { OpeningClient } from "./opening-client";
 
-const OPERATIONAL_TZ = "America/New_York";
-
 interface LocationLite {
   id: string;
   name: string;
   code: string;
 }
 
-function nyDateString(d: Date): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: OPERATIONAL_TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(d);
-}
-
 function todayAndYesterday(): { today: string; yesterday: string } {
-  const today = nyDateString(new Date());
+  const today = etCalendarDate(new Date().toISOString());
   const todayUtc = new Date(`${today}T00:00:00Z`);
   todayUtc.setUTCDate(todayUtc.getUTCDate() - 1);
   const yesterday = todayUtc.toISOString().slice(0, 10);

@@ -12,6 +12,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
+import { formatDateLabel, formatTime } from "@/lib/i18n/format";
+import { etCalendarDate } from "@/lib/operational-day";
 import { ROLES, canActOn } from "@/lib/roles";
 import { EmptyState } from "@/components/EmptyState";
 import type { AdminUserListItem } from "@/lib/admin/users";
@@ -164,7 +166,7 @@ export function UserAdminClient({
                     <span>
                       {t("admin.users.col.last_login")}:{" "}
                       {u.lastLoginAt
-                        ? new Date(u.lastLoginAt).toLocaleString(language === "es" ? "es-US" : "en-US")
+                        ? `${formatDateLabel(etCalendarDate(u.lastLoginAt), language)} ${formatTime(u.lastLoginAt, language)}`
                         : t("admin.users.last_login.never")}
                     </span>
                   </div>

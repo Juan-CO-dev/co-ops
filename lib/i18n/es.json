@@ -2467,6 +2467,7 @@
   "receiving.detail.items": "Artículos",
   "receiving.detail.packs": "paquetes",
   "receiving.detail.no_price": "sin precio",
+  "receiving.detail.unit_price": "{price}/paquete",
   "receiving.form.level": "Unidad",
   "receiving.form.pick_level": "Elige una unidad…",
   "receiving.form.level_legacy": "Sin cadena de empaque — ingresa la cantidad en paquetes.",

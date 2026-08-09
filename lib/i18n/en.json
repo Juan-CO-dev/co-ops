@@ -2467,6 +2467,7 @@
   "receiving.detail.items": "Items",
   "receiving.detail.packs": "packs",
   "receiving.detail.no_price": "no price",
+  "receiving.detail.unit_price": "{price}/pack",
   "receiving.form.level": "Unit",
   "receiving.form.pick_level": "Pick a unit…",
   "receiving.form.level_legacy": "No pack chain — enter quantity in packs.",

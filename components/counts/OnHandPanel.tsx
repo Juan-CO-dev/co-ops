@@ -27,10 +27,10 @@ export function OnHandPanel({ view, lang }: { view: OnHandView; lang: Language }
     <div className="mt-2">
       <p className="text-[11px] text-co-text-dim">
         {view.anchorAt != null
-          ? serverT(lang, "counts.onhand.anchor_at", { date: view.anchorAt.slice(0, 10) })
+          ? serverT(lang, "counts.onhand.anchor_at", { date: formatDateLabel(view.anchorAt.slice(0, 10), lang) })
           : serverT(lang, "counts.onhand.inferred_header")}
         {view.salesThrough != null
-          ? ` · ${serverT(lang, "counts.onhand.sales_through", { date: view.salesThrough })}`
+          ? ` · ${serverT(lang, "counts.onhand.sales_through", { date: formatDateLabel(view.salesThrough, lang) })}`
           : ""}
       </p>
       <ul className="mt-2 flex flex-col gap-1.5">

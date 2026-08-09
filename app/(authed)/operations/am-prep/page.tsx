@@ -45,23 +45,13 @@ import {
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
+import { etCalendarDate } from "@/lib/operational-day";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { ChecklistInstance, PrepInputs } from "@/lib/types";
 
 import { AmPrepForm } from "@/components/prep/AmPrepForm";
 import { BackLink } from "@/components/nav/BackLink";
-
-const OPERATIONAL_TZ = "America/New_York";
-
-function nyDateString(d: Date): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: OPERATIONAL_TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(d);
-}
 
 interface PageProps {
   searchParams: Promise<{ location?: string; edit?: string }>;
@@ -98,7 +88,7 @@ export default async function AmPrepPage({ searchParams }: PageProps) {
   if (locErr) throw new Error(`load location: ${locErr.message}`);
   if (!locationRow) redirect("/dashboard");
 
-  const today = nyDateString(new Date());
+  const today = etCalendarDate(new Date().toISOString());
 
   // 3. Authorization gate — AM_PREP_BASE_LEVEL OR active assignment.
   //    Sub-KH+ users without an assignment redirect to /dashboard (mirrors

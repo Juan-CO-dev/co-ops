@@ -9,6 +9,7 @@ import { getRoleLevel } from "@/lib/roles";
 import type { AuthContext } from "@/lib/session";
 import { audit } from "@/lib/audit";
 import { pushLtoToPos } from "@/lib/catering/lto-pos-push";
+import { etCalendarDate } from "@/lib/operational-day";
 
 export const LTO_MIN = 6;        // catering_mgr+ writes (mirrors SURPLUS_READ_MIN)
 export const LTO_READ_MIN = 5;   // staff can see the directive (list) at their location
@@ -138,7 +139,7 @@ export async function listLtoEvents(actor: AuthContext, args: { locationId: stri
     .eq("location_id", args.locationId)
     .order("starts_on", { ascending: false });
   if (args.activeOnly) {
-    const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    const today = etCalendarDate(new Date().toISOString());
     q = q.eq("status", "active").gte("ends_on", today);
   }
   const { data: events, error } = await q.returns<Array<{ id: string; location_id: string; kind: LtoKind; name: string; discount_bps: number | null; promo_price_cents: number | null; starts_on: string; ends_on: string; status: "active" | "cancelled" | "expired"; pos_push_status: "not_pushed" | "pushed" | "failed"; note: string | null }>>();

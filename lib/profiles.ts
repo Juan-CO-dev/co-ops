@@ -1,16 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { ROLES, type RoleCode } from "@/lib/roles";
+import { etCalendarDate } from "@/lib/operational-day";
 import { activeDayStreak, longestStreak, personalBest } from "@/lib/team-scoring";
 import { selectAllRows } from "@/lib/supabase-paginate";
 
-const OPERATIONAL_TZ = "America/New_York";
-/** timestamptz → operational YYYY-MM-DD. */
-function opDate(tstz: string): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: OPERATIONAL_TZ, year: "numeric", month: "2-digit", day: "2-digit",
-  }).format(new Date(tstz));
-}
 function addDays(yyyymmdd: string, n: number): string {
   const d = new Date(`${yyyymmdd}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
@@ -151,7 +145,7 @@ export async function loadPublicProfile(
   const tasksAllTime = comps.length;
   const dayCounts = new Map<string, number>();
   for (const c of comps) {
-    const d = opDate(c.completed_at);
+    const d = etCalendarDate(c.completed_at);
     dayCounts.set(d, (dayCounts.get(d) ?? 0) + 1);
   }
   const activeDates = [...dayCounts.keys()];

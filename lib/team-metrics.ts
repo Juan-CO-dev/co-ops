@@ -7,6 +7,7 @@ import {
   activeDayStreak, onTimeStreak, personalBest,
 } from "@/lib/team-scoring";
 import { personCardLine, personReadNarrative, teamBannerNarrative, myPerformanceRead, type NarrativeLine } from "@/lib/people-narrative";
+import { etCalendarDate } from "@/lib/operational-day";
 import { computeWindows, bucketStart, type TrendGranularity } from "@/lib/reports-trends";
 import { selectAllRows } from "@/lib/supabase-paginate";
 
@@ -21,23 +22,15 @@ export const OVERSIGHT_ACTIONS = [
   "report.drop",
 ];
 
-const OPERATIONAL_TZ = "America/New_York";
-/** timestamptz → operational YYYY-MM-DD (matches the rest of the app's bucketing). */
-function opDate(tstz: string): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: OPERATIONAL_TZ, year: "numeric", month: "2-digit", day: "2-digit",
-  }).format(new Date(tstz));
-}
-
 /**
- * Inclusive UTC upper-bound for a query whose rows are BUCKETED by ET opDate.
+ * Inclusive UTC upper-bound for a query whose rows are BUCKETED by ET etCalendarDate.
  * The window is [loadFrom, toInclusive] in ET days, but the columns are UTC
  * timestamps. ET-evening work on `toInclusive` (e.g. a 9pm-ET close) has a UTC
  * timestamp on `toInclusive+1` (~01:00-05:00Z), so a `${toInclusive}T23:59:59Z`
  * bound EXCLUDES the whole closing shift until the next day. End-of-ET-day is at
  * most 05:59:59Z the next day (EST; 04:59:59Z EDT), so bound at next-day 05:59:59Z.
  * The extra ~few hours of next-morning ET rows this over-fetches are discarded by
- * the curSet/prevSet bucket-membership check (opDate not in the window keys).
+ * the curSet/prevSet bucket-membership check (etCalendarDate not in the window keys).
  */
 function nextDayUtcBound(yyyymmdd: string): string {
   const d = new Date(`${yyyymmdd}T00:00:00Z`);
@@ -111,7 +104,7 @@ export async function loadTeamOperatingHealth(
   const place = (uid: string, tstz: string, category: ActionCategory) => {
     const m = members.get(uid);
     if (!m) return;
-    const bs = bucketStart(opDate(tstz), args.granularity);
+    const bs = bucketStart(etCalendarDate(tstz), args.granularity);
     if (curSet.has(bs)) {
       m.acc.current[category]++;
       m.acc.byBucketScoreActions.set(bs, (m.acc.byBucketScoreActions.get(bs) ?? 0) + scoreRelevant(m.role, category));
@@ -316,7 +309,7 @@ async function computePersonMetrics(
   const current = emptyCounts();
   const previous = emptyCounts();
   const windowOf = (tstz: string): "cur" | "prev" | null => {
-    const bs = bucketStart(opDate(tstz), args.granularity);
+    const bs = bucketStart(etCalendarDate(tstz), args.granularity);
     return curSet.has(bs) ? "cur" : prevSet.has(bs) ? "prev" : null;
   };
   const add = (tstz: string, cat: ActionCategory) => {
@@ -352,7 +345,7 @@ async function computePersonMetrics(
       add(c.completed_at, "tasks");
       if (c.notes && c.notes.trim()) add(c.completed_at, "notes");
       if (windowOf(c.completed_at) === "cur") {
-        const d = opDate(c.completed_at);
+        const d = etCalendarDate(c.completed_at);
         const bs = bucketStart(d, args.granularity);
         contribBucket.set(bs, (contribBucket.get(bs) ?? 0) + 1);
         touch(d);
@@ -373,7 +366,7 @@ async function computePersonMetrics(
   );
   for (const f of finInst) {
     add(f.confirmed_at, "finalizations");
-    if (windowOf(f.confirmed_at) === "cur") { finalsChrono.push({ at: f.confirmed_at, inWindow: opDate(f.confirmed_at) === f.date }); touch(opDate(f.confirmed_at)); }
+    if (windowOf(f.confirmed_at) === "cur") { finalsChrono.push({ at: f.confirmed_at, inWindow: etCalendarDate(f.confirmed_at) === f.date }); touch(etCalendarDate(f.confirmed_at)); }
   }
   const cashRows = await selectAllRows<{ signed_at: string | null; over_short_note: string | null; report_date: string }>(
     (from, to) => service
@@ -386,7 +379,7 @@ async function computePersonMetrics(
     if (!c.signed_at) continue;
     add(c.signed_at, "finalizations");
     if (c.over_short_note && c.over_short_note.trim()) add(c.signed_at, "notes");
-    if (windowOf(c.signed_at) === "cur") { finalsChrono.push({ at: c.signed_at, inWindow: opDate(c.signed_at) === c.report_date }); touch(opDate(c.signed_at)); }
+    if (windowOf(c.signed_at) === "cur") { finalsChrono.push({ at: c.signed_at, inWindow: etCalendarDate(c.signed_at) === c.report_date }); touch(etCalendarDate(c.signed_at)); }
   }
   const pmMine = await selectAllRows<{ id: string; submitted_at: string | null; report_date: string }>(
     (from, to) => service
@@ -399,7 +392,7 @@ async function computePersonMetrics(
     if (!r.submitted_at) continue;
     add(r.submitted_at, "finalizations");
     add(r.submitted_at, "peopleMgmt");
-    if (windowOf(r.submitted_at) === "cur") { finalsChrono.push({ at: r.submitted_at, inWindow: opDate(r.submitted_at) === r.report_date }); touch(opDate(r.submitted_at)); }
+    if (windowOf(r.submitted_at) === "cur") { finalsChrono.push({ at: r.submitted_at, inWindow: etCalendarDate(r.submitted_at) === r.report_date }); touch(etCalendarDate(r.submitted_at)); }
   }
   if (pmMine.length) {
     const submittedAtById = new Map(pmMine.map((r) => [r.id, r.submitted_at] as const));
@@ -430,7 +423,7 @@ async function computePersonMetrics(
   finalsChrono.sort((a, b) => (a.at < b.at ? -1 : 1));
   const onTimeByBucket = new Map<string, { hit: number; total: number }>();
   for (const f of finalsChrono) {
-    const bs = bucketStart(opDate(f.at), args.granularity);
+    const bs = bucketStart(etCalendarDate(f.at), args.granularity);
     const e = onTimeByBucket.get(bs) ?? { hit: 0, total: 0 };
     e.total++; if (f.inWindow) e.hit++;
     onTimeByBucket.set(bs, e);

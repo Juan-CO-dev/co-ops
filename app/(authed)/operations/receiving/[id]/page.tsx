@@ -167,7 +167,9 @@ export default async function DeliveryDetailPage({ params }: { params: Promise<{
               </span>
             </div>
             <div className="text-[11px] text-co-text-dim">
-              {l.unitPrice != null ? `$${l.unitPrice.toFixed(2)}/pack` : serverT(lang, "receiving.detail.no_price")}
+              {l.unitPrice != null
+                ? serverT(lang, "receiving.detail.unit_price", { price: `$${l.unitPrice.toFixed(2)}` })
+                : serverT(lang, "receiving.detail.no_price")}
               {l.resolvedOz != null ? ` · ${serverT(lang, "receiving.detail.resolved_oz", { oz: l.resolvedOz.toFixed(1) })}` : ""}
               {l.observedOzPerEach != null ? ` · ${l.observedOzPerEach} oz/each` : ""}
               {l.photoUrl ? (

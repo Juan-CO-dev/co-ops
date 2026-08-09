@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation";
 import { serverT } from "@/lib/i18n/server";
+import { formatDateLabel } from "@/lib/i18n/format";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
+import { etCalendarDate } from "@/lib/operational-day";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { loadProductionFormData, loadRecentProductions } from "@/lib/production";
 import { ProductionForm } from "@/components/production/ProductionForm";
@@ -30,7 +32,7 @@ export default async function ProductionPage({ searchParams }: { searchParams: P
             <li key={p.id} className="rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2 text-sm">
               <div className="flex items-center justify-between gap-2">
                 <span className="font-semibold text-co-text">{serverT(lang, "production.recent.line", { input: `${p.inputQty} ${p.skuName}`, output: `${p.outputQty} ${p.itemName}` })}</span>
-                <span className="text-xs text-co-text-muted">{p.producedAt.slice(0, 10)}</span>
+                <span className="text-xs text-co-text-muted">{formatDateLabel(etCalendarDate(p.producedAt), lang)}</span>
               </div>
             </li>
           ))}

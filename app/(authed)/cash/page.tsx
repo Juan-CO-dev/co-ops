@@ -18,14 +18,13 @@ import { formatCents, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
+import { etCalendarDate } from "@/lib/operational-day";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 
 import { DashboardBackLink } from "@/components/DashboardBackLink";
 import { CashClient } from "./cash-client";
-
-const OPERATIONAL_TZ = "America/New_York";
 
 // Labeled row for the read-only summary view. Declared at module scope to
 // satisfy the react-hooks/static-components lint rule (no nested component
@@ -47,15 +46,6 @@ function ReadOnlyRow({
   );
 }
 
-function nyDateString(d: Date): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: OPERATIONAL_TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(d);
-}
-
 interface PageProps {
   searchParams: Promise<{ location?: string }>;
 }
@@ -72,7 +62,7 @@ export default async function CashPage({ searchParams }: PageProps) {
 
   const sb = getServiceRoleClient();
   const lang = auth.user.language;
-  const today = nyDateString(new Date());
+  const today = etCalendarDate(new Date().toISOString());
 
   const report = await loadCashReport(sb, { locationId: locationParam, date: today });
 

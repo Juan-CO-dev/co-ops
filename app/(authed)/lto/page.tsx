@@ -1,20 +1,17 @@
 import { requireSessionFromHeaders } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
+import { formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { loadPackageLocations } from "@/lib/admin/catering/packages";
 import { loadPerishableSurplus, SURPLUS_READ_MIN } from "@/lib/catering/surplus";
 import { listLtoEvents } from "@/lib/catering/lto";
+import { etCalendarDate } from "@/lib/operational-day";
 import { BackLink } from "@/components/nav/BackLink";
 import { PlaceholderCard } from "@/components/PlaceholderCard";
 import { AlertPill } from "@/components/ui/AlertPill";
 
 export const dynamic = "force-dynamic";
-
-/** YYYY-MM-DD of today (request-time) in operational TZ. */
-function todayYmd(): string {
-  return new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
-}
 
 /** Add `days` calendar days to a YYYY-MM-DD string. */
 function addDays(yyyymmdd: string, days: number): string {
@@ -29,7 +26,7 @@ export default async function LtoPage() {
   const level = ROLES[auth.user.role].level;
   const lang = auth.user.language;
 
-  const from = todayYmd();
+  const from = etCalendarDate(new Date().toISOString());
   const to = addDays(from, 14);
 
   // Perishable surplus teaser — only for catering_mgr+ (level >= SURPLUS_READ_MIN)
@@ -123,7 +120,7 @@ export default async function LtoPage() {
                         )}
                       </div>
                       <p className="mt-0.5 text-xs text-co-text-muted">
-                        {ev.startsOn} – {ev.endsOn} · {ev.locationName}
+                        {formatDateLabel(ev.startsOn, lang)} – {formatDateLabel(ev.endsOn, lang)} · {ev.locationName}
                       </p>
                       {ev.items.length > 0 && (
                         <p className="mt-0.5 text-xs text-co-text-muted">
@@ -163,7 +160,7 @@ export default async function LtoPage() {
                     {item.name}
                   </span>
                   <span className="text-xs text-co-text-muted">{item.locationName}</span>
-                  <span className="text-xs text-co-text-muted">{item.needDate}</span>
+                  <span className="text-xs text-co-text-muted">{formatDateLabel(item.needDate, lang)}</span>
                 </li>
               ))}
             </ul>

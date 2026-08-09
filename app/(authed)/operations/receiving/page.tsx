@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { serverT } from "@/lib/i18n/server";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
+import { etCalendarDate } from "@/lib/operational-day";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { loadReceivingFormData, loadRecentDeliveries } from "@/lib/receiving";
 import type { DeliveryView } from "@/lib/receiving";
@@ -12,14 +13,10 @@ import { AlertPill } from "@/components/ui/AlertPill";
 import { DashboardBackLink } from "@/components/DashboardBackLink";
 import { EmptyState } from "@/components/EmptyState";
 
-const OPERATIONAL_TZ = "America/New_York";
 /** Grace window before a completed, unclaimed, never-attested delivery flags "missing
  *  email": an emailed vendor receipt usually arrives same-day, so 48h of silence is a
  *  real gap for a manager to chase. */
 const MISSING_EMAIL_GRACE_MS = 48 * 60 * 60 * 1000;
-function nyDate(): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: OPERATIONAL_TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-}
 /**
  * IDs of deliveries that should flag "missing email" — a completed delivery with no
  * vendor claim on file, never attested (still counted_only), older than the 48h grace
@@ -65,7 +62,7 @@ export default async function ReceivingPage({ searchParams }: { searchParams: Pr
     <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3"><DashboardBackLink /></div>
       <h1 className="mb-4 text-lg font-bold text-co-text">{serverT(lang, "receiving.page.title")}</h1>
-      <ReceivingForm formData={formData} locationId={location} today={nyDate()} />
+      <ReceivingForm formData={formData} locationId={location} today={etCalendarDate(new Date().toISOString())} />
 
       <OpenCreditsPanel summary={openCredits} />
 

@@ -36,6 +36,7 @@ import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { loadUnreadForUser } from "@/lib/notifications";
+import { etCalendarDate } from "@/lib/operational-day";
 import { loadAmPrepDashboardState, loadMidDayPrepDashboardState } from "@/lib/prep";
 import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
 import { loadCashDashboardState } from "@/lib/cash";
@@ -58,8 +59,6 @@ import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { ChecklistInstance } from "@/lib/types";
 
-const OPERATIONAL_TZ = "America/New_York";
-
 interface LocationLite {
   id: string;
   name: string;
@@ -75,7 +74,7 @@ interface ClosingInstanceLite {
 }
 
 interface OperationalState {
-  /** YYYY-MM-DD in OPERATIONAL_TZ. */
+  /** YYYY-MM-DD in the operational TZ (ET). */
   todayDate: string;
   yesterdayDate: string;
   /** True when the location has a "Standard Closing" template seeded. */
@@ -92,19 +91,9 @@ interface OperationalState {
 // Date helpers — TZ-aware
 // ─────────────────────────────────────────────────────────────────────────────
 
-function nyDateString(d: Date): string {
-  // Intl.DateTimeFormat with en-CA locale yields YYYY-MM-DD reliably.
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: OPERATIONAL_TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(d);
-}
-
 function todayAndYesterday(): { today: string; yesterday: string } {
   const now = new Date();
-  const today = nyDateString(now);
+  const today = etCalendarDate(now.toISOString());
   // Compute yesterday by subtracting one day from `today` in calendar terms,
   // then formatting back as YYYY-MM-DD. Using UTC arithmetic on the date-only
   // string sidesteps DST concerns (we're not converting between zones — just
