@@ -690,6 +690,11 @@ function ConfirmedView({
             <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-co-text-dim">{t("ordering.po.auto.title")}</h3>
           </div>
           <p className="mt-3 text-[13px] text-co-text-dim">{t("ordering.po.auto.dormant")}</p>
+          {/* The dormant note above says WHAT (not set up — use another way); this says WHEN
+              it changes. The block is not silent in this state, so per the design this line
+              sits BENEATH the existing note rather than replacing it. Muted: standing
+              configuration state, not an alert. */}
+          <p className="mt-1 text-[12px] text-co-text-muted">{t("ordering.po.email_dormant_hint")}</p>
         </section>
       )}
 
@@ -859,7 +864,15 @@ function TrailView({
           Advisory-only; collapsible per D-doctrine. Renders only when derivation was
           available (threeWay non-null). */}
       {threeWay && (
-        <ThreeWaySection view={threeWay} openCreditSkuIds={openCreditSkuIds} />
+        <ThreeWaySection
+          view={threeWay}
+          openCreditSkuIds={openCreditSkuIds}
+          // The billed leg is still open on an order that HAS been sent → the emailed-invoice
+          // parse cadence is the likeliest reason the column is empty. Gated on status here
+          // (the section has no status of its own). See the prop's doc for why this is NOT
+          // gated on transmit.emailOrderingAvailable.
+          showParseCadence={detail.status === "placed" || detail.status === "invoiced"}
+        />
       )}
 
       {/* Status timeline (from the row's own timestamps). */}
@@ -1004,9 +1017,23 @@ function qtyOrDash(v: number | null): string {
 function ThreeWaySection({
   view,
   openCreditSkuIds,
+  showParseCadence,
 }: {
   view: ThreeWayView;
   openCreditSkuIds: string[];
+  /**
+   * Explain an empty billed column with the inbound parse cadence? True for a PO already
+   * out the door (placed/invoiced), where "no invoice yet" may just mean the daily sweep
+   * hasn't run since the bill landed.
+   *
+   * NOT gated on `transmit.emailOrderingAvailable`: that flag is the OUTBOUND gate — it
+   * additionally requires a verified EMAIL_FROM domain (non-resend.dev), which is exactly
+   * the DNS errand still outstanding, so it reads false everywhere today. INBOUND invoice
+   * parsing is a separate leg (the location's receipt alias + the daily parse-receipts
+   * sweep) and no inbound-availability flag exists on PoDetail. Gating on the outbound
+   * flag would therefore suppress a true explanation; status-only is the honest gate.
+   */
+  showParseCadence: boolean;
 }) {
   const { t } = useTranslation();
   const creditSkus = useMemo(() => new Set(openCreditSkuIds), [openCreditSkuIds]);
@@ -1028,6 +1055,12 @@ function ThreeWaySection({
       )}
       {!view.hasInvoice && (
         <p className="mb-2 text-[13px] italic text-co-text-dim">{t("ordering.po.three_way.no_invoice")}</p>
+      )}
+      {/* WHY the billed column is empty on an already-placed order: emailed invoices are
+          parsed by a once-daily sweep, so a bill that arrived after the last run shows up
+          only after the next one. States the cadence; asserts nothing about this invoice. */}
+      {!view.hasInvoice && showParseCadence && (
+        <p className="mb-2 text-[12px] text-co-text-muted">{t("ordering.po.three_way.parse_cadence")}</p>
       )}
 
       {view.lines.length === 0 ? (
