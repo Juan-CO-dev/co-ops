@@ -13,16 +13,17 @@ import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { PasswordModal } from "@/components/auth/PasswordModal";
 import type { SalesConsumption, ExclusionView } from "@/lib/catering/toast-sales";
+import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
 
 type MappableEntity = { id: string; name: string; kind: "item" | "menu_item" | "package" | "sku"; locationId: string | null };
 
 /** Behavior targets for platter assortment picks (no entityId — the parent's package supplies the pool). */
 const ASSORTMENT_KINDS = ["assortment_classics", "assortment_full"] as const;
 
+/** DST-safe (and browser-zone-safe: a traveling manager's laptop must not shift
+ *  the business date) — same primitive the sales cron uses. */
 function yesterdayEt(): string {
-  const nowEt = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
-  nowEt.setDate(nowEt.getDate() - 1);
-  return nowEt.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  return etYmdMinusDays(etCalendarDate(new Date().toISOString()), 1);
 }
 
 const KNOWN = new Set([

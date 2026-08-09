@@ -7,6 +7,7 @@ import { type NextRequest } from "next/server";
 import { jsonError, jsonOk } from "@/lib/api-helpers";
 import { audit } from "@/lib/audit";
 import { pullSalesForAllLocations, materializeDailyDepletion } from "@/lib/catering/toast-sales";
+import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
 
 /** Truncate a caught error message so a giant stack never bloats the audit row. */
 function truncateErr(e: unknown): string {
@@ -25,11 +26,11 @@ function secretOk(req: NextRequest): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-/** Yesterday in the operational timezone (business dates close overnight). */
+/** Yesterday in the operational timezone (business dates close overnight).
+ *  DST-safe: ET calendar date first, then pure grid math — the previous
+ *  toLocaleString round-trip computed D-2 all winter on UTC servers. */
 function yesterdayYmd(): string {
-  const nowEt = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
-  nowEt.setDate(nowEt.getDate() - 1);
-  return nowEt.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+  return etYmdMinusDays(etCalendarDate(new Date().toISOString()), 1);
 }
 
 export async function GET(req: NextRequest) {
