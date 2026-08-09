@@ -28,4 +28,4 @@ Owner key: **CC** = my hands (coupled/lifecycle/judgment per fleet doctrine Q1) 
 ## Close
 - **T14:** full gates (discipline + `npm test` + `next build`), cross-family verifier card (builder lane, read-only clone, findings as card comment), fix findings, PR with council-report link, STOP.
 
-Deferred to Wave 2 (design-gated, NOT in this PR): confirmPO snapshot atomicity RPC; crosswalk-version snapshotting; par-overlay "none" semantics; portal Spanish; pm-eval partial unique index (migration); tap-target floor; po-match substitution join rework.
+Deferred to Wave 2 (design-gated, NOT in this PR): **multi-write atomicity RPC bucket** (confirmPO snapshot; confirmInstance flip+dependents; the two closing-ref insert-then-supersede chains — T5 made lost races LOUD, an RPC makes them impossible; moveStage flip+event coupling); crosswalk-version snapshotting; par-overlay "none" semantics; portal Spanish; pm-eval partial unique index (migration); tap-target floor; po-match substitution join rework; keyset pagination for selectAllRows math-feeding callers (offset paging on append-only windows accepted for now).

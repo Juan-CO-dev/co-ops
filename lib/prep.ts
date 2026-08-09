@@ -1446,9 +1446,11 @@ export async function autoCompleteClosingMidDayRef(
 
   if (prior && inserted) {
     // Guard on superseded_at IS NULL + rowcount (silent-UPDATE law, sibling
-    // ensureClosingRefCompletion): the prior row must still be the live head, else the
-    // supersede chain would fork (two rows pointing at different successors). Throwing on
-    // 0 is safe here — the caller is fire-and-forget with a .catch (submitMidDayPhase2).
+    // ensureClosingRefCompletion). DETECTION, not prevention: the new row above is
+    // already committed, so a lost race means a duplicate live head EXISTS — the
+    // throw makes it loud instead of silent (structural prevention = the Wave-2
+    // atomicity RPC). Throwing is safe — the caller is fire-and-forget with a
+    // .catch (submitMidDayPhase2).
     const { error: supErr, count: supCount } = await service
       .from("checklist_completions")
       .update({ superseded_at: nowIso, superseded_by: inserted.id }, { count: "exact" })
@@ -1533,8 +1535,9 @@ async function ensureClosingRefCompletion(
 
   if (head && inserted) {
     // Prior-state guard + rowcount (silent-UPDATE law; symmetric with the
-    // autoCompleteClosingMidDayRef supersede): the head must still be the live
-    // chain head, else two live completions coexist for the same ref item.
+    // autoCompleteClosingMidDayRef supersede). DETECTION, not prevention — the
+    // inserted row above already exists, so a lost race means a duplicate live
+    // head; the throw surfaces it loudly (structural fix = Wave-2 atomicity RPC).
     const { error: supErr, count: supCount } = await service
       .from("checklist_completions")
       .update({ superseded_at: nowIso, superseded_by: inserted.id }, { count: "exact" })

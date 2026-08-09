@@ -1405,20 +1405,39 @@ export async function confirmInstance(
   let submissionRow: SubmissionRow;
   try {
     // Reason rows (authed; RLS enforces reported_by = current_user_id).
+    // RETRY-IDEMPOTENT (T5/T6 review): if a prior attempt committed reasons and
+    // then failed on the submission insert, the revert reopened the instance but
+    // append-only keeps those rows. Re-inserting on retry would duplicate them —
+    // reuse any existing row for the same (item, reporter) instead.
     if (incompleteReasons.length > 0) {
-      const { data: insertedReasons, error: reasonErr } = await authed
+      const itemIds = incompleteReasons.map((r) => r.templateItemId);
+      const { data: existingReasons, error: exErr } = await authed
         .from("checklist_incomplete_reasons")
-        .insert(
-          incompleteReasons.map((r) => ({
-            instance_id: instanceId,
-            template_item_id: r.templateItemId,
-            reason: r.reason,
-            reported_by: actor.userId,
-          })),
-        )
-        .select("id, instance_id, template_item_id, reason, reported_by, reported_at");
-      if (reasonErr) throw new Error(`confirmInstance insert reasons: ${reasonErr.message}`);
-      reasonRows = ((insertedReasons ?? []) as ReasonRow[]).map(rowToReason);
+        .select("id, instance_id, template_item_id, reason, reported_by, reported_at")
+        .eq("instance_id", instanceId)
+        .eq("reported_by", actor.userId)
+        .in("template_item_id", itemIds);
+      if (exErr) throw new Error(`confirmInstance existing reasons: ${exErr.message}`);
+      const existing = (existingReasons ?? []) as ReasonRow[];
+      const have = new Set(existing.map((r) => r.template_item_id));
+      const toInsert = incompleteReasons.filter((r) => !have.has(r.templateItemId));
+      let insertedRows: ReasonRow[] = [];
+      if (toInsert.length > 0) {
+        const { data: insertedReasons, error: reasonErr } = await authed
+          .from("checklist_incomplete_reasons")
+          .insert(
+            toInsert.map((r) => ({
+              instance_id: instanceId,
+              template_item_id: r.templateItemId,
+              reason: r.reason,
+              reported_by: actor.userId,
+            })),
+          )
+          .select("id, instance_id, template_item_id, reason, reported_by, reported_at");
+        if (reasonErr) throw new Error(`confirmInstance insert reasons: ${reasonErr.message}`);
+        insertedRows = (insertedReasons ?? []) as ReasonRow[];
+      }
+      reasonRows = [...existing, ...insertedRows].map(rowToReason);
     }
 
     // Final-confirmation submission. The final-confirm submission is an
@@ -1443,16 +1462,31 @@ export async function confirmInstance(
     if (!insertedSubmission) throw new Error(`confirmInstance submission insert returned no row`);
     submissionRow = insertedSubmission;
   } catch (depErr) {
-    const { error: revertErr } = await authed
+    const { error: revertErr, count: revertCount } = await authed
       .from("checklist_instances")
-      .update({ status: "open", confirmed_at: null, confirmed_by: null })
+      .update({ status: "open", confirmed_at: null, confirmed_by: null }, { count: "exact" })
       .eq("id", instanceId)
       .eq("status", newStatus)
       .eq("confirmed_by", actor.userId);
-    if (revertErr) {
-      // Revert failure leaves a confirmed instance without its attestation —
-      // log loudly; the thrown depErr below still surfaces the root cause.
-      console.error(`confirmInstance revert failed for ${instanceId}: ${revertErr.message}`);
+    if (revertErr || revertCount === 0) {
+      // Revert failure leaves a confirmed instance without its attestation.
+      // console alone is ephemeral — write a fail-open audit row so the state
+      // is forensically visible; the thrown depErr still surfaces the cause.
+      console.error(`confirmInstance revert failed for ${instanceId}: ${revertErr?.message ?? "rowcount 0"}`);
+      await audit({
+        actorId: actor.userId,
+        actorRole: actor.role,
+        action: "checklist.confirm",
+        resourceTable: "checklist_instances",
+        resourceId: instanceId,
+        metadata: {
+          outcome: "dependent_insert_failed_revert_failed",
+          status_left: newStatus,
+          revert_error: revertErr?.message ?? "rowcount_0",
+        },
+        ipAddress: args.ipAddress ?? null,
+        userAgent: args.userAgent ?? null,
+      });
     }
     throw depErr;
   }
