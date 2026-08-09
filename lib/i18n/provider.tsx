@@ -59,6 +59,9 @@ export function TranslationProvider({
   // pages that hardcode initialLanguage="en" are unaffected (already the default).
   useEffect(() => {
     document.documentElement.lang = language;
+    // Restore the root layout's default on unmount so a provider-less surface
+    // (public portal, login) never inherits a stale "es" from an authed session.
+    return () => { document.documentElement.lang = "en"; };
   }, [language]);
 
   const t = useCallback(

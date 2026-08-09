@@ -1006,12 +1006,24 @@ async function locationDeliveryIds(
   afterIso: string,
   untilIso: string | null,
 ): Promise<string[]> {
-  let q = sb.from("vendor_deliveries").select("id").eq("location_id", locationId).gt("created_at", afterIso);
-  if (untilIso != null) q = q.lte("created_at", untilIso);
-  // Feeds the received-since term: an empty id list silently zeroes intake, so throw.
-  const { data, error } = await q.returns<Array<{ id: string }>>();
-  if (error) throw new Error(`locationDeliveryIds: ${error.message}`);
-  return (data ?? []).map((d) => d.id);
+  // Feeds the received-since term: a short id list silently zeroes intake for every
+  // delivery it drops, so this read must neither swallow an error nor truncate. The
+  // window is anchor→now, which widens without bound while a location goes uncounted
+  // — PAGED (the PR #63 lesson) under `id` (the PK) as the stable total order; the
+  // caller only uses the set membership, so row order is not load-bearing.
+  const rows = await selectAllRows<{ id: string }>(
+    async (from, to) => {
+      let q = sb.from("vendor_deliveries").select("id").eq("location_id", locationId).gt("created_at", afterIso);
+      if (untilIso != null) q = q.lte("created_at", untilIso);
+      const { data, error } = await q
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<{ id: string }>>();
+      if (error) throw new Error(`locationDeliveryIds: ${error.message}`);
+      return { data };
+    },
+  );
+  return rows.map((d) => d.id);
 }
 
 /**
@@ -1051,20 +1063,32 @@ async function sumReceivedOzWindow(
   // vendor_delivery_items has created_at; use it as the receipt timestamp (the
   // delivery_date is a bare date, created_at is the true write instant that the
   // anchor timestamp is comparable to).
-  let q = sb.from("vendor_delivery_items")
-    .select("vendor_item_id, resolved_oz, created_at")
-    .in("vendor_item_id", skuIds)
-    .in("delivery_id", deliveryIds)
-    .gt("created_at", afterIso);
-  if (untilIso != null) q = q.lte("created_at", untilIso);
-  const { data, error } = await q.returns<Array<{ vendor_item_id: string; resolved_oz: number | string | null; created_at: string }>>();
-  if (error) throw new Error(`sumReceivedOzWindow: ${error.message}`);
+  // PAGED (the PR #63 lesson): a wide window over the delivery ledger crosses the
+  // 1000-row cap, and a truncated page silently UNDERSTATES the received term —
+  // which reads downstream as shrinkage. `id` (the PK) gives the stable total order
+  // paging requires; the per-SKU sum and the null-taint are order-insensitive.
+  const rows = await selectAllRows<{ vendor_item_id: string; resolved_oz: number | string | null; created_at: string }>(
+    async (from, to) => {
+      let q = sb.from("vendor_delivery_items")
+        .select("vendor_item_id, resolved_oz, created_at")
+        .in("vendor_item_id", skuIds)
+        .in("delivery_id", deliveryIds)
+        .gt("created_at", afterIso);
+      if (untilIso != null) q = q.lte("created_at", untilIso);
+      const { data, error } = await q
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<{ vendor_item_id: string; resolved_oz: number | string | null; created_at: string }>>();
+      if (error) throw new Error(`sumReceivedOzWindow: ${error.message}`);
+      return { data };
+    },
+  );
   // Sum resolved oz per SKU; a SKU with ANY NULL resolved_oz in-window line →
   // advisory null (can't derive a clean received term). Tracked separately so a
   // null line taints the whole SKU regardless of row order.
   const sums = new Map<string, number>();
   const nulled = new Set<string>();
-  for (const r of data ?? []) {
+  for (const r of rows) {
     const oz = num(r.resolved_oz);
     if (oz == null) { nulled.add(r.vendor_item_id); continue; }
     sums.set(r.vendor_item_id, (sums.get(r.vendor_item_id) ?? 0) + oz);
@@ -1111,15 +1135,25 @@ async function sumReceivedUnitsWindow(
   const packChain = buildPackChain(chain);
   const deliveryIds = await locationDeliveryIds(sb, locationId, afterIso, untilIso);
   if (deliveryIds.length === 0) return 0;
-  let q = sb.from("vendor_delivery_items")
-    .select("received_level_label, received_qty_at_level, created_at")
-    .eq("vendor_item_id", skuId)
-    .in("delivery_id", deliveryIds)
-    .gt("created_at", afterIso);
-  if (untilIso != null) q = q.lte("created_at", untilIso);
-  const { data, error } = await q.returns<Array<{ received_level_label: string | null; received_qty_at_level: number | string | null; created_at: string }>>();
-  if (error) throw new Error(`sumReceivedUnitsWindow: ${error.message}`);
-  const rows = data ?? [];
+  // PAGED (the PR #63 lesson): a truncated page silently UNDERSTATES the received-
+  // units term. `id` (the PK) gives the stable total order paging requires; the sum
+  // and its advisory-null taint are order-insensitive.
+  const rows = await selectAllRows<{ received_level_label: string | null; received_qty_at_level: number | string | null; created_at: string }>(
+    async (from, to) => {
+      let q = sb.from("vendor_delivery_items")
+        .select("received_level_label, received_qty_at_level, created_at")
+        .eq("vendor_item_id", skuId)
+        .in("delivery_id", deliveryIds)
+        .gt("created_at", afterIso);
+      if (untilIso != null) q = q.lte("created_at", untilIso);
+      const { data, error } = await q
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<{ received_level_label: string | null; received_qty_at_level: number | string | null; created_at: string }>>();
+      if (error) throw new Error(`sumReceivedUnitsWindow: ${error.message}`);
+      return { data };
+    },
+  );
   if (rows.length === 0) return 0;
   let sum = 0;
   for (const r of rows) {
@@ -1182,15 +1216,27 @@ async function sumSalesDirectOzWindow(
     return new Map<string, number | null>(skuIds.map((id) => [id, null]));
   }
   const out = new Map<string, number | null>(skuIds.map((id) => [id, 0]));
-  let q = sb.from("toast_daily_depletion")
-    .select("sku_id, direct_oz")
-    .eq("location_id", locationId)
-    .in("sku_id", skuIds)
-    .gte("business_date", fromDate);
-  if (untilDateExclusive != null) q = q.lt("business_date", untilDateExclusive);
-  const { data, error } = await q.returns<Array<{ sku_id: string; direct_oz: number | string }>>();
-  if (error) throw new Error(`sumSalesDirectOzWindow: ${error.message}`);
-  for (const r of data ?? []) {
+  // PAGED (the PR #63 lesson): this ledger is one row per (day, SKU), so a 28-day
+  // window over the ~163-SKU roster is ~4.5k rows — a truncated page would silently
+  // UNDERSTATE the sales lane, inflating computed on-hand. `id` (the PK) gives the
+  // stable total order paging requires; the per-SKU sum is order-insensitive.
+  const rows = await selectAllRows<{ sku_id: string; direct_oz: number | string }>(
+    async (from, to) => {
+      let q = sb.from("toast_daily_depletion")
+        .select("sku_id, direct_oz")
+        .eq("location_id", locationId)
+        .in("sku_id", skuIds)
+        .gte("business_date", fromDate);
+      if (untilDateExclusive != null) q = q.lt("business_date", untilDateExclusive);
+      const { data, error } = await q
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<{ sku_id: string; direct_oz: number | string }>>();
+      if (error) throw new Error(`sumSalesDirectOzWindow: ${error.message}`);
+      return { data };
+    },
+  );
+  for (const r of rows) {
     out.set(r.sku_id, (out.get(r.sku_id) ?? 0) + (num(r.direct_oz) ?? 0));
   }
   return out;
@@ -1288,22 +1334,41 @@ async function sumConsumedOzWindow(
   const out = new Map<string, number | null>();
   for (const id of skuIds) out.set(id, 0);
   // Live production headers at this location in the window.
-  let hq = sb.from("productions").select("id").eq("location_id", locationId)
-    .is("superseded_at", null).is("revoked_at", null).gt("produced_at", afterIso);
-  if (untilIso != null) hq = hq.lte("produced_at", untilIso);
-  const { data: hdrs, error: hErr } = await hq.returns<Array<{ id: string }>>();
-  if (hErr) throw new Error(`sumConsumedOzWindow productions: ${hErr.message}`);
-  const prodIds = (hdrs ?? []).map((h) => h.id);
+  // BOTH reads are PAGED (the PR #63 lesson): the header set is bounded only by
+  // location + window, and its inputs multiply it — a truncated page would silently
+  // UNDERSTATE the consumed term, inflating computed on-hand. `id` (the PK) gives the
+  // stable total order paging requires; both reads are order-insensitive sums.
+  const hdrs = await selectAllRows<{ id: string }>(
+    async (from, to) => {
+      let hq = sb.from("productions").select("id").eq("location_id", locationId)
+        .is("superseded_at", null).is("revoked_at", null).gt("produced_at", afterIso);
+      if (untilIso != null) hq = hq.lte("produced_at", untilIso);
+      const { data, error } = await hq
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<{ id: string }>>();
+      if (error) throw new Error(`sumConsumedOzWindow productions: ${error.message}`);
+      return { data };
+    },
+  );
+  const prodIds = hdrs.map((h) => h.id);
   if (prodIds.length === 0) return out;
-  const { data: lines, error: liErr } = await sb.from("production_inputs")
-    .select("input_sku_id, input_oz")
-    .in("input_sku_id", skuIds)
-    .in("production_id", prodIds)
-    .returns<Array<{ input_sku_id: string; input_oz: number | string | null }>>();
-  if (liErr) throw new Error(`sumConsumedOzWindow production_inputs: ${liErr.message}`);
+  const lines = await selectAllRows<{ input_sku_id: string; input_oz: number | string | null }>(
+    async (from, to) => {
+      const { data, error } = await sb.from("production_inputs")
+        .select("input_sku_id, input_oz")
+        .in("input_sku_id", skuIds)
+        .in("production_id", prodIds)
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<{ input_sku_id: string; input_oz: number | string | null }>>();
+      if (error) throw new Error(`sumConsumedOzWindow production_inputs: ${error.message}`);
+      return { data };
+    },
+  );
   const sums = new Map<string, number>();
   const nulled = new Set<string>();
-  for (const l of lines ?? []) {
+  for (const l of lines) {
     const oz = num(l.input_oz);
     if (oz == null) { nulled.add(l.input_sku_id); continue; }
     sums.set(l.input_sku_id, (sums.get(l.input_sku_id) ?? 0) + oz);
