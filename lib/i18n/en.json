@@ -2763,6 +2763,7 @@
   "ordering.po.error.confirmed_during_edit": "This order was confirmed while you were editing — your last change did not make it into the confirmed snapshot.",
   "ordering.po.error.not_confirmed": "Confirm the order before marking it placed.",
   "ordering.po.error.not_received": "This order isn't received yet.",
+  "ordering.po.error.already_invoiced": "This order is already placed (invoice received).",
   "ordering.po.error.already_placed": "This order is already placed.",
   "ordering.po.error.already_received": "This order is already received.",
   "ordering.po.error.already_reconciled": "This order is already reconciled.",

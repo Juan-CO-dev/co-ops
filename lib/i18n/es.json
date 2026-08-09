@@ -2763,6 +2763,7 @@
   "ordering.po.error.confirmed_during_edit": "El pedido se confirmó mientras editabas — tu último cambio no entró en la instantánea confirmada.",
   "ordering.po.error.not_confirmed": "Confirma el pedido antes de marcarlo enviado.",
   "ordering.po.error.not_received": "Este pedido aún no se ha recibido.",
+  "ordering.po.error.already_invoiced": "Este pedido ya está enviado (factura recibida).",
   "ordering.po.error.already_placed": "Este pedido ya está enviado.",
   "ordering.po.error.already_received": "Este pedido ya está recibido.",
   "ordering.po.error.already_reconciled": "Este pedido ya está conciliado.",

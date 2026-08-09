@@ -14,12 +14,15 @@
  * closes it once its linked deliveries carry no open credits.
  *
  * ── STATE MACHINE (guarded, race-safe) ─────────────────────────────────────────
- *   draft → confirmed → placed → received → reconciled
+ *   draft → confirmed → placed [→ invoiced] → received → reconciled
  * Every transition is a single UPDATE guarded by `.eq("status", <prev>)` + a
  * rowcount check (AGENTS.md silent-UPDATE law). A concurrent double-confirm /
  * placed-without-confirm / etc. loses the race and 409s (never a false success —
  * `.update()` swallows constraint violations, so we never infer from `data`).
- * `invoiced` is present in the schema CHECK (V2) but never entered in V1.
+ * `invoiced` (V2, entered by lib/email-receipts.ts applyReceiptPoEffects when an
+ * invoice email lands before the truck) is a PAPERWORK ANNOTATION, not a gate:
+ * everywhere the lifecycle asks "is it placed?" the answer for `invoiced` is yes
+ * (advanceToReceived, recordDelivery, loadOpenPoTemplate all accept both).
  *
  * ── APPEND-ONLY (house law) ────────────────────────────────────────────────────
  * No row is ever DELETEd. Draft line edits are done IN PLACE: updateDraftLines
@@ -781,10 +784,12 @@ export async function markPlaced(actor: AuthContext, poId: string, input: MarkPl
 
 // ── advanceToReceived: service-internal placed→received (called by receiving) ─────
 /**
- * Advance a `placed` PO to `received` (SERVICE-INTERNAL — no actor; lib/receiving.ts
- * calls this on its completeDelivery path when a delivery links the PO). Guarded
- * placed→received UPDATE + rowcount. When the PO is NOT in `placed` (already
- * received, still draft/confirmed, etc.) this is a SILENT no-op returning false —
+ * Advance a `placed`|`invoiced` PO to `received` (SERVICE-INTERNAL — no actor;
+ * lib/receiving.ts calls this on its completeDelivery path when a delivery links
+ * the PO). `invoiced` qualifies: the inbound-email leg may have flipped
+ * placed→invoiced before the truck arrived, and paperwork order must never block
+ * the lifecycle. Guarded UPDATE + rowcount. When the PO is in neither status
+ * (already received, still draft/confirmed, etc.) this is a SILENT no-op returning false —
  * the caller decides what that means (e.g. a second delivery claiming an already-
  * received PO). Audits `po.received` with actorId null (machine — same precedent
  * as the delivery auto-link path). Returns true when it advanced.
@@ -794,7 +799,7 @@ export async function advanceToReceived(sb: ServiceClient, poId: string): Promis
   // (proven idiom, lib/portal/session.ts). A missed guard returns no row → false.
   const { data: po, error } = await sb.from("purchase_orders")
     .update({ status: "received" })
-    .eq("id", poId).eq("status", "placed")
+    .eq("id", poId).in("status", ["placed", "invoiced"])
     .select("id, location_id, vendor_id")
     .maybeSingle<{ id: string; location_id: string; vendor_id: string }>();
   if (error) throw new Error(`advanceToReceived: ${error.message}`);

@@ -334,7 +334,10 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
     if (po.status === "received" || po.status === "reconciled") {
       throw new ReceivingError(409, "po_already_received", "This purchase order has already been received");
     }
-    if (po.status !== "placed") {
+    // `invoiced` is receivable: V2's inbound-email leg flips placed→invoiced when the
+    // vendor's invoice lands BEFORE the truck (routine for Baldor/Boar's Head). The
+    // paperwork arriving first must never lock the door ceremony out of its own PO.
+    if (po.status !== "placed" && po.status !== "invoiced") {
       throw new ReceivingError(409, "po_not_placed", "Purchase order must be in placed status to receive against it");
     }
   }
@@ -715,12 +718,14 @@ export async function loadOpenPoTemplate(
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new ReceivingError(404, "not_found", "Location not found");
   const sb = getServiceRoleClient();
 
-  // Latest placed PO for this vendor+location (most recently placed).
+  // Latest receivable PO for this vendor+location (most recently placed).
+  // `invoiced` included: an invoice email arriving before the truck must not
+  // hide the PO from the door ceremony (same law as recordDelivery's guard).
   const { data: po, error: poErr } = await sb.from("purchase_orders")
     .select("id, display_code")
     .eq("location_id", locationId)
     .eq("vendor_id", vendorId)
-    .eq("status", "placed")
+    .in("status", ["placed", "invoiced"])
     .order("placed_at", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false })
     .limit(1)
