@@ -40,7 +40,7 @@ export function PayButtons({ quoteId, options }: { quoteId: string; options: Pay
       } else {
         setError(
           res.status === 404
-            ? "We couldn't find that quote."
+            ? "We couldn't find that order."
             : data.error ?? "Something went wrong — please try again.",
         );
       }

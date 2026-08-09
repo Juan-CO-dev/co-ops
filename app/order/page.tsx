@@ -163,7 +163,7 @@ export default async function OrderStorefront() {
               Menu
             </Link>
             <Link
-              href="#"
+              href="/order/start"
               className="rounded-full border border-co-bg/25 px-4 py-1.5 text-sm font-bold text-co-bg transition hover:bg-co-bg hover:text-co-text"
             >
               Sign in
