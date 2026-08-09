@@ -759,75 +759,107 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
     : new Set<string>();
 
   // ── Weight rows (oz drift + variance) ──
-  const weightRows: OnHandRow[] = await Promise.all(
-    weightSkuIds.map(async (skuId): Promise<OnHandRow> => {
-      const a = anchorBySku.get(skuId)!;
-      const [receivedSince, consumedSince, salesSince, anchorStale] = await Promise.all([
-        sumReceivedOzSince(sb, [skuId], locationId, a.anchorAt),
-        sumConsumedOzSince(sb, [skuId], locationId, a.anchorAt),
-        sumSalesDirectOzSince(sb, [skuId], locationId, a.anchorAt, gapDates),
-        detectRetroEditStaleness(sb, locationId, a.anchorAt, now),
+  // BATCHED (council audit 2026-08-08 P1-3; same group idiom as the par_estimate +
+  // inferred tiers above): census SKUs group by their EXACT (anchorAt, prevAt)
+  // window pair → ONE call per ledger helper per group, instead of the full helper
+  // fan-out per SKU (~10-12 queries × the whole roster on the first physical
+  // count). A single walk anchors most SKUs at one event → 1-2 groups in practice.
+  // Staleness probes are per-anchorAt (identical for every SKU sharing one) —
+  // memoized here and shared with the count tier below.
+  const stalenessByAnchorAt = new Map<string, Promise<boolean>>();
+  const stalenessFor = (anchorAt: string): Promise<boolean> => {
+    let p = stalenessByAnchorAt.get(anchorAt);
+    if (!p) {
+      p = detectRetroEditStaleness(sb, locationId, anchorAt, now);
+      stalenessByAnchorAt.set(anchorAt, p);
+    }
+    return p;
+  };
+
+  const weightGroups = new Map<string, { anchorAt: string; prevAt: string | null; ids: string[] }>();
+  for (const skuId of weightSkuIds) {
+    const a = anchorBySku.get(skuId)!;
+    const key = `${a.anchorAt}|${a.prevAt ?? ""}`;
+    let g = weightGroups.get(key);
+    if (!g) { g = { anchorAt: a.anchorAt, prevAt: a.prevAt, ids: [] }; weightGroups.set(key, g); }
+    g.ids.push(skuId);
+  }
+
+  const weightRowGroups = await Promise.all(
+    [...weightGroups.values()].map(async ({ anchorAt, prevAt, ids }): Promise<OnHandRow[]> => {
+      const [receivedSince, consumedSince, salesSince, anchorStale, between] = await Promise.all([
+        sumReceivedOzSince(sb, ids, locationId, anchorAt),
+        sumConsumedOzSince(sb, ids, locationId, anchorAt),
+        sumSalesDirectOzSince(sb, ids, locationId, anchorAt, gapDates),
+        stalenessFor(anchorAt),
+        prevAt == null
+          ? Promise.resolve(null)
+          : Promise.all([
+              sumReceivedOzBetween(sb, ids, locationId, prevAt, anchorAt),
+              sumConsumedOzBetween(sb, ids, locationId, prevAt, anchorAt),
+              sumSalesDirectOzBetween(sb, ids, locationId, prevAt, anchorAt, gapDates),
+            ]),
       ]);
-      // Drift spec 2026-07-31: consumed = prep production + DIRECT sales lane.
-      // BOTH terms may null-taint now (production when it can't derive; sales
-      // when its window has a materialization gap or collapsed — hardening
-      // 2026-07-31). Either null → consumed null → drift advisory. Honest-null.
-      const prodSince = consumedSince.get(skuId) ?? null;
-      const salesSinceOz = salesSince.get(skuId) ?? null;
-      const onHand = computeOnHand(
-        {
+      return ids.map((skuId): OnHandRow => {
+        const a = anchorBySku.get(skuId)!;
+        // Drift spec 2026-07-31: consumed = prep production + DIRECT sales lane.
+        // BOTH terms may null-taint now (production when it can't derive; sales
+        // when its window has a materialization gap or collapsed — hardening
+        // 2026-07-31). Either null → consumed null → drift advisory. Honest-null.
+        const prodSince = consumedSince.get(skuId) ?? null;
+        const salesSinceOz = salesSince.get(skuId) ?? null;
+        const onHand = computeOnHand(
+          {
+            skuId,
+            anchorOz: a.anchorOz,
+            anchorAt: a.anchorAt,
+            receivedSinceOz: receivedSince.get(skuId) ?? null,
+            consumedSinceOz: prodSince == null || salesSinceOz == null ? null : prodSince + salesSinceOz,
+            anchorStale,
+            // CENSUS provenance: this row's anchor is a real physical count event
+            // (anchorBySku is resolved from sku_count_lines). Par_estimate AND inferred
+            // anchors are composed in SEPARATE passes below and never reach this variance
+            // loop — only census rows do.
+            anchorSource: "census",
+          },
+          now,
+        );
+        let receivedBetweenOz: number | null = null;
+        let consumedBetweenOz: number | null = null;
+        if (between != null) {
+          const [rB, cB, sB] = between;
+          receivedBetweenOz = rB.get(skuId) ?? null;
+          const prodBetween = cB.get(skuId) ?? null;
+          const salesBetween = sB.get(skuId) ?? null;
+          consumedBetweenOz = prodBetween == null || salesBetween == null ? null : prodBetween + salesBetween;
+        }
+        // VARIANCE IS CENSUS-ONLY (spec D6, LOAD-BEARING). computeVariance verifies a
+        // NEW physical count against the PREVIOUS one + intervening ledger. Both
+        // newCountOz and prevCountOz here come from `a` (anchorBySku → resolved
+        // strictly from sku_count_lines), so this call NEVER receives a par_estimate OR
+        // an inferred anchor. Par_estimate rows (loadParEstimateRows) and inferred rows
+        // (loadInferredRows) BOTH carry varianceOz = null by law — a par-pass estimate
+        // and a run-rate baseline are not counted ground truths and cannot be a variance
+        // reference. Do NOT wire either non-census anchor into this call.
+        const variance = computeVariance({
           skuId,
-          anchorOz: a.anchorOz,
-          anchorAt: a.anchorAt,
-          receivedSinceOz: receivedSince.get(skuId) ?? null,
-          consumedSinceOz: prodSince == null || salesSinceOz == null ? null : prodSince + salesSinceOz,
-          anchorStale,
-          // CENSUS provenance: this row's anchor is a real physical count event
-          // (anchorBySku is resolved from sku_count_lines). Par_estimate AND inferred
-          // anchors are composed in SEPARATE passes below and never reach this variance
-          // loop — only census rows do.
-          anchorSource: "census",
-        },
-        now,
-      );
-      let receivedBetweenOz: number | null = null;
-      let consumedBetweenOz: number | null = null;
-      if (a.prevAt != null) {
-        const [rB, cB, sB] = await Promise.all([
-          sumReceivedOzBetween(sb, [skuId], locationId, a.prevAt, a.anchorAt),
-          sumConsumedOzBetween(sb, [skuId], locationId, a.prevAt, a.anchorAt),
-          sumSalesDirectOzBetween(sb, [skuId], locationId, a.prevAt, a.anchorAt, gapDates),
-        ]);
-        receivedBetweenOz = rB.get(skuId) ?? null;
-        const prodBetween = cB.get(skuId) ?? null;
-        const salesBetween = sB.get(skuId) ?? null;
-        consumedBetweenOz = prodBetween == null || salesBetween == null ? null : prodBetween + salesBetween;
-      }
-      // VARIANCE IS CENSUS-ONLY (spec D6, LOAD-BEARING). computeVariance verifies a
-      // NEW physical count against the PREVIOUS one + intervening ledger. Both
-      // newCountOz and prevCountOz here come from `a` (anchorBySku → resolved
-      // strictly from sku_count_lines), so this call NEVER receives a par_estimate OR
-      // an inferred anchor. Par_estimate rows (loadParEstimateRows) and inferred rows
-      // (loadInferredRows) BOTH carry varianceOz = null by law — a par-pass estimate
-      // and a run-rate baseline are not counted ground truths and cannot be a variance
-      // reference. Do NOT wire either non-census anchor into this call.
-      const variance = computeVariance({
-        skuId,
-        newCountOz: a.anchorOz,
-        prevCountOz: a.prevOz,
-        receivedBetweenOz,
-        consumedBetweenOz,
+          newCountOz: a.anchorOz,
+          prevCountOz: a.prevOz,
+          receivedBetweenOz,
+          consumedBetweenOz,
+        });
+        return {
+          dimension: "weight",
+          ...onHand,
+          skuName: skuName.get(skuId) ?? "(sku)",
+          varianceOz: variance.varianceOz,
+          looseLineCount: a.looseLineCount,
+          partialLineCount: a.partialLineCount,
+        };
       });
-      return {
-        dimension: "weight",
-        ...onHand,
-        skuName: skuName.get(skuId) ?? "(sku)",
-        varianceOz: variance.varianceOz,
-        looseLineCount: a.looseLineCount,
-        partialLineCount: a.partialLineCount,
-      };
     }),
   );
+  const weightRows: OnHandRow[] = weightRowGroups.flat();
 
   // ── Count rows (leaf-unit on-hand + "used or lost since last count") ──
   // received-units derive READ-TIME from level-aware receiving: received_qty_at_level
@@ -839,7 +871,7 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
       const unitLabel = chain ? (chainCountLeafMeasure(buildPackChain(chain), measures) ?? "units") : "units";
       const [receivedSince, anchorStale] = await Promise.all([
         sumReceivedUnitsSince(sb, skuId, locationId, a.anchorAt, chain),
-        detectRetroEditStaleness(sb, locationId, a.anchorAt, now),
+        stalenessFor(a.anchorAt), // memoized — shared with the weight tier's probes.
       ]);
       const onHand = computeOnHandUnits(
         { skuId, anchorUnits: a.anchorUnits, anchorAt: a.anchorAt, receivedUnitsSince: receivedSince, anchorStale },
