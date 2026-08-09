@@ -41,6 +41,7 @@
  * APPEND-ONLY: par_pass_events / par_pass_lines rows are never DELETEd or mutated.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
@@ -239,30 +240,58 @@ async function loadSkuUsageRank(
   const cutoffIso = cutoff.toISOString();
   const cutoffDate = cutoffIso.slice(0, 10); // YYYY-MM-DD for the business_date filter.
 
-  const { data: prodHdrs, error: phErr } = await sb.from("productions")
-    .select("id")
-    .eq("location_id", locationId)
-    .is("superseded_at", null).is("revoked_at", null)
-    .gt("produced_at", cutoffIso)
-    .returns<Array<{ id: string }>>();
-  if (phErr) throw new Error(`loadSkuUsageRank productions: ${phErr.message}`);
-  const prodIds = (prodHdrs ?? []).map((h) => h.id);
+  // BOTH production reads are PAGED (the PR #63 lesson): 30 days of productions and
+  // their inputs each overrun the 1000-row cap, and a truncated page would silently
+  // drop usage from the rank. `id` (the PK) gives the stable total order paging needs;
+  // both reads are order-insensitive sums.
+  const prodHdrs = await selectAllRows<{ id: string }>(
+    async (from, to) => {
+      const { data, error } = await sb.from("productions")
+        .select("id")
+        .eq("location_id", locationId)
+        .is("superseded_at", null).is("revoked_at", null)
+        .gt("produced_at", cutoffIso)
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<{ id: string }>>();
+      if (error) throw new Error(`loadSkuUsageRank productions: ${error.message}`);
+      return { data };
+    },
+  );
+  const prodIds = prodHdrs.map((h) => h.id);
   if (prodIds.length > 0) {
-    const { data: inputs, error: piErr } = await sb.from("production_inputs")
-      .select("input_sku_id, input_oz")
-      .in("production_id", prodIds)
-      .returns<Array<{ input_sku_id: string; input_oz: number | string | null }>>();
-    if (piErr) throw new Error(`loadSkuUsageRank production_inputs: ${piErr.message}`);
-    for (const r of inputs ?? []) add(r.input_sku_id, num(r.input_oz) ?? 0);
+    const inputs = await selectAllRows<{ input_sku_id: string; input_oz: number | string | null }>(
+      async (from, to) => {
+        const { data, error } = await sb.from("production_inputs")
+          .select("input_sku_id, input_oz")
+          .in("production_id", prodIds)
+          .order("id", { ascending: true })
+          .range(from, to)
+          .returns<Array<{ input_sku_id: string; input_oz: number | string | null }>>();
+        if (error) throw new Error(`loadSkuUsageRank production_inputs: ${error.message}`);
+        return { data };
+      },
+    );
+    for (const r of inputs) add(r.input_sku_id, num(r.input_oz) ?? 0);
   }
 
-  const { data: sales, error: sErr } = await sb.from("toast_daily_depletion")
-    .select("sku_id, direct_oz")
-    .eq("location_id", locationId)
-    .gte("business_date", cutoffDate)
-    .returns<Array<{ sku_id: string; direct_oz: number | string }>>();
-  if (sErr) throw new Error(`loadSkuUsageRank toast_daily_depletion: ${sErr.message}`);
-  for (const r of sales ?? []) add(r.sku_id, num(r.direct_oz) ?? 0);
+  // 30 days at (location, business_date, sku) grain overruns PostgREST's 1000-row
+  // default cap, and an unordered truncated page would silently drop usage from the
+  // rank (the PR #63 lesson) — page it under a stable total order (`id`, the PK).
+  const sales = await selectAllRows<{ sku_id: string; direct_oz: number | string }>(
+    async (from, to) => {
+      const { data, error } = await sb.from("toast_daily_depletion")
+        .select("sku_id, direct_oz")
+        .eq("location_id", locationId)
+        .gte("business_date", cutoffDate)
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<{ sku_id: string; direct_oz: number | string }>>();
+      if (error) throw new Error(`loadSkuUsageRank toast_daily_depletion: ${error.message}`);
+      return { data };
+    },
+  );
+  for (const r of sales) add(r.sku_id, num(r.direct_oz) ?? 0);
 
   return usage;
 }
@@ -512,13 +541,24 @@ async function loadLatestOrderQtyBySku(
 ): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (skuIds.length === 0) return out;
-  const { data, error } = await sb.from("par_pass_lines")
-    .select("sku_id, order_qty, created_at")
-    .in("sku_id", skuIds)
-    .order("created_at", { ascending: false })
-    .returns<Array<{ sku_id: string; order_qty: number | string; created_at: string }>>();
-  if (error) throw new Error(`loadLatestOrderQtyBySku: ${error.message}`);
-  for (const r of data ?? []) {
+  // PAGED (the PR #63 lesson): par_pass_lines grows one row per SKU per walk, so the
+  // desc scan loses its tail past 1000 rows — and the tail is where a rarely-walked
+  // SKU's only line lives. `id` is a tiebreaker ONLY (created_at stays the primary
+  // sort key), making the order total so page boundaries can't reshuffle rows.
+  const rows = await selectAllRows<{ sku_id: string; order_qty: number | string; created_at: string }>(
+    async (from, to) => {
+      const { data, error } = await sb.from("par_pass_lines")
+        .select("sku_id, order_qty, created_at")
+        .in("sku_id", skuIds)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to)
+        .returns<Array<{ sku_id: string; order_qty: number | string; created_at: string }>>();
+      if (error) throw new Error(`loadLatestOrderQtyBySku: ${error.message}`);
+      return { data };
+    },
+  );
+  for (const r of rows) {
     if (out.has(r.sku_id)) continue; // desc order → first seen is the latest.
     const q = num(r.order_qty);
     if (q != null) out.set(r.sku_id, q);

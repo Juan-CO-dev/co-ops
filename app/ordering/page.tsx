@@ -52,12 +52,16 @@ export default async function OrderingPage({
   // pattern). All-locations actors (owner/CGS override) see every active location;
   // assigned actors see their assignment list.
   const actorAll = isAllLocationsAccess({ role: auth.role, locations: auth.locations });
-  const { data: locRows } = await service
+  // A failed read MUST throw (Server Component → error boundary): an empty result is
+  // the "you have no location" signal, so swallowing the error renders that empty
+  // state at a manager who does have one.
+  const { data: locRows, error: locErr } = await service
     .from("locations")
     .select("id, code, name")
     .eq("active", true)
     .order("name", { ascending: true })
     .returns<Array<{ id: string; code: string; name: string }>>();
+  if (locErr) throw new Error(`ordering locations: ${locErr.message}`);
   const accessible = (locRows ?? []).filter((l) => actorAll || auth.locations.includes(l.id));
 
   // Authorization: the requested location MUST be one the actor may view — the walker

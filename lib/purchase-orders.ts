@@ -37,6 +37,7 @@
  * line stores integer cents → Math.round(unit_price * 100).
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
@@ -600,14 +601,27 @@ export async function confirmPO(actor: AuthContext, poId: string): Promise<void>
 async function loadLatestPriceCentsBySku(sb: ServiceClient, skuIds: string[]): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (skuIds.length === 0) return out;
-  const { data, error } = await sb.from("vendor_price_history")
-    .select("vendor_item_id, unit_price, effective_date, recorded_at")
-    .in("vendor_item_id", skuIds)
-    .order("effective_date", { ascending: false })
-    .order("recorded_at", { ascending: false, nullsFirst: false })
-    .returns<Array<{ vendor_item_id: string; unit_price: number | string; effective_date: string; recorded_at: string | null }>>();
-  if (error) throw new Error(`loadLatestPriceCentsBySku: ${error.message}`);
-  for (const r of data ?? []) {
+  // PAGED (the PR #63 lesson): vendor_price_history is an append-only ledger, so the
+  // desc scan loses its tail past 1000 rows — and the tail holds the only price row
+  // for a SKU whose price rarely changes (dropping it fabricates an advisory-null
+  // price on a confirmed PO). `id` is a tiebreaker ONLY (effective_date then
+  // recorded_at stay the ranking keys), making the order total so page boundaries
+  // can't reshuffle rows out from under the first-seen-per-SKU reduction.
+  const rows = await selectAllRows<{ vendor_item_id: string; unit_price: number | string; effective_date: string; recorded_at: string | null }>(
+    async (from, to) => {
+      const { data, error } = await sb.from("vendor_price_history")
+        .select("vendor_item_id, unit_price, effective_date, recorded_at")
+        .in("vendor_item_id", skuIds)
+        .order("effective_date", { ascending: false })
+        .order("recorded_at", { ascending: false, nullsFirst: false })
+        .order("id", { ascending: false })
+        .range(from, to)
+        .returns<Array<{ vendor_item_id: string; unit_price: number | string; effective_date: string; recorded_at: string | null }>>();
+      if (error) throw new Error(`loadLatestPriceCentsBySku: ${error.message}`);
+      return { data };
+    },
+  );
+  for (const r of rows) {
     if (out.has(r.vendor_item_id)) continue; // desc order → first seen is the latest.
     const dollars = num(r.unit_price);
     // Epsilon-safe dollars→cents: bare `dollars * 100` inherits binary-float error
