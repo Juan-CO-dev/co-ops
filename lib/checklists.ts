@@ -1371,48 +1371,13 @@ export async function confirmInstance(
   const newStatus: ChecklistStatus =
     incompleteRequiredIds.length > 0 ? "incomplete_confirmed" : "confirmed";
 
-  // 1. Insert reason rows (authed; RLS enforces reported_by = current_user_id).
-  let reasonRows: ChecklistIncompleteReason[] = [];
-  if (incompleteReasons.length > 0) {
-    const { data: insertedReasons, error: reasonErr } = await authed
-      .from("checklist_incomplete_reasons")
-      .insert(
-        incompleteReasons.map((r) => ({
-          instance_id: instanceId,
-          template_item_id: r.templateItemId,
-          reason: r.reason,
-          reported_by: actor.userId,
-        })),
-      )
-      .select("id, instance_id, template_item_id, reason, reported_by, reported_at");
-    if (reasonErr) throw new Error(`confirmInstance insert reasons: ${reasonErr.message}`);
-    reasonRows = ((insertedReasons ?? []) as ReasonRow[]).map(rowToReason);
-  }
-
-  // 2. Insert final-confirmation submission. The final-confirm submission
-  //    is an attestation event, NOT a completion batch — no completions
-  //    are added at confirm time. Prior submitBatch() events are the
-  //    canonical source for which completions belong to this instance,
-  //    each scoped to its own submission. So completion_ids = [].
-  //    (Schema permits empty UUID array; checklist_submissions.completion_ids
-  //    is `UUID[] NOT NULL`.) is_final_confirmation = true is the
-  //    discriminator that lets queries find the attestation event.
-  const { data: submissionRow, error: subErr } = await authed
-    .from("checklist_submissions")
-    .insert({
-      instance_id: instanceId,
-      submitted_by: actor.userId,
-      completion_ids: [],
-      is_final_confirmation: true,
-    })
-    .select("id, instance_id, submitted_by, submitted_at, completion_ids, is_final_confirmation")
-    .maybeSingle<SubmissionRow>();
-  if (subErr) throw new Error(`confirmInstance insert submission: ${subErr.message}`);
-  if (!submissionRow) throw new Error(`confirmInstance submission insert returned no row`);
-
-  // 3. UPDATE the instance status. RLS allows update at level 3+ in this
-  //    location. Per AGENTS.md UPDATE silent-denial footgun, check rowCount
-  //    and throw on 0 — RLS denial returns 0 rows with no exception.
+  // 1. CLAIM the transition FIRST (flip-first law; council audit 2026-08-08 —
+  //    mirrors confirmPO/recordPlacement: the guarded status flip is the
+  //    linearization point). Under the old order (reasons → submission → flip),
+  //    a lost race left committed orphans: duplicate reason rows plus a second
+  //    is_final_confirmation submission on an instance that never transitioned.
+  //    RLS allows update at level 3+ in this location. Per AGENTS.md UPDATE
+  //    silent-denial footgun, check rowcount and throw on 0.
   const { data: updatedRow, error: updateErr } = await authed
     .from("checklist_instances")
     .update({
@@ -1421,7 +1386,7 @@ export async function confirmInstance(
       confirmed_by: actor.userId,
     })
     .eq("id", instanceId)
-    .eq("status", "open") // optimistic concurrency: re-confirm only if still open
+    .eq("status", "open") // optimistic concurrency: confirm only if still open
     .select(
       INSTANCE_COLUMNS,
     )
@@ -1431,6 +1396,65 @@ export async function confirmInstance(
     throw new Error(
       `confirmInstance update returned 0 rows for ${instanceId} — RLS denial or status changed since load`,
     );
+  }
+
+  // 2+3. Dependent rows only AFTER owning the claim. If either insert fails,
+  //      revert OUR flip (scoped .eq status+confirmed_by — never undoes a rival)
+  //      and rethrow: no orphaned attestation, no stranded confirm.
+  let reasonRows: ChecklistIncompleteReason[] = [];
+  let submissionRow: SubmissionRow;
+  try {
+    // Reason rows (authed; RLS enforces reported_by = current_user_id).
+    if (incompleteReasons.length > 0) {
+      const { data: insertedReasons, error: reasonErr } = await authed
+        .from("checklist_incomplete_reasons")
+        .insert(
+          incompleteReasons.map((r) => ({
+            instance_id: instanceId,
+            template_item_id: r.templateItemId,
+            reason: r.reason,
+            reported_by: actor.userId,
+          })),
+        )
+        .select("id, instance_id, template_item_id, reason, reported_by, reported_at");
+      if (reasonErr) throw new Error(`confirmInstance insert reasons: ${reasonErr.message}`);
+      reasonRows = ((insertedReasons ?? []) as ReasonRow[]).map(rowToReason);
+    }
+
+    // Final-confirmation submission. The final-confirm submission is an
+    // attestation event, NOT a completion batch — no completions are added at
+    // confirm time. Prior submitBatch() events are the canonical source for
+    // which completions belong to this instance, each scoped to its own
+    // submission. So completion_ids = []. (Schema permits empty UUID array;
+    // checklist_submissions.completion_ids is `UUID[] NOT NULL`.)
+    // is_final_confirmation = true is the discriminator that lets queries find
+    // the attestation event.
+    const { data: insertedSubmission, error: subErr } = await authed
+      .from("checklist_submissions")
+      .insert({
+        instance_id: instanceId,
+        submitted_by: actor.userId,
+        completion_ids: [],
+        is_final_confirmation: true,
+      })
+      .select("id, instance_id, submitted_by, submitted_at, completion_ids, is_final_confirmation")
+      .maybeSingle<SubmissionRow>();
+    if (subErr) throw new Error(`confirmInstance insert submission: ${subErr.message}`);
+    if (!insertedSubmission) throw new Error(`confirmInstance submission insert returned no row`);
+    submissionRow = insertedSubmission;
+  } catch (depErr) {
+    const { error: revertErr } = await authed
+      .from("checklist_instances")
+      .update({ status: "open", confirmed_at: null, confirmed_by: null })
+      .eq("id", instanceId)
+      .eq("status", newStatus)
+      .eq("confirmed_by", actor.userId);
+    if (revertErr) {
+      // Revert failure leaves a confirmed instance without its attestation —
+      // log loudly; the thrown depErr below still surfaces the root cause.
+      console.error(`confirmInstance revert failed for ${instanceId}: ${revertErr.message}`);
+    }
+    throw depErr;
   }
 
   await audit({
