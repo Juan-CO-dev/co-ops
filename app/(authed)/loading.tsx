@@ -7,9 +7,11 @@
  *
  * Intentionally dependency-free: no session read, no i18n, no client hooks.
  * A loading fallback must render instantly and identically regardless of
- * locale or auth state, so it uses the brand wordmark + a gold spinner on
- * the app's Mayo background. Chrome matches the rest of the app
- * (co-bg / co-text / co-gold).
+ * locale or auth state, so it uses the brand wordmark + a gold spinner.
+ * TRANSPARENT background (council C2 fix): the body already paints the app's
+ * Mayo gradient (see globals.css), so painting a flat bg-co-bg here caused a
+ * visible flash against it on every navigation. Text stays co-text — it's
+ * readable over the gradient without its own background.
  */
 
 import { BrandMark } from "@/components/BrandMark";
@@ -19,7 +21,7 @@ export default function AuthedLoading() {
     <main
       aria-busy="true"
       aria-live="polite"
-      className="flex min-h-screen flex-col items-center justify-center gap-6 bg-co-bg px-6 text-co-text"
+      className="flex min-h-screen flex-col items-center justify-center gap-6 px-6 text-co-text"
     >
       {/* The mark IS the loading indicator — it breathes (reduced-motion → static).
           Decorative: the wordmark below + the sr-only "Loading…" carry the meaning. */}

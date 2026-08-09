@@ -13,6 +13,7 @@ import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { ROLES, canActOn } from "@/lib/roles";
+import { EmptyState } from "@/components/EmptyState";
 import type { AdminUserListItem } from "@/lib/admin/users";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { CreateUserForm } from "./CreateUserForm";
@@ -45,6 +46,15 @@ export function UserAdminClient({
   };
 
   const locCode = (id: string) => allLocations.find((l) => l.id === id)?.code ?? id;
+
+  // Distinguishes "no users at all" from "no users match the current filter bar"
+  // (council C2 adoption sweep — this list previously rendered an empty <ul> with
+  // no message either way).
+  const hasActiveFilters =
+    currentFilters.role !== "" ||
+    currentFilters.status !== "" ||
+    currentFilters.location !== "" ||
+    currentFilters.q !== "";
 
   return (
     <div className="mt-5">
@@ -122,13 +132,19 @@ export function UserAdminClient({
       </div>
 
       {/* List */}
+      {users.length === 0 ? (
+        <EmptyState
+          message={t(hasActiveFilters ? "admin.users.empty_filtered" : "admin.users.empty")}
+          className="mt-5"
+        />
+      ) : (
       <ul className="mt-5 grid grid-cols-1 gap-3 lg:grid-cols-2">
         {users.map((u) => {
           const actionable = canActOn(actorRole, u.role);
           return (
             <li
               key={u.id}
-              className="rounded-xl border-2 border-co-border bg-co-surface p-4"
+              className="co-card p-4"
             >
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
@@ -172,6 +188,7 @@ export function UserAdminClient({
           );
         })}
       </ul>
+      )}
 
       {creating ? (
         <CreateUserForm

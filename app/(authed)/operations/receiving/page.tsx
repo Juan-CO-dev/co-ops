@@ -10,6 +10,7 @@ import { ReceivingForm } from "@/components/receiving/ReceivingForm";
 import { OpenCreditsPanel } from "@/components/receiving/OpenCreditsPanel";
 import { AlertPill } from "@/components/ui/AlertPill";
 import { DashboardBackLink } from "@/components/DashboardBackLink";
+import { EmptyState } from "@/components/EmptyState";
 
 const OPERATIONAL_TZ = "America/New_York";
 /** Grace window before a completed, unclaimed, never-attested delivery flags "missing
@@ -70,7 +71,7 @@ export default async function ReceivingPage({ searchParams }: { searchParams: Pr
 
       <h2 className="mt-6 text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">{serverT(lang, "receiving.page.recent")}</h2>
       {recent.length === 0 ? (
-        <p className="mt-2 text-[11px] italic text-co-text-muted">{serverT(lang, "receiving.page.none")}</p>
+        <EmptyState message={serverT(lang, "receiving.page.none")} />
       ) : (
         <ul className="mt-2 flex flex-col gap-1.5">
           {recent.map((d) => {

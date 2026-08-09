@@ -1,17 +1,21 @@
 import { PlaceholderCard } from "@/components/PlaceholderCard";
+import { serverT } from "@/lib/i18n/server";
+import { requireSessionFromHeaders } from "@/lib/session";
 
-export default function FeedbackPage() {
+export default async function FeedbackPage() {
+  const auth = await requireSessionFromHeaders("/feedback");
+  const lang = auth.user.language;
   return (
     <PlaceholderCard
-      title="Customer Feedback"
-      description="1–5 ratings with optional comments and follow-up assignment."
+      title={serverT(lang, "feedback.ph.title")}
+      description={serverT(lang, "feedback.ph.description")}
       features={[
-        "Star rating + category + free-text comment",
-        "Follow-up flag with assigned-to user",
-        "Tracks response loop close-out",
-        "Surfaces in handoff for negative ratings",
+        serverT(lang, "feedback.ph.feature.rating"),
+        serverT(lang, "feedback.ph.feature.followup"),
+        serverT(lang, "feedback.ph.feature.response_loop"),
+        serverT(lang, "feedback.ph.feature.handoff"),
       ]}
-      shippingIn="Module #16 (Customer Feedback)"
+      shippingIn={serverT(lang, "feedback.ph.shipping")}
     />
   );
 }

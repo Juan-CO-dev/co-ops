@@ -5,11 +5,15 @@
  * description, and a feature list so the user (and future Cristian) can see
  * what's coming. Replaced module-by-module as features ship.
  *
- * Server component (async): it reads the viewer's language so its back link is
- * i18n'd — the stub pages that render it (settings, ai, training, etc.) live
- * OUTSIDE the (authed)/admin TranslationProvider trees, so there's no client
- * i18n context to lean on. The ~5ms session read matches the C.39-accepted
- * duplicate-read pattern used across the app.
+ * Server component (async): it reads the viewer's language for BOTH the back
+ * link AND its own strings ("Coming in {shippingIn}") — the stub pages that
+ * render it (settings, ai, training, etc.) live OUTSIDE the (authed)/admin
+ * TranslationProvider trees, so there's no client i18n context to lean on.
+ * The read is now UNCONDITIONAL (council C2 fix): it used to be gated behind
+ * showBackLink, which meant every caller passing showBackLink={false} got
+ * "Coming in {shippingIn}" hardcoded to English regardless of the viewer's
+ * language. The ~5ms session read matches the C.39-accepted duplicate-read
+ * pattern used across the app.
  *
  * The back link targets a parent via props that default to the nav registry's
  * DEFAULT_PARENT (/dashboard) — every current stub legitimately returns to the
@@ -52,16 +56,18 @@ export async function PlaceholderCard({
   parentHref = DEFAULT_PARENT.href,
   parentLabelKey = DEFAULT_PARENT.labelKey,
 }: PlaceholderCardProps) {
-  // Only pay the session read when we actually render the back link. The stub
-  // pages are all proxy-gated, so a session is guaranteed to exist.
-  const lang = showBackLink ? (await requireSessionFromHeaders(
+  // The session read is unconditional now — the card's own "Coming in {X}"
+  // string needs the viewer's language even when showBackLink is false (the
+  // common case among today's callers). The stub pages are all proxy-gated,
+  // so a session is guaranteed to exist.
+  const lang = (await requireSessionFromHeaders(
     // NOTE: this arg is the PARENT href, not the stub's own path — benign (both are
     // non-admin so the step-up decision is identical; the denial redirect is
     // proxy-unreachable), kept for simplicity per PR-A review LOW-3.
-    parentHref)).user.language : "en";
+    parentHref)).user.language;
 
   return (
-    <div className="mx-auto w-full max-w-[460px] p-3 pb-8">
+    <div className="mx-auto w-full max-w-2xl p-3 pb-8">
       {showBackLink && (
         <Link
           href={parentHref}
@@ -80,9 +86,9 @@ export async function PlaceholderCard({
       <div className="mb-3 flex items-center gap-2">
         <h2 className="m-0 text-base font-bold text-co-text">{title}</h2>
       </div>
-      <div className="rounded-lg border border-co-gold bg-co-surface p-5 text-center">
+      <div className="co-card border-co-gold p-5 text-center">
         <h3 className="m-0 mb-1.5 text-sm font-bold text-co-gold">
-          Coming in {shippingIn}
+          {serverT(lang, "placeholder.coming_in", { shippingIn })}
         </h3>
         <p className="m-0 mb-3 text-[11px] text-co-text-muted">
           {description}
@@ -91,7 +97,7 @@ export async function PlaceholderCard({
           {features.map((f, i) => (
             <li
               key={i}
-              className="my-1 border-l-2 border-co-gold pl-2 text-[10px] text-[#aaa]"
+              className="my-1 border-l-2 border-co-gold pl-2 text-xs text-co-text-muted"
             >
               {f}
             </li>

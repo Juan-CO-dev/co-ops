@@ -4,6 +4,7 @@ import type { Language } from "@/lib/i18n/types";
 import type { AnchorSource } from "@/lib/counts-shared";
 import type { OnHandView, OnHandRow, OnHandWeightRow, OnHandCountRow } from "@/lib/counts";
 import { AlertPill } from "@/components/ui/AlertPill";
+import { EmptyState } from "@/components/EmptyState";
 
 /**
  * On-hand panel (server-rendered). PER-SKU anchors (F1): each row's anchor timestamp
@@ -20,7 +21,7 @@ export function OnHandPanel({ view, lang }: { view: OnHandView; lang: Language }
   // and still surface inferred baselines (spec D6 cold-start). The `anchorAt` header
   // hint is census-only (the last physical count) and is omitted when null.
   if (view.rows.length === 0) {
-    return <p className="mt-2 text-[11px] italic text-co-text-muted">{serverT(lang, "counts.onhand.none")}</p>;
+    return <EmptyState message={serverT(lang, "counts.onhand.none")} />;
   }
   return (
     <div className="mt-2">

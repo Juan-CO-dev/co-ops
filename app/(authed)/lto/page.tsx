@@ -174,15 +174,15 @@ export default async function LtoPage() {
       {/* ─── Module #17 placeholder ──────────────────────────────────── */}
       <PlaceholderCard
         showBackLink={false}
-        title="LTO Performance"
-        description="Per-LTO sales, food cost, and customer rating tracking."
+        title={serverT(lang, "lto.ph.title")}
+        description={serverT(lang, "lto.ph.description")}
         features={[
-          "Units sold + revenue per LTO",
-          "Food cost % calculation",
-          "Customer rating average",
-          "Compare across locations and time windows",
+          serverT(lang, "lto.ph.feature.units_revenue"),
+          serverT(lang, "lto.ph.feature.food_cost"),
+          serverT(lang, "lto.ph.feature.rating"),
+          serverT(lang, "lto.ph.feature.compare"),
         ]}
-        shippingIn="Module #17 (LTO Performance)"
+        shippingIn={serverT(lang, "lto.ph.shipping")}
       />
     </main>
   );

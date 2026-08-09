@@ -1,18 +1,22 @@
 import { PlaceholderCard } from "@/components/PlaceholderCard";
+import { serverT } from "@/lib/i18n/server";
+import { requireSessionFromHeaders } from "@/lib/session";
 
-export default function SynthesisPage() {
+export default async function SynthesisPage() {
+  const auth = await requireSessionFromHeaders("/operations/synthesis");
+  const lang = auth.user.language;
   return (
     <PlaceholderCard
-      title="Today's Synthesis"
-      description="Read-only computed view that aggregates all of today's artifacts at this location. Drillable to source artifact at every level."
+      title={serverT(lang, "synthesis.ph.title")}
+      description={serverT(lang, "synthesis.ph.description")}
       features={[
-        "Rolls up opening / prep / closing checklist completions",
-        "Pulls latest shift overlay numbers",
-        "Lists written reports + active announcements",
-        "Surfaces handoff flags from closing",
-        "Click any line to drill into the source record",
+        serverT(lang, "synthesis.ph.feature.rollup"),
+        serverT(lang, "synthesis.ph.feature.overlay"),
+        serverT(lang, "synthesis.ph.feature.reports"),
+        serverT(lang, "synthesis.ph.feature.handoff"),
+        serverT(lang, "synthesis.ph.feature.drill"),
       ]}
-      shippingIn="Module #1 (Daily Operations)"
+      shippingIn={serverT(lang, "synthesis.ph.shipping")}
     />
   );
 }

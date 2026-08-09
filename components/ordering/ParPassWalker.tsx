@@ -36,6 +36,7 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { AlertPill } from "@/components/ui/AlertPill";
+import { EmptyState } from "@/components/EmptyState";
 import { CopyButton, DeliveryRow } from "@/components/ordering/delivery-affordances";
 import type {
   WalkerData,
@@ -376,9 +377,7 @@ export function ParPassWalker({
       {recent.length > 0 && <HistoryPanel recent={recent} shopLabel={shopLabel} dateLabel={dateLabel} />}
 
       {walker.vendors.length === 0 ? (
-        <p className="rounded-lg border-2 border-dashed border-co-border-2 px-3 py-6 text-center text-[13px] text-co-text-dim">
-          {t("ordering.walk.no_skus")}
-        </p>
+        <EmptyState message={t("ordering.walk.no_skus")} />
       ) : (
         walker.vendors.map((v) => (
           <VendorSection

@@ -7,7 +7,8 @@
  * payload (the page is a pure server component; this island owns all interaction):
  *
  *   1. "Today's orders" — per-vendor rows (displayCode, vendor, status chip, line count).
- *      Tap → opens the PoPanel overlay for that PO. Silent empty state (nothing rendered).
+ *      Tap → opens the PoPanel overlay for that PO. Empty state renders the house
+ *      EmptyState watermark (council C2 adoption sweep — was silent/nothing-rendered).
  *   2. Cutoff vendors WITHOUT a draft — a "Generate draft" affordance per vendor (POST
  *      generate_draft → opens the freshly-created draft in the panel). Only shows for
  *      attention vendors whose hasDraft is false (a draft already exists → they appear in
@@ -26,6 +27,7 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { AlertPill, type AlertPillTone } from "@/components/ui/AlertPill";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
+import { EmptyState } from "@/components/EmptyState";
 import { PoPanel } from "@/components/ordering/PoPanel";
 import type { TodaysOrderVendor, PoHistoryRow } from "@/lib/purchase-orders";
 import type { OrderingCutoffAttention } from "@/lib/ordering";
@@ -112,12 +114,13 @@ export function OrderingSurfaces({
 
   return (
     <div className="mt-4 flex flex-col gap-3">
-      {/* Today's orders — silent when empty (no section rendered). */}
-      {hasTodays && (
-        <section className="co-card p-4">
-          <h2 className="text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">
-            {t("ordering.po.todays_title")}
-          </h2>
+      {/* Today's orders — a visible EmptyState when nothing's been drafted yet today
+          (council C2 adoption sweep; was previously a silent no-render). */}
+      <section className="co-card p-4">
+        <h2 className="text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">
+          {t("ordering.po.todays_title")}
+        </h2>
+        {hasTodays ? (
           <ul className="mt-2 flex flex-col gap-2">
             {todaysOrders.map((o) => (
               <li key={o.poId}>
@@ -142,8 +145,10 @@ export function OrderingSurfaces({
               </li>
             ))}
           </ul>
-        </section>
-      )}
+        ) : (
+          <EmptyState message={t("ordering.po.todays_empty")} markSize={40} className="py-6" />
+        )}
+      </section>
 
       {/* Cutoff vendors with no draft yet → Generate draft. */}
       {hasDraftless && (
