@@ -694,14 +694,23 @@ export async function setQuoteStatus(actor: AuthContext, id: string, status: Ext
   if (!row) throw new CateringQuoteError(404, "not_found", "Quote not found");
   assertCanWrite(actor, row.location_id);
   if (row.superseded_at != null) throw new CateringQuoteError(409, "not_current", "Quote revision superseded");
+  // An expired quote is not acceptable — the customer's price/terms window has closed, so the
+  // path back to a sale is a revision, not an accept. Other transitions stay open on purpose
+  // (declined → accepted is a legitimate manager reversal).
+  if (row.status === "expired" && status === "accepted") {
+    throw new CateringQuoteError(409, "quote_expired", "This quote has expired — revise it before accepting");
+  }
 
+  // Guard on the status the pre-read saw (silent-UPDATE law): count 0 means the status
+  // changed between the read and the write, so the gates above were decided on stale state.
   const { error: uErr, count } = await sb
     .from("catering_quotes")
     .update({ status }, { count: "exact" })
     .eq("id", id)
+    .eq("status", row.status)
     .is("superseded_at", null);
   if (uErr) throw new Error(`setQuoteStatus update: ${uErr.message}`);
-  if (count === 0) throw new CateringQuoteError(404, "not_found", "Quote not found");
+  if (count === 0) throw new CateringQuoteError(409, "status_changed", "Quote status changed since it was loaded — reload and retry");
 
   void audit({
     actorId: actor.user.id,

@@ -246,6 +246,14 @@ export async function reverseProductionForPrep(actor: { userId: string; role: Ro
   const sb = getServiceRoleClient();
   const { data: live } = await sb.from("productions").select("id").eq("instance_id", args.instanceId).eq("template_item_id", args.templateItemId).is("superseded_at", null).is("revoked_at", null).maybeSingle<{ id: string }>();
   if (!live) return;
-  await sb.from("productions").update({ revoked_at: new Date().toISOString() }).eq("id", live.id);
+  // Guard on revoked_at IS NULL (silent-UPDATE law): the row must still be live for THIS
+  // call to be the one that revoked it. count 0 = a concurrent revoke won the race between
+  // the read and the write — the row is already revoked AND already audited by that caller,
+  // so returning without a second audit row is the idempotent outcome, not an error.
+  const { error: rErr, count } = await sb.from("productions")
+    .update({ revoked_at: new Date().toISOString() }, { count: "exact" })
+    .eq("id", live.id).is("revoked_at", null);
+  if (rErr) throw new Error(`reverseProductionForPrep revoke: ${rErr.message}`);
+  if (count === 0) return;
   await audit({ actorId: actor.userId, actorRole: actor.role, action: "production.revoked", resourceTable: "productions", resourceId: live.id, metadata: { instance_id: args.instanceId, template_item_id: args.templateItemId }, ipAddress: null, userAgent: null });
 }

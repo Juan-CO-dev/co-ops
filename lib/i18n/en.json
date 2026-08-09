@@ -2669,6 +2669,7 @@
   "ordering.deliver.call": "Call",
   "ordering.deliver.copy": "Copy",
   "ordering.deliver.copied": "Copied",
+  "ordering.deliver.copy_failed": "Copy blocked",
   "ordering.deliver.method_email": "Email",
   "ordering.deliver.method_url": "Order link",
   "ordering.deliver.method_portal": "Vendor portal",

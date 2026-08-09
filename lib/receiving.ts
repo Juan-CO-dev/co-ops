@@ -844,8 +844,9 @@ export async function addDeliveryLines(
 }
 
 /**
- * Flip an in-progress delivery to 'complete'. Location-bound; checks rowcount
- * (silent-UPDATE law) and 404s on zero rows. When the delivery is linked to a
+ * Flip an in-progress delivery to 'complete'. Location-bound; 404s when the delivery
+ * doesn't exist or isn't the actor's, 409s when it is already complete (pre-read) or was
+ * completed concurrently (guarded rowcount, silent-UPDATE law). When the delivery is linked to a
  * placed PO (purchase_order_id set), advances the PO to `received` after the
  * status flip (spec §3 — partial deliveries keep the PO at placed until complete).
  */
@@ -860,11 +861,16 @@ export async function completeDelivery(actor: AuthContext, deliveryId: string): 
   if (!h) throw new ReceivingError(404, "not_found", "Delivery not found");
   if (!lockLocationContext(actorLoc(actor), h.location_id)) throw new ReceivingError(404, "not_found", "Delivery not found");
   if (h.delivery_status === "complete") throw new ReceivingError(409, "already_complete", "This delivery is already complete");
+  // Guard on the expected prior status, not just the id (silent-UPDATE law): the row must
+  // still be 'in_progress' for THIS call to be the one that completed it. Not-found and
+  // already-complete are both ruled out by the pre-read above, so count 0 can only mean a
+  // rival completed it between the read and the write → 409, never 404.
   const { error: uErr, count } = await sb.from("vendor_deliveries")
     .update({ delivery_status: "complete" }, { count: "exact" })
-    .eq("id", deliveryId);
+    .eq("id", deliveryId)
+    .eq("delivery_status", "in_progress");
   if (uErr) throw new Error(`completeDelivery update: ${uErr.message}`);
-  if (count === 0) throw new ReceivingError(404, "not_found", "Delivery not found");
+  if (count === 0) throw new ReceivingError(409, "already_complete", "This delivery is already complete");
 
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,

@@ -1445,10 +1445,19 @@ export async function autoCompleteClosingMidDayRef(
   if (insErr) throw new Error(`autoCompleteClosingMidDayRef: insert: ${insErr.message}`);
 
   if (prior && inserted) {
-    await service
+    // Guard on superseded_at IS NULL + rowcount (silent-UPDATE law, sibling
+    // ensureClosingRefCompletion): the prior row must still be the live head, else the
+    // supersede chain would fork (two rows pointing at different successors). Throwing on
+    // 0 is safe here — the caller is fire-and-forget with a .catch (submitMidDayPhase2).
+    const { error: supErr, count: supCount } = await service
       .from("checklist_completions")
-      .update({ superseded_at: nowIso, superseded_by: inserted.id })
-      .eq("id", prior.id);
+      .update({ superseded_at: nowIso, superseded_by: inserted.id }, { count: "exact" })
+      .eq("id", prior.id)
+      .is("superseded_at", null);
+    if (supErr) throw new Error(`autoCompleteClosingMidDayRef: supersede: ${supErr.message}`);
+    if (supCount === 0) {
+      throw new Error("autoCompleteClosingMidDayRef: supersede: prior completion was concurrently superseded");
+    }
   }
 }
 
@@ -1523,11 +1532,16 @@ async function ensureClosingRefCompletion(
   if (insErr) throw new Error(`ensureClosingRefCompletion: insert: ${insErr.message}`);
 
   if (head && inserted) {
-    const { error: supErr } = await service
+    // Prior-state guard + rowcount (silent-UPDATE law; symmetric with the
+    // autoCompleteClosingMidDayRef supersede): the head must still be the live
+    // chain head, else two live completions coexist for the same ref item.
+    const { error: supErr, count: supCount } = await service
       .from("checklist_completions")
-      .update({ superseded_at: nowIso, superseded_by: inserted.id })
-      .eq("id", head.id);
+      .update({ superseded_at: nowIso, superseded_by: inserted.id }, { count: "exact" })
+      .eq("id", head.id)
+      .is("superseded_at", null);
     if (supErr) throw new Error(`ensureClosingRefCompletion: supersede: ${supErr.message}`);
+    if (supCount === 0) throw new Error(`ensureClosingRefCompletion: supersede raced — head ${head.id} already superseded`);
     return "superseded";
   }
   return "inserted";

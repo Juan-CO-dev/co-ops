@@ -33,6 +33,12 @@ export class PortalQuoteError extends Error {
   }
 }
 
+/** Canonical UUID — quoteId is caller-supplied (a route param), and an unguarded value
+ *  reaches PostgREST as a uuid cast that raises 22P02 instead of taking the not-found
+ *  branch. Guard it first so a malformed URL is a clean 404, never an error boundary
+ *  (lib/portal/draft.ts idiom). */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export type QuoteOrigin = "self_serve" | "staff";
 
 /** QuoteDetail (shape reused) + the origin the payment plan is driven by. */
@@ -163,6 +169,7 @@ export async function loadCustomerQuoteDetail(
   customerId: string,
   quoteId: string,
 ): Promise<PortalQuoteDetail | null> {
+  if (!UUID_RE.test(quoteId)) return null;
   const sb = getServiceRoleClient();
   const { data: row, error } = await sb
     .from("catering_quotes")
@@ -201,6 +208,7 @@ export async function initiatePayment(
   quoteId: string,
   kind: "deposit" | "full",
 ): Promise<{ ok: true; stub: true }> {
+  if (!UUID_RE.test(quoteId)) throw new PortalQuoteError(404, "not_found", "Quote not found");
   const sb = getServiceRoleClient();
   const { data: row, error } = await sb
     .from("catering_quotes")
