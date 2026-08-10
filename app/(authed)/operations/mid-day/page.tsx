@@ -92,7 +92,7 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
     }
 
     return (
-      <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
+      <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
         <div className="mb-3">
           <DashboardBackLink />
         </div>
@@ -169,7 +169,7 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
   const managers = await loadAgmPlusManagers(sb, state.instance.locationId);
 
   return (
-    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
+    <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3">
         <DashboardBackLink />
       </div>
