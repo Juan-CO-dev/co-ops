@@ -63,7 +63,7 @@ export default async function AdminListsReportsPage() {
         <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
           {serverT(lang, "admin.templates.lists_heading")}
         </h2>
-        <ul className="mt-3 flex flex-col gap-3">
+        <ul className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
           {PREP_SUBTYPES.map((subtype) => (
             <li key={subtype}>
               <Link href={`/admin/checklist-templates/${subtype}`} className={cardCls}>

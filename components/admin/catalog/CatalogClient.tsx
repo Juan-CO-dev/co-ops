@@ -208,7 +208,7 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
         groups.map(([section, rows]) => (
           <section key={section}>
             <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">{section}</h2>
-            <div className="mt-2 flex flex-col gap-2">
+            <div className="mt-2 grid grid-cols-1 gap-2 lg:grid-cols-2 lg:items-start">
               {rows.map((e) => (
                 <CatalogRow
                   key={e.key}
