@@ -143,7 +143,7 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
 
   if (!selectedLocation) {
     return (
-      <AuthShell>
+      <AuthShell width="wide">
         <ScaffoldHeader language={language} />
         <NoLocationView language={language} />
         <FooterActions />
@@ -164,7 +164,7 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
 
   if (gateBlocked) {
     return (
-      <AuthShell>
+      <AuthShell width="wide">
         <ScaffoldHeader language={language} />
         <GateBlockedBanner
           location={selectedLocation}
@@ -185,7 +185,7 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
 
   if (!state) {
     return (
-      <AuthShell>
+      <AuthShell width="wide">
         <ScaffoldHeader language={language} />
         <NoTemplateView location={selectedLocation} language={language} />
         <FooterActions />
@@ -200,7 +200,7 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
         ? state.authors[state.instance.confirmedBy]!
         : "—";
     return (
-      <AuthShell>
+      <AuthShell width="wide">
         <ScaffoldHeader language={language} />
         <ReadOnlyBanner
           location={selectedLocation}
@@ -246,7 +246,7 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
   // status='open' — render the form. (This branch renders OpeningClient
   // directly without ScaffoldHeader, so the back link is added explicitly.)
   return (
-    <AuthShell>
+    <AuthShell width="wide">
       <DashboardBackLink />
       <OpeningClient
         instance={state.instance}

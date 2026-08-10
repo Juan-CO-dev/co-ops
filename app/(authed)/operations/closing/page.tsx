@@ -531,7 +531,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
 
 function NoTemplateView({ locationLabel, language }: { locationLabel: string; language: Language }) {
   return (
-    <main className="mx-auto max-w-2xl p-4 sm:p-6">
+    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl p-4 sm:p-6">
       <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
         {serverT(language, "closing.no_template.heading")}
       </p>
@@ -558,7 +558,7 @@ function NoInstanceView({
   language: Language;
 }) {
   return (
-    <main className="mx-auto max-w-2xl p-4 sm:p-6">
+    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl p-4 sm:p-6">
       <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
         {serverT(language, "closing.no_template.heading")}
       </p>
