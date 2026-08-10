@@ -116,6 +116,10 @@ export default async function CashPage({ searchParams }: PageProps) {
     }
   }
 
+  // Recomposition PR 4b (Juan overruled the narrow column): the page keeps the
+  // house ladder and the CONTENT composes instead — cash-client lays the count
+  // beside a tips/crew/submit rail at lg. Width without composition was the
+  // stretched look; composition without width was the cramped one.
   return (
     <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3">

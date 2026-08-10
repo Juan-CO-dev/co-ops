@@ -105,8 +105,11 @@ export function CashClient({
         ? t("cash.readout.over", { amount: formatCents(overShortCents, language) })
         : t("cash.readout.short", { amount: formatCents(Math.abs(overShortCents), language) });
 
+  // Recomposition PR 4b: phone keeps the stack; lg+ composes — the cash count
+  // (the real work) left, tips + on-shift + submit as a right rail. Source
+  // order unchanged.
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-6 lg:grid lg:grid-cols-[3fr_2fr] lg:items-start lg:gap-8">
       {/* === CASH SECTION === */}
       <section>
         <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
@@ -224,6 +227,8 @@ export function CashClient({
         </div>
       </section>
 
+      {/* Right rail at lg (tips → crew → submit read down the rail). */}
+      <div className="flex flex-col gap-6">
       {/* === TIPS SECTION === */}
       <section>
         <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
@@ -323,6 +328,7 @@ export function CashClient({
       <ActionButton size="lg" className="w-full" onClick={() => setPinOpen(true)}>
         {t("cash.submit.button")}
       </ActionButton>
+      </div>
 
       {pinOpen ? (
         <div
