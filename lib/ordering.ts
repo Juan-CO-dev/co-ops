@@ -41,6 +41,7 @@
  * APPEND-ONLY: par_pass_events / par_pass_lines rows are never DELETEd or mutated.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
@@ -66,7 +67,7 @@ import {
   type CreatedDraft,
   type DraftLineInput,
 } from "@/lib/purchase-orders";
-import { etCalendarDate, operationalDayUtcRange } from "@/lib/operational-day";
+import { etCalendarDate, etYmdMinusDays, operationalDayUtcRange } from "@/lib/operational-day";
 import { etDayFromDate } from "@/lib/et-day-shared";
 import { formatTime } from "@/lib/i18n/format";
 
@@ -239,30 +240,58 @@ async function loadSkuUsageRank(
   const cutoffIso = cutoff.toISOString();
   const cutoffDate = cutoffIso.slice(0, 10); // YYYY-MM-DD for the business_date filter.
 
-  const { data: prodHdrs, error: phErr } = await sb.from("productions")
-    .select("id")
-    .eq("location_id", locationId)
-    .is("superseded_at", null).is("revoked_at", null)
-    .gt("produced_at", cutoffIso)
-    .returns<Array<{ id: string }>>();
-  if (phErr) throw new Error(`loadSkuUsageRank productions: ${phErr.message}`);
-  const prodIds = (prodHdrs ?? []).map((h) => h.id);
+  // BOTH production reads are PAGED (the PR #63 lesson): 30 days of productions and
+  // their inputs each overrun the 1000-row cap, and a truncated page would silently
+  // drop usage from the rank. `id` (the PK) gives the stable total order paging needs;
+  // both reads are order-insensitive sums.
+  const prodHdrs = await selectAllRows<{ id: string }>(
+    async (from, to) => {
+      const { data, error } = await sb.from("productions")
+        .select("id")
+        .eq("location_id", locationId)
+        .is("superseded_at", null).is("revoked_at", null)
+        .gt("produced_at", cutoffIso)
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<{ id: string }>>();
+      if (error) throw new Error(`loadSkuUsageRank productions: ${error.message}`);
+      return { data };
+    },
+  );
+  const prodIds = prodHdrs.map((h) => h.id);
   if (prodIds.length > 0) {
-    const { data: inputs, error: piErr } = await sb.from("production_inputs")
-      .select("input_sku_id, input_oz")
-      .in("production_id", prodIds)
-      .returns<Array<{ input_sku_id: string; input_oz: number | string | null }>>();
-    if (piErr) throw new Error(`loadSkuUsageRank production_inputs: ${piErr.message}`);
-    for (const r of inputs ?? []) add(r.input_sku_id, num(r.input_oz) ?? 0);
+    const inputs = await selectAllRows<{ input_sku_id: string; input_oz: number | string | null }>(
+      async (from, to) => {
+        const { data, error } = await sb.from("production_inputs")
+          .select("input_sku_id, input_oz")
+          .in("production_id", prodIds)
+          .order("id", { ascending: true })
+          .range(from, to)
+          .returns<Array<{ input_sku_id: string; input_oz: number | string | null }>>();
+        if (error) throw new Error(`loadSkuUsageRank production_inputs: ${error.message}`);
+        return { data };
+      },
+    );
+    for (const r of inputs) add(r.input_sku_id, num(r.input_oz) ?? 0);
   }
 
-  const { data: sales, error: sErr } = await sb.from("toast_daily_depletion")
-    .select("sku_id, direct_oz")
-    .eq("location_id", locationId)
-    .gte("business_date", cutoffDate)
-    .returns<Array<{ sku_id: string; direct_oz: number | string }>>();
-  if (sErr) throw new Error(`loadSkuUsageRank toast_daily_depletion: ${sErr.message}`);
-  for (const r of sales ?? []) add(r.sku_id, num(r.direct_oz) ?? 0);
+  // 30 days at (location, business_date, sku) grain overruns PostgREST's 1000-row
+  // default cap, and an unordered truncated page would silently drop usage from the
+  // rank (the PR #63 lesson) — page it under a stable total order (`id`, the PK).
+  const sales = await selectAllRows<{ sku_id: string; direct_oz: number | string }>(
+    async (from, to) => {
+      const { data, error } = await sb.from("toast_daily_depletion")
+        .select("sku_id, direct_oz")
+        .eq("location_id", locationId)
+        .gte("business_date", cutoffDate)
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<{ sku_id: string; direct_oz: number | string }>>();
+      if (error) throw new Error(`loadSkuUsageRank toast_daily_depletion: ${error.message}`);
+      return { data };
+    },
+  );
+  for (const r of sales) add(r.sku_id, num(r.direct_oz) ?? 0);
 
   return usage;
 }
@@ -308,6 +337,23 @@ export interface WalkerSku {
   /** max(par − advisoryOrderUnits, 0), rounded UP to whole units — only when the
    *  advisory is convertible to order units; else null (no fabricated suggestion). */
   suggestedQty: number | null;
+  /**
+   * Is the order-unit→oz conversion DERIVABLE for this SKU (perOrderUnitOz non-null
+   * AND > 0)? DISPLAY-ONLY — nothing in the walk math, filtering, or submit reads it.
+   *
+   * False is a CHRONIC state, not an alert: without a per-order-unit oz this SKU can
+   * never anchor an on-hand estimate and never earns a Suggest chip, so both hints go
+   * silently missing (the council's mute-face finding). The row renders a muted
+   * "no weight set" microcopy so the absence is EXPLAINED rather than unexplained.
+   *
+   * Gate note: this mirrors the `orderUnits`/`suggestedQty` gate below (`> 0`), NOT the
+   * marginally looser submit-side gate (`!= null`, line ~762) that decides whether a
+   * walk line stores implied_on_hand_oz. They differ only for a pathological perUnitOz
+   * === 0, where an implied "0 oz" would be stored but is not a usable estimate and
+   * still yields no chip — so `> 0` is the condition that makes the hint's claim true
+   * in every case.
+   */
+  canImplyOz: boolean;
 }
 export interface WalkerVendor {
   vendorId: string;
@@ -327,6 +373,19 @@ export interface WalkerData {
   /** The walk date (server local). Its getDay drives the weekend-par rule + isOrderDay. */
   walkDate: string; // ISO
   isWeekendPar: boolean;
+  /**
+   * Has the sales-depletion ledger materialized before but NOT yet caught up through
+   * YESTERDAY? (onHandView.salesThrough < yesterday-ET.) During that window the
+   * consumed term of every advisory on-hand is missing its most recent day, so
+   * estimates and Suggest chips are stale-or-absent BY DESIGN — the nightly
+   * toast-sales-pull cron (09:00 UTC ≈ 5 AM ET) materializes T-1 and they return.
+   *
+   * DORMANT ≠ BROKEN: salesThrough == null (Toast never materialized at all) is FALSE
+   * here — a shop that has never had a sales feed is not "paused", and claiming
+   * otherwise would invent a fault. Display-only; changes no math (the advisory stays
+   * honestly null/stale — this flag only lets the UI SAY why).
+   */
+  advisoryPaused: boolean;
   vendors: WalkerVendor[];
 }
 
@@ -369,7 +428,10 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
   // vendor can't be ordered from anyone → excluded (schema allows null vendor_id, live
   // data has none; defensive).
   if (skus.length === 0) {
-    return { walkDate: walkDateEt, isWeekendPar: weekend, vendors: [] };
+    // No par'd SKUs anywhere → we return BEFORE the loadOnHand batch below, so
+    // salesThrough is unknown here. Can't-know → don't claim: false (there is also no
+    // walker row for a blackout banner to explain).
+    return { walkDate: walkDateEt, isWeekendPar: weekend, advisoryPaused: false, vendors: [] };
   }
   const skuIds = skus.map((s) => s.id);
   const vendorIds = [...new Set(skus.map((s) => s.vendor_id as string))];
@@ -391,6 +453,18 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
   if (vErr) throw new Error(`loadWalkerData vendors: ${vErr.message}`);
   const vendorById = new Map((vendorRows ?? []).map((v) => [v.id, v]));
   const advisoryBySku = advisoryOnHandBySku(onHandView);
+
+  // Advisory blackout (council UX finding 2026-08-08): the depletion ledger lags the
+  // register by a day — the nightly cron materializes T-1. If it has materialized
+  // BEFORE but its latest business_date is older than yesterday, last night's run
+  // hasn't landed yet, so the advisory feed is mid-refresh and the walker's estimates
+  // + Suggest chips are thin for reasons that have nothing to do with the shelf.
+  // `< yesterday` is the exact complement of what the cron writes
+  // (app/api/cron/toast-sales-pull: materializes etYmdMinusDays(etCalendarDate(now), 1)).
+  // null salesThrough = Toast never materialized here = DORMANT, not paused → false.
+  const yesterdayEt = etYmdMinusDays(etCalendarDate(new Date().toISOString()), 1);
+  const advisoryPaused =
+    onHandView.salesThrough != null && onHandView.salesThrough < yesterdayEt;
 
   // Build a per-SKU WalkerSku, grouped under its (active) vendor.
   const skusByVendor = new Map<string, WalkerSku[]>();
@@ -447,6 +521,9 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
       lastOrderQty: lastOrderBySku.get(s.id) ?? null,
       advisoryOnHand,
       suggestedQty,
+      // Display-only (see WalkerSku.canImplyOz): same gate as orderUnits above, so the
+      // row can explain a permanently absent estimate/chip instead of just showing none.
+      canImplyOz: perUnitOz != null && perUnitOz > 0,
     };
     const arr = skusByVendor.get(vendorId) ?? [];
     arr.push(row);
@@ -497,14 +574,14 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
     return a.name.localeCompare(b.name);
   });
 
-  return { walkDate: walkDateEt, isWeekendPar: weekend, vendors };
+  return { walkDate: walkDateEt, isWeekendPar: weekend, advisoryPaused, vendors };
 }
 
 /**
- * The latest (by created_at) par_pass_lines.order_qty per SKU — one batched query over
- * the sku_ix (sku_id, created_at desc). We pull the recent rows for the SKU set and
- * keep the FIRST seen per SKU in created_at-desc order (the latest). Bounded by the
- * SKU set; no per-SKU query.
+ * The latest (by created_at) par_pass_lines.order_qty per SKU — one batched, PAGED
+ * scan over the sku_ix (sku_id, created_at desc; never per-SKU I/O). We pull the
+ * rows for the SKU set and keep the FIRST seen per SKU in created_at-desc order
+ * (the latest).
  */
 async function loadLatestOrderQtyBySku(
   sb: ReturnType<typeof getServiceRoleClient>,
@@ -512,13 +589,24 @@ async function loadLatestOrderQtyBySku(
 ): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (skuIds.length === 0) return out;
-  const { data, error } = await sb.from("par_pass_lines")
-    .select("sku_id, order_qty, created_at")
-    .in("sku_id", skuIds)
-    .order("created_at", { ascending: false })
-    .returns<Array<{ sku_id: string; order_qty: number | string; created_at: string }>>();
-  if (error) throw new Error(`loadLatestOrderQtyBySku: ${error.message}`);
-  for (const r of data ?? []) {
+  // PAGED (the PR #63 lesson): par_pass_lines grows one row per SKU per walk, so the
+  // desc scan loses its tail past 1000 rows — and the tail is where a rarely-walked
+  // SKU's only line lives. `id` is a tiebreaker ONLY (created_at stays the primary
+  // sort key), making the order total so page boundaries can't reshuffle rows.
+  const rows = await selectAllRows<{ sku_id: string; order_qty: number | string; created_at: string }>(
+    async (from, to) => {
+      const { data, error } = await sb.from("par_pass_lines")
+        .select("sku_id, order_qty, created_at")
+        .in("sku_id", skuIds)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to)
+        .returns<Array<{ sku_id: string; order_qty: number | string; created_at: string }>>();
+      if (error) throw new Error(`loadLatestOrderQtyBySku: ${error.message}`);
+      return { data };
+    },
+  );
+  for (const r of rows) {
     if (out.has(r.sku_id)) continue; // desc order → first seen is the latest.
     const q = num(r.order_qty);
     if (q != null) out.set(r.sku_id, q);

@@ -264,9 +264,16 @@ export function isCateringStepUpPath(currentPath: string): boolean {
   return currentPath.startsWith("/api/catering/quotes/") && currentPath.endsWith("/send");
 }
 
+/** The physical-count surface is Tier-A (council A4) but lives OUTSIDE /admin —
+ *  without registry membership the unlock auto-clears on the very count POST it
+ *  protects (found live 2026-08-10: the form's step-up loop could never close). */
+export function isCountsStepUpPath(currentPath: string): boolean {
+  return currentPath === "/api/operations/counts" || currentPath.startsWith("/operations/counts");
+}
+
 /** Paths where an unlocked step-up flag survives requireSession (does not auto-clear). */
 export function isStepUpSurface(currentPath: string): boolean {
-  return isAdminPath(currentPath) || isCateringStepUpPath(currentPath);
+  return isAdminPath(currentPath) || isCateringStepUpPath(currentPath) || isCountsStepUpPath(currentPath);
 }
 
 /**

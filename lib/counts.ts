@@ -43,6 +43,7 @@
  */
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
@@ -128,10 +129,13 @@ export async function loadCountFormData(actor: AuthContext, locationId: string):
 async function loadRecipeSkus(skuIds: string[]): Promise<Map<string, RecipeInputSku>> {
   if (skuIds.length === 0) return new Map();
   const sb = getServiceRoleClient();
-  const { data } = await sb.from("vendor_items")
+  // Feeds the write-time oz resolution (L3) — a swallowed error would resolve every
+  // line as unanchorable and report it as a bad pack chain. Throw.
+  const { data, error } = await sb.from("vendor_items")
     .select("id, pack_format, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each")
     .in("id", skuIds)
     .returns<Array<{ id: string; pack_format: string | null; each_container_label: string | null; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>>();
+  if (error) throw new Error(`loadRecipeSkus: ${error.message}`);
   const chainsBySku = await loadSkuPackChains(skuIds);
   return new Map((data ?? []).map((s) => [s.id, {
     packFormat: s.pack_format, eachContainerLabel: s.each_container_label,
@@ -173,7 +177,10 @@ export async function createCountEvent(actor: AuthContext, input: CreateCountEve
 
   const sb = getServiceRoleClient();
   const skuIds = [...new Set(input.lines.map((l) => l.skuId))];
-  const { data: activeSkus } = await sb.from("vendor_items").select("id").in("id", skuIds).eq("active", true).returns<Array<{ id: string }>>();
+  // Feeds the active-SKU validation gate — a swallowed error rejects the whole event
+  // as "SKU not found or inactive". Throw so the real cause surfaces.
+  const { data: activeSkus, error: asErr } = await sb.from("vendor_items").select("id").in("id", skuIds).eq("active", true).returns<Array<{ id: string }>>();
+  if (asErr) throw new Error(`createCountEvent active skus: ${asErr.message}`);
   const activeSet = new Set((activeSkus ?? []).map((s) => s.id));
   for (const id of skuIds) if (!activeSet.has(id)) throw new CountError(400, "invalid_sku", "A SKU is not found or inactive");
 
@@ -309,31 +316,59 @@ async function loadInferredConsumedOz(
   // SAME calendar window — the sales lane filters business_date >= cutoffDate (a bare
   // date, inherently inclusive of that whole day), so production uses .gte(cutoffIso)
   // to match (a production exactly at the cutoff instant belongs to the 28-day window).
-  const { data: prodHdrs, error: phErr } = await sb.from("productions")
-    .select("id")
-    .eq("location_id", locationId)
-    .is("superseded_at", null).is("revoked_at", null)
-    .gte("produced_at", cutoffIso)
-    .returns<Array<{ id: string }>>();
-  if (phErr) throw new Error(`loadInferredConsumedOz productions: ${phErr.message}`);
-  const prodIds = (prodHdrs ?? []).map((h) => h.id);
+  // BOTH production reads are PAGED (the PR #63 lesson): 28 days of productions and
+  // their inputs each overrun the 1000-row cap, and a truncated page would silently
+  // understate the run-rate. `id` (the PK) gives the stable total order paging needs;
+  // both reads are order-insensitive sums.
+  const prodHdrs = await selectAllRows<{ id: string }>(
+    async (from, to) => {
+      const { data, error } = await sb.from("productions")
+        .select("id")
+        .eq("location_id", locationId)
+        .is("superseded_at", null).is("revoked_at", null)
+        .gte("produced_at", cutoffIso)
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<{ id: string }>>();
+      if (error) throw new Error(`loadInferredConsumedOz productions: ${error.message}`);
+      return { data };
+    },
+  );
+  const prodIds = prodHdrs.map((h) => h.id);
   if (prodIds.length > 0) {
-    const { data: inputs, error: piErr } = await sb.from("production_inputs")
-      .select("input_sku_id, input_oz")
-      .in("production_id", prodIds)
-      .returns<Array<{ input_sku_id: string; input_oz: number | string | null }>>();
-    if (piErr) throw new Error(`loadInferredConsumedOz production_inputs: ${piErr.message}`);
-    for (const r of inputs ?? []) addProd(r.input_sku_id, num(r.input_oz) ?? 0);
+    const inputs = await selectAllRows<{ input_sku_id: string; input_oz: number | string | null }>(
+      async (from, to) => {
+        const { data, error } = await sb.from("production_inputs")
+          .select("input_sku_id, input_oz")
+          .in("production_id", prodIds)
+          .order("id", { ascending: true })
+          .range(from, to)
+          .returns<Array<{ input_sku_id: string; input_oz: number | string | null }>>();
+        if (error) throw new Error(`loadInferredConsumedOz production_inputs: ${error.message}`);
+        return { data };
+      },
+    );
+    for (const r of inputs) addProd(r.input_sku_id, num(r.input_oz) ?? 0);
   }
 
   // Sales direct lane — the materialized depletion ledger over the window (0166).
-  const { data: sales, error: sErr } = await sb.from("toast_daily_depletion")
-    .select("sku_id, direct_oz")
-    .eq("location_id", locationId)
-    .gte("business_date", cutoffDate)
-    .returns<Array<{ sku_id: string; direct_oz: number | string }>>();
-  if (sErr) throw new Error(`loadInferredConsumedOz toast_daily_depletion: ${sErr.message}`);
-  for (const r of sales ?? []) addDirect(r.sku_id, num(r.direct_oz) ?? 0);
+  // 28 days × the SKU roster overruns PostgREST's 1000-row default cap, and an
+  // unordered truncated page would silently understate the run-rate (the PR #63
+  // lesson) — page it under a stable total order (`id`, the primary key).
+  const sales = await selectAllRows<{ sku_id: string; direct_oz: number | string }>(
+    async (from, to) => {
+      const { data, error } = await sb.from("toast_daily_depletion")
+        .select("sku_id, direct_oz")
+        .eq("location_id", locationId)
+        .gte("business_date", cutoffDate)
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<{ sku_id: string; direct_oz: number | string }>>();
+      if (error) throw new Error(`loadInferredConsumedOz toast_daily_depletion: ${error.message}`);
+      return { data };
+    },
+  );
+  for (const r of sales) addDirect(r.sku_id, num(r.direct_oz) ?? 0);
 
   return lanes;
 }
@@ -559,16 +594,27 @@ async function loadParEstimateRows(
 
   // (b) Latest par_pass line per roster SKU with a non-null implied_on_hand_oz, among
   //     those events. Ordered created_at desc (the sku_ix) → first seen per SKU wins.
-  const { data: lineRows, error: lErr } = await sb.from("par_pass_lines")
-    .select("sku_id, implied_on_hand_oz, created_at")
-    .in("event_id", eventIds)
-    .in("sku_id", rosterIds)
-    .not("implied_on_hand_oz", "is", null)
-    .order("created_at", { ascending: false })
-    .returns<Array<{ sku_id: string; implied_on_hand_oz: number | string | null; created_at: string }>>();
-  if (lErr) throw new Error(`loadParEstimateRows lines: ${lErr.message}`);
+  //     PAGED (the PR #63 lesson): par_pass_lines grows one row per SKU per walk, so
+  //     the desc scan loses its tail past 1000 rows — dropping a rarely-walked SKU's
+  //     only anchor. `id` is a tiebreaker ONLY (created_at stays the primary sort key),
+  //     making the order total so page boundaries can't reshuffle the first-seen pick.
+  const lineRows = await selectAllRows<{ sku_id: string; implied_on_hand_oz: number | string | null; created_at: string }>(
+    async (from, to) => {
+      const { data, error } = await sb.from("par_pass_lines")
+        .select("sku_id, implied_on_hand_oz, created_at")
+        .in("event_id", eventIds)
+        .in("sku_id", rosterIds)
+        .not("implied_on_hand_oz", "is", null)
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to)
+        .returns<Array<{ sku_id: string; implied_on_hand_oz: number | string | null; created_at: string }>>();
+      if (error) throw new Error(`loadParEstimateRows lines: ${error.message}`);
+      return { data };
+    },
+  );
   const anchorBySku = new Map<string, { impliedOz: number; anchorAt: string }>();
-  for (const r of lineRows ?? []) {
+  for (const r of lineRows) {
     if (anchorBySku.has(r.sku_id)) continue; // desc order → first seen is the latest.
     const oz = num(r.implied_on_hand_oz);
     if (oz == null) continue; // defensive — filtered above, but never fabricate.
@@ -663,13 +709,25 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
 
   // ALL active count events at this location, newest first — every event is a live
   // session (F1: no supersede). We resolve each SKU's anchor across all of them.
-  const { data: events } = await sb.from("sku_count_events")
-    .select("id, counted_at")
-    .eq("location_id", locationId)
-    .eq("active", true)
-    .order("counted_at", { ascending: false })
-    .returns<Array<{ id: string; counted_at: string }>>();
-  const evList = events ?? [];
+  // A failed read MUST throw: an empty result is the COLD START signal ("this
+  // location was never counted"), so a swallowed error would fabricate it. PAGED (the
+  // PR #63 lesson): one row per count session accumulates forever, and evList[0] is
+  // the location's "last counted" hint — `id` is a tiebreaker ONLY (counted_at stays
+  // the primary sort key), making the order total so paging can't reorder the head.
+  const evList = await selectAllRows<{ id: string; counted_at: string }>(
+    async (from, to) => {
+      const { data, error } = await sb.from("sku_count_events")
+        .select("id, counted_at")
+        .eq("location_id", locationId)
+        .eq("active", true)
+        .order("counted_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to)
+        .returns<Array<{ id: string; counted_at: string }>>();
+      if (error) throw new Error(`loadOnHand count events: ${error.message}`);
+      return { data };
+    },
+  );
   if (evList.length === 0) {
     // COLD START (spec D6): no physical count has EVER anchored this location. Still
     // surface soft baselines so the panel isn't empty on day one — par_estimate first
@@ -687,11 +745,25 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
   // ALL lines across those active events, each tagged with its event's counted_at.
   // PR-C: read anchor_dimension + resolved_units to partition weight vs count rows.
   const eventIds = evList.map((e) => e.id);
-  const { data: allLines } = await sb.from("sku_count_lines")
-    .select("count_event_id, sku_id, anchor_dimension, resolved_oz, resolved_units, is_loose, partial_fraction")
-    .in("count_event_id", eventIds)
-    .returns<Array<{ count_event_id: string; sku_id: string; anchor_dimension: "weight" | "count" | null; resolved_oz: number | string | null; resolved_units: number | string | null; is_loose: boolean; partial_fraction: number | string | null }>>();
-  const lines = allLines ?? [];
+  // A failed read MUST throw: these lines ARE every SKU's anchor — an empty result
+  // reads as "the events resolved to no anchors" and silently drops the census tier.
+  // PAGED (the PR #63 lesson): a full census writes one line per SKU (~163), so all
+  // lines across all active events cross 1000 rows within a handful of counts; a
+  // truncated page would silently strand whichever SKUs fell off. `id` (the PK) gives
+  // the stable total order paging requires — anchors resolve by event counted_at, so
+  // row order is not otherwise load-bearing.
+  const lines = await selectAllRows<{ count_event_id: string; sku_id: string; anchor_dimension: "weight" | "count" | null; resolved_oz: number | string | null; resolved_units: number | string | null; is_loose: boolean; partial_fraction: number | string | null }>(
+    async (from, to) => {
+      const { data, error } = await sb.from("sku_count_lines")
+        .select("count_event_id, sku_id, anchor_dimension, resolved_oz, resolved_units, is_loose, partial_fraction")
+        .in("count_event_id", eventIds)
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<{ count_event_id: string; sku_id: string; anchor_dimension: "weight" | "count" | null; resolved_oz: number | string | null; resolved_units: number | string | null; is_loose: boolean; partial_fraction: number | string | null }>>();
+      if (error) throw new Error(`loadOnHand count lines: ${error.message}`);
+      return { data };
+    },
+  );
   // Legacy rows (anchor_dimension NULL) read as weight-anchored (0161 rationale).
   const isWeight = (d: "weight" | "count" | null): boolean => d !== "count";
 
@@ -738,12 +810,15 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
   }
 
   // SKU names + chains (count rows derive received-units read-time from the chain).
-  const [{ data: skuRows }, chainsBySku, measures] = await Promise.all([
+  const [nameRes, chainsBySku, measures] = await Promise.all([
     sb.from("vendor_items").select("id, name").in("id", skuIds).returns<Array<{ id: string; name: string }>>(),
     loadSkuPackChains(countSkuIds),
     loadMeasures(),
   ]);
-  const skuName = new Map((skuRows ?? []).map((s) => [s.id, s.name]));
+  // LABEL-ONLY read: names never touch the drift math (rows fall back to "(sku)"), so
+  // a failure logs and continues best-effort rather than failing the whole panel.
+  if (nameRes.error) console.error(`[counts] loadOnHand sku names lookup failed:`, nameRes.error.message);
+  const skuName = new Map((nameRes.data ?? []).map((s) => [s.id, s.name]));
 
   // Sales-coverage gap dates (hardening 2026-07-31): loaded ONCE for the whole
   // location from the earliest weight-SKU window start, then membership-tested
@@ -759,75 +834,107 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
     : new Set<string>();
 
   // ── Weight rows (oz drift + variance) ──
-  const weightRows: OnHandRow[] = await Promise.all(
-    weightSkuIds.map(async (skuId): Promise<OnHandRow> => {
-      const a = anchorBySku.get(skuId)!;
-      const [receivedSince, consumedSince, salesSince, anchorStale] = await Promise.all([
-        sumReceivedOzSince(sb, [skuId], locationId, a.anchorAt),
-        sumConsumedOzSince(sb, [skuId], locationId, a.anchorAt),
-        sumSalesDirectOzSince(sb, [skuId], locationId, a.anchorAt, gapDates),
-        detectRetroEditStaleness(sb, locationId, a.anchorAt, now),
+  // BATCHED (council audit 2026-08-08 P1-3; same group idiom as the par_estimate +
+  // inferred tiers above): census SKUs group by their EXACT (anchorAt, prevAt)
+  // window pair → ONE call per ledger helper per group, instead of the full helper
+  // fan-out per SKU (~10-12 queries × the whole roster on the first physical
+  // count). A single walk anchors most SKUs at one event → 1-2 groups in practice.
+  // Staleness probes are per-anchorAt (identical for every SKU sharing one) —
+  // memoized here and shared with the count tier below.
+  const stalenessByAnchorAt = new Map<string, Promise<boolean>>();
+  const stalenessFor = (anchorAt: string): Promise<boolean> => {
+    let p = stalenessByAnchorAt.get(anchorAt);
+    if (!p) {
+      p = detectRetroEditStaleness(sb, locationId, anchorAt, now);
+      stalenessByAnchorAt.set(anchorAt, p);
+    }
+    return p;
+  };
+
+  const weightGroups = new Map<string, { anchorAt: string; prevAt: string | null; ids: string[] }>();
+  for (const skuId of weightSkuIds) {
+    const a = anchorBySku.get(skuId)!;
+    const key = `${a.anchorAt}|${a.prevAt ?? ""}`;
+    let g = weightGroups.get(key);
+    if (!g) { g = { anchorAt: a.anchorAt, prevAt: a.prevAt, ids: [] }; weightGroups.set(key, g); }
+    g.ids.push(skuId);
+  }
+
+  const weightRowGroups = await Promise.all(
+    [...weightGroups.values()].map(async ({ anchorAt, prevAt, ids }): Promise<OnHandRow[]> => {
+      const [receivedSince, consumedSince, salesSince, anchorStale, between] = await Promise.all([
+        sumReceivedOzSince(sb, ids, locationId, anchorAt),
+        sumConsumedOzSince(sb, ids, locationId, anchorAt),
+        sumSalesDirectOzSince(sb, ids, locationId, anchorAt, gapDates),
+        stalenessFor(anchorAt),
+        prevAt == null
+          ? Promise.resolve(null)
+          : Promise.all([
+              sumReceivedOzBetween(sb, ids, locationId, prevAt, anchorAt),
+              sumConsumedOzBetween(sb, ids, locationId, prevAt, anchorAt),
+              sumSalesDirectOzBetween(sb, ids, locationId, prevAt, anchorAt, gapDates),
+            ]),
       ]);
-      // Drift spec 2026-07-31: consumed = prep production + DIRECT sales lane.
-      // BOTH terms may null-taint now (production when it can't derive; sales
-      // when its window has a materialization gap or collapsed — hardening
-      // 2026-07-31). Either null → consumed null → drift advisory. Honest-null.
-      const prodSince = consumedSince.get(skuId) ?? null;
-      const salesSinceOz = salesSince.get(skuId) ?? null;
-      const onHand = computeOnHand(
-        {
+      return ids.map((skuId): OnHandRow => {
+        const a = anchorBySku.get(skuId)!;
+        // Drift spec 2026-07-31: consumed = prep production + DIRECT sales lane.
+        // BOTH terms may null-taint now (production when it can't derive; sales
+        // when its window has a materialization gap or collapsed — hardening
+        // 2026-07-31). Either null → consumed null → drift advisory. Honest-null.
+        const prodSince = consumedSince.get(skuId) ?? null;
+        const salesSinceOz = salesSince.get(skuId) ?? null;
+        const onHand = computeOnHand(
+          {
+            skuId,
+            anchorOz: a.anchorOz,
+            anchorAt: a.anchorAt,
+            receivedSinceOz: receivedSince.get(skuId) ?? null,
+            consumedSinceOz: prodSince == null || salesSinceOz == null ? null : prodSince + salesSinceOz,
+            anchorStale,
+            // CENSUS provenance: this row's anchor is a real physical count event
+            // (anchorBySku is resolved from sku_count_lines). Par_estimate AND inferred
+            // anchors are composed in SEPARATE passes below and never reach this variance
+            // loop — only census rows do.
+            anchorSource: "census",
+          },
+          now,
+        );
+        let receivedBetweenOz: number | null = null;
+        let consumedBetweenOz: number | null = null;
+        if (between != null) {
+          const [rB, cB, sB] = between;
+          receivedBetweenOz = rB.get(skuId) ?? null;
+          const prodBetween = cB.get(skuId) ?? null;
+          const salesBetween = sB.get(skuId) ?? null;
+          consumedBetweenOz = prodBetween == null || salesBetween == null ? null : prodBetween + salesBetween;
+        }
+        // VARIANCE IS CENSUS-ONLY (spec D6, LOAD-BEARING). computeVariance verifies a
+        // NEW physical count against the PREVIOUS one + intervening ledger. Both
+        // newCountOz and prevCountOz here come from `a` (anchorBySku → resolved
+        // strictly from sku_count_lines), so this call NEVER receives a par_estimate OR
+        // an inferred anchor. Par_estimate rows (loadParEstimateRows) and inferred rows
+        // (loadInferredRows) BOTH carry varianceOz = null by law — a par-pass estimate
+        // and a run-rate baseline are not counted ground truths and cannot be a variance
+        // reference. Do NOT wire either non-census anchor into this call.
+        const variance = computeVariance({
           skuId,
-          anchorOz: a.anchorOz,
-          anchorAt: a.anchorAt,
-          receivedSinceOz: receivedSince.get(skuId) ?? null,
-          consumedSinceOz: prodSince == null || salesSinceOz == null ? null : prodSince + salesSinceOz,
-          anchorStale,
-          // CENSUS provenance: this row's anchor is a real physical count event
-          // (anchorBySku is resolved from sku_count_lines). Par_estimate AND inferred
-          // anchors are composed in SEPARATE passes below and never reach this variance
-          // loop — only census rows do.
-          anchorSource: "census",
-        },
-        now,
-      );
-      let receivedBetweenOz: number | null = null;
-      let consumedBetweenOz: number | null = null;
-      if (a.prevAt != null) {
-        const [rB, cB, sB] = await Promise.all([
-          sumReceivedOzBetween(sb, [skuId], locationId, a.prevAt, a.anchorAt),
-          sumConsumedOzBetween(sb, [skuId], locationId, a.prevAt, a.anchorAt),
-          sumSalesDirectOzBetween(sb, [skuId], locationId, a.prevAt, a.anchorAt, gapDates),
-        ]);
-        receivedBetweenOz = rB.get(skuId) ?? null;
-        const prodBetween = cB.get(skuId) ?? null;
-        const salesBetween = sB.get(skuId) ?? null;
-        consumedBetweenOz = prodBetween == null || salesBetween == null ? null : prodBetween + salesBetween;
-      }
-      // VARIANCE IS CENSUS-ONLY (spec D6, LOAD-BEARING). computeVariance verifies a
-      // NEW physical count against the PREVIOUS one + intervening ledger. Both
-      // newCountOz and prevCountOz here come from `a` (anchorBySku → resolved
-      // strictly from sku_count_lines), so this call NEVER receives a par_estimate OR
-      // an inferred anchor. Par_estimate rows (loadParEstimateRows) and inferred rows
-      // (loadInferredRows) BOTH carry varianceOz = null by law — a par-pass estimate
-      // and a run-rate baseline are not counted ground truths and cannot be a variance
-      // reference. Do NOT wire either non-census anchor into this call.
-      const variance = computeVariance({
-        skuId,
-        newCountOz: a.anchorOz,
-        prevCountOz: a.prevOz,
-        receivedBetweenOz,
-        consumedBetweenOz,
+          newCountOz: a.anchorOz,
+          prevCountOz: a.prevOz,
+          receivedBetweenOz,
+          consumedBetweenOz,
+        });
+        return {
+          dimension: "weight",
+          ...onHand,
+          skuName: skuName.get(skuId) ?? "(sku)",
+          varianceOz: variance.varianceOz,
+          looseLineCount: a.looseLineCount,
+          partialLineCount: a.partialLineCount,
+        };
       });
-      return {
-        dimension: "weight",
-        ...onHand,
-        skuName: skuName.get(skuId) ?? "(sku)",
-        varianceOz: variance.varianceOz,
-        looseLineCount: a.looseLineCount,
-        partialLineCount: a.partialLineCount,
-      };
     }),
   );
+  const weightRows: OnHandRow[] = weightRowGroups.flat();
 
   // ── Count rows (leaf-unit on-hand + "used or lost since last count") ──
   // received-units derive READ-TIME from level-aware receiving: received_qty_at_level
@@ -839,7 +946,7 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
       const unitLabel = chain ? (chainCountLeafMeasure(buildPackChain(chain), measures) ?? "units") : "units";
       const [receivedSince, anchorStale] = await Promise.all([
         sumReceivedUnitsSince(sb, skuId, locationId, a.anchorAt, chain),
-        detectRetroEditStaleness(sb, locationId, a.anchorAt, now),
+        stalenessFor(a.anchorAt), // memoized — shared with the weight tier's probes.
       ]);
       const onHand = computeOnHandUnits(
         { skuId, anchorUnits: a.anchorUnits, anchorAt: a.anchorAt, receivedUnitsSince: receivedSince, anchorStale },
@@ -899,10 +1006,24 @@ async function locationDeliveryIds(
   afterIso: string,
   untilIso: string | null,
 ): Promise<string[]> {
-  let q = sb.from("vendor_deliveries").select("id").eq("location_id", locationId).gt("created_at", afterIso);
-  if (untilIso != null) q = q.lte("created_at", untilIso);
-  const { data } = await q.returns<Array<{ id: string }>>();
-  return (data ?? []).map((d) => d.id);
+  // Feeds the received-since term: a short id list silently zeroes intake for every
+  // delivery it drops, so this read must neither swallow an error nor truncate. The
+  // window is anchor→now, which widens without bound while a location goes uncounted
+  // — PAGED (the PR #63 lesson) under `id` (the PK) as the stable total order; the
+  // caller only uses the set membership, so row order is not load-bearing.
+  const rows = await selectAllRows<{ id: string }>(
+    async (from, to) => {
+      let q = sb.from("vendor_deliveries").select("id").eq("location_id", locationId).gt("created_at", afterIso);
+      if (untilIso != null) q = q.lte("created_at", untilIso);
+      const { data, error } = await q
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<{ id: string }>>();
+      if (error) throw new Error(`locationDeliveryIds: ${error.message}`);
+      return { data };
+    },
+  );
+  return rows.map((d) => d.id);
 }
 
 /**
@@ -942,19 +1063,32 @@ async function sumReceivedOzWindow(
   // vendor_delivery_items has created_at; use it as the receipt timestamp (the
   // delivery_date is a bare date, created_at is the true write instant that the
   // anchor timestamp is comparable to).
-  let q = sb.from("vendor_delivery_items")
-    .select("vendor_item_id, resolved_oz, created_at")
-    .in("vendor_item_id", skuIds)
-    .in("delivery_id", deliveryIds)
-    .gt("created_at", afterIso);
-  if (untilIso != null) q = q.lte("created_at", untilIso);
-  const { data } = await q.returns<Array<{ vendor_item_id: string; resolved_oz: number | string | null; created_at: string }>>();
+  // PAGED (the PR #63 lesson): a wide window over the delivery ledger crosses the
+  // 1000-row cap, and a truncated page silently UNDERSTATES the received term —
+  // which reads downstream as shrinkage. `id` (the PK) gives the stable total order
+  // paging requires; the per-SKU sum and the null-taint are order-insensitive.
+  const rows = await selectAllRows<{ vendor_item_id: string; resolved_oz: number | string | null; created_at: string }>(
+    async (from, to) => {
+      let q = sb.from("vendor_delivery_items")
+        .select("vendor_item_id, resolved_oz, created_at")
+        .in("vendor_item_id", skuIds)
+        .in("delivery_id", deliveryIds)
+        .gt("created_at", afterIso);
+      if (untilIso != null) q = q.lte("created_at", untilIso);
+      const { data, error } = await q
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<{ vendor_item_id: string; resolved_oz: number | string | null; created_at: string }>>();
+      if (error) throw new Error(`sumReceivedOzWindow: ${error.message}`);
+      return { data };
+    },
+  );
   // Sum resolved oz per SKU; a SKU with ANY NULL resolved_oz in-window line →
   // advisory null (can't derive a clean received term). Tracked separately so a
   // null line taints the whole SKU regardless of row order.
   const sums = new Map<string, number>();
   const nulled = new Set<string>();
-  for (const r of data ?? []) {
+  for (const r of rows) {
     const oz = num(r.resolved_oz);
     if (oz == null) { nulled.add(r.vendor_item_id); continue; }
     sums.set(r.vendor_item_id, (sums.get(r.vendor_item_id) ?? 0) + oz);
@@ -1001,14 +1135,25 @@ async function sumReceivedUnitsWindow(
   const packChain = buildPackChain(chain);
   const deliveryIds = await locationDeliveryIds(sb, locationId, afterIso, untilIso);
   if (deliveryIds.length === 0) return 0;
-  let q = sb.from("vendor_delivery_items")
-    .select("received_level_label, received_qty_at_level, created_at")
-    .eq("vendor_item_id", skuId)
-    .in("delivery_id", deliveryIds)
-    .gt("created_at", afterIso);
-  if (untilIso != null) q = q.lte("created_at", untilIso);
-  const { data } = await q.returns<Array<{ received_level_label: string | null; received_qty_at_level: number | string | null; created_at: string }>>();
-  const rows = data ?? [];
+  // PAGED (the PR #63 lesson): a truncated page silently UNDERSTATES the received-
+  // units term. `id` (the PK) gives the stable total order paging requires; the sum
+  // and its advisory-null taint are order-insensitive.
+  const rows = await selectAllRows<{ received_level_label: string | null; received_qty_at_level: number | string | null; created_at: string }>(
+    async (from, to) => {
+      let q = sb.from("vendor_delivery_items")
+        .select("received_level_label, received_qty_at_level, created_at")
+        .eq("vendor_item_id", skuId)
+        .in("delivery_id", deliveryIds)
+        .gt("created_at", afterIso);
+      if (untilIso != null) q = q.lte("created_at", untilIso);
+      const { data, error } = await q
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<{ received_level_label: string | null; received_qty_at_level: number | string | null; created_at: string }>>();
+      if (error) throw new Error(`sumReceivedUnitsWindow: ${error.message}`);
+      return { data };
+    },
+  );
   if (rows.length === 0) return 0;
   let sum = 0;
   for (const r of rows) {
@@ -1071,15 +1216,27 @@ async function sumSalesDirectOzWindow(
     return new Map<string, number | null>(skuIds.map((id) => [id, null]));
   }
   const out = new Map<string, number | null>(skuIds.map((id) => [id, 0]));
-  let q = sb.from("toast_daily_depletion")
-    .select("sku_id, direct_oz")
-    .eq("location_id", locationId)
-    .in("sku_id", skuIds)
-    .gte("business_date", fromDate);
-  if (untilDateExclusive != null) q = q.lt("business_date", untilDateExclusive);
-  const { data, error } = await q.returns<Array<{ sku_id: string; direct_oz: number | string }>>();
-  if (error) throw new Error(`sumSalesDirectOzWindow: ${error.message}`);
-  for (const r of data ?? []) {
+  // PAGED (the PR #63 lesson): this ledger is one row per (day, SKU), so a 28-day
+  // window over the ~163-SKU roster is ~4.5k rows — a truncated page would silently
+  // UNDERSTATE the sales lane, inflating computed on-hand. `id` (the PK) gives the
+  // stable total order paging requires; the per-SKU sum is order-insensitive.
+  const rows = await selectAllRows<{ sku_id: string; direct_oz: number | string }>(
+    async (from, to) => {
+      let q = sb.from("toast_daily_depletion")
+        .select("sku_id, direct_oz")
+        .eq("location_id", locationId)
+        .in("sku_id", skuIds)
+        .gte("business_date", fromDate);
+      if (untilDateExclusive != null) q = q.lt("business_date", untilDateExclusive);
+      const { data, error } = await q
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<{ sku_id: string; direct_oz: number | string }>>();
+      if (error) throw new Error(`sumSalesDirectOzWindow: ${error.message}`);
+      return { data };
+    },
+  );
+  for (const r of rows) {
     out.set(r.sku_id, (out.get(r.sku_id) ?? 0) + (num(r.direct_oz) ?? 0));
   }
   return out;
@@ -1177,20 +1334,41 @@ async function sumConsumedOzWindow(
   const out = new Map<string, number | null>();
   for (const id of skuIds) out.set(id, 0);
   // Live production headers at this location in the window.
-  let hq = sb.from("productions").select("id").eq("location_id", locationId)
-    .is("superseded_at", null).is("revoked_at", null).gt("produced_at", afterIso);
-  if (untilIso != null) hq = hq.lte("produced_at", untilIso);
-  const { data: hdrs } = await hq.returns<Array<{ id: string }>>();
-  const prodIds = (hdrs ?? []).map((h) => h.id);
+  // BOTH reads are PAGED (the PR #63 lesson): the header set is bounded only by
+  // location + window, and its inputs multiply it — a truncated page would silently
+  // UNDERSTATE the consumed term, inflating computed on-hand. `id` (the PK) gives the
+  // stable total order paging requires; both reads are order-insensitive sums.
+  const hdrs = await selectAllRows<{ id: string }>(
+    async (from, to) => {
+      let hq = sb.from("productions").select("id").eq("location_id", locationId)
+        .is("superseded_at", null).is("revoked_at", null).gt("produced_at", afterIso);
+      if (untilIso != null) hq = hq.lte("produced_at", untilIso);
+      const { data, error } = await hq
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<{ id: string }>>();
+      if (error) throw new Error(`sumConsumedOzWindow productions: ${error.message}`);
+      return { data };
+    },
+  );
+  const prodIds = hdrs.map((h) => h.id);
   if (prodIds.length === 0) return out;
-  const { data: lines } = await sb.from("production_inputs")
-    .select("input_sku_id, input_oz")
-    .in("input_sku_id", skuIds)
-    .in("production_id", prodIds)
-    .returns<Array<{ input_sku_id: string; input_oz: number | string | null }>>();
+  const lines = await selectAllRows<{ input_sku_id: string; input_oz: number | string | null }>(
+    async (from, to) => {
+      const { data, error } = await sb.from("production_inputs")
+        .select("input_sku_id, input_oz")
+        .in("input_sku_id", skuIds)
+        .in("production_id", prodIds)
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<{ input_sku_id: string; input_oz: number | string | null }>>();
+      if (error) throw new Error(`sumConsumedOzWindow production_inputs: ${error.message}`);
+      return { data };
+    },
+  );
   const sums = new Map<string, number>();
   const nulled = new Set<string>();
-  for (const l of lines ?? []) {
+  for (const l of lines) {
     const oz = num(l.input_oz);
     if (oz == null) { nulled.add(l.input_sku_id); continue; }
     sums.set(l.input_sku_id, (sums.get(l.input_sku_id) ?? 0) + oz);
@@ -1222,9 +1400,12 @@ async function detectRetroEditStaleness(
   _now: number,
 ): Promise<boolean> {
   const anchorDate = anchorIso.slice(0, 10); // YYYY-MM-DD for the bare delivery_date compare.
-  const { data: delivHit } = await sb.from("vendor_deliveries").select("id")
+  // Absence of rows means "not stale" — a swallowed error would assert trust in an
+  // anchor we couldn't check. Throw instead of overstating the anchor's soundness.
+  const { data: delivHit, error } = await sb.from("vendor_deliveries").select("id")
     .eq("location_id", locationId)
     .gt("created_at", anchorIso).lte("delivery_date", anchorDate).limit(1)
     .returns<Array<{ id: string }>>();
+  if (error) throw new Error(`detectRetroEditStaleness: ${error.message}`);
   return (delivHit ?? []).length > 0;
 }

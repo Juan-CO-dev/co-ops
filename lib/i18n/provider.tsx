@@ -16,7 +16,7 @@
  * MessageFormat — out of scope per C.31 (no plurals, no nested formatting).
  */
 
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import en from "./en.json";
 import es from "./es.json";
@@ -51,6 +51,18 @@ export function TranslationProvider({
   children: ReactNode;
 }) {
   const [language, setLanguage] = useState<Language>(initialLanguage);
+
+  // The root layout (app/layout.tsx) can't know the user — language is a per-request
+  // users-table read, not available at the app shell. Assistive tech (screen readers,
+  // etc.) reads document.documentElement.lang, so it must follow the actual UI language
+  // here, where the value lives, rather than staying hardcoded "en" app-wide. Portal
+  // pages that hardcode initialLanguage="en" are unaffected (already the default).
+  useEffect(() => {
+    document.documentElement.lang = language;
+    // Restore the root layout's default on unmount so a provider-less surface
+    // (public portal, login) never inherits a stale "es" from an authed session.
+    return () => { document.documentElement.lang = "en"; };
+  }, [language]);
 
   const t = useCallback(
     (key: TranslationKey, params?: TranslationParams): string => {

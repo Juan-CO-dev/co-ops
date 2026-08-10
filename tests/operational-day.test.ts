@@ -4,7 +4,7 @@
  * midshift maintenance-notes bucketing + catering surplus ±1-day classification.
  */
 import { describe, it, expect } from "vitest";
-import { etCalendarDate, operationalDayUtcRange } from "@/lib/operational-day";
+import { etCalendarDate, etYmdMinusDays, operationalDayUtcRange } from "@/lib/operational-day";
 
 describe("etCalendarDate", () => {
   it("a late-evening ET instant belongs to the ET day, not the next UTC day", () => {
@@ -35,5 +35,37 @@ describe("operationalDayUtcRange", () => {
     const { startIso, endExclusiveIso } = operationalDayUtcRange("2026-07-10");
     const note = "2026-07-11T02:00:00.000Z"; // 22:00 EDT on the 10th
     expect(note >= startIso && note < endExclusiveIso).toBe(true);
+  });
+});
+
+describe("etYmdMinusDays (council audit 2026-08-08 P1-2: the winter cron D-2 bug)", () => {
+  it("simple midmonth", () => {
+    expect(etYmdMinusDays("2026-08-09", 1)).toBe("2026-08-08");
+  });
+  it("month boundary", () => {
+    expect(etYmdMinusDays("2026-08-01", 1)).toBe("2026-07-31");
+  });
+  it("year boundary", () => {
+    expect(etYmdMinusDays("2026-01-01", 1)).toBe("2025-12-31");
+  });
+  it("leap day", () => {
+    expect(etYmdMinusDays("2028-03-01", 1)).toBe("2028-02-29");
+  });
+  it("across the fall-back DST date (pure grid math — DST cannot shift it)", () => {
+    expect(etYmdMinusDays("2026-11-02", 1)).toBe("2026-11-01");
+  });
+  it("across the spring-forward DST date", () => {
+    expect(etYmdMinusDays("2026-03-09", 1)).toBe("2026-03-08");
+  });
+  it("the exact winter-cron composition: a 09:00Z January firing computes D-1, not D-2", () => {
+    // 2026-01-09T09:00Z = 04:00 EST Jan 9 → ET today = Jan 9 → yesterday = Jan 8.
+    expect(etYmdMinusDays(etCalendarDate("2026-01-09T09:00:00Z"), 1)).toBe("2026-01-08");
+  });
+  it("the summer composition still holds", () => {
+    // 2026-08-09T09:00Z = 05:00 EDT Aug 9 → yesterday = Aug 8.
+    expect(etYmdMinusDays(etCalendarDate("2026-08-09T09:00:00Z"), 1)).toBe("2026-08-08");
+  });
+  it("rejects malformed input", () => {
+    expect(() => etYmdMinusDays("Jan 9 2026", 1)).toThrow();
   });
 });

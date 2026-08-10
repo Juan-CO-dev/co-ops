@@ -29,7 +29,7 @@ export default async function PublicProfilePage({ params }: PageProps) {
   if (!profile) redirect("/profile"); // not viewable / not found → back to directory
 
   return (
-    <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
+    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3">
         <Link
           href="/profile"

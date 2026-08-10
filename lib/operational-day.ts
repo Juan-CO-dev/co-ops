@@ -19,6 +19,20 @@ export function etCalendarDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-CA", { timeZone: OPERATIONAL_TZ });
 }
 
+/**
+ * The ET calendar date `days` before `ymd` — pure math on the calendar grid via
+ * Date.UTC, immune to the runtime's zone AND to DST. Replaces the
+ * `new Date(new Date().toLocaleString(..., {timeZone}))` round-trip antipattern:
+ * parsing an ET-rendered wall-clock string in the runtime's own zone
+ * double-applies the offset, which made a 09:00Z cron compute D-2 instead of
+ * D-1 for the entire EST half of the year (council audit 2026-08-08, P1-2).
+ */
+export function etYmdMinusDays(ymd: string, days: number): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ymd)) throw new Error(`etYmdMinusDays: bad ymd "${ymd}"`);
+  const [y, m, d] = ymd.split("-").map(Number);
+  return new Date(Date.UTC(y!, m! - 1, d! - days)).toISOString().slice(0, 10);
+}
+
 /** The UTC offset (ms) of `instant` in the operational TZ. Negative west of UTC
  *  (ET is −4h EDT / −5h EST). Uses Intl to read the wall clock — DST-correct. */
 function tzOffsetMs(instant: Date): number {

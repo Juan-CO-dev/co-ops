@@ -1,18 +1,22 @@
 import { PlaceholderCard } from "@/components/PlaceholderCard";
+import { serverT } from "@/lib/i18n/server";
+import { requireSessionFromHeaders } from "@/lib/session";
 
-export default function AIInsightsPage() {
+export default async function AIInsightsPage() {
+  const auth = await requireSessionFromHeaders("/ai");
+  const lang = auth.user.language;
   return (
     <PlaceholderCard
-      title="AI Insights"
-      description="Claude-powered operational intelligence, scoped by role. GM+ only."
+      title={serverT(lang, "ai.ph.title")}
+      description={serverT(lang, "ai.ph.description")}
       features={[
-        "Auto-synthesizes the day / week / month from all artifacts",
-        "Threshold alerts: voids >1.5%, comps >3%, cash short >$10",
-        "Channel-mix and weather/event correlation",
-        "Cross-location compare (GM+) and exec summary (Owner+)",
-        "Forward forecast with DC event calendar (CGS)",
+        serverT(lang, "ai.ph.feature.synthesis"),
+        serverT(lang, "ai.ph.feature.alerts"),
+        serverT(lang, "ai.ph.feature.correlation"),
+        serverT(lang, "ai.ph.feature.compare"),
+        serverT(lang, "ai.ph.feature.forecast"),
       ]}
-      shippingIn="Module #5 (AI Insights)"
+      shippingIn={serverT(lang, "ai.ph.shipping")}
     />
   );
 }

@@ -426,12 +426,16 @@ export async function moveStage(
   const fromStage = isPipelineStage(lead.stage) ? lead.stage : null;
   if (fromStage === args.toStage) return; // no-op
 
+  // Guard on the stage the pre-read saw (silent-UPDATE law): the event row below records
+  // from_stage from that read, so an unguarded UPDATE would let a concurrent move write a
+  // stale from_stage into the audit trail. count 0 = the lead moved since the read.
   const { error: uErr, count } = await sb
     .from("catering_pipeline")
     .update({ stage: args.toStage, updated_at: new Date().toISOString() }, { count: "exact" })
-    .eq("id", args.id);
+    .eq("id", args.id)
+    .eq("stage", lead.stage);
   if (uErr) throw new Error(`moveStage update: ${uErr.message}`);
-  if (count === 0) throw new CateringPipelineError(404, "not_found", "Lead not found");
+  if (count === 0) throw new CateringPipelineError(409, "stage_changed", "Lead stage changed since it was loaded — reload and retry");
 
   const { error: evErr } = await sb.from("catering_pipeline_events").insert({
     pipeline_id: args.id,

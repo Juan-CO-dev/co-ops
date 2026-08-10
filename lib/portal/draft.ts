@@ -558,6 +558,7 @@ function allowlisted(email: string): boolean {
   const raw = process.env.PORTAL_MAGIC_LINK_ALLOWLIST ?? "juan@complimentsonlysubs.com";
   return raw.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean).includes(email.toLowerCase());
 }
+// customer portal is English-only by design (portal-i18n = Wave-2)
 function centsToUsd(cents: number): string { return (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" }); }
 function eventDateLabel(d: string | null): string {
   if (!d) return "your event";

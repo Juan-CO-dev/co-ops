@@ -1,18 +1,22 @@
 import { PlaceholderCard } from "@/components/PlaceholderCard";
+import { serverT } from "@/lib/i18n/server";
+import { requireSessionFromHeaders } from "@/lib/session";
 
-export default function PrepSheetPage() {
+export default async function PrepSheetPage() {
+  const auth = await requireSessionFromHeaders("/operations/prep");
+  const lang = auth.user.language;
   return (
     <PlaceholderCard
-      title="Prep Sheet"
-      description="Auto-generated prep targets from par minus on-hand. Single-submission — locks on submit."
+      title={serverT(lang, "prep.ph.title")}
+      description={serverT(lang, "prep.ph.description")}
       features={[
-        "Pulls par_levels for the location + day-of-week",
-        "Reads on-hand from latest opening checklist counts",
-        "Computes needed = max(par − on_hand, 0)",
-        "No forecasting in v1; hand-tunable adjustments only",
-        "Locks the prep instance on first submit",
+        serverT(lang, "prep.ph.feature.pars"),
+        serverT(lang, "prep.ph.feature.onhand"),
+        serverT(lang, "prep.ph.feature.formula"),
+        serverT(lang, "prep.ph.feature.no_forecast"),
+        serverT(lang, "prep.ph.feature.locks"),
       ]}
-      shippingIn="Module #1 (Daily Operations)"
+      shippingIn={serverT(lang, "prep.ph.shipping")}
     />
   );
 }

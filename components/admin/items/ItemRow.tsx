@@ -165,7 +165,7 @@ export function ItemRow({
   };
 
   return (
-    <div className="rounded-lg border-2 border-co-border bg-co-surface p-3">
+    <div className="co-card p-3">
       <div className="flex items-center justify-between gap-2">
         <span className="text-sm font-bold text-co-text">
           {item.name}

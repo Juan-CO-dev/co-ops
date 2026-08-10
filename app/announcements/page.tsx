@@ -1,18 +1,22 @@
 import { PlaceholderCard } from "@/components/PlaceholderCard";
+import { serverT } from "@/lib/i18n/server";
+import { requireSessionFromHeaders } from "@/lib/session";
 
-export default function AnnouncementsPage() {
+export default async function AnnouncementsPage() {
+  const auth = await requireSessionFromHeaders("/announcements");
+  const lang = auth.user.language;
   return (
     <PlaceholderCard
-      title="Announcements"
-      description="Top-down directives with acknowledgement tracking. AGM+ can post."
+      title={serverT(lang, "announcements.ph.title")}
+      description={serverT(lang, "announcements.ph.description")}
       features={[
-        "Priority: info / standard / urgent / critical",
-        "Per-recipient acknowledgement tracking",
-        "Role-band targeting — min and optional max level",
-        "Location-scoped or org-wide",
-        "Banner on dashboard until acknowledged",
+        serverT(lang, "announcements.ph.feature.priority"),
+        serverT(lang, "announcements.ph.feature.ack"),
+        serverT(lang, "announcements.ph.feature.targeting"),
+        serverT(lang, "announcements.ph.feature.scope"),
+        serverT(lang, "announcements.ph.feature.banner"),
       ]}
-      shippingIn="Module #3 (Announcements)"
+      shippingIn={serverT(lang, "announcements.ph.shipping")}
     />
   );
 }

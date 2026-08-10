@@ -8,11 +8,16 @@ import { OrderStartClient } from "./start-client";
 // getServiceRoleClient() throws (Phase 2 lesson: "build is a separate gate").
 export const dynamic = "force-dynamic";
 
-export default async function OrderStart() {
-  const [locations, nodes, pickupNodesFull] = await Promise.all([
+export default async function OrderStart({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const [locations, nodes, pickupNodesFull, params] = await Promise.all([
     loadPublicLocations(),
     loadPublicFulfillmentNodes(),
     loadPickupNodes(),
+    searchParams,
   ]);
 
   const deliveryNodesExist = nodes.some((n) => n.offersDelivery);
@@ -27,6 +32,7 @@ export default async function OrderStart() {
         locations={locations}
         deliveryNodesExist={deliveryNodesExist}
         pickupNodes={pickupNodes}
+        initialMode={params.mode === "signin" ? "returning" : "new"}
       />
     </TranslationProvider>
   );

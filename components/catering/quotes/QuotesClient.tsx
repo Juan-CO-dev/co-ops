@@ -14,7 +14,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
-import { formatCents } from "@/lib/i18n/format";
+import { formatCents, formatDateLabel } from "@/lib/i18n/format";
+import { etCalendarDate } from "@/lib/operational-day";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { PasswordModal } from "@/components/auth/PasswordModal";
 import type { Quote, QuoteItem, DeliveryZone, ChargeRates, ChargeStack } from "@/lib/catering/quotes";
@@ -748,7 +749,7 @@ function QuoteDetailPanel({
         </p>
         {q.expiresAt && (
           <p className="text-xs text-co-text-dim">
-            {t("catering.quotes.expires")}: {new Date(q.expiresAt).toLocaleDateString(language === "es" ? "es-US" : "en-US")}
+            {t("catering.quotes.expires")}: {formatDateLabel(etCalendarDate(q.expiresAt), language)}
           </p>
         )}
       </div>

@@ -1445,10 +1445,21 @@ export async function autoCompleteClosingMidDayRef(
   if (insErr) throw new Error(`autoCompleteClosingMidDayRef: insert: ${insErr.message}`);
 
   if (prior && inserted) {
-    await service
+    // Guard on superseded_at IS NULL + rowcount (silent-UPDATE law, sibling
+    // ensureClosingRefCompletion). DETECTION, not prevention: the new row above is
+    // already committed, so a lost race means a duplicate live head EXISTS — the
+    // throw makes it loud instead of silent (structural prevention = the Wave-2
+    // atomicity RPC). Throwing is safe — the caller is fire-and-forget with a
+    // .catch (submitMidDayPhase2).
+    const { error: supErr, count: supCount } = await service
       .from("checklist_completions")
-      .update({ superseded_at: nowIso, superseded_by: inserted.id })
-      .eq("id", prior.id);
+      .update({ superseded_at: nowIso, superseded_by: inserted.id }, { count: "exact" })
+      .eq("id", prior.id)
+      .is("superseded_at", null);
+    if (supErr) throw new Error(`autoCompleteClosingMidDayRef: supersede: ${supErr.message}`);
+    if (supCount === 0) {
+      throw new Error("autoCompleteClosingMidDayRef: supersede: prior completion was concurrently superseded");
+    }
   }
 }
 
@@ -1523,11 +1534,17 @@ async function ensureClosingRefCompletion(
   if (insErr) throw new Error(`ensureClosingRefCompletion: insert: ${insErr.message}`);
 
   if (head && inserted) {
-    const { error: supErr } = await service
+    // Prior-state guard + rowcount (silent-UPDATE law; symmetric with the
+    // autoCompleteClosingMidDayRef supersede). DETECTION, not prevention — the
+    // inserted row above already exists, so a lost race means a duplicate live
+    // head; the throw surfaces it loudly (structural fix = Wave-2 atomicity RPC).
+    const { error: supErr, count: supCount } = await service
       .from("checklist_completions")
-      .update({ superseded_at: nowIso, superseded_by: inserted.id })
-      .eq("id", head.id);
+      .update({ superseded_at: nowIso, superseded_by: inserted.id }, { count: "exact" })
+      .eq("id", head.id)
+      .is("superseded_at", null);
     if (supErr) throw new Error(`ensureClosingRefCompletion: supersede: ${supErr.message}`);
+    if (supCount === 0) throw new Error(`ensureClosingRefCompletion: supersede raced — head ${head.id} already superseded`);
     return "superseded";
   }
   return "inserted";

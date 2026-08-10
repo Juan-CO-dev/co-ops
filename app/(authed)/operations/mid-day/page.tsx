@@ -23,6 +23,7 @@ import {
   type MidDayOverUnder,
 } from "@/lib/prep";
 import { resolveSectionLabel } from "@/lib/prep-sections";
+import { etCalendarDate } from "@/lib/operational-day";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import type { ChecklistTemplateItem } from "@/lib/types";
@@ -32,17 +33,6 @@ import { MidDayPhase2Form, type MidDayPhase2Item } from "@/components/MidDayPhas
 import { MidDayPrepTile } from "@/components/MidDayPrepTile";
 import { DashboardBackLink } from "@/components/DashboardBackLink";
 import type { ManagerOption } from "@/components/opening/OverParModal";
-
-const OPERATIONAL_TZ = "America/New_York";
-
-function nyDateString(d: Date): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: OPERATIONAL_TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(d);
-}
 
 interface PageProps {
   searchParams: Promise<{ instance?: string; location?: string }>;
@@ -90,7 +80,7 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
     if (!lockLocationContext(locActor, locationParam)) redirect("/dashboard");
 
     const lang = auth.user.language;
-    const today = nyDateString(new Date());
+    const today = etCalendarDate(new Date().toISOString());
     const dashState = await loadMidDayPrepDashboardState(sb, {
       locationId: locationParam,
       date: today,
@@ -102,7 +92,7 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
     }
 
     return (
-      <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
+      <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
         <div className="mb-3">
           <DashboardBackLink />
         </div>
@@ -179,7 +169,7 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
   const managers = await loadAgmPlusManagers(sb, state.instance.locationId);
 
   return (
-    <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
+    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3">
         <DashboardBackLink />
       </div>

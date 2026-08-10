@@ -1,17 +1,21 @@
 import { PlaceholderCard } from "@/components/PlaceholderCard";
+import { serverT } from "@/lib/i18n/server";
+import { requireSessionFromHeaders } from "@/lib/session";
 
-export default function RollupsPage() {
+export default async function RollupsPage() {
+  const auth = await requireSessionFromHeaders("/rollups");
+  const lang = auth.user.language;
   return (
     <PlaceholderCard
-      title="Weekly + Monthly Rollups"
-      description="Cached aggregations with forecasting. Powered by weekly_rollups + AI."
+      title={serverT(lang, "rollups.ph.title")}
+      description={serverT(lang, "rollups.ph.description")}
       features={[
-        "Sales / labor / food cost / void+comp / waste totals",
-        "Data completeness score per period",
-        "Cached generation for AI snapshots",
-        "Forward forecast (CGS / Owner)",
+        serverT(lang, "rollups.ph.feature.totals"),
+        serverT(lang, "rollups.ph.feature.completeness"),
+        serverT(lang, "rollups.ph.feature.cache"),
+        serverT(lang, "rollups.ph.feature.forecast"),
       ]}
-      shippingIn="Module #18 (Rollups)"
+      shippingIn={serverT(lang, "rollups.ph.shipping")}
     />
   );
 }

@@ -13,7 +13,7 @@
  *                   the page operates on today's instance in NY time
  *
  * Today / yesterday / historical mode determination:
- *   - today   = nyDateString(now), the operational day in America/New_York
+ *   - today   = etCalendarDate(now), the operational day in America/New_York
  *   - yesterday = today - 1 calendar day
  *   - historical = (?date is set AND ?date !== today)
  *   - readOnly mode fires when:
@@ -57,6 +57,7 @@ import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib
 import { formatDateLabel, formatTime } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language } from "@/lib/i18n/types";
+import { etCalendarDate } from "@/lib/operational-day";
 import { getRoleLevel, type RoleCode } from "@/lib/roles";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -76,18 +77,7 @@ import { ActionLink } from "@/components/ActionButton";
 
 import { ClosingClient, type ClosingInitialState, type StatusBanner } from "./closing-client";
 
-const OPERATIONAL_TZ = "America/New_York";
-
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-function nyDateString(d: Date): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: OPERATIONAL_TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(d);
-}
 
 // formatTime + formatDateLabel imported from @/lib/i18n/format above;
 // canonical helpers consolidate prior inline copies and always pin to the
@@ -203,7 +193,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
 
   // Date determination FIRST (PR-3: the template resolver is now date-aware, so it
   // needs the operational date the page is viewing before it resolves the version).
-  const today = nyDateString(new Date());
+  const today = etCalendarDate(new Date().toISOString());
   const requestedDate = dateParam && DATE_RE.test(dateParam) ? dateParam : null;
   const targetDate = requestedDate ?? today;
   const isHistorical = targetDate !== today;

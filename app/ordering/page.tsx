@@ -39,25 +39,31 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 export default async function OrderingPage({
   searchParams,
 }: {
-  searchParams: Promise<{ location?: string }>;
+  /** `po` = deep-link a single order's panel open (the delivery detail links back this
+   *  way). Passed straight through as a fetch key — the PO API re-gates it server-side. */
+  searchParams: Promise<{ location?: string; po?: string }>;
 }) {
   const auth = await requireSessionFromHeaders("/ordering");
   const language = auth.user.language;
   if (auth.level < PAR_PASS_MIN) redirect("/dashboard");
 
-  const { location } = await searchParams;
+  const { location, po } = await searchParams;
   const service = getServiceRoleClient();
 
   // Accessible locations drive both the tab row and the default resolution (mid-shift
   // pattern). All-locations actors (owner/CGS override) see every active location;
   // assigned actors see their assignment list.
   const actorAll = isAllLocationsAccess({ role: auth.role, locations: auth.locations });
-  const { data: locRows } = await service
+  // A failed read MUST throw (Server Component → error boundary): an empty result is
+  // the "you have no location" signal, so swallowing the error renders that empty
+  // state at a manager who does have one.
+  const { data: locRows, error: locErr } = await service
     .from("locations")
     .select("id, code, name")
     .eq("active", true)
     .order("name", { ascending: true })
     .returns<Array<{ id: string; code: string; name: string }>>();
+  if (locErr) throw new Error(`ordering locations: ${locErr.message}`);
   const accessible = (locRows ?? []).filter((l) => actorAll || auth.locations.includes(l.id));
 
   // Authorization: the requested location MUST be one the actor may view — the walker
@@ -74,7 +80,7 @@ export default async function OrderingPage({
   if (!locationId) {
     return (
       <TranslationProvider initialLanguage={language}>
-        <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
+        <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
           <div className="mb-3">
             <DashboardBackLink />
           </div>
@@ -101,9 +107,20 @@ export default async function OrderingPage({
 
   return (
     <TranslationProvider initialLanguage={language}>
-      <main className="mx-auto max-w-2xl px-4 pb-40 pt-4 sm:px-6">
-        <div className="mb-3">
+      <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-40 pt-4 sm:px-6">
+        {/* Back + the sibling hop to receiving. Ordering and receiving are two ends of one
+            thread (draft → PO → truck), so each names the other; the active location
+            travels so the destination doesn't bounce to the dashboard. Same muted
+            uppercase idiom as BackLink, chevron trailing instead of leading. */}
+        <div className="mb-3 flex items-center justify-between gap-2">
           <DashboardBackLink />
+          <Link
+            href={`/operations/receiving?location=${encodeURIComponent(locationId)}`}
+            className="-mr-2 mb-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-md px-2 py-2 text-xs font-bold uppercase tracking-[0.14em] text-co-text-muted transition hover:text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
+          >
+            <span>{serverT(language, "nav.receiving")}</span>
+            <span aria-hidden>›</span>
+          </Link>
         </div>
 
         <div>
@@ -156,6 +173,7 @@ export default async function OrderingPage({
           language={language}
           shopLabel={shopLabel}
           dateLabel={dateLabel}
+          initialPoId={po ?? null}
         />
 
         <ParPassWalker

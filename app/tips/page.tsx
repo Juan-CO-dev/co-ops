@@ -1,17 +1,21 @@
 import { PlaceholderCard } from "@/components/PlaceholderCard";
+import { serverT } from "@/lib/i18n/server";
+import { requireSessionFromHeaders } from "@/lib/session";
 
-export default function TipPoolPage() {
+export default async function TipPoolPage() {
+  const auth = await requireSessionFromHeaders("/tips");
+  const lang = auth.user.language;
   return (
     <PlaceholderCard
-      title="Tip Pool"
-      description="Period-based tip pool calculation and distribution log."
+      title={serverT(lang, "tips.ph.title")}
+      description={serverT(lang, "tips.ph.description")}
       features={[
-        "Hours from 7shifts adapter (when activated) or manual entry",
-        "Rate-per-hour computed from pool ÷ total hours",
-        "Per-employee distribution rows",
-        "Status: draft / calculated / distributed",
+        serverT(lang, "tips.ph.feature.hours"),
+        serverT(lang, "tips.ph.feature.rate"),
+        serverT(lang, "tips.ph.feature.distribution"),
+        serverT(lang, "tips.ph.feature.status"),
       ]}
-      shippingIn="Module #11 (Tip Pool)"
+      shippingIn={serverT(lang, "tips.ph.shipping")}
     />
   );
 }

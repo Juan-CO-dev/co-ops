@@ -22,7 +22,7 @@ export default async function CountsPage({ searchParams }: { searchParams: Promi
   ]);
 
   return (
-    <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
+    <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3"><DashboardBackLink /></div>
       <h1 className="mb-1 text-lg font-bold text-co-text">{serverT(lang, "counts.page.title")}</h1>
       <p className="mb-4 text-[11px] text-co-text-muted">{serverT(lang, "counts.page.subtitle")}</p>

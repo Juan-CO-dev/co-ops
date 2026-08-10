@@ -10,6 +10,7 @@
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { orderedSectionSlugs, sectionLabelByLang } from "@/lib/prep-sections";
+import { EmptyState } from "@/components/EmptyState";
 import type { ChecklistRegistryItem } from "@/lib/admin/templates";
 import type { ItemsAdminView } from "@/lib/admin/items";
 import type { Readiness } from "@/lib/readiness";
@@ -46,6 +47,11 @@ export function ItemsClient({
       {canAdd ? (
         <AddItemForm sections={view.sections} units={view.units} actorLevel={view.actorLevel} />
       ) : null}
+
+      {/* view.registry is empty (no items yet) — previously rendered nothing at all,
+          since every section's items.length===0 branch returns null (council C2
+          adoption sweep). */}
+      {view.registry.length === 0 ? <EmptyState message={t("admin.items.empty")} /> : null}
 
       {sectionKeys.map((section) => {
         const items = groups.get(section) ?? [];

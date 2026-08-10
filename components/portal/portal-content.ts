@@ -60,14 +60,4 @@ export const GTK = {
     "Counts flexible? We confirm the final number before the balance is due.",
     "Only the deposit today — the balance is due up to 48h before.",
   ],
-  checkout: [
-    "Payment runs through Stripe — we never see or store your card.",
-    "Your deposit locks the date; refunded in full if we can't do it.",
-    "We confirm your order — usually within 24 hours.",
-  ],
-  confirmation: [
-    "Everything's built the morning of your event.",
-    "Our sub rolls come fresh from Cardinal Bakery.",
-    "Need to change something? Reply to your email or call us — a real person will help.",
-  ],
 } satisfies Record<string, string[]>;

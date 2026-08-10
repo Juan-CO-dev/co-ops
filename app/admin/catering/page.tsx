@@ -16,6 +16,7 @@ import { serverT } from "@/lib/i18n/server";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { loadPackageLocations } from "@/lib/admin/catering/packages";
 import { loadPerishableSurplus, SURPLUS_READ_MIN } from "@/lib/catering/surplus";
+import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { AlertPill } from "@/components/ui/AlertPill";
 
@@ -46,13 +47,8 @@ export default async function AdminCateringHubPage() {
   let surplusCount = 0;
   if (level >= SURPLUS_READ_MIN) {
     try {
-      const from = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
-      const dt = new Date(Date.UTC(
-        Number(from.split("-")[0]),
-        Number(from.split("-")[1]) - 1,
-        Number(from.split("-")[2]) + 14,
-      ));
-      const to = dt.toISOString().slice(0, 10);
+      const from = etCalendarDate(new Date().toISOString());
+      const to = etYmdMinusDays(from, -14); // -N days = N days forward
       const locations = await loadPackageLocations(auth);
       const results = await Promise.all(
         locations.map((loc) => loadPerishableSurplus(auth, { locationId: loc.id, from, to })),

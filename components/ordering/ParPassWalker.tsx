@@ -36,6 +36,7 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { AlertPill } from "@/components/ui/AlertPill";
+import { EmptyState } from "@/components/EmptyState";
 import { CopyButton, DeliveryRow } from "@/components/ordering/delivery-affordances";
 import type {
   WalkerData,
@@ -371,14 +372,27 @@ export function ParPassWalker({
   // ── WALK: vendor sections + SKU rows ──────────────────────────────────────────
   return (
     <div className="mt-4 flex flex-col gap-4 pb-24">
+      {/* Advisory-blackout banner (page-level notice position — first thing in the walk).
+          INFO tone, not warn: the nightly sales-depletion run simply hasn't landed yet, so
+          on-hand estimates + Suggest chips are thin BY DESIGN and return on their own. The
+          owner himself once read this designed blackout as a regression — the banner exists
+          to say so out loud. Server-derived (walker.advisoryPaused); dormant shops (no sales
+          ledger at all) never trip it. Explains the silence; fabricates no number. */}
+      {walker.advisoryPaused && (
+        <div
+          role="status"
+          className="rounded-xl border-2 border-co-info/40 bg-co-info/10 px-4 py-3 text-[13px] text-co-text"
+        >
+          {t("ordering.walker.advisory_paused")}
+        </div>
+      )}
+
       {/* Recent-passes history affordance — collapsible, default-collapsed (D3). Each
           links to its recorded draft orders via the eventId GET (opened in a new view). */}
       {recent.length > 0 && <HistoryPanel recent={recent} shopLabel={shopLabel} dateLabel={dateLabel} />}
 
       {walker.vendors.length === 0 ? (
-        <p className="rounded-lg border-2 border-dashed border-co-border-2 px-3 py-6 text-center text-[13px] text-co-text-dim">
-          {t("ordering.walk.no_skus")}
-        </p>
+        <EmptyState message={t("ordering.walk.no_skus")} />
       ) : (
         walker.vendors.map((v) => (
           <VendorSection
@@ -538,6 +552,16 @@ function SkuRow({
 
       {/* Advisory on-hand + last-order hints. */}
       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px]">
+        {/* No derivable order-unit→oz conversion (server: canImplyOz) → this SKU can never
+            carry an on-hand estimate and never earns a Suggest chip. Muted microcopy, NOT a
+            warning tone: it's a chronic data gap (fix it in SKU admin), not an incident. It
+            occupies the slot the advisory line would have used, so the absence reads as
+            explained rather than blank. Display-only — the stepper still works normally. */}
+        {!sku.canImplyOz && (
+          <span className="text-co-text-muted" aria-label={t("ordering.row.no_weight")}>
+            {t("ordering.row.no_weight")}
+          </span>
+        )}
         {sku.advisoryOnHand && sku.advisoryOnHand.orderUnits != null && (
           <span className="text-co-text-dim">
             {t("ordering.row.advisory", {

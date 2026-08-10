@@ -34,7 +34,7 @@ function Shell({ children }: { children: React.ReactNode }) {
       <header className="sticky top-0 z-30 border-b border-white/10 bg-co-text/90 text-co-bg backdrop-blur-md">
         <div className="mx-auto flex max-w-2xl items-center justify-between px-5 py-3.5">
           <Link href="/order" className="text-sm font-semibold text-co-bg/70 transition hover:text-co-bg">‹ Compliments Only</Link>
-          <span className="text-sm font-extrabold uppercase tracking-[0.22em]">Your quote</span>
+          <span className="text-sm font-extrabold uppercase tracking-[0.22em]">Your order</span>
           <span className="w-24" />
         </div>
       </header>
@@ -55,9 +55,9 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
       <Shell>
         <div className="rounded-3xl border border-co-border/70 bg-co-surface p-8 text-center shadow-sm sm:p-10">
           <div className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-co-gold/40 text-3xl">🔍</div>
-          <h1 className="mt-5 text-2xl font-extrabold text-co-text">Quote not found</h1>
+          <h1 className="mt-5 text-2xl font-extrabold text-co-text">Order not found</h1>
           <p className="mx-auto mt-2 max-w-sm text-co-text-muted">
-            We couldn&apos;t find that quote on your account. If someone sent you a link, make sure
+            We couldn&apos;t find that order on your account. If someone sent you a link, make sure
             you&apos;re signed in with the email it was sent to.
           </p>
           <Link
@@ -83,7 +83,7 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
   return (
     <Shell>
       <p className="text-xs font-bold uppercase tracking-[0.28em] text-co-text-dim">Review &amp; pay</p>
-      <h1 className="mt-2 text-3xl font-extrabold tracking-tight text-co-text sm:text-4xl">Here&apos;s your catering quote.</h1>
+      <h1 className="mt-2 text-3xl font-extrabold tracking-tight text-co-text sm:text-4xl">Here&apos;s your catering order.</h1>
       <p className="mt-2 text-co-text-muted">
         For {formatDate(quote.eventDate)}{quote.headcount ? ` · ${quote.headcount} guests` : ""}.
         Choose how you&apos;d like to pay below.
@@ -95,7 +95,7 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
           <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-co-text-dim">Your order</h2>
         </div>
         {items.length === 0 ? (
-          <p className="px-6 py-5 text-sm text-co-text-dim">No line items on this quote.</p>
+          <p className="px-6 py-5 text-sm text-co-text-dim">No line items on this order.</p>
         ) : (
           <ul className="divide-y divide-co-border/50">
             {items.map((l) => (
@@ -152,7 +152,7 @@ export default async function QuotePage({ params }: { params: Promise<{ id: stri
       </section>
 
       <p className="mt-6 text-center text-xs text-co-text-dim">
-        Questions about your quote? Reply to the email we sent and our team will help.
+        Questions about your order? Reply to the email we sent and our team will help.
       </p>
     </Shell>
   );

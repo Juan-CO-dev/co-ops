@@ -23,10 +23,17 @@ import type { TranslationKey } from "@/lib/i18n/types";
 
 // ── Href hygiene helpers (security-adjacent) ─────────────────────────────────────
 /** True when `addr` is a syntactically safe email address for a mailto: href.
- *  encodeURIComponent is wrong for the address part (it encodes @); we validate
- *  with a conservative regex instead and render the link only when it passes. */
+ *  encodeURIComponent is wrong for the address part (it encodes @), so the address is
+ *  validated instead and the link renders only when it passes. The character class
+ *  rejects exactly what can escape the address segment of the href:
+ *    ? # &  — would open or extend the mailto query (extra headers: cc, bcc, subject)
+ *    %      — percent-escapes the mail client decodes, so %0D%0A is a CRLF header injection
+ *    :      — scheme confusion inside the href
+ *    \s     — whitespace, which browsers strip or fold rather than reject
+ *  It is a hygiene gate on an untrusted vendor-supplied value, NOT RFC 5322 conformance —
+ *  a legitimate address it rejects degrades to Copy-only, which is the safe direction. */
 export function isValidEmail(addr: string): boolean {
-  return /^[^\s@?#&]+@[^\s@?#&]+$/.test(addr);
+  return /^[^\s@?#&%:]+@[^\s@?#&%:]+$/.test(addr);
 }
 /** True when `raw` is an http/https URL. Render the anchor only when valid. */
 export function isValidHttpUrl(raw: string): boolean {
@@ -78,7 +85,7 @@ export function DeliveryRow({
   // Href hygiene: each method renders its action link ONLY when the value passes a
   // conservative validation check. Copy is always available as a fallback. mailto:
   // subject + body are URL-encoded (injection guard); the address is validated with
-  // isValidEmail (encodeURIComponent encodes @ and is wrong for the address segment).
+  // isValidEmail (which rejects the characters that could escape the address segment).
   let action: React.ReactNode;
   if (detail.method === "email") {
     if (isValidEmail(detail.value)) {
@@ -138,10 +145,13 @@ export function DeliveryRow({
 }
 
 /** Copy-to-clipboard with a textual fallback (older/insecure contexts have no
- *  navigator.clipboard). Shows a transient "Copied" state. */
+ *  navigator.clipboard). Shows a transient "Copied" state, or a transient failed state
+ *  when the clipboard is blocked — an unreported failure reads as a dead button on a
+ *  phone, which is where this is tapped. */
 export function CopyButton({ text }: { text: string }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const copy = async () => {
     try {
       if (navigator.clipboard?.writeText) {
@@ -157,19 +167,32 @@ export function CopyButton({ text }: { text: string }) {
         document.execCommand("copy");
         document.body.removeChild(ta);
       }
+      setCopyFailed(false);
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
     } catch {
-      // Clipboard blocked — silently no-op (the link affordances still work).
+      // Clipboard blocked (denied permission / insecure context). Say so on the button —
+      // the value is still on screen to read off, and the link affordances still work.
+      setCopied(false);
+      setCopyFailed(true);
+      setTimeout(() => setCopyFailed(false), 1800);
     }
   };
   return (
     <button
       type="button"
       onClick={() => void copy()}
-      className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-sm font-bold text-co-text-dim hover:border-co-text"
+      className={`inline-flex min-h-[44px] items-center rounded-lg border-2 px-3 text-sm font-bold ${
+        copyFailed
+          ? "border-co-danger bg-co-danger-surface text-co-text"
+          : "border-co-border bg-co-surface text-co-text-dim hover:border-co-text"
+      }`}
     >
-      {copied ? t("ordering.deliver.copied") : t("ordering.deliver.copy")}
+      {copyFailed
+        ? t("ordering.deliver.copy_failed")
+        : copied
+          ? t("ordering.deliver.copied")
+          : t("ordering.deliver.copy")}
     </button>
   );
 }

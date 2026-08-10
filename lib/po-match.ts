@@ -44,6 +44,9 @@ import {
 
 type ServiceClient = ReturnType<typeof getServiceRoleClient>;
 
+/** Canonical UUID — line keys are interpolated into a PostgREST `.in()` filter, so guard them. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** The empty view returned for a pre-confirm PO (no snapshot to compare against yet). */
 const EMPTY_VIEW: ThreeWayView = { lines: [], totals: { orderedCents: null, billedCents: null }, hasInvoice: false, hasDelivery: false };
 
@@ -212,7 +215,10 @@ function readInvoiceLines(parsedJson: unknown): InvoiceLineInput[] {
  * equals that key. One batch query; a missing SKU row leaves the placeholder untouched.
  */
 async function resolveUnorderedRowNames(sb: ServiceClient, view: ThreeWayView): Promise<void> {
-  const unresolved = view.lines.filter((l) => l.name === l.key && !l.key.startsWith("inv:"));
+  // The UUID test is load-bearing, not cosmetic: keys are line identities from the pure
+  // brain, and a non-UUID one reaching `.in("id", …)` makes Postgres raise 22P02 and takes
+  // the whole three-way view down. Non-UUID keys keep their fallback name instead.
+  const unresolved = view.lines.filter((l) => l.name === l.key && UUID_RE.test(l.key));
   if (unresolved.length === 0) return;
   const skuIds = [...new Set(unresolved.map((l) => l.key))];
   const { data: skus, error } = await sb.from("vendor_items")

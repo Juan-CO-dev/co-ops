@@ -7,6 +7,7 @@
 import { describe, it, expect } from "vitest";
 import {
   deriveCreditDrafts,
+  deriveMissingCreditDrafts,
   isDuplicateAppend,
   type AppendLine,
   type IntakeLineForCredits,
@@ -63,6 +64,31 @@ describe("deriveCreditDrafts", () => {
       line({ qtyReceived: 3, discrepancyType: "short", unitPrice: null }),
     ]);
     expect(c?.amountCents).toBeNull();
+  });
+});
+
+describe("deriveMissingCreditDrafts", () => {
+  it("credits the WHOLE expected qty (nothing arrived) at the intake price", () => {
+    const [c] = deriveMissingCreditDrafts([
+      { skuId: "sku-9", expectedQty: 4, unitPrice: 12.5 },
+    ]);
+    expect(c).toMatchObject({ skuId: "sku-9", reason: "short", qty: 4, amountCents: 5000 });
+  });
+
+  it("leaves amountCents null when no intake price was entered (advisory, never fabricated)", () => {
+    const [c] = deriveMissingCreditDrafts([
+      { skuId: "sku-9", expectedQty: 4, unitPrice: null },
+    ]);
+    expect(c).toMatchObject({ qty: 4, amountCents: null });
+  });
+
+  it("carries no delivery_item_id — these credits have no line by construction", () => {
+    const [c] = deriveMissingCreditDrafts([{ skuId: "s", expectedQty: 1, unitPrice: null }]);
+    expect(c?.deliveryItemId).toBe("");
+  });
+
+  it("empty input → no drafts", () => {
+    expect(deriveMissingCreditDrafts([])).toEqual([]);
   });
 });
 

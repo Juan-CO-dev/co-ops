@@ -14,12 +14,15 @@
  * closes it once its linked deliveries carry no open credits.
  *
  * ── STATE MACHINE (guarded, race-safe) ─────────────────────────────────────────
- *   draft → confirmed → placed → received → reconciled
+ *   draft → confirmed → placed [→ invoiced] → received → reconciled
  * Every transition is a single UPDATE guarded by `.eq("status", <prev>)` + a
  * rowcount check (AGENTS.md silent-UPDATE law). A concurrent double-confirm /
  * placed-without-confirm / etc. loses the race and 409s (never a false success —
  * `.update()` swallows constraint violations, so we never infer from `data`).
- * `invoiced` is present in the schema CHECK (V2) but never entered in V1.
+ * `invoiced` (V2, entered by lib/email-receipts.ts applyReceiptPoEffects when an
+ * invoice email lands before the truck) is a PAPERWORK ANNOTATION, not a gate:
+ * everywhere the lifecycle asks "is it placed?" the answer for `invoiced` is yes
+ * (advanceToReceived, recordDelivery, loadOpenPoTemplate all accept both).
  *
  * ── APPEND-ONLY (house law) ────────────────────────────────────────────────────
  * No row is ever DELETEd. Draft line edits are done IN PLACE: updateDraftLines
@@ -34,6 +37,7 @@
  * line stores integer cents → Math.round(unit_price * 100).
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
@@ -588,23 +592,37 @@ export async function confirmPO(actor: AuthContext, poId: string): Promise<void>
 }
 
 /**
- * Latest price (in CENTS) per SKU from vendor_price_history. ONE batched query
- * over the SKU set, ordered newest-first by effective_date then recorded_at; the
- * FIRST row seen per vendor_item wins. unit_price is DOLLARS (numeric) → cents via
- * Math.round(× 100). A SKU with no price row is absent from the map (→ advisory
- * null at the call site — never fabricated). Bounded by the SKU set; no per-SKU I/O.
+ * Latest price (in CENTS) per SKU from vendor_price_history. One batched, PAGED
+ * scan over the SKU set (never per-SKU I/O), ordered newest-first by
+ * effective_date then recorded_at; the FIRST row seen per vendor_item wins.
+ * unit_price is DOLLARS (numeric) → cents via Math.round(× 100). A SKU with no
+ * price row is absent from the map (→ advisory null at the call site — never
+ * fabricated).
  */
 async function loadLatestPriceCentsBySku(sb: ServiceClient, skuIds: string[]): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   if (skuIds.length === 0) return out;
-  const { data, error } = await sb.from("vendor_price_history")
-    .select("vendor_item_id, unit_price, effective_date, recorded_at")
-    .in("vendor_item_id", skuIds)
-    .order("effective_date", { ascending: false })
-    .order("recorded_at", { ascending: false, nullsFirst: false })
-    .returns<Array<{ vendor_item_id: string; unit_price: number | string; effective_date: string; recorded_at: string | null }>>();
-  if (error) throw new Error(`loadLatestPriceCentsBySku: ${error.message}`);
-  for (const r of data ?? []) {
+  // PAGED (the PR #63 lesson): vendor_price_history is an append-only ledger, so the
+  // desc scan loses its tail past 1000 rows — and the tail holds the only price row
+  // for a SKU whose price rarely changes (dropping it fabricates an advisory-null
+  // price on a confirmed PO). `id` is a tiebreaker ONLY (effective_date then
+  // recorded_at stay the ranking keys), making the order total so page boundaries
+  // can't reshuffle rows out from under the first-seen-per-SKU reduction.
+  const rows = await selectAllRows<{ vendor_item_id: string; unit_price: number | string; effective_date: string; recorded_at: string | null }>(
+    async (from, to) => {
+      const { data, error } = await sb.from("vendor_price_history")
+        .select("vendor_item_id, unit_price, effective_date, recorded_at")
+        .in("vendor_item_id", skuIds)
+        .order("effective_date", { ascending: false })
+        .order("recorded_at", { ascending: false, nullsFirst: false })
+        .order("id", { ascending: false })
+        .range(from, to)
+        .returns<Array<{ vendor_item_id: string; unit_price: number | string; effective_date: string; recorded_at: string | null }>>();
+      if (error) throw new Error(`loadLatestPriceCentsBySku: ${error.message}`);
+      return { data };
+    },
+  );
+  for (const r of rows) {
     if (out.has(r.vendor_item_id)) continue; // desc order → first seen is the latest.
     const dollars = num(r.unit_price);
     // Epsilon-safe dollars→cents: bare `dollars * 100` inherits binary-float error
@@ -771,6 +789,53 @@ export async function recordPlacement(
 }
 
 /**
+ * AUTO-PLACE ON EMAIL EVIDENCE (smoke round 1, 2026-08-10, Juan-ratified): a vendor
+ * reply carrying OUR display code (invoice or confirmation) IS placement evidence —
+ * the vendor can only be answering an order that went out. SERVICE-INTERNAL machine
+ * variant of the confirmed→placed flip (no actor; lib/email-receipts.ts calls this
+ * from applyReceiptPoEffects on a PO-CODE match ONLY — a vendor+window match is too
+ * weak to place an order nobody sent, and stays in triage). Guarded flip (count
+ * exact; count 0 = already placed/moved → benign false), machine transmission row
+ * (channel email, sent_by null → renders via the existing tx_automated fallback),
+ * `po.placed` audit with actorId null. Never throws — effects are best-effort;
+ * a failure logs and returns false (the link itself is already durable).
+ */
+export async function autoPlaceOnEmailEvidence(
+  sb: ServiceClient,
+  poId: string,
+  receiptId: string,
+): Promise<boolean> {
+  const placedAt = new Date().toISOString();
+  const { data: po, error: uErr } = await sb.from("purchase_orders")
+    .update({
+      status: "placed", placed_by: null, placed_at: placedAt,
+      placed_note: "auto: vendor email evidence",
+    })
+    .eq("id", poId).eq("status", "confirmed")
+    .select("id, location_id")
+    .maybeSingle<{ id: string; location_id: string }>();
+  if (uErr) {
+    console.error(`autoPlaceOnEmailEvidence: flip failed for po ${poId}: ${uErr.message}`);
+    return false;
+  }
+  if (!po) return false; // not confirmed (already placed/received or still draft) — benign.
+
+  const { error: tErr } = await sb.from("po_transmissions").insert({
+    po_id: poId, channel: "email", target: null, sent_by: null,
+    note: "auto-place: inbound vendor email evidence", provider_message_id: null,
+  });
+  if (tErr) console.error(`autoPlaceOnEmailEvidence: transmission row failed for po ${poId}: ${tErr.message}`);
+
+  await audit({
+    actorId: null, actorRole: null,
+    action: "po.placed", resourceTable: "purchase_orders", resourceId: poId,
+    metadata: { location_id: po.location_id, channel: "email", actor_context: "email_evidence_auto_place", receipt_id: receiptId },
+    ipAddress: null, userAgent: null,
+  });
+  return true;
+}
+
+/**
  * Mark a confirmed PO as placed via a MANUAL tier (KH+ + location-bind). Thin wrapper
  * over recordPlacement with no provider_message_id — the status-flip logic lives once,
  * in recordPlacement. Existing callers (route `place` action) are unchanged.
@@ -781,10 +846,12 @@ export async function markPlaced(actor: AuthContext, poId: string, input: MarkPl
 
 // ── advanceToReceived: service-internal placed→received (called by receiving) ─────
 /**
- * Advance a `placed` PO to `received` (SERVICE-INTERNAL — no actor; lib/receiving.ts
- * calls this on its completeDelivery path when a delivery links the PO). Guarded
- * placed→received UPDATE + rowcount. When the PO is NOT in `placed` (already
- * received, still draft/confirmed, etc.) this is a SILENT no-op returning false —
+ * Advance a `placed`|`invoiced` PO to `received` (SERVICE-INTERNAL — no actor;
+ * lib/receiving.ts calls this on its completeDelivery path when a delivery links
+ * the PO). `invoiced` qualifies: the inbound-email leg may have flipped
+ * placed→invoiced before the truck arrived, and paperwork order must never block
+ * the lifecycle. Guarded UPDATE + rowcount. When the PO is in neither status
+ * (already received, still draft/confirmed, etc.) this is a SILENT no-op returning false —
  * the caller decides what that means (e.g. a second delivery claiming an already-
  * received PO). Audits `po.received` with actorId null (machine — same precedent
  * as the delivery auto-link path). Returns true when it advanced.
@@ -794,7 +861,7 @@ export async function advanceToReceived(sb: ServiceClient, poId: string): Promis
   // (proven idiom, lib/portal/session.ts). A missed guard returns no row → false.
   const { data: po, error } = await sb.from("purchase_orders")
     .update({ status: "received" })
-    .eq("id", poId).eq("status", "placed")
+    .eq("id", poId).in("status", ["placed", "invoiced"])
     .select("id, location_id, vendor_id")
     .maybeSingle<{ id: string; location_id: string; vendor_id: string }>();
   if (error) throw new Error(`advanceToReceived: ${error.message}`);

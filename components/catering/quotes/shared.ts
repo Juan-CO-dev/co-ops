@@ -54,6 +54,8 @@ const KNOWN_ERROR_CODES = new Set([
   "step_up_required",
   "step_up_stale",
   "not_due",
+  "status_changed", // guarded setQuoteStatus 409 (stale read) — actionable, not generic
+  "quote_expired", // expired→accepted block — needs a revision, not a retry
   "generic",
 ]);
 

@@ -1,19 +1,23 @@
 import { PlaceholderCard } from "@/components/PlaceholderCard";
+import { serverT } from "@/lib/i18n/server";
+import { requireSessionFromHeaders } from "@/lib/session";
 
-export default function ShiftOverlayPage() {
+export default async function ShiftOverlayPage() {
+  const auth = await requireSessionFromHeaders("/operations/overlay");
+  const lang = auth.user.language;
   return (
     <PlaceholderCard
-      title="Shift Overlay"
-      description="Management's view of the shift — voids, comps, vendor, people, strategic, executive. Role-scoped sections per Section 7.2."
+      title={serverT(lang, "overlay.ph.title")}
+      description={serverT(lang, "overlay.ph.description")}
       features={[
-        "Cash/voids/comps/waste at level 5+",
-        "Vendor + people sections at level 6+",
-        "Strategic notes at level 7+",
-        "Executive directives at level 9+",
-        "Forecast at level 10 (CGS only)",
-        "3-hour self-edit window, then append-only corrections",
+        serverT(lang, "overlay.ph.feature.cash"),
+        serverT(lang, "overlay.ph.feature.vendor_people"),
+        serverT(lang, "overlay.ph.feature.strategic"),
+        serverT(lang, "overlay.ph.feature.executive"),
+        serverT(lang, "overlay.ph.feature.forecast"),
+        serverT(lang, "overlay.ph.feature.edit_window"),
       ]}
-      shippingIn="Module #1 (Daily Operations)"
+      shippingIn={serverT(lang, "overlay.ph.shipping")}
     />
   );
 }

@@ -15,6 +15,7 @@ import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { useStepUp } from "@/components/admin/StepUpProvider";
+import { EmptyState } from "@/components/EmptyState";
 import type { VendorView, CategoryView, OrderTypeView } from "@/lib/admin/vendors";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { postJson, resolveErrorKey, ORDERING_METHODS } from "./shared";
@@ -56,9 +57,7 @@ export function VendorListClient({
       </div>
 
       {vendors.length === 0 ? (
-        <div className="mt-5 rounded-2xl border-2 border-dashed border-co-border p-6 text-center text-sm text-co-text-muted">
-          {t("admin.vendors.empty")}
-        </div>
+        <EmptyState message={t("admin.vendors.empty")} className="mt-5" />
       ) : (
         <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {vendors.map((v) => (
@@ -100,7 +99,7 @@ function VendorCard({
     <a
       href={`/admin/vendors/${v.id}`}
       className={
-        "flex flex-col gap-3 rounded-2xl border-2 border-co-border bg-co-surface p-4 transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 " +
+        "co-card co-card-interactive flex flex-col gap-3 p-4 focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 " +
         (v.active ? "" : "opacity-60")
       }
     >
