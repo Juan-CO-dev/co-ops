@@ -448,7 +448,14 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   return (
     <AuthShell width="wide">
       <div className="mt-2 flex flex-col gap-6">
-        <div className="flex items-center gap-3">
+        {/* HEADER ZONE (recomposition arc PR 1): phone keeps today's exact stack
+            (source order = greeting → nav → identity → location, flex-col gap-6);
+            lg+ composes it as a two-column grid — greeting + nav LEFT, identity +
+            location RIGHT — so the top of the page stops burning three full-width
+            rows on a laptop/tablet-landscape. Placement classes only; no DOM
+            reordering (phone-first law). */}
+        <div className="flex flex-col gap-6 lg:grid lg:grid-cols-[1fr_auto] lg:items-start lg:gap-x-8 lg:gap-y-4">
+        <div className="flex items-center gap-3 lg:col-start-1 lg:row-start-1">
           <BrandMark size={40} decorative className="shrink-0" />
           <div>
             <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
@@ -463,18 +470,20 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         {/* Primary navigation — non-report destinations. Report tiles below
          * stay as-is; this nav surfaces the rest of the app above them.
          * actorLevel >= 6 (GM+) also gets the Admin chip. */}
-        <DashboardNav
-          language={language}
-          actorLevel={auth.level}
-          selectedLocationId={selectedLocation?.id ?? null}
-        />
+        <div className="lg:col-start-1 lg:row-start-2">
+          <DashboardNav
+            language={language}
+            actorLevel={auth.level}
+            selectedLocationId={selectedLocation?.id ?? null}
+          />
+        </div>
 
         {/* Role badge — user identity, not location. Stays separate from
          * the location chrome below. NotificationBell shares this header
          * row at the right edge per Q1 (Build #3 PR 3 Step 7 architecture
          * lock — phone-first muscle memory, top-right of the header row).
          */}
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center justify-between gap-3 lg:col-start-2 lg:row-start-1 lg:justify-end lg:gap-4">
           <div className="flex flex-wrap gap-2">
             <span
               className="
@@ -503,7 +512,9 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         {/* Location chrome — single non-interactive chip for single-location
          * users; switcher (interactive selectable pills) for multi-location.
          * No co-existence: the surface either shows the user's one location
-         * or lets them switch. */}
+         * or lets them switch. empty:hidden — the rare all-null branch must not
+         * leave a ghost flex gap on phones. */}
+        <div className="empty:hidden lg:col-start-2 lg:row-start-2 lg:justify-self-end">
         {allLocationsBadge && locations.length === 0 ? (
           <div className="flex flex-wrap gap-2">
             <span
@@ -548,7 +559,8 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
             language={language}
           />
         ) : null}
-
+        </div>
+        </div>
 
         {/* Yesterday-unconfirmed alert — operational concern, not a history view. */}
         {selectedLocation && operational?.yesterdayUnconfirmed ? (
@@ -678,7 +690,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
             <ActionLink
               href={`/maintenance?location=${selectedLocation.id}`}
               variant="secondary"
-              className="w-full"
+              className="w-full md:w-auto md:self-start"
             >
               {serverT(language, "maintenance.nav_label")}
             </ActionLink>
@@ -885,8 +897,9 @@ function ReportsSection({
       >
         {serverT(language, "dashboard.reports.heading")}
       </h3>
-      {/* Tiles stack on phones (unchanged), grid on desktop so they use the width. */}
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">{children}</div>
+      {/* Tiles stack on phones (unchanged), two-up from sm — the shops' TABLETS are a
+          first-class form factor (recomposition arc D-tablet) — three-up at xl. */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">{children}</div>
     </section>
   );
 }
