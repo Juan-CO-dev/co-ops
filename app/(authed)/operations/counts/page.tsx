@@ -27,10 +27,18 @@ export default async function CountsPage({ searchParams }: { searchParams: Promi
       <h1 className="mb-1 text-lg font-bold text-co-text">{serverT(lang, "counts.page.title")}</h1>
       <p className="mb-4 text-[11px] text-co-text-muted">{serverT(lang, "counts.page.subtitle")}</p>
 
+      {/* Recomposition PR 3: phone keeps the stack (count form → on-hand); lg+
+          puts the ACTION (physical count entry) beside the REFERENCE (computed
+          on-hand) — the operator counting a shelf can see the drift math answer
+          without scrolling away from the form. Source order unchanged. */}
+      <div className="lg:grid lg:grid-cols-2 lg:items-start lg:gap-8">
       <CountForm skus={formData.skus} locationId={location} />
 
-      <h2 className="mt-6 text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">{serverT(lang, "counts.onhand.title")}</h2>
+      <div className="lg:min-w-0">
+      <h2 className="mt-6 text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim lg:mt-0">{serverT(lang, "counts.onhand.title")}</h2>
       <OnHandPanel view={onHand} lang={lang} />
+      </div>
+      </div>
     </main>
   );
 }

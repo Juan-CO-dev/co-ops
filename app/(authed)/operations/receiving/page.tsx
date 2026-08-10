@@ -73,8 +73,17 @@ export default async function ReceivingPage({ searchParams }: { searchParams: Pr
         </Link>
       </div>
       <h1 className="mb-4 text-lg font-bold text-co-text">{serverT(lang, "receiving.page.title")}</h1>
+      {/* Recomposition PR 3: phone keeps the stack (form → credits → history);
+          lg+ puts the intake form beside the credits + history rail so the door
+          ceremony and what-came-before are visible together. Source order
+          unchanged — the rail cell wraps the two reference blocks. */}
+      <div className="lg:grid lg:grid-cols-[3fr_2fr] lg:items-start lg:gap-8">
       <ReceivingForm formData={formData} locationId={location} today={etCalendarDate(new Date().toISOString())} />
 
+      {/* [&>*:first-child]:lg:mt-0 — the rail's first block (credits panel) carries
+          its own stack margin (mt-6) for the phone flow; at lg the rail top must
+          align with the form. */}
+      <div className="lg:min-w-0 [&>*:first-child]:lg:mt-0">
       <OpenCreditsPanel summary={openCredits} />
 
       <h2 className="mt-6 text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">{serverT(lang, "receiving.page.recent")}</h2>
@@ -138,6 +147,8 @@ export default async function ReceivingPage({ searchParams }: { searchParams: Pr
           })}
         </ul>
       )}
+      </div>
+      </div>
     </main>
   );
 }
