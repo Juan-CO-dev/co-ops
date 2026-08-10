@@ -763,6 +763,9 @@ export function AmPrepForm({
           numeric shapes → GenericPrepSection. Props match exactly what the
           former per-section components received (byte-identical render for
           the 6 seeded sections). */}
+      {/* Recomposition PR 4b: section cards flow into two columns at lg (the
+          proven opening/closing idiom — break-guarded, phone stack unchanged). */}
+      <div className="flex flex-col gap-4 lg:block lg:columns-2 lg:[column-gap:1rem] lg:[&>*]:break-inside-avoid lg:[&>*]:mb-4">
       {sections.map((s) => {
         const sectionItems = itemsBySection.get(s.slug) ?? [];
         // Homogeneity: a section renders the UNIFORM path (MiscSection /
@@ -815,6 +818,7 @@ export function AmPrepForm({
           />
         );
       })}
+      </div>
 
       {/* Form-level error summary — accessibility-driven (per locked
           decision: BOTH per-row inline AND form-level summary). Renders

@@ -429,6 +429,8 @@ export function PmReportClient({
         </p>
         {/* Read-only wrap-up and evals below */}
         <WrapUpSection wrapUp={wrapUp} timeliness={timeliness} language={language} />
+        {/* Eval cards two-up at lg (recomposition PR 4b) — phone keeps the stack. */}
+        <div className="grid gap-4 lg:grid-cols-2">
         {evalEmployeeIds.map((id) => (
           <EmployeeEvalCard
             key={id}
@@ -440,6 +442,7 @@ export function PmReportClient({
             readOnly={true}
           />
         ))}
+        </div>
       </div>
     );
   }
@@ -504,7 +507,8 @@ export function PmReportClient({
         <h2 className="mb-3 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
           {t("pm.eval.attitude")}
         </h2>
-        <div className="flex flex-col gap-4">
+        {/* Eval cards two-up at lg (recomposition PR 4b); the add-picker spans. */}
+        <div className="grid gap-4 lg:grid-cols-2">
           {evalEmployeeIds.map((id) => (
             <EmployeeEvalCard
               key={id}
@@ -519,7 +523,7 @@ export function PmReportClient({
 
           {/* Add-employee picker */}
           {pickableUsers.length > 0 && (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 lg:col-span-2">
               <select
                 value={selectValue}
                 onChange={(e) => {
