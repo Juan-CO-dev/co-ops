@@ -116,11 +116,11 @@ export default async function CashPage({ searchParams }: PageProps) {
     }
   }
 
+  // READABLE COLUMN BY DESIGN (recomposition arc PR 4, spec rule 4): this is a
+  // linear entry form — denomination fields and sign-off never stretch across a
+  // laptop. The house ladder is for COMPOSED surfaces (dashboard, counts,
+  // receiving); form surfaces hold the readable column deliberately.
   return (
-    {/* READABLE COLUMN BY DESIGN (recomposition arc PR 4, spec rule 4): this is a
-        linear entry form — denomination fields and sign-off never stretch across a
-        laptop. The house ladder is for COMPOSED surfaces (dashboard, counts,
-        receiving); form surfaces hold the readable column deliberately. */}
     <main className="mx-auto max-w-2xl px-4 pb-32 pt-4 sm:px-6">
       <div className="mb-3">
         <DashboardBackLink />
