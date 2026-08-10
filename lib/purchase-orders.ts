@@ -789,6 +789,53 @@ export async function recordPlacement(
 }
 
 /**
+ * AUTO-PLACE ON EMAIL EVIDENCE (smoke round 1, 2026-08-10, Juan-ratified): a vendor
+ * reply carrying OUR display code (invoice or confirmation) IS placement evidence —
+ * the vendor can only be answering an order that went out. SERVICE-INTERNAL machine
+ * variant of the confirmed→placed flip (no actor; lib/email-receipts.ts calls this
+ * from applyReceiptPoEffects on a PO-CODE match ONLY — a vendor+window match is too
+ * weak to place an order nobody sent, and stays in triage). Guarded flip (count
+ * exact; count 0 = already placed/moved → benign false), machine transmission row
+ * (channel email, sent_by null → renders via the existing tx_automated fallback),
+ * `po.placed` audit with actorId null. Never throws — effects are best-effort;
+ * a failure logs and returns false (the link itself is already durable).
+ */
+export async function autoPlaceOnEmailEvidence(
+  sb: ServiceClient,
+  poId: string,
+  receiptId: string,
+): Promise<boolean> {
+  const placedAt = new Date().toISOString();
+  const { data: po, error: uErr } = await sb.from("purchase_orders")
+    .update({
+      status: "placed", placed_by: null, placed_at: placedAt,
+      placed_note: "auto: vendor email evidence",
+    })
+    .eq("id", poId).eq("status", "confirmed")
+    .select("id, location_id")
+    .maybeSingle<{ id: string; location_id: string }>();
+  if (uErr) {
+    console.error(`autoPlaceOnEmailEvidence: flip failed for po ${poId}: ${uErr.message}`);
+    return false;
+  }
+  if (!po) return false; // not confirmed (already placed/received or still draft) — benign.
+
+  const { error: tErr } = await sb.from("po_transmissions").insert({
+    po_id: poId, channel: "email", target: null, sent_by: null,
+    note: "auto-place: inbound vendor email evidence", provider_message_id: null,
+  });
+  if (tErr) console.error(`autoPlaceOnEmailEvidence: transmission row failed for po ${poId}: ${tErr.message}`);
+
+  await audit({
+    actorId: null, actorRole: null,
+    action: "po.placed", resourceTable: "purchase_orders", resourceId: poId,
+    metadata: { location_id: po.location_id, channel: "email", actor_context: "email_evidence_auto_place", receipt_id: receiptId },
+    ipAddress: null, userAgent: null,
+  });
+  return true;
+}
+
+/**
  * Mark a confirmed PO as placed via a MANUAL tier (KH+ + location-bind). Thin wrapper
  * over recordPlacement with no provider_message_id — the status-flip logic lives once,
  * in recordPlacement. Existing callers (route `place` action) are unchanged.

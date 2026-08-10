@@ -44,6 +44,7 @@ import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, accessibleLocations, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
+import { autoPlaceOnEmailEvidence } from "@/lib/purchase-orders";
 import { extractPoCodes } from "@/lib/email-receipts-matching-shared";
 
 // Re-export the pure code extractor so server callers keep their `@/lib/email-receipts`
@@ -553,10 +554,13 @@ export async function attemptAutoLink(receiptId: string): Promise<void> {
 // on ingest AND on parse completion (Task 5); pure extraction (extractPoCodes) is also
 // reused by the SMS leg (Task 7).
 
-/** PO statuses a receipt link may legitimately attach to. A draft/reconciled PO is NOT a
- *  valid target for an inbound confirmation/invoice (nothing was placed yet / it's closed).
- *  Kept as a Set for O(1) membership. */
-const PO_LINKABLE_STATUSES = new Set(["placed", "invoiced", "received", "reconciled"]);
+/** PO statuses a receipt link may legitimately attach to on the PO-CODE path. A draft
+ *  PO is NOT a valid target (nothing was even confirmed). `confirmed` IS code-linkable
+ *  (2026-08-10, Juan-ratified auto-place): a vendor reply carrying OUR display code is
+ *  placement evidence — applyReceiptPoEffects auto-advances confirmed→placed on it.
+ *  The vendor+window fallback keeps its own narrower placed|invoiced filter inline —
+ *  a window guess must never place an order nobody sent. Kept as a Set for O(1). */
+const PO_LINKABLE_STATUSES = new Set(["confirmed", "placed", "invoiced", "received", "reconciled"]);
 /** ±3 days: the vendor+window fallback tolerance around a receipt's received-at date vs a
  *  candidate PO's placed_at (V2 §4 step 4 — the single-candidate rule). */
 const PO_MATCH_DAY_WINDOW = 3;
@@ -709,6 +713,10 @@ async function resolvePoMatch(
  *   'invoice' → guarded placed→invoiced status flip (`.eq("status","placed")`, count exact).
  *      count 0 is TOLERATED: a PO already received/reconciled just keeps the link (invoices
  *      often arrive after the truck) — the link is enough, no status regression, no throw.
+ *   AUTO-PLACE precedes both (V2.1): a PO-CODE-matched confirmation/invoice for a PO still
+ *      in `confirmed` first advances it confirmed→placed (autoPlaceOnEmailEvidence — machine
+ *      transmission + audit), so the effects above act on the placed order in the same pass.
+ *      vendor_window and manual matches never auto-place.
  * NO audit here (the link write above already audited receipt.po_linked). Best-effort reads
  * error-checked; nothing here throws to the ingest (ledger-first).
  */
@@ -727,6 +735,15 @@ export async function applyReceiptPoEffects(
     return;
   }
   if (!r || !r.linked_po_id || !r.doc_kind) return; // no link / no classification → nothing to apply.
+
+  // AUTO-PLACE (V2.1, Juan-ratified 2026-08-10): a code-matched vendor doc for a PO
+  // still in `confirmed` advances it to `placed` FIRST, so the ack/invoiced effects
+  // below apply to the placed order in the same pass (one invoice email can carry
+  // confirmed→placed→invoiced). PO-CODE MATCHES ONLY — a vendor+window guess or a
+  // manual attach never auto-places (the human places, or the code proves it).
+  if (matchedBy === "po_code" && (r.doc_kind === "confirmation" || r.doc_kind === "invoice")) {
+    await autoPlaceOnEmailEvidence(sb, r.linked_po_id, r.id);
+  }
 
   if (r.doc_kind === "confirmation") {
     const ackEntry = {
