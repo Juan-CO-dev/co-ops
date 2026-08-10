@@ -60,7 +60,18 @@ export default async function ReceivingPage({ searchParams }: { searchParams: Pr
 
   return (
     <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
-      <div className="mb-3"><DashboardBackLink /></div>
+      {/* Back + the sibling hop to ordering (the other end of the draft → PO → truck
+          thread). The active location travels so the destination resolves the same shop. */}
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <DashboardBackLink />
+        <Link
+          href={`/ordering?location=${encodeURIComponent(location)}`}
+          className="-mr-2 mb-3 inline-flex min-h-[44px] items-center gap-1.5 rounded-md px-2 py-2 text-xs font-bold uppercase tracking-[0.14em] text-co-text-muted transition hover:text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
+        >
+          <span>{serverT(lang, "nav.ordering")}</span>
+          <span aria-hidden>›</span>
+        </Link>
+      </div>
       <h1 className="mb-4 text-lg font-bold text-co-text">{serverT(lang, "receiving.page.title")}</h1>
       <ReceivingForm formData={formData} locationId={location} today={etCalendarDate(new Date().toISOString())} />
 
@@ -79,8 +90,17 @@ export default async function ReceivingPage({ searchParams }: { searchParams: Pr
             <li key={d.id}>
               <Link href={`/operations/receiving/${d.id}`} className="block rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2 text-sm transition hover:border-co-text">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-semibold text-co-text">{d.vendorName}</span>
-                  <span className="text-xs text-co-text-muted">{d.deliveryDate}</span>
+                  <span className="min-w-0">
+                    <span className="block font-semibold text-co-text">{d.vendorName}</span>
+                    {/* The id thread: the PO this drop was received against. Absent on a
+                        walk-in delivery with no order behind it. */}
+                    {d.purchaseOrderCode ? (
+                      <span className="block font-mono text-[11px] tracking-wide text-co-text-dim">
+                        {d.purchaseOrderCode}
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className="shrink-0 text-xs text-co-text-muted">{d.deliveryDate}</span>
                 </div>
                 {/* Alert badges (D2 — always visible, never collapsed): in-progress
                     door, two-way-match state (discrepant/matched/override), missing

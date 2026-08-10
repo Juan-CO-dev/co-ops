@@ -65,6 +65,49 @@ export function deriveCreditDrafts(lines: IntakeLineForCredits[]): CreditDraft[]
   return out;
 }
 
+/**
+ * An EXPECTED item that never arrived — the door's missing-item honesty gate.
+ *
+ * WHY THIS EXISTS AS A SEPARATE SHAPE (constraint, verified 2026-08-10): a fully
+ * missing item CANNOT be represented as a delivery line. `vendor_delivery_items`
+ * carries `check (qty_received > 0)` (migration 0100) and
+ * validateAndResolveDeliveryLines rejects `qtyReceived <= 0` (400 invalid_qty), so
+ * there is no way to persist "expected 4, received 0". The credit is therefore filed
+ * LINE-LESS: `vendor_credits.delivery_item_id` is nullable (0168) and `delivery_id`
+ * points at the delivery that DID arrive — which is precisely the evidence that the
+ * truck came and this item was not on it.
+ *
+ * `unitPrice` is the operator-entered intake price when one was typed, else null —
+ * same price authority as the lined path (spec D1), never a catalogue lookup.
+ */
+export interface MissingExpectedLine {
+  skuId: string;
+  /** Level-unit qty the PO ordered. Always > 0 (a 0-qty PO line is a removed line). */
+  expectedQty: number;
+  unitPrice: number | null;
+}
+
+/**
+ * Credit drafts for expected-but-never-delivered items. Delegates ALL money/qty math
+ * to deriveCreditDrafts with qtyReceived 0 — so the line-less path and the lined path
+ * can never drift: qty = expectedQty − 0 = expectedQty, amountCents = qty × unitPrice
+ * (null when no price was entered; a null amount is an advisory, never a fabricated
+ * number). `deliveryItemId` is "" here and is IGNORED by the caller, which writes NULL
+ * into the nullable column — these drafts have no line to point at, by construction.
+ */
+export function deriveMissingCreditDrafts(lines: MissingExpectedLine[]): CreditDraft[] {
+  return deriveCreditDrafts(
+    lines.map((l) => ({
+      deliveryItemId: "",
+      skuId: l.skuId,
+      qtyReceived: 0,
+      expectedQty: l.expectedQty,
+      unitPrice: l.unitPrice,
+      discrepancyType: "short" as const,
+    })),
+  );
+}
+
 /** A single line as it lands in a delivery-append batch (identity tuple only). */
 export interface AppendLine {
   skuId: string;

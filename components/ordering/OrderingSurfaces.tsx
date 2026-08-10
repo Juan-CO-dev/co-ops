@@ -52,6 +52,7 @@ export function OrderingSurfaces({
   language,
   shopLabel,
   dateLabel,
+  initialPoId,
 }: {
   todaysOrders: TodaysOrderVendor[];
   history: PoHistoryRow[];
@@ -63,11 +64,20 @@ export function OrderingSurfaces({
   language: "en" | "es";
   shopLabel: string;
   dateLabel: string;
+  /**
+   * Deep-link target (?po=<id>) — the panel this page should open on load, so a delivery
+   * detail can link back to the exact PO. Seeds the panel state ONCE (initial useState);
+   * closing it is a normal state change and must not be re-forced by a re-render.
+   * UNTRUSTED: the id is only a fetch key — PoPanel's GET re-runs the PO_MIN level gate
+   * and lockLocationContext server-side, so a crafted id renders the load error, never
+   * another store's order.
+   */
+  initialPoId?: string | null;
 }) {
   const { t } = useTranslation();
   const router = useRouter();
 
-  const [openPoId, setOpenPoId] = useState<string | null>(null);
+  const [openPoId, setOpenPoId] = useState<string | null>(initialPoId ?? null);
   const [generating, setGenerating] = useState<string | null>(null); // vendorId being drafted
   const [genErr, setGenErr] = useState<string | null>(null);
 

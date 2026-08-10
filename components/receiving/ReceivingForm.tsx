@@ -19,6 +19,17 @@
  * resets); router.refresh() does NOT reset client state, so success resets
  * explicitly; type-only server imports; no server module leaks.
  *
+ * MISSING-ITEM HONESTY GATE: completing a delivery while pre-filled EXPECTED rows sat
+ * unconfirmed used to be silent — and worse than silent, because the template SEEDS each
+ * row's qty at the expected value, so an item that never came off the truck was filed as
+ * fully received. Now the first tap on "Delivery confirmed" opens a warn notice listing
+ * every unconfirmed expected row; each offers "Received" (confirm at the expected count)
+ * or "Didn't arrive" (clear the count, and on a PO-LINKED intake claim a short). A second
+ * tap completes regardless — honesty, not a hard block — and the notice states that
+ * unanswered rows file at their expected count. Off a mere last-delivery prefill no short
+ * is claimed, because a habit is not a debt. See lib/receiving-shared.ts
+ * MissingExpectedLine for why a fully-missing item cannot be a delivery line at all.
+ *
  * D1 Task 6 — offline-draft persistence:
  *   - Debounced (500 ms) save to localStorage key
  *     `coops.intake.draft.<locationId>` on every relevant state change.
@@ -229,6 +240,15 @@ export function ReceivingForm({
   const [closedCount, setClosedCount] = useState<number>(0);
   const [closureError, setClosureError] = useState<boolean>(false);
 
+  // Missing-item honesty gate. `armComplete` = the interrupt has been shown once, so the
+  // next tap on the primary button completes. `notArrived` is keyed by LINE KEY (not skuId
+  // — the same SKU can legitimately sit on two rows) and marks the rows the operator said
+  // never came off the truck; on a PO-linked intake those ride the payload as shorts.
+  // "Received" needs no entry here — it patches the line itself (confirmed + qty), which
+  // is what removes it from the unconfirmed set.
+  const [armComplete, setArmComplete] = useState(false);
+  const [notArrived, setNotArrived] = useState<Record<string, true>>({});
+
   // On mount: check for a saved draft and offer Resume/Discard.
   useEffect(() => {
     const draft = readDraft(locationId);
@@ -296,6 +316,55 @@ export function ReceivingForm({
   const canSubmit =
     vendorId !== "" && date !== "" && readyLines.length > 0 && (receiptPhotoId !== null || photoLater) && !busy;
 
+  // ── Missing-item honesty gate ──────────────────────────────────────────────
+  // UNCONFIRMED EXPECTED ROWS. Only PRE-FILLED rows can be missed (expectedQty != null —
+  // they came from the PO or the last-delivery template; offered/added rows carry no
+  // expectation). A row counts as unconfirmed when the operator never tapped ✓
+  // (`confirmed` false), raised no flag, AND left the quantity at whatever the template
+  // seeded. That covers BOTH ways the door used to swallow a miss:
+  //   • qty STILL at the seeded expected value → today it submits as fully received, so
+  //     an item that never came off the truck is recorded as delivered. (This is the one
+  //     the owner hit: the template pre-fills qty, so "leaving a row off" fabricates it.)
+  //   • qty emptied or zeroed → readyLines drops it and nothing is recorded at all.
+  // A row whose qty was EDITED to a different number is a deliberate count (the flag
+  // auto-suggest already nudges it), and a flagged row is an acknowledged exception —
+  // neither is silent, so neither is listed.
+  const unconfirmedExpected = lines.filter((l) => {
+    if (l.skuId === "" || l.expectedQty == null || l.confirmed || l.discrepancy !== null) return false;
+    const q = l.qty.trim();
+    if (q === "" || Number(q) === 0) return true; // emptied/zeroed → would be dropped
+    return Number(q) === l.expectedQty; // untouched at the seeded value → would be fabricated
+  });
+  // Credits may ONLY be filed against a real order (the server enforces this too —
+  // 400 missing_requires_po). Off a last-delivery prefill the notice still fires, but it
+  // is a hint, not a claim: "they usually bring this" is not a debt the vendor owes.
+  const canFileShorts = linkedPoId !== null;
+  const shortCount = unconfirmedExpected.filter((l) => notArrived[l.key] === true).length;
+  // The notice only stands between the operator and COMPLETE. "Save partial" means the
+  // truck is still unloading, so an unconfirmed expected item is expected — no interrupt.
+  const showMissingNotice = unconfirmedExpected.length > 0 && armComplete;
+
+  /** "Received" — the operator confirms this row arrived as expected. Reuses the exact
+   *  collapsed-✓ semantics (qty = expected, confirmed, no flag), so the row leaves the
+   *  unconfirmed set on the next render and the notice shrinks live. */
+  const markArrived = (i: number, key: string, expected: number) => {
+    setNotArrived((m) => {
+      if (m[key] !== true) return m;
+      const next = { ...m };
+      delete next[key];
+      return next;
+    });
+    setLine(i, { qty: String(expected), confirmed: true, discrepancy: null });
+  };
+
+  /** "Didn't arrive" — nothing came off the truck for this row. The quantity is cleared
+   *  (so no fabricated count is filed) and, on a PO-linked intake, the row is marked for
+   *  a line-less short credit in the submit payload. */
+  const markNotArrived = (i: number, key: string) => {
+    setNotArrived((m) => ({ ...m, [key]: true }));
+    setLine(i, { qty: "", confirmed: false, discrepancy: null });
+  };
+
   const resetForm = () => {
     setVendorId("");
     setDate(today);
@@ -314,6 +383,8 @@ export function ReceivingForm({
     setLinkedPoCode(null);
     setOpenCredits([]);
     setCheckedCreditIds(new Set());
+    setArmComplete(false);
+    setNotArrived({});
     // NOTE: closedCount / closureError are the success-state notice — NOT cleared here.
     // resetForm runs on a successful submit; the notice must survive to be shown.
   };
@@ -362,6 +433,9 @@ export function ReceivingForm({
     setCheckedCreditIds(new Set());
     setClosedCount(0);
     setClosureError(false);
+    // A new vendor means a new expected list — never carry a stale arm or disposition.
+    setArmComplete(false);
+    setNotArrived({});
     if (!nextVendorId) return;
     setPrefilling(true);
     // Fallback we drop to whenever there's no usable template: the vendor's usage-ranked
@@ -437,6 +511,17 @@ export function ReceivingForm({
       // V2-D4: the open credits this truck makes up (checked in "Makes up a short?").
       // Filtered to ids still present in openCredits so a stale check can't leak.
       makeUpCreditIds: openCredits.filter((c) => checkedCreditIds.has(c.id)).map((c) => c.id),
+      // Ordered items the operator said never came off the truck. ONLY on a complete,
+      // PO-linked intake: a partial delivery hasn't finished arriving, and without a PO
+      // there is no order to be short against (the server re-checks both).
+      missingLines:
+        deliveryStatus === "complete" && canFileShorts
+          ? unconfirmedExpected.flatMap((l) =>
+              notArrived[l.key] === true && l.expectedQty != null && l.expectedQty > 0
+                ? [{ skuId: l.skuId, expectedQty: l.expectedQty, unitPrice: num(l.unitPrice) }]
+                : [],
+            )
+          : [],
       lines: readyLines.map((l) => ({
         skuId: l.skuId,
         qtyReceived: Number(l.qty),
@@ -491,6 +576,22 @@ export function ReceivingForm({
       return;
     }
     setErr(t(("receiving.error." + (j?.code ?? "generic")) as never));
+  };
+
+  /**
+   * The COMPLETE path, gated by the honesty interrupt. First tap with untouched expected
+   * rows arms the notice and returns; the operator dispositions each item (or not) and
+   * taps again to file. The notice is never a hard block — it is the hint the door was
+   * missing. The set is recomputed every render, so counting a listed item makes it drop
+   * off (and, once the list empties, the notice closes and the button reverts on its own).
+   */
+  const completeWithGate = () => {
+    if (!canSubmit) return;
+    if (unconfirmedExpected.length > 0 && !armComplete) {
+      setArmComplete(true);
+      return;
+    }
+    void submit("complete");
   };
 
   return (
@@ -781,6 +882,84 @@ export function ReceivingForm({
         </div>
       ) : null}
 
+      {/* ── MISSING-ITEM HONESTY NOTICE ───────────────────────────────────────
+          Stands once between the operator and "Delivery confirmed" when pre-filled
+          expected rows were never confirmed. Warn tone (same idiom as the closure
+          advisory above), role="status" — advisory, not an error. Both dispositions
+          render on every source; only the SHORT CLAIM is PO-gated (canFileShorts). */}
+      {showMissingNotice ? (
+        <div
+          role="status"
+          className="mt-4 rounded-lg border-2 border-co-warning bg-co-warning-surface px-3 py-3"
+        >
+          <p className="text-sm font-bold text-co-text">{t("receiving.missing.title")}</p>
+          <p className="mt-1 text-[12px] text-co-text-dim">
+            {canFileShorts && linkedPoCode
+              ? t("receiving.missing.help_po", { n: unconfirmedExpected.length, code: linkedPoCode })
+              : t("receiving.missing.help_plain", { n: unconfirmedExpected.length })}
+          </p>
+          <ul className="mt-2 flex flex-col gap-1.5">
+            {unconfirmedExpected.map((l) => {
+              // The row's own index in `lines` — the patch helpers address lines by index
+              // (setLine), and the unconfirmed list is a filtered view of the same array.
+              const i = lines.indexOf(l);
+              const missed = notArrived[l.key] === true;
+              const levelLabel = l.level.trim() || t("receiving.door.level_generic");
+              return (
+                <li
+                  key={l.key}
+                  className="rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2"
+                >
+                  <span className="block text-sm font-semibold text-co-text">{l.skuName}</span>
+                  <span className="block text-[11px] text-co-text-dim">
+                    {t("receiving.door.expected_line", { qty: l.expectedQty ?? 0, level: levelLabel })}
+                  </span>
+                  <div className="mt-1.5 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => markArrived(i, l.key, l.expectedQty ?? 0)}
+                      aria-label={t("receiving.missing.received_aria", { sku: l.skuName })}
+                      className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text-dim transition hover:border-co-text"
+                    >
+                      {t("receiving.missing.received")}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => markNotArrived(i, l.key)}
+                      aria-pressed={missed}
+                      aria-label={t("receiving.missing.not_arrived_aria", { sku: l.skuName })}
+                      className={
+                        "inline-flex min-h-[44px] items-center rounded-full border-2 px-4 text-sm font-bold transition " +
+                        (missed
+                          ? "border-co-danger bg-co-danger-surface text-co-text"
+                          : "border-co-border bg-co-surface text-co-text-dim hover:border-co-text")
+                      }
+                    >
+                      {t("receiving.missing.not_arrived")}
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+          {/* What the next tap will actually do — stated, never implied. */}
+          {canFileShorts && shortCount > 0 ? (
+            <p className="mt-2 text-[12px] font-semibold text-co-text">
+              {t("receiving.missing.summary_claim", { n: shortCount })}
+            </p>
+          ) : null}
+          {/* Only true while a row is still unanswered — a "Didn't arrive" row has its
+              qty cleared, so it is NOT filed at the expected count. */}
+          {unconfirmedExpected.some((l) => notArrived[l.key] !== true) ? (
+            <p className="mt-1 text-[12px] text-co-text-dim">
+              {t("receiving.missing.summary_unanswered")}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       {/* Inline error / duplicate banner (never an alert()). */}
       {err ? (
         <div
@@ -812,10 +991,15 @@ export function ReceivingForm({
             <button
               type="button"
               disabled={!canSubmit}
-              onClick={() => void submit("complete")}
-              className="inline-flex min-h-[48px] flex-1 items-center justify-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50"
+              onClick={completeWithGate}
+              className={
+                "inline-flex min-h-[48px] flex-1 items-center justify-center rounded-lg border-2 border-co-gold-deep px-4 text-sm font-bold uppercase tracking-[0.1em] disabled:opacity-50 " +
+                (showMissingNotice ? "bg-co-gold-deep text-white" : "bg-co-gold text-co-text")
+              }
             >
-              {t("receiving.door.submit_complete")}
+              {showMissingNotice
+                ? t("receiving.door.submit_complete_anyway")
+                : t("receiving.door.submit_complete")}
             </button>
           </div>
           <button

@@ -38,7 +38,14 @@ import type { AuthContext } from "@/lib/session";
 import { loadMeasures, loadSkuPackChains } from "@/lib/prep-consumption";
 import { ozForRecipeInput, skuContentOz, type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
-import { deriveCreditDrafts, isDuplicateAppend, type AppendLine, type IntakeLineForCredits } from "@/lib/receiving-shared";
+import {
+  deriveCreditDrafts,
+  deriveMissingCreditDrafts,
+  isDuplicateAppend,
+  type AppendLine,
+  type IntakeLineForCredits,
+  type MissingExpectedLine,
+} from "@/lib/receiving-shared";
 import { advanceToReceived } from "@/lib/purchase-orders";
 import { resolveCreditsRedelivered, loadOpenCreditRowsForVendor, type OpenCreditRow } from "@/lib/credits";
 
@@ -115,6 +122,21 @@ export interface RecordDeliveryInput {
    * result. Empty/absent = no closure attempted.
    */
   makeUpCreditIds?: string[];
+  /**
+   * MISSING-ITEM HONESTY GATE: expected items the operator marked SHORT at the door
+   * because they never came off the truck. These carry NO delivery line — nothing
+   * physically arrived, and a delivery line cannot say so (`qty_received > 0` CHECK,
+   * migration 0100; validateAndResolveDeliveryLines rejects qty <= 0). Each becomes a
+   * line-less open `short` credit against THIS delivery (full constraint note on
+   * MissingExpectedLine in lib/receiving-shared.ts).
+   *
+   * PO-LINKED ONLY (enforced in recordDelivery, 400 `missing_requires_po`): an
+   * expectation only becomes a vendor DEBT when the vendor was actually ordered the
+   * item. A last-delivery prefill is "what they usually bring", not an order — filing
+   * a credit off it would invent a debt, so the server refuses it regardless of what
+   * the client sends (server = authority).
+   */
+  missingLines?: MissingExpectedLine[];
 }
 /** One SKU option for the receiving form, carrying its active chain-level labels
  *  (root → leaf) so the line UI can offer a level picker. Empty chainLabels →
@@ -157,9 +179,14 @@ export interface DeliveryView {
   emailReceiptId: string | null;
   /** Row creation timestamp (ISO); the age input for the 48h missing-email window. */
   createdAt: string;
+  /** Linked PO's human code (EM-20260810-BALDOR) — the ONE id thread that starts at the
+   *  draft and runs to receiving. null = a walk-in drop with no order behind it. */
+  purchaseOrderCode: string | null;
 }
 export interface DeliveryDetail extends DeliveryView {
   locationId: string;
+  /** Linked PO id — powers the cross-link back to the ordering board's panel. */
+  purchaseOrderId: string | null;
   invoiceTotal: number | null;
   notes: string | null;
   lines: Array<{
@@ -388,6 +415,14 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
 
   const resolved = await validateAndResolveDeliveryLines(sb, input.lines);
 
+  // Missing-item honesty gate (PO-LINKED ONLY). An expectation is a vendor DEBT only when
+  // the vendor was ordered the item; a last-delivery prefill is a habit, not an order. The
+  // form only offers the affordance on a PO-linked intake — this is the enforcement.
+  const missingExpected = input.missingLines ?? [];
+  if (missingExpected.length > 0 && !poId) {
+    throw new ReceivingError(400, "missing_requires_po", "Missing-item shorts can only be filed against a purchase order");
+  }
+
   // 0160 columns — apply 0160 BEFORE deploying this code (additive; old code unaffected).
   // The 0160 `note` columns are the brief-canonical fields; the legacy `notes`
   // columns stay populated so the existing detail reader keeps working (no split-
@@ -423,6 +458,14 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   // (delivery_item_id, reason) unique index — ignoreDuplicates on re-run.
   await deriveAndUpsertCredits(sb, header.id, input.vendorId, input.locationId, actor.user.id);
 
+  // Line-less `short` credits for ordered items that never came off the truck. Filed
+  // right beside the lined credits so both halves of "what the vendor owes us for this
+  // drop" land in the same write phase.
+  const missingCreditCount = await insertMissingExpectedCredits(
+    sb, header.id, input.vendorId, input.locationId,
+    missingExpected, new Set(input.lines.map((l) => l.skuId)), actor.user.id,
+  );
+
   const priced = input.lines.filter((l) => l.unitPrice != null);
   if (priced.length > 0) {
     const { error: pErr } = await sb.from("vendor_price_history").insert(
@@ -453,7 +496,7 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "delivery.received", resourceTable: "vendor_deliveries", resourceId: header.id,
-    metadata: { vendor_id: input.vendorId, location_id: input.locationId, line_count: input.lines.length, priced_lines: priced.length, avg_oz_updated: avgUpdated, avg_skipped_chained: avgSkippedChained, purchase_order_id: poId },
+    metadata: { vendor_id: input.vendorId, location_id: input.locationId, line_count: input.lines.length, priced_lines: priced.length, avg_oz_updated: avgUpdated, avg_skipped_chained: avgSkippedChained, purchase_order_id: poId, missing_expected_credits: missingCreditCount },
     ipAddress: null, userAgent: null,
   });
 
@@ -620,27 +663,104 @@ async function deriveAndUpsertCredits(
   if (cErr) throw new ReceivingError(500, "credit_write_failed", `Credit write failed: ${cErr.message}`);
 }
 
+/**
+ * Validate the missing-expected batch and file its line-less `short` credits (the door's
+ * missing-item honesty gate). Runs AFTER the delivery header + lines exist, alongside
+ * deriveAndUpsertCredits, so the credit's `delivery_id` points at the truck that came
+ * without the item.
+ *
+ * VALIDATION (server = authority — the form's own gating is UX, not enforcement):
+ *   • every skuId must name an ACTIVE vendor_item (mirrors validateAndResolveDeliveryLines)
+ *   • expectedQty > 0 and finite; unitPrice, when given, > 0 and finite
+ *   • a SKU that ALSO has a real delivery line is dropped: it arrived, so the lined
+ *     discrepancy path owns it (and a double credit for one SKU would be a false debt)
+ *   • duplicate skuIds collapse to one credit
+ *
+ * IDEMPOTENCY NOTE: the 0168 unique index is `(delivery_item_id, reason) WHERE
+ * delivery_item_id IS NOT NULL`, so these line-less rows have no index-level dedupe.
+ * The protection is one level up: they are written exactly once, inside the same
+ * recordDelivery call that CREATED the delivery, and a retry of that call is stopped by
+ * the delivery dedupe guard + vendor_deliveries_dedupe_uq (0169).
+ *
+ * A write failure THROWS (500 credit_write_failed) — mirroring deriveAndUpsertCredits,
+ * because a swallowed credit is a real loss.
+ */
+async function insertMissingExpectedCredits(
+  sb: ServiceClient,
+  deliveryId: string,
+  vendorId: string,
+  locationId: string,
+  missing: MissingExpectedLine[],
+  deliveredSkuIds: Set<string>,
+  createdBy: string,
+): Promise<number> {
+  if (missing.length === 0) return 0;
+  for (const m of missing) {
+    if (typeof m.skuId !== "string" || m.skuId === "") throw new ReceivingError(400, "invalid_missing_sku", "A missing item named no SKU");
+    if (!Number.isFinite(m.expectedQty) || m.expectedQty <= 0) throw new ReceivingError(400, "invalid_expected", "Expected qty must be greater than zero");
+    if (m.unitPrice != null && (!Number.isFinite(m.unitPrice) || m.unitPrice <= 0)) throw new ReceivingError(400, "invalid_price", "Price must be positive");
+  }
+  // Drop anything that actually arrived, then collapse duplicates (first wins).
+  const bySku = new Map<string, MissingExpectedLine>();
+  for (const m of missing) {
+    if (deliveredSkuIds.has(m.skuId)) continue;
+    if (!bySku.has(m.skuId)) bySku.set(m.skuId, m);
+  }
+  const usable = [...bySku.values()];
+  if (usable.length === 0) return 0;
+
+  const skuIds = usable.map((m) => m.skuId);
+  const { data: activeSkus, error: sErr } = await sb.from("vendor_items")
+    .select("id").in("id", skuIds).eq("active", true)
+    .returns<Array<{ id: string }>>();
+  if (sErr) throw new Error(`insertMissingExpectedCredits skus: ${sErr.message}`);
+  const activeSet = new Set((activeSkus ?? []).map((s) => s.id));
+  for (const id of skuIds) if (!activeSet.has(id)) throw new ReceivingError(400, "invalid_sku", "A SKU is not found or inactive");
+
+  const drafts = deriveMissingCreditDrafts(usable);
+  const { error: cErr } = await sb.from("vendor_credits").insert(
+    drafts.map((d) => ({
+      location_id: locationId, vendor_id: vendorId, delivery_id: deliveryId,
+      // NULL by construction: nothing arrived, so there is no vendor_delivery_items row
+      // to point at (the column is nullable per 0168).
+      delivery_item_id: null,
+      reason: d.reason, sku_id: d.skuId, qty: d.qty, amount_cents: d.amountCents, created_by: createdBy,
+    })),
+  );
+  if (cErr) throw new ReceivingError(500, "credit_write_failed", `Missing-item credit write failed: ${cErr.message}`);
+  return drafts.length;
+}
+
 export async function loadRecentDeliveries(actor: AuthContext, locationId: string, limit = 20): Promise<DeliveryView[]> {
   requireReceive(actor);
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new ReceivingError(404, "not_found", "Location not found");
   const sb = getServiceRoleClient();
   const { data: rows, error } = await sb.from("vendor_deliveries")
-    .select("id, vendor_id, delivery_date, invoice_number, received_by, match_state, delivery_status, receipt_url, email_receipt_id, created_at")
+    .select("id, vendor_id, delivery_date, invoice_number, received_by, match_state, delivery_status, receipt_url, email_receipt_id, created_at, purchase_order_id")
     .eq("location_id", locationId).order("delivery_date", { ascending: false }).order("created_at", { ascending: false }).limit(limit)
-    .returns<Array<{ id: string; vendor_id: string; delivery_date: string; invoice_number: string | null; received_by: string | null; match_state: DeliveryMatchState; delivery_status: DeliveryStatus; receipt_url: string | null; email_receipt_id: string | null; created_at: string }>>();
+    .returns<Array<{ id: string; vendor_id: string; delivery_date: string; invoice_number: string | null; received_by: string | null; match_state: DeliveryMatchState; delivery_status: DeliveryStatus; receipt_url: string | null; email_receipt_id: string | null; created_at: string; purchase_order_id: string | null }>>();
   if (error) throw new Error(`loadRecentDeliveries: ${error.message}`);
   const list = rows ?? [];
   if (list.length === 0) return [];
   const vendorIds = [...new Set(list.map((r) => r.vendor_id))];
   const userIds = [...new Set(list.map((r) => r.received_by).filter((v): v is string => v !== null))];
   const deliveryIds = list.map((r) => r.id);
-  const [{ data: vs }, { data: us }, { data: lines }] = await Promise.all([
+  // PO codes for the id-thread column: ONE batched .in() over the distinct linked POs
+  // (never a per-row lookup — loadRecipeGraph law). Empty when nothing on this page is
+  // PO-linked, in which case the query is skipped entirely.
+  const poIds = [...new Set(list.map((r) => r.purchase_order_id).filter((v): v is string => v !== null))];
+  const [{ data: vs }, { data: us }, { data: lines }, { data: pos, error: pErr }] = await Promise.all([
     sb.from("vendors").select("id, name").in("id", vendorIds).returns<Array<{ id: string; name: string }>>(),
     userIds.length ? sb.from("users").select("id, name").in("id", userIds).returns<Array<{ id: string; name: string }>>() : Promise.resolve({ data: [] as Array<{ id: string; name: string }> }),
     sb.from("vendor_delivery_items").select("delivery_id").in("delivery_id", deliveryIds).returns<Array<{ delivery_id: string }>>(),
+    poIds.length
+      ? sb.from("purchase_orders").select("id, display_code").in("id", poIds).returns<Array<{ id: string; display_code: string }>>()
+      : Promise.resolve({ data: [] as Array<{ id: string; display_code: string }>, error: null }),
   ]);
+  if (pErr) throw new Error(`loadRecentDeliveries purchase_orders: ${pErr.message}`);
   const vName = new Map((vs ?? []).map((v) => [v.id, v.name]));
   const uName = new Map((us ?? []).map((u) => [u.id, u.name]));
+  const poCode = new Map((pos ?? []).map((p) => [p.id, p.display_code]));
   const lineCount = new Map<string, number>();
   for (const l of lines ?? []) lineCount.set(l.delivery_id, (lineCount.get(l.delivery_id) ?? 0) + 1);
   return list.map((r) => ({
@@ -649,6 +769,7 @@ export async function loadRecentDeliveries(actor: AuthContext, locationId: strin
     receivedByName: r.received_by ? (uName.get(r.received_by) ?? null) : null,
     matchState: r.match_state, deliveryStatus: r.delivery_status, receiptUrl: r.receipt_url,
     emailReceiptId: r.email_receipt_id, createdAt: r.created_at,
+    purchaseOrderCode: r.purchase_order_id != null ? (poCode.get(r.purchase_order_id) ?? null) : null,
   }));
 }
 
@@ -656,17 +777,23 @@ export async function loadDeliveryDetail(actor: AuthContext, deliveryId: string)
   requireReceive(actor);
   const sb = getServiceRoleClient();
   const { data: h, error } = await sb.from("vendor_deliveries")
-    .select("id, vendor_id, location_id, delivery_date, invoice_number, invoice_total, notes, receipt_url, received_by, match_state, delivery_status, email_receipt_id, created_at")
+    .select("id, vendor_id, location_id, delivery_date, invoice_number, invoice_total, notes, receipt_url, received_by, match_state, delivery_status, email_receipt_id, created_at, purchase_order_id")
     .eq("id", deliveryId)
-    .maybeSingle<{ id: string; vendor_id: string; location_id: string; delivery_date: string; invoice_number: string | null; invoice_total: number | string | null; notes: string | null; receipt_url: string | null; received_by: string | null; match_state: DeliveryMatchState; delivery_status: DeliveryStatus; email_receipt_id: string | null; created_at: string }>();
+    .maybeSingle<{ id: string; vendor_id: string; location_id: string; delivery_date: string; invoice_number: string | null; invoice_total: number | string | null; notes: string | null; receipt_url: string | null; received_by: string | null; match_state: DeliveryMatchState; delivery_status: DeliveryStatus; email_receipt_id: string | null; created_at: string; purchase_order_id: string | null }>();
   if (error) throw new Error(`loadDeliveryDetail: ${error.message}`);
   if (!h) throw new ReceivingError(404, "not_found", "Delivery not found");
   if (!lockLocationContext(actorLoc(actor), h.location_id)) throw new ReceivingError(404, "not_found", "Delivery not found");
   const { data: lineRows } = await sb.from("vendor_delivery_items").select("vendor_item_id, qty_received, unit_price, observed_oz_per_each, notes, received_level_label, resolved_oz, photo_url, discrepancy_type").eq("delivery_id", deliveryId).order("created_at", { ascending: true }).returns<Array<{ vendor_item_id: string; qty_received: number | string; unit_price: number | string | null; observed_oz_per_each: number | string | null; notes: string | null; received_level_label: string | null; resolved_oz: number | string | null; photo_url: string | null; discrepancy_type: "short" | "over" | "damaged" | "substitution" | null }>>();
-  const [{ data: vend }, { data: rx }] = await Promise.all([
+  const [{ data: vend }, { data: rx }, { data: po, error: poErr }] = await Promise.all([
     sb.from("vendors").select("name").eq("id", h.vendor_id).maybeSingle<{ name: string }>(),
     h.received_by ? sb.from("users").select("name").eq("id", h.received_by).maybeSingle<{ name: string }>() : Promise.resolve({ data: null }),
+    // The id thread: the linked PO's human code, shown on the detail header and used to
+    // link back to the ordering board's panel. Null when this was a walk-in drop.
+    h.purchase_order_id
+      ? sb.from("purchase_orders").select("display_code").eq("id", h.purchase_order_id).maybeSingle<{ display_code: string }>()
+      : Promise.resolve({ data: null, error: null }),
   ]);
+  if (poErr) throw new Error(`loadDeliveryDetail purchase_order: ${poErr.message}`);
   const skuIds = [...new Set((lineRows ?? []).map((l) => l.vendor_item_id))];
   const { data: skus } = skuIds.length ? await sb.from("vendor_items").select("id, name").in("id", skuIds).returns<Array<{ id: string; name: string }>>() : { data: [] as Array<{ id: string; name: string }> };
   const skuName = new Map((skus ?? []).map((s) => [s.id, s.name]));
@@ -676,6 +803,7 @@ export async function loadDeliveryDetail(actor: AuthContext, deliveryId: string)
     invoiceTotal: num(h.invoice_total), notes: h.notes, receiptUrl: h.receipt_url,
     matchState: h.match_state, deliveryStatus: h.delivery_status,
     emailReceiptId: h.email_receipt_id, createdAt: h.created_at,
+    purchaseOrderId: h.purchase_order_id, purchaseOrderCode: po?.display_code ?? null,
     lines: (lineRows ?? []).map((l) => ({
       skuName: skuName.get(l.vendor_item_id) ?? "(sku)", qtyReceived: num(l.qty_received) ?? 0,
       unitPrice: num(l.unit_price), observedOzPerEach: num(l.observed_oz_per_each), notes: l.notes,

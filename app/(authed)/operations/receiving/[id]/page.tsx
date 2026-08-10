@@ -79,13 +79,30 @@ export default async function DeliveryDetailPage({ params }: { params: Promise<{
 
   return (
     <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
-      <BackLink />
+      {/* The registry resolves this to /operations/receiving, which REQUIRES a ?location=
+          (it redirects to the dashboard without one) — so carry this delivery's location
+          through, or "back" silently dumps the manager out of receiving entirely. */}
+      <BackLink search={`?location=${encodeURIComponent(detail.locationId)}`} />
       <h1 className="text-lg font-bold text-co-text">{detail.vendorName}</h1>
       <p className="mt-1 text-sm text-co-text-muted">
         {detail.deliveryDate}
         {detail.invoiceNumber ? ` · #${detail.invoiceNumber}` : ""}
         {detail.receivedByName ? ` · ${serverT(lang, "receiving.detail.received_by")} ${detail.receivedByName}` : ""}
       </p>
+      {/* THE ID THREAD, receiving end: the PO code this drop was received against, linking
+          back to that order's panel on the board. `po` opens the panel; `location` keeps
+          the board on this delivery's shop. A delivery with no PO (walk-in) shows nothing. */}
+      {detail.purchaseOrderCode && detail.purchaseOrderId ? (
+        <p className="mt-1 text-sm">
+          <Link
+            href={`/ordering?location=${encodeURIComponent(detail.locationId)}&po=${encodeURIComponent(detail.purchaseOrderId)}`}
+            className="inline-flex min-h-[44px] items-center gap-1.5 font-bold text-co-cta underline underline-offset-2"
+          >
+            <span>{serverT(lang, "receiving.detail.received_against")}</span>
+            <span className="font-mono tracking-wide">{detail.purchaseOrderCode}</span>
+          </Link>
+        </p>
+      ) : null}
       {detail.invoiceTotal != null ? (
         <p className="mt-1 text-sm text-co-text-muted">{serverT(lang, "receiving.detail.invoice_total")}: ${detail.invoiceTotal.toFixed(2)}</p>
       ) : null}

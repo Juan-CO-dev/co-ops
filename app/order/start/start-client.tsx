@@ -52,6 +52,9 @@ interface Props {
   locations: Location[];
   deliveryNodesExist: boolean;
   pickupNodes: PickupNode[];
+  /** "returning" lands the visitor on the sign-in view directly (?mode=signin —
+   *  the storefront's Sign in link; a new-order visitor still defaults to "new"). */
+  initialMode?: "new" | "returning";
 }
 
 type Fulfillment = "delivery" | "pickup";
@@ -73,9 +76,9 @@ interface FormState {
   door: string;
 }
 
-export function OrderStartClient({ locations, deliveryNodesExist, pickupNodes }: Props) {
+export function OrderStartClient({ locations, deliveryNodesExist, pickupNodes, initialMode }: Props) {
   const { t } = useTranslation();
-  const [mode, setMode] = useState<"new" | "returning">("new");
+  const [mode, setMode] = useState<"new" | "returning">(initialMode ?? "new");
   const [sent, setSent] = useState(false);
   const [f, setF] = useState<FormState>({
     name: "",

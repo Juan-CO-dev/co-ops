@@ -372,8 +372,15 @@ export function PoPanel({
                   {detail.ack.additionalCount > 0 ? ` +${detail.ack.additionalCount}` : ""}
                 </AlertPill>
               )}
-              <span className="rounded-md bg-co-surface-2 px-2 py-0.5 font-mono text-[12px] font-bold tracking-wide text-co-text-dim">
-                {detail.displayCode}
+              {/* THE ID THREAD (identity, every status incl. draft): the display_code born
+                  at draft creation is what the vendor, the invoice, and the door intake all
+                  quote back. Copyable so it can be pasted into a text/portal/phone note —
+                  the shared CopyButton, same affordance as the transmit block below. */}
+              <span className="inline-flex items-center gap-1.5">
+                <span className="rounded-md bg-co-surface-2 px-2 py-0.5 font-mono text-[12px] font-bold tracking-wide text-co-text-dim">
+                  {detail.displayCode}
+                </span>
+                <CopyButton text={detail.displayCode} />
               </span>
             </div>
 

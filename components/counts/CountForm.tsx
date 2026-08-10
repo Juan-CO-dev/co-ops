@@ -1,7 +1,8 @@
 "use client";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
+import { PasswordModal } from "@/components/auth/PasswordModal";
 import type { CountSkuOption } from "@/lib/counts";
 
 interface LineDraft {
@@ -21,6 +22,12 @@ export function CountForm({ skus, locationId }: { skus: CountSkuOption[]; locati
   const [lines, setLines] = useState<LineDraft[]>([emptyLine()]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Tier-A step-up (council A4): the counts POST asserts it server-side, but this
+  // form lives outside /admin's StepUpProvider — it carries its own modal (the
+  // SalesTab idiom: stash the pending submit, prompt, replay on confirm). Found
+  // live 2026-08-10: the route demanded a password confirm the UI never offered.
+  const [stepUpOpen, setStepUpOpen] = useState(false);
+  const pendingRef = useRef<(() => void) | null>(null);
 
   const skuById = new Map(skus.map((s) => [s.id, s]));
   const setLine = (i: number, patch: Partial<LineDraft>) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
@@ -57,8 +64,14 @@ export function CountForm({ skus, locationId }: { skus: CountSkuOption[]; locati
     };
     const res = await fetch("/api/operations/counts", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
     setBusy(false);
-    if (res.ok) { router.refresh(); setNote(""); setLines([emptyLine()]); }
-    else { const j = await res.json().catch(() => ({} as { code?: string })); setErr(t(("counts.error." + (j?.code ?? "generic")) as never)); }
+    if (res.ok) { setStepUpOpen(false); pendingRef.current = null; router.refresh(); setNote(""); setLines([emptyLine()]); return; }
+    const j = await res.json().catch(() => ({} as { code?: string }));
+    if (j?.code === "step_up_required" || j?.code === "step_up_stale") {
+      pendingRef.current = () => void submit();
+      setStepUpOpen(true);
+      return;
+    }
+    setErr(t(("counts.error." + (j?.code ?? "generic")) as never));
   };
 
   return (
@@ -129,6 +142,12 @@ export function CountForm({ skus, locationId }: { skus: CountSkuOption[]; locati
       <div className="mt-4 flex justify-end">
         <button type="button" disabled={!canSubmit} onClick={() => void submit()} className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50">{t("counts.form.submit")}</button>
       </div>
+      {/* PasswordModal posts /api/auth/step-up itself and confirms only on 200. */}
+      <PasswordModal
+        open={stepUpOpen}
+        onConfirm={() => { setStepUpOpen(false); const p = pendingRef.current; pendingRef.current = null; p?.(); }}
+        onCancel={() => { setStepUpOpen(false); pendingRef.current = null; }}
+      />
     </div>
   );
 }
