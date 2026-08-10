@@ -10,13 +10,15 @@ import type { ReactNode } from "react";
 
 /**
  * Content width. "focused" is the mobile-first centered column (auth pages,
- * forms). "wide" ramps up on larger screens so content-rich surfaces (the
- * dashboard) use desktop space instead of sitting in a narrow ribbon. Phone
- * width is identical for both (max-w-md fills a phone) — the ramp starts at md/lg.
+ * forms). "wide" is the HOUSE ladder (recomposition arc PR 1) — the dashboard is
+ * the sole "wide" consumer and must match every hub page's ramp; the old
+ * md:max-w-2xl step was a breakpoint narrower than the rest of the app on the
+ * shops' tablets (council C1). Phone width is effectively identical for both
+ * (both fill a phone) — the ramp starts at md.
  */
 const WIDTH_CLASS = {
   focused: "max-w-md",
-  wide: "max-w-md md:max-w-2xl lg:max-w-5xl xl:max-w-6xl",
+  wide: "max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl",
 } as const;
 
 export function AuthShell({
