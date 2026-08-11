@@ -1392,8 +1392,19 @@ export async function confirmInstance(
     .maybeSingle<InstanceRow>();
   if (updateErr) throw new Error(`confirmInstance update instance: ${updateErr.message}`);
   if (!updatedRow) {
+    // 0 rows = the guarded open→confirmed flip matched nothing. The dominant cause
+    // (sim-2 SIM-22, deterministically reproduced under a two-manager confirm race):
+    // a CONCURRENT confirm — or a client double-submit/retry — already flipped the
+    // status, so this caller is the race-LOSER. flip-first guarantees the winner's
+    // data is intact; the loser should see a clean 409 "already confirmed", NOT the
+    // raw 500 this used to throw. Re-read to distinguish that from a true RLS denial.
+    const { data: cur } = await authed
+      .from("checklist_instances").select("status").eq("id", instanceId).maybeSingle<{ status: ChecklistStatus }>();
+    if (cur && cur.status !== "open") {
+      throw new ChecklistInstanceClosedError(instanceId, cur.status); // → 409 instance_closed
+    }
     throw new Error(
-      `confirmInstance update returned 0 rows for ${instanceId} — RLS denial or status changed since load`,
+      `confirmInstance update returned 0 rows for ${instanceId} — RLS denial (status still ${cur?.status ?? "unknown"})`,
     );
   }
 
