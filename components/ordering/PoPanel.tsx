@@ -85,7 +85,7 @@ export function PoPanel({
   onChanged,
 }: {
   poId: string;
-  /** The actor's role level (server-computed) — gates Mark-reconciled (AGM+ ≥ 6). */
+  /** The actor's role level (server-computed) — gates Mark-reconciled (shift_lead+ ≥ 5). */
   actorLevel: number;
   language: "en" | "es";
   shopLabel: string;
@@ -845,7 +845,7 @@ function TrailView({
   openCreditSkuIds: string[];
 }) {
   const { t } = useTranslation();
-  const canReconcile = actorLevel >= 6; // AGM+
+  const canReconcile = actorLevel >= 5; // shift_lead+ (see PO_RECONCILE_MIN)
 
   return (
     <div className="mt-4 flex flex-col gap-4">

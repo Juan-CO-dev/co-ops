@@ -153,7 +153,7 @@ export async function POST(req: NextRequest) {
         return jsonOk({ poId: b.poId, status: "placed" });
       }
       case "reconcile": {
-        // AGM+ front-door check (the lib re-checks PO_RECONCILE_MIN authoritatively).
+        // shift_lead+ front-door check (the lib re-checks PO_RECONCILE_MIN authoritatively).
         if (ROLES[ctx.user.role].level < PO_RECONCILE_MIN) return jsonError(403, "forbidden");
         if (typeof b.poId !== "string" || !b.poId) return jsonError(400, "invalid_payload", { field: "poId" });
         await markReconciled(ctx, b.poId);
