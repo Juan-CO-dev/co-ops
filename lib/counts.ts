@@ -703,6 +703,26 @@ async function loadParEstimateRows(
  */
 export async function loadOnHand(actor: AuthContext, locationId: string, now: number = Date.now()): Promise<OnHandView> {
   requireLevel(actor, COUNT_READ_MIN);
+  return loadOnHandDerived(actor, locationId, now);
+}
+
+/** KH+ floor for the ADVISORY on-hand derivation — matches the ordering walker's
+ *  PAR_PASS_MIN (kept as a local constant: ordering.ts imports this module, so
+ *  importing the walker's constant back would cycle). The counts SURFACE stays
+ *  AGM+ via loadOnHand above. */
+export const ON_HAND_DERIVED_MIN = 4;
+
+/**
+ * DERIVATION CORE (sim-day P1 fix, 2026-08-11): the counts SURFACE stays AGM+
+ * (loadOnHand above adds COUNT_READ_MIN), but the ordering walker consumes
+ * on-hand as SERVER-SIDE ADVISORY for KH+ actors — gating the derivation at
+ * COUNT_READ_MIN 500'd /ordering for every key-holder (caught by the sim's KH
+ * persona; never seen live because all prior smokes ran at L10). SELF-GATED
+ * (security review 2026-08-11): KH+ + location bind enforced HERE, never
+ * delegated to callers — an exported service-role read must carry its own gate.
+ */
+export async function loadOnHandDerived(actor: AuthContext, locationId: string, now: number = Date.now()): Promise<OnHandView> {
+  requireLevel(actor, ON_HAND_DERIVED_MIN);
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new CountError(404, "not_found", "Location not found");
   const sb = getServiceRoleClient();
   const salesThrough = await salesLedgerThrough(sb, locationId);
