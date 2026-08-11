@@ -890,72 +890,71 @@ export async function completeItem(
     throw new ChecklistInvalidAnswerError(templateItemId, answerProblem);
   }
 
-  // Find prior live completion (if any) for this item on this instance.
-  const { data: prior, error: priorErr } = await authed
-    .from("checklist_completions")
-    .select("id, instance_id, template_item_id, completed_by")
-    .eq("instance_id", instanceId)
-    .eq("template_item_id", templateItemId)
-    .is("superseded_at", null)
-    .maybeSingle<{ id: string; instance_id: string; template_item_id: string; completed_by: string }>();
-  if (priorErr) throw new Error(`completeItem load prior: ${priorErr.message}`);
-  const priorId = prior?.id ?? null;
-
-  // Step 1: insert new completion (authed; RLS checks completed_by =
-  // current_user_id, instance.status='open', min_role_level <= caller level).
-  const { data: inserted, error: insertErr } = await authed
-    .from("checklist_completions")
-    .insert({
-      instance_id: instanceId,
-      template_item_id: templateItemId,
-      completed_by: actor.userId,
-      count_value: args.countValue ?? null,
-      photo_id: args.photoId ?? null,
-      notes: args.notes ?? null,
-    })
-    .select(COMPLETION_COLUMNS)
-    .maybeSingle<CompletionRow>();
-  if (insertErr) throw new Error(`completeItem insert: ${insertErr.message}`);
-  if (!inserted) throw new Error(`completeItem insert returned no row`);
-  const newId = inserted.id;
-
-  // Step 2: supersede prior (service-role; RLS denies UPDATE for everyone).
-  // Per AGENTS.md UPDATE silent-denial footgun: a 0-row update returns no
-  // exception, so we explicitly select the updated row and check we got
-  // exactly one back. The .is() filter guards against re-superseding a row
-  // already superseded by a concurrent operation.
-  if (priorId) {
-    const sb = getServiceRoleClient();
-    const { data: supersededRows, error: supersedeErr } = await sb
+  // SUPERSEDE-THEN-INSERT with a bounded retry (concurrency sim fix, migration
+  // 0176). The old order (read-prior → insert → supersede) was a non-atomic
+  // two-phase write: two simultaneous completers both inserted before either
+  // superseded, leaving TWO live heads (reproduced 18/20 under the harness). Now
+  // the partial unique index `checklist_completions_one_live_head` makes a second
+  // live head IMPOSSIBLE, and we claim the slot flip-first: supersede the current
+  // live head, then insert. A racing writer that inserted between our supersede
+  // and our insert trips the index (23505) — we re-read the new live head,
+  // supersede it, and retry. Bounded: last-writer-wins converges in ≤ a few laps.
+  const sb = getServiceRoleClient();
+  let inserted: CompletionRow | null = null;
+  let supersededPriorId: string | null = null;
+  for (let attempt = 0; attempt < 5 && !inserted; attempt++) {
+    // Claim: supersede whatever live head currently exists for this item (0 rows
+    // is fine — no prior, or a rival already superseded it). Guarded on
+    // superseded_at IS NULL so we never re-stamp a settled row.
+    const { data: superseded, error: supErr } = await sb
       .from("checklist_completions")
-      .update({
-        superseded_at: new Date().toISOString(),
-        superseded_by: newId,
-      })
-      .eq("id", priorId)
+      .update({ superseded_at: new Date().toISOString() })
+      .eq("instance_id", instanceId)
+      .eq("template_item_id", templateItemId)
       .is("superseded_at", null)
+      .is("revoked_at", null)
       .select("id");
+    if (supErr) throw new Error(`completeItem supersede: ${supErr.message}`);
+    supersededPriorId = superseded?.[0]?.id ?? supersededPriorId;
 
-    if (supersedeErr || !supersededRows || supersededRows.length === 0) {
-      const cause = supersedeErr?.message ?? `0 rows updated (already superseded?)`;
-      await audit({
-        actorId: actor.userId,
-        actorRole: actor.role,
-        action: "checklist_completion.supersede_failure",
-        resourceTable: "checklist_completions",
-        resourceId: newId,
-        metadata: {
-          instance_id: instanceId,
-          template_item_id: templateItemId,
-          new_completion_id: newId,
-          prior_completion_id: priorId,
-          error: cause,
-        },
-        ipAddress: args.ipAddress ?? null,
-        userAgent: args.userAgent ?? null,
-      });
-      throw new ChecklistSupersedeFailedError(newId, priorId, cause);
+    // Insert the new live head (authed; RLS checks completed_by = current_user_id,
+    // instance open, role floor). The index rejects a second live head → 23505.
+    const { data: row, error: insertErr } = await authed
+      .from("checklist_completions")
+      .insert({
+        instance_id: instanceId,
+        template_item_id: templateItemId,
+        completed_by: actor.userId,
+        count_value: args.countValue ?? null,
+        photo_id: args.photoId ?? null,
+        notes: args.notes ?? null,
+      })
+      .select(COMPLETION_COLUMNS)
+      .maybeSingle<CompletionRow>();
+    if (insertErr) {
+      if (insertErr.code === "23505") continue; // a rival won the slot — re-claim + retry
+      throw new Error(`completeItem insert: ${insertErr.message}`);
     }
+    if (!row) throw new Error(`completeItem insert returned no row`);
+    inserted = row;
+  }
+  if (!inserted) {
+    // 5 laps without landing a live head means sustained contention on one item —
+    // a real anomaly worth forensics (never observed; the loop converges fast).
+    await audit({
+      actorId: actor.userId, actorRole: actor.role,
+      action: "checklist_completion.supersede_failure",
+      resourceTable: "checklist_completions", resourceId: instanceId,
+      metadata: { instance_id: instanceId, template_item_id: templateItemId, error: "live-head contention: 5 retries exhausted" },
+      ipAddress: args.ipAddress ?? null, userAgent: args.userAgent ?? null,
+    });
+    throw new ChecklistSupersedeFailedError(instanceId, templateItemId, "live-head contention: retries exhausted");
+  }
+  const newId = inserted.id;
+  const priorId = supersededPriorId;
+  // Backfill superseded_by → the winning head, so the chain stays coherent.
+  if (priorId) {
+    await sb.from("checklist_completions").update({ superseded_by: newId }).eq("id", priorId).is("superseded_by", null);
   }
 
   await audit({

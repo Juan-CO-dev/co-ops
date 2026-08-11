@@ -51,7 +51,7 @@ import { emailOrderingAvailable, isPlausibleEmail } from "@/lib/po-email-shared"
 /** KH+ read/write floor for the PO lifecycle (draft/confirm/place/receive + reads). */
 export const PO_MIN = 4; // key_holder+
 /** AGM+ floor for the terminal reconcile transition (mirrors credits RESOLVE). */
-export const PO_RECONCILE_MIN = 6; // AGM+
+export const PO_RECONCILE_MIN = 5; // shift_lead+ (Juan 2026-08-11: SLs are training-to-AGM and do AGM work; an evening invoice must not wait for the AGM who left early — coverage-gap CGAP-2 from the concurrency sim)
 
 type ServiceClient = ReturnType<typeof getServiceRoleClient>;
 
