@@ -58,7 +58,7 @@ import {
   chainRootLabel,
   type PackChainLevel,
 } from "@/lib/pack-chain-shared";
-import { loadOnHand, type OnHandRow } from "@/lib/counts";
+import { loadOnHandDerived, type OnHandRow } from "@/lib/counts";
 import { etBusinessDate } from "@/lib/counts-shared";
 import { resolvePar, resolveActive, type LocationSkuOverlay } from "@/lib/location-sku-shared";
 import {
@@ -443,7 +443,7 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
       loadSkuPackChains(skuIds),
       loadMeasures(),
       loadSkuUsageRank(sb, locationId),
-      loadOnHand(actor, locationId), // ONE advisory on-hand pass for the whole location.
+      loadOnHandDerived(actor, locationId), // ONE advisory on-hand pass for the whole location.
       sb.from("vendors").select("id, name, order_days").in("id", vendorIds).eq("active", true)
         .returns<Array<{ id: string; name: string; order_days: number[] | null }>>(),
       loadLatestOrderQtyBySku(sb, skuIds),
@@ -891,7 +891,7 @@ export async function submitParPass(
   })), displayCodeByVendor);
 
   // ── Shrinkage: implied on-hand vs the CURRENT computed advisory (a loadOnHand pass) ──
-  const onHandView = await loadOnHand(actor, locationId);
+  const onHandView = await loadOnHandDerived(actor, locationId);
   const advisoryBySku = advisoryOnHandBySku(onHandView);
   const shrinkage: ShrinkageNotice[] = [];
   for (const r of resolved) {
@@ -1011,7 +1011,7 @@ export async function loadShrinkageSignals(
   // Current computed on-hand + SKU names (batched).
   const skuIds = [...new Set(lines.map((l) => l.sku_id))];
   const [onHandView, { data: skuRows, error: nErr }] = await Promise.all([
-    loadOnHand(actor, locationId),
+    loadOnHandDerived(actor, locationId),
     sb.from("vendor_items").select("id, name").in("id", skuIds).returns<Array<{ id: string; name: string }>>(),
   ]);
   if (nErr) throw new Error(`loadShrinkageSignals sku names: ${nErr.message}`);

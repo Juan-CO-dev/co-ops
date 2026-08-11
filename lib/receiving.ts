@@ -653,12 +653,28 @@ async function deriveAndUpsertCredits(
     }));
   const drafts = deriveCreditDrafts(forCredits);
   if (drafts.length === 0) return;
-  const { error: cErr } = await sb.from("vendor_credits").upsert(
-    drafts.map((d) => ({
+  // SIM-DAY FIND (2026-08-11, P1 — live since V1): vendor_credits_line_reason_uq is a
+  // PARTIAL unique index (WHERE delivery_item_id IS NOT NULL) and Postgres refuses a
+  // partial index as a bare ON CONFLICT (cols) arbiter — so this upsert 500'd on EVERY
+  // lined-discrepancy credit while the delivery itself saved (operator saw
+  // credit_write_failed; the vendor debt was silently lost). supabase-js cannot emit
+  // the index predicate, so idempotency moves app-side: read existing (line, reason)
+  // pairs for this delivery, insert only the missing drafts. Same re-run no-op
+  // semantics the upsert intended.
+  const { data: existingRows, error: exErr } = await sb.from("vendor_credits")
+    .select("delivery_item_id, reason")
+    .eq("delivery_id", deliveryId)
+    .not("delivery_item_id", "is", null)
+    .returns<Array<{ delivery_item_id: string; reason: string }>>();
+  if (exErr) throw new ReceivingError(500, "credit_write_failed", `Credit pre-read failed: ${exErr.message}`);
+  const have = new Set((existingRows ?? []).map((r) => `${r.delivery_item_id}|${r.reason}`));
+  const toInsert = drafts.filter((d) => !have.has(`${d.deliveryItemId}|${d.reason}`));
+  if (toInsert.length === 0) return;
+  const { error: cErr } = await sb.from("vendor_credits").insert(
+    toInsert.map((d) => ({
       location_id: locationId, vendor_id: vendorId, delivery_id: deliveryId, delivery_item_id: d.deliveryItemId,
       reason: d.reason, sku_id: d.skuId, qty: d.qty, amount_cents: d.amountCents, created_by: createdBy,
     })),
-    { onConflict: "delivery_item_id,reason", ignoreDuplicates: true },
   );
   if (cErr) throw new ReceivingError(500, "credit_write_failed", `Credit write failed: ${cErr.message}`);
 }

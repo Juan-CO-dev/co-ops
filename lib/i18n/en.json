@@ -2464,6 +2464,7 @@
   "receiving.error.not_found": "Not found.",
   "receiving.error.forbidden": "You don't have permission to receive.",
   "receiving.error.already_complete": "This delivery is already complete.",
+  "receiving.error.credit_write_failed": "Items saved, but the credit note failed to file — tell a manager (the delivery itself is recorded).",
   "receiving.error.generic": "Something went wrong — try again.",
   "receiving.detail.received_by": "by",
   "receiving.detail.invoice_total": "Invoice total",

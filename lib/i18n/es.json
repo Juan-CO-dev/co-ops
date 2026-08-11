@@ -2464,6 +2464,7 @@
   "receiving.error.not_found": "No encontrado.",
   "receiving.error.forbidden": "No tienes permiso para recibir.",
   "receiving.error.already_complete": "Esta entrega ya está completa.",
+  "receiving.error.credit_write_failed": "La entrega se guardó, pero el crédito no se registró — avísale a un gerente (la entrega sí quedó registrada).",
   "receiving.error.generic": "Algo salió mal — inténtalo de nuevo.",
   "receiving.detail.received_by": "por",
   "receiving.detail.invoice_total": "Total de factura",
