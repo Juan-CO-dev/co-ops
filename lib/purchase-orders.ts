@@ -260,8 +260,18 @@ export async function createDraftsFromLines(
     // opts.noCodeSuffixRetry (generate path): ONE attempt at the base code only; a
     // 23505 means a PO already holds today's base code for this vendor → treat the
     // unique index as the day-idempotency arbiter and 409 `po_exists` (never suffix).
+    // Day-idempotency (generate path, noCodeSuffixRetry): the base code IS the
+    // whole allocation — never a suffix. A concurrent double-generate loses either
+    // (a) at the in-memory scan (a rival's base already present → nextFreeCode
+    // would have suffixed, silently defeating idempotency — the sim-2 bug), or
+    // (b) at the INSERT (23505). BOTH mean an order for this vendor already exists
+    // today → 409 po_exists, never a -2 second order. The suffix loop is the WALKER-
+    // birth path only (deliberate seconds to the same vendor).
+    if (opts?.noCodeSuffixRetry && takenCodes.has(base)) {
+      throw new PurchaseOrderError(409, "po_exists", "A draft or confirmed order already exists today for this vendor");
+    }
     for (let attempt = 0; attempt < 25; attempt++) {
-      const code = nextFreeCode(base, takenCodes);
+      const code = opts?.noCodeSuffixRetry ? base : nextFreeCode(base, takenCodes);
       const { data: po, error: poErr } = await sb.from("purchase_orders").insert({
         location_id: locationId,
         vendor_id: vendorId,
