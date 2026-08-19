@@ -18,6 +18,7 @@ import { formatDateLabel } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import type { OpeningDetailItem, OpeningReportDetail } from "@/lib/reports-hub";
+import { reportStatusLabel } from "./shared";
 
 /**
  * Fulledit PR-2 (0165): render a question line's ANSWER via interpretAnswer —
@@ -55,22 +56,6 @@ function QuestionAnswer({
   return null;
 }
 
-const STATUS_LABEL_KEYS: Partial<Record<string, TranslationKey>> = {
-  open: "reports.status.open",
-  in_progress: "reports.status.in_progress",
-  phase1_complete: "reports.status.phase1_complete",
-  phase2_complete: "reports.status.phase2_complete",
-  submitted: "reports.status.submitted",
-  confirmed: "reports.status.confirmed",
-  incomplete_confirmed: "reports.status.incomplete_confirmed",
-  auto_finalized: "reports.status.auto_finalized",
-};
-
-function statusLabel(status: string, t: (k: TranslationKey) => string): string {
-  const key = STATUS_LABEL_KEYS[status];
-  return key ? t(key) : status;
-}
-
 interface Props {
   detail: OpeningReportDetail;
   language: Language;
@@ -95,7 +80,7 @@ export function OpeningReportDetailView({ detail, language }: Props) {
 
   const typeLabel = t("reports.type.opening");
   const dateLabel = formatDateLabel(detail.date, language);
-  const statusText = statusLabel(detail.status, t);
+  const statusText = reportStatusLabel(detail.status, t);
 
   return (
     <div className="flex flex-col gap-4">

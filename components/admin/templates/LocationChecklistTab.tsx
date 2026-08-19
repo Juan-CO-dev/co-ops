@@ -10,7 +10,9 @@
  *
  * Gating: everything here is AGM+ (the page gate is ≥6, so reaching this tab
  * implies AGM+). Disable + add-local + enable are all AGM+; the server routes
- * re-gate + step-up.
+ * re-gate + step-up. The ONE exception is the per-line input-type conversion,
+ * whose route requires ≥7 (MoO-adjacent structural edit) — the control is hidden
+ * below 7 so L6 admins don't hit a naked 403 on a button they can see.
  */
 
 import { useState } from "react";
@@ -41,12 +43,14 @@ export function LocationChecklistTab({
   registry,
   sections,
   units,
+  actorLevel,
 }: {
   view: ChecklistLocationView;
   subtype: PrepSubtype;
   registry: ChecklistRegistryItem[];
   sections: PrepSectionDefn[];
   units: Array<{ label: string }>;
+  actorLevel: number;
 }) {
   const { t, language } = useTranslation();
 
@@ -96,6 +100,7 @@ export function LocationChecklistTab({
                   templateId={templateId}
                   item={it}
                   locationId={view.locationId}
+                  actorLevel={actorLevel}
                   prevItem={idx > 0 ? sectionItems[idx - 1] ?? null : null}
                   nextItem={idx < sectionItems.length - 1 ? sectionItems[idx + 1] ?? null : null}
                   parCtx={
@@ -132,6 +137,7 @@ function LocationItemRow({
   templateId,
   item,
   locationId,
+  actorLevel,
   prevItem,
   nextItem,
   parCtx,
@@ -139,6 +145,7 @@ function LocationItemRow({
   templateId: string;
   item: ChecklistTemplateItem;
   locationId: string;
+  actorLevel: number;
   prevItem: ChecklistTemplateItem | null;
   nextItem: ChecklistTemplateItem | null;
   parCtx: Parameters<typeof ParGrid>[0]["parCtx"];
@@ -149,6 +156,11 @@ function LocationItemRow({
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Per-line input-type conversion is a structural edit: the route requires ≥7
+  // (app/api/admin/checklist-templates/[id]/items/[itemId]/input-type/route.ts).
+  // Mirror it here so L6 admins aren't offered a control that 403s.
+  const canConvertInputType = actorLevel >= 7; // MoO-adjacent, matches the route
 
   const isQuestion = isQuestionShapedLine(item);
   // A line whose label is edited on the LINE (question-shaped or unlinked) shows
@@ -394,7 +406,8 @@ function LocationItemRow({
             <ParGrid templateId={templateId} lineId={item.id} locationId={locationId} parCtx={parCtx} />
           )}
 
-          {/* Input type — deliberate per-line conversion (Tier B). */}
+          {/* Input type — deliberate per-line conversion (Tier B, ≥7). */}
+          {canConvertInputType ? (
           <div className="rounded-lg border-2 border-co-border p-3">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
               <label className="block flex-1">
@@ -426,6 +439,7 @@ function LocationItemRow({
               </button>
             </div>
           </div>
+          ) : null}
 
           {/* Unlink — only when linked to a registry item (Tier B, danger). */}
           {parCtx.itemId ? (

@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
-import { formatCents } from "@/lib/i18n/format";
+import { formatCents, formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { PIPELINE_STAGES, type PipelineStage } from "@/lib/catering/pipeline-shared";
 import type { PipelineLead, PipelineSearchResult, AssignableStaff } from "@/lib/catering/pipeline";
@@ -39,9 +39,9 @@ function stageKey(s: PipelineStage): TranslationKey {
   return `catering.pipeline.stage.${s}` as TranslationKey;
 }
 
-export function PipelineClient({ staff, leads, followUps, locations, actorLevel, searchQuery, results }: Props) {
+export function PipelineClient({ staff, leads, followUps, locations, actorLevel, writeMin, searchQuery, results }: Props) {
   const { t, language } = useTranslation();
-  const canWrite = actorLevel >= 6;
+  const canWrite = actorLevel >= writeMin;
 
   const money = (cents: number | null) => (cents == null ? null : formatCents(cents, language));
 
@@ -107,7 +107,8 @@ export function PipelineClient({ staff, leads, followUps, locations, actorLevel,
                       {l.company ? ` · ${l.company}` : ""}
                     </span>
                     <span className="text-co-cta">
-                      {t("catering.pipeline.follow_ups.due")} {l.followUpDate}
+                      {t("catering.pipeline.follow_ups.due")}{" "}
+                      {l.followUpDate ? formatDateLabel(l.followUpDate, language) : ""}
                     </span>
                   </li>
                 ))}
@@ -242,7 +243,7 @@ function SearchResultCard({
   result: PipelineSearchResult;
   money: (cents: number | null) => string | null;
 }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const quoteDisplay =
     r.quoteStatus != null && r.quoteTotalCents != null
       ? `${r.quoteStatus} · ${money(r.quoteTotalCents) ?? ""}`
@@ -263,7 +264,7 @@ function SearchResultCard({
         {r.eventDate && (
           <>
             <dt className="text-co-text-muted">{t("catering.pipeline.field.event_date")}</dt>
-            <dd className="text-co-text">{r.eventDate}</dd>
+            <dd className="text-co-text">{formatDateLabel(r.eventDate, language)}</dd>
           </>
         )}
         {r.contactPhone && (
@@ -299,7 +300,7 @@ function LeadCard({
   canWrite: boolean;
   staffNames: Record<string, string>;
 }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const [open, setOpen] = useState(false);
   const rev = money(lead.estimatedRevenueCents);
   return (
@@ -313,7 +314,7 @@ function LeadCard({
         <div className="font-semibold text-co-text">{lead.contactName}</div>
         {lead.company && <div className="text-xs text-co-text-muted">{lead.company}</div>}
         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-co-text-muted">
-          {lead.eventDate && <span>{lead.eventDate}</span>}
+          {lead.eventDate && <span>{formatDateLabel(lead.eventDate, language)}</span>}
           {lead.headcount != null && <span>{t("catering.pipeline.headcount_short").replace("{n}", String(lead.headcount))}</span>}
           {lead.leadSource && (
             <span>{leadSourceKey(lead.leadSource) ? t(leadSourceKey(lead.leadSource) as TranslationKey) : lead.leadSource}</span>
@@ -338,7 +339,7 @@ function LeadDetail({
   canWrite: boolean;
   onClose: () => void;
 }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const router = useRouter();
   const [capacity, setCapacity] = useState<CateringCapacityResult | null>(null);
   const [busy, setBusy] = useState(false);
@@ -399,7 +400,7 @@ function LeadDetail({
         {lead.followUpDate && (
           <>
             <dt className="text-co-text-muted">{t("catering.pipeline.field.follow_up_date")}</dt>
-            <dd className="text-co-text">{lead.followUpDate}</dd>
+            <dd className="text-co-text">{formatDateLabel(lead.followUpDate, language)}</dd>
           </>
         )}
         {rev && (

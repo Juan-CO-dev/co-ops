@@ -82,6 +82,7 @@ export function ChecklistTabs({
           registry={view.registry}
           sections={view.sections}
           units={view.units}
+          actorLevel={view.actorLevel}
         />
       ) : null}
     </div>

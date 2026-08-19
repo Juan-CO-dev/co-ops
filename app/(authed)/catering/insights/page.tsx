@@ -15,9 +15,9 @@ import { serverT } from "@/lib/i18n/server";
 import { formatCents, formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { loadCateringInsights, INSIGHTS_READ_MIN } from "@/lib/catering/insights";
+import { PIPELINE_STAGES } from "@/lib/catering/pipeline-shared";
 import { BackLink } from "@/components/nav/BackLink";
 
-const PIPELINE_STAGES = ["inquiry", "quote_sent", "confirmed", "completed", "lost"] as const;
 const QUOTE_STATUSES = ["draft", "sent", "accepted", "declined", "expired"] as const;
 
 export default async function CateringInsightsPage() {

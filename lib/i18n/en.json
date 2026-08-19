@@ -2232,6 +2232,7 @@
   "auth.manager.sending": "Sending…",
   "auth.manager.reset_need_email": "Enter your email above first.",
   "auth.manager.reset_error": "Couldn't send reset link. Try again.",
+  "auth.manager.reset_pin_hint": "Reset links go to manager email accounts. If you sign in with a PIN, ask a manager to reset it.",
   "auth.pin.role_aria": "{role}",
   "auth.pin.prompt": "Enter your 4-digit PIN",
   "auth.pin.entry_aria": "PIN entry: {entered} of {total} digits entered",
