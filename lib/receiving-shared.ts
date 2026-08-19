@@ -141,3 +141,50 @@ export function isDuplicateAppend(incoming: AppendLine[], recent: AppendLine[]):
   }
   return true; // exact multiset match (equal lengths + every incoming tuple consumed)
 }
+
+// ── Offline intake drafts: the per-location draft SHELF ────────────────────────
+//
+// One localStorage key per location holds a LIST of drafts, not a single slot. The
+// single slot was a data-loss bug at the door: two trucks in the same hour (the produce
+// drop while the paper-goods drop is half-counted) wrote the same key, and the second
+// intake silently overwrote the first.
+//
+// Identity is (vendorId, startedAt) — the same vendor can legitimately be re-counted on
+// a later day, and startedAt is what distinguishes those. But a LIVE intake must not
+// spawn a new entry on every debounce tick, so the write rule is replace-by-VENDOR:
+// one shelf slot per vendor, holding that vendor's most recent draft.
+//
+// Newest-first, capped — the shelf is a short-term convenience, not an archive, and an
+// unbounded list on a shared door tablet is just a slow leak.
+
+/** The identity every stored draft carries. The component's draft shape extends it. */
+export interface IntakeDraftIdentity {
+  vendorId: string;
+  /** ISO timestamp of when THIS intake session began (stable across saves). */
+  startedAt: string;
+}
+
+/** Max drafts kept per location. Three = two trucks plus one straggler. */
+export const INTAKE_DRAFT_CAP = 3;
+
+/**
+ * Put `draft` at the head of the shelf, replacing any entry for the SAME vendor, and
+ * trim to `cap`. Pure: returns a new array, never mutates the input.
+ */
+export function upsertIntakeDraft<T extends IntakeDraftIdentity>(
+  shelf: readonly T[],
+  draft: T,
+  cap: number = INTAKE_DRAFT_CAP,
+): T[] {
+  const rest = shelf.filter((d) => d.vendorId !== draft.vendorId);
+  return [draft, ...rest].slice(0, Math.max(0, cap));
+}
+
+/** Drop one entry by its full identity. Pure; a non-match returns an equal shelf. */
+export function removeIntakeDraft<T extends IntakeDraftIdentity>(
+  shelf: readonly T[],
+  vendorId: string,
+  startedAt: string,
+): T[] {
+  return shelf.filter((d) => !(d.vendorId === vendorId && d.startedAt === startedAt));
+}
