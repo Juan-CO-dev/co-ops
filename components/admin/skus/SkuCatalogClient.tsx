@@ -516,7 +516,7 @@ function CatalogRow({
             </span>
           ) : null}
           {s.active && !chained ? (
-            <span className="inline-flex items-center rounded-full bg-co-cta/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-cta">
+            <span className="inline-flex items-center rounded-full bg-co-danger-surface px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-cta-text">
               {t("admin.skus.no_pack_info")}
             </span>
           ) : null}
@@ -524,7 +524,7 @@ function CatalogRow({
               what-to-fix tooltip (D2 alert; never hidden even collapsed). */}
           {unverified ? (
             <span
-              className="inline-flex items-center rounded-full bg-co-cta/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-cta"
+              className="inline-flex items-center rounded-full bg-co-danger-surface px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-cta-text"
               title={t("admin.skus.unverified_hint")}
             >
               {t("admin.skus.unverified_badge")}

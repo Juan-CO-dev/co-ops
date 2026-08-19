@@ -180,7 +180,7 @@ function PrepTemplateBlock({ tpl }: { tpl: PrepOverviewTemplate }) {
                       {t(inputTypeKey(line.inputType))}
                     </span>
                     {needsLinkIds.has(line.lineId) && (
-                      <span className="inline-flex items-center rounded-full bg-co-cta/15 px-2 py-0.5 text-[10px] font-bold text-co-cta">
+                      <span className="inline-flex items-center rounded-full bg-co-danger-surface px-2 py-0.5 text-[10px] font-bold text-co-cta-text">
                         {t("admin.templates.prep.chip_needs_link")}
                       </span>
                     )}

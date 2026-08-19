@@ -158,7 +158,7 @@ export function SkuPackChainPanel({
       >
         {t("admin.skus.chain.title")}
         {loaded && unverified ? (
-          <span className="inline-flex items-center rounded-full bg-co-cta/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-cta">
+          <span className="inline-flex items-center rounded-full bg-co-danger-surface px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-cta-text">
             {t("admin.skus.chain.unverified")}
           </span>
         ) : null}

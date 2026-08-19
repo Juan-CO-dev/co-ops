@@ -29,8 +29,8 @@ interface Props {
 const SIGNAL_TONE: Record<CateringCapacityResult["signal"], string> = {
   available: "bg-co-success/15 text-co-success",
   limited: "bg-co-gold/25 text-co-text",
-  unavailable: "bg-co-cta/15 text-co-cta",
-  blackout: "bg-co-cta/15 text-co-cta",
+  unavailable: "bg-co-danger-surface text-co-cta-text",
+  blackout: "bg-co-danger-surface text-co-cta-text",
   below_lead_time: "bg-co-gold/25 text-co-text",
   unconfigured: "bg-co-surface text-co-text-muted",
 };

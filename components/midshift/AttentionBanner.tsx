@@ -27,7 +27,7 @@ const SCORE_KEY: Record<PulseScore, TranslationKey> = {
 const SCORE_CHIP_CLASS: Record<PulseScore, string> = {
   green: "bg-co-success/15 text-co-success",
   yellow: "bg-co-gold/25 text-co-gold-text",
-  red: "bg-co-cta/15 text-co-cta",
+  red: "bg-co-danger-surface text-co-cta-text",
 };
 
 function ScoreChip({ score, language }: { score: PulseScore; language: Language }) {

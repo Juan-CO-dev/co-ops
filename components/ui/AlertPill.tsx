@@ -11,10 +11,19 @@ import type { ReactNode } from "react";
  * design-token status colors so a palette change lands in one place.
  *
  * TONE MAPPING (semantic → tokens):
- *   warn   → warning-surface bg + warning text  (over-par, order-more, choice-needs-pick, perishable)
- *   danger → danger-surface  bg + danger  text  (not-ready, cancelled, cash-short)
- *   ok     → success-surface bg + success text  (active, ready)
+ *   warn   → warning-surface bg + warning  text  (over-par, order-more, choice-needs-pick, perishable)
+ *   danger → danger-surface  bg + cta-text text  (not-ready, cancelled, cash-short)
+ *   ok     → success-surface bg + success  text  (active, ready)
  *   info   → surface-2       bg + text-dim       (neutral/expired/informational)
+ *
+ * AA NOTE (token floor, 2026-08-19): `danger` reads --co-cta-text #B3252C, not
+ * --co-danger #FF3A44. The brand red on danger-surface measures 2.94:1 — the same
+ * failure as the hand-rolled `bg-co-cta/15 + text-co-cta` pills this primitive was
+ * meant to replace. #B3252C on danger-surface is 5.43:1.
+ *
+ * STILL FAILING, deliberately left for the restyle sweep (each needs a new text
+ * token this PR was not scoped to add): `warn` is #F59E0B on #FFF4D0 = 1.95:1 and
+ * `ok` is #28B25C on #E8F7EE = 2.49:1. `info` passes at 4.64:1.
  *
  * The raw ambers (`amber-100/800`) map to `warn`; `co-cta/15 + co-cta` and
  * `red-100/700` map to `danger`; `emerald-100/800` maps to `ok`; `gray-100/600`
@@ -30,7 +39,7 @@ export type AlertPillTone = "warn" | "danger" | "ok" | "info";
 
 const TONE_CLASSES: Record<AlertPillTone, string> = {
   warn: "bg-co-warning-surface text-co-warning",
-  danger: "bg-co-danger-surface text-co-danger",
+  danger: "bg-co-danger-surface text-co-cta-text",
   ok: "bg-co-success-surface text-co-success",
   info: "bg-co-surface-2 text-co-text-dim",
 };
