@@ -20,15 +20,22 @@
  * explicitly; type-only server imports; no server module leaks.
  *
  * MISSING-ITEM HONESTY GATE: completing a delivery while pre-filled EXPECTED rows sat
- * unconfirmed used to be silent — and worse than silent, because the template SEEDS each
- * row's qty at the expected value, so an item that never came off the truck was filed as
- * fully received. Now the first tap on "Delivery confirmed" opens a warn notice listing
- * every unconfirmed expected row; each offers "Received" (confirm at the expected count)
- * or "Didn't arrive" (clear the count, and on a PO-LINKED intake claim a short). A second
- * tap completes regardless — honesty, not a hard block — and the notice states that
- * unanswered rows file at their expected count. Off a mere last-delivery prefill no short
- * is claimed, because a habit is not a debt. See lib/receiving-shared.ts
- * MissingExpectedLine for why a fully-missing item cannot be a delivery line at all.
+ * unconfirmed used to be silent — and worse than silent, because the template once SEEDED
+ * each row's qty at the expected value, so an item that never came off the truck was filed
+ * as fully received. Two things fix that:
+ *   1. The template seeds qty EMPTY and keeps expectedQty. An untouched row therefore
+ *      carries NO count: readyLines drops it and it files as UNCOUNTED — a visible
+ *      omission that surfaces later against the invoice — never as received-in-full.
+ *      The happy path is untouched: the collapsed row still reads "expected N × level"
+ *      and tapping ✓ still writes qty = expectedQty.
+ *   2. The first tap on "Delivery confirmed" opens a warn notice listing every
+ *      unconfirmed expected row; each offers "Received" (confirm at the expected count)
+ *      or "Didn't arrive" (clear the count, and on a PO-LINKED intake claim a short). A
+ *      second tap completes regardless — honesty, not a hard block — and the notice
+ *      states that unanswered rows are filed as not counted.
+ * Off a mere last-delivery prefill no short is claimed, because a habit is not a debt.
+ * See lib/receiving-shared.ts MissingExpectedLine for why a fully-missing item cannot be
+ * a delivery line at all.
  *
  * D1 Task 6 — offline-draft persistence:
  *   - Debounced (500 ms) save to localStorage key
@@ -320,12 +327,13 @@ export function ReceivingForm({
   // UNCONFIRMED EXPECTED ROWS. Only PRE-FILLED rows can be missed (expectedQty != null —
   // they came from the PO or the last-delivery template; offered/added rows carry no
   // expectation). A row counts as unconfirmed when the operator never tapped ✓
-  // (`confirmed` false), raised no flag, AND left the quantity at whatever the template
-  // seeded. That covers BOTH ways the door used to swallow a miss:
-  //   • qty STILL at the seeded expected value → today it submits as fully received, so
-  //     an item that never came off the truck is recorded as delivered. (This is the one
-  //     the owner hit: the template pre-fills qty, so "leaving a row off" fabricates it.)
-  //   • qty emptied or zeroed → readyLines drops it and nothing is recorded at all.
+  // (`confirmed` false), raised no flag, AND entered no count that departs from the
+  // expectation. That covers both silent shapes:
+  //   • qty EMPTY (the seeded state — the template deliberately seeds no count) or zeroed
+  //     → readyLines drops it, so NOTHING is recorded for an item the vendor was expected
+  //     to bring. Silent unless this notice names it.
+  //   • qty sitting exactly ON the expectation without a ✓ → indistinguishable from an
+  //     untouched row, so it is surfaced rather than assumed.
   // A row whose qty was EDITED to a different number is a deliberate count (the flag
   // auto-suggest already nudges it), and a flagged row is an acknowledged exception —
   // neither is silent, so neither is listed.
@@ -464,12 +472,18 @@ export function ReceivingForm({
         setLinkedPoCode(body.displayCode ?? null);
       }
 
+      // Seed the EXPECTATION, never the COUNT. qty starts EMPTY so an untouched row
+      // holds no number the operator did not put there: it falls out of readyLines and
+      // files as uncounted rather than as fully received (the door's worst silent
+      // failure). expectedQty is what makes the row collapsed-with-a-✓, what the ✓
+      // writes into qty, and what the honesty gate measures against — so the tap-✓
+      // happy path is byte-for-byte the same as before.
       const seeded: LineDraft[] = tpl.lines.map((tl) => ({
         key: nextKey(),
         skuId: tl.skuId,
         skuName: skuById.get(tl.skuId)?.name ?? t("receiving.door.unknown_sku"),
         level: tl.level ?? "",
-        qty: String(tl.qty),
+        qty: "",
         expectedQty: tl.qty,
         discrepancy: null,
         note: "",
@@ -950,8 +964,10 @@ export function ReceivingForm({
               {t("receiving.missing.summary_claim", { n: shortCount })}
             </p>
           ) : null}
-          {/* Only true while a row is still unanswered — a "Didn't arrive" row has its
-              qty cleared, so it is NOT filed at the expected count. */}
+          {/* Only true while a row is still unanswered. A "Didn't arrive" row has been
+              dispositioned (and on a PO-linked intake claims a short), so it isn't what
+              this line warns about. An unanswered row files as NOT COUNTED — the seed no
+              longer supplies a quantity, so there is nothing to file it at. */}
           {unconfirmedExpected.some((l) => notArrived[l.key] !== true) ? (
             <p className="mt-1 text-[12px] text-co-text-dim">
               {t("receiving.missing.summary_unanswered")}

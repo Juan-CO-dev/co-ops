@@ -2539,7 +2539,7 @@
   "receiving.missing.not_arrived": "No llegó",
   "receiving.missing.not_arrived_aria": "Marca {sku} como no entregado",
   "receiving.missing.summary_claim": "Se reclamarán {n} faltante(s) en esta entrega.",
-  "receiving.missing.summary_unanswered": "Lo que dejes sin responder se registra con la cantidad esperada.",
+  "receiving.missing.summary_unanswered": "Lo que dejes sin responder se registra como no contado — aparecerá al comparar con la factura.",
   "receiving.detail.received_against": "Recibido contra",
   "receiving.error.invalid_missing_lines": "Algo falló con los artículos faltantes — intenta otra vez.",
   "receiving.error.missing_requires_po": "Solo puedes reclamar faltantes contra una orden de compra.",
