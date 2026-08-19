@@ -449,7 +449,7 @@ function LocationItemRow({
                 type="button"
                 disabled={submitting}
                 onClick={() => void unlink()}
-                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-surface px-3 text-xs font-bold text-co-cta hover:bg-co-cta hover:text-co-surface disabled:opacity-50"
+                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-surface px-3 text-xs font-bold text-co-cta hover:bg-co-cta hover:text-co-text disabled:opacity-50"
               >
                 {t("admin.templates.line_edit.unlink")}
               </button>
@@ -461,7 +461,7 @@ function LocationItemRow({
               type="button"
               disabled={submitting}
               onClick={() => void disableItem()}
-              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-surface px-3 text-xs font-bold text-co-cta hover:bg-co-cta hover:text-co-surface disabled:opacity-50"
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-surface px-3 text-xs font-bold text-co-cta hover:bg-co-cta hover:text-co-text disabled:opacity-50"
             >
               {t("admin.templates.disable_item")}
             </button>
