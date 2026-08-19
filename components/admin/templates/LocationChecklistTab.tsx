@@ -408,37 +408,37 @@ function LocationItemRow({
 
           {/* Input type — deliberate per-line conversion (Tier B, ≥7). */}
           {canConvertInputType ? (
-          <div className="rounded-lg border-2 border-co-border p-3">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-              <label className="block flex-1">
-                <span className="text-sm font-bold text-co-text">{t("admin.templates.line_edit.input_type")}</span>
-                <select className={field} value={inputType} onChange={(e) => setInputType(e.target.value as LineInputType)}>
-                  {LINE_INPUT_TYPE_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>{t(o.key)}</option>
-                  ))}
-                </select>
-              </label>
-              {inputType === "yes_no" ? (
-                <label className="flex items-center gap-2 text-sm font-bold text-co-text sm:pb-2">
-                  <input
-                    type="checkbox"
-                    className="h-5 w-5 accent-co-gold"
-                    checked={includeNote}
-                    onChange={(e) => setIncludeNote(e.target.checked)}
-                  />
-                  {t("admin.templates.field.include_note")}
+            <div className="rounded-lg border-2 border-co-border p-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+                <label className="block flex-1">
+                  <span className="text-sm font-bold text-co-text">{t("admin.templates.line_edit.input_type")}</span>
+                  <select className={field} value={inputType} onChange={(e) => setInputType(e.target.value as LineInputType)}>
+                    {LINE_INPUT_TYPE_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>{t(o.key)}</option>
+                    ))}
+                  </select>
                 </label>
-              ) : null}
-              <button
-                type="button"
-                disabled={submitting}
-                onClick={() => void changeInputType()}
-                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-surface px-4 text-sm font-bold text-co-text disabled:opacity-50 sm:w-auto"
-              >
-                {t("admin.templates.line_edit.change_input_type")}
-              </button>
+                {inputType === "yes_no" ? (
+                  <label className="flex items-center gap-2 text-sm font-bold text-co-text sm:pb-2">
+                    <input
+                      type="checkbox"
+                      className="h-5 w-5 accent-co-gold"
+                      checked={includeNote}
+                      onChange={(e) => setIncludeNote(e.target.checked)}
+                    />
+                    {t("admin.templates.field.include_note")}
+                  </label>
+                ) : null}
+                <button
+                  type="button"
+                  disabled={submitting}
+                  onClick={() => void changeInputType()}
+                  className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-surface px-4 text-sm font-bold text-co-text disabled:opacity-50 sm:w-auto"
+                >
+                  {t("admin.templates.line_edit.change_input_type")}
+                </button>
+              </div>
             </div>
-          </div>
           ) : null}
 
           {/* Unlink — only when linked to a registry item (Tier B, danger). */}
