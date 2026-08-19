@@ -32,8 +32,10 @@
   --co-gold: #FFE560;        /* Mustard — anchor */
   --co-gold-deep: #E6C84A;   /* Pressed states, borders, fills — NEVER a text color on light grounds (1.50:1 on Mayo) */
   --co-gold-text: #7A6015;   /* AA dark-bronze gold TEXT on light grounds — 5.42:1 worst-case over the body gradient */
-  --co-cta: #FF3A44;         /* Brand Red — fills, borders, outlines (use sparingly). NOT a text color on light grounds */
-  --co-cta-text: #B3252C;    /* AA red TEXT on light grounds — 5.43:1 on danger-surface, 6.19:1 on Mayo, 6.53:1 on white */
+  --co-cta: #FF3A44;         /* Brand Red — FILLS and the edge of a filled red control (use sparingly). Never text on light grounds */
+  --co-cta-text: #B3252C;    /* AA red TEXT on light grounds — 5.43:1 on danger-surface, 6.19:1 on Mayo, 6.53:1 on white.
+                              * Also the EDGE of a red outline on a light fill: --co-cta drops to 2.94:1 against the
+                              * hover tint, under the 3:1 non-text floor, so edge and label move together. */
 
   /* Text */
   --co-text: #141414;        /* Diet Coke — primary */

@@ -387,7 +387,7 @@ export function StorefrontOrderTray({
           className="flex min-h-[52px] items-center gap-2 rounded-full bg-co-text px-6 py-3 text-sm font-bold text-co-cta shadow-2xl shadow-black/40 transition hover:-translate-y-0.5 hover:shadow-black/50 active:scale-95"
         >
           {count > 0 && (
-            <span className="rounded-full bg-co-cta px-2 py-0.5 text-xs font-extrabold text-co-bg">
+            <span className="rounded-full bg-co-cta px-2 py-0.5 text-xs font-extrabold text-co-text">
               {count} item{count === 1 ? "" : "s"}
             </span>
           )}

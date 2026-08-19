@@ -1651,7 +1651,7 @@ function MarkNotDoneNotePanel({
           disabled={disabled || note.trim().length === 0}
           className="
             inline-flex min-h-[48px] flex-1 items-center justify-center rounded-md
-            bg-co-cta px-4 text-sm font-bold uppercase tracking-[0.12em] text-white
+            bg-co-cta px-4 text-sm font-bold uppercase tracking-[0.12em] text-co-text
             transition hover:opacity-90
             focus:outline-none focus-visible:ring-4 focus-visible:ring-co-cta/50
             disabled:cursor-not-allowed disabled:opacity-50

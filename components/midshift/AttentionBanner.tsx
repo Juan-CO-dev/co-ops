@@ -64,7 +64,7 @@ export function AttentionBanner({
   }
 
   const border = score === "red" ? "border-co-cta" : "border-co-gold-deep";
-  const headingTone = score === "red" ? "text-co-cta" : "text-co-gold-text";
+  const headingTone = score === "red" ? "text-co-cta-text" : "text-co-gold-text";
   return (
     // role="alert" — attention items are the page's urgency signal.
     <div role="alert" className={`rounded-lg border-2 ${border} bg-co-surface px-4 py-3`}>
