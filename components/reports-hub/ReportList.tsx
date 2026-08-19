@@ -19,6 +19,7 @@ import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import { REPORTS_HUB_CASH_LEVEL, type ReportListItem, type ReportTypeKey } from "@/lib/reports-hub";
 import type { SearchSnippet } from "@/lib/reports-search";
+import { reportStatusLabelKey } from "./shared";
 
 const TYPE_LABEL_KEYS: Record<ReportTypeKey, TranslationKey> = {
   opening: "reports.type.opening",
@@ -30,17 +31,12 @@ const TYPE_LABEL_KEYS: Record<ReportTypeKey, TranslationKey> = {
   maintenance: "reports.type.maintenance",
 };
 
-// Map DB status enum → translation key. Mirrors ChecklistReportDetail's
-// STATUS_LABEL_KEYS; partial because status values outside this set
-// (e.g. incomplete_confirmed, auto_finalized) fall back to the raw string.
-const STATUS_LABEL_KEYS: Partial<Record<string, TranslationKey>> = {
-  open: "reports.status.open",
-  in_progress: "reports.status.in_progress",
-  submitted: "reports.status.submitted",
-  confirmed: "reports.status.confirmed",
-  // Maintenance synthetic digest rows carry status "flags" | "ok"; the
-  // out-of-range count is already surfaced in the temp signal badge, so these
-  // map through the param-less status convention like the other types.
+// Real report statuses come from the ONE shared map (components/reports-hub/shared.ts).
+// This overlay is list-only vocabulary: maintenance synthetic digest rows carry
+// status "flags" | "ok" (not DB report statuses); the out-of-range count is
+// already surfaced in the temp signal badge, so these map through the param-less
+// status convention like the other types.
+const MAINT_DIGEST_STATUS_KEYS: Partial<Record<string, TranslationKey>> = {
   flags: "reports.maint_status_row.flags",
   ok: "reports.maint_status_row.ok",
 };
@@ -77,7 +73,7 @@ export function ReportList({ items, locationId, language, viewerLevel, searchQue
         const href = `/reports/${item.type}/${item.id}?location=${locationId}`;
         const dateLabel = formatDateLabel(item.date, language);
         const typeLabel = t(TYPE_LABEL_KEYS[item.type]);
-        const statusKey = STATUS_LABEL_KEYS[item.status];
+        const statusKey = reportStatusLabelKey(item.status) ?? MAINT_DIGEST_STATUS_KEYS[item.status];
         const statusLabel = statusKey ? t(statusKey) : item.status;
         const s = item.signalSummary;
         const snip = snippets?.get(`${item.type}:${item.id}`);

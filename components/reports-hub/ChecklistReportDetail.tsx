@@ -16,6 +16,7 @@ import { formatDateLabel } from "@/lib/i18n/format";
 import { serverT } from "@/lib/i18n/server";
 import type { Language, TranslationKey } from "@/lib/i18n/types";
 import type { ChecklistCheckRow, ChecklistDetailItem, ChecklistReportDetail, PrepValueRow, ReportTypeKey } from "@/lib/reports-hub";
+import { reportStatusLabel } from "./shared";
 
 /**
  * Fulledit PR-2 (0165): render a question line's ANSWER keyed on its inputType
@@ -62,18 +63,6 @@ const TYPE_LABEL_KEYS: Record<ReportTypeKey, TranslationKey> = {
   pm: "reports.type.pm",
   maintenance: "reports.type.maintenance",
 };
-
-const STATUS_LABEL_KEYS: Partial<Record<string, TranslationKey>> = {
-  open: "reports.status.open",
-  in_progress: "reports.status.in_progress",
-  submitted: "reports.status.submitted",
-  confirmed: "reports.status.confirmed",
-};
-
-function statusLabel(status: string, t: (k: TranslationKey) => string): string {
-  const key = STATUS_LABEL_KEYS[status];
-  return key ? t(key) : status;
-}
 
 function formatPrepValue(v: number | null): string {
   return v === null ? "—" : String(v);
@@ -181,7 +170,7 @@ export function ChecklistReportDetailView({ detail, language }: Props) {
 
   const typeLabel = t(TYPE_LABEL_KEYS[detail.type]);
   const dateLabel = formatDateLabel(detail.date, language);
-  const statusText = statusLabel(detail.status, t);
+  const statusText = reportStatusLabel(detail.status, t);
 
   return (
     <div className="flex flex-col gap-4">

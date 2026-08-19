@@ -308,6 +308,16 @@ export function ManagerLoginForm({ onSuccess, onTransientError }: ManagerLoginFo
       >
         {resetRequesting ? t("auth.manager.sending") : t("auth.manager.forgot_password")}
       </button>
+
+      {/*
+        Static, role-agnostic guidance. The reset route answers a constant 200
+        for every email by design (anti-enumeration) — it cannot tell a PIN-only
+        staffer that the link will never arrive. So the UI says it once, up
+        front, to everyone, without varying by role or by what was typed.
+      */}
+      <p className="self-center px-2 text-center text-xs text-co-text-dim">
+        {t("auth.manager.reset_pin_hint")}
+      </p>
     </form>
   );
 }

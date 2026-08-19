@@ -54,8 +54,11 @@ export default async function AdminCateringHubPage() {
         locations.map((loc) => loadPerishableSurplus(auth, { locationId: loc.id, from, to })),
       );
       surplusCount = results.reduce((acc, lines) => acc + lines.length, 0);
-    } catch {
-      // Non-fatal: badge silently absent on error.
+    } catch (err) {
+      // ADVISORY badge — best-effort: its failure never takes down the hub. But
+      // degrade LOUDLY: a silently-absent surplus badge is indistinguishable
+      // from "no surplus", so the failure must at least reach the logs.
+      console.error("[admin/catering] surplus badge degraded:", err);
     }
   }
 

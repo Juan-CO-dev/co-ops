@@ -2232,6 +2232,7 @@
   "auth.manager.sending": "Enviando…",
   "auth.manager.reset_need_email": "Primero ingresa tu correo arriba.",
   "auth.manager.reset_error": "No se pudo enviar el enlace. Inténtalo de nuevo.",
+  "auth.manager.reset_pin_hint": "Los enlaces de restablecimiento van a las cuentas de correo de gerentes. Si entras con PIN, pídele a un gerente que lo restablezca.",
   "auth.pin.role_aria": "{role}",
   "auth.pin.prompt": "Ingresa tu PIN de 4 dígitos",
   "auth.pin.entry_aria": "Entrada de PIN: {entered} de {total} dígitos ingresados",

@@ -227,10 +227,16 @@ function FaqRow({
         {faq.answerEs ? (
           <div className="mt-0.5 text-xs text-co-text-muted">{faq.answerEs}</div>
         ) : null}
+        {/*
+          The display-order number used to render here. Nothing in the product
+          can change it — updateFaqText writes question/answer/slug only, and
+          there is no reorder affordance or route — so it was a frozen number
+          inviting an edit that doesn't exist. Removed rather than made editable
+          (Juan's call). The order_label i18n key is left in place, harmless,
+          for whenever reordering is actually built.
+        */}
         <div className="mt-1 text-[11px] text-co-text-muted">
           {t("admin.catering.faq.slug_label" as TranslationKey)}: <code>{faq.slug}</code>
-          {" · "}
-          {t("admin.catering.faq.order_label" as TranslationKey)}: {faq.displayOrder}
         </div>
       </div>
 
