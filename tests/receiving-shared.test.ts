@@ -2,13 +2,17 @@
  * Unit spine — lib/receiving-shared.ts pure math (zero I/O, no server imports).
  * Pins: credit derivation for short/over/damaged/substitution lines, qty-delta
  * arithmetic, amount-cents derivation from intake price (spec D1), and the
- * addDeliveryLines double-submit multiset guard (isDuplicateAppend).
+ * addDeliveryLines double-submit multiset guard (isDuplicateAppend), and the
+ * offline intake-draft shelf (one slot per vendor, newest first, capped).
  */
 import { describe, it, expect } from "vitest";
 import {
   deriveCreditDrafts,
   deriveMissingCreditDrafts,
   isDuplicateAppend,
+  upsertIntakeDraft,
+  removeIntakeDraft,
+  INTAKE_DRAFT_CAP,
   type AppendLine,
   type IntakeLineForCredits,
 } from "../lib/receiving-shared";
@@ -116,5 +120,64 @@ describe("isDuplicateAppend", () => {
 
   it("empty recent → false (nothing appended in the window)", () => {
     expect(isDuplicateAppend([l("sku-1", "case", 2)], [])).toBe(false);
+  });
+});
+
+describe("intake draft shelf", () => {
+  const d = (vendorId: string, startedAt: string, savedAt = startedAt) => ({
+    vendorId,
+    startedAt,
+    savedAt,
+  });
+
+  it("prepends a new draft — newest first", () => {
+    const shelf = upsertIntakeDraft([d("v-1", "t1")], d("v-2", "t2"));
+    expect(shelf.map((x) => x.vendorId)).toEqual(["v-2", "v-1"]);
+  });
+
+  it("replaces the same vendor's slot instead of duplicating it", () => {
+    // The live intake saves every 500 ms; each save must land in ONE slot.
+    const shelf = [d("v-1", "t1", "s1")]
+      .reduce((acc, x) => upsertIntakeDraft(acc, x), [] as ReturnType<typeof d>[]);
+    const after = upsertIntakeDraft(upsertIntakeDraft(shelf, d("v-1", "t1", "s2")), d("v-1", "t1", "s3"));
+    expect(after).toHaveLength(1);
+    expect(after[0]?.savedAt).toBe("s3");
+  });
+
+  it("replaces by vendor even when startedAt differs (a fresh intake for that vendor)", () => {
+    const after = upsertIntakeDraft([d("v-1", "t1")], d("v-1", "t9"));
+    expect(after).toEqual([d("v-1", "t9")]);
+  });
+
+  it("keeps DIFFERENT vendors side by side — the two-trucks-one-hour case", () => {
+    const shelf = upsertIntakeDraft(upsertIntakeDraft([], d("v-1", "t1")), d("v-2", "t2"));
+    expect(shelf.map((x) => x.vendorId).sort()).toEqual(["v-1", "v-2"]);
+  });
+
+  it("caps the shelf, dropping the oldest", () => {
+    const shelf = [d("v-1", "t1"), d("v-2", "t2"), d("v-3", "t3"), d("v-4", "t4")].reduce(
+      (acc, x) => upsertIntakeDraft(acc, x),
+      [] as ReturnType<typeof d>[],
+    );
+    expect(shelf).toHaveLength(INTAKE_DRAFT_CAP);
+    expect(shelf.map((x) => x.vendorId)).toEqual(["v-4", "v-3", "v-2"]);
+  });
+
+  it("does not mutate the input shelf", () => {
+    const shelf = [d("v-1", "t1")];
+    upsertIntakeDraft(shelf, d("v-2", "t2"));
+    expect(shelf).toEqual([d("v-1", "t1")]);
+  });
+
+  it("removes exactly one draft by full identity", () => {
+    const shelf = [d("v-1", "t1"), d("v-2", "t2")];
+    expect(removeIntakeDraft(shelf, "v-1", "t1")).toEqual([d("v-2", "t2")]);
+  });
+
+  it("leaves the shelf alone when the identity does not match", () => {
+    // Same vendor, different session — submitting one intake must not delete another.
+    const shelf = [d("v-1", "t1")];
+    expect(removeIntakeDraft(shelf, "v-1", "t-other")).toEqual(shelf);
+    expect(removeIntakeDraft(shelf, "v-other", "t1")).toEqual(shelf);
   });
 });

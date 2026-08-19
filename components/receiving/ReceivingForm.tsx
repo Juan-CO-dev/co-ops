@@ -41,12 +41,24 @@
  * D1 Task 6 — offline-draft persistence:
  *   - Debounced (500 ms) save to localStorage key
  *     `coops.intake.draft.<locationId>` on every relevant state change.
- *   - On mount, if a draft exists: renders a resume banner; user taps Resume
- *     or Discard. No auto-hydration.
+ *   - On mount, any stored drafts render a resume banner; the operator taps
+ *     Resume or Discard PER DRAFT. No auto-hydration.
  *   - "Saved on device HH:MM" pill shown after the first write.
- *   - Draft cleared before router.refresh() on success.
+ *   - The submitted draft is removed before router.refresh() on success —
+ *     only that one; a second truck's draft survives its neighbour's submit.
  *   - localStorage access fully try/catch guarded (private-mode Safari).
- *   - Corrupt/unparseable draft = treated as absent + cleared.
+ *   - Corrupt/unparseable payload = treated as absent + cleared.
+ *
+ * The key holds a LIST (newest first, capped) rather than one draft, and the
+ * writer stands down while the resume banner is up. Both are data-loss fixes:
+ *   - ONE SLOT PER LOCATION meant two same-hour deliveries clobbered each
+ *     other. The shelf keeps one slot per vendor (lib/receiving-shared.ts
+ *     upsertIntakeDraft), so the produce drop can't erase the paper-goods
+ *     count half-entered beside it.
+ *   - The debounced writer used to run WHILE the banner was still asking
+ *     "resume or discard?", so the first keystroke of a new intake destroyed
+ *     the very draft being offered ~500 ms later. Persistence is suppressed
+ *     until the operator answers the banner (resume or discard re-enables it).
  */
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -58,6 +70,12 @@ import { IntakeLineRow, type IntakeLine } from "@/components/receiving/IntakeLin
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import type { ReceivingFormData, ReceivingSkuOption } from "@/lib/receiving";
 import type { OpenCreditRow } from "@/lib/credits";
+import {
+  INTAKE_DRAFT_CAP,
+  removeIntakeDraft,
+  upsertIntakeDraft,
+  type IntakeDraftIdentity,
+} from "@/lib/receiving-shared";
 
 interface LineDraft extends IntakeLine {
   /** local key so React reconciles rows across add/remove without index churn. */
@@ -138,9 +156,9 @@ function byUsageThenName(a: ReceivingSkuOption, b: ReceivingSkuOption): number {
 
 // ── Draft persistence (D1 Task 6) ─────────────────────────────────────────
 
-/** Shape persisted to localStorage. `savedAt` is an ISO timestamp. */
-interface IntakeDraft {
-  vendorId: string;
+/** Shape persisted to localStorage. `savedAt` is an ISO timestamp; `startedAt` marks
+ *  when the intake session began and, with vendorId, identifies the draft on the shelf. */
+interface IntakeDraft extends IntakeDraftIdentity {
   date: string;
   invoiceNumber: string;
   invoiceTotal: string;
@@ -155,37 +173,57 @@ function draftKey(locationId: string): string {
   return `coops.intake.draft.${locationId}`;
 }
 
-function readDraft(locationId: string): IntakeDraft | null {
+/** Minimal shape guard — one bad entry must not poison the whole shelf. */
+function isIntakeDraft(v: unknown): v is IntakeDraft {
+  if (typeof v !== "object" || v === null) return false;
+  const d = v as Record<string, unknown>;
+  return (
+    typeof d.vendorId === "string" &&
+    typeof d.savedAt === "string" &&
+    typeof d.startedAt === "string" &&
+    Array.isArray(d.lines)
+  );
+}
+
+/** The location's draft shelf, newest first. Anything unreadable is discarded — a
+ *  corrupt payload must never stand between the operator and a working door form. */
+function readDrafts(locationId: string): IntakeDraft[] {
   try {
     const raw = localStorage.getItem(draftKey(locationId));
-    if (!raw) return null;
+    if (!raw) return [];
     const parsed = JSON.parse(raw) as unknown;
-    // Minimal shape guard — if any required field is missing, treat as corrupt.
-    if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      typeof (parsed as Record<string, unknown>).vendorId !== "string" ||
-      typeof (parsed as Record<string, unknown>).savedAt !== "string"
-    ) {
-      clearDraft(locationId);
-      return null;
+    if (!Array.isArray(parsed)) {
+      // Not a shelf — corrupt, or the pre-launch single-draft shape. Drop it.
+      clearDrafts(locationId);
+      return [];
     }
-    return parsed as IntakeDraft;
+    return parsed.filter(isIntakeDraft).slice(0, INTAKE_DRAFT_CAP);
   } catch {
-    clearDraft(locationId);
-    return null;
+    clearDrafts(locationId);
+    return [];
   }
 }
 
-function writeDraft(locationId: string, draft: IntakeDraft): void {
+function writeShelf(locationId: string, shelf: IntakeDraft[]): void {
   try {
-    localStorage.setItem(draftKey(locationId), JSON.stringify(draft));
+    if (shelf.length === 0) localStorage.removeItem(draftKey(locationId));
+    else localStorage.setItem(draftKey(locationId), JSON.stringify(shelf));
   } catch {
     // Private-mode Safari or storage full — silently ignore.
   }
 }
 
-function clearDraft(locationId: string): void {
+/** Save this intake, replacing this vendor's slot rather than adding a duplicate. */
+function writeDraft(locationId: string, draft: IntakeDraft): void {
+  writeShelf(locationId, upsertIntakeDraft(readDrafts(locationId), draft));
+}
+
+/** Remove exactly one draft (submitted or discarded) — never the whole shelf. */
+function removeDraft(locationId: string, vendorId: string, startedAt: string): void {
+  writeShelf(locationId, removeIntakeDraft(readDrafts(locationId), vendorId, startedAt));
+}
+
+function clearDrafts(locationId: string): void {
   try {
     localStorage.removeItem(draftKey(locationId));
   } catch {
@@ -224,12 +262,16 @@ export function ReceivingForm({
   const [dupId, setDupId] = useState<string | null>(null);
 
   // Draft persistence state (D1 Task 6).
-  // `pendingDraft` = a draft found on mount awaiting Resume/Discard decision.
+  // `pendingDrafts` = drafts found on mount, awaiting a per-draft Resume/Discard.
   // `savedAt` = ISO timestamp of the last successful localStorage write this
   // session — drives the "Saved on device HH:MM" indicator.
-  const [pendingDraft, setPendingDraft] = useState<IntakeDraft | null>(null);
+  // `startedAtRef` = this intake session's identity half (with vendorId). Set on the
+  // first save, adopted from a resumed draft, cleared by resetForm — a ref, not state,
+  // because it must never trigger a render or re-arm the debounce.
+  const [pendingDrafts, setPendingDrafts] = useState<IntakeDraft[]>([]);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const startedAtRef = useRef<string | null>(null);
   const isFirstRender = useRef(true);
 
   // PO context — set when the template route returns source "po".
@@ -257,10 +299,10 @@ export function ReceivingForm({
   const [armComplete, setArmComplete] = useState(false);
   const [notArrived, setNotArrived] = useState<Record<string, true>>({});
 
-  // On mount: check for a saved draft and offer Resume/Discard.
+  // On mount: read the shelf and offer a per-draft Resume/Discard.
   useEffect(() => {
-    const draft = readDraft(locationId);
-    if (draft) setPendingDraft(draft);
+    const drafts = readDrafts(locationId);
+    if (drafts.length > 0) setPendingDrafts(drafts);
   }, [locationId]);
 
   // Debounced draft save. Fires 500 ms after the last state change.
@@ -271,6 +313,10 @@ export function ReceivingForm({
       isFirstRender.current = false;
       return;
     }
+    // While the resume banner is up, the stored drafts are NOT ours to overwrite: the
+    // operator hasn't said which one (if any) this session continues. Answering the
+    // banner — resume or discard — re-enables persistence.
+    if (pendingDrafts.length > 0) return;
     // Pristine guard: no vendor and the single line is blank.
     const isPristine =
       vendorId === "" &&
@@ -283,8 +329,13 @@ export function ReceivingForm({
     if (debounceRef.current !== null) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       const now = new Date().toISOString();
+      // First save of this intake stamps its startedAt; every later save reuses it, so
+      // the shelf slot stays the same one instead of multiplying every 500 ms.
+      const startedAt = startedAtRef.current ?? now;
+      startedAtRef.current = startedAt;
       writeDraft(locationId, {
         vendorId,
+        startedAt,
         date,
         invoiceNumber,
         invoiceTotal,
@@ -300,7 +351,7 @@ export function ReceivingForm({
     return () => {
       if (debounceRef.current !== null) clearTimeout(debounceRef.current);
     };
-  }, [vendorId, date, invoiceNumber, invoiceTotal, notes, photoLater, receiptPhotoId, lines, locationId]);
+  }, [vendorId, date, invoiceNumber, invoiceTotal, notes, photoLater, receiptPhotoId, lines, locationId, pendingDrafts]);
 
   const skuById = new Map<string, ReceivingSkuOption>(formData.skus.map((s) => [s.id, s]));
   // Picker + fallback are ALWAYS scoped to the selected vendor's OWN SKUs (never the
@@ -385,9 +436,11 @@ export function ReceivingForm({
     setLines([addedLine()]);
     setErr(null);
     setDupId(null);
-    // Clear any pending banner too.
-    setPendingDraft(null);
+    // Clear any pending banner too, and end this draft's identity — the next intake
+    // is a new session and gets its own shelf slot.
+    setPendingDrafts([]);
     setSavedAt(null);
+    startedAtRef.current = null;
     setLinkedPoId(null);
     setLinkedPoCode(null);
     setOpenCredits([]);
@@ -398,6 +451,11 @@ export function ReceivingForm({
     // resetForm runs on a successful submit; the notice must survive to be shown.
   };
 
+  /** Continue one shelved intake. The banner closes ENTIRELY — the operator has said
+   *  which intake this session is, so persistence must resume (a still-open banner would
+   *  keep the writer suppressed and lose everything typed from here on). The other
+   *  drafts stay on the shelf and are offered again next mount. Adopting `startedAt`
+   *  keeps the resumed draft in its own slot rather than opening a second one. */
   const resumeDraft = (draft: IntakeDraft) => {
     setVendorId(draft.vendorId);
     setDate(draft.date);
@@ -407,13 +465,15 @@ export function ReceivingForm({
     setPhotoLater(draft.photoLater);
     setReceiptPhotoId(draft.receiptPhotoId);
     setLines(draft.lines.length > 0 ? draft.lines : [addedLine()]);
-    setPendingDraft(null);
+    startedAtRef.current = draft.startedAt;
+    setPendingDrafts([]);
     setSavedAt(draft.savedAt);
   };
 
-  const discardDraft = () => {
-    clearDraft(locationId);
-    setPendingDraft(null);
+  /** Throw ONE draft away — the others on the shelf are untouched. */
+  const discardDraft = (draft: IntakeDraft) => {
+    removeDraft(locationId, draft.vendorId, draft.startedAt);
+    setPendingDrafts((ds) => removeIntakeDraft(ds, draft.vendorId, draft.startedAt));
   };
 
   // The selected vendor's OWN usage-ranked SKUs having real depletion (usageRank set),
@@ -566,9 +626,11 @@ export function ReceivingForm({
         creditClosureError?: boolean;
       };
       setBusy(false);
-      // Clear the draft BEFORE router.refresh() so it can't be resumed
-      // after a successful submit (D1 Task 6 law: clear on success).
-      clearDraft(locationId);
+      // Remove THIS draft BEFORE router.refresh() so it can't be resumed after a
+      // successful submit (D1 Task 6 law: clear on success) — and only this one, by
+      // its (vendor, startedAt) identity. A second truck's half-counted draft is not
+      // this delivery's to delete. Runs before resetForm, which clears both halves.
+      if (startedAtRef.current !== null) removeDraft(locationId, vendorId, startedAtRef.current);
       resetForm();
       setClosedCount(Array.isArray(ok.resolvedCredits) ? ok.resolvedCredits.length : 0);
       setClosureError(ok.creditClosureError === true);
@@ -614,39 +676,56 @@ export function ReceivingForm({
 
   return (
     <div className="pb-24">
-      {/* ── Draft resume banner (D1 Task 6) ────────────────────────────── */}
-      {pendingDraft ? (
+      {/* ── Draft resume banner (D1 Task 6) ──────────────────────────────
+          One row per shelved draft: WHICH vendor and when, then Resume/Discard for
+          that draft alone. A time alone can't tell two same-hour trucks apart, so the
+          vendor name leads whenever it resolves (a draft saved before the vendor was
+          picked falls back to the time-only string). One draft renders as the single
+          row this has always been — same container, same buttons. */}
+      {pendingDrafts.length > 0 ? (
         <div
           role="status"
-          className="mb-3 flex items-center justify-between gap-3 rounded-xl border-2 border-co-gold-deep bg-co-gold/20 px-4 py-3"
+          className="mb-3 flex flex-col gap-2 rounded-xl border-2 border-co-gold-deep bg-co-gold/20 px-4 py-3"
         >
-          <span className="text-sm font-bold text-co-text">
-            {t("receiving.door.draft_resume_banner", {
-              time: formatTime(pendingDraft.savedAt, language),
-            })}
-          </span>
-          <div className="flex shrink-0 gap-2">
-            <button
-              type="button"
-              onClick={discardDraft}
-              aria-label={t("receiving.door.draft_discard_aria", {
-                time: formatTime(pendingDraft.savedAt, language),
-              })}
-              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-sm font-bold text-co-text-dim hover:border-co-text"
-            >
-              {t("receiving.door.draft_discard")}
-            </button>
-            <button
-              type="button"
-              onClick={() => resumeDraft(pendingDraft)}
-              aria-label={t("receiving.door.draft_resume_aria", {
-                time: formatTime(pendingDraft.savedAt, language),
-              })}
-              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-3 text-sm font-bold text-co-text hover:bg-co-gold-deep"
-            >
-              {t("receiving.door.draft_resume")}
-            </button>
-          </div>
+          {pendingDrafts.map((d) => {
+            const vendor = formData.vendors.find((v) => v.id === d.vendorId)?.name ?? null;
+            const time = formatTime(d.savedAt, language);
+            return (
+              <div key={`${d.vendorId}:${d.startedAt}`} className="flex items-center justify-between gap-3">
+                <span className="text-sm font-bold text-co-text">
+                  {vendor
+                    ? t("receiving.door.draft_resume_banner_vendor", { time, vendor })
+                    : t("receiving.door.draft_resume_banner", { time })}
+                </span>
+                <div className="flex shrink-0 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => discardDraft(d)}
+                    aria-label={
+                      vendor
+                        ? t("receiving.door.draft_discard_aria_vendor", { time, vendor })
+                        : t("receiving.door.draft_discard_aria", { time })
+                    }
+                    className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-sm font-bold text-co-text-dim hover:border-co-text"
+                  >
+                    {t("receiving.door.draft_discard")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => resumeDraft(d)}
+                    aria-label={
+                      vendor
+                        ? t("receiving.door.draft_resume_aria_vendor", { time, vendor })
+                        : t("receiving.door.draft_resume_aria", { time })
+                    }
+                    className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-3 text-sm font-bold text-co-text hover:bg-co-gold-deep"
+                  >
+                    {t("receiving.door.draft_resume")}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
         </div>
       ) : null}
 
