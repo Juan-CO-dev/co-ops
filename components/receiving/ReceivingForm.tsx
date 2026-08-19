@@ -10,10 +10,11 @@
  * No template → today's blank-line behavior (one added line, expanded).
  *
  * Three visually numbered steps: 1 Count · 2 Receipt photo · 3 Submit. Submit
- * gates on receiptPhotoId OR a "Photo later" tick (which appends
- * "[PHOTO PENDING]" to the header note). The primary button files a complete
- * delivery; a quieter secondary action files an in-progress ("still unloading")
- * one. A 409 duplicate renders inline with a "View existing" deep link.
+ * gates on receiptPhotoId OR a "Photo later" tick; the missing photo needs no
+ * note tag, because receipt_url IS NULL already renders the "Photo missing"
+ * badge on the receiving list and the delivery detail. The primary button files
+ * a complete delivery; a quieter secondary action files an in-progress ("still
+ * unloading") one. A 409 duplicate renders inline with a "View existing" link.
  *
  * House laws honored: useState-only disclosure (no effects for prop-driven
  * resets); router.refresh() does NOT reset client state, so success resets
@@ -508,15 +509,18 @@ export function ReceivingForm({
     setErr(null);
     setDupId(null);
     setBusy(true);
+    // The note is the operator's words and nothing else. "Photo later" used to append a
+    // "[PHOTO PENDING]" tag here — an untranslated machine string wedged into free text,
+    // duplicating state the data already carries: receipt_url IS NULL drives the
+    // "Photo missing" badge on both the receiving list and the delivery detail.
     const headerNote = notes.trim();
-    const finalNote = photoLater ? `${headerNote}${headerNote ? " " : ""}[PHOTO PENDING]` : headerNote;
     const payload = {
       vendorId,
       locationId,
       deliveryDate: date,
       invoiceNumber: invoiceNumber.trim() || null,
       invoiceTotal: num(invoiceTotal),
-      notes: finalNote || null,
+      notes: headerNote || null,
       deliveryStatus,
       // FORK 1: store the canonical /api/photos/{id} URL in receipt_url (TEXT).
       receiptUrl: receiptPhotoId ? `/api/photos/${receiptPhotoId}` : null,
