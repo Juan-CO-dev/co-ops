@@ -97,7 +97,7 @@ function PrepValuesTable({ rows, t }: PrepValuesTableProps) {
                   row.parStatus === "under"
                     ? "text-co-cta"
                     : row.parStatus === "over"
-                      ? "text-co-gold-deep"
+                      ? "text-co-gold-text"
                       : "text-co-text"
                 }
               >

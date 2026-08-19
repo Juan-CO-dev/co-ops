@@ -276,7 +276,7 @@ function CoreCard({
           <p className="text-xs italic text-co-text-muted">{t("admin.vendors.core.readonly_note")}</p>
         ) : null}
         {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
-        {saved ? <p className="text-sm text-co-gold-deep">{t("admin.vendors.saved")}</p> : null}
+        {saved ? <p className="text-sm text-co-gold-text">{t("admin.vendors.saved")}</p> : null}
 
         {canEdit ? (
           <div className="flex justify-end">
@@ -408,7 +408,7 @@ function ClassificationCard({
           <p className="text-xs italic text-co-text-muted">{t("admin.vendors.classification.readonly_note")}</p>
         ) : null}
         {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
-        {saved ? <p className="text-sm text-co-gold-deep">{t("admin.vendors.saved")}</p> : null}
+        {saved ? <p className="text-sm text-co-gold-text">{t("admin.vendors.saved")}</p> : null}
 
         {canEdit ? (
           <div className="flex justify-end">
@@ -614,7 +614,7 @@ function ScheduleCard({
           <p className="text-xs italic text-co-text-muted">{t("admin.vendors.schedule.readonly_note")}</p>
         ) : null}
         {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
-        {saved ? <p className="text-sm text-co-gold-deep">{t("admin.vendors.saved")}</p> : null}
+        {saved ? <p className="text-sm text-co-gold-text">{t("admin.vendors.saved")}</p> : null}
 
         {canEdit ? (
           <div className="flex justify-end">
@@ -732,7 +732,7 @@ function TransmissionCard({
           <p className="text-xs italic text-co-text-muted">{t("admin.vendors.transmission.readonly_note")}</p>
         ) : null}
         {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
-        {saved ? <p className="text-sm text-co-gold-deep">{t("admin.vendors.saved")}</p> : null}
+        {saved ? <p className="text-sm text-co-gold-text">{t("admin.vendors.saved")}</p> : null}
 
         {canEdit ? (
           <div className="flex justify-end">
@@ -950,7 +950,7 @@ function NotesCard({ vendor, canEdit }: { vendor: VendorView; canEdit: boolean }
           <p className="text-xs italic text-co-text-muted">{t("admin.vendors.notes.readonly_note")}</p>
         ) : null}
         {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
-        {saved ? <p className="text-sm text-co-gold-deep">{t("admin.vendors.saved")}</p> : null}
+        {saved ? <p className="text-sm text-co-gold-text">{t("admin.vendors.saved")}</p> : null}
         {canEdit ? (
           <div className="flex justify-end">
             <PrimaryBtn label={t("admin.vendors.save")} disabled={submitting} onClick={() => void save()} />
@@ -1086,7 +1086,7 @@ function ContactsCard({
                   <div className="flex flex-wrap items-center gap-2 font-bold">
                     {c.name}
                     {c.acceptsTextOrders ? (
-                      <span className="inline-flex items-center rounded-full bg-co-gold/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-gold-deep">
+                      <span className="inline-flex items-center rounded-full bg-co-gold/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-gold-text">
                         {t("admin.vendors.contact.accepts_text_badge")}
                       </span>
                     ) : null}

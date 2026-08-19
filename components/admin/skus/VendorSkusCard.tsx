@@ -314,7 +314,7 @@ export function SkuRow({
             </span>
           ) : null}
           {s.locationName ? (
-            <span className="inline-flex items-center rounded-full bg-co-gold/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-gold-deep">
+            <span className="inline-flex items-center rounded-full bg-co-gold/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-gold-text">
               {s.locationName}
             </span>
           ) : null}

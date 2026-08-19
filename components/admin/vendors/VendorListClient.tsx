@@ -118,7 +118,7 @@ function VendorCard({
         <span
           className={
             "inline-flex shrink-0 items-center rounded-full px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] " +
-            (v.active ? "bg-co-gold/20 text-co-gold-deep" : "bg-co-text/10 text-co-text-muted")
+            (v.active ? "bg-co-gold/20 text-co-gold-text" : "bg-co-text/10 text-co-text-muted")
           }
         >
           {v.active ? t("admin.vendors.status.active") : t("admin.vendors.status.inactive")}
@@ -131,7 +131,7 @@ function VendorCard({
           {v.orderTypes.map((o) => (
             <span
               key={`o-${o.id}`}
-              className="inline-flex items-center rounded-full bg-co-gold/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-gold-deep"
+              className="inline-flex items-center rounded-full bg-co-gold/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-gold-text"
             >
               {o.label}
             </span>

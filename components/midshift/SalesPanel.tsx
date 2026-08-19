@@ -29,7 +29,7 @@ export function SalesPanel({ pulse, language }: { pulse: SalesPulse; language: L
 
   return (
     <section>
-      <h2 className="mb-2 flex flex-wrap items-baseline gap-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
+      <h2 className="mb-2 flex flex-wrap items-baseline gap-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
         {serverT(language, "midshift.sales.heading")}
         {lastPulledAt && (
           <span className="normal-case font-semibold tracking-normal text-co-text-dim">

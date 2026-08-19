@@ -212,11 +212,11 @@ export function IntakeLineRow({
               {t("receiving.door.expected_line", { qty: line.expectedQty, level: expectedLabel })}
             </span>
           ) : isOffered ? (
-            <span className="block text-[12px] font-semibold text-co-gold-deep">
+            <span className="block text-[12px] font-semibold text-co-gold-text">
               {t("receiving.door.offered_badge")}
             </span>
           ) : (
-            <span className="block text-[12px] font-semibold text-co-gold-deep">
+            <span className="block text-[12px] font-semibold text-co-gold-text">
               {t("receiving.door.added_badge")}
             </span>
           )}

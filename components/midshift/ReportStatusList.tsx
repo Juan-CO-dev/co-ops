@@ -43,7 +43,7 @@ export function ReportStatusList({
   return (
     // id = the attention banner's tap-through anchor target.
     <section id="midshift-reports">
-      <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
+      <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
         {serverT(language, "midshift.reports.heading")}
       </h2>
       <ul className="flex flex-col gap-2">
@@ -73,7 +73,7 @@ export function ReportStatusList({
                 )}
                 {/* due_now: the mid-day 14:00–15:30 window nudge (was silent). */}
                 {row.overdue === "due_now" && (
-                  <span className="text-xs font-semibold text-co-gold-deep">
+                  <span className="text-xs font-semibold text-co-gold-text">
                     {serverT(language, "midshift.overdue.due_now")}
                   </span>
                 )}

@@ -26,7 +26,7 @@ export function UnifiedSearchResults({
     <div className="mb-4 flex flex-col gap-4">
       {people.length > 0 ? (
         <section>
-          <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
+          <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
             {t("reports.search.people_heading", { n: people.length })}
           </h2>
           <ul className="flex flex-col gap-1">
@@ -55,7 +55,7 @@ export function UnifiedSearchResults({
 
       {pages.length > 0 ? (
         <section>
-          <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
+          <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
             {t("reports.search.pages_heading", { n: pages.length })}
           </h2>
           <div className="flex flex-wrap gap-2">

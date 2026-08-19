@@ -94,7 +94,7 @@ export function MidDayPhase1Form({
     <div className="mt-4 flex flex-col gap-5 lg:block lg:columns-2 lg:[column-gap:1.25rem] lg:[&>*]:break-inside-avoid lg:[&>*]:mb-5">
       {groups.map((g) => (
         <section key={g.section}>
-          <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
+          <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
             {resolveSectionLabel(sectionLabels, g.section, language, g.section)}
           </h2>
           <ul className="mt-2 flex flex-col gap-1.5">

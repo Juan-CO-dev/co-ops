@@ -318,7 +318,7 @@ function LocationItemRow({
             </span>
           ) : null}
           {parCtx.itemGlobal ? (
-            <span className="ml-2 rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.05em] text-co-gold-deep">
+            <span className="ml-2 rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.05em] text-co-gold-text">
               {t("admin.templates.global_badge")}
             </span>
           ) : null}

@@ -207,7 +207,7 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
           <div className="mt-4 flex flex-col gap-5">
             {groups.map((g) => (
               <section key={g.section}>
-                <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
+                <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
                   {resolveSectionLabel(state.sectionLabels, g.section, lang, g.section)}
                 </h2>
                 <ul className="mt-2 flex flex-col gap-1">

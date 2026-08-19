@@ -220,7 +220,7 @@ function ItemQuestionRow({ question }: { question: ItemQuestionView }) {
       <div className="flex items-center justify-between gap-2">
         <p className="min-w-0 text-sm font-bold text-co-text">
           {question.label}
-          <span className="ml-2 rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.05em] text-co-gold-deep">
+          <span className="ml-2 rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.05em] text-co-gold-text">
             {t(inputTypeKey)}
           </span>
         </p>

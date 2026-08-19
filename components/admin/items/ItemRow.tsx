@@ -176,7 +176,7 @@ export function ItemRow({
             </span>
           ) : null}
           {item.isDefault ? (
-            <span className="ml-2 rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.05em] text-co-gold-deep">
+            <span className="ml-2 rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.05em] text-co-gold-text">
               {t("admin.templates.default_badge")}
             </span>
           ) : null}
@@ -384,7 +384,7 @@ export function ItemRow({
             <p className="text-xs text-co-text-muted">{t("admin.templates.opening_verify_hint")}</p>
             <div className="mt-2 flex items-center gap-2">
               {item.openingVerify ? (
-                <span className="rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.05em] text-co-gold-deep">
+                <span className="rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.05em] text-co-gold-text">
                   {t("admin.templates.opening_verify_on")}
                 </span>
               ) : null}

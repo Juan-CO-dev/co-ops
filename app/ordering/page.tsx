@@ -130,7 +130,7 @@ export default async function OrderingPage({
               <span className="text-sm font-semibold text-co-text-muted">{shopLabel}</span>
             )}
             {walker.isWeekendPar && (
-              <span className="rounded-full bg-co-gold/25 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-gold-deep">
+              <span className="rounded-full bg-co-gold/25 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-gold-text">
                 {serverT(language, "ordering.page.weekend_par")}
               </span>
             )}

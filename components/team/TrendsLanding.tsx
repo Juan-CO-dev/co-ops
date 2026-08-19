@@ -44,7 +44,7 @@ export function TrendsLanding({
           <p className="text-[11px] text-co-text-muted">
             {serverT(language, "reports.trends.landing.ops_desc")}
           </p>
-          <p className="mt-2 text-[10px] font-bold uppercase tracking-[0.08em] text-co-gold-deep">
+          <p className="mt-2 text-[10px] font-bold uppercase tracking-[0.08em] text-co-gold-text">
             {serverT(language, "reports.trends.landing.tap_hint")} →
           </p>
         </Link>
@@ -59,7 +59,7 @@ export function TrendsLanding({
             <p className="text-[11px] text-co-text-muted">
               {serverT(language, "reports.trends.landing.team_desc")}
             </p>
-            <p className="mt-2 text-[10px] font-bold uppercase tracking-[0.08em] text-co-gold-deep">
+            <p className="mt-2 text-[10px] font-bold uppercase tracking-[0.08em] text-co-gold-text">
               {serverT(language, "reports.trends.landing.tap_hint")} →
             </p>
           </Link>
@@ -68,7 +68,7 @@ export function TrendsLanding({
 
       {/* Relevant right now */}
       <div className="flex flex-col gap-2">
-        <p className="text-xs font-bold uppercase tracking-[0.1em] text-co-gold-deep">
+        <p className="text-xs font-bold uppercase tracking-[0.1em] text-co-gold-text">
           {serverT(language, "reports.trends.landing.relevant_now")}
         </p>
         {attention.length === 0 ? (

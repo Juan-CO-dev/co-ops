@@ -1096,7 +1096,7 @@ export function ChecklistItem({
             </span>
           ) : null}
           {taggedAnnotationText ? (
-            <span className="font-semibold text-co-gold-deep">{taggedAnnotationText}</span>
+            <span className="font-semibold text-co-gold-text">{taggedAnnotationText}</span>
           ) : null}
           {noteText ? (
             <span className="italic text-co-text-muted">{noteText}</span>
@@ -2037,7 +2037,7 @@ function LockIcon() {
 
 function SpinnerIcon() {
   return (
-    <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden className="animate-spin text-co-gold-deep">
+    <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden className="animate-spin text-co-gold-text">
       <circle cx="14" cy="14" r="11" stroke="currentColor" strokeOpacity="0.25" strokeWidth="3" fill="none" />
       <path
         d="M25 14a11 11 0 0 0-11-11"
