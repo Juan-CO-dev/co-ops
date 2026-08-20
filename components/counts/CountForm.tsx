@@ -2,6 +2,7 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
+import { ActionButton } from "@/components/ActionButton";
 import { PasswordModal } from "@/components/auth/PasswordModal";
 import type { CountSkuOption } from "@/lib/counts";
 
@@ -75,7 +76,7 @@ export function CountForm({ skus, locationId }: { skus: CountSkuOption[]; locati
   };
 
   return (
-    <div className="rounded-xl border-2 border-co-border bg-co-surface p-4">
+    <div className="rounded-2xl border-2 border-co-border bg-co-surface p-4">
       <h2 className="text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">{t("counts.form.title")}</h2>
       {/* Disjoint-by-law guidance (council L5): full containers + loose-below,
           never double-counted. */}
@@ -140,7 +141,7 @@ export function CountForm({ skus, locationId }: { skus: CountSkuOption[]; locati
         </div>
       ) : null}
       <div className="mt-4 flex justify-end">
-        <button type="button" disabled={!canSubmit} onClick={() => void submit()} className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50">{t("counts.form.submit")}</button>
+        <ActionButton disabled={!canSubmit} onClick={() => void submit()}>{t("counts.form.submit")}</ActionButton>
       </div>
       {/* PasswordModal posts /api/auth/step-up itself and confirms only on 200. */}
       <PasswordModal

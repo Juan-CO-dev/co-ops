@@ -169,7 +169,7 @@ export function NotificationList({
             onClick={onClose}
             aria-label={t("notifications.sheet.close_aria")}
             className="
-              inline-flex h-9 w-9 items-center justify-center rounded-full
+              inline-flex h-11 w-11 items-center justify-center rounded-full
               border-2 border-co-border-2 text-co-text-muted
               transition hover:border-co-text hover:text-co-text
               focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60

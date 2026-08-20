@@ -249,7 +249,7 @@ function LoginPageContent() {
             className="h-7 w-auto sm:h-8"
           />
         </h1>
-        <p className="mt-2 text-center text-[10px] font-bold uppercase tracking-[0.32em] text-co-text/70">
+        <p className="mt-2 text-center text-[10px] font-bold uppercase tracking-[0.32em] text-co-text-muted">
           {t("auth.brand.tagline")}
         </p>
       </header>

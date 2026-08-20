@@ -73,7 +73,7 @@ export function ReportFilterBar({
       <div className="flex flex-wrap gap-3">
         {/* Free-text quick-find — matches submitter name + report type */}
         <div className="flex flex-col gap-1">
-          <label htmlFor="rpt-q" className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-muted">
+          <label htmlFor="rpt-q" className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-dim">
             {t("reports.search.label")}
           </label>
           <input
@@ -89,7 +89,7 @@ export function ReportFilterBar({
 
         {/* Date from */}
         <div className="flex flex-col gap-1">
-          <label htmlFor="rpt-from" className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-muted">
+          <label htmlFor="rpt-from" className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-dim">
             {t("reports.filter.from")}
           </label>
           <input
@@ -103,7 +103,7 @@ export function ReportFilterBar({
 
         {/* Date to */}
         <div className="flex flex-col gap-1">
-          <label htmlFor="rpt-to" className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-muted">
+          <label htmlFor="rpt-to" className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-dim">
             {t("reports.filter.to")}
           </label>
           <input
@@ -117,14 +117,14 @@ export function ReportFilterBar({
 
         {/* Report type */}
         <div className="flex flex-col gap-1">
-          <label htmlFor="rpt-type" className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-muted">
+          <label htmlFor="rpt-type" className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-dim">
             {t("reports.filter.type")}
           </label>
           <select
             id="rpt-type"
             name="type"
             defaultValue={selectedType}
-            className="h-10 rounded-md border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text focus:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
+            className="min-h-[44px] rounded-md border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text focus:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
           >
             <option value="all">{t("reports.filter.all_types")}</option>
             {allowedTypes.map((typeKey) => (
@@ -145,7 +145,7 @@ export function ReportFilterBar({
 
       {/* Derived signal filter toggles — checkboxes submitted as "true" when checked */}
       <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 border-t border-co-border pt-3">
-        <span className="w-full text-xs font-bold uppercase tracking-[0.12em] text-co-text-muted">
+        <span className="w-full text-xs font-bold uppercase tracking-[0.12em] text-co-text-dim">
           {t("reports.filter.signals_heading")}
         </span>
 

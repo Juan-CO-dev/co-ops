@@ -18,6 +18,7 @@ import { formatTime } from "@/lib/i18n/format";
 import type { RoleCode } from "@/lib/roles";
 import type { WrittenReportListItem } from "@/lib/written-reports";
 
+import { ActionButton } from "@/components/ActionButton";
 import { AlertPill, type AlertPillTone } from "@/components/ui/AlertPill";
 import { EmptyState } from "@/components/EmptyState";
 import { WrittenReportForm, type WrittenReportFormValues } from "./WrittenReportForm";
@@ -138,17 +139,15 @@ export function WrittenReportsClient({
             }}
           />
         ) : (
-          <button
-            type="button"
+          <ActionButton
             onClick={() => {
               setAdding(true);
               setEditingId(null);
               setErrorMsg(null);
             }}
-            className="inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
           >
             {t("written_reports.new")}
-          </button>
+          </ActionButton>
         )
       ) : null}
 

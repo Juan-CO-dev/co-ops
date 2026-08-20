@@ -183,7 +183,7 @@ export function ManagerLoginForm({ onSuccess, onTransientError }: ManagerLoginFo
   return (
     <form onSubmit={submit} noValidate className="flex flex-col gap-5">
       <div className="flex flex-col gap-1.5">
-        <label htmlFor="manager-email" className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
+        <label htmlFor="manager-email" className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-dim">
           {t("auth.manager.email_label")}
         </label>
         <input
@@ -221,7 +221,7 @@ export function ManagerLoginForm({ onSuccess, onTransientError }: ManagerLoginFo
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label htmlFor="manager-password" className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
+        <label htmlFor="manager-password" className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-dim">
           {t("auth.manager.password_label")}
         </label>
         <input

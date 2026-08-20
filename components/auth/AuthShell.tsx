@@ -40,7 +40,7 @@ export function AuthShell({
         >
           Compliments Only
         </h1>
-        <p className="mt-1 text-center text-[10px] font-bold uppercase tracking-[0.32em] text-co-text/70">
+        <p className="mt-1 text-center text-[10px] font-bold uppercase tracking-[0.32em] text-co-text-muted">
           Operations
         </p>
       </header>

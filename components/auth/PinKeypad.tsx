@@ -189,7 +189,7 @@ export function PinKeypad({ userName, role, onSubmit, onBack }: PinKeypadProps) 
         <BrandMark size={22} decorative className="opacity-70" />
         <div className="flex flex-col items-center gap-1">
           <span
-            className="rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.18em] text-co-text"
+            className="rounded-full px-3 py-1 text-[11px] font-bold uppercase tracking-[0.12em] text-co-text"
             style={{ background: def.color + "33", border: `1px solid ${def.color}` }}
           >
             {roleLabel}

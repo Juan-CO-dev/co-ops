@@ -34,6 +34,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
+import { ActionButton } from "@/components/ActionButton";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { AlertPill, type AlertPillTone } from "@/components/ui/AlertPill";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -385,14 +386,13 @@ function UnlinkedReceiptRow({
                           {c.vendorName} · {t("receiving.claim.po_status_at_date", { status: c.status, date: c.createdAt.slice(0, 10) })}
                         </span>
                       </div>
-                      <button
-                        type="button"
+                      <ActionButton
+                        className="shrink-0"
                         disabled={attaching}
                         onClick={() => void attach(c.poId)}
-                        className="inline-flex min-h-[44px] shrink-0 items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-3 text-[11px] font-bold text-co-text transition hover:bg-co-gold-deep disabled:opacity-50"
                       >
                         {t("receiving.claim.attach_po_action")}
-                      </button>
+                      </ActionButton>
                     </li>
                   ))}
                 </ul>
@@ -565,7 +565,7 @@ export function VendorClaimPanel({
           <div className="mt-2 grid grid-cols-1 gap-3 md:grid-cols-2">
             {/* Left: what we counted at the door. */}
             <div className="rounded-lg border-2 border-co-border-2 bg-co-surface p-3">
-              <h3 className="text-xs font-bold uppercase tracking-[0.1em] text-co-text-muted">
+              <h3 className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
                 {t("receiving.claim.counted_title")}
               </h3>
               {countedSummary.length === 0 ? (
@@ -588,7 +588,7 @@ export function VendorClaimPanel({
 
             {/* Right: the vendor's claim (untrusted — rendered per content-type law). */}
             <div className="rounded-lg border-2 border-co-border-2 bg-co-surface p-3">
-              <h3 className="text-xs font-bold uppercase tracking-[0.1em] text-co-text-muted">
+              <h3 className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
                 {t("receiving.claim.vendor_title")}
               </h3>
               <div className="mt-2">
@@ -619,22 +619,12 @@ export function VendorClaimPanel({
                     aria-label={t("receiving.claim.override_note_label")}
                   />
                   <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void override()}
-                      className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-3 text-xs font-bold text-co-text transition hover:bg-co-gold-deep disabled:opacity-50"
-                    >
+                    <ActionButton disabled={busy} onClick={() => void override()}>
                       {t("receiving.claim.override_confirm")}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={resetAttest}
-                      className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text-dim transition hover:border-co-text disabled:opacity-50"
-                    >
+                    </ActionButton>
+                    <ActionButton variant="secondary" disabled={busy} onClick={resetAttest}>
                       {t("receiving.claim.cancel")}
-                    </button>
+                    </ActionButton>
                   </div>
                 </div>
               ) : mode === "discrepancy" ? (
@@ -652,56 +642,39 @@ export function VendorClaimPanel({
                     aria-label={t("receiving.claim.discrepancy_note_label")}
                   />
                   <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void attest("discrepant")}
-                      className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-3 text-xs font-bold text-co-text transition hover:bg-co-gold-deep disabled:opacity-50"
-                    >
+                    <ActionButton disabled={busy} onClick={() => void attest("discrepant")}>
                       {t("receiving.claim.discrepancy_confirm")}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={resetAttest}
-                      className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text-dim transition hover:border-co-text disabled:opacity-50"
-                    >
+                    </ActionButton>
+                    <ActionButton variant="secondary" disabled={busy} onClick={resetAttest}>
                       {t("receiving.claim.cancel")}
-                    </button>
+                    </ActionButton>
                   </div>
                 </div>
               ) : (
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-[11px] font-bold text-co-text-dim">{t("receiving.claim.attest_prompt")}</span>
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() => void attest("matched")}
-                    className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-3 text-xs font-bold text-co-text transition hover:bg-co-gold-deep disabled:opacity-50"
-                  >
+                  <ActionButton disabled={busy} onClick={() => void attest("matched")}>
                     {t("receiving.claim.attest_matches")}
-                  </button>
-                  <button
-                    type="button"
+                  </ActionButton>
+                  <ActionButton
+                    variant="secondary"
                     disabled={busy}
                     onClick={() => void attest("discrepant")}
-                    className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text disabled:opacity-50"
                   >
                     {t("receiving.claim.attest_discrepancy")}
-                  </button>
+                  </ActionButton>
                   {canOverride ? (
-                    <button
-                      type="button"
+                    <ActionButton
+                      variant="danger"
                       disabled={busy}
                       onClick={() => {
                         setMode("override");
                         setNote("");
                         setErr(null);
                       }}
-                      className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta-text bg-co-surface px-3 text-xs font-bold text-co-cta-text transition hover:bg-co-danger-surface disabled:opacity-50"
                     >
                       {t("receiving.claim.attest_override")}
-                    </button>
+                    </ActionButton>
                   ) : null}
                 </div>
               )}
@@ -716,7 +689,7 @@ export function VendorClaimPanel({
 
           {/* Attach an emailed/paper receipt (POST multipart). */}
           <div className="rounded-lg border-2 border-co-border-2 bg-co-surface p-3">
-            <label className="text-xs font-bold uppercase tracking-[0.1em] text-co-text-muted" htmlFor={`claim-file-${deliveryId}`}>
+            <label className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-dim" htmlFor={`claim-file-${deliveryId}`}>
               {t("receiving.claim.attach_title")}
             </label>
             <input
@@ -726,7 +699,7 @@ export function VendorClaimPanel({
               disabled={uploading}
               onChange={(e) => void onFile(e.target.files?.[0])}
               aria-label={t("receiving.claim.attach_title")}
-              className="mt-2 block w-full text-sm text-co-text file:mr-3 file:min-h-[44px] file:rounded-lg file:border-2 file:border-co-gold-deep file:bg-co-gold file:px-3 file:text-xs file:font-bold file:text-co-text disabled:opacity-60"
+              className="mt-2 block w-full text-sm text-co-text file:mr-3 file:min-h-[48px] file:rounded-xl file:border-2 file:border-co-text file:bg-co-gold file:px-5 file:text-sm file:font-bold file:uppercase file:tracking-[0.1em] file:text-co-text disabled:opacity-60"
             />
             {uploading ? <p className="mt-2 text-[11px] text-co-text-dim">{t("receiving.claim.uploading")}</p> : null}
             {uploadErr ? <p className="mt-2 text-xs text-co-cta-text">{uploadErr}</p> : null}

@@ -11,6 +11,7 @@
 
 import { useState } from "react";
 
+import { ActionButton } from "@/components/ActionButton";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
 import {
@@ -154,22 +155,12 @@ export function WrittenReportForm({
       {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
 
       <div className="flex justify-end gap-2">
-        <button
-          type="button"
-          onClick={onCancel}
-          disabled={busy}
-          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-50"
-        >
+        <ActionButton variant="secondary" onClick={onCancel} disabled={busy}>
           {t("written_reports.cancel")}
-        </button>
-        <button
-          type="button"
-          disabled={!canSubmit}
-          onClick={submit}
-          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-50"
-        >
+        </ActionButton>
+        <ActionButton disabled={!canSubmit} onClick={submit}>
           {submitLabel}
-        </button>
+        </ActionButton>
       </div>
     </div>
   );

@@ -28,7 +28,7 @@ interface DashboardNavProps {
 }
 
 const CHIP_CLASS =
-  "rounded-full border-2 border-co-border bg-co-surface px-3 py-1.5 text-sm font-semibold text-co-text " +
+  "inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border bg-co-surface px-3 py-1.5 text-sm font-semibold text-co-text " +
   "transition-[opacity,border-color,background-color] duration-150 hover:opacity-90 active:opacity-80";
 
 export function DashboardNav({ language, actorLevel, selectedLocationId }: DashboardNavProps) {

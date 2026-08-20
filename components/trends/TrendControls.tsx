@@ -43,7 +43,7 @@ export function TrendControls({
               scroll={false}
               aria-current={on ? "page" : undefined}
               className={[
-                "inline-flex min-h-[40px] items-center rounded-full px-4 py-1.5",
+                "inline-flex min-h-[44px] items-center rounded-full px-4 py-1.5",
                 "text-xs font-bold uppercase tracking-[0.1em] transition",
                 on
                   ? "border-2 border-co-text bg-co-gold text-co-text"
@@ -59,7 +59,7 @@ export function TrendControls({
         href={href(granularity, !compare)}
         scroll={false}
         className={[
-          "inline-flex min-h-[40px] items-center rounded-full px-4 py-1.5",
+          "inline-flex min-h-[44px] items-center rounded-full px-4 py-1.5",
           "text-xs font-bold uppercase tracking-[0.1em] transition",
           compare
             ? "border-2 border-co-text bg-co-gold text-co-text"

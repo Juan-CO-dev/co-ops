@@ -15,7 +15,7 @@ import { ROLES } from "@/lib/roles";
 
 function Tile({ value, label }: { value: string; label: string }) {
   return (
-    <div className="flex-1 min-w-[96px] rounded-xl border border-co-border bg-co-surface p-3 text-center">
+    <div className="flex-1 min-w-[96px] rounded-2xl border border-co-border bg-co-surface p-3 text-center">
       <div className="text-xl font-extrabold text-co-text">{value}</div>
       <div className="text-[9px] uppercase text-co-text-dim">{label}</div>
     </div>
@@ -24,7 +24,7 @@ function Tile({ value, label }: { value: string; label: string }) {
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-co-border bg-co-surface p-3">
+    <div className="rounded-2xl border border-co-border bg-co-surface p-3">
       <div className="text-[11px] font-bold uppercase tracking-wide text-co-text-muted mb-2">{title}</div>
       {children}
     </div>

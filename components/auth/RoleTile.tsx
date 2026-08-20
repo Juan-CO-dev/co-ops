@@ -42,7 +42,7 @@ export function RoleTile({ role, onSelect, disabled = false }: RoleTileProps) {
         style={{ background: def.color }}
         aria-hidden
       />
-      <span className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
+      <span className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-dim">
         {def.shortLabel}
       </span>
       <span className="text-lg font-bold leading-tight text-co-text">{roleLabel}</span>

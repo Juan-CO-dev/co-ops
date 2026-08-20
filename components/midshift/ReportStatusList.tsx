@@ -43,7 +43,7 @@ export function ReportStatusList({
   return (
     // id = the attention banner's tap-through anchor target.
     <section id="midshift-reports">
-      <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
+      <h2 className="mb-2 text-[11px] font-bold uppercase tracking-[0.12em] text-co-gold-text">
         {serverT(language, "midshift.reports.heading")}
       </h2>
       <ul className="flex flex-col gap-2">
@@ -62,7 +62,7 @@ export function ReportStatusList({
               <div className="flex flex-col items-end gap-0.5">
                 {/* Overdue badge takes visual priority */}
                 {row.overdue === "overdue" && (
-                  <span className="text-xs font-semibold text-co-cta">
+                  <span className="text-xs font-semibold text-co-cta-text">
                     {serverT(language, "midshift.overdue.badge")}
                   </span>
                 )}
