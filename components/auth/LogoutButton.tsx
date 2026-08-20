@@ -11,6 +11,7 @@
 import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 
+import { actionButtonClass } from "@/components/ActionButton";
 import { useTranslation } from "@/lib/i18n/provider";
 
 export function LogoutButton() {
@@ -34,14 +35,7 @@ export function LogoutButton() {
       type="button"
       onClick={onClick}
       disabled={submitting}
-      className="
-        inline-flex min-h-[48px] items-center justify-center rounded-xl
-        border-2 border-co-border-2 bg-co-surface px-4 text-sm
-        font-bold uppercase tracking-[0.1em] text-co-text-muted transition
-        hover:border-co-text hover:text-co-text
-        focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
-        disabled:cursor-not-allowed disabled:opacity-50
-      "
+      className={actionButtonClass("secondary")}
     >
       {submitting ? t("auth.logout.submitting") : t("auth.logout.label")}
     </button>
