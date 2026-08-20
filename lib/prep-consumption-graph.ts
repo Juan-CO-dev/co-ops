@@ -39,6 +39,18 @@ export interface GraphOutput {
   yield: number;
   /** items.oz_per_par_unit for item outputs (null when unset/unknown). */
   ozPerParUnit: number | null;
+  /**
+   * `items.default_par_unit` for item outputs — the sub-item's OWN par-unit
+   * label ("Quart", "1/3 Pan", "Bottle"). Null for menu outputs and when unset.
+   *
+   * Load-bearing only for `itemRefParUnits`: it is the one non-measure spelling
+   * a recipe line may legitimately use for an item ref ("2 Quart of Marinara"),
+   * and naming it explicitly is what lets every OTHER unregistered label be
+   * refused instead of silently read as par-units. Optional so the many
+   * fixtures/constructors that predate it keep compiling — absent means
+   * "unknown", which refuses, never guesses.
+   */
+  parUnitLabel?: string | null;
 }
 export interface GraphRecipe {
   recipeId: string;
@@ -78,30 +90,68 @@ export interface RecipeGraph {
   measures: Map<string, MeasureUnitFactor>;
 }
 
+/** The sub-item's own `default_par_unit` label, from the recipe that produces it. */
+function subItemParUnitLabel(graph: RecipeGraph, itemId: string): string | null {
+  const node = graph.byOutputItem.get(itemId);
+  return node?.outputs.find((o) => o.outputItemId === itemId)?.parUnitLabel ?? null;
+}
+
+/** Case/whitespace-insensitive label equality (`"Quart"` ≡ `"quart "`). */
+function labelsMatch(a: string | null, b: string | null): boolean {
+  if (a == null || b == null) return false;
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
 /**
  * Par-units of a sub-ITEM consumed by an item-ref input line (Wave 1.5 math
  * fix — prod had 65 oz-denominated consumer-build lines read as par-units,
  * e.g. "2 oz Marinara" counted as 2 QUARTS, "3.5 oz Turkey" as 3.5 THIRD-PANS).
  *
- *  - unit null / unregistered / count-dimension → quantity IS par-units of the
- *    sub-item (the seed convention for "each"/"handful"-style lines).
- *  - WEIGHT-dimension unit → convert: oz = quantity × toBaseFactor; par-units
+ *  - unit NULL → quantity IS par-units (the seed convention for bare lines).
+ *  - COUNT-dimension measure → quantity IS par-units ("each"/"handful"-style).
+ *  - the sub-item's OWN par-unit label ("2 Quart of Marinara") → quantity IS
+ *    par-units. This is the only non-measure spelling that means anything, and
+ *    it is now checked EXPLICITLY rather than reached by falling through.
+ *  - WEIGHT-dimension measure → convert: oz = quantity × toBaseFactor; par-units
  *    = oz ÷ oz-per-par-unit of the sub-item. oz-per-par-unit prefers
  *    items.oz_per_par_unit (human-entered ground truth) and falls back to the
  *    sub's per-par-unit INPUT mass (Σ of its flattened SKU-oz map) — exact for
  *    mixes/salads, UNDERSTATES cook-down items (caramelized onions, jus)
  *    until oz_per_par_unit is filled. Neither known-positive → null.
- *  - VOLUME-dimension unit → null (unresolvable): volume→weight needs density
+ *  - VOLUME-dimension measure → null (unresolvable): volume→weight needs density
  *    we don't have — same doctrine as recipe-math's ozPerMeasureUnit. Zero
  *    prod rows carry volume-denominated item refs today.
+ *  - ANYTHING ELSE → null. See below.
+ *
+ * ── THE UNKNOWN-UNIT REFUSAL (2026-08-20 costing cleanup) ────────────────────
+ * This function used to read an UNREGISTERED label as par-units, alongside the
+ * two conventions above. That is how prod's one `1 ladle` line on Our French Dip
+ * came to mean one QUART of jus: `ladle` is in no `measure_units` row, so it fell
+ * into the par-unit branch and silently re-denominated the line by ~8x, with no
+ * error anywhere and a perfectly plausible dollar figure on the board.
+ *
+ * A typo'd or unregistered unit is now a REFUSAL (null), which poisons the
+ * flatten to the honest `unresolved` status — the same posture the whole module
+ * already takes for an unknown SKU pack or an un-convertible unit, and the same
+ * one the D2 mass-balance guard took for a wrong-but-confident number. The rule
+ * this encodes: a unit the system does not know may never decide what a line
+ * means. Register it (measure_units) or spell the sub-item's par unit; there is
+ * no third way to be understood.
  */
 export function itemRefParUnits(
   graph: RecipeGraph,
   input: GraphInput,
   subPerUnitSkuOz: Map<string, number>,
 ): number | null {
-  const m = input.unit != null ? graph.measures.get(input.unit) : undefined;
-  if (!m || m.dimension === "count") return input.quantity;
+  if (input.unit == null) return input.quantity;
+  const m = graph.measures.get(input.unit);
+  if (!m) {
+    // Not a measure. The sub-item's own par-unit label is the one legitimate
+    // alternative; anything else is unknown and must not be interpreted.
+    const parLabel = input.componentItemId != null ? subItemParUnitLabel(graph, input.componentItemId) : null;
+    return labelsMatch(parLabel, input.unit) ? input.quantity : null;
+  }
+  if (m.dimension === "count") return input.quantity;
   if (m.dimension === "volume") return null;
   const oz = input.quantity * m.toBaseFactor;
   const node = input.componentItemId != null ? graph.byOutputItem.get(input.componentItemId) : undefined;

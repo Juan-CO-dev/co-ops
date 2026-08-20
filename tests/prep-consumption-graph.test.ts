@@ -211,11 +211,11 @@ describe("weight-denominated item refs (Wave 1.5 math fix)", () => {
     expect(perUnitSkuOzForItemFromGraph(g, "B").size).toBe(0);
   });
 
-  it("count units and unregistered labels keep par-unit semantics (seed convention)", () => {
+  it("count units and a null unit keep par-unit semantics (seed convention)", () => {
     const g = graphOf([
       { recipeId: "rA", batchYield: 10, inputs: [ozIn(20, "sku1")], outputs: [itemOut("A", 10)] },
       { recipeId: "rB", batchYield: 1, inputs: [itemInUnit(2, "each", "A")], outputs: [itemOut("B", 1)] },
-      { recipeId: "rC", batchYield: 1, inputs: [itemInUnit(2, "ladle", "A")], outputs: [itemOut("C", 1)] },
+      { recipeId: "rC", batchYield: 1, inputs: [itemInUnit(2, null, "A")], outputs: [itemOut("C", 1)] },
     ]);
     expect(perUnitSkuOzForItemFromGraph(g, "B").get("sku1")).toBeCloseTo(4, 10);
     expect(perUnitSkuOzForItemFromGraph(g, "C").get("sku1")).toBeCloseTo(4, 10);
@@ -228,6 +228,77 @@ describe("weight-denominated item refs (Wave 1.5 math fix)", () => {
     ]);
     // parUnits = 4 oz ÷ 2 oz-per-par = 2 → batch sku1 = 4 oz; share 1; ÷ myYield 2.
     expect(perUnitSkuOzForMenuItemFromGraph(g, "M").get("sku1")).toBeCloseTo(2, 10);
+  });
+});
+
+describe("unknown-unit refusal on item refs (2026-08-20 costing cleanup)", () => {
+  function itemInUnit(quantity: number, unit: string | null, itemId: string): GraphRecipe["inputs"][number] {
+    return { quantity, unit, componentSkuId: null, componentItemId: itemId };
+  }
+  /** An item output that also declares the sub-item's own par-unit label. */
+  function itemOutPar(itemId: string, yld: number, ozPerParUnit: number | null, parUnitLabel: string | null) {
+    return { outputItemId: itemId, outputMenuItemId: null, yield: yld, ozPerParUnit, parUnitLabel };
+  }
+
+  it("an UNREGISTERED unit poisons the flatten instead of silently meaning par-units", () => {
+    // This is prod's `1 ladle` of Jus on Our French Dip: `ladle` is in no
+    // measure_units row, and the old code read it as ONE QUART.
+    const g = graphOf([
+      { recipeId: "rA", batchYield: 10, inputs: [ozIn(20, "sku1")], outputs: [itemOut("A", 10)] },
+      { recipeId: "rC", batchYield: 1, inputs: [itemInUnit(1, "ladle", "A")], outputs: [itemOut("C", 1)] },
+    ]);
+    expect(perUnitSkuOzForItemFromGraph(g, "C").size).toBe(0);
+  });
+
+  it("the same refusal reaches the MENU engine and the direct-SKU lane", () => {
+    const g = graphOf([
+      { recipeId: "rA", batchYield: 10, inputs: [ozIn(20, "sku1")], outputs: [itemOut("A", 10)] },
+      {
+        recipeId: "rM", batchYield: 1,
+        inputs: [itemInUnit(1, "ladle", "A"), ozIn(3, "sku2")],
+        outputs: [menuOut("M", 1)],
+      },
+    ]);
+    expect(perUnitSkuOzForMenuItemFromGraph(g, "M").size).toBe(0);
+    // The direct-SKU lane validates item refs too, so both lanes agree.
+    expect(perUnitDirectSkuOzForMenuItem(g, "M").size).toBe(0);
+    expect(firstLevelItemConsumption(g, "M").size).toBe(0);
+  });
+
+  it("the sub-item's OWN par-unit label still means par-units (case-insensitive)", () => {
+    const g = graphOf([
+      { recipeId: "rA", batchYield: 10, inputs: [ozIn(20, "sku1")], outputs: [itemOutPar("A", 10, null, "Quart")] },
+      { recipeId: "rB", batchYield: 1, inputs: [itemInUnit(2, "Quart", "A")], outputs: [itemOut("B", 1)] },
+      { recipeId: "rC", batchYield: 1, inputs: [itemInUnit(2, " quart ", "A")], outputs: [itemOut("C", 1)] },
+    ]);
+    // 2 par-units of A × 2 oz-per-par-unit input mass = 4 oz of sku1.
+    expect(perUnitSkuOzForItemFromGraph(g, "B").get("sku1")).toBeCloseTo(4, 10);
+    expect(perUnitSkuOzForItemFromGraph(g, "C").get("sku1")).toBeCloseTo(4, 10);
+  });
+
+  it("a par-unit label belonging to a DIFFERENT item is still a refusal", () => {
+    const g = graphOf([
+      { recipeId: "rA", batchYield: 10, inputs: [ozIn(20, "sku1")], outputs: [itemOutPar("A", 10, null, "Quart")] },
+      { recipeId: "rZ", batchYield: 10, inputs: [ozIn(20, "sku2")], outputs: [itemOutPar("Z", 10, null, "Bundle")] },
+      // "Bundle" is a real par-unit label — just not A's.
+      { recipeId: "rB", batchYield: 1, inputs: [itemInUnit(2, "Bundle", "A")], outputs: [itemOut("B", 1)] },
+    ]);
+    expect(perUnitSkuOzForItemFromGraph(g, "B").size).toBe(0);
+  });
+
+  it("registering the unit as a WEIGHT measure resolves it (the ladle, once registered)", () => {
+    const measures = new Map(MEASURES);
+    measures.set("ladle", { dimension: "weight", toBaseFactor: 4 });
+    const g = buildRecipeGraph(
+      [
+        { recipeId: "rA", batchYield: 10, inputs: [ozIn(20, "sku1")], outputs: [itemOut("A", 10, 32)] },
+        { recipeId: "rC", batchYield: 1, inputs: [itemInUnit(1, "ladle", "A")], outputs: [itemOut("C", 1)] },
+      ],
+      PACK,
+      measures,
+    );
+    // 1 ladle = 4 oz ÷ 32 oz-per-par-unit = 0.125 par-units × 2 oz/par input mass.
+    expect(perUnitSkuOzForItemFromGraph(g, "C").get("sku1")).toBeCloseTo(0.25, 10);
   });
 });
 

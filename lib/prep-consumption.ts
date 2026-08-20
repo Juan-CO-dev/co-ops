@@ -75,12 +75,23 @@ export async function loadSkuPackChains(skuIds: string[]): Promise<Map<string, P
   return out;
 }
 
-/** oz_per_par_unit per item (for fan-out allocation weight). */
-async function loadItemOzPerPar(itemIds: string[]): Promise<Map<string, number | null>> {
+/**
+ * Per-item par BASIS: `oz_per_par_unit` (fan-out allocation weight) plus
+ * `default_par_unit` (the label a recipe line may legitimately spell instead of
+ * a measure — see itemRefParUnits' unknown-unit refusal). One query, both
+ * fields; they come off the same row and are read by the same resolver.
+ */
+async function loadItemParBasis(
+  itemIds: string[],
+): Promise<Map<string, { ozPerParUnit: number | null; parUnitLabel: string | null }>> {
   if (itemIds.length === 0) return new Map();
   const sb = getServiceRoleClient();
-  const { data } = await sb.from("items").select("id, oz_per_par_unit").in("id", itemIds).returns<Array<{ id: string; oz_per_par_unit: number | string | null }>>();
-  return new Map((data ?? []).map((r) => [r.id, num(r.oz_per_par_unit)]));
+  const { data } = await sb.from("items").select("id, oz_per_par_unit, default_par_unit").in("id", itemIds)
+    .returns<Array<{ id: string; oz_per_par_unit: number | string | null; default_par_unit: string | null }>>();
+  return new Map((data ?? []).map((r) => [r.id, {
+    ozPerParUnit: num(r.oz_per_par_unit),
+    parUnitLabel: r.default_par_unit,
+  }]));
 }
 
 /**
@@ -118,7 +129,7 @@ export async function loadRecipeGraph(): Promise<RecipeGraph> {
   ]);
   const outputItemIds = [...new Set((outRows ?? []).filter((o) => o.output_item_id).map((o) => o.output_item_id!))];
   const skuIds = [...new Set((inRows ?? []).filter((c) => c.component_sku_id).map((c) => c.component_sku_id!))];
-  const [ozPar, skuPack] = await Promise.all([loadItemOzPerPar(outputItemIds), loadSkuPack(skuIds)]);
+  const [parBasis, skuPack] = await Promise.all([loadItemParBasis(outputItemIds), loadSkuPack(skuIds)]);
 
   const inputsByRecipe = new Map<string, GraphRecipe["inputs"]>();
   for (const c of inRows ?? []) {
@@ -129,10 +140,12 @@ export async function loadRecipeGraph(): Promise<RecipeGraph> {
   const outputsByRecipe = new Map<string, GraphRecipe["outputs"]>();
   for (const o of outRows ?? []) {
     const list = outputsByRecipe.get(o.recipe_id) ?? [];
+    const basis = o.output_item_id ? parBasis.get(o.output_item_id) : undefined;
     list.push({
       outputItemId: o.output_item_id, outputMenuItemId: o.output_menu_item_id,
       yield: num(o.yield) ?? 0,
-      ozPerParUnit: o.output_item_id ? (ozPar.get(o.output_item_id) ?? null) : null,
+      ozPerParUnit: basis?.ozPerParUnit ?? null,
+      parUnitLabel: basis?.parUnitLabel ?? null,
     });
     outputsByRecipe.set(o.recipe_id, list);
   }
