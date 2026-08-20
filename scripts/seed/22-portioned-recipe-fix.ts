@@ -74,7 +74,7 @@ import { loadRecipeGraph } from "@/lib/prep-consumption";
 import { loadCurrentSkuPrices } from "@/lib/admin/cost";
 import { costPerOzFromGraph } from "@/lib/admin/menu-costing";
 import { itemMassBalance, massBalanceIndex, MASS_BALANCE_TOLERANCE } from "@/lib/menu-costing-shared";
-import { perUnitSkuOzForMenuItemFromGraph, type RecipeGraph } from "@/lib/prep-consumption-graph";
+import { itemRefParUnits, perUnitSkuOzForItemFromGraph, perUnitSkuOzForMenuItemFromGraph, type RecipeGraph } from "@/lib/prep-consumption-graph";
 import { pathToFileURL } from "node:url";
 
 /** Provenance key. Dated + named for this fix, so its rows can never be confused
@@ -299,6 +299,21 @@ const HEADLINE_SUBS = ["Ham Sub", "Turkey Sub", "Roast Beef Sub"];
 // weight. Guessing one is the exact move that produced the defect §1 is cleaning up.
 type BuildVerdict = "CONVERT" | "AS_IS" | "REFUSE";
 
+/**
+ * Where a CONVERT rule's per-piece ounce figure comes from. The three grades are
+ * kept apart for the same reason §1's trim registry keeps its three apart: a number
+ * Juan measured, a number a vendor spec pins, and a number we reasoned out are not
+ * the same kind of number, and the weakest of them should be the easiest to find
+ * again when someone finally puts the thing on a scale.
+ */
+type PieceOzSource =
+  /** Read live off the SKU the prep pins today (vendor spec or a recorded weight). */
+  | "prep_sku_avg"
+  /** Juan named the ounces outright. */
+  | "ruling"
+  /** Whole-unit weight (live) ÷ a stated slice count. An EDUCATED GUESS by construction. */
+  | "derived_from_whole";
+
 interface BuildLineRule {
   /** menu_item name as it appears on the board. */
   consumer: string;
@@ -309,8 +324,23 @@ interface BuildLineRule {
   verdict: BuildVerdict;
   /** CONVERT/REFUSE: the count the sheet states, asserted against the live row. */
   sheetCount?: number;
-  /** Where the per-piece weight comes from. CONVERT requires this to be a FACT. */
+  pieceOzSource?: PieceOzSource;
+  /** "ruling": the ounces Juan named. */
+  rulingOz?: number;
+  /**
+   * "prep_sku_avg" + a ruling: the ounces Juan named, ASSERTED against the live
+   * SKU figure. Agreement is worth checking rather than assuming — if the two ever
+   * drift apart the rule should stop, not quietly prefer one.
+   */
+  expectPieceOz?: number;
+  /** "derived_from_whole": how many sandwich slices come off one whole unit. */
+  slicesPerWhole?: number;
+  /** Where the per-piece weight comes from, in words. Required on every CONVERT. */
   pieceProvenance?: string;
+  /** Juan's own words, quoted into the source_note and the dry run. */
+  ruling?: string;
+  /** True for the educated guesses — they join the surprise-weigh list. */
+  pendingWeigh?: string;
   /** AS_IS: why the count line is already right. */
   asIsReason?: string;
   /** REFUSE: the unanswerable part, and the reading we would take if forced. */
@@ -319,16 +349,80 @@ interface BuildLineRule {
   question?: string;
 }
 
+/**
+ * Juan's rulings of 2026-08-20 night, quoted. Every row below that leans on one
+ * names it, and the quote rides the audit metadata, so "why is this 2 oz" is
+ * answerable from the row itself a year from now.
+ */
+const RULINGS = {
+  handful: "Juan 2026-08-20: a handful is 2 oz.",
+  ladle: "Juan 2026-08-20: a ladle is 4 oz.",
+  basil: "Juan 2026-08-20: confirmed — 4 leaves reads against the herb-policy leaf weight.",
+  slices:
+    "Juan 2026-08-20: educated guess authorized for the tomato and cucumber slice weights — " +
+    "derive them from the whole weights already on file with a stated slicing assumption, grade them " +
+    "OPERATIONAL_ESTIMATE, and put both on the weigh list.",
+  horsey:
+    "Juan 2026-08-20: the yield is the wrong number — 36 oz of batch into 16 oz bottles is 2.25 bottles, not 4.",
+} as const;
+
 const BUILD_LINE_RULES: BuildLineRule[] = [
   // ── CONVERT ────────────────────────────────────────────────────────────────
   // One "each" of Fresh Mozzarella is a 1 oz SLICE, and that is vendor spec rather
   // than inference: Angel harvest 2 closed the case as 6 logs x 32 CT x 1 oz = 192
   // slices = 12 lb against BOTH the `6/2 LB` pack field and the `12 LB` subtitle
   // (seed 10's amendment block). The sheet says 3 ea on both subs. 3 x 1 = 3 oz.
-  { consumer: "Marisa Tomei Eats Free", prep: "Fresh Mozzarella", sheetQuote: "Marisa Tomei / Fresh Mozz / 3 / ea", verdict: "CONVERT", sheetCount: 3,
+  { consumer: "Marisa Tomei Eats Free", prep: "Fresh Mozzarella", sheetQuote: "Marisa Tomei / Fresh Mozz / 3 / ea", verdict: "CONVERT", sheetCount: 3, pieceOzSource: "prep_sku_avg",
     pieceProvenance: "one each = one 1 oz slice — vendor spec, closed by Angel harvest 2 (6 logs x 32 CT x 1 oz = 192/case = 12 lb, agrees with both the pack field and the subtitle); seed 10 amendment block" },
-  { consumer: "The Frex", prep: "Fresh Mozzarella", sheetQuote: "Frex / Fresh Mozz / 3 / ea", verdict: "CONVERT", sheetCount: 3,
+  { consumer: "The Frex", prep: "Fresh Mozzarella", sheetQuote: "Frex / Fresh Mozz / 3 / ea", verdict: "CONVERT", sheetCount: 3, pieceOzSource: "prep_sku_avg",
     pieceProvenance: "one each = one 1 oz slice — same vendor spec as above" },
+
+  // Handful = 2 oz (Juan). Worth noting that this AGREES with the figure seed 10
+  // already carried and disclaimed as "unit = a portion — LOW confidence": the
+  // ruling does not change the number, it changes its GRADE, from a guess nobody
+  // had confirmed to an operator's stated portion. `expectPieceOz` asserts the two
+  // still match rather than trusting that they do.
+  { consumer: "Chicken parm", prep: "Shredded Mozzarella", sheetQuote: "(not on the sheet)", verdict: "CONVERT", sheetCount: 1, pieceOzSource: "prep_sku_avg", expectPieceOz: 2, ruling: RULINGS.handful,
+    pieceProvenance: "one handful = 2 oz per Juan's ruling, which matches the live avg_oz_per_each seed 10 had recorded at LOW confidence — the ruling promotes it from guess to stated portion" },
+  { consumer: "Vesuvio II", prep: "Shredded Mozzarella", sheetQuote: "Vesuvio / Shredded Cheese / Handfulls / 2", verdict: "CONVERT", sheetCount: 2, pieceOzSource: "prep_sku_avg", expectPieceOz: 2, ruling: RULINGS.handful,
+    pieceProvenance: "same 2 oz handful; the sheet confirms the count (2), Juan supplies the ounces" },
+
+  // Basil: the sheet's "4 leaves" against the herb-policy leaf weight, which moved
+  // 0.1 -> 0.017 under wave 4's INVOICE_DERIVED averaging. Juan confirmed the read.
+  { consumer: "Marisa Tomei Eats Free", prep: "Basil", sheetQuote: "Marisa Tomei / Basil / 4 leaves", verdict: "CONVERT", sheetCount: 4, pieceOzSource: "prep_sku_avg", ruling: RULINGS.basil,
+    pieceProvenance: "per-leaf weight read live off the Basil SKU (0.017 oz, set by wave 4's herb-weight policy); seed 10's old \"conflicting units\" flag is resolved by taking the leaf reading Juan confirmed" },
+
+  // Tomato + cucumber: EDUCATED GUESSES, authorized as such. Both preps had only a
+  // WHOLE-unit weight on file, so the slice weight is derived — whole ÷ a stated
+  // slice count — and the slice count is the assumption, named here so it can be
+  // argued with. Both choices take the LOWER slice count of the plausible range,
+  // which makes each slice heavier and the cost higher: where a guess has a
+  // direction, it should be the one that does not flatter the margin.
+  { consumer: "Regular BLT", prep: "Tomato", sheetQuote: "(not on the sheet)", verdict: "CONVERT", sheetCount: 3, pieceOzSource: "derived_from_whole", slicesPerWhole: 8, ruling: RULINGS.slices,
+    pieceProvenance: "a ~5 oz slicing tomato cut at the 1/4\" foodservice sandwich standard yields ~8 usable rounds end to end; 5 / 8 = 0.625 oz per slice. 8 is the low end of the 8-10 range — the heavier-slice, higher-cost direction",
+    pendingWeigh: "tomato slice — weigh 10 sandwich slices off a standard tomato and divide" },
+  { consumer: "Sicky Wicky Club", prep: "Tomato", sheetQuote: "Sicky Wicky Club / Tomatoes / 3 / ea", verdict: "CONVERT", sheetCount: 3, pieceOzSource: "derived_from_whole", slicesPerWhole: 8, ruling: RULINGS.slices,
+    pieceProvenance: "same 8-slices-per-tomato assumption; the sheet's \"3 ea\" is 3 slices, not 3 tomatoes",
+    pendingWeigh: "tomato slice — weigh 10 sandwich slices off a standard tomato and divide" },
+  { consumer: "Veggie Sub", prep: "Tomato", sheetQuote: "(not on the sheet)", verdict: "CONVERT", sheetCount: 3, pieceOzSource: "derived_from_whole", slicesPerWhole: 8, ruling: RULINGS.slices,
+    pieceProvenance: "same 8-slices-per-tomato assumption",
+    pendingWeigh: "tomato slice — weigh 10 sandwich slices off a standard tomato and divide" },
+  { consumer: "Farmers Market After Dark", prep: "Cucumber", sheetQuote: "Farmers Market / Cucumbers / 3 / ea", verdict: "CONVERT", sheetCount: 3, pieceOzSource: "derived_from_whole", slicesPerWhole: 32, ruling: RULINGS.slices,
+    pieceProvenance: "an ~8 oz field cucumber is about 8\" long; sliced into 1/4\" rounds that is ~32 slices, so 8 / 32 = 0.25 oz per round. 32 is the 1/4\" count rather than the 1/8\" count (~64) — again the heavier-slice, higher-cost direction",
+    pendingWeigh: "cucumber round — weigh 10 sandwich rounds off a standard cucumber and divide" },
+  { consumer: "Veggie Sub", prep: "Cucumber", sheetQuote: "(not on the sheet)", verdict: "CONVERT", sheetCount: 3, pieceOzSource: "derived_from_whole", slicesPerWhole: 32, ruling: RULINGS.slices,
+    pieceProvenance: "same 32-rounds-per-cucumber assumption",
+    pendingWeigh: "cucumber round — weigh 10 sandwich rounds off a standard cucumber and divide" },
+
+  // Ladle = 4 oz (Juan). Both of these target preps carry NO declared finished
+  // weight, so whether the conversion helps or hurts is not a matter of opinion —
+  // it is arithmetic, and the guard below computes it per row rather than trusting
+  // this comment. Vesuvio's vodka sauce improves enormously; the French Dip's jus
+  // does not, and gets refused on the number.
+  { consumer: "Our French Dip", prep: "Jus", sheetQuote: "French Dip / Jus / 1 / ladle", verdict: "CONVERT", sheetCount: 1, pieceOzSource: "ruling", rulingOz: 4, ruling: RULINGS.ladle,
+    pieceProvenance: "one ladle = 4 oz per Juan's ruling; `ladle` is not in measure_units at all, so today the line falls into the par-unit branch silently" },
+  { consumer: "Vesuvio II", prep: "Vodka", sheetQuote: "Vesuvio / Vodka Sauce / 2 / ladles", verdict: "CONVERT", sheetCount: 2, pieceOzSource: "ruling", rulingOz: 4, ruling: RULINGS.ladle,
+    pieceProvenance: "same 4 oz ladle; today's 2 par-units reads as HALF of a four-quart batch of vodka sauce on one sandwich" },
 
   // ── AS_IS — the par-unit IS the piece, so the count line is already correct ──
   { consumer: "Vesuvio II", prep: "Meatballs", sheetQuote: "Vesuvio / Meatballs / 3 / ea (cut in half)", verdict: "AS_IS",
@@ -345,37 +439,26 @@ const BUILD_LINE_RULES: BuildLineRule[] = [
     asIsReason: "same: one par-unit is one cutlet" },
 
   // ── REFUSE ─────────────────────────────────────────────────────────────────
-  { consumer: "Chicken parm", prep: "Shredded Mozzarella", sheetQuote: "(not on the sheet)", verdict: "REFUSE", sheetCount: 1,
-    refuseCode: "UNIT_NOT_IN_OZ", bestReading: "1 handful = 2 oz (the SKU's avg_oz_per_each) -> 2 oz",
-    question: "What does a handful of shredded mozzarella weigh? Seed 10 set 2 oz and labelled it \"unit = a portion — LOW confidence\", and listed Shredded Mozz among the rows DEFERRED to the weigh checklist. Chicken parm is not on the build sheet at all, so there is no second source." },
-  { consumer: "Vesuvio II", prep: "Shredded Mozzarella", sheetQuote: "Vesuvio / Shredded Cheese / Handfulls / 2", verdict: "REFUSE", sheetCount: 2,
-    refuseCode: "UNIT_NOT_IN_OZ", bestReading: "2 handfuls x 2 oz -> 4 oz",
-    question: "Same handful question. The sheet confirms the COUNT (2) but states no weight — and note the sheet's own columns are swapped on this row (\"Handfulls\" in the quantity column, \"2\" in the unit column)." },
-  { consumer: "Farmers Market After Dark", prep: "Cucumber", sheetQuote: "Farmers Market / Cucumbers / 3 / ea", verdict: "REFUSE", sheetCount: 3,
-    refuseCode: "PIECE_IS_NOT_THE_UNIT", bestReading: "3 SLICES, weight unknown (a whole cucumber is 8 oz; 3 whole cucumbers on a sub is not a thing)",
-    question: "How much does a cucumber slice weigh, or how many slices come off one cucumber? The only recorded weight is seed 10's \"unit = whole cucumber\" 8 oz." },
-  { consumer: "Veggie Sub", prep: "Cucumber", sheetQuote: "(not on the sheet)", verdict: "REFUSE", sheetCount: 3,
-    refuseCode: "PIECE_IS_NOT_THE_UNIT", bestReading: "3 slices, weight unknown", question: "Same cucumber-slice question." },
-  { consumer: "Regular BLT", prep: "Tomato", sheetQuote: "(not on the sheet)", verdict: "REFUSE", sheetCount: 3,
-    refuseCode: "PIECE_IS_NOT_THE_UNIT", bestReading: "3 SLICES, weight unknown (a whole tomato is 5 oz)",
-    question: "How much does a tomato slice weigh, or how many slices per tomato? Seed 10 recorded \"unit = whole tomato\" 5 oz, and the Tomato prep's own par-unit is one whole tomato." },
-  { consumer: "Sicky Wicky Club", prep: "Tomato", sheetQuote: "Sicky Wicky Club / Tomatoes / 3 / ea", verdict: "REFUSE", sheetCount: 3,
-    refuseCode: "PIECE_IS_NOT_THE_UNIT", bestReading: "3 slices, weight unknown", question: "Same tomato-slice question; the sheet says \"3 ea\" but a sub does not carry 3 whole tomatoes." },
-  { consumer: "Veggie Sub", prep: "Tomato", sheetQuote: "(not on the sheet)", verdict: "REFUSE", sheetCount: 3,
-    refuseCode: "PIECE_IS_NOT_THE_UNIT", bestReading: "3 slices, weight unknown", question: "Same tomato-slice question." },
+  // The last one standing. Juan ruled on the handful, the ladle, basil, and
+  // authorized the slice guesses; he did not reach the radish, so it keeps today's
+  // reading and its flag. One unanswered row is a better place to stop than a
+  // tenth guess dressed as a ninth ruling.
   { consumer: "Never Been Cheddar", prep: "Radish", sheetQuote: "Never Been Cheddar / Radish / 4 / Julliened", verdict: "REFUSE", sheetCount: 4,
     refuseCode: "PIECE_IS_NOT_THE_UNIT", bestReading: "4 julienne strips, weight unknown (a whole watermelon radish is 3 oz)",
-    question: "Is \"4 Julliened\" four radishes julienned, or four julienne strips? The two readings differ by more than an order of magnitude and the sheet's wording does not settle it." },
-  { consumer: "Marisa Tomei Eats Free", prep: "Basil", sheetQuote: "Marisa Tomei / Basil / 4 leaves", verdict: "REFUSE", sheetCount: 4,
-    refuseCode: "KNOWN_UNIT_CONFLICT", bestReading: "4 leaves x 0.017 oz -> 0.068 oz",
-    question: "Basil is the one SKU seed 10 flagged in its own note as \"conflicting units (leaf + unit) — recipe data bug; verify\", and the live per-leaf weight has since moved (0.1 -> 0.017) under the herb-weight policy. Confirm the leaf weight before this row is rewritten against it." },
-  { consumer: "Our French Dip", prep: "Jus", sheetQuote: "French Dip / Jus / 1 / ladle", verdict: "REFUSE", sheetCount: 1,
-    refuseCode: "UNIT_NOT_IN_OZ", bestReading: "1 ladle ~ 2-4 oz; currently read as 1 QUART",
-    question: "How many ounces is a ladle of jus? Note `ladle` is not in `measure_units` at all — an UNREGISTERED unit falls into the same par-unit branch as a count unit, silently, which is a hazard in its own right." },
-  { consumer: "Vesuvio II", prep: "Vodka", sheetQuote: "Vesuvio / Vodka Sauce / 2 / ladles", verdict: "REFUSE", sheetCount: 2,
-    refuseCode: "UNIT_NOT_IN_OZ", bestReading: "2 ladles; currently read as 2 QUARTS",
-    question: "Same ladle question, same unregistered-unit hazard." },
+    question: "NOT RULED ON. Is \"4 Julliened\" four radishes julienned, or four julienne strips? The two readings differ by more than an order of magnitude, the sheet's wording does not settle it, and unlike the tomato and cucumber rows there is no slicing standard to reason from — julienne yield depends entirely on how much of the radish gets used." },
 ];
+
+/**
+ * The educated guesses, collected for the weight-audit arc. Emitted as its own
+ * dry-run section and stamped into every audit row they produce, so a `pending_
+ * surprise_weigh` grep finds them without anyone having to remember they exist.
+ * Canonical home for the human-facing list: the SKU weigh checklist in CHIEF
+ * (`03-PROJECTS/co-ops/2026-07-22-sku-weight-checklist.md`).
+ */
+const PENDING_WEIGH_LIST = [
+  { subject: "tomato slice", assumption: "5 oz whole ÷ 8 sandwich rounds = 0.625 oz", how: "weigh 10 sandwich slices off a standard tomato and divide" },
+  { subject: "cucumber round", assumption: "8 oz whole ÷ 32 rounds at 1/4\" = 0.25 oz", how: "weigh 10 sandwich rounds off a standard cucumber and divide" },
+] as const;
 
 // ── §3 — THE HORSEY MAYO SEAM ─────────────────────────────────────────────────
 //
@@ -394,8 +477,19 @@ type HorseyMayoRuling =
   /** "Those bottles aren't 16 oz" — items.oz_per_par_unit is wrong. 36/4 = 9. */
   | { kind: "bottle_size_wrong"; ozPerParUnit: number; note: string };
 
-/** Juan's answer goes HERE. `null` = unanswered = still refused, nothing written. */
-const HORSEY_MAYO_RULING: HorseyMayoRuling | null = null;
+/**
+ * Juan's answer goes HERE. `null` = unanswered = still refused, nothing written.
+ *
+ * RULED 2026-08-20 (b): the YIELD is the wrong number. 36 oz of batch into 16 oz
+ * bottles is 2.25 bottles, not 4 — the inputs are right and the bottles are right.
+ * That lands the balance at 36 oz in vs 36 oz out, and it is the only one of the
+ * three readings that changes nothing anybody has ever measured.
+ */
+const HORSEY_MAYO_RULING: HorseyMayoRuling | null = {
+  kind: "yield_wrong",
+  outputYield: 2.25,
+  note: RULINGS.horsey,
+};
 
 type RefusalCode =
   | "NO_RECIPE"
@@ -412,6 +506,7 @@ type RefusalCode =
   | "KNOWN_UNIT_CONFLICT"
   | "LINE_MOVED"
   | "NO_PIECE_WEIGHT"
+  | "NO_PAR_WEIGHT_FALLBACK"
   // §3
   | "AWAITING_JUAN";
 
@@ -435,6 +530,12 @@ interface LinePlan {
   newQty: number;
   pieceOz: number;
   pieceProvenance: string;
+  pieceOzSource: PieceOzSource;
+  /** Juan's own words, when the row leans on a ruling. */
+  ruling: string | null;
+  /** Set on the educated guesses — rides the audit row for the weigh arc to find. */
+  pendingWeigh: string | null;
+  arithmetic: string;
 }
 
 /** §3: the Horsey Mayo write, planned only when HORSEY_MAYO_RULING is filled. */
@@ -687,20 +788,77 @@ async function main(): Promise<void> {
       continue;
     }
 
-    // CONVERT. The piece weight is read LIVE off the SKU the prep pins today —
-    // never from this file — for the same reason §1 refuses to hardcode a slice oz.
-    const pieceOz = resolvePieceOz(graphBefore, line.prepItemId);
-    if (pieceOz == null) {
-      refusals.push({ item: line.consumer, subject: `${line.prep} line`, code: "NO_PIECE_WEIGHT", detail: `${line.prep}'s producing recipe does not resolve to a single priced SKU with an avg_oz_per_each — cannot convert a count to ounces` });
+    // CONVERT. Wherever a weight is already on file it is read LIVE off the SKU the
+    // prep pins today — never from this file — for the same reason §1 refuses to
+    // hardcode a slice oz. Only the two grades that CANNOT be read live (Juan's
+    // ruling, and the slice counts) carry a number here.
+    const wholeOz = resolvePieceOz(graphBefore, line.prepItemId);
+    let pieceOz: number | null = null;
+    if (rule.pieceOzSource === "ruling") {
+      pieceOz = rule.rulingOz ?? null;
+    } else if (rule.pieceOzSource === "derived_from_whole") {
+      pieceOz = wholeOz != null && rule.slicesPerWhole ? wholeOz / rule.slicesPerWhole : null;
+    } else {
+      pieceOz = wholeOz;
+      if (rule.expectPieceOz != null && (pieceOz == null || Math.abs(pieceOz - rule.expectPieceOz) > 1e-9)) {
+        refusals.push({ item: line.consumer, subject: `${line.prep} line`, code: "NO_PIECE_WEIGHT", detail: `Juan's ruling says ${rule.expectPieceOz} oz but the live SKU reads ${pieceOz ?? "null"} oz — the two disagree, so the rule stops rather than picking one` });
+        continue;
+      }
+    }
+    if (pieceOz == null || pieceOz <= 0) {
+      refusals.push({ item: line.consumer, subject: `${line.prep} line`, code: "NO_PIECE_WEIGHT", detail: `no per-piece weight resolves for ${line.prep} — cannot convert a count to ounces` });
       continue;
     }
+    const newQty = round(rule.sheetCount! * pieceOz);
+
+    // ── The fallback guard, computed rather than asserted ──────────────────────
+    // An item-ref denominated in OUNCES converts to par-units by dividing by the
+    // prep's declared finished weight — and when the prep has NO declared weight the
+    // engine substitutes the prep's per-par-unit INPUT mass. For a straight
+    // portioning step (one SKU in, portioned out) that substitution is exactly
+    // right: ounces in equal ounces of SKU out. For a COOKED prep it is not, because
+    // the recipe's inputs are not its finished mass — Beef Jus turns 11.24 oz of
+    // purchased ingredients into 5 quarts by adding water nobody records, so the
+    // engine believes a quart of jus weighs 2.25 oz.
+    //
+    // So the rule is: convert freely when the prep declares a finished weight, and
+    // when it does not, convert only if doing so does not INCREASE the prep's
+    // contribution. An increase there is an artifact of the fallback, not a fact
+    // about the sandwich, and shipping it would trade a wrong number for a worse
+    // one. This is derived per row, so it will let the row through unchanged on the
+    // day someone fills in the missing oz_per_par_unit.
+    const declared = graphBefore.byOutputItem.get(line.prepItemId)?.outputs
+      .find((o) => o.outputItemId === line.prepItemId)?.ozPerParUnit ?? null;
+    if (declared == null || declared <= 0) {
+      const sub = perUnitSkuOzForItemFromGraph(graphBefore, line.prepItemId);
+      const refInput = (q: number, u: string | null) => ({ quantity: q, unit: u, componentSkuId: null, componentItemId: line.prepItemId });
+      let perParOz = 0;
+      for (const v of sub.values()) perParOz += v;
+      const oldPar = itemRefParUnits(graphBefore, refInput(line.qty, line.unit), sub);
+      const newPar = itemRefParUnits(graphBefore, refInput(newQty, "oz"), sub);
+      const oldOz = (oldPar ?? 0) * perParOz;
+      if (newQty > oldOz + 1e-9) {
+        refusals.push({
+          item: line.consumer, subject: `${line.prep} line`, code: "NO_PAR_WEIGHT_FALLBACK",
+          detail: `${rule.ruling ?? ""} ACCEPTED as a fact about the ladle — but REFUSED as a write: ${line.prep} declares no oz_per_par_unit, so an oz line converts through its per-par-unit INPUT mass (${round(perParOz, 3)} oz), which is not what a ${line.prep} par-unit weighs (the recipe adds water it never records). Converting would take this line from ${round(oldPar ?? 0, 3)} par-units (${round(oldOz, 3)} oz of purchased ingredients) to ${round(newPar ?? 0, 3)} par-units (${newQty} oz) — a ${round(newQty / Math.max(oldOz, 1e-9), 2)}x INCREASE, i.e. a worse number than today's. UNBLOCK: set ${line.prep}.oz_per_par_unit (a full quart by weight is ~32 oz) and re-run; be aware that doing so will expose the missing-water recipes to the mass-balance guard, which is its own arc.`,
+        });
+        continue;
+      }
+    }
+
     linePlans.push({
       inputId: line.inputId, consumer: line.consumer, prep: line.prep,
       prepItemId: line.prepItemId, menuItemId: line.menuItemId ?? menuIdByName.get(line.consumer) ?? null,
       sheetQuote: rule.sheetQuote,
       oldQty: line.qty, oldUnit: line.unit,
-      newQty: round(rule.sheetCount! * pieceOz),
+      newQty,
       pieceOz, pieceProvenance: rule.pieceProvenance ?? "",
+      pieceOzSource: rule.pieceOzSource ?? "prep_sku_avg",
+      ruling: rule.ruling ?? null,
+      pendingWeigh: rule.pendingWeigh ?? null,
+      arithmetic: rule.pieceOzSource === "derived_from_whole"
+        ? `${rule.sheetCount} x (${wholeOz} oz whole / ${rule.slicesPerWhole} slices = ${round(pieceOz)} oz) = ${newQty} oz`
+        : `${rule.sheetCount} x ${round(pieceOz)} oz = ${newQty} oz`,
     });
   }
   for (const r of BUILD_LINE_RULES) {
@@ -803,23 +961,32 @@ async function main(): Promise<void> {
   table(["prep", "sample menu item", "its SKU BEFORE", "its SKU AFTER", "line delta"], sampleRows, ["", "", "r", "r", "r"]);
 
   h(2, "D. Mass balance — before and after, and what is left standing");
+  // The UNION of before- and after-violators, not just the before set. Listing only
+  // what was already broken would let a prep this fix BREAKS slip through the report
+  // entirely — which is not hypothetical: an earlier verification pass that applied
+  // §1 without the dual-producer guard drove Hot Peppers from 0.39x to 10x, and a
+  // before-only table would have shown that as a clean sweep.
+  const balanceIds = [...new Set([...balanceBefore.keys(), ...balanceAfter.keys()])];
   table(
     ["item", "declared oz/batch", "input oz BEFORE", "ratio BEFORE", "input oz AFTER", "ratio AFTER", "verdict"],
-    [...balanceBefore.keys()].sort((a, b) => (itemNameById.get(a) ?? a).localeCompare(itemNameById.get(b) ?? b)).map((id) => {
-      const b = balanceBefore.get(id)!;
+    balanceIds.sort((a, b) => (itemNameById.get(a) ?? a).localeCompare(itemNameById.get(b) ?? b)).map((id) => {
+      const b = balanceBefore.get(id) ?? itemMassBalance(graphBefore, id);
       const a = itemMassBalance(graphAfter, id);
+      const wasBad = balanceBefore.has(id);
+      const isBad = balanceAfter.has(id);
       return [
         itemNameById.get(id) ?? id,
-        `${round(b.declaredOz, 2)}`,
-        `${round(b.inputOz, 3)}`,
-        `${b.ratio.toFixed(2)}x`,
+        b ? `${round(b.declaredOz, 2)}` : "—",
+        b ? `${round(b.inputOz, 3)}` : "—",
+        b ? `${b.ratio.toFixed(2)}x` : "—",
         a ? `${round(a.inputOz, 3)}` : "—",
         a ? `${a.ratio.toFixed(3)}x` : "—",
-        balanceAfter.has(id) ? "STILL VIOLATING" : "resolved",
+        isBad ? (wasBad ? "STILL VIOLATING" : "⚠ NEWLY BROKEN BY THIS FIX") : "resolved",
       ];
     }),
     ["", "r", "r", "r", "r", "r", ""],
   );
+  if (balanceAfter.size === 0) p(MD ? "\n**Every mass violation resolves.** The board's `inconsistent` group goes from 21 rows to none." : "\n  Every mass violation resolves — the board's `inconsistent` group empties.");
   p();
   p(MD ? `Tolerance is \`MASS_BALANCE_TOLERANCE\` = ${pctOf(MASS_BALANCE_TOLERANCE)}, one-sided: output below input is normal (cook-downs, trim), output above it is the violation.` : "");
 
@@ -854,28 +1021,30 @@ async function main(): Promise<void> {
   h(3, "§2a. CONVERT — sheet quote → old line → new line → cost effect");
   const convertRows: string[][] = [];
   for (const l of linePlans) {
+    // What §1 alone would have made this line mean, had §2 not corrected it.
     const w = plans.find((x) => x.itemId === l.prepItemId);
-    const skuId = w?.skuId ?? null;
-    const cpo = skuId != null ? costPerOz.get(skuId) ?? null : null;
-    const ozB = skuId != null && l.menuItemId != null ? perUnitSkuOzForMenuItemFromGraph(graphBefore, l.menuItemId).get(skuId) ?? 0 : 0;
-    const ozA = skuId != null && l.menuItemId != null ? perUnitSkuOzForMenuItemFromGraph(graphAfter, l.menuItemId).get(skuId) ?? 0 : 0;
-    // What the line WOULD have cost after §1 if §2 had not corrected it.
-    const unfixedOz = w != null ? l.oldQty * (w.declaredOz / (1 - w.trim)) : 0;
+    const unfixed = w != null ? `${round(l.oldQty * (w.declaredOz / (1 - w.trim)), 1)} oz` : "(prep unchanged by §1)";
     convertRows.push([
       l.consumer, `\`${l.sheetQuote}\``,
       `${l.oldQty} ${l.oldUnit ?? "(null)"}`,
       `**${round(l.newQty)} oz**`,
-      `${round(ozB, 3)} oz${cpo != null ? ` / ${money4(ozB * cpo)}` : ""}`,
-      `${round(ozA, 3)} oz${cpo != null ? ` / ${money4(ozA * cpo)}` : ""}`,
-      cpo != null ? `${round(unfixedOz, 1)} oz / ${money4(unfixedOz * cpo)}` : "—",
+      l.arithmetic,
+      l.pieceOzSource === "derived_from_whole" ? "EDUCATED GUESS" : l.pieceOzSource === "ruling" ? "JUAN'S RULING" : "on file",
+      unfixed,
     ]);
   }
-  table(["menu item", "sheet says", "old line", "new line", "SKU oz/$ BEFORE", "SKU oz/$ AFTER", "if §1 shipped WITHOUT §2"], convertRows, ["", "", "r", "r", "r", "r", "r"]);
+  table(["menu item", "sheet says", "old line", "new line", "arithmetic", "grade", "§1 alone would mean"], convertRows, ["", "", "r", "r", "r", "", "r"]);
   p();
-  p("The last column is the point: §1 alone would have put 96 oz of fresh mozzarella on");
-  p("two sandwiches. The piece weight used is read live off the SKU each prep pins today —");
-  p("never hardcoded here — and for these rows it is vendor spec, not inference:");
-  for (const l of linePlans) p(MD ? `- **${l.prep}** — ${l.pieceOz} oz: ${l.pieceProvenance}` : `  ${l.prep} — ${l.pieceOz} oz: ${l.pieceProvenance}`);
+  p("Where a weight was already on file it is read LIVE off the SKU the prep pins today —");
+  p("never hardcoded — so only the two grades that cannot be read live carry a number in");
+  p("this script: Juan's ruling, and the slice counts he authorized as educated guesses.");
+  p();
+  for (const l of linePlans) {
+    const head = `${l.consumer} / ${l.prep} — ${round(l.pieceOz)} oz per piece [${l.pieceOzSource}]`;
+    p(MD ? `- **${head}**` : `  ${head}`);
+    p(MD ? `  - ${l.pieceProvenance}` : `      ${l.pieceProvenance}`);
+    if (l.ruling) p(MD ? `  - RULING: _${l.ruling}_` : `      RULING: ${l.ruling}`);
+  }
 
   h(3, `§2b. ALREADY CORRECT — ${asIsLines.length} lines left alone`);
   p(MD ? "Touching these would BREAK them: the prep's par-unit is one piece, so a count is the honest unit." : "");
@@ -885,17 +1054,44 @@ async function main(): Promise<void> {
   h(3, "§2c. REFUSED — the Juan-questions");
   p(MD ? "Each carries the reading we would take if forced. None of them is written." : "");
   table(["menu item", "prep", "code", "the question + best reading"],
-    refusals.filter((r) => ["UNIT_NOT_IN_OZ", "PIECE_IS_NOT_THE_UNIT", "KNOWN_UNIT_CONFLICT"].includes(r.code))
+    refusals.filter((r) => ["UNIT_NOT_IN_OZ", "PIECE_IS_NOT_THE_UNIT", "KNOWN_UNIT_CONFLICT", "NO_PAR_WEIGHT_FALLBACK", "NO_PIECE_WEIGHT"].includes(r.code))
       .map((r) => [r.item, r.subject.replace(" line", ""), r.code, r.detail]));
   p();
-  p("Seed 10 — the seed that SET these weights — refused the same rows in the same words:");
-  p("\"the Onion each/quart conflict, cans, Mixed Herbs, Shredded Mozz are DEFERRED to the");
-  p("checklist (not guessed)\", with per-SKU notes reading \"unit = whole cucumber\", \"unit =");
-  p("whole tomato\", \"unit = a portion — LOW confidence\", and on basil \"conflicting units");
-  p("(leaf + unit) — recipe data bug; verify\". These refusals inherit that position rather");
-  p("than inventing it. **Consequence if they stay unanswered:** Chicken parm and Vesuvio II");
-  p("keep an overstated shredded-mozzarella line after `--execute` (6.65x and 13.3x), and the");
-  p("cucumber/tomato/radish/basil/ladle rows keep the par-unit reading they have today.");
+  p("Juan's 2026-08-20 rulings cleared the handful, the ladle, basil, and authorized the");
+  p("tomato/cucumber slice guesses — the questions seed 10 had deferred since July. What is");
+  p("left is what he did not reach, plus one row the arithmetic refuses on its own.");
+
+  h(3, `§2d. EDUCATED GUESSES — ${PENDING_WEIGH_LIST.length} on the surprise-weigh list`);
+  p(MD ? "Authorized as guesses, graded as guesses. Each rides `pending_surprise_weigh` in its audit metadata so the weight-audit arc can find it by grep rather than by memory; the human-facing list is CHIEF `03-PROJECTS/co-ops/2026-07-22-sku-weight-checklist.md`." : "");
+  table(["subject", "the assumption", "how to settle it"],
+    PENDING_WEIGH_LIST.map((w) => [w.subject, w.assumption, w.how]));
+
+  h(3, "§2e. Board effect — every menu item §1 or §2 moves");
+  p(MD ? "Whole-row flatten cost (Σ leaf oz × $/oz), so nothing hides behind a per-line view. `(N unpriced)` is leaves with no price yet — a price gap, not a mass error." : "");
+  const touched = new Set<string>();
+  for (const l of linePlans) if (l.menuItemId != null) touched.add(l.menuItemId);
+  for (const m of menuRows ?? []) {
+    const b = perUnitSkuOzForMenuItemFromGraph(graphBefore, m.id);
+    const a = perUnitSkuOzForMenuItemFromGraph(graphAfter, m.id);
+    if (b.size === 0 && a.size === 0) continue;
+    for (const [sku, oz] of a) if (Math.abs((b.get(sku) ?? 0) - oz) > 1e-9) { touched.add(m.id); break; }
+  }
+  const boardRows: string[][] = [];
+  for (const m of menuRows ?? []) {
+    if (!touched.has(m.id)) continue;
+    const before = flattenCost(graphBefore, m.id, costPerOz);
+    const after = flattenCost(graphAfter, m.id, costPerOz);
+    const price = num(m.menu_price);
+    boardRows.push([
+      m.name,
+      price != null ? money(price) : "—",
+      `${money4(before.cost)}${before.unpriced > 0 ? ` (+${before.unpriced})` : ""}`,
+      `${money4(after.cost)}${after.unpriced > 0 ? ` (+${after.unpriced})` : ""}`,
+      `${after.cost >= before.cost ? "+" : ""}${money4(after.cost - before.cost)}`,
+      price != null && price > 0 && after.unpriced === 0 ? `${((after.cost / price) * 100).toFixed(1)}%` : "—",
+    ]);
+  }
+  table(["menu item", "price", "flatten BEFORE", "flatten AFTER", "delta", "FC% after"], boardRows, ["", "r", "r", "r", "r", "r"]);
 
   // ── §3 ──────────────────────────────────────────────────────────────────────
   h(2, "§3. Horsey Mayo — the seam");
@@ -1168,6 +1364,24 @@ function applyPlansTo(graph: RecipeGraph): void {
       }
     }
   }
+  // §3 too — otherwise the mass-balance table below would report Horsey Mayo as
+  // still violating in an "after" that has already corrected it.
+  if (horseyPlan != null) {
+    const node = graph.byOutputItem.get(horseyPlan.itemId);
+    if (node) {
+      for (const o of node.outputs) {
+        if (o.outputItemId !== horseyPlan.itemId) continue;
+        if (horseyPlan.outputRow) o.yield = horseyPlan.outputRow.newYield;
+        if (horseyPlan.newOzPerParUnit) o.ozPerParUnit = horseyPlan.newOzPerParUnit.next;
+      }
+      if (horseyPlan.inputScale) {
+        for (const c of node.inputs) {
+          const m = horseyPlan.inputScale.find((i) => c.componentSkuId != null && Math.abs(c.quantity - i.oldQty) < 1e-9 && c.unit === i.unit);
+          if (m) c.quantity = m.newQty;
+        }
+      }
+    }
+  }
 }
 
 /**
@@ -1315,9 +1529,14 @@ async function execute(sb: ReturnType<typeof getServiceRoleClient>): Promise<voi
         consumer: l.consumer, prep: l.prep, component_item_id: l.prepItemId,
         quantity_before: l.oldQty, unit_before: l.oldUnit,
         quantity_after: l.newQty, unit_after: "oz",
-        piece_oz: l.pieceOz, piece_provenance: l.pieceProvenance,
+        piece_oz: l.pieceOz, piece_oz_source: l.pieceOzSource, piece_provenance: l.pieceProvenance,
         sheet_quote: l.sheetQuote, sheet_source: SHEET_CSV,
-        arithmetic: `${l.oldQty} x ${l.pieceOz} oz per each = ${l.newQty} oz`,
+        arithmetic: l.arithmetic,
+        ruling: l.ruling,
+        // The two educated guesses stamp themselves so the weight-audit arc finds
+        // them by grep rather than by anyone remembering they were guessed.
+        pending_surprise_weigh: l.pendingWeigh != null,
+        weigh_subject: l.pendingWeigh,
         phase: "portioned_mass_fix", reason: "build_line_redenominated_from_par_units_to_oz",
         script: SCRIPT, source: SOURCE_KEY, source_note: SOURCE_FINDING,
       },
