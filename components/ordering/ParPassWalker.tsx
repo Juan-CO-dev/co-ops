@@ -395,6 +395,31 @@ export function ParPassWalker({
         </div>
       )}
 
+      {/* Unroutable-demand notice (audit P4). WARN tone, unlike the blackout banner above:
+          a par with no ordering path is a real gap that will not fix itself overnight.
+          Each cause line names what to DO about it, and only non-zero causes render.
+          Live at filing: Ham + Fresh Mozzarella both have their par on the deactivated
+          twin, so the walker could never suggest them — and said nothing. */}
+      {walker.unroutable.count > 0 && (
+        <div
+          role="status"
+          className="rounded-xl border-2 border-co-warning bg-co-warning-surface px-4 py-3 text-[13px] text-co-text"
+        >
+          <p className="font-bold">{t("ordering.walker.unroutable", { n: walker.unroutable.count })}</p>
+          <ul className="mt-1 flex flex-col gap-0.5 text-co-warning-text">
+            {walker.unroutable.skuInactive > 0 && (
+              <li>{t("ordering.walker.unroutable_sku_inactive", { n: walker.unroutable.skuInactive })}</li>
+            )}
+            {walker.unroutable.vendorInactive > 0 && (
+              <li>{t("ordering.walker.unroutable_vendor_inactive", { n: walker.unroutable.vendorInactive })}</li>
+            )}
+            {walker.unroutable.noVendor > 0 && (
+              <li>{t("ordering.walker.unroutable_no_vendor", { n: walker.unroutable.noVendor })}</li>
+            )}
+          </ul>
+        </div>
+      )}
+
       {/* Recent-passes history affordance — collapsible, default-collapsed (D3). Each
           links to its recorded draft orders via the eventId GET (opened in a new view). */}
       {recent.length > 0 && <HistoryPanel recent={recent} shopLabel={shopLabel} dateLabel={dateLabel} />}
