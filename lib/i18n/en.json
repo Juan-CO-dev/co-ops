@@ -2511,6 +2511,7 @@
   "receiving.error.invalid_date": "Pick a valid delivery date.",
   "receiving.error.invalid_vendor": "That vendor isn't available.",
   "receiving.error.invalid_sku": "One of the items isn't available.",
+  "receiving.error.sku_vendor_mismatch": "One of the items belongs to a different vendor. Pick the items this vendor actually delivered.",
   "receiving.error.not_found": "Not found.",
   "receiving.error.forbidden": "You don't have permission to receive.",
   "receiving.error.already_complete": "This delivery is already complete.",
