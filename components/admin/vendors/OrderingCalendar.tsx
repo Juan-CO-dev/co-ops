@@ -57,7 +57,7 @@ export function OrderingCalendar({
           {serverT(language, "admin.vendors.ordering_calendar.title")}
         </h2>
         {/* Legend — ● order vs ★ delivery (symbols denote; color denotes vendor). */}
-        <div className="flex flex-wrap items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.1em] text-co-text-muted">
+        <div className="flex flex-wrap items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-co-text-muted">
           <span className="inline-flex items-center gap-1.5">
             <span aria-hidden className="text-co-text">{ORDER_SYMBOL}</span>
             {serverT(language, "admin.vendors.ordering_calendar.legend_order")}

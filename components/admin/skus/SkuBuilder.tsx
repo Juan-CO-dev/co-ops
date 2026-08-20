@@ -101,7 +101,7 @@ function Labeled({ label, children }: { label: string; children: React.ReactNode
 function SectionHeader({ title, badge }: { title: string; badge?: React.ReactNode }) {
   return (
     <div className="flex items-center gap-2">
-      <h3 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">{title}</h3>
+      <h3 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">{title}</h3>
       {badge}
     </div>
   );
@@ -443,7 +443,7 @@ export function SkuBuilder({
           title={t("admin.skus.builder.section_pack")}
           badge={
             isEdit && hasChain && initialChainUnverified ? (
-              <span className="inline-flex items-center rounded-full bg-co-danger-surface px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-cta-text">
+              <span className="inline-flex items-center rounded-full bg-co-danger-surface px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-cta-text">
                 {t("admin.skus.chain.unverified")}
               </span>
             ) : undefined
@@ -655,7 +655,7 @@ function ChainEditor({
             </select>
           </label>
           <div className="mt-2 flex justify-end">
-            <button type="button" disabled={busy} onClick={() => onRemove(i)} className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-cta disabled:opacity-50">
+            <button type="button" disabled={busy} onClick={() => onRemove(i)} className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-cta-text disabled:opacity-50">
               {t("admin.skus.chain.remove_level")}
             </button>
           </div>

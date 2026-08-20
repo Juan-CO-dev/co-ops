@@ -125,8 +125,8 @@ function NeedsLinkCard({
   }, [targets, query, kindFilter]);
 
   const kindChip = (active: boolean) =>
-    `inline-flex min-h-[32px] items-center rounded-full border-2 px-3 text-xs font-bold transition ${
-      active ? "border-co-gold-deep bg-co-gold/25 text-co-text" : "border-co-border-2 bg-co-surface text-co-text-dim hover:text-co-text"
+    `inline-flex min-h-[44px] items-center rounded-full border-2 px-3 text-xs font-bold transition ${
+      active ? "border-co-gold-deep bg-co-surface-2 text-co-text" : "border-co-border-2 bg-co-surface text-co-text-dim hover:text-co-text"
     }`;
 
   return (
@@ -162,7 +162,7 @@ function NeedsLinkCard({
             value={query}
             disabled={busy}
             onChange={(e) => setQuery(e.target.value)}
-            className="mt-2 min-h-[40px] w-full max-w-sm rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text disabled:opacity-50"
+            className="mt-2 min-h-[44px] w-full max-w-sm rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text disabled:opacity-50"
           />
           <ul className="mt-2 flex flex-col gap-1">
             {filtered.length === 0 ? (
@@ -172,7 +172,7 @@ function NeedsLinkCard({
                 <li key={`${tg.kind}:${tg.id}`} className="flex items-center justify-between gap-2">
                   <span className="flex items-center gap-2 text-sm text-co-text">
                     {tg.name}
-                    <span className="rounded bg-co-gold/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-co-text">
+                    <span className="rounded bg-co-gold/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-co-text">
                       {t(tk(`admin.catalog.type.${tg.typeLabel}`))}
                     </span>
                   </span>
@@ -180,7 +180,7 @@ function NeedsLinkCard({
                     type="button"
                     disabled={busy}
                     onClick={() => onLink(tg)}
-                    className="inline-flex min-h-[32px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15 disabled:opacity-50"
+                    className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-surface-2 disabled:opacity-50"
                   >
                     {busy ? t("admin.templates.needs_link.linking") : t("admin.templates.needs_link.link")}
                   </button>

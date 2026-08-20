@@ -38,7 +38,7 @@ export function MultiSelectChips({
             disabled={disabled}
             onClick={() => onToggle(o.id)}
             className={
-              "inline-flex min-h-[40px] items-center rounded-full border-2 px-3 text-sm font-bold transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-50 " +
+              "inline-flex min-h-[44px] items-center rounded-full border-2 px-3 text-sm font-bold transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-50 " +
               (on
                 ? "border-co-gold-deep bg-co-gold text-co-text"
                 : "border-co-border bg-co-surface text-co-text-muted hover:border-co-text")

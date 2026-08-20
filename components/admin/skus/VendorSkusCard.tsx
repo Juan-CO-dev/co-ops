@@ -157,7 +157,7 @@ export function VendorSkusCard({
 
   return (
     <section className="rounded-xl border-2 border-co-border bg-co-surface p-4">
-      <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+      <h2 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
         {t("admin.skus.card.title")}
       </h2>
 
@@ -314,7 +314,7 @@ export function SkuRow({
             </span>
           ) : null}
           {s.locationName ? (
-            <span className="inline-flex items-center rounded-full bg-co-gold/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-gold-text">
+            <span className="inline-flex items-center rounded-full bg-co-gold/20 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-gold-text">
               {s.locationName}
             </span>
           ) : null}

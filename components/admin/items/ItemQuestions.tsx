@@ -87,7 +87,7 @@ export function ItemQuestionsEditor({
 
   return (
     <div className="rounded-lg border-2 border-co-border p-3">
-      <h3 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+      <h3 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
         {t("admin.templates.item_questions.heading")}
       </h3>
 
@@ -125,7 +125,7 @@ export function ItemQuestionsEditor({
               </select>
             </Labeled>
             {inputType === "yes_no" ? (
-              <label className="flex items-center gap-2 text-sm font-bold text-co-text">
+              <label className="flex min-h-[44px] items-center gap-2 text-sm font-bold text-co-text">
                 <input
                   type="checkbox"
                   className="h-5 w-5 accent-co-gold"
@@ -144,7 +144,7 @@ export function ItemQuestionsEditor({
               </select>
             </Labeled>
             <p className="-mt-1 text-xs text-co-text-muted">{t("admin.templates.min_role.hint")}</p>
-            <label className="flex items-center gap-2 text-sm font-bold text-co-text">
+            <label className="flex min-h-[44px] items-center gap-2 text-sm font-bold text-co-text">
               <input
                 type="checkbox"
                 className="h-5 w-5 accent-co-gold"
@@ -220,7 +220,7 @@ function ItemQuestionRow({ question }: { question: ItemQuestionView }) {
       <div className="flex items-center justify-between gap-2">
         <p className="min-w-0 text-sm font-bold text-co-text">
           {question.label}
-          <span className="ml-2 rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.05em] text-co-gold-text">
+          <span className="ml-2 rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-co-gold-text">
             {t(inputTypeKey)}
           </span>
         </p>
@@ -228,7 +228,7 @@ function ItemQuestionRow({ question }: { question: ItemQuestionView }) {
           type="button"
           disabled={submitting}
           onClick={() => setConfirmingDisable((v) => !v)}
-          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta disabled:opacity-50"
+          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta-text disabled:opacity-50"
         >
           {t("admin.templates.item_questions.disable")}
         </button>

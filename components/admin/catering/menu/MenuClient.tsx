@@ -167,7 +167,7 @@ export function MenuClient({ items: initial, canWrite }: { items: AdminMenuItem[
         </div>
       )}
 
-      <a href="/admin/catering/packages" className="co-card inline-flex items-center justify-center p-3 text-sm font-bold text-co-text transition hover:text-co-cta">
+      <a href="/admin/catering/packages" className="co-card inline-flex items-center justify-center p-3 text-sm font-bold text-co-text transition hover:text-co-cta-text">
         {t("admin.catering.menu.edit_packages")}
       </a>
 
@@ -228,7 +228,7 @@ function ServesBox({ it, canWrite, onSave, t }: { it: AdminMenuItem; canWrite: b
         placeholder="1"
         disabled={!canWrite}
         aria-label={t("admin.catering.menu.serves_hint")}
-        className="w-12 rounded-md border border-co-border-2 bg-co-surface px-1.5 py-0.5 text-xs font-bold text-co-text"
+        className="min-h-[44px] w-12 rounded-md border border-co-border-2 bg-co-surface px-1.5 py-0.5 text-xs font-bold text-co-text"
       />
     </label>
   );
@@ -242,7 +242,7 @@ function Toggle({ label, on, disabled, onClick }: { label: string; on: boolean; 
       disabled={disabled}
       aria-pressed={on}
       className={`inline-flex min-h-[44px] items-center rounded-full border-2 px-3 text-xs font-bold uppercase tracking-wide transition disabled:opacity-50 ${
-        on ? "border-co-gold bg-co-gold/20 text-co-text" : "border-co-border-2 bg-co-surface text-co-text-dim hover:text-co-text"
+        on ? "border-co-gold bg-co-surface-2 text-co-text" : "border-co-border-2 bg-co-surface text-co-text-dim hover:text-co-text"
       }`}
     >
       {label}
@@ -276,8 +276,8 @@ function SizeEditor({ item, canWrite, t, money, onAdd, onEdit, onRemove }: {
   const saveEdit = (sizeId: string) => { if (!eLabel.trim() || !validPrice(ePrice)) return; onEdit(item.id, sizeId, { label: eLabel.trim(), priceCents: toCents(ePrice), serves: parseServes(eServes) }); setEditing(null); };
   const add = () => { if (!aLabel.trim() || !validPrice(aPrice)) return; onAdd(item.id, { label: aLabel.trim(), priceCents: toCents(aPrice), serves: parseServes(aServes) }); setALabel(""); setAPrice(""); setAServes(""); };
 
-  const inputCls = "min-h-[34px] rounded-lg border-2 border-co-border-2 bg-co-surface px-2 text-sm text-co-text";
-  const btnCls = "inline-flex min-h-[34px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 text-xs font-bold text-co-text-dim transition hover:text-co-text disabled:opacity-50";
+  const inputCls = "min-h-[44px] rounded-lg border-2 border-co-border-2 bg-co-surface px-2 text-sm text-co-text";
+  const btnCls = "inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 text-xs font-bold text-co-text-dim transition hover:text-co-text disabled:opacity-50";
 
   return (
     <div className="mt-2 rounded-xl border border-co-border/60 bg-co-bg/40 p-3">

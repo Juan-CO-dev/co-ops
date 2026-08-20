@@ -23,8 +23,8 @@ export function MenuTabs({ items, toastState, ezcaterState, canWrite }: {
   const { t } = useTranslation();
   const [tab, setTab] = useState<"menu" | "toast">("menu");
   const tabCls = (on: boolean) =>
-    `inline-flex min-h-[38px] items-center rounded-full border-2 px-4 text-sm font-bold transition ${
-      on ? "border-co-gold bg-co-gold/20 text-co-text" : "border-co-border-2 bg-co-surface text-co-text-dim hover:text-co-text"
+    `inline-flex min-h-[44px] items-center rounded-full border-2 px-4 text-sm font-bold transition ${
+      on ? "border-co-gold bg-co-surface-2 text-co-text" : "border-co-border-2 bg-co-surface text-co-text-dim hover:text-co-text"
     }`;
   return (
     <div className="mt-4">

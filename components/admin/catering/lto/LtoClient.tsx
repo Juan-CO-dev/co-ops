@@ -192,7 +192,7 @@ function LineCard({ line, locationId, busy, setBusy, onSuccess }: LineCardProps)
                 disabled={busy}
                 onClick={() => setForm((f) => ({ ...f, kind: k }))}
                 className={[
-                  "flex-1 rounded-lg border-2 py-2 text-sm font-bold uppercase tracking-[0.08em] transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50",
+                  "flex min-h-[44px] flex-1 items-center justify-center rounded-lg border-2 py-2 text-sm font-bold uppercase tracking-[0.08em] transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50",
                   form.kind === k
                     ? "border-co-gold-deep bg-co-gold text-co-text"
                     : "border-co-border bg-co-surface text-co-text-muted",

@@ -304,7 +304,7 @@ export function PackChainWizard({
               type="button"
               disabled={busy || !qtyValid}
               onClick={terminate}
-              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold/70 px-3 text-xs font-bold text-co-text hover:bg-co-gold disabled:opacity-50"
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-3 text-xs font-bold text-co-text disabled:opacity-50"
             >
               {isNonRaw ? t("admin.skus.wizard.thats_it") : t("admin.skus.wizard.smallest")}
             </button>

@@ -60,7 +60,7 @@ export default async function AdminListsReportsPage() {
       {/* All list types FIRST — the primary navigation (owner ruling 2026-07-30:
           the needs-link queue was pushing the editors below an endless scroll). */}
       <section className="mt-6">
-        <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+        <h2 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
           {serverT(lang, "admin.templates.lists_heading")}
         </h2>
         <ul className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
@@ -111,7 +111,7 @@ export default async function AdminListsReportsPage() {
           title={serverT(lang, "admin.templates.needs_link.title")}
           badge={
             needsLinkRows.length > 0 ? (
-              <span className="inline-flex items-center rounded-full border border-co-cta/50 bg-co-cta/10 px-2 py-0.5 text-[11px] font-bold text-co-cta-text">
+              <span className="inline-flex items-center rounded-full border border-co-cta-text/50 bg-co-cta/10 px-2 py-0.5 text-[11px] font-bold text-co-cta-text">
                 {needsLinkRows.length}
               </span>
             ) : null

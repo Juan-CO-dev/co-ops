@@ -170,9 +170,9 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
 
   const chip = (active: boolean) =>
     `inline-flex min-h-[44px] items-center rounded-full border-2 px-3 text-xs font-bold transition ${
-      active ? "border-co-gold-deep bg-co-gold/25 text-co-text" : "border-co-border-2 bg-co-surface text-co-text-dim hover:text-co-text"
+      active ? "border-co-gold-deep bg-co-surface-2 text-co-text" : "border-co-border-2 bg-co-surface text-co-text-dim hover:text-co-text"
     }`;
-  const inputCls = "min-h-[40px] w-full max-w-sm rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text";
+  const inputCls = "min-h-[44px] w-full max-w-sm rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text";
 
   return (
     <div className="mt-4 flex flex-col gap-5">
@@ -207,7 +207,7 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
       ) : (
         groups.map(([section, rows]) => (
           <section key={section}>
-            <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">{section}</h2>
+            <h2 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">{section}</h2>
             <div className="mt-2 grid grid-cols-1 gap-2 lg:grid-cols-2 lg:items-start">
               {rows.map((e) => (
                 <CatalogRow
@@ -239,7 +239,7 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
 function IssueBadge({ issue }: { issue: CatalogIssue }) {
   const { t } = useTranslation();
   return (
-    <span className="inline-flex items-center rounded-full border border-co-cta/50 bg-co-cta/10 px-2 py-0.5 text-[11px] font-bold text-co-cta-text">
+    <span className="inline-flex items-center rounded-full border border-co-cta-text/50 bg-co-cta/10 px-2 py-0.5 text-[11px] font-bold text-co-cta-text">
       {t(tk(`admin.catalog.issue.${issue}`))}
     </span>
   );
@@ -248,7 +248,7 @@ function IssueBadge({ issue }: { issue: CatalogIssue }) {
 function EdgeList({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">{label}</p>
+      <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">{label}</p>
       <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm text-co-text">{children}</div>
     </div>
   );
@@ -259,7 +259,7 @@ const linkCls = "text-co-text underline decoration-co-border underline-offset-2 
 function TypeBadge({ e }: { e: CatalogEntity }) {
   const { t } = useTranslation();
   return (
-    <span className="rounded bg-co-gold/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-co-text">
+    <span className="rounded bg-co-gold/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-co-text">
       {t(tk(`admin.catalog.type.${e.taxonType}`))}
     </span>
   );
@@ -343,7 +343,7 @@ function CatalogRow({
             </span>
           )}
           {e.issues.length > 0 && (
-            <span className="rounded-full border border-co-cta/50 bg-co-cta/10 px-2 py-0.5 text-[11px] font-bold text-co-cta-text">
+            <span className="rounded-full border border-co-cta-text/50 bg-co-cta/10 px-2 py-0.5 text-[11px] font-bold text-co-cta-text">
               {t("admin.catalog.badge.issues", { n: String(e.issues.length) })}
             </span>
           )}
@@ -446,7 +446,7 @@ function CatalogRow({
           {/* item_type editor — items only (menu_items derive made/retail; packages have no taxon). */}
           {e.kind === "item" && canWriteItemType && e.itemType != null && (
             <div>
-              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
+              <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
                 {t("admin.catalog.item_type.label")}
               </p>
               <label className="sr-only" htmlFor={`item-type-${e.id}`}>
@@ -473,7 +473,7 @@ function CatalogRow({
                 type="button"
                 disabled={busy}
                 onClick={() => onSeasonal(!e.seasonal)}
-                className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15 disabled:opacity-50"
+                className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-surface-2 disabled:opacity-50"
               >
                 {busy
                   ? t("admin.catalog.seasonal.working")

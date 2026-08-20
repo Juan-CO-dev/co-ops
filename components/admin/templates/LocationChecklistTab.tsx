@@ -90,7 +90,7 @@ export function LocationChecklistTab({
         if (sectionItems.length === 0) return null;
         return (
           <section key={section}>
-            <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+            <h2 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
               {t("admin.templates.section_label")}: {sectionLabelByLang(sections, section, language)}
             </h2>
             <div className="mt-2 flex flex-col gap-2">
@@ -302,7 +302,7 @@ function LocationItemRow({
   const smallBtn =
     "inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-text disabled:opacity-50";
   const iconBtn =
-    "inline-flex h-9 w-9 items-center justify-center rounded-lg border-2 border-co-border bg-co-surface text-sm font-bold text-co-text hover:border-co-text disabled:opacity-40";
+    "inline-flex h-11 w-11 items-center justify-center rounded-lg border-2 border-co-border bg-co-surface text-sm font-bold text-co-text hover:border-co-text disabled:opacity-40";
   const field =
     "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60";
 
@@ -318,7 +318,7 @@ function LocationItemRow({
             </span>
           ) : null}
           {parCtx.itemGlobal ? (
-            <span className="ml-2 rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.05em] text-co-gold-text">
+            <span className="ml-2 rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-co-gold-text">
               {t("admin.templates.global_badge")}
             </span>
           ) : null}
@@ -419,7 +419,7 @@ function LocationItemRow({
                   </select>
                 </label>
                 {inputType === "yes_no" ? (
-                  <label className="flex items-center gap-2 text-sm font-bold text-co-text sm:pb-2">
+                  <label className="flex min-h-[44px] items-center gap-2 text-sm font-bold text-co-text sm:pb-2">
                     <input
                       type="checkbox"
                       className="h-5 w-5 accent-co-gold"
@@ -520,7 +520,7 @@ function EnableFromRegistry({
   return (
     <section className="rounded-xl border-2 border-co-border bg-co-surface p-4">
       <div className="flex items-center justify-between gap-2">
-        <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+        <h2 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
           {t("admin.templates.enable_from_registry")}
         </h2>
         <button
@@ -576,7 +576,7 @@ function AddLocalItem({ templateId, subtype, sections, units }: { templateId: st
   return (
     <section className="rounded-xl border-2 border-co-border bg-co-surface p-4">
       <div className="flex items-center justify-between gap-2">
-        <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+        <h2 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
           {t("admin.templates.add_local_item")}
         </h2>
         {section === null ? (

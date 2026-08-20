@@ -48,7 +48,7 @@ export function SectionsTab({
 
   return (
     <div className="mt-4 flex flex-col gap-6">
-      <p className="rounded-lg border-2 border-co-gold-deep bg-co-gold/15 px-3 py-2 text-xs font-bold text-co-text">
+      <p className="rounded-lg border-2 border-co-warning bg-co-warning-surface px-3 py-2 text-xs font-bold text-co-text">
         {t("admin.templates.items_moved")}{" "}
         <Link href="/admin/items" className="underline decoration-2 underline-offset-2 hover:text-co-gold-text">
           {t("admin.templates.items_moved_link")}
@@ -57,7 +57,7 @@ export function SectionsTab({
 
       {canEditSections && sections.length > 0 ? (
         <section className="rounded-lg border-2 border-co-gold-deep bg-co-surface p-3">
-          <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+          <h2 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
             {t("admin.templates.sections_panel.title")}
           </h2>
           <p className="mt-1 text-xs text-co-text-muted">
@@ -80,7 +80,7 @@ export function SectionsTab({
 
       {canEditSections ? (
         <section className="rounded-lg border-2 border-co-gold-deep bg-co-surface p-3">
-          <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+          <h2 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
             {t("admin.templates.section_questions_panel.title")}
           </h2>
           <p className="mt-1 text-xs text-co-text-muted">
@@ -144,7 +144,7 @@ function SectionRow({
   const field =
     "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60";
   const iconBtn =
-    "inline-flex h-9 w-9 items-center justify-center rounded-lg border-2 border-co-border bg-co-surface text-sm font-bold text-co-text hover:border-co-text disabled:opacity-50";
+    "inline-flex h-11 w-11 items-center justify-center rounded-lg border-2 border-co-border bg-co-surface text-sm font-bold text-co-text hover:border-co-text disabled:opacity-50";
 
   const reorder = async (direction: "up" | "down") => {
     if (submitting) return;
@@ -245,7 +245,7 @@ function SectionRow({
               type="button"
               disabled={submitting}
               onClick={() => setConfirmingDisable((v) => !v)}
-              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta disabled:opacity-50"
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta-text disabled:opacity-50"
             >
               {t("admin.templates.sections_panel.disable")}
             </button>
@@ -254,7 +254,7 @@ function SectionRow({
       </div>
 
       {confirmingDisable && !isMisc ? (
-        <div className="mt-3 rounded-lg border-2 border-co-cta bg-co-cta/10 p-3">
+        <div className="mt-3 rounded-lg border-2 border-co-cta-text bg-co-cta/10 p-3">
           <p className="text-sm font-bold text-co-text">
             {t("admin.templates.sections_panel.disable_confirm_title")
               .replace("{section}", section.labelEn)
@@ -327,7 +327,7 @@ function SectionRow({
           </select>
         </label>
         {shape === "yes_no" ? (
-          <label className="flex items-center gap-2 text-sm font-bold text-co-text sm:pb-2">
+          <label className="flex min-h-[44px] items-center gap-2 text-sm font-bold text-co-text sm:pb-2">
             <input
               type="checkbox"
               className="h-5 w-5 accent-co-gold"
@@ -350,7 +350,7 @@ function SectionRow({
       </div>
 
       {confirmingShape && shapeChanged ? (
-        <div className="mt-3 rounded-lg border-2 border-co-gold-deep bg-co-gold/10 p-3">
+        <div className="mt-3 rounded-lg border-2 border-co-warning bg-co-warning-surface p-3">
           <p className="text-sm font-bold text-co-text">
             {t("admin.templates.sections_panel.change_input_type_confirm_title")
               .replace("{count}", itemsInSection.length.toString())
@@ -468,7 +468,7 @@ function AddSectionForm() {
           </select>
         </Labeled>
         {shape === "yes_no" ? (
-          <label className="flex items-center gap-2 text-sm font-bold text-co-text">
+          <label className="flex min-h-[44px] items-center gap-2 text-sm font-bold text-co-text">
             <input
               type="checkbox"
               className="h-5 w-5 accent-co-gold"
@@ -583,7 +583,7 @@ function SectionQuestionRow({
           <p className="text-xs text-co-text-muted">{sectionLabel}</p>
           <p className="text-sm font-bold text-co-text">
             {question.label}
-            <span className="ml-2 rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.05em] text-co-gold-text">
+            <span className="ml-2 rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-co-gold-text">
               {t(inputTypeKey)}
             </span>
           </p>
@@ -601,7 +601,7 @@ function SectionQuestionRow({
             type="button"
             disabled={submitting}
             onClick={() => { setConfirmingDisable((v) => !v); setEditing(false); }}
-            className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta disabled:opacity-50"
+            className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta-text disabled:opacity-50"
           >
             {t("admin.templates.section_questions_panel.disable")}
           </button>
@@ -627,7 +627,7 @@ function SectionQuestionRow({
             </select>
           </label>
           {inputType === "yes_no" ? (
-            <label className="flex items-center gap-2 text-sm font-bold text-co-text">
+            <label className="flex min-h-[44px] items-center gap-2 text-sm font-bold text-co-text">
               <input
                 type="checkbox"
                 className="h-5 w-5 accent-co-gold"
@@ -647,7 +647,7 @@ function SectionQuestionRow({
             </select>
           </label>
           <p className="-mt-1 text-xs text-co-text-muted">{t("admin.templates.min_role.hint")}</p>
-          <label className="flex items-center gap-2 text-sm font-bold text-co-text">
+          <label className="flex min-h-[44px] items-center gap-2 text-sm font-bold text-co-text">
             <input
               type="checkbox"
               className="h-5 w-5 accent-co-gold"
@@ -679,7 +679,7 @@ function SectionQuestionRow({
       ) : null}
 
       {confirmingDisable ? (
-        <div className="mt-3 rounded-lg border-2 border-co-cta bg-co-cta/10 p-3">
+        <div className="mt-3 rounded-lg border-2 border-co-cta-text bg-co-cta/10 p-3">
           <p className="text-sm font-bold text-co-text">
             {t("admin.templates.section_questions_panel.disable_confirm_title", { section: sectionLabel })}
           </p>
@@ -814,7 +814,7 @@ function AddSectionQuestionForm({ sections }: { sections: PrepSectionDefn[] }) {
           </select>
         </Labeled>
         {inputType === "yes_no" ? (
-          <label className="flex items-center gap-2 text-sm font-bold text-co-text">
+          <label className="flex min-h-[44px] items-center gap-2 text-sm font-bold text-co-text">
             <input
               type="checkbox"
               className="h-5 w-5 accent-co-gold"
@@ -833,7 +833,7 @@ function AddSectionQuestionForm({ sections }: { sections: PrepSectionDefn[] }) {
           </select>
         </Labeled>
         <p className="-mt-1 text-xs text-co-text-muted">{t("admin.templates.min_role.hint")}</p>
-        <label className="flex items-center gap-2 text-sm font-bold text-co-text">
+        <label className="flex min-h-[44px] items-center gap-2 text-sm font-bold text-co-text">
           <input
             type="checkbox"
             className="h-5 w-5 accent-co-gold"

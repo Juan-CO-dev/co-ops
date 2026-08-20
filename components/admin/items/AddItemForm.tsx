@@ -149,7 +149,7 @@ export function AddItemForm({
             onChange={(e) => setSpecialInstructionEs(e.target.value)}
           />
         </Labeled>
-        <label className="mt-2 flex items-center gap-2 text-sm font-bold text-co-text">
+        <label className="mt-2 flex min-h-[44px] items-center gap-2 text-sm font-bold text-co-text">
           <input
             type="checkbox"
             className="h-5 w-5 accent-co-gold"
@@ -167,7 +167,7 @@ export function AddItemForm({
           </select>
         </Labeled>
         <p className="-mt-1 text-xs text-co-text-muted">{t("admin.templates.min_role.hint")}</p>
-        <label className="flex items-center gap-2 text-sm text-co-text">
+        <label className="flex min-h-[44px] items-center gap-2 text-sm text-co-text">
           <input
             type="checkbox"
             className="h-5 w-5 accent-co-gold"

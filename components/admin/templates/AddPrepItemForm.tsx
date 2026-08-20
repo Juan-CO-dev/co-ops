@@ -89,13 +89,13 @@ export function AddPrepItemForm({
           </select>
         </label>
         {section === "Misc" ? (
-          <label className="flex items-center gap-2 text-sm text-co-text">
+          <label className="flex min-h-[44px] items-center gap-2 text-sm text-co-text">
             <input type="checkbox" className="h-5 w-5 accent-co-gold" checked={includeNote} onChange={(e) => setIncludeNote(e.target.checked)} />
             {t("admin.templates.field.include_note")}
           </label>
         ) : null}
         {prepSubtype === "am_prep" ? (
-          <label className="flex items-center gap-2 text-sm text-co-text">
+          <label className="flex min-h-[44px] items-center gap-2 text-sm text-co-text">
             <input type="checkbox" className="h-5 w-5 accent-co-gold" checked={createMirror} onChange={(e) => setCreateMirror(e.target.checked)} />
             {t("admin.templates.field.create_opening_mirror")}
           </label>

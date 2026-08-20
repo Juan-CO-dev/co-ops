@@ -85,7 +85,7 @@ export function RecipesClient({
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-bold text-co-text">{r.name}</span>
-                    <span className="rounded bg-co-gold/30 px-2 py-0.5 text-xs font-bold uppercase tracking-[0.08em] text-co-text">
+                    <span className="rounded bg-co-gold/20 px-2 py-0.5 text-xs font-bold uppercase tracking-[0.08em] text-co-text">
                       {r.recipeType === "production"
                         ? t(rk("recipes.type.production"))
                         : t(rk("recipes.type.consumer"))}

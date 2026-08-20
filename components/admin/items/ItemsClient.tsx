@@ -40,7 +40,7 @@ export function ItemsClient({
 
   return (
     <div className="mt-4 flex flex-col gap-6">
-      <p className="rounded-lg border-2 border-co-gold-deep bg-co-gold/15 px-3 py-2 text-xs font-bold text-co-text">
+      <p className="rounded-lg border-2 border-co-warning bg-co-warning-surface px-3 py-2 text-xs font-bold text-co-text">
         {t("admin.templates.global_blast_radius_note")}
       </p>
 
@@ -58,7 +58,7 @@ export function ItemsClient({
         if (items.length === 0) return null;
         return (
           <section key={section}>
-            <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+            <h2 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
               {t("admin.templates.section_label")}: {sectionLabelByLang(view.sections, section, language)}
             </h2>
             <div className="mt-2 grid grid-cols-1 gap-2 lg:grid-cols-2">

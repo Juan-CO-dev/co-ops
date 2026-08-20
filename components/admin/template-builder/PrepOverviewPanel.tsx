@@ -83,7 +83,7 @@ export function PrepOverviewPanel({ overview }: { overview: PrepOverviewReport |
         {/* Input-type drift across locations — ADVISORY (fixed in the prep editor). */}
         {overview.inputTypeDrift.length > 0 && (
           <div>
-            <h3 className="text-xs font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+            <h3 className="text-xs font-extrabold uppercase tracking-wide text-co-text-muted">
               {t("admin.templates.prep.drift_heading", { n: String(overview.inputTypeDrift.length) })}
             </h3>
             <p className="mt-1 mb-2 text-xs text-co-text-muted">
@@ -103,7 +103,7 @@ export function PrepOverviewPanel({ overview }: { overview: PrepOverviewReport |
                     {d.perLocation.map((p) => (
                       <span
                         key={p.locationId}
-                        className="inline-flex items-center gap-1 rounded-full bg-co-gold/15 px-2 py-0.5 text-[11px] font-semibold text-co-text"
+                        className="inline-flex items-center gap-1 rounded-full bg-co-gold/20 px-2 py-0.5 text-[11px] font-semibold text-co-text"
                       >
                         {locName(p.locationId)}: {t(inputTypeKey(p.inputType))}
                       </span>
@@ -159,7 +159,7 @@ function PrepTemplateBlock({ tpl }: { tpl: PrepOverviewTemplate }) {
         </div>
         <Link
           href={prepEditorHref(tpl.subtype)}
-          className="inline-flex min-h-[32px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
+          className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-surface-2"
         >
           {t("admin.templates.prep.open_editor")}
         </Link>
@@ -176,7 +176,7 @@ function PrepTemplateBlock({ tpl }: { tpl: PrepOverviewTemplate }) {
                 {lines.map((line) => (
                   <li key={line.lineId} className="flex flex-wrap items-center gap-2">
                     <span className="text-sm text-co-text">{line.displayLabel}</span>
-                    <span className="inline-flex items-center rounded-full bg-co-border/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.06em] text-co-text-muted">
+                    <span className="inline-flex items-center rounded-full bg-co-border/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-co-text-muted">
                       {t(inputTypeKey(line.inputType))}
                     </span>
                     {needsLinkIds.has(line.lineId) && (
@@ -185,7 +185,7 @@ function PrepTemplateBlock({ tpl }: { tpl: PrepOverviewTemplate }) {
                       </span>
                     )}
                     {line.esMissing && (
-                      <span className="inline-flex items-center rounded-full bg-co-gold/15 px-2 py-0.5 text-[10px] font-bold text-co-text">
+                      <span className="inline-flex items-center rounded-full bg-co-gold/20 px-2 py-0.5 text-[10px] font-bold text-co-text">
                         {t("admin.templates.prep.chip_es_missing")}
                       </span>
                     )}

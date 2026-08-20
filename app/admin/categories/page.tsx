@@ -31,14 +31,14 @@ export default async function AdminCategoriesPage() {
       />
 
       <section className="mt-6">
-        <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+        <h2 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
           {serverT(lang, "admin.categories.section.categories")}
         </h2>
         <CategoryListClient categories={categories} actorLevel={level} />
       </section>
 
       <section className="mt-8">
-        <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+        <h2 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
           {serverT(lang, "admin.categories.section.order_types")}
         </h2>
         <OrderTypeListClient orderTypes={orderTypes} actorLevel={level} />
