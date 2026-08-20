@@ -92,7 +92,7 @@ export function OpeningSectionVerify({
         aria-label={ariaLabel}
         aria-disabled={disabled || undefined}
         className={[
-          "inline-flex min-h-[40px] items-center gap-1.5 rounded-full px-3",
+          "inline-flex min-h-[44px] items-center gap-1.5 rounded-full px-3",
           "text-xs font-bold uppercase tracking-[0.12em]",
           "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
           disabled

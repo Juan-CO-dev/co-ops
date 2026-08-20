@@ -128,7 +128,7 @@ export function CashClient({
               onChange={(e) => setProjected(e.target.value.replace(/-/g, ""))}
               placeholder="0.00"
               className="
-                h-10 w-full rounded-md border-2 border-co-border-2 bg-co-surface
+                min-h-[44px] w-full rounded-md border-2 border-co-border-2 bg-co-surface
                 px-3 text-sm text-co-text focus:border-co-text focus:outline-none
                 focus-visible:ring-4 focus-visible:ring-co-gold/60
               "
@@ -141,7 +141,7 @@ export function CashClient({
               type="button"
               onClick={() => setMode("hand")}
               className={`
-                flex-1 rounded-md border-2 px-3 py-2 text-sm font-semibold transition
+                inline-flex min-h-[44px] flex-1 items-center justify-center rounded-md border-2 px-3 py-2 text-sm font-semibold transition
                 focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
                 ${mode === "hand"
                   ? "border-co-text bg-co-gold text-co-text"
@@ -154,7 +154,7 @@ export function CashClient({
               type="button"
               onClick={() => setMode("denomination")}
               className={`
-                flex-1 rounded-md border-2 px-3 py-2 text-sm font-semibold transition
+                inline-flex min-h-[44px] flex-1 items-center justify-center rounded-md border-2 px-3 py-2 text-sm font-semibold transition
                 focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
                 ${mode === "denomination"
                   ? "border-co-text bg-co-gold text-co-text"
@@ -177,7 +177,7 @@ export function CashClient({
                 onChange={(e) => setHandTotal(e.target.value.replace(/-/g, ""))}
                 placeholder="0.00"
                 className="
-                  h-10 w-full rounded-md border-2 border-co-border-2 bg-co-surface
+                  min-h-[44px] w-full rounded-md border-2 border-co-border-2 bg-co-surface
                   px-3 text-sm text-co-text focus:border-co-text focus:outline-none
                   focus-visible:ring-4 focus-visible:ring-co-gold/60
                 "
@@ -218,7 +218,7 @@ export function CashClient({
               value={note}
               onChange={(e) => setNote(e.target.value)}
               className="
-                h-10 w-full rounded-md border-2 border-co-border-2 bg-co-surface
+                min-h-[44px] w-full rounded-md border-2 border-co-border-2 bg-co-surface
                 px-3 text-sm text-co-text focus:border-co-text focus:outline-none
                 focus-visible:ring-4 focus-visible:ring-co-gold/60
               "
@@ -246,7 +246,7 @@ export function CashClient({
               onChange={(e) => setTips(e.target.value.replace(/-/g, ""))}
               placeholder="0.00"
               className="
-                h-10 w-full rounded-md border-2 border-co-border-2 bg-co-surface
+                min-h-[44px] w-full rounded-md border-2 border-co-border-2 bg-co-surface
                 px-3 text-sm text-co-text focus:border-co-text focus:outline-none
                 focus-visible:ring-4 focus-visible:ring-co-gold/60
               "
@@ -266,7 +266,7 @@ export function CashClient({
           {users.map((u) => (
             <label
               key={u.id}
-              className="flex cursor-pointer items-center gap-3 rounded-md border-2 border-co-border bg-co-surface px-3 py-2"
+              className="flex min-h-[44px] cursor-pointer items-center gap-3 rounded-md border-2 border-co-border bg-co-surface px-3 py-2"
             >
               <input
                 type="checkbox"
@@ -299,7 +299,7 @@ export function CashClient({
                   setExtraNames(next);
                 }}
                 className="
-                  h-10 flex-1 rounded-md border-2 border-co-border-2 bg-co-surface
+                  min-h-[44px] flex-1 rounded-md border-2 border-co-border-2 bg-co-surface
                   px-3 text-sm text-co-text focus:border-co-text focus:outline-none
                   focus-visible:ring-4 focus-visible:ring-co-gold/60
                 "

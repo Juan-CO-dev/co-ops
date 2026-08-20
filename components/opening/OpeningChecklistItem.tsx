@@ -207,7 +207,7 @@ export function OpeningChecklistItem({
                 aria-label={`${t("opening.recount.label")} — ${resolved.label}`}
                 aria-required={isNullSource}
                 className={[
-                  "inline-flex h-9 w-20 items-center rounded-md border-2 px-2",
+                  "inline-flex min-h-[44px] w-20 items-center rounded-md border-2 px-2",
                   "text-base font-semibold text-co-text",
                   "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
                   verificationLocked ? "cursor-not-allowed opacity-70" : "",

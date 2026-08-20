@@ -143,7 +143,7 @@ function EmployeeEvalCard({
               disabled={readOnly}
               onClick={() => !readOnly && setArrivedReady(g)}
               className={`
-                flex-1 rounded-md border-2 px-2 py-2 text-sm font-semibold transition
+                inline-flex min-h-[44px] flex-1 items-center justify-center rounded-md border-2 px-2 py-2 text-sm font-semibold transition
                 focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
                 disabled:cursor-not-allowed disabled:opacity-60
                 ${arrivedReady === g
@@ -170,7 +170,7 @@ function EmployeeEvalCard({
               disabled={readOnly}
               onClick={() => !readOnly && setAttitude(g)}
               className={`
-                flex-1 rounded-md border-2 px-2 py-2 text-sm font-semibold transition
+                inline-flex min-h-[44px] flex-1 items-center justify-center rounded-md border-2 px-2 py-2 text-sm font-semibold transition
                 focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
                 disabled:cursor-not-allowed disabled:opacity-60
                 ${attitude === g
@@ -197,7 +197,7 @@ function EmployeeEvalCard({
               disabled={readOnly}
               onClick={() => !readOnly && setProduction(g)}
               className={`
-                flex-1 rounded-md border-2 px-2 py-2 text-sm font-semibold transition
+                inline-flex min-h-[44px] flex-1 items-center justify-center rounded-md border-2 px-2 py-2 text-sm font-semibold transition
                 focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
                 disabled:cursor-not-allowed disabled:opacity-60
                 ${production === g
@@ -224,7 +224,7 @@ function EmployeeEvalCard({
               disabled={readOnly}
               onClick={() => !readOnly && setTeamPlayer(g)}
               className={`
-                flex-1 rounded-md border-2 px-2 py-2 text-sm font-semibold transition
+                inline-flex min-h-[44px] flex-1 items-center justify-center rounded-md border-2 px-2 py-2 text-sm font-semibold transition
                 focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
                 disabled:cursor-not-allowed disabled:opacity-60
                 ${teamPlayer === g
@@ -462,7 +462,7 @@ export function PmReportClient({
             value={mvpUserId ?? ""}
             onChange={(e) => setMvpUserId(e.target.value || null)}
             className="
-              h-10 w-full rounded-md border-2 border-co-border-2 bg-co-surface
+              min-h-[44px] w-full rounded-md border-2 border-co-border-2 bg-co-surface
               px-3 text-sm text-co-text focus:border-co-text focus:outline-none
               focus-visible:ring-4 focus-visible:ring-co-gold/60
             "
@@ -531,7 +531,7 @@ export function PmReportClient({
                   handleAddEmployee(e.target.value);
                 }}
                 className="
-                  h-10 flex-1 rounded-md border-2 border-co-border-2 bg-co-surface
+                  min-h-[44px] flex-1 rounded-md border-2 border-co-border-2 bg-co-surface
                   px-3 text-sm text-co-text focus:border-co-text focus:outline-none
                   focus-visible:ring-4 focus-visible:ring-co-gold/60
                 "

@@ -1168,7 +1168,7 @@ function StationGroup({
         onClick={onToggle}
         aria-expanded={expanded}
         className="
-          flex w-full items-center justify-between gap-3 px-4 py-3
+          flex min-h-[44px] w-full items-center justify-between gap-3 px-4 py-3
           text-left
           focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
         "

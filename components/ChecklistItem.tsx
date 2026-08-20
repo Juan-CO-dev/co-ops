@@ -1138,7 +1138,7 @@ export function ChecklistItem({
                 onChange={(e) => setCountDraft(e.target.value)}
                 placeholder={t("closing.expand.count_placeholder")}
                 className="
-                  mt-1 w-full rounded-md border-2 border-co-border bg-white px-3 py-2
+                  mt-1 min-h-[44px] w-full rounded-md border-2 border-co-border bg-white px-3 py-2
                   text-base text-co-text
                   focus:outline-none focus:border-co-gold focus-visible:ring-4 focus-visible:ring-co-gold/40
                 "

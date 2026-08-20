@@ -259,7 +259,7 @@ export function MidDayPhase2Form({
                       aria-label={`${it.label} — ${t("mid_day_prep.phase2.prepped")}`}
                       placeholder={t("mid_day_prep.phase2.prepped")}
                       className="
-                        h-10 w-20 shrink-0 rounded-md border-2 border-co-border-2 bg-co-surface
+                        min-h-[44px] w-20 shrink-0 rounded-md border-2 border-co-border-2 bg-co-surface
                         px-2 text-sm text-co-text focus:border-co-text focus:outline-none
                         focus-visible:ring-4 focus-visible:ring-co-gold/60
                       "

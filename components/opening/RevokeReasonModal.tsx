@@ -127,7 +127,7 @@ export function RevokeReasonModal({
             {REASON_OPTIONS.map((opt) => (
               <label
                 key={opt.value}
-                className="flex items-center gap-2 text-sm font-medium text-co-text"
+                className="flex min-h-[44px] items-center gap-2 text-sm font-medium text-co-text"
               >
                 <input
                   type="radio"

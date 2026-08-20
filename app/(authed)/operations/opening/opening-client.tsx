@@ -1402,7 +1402,7 @@ export function OpeningClient({
           onClick={() => handleTabClick("verification")}
           aria-current={activePhase === "verification" ? "page" : undefined}
           className={[
-            "inline-flex items-center px-3 py-2",
+            "inline-flex min-h-[44px] items-center px-3 py-2",
             "text-xs font-bold uppercase tracking-[0.14em]",
             "transition focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60",
             activePhase === "verification"
@@ -1423,7 +1423,7 @@ export function OpeningClient({
             }
             aria-current={activePhase === "prep" ? "page" : undefined}
             className={[
-              "inline-flex items-center px-3 py-2",
+              "inline-flex min-h-[44px] items-center px-3 py-2",
               "text-xs font-bold uppercase tracking-[0.14em]",
               "transition focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60",
               !phase2Available
@@ -1490,7 +1490,7 @@ export function OpeningClient({
             })}
           </p>
           <div className="mt-3 flex flex-col gap-2">
-            <label className="flex items-center gap-3 text-sm font-medium text-co-text">
+            <label className="flex min-h-[44px] items-center gap-3 text-sm font-medium text-co-text">
               <input
                 type="radio"
                 name="opener_no_prior_data_reason"
@@ -1502,7 +1502,7 @@ export function OpeningClient({
               />
               {t("opening.phase1.attestation.option.planned_closure")}
             </label>
-            <label className="flex items-center gap-3 text-sm font-medium text-co-text">
+            <label className="flex min-h-[44px] items-center gap-3 text-sm font-medium text-co-text">
               <input
                 type="radio"
                 name="opener_no_prior_data_reason"

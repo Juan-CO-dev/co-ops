@@ -79,7 +79,7 @@ export function OpeningItemAddon({
           aria-label={t("opening.item.photo_pending_label")}
           title={t("opening.item.photo_pending_tooltip")}
           className="
-            inline-flex h-9 w-9 items-center justify-center rounded-md
+            inline-flex h-11 w-11 items-center justify-center rounded-md
             border border-co-border-2 bg-co-surface text-co-text-dim
             opacity-40 cursor-not-allowed
           "
