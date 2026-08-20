@@ -180,6 +180,14 @@ export function ParPassWalker({
       }
       setResult({ draftOrders: j.draftOrders ?? [], shrinkage: j.shrinkage ?? [], poError: j.poError ?? false });
       setPhase("done");
+      // SIM-18b: a completed walk CREATES draft POs, so the server payload above
+      // this island (OrderingSurfaces' "Today's orders" + the draftless-cutoff
+      // list, both server props from app/ordering/page.tsx) is now stale — it
+      // still shows the pre-walk board. Only `startNew` refreshed, so a manager
+      // who finished a walk and scrolled up saw the old board until a hard
+      // reload. router.refresh() re-pulls the server payload; it does NOT reset
+      // this island's useState (house law), so the success state below survives.
+      router.refresh();
       window.scrollTo({ top: 0 });
     } catch {
       setErr(t("ordering.error.generic"));
