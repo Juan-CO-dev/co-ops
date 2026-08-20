@@ -46,6 +46,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
+import { etCalendarDate } from "@/lib/operational-day";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { loadMeasures, loadSkuPackChains } from "@/lib/prep-consumption";
@@ -1009,6 +1010,84 @@ export async function loadOnHandDerived(actor: AuthContext, locationId: string, 
 
   const rows = [...weightRows, ...countRows, ...parEstimate.rows, ...inferredRows].sort((a, b) => a.skuName.localeCompare(b.skuName));
   return { locationId, anchorAt: locationLastCountedAt, salesThrough, rows };
+}
+
+// ── Dashboard counts-tile state (READ-ONLY, cheap) ───────────────────────────────
+export interface CountsTileState {
+  /** ET calendar date of the most recent active count event; null = never counted. */
+  lastCountDate: string | null;
+  /** Distinct SKUs carrying a census anchor at this location. */
+  anchoredSkuCount: number;
+}
+
+/**
+ * The two facts the dashboard's counts tile needs, at the cheapest correct cost:
+ * one indexed read for the latest event, one paged read for the anchored SKU set.
+ *
+ * WHY NOT loadOnHand: that loader exists for the counts PAGE and is the wrong
+ * tool here — it walks every active SKU, computes 28-day consumption lanes over
+ * paged productions/production_inputs/toast_daily_depletion, and WRITES
+ * (sku_inferred_baselines upsert). Putting it on the dashboard render path would
+ * add a write and ~15 queries to every GM+ page view. Variance is deliberately
+ * NOT returned: it is not persisted anywhere (sku_count_lines has no variance
+ * column) and only exists inside loadOnHand's live drift math, so the tile
+ * renders its honest absence rather than a fabricated number.
+ *
+ * Same gates as the surface it feeds: COUNT_READ_MIN (AGM+) + location-bind.
+ * A failed read MUST throw — an empty result is the COLD START signal ("this
+ * location was never counted"), so a swallowed error would fabricate it.
+ */
+export async function loadCountsTileState(
+  actor: AuthContext,
+  locationId: string,
+): Promise<CountsTileState> {
+  requireLevel(actor, COUNT_READ_MIN);
+  if (!lockLocationContext(actorLoc(actor), locationId)) {
+    throw new CountError(404, "not_found", "Location not found");
+  }
+  const sb = getServiceRoleClient();
+
+  // (1) All active count events at this location. PAGED (the PR #63 lesson):
+  // one row per session accumulates forever, and a truncated page would both
+  // move the "last counted" head and under-count the anchored set. `id` is a
+  // tiebreaker only — counted_at stays the primary sort key.
+  const events = await selectAllRows<{ id: string; counted_at: string }>(
+    async (from, to) => {
+      const { data, error } = await sb.from("sku_count_events")
+        .select("id, counted_at")
+        .eq("location_id", locationId)
+        .eq("active", true)
+        .order("counted_at", { ascending: false })
+        .order("id", { ascending: false })
+        .range(from, to)
+        .returns<Array<{ id: string; counted_at: string }>>();
+      if (error) throw new Error(`loadCountsTileState events: ${error.message}`);
+      return { data };
+    },
+  );
+  const head = events[0];
+  if (!head) return { lastCountDate: null, anchoredSkuCount: 0 };
+
+  // (2) Distinct SKUs ever counted here. PostgREST has no DISTINCT, so we page
+  // the sku_id column and dedupe in memory (still one batched read, never per-SKU).
+  const eventIds = events.map((e) => e.id);
+  const lines = await selectAllRows<{ sku_id: string }>(
+    async (from, to) => {
+      const { data, error } = await sb.from("sku_count_lines")
+        .select("sku_id")
+        .in("count_event_id", eventIds)
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<{ sku_id: string }>>();
+      if (error) throw new Error(`loadCountsTileState lines: ${error.message}`);
+      return { data };
+    },
+  );
+
+  return {
+    lastCountDate: etCalendarDate(head.counted_at),
+    anchoredSkuCount: new Set(lines.map((l) => l.sku_id)).size,
+  };
 }
 
 // ── Ledger oz aggregations (A3, oz-native, advisory-null) ─────────────────────────
