@@ -113,7 +113,7 @@ function FlagRow({ output, canEdit }: { output: RecipeMenuOutputFlags; canEdit: 
   };
 
   const toggleCls = (on: boolean) =>
-    `inline-flex min-h-[32px] items-center rounded-full border-2 px-3 text-xs font-bold transition disabled:opacity-50 ${
+    `inline-flex min-h-[44px] items-center rounded-full border-2 px-3 text-xs font-bold transition disabled:opacity-50 ${
       on ? "border-co-gold-deep bg-co-gold/25 text-co-text" : "border-co-border-2 bg-co-surface text-co-text-dim hover:text-co-text"
     }`;
 
@@ -171,7 +171,7 @@ function FlagRow({ output, canEdit }: { output: RecipeMenuOutputFlags; canEdit: 
             onBlur={commitServes}
             placeholder={t("recipes.catering_flags.serves_placeholder")}
             aria-label={`${output.name} — ${t("recipes.catering_flags.serves")}`}
-            className="min-h-[32px] w-20 rounded-lg border-2 border-co-border-2 bg-co-surface px-2 text-sm text-co-text disabled:opacity-50"
+            className="min-h-[44px] w-20 rounded-lg border-2 border-co-border-2 bg-co-surface px-2 text-sm text-co-text disabled:opacity-50"
           />
         </label>
         {busy && <span className="text-xs text-co-text-muted">{t("recipes.catering_flags.working")}</span>}

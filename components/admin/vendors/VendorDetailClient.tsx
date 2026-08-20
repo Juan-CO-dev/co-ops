@@ -568,7 +568,7 @@ function ScheduleCard({
                 aria-label={t("admin.vendors.schedule.none")}
                 onClick={() => pickColor(null)}
                 className={
-                  "inline-flex h-9 items-center rounded-full border-2 px-3 text-xs font-bold transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 " +
+                  "inline-flex min-h-[44px] items-center rounded-full border-2 px-3 text-xs font-bold transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 " +
                   (color === null
                     ? "border-co-text bg-co-surface text-co-text"
                     : "border-co-border bg-co-surface text-co-text-muted hover:border-co-text")
@@ -600,7 +600,7 @@ function ScheduleCard({
                   aria-label={c}
                   onClick={() => pickColor(c)}
                   className={
-                    "inline-block h-9 w-9 rounded-full border-2 transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 " +
+                    "inline-block h-11 w-11 rounded-full border-2 transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 " +
                     (isSelected ? "border-co-text ring-2 ring-co-text ring-offset-2 ring-offset-co-surface" : "border-co-border hover:border-co-text")
                   }
                   style={{ backgroundColor: c }}

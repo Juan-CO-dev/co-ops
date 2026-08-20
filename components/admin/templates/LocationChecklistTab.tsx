@@ -302,7 +302,7 @@ function LocationItemRow({
   const smallBtn =
     "inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-text disabled:opacity-50";
   const iconBtn =
-    "inline-flex h-9 w-9 items-center justify-center rounded-lg border-2 border-co-border bg-co-surface text-sm font-bold text-co-text hover:border-co-text disabled:opacity-40";
+    "inline-flex h-11 w-11 items-center justify-center rounded-lg border-2 border-co-border bg-co-surface text-sm font-bold text-co-text hover:border-co-text disabled:opacity-40";
   const field =
     "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60";
 

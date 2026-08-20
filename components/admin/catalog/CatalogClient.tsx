@@ -172,7 +172,7 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
     `inline-flex min-h-[44px] items-center rounded-full border-2 px-3 text-xs font-bold transition ${
       active ? "border-co-gold-deep bg-co-gold/25 text-co-text" : "border-co-border-2 bg-co-surface text-co-text-dim hover:text-co-text"
     }`;
-  const inputCls = "min-h-[40px] w-full max-w-sm rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text";
+  const inputCls = "min-h-[44px] w-full max-w-sm rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text";
 
   return (
     <div className="mt-4 flex flex-col gap-5">

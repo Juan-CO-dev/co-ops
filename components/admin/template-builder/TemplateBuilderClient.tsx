@@ -357,7 +357,7 @@ export function TemplateBuilderClient({
                   setFocusItemId(null);
                 }}
                 className={
-                  "inline-flex min-h-[40px] items-center gap-2 rounded-full border-2 px-4 text-sm font-bold transition " +
+                  "inline-flex min-h-[44px] items-center gap-2 rounded-full border-2 px-4 text-sm font-bold transition " +
                   (tpl.id === active?.id
                     ? "border-co-gold-deep bg-co-gold/25 text-co-text"
                     : "border-co-border bg-co-surface text-co-text-muted hover:text-co-text")
@@ -605,7 +605,7 @@ function DriftReconcileGroup({
                   <button
                     type="button"
                     onClick={() => pending.forEach(runReconcile)}
-                    className="inline-flex min-h-[32px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
+                    className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
                   >
                     {t("admin.templates.doctor.reconcile_all", { n: String(pending.length), missing: missingName })}
                   </button>
@@ -633,7 +633,7 @@ function DriftReconcileGroup({
                         <button
                           type="button"
                           onClick={() => runReconcile(d)}
-                          className="inline-flex min-h-[32px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
+                          className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
                         >
                           {t("admin.templates.doctor.reconcile_add", { missing: missingName })}
                         </button>
@@ -694,7 +694,7 @@ function DoctorTemplateBlock({
                   <button
                     type="button"
                     onClick={() => onFix(tpl.templateId, nl.itemId)}
-                    className="inline-flex min-h-[32px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
+                    className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
                   >
                     {t("admin.templates.doctor.fix")}
                   </button>
@@ -742,7 +742,7 @@ function DoctorTemplateBlock({
                   <button
                     type="button"
                     onClick={() => onFix(tpl.templateId, dr.itemId)}
-                    className="inline-flex min-h-[32px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
+                    className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
                   >
                     {t("admin.templates.doctor.fix")}
                   </button>
@@ -1011,7 +1011,7 @@ function ItemRow({
   const chipHardGate =
     "inline-flex items-center rounded-full border-2 border-co-cta/60 bg-co-cta/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-cta-text";
   const moveBtn =
-    "inline-flex h-8 w-8 items-center justify-center rounded-lg border-2 border-co-border-2 bg-co-surface text-sm font-bold text-co-text disabled:opacity-30";
+    "inline-flex h-11 w-11 items-center justify-center rounded-lg border-2 border-co-border-2 bg-co-surface text-sm font-bold text-co-text disabled:opacity-30";
 
   return (
     <SummaryRow
@@ -1242,7 +1242,7 @@ function StructuralEdits({
               value={label}
               onChange={(e) => setLabel(e.target.value)}
               onBlur={() => { if (label.trim() && label !== item.label) onEdit({ op: "relabel", itemId: idForEdit, label: label.trim() }); }}
-              className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
+              className="mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
             />
           </label>
           <label className="block text-sm">
@@ -1254,7 +1254,7 @@ function StructuralEdits({
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               onBlur={() => { const v = description.trim() || null; if (v !== (item.description ?? null)) onEdit({ op: "describe", itemId: idForEdit, description: v }); }}
-              className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
+              className="mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
             />
           </label>
           <label className="block text-sm">
@@ -1264,7 +1264,7 @@ function StructuralEdits({
             <select
               value={item.minRoleLevel}
               onChange={(e) => onEdit({ op: "role", itemId: idForEdit, minRoleLevel: Number(e.target.value) })}
-              className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
+              className="mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
             >
               {roleLevelOptions().map((o) => (
                 <option key={o.level} value={o.level}>{o.label}</option>
@@ -1289,7 +1289,7 @@ function StructuralEdits({
                   hardGate: tier === "hard_gate",
                 });
               }}
-              className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
+              className="mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
             >
               <option value="optional">{t("admin.templates.builder.gate.optional")}</option>
               <option value="must_complete">{t("admin.templates.builder.gate.must_complete")}</option>
@@ -1320,7 +1320,7 @@ function StructuralEdits({
                   <select
                     value={item.expectsCount ? "count" : "tick"}
                     disabled
-                    className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text-muted disabled:opacity-70"
+                    className="mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text-muted disabled:opacity-70"
                   >
                     <option value="count">{t("admin.templates.builder.input_type.count")}</option>
                     <option value="tick">{t("admin.templates.builder.input_type.tick")}</option>
@@ -1342,7 +1342,7 @@ function StructuralEdits({
                       inputType: v === "tick" ? null : (v as "yes_no" | "free_text"),
                     });
                   }}
-                  className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
+                  className="mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
                 >
                   <option value="tick">{t("admin.templates.builder.input_type.tick")}</option>
                   <option value="yes_no">{t("admin.templates.builder.input_type.yes_no")}</option>
@@ -1361,7 +1361,7 @@ function StructuralEdits({
         <button
           type="button"
           onClick={() => onRemoveDraftAdd(item.id.slice("draft-".length))}
-          className="inline-flex min-h-[40px] items-center justify-center rounded-lg border-2 border-co-cta-text/50 bg-co-surface px-4 text-sm font-bold text-co-cta-text"
+          className="inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 border-co-cta-text/50 bg-co-surface px-4 text-sm font-bold text-co-cta-text"
         >
           {t("admin.templates.builder.remove_draft_add")}
         </button>
@@ -1370,7 +1370,7 @@ function StructuralEdits({
           type="button"
           onClick={() => onEdit(disabled ? { op: "enable", itemId: idForEdit } : { op: "disable", itemId: idForEdit })}
           className={
-            "inline-flex min-h-[40px] items-center justify-center rounded-lg border-2 px-4 text-sm font-bold " +
+            "inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 px-4 text-sm font-bold " +
             (disabled
               ? "border-co-gold-deep bg-co-gold text-co-text"
               : "border-co-cta-text/50 bg-co-surface text-co-cta-text")
@@ -1437,7 +1437,7 @@ function ConnectionsEditor({
               refType: v === "" ? null : (v as ReconciledReportRefType),
             });
           }}
-          className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
+          className="mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
         >
           <option value="">{t("admin.templates.builder.connections.report_ref_none")}</option>
           {RECONCILED_REPORT_REF_TYPES.map((rt) => (
@@ -1461,7 +1461,7 @@ function ConnectionsEditor({
               <button
                 type="button"
                 onClick={() => onEdit({ op: "ref_track", itemId: item.id, targetItemId: null })}
-                className="inline-flex min-h-[32px] items-center rounded-full border-2 border-co-cta-text/50 bg-co-surface px-3 text-xs font-bold text-co-cta-text"
+                className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-cta-text/50 bg-co-surface px-3 text-xs font-bold text-co-cta-text"
               >
                 {t("admin.templates.builder.connections.ref_track_clear")}
               </button>
@@ -1474,7 +1474,7 @@ function ConnectionsEditor({
                 placeholder={t("admin.templates.builder.connections.ref_track_search")}
                 value={refQuery}
                 onChange={(e) => setRefQuery(e.target.value)}
-                className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
+                className="mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
               />
               <ul className="mt-1 flex flex-col gap-1">
                 {filteredTargets.length === 0 ? (
@@ -1488,7 +1488,7 @@ function ConnectionsEditor({
                       <button
                         type="button"
                         onClick={() => onEdit({ op: "ref_track", itemId: item.id, targetItemId: r.itemId })}
-                        className="inline-flex min-h-[32px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
+                        className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
                       >
                         {t("admin.templates.builder.connections.ref_track_pick")}
                       </button>
@@ -1695,7 +1695,7 @@ function QuickAdd({
           placeholder={t("admin.templates.builder.add_item_placeholder")}
           onChange={(e) => setLabel(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter" && !expectsCount) { e.preventDefault(); add(); } }}
-          className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
+          className="mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
         />
       </label>
       <div className="flex flex-wrap gap-2">
@@ -1707,7 +1707,7 @@ function QuickAdd({
             type="text"
             value={station}
             onChange={(e) => setStation(e.target.value)}
-            className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
+            className="mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
           />
         </label>
         <label className="block flex-1 text-sm">
@@ -1717,7 +1717,7 @@ function QuickAdd({
           <select
             value={role}
             onChange={(e) => setRole(Number(e.target.value))}
-            className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
+            className="mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text"
           >
             {roleLevelOptions().map((o) => (
               <option key={o.level} value={o.level}>{o.label}</option>
@@ -1752,7 +1752,7 @@ function QuickAdd({
                   if (it !== "count") { setSpine(null); setError(null); }
                 }}
                 className={
-                  "inline-flex min-h-[36px] items-center rounded-full border-2 px-3 text-sm font-bold transition " +
+                  "inline-flex min-h-[44px] items-center rounded-full border-2 px-3 text-sm font-bold transition " +
                   (activeChip
                     ? "border-co-gold-deep bg-co-gold/25 text-co-text"
                     : "border-co-border-2 bg-co-surface text-co-text-dim hover:text-co-text")
@@ -1778,7 +1778,7 @@ function QuickAdd({
                 placeholder={t("admin.templates.needs_link.search_placeholder")}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                className="min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text"
+                className="min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text"
               />
               <ul className="mt-1 flex flex-col gap-1">
                 {filtered.map((tg) => (
@@ -1787,7 +1787,7 @@ function QuickAdd({
                     <button
                       type="button"
                       onClick={() => { setSpine(tg); setError(null); }}
-                      className="inline-flex min-h-[32px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
+                      className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
                     >
                       {t("admin.templates.needs_link.link")}
                     </button>
@@ -1828,14 +1828,14 @@ function QuickAdd({
           type="button"
           onClick={add}
           disabled={!label.trim()}
-          className="inline-flex min-h-[40px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold text-co-text disabled:opacity-50"
+          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold text-co-text disabled:opacity-50"
         >
           {t("admin.templates.builder.add_confirm")}
         </button>
         <button
           type="button"
           onClick={() => { reset(); setOpen(false); }}
-          className="inline-flex min-h-[40px] items-center rounded-lg border-2 border-co-border-2 bg-co-surface px-4 text-sm font-bold text-co-text-muted"
+          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border-2 bg-co-surface px-4 text-sm font-bold text-co-text-muted"
         >
           {t("admin.templates.builder.add_cancel")}
         </button>
@@ -1938,7 +1938,7 @@ function SpanishBlock({
                 disabled={busy}
                 placeholder={f.en ?? ""}
                 onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))}
-                className="mt-1 min-h-[40px] w-full rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text disabled:opacity-50"
+                className="mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text disabled:opacity-50"
               />
             </label>
           ) : (
@@ -1954,7 +1954,7 @@ function SpanishBlock({
           type="button"
           onClick={() => void save()}
           disabled={busy || !hasEdits}
-          className="mt-2 inline-flex min-h-[40px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold text-co-text disabled:opacity-50"
+          className="mt-2 inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold text-co-text disabled:opacity-50"
         >
           {busy ? t("admin.templates.builder.saving") : t("admin.templates.builder.fill_spanish")}
         </button>
@@ -2022,7 +2022,7 @@ function SpineLinkBlock({
   };
 
   const kindChip = (activeChip: boolean) =>
-    `inline-flex min-h-[32px] items-center rounded-full border-2 px-3 text-xs font-bold transition ${
+    `inline-flex min-h-[44px] items-center rounded-full border-2 px-3 text-xs font-bold transition ${
       activeChip
         ? "border-co-gold-deep bg-co-gold/25 text-co-text"
         : "border-co-border-2 bg-co-surface text-co-text-dim hover:text-co-text"
@@ -2058,7 +2058,7 @@ function SpineLinkBlock({
             value={query}
             disabled={busy}
             onChange={(e) => setQuery(e.target.value)}
-            className="mt-2 min-h-[40px] w-full max-w-sm rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text disabled:opacity-50"
+            className="mt-2 min-h-[44px] w-full max-w-sm rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text disabled:opacity-50"
           />
           {errorKey && <p className="mt-2 text-sm font-semibold text-co-cta-text">{t(errorKey)}</p>}
           <ul className="mt-2 flex flex-col gap-1">
@@ -2077,7 +2077,7 @@ function SpineLinkBlock({
                     type="button"
                     disabled={busy}
                     onClick={() => void link(tg)}
-                    className="inline-flex min-h-[32px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15 disabled:opacity-50"
+                    className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15 disabled:opacity-50"
                   >
                     {busy ? t("admin.templates.needs_link.linking") : t("admin.templates.needs_link.link")}
                   </button>
@@ -2203,7 +2203,7 @@ function PublishBar({
         <button
           type="button"
           onClick={() => { setConfirmOpen(true); setApplyNow(false); setErrorKey(null); }}
-          className="inline-flex min-h-[40px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-5 text-sm font-extrabold text-co-text"
+          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-5 text-sm font-extrabold text-co-text"
         >
           {t("admin.templates.builder.publish")}
         </button>
@@ -2257,7 +2257,7 @@ function PublishBar({
                 type="button"
                 onClick={() => setConfirmOpen(false)}
                 disabled={busy}
-                className="inline-flex min-h-[40px] items-center rounded-lg border-2 border-co-border-2 bg-co-surface px-4 text-sm font-bold text-co-text-muted disabled:opacity-50"
+                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border-2 bg-co-surface px-4 text-sm font-bold text-co-text-muted disabled:opacity-50"
               >
                 {t("admin.templates.builder.publish_cancel")}
               </button>
@@ -2265,7 +2265,7 @@ function PublishBar({
                 type="button"
                 onClick={() => void publish()}
                 disabled={busy}
-                className="inline-flex min-h-[40px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-5 text-sm font-extrabold text-co-text disabled:opacity-50"
+                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-5 text-sm font-extrabold text-co-text disabled:opacity-50"
               >
                 {busy ? t("admin.templates.builder.publishing") : t("admin.templates.builder.publish_go")}
               </button>
@@ -2409,7 +2409,7 @@ function PhonePreview({
   }, [draftedItems]);
 
   const langChip = (activeChip: boolean) =>
-    `inline-flex min-h-[32px] items-center rounded-full border-2 px-3 text-xs font-bold transition ${
+    `inline-flex min-h-[44px] items-center rounded-full border-2 px-3 text-xs font-bold transition ${
       activeChip ? "border-co-gold-deep bg-co-gold/25 text-co-text" : "border-co-border-2 bg-co-surface text-co-text-dim hover:text-co-text"
     }`;
 

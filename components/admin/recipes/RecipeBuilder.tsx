@@ -299,7 +299,7 @@ export function RecipeBuilder({
                 {t(rk("recipes.create.type_label"))}
               </span>
               <select
-                className="rounded border-2 border-co-border bg-co-surface px-2 py-1 text-xs font-bold text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
+                className="min-h-[44px] rounded border-2 border-co-border bg-co-surface px-2 py-1 text-xs font-bold text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
                 value={draftType}
                 onChange={(e) => setDraftType(e.target.value as RecipeType)}
               >

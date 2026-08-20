@@ -159,7 +159,7 @@ function PrepTemplateBlock({ tpl }: { tpl: PrepOverviewTemplate }) {
         </div>
         <Link
           href={prepEditorHref(tpl.subtype)}
-          className="inline-flex min-h-[32px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
+          className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
         >
           {t("admin.templates.prep.open_editor")}
         </Link>
