@@ -167,7 +167,7 @@ export function MenuClient({ items: initial, canWrite }: { items: AdminMenuItem[
         </div>
       )}
 
-      <a href="/admin/catering/packages" className="co-card inline-flex items-center justify-center p-3 text-sm font-bold text-co-text transition hover:text-co-cta">
+      <a href="/admin/catering/packages" className="co-card inline-flex items-center justify-center p-3 text-sm font-bold text-co-text transition hover:text-co-cta-text">
         {t("admin.catering.menu.edit_packages")}
       </a>
 
@@ -242,7 +242,7 @@ function Toggle({ label, on, disabled, onClick }: { label: string; on: boolean; 
       disabled={disabled}
       aria-pressed={on}
       className={`inline-flex min-h-[44px] items-center rounded-full border-2 px-3 text-xs font-bold uppercase tracking-wide transition disabled:opacity-50 ${
-        on ? "border-co-gold bg-co-gold/20 text-co-text" : "border-co-border-2 bg-co-surface text-co-text-dim hover:text-co-text"
+        on ? "border-co-gold bg-co-surface-2 text-co-text" : "border-co-border-2 bg-co-surface text-co-text-dim hover:text-co-text"
       }`}
     >
       {label}

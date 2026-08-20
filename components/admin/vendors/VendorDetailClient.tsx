@@ -1086,7 +1086,7 @@ function ContactsCard({
                   <div className="flex flex-wrap items-center gap-2 font-bold">
                     {c.name}
                     {c.acceptsTextOrders ? (
-                      <span className="inline-flex items-center rounded-full bg-co-gold/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-gold-text">
+                      <span className="inline-flex items-center rounded-full bg-co-gold/20 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-gold-text">
                         {t("admin.vendors.contact.accepts_text_badge")}
                       </span>
                     ) : null}

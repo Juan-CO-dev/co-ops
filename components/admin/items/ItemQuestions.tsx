@@ -228,7 +228,7 @@ function ItemQuestionRow({ question }: { question: ItemQuestionView }) {
           type="button"
           disabled={submitting}
           onClick={() => setConfirmingDisable((v) => !v)}
-          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta disabled:opacity-50"
+          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta-text disabled:opacity-50"
         >
           {t("admin.templates.item_questions.disable")}
         </button>

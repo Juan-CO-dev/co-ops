@@ -106,7 +106,7 @@ export function SalesTab({ locationId, canPull }: { locationId: string | null; c
 
   return (
     <div className="mt-5 flex flex-col gap-5">
-      {errorKey && <p className="text-sm font-semibold text-co-cta">{t(errorKey)}</p>}
+      {errorKey && <p className="text-sm font-semibold text-co-cta-text">{t(errorKey)}</p>}
 
       <div className="flex flex-wrap items-center gap-2">
         <label htmlFor="sales-date" className="text-xs font-bold uppercase tracking-wide text-co-text-dim">{t("admin.toastsales.date_label")}</label>
@@ -134,7 +134,7 @@ export function SalesTab({ locationId, canPull }: { locationId: string | null; c
                 <ul className="flex flex-col gap-1 text-sm text-co-text">
                   {report.prepConsumed.map((r) => (
                     <li key={r.itemId} className="flex justify-between gap-2">
-                      <span>{r.name}{r.removedUnits > 0 ? <span className="ml-1 text-xs text-co-cta">(−{r.removedUnits.toFixed(2)} {t("admin.toastsales.removed_tag")})</span> : null}</span>
+                      <span>{r.name}{r.removedUnits > 0 ? <span className="ml-1 text-xs text-co-cta-text">(−{r.removedUnits.toFixed(2)} {t("admin.toastsales.removed_tag")})</span> : null}</span>
                       <span className="font-semibold">{r.units.toFixed(2)}</span>
                     </li>
                   ))}
@@ -146,7 +146,7 @@ export function SalesTab({ locationId, canPull }: { locationId: string | null; c
                 <ul className="flex flex-col gap-1 text-sm text-co-text">
                   {report.skuConsumed.map((r) => (
                     <li key={r.skuId} className="flex justify-between gap-2">
-                      <span>{r.name}{r.removedOz > 0 ? <span className="ml-1 text-xs text-co-cta">(−{r.removedOz.toFixed(1)} oz {t("admin.toastsales.removed_tag")})</span> : null}</span>
+                      <span>{r.name}{r.removedOz > 0 ? <span className="ml-1 text-xs text-co-cta-text">(−{r.removedOz.toFixed(1)} oz {t("admin.toastsales.removed_tag")})</span> : null}</span>
                       <span className="font-semibold">{r.oz.toFixed(1)} oz</span>
                     </li>
                   ))}
@@ -253,7 +253,7 @@ export function SalesTab({ locationId, canPull }: { locationId: string | null; c
               )}
               {report.suspectedCatering.length > 0 && (
                 <div className="mt-2">
-                  <p className="text-sm font-semibold text-co-cta">{t("admin.toastsales.suspected_heading")}</p>
+                  <p className="text-sm font-semibold text-co-cta-text">{t("admin.toastsales.suspected_heading")}</p>
                   <ul className="text-sm text-co-text-muted">
                     {report.suspectedCatering.map((s) => (
                       <li key={s.checkGuid}>

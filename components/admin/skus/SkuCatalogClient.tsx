@@ -305,7 +305,7 @@ export function SkuCatalogClient({
 
   const chipCls = (active: boolean) =>
     `inline-flex min-h-[44px] items-center rounded-full border-2 px-3 text-xs font-bold transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 ${
-      active ? "border-co-gold-deep bg-co-gold/25 text-co-text" : "border-co-border bg-co-surface text-co-text-muted hover:text-co-text"
+      active ? "border-co-gold-deep bg-co-surface-2 text-co-text" : "border-co-border bg-co-surface text-co-text-muted hover:text-co-text"
     }`;
 
   // Chip label: the two cross-cutting lenses carry live campaign counters (D2/D5).

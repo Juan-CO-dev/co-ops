@@ -40,7 +40,7 @@ export function ItemsClient({
 
   return (
     <div className="mt-4 flex flex-col gap-6">
-      <p className="rounded-lg border-2 border-co-gold-deep bg-co-gold/15 px-3 py-2 text-xs font-bold text-co-text">
+      <p className="rounded-lg border-2 border-co-warning bg-co-warning-surface px-3 py-2 text-xs font-bold text-co-text">
         {t("admin.templates.global_blast_radius_note")}
       </p>
 

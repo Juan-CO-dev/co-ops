@@ -103,7 +103,7 @@ export function PrepOverviewPanel({ overview }: { overview: PrepOverviewReport |
                     {d.perLocation.map((p) => (
                       <span
                         key={p.locationId}
-                        className="inline-flex items-center gap-1 rounded-full bg-co-gold/15 px-2 py-0.5 text-[11px] font-semibold text-co-text"
+                        className="inline-flex items-center gap-1 rounded-full bg-co-gold/20 px-2 py-0.5 text-[11px] font-semibold text-co-text"
                       >
                         {locName(p.locationId)}: {t(inputTypeKey(p.inputType))}
                       </span>
@@ -159,7 +159,7 @@ function PrepTemplateBlock({ tpl }: { tpl: PrepOverviewTemplate }) {
         </div>
         <Link
           href={prepEditorHref(tpl.subtype)}
-          className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
+          className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-surface-2"
         >
           {t("admin.templates.prep.open_editor")}
         </Link>
@@ -185,7 +185,7 @@ function PrepTemplateBlock({ tpl }: { tpl: PrepOverviewTemplate }) {
                       </span>
                     )}
                     {line.esMissing && (
-                      <span className="inline-flex items-center rounded-full bg-co-gold/15 px-2 py-0.5 text-[10px] font-bold text-co-text">
+                      <span className="inline-flex items-center rounded-full bg-co-gold/20 px-2 py-0.5 text-[10px] font-bold text-co-text">
                         {t("admin.templates.prep.chip_es_missing")}
                       </span>
                     )}

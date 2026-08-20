@@ -288,7 +288,7 @@ export function RecipeBuilder({
         {/* Recipe type badge / selector */}
         <div className="mb-3 flex items-center gap-2 flex-wrap">
           {recipe ? (
-            <span className="rounded bg-co-gold/30 px-2 py-0.5 text-xs font-bold uppercase tracking-[0.08em] text-co-text">
+            <span className="rounded bg-co-gold/20 px-2 py-0.5 text-xs font-bold uppercase tracking-[0.08em] text-co-text">
               {recipe.recipeType === "production"
                 ? t(rk("recipes.type.production"))
                 : t(rk("recipes.type.consumer"))}
@@ -501,7 +501,7 @@ export function RecipeBuilder({
               <button
                 type="button"
                 onClick={() => { setDeleteError(null); setConfirmDelete(true); }}
-                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta-text bg-co-surface px-4 text-sm font-bold text-co-cta-text hover:border-co-cta"
+                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta-text bg-co-surface px-4 text-sm font-bold text-co-cta-text hover:border-co-cta-text"
               >
                 {t(rk("recipes.delete.button"))}
               </button>
@@ -886,7 +886,7 @@ function DraftInputRow({
         <button
           type="button"
           onClick={() => setConfirming((v) => !v)}
-          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta"
+          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta-text"
         >
           {t(rk("recipes.row.remove"))}
         </button>
@@ -1206,7 +1206,7 @@ function DraftOutputRow({
           {meta ? <p className="text-xs text-co-text-muted">{meta}</p> : null}
         </div>
         <button type="button" onClick={() => setConfirming((v) => !v)}
-          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta">
+          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta-text">
           {t(rk("recipes.row.remove"))}
         </button>
       </div>

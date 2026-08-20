@@ -131,7 +131,7 @@ function VendorCard({
           {v.orderTypes.map((o) => (
             <span
               key={`o-${o.id}`}
-              className="inline-flex items-center rounded-full bg-co-gold/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-gold-text"
+              className="inline-flex items-center rounded-full bg-co-gold/20 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-gold-text"
             >
               {o.label}
             </span>

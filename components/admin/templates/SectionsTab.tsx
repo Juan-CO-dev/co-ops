@@ -48,7 +48,7 @@ export function SectionsTab({
 
   return (
     <div className="mt-4 flex flex-col gap-6">
-      <p className="rounded-lg border-2 border-co-gold-deep bg-co-gold/15 px-3 py-2 text-xs font-bold text-co-text">
+      <p className="rounded-lg border-2 border-co-warning bg-co-warning-surface px-3 py-2 text-xs font-bold text-co-text">
         {t("admin.templates.items_moved")}{" "}
         <Link href="/admin/items" className="underline decoration-2 underline-offset-2 hover:text-co-gold-text">
           {t("admin.templates.items_moved_link")}
@@ -245,7 +245,7 @@ function SectionRow({
               type="button"
               disabled={submitting}
               onClick={() => setConfirmingDisable((v) => !v)}
-              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta disabled:opacity-50"
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta-text disabled:opacity-50"
             >
               {t("admin.templates.sections_panel.disable")}
             </button>
@@ -254,7 +254,7 @@ function SectionRow({
       </div>
 
       {confirmingDisable && !isMisc ? (
-        <div className="mt-3 rounded-lg border-2 border-co-cta bg-co-cta/10 p-3">
+        <div className="mt-3 rounded-lg border-2 border-co-cta-text bg-co-cta/10 p-3">
           <p className="text-sm font-bold text-co-text">
             {t("admin.templates.sections_panel.disable_confirm_title")
               .replace("{section}", section.labelEn)
@@ -601,7 +601,7 @@ function SectionQuestionRow({
             type="button"
             disabled={submitting}
             onClick={() => { setConfirmingDisable((v) => !v); setEditing(false); }}
-            className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta disabled:opacity-50"
+            className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta-text disabled:opacity-50"
           >
             {t("admin.templates.section_questions_panel.disable")}
           </button>
@@ -679,7 +679,7 @@ function SectionQuestionRow({
       ) : null}
 
       {confirmingDisable ? (
-        <div className="mt-3 rounded-lg border-2 border-co-cta bg-co-cta/10 p-3">
+        <div className="mt-3 rounded-lg border-2 border-co-cta-text bg-co-cta/10 p-3">
           <p className="text-sm font-bold text-co-text">
             {t("admin.templates.section_questions_panel.disable_confirm_title", { section: sectionLabel })}
           </p>

@@ -243,7 +243,7 @@ export function SkuPackChainPanel({
                       type="button"
                       disabled={busy}
                       onClick={() => removeRow(i)}
-                      className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-cta disabled:opacity-50"
+                      className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-cta-text disabled:opacity-50"
                     >
                       {t("admin.skus.chain.remove_level")}
                     </button>

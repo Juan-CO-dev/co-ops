@@ -327,7 +327,7 @@ export function TemplateBuilderClient({
       {/* PENDING-VERSION banner (D2, never collapses): the loaded version is a pending
           next-day publish — these on-screen items go live tomorrow morning. */}
       {active?.isPending && active.effectiveFrom && (
-        <p className="rounded-lg border-2 border-co-gold-deep/60 bg-co-gold/15 px-3 py-2 text-sm font-semibold text-co-text">
+        <p className="rounded-lg border-2 border-co-warning bg-co-warning-surface px-3 py-2 text-sm font-semibold text-co-text">
           {t("admin.templates.builder.pending_banner", { date: active.effectiveFrom })}
         </p>
       )}
@@ -359,7 +359,7 @@ export function TemplateBuilderClient({
                 className={
                   "inline-flex min-h-[44px] items-center gap-2 rounded-full border-2 px-4 text-sm font-bold transition " +
                   (tpl.id === active?.id
-                    ? "border-co-gold-deep bg-co-gold/25 text-co-text"
+                    ? "border-co-gold-deep bg-co-surface-2 text-co-text"
                     : "border-co-border bg-co-surface text-co-text-muted hover:text-co-text")
                 }
               >
@@ -605,7 +605,7 @@ function DriftReconcileGroup({
                   <button
                     type="button"
                     onClick={() => pending.forEach(runReconcile)}
-                    className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
+                    className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-surface-2"
                   >
                     {t("admin.templates.doctor.reconcile_all", { n: String(pending.length), missing: missingName })}
                   </button>
@@ -633,7 +633,7 @@ function DriftReconcileGroup({
                         <button
                           type="button"
                           onClick={() => runReconcile(d)}
-                          className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
+                          className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-surface-2"
                         >
                           {t("admin.templates.doctor.reconcile_add", { missing: missingName })}
                         </button>
@@ -694,7 +694,7 @@ function DoctorTemplateBlock({
                   <button
                     type="button"
                     onClick={() => onFix(tpl.templateId, nl.itemId)}
-                    className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
+                    className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-surface-2"
                   >
                     {t("admin.templates.doctor.fix")}
                   </button>
@@ -742,7 +742,7 @@ function DoctorTemplateBlock({
                   <button
                     type="button"
                     onClick={() => onFix(tpl.templateId, dr.itemId)}
-                    className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
+                    className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-surface-2"
                   >
                     {t("admin.templates.doctor.fix")}
                   </button>
@@ -1009,7 +1009,7 @@ function ItemRow({
     "inline-flex items-center rounded-full border border-co-border px-2 py-0.5 text-[11px] font-semibold text-co-text-muted";
   // PR-4: hard-gated lines get an emphatic chip (they can block a whole submission).
   const chipHardGate =
-    "inline-flex items-center rounded-full border-2 border-co-cta/60 bg-co-cta/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-cta-text";
+    "inline-flex items-center rounded-full border-2 border-co-cta-text/60 bg-co-cta/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-cta-text";
   const moveBtn =
     "inline-flex h-11 w-11 items-center justify-center rounded-lg border-2 border-co-border-2 bg-co-surface text-sm font-bold text-co-text disabled:opacity-30";
 
@@ -1085,7 +1085,7 @@ function ItemRow({
           {/* PR-5 (spec §8): the location-scope indicator on draft-added rows — "both
               locations" (fanned) or "this location only". Informational; not an alert. */}
           {isDraftAdd && addScope !== null && (
-            <span className="inline-flex items-center rounded-full bg-co-gold/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-text">
+            <span className="inline-flex items-center rounded-full bg-co-gold/20 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-text">
               {addScope === "both"
                 ? t("admin.templates.builder.badge.both_locations")
                 : t("admin.templates.builder.badge.this_location_only")}
@@ -1488,7 +1488,7 @@ function ConnectionsEditor({
                       <button
                         type="button"
                         onClick={() => onEdit({ op: "ref_track", itemId: item.id, targetItemId: r.itemId })}
-                        className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
+                        className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-surface-2"
                       >
                         {t("admin.templates.builder.connections.ref_track_pick")}
                       </button>
@@ -1675,7 +1675,7 @@ function QuickAdd({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="mt-2 inline-flex min-h-[44px] items-center rounded-lg border-2 border-dashed border-co-gold-deep bg-co-surface px-4 text-sm font-bold text-co-text hover:bg-co-gold/15"
+        className="mt-2 inline-flex min-h-[44px] items-center rounded-lg border-2 border-dashed border-co-gold-deep bg-co-surface px-4 text-sm font-bold text-co-text hover:bg-co-surface-2"
       >
         {t("admin.templates.builder.add_item")}
       </button>
@@ -1754,7 +1754,7 @@ function QuickAdd({
                 className={
                   "inline-flex min-h-[44px] items-center rounded-full border-2 px-3 text-sm font-bold transition " +
                   (activeChip
-                    ? "border-co-gold-deep bg-co-gold/25 text-co-text"
+                    ? "border-co-gold-deep bg-co-surface-2 text-co-text"
                     : "border-co-border-2 bg-co-surface text-co-text-dim hover:text-co-text")
                 }
               >
@@ -1787,7 +1787,7 @@ function QuickAdd({
                     <button
                       type="button"
                       onClick={() => { setSpine(tg); setError(null); }}
-                      className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15"
+                      className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-surface-2"
                     >
                       {t("admin.templates.needs_link.link")}
                     </button>
@@ -2024,7 +2024,7 @@ function SpineLinkBlock({
   const kindChip = (activeChip: boolean) =>
     `inline-flex min-h-[44px] items-center rounded-full border-2 px-3 text-xs font-bold transition ${
       activeChip
-        ? "border-co-gold-deep bg-co-gold/25 text-co-text"
+        ? "border-co-gold-deep bg-co-surface-2 text-co-text"
         : "border-co-border-2 bg-co-surface text-co-text-dim hover:text-co-text"
     }`;
 
@@ -2069,7 +2069,7 @@ function SpineLinkBlock({
                 <li key={`${tg.kind}:${tg.id}`} className="flex items-center justify-between gap-2">
                   <span className="flex items-center gap-2 text-sm text-co-text">
                     {tg.name}
-                    <span className="rounded bg-co-gold/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-co-text">
+                    <span className="rounded bg-co-gold/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-co-text">
                       {t(tk(`admin.catalog.type.${tg.typeLabel}`))}
                     </span>
                   </span>
@@ -2077,7 +2077,7 @@ function SpineLinkBlock({
                     type="button"
                     disabled={busy}
                     onClick={() => void link(tg)}
-                    className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-gold/15 disabled:opacity-50"
+                    className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-gold-deep bg-co-surface px-3 text-xs font-bold text-co-text hover:bg-co-surface-2 disabled:opacity-50"
                   >
                     {busy ? t("admin.templates.needs_link.linking") : t("admin.templates.needs_link.link")}
                   </button>
@@ -2189,7 +2189,7 @@ function PublishBar({
   return (
     <>
       {/* Dirty banner (D2 — never collapses). */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border-2 border-co-cta/40 bg-co-cta/5 px-3 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border-2 border-co-cta-text/40 bg-co-cta/5 px-3 py-2">
         <div className="flex flex-col gap-0.5">
           <span className="text-sm font-semibold text-co-text">{t("admin.templates.builder.dirty_banner")}</span>
           {/* PR-5 (spec §8): the peer location's draft is also dirty. Publish is PER
@@ -2222,7 +2222,7 @@ function PublishBar({
                 <span className="text-sm text-co-text-muted">{t("admin.templates.builder.publish_diff_none")}</span>
               ) : (
                 diffChips.map((c, i) => (
-                  <span key={i} className="inline-flex items-center rounded-full bg-co-gold/15 px-2 py-0.5 text-xs font-bold text-co-text">
+                  <span key={i} className="inline-flex items-center rounded-full bg-co-gold/20 px-2 py-0.5 text-xs font-bold text-co-text">
                     {c}
                   </span>
                 ))
@@ -2342,7 +2342,7 @@ function PreviewStationGroups({
                           {t("admin.templates.builder.preview.hard_gate")}
                         </span>
                       ) : it.required ? (
-                        <span className="text-[10px] font-bold uppercase tracking-wide text-co-cta">
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-co-cta-text">
                           {t("admin.templates.builder.preview.required")}
                         </span>
                       ) : null}
@@ -2410,7 +2410,7 @@ function PhonePreview({
 
   const langChip = (activeChip: boolean) =>
     `inline-flex min-h-[44px] items-center rounded-full border-2 px-3 text-xs font-bold transition ${
-      activeChip ? "border-co-gold-deep bg-co-gold/25 text-co-text" : "border-co-border-2 bg-co-surface text-co-text-dim hover:text-co-text"
+      activeChip ? "border-co-gold-deep bg-co-surface-2 text-co-text" : "border-co-border-2 bg-co-surface text-co-text-dim hover:text-co-text"
     }`;
 
   return (
@@ -2436,7 +2436,7 @@ function PhonePreview({
           {hasPhases ? (
             <div className="flex flex-col gap-4">
               <section>
-                <h4 className="text-xs font-extrabold uppercase tracking-[0.08em] text-co-cta">
+                <h4 className="text-xs font-extrabold uppercase tracking-[0.08em] text-co-cta-text">
                   {t("admin.templates.builder.preview.phase1")}
                 </h4>
                 <div className="mt-1">
@@ -2444,7 +2444,7 @@ function PhonePreview({
                 </div>
               </section>
               <section>
-                <h4 className="text-xs font-extrabold uppercase tracking-[0.08em] text-co-cta">
+                <h4 className="text-xs font-extrabold uppercase tracking-[0.08em] text-co-cta-text">
                   {t("admin.templates.builder.preview.phase2")}
                 </h4>
                 <p className="mt-0.5 text-xs text-co-text-muted">

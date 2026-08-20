@@ -52,7 +52,7 @@ export function RecipeInputRow({
           <button
             type="button"
             onClick={() => setConfirming((v) => !v)}
-            className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta"
+            className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta-text"
           >
             {t(rk("recipes.row.remove"))}
           </button>
