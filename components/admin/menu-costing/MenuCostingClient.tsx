@@ -58,6 +58,7 @@ const GROUPS: ReadonlyArray<{ status: MenuCostStatus; titleKey: TranslationKey }
   { status: "partial", titleKey: "admin.menu_costing.group.partial" },
   { status: "unpriced", titleKey: "admin.menu_costing.group.unpriced" },
   { status: "inconsistent", titleKey: "admin.menu_costing.group.inconsistent" },
+  { status: "unweighed", titleKey: "admin.menu_costing.group.unweighed" },
   { status: "unresolved", titleKey: "admin.menu_costing.group.unresolved" },
   { status: "no_recipe", titleKey: "admin.menu_costing.group.no_recipe" },
 ];
@@ -133,6 +134,13 @@ export function MenuCostingClient({
           label={t("admin.menu_costing.totals.inconsistent_items")}
           value={String(totals.inconsistentItemCount)}
           danger={totals.inconsistentItemCount > 0}
+        />
+        {/* Same always-rendered contract, different errand: these preps need a
+            scale, not a recipe edit. */}
+        <Metric
+          label={t("admin.menu_costing.totals.unweighed_items")}
+          value={String(totals.unweighedItemCount)}
+          danger={totals.unweighedItemCount > 0}
         />
         <p className="w-full text-[11px] font-medium text-co-text-muted">
           {t("admin.menu_costing.threshold_note", { pct: FOOD_COST_RED_THRESHOLD_PCT })}
@@ -263,6 +271,13 @@ function RowBadges({
       </AlertPill>,
     );
   }
+  if (row.rollup.status === "unweighed") {
+    badges.push(
+      <AlertPill key="unweighed" tone="warn">
+        {t("admin.menu_costing.badge.unweighed")}
+      </AlertPill>,
+    );
+  }
   if (row.rollup.status === "unresolved") {
     badges.push(
       <AlertPill key="unresolved" tone="danger">
@@ -295,7 +310,28 @@ function RowDrawer({
   money: (v: number | null) => string;
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }) {
-  const { status, pricedCost, pricedLineCount, unpricedSkuIds, inconsistentItemIds } = row.rollup;
+  const { status, pricedCost, pricedLineCount, unpricedSkuIds, inconsistentItemIds, unweighedItemIds } =
+    row.rollup;
+
+  /** Shared renderer for the two prep-blocked drawers — same list, different errand. */
+  const prepList = (ids: string[], labelKey: TranslationKey) => (
+    <div>
+      <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
+        {t(labelKey, { n: ids.length })}
+      </p>
+      <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+        {ids.map((id) => {
+          const name = itemNames[id];
+          return (
+            <li key={id} className="text-xs font-medium text-co-text">
+              {(language === "es" ? name?.es ?? name?.en : name?.en) ??
+                t("admin.menu_costing.drawer.unknown_item")}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
 
   if (status === "no_recipe") {
     return <p className="text-xs text-co-text-muted">{t("admin.menu_costing.drawer.no_recipe_help")}</p>;
@@ -307,22 +343,15 @@ function RowDrawer({
     return (
       <>
         <p className="text-xs text-co-text-muted">{t("admin.menu_costing.drawer.inconsistent_help")}</p>
-        <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
-            {t("admin.menu_costing.drawer.inconsistent_preps", { n: inconsistentItemIds.length })}
-          </p>
-          <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
-            {inconsistentItemIds.map((id) => {
-              const name = itemNames[id];
-              return (
-                <li key={id} className="text-xs font-medium text-co-text">
-                  {(language === "es" ? name?.es ?? name?.en : name?.en) ??
-                    t("admin.menu_costing.drawer.unknown_item")}
-                </li>
-              );
-            })}
-          </ul>
-        </div>
+        {prepList(inconsistentItemIds, "admin.menu_costing.drawer.inconsistent_preps")}
+      </>
+    );
+  }
+  if (status === "unweighed") {
+    return (
+      <>
+        <p className="text-xs text-co-text-muted">{t("admin.menu_costing.drawer.unweighed_help")}</p>
+        {prepList(unweighedItemIds, "admin.menu_costing.drawer.unweighed_preps")}
       </>
     );
   }

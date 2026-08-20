@@ -27,6 +27,8 @@ import {
   summarizeMenuCostRows,
   toMenuCostRow,
   type MenuCostInput,
+  isPlaceholderPortion,
+  placeholderPortionIndex,
 } from "@/lib/menu-costing-shared";
 import { buildRecipeGraph, type GraphRecipe } from "@/lib/prep-consumption-graph";
 import type { MeasureUnitFactor, RecipeInputSku } from "@/lib/recipe-math";
@@ -353,7 +355,7 @@ describe("mass balance — declared output vs resolved input (D2)", () => {
     const mk = (id: string, status: "inconsistent" | "unresolved") =>
       toMenuCostRow(
         { id, name: id, nameEs: null, section: null, menuPrice: 10 },
-        { status, cost: null, pricedCost: 0, pricedLineCount: 0, unpricedLineCount: 0, unpricedSkuIds: [], inconsistentItemIds: [] },
+        { status, cost: null, pricedCost: 0, pricedLineCount: 0, unpricedLineCount: 0, unpricedSkuIds: [], inconsistentItemIds: [], unweighedItemIds: [] },
       );
     expect([mk("u", "unresolved"), mk("i", "inconsistent")].sort(compareMenuCostRows).map((r) => r.id))
       .toEqual(["i", "u"]);
@@ -388,7 +390,7 @@ describe("board composition + ordering", () => {
     expect(rows[1]!.overThreshold).toBe(false);
     const exactly = toMenuCostRow(
       { id: "x", name: "x", nameEs: null, section: null, menuPrice: 10 },
-      { status: "costed", cost: 3, pricedCost: 3, pricedLineCount: 1, unpricedLineCount: 0, unpricedSkuIds: [], inconsistentItemIds: [] },
+      { status: "costed", cost: 3, pricedCost: 3, pricedLineCount: 1, unpricedLineCount: 0, unpricedSkuIds: [], inconsistentItemIds: [], unweighedItemIds: [] },
     );
     expect(exactly.foodCostPct).toBeCloseTo(30, 10);
     expect(exactly.overThreshold).toBe(false); // AT the threshold is not OVER it
@@ -397,7 +399,7 @@ describe("board composition + ordering", () => {
   it("a costed row with no menu price sorts after priced ones instead of ranking as worst", () => {
     const noPrice = toMenuCostRow(
       { id: "np", name: "No Price", nameEs: null, section: null, menuPrice: null },
-      { status: "costed", cost: 1, pricedCost: 1, pricedLineCount: 1, unpricedLineCount: 0, unpricedSkuIds: [], inconsistentItemIds: [] },
+      { status: "costed", cost: 1, pricedCost: 1, pricedLineCount: 1, unpricedLineCount: 0, unpricedSkuIds: [], inconsistentItemIds: [], unweighedItemIds: [] },
     );
     expect(compareMenuCostRows(noPrice, rows[0]!)).toBeGreaterThan(0);
   });
@@ -406,7 +408,7 @@ describe("board composition + ordering", () => {
     const mk = (id: string, unpriced: number) =>
       toMenuCostRow(
         { id, name: id, nameEs: null, section: null, menuPrice: 10 },
-        { status: "partial", cost: null, pricedCost: 1, pricedLineCount: 1, unpricedLineCount: unpriced, unpricedSkuIds: [], inconsistentItemIds: [] },
+        { status: "partial", cost: null, pricedCost: 1, pricedLineCount: 1, unpricedLineCount: unpriced, unpricedSkuIds: [], inconsistentItemIds: [], unweighedItemIds: [] },
       );
     expect([mk("b", 3), mk("a", 1)].sort(compareMenuCostRows).map((r) => r.id)).toEqual(["a", "b"]);
   });
@@ -417,5 +419,118 @@ describe("board composition + ordering", () => {
       rowCount: 5, costedCount: 2, partialCount: 1, unpricedCount: 1, noRecipeCount: 1, overThresholdCount: 1,
     });
     expect(t.blockingSkuCount).toBe(2); // sku2 (partial) + sku3 (unpriced) — sku1 is priced
+  });
+});
+
+describe("unweighed placeholder preps (the mass guard's blind spot, 2026-08-20)", () => {
+  /** The stage-3d shape: ONE count SKU line of quantity 1, output declares no weight. */
+  const PLACEHOLDER: GraphRecipe = {
+    recipeId: "rPlaceholder",
+    batchYield: 1,
+    inputs: [eachIn(1, "skuCount")],
+    outputs: [itemOut("Onion", 1, null)],
+  };
+
+  it("THE REGRESSION: a priced placeholder prep must never render `costed`", () => {
+    // Before this guard: skuCount is priced, the flatten resolves (1 each =
+    // 1.5 oz), the mass check returns null for want of a declared weight, and
+    // the board printed a confident cost for "one onion IS one quart".
+    const g = graphOf([
+      PLACEHOLDER,
+      { recipeId: "rM", batchYield: 1, inputs: [itemIn(1, "Onion")], outputs: [menuOut("m", 1)] },
+    ]);
+    const r = rollupMenuItemCost(g, "m", prices([["skuCount", 2]]));
+    expect(r.status).toBe("unweighed");
+    expect(r.status).not.toBe("costed");
+    expect(r.cost).toBeNull();
+    expect(r.pricedCost).toBe(0); // no money at all, same contract as `inconsistent`
+    expect(r.unweighedItemIds).toEqual(["Onion"]);
+  });
+
+  it("names the prep to weigh even when the row is reached through nesting", () => {
+    const g = graphOf([
+      PLACEHOLDER,
+      // Salsa's own declared weight (1.5 oz) matches its input mass, so it is
+      // mass-CONSISTENT — the row's only complaint is the Onion below it.
+      { recipeId: "rMid", batchYield: 1, inputs: [itemIn(1, "Onion")], outputs: [itemOut("Salsa", 1, 1.5)] },
+      { recipeId: "rM", batchYield: 1, inputs: [itemOzIn(4, "Salsa")], outputs: [menuOut("m", 1)] },
+    ]);
+    expect(rollupMenuItemCost(g, "m", prices([["skuCount", 2]])).unweighedItemIds).toEqual(["Onion"]);
+  });
+
+  it("RELEASES the moment the item declares a par-unit weight", () => {
+    const g = graphOf([
+      { ...PLACEHOLDER, outputs: [itemOut("Onion", 1, 32)] },
+      { recipeId: "rM", batchYield: 1, inputs: [itemIn(1, "Onion")], outputs: [menuOut("m", 1)] },
+    ]);
+    // Declared 32 oz against 1.5 oz of input is now a MASS violation — a
+    // different, louder complaint, which is the point: the guard can finally read it.
+    expect(rollupMenuItemCost(g, "m", prices([["skuCount", 2]])).status).toBe("inconsistent");
+  });
+
+  it("a deliberate count > 1 is NOT a placeholder (live: Cooked Bacon's `12 each`)", () => {
+    const g = graphOf([
+      { recipeId: "rBacon", batchYield: 1, inputs: [eachIn(12, "skuCount")], outputs: [itemOut("Bacon", 12, null)] },
+      { recipeId: "rM", batchYield: 1, inputs: [itemIn(1, "Bacon")], outputs: [menuOut("m", 1)] },
+    ]);
+    expect(rollupMenuItemCost(g, "m", prices([["skuCount", 2]])).status).toBe("costed");
+  });
+
+  it("a weight-denominated input of quantity 1 is NOT a placeholder either", () => {
+    const g = graphOf([
+      { recipeId: "rD", batchYield: 1, inputs: [ozIn(1, "sku1")], outputs: [itemOut("Dukes", 1, null)] },
+      { recipeId: "rM", batchYield: 1, inputs: [itemIn(1, "Dukes")], outputs: [menuOut("m", 1)] },
+    ]);
+    expect(rollupMenuItemCost(g, "m", prices([["sku1", 2]])).status).toBe("costed");
+  });
+
+  it("isPlaceholderPortion is exact about the three conditions", () => {
+    const g = graphOf([
+      PLACEHOLDER,
+      // two input lines → a real recipe, not the single-line placeholder shape
+      { recipeId: "r2", batchYield: 1, inputs: [eachIn(1, "skuCount"), ozIn(1, "sku1")], outputs: [itemOut("Two", 1, null)] },
+      // an ITEM-ref line, not a SKU-ref line
+      { recipeId: "r3", batchYield: 1, inputs: [itemIn(1, "Onion")], outputs: [itemOut("Three", 1, null)] },
+    ]);
+    expect(isPlaceholderPortion(g, "Onion")).toBe(true);
+    expect(isPlaceholderPortion(g, "Two")).toBe(false);
+    expect(isPlaceholderPortion(g, "Three")).toBe(false);
+    expect(isPlaceholderPortion(g, "nope")).toBe(false);
+    expect([...placeholderPortionIndex(g)]).toEqual(["Onion"]);
+  });
+
+  it("INCONSISTENT still outranks UNWEIGHED — proven wrong beats unproven", () => {
+    const mk = (id: string, status: "inconsistent" | "unweighed") =>
+      toMenuCostRow(
+        { id, name: id, nameEs: null, section: null, menuPrice: 10 },
+        { status, cost: null, pricedCost: 0, pricedLineCount: 0, unpricedLineCount: 0, unpricedSkuIds: [], inconsistentItemIds: [], unweighedItemIds: [] },
+      );
+    expect([mk("w", "unweighed"), mk("i", "inconsistent")].sort(compareMenuCostRows).map((r) => r.id))
+      .toEqual(["i", "w"]);
+  });
+
+  it("...and UNWEIGHED outranks UNRESOLVED (it is the other plausible-looking one)", () => {
+    const mk = (id: string, status: "unweighed" | "unresolved") =>
+      toMenuCostRow(
+        { id, name: id, nameEs: null, section: null, menuPrice: 10 },
+        { status, cost: null, pricedCost: 0, pricedLineCount: 0, unpricedLineCount: 0, unpricedSkuIds: [], inconsistentItemIds: [], unweighedItemIds: [] },
+      );
+    expect([mk("u", "unresolved"), mk("w", "unweighed")].sort(compareMenuCostRows).map((r) => r.id))
+      .toEqual(["w", "u"]);
+  });
+
+  it("totals count unweighed rows and DISTINCT unweighed preps", () => {
+    const g = graphOf([
+      PLACEHOLDER,
+      { recipeId: "rA", batchYield: 1, inputs: [itemIn(1, "Onion")], outputs: [menuOut("a", 1)] },
+      { recipeId: "rB", batchYield: 1, inputs: [itemIn(1, "Onion")], outputs: [menuOut("b", 1)] },
+    ]);
+    const inputs: MenuCostInput[] = [
+      { id: "a", name: "A", nameEs: null, section: null, menuPrice: 10 },
+      { id: "b", name: "B", nameEs: null, section: null, menuPrice: 10 },
+    ];
+    const t = summarizeMenuCostRows(composeMenuCostRows(inputs, g, prices([["skuCount", 2]])));
+    expect(t.unweighedCount).toBe(2);
+    expect(t.unweighedItemCount).toBe(1); // one unweighed prep behind both rows
   });
 });
