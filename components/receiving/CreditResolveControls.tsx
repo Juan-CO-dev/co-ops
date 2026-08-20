@@ -22,6 +22,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { formatCents } from "@/lib/i18n/format";
+import { ActionButton } from "@/components/ActionButton";
 import { AlertPill, type AlertPillTone } from "@/components/ui/AlertPill";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { CreditRow } from "@/lib/credits";
@@ -152,36 +153,21 @@ export function CreditResolveControls({
                     />
                     <div className="flex flex-wrap gap-2">
                       {OUTCOMES.map((o) => (
-                        <button
-                          key={o}
-                          type="button"
-                          disabled={busy}
-                          onClick={() => void resolve(c.id, o)}
-                          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-3 text-xs font-bold text-co-text transition hover:bg-co-gold-deep disabled:opacity-50"
-                        >
+                        <ActionButton key={o} disabled={busy} onClick={() => void resolve(c.id, o)}>
                           {t(OUTCOME_KEY[o])}
-                        </button>
+                        </ActionButton>
                       ))}
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={cancelResolve}
-                        className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text-dim transition hover:border-co-text disabled:opacity-50"
-                      >
+                      <ActionButton variant="secondary" disabled={busy} onClick={cancelResolve}>
                         {t("receiving.credits.cancel")}
-                      </button>
+                      </ActionButton>
                     </div>
                     {err ? <p className="text-xs text-co-cta-text">{err}</p> : null}
                   </div>
                 ) : (
                   <div className="mt-2">
-                    <button
-                      type="button"
-                      onClick={() => beginResolve(c.id)}
-                      className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text transition hover:border-co-text"
-                    >
+                    <ActionButton variant="secondary" onClick={() => beginResolve(c.id)}>
                       {t("receiving.credits.resolve")}
-                    </button>
+                    </ActionButton>
                   </div>
                 )
               ) : null}

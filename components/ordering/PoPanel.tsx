@@ -34,6 +34,7 @@ import { useCallback, useEffect, useId, useMemo, useState } from "react";
 
 import { useTranslation } from "@/lib/i18n/provider";
 import { formatTime } from "@/lib/i18n/format";
+import { ActionButton } from "@/components/ActionButton";
 import { AlertPill, type AlertPillTone } from "@/components/ui/AlertPill";
 import {
   CopyButton,
@@ -560,7 +561,7 @@ function DraftView({
           className={
             "inline-flex min-h-[48px] flex-[2] items-center justify-center rounded-lg border-2 px-4 text-sm font-bold uppercase tracking-[0.1em] disabled:opacity-50 " +
             (armConfirm
-              ? "border-co-gold-deep bg-co-gold-deep text-white"
+              ? "border-co-gold-deep bg-co-gold-deep text-co-text"
               : "border-co-gold-deep bg-co-gold text-co-text")
           }
         >
@@ -615,10 +616,10 @@ function ConfirmedView({
     <div className="mt-4 flex flex-col gap-4">
       {/* Frozen line table (read-only). */}
       <section className="co-card p-4">
-        <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-co-text-dim">{t("ordering.po.frozen_lines")}</h3>
+        <h3 className="text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">{t("ordering.po.frozen_lines")}</h3>
         <table className="mt-2 w-full text-[13px]">
           <thead>
-            <tr className="text-left text-[11px] uppercase tracking-[0.1em] text-co-text-dim">
+            <tr className="text-left text-[11px] uppercase tracking-[0.12em] text-co-text-dim">
               <th className="pb-1 font-bold">{t("ordering.review.col_sku")}</th>
               <th className="pb-1 font-bold">{t("ordering.review.col_item")}</th>
               <th className="pb-1 text-right font-bold">{t("ordering.review.col_qty")}</th>
@@ -647,7 +648,7 @@ function ConfirmedView({
       {transmit.emailOrderingAvailable ? (
         <section className="co-card p-4">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-co-text-dim">{t("ordering.po.auto.title")}</h3>
+            <h3 className="text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">{t("ordering.po.auto.title")}</h3>
             <AlertPill tone="ok" uppercase={false}>{t("ordering.po.tier.auto")}</AlertPill>
           </div>
           {emailPreview && emailPreview.to.length > 0 ? (
@@ -672,14 +673,9 @@ function ConfirmedView({
                   count: emailPreview.to.length,
                 })}
               </p>
-              <button
-                type="button"
-                onClick={onSend}
-                disabled={busy}
-                className="mt-3 inline-flex min-h-[48px] w-full items-center justify-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50"
-              >
+              <ActionButton className="mt-3 w-full" onClick={onSend} disabled={busy}>
                 {t("ordering.po.auto.send")}
-              </button>
+              </ActionButton>
               <p className="mt-2 text-[12px] italic text-co-text-muted">{t("ordering.po.auto.send_help")}</p>
             </>
           ) : emailPreview ? (
@@ -694,7 +690,7 @@ function ConfirmedView({
       ) : (
         <section className="co-card p-4">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-co-text-dim">{t("ordering.po.auto.title")}</h3>
+            <h3 className="text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">{t("ordering.po.auto.title")}</h3>
           </div>
           <p className="mt-3 text-[13px] text-co-text-dim">{t("ordering.po.auto.dormant")}</p>
           {/* The dormant note above says WHAT (not set up — use another way); this says WHEN
@@ -708,7 +704,7 @@ function ConfirmedView({
       {/* TRANSMIT block — tier-appropriate. */}
       <section className="co-card p-4">
         <div className="flex flex-wrap items-center gap-2">
-          <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-co-text-dim">{t("ordering.po.transmit")}</h3>
+          <h3 className="text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">{t("ordering.po.transmit")}</h3>
           <AlertPill tone="info" uppercase={false}>
             {t(("ordering.po.tier." + transmit.tier) as TranslationKey)}
           </AlertPill>
@@ -745,7 +741,7 @@ function ConfirmedView({
             {/* Manual: contact cards (accepts_text_orders badged) + ordering-detail affordances. */}
             {transmit.contacts.length > 0 && (
               <div className="flex flex-col gap-2">
-                <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-co-text-dim">{t("ordering.po.contacts")}</span>
+                <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">{t("ordering.po.contacts")}</span>
                 {transmit.contacts.map((c) => (
                   <div key={c.id} className="rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2">
                     <div className="flex flex-wrap items-center gap-2">
@@ -780,7 +776,7 @@ function ConfirmedView({
 
             {transmit.orderingDetails.length > 0 ? (
               <div className="flex flex-col gap-2">
-                <span className="text-[11px] font-bold uppercase tracking-[0.1em] text-co-text-dim">{t("ordering.po.ordering_methods")}</span>
+                <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">{t("ordering.po.ordering_methods")}</span>
                 {transmit.orderingDetails.map((d, i) => (
                   <DeliveryRow
                     key={`${d.method}-${i}`}
@@ -811,13 +807,7 @@ function ConfirmedView({
       </section>
 
       {/* Mark placed. */}
-      <button
-        type="button"
-        onClick={onOpenPlace}
-        className="inline-flex min-h-[48px] items-center justify-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text"
-      >
-        {t("ordering.po.mark_placed")}
-      </button>
+      <ActionButton onClick={onOpenPlace}>{t("ordering.po.mark_placed")}</ActionButton>
     </div>
   );
 }
@@ -851,7 +841,7 @@ function TrailView({
     <div className="mt-4 flex flex-col gap-4">
       {/* Frozen lines (read-only). */}
       <section className="co-card p-4">
-        <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-co-text-dim">{t("ordering.po.frozen_lines")}</h3>
+        <h3 className="text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">{t("ordering.po.frozen_lines")}</h3>
         <table className="mt-2 w-full text-[13px]">
           <tbody>
             {detail.lines.filter((l) => l.orderQty > 0).map((l) => (
@@ -884,7 +874,7 @@ function TrailView({
 
       {/* Status timeline (from the row's own timestamps). */}
       <section className="co-card p-4">
-        <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-co-text-dim">{t("ordering.po.timeline")}</h3>
+        <h3 className="text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">{t("ordering.po.timeline")}</h3>
         <ol className="mt-2 flex flex-col gap-1">
           {detail.timeline.map((ev, i) => (
             <li key={`${ev.status}-${i}`} className="flex items-center justify-between gap-2 text-[13px]">
@@ -909,7 +899,7 @@ function TrailView({
       {/* Transmissions list. */}
       {detail.transmissions.length > 0 && (
         <section className="co-card p-4">
-          <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-co-text-dim">{t("ordering.po.transmissions")}</h3>
+          <h3 className="text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">{t("ordering.po.transmissions")}</h3>
           <ul className="mt-2 flex flex-col gap-2">
             {detail.transmissions.map((tx) => (
               <li key={tx.id} className="rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2 text-[13px]">
@@ -937,7 +927,7 @@ function TrailView({
           an outbound order (outbound is dormant in V1, so these are inbound today). */}
       {detail.smsMessages.length > 0 && (
         <section className="co-card p-4">
-          <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-co-text-dim">{t("ordering.po.sms.heading")}</h3>
+          <h3 className="text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">{t("ordering.po.sms.heading")}</h3>
           <ul className="mt-2 flex flex-col gap-2">
             {detail.smsMessages.map((sms) => (
               <li key={sms.id} className="rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2 text-[13px]">
@@ -960,7 +950,7 @@ function TrailView({
       {/* Linked delivery + credits summary. */}
       {detail.deliveryIds.length > 0 && (
         <section className="co-card p-4">
-          <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-co-text-dim">{t("ordering.po.delivery")}</h3>
+          <h3 className="text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">{t("ordering.po.delivery")}</h3>
           <ul className="mt-2 flex flex-col gap-1">
             {detail.deliveryIds.map((did) => (
               <li key={did}>
@@ -995,7 +985,7 @@ function TrailView({
           className={
             "inline-flex min-h-[48px] items-center justify-center rounded-lg border-2 px-4 text-sm font-bold uppercase tracking-[0.1em] disabled:opacity-50 " +
             (armReconcile
-              ? "border-co-gold-deep bg-co-gold-deep text-white"
+              ? "border-co-gold-deep bg-co-gold-deep text-co-text"
               : "border-co-gold-deep bg-co-gold text-co-text")
           }
         >
@@ -1111,7 +1101,7 @@ function ThreeWayRow({ line, hasOpenCredit }: { line: ThreeWayLine; hasOpenCredi
       {/* Ordered / Received / Billed — stack on narrow, three columns ≥ sm. */}
       <dl className="mt-2 grid grid-cols-1 gap-1 sm:grid-cols-3 sm:gap-3">
         <div className="flex items-baseline justify-between gap-2 sm:flex-col sm:items-start sm:gap-0">
-          <dt className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-text-dim">
+          <dt className="text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
             {t("ordering.po.three_way.ordered")}
           </dt>
           <dd className="text-[14px] font-semibold text-co-text">
@@ -1120,7 +1110,7 @@ function ThreeWayRow({ line, hasOpenCredit }: { line: ThreeWayLine; hasOpenCredi
           </dd>
         </div>
         <div className="flex items-baseline justify-between gap-2 sm:flex-col sm:items-start sm:gap-0">
-          <dt className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-text-dim">
+          <dt className="text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
             {t("ordering.po.three_way.received")}
           </dt>
           <dd className="text-[14px] font-semibold text-co-text">
@@ -1129,7 +1119,7 @@ function ThreeWayRow({ line, hasOpenCredit }: { line: ThreeWayLine; hasOpenCredi
           </dd>
         </div>
         <div className="flex items-baseline justify-between gap-2 sm:flex-col sm:items-start sm:gap-0">
-          <dt className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-text-dim">
+          <dt className="text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
             {t("ordering.po.three_way.billed")}
           </dt>
           <dd className="text-[14px] font-semibold text-co-text">
@@ -1193,7 +1183,7 @@ function PlaceDialog({
         <h3 className="text-base font-bold text-co-text">{t("ordering.po.place_title")}</h3>
         <p className="mt-1 text-[12px] text-co-text-dim">{t("ordering.po.place_help")}</p>
 
-        <label htmlFor={channelId} className="mt-3 block text-[11px] font-bold uppercase tracking-[0.1em] text-co-text-dim">
+        <label htmlFor={channelId} className="mt-3 block text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
           {t("ordering.po.place_channel")}
         </label>
         <select
@@ -1209,7 +1199,7 @@ function PlaceDialog({
           ))}
         </select>
 
-        <label htmlFor={targetId} className="mt-3 block text-[11px] font-bold uppercase tracking-[0.1em] text-co-text-dim">
+        <label htmlFor={targetId} className="mt-3 block text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
           {t("ordering.po.place_target")}
         </label>
         <input
@@ -1221,7 +1211,7 @@ function PlaceDialog({
           className="mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-sm text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
         />
 
-        <label htmlFor={noteId} className="mt-3 block text-[11px] font-bold uppercase tracking-[0.1em] text-co-text-dim">
+        <label htmlFor={noteId} className="mt-3 block text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
           {t("ordering.po.place_note")}
         </label>
         <input
@@ -1234,22 +1224,21 @@ function PlaceDialog({
         />
 
         <div className="mt-4 flex gap-2">
-          <button
-            type="button"
+          <ActionButton
+            variant="secondary"
             onClick={onCancel}
             disabled={busy}
-            className="inline-flex min-h-[48px] flex-1 items-center justify-center rounded-lg border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text-dim hover:border-co-text disabled:opacity-50"
+            className="flex-1"
           >
             {t("ordering.po.place_cancel")}
-          </button>
-          <button
-            type="button"
+          </ActionButton>
+          <ActionButton
+            className="flex-[2]"
             onClick={onConfirm}
             disabled={busy}
-            className="inline-flex min-h-[48px] flex-[2] items-center justify-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50"
           >
             {t("ordering.po.place_confirm")}
-          </button>
+          </ActionButton>
         </div>
       </div>
     </div>

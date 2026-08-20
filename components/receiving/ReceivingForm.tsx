@@ -65,6 +65,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useTranslation } from "@/lib/i18n/provider";
 import { formatTime } from "@/lib/i18n/format";
+import { ActionButton, actionButtonClass } from "@/components/ActionButton";
 import { PhotoCapture } from "@/components/photos/PhotoCapture";
 import { IntakeLineRow, type IntakeLine } from "@/components/receiving/IntakeLineRow";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
@@ -685,7 +686,7 @@ export function ReceivingForm({
       {pendingDrafts.length > 0 ? (
         <div
           role="status"
-          className="mb-3 flex flex-col gap-2 rounded-xl border-2 border-co-gold-deep bg-co-gold/20 px-4 py-3"
+          className="mb-3 flex flex-col gap-2 rounded-xl border-2 border-co-gold-deep bg-co-warning-surface px-4 py-3"
         >
           {pendingDrafts.map((d) => {
             const vendor = formData.vendors.find((v) => v.id === d.vendorId)?.name ?? null;
@@ -698,30 +699,27 @@ export function ReceivingForm({
                     : t("receiving.door.draft_resume_banner", { time })}
                 </span>
                 <div className="flex shrink-0 gap-2">
-                  <button
-                    type="button"
+                  <ActionButton
+                    variant="secondary"
                     onClick={() => discardDraft(d)}
                     aria-label={
                       vendor
                         ? t("receiving.door.draft_discard_aria_vendor", { time, vendor })
                         : t("receiving.door.draft_discard_aria", { time })
                     }
-                    className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-sm font-bold text-co-text-dim hover:border-co-text"
                   >
                     {t("receiving.door.draft_discard")}
-                  </button>
-                  <button
-                    type="button"
+                  </ActionButton>
+                  <ActionButton
                     onClick={() => resumeDraft(d)}
                     aria-label={
                       vendor
                         ? t("receiving.door.draft_resume_aria_vendor", { time, vendor })
                         : t("receiving.door.draft_resume_aria", { time })
                     }
-                    className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-3 text-sm font-bold text-co-text hover:bg-co-gold-deep"
                   >
                     {t("receiving.door.draft_resume")}
-                  </button>
+                  </ActionButton>
                 </div>
               </div>
             );
@@ -730,7 +728,7 @@ export function ReceivingForm({
       ) : null}
 
       {/* ── STEP 1 · Count the delivery ─────────────────────────────────── */}
-      <section className="rounded-xl border-2 border-co-border bg-co-surface p-4">
+      <section className="rounded-2xl border-2 border-co-border bg-co-surface p-4">
         <div className={stepHeadClass}>
           <span className={stepNumClass}>1</span>
           <span>{t("receiving.door.step1")}</span>
@@ -746,7 +744,7 @@ export function ReceivingForm({
         {linkedPoCode ? (
           <div
             role="status"
-            className="mt-3 rounded-lg border-2 border-co-gold-deep bg-co-gold/20 px-3 py-2 text-sm font-bold text-co-text"
+            className="mt-3 rounded-lg border-2 border-co-gold-deep bg-co-warning-surface px-3 py-2 text-sm font-bold text-co-text"
           >
             {t("receiving.door.receiving_against_po", { code: linkedPoCode })}
           </div>
@@ -857,7 +855,7 @@ export function ReceivingForm({
       </section>
 
       {/* ── STEP 2 · Receipt photo ──────────────────────────────────────── */}
-      <section className="mt-4 rounded-xl border-2 border-co-border bg-co-surface p-4">
+      <section className="mt-4 rounded-2xl border-2 border-co-border bg-co-surface p-4">
         <div className={stepHeadClass}>
           <span className={stepNumClass}>2</span>
           <span>{t("receiving.door.step2")}</span>
@@ -888,7 +886,7 @@ export function ReceivingForm({
       </section>
 
       {/* Notes travel with the delivery header (step 2/3 boundary). */}
-      <section className="mt-4 rounded-xl border-2 border-co-border bg-co-surface p-4">
+      <section className="mt-4 rounded-2xl border-2 border-co-border bg-co-surface p-4">
         <label className="block">
           <span className="text-sm font-bold text-co-text">{t("receiving.form.notes")}</span>
           <textarea
@@ -965,7 +963,7 @@ export function ReceivingForm({
       {closedCount > 0 ? (
         <div
           role="status"
-          className="mt-4 rounded-lg border-2 border-co-gold-deep bg-co-gold/20 px-3 py-3 text-sm font-bold text-co-text"
+          className="mt-4 rounded-lg border-2 border-co-gold-deep bg-co-warning-surface px-3 py-3 text-sm font-bold text-co-text"
         >
           {t("receiving.makeup.closed_notice", { n: closedCount })}
         </div>
@@ -1091,10 +1089,7 @@ export function ReceivingForm({
               type="button"
               disabled={!canSubmit}
               onClick={completeWithGate}
-              className={
-                "inline-flex min-h-[48px] flex-1 items-center justify-center rounded-lg border-2 border-co-gold-deep px-4 text-sm font-bold uppercase tracking-[0.1em] disabled:opacity-50 " +
-                (showMissingNotice ? "bg-co-gold-deep text-white" : "bg-co-gold text-co-text")
-              }
+              className={actionButtonClass("primary", "default", "flex-1")}
             >
               {showMissingNotice
                 ? t("receiving.door.submit_complete_anyway")
@@ -1105,7 +1100,7 @@ export function ReceivingForm({
             type="button"
             disabled={!canSubmit}
             onClick={() => void submit("in_progress")}
-            className="inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text-dim hover:border-co-text disabled:opacity-50"
+            className={actionButtonClass("secondary")}
           >
             {t("receiving.door.submit_partial")}
           </button>

@@ -25,6 +25,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
+import { ActionButton } from "@/components/ActionButton";
 import { AlertPill, type AlertPillTone } from "@/components/ui/AlertPill";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { EmptyState } from "@/components/EmptyState";
@@ -188,14 +189,13 @@ export function OrderingSurfaces({
                     {t("ordering.po.cutoff_at", { time: c.cutoffTime })}
                   </span>
                 </span>
-                <button
-                  type="button"
+                <ActionButton
+                  className="shrink-0"
                   onClick={() => void generateDraft(c.vendorId)}
                   disabled={generating != null}
-                  className="inline-flex min-h-[44px] shrink-0 items-center justify-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-3 text-[13px] font-bold text-co-text disabled:opacity-50"
                 >
                   {generating === c.vendorId ? t("ordering.po.generating") : t("ordering.po.generate_draft")}
-                </button>
+                </ActionButton>
               </li>
             ))}
           </ul>
