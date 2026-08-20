@@ -58,8 +58,21 @@ export interface PulseFridge {
   /** Equipment-registry id — the stable React key (names can collide). */
   equipId: string;
   name: string;
+  /**
+   * The latest reading value SINCE the overview's window start — NOT necessarily
+   * today's (lib/maintenance.ts loadMaintenanceOverview computes `latest` over
+   * `sinceDate` while `status` is today-scoped). Only claim this as a current
+   * temperature when `hasReadingToday` is true.
+   */
   latestF: number | null;
   outOfRange: boolean; // any reading today > safe max
+  /**
+   * SIM-25: did anyone actually temp this fridge TODAY? Derived from the
+   * today-scoped FridgeStatus, never from `latestF != null` — a fridge unread
+   * today can still carry yesterday's value, and treating that as "read" is
+   * exactly the false all-clear this field exists to prevent.
+   */
+  hasReadingToday: boolean;
 }
 
 export interface AttentionItem {
