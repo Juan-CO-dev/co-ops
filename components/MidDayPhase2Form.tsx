@@ -264,37 +264,25 @@ export function MidDayPhase2Form({
                         focus-visible:ring-4 focus-visible:ring-co-gold/60
                       "
                     />
-                    <button
-                      type="button"
+                    <ActionButton
                       onClick={() => void onSave(it)}
                       disabled={st.status === "saving"}
-                      className="
-                        inline-flex h-10 shrink-0 items-center rounded-md border-2 border-co-text
-                        bg-co-gold px-3 text-xs font-bold uppercase tracking-[0.1em] text-co-text
-                        transition hover:bg-co-gold-deep focus:outline-none
-                        focus-visible:ring-4 focus-visible:ring-co-gold/60
-                        disabled:cursor-not-allowed disabled:opacity-50
-                      "
+                      className="shrink-0"
                     >
                       {st.status === "saving" ? t("mid_day_prep.phase2.saving") : t("mid_day_prep.phase2.save")}
-                    </button>
+                    </ActionButton>
                   </div>
 
                   {offPar ? (
-                    <button
-                      type="button"
+                    <ActionButton
+                      variant="secondary"
                       onClick={() => patch(it.id, { modalOpen: true, status: "idle", error: null })}
-                      className="
-                        inline-flex min-h-[44px] items-center self-start rounded-md border-2
-                        border-co-gold-deep bg-co-surface px-2 text-[11px] font-bold uppercase
-                        tracking-[0.1em] text-co-text transition hover:bg-co-surface-2
-                        focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
-                      "
+                      className="self-start"
                     >
                       {st.overUnder
                         ? t("mid_day_prep.phase2.edit_reason")
                         : t("mid_day_prep.phase2.add_reason")}
-                    </button>
+                    </ActionButton>
                   ) : null}
 
                   {it.derived.length > 0 ? (

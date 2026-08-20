@@ -16,7 +16,7 @@
  * Replaces the Phase 0/1 PlaceholderCard wholesale.
  */
 
-import Link from "next/link";
+import { ActionLink } from "@/components/ActionButton";
 
 import { AuthShell } from "@/components/auth/AuthShell";
 import { LogoutButton } from "@/components/auth/LogoutButton";
@@ -406,15 +406,12 @@ function GateBlockedBanner({
         </p>
       </div>
       <div>
-        <Link
+        <ActionLink
           href={`/operations/closing?location=${location.id}&date=${yesterdayDate}`}
-          className="
-            inline-flex min-h-[48px] items-center justify-center rounded-md
-            border-2 border-co-text bg-co-surface px-4 text-sm font-bold uppercase tracking-[0.12em] text-co-text
-          "
+          variant="secondary"
         >
           {serverT(language, "opening.gate.cta_view_prior_closing")}
-        </Link>
+        </ActionLink>
       </div>
     </section>
   );
