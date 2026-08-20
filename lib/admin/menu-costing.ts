@@ -7,9 +7,10 @@
  *
  * BATCH-LOADED, NEVER PER-NODE (the loadRecipeGraph law, AGENTS.md): ONE
  * loadRecipeGraph() for the whole recipe universe (6 fixed queries) + ONE
- * price read + ONE menu_items read + at most TWO name reads (the blocking SKUs
- * and the mass-inconsistent prep items, each skipped when that failure mode is
- * absent). Cost for 68 menu items costs the same number of queries as for one.
+ * price read + ONE menu_items read + at most TWO name reads (the blocking SKUs,
+ * and the prep items a row is waiting on — mass-inconsistent or never-weighed,
+ * both in the same lookup — each skipped when that failure mode is absent).
+ * Cost for 68 menu items costs the same number of queries as for one.
  *
  * COST/OZ COMES OFF THE GRAPH'S OWN SKU PACK DATA, on purpose. loadRecipeGraph
  * already hydrates every referenced SKU's pack fields AND its active pack chain
@@ -85,9 +86,11 @@ export interface MenuCostingBoard {
   /** Display names for the SKUs blocking at least one row, so the UI can name them. */
   skuNames: Record<string, string>;
   /**
-   * Display names (en + es) for the mass-inconsistent PREP ITEMS blocking at
-   * least one row. Same job as skuNames on the other failure mode: the drawer
-   * must be able to say WHICH recipe is out of balance, not just that one is.
+   * Display names (en + es) for the PREP ITEMS blocking at least one row —
+   * mass-inconsistent AND never-weighed alike. Same job as skuNames on the price
+   * failure mode: the drawer must be able to say WHICH recipe is out of balance
+   * or WHICH prep needs a scale, not just that one is. One map covers both
+   * because both lists are item ids and both drawers render the same lookup.
    */
   itemNames: Record<string, { en: string; es: string | null }>;
 }
@@ -126,7 +129,9 @@ export async function loadMenuCostingBoard(actor: AuthContext): Promise<MenuCost
   const totals = summarizeMenuCostRows(rows);
 
   const blocking = [...new Set(rows.flatMap((r) => r.rollup.unpricedSkuIds))];
-  const broken = [...new Set(rows.flatMap((r) => r.rollup.inconsistentItemIds))];
+  const broken = [
+    ...new Set(rows.flatMap((r) => [...r.rollup.inconsistentItemIds, ...r.rollup.unweighedItemIds])),
+  ];
   const skuNames: Record<string, string> = {};
   const itemNames: Record<string, { en: string; es: string | null }> = {};
   // Two name lookups, each skipped entirely when its failure mode is absent —

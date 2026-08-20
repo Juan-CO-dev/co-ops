@@ -13,7 +13,7 @@
  * Chicken Salad→Chix Salad. Prosciutto/Bacon/Banana Peppers→BH SKUs; Utz Ripples/Sub
  * Roll/Lemon Oil auto-placeholder. Every sub also consumes 1 Sub Roll.
  *
- * Idempotent. Run: npx tsx --env-file=.env.local scripts/seed/06b2-sub-builds.ts   (SEED_DRY=1 = report only)
+ * Idempotent. Run: npx tsx --conditions=react-server --env-file=.env.local scripts/seed/06b2-sub-builds.ts   (SEED_DRY=1 = report only)
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { pathToFileURL } from "node:url";

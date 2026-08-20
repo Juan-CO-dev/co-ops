@@ -70,8 +70,8 @@
  * deterministic rather than lucky.
  *
  * Idempotent. SEED_DRY=1 → report. Run:
- *   SEED_DRY=1 npx tsx --env-file=.env.local scripts/seed/10-fill-sku-weights.ts   (dry)
- *   npx tsx --env-file=.env.local scripts/seed/10-fill-sku-weights.ts               (prod)
+ *   SEED_DRY=1 npx tsx --conditions=react-server --env-file=.env.local scripts/seed/10-fill-sku-weights.ts   (dry)
+ *   npx tsx --conditions=react-server --env-file=.env.local scripts/seed/10-fill-sku-weights.ts               (prod)
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";

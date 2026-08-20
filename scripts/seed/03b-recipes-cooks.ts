@@ -2,7 +2,7 @@
  * Operational Seed — Stage 3b: COOKS recipes. Thin caller over lib-recipe-seed.ts.
  * Wires the 6 Cooks items, incl. the recursive SUB-ITEM input (Beef Jus consumes the
  * "Caramelized onion" ITEM). Juan: Jus = Beef. Chicken Cutlet = APPROXIMATE.
- * Run: npx tsx --env-file=.env.local scripts/seed/03b-recipes-cooks.ts   (SEED_DRY=1 = report only)
+ * Run: npx tsx --conditions=react-server --env-file=.env.local scripts/seed/03b-recipes-cooks.ts   (SEED_DRY=1 = report only)
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { pathToFileURL } from "node:url";

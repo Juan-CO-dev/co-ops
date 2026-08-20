@@ -4,7 +4,7 @@
  * Onion Dip→French Onion Dip, Tuna Salad, Antipasto Pasta). Antipasto Pasta =
  * APPROXIMATE (no .docx). Misses auto-placeholder (Vanilla Bean Paste, Ever Roast
  * Chicken [BH — reconciles at BH seed], Dried Chives).
- * Run: npx tsx --env-file=.env.local scripts/seed/03c-recipes-sides.ts   (SEED_DRY=1 = report only)
+ * Run: npx tsx --conditions=react-server --env-file=.env.local scripts/seed/03c-recipes-sides.ts   (SEED_DRY=1 = report only)
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { pathToFileURL } from "node:url";

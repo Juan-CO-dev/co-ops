@@ -3,7 +3,7 @@
  * Idempotent: only fills rows where serves IS NULL (admin edits are never
  * overwritten). Run AFTER migration 0154 (Juan's go).
  *
- *   npx tsx scripts/seed/11-serves.ts
+ *   npx tsx --conditions=react-server --env-file=.env.local scripts/seed/11-serves.ts
  *
  * Rules (Juan-tunable afterward in /admin/catering/menu):
  *   - menu_items: "(24 bags)"/"(24)"-style counts parse from the name → serves=N;

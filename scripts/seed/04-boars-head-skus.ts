@@ -15,7 +15,7 @@
  *     by a same-name real BH SKU (Turkey, Pepperoni, Capicola, Provolone, Roast Beef,
  *     Banana/Hot/Sweet Peppers). Reported; append-only-reversible.
  *
- * Idempotent. Run: npx tsx --env-file=.env.local scripts/seed/04-boars-head-skus.ts
+ * Idempotent. Run: npx tsx --conditions=react-server --env-file=.env.local scripts/seed/04-boars-head-skus.ts
  * SEED_DRY=1 → report only.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";

@@ -45,8 +45,8 @@
  * (deactivate all active rows, insert the fresh set) — matches the lib's
  * supersede-as-a-SET. Safe to run repeatedly.
  *
- *   SEED_DRY=1 npx tsx --env-file=.env.local scripts/seed/14-shallow-pack-chains.ts   (report only)
- *   npx tsx --env-file=.env.local scripts/seed/14-shallow-pack-chains.ts               (write)
+ *   SEED_DRY=1 npx tsx --conditions=react-server --env-file=.env.local scripts/seed/14-shallow-pack-chains.ts   (report only)
+ *   npx tsx --conditions=react-server --env-file=.env.local scripts/seed/14-shallow-pack-chains.ts               (write)
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";

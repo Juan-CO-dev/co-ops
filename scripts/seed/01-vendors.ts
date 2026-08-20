@@ -5,7 +5,7 @@
  * (real where known, placeholder "TBD" otherwise — placeholders to be replaced by Juan).
  * Reconciles the existing "Sisco" → "Sysco" in place (keeps its id). Existing "Baldor" reused.
  *
- * Run: npx tsx --env-file=.env.local scripts/seed/01-vendors.ts
+ * Run: npx tsx --conditions=react-server --env-file=.env.local scripts/seed/01-vendors.ts
  * Decisions: docs/superpowers/specs/2026-07-21-operational-seed-decisions.md (Q8 = plain vendor rows).
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";

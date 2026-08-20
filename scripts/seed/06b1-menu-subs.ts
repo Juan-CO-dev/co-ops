@@ -6,7 +6,7 @@
  * portionable (catering sells subs by ¼/½/whole — the W1a pricing basis). Their
  * consumer-recipe BUILDS come in 6b-2 (which resolves against these rows).
  *
- * Idempotent (by name). Run: npx tsx --env-file=.env.local scripts/seed/06b1-menu-subs.ts
+ * Idempotent (by name). Run: npx tsx --conditions=react-server --env-file=.env.local scripts/seed/06b1-menu-subs.ts
  * SEED_DRY=1 → report only.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";

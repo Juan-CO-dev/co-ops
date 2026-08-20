@@ -69,7 +69,7 @@ import {
 export const FOOD_COST_RED_THRESHOLD_PCT = 30;
 
 /**
- * The six honest outcomes of costing one menu item. Ordered by how actionable
+ * The seven honest outcomes of costing one menu item. Ordered by how actionable
  * they are, which is also the board's default grouping (see compareMenuCostRows).
  */
 export type MenuCostStatus =
@@ -81,6 +81,10 @@ export type MenuCostStatus =
   | "unpriced"
   /** A prep this item is built from declares more weight than it is made of — a DATA BUG. */
   | "inconsistent"
+  /** A prep this item is built from has never been weighed and still carries the
+   *  stage-3d `1 unit` placeholder — its cost basis is an assumption, not a
+   *  measurement. See isPlaceholderPortion. */
+  | "unweighed"
   /** A recipe exists but the oz flatten is unresolvable (poisoned) — a DATA BUG to fix. */
   | "unresolved"
   /** No producing/build recipe at all. Nothing to cost yet. */
@@ -108,6 +112,13 @@ export interface MenuCostRollup {
    * "inconsistent" badge without this list would be an accusation with no address.
    */
   inconsistentItemIds: string[];
+  /**
+   * The never-weighed PREP ITEMS this row is built from, sorted. Non-empty only
+   * when status === "unweighed" — same "name the address, not just the fault"
+   * contract as `inconsistentItemIds`, and the fix is a different errand: put a
+   * finished par-unit on a scale, then fill `items.oz_per_par_unit`.
+   */
+  unweighedItemIds: string[];
 }
 
 const EMPTY_ROLLUP = (status: MenuCostStatus): MenuCostRollup => ({
@@ -118,6 +129,7 @@ const EMPTY_ROLLUP = (status: MenuCostStatus): MenuCostRollup => ({
   unpricedLineCount: 0,
   unpricedSkuIds: [],
   inconsistentItemIds: [],
+  unweighedItemIds: [],
 });
 
 // ── Mass balance (debug finding D2) ──────────────────────────────────────────
@@ -192,6 +204,70 @@ function isViolation(b: MassBalance): boolean {
   return b.ratio > 1 + MASS_BALANCE_TOLERANCE;
 }
 
+// ── The guard's blind spot: preps with NO declared weight (2026-08-20) ───────
+
+/**
+ * A producing recipe that still carries the stage-3d PLACEHOLDER input and has
+ * never been weighed — so nothing in the data says what one par-unit is.
+ *
+ * ── Why the mass-balance guard cannot see these ──────────────────────────────
+ * `itemMassBalance` compares DECLARED output weight against resolved input
+ * weight. When no output declares an `oz_per_par_unit` it returns null — and
+ * null there means "the question cannot honestly be asked", which the board then
+ * treats as "nothing wrong". For a recipe whose input is also a placeholder that
+ * is exactly backwards: the pairing of an undeclared output with an unexamined
+ * input is not a recipe the guard has cleared, it is a recipe the guard could
+ * not read. Six live preps sit in precisely that state — the six seed 22 refused
+ * with NO_DECLARED_PAR_WEIGHT (Cucumber, Mortadella, Onion, Pickles, Radish,
+ * Tomato), each still saying `1 unit`.
+ *
+ * ── Why it matters NOW and not later ─────────────────────────────────────────
+ * They read `partial` today only because their SKUs happen to be unpriced. The
+ * Angel price waves are filling exactly those SKUs, and the moment a price lands
+ * the row flips to `costed` — a confident dollar figure resting on "one par-unit
+ * of Onion is one onion" (≈5 oz standing in for a ~32 oz quart, 6x under; Pickles
+ * runs ~160x under). That is the same failure #271 was written to end, arriving
+ * through the one door #271 left open.
+ *
+ * ── The fingerprint, and why `quantity === 1` is load-bearing ────────────────
+ * Stage 3d wrote `1 unit` literally, and seed 22 exists to replace that 1 with a
+ * derived count. A count > 1 is a number a human chose and stands on its own:
+ * live, `Cooked Bacon` is a single `12 each` SKU line producing an item with no
+ * declared weight, and it is CORRECT — twelve strips per batch is a real recipe,
+ * not an unexamined identity. Testing the literal placeholder keeps that row (and
+ * every future deliberate count) out of the refusal. The other two conditions —
+ * one SKU-ref input line, count-dimension unit — are the rest of stage 3d's shape.
+ *
+ * Releases per-row the moment `items.oz_per_par_unit` is filled, exactly like the
+ * jus guard in #271: this is a missing measurement, not a permanent verdict.
+ */
+export function isPlaceholderPortion(graph: RecipeGraph, itemId: string): boolean {
+  const node = graph.byOutputItem.get(itemId);
+  if (!node) return false;
+  // (1) NOT ONE output of this recipe declares a finished par-unit weight.
+  //     (Same predicate itemMassBalance uses for `anyDeclared` — if any output
+  //      declares, the guard proper can do its job and this one steps aside.)
+  for (const o of node.outputs) {
+    if (o.outputItemId != null && o.ozPerParUnit != null && o.ozPerParUnit > 0 && o.yield > 0) return false;
+  }
+  // (2) The whole batch is ONE count-denominated SKU line of quantity 1.
+  if (node.inputs.length !== 1) return false;
+  const line = node.inputs[0];
+  if (line == null || line.componentSkuId == null || line.unit == null) return false;
+  if (line.quantity !== 1) return false;
+  const m = graph.measures.get(line.unit);
+  return m != null && m.dimension === "count";
+}
+
+/** Every never-weighed placeholder prep in the graph, by the item it produces. */
+export function placeholderPortionIndex(graph: RecipeGraph): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const itemId of graph.byOutputItem.keys()) {
+    if (isPlaceholderPortion(graph, itemId)) out.add(itemId);
+  }
+  return out;
+}
+
 /** Every mass-inconsistent producing recipe in the graph, keyed by the item it produces. */
 export function massBalanceIndex(graph: RecipeGraph): MassBalanceIndex {
   const out = new Map<string, MassBalance>();
@@ -224,6 +300,17 @@ function balanceFor(graph: RecipeGraph): MassBalanceIndex {
   return idx;
 }
 
+/** Same per-graph memo, same mutation assumption, for the placeholder index. */
+const PLACEHOLDER_CACHE = new WeakMap<RecipeGraph, ReadonlySet<string>>();
+function placeholdersFor(graph: RecipeGraph): ReadonlySet<string> {
+  let idx = PLACEHOLDER_CACHE.get(graph);
+  if (idx === undefined) {
+    idx = placeholderPortionIndex(graph);
+    PLACEHOLDER_CACHE.set(graph, idx);
+  }
+  return idx;
+}
+
 /**
  * Every ITEM a recipe's cost flows through, transitively — the reach over which
  * one bad prep poisons a downstream number. Cycle-safe via the seen set (the
@@ -246,6 +333,15 @@ function inconsistentReach(graph: RecipeGraph, node: GraphRecipe, seed: string[]
   const seen = new Set<string>(seed);
   collectItemRefs(graph, node, seen);
   return [...seen].filter((id) => balance.has(id)).sort();
+}
+
+/** The never-weighed placeholder preps reached from `node`, sorted. */
+function unweighedReach(graph: RecipeGraph, node: GraphRecipe, seed: string[] = []): string[] {
+  const placeholders = placeholdersFor(graph);
+  if (placeholders.size === 0) return [];
+  const seen = new Set<string>(seed);
+  collectItemRefs(graph, node, seen);
+  return [...seen].filter((id) => placeholders.has(id)).sort();
 }
 
 /**
@@ -288,6 +384,7 @@ function rollupFromPerUnitOz(
     unpricedLineCount,
     unpricedSkuIds,
     inconsistentItemIds: [],
+    unweighedItemIds: [],
   };
 }
 
@@ -308,16 +405,31 @@ const INCONSISTENT_ROLLUP = (itemIds: string[]): MenuCostRollup => ({
 });
 
 /**
+ * An unweighed rollup carries no money either, for the same reason one step
+ * earlier in the chain: the ounces are not proven wrong, they are unproven. The
+ * flatten's whole per-par-unit basis is a placeholder ("one onion IS one quart"),
+ * so a subtotal computed from it is a confident answer to a question nobody has
+ * measured. `partial`'s "known so far" caveat does not apply — what is missing
+ * here is not prices, it is the denominator.
+ */
+const UNWEIGHED_ROLLUP = (itemIds: string[]): MenuCostRollup => ({
+  ...EMPTY_ROLLUP("unweighed"),
+  unweighedItemIds: itemIds,
+});
+
+/**
  * Cost of ONE unit of a MENU_ITEM (a sub/side as sold), flattened to leaf SKUs.
  *
  * The empty oz map is ambiguous by itself (poisoned flatten vs no recipe), so
  * the graph's own output index decides which — see the module header, failure
  * mode 1.
  *
- * ORDER OF THE THREE REFUSALS, and why: no_recipe (there is nothing to cost) →
+ * ORDER OF THE FOUR REFUSALS, and why: no_recipe (there is nothing to cost) →
  * unresolved (there is something, but no ounces come out of it) → inconsistent
- * (ounces come out, and they are wrong). Each later check needs the earlier one
- * to have passed, so the sequence is forced rather than chosen.
+ * (ounces come out, and they are PROVEN wrong) → unweighed (ounces come out, and
+ * their basis was never measured). Each later check needs the earlier one to
+ * have passed, so the sequence is forced rather than chosen; inconsistent
+ * precedes unweighed because a demonstrated error outranks an unverifiable one.
  */
 export function rollupMenuItemCost(
   graph: RecipeGraph,
@@ -330,6 +442,8 @@ export function rollupMenuItemCost(
   if (perUnitOz.size === 0) return EMPTY_ROLLUP("unresolved");
   const bad = inconsistentReach(graph, node);
   if (bad.length > 0) return INCONSISTENT_ROLLUP(bad);
+  const unweighed = unweighedReach(graph, node);
+  if (unweighed.length > 0) return UNWEIGHED_ROLLUP(unweighed);
   return rollupFromPerUnitOz(perUnitOz, costPerOzBySku);
 }
 
@@ -352,6 +466,8 @@ export function rollupItemCost(
   if (perUnitOz.size === 0) return EMPTY_ROLLUP("unresolved");
   const bad = inconsistentReach(graph, node, [itemId]);
   if (bad.length > 0) return INCONSISTENT_ROLLUP(bad);
+  const unweighed = unweighedReach(graph, node, [itemId]);
+  if (unweighed.length > 0) return UNWEIGHED_ROLLUP(unweighed);
   return rollupFromPerUnitOz(perUnitOz, costPerOzBySku);
 }
 
@@ -411,8 +527,14 @@ const STATUS_RANK: Record<MenuCostStatus, number> = {
   // have priced a menu against. The silent wrong answer outranks the loud
   // missing one.
   inconsistent: 3,
-  unresolved: 4,
-  no_recipe: 5,
+  // UNWEIGHED sits immediately below INCONSISTENT and above UNRESOLVED for the
+  // same reason: it is the other row that would otherwise show a plausible
+  // dollar figure. It ranks BELOW inconsistent because that one is demonstrably
+  // wrong today, while this one is a number nobody has measured — and the errand
+  // differs (a scale, not a recipe edit), so they stay separate groups.
+  unweighed: 4,
+  unresolved: 5,
+  no_recipe: 6,
 };
 
 /**
@@ -464,6 +586,7 @@ export interface MenuCostTotals {
   partialCount: number;
   unpricedCount: number;
   inconsistentCount: number;
+  unweighedCount: number;
   unresolvedCount: number;
   noRecipeCount: number;
   overThresholdCount: number;
@@ -471,35 +594,43 @@ export interface MenuCostTotals {
   blockingSkuCount: number;
   /** Distinct PREP ITEMS whose recipe fails mass balance — the "go fix these" number. */
   inconsistentItemCount: number;
+  /** Distinct PREP ITEMS never weighed — the "go put these on a scale" number. */
+  unweighedItemCount: number;
 }
 
 export function summarizeMenuCostRows(rows: MenuCostRow[]): MenuCostTotals {
   const blocking = new Set<string>();
   const broken = new Set<string>();
+  const unweighed = new Set<string>();
   const totals: MenuCostTotals = {
     rowCount: rows.length,
     costedCount: 0,
     partialCount: 0,
     unpricedCount: 0,
     inconsistentCount: 0,
+    unweighedCount: 0,
     unresolvedCount: 0,
     noRecipeCount: 0,
     overThresholdCount: 0,
     blockingSkuCount: 0,
     inconsistentItemCount: 0,
+    unweighedItemCount: 0,
   };
   for (const r of rows) {
     if (r.rollup.status === "costed") totals.costedCount += 1;
     else if (r.rollup.status === "partial") totals.partialCount += 1;
     else if (r.rollup.status === "unpriced") totals.unpricedCount += 1;
     else if (r.rollup.status === "inconsistent") totals.inconsistentCount += 1;
+    else if (r.rollup.status === "unweighed") totals.unweighedCount += 1;
     else if (r.rollup.status === "unresolved") totals.unresolvedCount += 1;
     else totals.noRecipeCount += 1;
     if (r.overThreshold) totals.overThresholdCount += 1;
     for (const skuId of r.rollup.unpricedSkuIds) blocking.add(skuId);
     for (const itemId of r.rollup.inconsistentItemIds) broken.add(itemId);
+    for (const itemId of r.rollup.unweighedItemIds) unweighed.add(itemId);
   }
   totals.blockingSkuCount = blocking.size;
   totals.inconsistentItemCount = broken.size;
+  totals.unweighedItemCount = unweighed.size;
   return totals;
 }

@@ -10,7 +10,7 @@
  *      gear off.
  *
  * Prices from docs/seed/source/toast-menu-regular.md. Idempotent. SEED_DRY=1 → report.
- * Run: npx tsx --env-file=.env.local scripts/seed/06c-sides-and-resale.ts
+ * Run: npx tsx --conditions=react-server --env-file=.env.local scripts/seed/06c-sides-and-resale.ts
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";

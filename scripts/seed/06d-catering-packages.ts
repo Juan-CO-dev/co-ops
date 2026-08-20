@@ -7,7 +7,7 @@
  * + catering_package_slot_options referencing the eligible sub menu_items (from 6b-1).
  * The slot children are seeded only when the package row is newly created (idempotent).
  *
- * Source: docs/seed/source/toast-menu-catering.md. Run: npx tsx --env-file=.env.local scripts/seed/06d-catering-packages.ts
+ * Source: docs/seed/source/toast-menu-catering.md. Run: npx tsx --conditions=react-server --env-file=.env.local scripts/seed/06d-catering-packages.ts
  * SEED_DRY=1 → report only.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
