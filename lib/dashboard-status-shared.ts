@@ -121,3 +121,149 @@ export function deriveCloseState(rawStatus: string | null | undefined): CloseSta
   }
   return { status: "in_progress", incomplete: false };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fridge aggregate — SIM-25 (design §2, safety-adjacent, LOUD)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One fridge's facts. `hasReadingToday` is the SIM-25 term and MUST be derived
+ * from the today-scoped FridgeStatus (`status !== "no_reading_today"`), never
+ * from `latestF != null` — `latest` in lib/maintenance.ts is the latest reading
+ * since `sinceDate`, so a fridge unread today can still carry yesterday's value.
+ */
+export interface FridgeFacts {
+  equipId: string;
+  name: string;
+  latestF: number | null;
+  outOfRange: boolean;
+  hasReadingToday: boolean;
+}
+
+export type FridgeAggregateState = "ok" | "alert";
+
+export interface FridgeAggregateVm {
+  state: FridgeAggregateState;
+  headline: StatusHeadline;
+  pills: StatusPill[];
+  outOfRangeCount: number;
+  unreadCount: number;
+  readCount: number;
+}
+
+/**
+ * The fridge aggregate, per the three locked rules:
+ *   (a) "in range" is a claim ONLY about fridges actually read;
+ *   (b) ANY unread fridge renders the alert state until it is read — no clock
+ *       gate, no threshold (the mid-shift ATTENTION BANNER keeps its separate
+ *       F4 time gate; this is the strip);
+ *   (c) zero readings = the "no readings yet" alert.
+ *
+ * An out-of-range excursion outranks unread for the HEADLINE (it is the worse
+ * fact) but never suppresses the unread pill.
+ */
+export function composeFridgeAggregate(fridges: FridgeFacts[]): FridgeAggregateVm {
+  const total = fridges.length;
+  const readCount = fridges.filter((f) => f.hasReadingToday).length;
+  const unreadCount = total - readCount;
+  const outOfRangeCount = fridges.filter((f) => f.outOfRange).length;
+  // "In range" counts only fridges READ today and not flagged (rule a).
+  const inRangeCount = fridges.filter((f) => f.hasReadingToday && !f.outOfRange).length;
+
+  if (total === 0) {
+    return {
+      state: "ok",
+      headline: { key: "midshift.fridges.none_configured", form: "text", value: null, tone: "info" },
+      pills: [],
+      outOfRangeCount: 0,
+      unreadCount: 0,
+      readCount: 0,
+    };
+  }
+
+  const pills: StatusPill[] = [];
+  if (unreadCount > 0) {
+    pills.push({
+      id: "unread",
+      key: "midshift.fridges.pill_unread",
+      params: { count: unreadCount },
+      tone: "danger",
+    });
+  }
+  if (inRangeCount > 0) {
+    pills.push({
+      id: "in-range",
+      key: "midshift.fridges.pill_in_range_of_read",
+      params: { count: inRangeCount },
+      tone: "ok",
+    });
+  }
+
+  if (outOfRangeCount > 0) {
+    return {
+      state: "alert",
+      headline: {
+        key: "midshift.fridges.flagged",
+        params: { count: outOfRangeCount },
+        form: "text",
+        value: null,
+        tone: "danger",
+      },
+      pills,
+      outOfRangeCount,
+      unreadCount,
+      readCount,
+    };
+  }
+
+  if (readCount === 0) {
+    // Rule (c) — nothing has been read; there is no "in range" claim to make.
+    return {
+      state: "alert",
+      headline: {
+        key: "midshift.fridges.none_read",
+        params: { count: total },
+        form: "text",
+        value: null,
+        tone: "danger",
+      },
+      pills,
+      outOfRangeCount,
+      unreadCount,
+      readCount,
+    };
+  }
+
+  if (unreadCount > 0) {
+    // Rule (b) — partial coverage is still the alert state.
+    return {
+      state: "alert",
+      headline: {
+        key: "midshift.fridges.some_unread",
+        params: { unread: unreadCount, total },
+        form: "text",
+        value: null,
+        tone: "danger",
+      },
+      pills,
+      outOfRangeCount,
+      unreadCount,
+      readCount,
+    };
+  }
+
+  return {
+    state: "ok",
+    headline: {
+      key: "midshift.fridges.all_read_in_range",
+      params: { count: total },
+      form: "text",
+      value: null,
+      tone: "ok",
+    },
+    pills: [],
+    outOfRangeCount,
+    unreadCount,
+    readCount,
+  };
+}
