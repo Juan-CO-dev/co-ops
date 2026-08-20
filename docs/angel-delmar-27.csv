@@ -1,0 +1,28 @@
+product,vendor,price_per_lb,case_price_min,case_price_max,derived_case_weight_lbs_min,derived_case_weight_lbs_max,weight_source,purchase_lines,total_cases,total_spend
+OVENGOLD TURKEY,Delmar Provisions,6.29,57.6094,58.4821,9.1589,9.2976,MEASURED (invoice catch weight),3,136.0,7913.31
+LONDON BROIL,Delmar Provisions,8.69,56.9306,62.451,6.5512,7.1865,MEASURED (invoice catch weight),3,44.0,2650.38
+MILD PROVOLONE,Delmar Provisions,3.49,19.1943,19.235,5.4998,5.5115,MEASURED (invoice catch weight),3,108.0,2073.66
+DILANDRI GENOA SALAME,Delmar Provisions,4.39,27.5156,28.8133,6.2678,6.5634,MEASURED (invoice catch weight),3,48.0,1357.22
+HOT BUTT CAPPY,Delmar Provisions,5.45,19.5657,19.5907,3.59,3.5946,MEASURED (invoice catch weight),2,60.0,1174.69
+PICKLES CHIPS 1/4,Delmar Provisions,35.95,35.95,35.95,1.0,1.0,FAKE (1.0 lb/unit default — $/lb is unusable),3,23.0,826.85
+IMP LAYER BACON 12/14,Delmar Provisions,4.69,70.35,70.35,15.0,15.0,MEASURED (invoice catch weight),2,9.0,633.15
+DIET COKE,Delmar Provisions,25.45,25.45,25.45,1.0,1.0,FAKE (1.0 lb/unit default — $/lb is unusable),3,20.0,509.0
+HOT CHERRY PEPPERS,Delmar Provisions,8.95,8.95,8.95,1.0,1.0,FAKE (1.0 lb/unit default — $/lb is unusable),2,56.0,501.2
+Food Service Prosciutto,Delmar Provisions,12.95,12.95,12.95,1.0,1.0,FAKE (1.0 lb/unit default — $/lb is unusable),2,30.0,388.5
+COKE,Delmar Provisions,25.45,25.45,25.45,1.0,1.0,FAKE (1.0 lb/unit default — $/lb is unusable),2,15.0,381.75
+EVERROAST CHICKEN,Delmar Provisions,5.99,27.6933,28.0133,4.6232,4.6767,MEASURED (invoice catch weight),2,12.0,333.28
+Pepperoni Slicing,Delmar Provisions,5.19,17.7917,18.0933,3.4862,3.4954,MEASURED (invoice catch weight),2,18.0,322.06
+SWEET PEPPERS,Delmar Provisions,10.25,10.25,10.25,1.0,1.0,FAKE (1.0 lb/unit default — $/lb is unusable),2,24.0,246.0
+Compliments Branded Water,Delmar Provisions,12.95,12.95,12.95,1.0,1.0,FAKE (1.0 lb/unit default — $/lb is unusable),2,18.0,233.1
+5 GALLON GARLIC PICKLES,Delmar Provisions,35.95,35.95,35.95,1.0,1.0,FAKE (1.0 lb/unit default — $/lb is unusable),2,6.0,215.7
+Just Dragon Green Can,Delmar Provisions,14.95,14.95,14.95,1.0,1.0,FAKE (1.0 lb/unit default — $/lb is unusable),2,8.0,119.6
+Just Raspberry Tea Can,Delmar Provisions,14.95,14.95,14.95,1.0,1.0,FAKE (1.0 lb/unit default — $/lb is unusable),2,8.0,119.6
+Just Lemon Tea Can,Delmar Provisions,14.95,14.95,14.95,1.0,1.0,FAKE (1.0 lb/unit default — $/lb is unusable),2,8.0,119.6
+BLACK CHERRY DR. BROWNS,Delmar Provisions,14.95,14.95,14.95,1.0,1.0,FAKE (1.0 lb/unit default — $/lb is unusable),2,8.0,119.6
+ROOT BEER DR. BROWNS,Delmar Provisions,14.95,14.95,14.95,1.0,1.0,FAKE (1.0 lb/unit default — $/lb is unusable),2,6.0,89.7
+CREAM DR. BROWNS,Delmar Provisions,14.95,14.95,14.95,1.0,1.0,FAKE (1.0 lb/unit default — $/lb is unusable),2,6.0,89.7
+DIET CREAM DR. BROWNS,Delmar Provisions,14.95,14.95,14.95,1.0,1.0,FAKE (1.0 lb/unit default — $/lb is unusable),2,5.0,74.75
+BANANA PEPPER RINGS,Delmar Provisions,8.75,8.75,8.75,1.0,1.0,FAKE (1.0 lb/unit default — $/lb is unusable),1,8.0,70.0
+CEL-RAY DR. BROWNS,Delmar Provisions,16.95,16.95,16.95,1.0,1.0,FAKE (1.0 lb/unit default — $/lb is unusable),1,1.0,16.95
+DIET CHERRY DR. BROWNS,Delmar Provisions,16.5,16.5,16.5,1.0,1.0,FAKE (1.0 lb/unit default — $/lb is unusable),1,1.0,16.5
+Deer Park Loose,Delmar Provisions,8.5,8.5,8.5,1.0,1.0,FAKE (1.0 lb/unit default — $/lb is unusable),1,1.0,8.5

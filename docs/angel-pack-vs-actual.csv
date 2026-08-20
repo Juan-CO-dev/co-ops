@@ -1,0 +1,160 @@
+product,vendor,pack_size,nominal_lbs,actual_lbs_per_case,actual_over_nominal,price_per_lb,case_price,weight_source,total_spend
+OVENGOLD TURKEY,Delmar Provisions,—,,9.2976,,6.29,58.4821,invoice_catch_weight,7913.31
+MAYO HD,PFG,4/1 GA,33.36,32.4518,0.973,2.28,73.99,invoice_catch_weight,6807.08
+OIL OLIVE 100% EXTRA VIRGIN,PFG,3/3 LT,19.841,20.0018,1.008,4.69,93.72,invoice_catch_weight,4096.32
+HAM 35% WATER FC 4X6 TFF,PFG,1/13 LB,13.0,13.0168,1.001,2.81,36.4936,invoice_catch_weight,2675.85
+LONDON BROIL,Delmar Provisions,—,,7.1865,,8.69,62.451,invoice_catch_weight,2650.38
+MILD PROVOLONE,Delmar Provisions,—,,5.5115,,3.49,19.235,invoice_catch_weight,2073.66
+LETTUCE ICEBERG LINER,PFG,24/1 CT,,42.2363,,0.79,32.985,invoice_catch_weight,1937.92
+CHEESE MOZZ 1OZ SLCD LOG 32 CT,PFG,6/2 LB,12.0,12.7643,1.064,3.69,47.1,invoice_catch_weight,1601.4
+ARUGULA BABY,PFG,2/2 LB,4.0,5.0058,1.251,4.47,22.35,invoice_catch_weight,1445.8
+BEEF GRND BULK 80/20,PFG,2/5 LB,10.0,10.7895,1.079,4.56,49.2,invoice_catch_weight,1426.8
+DILANDRI GENOA SALAME,Delmar Provisions,—,,6.5634,,4.39,28.8133,invoice_catch_weight,1357.22
+BAG PAPER KRAFT SHOPPER BISTRO,PFG,250/1 CT,,25.1394,,2.44,61.34,invoice_catch_weight,1269.94
+HOT BUTT CAPPY,Delmar Provisions,—,,3.5946,,5.45,19.5907,invoice_catch_weight,1174.69
+"Lettuce, Iceberg Cleaned & Trimmed Fresh Ref",US Foods,4/6 EA,,28.0231,,2.16,60.53,invoice_catch_weight,1050.15
+TOMATO 5X6,PFG,1/25 LB,25.0,25.0615,1.002,1.39,34.82,invoice_catch_weight,864.98
+PICKLES CHIPS 1/4,Delmar Provisions,—,,1.0,,35.95,35.95,assumed_default_1lb,826.85
+"Bag, Shopping 10x6.75x12 Paper Kraft Brown W/ Handle Carry-Out",US Foods,250 EA,,27.1195,,2.78,75.39,invoice_catch_weight,801.09
+ONION YLW COLOSSAL BAG,PFG,1/50 LB,50.0,51.3732,1.027,0.71,36.44,invoice_catch_weight,720.28
+IMP LAYER BACON 12/14,Delmar Provisions,—,,15.0,,4.69,70.35,invoice_catch_weight,633.15
+"Mayonnaise, Heavy Plastic Shelf Stable",US Foods,4/1 GA,33.36,30.034,0.9,2.83,84.91,invoice_catch_weight,584.33
+JUICE LEMONADE NAT,PFG,6/12 OZ,4.5,4.5043,1.001,2.36,10.63,invoice_catch_weight,552.76
+PORK GRND 80/20 ALL NAT FZ,PFG,2/5 LB,10.0,10.688,1.069,2.56,27.36,invoice_catch_weight,529.58
+"Juice, Lemonade Drink 22% Natural Ss Plastic Bottle Ref",US Foods,6/12 OZ,4.5,4.5,1.0,2.98,13.41,invoice_catch_weight,522.99
+DIET COKE,Delmar Provisions,—,,1.0,,25.45,25.45,assumed_default_1lb,509.0
+HOT CHERRY PEPPERS,Delmar Provisions,—,,1.0,,8.95,8.95,assumed_default_1lb,501.2
+CHEESE MOZZ LMWM SHRED,PFG,6/5 LB,30.0,31.315,1.044,2.77,86.67,invoice_catch_weight,498.18
+JUICE LEMON ALL NAT,PFG,6/32 OZ,12.0,13.9745,1.165,2.34,32.7,invoice_catch_weight,490.5
+TUNA CHNK LIGHT CHN,PFG,6/66.5OZ,24.938,28.536,1.144,2.52,71.91,invoice_catch_weight,431.46
+GARLIC WHL PLD DOM,PFG,1/5 LB,5.0,6.0077,1.202,3.29,19.72,invoice_catch_weight,400.47
+Food Service Prosciutto,Delmar Provisions,—,,1.0,,12.95,12.95,assumed_default_1lb,388.5
+COKE,Delmar Provisions,—,,1.0,,25.45,25.45,assumed_default_1lb,381.75
+CHEESE CHED SHARP WHI BLOCK TF,PFG,1/10 LB,10.0,10.03,1.003,3.54,35.46,invoice_catch_weight,378.7
+"Glove, Latex Medium Powder-Free Natural Imported Thailand Ambidextrous",US Foods,10/100 EA,,11.686,,7.17,83.7,invoice_catch_weight,355.43
+TOMATO CRUSHED EXTRA HVY PUREE,PFG,6/#10 CN,,45.6,,0.8,36.48,invoice_catch_weight,355.3
+BAG PAPER SHOPPER REGAL,PFG,200/1 EA,,30.53,,2.3,70.22,invoice_catch_weight,345.9
+"Arugula, Baby Cleaned Loose Leaf Wild Fresh Ref Bag",US Foods,2/2 LB,4.0,4.002,1.0,4.92,19.69,invoice_catch_weight,334.73
+EVERROAST CHICKEN,Delmar Provisions,—,,4.6767,,5.99,28.0133,invoice_catch_weight,333.28
+Pepperoni Slicing,Delmar Provisions,—,,3.4954,,5.19,18.0933,invoice_catch_weight,322.06
+SALT KSHR COARSE,PFG,9/3 LB,27.0,27.801,1.03,2.26,62.83,invoice_catch_weight,314.15
+"Glove, Latex Large Powder-Free Natural Imported Thailand Ambidextrous",US Foods,10/100 EA,,12.797,,7.94,101.6,invoice_catch_weight,275.21
+WATER SPRKLNG SPRING GLASS,PFG,24/12 OZ,18.0,34.528,1.918,0.75,25.73,invoice_catch_weight,250.34
+CHIVES FRSH,PFG,1/8 OZ,0.5,0.81,1.62,22.07,17.88,invoice_catch_weight,250.32
+SWEET PEPPERS,Delmar Provisions,—,,1.0,,10.25,10.25,assumed_default_1lb,246.0
+CHEESE MOZZ PROV 50/50 SHRED,PFG,6/5 LB,30.0,31.307,1.044,2.61,81.71,invoice_catch_weight,234.85
+Compliments Branded Water,Delmar Provisions,—,,1.0,,12.95,12.95,assumed_default_1lb,233.1
+CREAM HVY WHIPPING 40% TFF,PFG,12/32 OZ,24.0,27.571,1.149,1.69,46.56,invoice_catch_weight,232.08
+CHEESE PARMESAN GRATED TUB,PFG,4/5 LB,20.0,21.974,1.099,3.46,76.03,invoice_catch_weight,228.09
+BASIL FRSH,PFG,1/1 LB,1.0,1.0,1.0,10.34,10.34,assumed_default_1lb,227.48
+CUCUMBER EURO SDLS,PFG,1/12 CT,,5.003,,4.18,20.89,invoice_catch_weight,222.86
+5 GALLON GARLIC PICKLES,Delmar Provisions,—,,1.0,,35.95,35.95,assumed_default_1lb,215.7
+CONT PLAS 8 OZ DELI CLR PP,PFG,10/50 CT,,12.085,,3.54,42.78,invoice_catch_weight,213.9
+"Ham, Cooked Rectangle 4x6 Hwp 39% Ref 1-Diamond Pork",US Foods,2/13 LB,26.0,26.043,1.002,2.78,72.4,invoice_catch_weight,212.92
+GARLIC PWDR,PFG,3/6 LB,18.0,19.872,1.104,10.61,210.84,invoice_catch_weight,210.84
+EGG HRD CKD PLD DRY PACK,PFG,12/12 CT,,15.988,,2.5,39.97,invoice_catch_weight,209.22
+GLOVE LATEX XL PWDR FREE,PFG,10/100 CT,,15.022,,4.55,68.35,invoice_catch_weight,205.05
+ROLL REGISTER 3.13X200 THERMAL,PFG,1/50 EA,,25.981,,3.73,96.91,invoice_catch_weight,193.82
+CHICKEN BRST RAND B/F B/S HALA,PFG,4/10 LB,40.0,40.1235,1.003,1.59,63.58,invoice_catch_weight,187.16
+"Bowl, Pla Plastic 24 Oz Clear W/ Lid Combo Salad",US Foods,150 EA,,8.603,,10.6,91.19,invoice_catch_weight,182.38
+CELERY SPLIT,PFG,1/6 CT,,6.8925,,3.72,25.64,invoice_catch_weight,179.48
+CREAM HVY 36% TFF,PFG,12/32 OZ,24.0,26.886,1.12,1.67,44.88,invoice_catch_weight,178.77
+BUTTER SOLID UNSLTD,PFG,36/1 LB,36.0,37.551,1.043,2.41,90.36,invoice_catch_weight,171.47
+"Ham, Cooked Hwp 35% Ref Pork",US Foods,2/13 LB,26.0,26.038,1.001,3.4,88.38,invoice_catch_weight,171.18
+"Tomato, Crushed Pear Canned",US Foods,6/#10 CN,,39.55,,1.09,43.11,invoice_catch_weight,170.4
+OREGANO LEAVES,PFG,1/5 LB,5.0,6.001,1.2,9.21,55.27,invoice_catch_weight,165.81
+NAPKIN FOR DSPNSR 13X12 WHI,PFG,12/500 CT,,27.773,,1.98,54.99,invoice_catch_weight,164.97
+Large Hero Hearth,Cardinal Bakery,12 ct,,,,,7.87,unknown,157.4
+PEPPER BLK WHL,PFG,1/5.75LB,5.75,6.12,1.064,8.75,53.52,invoice_catch_weight,156.58
+"Glove, Latex Xl Powder-Free Natural Imported Thailand Ambidextrous",US Foods,10/100 EA,,14.1,,5.51,77.69,invoice_catch_weight,155.38
+"Bag, Shopping 12x9x15.75 Paper Kraft Brown W/ Twist Handle Carry-Out",US Foods,200 EA,,27.996,,2.65,74.19,invoice_catch_weight,148.38
+LETTUCE ICEBERG C&T,PFG,4/6 CT,,41.114,,1.14,46.87,invoice_catch_weight,140.61
+BASIL FRSH,PFG,1/1 LB,1.0,1.4505,1.45,13.97,20.25,invoice_catch_weight,138.25
+GLOVE LATEX LG PWDR FREE,PFG,10/100 CT,,14.329,,4.77,68.35,invoice_catch_weight,136.7
+CHEESE RICOTTA IMPASTATA WM,PFG,4/5 LB,20.0,20.9815,1.049,3.25,68.19,invoice_catch_weight,136.38
+MUSTARD DIJON,PFG,1/9.5 LB,9.5,9.759,1.027,2.01,19.59,invoice_catch_weight,134.28
+GLOVE LATEX MED PWDR,PFG,10/100 CT,,12.744,,5.12,65.25,invoice_catch_weight,130.5
+CAN LINER 45 GA XHW BLK 40X46,PFG,10/10 CT,,15.52,,3.04,47.18,invoice_catch_weight,127.94
+SHELL CANNOLI SM,PFG,1/120 CT,,3.999,,10.67,42.67,invoice_catch_weight,127.51
+"Tomato, Paste 26% Light Shelf Stable Canned",US Foods,6/#10 CN,,41.513,,1.5,62.27,invoice_catch_weight,124.54
+PARSLEY FRSH FLAT ITAL,PFG,1/1 LB,1.0,1.4,1.4,10.86,15.2,invoice_catch_weight,121.6
+"Napkin, Dinner Blue 15.5x15.5 Ultra Ply 1/8 Fold Paper Fashnpoint",US Foods,8/100 EA,,10.805,,11.14,120.37,invoice_catch_weight,120.37
+Just Dragon Green Can,Delmar Provisions,—,,1.0,,14.95,14.95,assumed_default_1lb,119.6
+Just Raspberry Tea Can,Delmar Provisions,—,,1.0,,14.95,14.95,assumed_default_1lb,119.6
+Just Lemon Tea Can,Delmar Provisions,—,,1.0,,14.95,14.95,assumed_default_1lb,119.6
+BLACK CHERRY DR. BROWNS,Delmar Provisions,—,,1.0,,14.95,14.95,assumed_default_1lb,119.6
+"Onion, Yellow Jumbo 3""+ Fresh Ref Bag",US Foods,50 LB,50.0,50.28,1.006,0.85,42.56,invoice_catch_weight,115.68
+CHEESE CHED WHI MED LOAF,PFG,2/5 LB,10.0,11.006,1.101,4.7,51.73,invoice_catch_weight,103.46
+LETTUCE CELLO ICEBERG CA,PFG,1/24 CT,,45.973,,0.74,34.02,invoice_catch_weight,102.06
+PEPPERS RED FIRE RSTD,PFG,6/#10 CN,,44.08,,1.13,49.81,invoice_catch_weight,99.62
+LID CONT PLAS 8-32 OZ DELI PP,PFG,10/50 CT,,6.174,,3.97,24.51,invoice_catch_weight,98.04
+SOUR CREAM REAL,PFG,1/5 LB,5.0,5.5103,1.102,1.47,8.1,invoice_catch_weight,96.34
+RADISH WATERMELON,PFG,1/10 LB,10.0,12.01,1.201,2.0,24.02,invoice_catch_weight,96.08
+"Towel, Paper 10.25x13 C Fold White 1 Ply",US Foods,12/200 EA,,14.997,,3.18,47.69,invoice_catch_weight,95.38
+ROOT BEER DR. BROWNS,Delmar Provisions,—,,1.0,,14.95,14.95,assumed_default_1lb,89.7
+CREAM DR. BROWNS,Delmar Provisions,—,,1.0,,14.95,14.95,assumed_default_1lb,89.7
+GLOVE LATEX MED PWDR FREE,PFG,4/100 CT,,5.2,,8.55,44.46,invoice_catch_weight,88.92
+BREAD CRUMBS TOASTED PANKO,PFG,1/25 LB,25.0,25.6085,1.024,1.08,27.55,invoice_catch_weight,81.84
+OIL CANOLA CLR FRY,PFG,1/35 LB,35.0,38.009,1.086,1.07,40.67,invoice_catch_weight,81.23
+"Container, 32 Oz 1 Cmpt Plastic W/ Lid Combo Clear Round Carry-Out",US Foods,240 EA,,23.985,,3.36,80.59,invoice_catch_weight,80.59
+"Foil, Aluminum 18""X500' Heavy-Duty Roll Cutter Box 100% Recycled Wrap",US Foods,1 RL,,9.921,,7.75,76.89,invoice_catch_weight,76.89
+DIET CREAM DR. BROWNS,Delmar Provisions,—,,1.0,,14.95,14.95,assumed_default_1lb,74.75
+"Tuna, Light Skipjack Chunk In Water Can Shelf Stable Imported",US Foods,6/66.5 OZ,24.938,24.913,0.999,2.99,74.49,invoice_catch_weight,74.49
+"Water, Sparkling Glass Bottle Blue Carbonated Seltzer",US Foods,24/12 OZ,18.0,18.015,1.001,1.99,35.85,invoice_catch_weight,70.97
+BANANA PEPPER RINGS,Delmar Provisions,—,,1.0,,8.75,8.75,assumed_default_1lb,70.0
+"Sauce, Hot Plastic Jug Shelf Stable Original",US Foods,4/64 OZ,16.0,17.509,1.094,3.99,69.86,invoice_catch_weight,69.86
+TOMATO 6X6,PFG,1/25 LB,25.0,26.992,1.08,1.29,34.82,invoice_catch_weight,69.64
+CONT PLAS PP 8 OZ COMBO DELI,PFG,1/240 CT,,13.535,,2.56,34.65,invoice_catch_weight,69.3
+VINEGAR BALSAMIC,PFG,2/5 LT,22.046,25.563,1.16,1.35,34.51,invoice_catch_weight,69.02
+WATER PURIFIED DRINKING,PFG,24/16.9OZ,25.35,27.8,1.097,0.16,4.42,invoice_catch_weight,68.4
+CONT PLAS 32 OZ DELI W/LID CLR,PFG,1/240 CT,,32.015,,1.99,63.71,invoice_catch_weight,63.71
+"Tomato, Round 4x5 #1 Grade Fresh Ref 2 Layer Box",US Foods,20 LB,20.0,19.988,0.999,1.64,32.78,invoice_catch_weight,62.76
+JUICE LEMON FZ,PFG,12/1 LT,26.455,31.02,1.173,2.02,62.66,invoice_catch_weight,62.66
+BASE BEEF NO MSG,PFG,6/1 LB,6.0,6.703,1.117,9.34,62.61,invoice_catch_weight,62.61
+ONION YLW JUMBO,PFG,1/50 LB,50.0,51.279,1.026,0.61,31.28,invoice_catch_weight,60.33
+"Egg, Hard Cooked Peeled Whole Ref Dry Pillow Pack",US Foods,12/1 DZ,,15.018,,3.95,59.32,invoice_catch_weight,59.32
+"Cleaner, Oven & Grill K44 Aerosol Can Clear Odorless",US Foods,6/20 OZ,7.5,7.499,1.0,7.72,57.89,invoice_catch_weight,57.89
+"Radish, Fresh Ref",US Foods,14/1 LB,14.0,14.0056,1.0,2.93,41.0364,invoice_catch_weight,55.32
+"Wrap, 12x10.75 Wax Paper White Interfold",US Foods,12/500 EA,,33.1807,,3.4,112.7711,invoice_catch_weight,54.98
+EGG WHI LG AA LOOSE,PFG,1/30 DZ,,49.933,,1.04,51.93,invoice_catch_weight,51.93
+"Water, Purified Plastic Bottle Twist Cap Shelf Stable",US Foods,24/16.9 OZ,25.35,27.6335,1.09,0.34,9.23,invoice_catch_weight,50.68
+OREGANO LEAVES,PFG,1/24 OZ,1.5,1.83,1.22,13.34,24.41,invoice_catch_weight,48.82
+"Cheese, Cheddar White Sharp Print Vacuum-Pack Ref",US Foods,10 LBA,10.0,10.461,1.046,4.6,48.12,invoice_catch_weight,48.12
+"Plate, 9"" Molded Fiber Round Natural Compostable No Pfas Added Paper",US Foods,4/125 EA,,16.556,,2.79,46.19,invoice_catch_weight,46.19
+"Celery, Stalk Fresh Ref Box",US Foods,6 EA,,6.997,,3.37,23.58,invoice_catch_weight,45.54
+"Cream, Whipping Heavy 40% Butterfat Uht Dairy Carton Gable Top Ref",US Foods,12/1 QT,25.032,25.041,1.0,1.71,42.82,invoice_catch_weight,42.82
+CONT PP 16 OZ COMBO DELI NAT,PFG,6/40 CT,,16.454,,2.6,42.78,invoice_catch_weight,42.78
+"Towel, Paper 9.5x9 Multifold Brown 1 Ply",US Foods,16/250 EA,,17.548,,2.41,42.29,invoice_catch_weight,42.29
+"Cheese, Ricotta Impastata Whole Milk Tub Ref Del Pastaio",US Foods,2/5 LB,10.0,9.993,0.999,4.16,41.57,invoice_catch_weight,41.57
+"Juice, Lemon Not-From-Concentrate Plastic Bottle Ref",US Foods,6/32 OZ,12.0,13.493,1.124,3.02,40.75,invoice_catch_weight,40.75
+PASTA FUSILLI,PFG,4/5 LB,20.0,21.842,1.092,1.83,39.97,invoice_catch_weight,39.97
+"Fork, Mediumweight Black Polystyrene Bulk Plastic",US Foods,1000 EA,,6.827,,5.77,39.39,invoice_catch_weight,39.39
+"Vinegar, Balsamic Imported Italy",US Foods,2/5 LT,22.046,21.145,0.959,1.86,39.33,invoice_catch_weight,39.33
+HONEY AMBER EXTRA LIGHT,PFG,1/5 LB,5.0,5.3045,1.061,3.35,17.77,invoice_catch_weight,35.54
+"Water, Spring Plastic Bottle Special Print",US Foods,24/16.9 OZ,25.35,27.95,1.103,0.24,6.67,invoice_catch_weight,35.26
+ONION PWDR,PFG,1/5 LB,5.0,6.002,1.2,5.54,33.25,invoice_catch_weight,33.25
+CONT PLAS 24 OZ RND BLK COMBO,PFG,1/150 CT,,15.005,,2.11,31.66,invoice_catch_weight,31.66
+"Container, 8 Oz Round 1 Cmpt Polypropylene Deli Clear Carry-Out Plastic",US Foods,10/50 EA,,9.357,,3.22,30.13,invoice_catch_weight,30.13
+"Spice, Oregano Leaf Dried Plastic Jug Shelf Stable Seasoning",US Foods,24 OZ,1.5,1.5,1.0,19.46,29.19,invoice_catch_weight,29.19
+BASE BEEF NO MSG JAR,PFG,1/1 LB,1.0,6.969,6.969,1.4,9.72,invoice_catch_weight,28.29
+ONION RED JUMBO,PFG,1/25 LB,25.0,25.486,1.019,1.09,27.78,invoice_catch_weight,27.78
+"Garlic, White Whole Clove Peeled Fresh Ref",US Foods,4/5 LB,20.0,20.016,1.001,5.25,105.08,invoice_catch_weight,26.27
+STRAWBERRIES,PFG,8/1 LB,8.0,9.0,1.125,2.88,25.92,invoice_catch_weight,25.92
+"Flour, White Bread Unbleached Special Spring",US Foods,50 LB,50.0,49.735,0.995,0.49,24.37,invoice_catch_weight,24.37
+"Horseradish, Prepared Ref",US Foods,4/1 GA,33.36,32.044,0.961,2.65,84.92,invoice_catch_weight,21.23
+"Cucumber, Large English Seedless Hot House Bulk Fresh Ref",US Foods,12 EA,,4.997,,3.8,18.99,invoice_catch_weight,18.99
+WRAP WAX PAPER 15X10.75 WHI,PFG,1/500 CT,,7.008,,1.28,8.97,invoice_catch_weight,17.94
+MINT FRSH,PFG,1/1 LB,1.0,1.4,1.4,12.77,17.88,invoice_catch_weight,17.88
+CEL-RAY DR. BROWNS,Delmar Provisions,—,,1.0,,16.95,16.95,assumed_default_1lb,16.95
+THYME FRSH,PFG,1/4 OZ,0.25,0.47,1.88,35.19,16.54,invoice_catch_weight,16.54
+DIET CHERRY DR. BROWNS,Delmar Provisions,—,,1.0,,16.5,16.5,assumed_default_1lb,16.5
+VINEGAR WHI DISTILLED 40 GRAIN,PFG,4/1 GA,33.36,35.761,1.072,0.46,16.45,invoice_catch_weight,16.45
+"Basil, Fresh Herb",US Foods,1 LB,1.0,1.0,1.0,16.08,16.08,assumed_default_1lb,16.08
+VINEGAR APPLE CIDER 5% ACIDITY,PFG,1/1 GA,8.34,9.197,1.103,0.71,6.53,invoice_catch_weight,13.06
+EGG WHI MED AA LOOSE,PFG,1/15 DZ,,21.589,,0.56,12.09,invoice_catch_weight,12.09
+STRAWBERRIES FRSH,PFG,2/1 LB,2.0,2.502,1.251,4.56,11.41,invoice_catch_weight,11.41
+"Spice, Chive Chopped Plastic Shaker Shelf Stable Seasoning",US Foods,6/1.12 OZ,0.42,0.07,0.167,138.86,9.72,invoice_catch_weight,9.72
+"Sour Cream, Cultured All Natural Rbst Free Tub Ref",US Foods,4/5 LB,20.0,20.048,1.002,1.7,34.08,invoice_catch_weight,8.52
+Deer Park Loose,Delmar Provisions,—,,1.0,,8.5,8.5,assumed_default_1lb,8.5
+WRAP DELI PAPER WAX 12X10.75,PFG,1/500 CT,,2.752,,2.46,6.77,invoice_catch_weight,6.77
+"Glove, Vinyl Medium Powder-Free Natural Ambidextrous",US Foods,10/100 EA,,9.9,,5.91,58.5,invoice_catch_weight,5.85
