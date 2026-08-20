@@ -107,18 +107,29 @@ export async function loadRecipeGraph(): Promise<RecipeGraph> {
   const sb = getServiceRoleClient();
   const measures = await loadMeasures();
   const [{ data: recRows }, { data: inRows }, { data: outRows }] = await Promise.all([
-    // DETERMINISTIC ORDER (multi-vendor audit P5). buildRecipeGraph indexes producers
-    // FIRST-WINS per output (prep-consumption-graph.ts ~:210), so when two ACTIVE recipes
-    // produce the same item the winner is decided purely by the order rows come back in —
-    // and an unordered select gives no such guarantee. That is not an abstract worry: live,
-    // the two Hot Peppers recipes pin DIFFERENT vendor SKUs (Baldor 512 oz vs Boar's Head
-    // 1 unit), so a row-order coin-flip picked both a vendor AND a 512x oz basis for
-    // costing. Ordering here does not FIX dual producers — it makes them repeatable, so
-    // the number stops changing under you. Surfacing the ambiguity to an admin is the
-    // follow-up the audit files separately.
-    // created_at is nullable, so `id` (PK, never null) is the tiebreak that makes the
-    // order total rather than merely mostly-stable.
-    sb.from("recipes").select("id, batch_yield")
+    // ACTIVE ONLY (multi-vendor audit P5, second half — 2026-08-20). An inactive
+    // recipe is a RETIRED one: `active = false` is how this codebase deactivates
+    // config rows, and nothing else in the app treats a retired recipe as live
+    // (lib/admin/readiness-load.ts has filtered on it since it shipped). Without
+    // the filter, first-wins indexing plus created_at ordering handed the slot to
+    // whichever producer was created FIRST — which is systematically the OLDER,
+    // retired one. Live that was not hypothetical: the 2026-07-01 `Hot Peppers`
+    // recipe (retired, Baldor, 512 oz) beat the active `Hot Peppers (portioned)`,
+    // and the 2026-07-06 `AntiPasta2` (retired) beat `Antipasto Pasta
+    // (approximate)`. A deactivated recipe was silently defining two items' costs
+    // and depletion, and disagreeing with the readiness map about which recipe
+    // even produces them.
+    //
+    // DETERMINISTIC ORDER still matters for the ACTIVE duplicates the filter
+    // cannot resolve. buildRecipeGraph indexes producers FIRST-WINS per output, so
+    // when two ACTIVE recipes produce the same item the winner is decided purely by
+    // row order, and an unordered select gives no guarantee. Ordering makes that
+    // repeatable, not correct — nothing here knows which producer is operationally
+    // right, which is why duplicate ACTIVE producers now raise a readiness warning
+    // (lib/readiness.ts, `duplicate_producers`). created_at is nullable, so `id`
+    // (PK, never null) is the tiebreak that makes the order total rather than
+    // merely mostly-stable.
+    sb.from("recipes").select("id, batch_yield").eq("active", true)
       .order("created_at", { ascending: true, nullsFirst: true })
       .order("id", { ascending: true })
       .returns<Array<{ id: string; batch_yield: number | string | null }>>(),

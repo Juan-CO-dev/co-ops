@@ -26,6 +26,7 @@ export const KNOWN_REASONS = [
   "no_inputs", "no_outputs", "no_batch_yield",
   "not_ready_skus", "not_ready_subitems",
   "no_recipe", "no_oz_per_par_unit", "sell_incomplete", "upstream_recipe",
+  "duplicate_producers",
 ] as const;
 export type ReasonCode = (typeof KNOWN_REASONS)[number];
 
@@ -104,22 +105,44 @@ export function composeRecipeReadiness(
   return READY;
 }
 
-/** Item: own gaps (no producing recipe / no oz basis / sold-directly incomplete),
- * else inherits amber from its producing recipe's status. */
+/**
+ * Item: own gaps (no producing recipe / no oz basis / sold-directly incomplete),
+ * else inherits amber from its producing recipe's status.
+ *
+ * DUPLICATE ACTIVE PRODUCERS (multi-vendor audit P5, 2026-08-20). `activeProducerCount`
+ * > 1 means two or more ACTIVE recipes claim to produce this item, and the costing graph
+ * indexes producers first-wins — so one of them silently defines what the item costs and
+ * depletes, and nothing in the data says which one is right. That is not a missing field,
+ * so it never makes a row RED on its own; it is an ambiguity in the graph above the item,
+ * which is exactly what the amber `upstream_gaps` bucket is for. It also RIDES ALONG on a
+ * red row rather than being swallowed by it: an item can be both incomplete and ambiguous,
+ * and the second fact does not stop mattering because the first one is louder.
+ *
+ * The parameter is optional so callers that cannot count producers keep their exact
+ * behavior — an absent count is "unknown", which warns about nothing.
+ */
 export function itemReadiness(
   it: {
     hasProducingRecipe: boolean; ozPerParUnit: number | null;
     soldDirectly: boolean; sellPortionComplete: boolean;
+    /** How many ACTIVE recipes produce this item. > 1 → the graph picks arbitrarily. */
+    activeProducerCount?: number;
   },
   producingRecipeStatus: ReadinessStatus | null,
 ): Readiness {
+  const producers = it.activeProducerCount ?? 0;
+  const duplicate: Reason[] = producers > 1 ? [{ code: "duplicate_producers", count: producers }] : [];
+
   const reasons: Reason[] = [];
   if (!it.hasProducingRecipe) reasons.push({ code: "no_recipe" });
   if (!((it.ozPerParUnit ?? 0) > 0)) reasons.push({ code: "no_oz_per_par_unit" });
   if (it.soldDirectly && !it.sellPortionComplete) reasons.push({ code: "sell_incomplete" });
-  if (reasons.length > 0) return { status: "incomplete", reasons };
+  if (reasons.length > 0) return { status: "incomplete", reasons: [...reasons, ...duplicate] };
+
+  const upstream: Reason[] = [...duplicate];
   if (producingRecipeStatus !== null && producingRecipeStatus !== "ready") {
-    return { status: "upstream_gaps", reasons: [{ code: "upstream_recipe" }] };
+    upstream.push({ code: "upstream_recipe" });
   }
+  if (upstream.length > 0) return { status: "upstream_gaps", reasons: upstream };
   return READY;
 }

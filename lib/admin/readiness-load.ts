@@ -123,10 +123,20 @@ export async function loadGraphReadiness(actor: AuthContext): Promise<{
   const activeRecipeIds = new Set(g.recipes.map((r) => r.id));
   const outputsOfRecipe = new Map<string, number>();
   const recipeOfItem = new Map<string, string>();
+  // How many DISTINCT active recipes produce each item (audit P5). The costing
+  // graph indexes producers first-wins, so a count > 1 means one of them silently
+  // owns the item's cost; `recipeOfItem` above keeps its historic last-wins pick,
+  // which is precisely the arbitrariness this count exists to surface.
+  const producersOfItem = new Map<string, Set<string>>();
   for (const o of g.outputs) {
     if (!activeRecipeIds.has(o.recipe_id)) continue;
     outputsOfRecipe.set(o.recipe_id, (outputsOfRecipe.get(o.recipe_id) ?? 0) + 1);
-    if (o.output_item_id) recipeOfItem.set(o.output_item_id, o.recipe_id);
+    if (o.output_item_id) {
+      recipeOfItem.set(o.output_item_id, o.recipe_id);
+      const set = producersOfItem.get(o.output_item_id) ?? new Set<string>();
+      set.add(o.recipe_id);
+      producersOfItem.set(o.output_item_id, set);
+    }
   }
   const itemById = new Map(g.items.map((it) => [it.id, it]));
   const recipeRowById = new Map(g.recipes.map((r) => [r.id, r]));
@@ -185,6 +195,7 @@ export async function loadGraphReadiness(actor: AuthContext): Promise<{
         ozPerParUnit: it ? num(it.oz_per_par_unit) : null,
         soldDirectly: it?.sold_directly ?? false,
         sellPortionComplete,
+        activeProducerCount: producersOfItem.get(itemId)?.size ?? 0,
       },
       producing?.status ?? null,
     );
