@@ -112,7 +112,7 @@ export function MidDayPhase1Form({
                 >
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-co-text">{it.label}</p>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-text-dim">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-co-text-dim">
                       {t("mid_day_prep.page.section_par")} {it.parValue ?? "—"}
                       {it.parUnit ? ` ${it.parUnit}` : ""}
                       {need !== null ? ` · ${t("mid_day_prep.phase1.need")} ${need}` : ""}
@@ -129,7 +129,7 @@ export function MidDayPhase1Form({
                     aria-label={`${it.label} — ${t("mid_day_prep.phase1.on_hand")}`}
                     placeholder={t("mid_day_prep.phase1.on_hand")}
                     className="
-                      h-10 w-24 shrink-0 rounded-md border-2 border-co-border-2 bg-co-surface
+                      min-h-[44px] w-24 shrink-0 rounded-md border-2 border-co-border-2 bg-co-surface
                       px-2 text-sm text-co-text focus:border-co-text focus:outline-none
                       focus-visible:ring-4 focus-visible:ring-co-gold/60
                     "
@@ -141,7 +141,7 @@ export function MidDayPhase1Form({
         </section>
       ))}
 
-      {error ? <p className="px-1 text-[11px] text-co-cta">{error}</p> : null}
+      {error ? <p className="px-1 text-[11px] text-co-cta-text">{error}</p> : null}
 
       <ActionButton onClick={() => void onSubmit()} disabled={submitting} className="w-full">
         {submitting ? t("mid_day_prep.phase1.submitting") : t("mid_day_prep.phase1.submit")}

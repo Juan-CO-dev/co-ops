@@ -146,7 +146,7 @@ export function OpeningChecklistItem({
                 disabled={verificationLocked}
               />
               {hasMissingCountError ? (
-                <span className="text-xs text-co-danger">
+                <span className="text-xs text-co-cta-text">
                   {t("opening.item.count_required_inline")}
                 </span>
               ) : null}
@@ -186,14 +186,14 @@ export function OpeningChecklistItem({
               className={[
                 "mt-1 flex items-center gap-3 rounded-md border-2 px-3 py-2 text-sm",
                 isNullSource
-                  ? "border-co-danger bg-co-danger-surface"
+                  ? "border-co-cta-text bg-co-danger-surface"
                   : "border-co-border-2 bg-co-bg",
               ].join(" ")}
             >
               <span
                 className={[
                   "shrink-0 text-xs font-bold uppercase tracking-[0.12em]",
-                  isNullSource ? "text-co-danger" : "text-co-text-muted",
+                  isNullSource ? "text-co-cta-text" : "text-co-text-muted",
                 ].join(" ")}
               >
                 {t("opening.recount.label")}
@@ -207,12 +207,12 @@ export function OpeningChecklistItem({
                 aria-label={`${t("opening.recount.label")} — ${resolved.label}`}
                 aria-required={isNullSource}
                 className={[
-                  "inline-flex h-9 w-20 items-center rounded-md border-2 px-2",
+                  "inline-flex min-h-[44px] w-20 items-center rounded-md border-2 px-2",
                   "text-base font-semibold text-co-text",
                   "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
                   verificationLocked ? "cursor-not-allowed opacity-70" : "",
                   isNullSource
-                    ? "border-co-danger bg-co-surface hover:border-co-text"
+                    ? "border-co-cta-text bg-co-surface hover:border-co-text"
                     : "border-co-border-2 bg-co-surface hover:border-co-text",
                 ].join(" ")}
               />

@@ -127,7 +127,7 @@ export function RevokeReasonModal({
             {REASON_OPTIONS.map((opt) => (
               <label
                 key={opt.value}
-                className="flex items-center gap-2 text-sm font-medium text-co-text"
+                className="flex min-h-[44px] items-center gap-2 text-sm font-medium text-co-text"
               >
                 <input
                   type="radio"
@@ -166,7 +166,7 @@ export function RevokeReasonModal({
           </div>
 
           {errorCode ? (
-            <p role="alert" className="text-sm font-medium text-co-danger">
+            <p role="alert" className="text-sm font-medium text-co-cta-text">
               {t("opening.phase2.revoke.error")}
             </p>
           ) : null}
@@ -195,7 +195,7 @@ export function RevokeReasonModal({
               "text-sm font-bold uppercase tracking-[0.12em]",
               "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
               canSubmit
-                ? "border-2 border-co-danger bg-co-surface text-co-text hover:bg-co-danger-surface"
+                ? "border-2 border-co-cta-text bg-co-surface text-co-text hover:bg-co-danger-surface"
                 : "border-2 border-co-border-2 bg-co-surface text-co-text-faint cursor-not-allowed",
             ].join(" ")}
           >

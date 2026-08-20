@@ -118,7 +118,7 @@ export function PhotoCapture({ locationId, onUploaded, initialPhotoId = null, la
             href={`/api/photos/${photoId}`}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex min-h-[44px] items-center gap-2 text-sm font-semibold text-co-cta underline"
+            className="inline-flex min-h-[44px] items-center gap-2 text-sm font-semibold text-co-cta-text underline"
           >
             {/* Thumbnail via the same canonical read URL (302 → signed url). */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -131,7 +131,7 @@ export function PhotoCapture({ locationId, onUploaded, initialPhotoId = null, la
           </a>
         ) : null}
       </div>
-      {error ? <p className="mt-1 text-sm text-co-cta">{error}</p> : null}
+      {error ? <p className="mt-1 text-sm text-co-cta-text">{error}</p> : null}
     </div>
   );
 }

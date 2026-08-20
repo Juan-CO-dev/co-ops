@@ -796,7 +796,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
 
       {/* Header */}
       <div>
-        <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
+        <p className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
           {t("closing.page.title")}
         </p>
         <h1 className="mt-1 text-2xl font-extrabold leading-tight text-co-text">
@@ -925,7 +925,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
         * clear prompt + one-tap CTA to the cash page.
         * Hidden once cashDeposited is true (canFinalize's banner takes over). */}
       {!readOnly && actor.level >= 4 && walkOutVerificationComplete && !cashDeposited ? (
-        <div className="mt-6 rounded-2xl border-2 border-co-cta bg-co-danger-surface p-4">
+        <div className="mt-6 rounded-2xl border-2 border-co-cta-text bg-co-danger-surface p-4">
           <p className="text-sm font-bold text-co-text">{t("closing.cash_required.banner")}</p>
           <div className="mt-3">
             <ActionLink
@@ -1168,7 +1168,7 @@ function StationGroup({
         onClick={onToggle}
         aria-expanded={expanded}
         className="
-          flex w-full items-center justify-between gap-3 px-4 py-3
+          flex min-h-[44px] w-full items-center justify-between gap-3 px-4 py-3
           text-left
           focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
         "
@@ -1306,7 +1306,7 @@ function ReviewSection({
       aria-label={t("closing.review.button_complete")}
       className="mt-6 rounded-2xl border-2 border-co-text bg-co-surface p-5 sm:p-6"
     >
-      <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
+      <p className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
         {t("closing.review.button_complete")}
       </p>
       <h2 className="mt-1 text-lg font-extrabold text-co-text">

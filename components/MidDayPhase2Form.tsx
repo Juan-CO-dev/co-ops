@@ -237,7 +237,7 @@ export function MidDayPhase2Form({
                   <div className="flex items-center gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-co-text">{it.label}</p>
-                      <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-text-dim">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-co-text-dim">
                         {it.need !== null
                           ? `${t("mid_day_prep.phase1.need")} ${it.need}`
                           : `${t("mid_day_prep.page.section_par")} ${it.parValue ?? "—"}`}
@@ -259,42 +259,30 @@ export function MidDayPhase2Form({
                       aria-label={`${it.label} — ${t("mid_day_prep.phase2.prepped")}`}
                       placeholder={t("mid_day_prep.phase2.prepped")}
                       className="
-                        h-10 w-20 shrink-0 rounded-md border-2 border-co-border-2 bg-co-surface
+                        min-h-[44px] w-20 shrink-0 rounded-md border-2 border-co-border-2 bg-co-surface
                         px-2 text-sm text-co-text focus:border-co-text focus:outline-none
                         focus-visible:ring-4 focus-visible:ring-co-gold/60
                       "
                     />
-                    <button
-                      type="button"
+                    <ActionButton
                       onClick={() => void onSave(it)}
                       disabled={st.status === "saving"}
-                      className="
-                        inline-flex h-10 shrink-0 items-center rounded-md border-2 border-co-text
-                        bg-co-gold px-3 text-xs font-bold uppercase tracking-[0.1em] text-co-text
-                        transition hover:bg-co-gold-deep focus:outline-none
-                        focus-visible:ring-4 focus-visible:ring-co-gold/60
-                        disabled:cursor-not-allowed disabled:opacity-50
-                      "
+                      className="shrink-0"
                     >
                       {st.status === "saving" ? t("mid_day_prep.phase2.saving") : t("mid_day_prep.phase2.save")}
-                    </button>
+                    </ActionButton>
                   </div>
 
                   {offPar ? (
-                    <button
-                      type="button"
+                    <ActionButton
+                      variant="secondary"
                       onClick={() => patch(it.id, { modalOpen: true, status: "idle", error: null })}
-                      className="
-                        inline-flex min-h-[44px] items-center self-start rounded-md border-2
-                        border-co-gold-deep bg-co-surface px-2 text-[11px] font-bold uppercase
-                        tracking-[0.1em] text-co-text transition hover:bg-co-surface-2
-                        focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
-                      "
+                      className="self-start"
                     >
                       {st.overUnder
                         ? t("mid_day_prep.phase2.edit_reason")
                         : t("mid_day_prep.phase2.add_reason")}
-                    </button>
+                    </ActionButton>
                   ) : null}
 
                   {it.derived.length > 0 ? (
@@ -306,14 +294,14 @@ export function MidDayPhase2Form({
                     />
                   ) : null}
                   {st.status === "saved" ? (
-                    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-confirm-text">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-co-confirm-text">
                       {st.savedBy
                         ? t("mid_day_prep.phase2.saved_by", { name: st.savedBy })
                         : t("mid_day_prep.phase2.saved")}
                     </p>
                   ) : null}
                   {st.status === "error" && st.error ? (
-                    <p className="text-[10px] text-co-cta">{st.error}</p>
+                    <p className="text-[10px] text-co-cta-text">{st.error}</p>
                   ) : null}
 
                   {st.modalOpen && over ? (
@@ -342,7 +330,7 @@ export function MidDayPhase2Form({
         </section>
       ))}
 
-      {finalizeError ? <p className="px-1 text-[11px] text-co-cta">{finalizeError}</p> : null}
+      {finalizeError ? <p className="px-1 text-[11px] text-co-cta-text">{finalizeError}</p> : null}
 
       <ActionButton onClick={() => void onFinalize()} disabled={finalizing} className="w-full">
         {finalizing ? t("mid_day_prep.phase2.finalizing") : t("mid_day_prep.phase2.finalize")}

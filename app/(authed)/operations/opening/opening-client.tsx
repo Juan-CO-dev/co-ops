@@ -1383,7 +1383,7 @@ export function OpeningClient({
     <div className="flex flex-col gap-4 pb-32">
       {/* Header */}
       <div>
-        <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
+        <p className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
           {t("opening.page.label")}
         </p>
         <h2 className="mt-1 text-2xl font-extrabold leading-tight text-co-text">
@@ -1402,7 +1402,7 @@ export function OpeningClient({
           onClick={() => handleTabClick("verification")}
           aria-current={activePhase === "verification" ? "page" : undefined}
           className={[
-            "inline-flex items-center px-3 py-2",
+            "inline-flex min-h-[44px] items-center px-3 py-2",
             "text-xs font-bold uppercase tracking-[0.14em]",
             "transition focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60",
             activePhase === "verification"
@@ -1423,7 +1423,7 @@ export function OpeningClient({
             }
             aria-current={activePhase === "prep" ? "page" : undefined}
             className={[
-              "inline-flex items-center px-3 py-2",
+              "inline-flex min-h-[44px] items-center px-3 py-2",
               "text-xs font-bold uppercase tracking-[0.14em]",
               "transition focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60",
               !phase2Available
@@ -1479,7 +1479,7 @@ export function OpeningClient({
         <section
           role="region"
           aria-label={t("opening.phase1.attestation.title")}
-          className="rounded-2xl border-2 border-co-danger bg-co-danger-surface p-4 sm:p-5"
+          className="rounded-2xl border-2 border-co-cta-text bg-co-danger-surface p-4 sm:p-5"
         >
           <h3 className="text-base font-extrabold uppercase tracking-[0.14em] text-co-text">
             {t("opening.phase1.attestation.title")}
@@ -1490,7 +1490,7 @@ export function OpeningClient({
             })}
           </p>
           <div className="mt-3 flex flex-col gap-2">
-            <label className="flex items-center gap-3 text-sm font-medium text-co-text">
+            <label className="flex min-h-[44px] items-center gap-3 text-sm font-medium text-co-text">
               <input
                 type="radio"
                 name="opener_no_prior_data_reason"
@@ -1502,7 +1502,7 @@ export function OpeningClient({
               />
               {t("opening.phase1.attestation.option.planned_closure")}
             </label>
-            <label className="flex items-center gap-3 text-sm font-medium text-co-text">
+            <label className="flex min-h-[44px] items-center gap-3 text-sm font-medium text-co-text">
               <input
                 type="radio"
                 name="opener_no_prior_data_reason"
@@ -1559,7 +1559,7 @@ export function OpeningClient({
       {submitState.status === "error" ? (
         <div
           role="alert"
-          className="rounded-2xl border-2 border-co-danger bg-co-danger-surface p-4 text-sm text-co-text"
+          className="rounded-2xl border-2 border-co-cta-text bg-co-danger-surface p-4 text-sm text-co-text"
         >
           {t(
             `opening.error.${submitState.errorCode ?? "fallback"}` as TranslationKey,

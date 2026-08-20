@@ -52,6 +52,7 @@ import type { ChecklistInstance, PrepInputs } from "@/lib/types";
 
 import { AmPrepForm } from "@/components/prep/AmPrepForm";
 import { BackLink } from "@/components/nav/BackLink";
+import { actionButtonClass } from "@/components/ActionButton";
 
 interface PageProps {
   searchParams: Promise<{ location?: string; edit?: string }>;
@@ -195,7 +196,7 @@ export default async function AmPrepPage({ searchParams }: PageProps) {
 
       {/* Header — visual parallel to closing-client header. */}
       <div>
-        <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
+        <p className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
           {serverT(auth.user.language, "am_prep.page.title")}
         </p>
         <h1 className="mt-1 text-2xl font-extrabold leading-tight text-co-text">
@@ -317,7 +318,7 @@ function NoTemplateView({
 }) {
   return (
     <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl p-4 sm:p-6">
-      <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
+      <p className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
         {serverT(language, "am_prep.page.title")}
       </p>
       <h1 className="mt-1 text-2xl font-extrabold text-co-text">{locationLabel}</h1>
@@ -328,15 +329,7 @@ function NoTemplateView({
         <p className="mt-3 text-sm text-co-text-muted">
           {serverT(language, "am_prep.no_template.body")}
         </p>
-        <a
-          href="/dashboard"
-          className="
-            mt-4 inline-flex min-h-[48px] items-center justify-center rounded-md
-            border-2 border-co-text bg-co-surface px-4 text-sm font-bold uppercase tracking-[0.12em] text-co-text
-            transition hover:bg-co-surface-2
-            focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
-          "
-        >
+        <a href="/dashboard" className={actionButtonClass("secondary", "default", "mt-4")}>
           {serverT(language, "am_prep.no_template.return_dashboard")}
         </a>
       </section>

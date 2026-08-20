@@ -16,7 +16,7 @@
  * Replaces the Phase 0/1 PlaceholderCard wholesale.
  */
 
-import Link from "next/link";
+import { ActionLink } from "@/components/ActionButton";
 
 import { AuthShell } from "@/components/auth/AuthShell";
 import { LogoutButton } from "@/components/auth/LogoutButton";
@@ -323,7 +323,7 @@ function ScaffoldHeader({ language }: { language: Language }) {
   return (
     <div className="mb-4">
       <DashboardBackLink />
-      <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
+      <p className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
         {serverT(language, "opening.page.label")}
       </p>
       <h2 className="mt-1 text-2xl font-extrabold leading-tight text-co-text">
@@ -406,15 +406,12 @@ function GateBlockedBanner({
         </p>
       </div>
       <div>
-        <Link
+        <ActionLink
           href={`/operations/closing?location=${location.id}&date=${yesterdayDate}`}
-          className="
-            inline-flex min-h-[48px] items-center justify-center rounded-md
-            border-2 border-co-text bg-co-surface px-4 text-sm font-bold uppercase tracking-[0.12em] text-co-text
-          "
+          variant="secondary"
         >
           {serverT(language, "opening.gate.cta_view_prior_closing")}
-        </Link>
+        </ActionLink>
       </div>
     </section>
   );
@@ -433,7 +430,7 @@ function ReadOnlyBanner({
 }) {
   return (
     <section className="rounded-2xl border-2 border-co-border bg-co-surface p-5 sm:p-6">
-      <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-co-text-dim">
+      <p className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
         {serverT(language, "opening.read_only.label", { code: location.code })}
       </p>
       <h3 className="mt-1 text-xl font-extrabold leading-tight text-co-text">

@@ -993,7 +993,7 @@ export function ChecklistItem({
     instanceLocked ? "opacity-70 cursor-not-allowed" : "",
     readOnly ? "opacity-70 cursor-default" : "",
     inFlight ? "ring-2 ring-co-gold-deep cursor-wait" : "",
-    error ? "border-co-cta/60" : "",
+    error ? "border-co-cta-text/60" : "",
     isCompleted && !error ? "bg-co-surface-2/60" : "",
   ]
     .filter(Boolean)
@@ -1038,7 +1038,7 @@ export function ChecklistItem({
             <span
               className={[
                 "shrink-0 text-[11px] font-medium tabular-nums",
-                error ? "text-co-cta" : "text-co-text-dim",
+                error ? "text-co-cta-text" : "text-co-text-dim",
               ].join(" ")}
             >
               {rightSlotText}
@@ -1091,7 +1091,7 @@ export function ChecklistItem({
       {(metaPrimaryText || taggedAnnotationText || noteText) ? (
         <div className="ml-15 mt-1 flex flex-col gap-0.5 text-[11px] leading-tight">
           {metaPrimaryText ? (
-            <span className={metaIsDanger ? "tabular-nums font-semibold text-co-cta" : "tabular-nums text-co-text-dim"}>
+            <span className={metaIsDanger ? "tabular-nums font-semibold text-co-cta-text" : "tabular-nums text-co-text-dim"}>
               {metaPrimaryText}
             </span>
           ) : null}
@@ -1138,7 +1138,7 @@ export function ChecklistItem({
                 onChange={(e) => setCountDraft(e.target.value)}
                 placeholder={t("closing.expand.count_placeholder")}
                 className="
-                  mt-1 w-full rounded-md border-2 border-co-border bg-white px-3 py-2
+                  mt-1 min-h-[44px] w-full rounded-md border-2 border-co-border bg-white px-3 py-2
                   text-base text-co-text
                   focus:outline-none focus:border-co-gold focus-visible:ring-4 focus-visible:ring-co-gold/40
                 "
@@ -1301,7 +1301,7 @@ function UndoButton({ onClick, disabled }: { onClick: () => void; disabled: bool
         shrink-0 inline-flex min-h-[48px] min-w-[64px] items-center justify-center rounded-lg
         border-2 border-co-border bg-co-surface px-3
         text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-muted
-        transition hover:border-co-cta/60 hover:text-co-cta active:bg-co-surface-2
+        transition hover:border-co-cta-text/60 hover:text-co-cta-text active:bg-co-surface-2
         focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
         disabled:cursor-not-allowed disabled:opacity-50
       "
@@ -1363,7 +1363,7 @@ function MarkNotDoneButton({
         shrink-0 inline-flex min-h-[48px] min-w-[64px] items-center justify-center rounded-lg
         border-2 border-co-border bg-co-surface px-3
         text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-muted
-        transition hover:border-co-cta/60 hover:text-co-cta active:bg-co-surface-2
+        transition hover:border-co-cta-text/60 hover:text-co-cta-text active:bg-co-surface-2
         focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
         disabled:cursor-not-allowed disabled:opacity-50
       "
@@ -1885,8 +1885,8 @@ function YesNoButtons({
           base +
           " " +
           (isYes
-            ? "border-co-success bg-co-success/15 text-co-confirm-text"
-            : "border-co-border bg-co-surface text-co-text-muted hover:border-co-success/60 hover:text-co-confirm-text")
+            ? "border-co-confirm bg-co-success-surface text-co-confirm-text"
+            : "border-co-border bg-co-surface text-co-text-muted hover:border-co-confirm/60 hover:text-co-confirm-text")
         }
       >
         {t("closing.answer.yes")}
@@ -1901,8 +1901,8 @@ function YesNoButtons({
           base +
           " " +
           (isNo
-            ? "border-co-cta bg-co-cta/10 text-co-cta"
-            : "border-co-border bg-co-surface text-co-text-muted hover:border-co-cta/60 hover:text-co-cta")
+            ? "border-co-cta-text bg-co-danger-surface text-co-cta-text"
+            : "border-co-border bg-co-surface text-co-text-muted hover:border-co-cta-text/60 hover:text-co-cta-text")
         }
       >
         {t("closing.answer.no")}
