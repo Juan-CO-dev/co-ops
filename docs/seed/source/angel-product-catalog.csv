@@ -1,0 +1,154 @@
+product,brand,manufacturer,vendor,pack_size_raw,class,latest_price_per_case_usd,case_price_delta_pct,price_per_lb_delta_pct,total_spend_usd,est_units_per_case,est_unit_size,est_uom,est_case_weight_lb,est_dimension,est_price_per_lb_usd,flags
+OVENGOLD TURKEY,,,Delmar Provisions,,,58.48,+0.8%,-0.0%,7913.31,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+MAYO HD,DUKES,SAUER BRANDS,PFG,4/1 GA,MAYO/DRESSINGS/DIPS/MIXES,73.99,,,5771.22,4,1,GA,,volume,,
+OIL OLIVE 100% EXTRA VIRGIN,ASSOLUTI,REMA FOODS INC,PFG,3/3 LT,OILS & SHORTENINGS,93.72,,+0.0%,3534.0,3,3,LT,,volume,,
+LONDON BROIL,,,Delmar Provisions,,,62.45,+0.9%,-0.0%,2650.38,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+HAM 35% WATER FC 4X6 TFF,ROMA,AL & JOHN INC,PFG,1/13 LB,DELI/COOKED MEATS REFRIG,36.06,-0.6%,-0.6%,2164.94,1,13,LB,13.0,weight,2.7738,
+MILD PROVOLONE,,,Delmar Provisions,,,19.2,-0.1%,+0.0%,2073.66,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+LETTUCE ICEBERG LINER,PEAK FRS,ARMSTRONG MARKETING,PFG,24/1 CT,VEGETABLES FRESH,31.58,-4.1%,-4.1%,1389.64,24,1,CT,,count,,
+CHEESE MOZZ 1OZ SLCD LOG 32 CT,ROMA,BELGIOIOSO CHEESE INC,PFG,6/2 LB,CHEESE,47.1,,,1365.9,6,2,LB,12.0,weight,3.925,
+DILANDRI GENOA SALAME,,,Delmar Provisions,,,28.81,+0.7%,+0.0%,1357.22,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+BEEF GRND BULK 80/20,WEST CRK,PLYMOUTH BEEF CO INC,PFG,2/5 LB,BEEF FRESH,49.2,,,1180.8,2,5,LB,10.0,weight,4.92,
+HOT BUTT CAPPY,,,Delmar Provisions,,,19.59,+0.0%,-0.0%,1174.69,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+ARUGULA BABY,PACKER,ARMSTRONG MARKETING,PFG,2/2 LB,VEGETABLES FRESH,20.67,+13.8%,+13.8%,1132.9,2,2,LB,4.0,weight,5.1675,
+"Lettuce, Iceberg Cleaned & Trimmed Fresh Ref",Cross Valley Farms,Cross Valley Farms,US Foods,4/6 EA,"Produce, Fresh (25)",35.49,,,1050.15,4,6,EA,,count,,
+BAG PAPER KRAFT SHOPPER BISTRO,FRST MRK,DURO HILEX POLY LLC,PFG,250/1 CT,BAGS/WRAPS/FILTERS,61.34,,,963.24,250,1,CT,,count,,
+PICKLES CHIPS 1/4,,,Delmar Provisions,,,35.95,,-0.0%,826.85,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+"Bag, Shopping 10x6.75x12 Paper Kraft Brown W/ Handle Carry-Out",Monogram,Monogram,US Foods,250 EA,Disposables (24),61.29,-9.4%,-9.4%,801.09,1,250,EA,,count,,
+TOMATO 5X6,PEAK FRS,RUBY ROBINSON PETE PAPPAS,PFG,1/25 LB,VEGETABLES FRESH,33.14,-4.8%,-4.8%,732.44,1,25,LB,25.0,weight,1.3256,
+IMP LAYER BACON 12/14,,,Delmar Provisions,,,70.35,,+0.0%,633.15,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+"Mayonnaise, Heavy Plastic Shelf Stable",Dukes,Sauer Brands Inc,US Foods,4/1 GA,"Grocery, Dry (22)",79.89,,,584.33,4,1,GA,,volume,,
+ONION YLW COLOSSAL BAG,PEAK,EAGLE EYE PRODUCE INC,PFG,1/50 LB,VEGETABLES FRESH,34.35,+6.0%,+6.0%,578.95,1,50,LB,50.0,weight,0.687,
+"Juice, Lemonade Drink 22% Natural Ss Plastic Bottle Ref",Natalie's,Orchid Island Juice Company,US Foods,6/12 OZ,Beverage (16),13.41,,,522.99,6,12,OZ,4.5,weight,2.98,
+DIET COKE,,,Delmar Provisions,,,25.45,,,509.0,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+HOT CHERRY PEPPERS,,,Delmar Provisions,,,8.95,,,501.2,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+PORK GRND 80/20 ALL NAT FZ,WEST CRK,IPAP CALUMET DIVERSIFIED,PFG,2/5 LB,PORK FROZEN,23.9,,,433.98,2,5,LB,10.0,weight,2.39,
+JUICE LEMONADE NAT,NATALIES,ORCHID ISLAND JUICE CO,PFG,6/12 OZ,BEVERAGE REFRIG,10.63,,,425.2,6,12,OZ,4.5,weight,2.3622,
+CHEESE MOZZ LMWM SHRED,GPREMIO,LACTALIS CULINARY FRSH,PFG,6/5 LB,CHEESE,85.14,-1.8%,-1.8%,413.51,6,5,LB,30.0,weight,2.838,
+JUICE LEMON ALL NAT,NATALIES,ORCHID ISLAND JUICE CO,PFG,6/32 OZ,BEVERAGE REFRIG,32.7,,+0.0%,392.4,6,32,OZ,12.0,weight,2.725,
+Food Service Prosciutto,,,Delmar Provisions,,,12.95,,-0.0%,388.5,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+COKE,,,Delmar Provisions,,,25.45,,+0.0%,381.75,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+TUNA CHNK LIGHT CHN,WRLDDCK,REMA FOODS INC,PFG,6/66.5OZ,SEAFOOD CANNED/DRY,71.91,,,359.55,6,66.5,OZ,24.9375,weight,2.8836,
+"Glove, Latex Medium Powder-Free Natural Imported Thailand Ambidextrous",Monogram,Monogram,US Foods,10/100 EA,Disposables (24),83.7,+30.0%,+30.0%,355.43,10,100,EA,,count,,
+"Arugula, Baby Cleaned Loose Leaf Wild Fresh Ref Bag",Cross Valley Farms,Cross Valley Farms,US Foods,2/2 LB,"Produce, Fresh (25)",19.69,,,334.73,2,2,LB,4.0,weight,4.9225,
+EVERROAST CHICKEN,,,Delmar Provisions,,,27.69,-0.3%,-0.0%,333.28,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+Pepperoni Slicing,,,Delmar Provisions,,,17.79,-0.4%,-0.5%,322.06,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+GARLIC WHL PLD DOM,PEAK FRS,ARMSTRONG MARKETING,PFG,1/5 LB,HERBS FRESH,19.72,+2.5%,+2.5%,321.59,1,5,LB,5.0,weight,3.944,
+CHEESE CHED SHARP WHI BLOCK TF,LOL,LAND O LAKES INC,PFG,1/10 LB,CHEESE,35.46,+1.4%,+1.4%,307.78,1,10,LB,10.0,weight,3.546,
+TOMATO CRUSHED EXTRA HVY PUREE,SAPORITO,STANISLAUS FOOD PRODUCTS,PFG,6/#10 CN,VEGETABLES CANNED/DRY,36.48,,,282.34,6,10,CN,,count,,
+BAG PAPER SHOPPER REGAL,FRST MRK,DURO HILEX POLY LLC,PFG,200/1 EA,BAGS/WRAPS/FILTERS,70.22,,,275.68,200,1,EA,,count,,
+"Glove, Latex Large Powder-Free Natural Imported Thailand Ambidextrous",Monogram,Monogram,US Foods,10/100 EA,Disposables (24),101.6,+15.0%,+14.9%,275.21,10,100,EA,,count,,
+SALT KSHR COARSE,DMND CRY,CARGILL SALT,PFG,9/3 LB,SPICE/EXTRACT/FOOD COLOR,62.83,,,251.32,9,3,LB,27.0,weight,2.327,
+SWEET PEPPERS,,,Delmar Provisions,,,10.25,,,246.0,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+Compliments Branded Water,,,Delmar Provisions,,,12.95,,,233.1,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+CHEESE PARMESAN GRATED TUB,ROMA,IPAP CAPUTO CHEESE,PFG,4/5 LB,CHEESE,76.03,,,228.09,4,5,LB,20.0,weight,3.8015,
+5 GALLON GARLIC PICKLES,,,Delmar Provisions,,,35.95,,,215.7,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+CHIVES FRSH,PEAK FRS,RUBY CO EUREKA,PFG,1/8 OZ,HERBS FRESH,17.88,,,214.56,1,8,OZ,0.5,weight,35.76,HIGH_PPL_REVIEW
+"Ham, Cooked Rectangle 4x6 Hwp 39% Ref 1-Diamond Pork",Patuxent Farms,Patuxent Farms,US Foods,2/13 LB,Pork (30),71.04,+1.1%,+1.1%,212.92,2,13,LB,26.0,weight,2.7323,
+GLOVE LATEX XL PWDR FREE,SLVR SRC,HANDGARDS LLC,PFG,10/100 CT,DISPOSABLE SUPPLIES,68.35,,,205.05,10,100,CT,,count,,
+WATER SPRKLNG SPRING GLASS,SARATOGA,BLUETRITON BRAND INC,PFG,24/12 OZ,BEVERAGE PACKAGED DRY,24.86,,,198.88,24,12,OZ,18.0,weight,1.3811,
+ROLL REGISTER 3.13X200 THERMAL,FRST MRK,NATIONAL CHECKING COMPANY,PFG,1/50 EA,DISPOSABLE SUPPLIES,96.91,,,193.82,1,50,EA,,count,,
+BASIL FRSH,FRSH ADV,THE CLASS PRODUCE GROUP,PFG,1/1 LB,HERBS FRESH,10.34,,,186.12,1,1,LB,1.0,weight,10.34,
+CREAM HVY WHIPPING 40% TFF,NTRSBST,SAPUTO DAIRY FOODS USA,PFG,12/32 OZ,MILKS/CREAMS/YOGURT,46.32,-0.1%,-0.1%,185.76,12,32,OZ,24.0,weight,1.93,
+"Bowl, Pla Plastic 24 Oz Clear W/ Lid Combo Salad",Eco-Products,Eco Products,US Foods,150 EA,Disposables (24),91.19,,,182.38,1,150,EA,,count,,
+CUCUMBER EURO SDLS,PACKER,RUBY ROBINSON PETE PAPPAS,PFG,1/12 CT,VEGETABLES FRESH,18.11,,,171.89,1,12,CT,,count,,
+BUTTER SOLID UNSLTD,SLVR SRC,IPAP DAIRY GRASSLAND,PFG,36/1 LB,BUTTER,81.11,-3.4%,-3.4%,171.47,36,1,LB,36.0,weight,2.2531,
+"Ham, Cooked Hwp 35% Ref Pork",Hormel,Hormel Foods Sales Llc,US Foods,2/13 LB,Pork (30),88.38,+2.2%,+2.2%,171.18,2,13,LB,26.0,weight,3.3992,
+"Tomato, Crushed Pear Canned",Saporito,Stanislaus Foods Products Co.,US Foods,6/#10 CN,"Fruits & Vegetables, Canned & Dried (17)",43.11,,,170.4,6,10,CN,,count,,
+EGG HRD CKD PLD DRY PACK,NTRSBST,DEB EL FOOD PRODUCTS,PFG,12/12 CT,EGGS PROCESSED,33.85,,,169.25,12,12,CT,,count,,
+NAPKIN FOR DSPNSR 13X12 WHI,FRST MRK,IPAP ESSITY AFFLINK,PFG,12/500 CT,NAPKINS/TOWELS/TISSUE,54.99,,,164.97,12,500,CT,,count,,
+CHEESE MOZZ PROV 50/50 SHRED,GALBANI,LACTALIS CULINARY FRSH,PFG,6/5 LB,CHEESE,81.71,+4.9%,+4.9%,156.08,6,5,LB,30.0,weight,2.7237,
+"Glove, Latex Xl Powder-Free Natural Imported Thailand Ambidextrous",Monogram,Monogram,US Foods,10/100 EA,Disposables (24),77.69,,,155.38,10,100,EA,,count,,
+"Bag, Shopping 12x9x15.75 Paper Kraft Brown W/ Twist Handle Carry-Out",Monogram,Monogram,US Foods,200 EA,Disposables (24),74.19,,,148.38,1,200,EA,,count,,
+LETTUCE ICEBERG C&T,PACKER,ARMSTRONG MARKETING,PFG,4/6 CT,VEGETABLES PRE-CUT,46.87,,,140.61,4,6,CT,,count,,
+GLOVE LATEX LG PWDR FREE,SLVR SRC,HANDGARDS LLC,PFG,10/100 CT,DISPOSABLE SUPPLIES,68.35,,,136.7,10,100,CT,,count,,
+CHEESE RICOTTA IMPASTATA WM,ROMA,LOSURDO FOODS INC,PFG,4/5 LB,CHEESE,68.19,,,136.38,4,5,LB,20.0,weight,3.4095,
+CREAM HVY 36% TFF,NTRSBST,SAPUTO DAIRY FOODS USA,PFG,12/32 OZ,MILKS/CREAMS/YOGURT,44.63,,,134.14,12,32,OZ,24.0,weight,1.8596,
+CONT PLAS 8 OZ DELI CLR PP,FRST MRK,BUNZL DISTRIBUTION USA IN,PFG,10/50 CT,CARTONS/CONTAINERS/TRAYS,42.78,,,128.34,10,50,CT,,count,,
+CELERY SPLIT,PEAK FRS,ARMSTRONG MARKETING,PFG,1/6 CT,VEGETABLES FRESH,25.64,,,128.2,1,6,CT,,count,,
+SHELL CANNOLI SM,ROMA,CANNOLI FACTORY,PFG,1/120 CT,BAKERY FROZEN,42.67,+0.6%,+0.6%,127.51,1,120,CT,,count,,
+"Tomato, Paste 26% Light Shelf Stable Canned",Full Red,Stanislaus Foods Products Co.,US Foods,6/#10 CN,"Fruits & Vegetables, Canned & Dried (17)",62.27,,,124.54,6,10,CN,,count,,
+PARSLEY FRSH FLAT ITAL,PEAK FRS,RUBY CO EUREKA,PFG,1/1 LB,HERBS FRESH,15.2,,,121.6,1,1,LB,1.0,weight,15.2,
+"Napkin, Dinner Blue 15.5x15.5 Ultra Ply 1/8 Fold Paper Fashnpoint",Fashnpoint,Hoffmaster Group,US Foods,8/100 EA,Disposables (24),120.37,,,120.37,8,100,EA,,count,,
+BLACK CHERRY DR. BROWNS,,,Delmar Provisions,,,14.95,,,119.6,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+Just Dragon Green Can,,,Delmar Provisions,,,14.95,,+0.0%,119.6,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+Just Lemon Tea Can,,,Delmar Provisions,,,14.95,,+0.0%,119.6,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+Just Raspberry Tea Can,,,Delmar Provisions,,,14.95,,+0.0%,119.6,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+"Onion, Yellow Jumbo 3""+ Fresh Ref Bag",Cross Valley Farms,Cross Valley Farms,US Foods,50 LB,"Produce, Fresh (25)",42.56,+33.5%,+33.5%,115.68,1,50,LB,50.0,weight,0.8512,
+OREGANO LEAVES,ROMA,REMA FOODS INC,PFG,1/5 LB,SPICE/EXTRACT/FOOD COLOR,55.27,,,110.54,1,5,LB,5.0,weight,11.054,
+CHEESE CHED WHI MED LOAF,TILLAMK,TILLAMOOK COUNTY CREAMERY,PFG,2/5 LB,CHEESE,51.73,,,103.46,2,5,LB,10.0,weight,5.173,
+PEPPER BLK WHL,ROMA,MCCORMICK & COMPANY INC,PFG,1/5.75LB,SPICE/EXTRACT/FOOD COLOR,51.53,,,103.06,1,5.75,LB,5.75,weight,8.9617,
+LETTUCE CELLO ICEBERG CA,PACKER,ARMSTRONG MARKETING,PFG,1/24 CT,VEGETABLES FRESH,34.02,,,102.06,1,24,CT,,count,,
+PEPPERS RED FIRE RSTD,ASSOLUTI,REMA FOODS INC,PFG,6/#10 CN,VEGETABLES CANNED/DRY,49.81,,,99.62,6,10,CN,,count,,
+BASIL FRSH,PEAK FRS,RUBY CO EUREKA,PFG,1/1 LB,HERBS FRESH,19.55,,,97.75,1,1,LB,1.0,weight,19.55,
+RADISH WATERMELON,PACKER,THE CLASS PRODUCE GROUP,PFG,1/10 LB,VEGETABLES FRESH,24.02,,,96.08,1,10,LB,10.0,weight,2.402,
+"Towel, Paper 10.25x13 C Fold White 1 Ply",Valu Plus,Valu Plus,US Foods,12/200 EA,Disposables (24),47.69,,,95.38,12,200,EA,,count,,
+MUSTARD DIJON,ESPRTDPR,SCHREIBER FOODS INTL INC,PFG,1/9.5 LB,KETCHUP/MUSTARD/VINEGAR,19.59,+5.1%,+5.1%,95.1,1,9.5,LB,9.5,weight,2.0621,
+CREAM DR. BROWNS,,,Delmar Provisions,,,14.95,,,89.7,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+ROOT BEER DR. BROWNS,,,Delmar Provisions,,,14.95,,,89.7,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+GLOVE LATEX MED PWDR FREE,FRST MRK,HANDGARDS LLC,PFG,4/100 CT,DISPOSABLE SUPPLIES,44.46,,,88.92,4,100,CT,,count,,
+BREAD CRUMBS TOASTED PANKO,KIKKOMAN,KIKKOMAN SALES USA INC,PFG,1/25 LB,BAKERY SUGAR/FLOUR/MIXES,27.14,-0.5%,-0.5%,81.84,1,25,LB,25.0,weight,1.0856,
+CAN LINER 45 GA XHW BLK 40X46,FRST MRK,BERRY GLOBAL FILMS LLC,PFG,10/10 CT,CAN LINERS,40.38,,,80.76,10,10,CT,,count,,
+"Container, 32 Oz 1 Cmpt Plastic W/ Lid Combo Clear Round Carry-Out",Wy Industries,Wy Industries Inc,US Foods,240 EA,Disposables (24),80.59,,,80.59,1,240,EA,,count,,
+"Foil, Aluminum 18""X500' Heavy-Duty Roll Cutter Box 100% Recycled Wrap",Monogram,Monogram,US Foods,1 RL,Disposables (24),76.89,,,76.89,1,1,RL,,count,,
+DIET CREAM DR. BROWNS,,,Delmar Provisions,,,14.95,,-0.0%,74.75,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+"Tuna, Light Skipjack Chunk In Water Can Shelf Stable Imported",Harvest Value,Harvest Value,US Foods,6/66.5 OZ,"Grocery, Dry (22)",74.49,,,74.49,6,66.5,OZ,24.9375,weight,2.9871,
+SOUR CREAM REAL,DAISY,DAISY BRAND LLC,PFG,1/5 LB,MILKS/CREAMS/YOGURT,8.1,+10.2%,+10.2%,72.04,1,5,LB,5.0,weight,1.62,
+"Water, Sparkling Glass Bottle Blue Carbonated Seltzer",Saratoga Spring Water,Bluetriton Brands Inc,US Foods,24/12 OZ,Beverage (16),35.85,+0.5%,+0.5%,70.97,24,12,OZ,18.0,weight,1.9917,
+BANANA PEPPER RINGS,Boar's Head,,Delmar Provisions,,EA,8.75,,,70.0,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+"Sauce, Hot Plastic Jug Shelf Stable Original",Cholula,Mccormick & Company Inc,US Foods,4/64 OZ,"Grocery, Dry (22)",69.86,,,69.86,4,64,OZ,16.0,weight,4.3662,
+TOMATO 6X6,PEAK FRS,RUBY ROBINSON PETE PAPPAS,PFG,1/25 LB,VEGETABLES FRESH,34.82,,,69.64,1,25,LB,25.0,weight,1.3928,
+CONT PLAS PP 8 OZ COMBO DELI,NEWSPRNG,PACTIV LLC,PFG,1/240 CT,CARTONS/CONTAINERS/TRAYS,34.65,,,69.3,1,240,CT,,count,,
+VINEGAR BALSAMIC,PIANCONE,REMA FOODS INC,PFG,2/5 LT,KETCHUP/MUSTARD/VINEGAR,34.51,,,69.02,2,5,LT,,volume,,
+GLOVE LATEX MED PWDR,SLVR SRC,HANDGARDS LLC,PFG,10/100 CT,DISPOSABLE SUPPLIES,65.25,,,65.25,10,100,CT,,count,,
+CONT PLAS 32 OZ DELI W/LID CLR,PLACON,PLACON CORPORATION,PFG,1/240 CT,CARTONS/CONTAINERS/TRAYS,63.71,,,63.71,1,240,CT,,count,,
+CHICKEN BRST RAND B/F B/S HALA,MNTAIRE,MOUNTAIRE FARMS,PFG,4/10 LB,CHICKEN FRESH,63.58,,,63.58,4,10,LB,40.0,weight,1.5895,
+"Tomato, Round 4x5 #1 Grade Fresh Ref 2 Layer Box",Cross Valley Farms,Cross Valley Farms,US Foods,20 LB,"Produce, Fresh (25)",29.98,-2.1%,-2.1%,62.76,1,20,LB,20.0,weight,1.499,
+JUICE LEMON FZ,NATALIES,ORCHID ISLAND JUICE CO,PFG,12/1 LT,BEVERAGE FROZEN,62.66,,,62.66,12,1,LT,,volume,,
+BASE BEEF NO MSG,MINORS,NESTLE PROFESSIONAL,PFG,6/1 LB,SAUCES/BASES REFRIG,62.61,,,62.61,6,1,LB,6.0,weight,10.435,
+ONION YLW JUMBO,PEAK FRS,EAGLE EYE PRODUCE INC,PFG,1/50 LB,VEGETABLES FRESH,31.28,+7.7%,+7.7%,60.33,1,50,LB,50.0,weight,0.6256,
+"Egg, Hard Cooked Peeled Whole Ref Dry Pillow Pack",Glenview Farms,Glenview Farms,US Foods,12/1 DZ,Dairy (21),59.32,,,59.32,12,1,DZ,,count,,
+"Cleaner, Oven & Grill K44 Aerosol Can Clear Odorless",Monogram / Clean Force,Monogram / Clean Force,US Foods,6/20 OZ,Chemicals & Cleaning Agents (19),57.89,,,57.89,6,20,OZ,7.5,weight,7.7187,
+"Radish, Fresh Ref",Packer,Multiple Sources,US Foods,14/1 LB,"Produce, Fresh (25)",40.03,-2.4%,-2.4%,55.32,14,1,LB,14.0,weight,2.8593,
+"Wrap, 12x10.75 Wax Paper White Interfold",Monogram,Monogram,US Foods,12/500 EA,Disposables (24),98.2,-4.2%,-4.2%,54.98,12,500,EA,,count,,
+EGG WHI LG AA LOOSE,NTRSBST,KREIDER FARMS DAIRY DIV,PFG,1/30 DZ,EGGS IN SHELL,51.93,,,51.93,1,30,DZ,,count,,
+"Water, Purified Plastic Bottle Twist Cap Shelf Stable",Thirster,Thirster,US Foods,24/16.9 OZ,Beverage (16),9.23,+11.3%,+11.3%,50.68,24,16.9,OZ,25.35,weight,0.3641,
+LID CONT PLAS 8-32 OZ DELI PP,FRST MRK,BUNZL DISTRIBUTION USA IN,PFG,10/50 CT,TABLETOP DISPOSABLES,24.51,,,49.02,10,50,CT,,count,,
+OREGANO LEAVES,ROMA,REMA FOODS INC,PFG,1/24 OZ,SPICE/EXTRACT/FOOD COLOR,24.41,,,48.82,1,24,OZ,1.5,weight,16.2733,
+"Cheese, Cheddar White Sharp Print Vacuum-Pack Ref",Glenview Farms,Glenview Farms,US Foods,10 LBA,Cheese (18),48.12,,,48.12,1,10,LBA,10.0,weight,4.812,
+WATER PURIFIED DRINKING,ASCEND,PREMIUM WATERS INC,PFG,24/16.9OZ,BEVERAGE PACKAGED DRY,4.42,+6.0%,+6.0%,46.3,24,16.9,OZ,25.35,weight,0.1744,
+"Plate, 9"" Molded Fiber Round Natural Compostable No Pfas Added Paper",Monogram,Monogram,US Foods,4/125 EA,Disposables (24),46.19,,,46.19,4,125,EA,,count,,
+"Celery, Stalk Fresh Ref Box",Cross Valley Farms,Cross Valley Farms,US Foods,6 EA,"Produce, Fresh (25)",21.96,-6.9%,-6.9%,45.54,1,6,EA,,count,,
+"Cream, Whipping Heavy 40% Butterfat Uht Dairy Carton Gable Top Ref",Glenview Farms,Glenview Farms,US Foods,12/1 QT,Dairy (21),42.82,,,42.82,12,1,QT,,volume,,
+CONT PP 16 OZ COMBO DELI NAT,NEWSPRNG,PACTIV LLC,PFG,6/40 CT,CARTONS/CONTAINERS/TRAYS,42.78,,,42.78,6,40,CT,,count,,
+"Towel, Paper 9.5x9 Multifold Brown 1 Ply",Monogram,Monogram,US Foods,16/250 EA,Disposables (24),42.29,,,42.29,16,250,EA,,count,,
+"Cheese, Ricotta Impastata Whole Milk Tub Ref Del Pastaio",Grande Cheese Company,Grande Cheese Sales &Marketing,US Foods,2/5 LB,Cheese (18),41.57,,,41.57,2,5,LB,10.0,weight,4.157,
+"Juice, Lemon Not-From-Concentrate Plastic Bottle Ref",Natalie's,Orchid Island Juice Company,US Foods,6/32 OZ,Beverage (16),40.75,,,40.75,6,32,OZ,12.0,weight,3.3958,
+OIL CANOLA CLR FRY,PACKER,CHEFLER FOODS LLC,PFG,1/35 LB,OILS & SHORTENINGS,40.56,,,40.56,1,35,LB,35.0,weight,1.1589,
+"Fork, Mediumweight Black Polystyrene Bulk Plastic",Dixie Foodservice,Gp Consumer Products Lp-Fd Svc,US Foods,1000 EA,Disposables (24),39.39,,,39.39,1,1000,EA,,count,,
+"Vinegar, Balsamic Imported Italy",Harvest Value,Harvest Value,US Foods,2/5 LT,"Grocery, Dry (22)",39.33,,,39.33,2,5,LT,,volume,,
+HONEY AMBER EXTRA LIGHT,WEST CRK,IPAP PURE SWEET HONEY FAR,PFG,1/5 LB,HONEY/JELLY/SPREADS/SYRUP,17.77,,,35.54,1,5,LB,5.0,weight,3.554,
+"Water, Spring Plastic Bottle Special Print",Kala Falls,Niagara Bottling Llc,US Foods,24/16.9 OZ,Beverage (16),6.67,+4.3%,+4.3%,35.26,24,16.9,OZ,25.35,weight,0.2631,
+ONION PWDR,ROMA,REMA FOODS INC,PFG,1/5 LB,SPICE/EXTRACT/FOOD COLOR,33.25,,,33.25,1,5,LB,5.0,weight,6.65,
+CONT PLAS 24 OZ RND BLK COMBO,FORMAN,FORMAN INC,PFG,1/150 CT,CARTONS/CONTAINERS/TRAYS,31.66,,,31.66,1,150,CT,,count,,
+"Container, 8 Oz Round 1 Cmpt Polypropylene Deli Clear Carry-Out Plastic",Valu Plus,Valu Plus,US Foods,10/50 EA,Disposables (24),30.13,,,30.13,10,50,EA,,count,,
+"Spice, Oregano Leaf Dried Plastic Jug Shelf Stable Seasoning",Monarch,Monarch,US Foods,24 OZ,"Grocery, Dry (22)",29.19,,,29.19,1,24,OZ,1.5,weight,19.46,
+ONION RED JUMBO,PEAK FRS,EAGLE EYE PRODUCE INC,PFG,1/25 LB,VEGETABLES FRESH,27.78,,,27.78,1,25,LB,25.0,weight,1.1112,
+"Garlic, White Whole Clove Peeled Fresh Ref",Cross Valley Farms,Cross Valley Farms,US Foods,4/5 LB,"Produce, Fresh (25)",105.08,,,26.27,4,5,LB,20.0,weight,5.254,
+"Flour, White Bread Unbleached Special Spring",King Arthur Flour,King Arthur Baking Co Inc,US Foods,50 LB,"Grocery, Dry (22)",24.37,,,24.37,1,50,LB,50.0,weight,0.4874,
+"Horseradish, Prepared Ref",Monarch,Monarch,US Foods,4/1 GA,"Grocery, Ref & Fzn (26)",84.92,,,21.23,4,1,GA,,volume,,
+"Cucumber, Large English Seedless Hot House Bulk Fresh Ref",Packer,Multiple Sources,US Foods,12 EA,"Produce, Fresh (25)",18.99,,,18.99,1,12,EA,,count,,
+BASE BEEF NO MSG JAR,RDGCRST,IPAP VANEE FOODS COMPANY,PFG,1/1 LB,SAUCES PREPARED/BASES DRY,9.72,+4.9%,+4.9%,18.57,1,1,LB,1.0,weight,9.72,
+MINT FRSH,PEAK FRS,RUBY CO EUREKA,PFG,1/1 LB,HERBS FRESH,17.88,,,17.88,1,1,LB,1.0,weight,17.88,
+CEL-RAY DR. BROWNS,Boar's Head,,Delmar Provisions,,EA,16.95,,,16.95,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+THYME FRSH,PEAK FRS,RUBY CO EUREKA,PFG,1/4 OZ,HERBS FRESH,16.54,,,16.54,1,4,OZ,0.25,weight,66.16,HIGH_PPL_REVIEW
+DIET CHERRY DR. BROWNS,,,Delmar Provisions,,,16.5,,,16.5,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+"Basil, Fresh Herb",Cross Valley Farms,Cross Valley Farms,US Foods,1 LB,"Produce, Fresh (25)",16.08,,,16.08,1,1,LB,1.0,weight,16.08,
+EGG WHI MED AA LOOSE,NTRSBST,KREIDER FARMS DAIRY DIV,PFG,1/15 DZ,EGGS IN SHELL,12.09,,,12.09,1,15,DZ,,count,,
+STRAWBERRIES FRSH,PACKER,RUBY ROBINSON PETE PAPPAS,PFG,2/1 LB,FRUITS FRESH,11.41,,,11.41,2,1,LB,2.0,weight,5.705,
+"Spice, Chive Chopped Plastic Shaker Shelf Stable Seasoning",Monarch,Monarch,US Foods,6/1.12 OZ,"Grocery, Dry (22)",9.72,,,9.72,6,1.12,OZ,0.42,weight,23.1429,HIGH_PPL_REVIEW
+WRAP WAX PAPER 15X10.75 WHI,SLVR SRC,NOVOLEX BAGCRAFT INC,PFG,1/500 CT,BAGS/WRAPS/FILTERS,8.97,,,8.97,1,500,CT,,count,,
+"Sour Cream, Cultured All Natural Rbst Free Tub Ref",Glenview Farms,Glenview Farms,US Foods,4/5 LB,Dairy (21),34.08,,,8.52,4,5,LB,20.0,weight,1.704,
+Deer Park Loose,,,Delmar Provisions,,,8.5,,,8.5,,,,,,,NO_PACK_SIZE|BROKER_DIRECT
+VINEGAR APPLE CIDER 5% ACIDITY,WEST CRK,BELTON FOODS INC,PFG,1/1 GA,KETCHUP/MUSTARD/VINEGAR,6.53,,,6.53,1,1,GA,,volume,,
+"Glove, Vinyl Medium Powder-Free Natural Ambidextrous",Monogram,Monogram,US Foods,10/100 EA,Disposables (24),58.5,,,5.85,10,100,EA,,count,,
