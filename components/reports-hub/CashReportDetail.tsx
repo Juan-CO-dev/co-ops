@@ -71,7 +71,7 @@ export function CashReportDetailView({ detail, language }: Props) {
           className={[
             "flex items-center gap-2 rounded-lg border-2 px-3 py-2 text-xs font-semibold",
             overShortCents > 0
-              ? "border-co-border bg-co-surface text-co-success"
+              ? "border-co-border bg-co-surface text-co-confirm-text"
               : overShortCents < 0
                 ? "border-co-border bg-co-surface text-co-danger"
                 : "border-co-border bg-co-surface text-co-text-muted",
@@ -100,7 +100,7 @@ export function CashReportDetailView({ detail, language }: Props) {
                     ? detail.overShortCents < 0
                       ? "font-semibold text-co-danger"
                       : detail.overShortCents > 0
-                        ? "font-semibold text-co-success"
+                        ? "font-semibold text-co-confirm-text"
                         : "font-semibold text-co-text"
                     : "font-semibold text-co-text"
                 }

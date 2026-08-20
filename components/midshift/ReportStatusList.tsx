@@ -28,7 +28,7 @@ const PROGRESS_KEY: Record<ReportProgress, TranslationKey> = {
  * Chip color class per progress state.
  */
 const PROGRESS_CLASS: Record<ReportProgress, string> = {
-  done: "text-co-success",
+  done: "text-co-confirm-text",
   in_progress: "text-co-text-muted",
   not_started: "text-co-text-muted",
 };

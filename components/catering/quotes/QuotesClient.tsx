@@ -158,7 +158,7 @@ function StatusBadge({ status, isExpired, t }: { status: Quote["status"]; isExpi
   const tone: Record<string, string> = {
     draft: "bg-co-surface text-co-text-muted border-co-border-2",
     sent: "bg-co-info/10 text-co-info border-co-info/40",
-    accepted: "bg-co-success/10 text-co-success border-co-success/40",
+    accepted: "bg-co-success/10 text-co-confirm-text border-co-success/40",
     declined: "bg-co-cta/10 text-co-cta border-co-cta/40",
     expired: "bg-co-surface text-co-text-dim border-co-border-2",
   };
@@ -576,8 +576,8 @@ function PaymentsSection({
   const kindLabel = (k: Payment["kind"]) => t(`catering.quotes.payments.kind.${k}` as TranslationKey);
   const statusLabel = (s: Payment["status"]) => t(`catering.quotes.payments.status.${s}` as TranslationKey);
   const statusTone: Record<Payment["status"], string> = {
-    due: "text-co-warning",
-    paid: "text-co-success",
+    due: "text-co-warning-text",
+    paid: "text-co-confirm-text",
     refunded: "text-co-text-muted",
     void: "text-co-text-dim",
   };
@@ -602,7 +602,7 @@ function PaymentsSection({
                   if (window.confirm(t("catering.quotes.payments.mark_paid"))) onMarkPaid(p.id);
                 }}
                 disabled={payingId !== null}
-                className="inline-flex min-h-[36px] items-center rounded-full border-2 border-co-success/50 bg-co-success/10 px-3 text-xs font-bold text-co-success disabled:opacity-50"
+                className="inline-flex min-h-[36px] items-center rounded-full border-2 border-co-success/50 bg-co-success/10 px-3 text-xs font-bold text-co-confirm-text disabled:opacity-50"
               >
                 {payingId === p.id ? t("catering.quotes.payments.marking") : t("catering.quotes.payments.mark_paid")}
               </button>
@@ -780,7 +780,7 @@ function QuoteDetailPanel({
         />
       )}
 
-      {flashKey && <p className="rounded-lg border-2 border-co-success/40 bg-co-success/10 px-3 py-2 text-sm font-semibold text-co-success">{t(flashKey)}</p>}
+      {flashKey && <p className="rounded-lg border-2 border-co-success/40 bg-co-success/10 px-3 py-2 text-sm font-semibold text-co-confirm-text">{t(flashKey)}</p>}
       {errorKey && <p className="text-sm font-semibold text-co-cta">{t(errorKey)}</p>}
 
       {canWrite && (
@@ -795,7 +795,7 @@ function QuoteDetailPanel({
           </button>
           {decidable && (
             <>
-              <button type="button" onClick={() => void setStatus("accepted")} disabled={busy} className="inline-flex min-h-[48px] items-center justify-center rounded-xl border-2 border-co-success/50 bg-co-success/10 px-5 py-2.5 text-sm font-bold text-co-success disabled:opacity-50">
+              <button type="button" onClick={() => void setStatus("accepted")} disabled={busy} className="inline-flex min-h-[48px] items-center justify-center rounded-xl border-2 border-co-success/50 bg-co-success/10 px-5 py-2.5 text-sm font-bold text-co-confirm-text disabled:opacity-50">
                 {t("catering.quotes.mark_accepted")}
               </button>
               <button type="button" onClick={() => void setStatus("declined")} disabled={busy} className="inline-flex min-h-[48px] items-center justify-center rounded-xl border-2 border-co-cta/50 bg-co-cta/10 px-5 py-2.5 text-sm font-bold text-co-cta disabled:opacity-50">

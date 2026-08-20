@@ -616,7 +616,7 @@ function WrapUpSection({
             let badgeClasses: string;
             if (row.progress === "done") {
               label = row.doneAt ? formatTime(row.doneAt, language) : t("midshift.progress.done");
-              badgeClasses = "text-co-success font-semibold";
+              badgeClasses = "text-co-confirm-text font-semibold";
             } else if (row.overdue === "overdue") {
               label = t("midshift.overdue.badge");
               badgeClasses = "text-co-cta font-bold";

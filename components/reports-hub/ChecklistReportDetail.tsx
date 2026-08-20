@@ -41,7 +41,7 @@ function QuestionAnswer({
   );
   if (!answer) return null;
   if (answer.kind === "yes") {
-    return <span className="font-bold text-co-success">{t("reports.detail.answer_yes")}</span>;
+    return <span className="font-bold text-co-confirm-text">{t("reports.detail.answer_yes")}</span>;
   }
   if (answer.kind === "no") {
     return <span className="font-bold text-co-cta">{t("reports.detail.answer_no")}</span>;
@@ -272,7 +272,7 @@ export function ChecklistReportDetailView({ detail, language }: Props) {
                     <span
                       className={
                         item.done
-                          ? "shrink-0 font-bold text-co-success"
+                          ? "shrink-0 font-bold text-co-confirm-text"
                           : "shrink-0 text-co-text-muted"
                       }
                     >

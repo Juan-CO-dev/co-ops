@@ -706,7 +706,7 @@ function PrepEntryRow({
 
       {/* At-par indicator (informational; no action) */}
       {delta === 0 ? (
-        <p className="self-start text-xs italic text-co-success">
+        <p className="self-start text-xs italic text-co-confirm-text">
           {t("opening.phase2.signal.at_par")}
         </p>
       ) : null}
@@ -721,7 +721,7 @@ function PrepEntryRow({
           </span>
         ) : saveState.status === "saved" ? (
           <>
-            <span className="font-medium text-co-success">
+            <span className="font-medium text-co-confirm-text">
               {saveState.savedAt !== null
                 ? t("opening.phase2.save.saved_by_at", {
                     name: saverName ?? t("opening.phase2.save.saved_by_unknown"),

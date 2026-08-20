@@ -59,7 +59,7 @@ export function PrepOverviewPanel({ overview }: { overview: PrepOverviewReport |
 
   const badge =
     findingCount === 0 ? (
-      <span className="inline-flex items-center gap-1 rounded-full bg-co-success/15 px-2 py-0.5 text-[11px] font-bold text-co-success">
+      <span className="inline-flex items-center gap-1 rounded-full bg-co-success/15 px-2 py-0.5 text-[11px] font-bold text-co-confirm-text">
         ✓ {t("admin.templates.prep.all_clear")}
       </span>
     ) : (

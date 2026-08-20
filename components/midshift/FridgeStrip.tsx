@@ -50,7 +50,7 @@ export function FridgeStrip({
               className={`rounded-md px-2 py-1 text-[11px] font-bold ${
                 p.tone === "danger"
                   ? "bg-co-danger-surface text-co-cta-text"
-                  : "bg-co-success-surface text-co-success"
+                  : "bg-co-success-surface text-co-confirm-text"
               }`}
             >
               {serverT(language, p.key, p.params)}

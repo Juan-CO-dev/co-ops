@@ -50,7 +50,7 @@ function GradientTallyCard({ tally, t }: GradientTallyCardProps) {
             <li key={entry.dimension} className="flex items-center justify-between gap-2 text-xs">
               <span className="text-co-text-muted">{t(DIMENSION_LABEL_KEY[entry.dimension])}</span>
               <span className="flex gap-3">
-                <span className="font-semibold text-co-success">
+                <span className="font-semibold text-co-confirm-text">
                   {t("pm.attitude.great")} {entry.great}
                 </span>
                 <span className="font-semibold text-co-text">
@@ -94,7 +94,7 @@ function EvalCard({ ev, t }: EvalCardProps) {
             <span
               className={
                 value === "great"
-                  ? "text-xs font-semibold text-co-success"
+                  ? "text-xs font-semibold text-co-confirm-text"
                   : value === "needs_work"
                     ? "text-xs font-semibold text-co-danger"
                     : "text-xs font-semibold text-co-text"
@@ -198,7 +198,7 @@ export function PmReportDetailView({ detail, language }: Props) {
                 {detail.reportProgress.map((r) => (
                   <li key={r.key} className="flex items-center justify-between gap-2">
                     <span>{t(`midshift.report.${r.key}` as Parameters<typeof t>[0])}</span>
-                    <span className={r.progress === "done" ? "font-semibold text-co-success" : r.progress === "in_progress" ? "font-semibold text-co-text" : "text-co-text-muted"}>
+                    <span className={r.progress === "done" ? "font-semibold text-co-confirm-text" : r.progress === "in_progress" ? "font-semibold text-co-text" : "text-co-text-muted"}>
                       {t(`midshift.progress.${r.progress}` as Parameters<typeof t>[0])}
                       {r.doneAt !== null && r.progress === "done" && (
                         <> · {formatTime(r.doneAt, language)}</>

@@ -171,7 +171,7 @@ export function PriceAdvicePanel({
               )}
             </span>
             <span
-              className={`font-bold ${isDiscount ? "text-co-success" : "text-co-warning"}`}
+              className={`font-bold ${isDiscount ? "text-co-confirm-text" : "text-co-warning-text"}`}
             >
               {discountPct != null ? `${discountPct}%` : "—"}
             </span>

@@ -47,7 +47,7 @@ export function EquipmentDetail({
             <span
               className={`text-xs font-semibold ${
                 status === "ok"
-                  ? "text-co-success"
+                  ? "text-co-confirm-text"
                   : status === "out_of_range"
                     ? "text-co-cta"
                     : "text-co-text-muted"
