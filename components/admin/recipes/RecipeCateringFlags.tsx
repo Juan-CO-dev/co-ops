@@ -43,7 +43,7 @@ export function RecipeCateringFlags({
   if (outputs.length === 0) {
     return (
       <div className="mx-auto mt-4 w-full max-w-3xl rounded-lg border-2 border-co-border bg-co-surface p-4">
-        <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+        <h2 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
           {t("recipes.catering_flags.title")}
         </h2>
         <p className="mt-2 text-xs text-co-text-muted">{t("recipes.catering_flags.empty")}</p>
@@ -53,7 +53,7 @@ export function RecipeCateringFlags({
 
   return (
     <div className="mx-auto mt-4 w-full max-w-3xl rounded-lg border-2 border-co-border bg-co-surface p-4">
-      <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+      <h2 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
         {t("recipes.catering_flags.title")}
       </h2>
       <p className="mt-1 text-xs text-co-text-muted">{t("recipes.catering_flags.subtitle")}</p>

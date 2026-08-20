@@ -207,7 +207,7 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
       ) : (
         groups.map(([section, rows]) => (
           <section key={section}>
-            <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">{section}</h2>
+            <h2 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">{section}</h2>
             <div className="mt-2 grid grid-cols-1 gap-2 lg:grid-cols-2 lg:items-start">
               {rows.map((e) => (
                 <CatalogRow
@@ -248,7 +248,7 @@ function IssueBadge({ issue }: { issue: CatalogIssue }) {
 function EdgeList({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">{label}</p>
+      <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">{label}</p>
       <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-sm text-co-text">{children}</div>
     </div>
   );
@@ -446,7 +446,7 @@ function CatalogRow({
           {/* item_type editor — items only (menu_items derive made/retail; packages have no taxon). */}
           {e.kind === "item" && canWriteItemType && e.itemType != null && (
             <div>
-              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-co-text-dim">
+              <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
                 {t("admin.catalog.item_type.label")}
               </p>
               <label className="sr-only" htmlFor={`item-type-${e.id}`}>

@@ -57,7 +57,7 @@ export function SectionsTab({
 
       {canEditSections && sections.length > 0 ? (
         <section className="rounded-lg border-2 border-co-gold-deep bg-co-surface p-3">
-          <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+          <h2 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
             {t("admin.templates.sections_panel.title")}
           </h2>
           <p className="mt-1 text-xs text-co-text-muted">
@@ -80,7 +80,7 @@ export function SectionsTab({
 
       {canEditSections ? (
         <section className="rounded-lg border-2 border-co-gold-deep bg-co-surface p-3">
-          <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+          <h2 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
             {t("admin.templates.section_questions_panel.title")}
           </h2>
           <p className="mt-1 text-xs text-co-text-muted">
@@ -583,7 +583,7 @@ function SectionQuestionRow({
           <p className="text-xs text-co-text-muted">{sectionLabel}</p>
           <p className="text-sm font-bold text-co-text">
             {question.label}
-            <span className="ml-2 rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.05em] text-co-gold-text">
+            <span className="ml-2 rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-co-gold-text">
               {t(inputTypeKey)}
             </span>
           </p>

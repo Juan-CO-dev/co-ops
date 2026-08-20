@@ -92,7 +92,7 @@ export function ParGrid({
 
   return (
     <section className="rounded-lg border-2 border-co-border p-3">
-      <h3 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+      <h3 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
         {t("admin.templates.par_grid.title")}
       </h3>
       {errorMsg ? <p className="mt-2 text-sm text-co-cta-text">{errorMsg}</p> : null}

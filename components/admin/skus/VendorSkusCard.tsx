@@ -157,7 +157,7 @@ export function VendorSkusCard({
 
   return (
     <section className="rounded-xl border-2 border-co-border bg-co-surface p-4">
-      <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+      <h2 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
         {t("admin.skus.card.title")}
       </h2>
 

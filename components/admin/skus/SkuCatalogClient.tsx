@@ -411,7 +411,7 @@ export function SkuCatalogClient({
       ) : (
         groups.map(([klass, rows]) => (
           <section key={klass}>
-            <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+            <h2 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
               {t(tk(`admin.skus.lens.${klass}`))} · {t("admin.skus.group_count", { n: String(rows.length) })}
             </h2>
             <ul className="mt-2 flex flex-col gap-2">
@@ -516,7 +516,7 @@ function CatalogRow({
             </span>
           ) : null}
           {s.active && !chained ? (
-            <span className="inline-flex items-center rounded-full bg-co-danger-surface px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-cta-text">
+            <span className="inline-flex items-center rounded-full bg-co-danger-surface px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-cta-text">
               {t("admin.skus.no_pack_info")}
             </span>
           ) : null}
@@ -524,7 +524,7 @@ function CatalogRow({
               what-to-fix tooltip (D2 alert; never hidden even collapsed). */}
           {unverified ? (
             <span
-              className="inline-flex items-center rounded-full bg-co-danger-surface px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-cta-text"
+              className="inline-flex items-center rounded-full bg-co-danger-surface px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-cta-text"
               title={t("admin.skus.unverified_hint")}
             >
               {t("admin.skus.unverified_badge")}

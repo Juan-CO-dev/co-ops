@@ -159,7 +159,7 @@ export function VendorDetailClient({
 function Card({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="rounded-xl border-2 border-co-border bg-co-surface p-4">
-      <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">{title}</h2>
+      <h2 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">{title}</h2>
       <div className="mt-3">{children}</div>
     </section>
   );
@@ -1086,7 +1086,7 @@ function ContactsCard({
                   <div className="flex flex-wrap items-center gap-2 font-bold">
                     {c.name}
                     {c.acceptsTextOrders ? (
-                      <span className="inline-flex items-center rounded-full bg-co-gold/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-gold-text">
+                      <span className="inline-flex items-center rounded-full bg-co-gold/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-gold-text">
                         {t("admin.vendors.contact.accepts_text_badge")}
                       </span>
                     ) : null}

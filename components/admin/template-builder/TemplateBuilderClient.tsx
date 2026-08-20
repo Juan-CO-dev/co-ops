@@ -526,7 +526,7 @@ function TemplateDoctorPanel({
 function DoctorGroup({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <h3 className="text-xs font-extrabold uppercase tracking-[0.1em] text-co-text-muted">{title}</h3>
+      <h3 className="text-xs font-extrabold uppercase tracking-wide text-co-text-muted">{title}</h3>
       <div className="mt-1">{children}</div>
     </div>
   );
@@ -598,7 +598,7 @@ function DriftReconcileGroup({
           return (
             <div key={dirKey} className="rounded-lg border border-co-border/60 bg-co-surface p-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs font-bold uppercase tracking-[0.06em] text-co-text-muted">
+                <p className="text-xs font-bold uppercase tracking-[0.08em] text-co-text-muted">
                   {t("admin.templates.doctor.drift_direction", { present: presentName, missing: missingName })}
                 </p>
                 {canReconcile && pending.length > 1 && (
@@ -865,7 +865,7 @@ function ItemList({
 
   return (
     <section>
-      <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+      <h2 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
         {t("admin.templates.builder.items_count", { n: String(draftedItems.filter((it) => it.active).length) })}
       </h2>
 
@@ -1009,7 +1009,7 @@ function ItemRow({
     "inline-flex items-center rounded-full border border-co-border px-2 py-0.5 text-[11px] font-semibold text-co-text-muted";
   // PR-4: hard-gated lines get an emphatic chip (they can block a whole submission).
   const chipHardGate =
-    "inline-flex items-center rounded-full border-2 border-co-cta/60 bg-co-cta/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.04em] text-co-cta-text";
+    "inline-flex items-center rounded-full border-2 border-co-cta/60 bg-co-cta/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-cta-text";
   const moveBtn =
     "inline-flex h-8 w-8 items-center justify-center rounded-lg border-2 border-co-border-2 bg-co-surface text-sm font-bold text-co-text disabled:opacity-30";
 
@@ -1063,29 +1063,29 @@ function ItemRow({
         <>
           {/* Never-collapse alerts (D2). */}
           {mirror && (
-            <span className="inline-flex items-center rounded-full bg-co-text/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-text-muted">
+            <span className="inline-flex items-center rounded-full bg-co-text/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-text-muted">
               {t("admin.templates.builder.badge.mirror")}
             </span>
           )}
           {disabled && (
-            <span className="inline-flex items-center rounded-full bg-co-text/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-text-muted">
+            <span className="inline-flex items-center rounded-full bg-co-text/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-text-muted">
               {t("admin.templates.builder.disabled_badge")}
             </span>
           )}
           {missingEs && !isDraftAdd && (
-            <span className="inline-flex items-center rounded-full bg-co-danger-surface px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-cta-text">
+            <span className="inline-flex items-center rounded-full bg-co-danger-surface px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-cta-text">
               {t("admin.templates.builder.badge.missing_es")}
             </span>
           )}
           {needsLink && (
-            <span className="inline-flex items-center rounded-full bg-co-danger-surface px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-cta-text">
+            <span className="inline-flex items-center rounded-full bg-co-danger-surface px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-cta-text">
               {t("admin.templates.builder.badge.needs_link")}
             </span>
           )}
           {/* PR-5 (spec §8): the location-scope indicator on draft-added rows — "both
               locations" (fanned) or "this location only". Informational; not an alert. */}
           {isDraftAdd && addScope !== null && (
-            <span className="inline-flex items-center rounded-full bg-co-gold/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-text">
+            <span className="inline-flex items-center rounded-full bg-co-gold/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-text">
               {addScope === "both"
                 ? t("admin.templates.builder.badge.both_locations")
                 : t("admin.templates.builder.badge.this_location_only")}

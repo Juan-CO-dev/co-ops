@@ -188,7 +188,7 @@ export function ToastTab({ state, ezcater, canWrite }: { state: ToastMapState; e
 
             {candidates.length > 0 && (
               <div>
-                <h3 className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">{t("admin.toast.candidates_heading")}</h3>
+                <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-co-text-muted">{t("admin.toast.candidates_heading")}</h3>
                 <ul className="flex flex-col gap-1.5">
                   {candidates.map((r) => (
                     <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-co-border/60 bg-co-bg/40 p-3">
@@ -213,7 +213,7 @@ export function ToastTab({ state, ezcater, canWrite }: { state: ToastMapState; e
 
             {(confirmed.length > 0 || stale.length > 0) && (
               <div>
-                <h3 className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">{t("admin.toast.confirmed_heading")}</h3>
+                <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-co-text-muted">{t("admin.toast.confirmed_heading")}</h3>
                 <ul className="flex flex-col gap-1.5">
                   {[...confirmed, ...stale].map((r) => (
                     <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-co-border/60 bg-co-bg/40 p-3">
@@ -270,10 +270,10 @@ function DriftPanel({ d, t, money }: {
   money: (c: number | null) => string;
 }) {
   const empty = d.priceChanged.length === 0 && d.renamed.length === 0 && d.missingOnToast.length === 0 && d.newOnToast.length === 0 && d.unmappedCo.length === 0;
-  const h3 = "mb-1 text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim";
+  const h3 = "mb-1 text-xs font-bold uppercase tracking-wide text-co-text-muted";
   return (
     <div className="rounded-xl border border-co-border/60 bg-co-bg/40 p-3">
-      <h3 className="text-xs font-extrabold uppercase tracking-[0.18em] text-co-text">{t("admin.toast.drift_heading")}</h3>
+      <h3 className="text-xs font-extrabold uppercase tracking-wide text-co-text">{t("admin.toast.drift_heading")}</h3>
       {empty && <p className="mt-1 text-sm text-co-text-muted">{t("admin.toast.drift_empty")}</p>}
       {d.priceChanged.length > 0 && (
         <div className="mt-2">

@@ -58,7 +58,7 @@ export function ItemsClient({
         if (items.length === 0) return null;
         return (
           <section key={section}>
-            <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+            <h2 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
               {t("admin.templates.section_label")}: {sectionLabelByLang(view.sections, section, language)}
             </h2>
             <div className="mt-2 grid grid-cols-1 gap-2 lg:grid-cols-2">

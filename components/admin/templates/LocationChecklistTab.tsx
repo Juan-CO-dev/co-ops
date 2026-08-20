@@ -90,7 +90,7 @@ export function LocationChecklistTab({
         if (sectionItems.length === 0) return null;
         return (
           <section key={section}>
-            <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+            <h2 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
               {t("admin.templates.section_label")}: {sectionLabelByLang(sections, section, language)}
             </h2>
             <div className="mt-2 flex flex-col gap-2">
@@ -318,7 +318,7 @@ function LocationItemRow({
             </span>
           ) : null}
           {parCtx.itemGlobal ? (
-            <span className="ml-2 rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.05em] text-co-gold-text">
+            <span className="ml-2 rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-co-gold-text">
               {t("admin.templates.global_badge")}
             </span>
           ) : null}
@@ -520,7 +520,7 @@ function EnableFromRegistry({
   return (
     <section className="rounded-xl border-2 border-co-border bg-co-surface p-4">
       <div className="flex items-center justify-between gap-2">
-        <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+        <h2 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
           {t("admin.templates.enable_from_registry")}
         </h2>
         <button
@@ -576,7 +576,7 @@ function AddLocalItem({ templateId, subtype, sections, units }: { templateId: st
   return (
     <section className="rounded-xl border-2 border-co-border bg-co-surface p-4">
       <div className="flex items-center justify-between gap-2">
-        <h2 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+        <h2 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
           {t("admin.templates.add_local_item")}
         </h2>
         {section === null ? (

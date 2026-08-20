@@ -176,7 +176,7 @@ export function ItemRow({
             </span>
           ) : null}
           {item.isDefault ? (
-            <span className="ml-2 rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.05em] text-co-gold-text">
+            <span className="ml-2 rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-co-gold-text">
               {t("admin.templates.default_badge")}
             </span>
           ) : null}
@@ -206,7 +206,7 @@ export function ItemRow({
           {readiness ? <ReadinessReasons reasons={readiness.reasons} /> : null}
 
           <section className="rounded-lg border-2 border-co-border p-3">
-            <h3 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+            <h3 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
               {t("admin.templates.definition.title")}
             </h3>
             <Labeled label={t("admin.templates.field.label_en")}>
@@ -299,7 +299,7 @@ export function ItemRow({
           </section>
 
           <section className="rounded-lg border-2 border-co-border p-3">
-            <h3 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
+            <h3 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
               {t("admin.templates.sold_directly.title" as TranslationKey)}
             </h3>
             <label className="mt-2 flex items-center gap-2 text-sm font-bold text-co-text">
@@ -384,7 +384,7 @@ export function ItemRow({
             <p className="text-xs text-co-text-muted">{t("admin.templates.opening_verify_hint")}</p>
             <div className="mt-2 flex items-center gap-2">
               {item.openingVerify ? (
-                <span className="rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.05em] text-co-gold-text">
+                <span className="rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em] text-co-gold-text">
                   {t("admin.templates.opening_verify_on")}
                 </span>
               ) : null}
