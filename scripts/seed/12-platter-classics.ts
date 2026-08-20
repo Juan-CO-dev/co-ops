@@ -12,7 +12,7 @@
  * Idempotent: never duplicates an option, never unflags anything.
  * Run AFTER migration 0155 (Juan's go):
  *
- *   NODE_OPTIONS=--conditions=react-server npx tsx scripts/seed/12-platter-classics.ts
+ *   npx tsx --conditions=react-server --env-file=.env.local scripts/seed/12-platter-classics.ts
  */
 import { pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";

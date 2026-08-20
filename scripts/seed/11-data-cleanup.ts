@@ -10,8 +10,8 @@
  *        - Basil (portioned):  Basil "1 unit"  → "0.25 oz"; and set Basil avg_oz_per_each 0.1 → 0.017
  *          (per leaf) so Marinara's "6 leaf" ≈ 0.1 oz.
  *
- * Run: SEED_DRY=1 npx tsx --env-file=.env.local scripts/seed/11-data-cleanup.ts  (dry)
- *      npx tsx --env-file=.env.local scripts/seed/11-data-cleanup.ts              (prod)
+ * Run: SEED_DRY=1 npx tsx --conditions=react-server --env-file=.env.local scripts/seed/11-data-cleanup.ts  (dry)
+ *      npx tsx --conditions=react-server --env-file=.env.local scripts/seed/11-data-cleanup.ts              (prod)
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";

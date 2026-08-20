@@ -16,8 +16,8 @@
  * NOTE: "Quart of Pickle Spears" is intentionally NOT here — 06c already created
  * "Quart of Pickle Spears (12pcs)" $9 (catering_available) and it already surfaces on the menu.
  *
- * Run: SEED_DRY=1 npx tsx --env-file=.env.local scripts/seed/08-catering-sizes.ts   (dry)
- *      npx tsx --env-file=.env.local scripts/seed/08-catering-sizes.ts               (prod)
+ * Run: SEED_DRY=1 npx tsx --conditions=react-server --env-file=.env.local scripts/seed/08-catering-sizes.ts   (dry)
+ *      npx tsx --conditions=react-server --env-file=.env.local scripts/seed/08-catering-sizes.ts               (prod)
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";

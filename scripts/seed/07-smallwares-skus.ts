@@ -11,7 +11,7 @@
  * (Checklists — the nominal Stage 7 — are already fully seeded from earlier phases;
  * this fold-in is the ordering-completeness leftover Juan asked to include.)
  *
- * Idempotent. Run: npx tsx --env-file=.env.local scripts/seed/07-smallwares-skus.ts
+ * Idempotent. Run: npx tsx --conditions=react-server --env-file=.env.local scripts/seed/07-smallwares-skus.ts
  * SEED_DRY=1 → report only.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";

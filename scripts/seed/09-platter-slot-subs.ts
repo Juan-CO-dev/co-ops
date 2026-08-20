@@ -6,8 +6,8 @@
  * 3-/6-footers + lunch boxes are untouched (already whole-sub picks).
  *
  * Idempotent. SEED_DRY=1 → report only. pathToFileURL guard.
- * Run: SEED_DRY=1 npx tsx --env-file=.env.local scripts/seed/09-platter-slot-subs.ts  (dry)
- *      npx tsx --env-file=.env.local scripts/seed/09-platter-slot-subs.ts              (prod)
+ * Run: SEED_DRY=1 npx tsx --conditions=react-server --env-file=.env.local scripts/seed/09-platter-slot-subs.ts  (dry)
+ *      npx tsx --conditions=react-server --env-file=.env.local scripts/seed/09-platter-slot-subs.ts              (prod)
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";

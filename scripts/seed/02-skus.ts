@@ -19,7 +19,7 @@
  *     Head good), so leaving it untouched preserves the link. Multi-vendor duplicates by name
  *     are welcome under the Q3 search-time grouping model.
  *
- * Idempotent. Run: npx tsx --env-file=.env.local scripts/seed/02-skus.ts
+ * Idempotent. Run: npx tsx --conditions=react-server --env-file=.env.local scripts/seed/02-skus.ts
  * Decisions: docs/superpowers/specs/2026-07-21-operational-seed-decisions.md
  */
 import { readFileSync } from "node:fs";

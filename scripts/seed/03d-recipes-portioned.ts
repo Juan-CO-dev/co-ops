@@ -8,7 +8,7 @@
  * (1 raw unit → 1 par-unit of the item); refine with real slice/portion data later.
  *
  * Mortadella has no seeded SKU (not on the BH vA guide) → auto-placeholder.
- * Run: npx tsx --env-file=.env.local scripts/seed/03d-recipes-portioned.ts   (SEED_DRY=1 = report only)
+ * Run: npx tsx --conditions=react-server --env-file=.env.local scripts/seed/03d-recipes-portioned.ts   (SEED_DRY=1 = report only)
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { pathToFileURL } from "node:url";

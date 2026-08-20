@@ -2,7 +2,7 @@
  * Operational Seed — Stage 3a: SAUCES recipes. Thin caller over lib-recipe-seed.ts
  * (shared engine: canonical production graph, auto-placeholder misses, idempotent).
  * Wires the 9 Sauces items. Ranch/Horsey/Vin = APPROXIMATE house mixes (no .docx yet).
- * Run: npx tsx --env-file=.env.local scripts/seed/03a-recipes-sauces.ts   (SEED_DRY=1 = report only)
+ * Run: npx tsx --conditions=react-server --env-file=.env.local scripts/seed/03a-recipes-sauces.ts   (SEED_DRY=1 = report only)
  * Source: docs/seed/recipes/ALL-RECIPES.md.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";

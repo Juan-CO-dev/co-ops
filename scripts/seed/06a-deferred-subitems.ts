@@ -9,7 +9,7 @@
  *   - Green Goddess (Farmers Market).
  *   - Caesar Dressing (Turkey Caesar).
  *
- * Idempotent. Run: npx tsx --env-file=.env.local scripts/seed/06a-deferred-subitems.ts
+ * Idempotent. Run: npx tsx --conditions=react-server --env-file=.env.local scripts/seed/06a-deferred-subitems.ts
  * SEED_DRY=1 → report only. Source: docs/seed/recipes/ALL-RECIPES.md.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
