@@ -4,10 +4,29 @@
 > six blind seats, repo-verified). **Supersedes `docs/REMAINING_SCOPE.md`** (2026-06-13,
 > severely stale — do not plan from it). Update this file at every arc-close; keep NOW
 > capped at 3 builds. Dated entries; delete, don't strikethrough.
+>
+> **Last refreshed 2026-08-20** (costing-engine arc close). Every figure in the
+> 2026-08-20 blocks was re-verified live against prod, not carried from a handoff.
 
 **The strategic read (unanimous):** the center of gravity has moved from BUILDING to
 LIGHTING UP. The deepest stacks (Toast depletion, the catering moat, pack chains) are
 built and dormant behind owner externals. Converting dormant→live outranks new builds.
+
+> ### ⭐ THE FIRST PHYSICAL COUNT IS UNBLOCKED (2026-08-20)
+>
+> Both engine defects that would have made its numbers meaningless have landed:
+> **receiving now binds a receipt line to the delivering vendor** (#267, mig 0178 — before
+> it, a cross-vendor line wrote price and slice weight onto the WRONG twin) and **the
+> portioned recipes carry real masses** (#271 + seed 22 — before it, a 1.2 oz ham slice
+> "became" a 34.4 oz bundle at ratios from 4.2× to 113.8×). Count today and the variance
+> is arithmetic; count last week and it was noise.
+>
+> This does **not** revive the mandatory-count gate — the 2026-08-02 truth-model reframe
+> below still stands, the shop still never census-counts, and the page is still the
+> owner-invoked **Inventory Audit tool**. What changed is that running it is now worth
+> doing: it lays the first `census` anchor (live: `sku_count_events` = **0**), and every
+> downstream signal that waits on one — variance, the queued low-stock item, `loadOnHand`
+> batching — fires off the back of it.
 
 ---
 
@@ -28,6 +47,70 @@ built and dormant behind owner externals. Converting dormant→live outranks new
    · fulfillment nodes radius config · catering rate rules authoring.
 5. **Strategic decision when ready:** payment provider (Stripe/Square/Toast) — gates
    portal launch; has tax/accounting implications; deserves its own sit-down.
+6. ⭐ **THE COSTING OPEN LIST (2026-08-20)** — the Angel arc priced everything a
+   distributor invoice can reach; what is left needs a scale or a receipt, and each row
+   below unblocks a specific number rather than a vague "more data". Ordered by leverage:
+   - **Finished-jus quart weight** — the highest-leverage single weigh on this list.
+     `Jus.oz_per_par_unit` is NULL, so `1 ladle` on Our French Dip cannot be costed at all
+     (the line reads `unresolved` today, deliberately — see the arc note below). Filling it
+     releases seed 23's gate AND opens the **missing-water recipe arc**: the cooked liquid
+     preps (Jus, Vodka Sauce) don't record the water they add, so declaring their finished
+     weights exposes them to the mass-balance guard. Expect that; it is the guard working.
+   - **Five never-weighed preps** — Cucumber · Mortadella · Onion · Pickles · Radish ·
+     Tomato still carry the stage-3d `1 unit` placeholder against a NULL par weight. Weigh
+     one finished container of each and fill `items.oz_per_par_unit`. Until then the board
+     refuses to cost the 10 menu items behind them (`unweighed`, 2026-08-20) rather than
+     printing ~6×–160×-under figures. **Radish additionally needs Juan's ruling** on what
+     "4 Julliened" means (#271 §4 — four radishes, or four strips?).
+   - **Surprise-weigh pass 2** — EverRoast Chicken (its 1 oz/slice is SPEC, not measured —
+     the only unmeasured entry in the piece model) + the tomato and cucumber slice
+     guesses, which shipped graded EDUCATED GUESS.
+   - **The 1.20× jug cluster — one tub on a scale settles four SKUs.** Angel measures the
+     5 lb garlic tub at 6.00 lb and both jugs at exactly 1.20× nominal, which reads like a
+     feed artifact rather than tare. If the scale says 6 lb, garlic's cost/oz falls 17%.
+     Parsley's 1.40× is a separate question (likely a real weight).
+   - **Pepperoncini vendor** — not in Angel under that name. Two Delmar neighbours exist
+     (Banana Pepper Rings, Hot Cherry Peppers), both carrying Angel's fabricated 1.0 lb
+     weight, so neither can be costed by weight until a real case weight exists. A live
+     sourcing question, not a permanent gap.
+   - **Six supply-run prices, from a receipt** — Lemon Oil · Mixed Herbs · Vanilla Bean
+     Paste · White Wine · Worcestershire · Utz Ripples. Bought on a grocery run, so Angel
+     structurally cannot see them and no future harvest will resolve them. Naming the
+     category is the point: they need manual pricing ONCE, and co-ops can hold that because
+     it starts from invoices generally rather than one distributor's feed.
+
+## THE COSTING ENGINE — arc state (2026-08-20)
+
+**✅ ANGEL ARC COMPLETE (waves 1–4 + harvest 2).** 31 price rows across 29 distinct SKUs,
+every one dry-run-gated and Juan-eyeballed before `--execute`. Structural wins beyond the
+prices: the **Boar's Head piece model** (Delmar invoices by the PIECE — the hidden `1 CT`
+field — so seven deli SKUs got a one-piece pack chain and a `$/lb × piece-lb` price), the
+**jug supersedes** (paired pack+price writes, cost-per-ounce provably neutral), and Juan's
+**spec-vs-operational ruling**, which is the durable one: a slice's SPEC weight and its
+OPERATIONAL weight had been sharing a column, costing and depletion take the operational
+number, and `10-fill-sku-weights.ts`'s constants were amended so a re-run cannot regress
+his measurements. Dry runs: `docs/seed/source/angel-wave{2,3,4}-dryrun.md`.
+
+**✅ PORTIONING FIX LANDED (#271 + seed 22).** The 13 `(portioned)` recipes carried
+stage-3d's `1 unit` placeholder, so the graph believed one ham slice became a whole bundle
+— mass violations from 4.2× to 113.8×. Fixed against a named standard-trim registry
+(Juan's ruling, evidence-graded per class), plus 11 build-line re-denominations and the
+Horsey Mayo yield correction (4 → 2.25, verified live). Board: 21 `inconsistent` → 0.
+Ham Sub $0.6777 → $1.2920; Roast Beef Sub $0.6941 → $3.4269.
+
+**✅ CLEANUP BATCH (this PR).** Four engine-honesty fixes: unknown units REFUSE instead of
+silently meaning par-units · `loadRecipeGraph` filters `recipes.active` (a RETIRED recipe
+was defining Hot Peppers' and Antipasto Pasta's costs) · duplicate ACTIVE producers raise a
+readiness warning · the mass guard's blind spot (never-weighed placeholder preps) gets its
+own `unweighed` status instead of flipping to `costed` the moment a price lands.
+
+**Engine hardening still owed:** `computeSkuCostPerOz` (`lib/admin/cost.ts`) is
+**pack-chain-blind** — it takes no `packChain`, so it silently uses the LEGACY flat-field
+path while 50 of the 77 recipe-referenced SKUs carry chains. `/admin/menu-costing` already
+routes around it (it derives cost/oz from the graph's own pack data); **`/admin/skus` and
+`/admin/vendors/[id]` do not**, so those two surfaces can show a different $/oz than the
+costing board for the same SKU. Flagged in #271, deliberately not fixed there — different
+surface, own PR.
 
 ## NOW (build — small, unblocked, dormant→live)
 
@@ -103,8 +186,29 @@ Logged-deferred → DEBT table.
   velocity have a couple of weeks of data. Weather bootstraps from the existing
   manual weather field on the daily report before any feed is built. Then
   EZCater 2c-b when the ezManage token lands.
+- ⭐ **P2 — THE PRODUCT-IDENTITY NODE (brainstorm w/ Juan first, then build).** The
+  multi-vendor audit's deepest finding: there is no identity layer above SKUs, so two
+  vendors' hams are two independent universes and the doctrine's backup/failover/guidance
+  half has NO representation. Consumption pins to one SKU with no failover, so a dead pin
+  plus a live receipt drifts BOTH twins in opposite directions and nothing nets them.
+  **Blocks, and is blocked by, real decisions** — it is a truth-model question, not a
+  refactor, and its blast radius is the whole arc (flatten, depletion, counts, ordering,
+  production, usageRank). **8 multi-vendor pairs are still un-adjudicated** (Ham and Fresh
+  Mozzarella were settled in #265/#267; the rest, incl. the PFG-lettuce attribution
+  question, wait on this brainstorm). P6 (usageRank seeded from Angel spend as a
+  null-fallback) SEQUENCES AFTER it. Audit:
+  `docs/audits/2026-08-20-multivendor-semantics-audit.md`.
+- **Weight / trim audit** — the trim registry shipped as `OPERATIONAL_ESTIMATE` for four
+  of its five classes (a named physical loss, reasoned, not observed). First in line to be
+  replaced by observed trim once production capture runs. Pair it with the surprise-weigh
+  pass so one floor session settles both.
 
 ## LATER (sequenced, not forgotten)
+
+- **UX Phase 3 — the two approved proposals** (input-type picker · receipt-attach) from
+  the 2026-08-19/20 refresh arc (#253–#262, ten PRs, all merged). Approved, not built.
+- **Go-live batch — PARKED until Juan flips it.** The refresh arc's remaining go-live
+  items ship as one batch on his word, not incrementally.
 
 - **Store Ordering (Phase 5)** — the capstone every inventory arc points at (SKU par
   → purchase orders; sku_par + purchase_order tables are greenfield). After
@@ -161,3 +265,9 @@ offline/dead-zone resilience (walk-ins, basements) · customer-facing menu displ
 | catering_pipeline (location_id, event_date) index | real catering volume (table tiny today) |
 | maybeRefreshTodaySales audit_log debounce — one-time EXPLAIN | audit_log growth felt on /mid-shift loads |
 | loadMaintenanceOverview per-fridge serial loads | next maintenance-lib touch |
+| `computeSkuCostPerOz` pack-chain-blind on /admin/skus + /admin/vendors/[id] | next cost-surface touch (menu-costing already routes around it) |
+| `ladle` measure row — seed 23 written, gate CLOSED | `Jus.oz_per_par_unit` filled (see the costing open list) |
+| Seed 22 §4 refusals: the radish line | Juan rules on "4 Julliened" |
+| `location_sku_settings` unseeded (0 rows) — the per-location activation overlay is BUILT and correct, just carrying no data; counts never reads it at all | "shops use what they carry" becomes real, i.e. with the P2 arc |
+| `skuNameCollisions` will nag on doctrine-correct twins | P7 — when more pairs go both-active |
+| Count sheet shows no vendor label on twins (two identical "Ham" rows) | P8 — blocks P2's usefulness |
