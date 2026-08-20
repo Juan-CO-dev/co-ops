@@ -81,6 +81,7 @@ import { pathToFileURL } from "node:url";
  *  with the Angel waves' `angel-wave*-2026-08-*` or stage 3d's own seed rows. */
 const SOURCE_KEY = "portioned-mass-fix-2026-08-20";
 const SCRIPT = "scripts/seed/22-portioned-recipe-fix.ts";
+const SHEET_CSV = "docs/seed/source/sandwich-build-sheet.csv";
 const SOURCE_FINDING =
   "2026-08-20 portioned-recipe debug, findings D1 (placeholder `1 unit` inputs violate mass balance) " +
   "and D2 (the board's new mass-balance guard), plus Juan's 2026-08-20 standard-trim ruling.";
@@ -264,6 +265,138 @@ const PORTIONED_ITEMS: Array<{ item: string; trimClass: keyof typeof TRIM_STANDA
  */
 const HEADLINE_SUBS = ["Ham Sub", "Turkey Sub", "Roast Beef Sub"];
 
+// ── §2 — THE BUILD LINES THIS FIX EXPOSES ─────────────────────────────────────
+//
+// A build line referencing a PREP with a count-dimension unit — or with a unit that
+// is not in `measure_units` at all — is read by the engine as that many PAR-UNITS of
+// the prep (`itemRefParUnits`: "unit null / unregistered / count-dimension →
+// quantity IS par-units"). A SKU-ref with a count unit resolves through
+// avg_oz_per_each instead. That asymmetry is the whole trap, and §1 springs it: while
+// a "pan" of fresh mozzarella weighed 1 oz, "3 each" and "3 slices" were numerically
+// indistinguishable. Once the pan weighs 32 oz, the same row means THREE QUARTS.
+//
+// Ground truth is `docs/seed/source/sandwich-build-sheet.csv` — the paper sheet these
+// builds were seeded from. Nineteen live lines resolve through par-units; each is
+// adjudicated below against what the sheet actually says, and the adjudication is
+// one of exactly three verdicts:
+//
+//   CONVERT — the sheet quotes a count AND the piece weight is a recorded fact, so
+//     the line can be re-denominated to ounces with no inference. TWO rows qualify.
+//   AS_IS   — the prep's par-unit genuinely IS one piece (Meatballs' output label is
+//     literally "4 oz ball", Bacon's is "strip", Chicken Cutlet's is "Piece"), so the
+//     count line is already correct and touching it would BREAK it. SIX rows. This
+//     verdict is the reason the sweep could not be a blanket "convert every count
+//     line" — a third of them are right.
+//   REFUSE  — the sheet is silent or ambiguous in ounces. ELEVEN rows.
+//
+// The refusals are not caution for its own sake. Seed 10, which set these weights,
+// refused the same rows in the same words: "the Onion each/quart conflict, cans,
+// Mixed Herbs, Shredded Mozz are DEFERRED to the checklist (not guessed)", with
+// per-SKU notes reading "unit = whole cucumber", "unit = whole tomato", "unit = a
+// portion — LOW confidence", and on basil "conflicting units (leaf + unit) — recipe
+// data bug; verify". Where the sheet says "3 ea" of a cucumber and the only recorded
+// weight is a WHOLE cucumber, the sheet means slices and we do not have a slice
+// weight. Guessing one is the exact move that produced the defect §1 is cleaning up.
+type BuildVerdict = "CONVERT" | "AS_IS" | "REFUSE";
+
+interface BuildLineRule {
+  /** menu_item name as it appears on the board. */
+  consumer: string;
+  /** component ITEM (prep) name. */
+  prep: string;
+  /** Verbatim from sandwich-build-sheet.csv, or the fact that it is absent. */
+  sheetQuote: string;
+  verdict: BuildVerdict;
+  /** CONVERT/REFUSE: the count the sheet states, asserted against the live row. */
+  sheetCount?: number;
+  /** Where the per-piece weight comes from. CONVERT requires this to be a FACT. */
+  pieceProvenance?: string;
+  /** AS_IS: why the count line is already right. */
+  asIsReason?: string;
+  /** REFUSE: the unanswerable part, and the reading we would take if forced. */
+  refuseCode?: RefusalCode;
+  bestReading?: string;
+  question?: string;
+}
+
+const BUILD_LINE_RULES: BuildLineRule[] = [
+  // ── CONVERT ────────────────────────────────────────────────────────────────
+  // One "each" of Fresh Mozzarella is a 1 oz SLICE, and that is vendor spec rather
+  // than inference: Angel harvest 2 closed the case as 6 logs x 32 CT x 1 oz = 192
+  // slices = 12 lb against BOTH the `6/2 LB` pack field and the `12 LB` subtitle
+  // (seed 10's amendment block). The sheet says 3 ea on both subs. 3 x 1 = 3 oz.
+  { consumer: "Marisa Tomei Eats Free", prep: "Fresh Mozzarella", sheetQuote: "Marisa Tomei / Fresh Mozz / 3 / ea", verdict: "CONVERT", sheetCount: 3,
+    pieceProvenance: "one each = one 1 oz slice — vendor spec, closed by Angel harvest 2 (6 logs x 32 CT x 1 oz = 192/case = 12 lb, agrees with both the pack field and the subtitle); seed 10 amendment block" },
+  { consumer: "The Frex", prep: "Fresh Mozzarella", sheetQuote: "Frex / Fresh Mozz / 3 / ea", verdict: "CONVERT", sheetCount: 3,
+    pieceProvenance: "one each = one 1 oz slice — same vendor spec as above" },
+
+  // ── AS_IS — the par-unit IS the piece, so the count line is already correct ──
+  { consumer: "Vesuvio II", prep: "Meatballs", sheetQuote: "Vesuvio / Meatballs / 3 / ea (cut in half)", verdict: "AS_IS",
+    asIsReason: "the Meatballs recipe's output container label is literally \"4 oz ball\" and the item's par unit is Each — one par-unit IS one meatball, so 3 par-units is 3 meatballs, which is what the sheet says" },
+  { consumer: "Side of Meatballs", prep: "Meatballs", sheetQuote: "(not on the sheet — but the same par-unit semantics)", verdict: "AS_IS",
+    asIsReason: "same: one par-unit is one meatball" },
+  { consumer: "Sicky Wicky Club", prep: "Bacon", sheetQuote: "Sicky Wicky Club / Bacon / 2 / ea", verdict: "AS_IS",
+    asIsReason: "Cooked Bacon yields 12 with output label \"strip\" — one par-unit is one strip, so 2 par-units is the 2 strips the sheet asks for" },
+  { consumer: "Regular BLT", prep: "Bacon", sheetQuote: "(not on the sheet)", verdict: "AS_IS",
+    asIsReason: "same strip semantics; 3 strips on a BLT needs no sheet to be plausible" },
+  { consumer: "The chicken cutlet", prep: "Chicken Cutlet", sheetQuote: "(not on the sheet)", verdict: "AS_IS",
+    asIsReason: "Chicken Cutlet yields 15 with output label \"Piece\" and par unit Piece — one par-unit is one cutlet" },
+  { consumer: "Chicken parm", prep: "Chicken Cutlet", sheetQuote: "(not on the sheet)", verdict: "AS_IS",
+    asIsReason: "same: one par-unit is one cutlet" },
+
+  // ── REFUSE ─────────────────────────────────────────────────────────────────
+  { consumer: "Chicken parm", prep: "Shredded Mozzarella", sheetQuote: "(not on the sheet)", verdict: "REFUSE", sheetCount: 1,
+    refuseCode: "UNIT_NOT_IN_OZ", bestReading: "1 handful = 2 oz (the SKU's avg_oz_per_each) -> 2 oz",
+    question: "What does a handful of shredded mozzarella weigh? Seed 10 set 2 oz and labelled it \"unit = a portion — LOW confidence\", and listed Shredded Mozz among the rows DEFERRED to the weigh checklist. Chicken parm is not on the build sheet at all, so there is no second source." },
+  { consumer: "Vesuvio II", prep: "Shredded Mozzarella", sheetQuote: "Vesuvio / Shredded Cheese / Handfulls / 2", verdict: "REFUSE", sheetCount: 2,
+    refuseCode: "UNIT_NOT_IN_OZ", bestReading: "2 handfuls x 2 oz -> 4 oz",
+    question: "Same handful question. The sheet confirms the COUNT (2) but states no weight — and note the sheet's own columns are swapped on this row (\"Handfulls\" in the quantity column, \"2\" in the unit column)." },
+  { consumer: "Farmers Market After Dark", prep: "Cucumber", sheetQuote: "Farmers Market / Cucumbers / 3 / ea", verdict: "REFUSE", sheetCount: 3,
+    refuseCode: "PIECE_IS_NOT_THE_UNIT", bestReading: "3 SLICES, weight unknown (a whole cucumber is 8 oz; 3 whole cucumbers on a sub is not a thing)",
+    question: "How much does a cucumber slice weigh, or how many slices come off one cucumber? The only recorded weight is seed 10's \"unit = whole cucumber\" 8 oz." },
+  { consumer: "Veggie Sub", prep: "Cucumber", sheetQuote: "(not on the sheet)", verdict: "REFUSE", sheetCount: 3,
+    refuseCode: "PIECE_IS_NOT_THE_UNIT", bestReading: "3 slices, weight unknown", question: "Same cucumber-slice question." },
+  { consumer: "Regular BLT", prep: "Tomato", sheetQuote: "(not on the sheet)", verdict: "REFUSE", sheetCount: 3,
+    refuseCode: "PIECE_IS_NOT_THE_UNIT", bestReading: "3 SLICES, weight unknown (a whole tomato is 5 oz)",
+    question: "How much does a tomato slice weigh, or how many slices per tomato? Seed 10 recorded \"unit = whole tomato\" 5 oz, and the Tomato prep's own par-unit is one whole tomato." },
+  { consumer: "Sicky Wicky Club", prep: "Tomato", sheetQuote: "Sicky Wicky Club / Tomatoes / 3 / ea", verdict: "REFUSE", sheetCount: 3,
+    refuseCode: "PIECE_IS_NOT_THE_UNIT", bestReading: "3 slices, weight unknown", question: "Same tomato-slice question; the sheet says \"3 ea\" but a sub does not carry 3 whole tomatoes." },
+  { consumer: "Veggie Sub", prep: "Tomato", sheetQuote: "(not on the sheet)", verdict: "REFUSE", sheetCount: 3,
+    refuseCode: "PIECE_IS_NOT_THE_UNIT", bestReading: "3 slices, weight unknown", question: "Same tomato-slice question." },
+  { consumer: "Never Been Cheddar", prep: "Radish", sheetQuote: "Never Been Cheddar / Radish / 4 / Julliened", verdict: "REFUSE", sheetCount: 4,
+    refuseCode: "PIECE_IS_NOT_THE_UNIT", bestReading: "4 julienne strips, weight unknown (a whole watermelon radish is 3 oz)",
+    question: "Is \"4 Julliened\" four radishes julienned, or four julienne strips? The two readings differ by more than an order of magnitude and the sheet's wording does not settle it." },
+  { consumer: "Marisa Tomei Eats Free", prep: "Basil", sheetQuote: "Marisa Tomei / Basil / 4 leaves", verdict: "REFUSE", sheetCount: 4,
+    refuseCode: "KNOWN_UNIT_CONFLICT", bestReading: "4 leaves x 0.017 oz -> 0.068 oz",
+    question: "Basil is the one SKU seed 10 flagged in its own note as \"conflicting units (leaf + unit) — recipe data bug; verify\", and the live per-leaf weight has since moved (0.1 -> 0.017) under the herb-weight policy. Confirm the leaf weight before this row is rewritten against it." },
+  { consumer: "Our French Dip", prep: "Jus", sheetQuote: "French Dip / Jus / 1 / ladle", verdict: "REFUSE", sheetCount: 1,
+    refuseCode: "UNIT_NOT_IN_OZ", bestReading: "1 ladle ~ 2-4 oz; currently read as 1 QUART",
+    question: "How many ounces is a ladle of jus? Note `ladle` is not in `measure_units` at all — an UNREGISTERED unit falls into the same par-unit branch as a count unit, silently, which is a hazard in its own right." },
+  { consumer: "Vesuvio II", prep: "Vodka", sheetQuote: "Vesuvio / Vodka Sauce / 2 / ladles", verdict: "REFUSE", sheetCount: 2,
+    refuseCode: "UNIT_NOT_IN_OZ", bestReading: "2 ladles; currently read as 2 QUARTS",
+    question: "Same ladle question, same unregistered-unit hazard." },
+];
+
+// ── §3 — THE HORSEY MAYO SEAM ─────────────────────────────────────────────────
+//
+// Horsey Mayo is a fourteenth mass violation and NOT one of §1's placeholders: its
+// recipe is 32 oz Duke's + 4 oz horseradish = 36 oz in, against 4 outputs declaring
+// 16 oz each = 64 oz out (1.78x). Nothing about it is a trim question. Exactly one
+// of three numbers is wrong and only Juan knows which, so the script holds it as
+// refused and leaves this seam: fill the constant, re-run the dry run, and the write
+// plans itself. Leave it `null` and nothing about Horsey Mayo is touched.
+type HorseyMayoRuling =
+  /** "The recipe makes more than that" — batch inputs scale to the declared 64 oz,
+   *  keeping the mayo:horseradish ratio the recipe already states. */
+  | { kind: "inputs_wrong"; batchInputOz: number; note: string }
+  /** "It doesn't make 4" — recipe_outputs.yield is the wrong number. 36/16 = 2.25. */
+  | { kind: "yield_wrong"; outputYield: number; note: string }
+  /** "Those bottles aren't 16 oz" — items.oz_per_par_unit is wrong. 36/4 = 9. */
+  | { kind: "bottle_size_wrong"; ozPerParUnit: number; note: string };
+
+/** Juan's answer goes HERE. `null` = unanswered = still refused, nothing written. */
+const HORSEY_MAYO_RULING: HorseyMayoRuling | null = null;
+
 type RefusalCode =
   | "NO_RECIPE"
   | "AMBIGUOUS_ITEM"
@@ -272,13 +405,52 @@ type RefusalCode =
   | "NO_SLICE_WEIGHT"
   | "NOT_A_COUNT_UNIT"
   | "ALREADY_BALANCED"
-  | "DUAL_PRODUCER_UNREACHABLE";
+  | "DUAL_PRODUCER_UNREACHABLE"
+  // §2 codes
+  | "UNIT_NOT_IN_OZ"
+  | "PIECE_IS_NOT_THE_UNIT"
+  | "KNOWN_UNIT_CONFLICT"
+  | "LINE_MOVED"
+  | "NO_PIECE_WEIGHT"
+  // §3
+  | "AWAITING_JUAN";
 
 interface Refusal {
   item: string;
   subject: string;
   code: RefusalCode;
   detail: string;
+}
+
+/** §2: one build line to re-denominate from par-units to ounces. */
+interface LinePlan {
+  inputId: string;
+  consumer: string;
+  prep: string;
+  prepItemId: string;
+  menuItemId: string | null;
+  sheetQuote: string;
+  oldQty: number;
+  oldUnit: string | null;
+  newQty: number;
+  pieceOz: number;
+  pieceProvenance: string;
+}
+
+/** §3: the Horsey Mayo write, planned only when HORSEY_MAYO_RULING is filled. */
+interface HorseyPlan {
+  kind: HorseyMayoRuling["kind"];
+  itemId: string;
+  recipeId: string;
+  note: string;
+  before: string;
+  after: string;
+  /** inputs_wrong: per-input id -> new quantity. */
+  inputScale?: Array<{ id: string; name: string; oldQty: number; newQty: number; unit: string | null }>;
+  /** yield_wrong: recipe_outputs row + new yield. */
+  outputRow?: { id: string; oldYield: number; newYield: number };
+  /** bottle_size_wrong: items.oz_per_par_unit. */
+  newOzPerParUnit?: { old: number; next: number };
 }
 
 interface Plan {
@@ -312,7 +484,10 @@ interface Plan {
 }
 
 const plans: Plan[] = [];
+const linePlans: LinePlan[] = [];
+const asIsLines: Array<{ consumer: string; prep: string; sheetQuote: string; reason: string; qty: number; unit: string | null }> = [];
 const refusals: Refusal[] = [];
+let horseyPlan: HorseyPlan | null = null;
 
 // ── Live shapes ───────────────────────────────────────────────────────────────
 
@@ -483,6 +658,61 @@ async function main(): Promise<void> {
     });
   }
 
+  // ── §2 plan: the build lines ────────────────────────────────────────────────
+  const parUnitLines = await loadParUnitDenominatedLines(sb);
+  const menuIdByName = new Map((menuRows ?? []).map((m) => [m.name, m.id]));
+  const seenRules = new Set<string>();
+
+  for (const line of parUnitLines) {
+    const key = `${line.consumer} ${line.prep}`;
+    const rule = BUILD_LINE_RULES.find((r) => r.consumer === line.consumer && r.prep === line.prep);
+    if (!rule) {
+      // A par-unit line nobody adjudicated. NOT silently skipped — an unreviewed
+      // row of exactly this shape is what §2 exists to catch.
+      refusals.push({ item: line.consumer, subject: `${line.prep} line`, code: "LINE_MOVED", detail: `${line.qty} ${line.unit ?? "(null)"} ${line.prep} resolves through par-units but is not in BUILD_LINE_RULES — the build data changed since this script was written; adjudicate it against the sheet before --execute` });
+      continue;
+    }
+    seenRules.add(key);
+
+    if (rule.verdict === "AS_IS") {
+      asIsLines.push({ consumer: line.consumer, prep: line.prep, sheetQuote: rule.sheetQuote, reason: rule.asIsReason ?? "", qty: line.qty, unit: line.unit });
+      continue;
+    }
+    if (rule.sheetCount != null && Math.abs(line.qty - rule.sheetCount) > 1e-9) {
+      refusals.push({ item: line.consumer, subject: `${line.prep} line`, code: "LINE_MOVED", detail: `live quantity is ${line.qty}, the sheet and this rule say ${rule.sheetCount} — someone edited the build; re-adjudicate` });
+      continue;
+    }
+    if (rule.verdict === "REFUSE") {
+      refusals.push({ item: line.consumer, subject: `${line.prep} line`, code: rule.refuseCode ?? "UNIT_NOT_IN_OZ", detail: `${rule.question ?? ""} BEST READING: ${rule.bestReading ?? "—"}` });
+      continue;
+    }
+
+    // CONVERT. The piece weight is read LIVE off the SKU the prep pins today —
+    // never from this file — for the same reason §1 refuses to hardcode a slice oz.
+    const pieceOz = resolvePieceOz(graphBefore, line.prepItemId);
+    if (pieceOz == null) {
+      refusals.push({ item: line.consumer, subject: `${line.prep} line`, code: "NO_PIECE_WEIGHT", detail: `${line.prep}'s producing recipe does not resolve to a single priced SKU with an avg_oz_per_each — cannot convert a count to ounces` });
+      continue;
+    }
+    linePlans.push({
+      inputId: line.inputId, consumer: line.consumer, prep: line.prep,
+      prepItemId: line.prepItemId, menuItemId: line.menuItemId ?? menuIdByName.get(line.consumer) ?? null,
+      sheetQuote: rule.sheetQuote,
+      oldQty: line.qty, oldUnit: line.unit,
+      newQty: round(rule.sheetCount! * pieceOz),
+      pieceOz, pieceProvenance: rule.pieceProvenance ?? "",
+    });
+  }
+  for (const r of BUILD_LINE_RULES) {
+    if (r.verdict === "AS_IS") continue;
+    if (!seenRules.has(`${r.consumer} ${r.prep}`)) {
+      refusals.push({ item: r.consumer, subject: `${r.prep} line`, code: "LINE_MOVED", detail: "this rule matched no live par-unit line — the row was already fixed, removed, or renamed; drop the rule or re-adjudicate" });
+    }
+  }
+
+  // ── §3 plan: Horsey Mayo, only if Juan has ruled ────────────────────────────
+  horseyPlan = await planHorseyMayo(sb, activeItemsByName);
+
   // ── The AFTER graph ─────────────────────────────────────────────────────────
   // A SECOND, independently loaded graph, mutated before anything reads it. Two
   // separate graph objects matter: menu-costing-shared memoizes the mass-balance
@@ -593,17 +823,7 @@ async function main(): Promise<void> {
   p();
   p(MD ? `Tolerance is \`MASS_BALANCE_TOLERANCE\` = ${pctOf(MASS_BALANCE_TOLERANCE)}, one-sided: output below input is normal (cook-downs, trim), output above it is the violation.` : "");
 
-  h(2, "D1. Two findings this fix does NOT resolve");
-  p("**Horsey Mayo is a fourteenth violation, and it is not one of the 13.**");
-  p("Its recipe is 32 oz Duke's + 4 oz horseradish = 36 oz of input, against 4 outputs");
-  p("declaring 16 oz each = 64 oz. That is 1.78x, in the same illegal direction, but it is");
-  p("NOT the stage-3d placeholder pattern and it is not a trim question — one of the two");
-  p("numbers is simply wrong, and only Juan can say which (is the batch 4 containers of a");
-  p("smaller size, or ~2.25 containers of the declared one?). Adding a trim allowance to it");
-  p("would be double-counting an unrelated error, so this script leaves it alone and refuses");
-  p("it out loud. CONSEQUENCE: `Our French Dip` keeps reading `inconsistent` on the board");
-  p("after this fix lands, which is correct — it IS built on a broken recipe.");
-  p();
+  h(2, "D1. The dual-producer finding");
   p("**`Hot Peppers (portioned)` is fixed here but is not what the graph costs today.**");
   p("`loadRecipeGraph` does not filter on `recipes.active`, and `buildRecipeGraph` is");
   p("first-wins by (created_at, id). The retired 2026-07-01 Baldor recipe (512 oz in,");
@@ -616,50 +836,103 @@ async function main(): Promise<void> {
   p("Filed as a separate finding; NOT changed here, because adding an `active` filter to the");
   p("graph loader silently re-costs the whole board and deserves its own PR and smoke.");
 
-  const exposed = await loadCountDenominatedConsumers(sb, plans.map((w) => w.itemId));
-  h(2, `D2. ⚠ WHAT THIS FIX EXPOSES — ${exposed.length} build line(s) denominated in PAR-UNITS`);
-  p("A build line referencing a prep with a COUNT unit is read by the engine as that");
-  p("many PAR-UNITS of the prep (the seed convention; see itemRefParUnits). While the");
-  p("preps weighed an ounce, \"3 each Fresh Mozzarella\" and \"3 slices\" were numerically");
-  p("indistinguishable. Once the prep carries its real weight, that line means THREE QUARTS.");
+  // ── §2 ──────────────────────────────────────────────────────────────────────
+  h(2, `§2. Build lines that resolve through PAR-UNITS — ${parUnitLines.length} swept`);
+  p("A build line referencing a PREP with a count unit — or with a unit that is not in");
+  p("`measure_units` at all — is read as that many PAR-UNITS of the prep, while the same");
+  p("unit on a SKU line resolves through avg_oz_per_each. That asymmetry is the trap, and");
+  p("§1 springs it: while a pan of fresh mozzarella weighed 1 oz, \"3 each\" and \"3 slices\"");
+  p("were numerically identical. Once the pan weighs 32 oz, the row means THREE QUARTS.");
+  p("This is the Wave-1.5 unit class ('2 oz Marinara' read as 2 QUARTS), latent until now");
+  p("BECAUSE the placeholder was hiding it — and the mass-balance guard will NOT catch it,");
+  p("since the preps themselves balance. Ground truth: `docs/seed/source/sandwich-build-sheet.csv`.");
   p();
-  p("This is the Wave-1.5 unit class ('2 oz Marinara' counted as 2 QUARTS), latent until now");
-  p("BECAUSE the placeholder was hiding it. The fix does not create these rows — it makes");
-  p(`them expensive. Left alone, ${exposed.length} menu item(s) swap today's understatement for a much`);
-  p("larger overstatement, which the mass-balance guard will NOT catch (the preps balance).");
-  const exposedRows: string[][] = [];
-  for (const e of exposed) {
-    const w = plans.find((x) => x.itemId === e.itemId);
-    if (!w || e.menuItemId == null) continue;
-    const cpo = costPerOz.get(w.skuId) ?? null;
-    const ozB = perUnitSkuOzForMenuItemFromGraph(graphBefore, e.menuItemId).get(w.skuId) ?? 0;
-    const ozA = perUnitSkuOzForMenuItemFromGraph(graphAfter, e.menuItemId).get(w.skuId) ?? 0;
-    exposedRows.push([
-      e.consumer, `${e.qty} ${e.unit ?? "(null)"} ${e.prep}`,
-      `= ${round(e.qty * w.declaredOz, 1)} oz of prep`,
+  p(`**${linePlans.length} CONVERT · ${asIsLines.length} already correct · ${parUnitLines.length - linePlans.length - asIsLines.length} refused.**`);
+  p("The middle column is why this could not be a blanket \"convert every count line\":");
+  p("a third of them are right, because those preps' par-unit genuinely IS one piece.");
+
+  h(3, "§2a. CONVERT — sheet quote → old line → new line → cost effect");
+  const convertRows: string[][] = [];
+  for (const l of linePlans) {
+    const w = plans.find((x) => x.itemId === l.prepItemId);
+    const skuId = w?.skuId ?? null;
+    const cpo = skuId != null ? costPerOz.get(skuId) ?? null : null;
+    const ozB = skuId != null && l.menuItemId != null ? perUnitSkuOzForMenuItemFromGraph(graphBefore, l.menuItemId).get(skuId) ?? 0 : 0;
+    const ozA = skuId != null && l.menuItemId != null ? perUnitSkuOzForMenuItemFromGraph(graphAfter, l.menuItemId).get(skuId) ?? 0 : 0;
+    // What the line WOULD have cost after §1 if §2 had not corrected it.
+    const unfixedOz = w != null ? l.oldQty * (w.declaredOz / (1 - w.trim)) : 0;
+    convertRows.push([
+      l.consumer, `\`${l.sheetQuote}\``,
+      `${l.oldQty} ${l.oldUnit ?? "(null)"}`,
+      `**${round(l.newQty)} oz**`,
       `${round(ozB, 3)} oz${cpo != null ? ` / ${money4(ozB * cpo)}` : ""}`,
       `${round(ozA, 3)} oz${cpo != null ? ` / ${money4(ozA * cpo)}` : ""}`,
-      `${w.sliceOz} oz per ${e.unit ?? "unit"} → ${round(e.qty * w.sliceOz, 2)} oz`,
+      cpo != null ? `${round(unfixedOz, 1)} oz / ${money4(unfixedOz * cpo)}` : "—",
     ]);
   }
-  table(["menu item", "the line", "engine reads it as", "SKU oz/$ BEFORE", "SKU oz/$ AFTER", "likely intent"], exposedRows, ["", "", "r", "r", "r", "r"]);
+  table(["menu item", "sheet says", "old line", "new line", "SKU oz/$ BEFORE", "SKU oz/$ AFTER", "if §1 shipped WITHOUT §2"], convertRows, ["", "", "r", "r", "r", "r", "r"]);
   p();
-  p("**NOT FIXED HERE, and it needs Juan's word.** \"Likely intent\" above reads the count");
-  p("against the SKU's own avg_oz_per_each — one mozzarella ball IS 1 oz, one handful of");
-  p("shredded IS 2 oz — which makes 3 balls / 1 handful the obviously-meant quantities. But");
-  p("re-denominating a consumer build line is a different table, a different decision, and");
-  p("guessing 'handful' in ounces is exactly the kind of inference that produced the defect");
-  p("this script is cleaning up. Recommend: convert these four to weight lines in a companion");
-  p("change before or with `--execute`.");
+  p("The last column is the point: §1 alone would have put 96 oz of fresh mozzarella on");
+  p("two sandwiches. The piece weight used is read live off the SKU each prep pins today —");
+  p("never hardcoded here — and for these rows it is vendor spec, not inference:");
+  for (const l of linePlans) p(MD ? `- **${l.prep}** — ${l.pieceOz} oz: ${l.pieceProvenance}` : `  ${l.prep} — ${l.pieceOz} oz: ${l.pieceProvenance}`);
 
-  h(2, "E. Refusals");
+  h(3, `§2b. ALREADY CORRECT — ${asIsLines.length} lines left alone`);
+  p(MD ? "Touching these would BREAK them: the prep's par-unit is one piece, so a count is the honest unit." : "");
+  table(["menu item", "prep", "the line", "sheet says", "why it is already right"],
+    asIsLines.map((a) => [a.consumer, a.prep, `${a.qty} ${a.unit ?? "(null)"}`, `\`${a.sheetQuote}\``, a.reason]));
+
+  h(3, "§2c. REFUSED — the Juan-questions");
+  p(MD ? "Each carries the reading we would take if forced. None of them is written." : "");
+  table(["menu item", "prep", "code", "the question + best reading"],
+    refusals.filter((r) => ["UNIT_NOT_IN_OZ", "PIECE_IS_NOT_THE_UNIT", "KNOWN_UNIT_CONFLICT"].includes(r.code))
+      .map((r) => [r.item, r.subject.replace(" line", ""), r.code, r.detail]));
+  p();
+  p("Seed 10 — the seed that SET these weights — refused the same rows in the same words:");
+  p("\"the Onion each/quart conflict, cans, Mixed Herbs, Shredded Mozz are DEFERRED to the");
+  p("checklist (not guessed)\", with per-SKU notes reading \"unit = whole cucumber\", \"unit =");
+  p("whole tomato\", \"unit = a portion — LOW confidence\", and on basil \"conflicting units");
+  p("(leaf + unit) — recipe data bug; verify\". These refusals inherit that position rather");
+  p("than inventing it. **Consequence if they stay unanswered:** Chicken parm and Vesuvio II");
+  p("keep an overstated shredded-mozzarella line after `--execute` (6.65x and 13.3x), and the");
+  p("cucumber/tomato/radish/basil/ladle rows keep the par-unit reading they have today.");
+
+  // ── §3 ──────────────────────────────────────────────────────────────────────
+  h(2, "§3. Horsey Mayo — the seam");
+  if (horseyPlan == null) {
+    p("**HELD AS REFUSED.** `HORSEY_MAYO_RULING` is `null`, so nothing about Horsey Mayo is");
+    p("touched. Its recipe is 32 oz Duke's + 4 oz horseradish = **36 oz in**, against 4 outputs");
+    p("declaring 16 oz each = **64 oz out** (1.78x, the illegal direction). It is NOT a §1");
+    p("placeholder and NOT a trim question: exactly one of three numbers is wrong.");
+    p();
+    table(["if Juan says…", "fill", "implies", "resulting balance"], [
+      ["\"the batch is bigger than that\"", "`{ kind: \"inputs_wrong\", batchInputOz: 64 }`", "the recipe really uses ~57 oz mayo + ~7 oz horseradish", "64 oz in vs 64 oz out = 1.00x"],
+      ["\"it doesn't make 4\"", "`{ kind: \"yield_wrong\", outputYield: 2.25 }`", "36 oz fills 2.25 of those bottles", "36 oz in vs 36 oz out = 1.00x"],
+      ["\"those bottles aren't 16 oz\"", "`{ kind: \"bottle_size_wrong\", ozPerParUnit: 9 }`", "4 bottles of 9 oz", "36 oz in vs 36 oz out = 1.00x"],
+    ]);
+    p();
+    p("Fill the constant, re-run this dry run, and the write plans itself — each ruling");
+    p("resolves to exactly one column. **CONSEQUENCE while unanswered:** `Our French Dip`");
+    p("keeps reading `inconsistent` on the board after `--execute`, which is correct — it IS");
+    p("built on a recipe whose weights do not add up.");
+  } else {
+    p(`**RULED: \`${horseyPlan.kind}\`.** ${horseyPlan.note}`);
+    p();
+    table(["before", "after"], [[horseyPlan.before, horseyPlan.after]]);
+    if (horseyPlan.inputScale) {
+      table(["input", "old qty", "new qty"], horseyPlan.inputScale.map((i) => [i.name, `${i.oldQty} ${i.unit ?? ""}`, `${i.newQty} ${i.unit ?? ""}`]), ["", "r", "r"]);
+    }
+  }
+
+  h(2, "§4. Refusals (full ledger)");
   table(["item", "subject", "code", "why"], refusals.map((r) => [r.item, r.subject, r.code, r.detail]));
 
-  h(2, "F. What --execute would write");
-  p(`${plans.length} \`recipe_inputs.quantity\` update(s) + ${plans.length} \`recipes\` notes/directions update(s).`);
+  h(2, "§5. What --execute would write");
+  p(`§1: ${plans.length} \`recipe_inputs.quantity\` update(s) + ${plans.length} \`recipes\` notes/directions update(s).`);
+  p(`§2: ${linePlans.length} \`recipe_inputs\` re-denomination(s) (quantity + unit -> oz).`);
+  p(`§3: ${horseyPlan == null ? "nothing — held as refused." : "1 Horsey Mayo correction."}`);
   p("Every one re-reads its live row first and writes only the delta; a second run reports");
-  p("\"already\" and writes nothing. Both carry an audit row naming the trim class, the");
-  p("fraction, the arithmetic and the finding.");
+  p("\"already\" and writes nothing. All carry an audit row naming the arithmetic and the finding.");
   p();
   p("Sample notes stanza (Ham):");
   const hamPlan = plans.find((w) => w.item === "Ham");
@@ -717,29 +990,33 @@ async function loadPortionedRecipes(sb: ReturnType<typeof getServiceRoleClient>)
   return out;
 }
 
-interface ExposedLine {
-  itemId: string;
+interface ParUnitLine {
+  inputId: string;
+  prepItemId: string;
   prep: string;
   consumer: string;
   menuItemId: string | null;
   qty: number;
   unit: string | null;
+  unitDimension: string;
 }
 
 /**
- * Consumer build lines that reference one of the fixed preps with a NON-WEIGHT
- * unit — i.e. lines the engine reads as par-units of the prep. Harmless while the
- * prep weighed an ounce; a multiplier once it doesn't. See §D2.
+ * EVERY active build line whose unit resolves through an item PAR-UNIT rather than
+ * ounces — the whole population §2 adjudicates, not just the ones §1 happens to
+ * touch. Three shapes qualify, and the third is the quiet one:
+ *   - unit is NULL (the seed's "quantity is par-units" convention),
+ *   - unit is a COUNT-dimension measure (each / handful / leaf / …),
+ *   - unit is not in `measure_units` AT ALL (`ladle`) — `itemRefParUnits` treats an
+ *     unregistered label exactly like a count unit, with no error anywhere.
+ * A WEIGHT unit is the only shape that is already honest, so it is the only one
+ * filtered out.
  */
-async function loadCountDenominatedConsumers(
-  sb: ReturnType<typeof getServiceRoleClient>,
-  itemIds: string[],
-): Promise<ExposedLine[]> {
-  if (itemIds.length === 0) return [];
+async function loadParUnitDenominatedLines(sb: ReturnType<typeof getServiceRoleClient>): Promise<ParUnitLine[]> {
   const { data: lines, error } = await sb
-    .from("recipe_inputs").select("recipe_id, component_item_id, quantity, unit").in("component_item_id", itemIds)
-    .returns<Array<{ recipe_id: string; component_item_id: string; quantity: number | string; unit: string | null }>>();
-  if (error) throw new Error(`recipe_inputs (consumers): ${error.message}`);
+    .from("recipe_inputs").select("id, recipe_id, component_item_id, quantity, unit").not("component_item_id", "is", null)
+    .returns<Array<{ id: string; recipe_id: string; component_item_id: string; quantity: number | string; unit: string | null }>>();
+  if (error) throw new Error(`recipe_inputs (par-unit sweep): ${error.message}`);
   const recipeIds = [...new Set((lines ?? []).map((l) => l.recipe_id))];
   if (recipeIds.length === 0) return [];
 
@@ -748,7 +1025,7 @@ async function loadCountDenominatedConsumers(
     sb.from("recipe_outputs").select("recipe_id, output_item_id, output_menu_item_id").in("recipe_id", recipeIds)
       .returns<Array<{ recipe_id: string; output_item_id: string | null; output_menu_item_id: string | null }>>(),
     sb.from("measure_units").select("label, dimension").returns<Array<{ label: string; dimension: string }>>(),
-    sb.from("items").select("id, name").in("id", itemIds).returns<Array<{ id: string; name: string }>>(),
+    sb.from("items").select("id, name").returns<Array<{ id: string; name: string }>>(),
     sb.from("menu_items").select("id, name").returns<Array<{ id: string; name: string }>>(),
   ]);
   const dim = new Map((measures ?? []).map((m) => [m.label, m.dimension]));
@@ -757,33 +1034,138 @@ async function loadCountDenominatedConsumers(
   const prepName = new Map((items ?? []).map((i) => [i.id, i.name]));
   const menuName = new Map((menus ?? []).map((m) => [m.id, m.name]));
 
-  const out: ExposedLine[] = [];
+  const out: ParUnitLine[] = [];
   for (const l of lines ?? []) {
     if (recActive.get(l.recipe_id) !== true) continue;
-    if (l.unit != null && dim.get(l.unit) === "weight") continue; // weight lines are already honest
+    const d = l.unit == null ? "(null unit)" : dim.get(l.unit) ?? "unregistered";
+    if (d === "weight") continue;
     const o = (outs ?? []).find((x) => x.recipe_id === l.recipe_id);
     const menuItemId = o?.output_menu_item_id ?? null;
     out.push({
-      itemId: l.component_item_id,
+      inputId: l.id,
+      prepItemId: l.component_item_id,
       prep: prepName.get(l.component_item_id) ?? l.component_item_id,
       consumer: (menuItemId != null ? menuName.get(menuItemId) : undefined) ?? recName.get(l.recipe_id) ?? l.recipe_id,
       menuItemId,
       qty: num(l.quantity) ?? 0,
       unit: l.unit,
+      unitDimension: d,
     });
   }
-  return out.sort((a, b) => a.prep.localeCompare(b.prep) || a.consumer.localeCompare(b.consumer));
+  return out.sort((a, b) => a.consumer.localeCompare(b.consumer) || a.prep.localeCompare(b.prep));
+}
+
+/**
+ * Ounces in ONE of a prep's own count units, read off the SKU its recipe pins today.
+ * Null when the prep is not a single-SKU portioned recipe — in which case "3 each"
+ * has no defensible ounce reading and §2 refuses rather than inventing one.
+ */
+function resolvePieceOz(graph: RecipeGraph, prepItemId: string): number | null {
+  const node = graph.byOutputItem.get(prepItemId);
+  if (!node) return null;
+  const skuLines = node.inputs.filter((i) => i.componentSkuId != null);
+  if (skuLines.length !== 1) return null;
+  const pack = graph.skuPack.get(skuLines[0]!.componentSkuId!);
+  const avg = pack?.avgOzPerEach ?? null;
+  return avg != null && avg > 0 ? avg : null;
+}
+
+/**
+ * §3. Plans nothing while HORSEY_MAYO_RULING is null — that is the refusal, and it
+ * is the default. Each ruling kind resolves to exactly ONE column's worth of write,
+ * which is why the seam is a single constant rather than a branch anyone has to wire.
+ */
+async function planHorseyMayo(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  activeItemsByName: Map<string, Array<{ id: string; name: string; oz_per_par_unit: number | string | null }>>,
+): Promise<HorseyPlan | null> {
+  const ruling = HORSEY_MAYO_RULING;
+  if (ruling == null) {
+    refusals.push({
+      item: "Horsey Mayo", subject: "mass balance", code: "AWAITING_JUAN",
+      detail: "36 oz in (32 oz Duke's + 4 oz horseradish) vs 64 oz declared out (4 x 16 oz) = 1.78x. Which number is real: the inputs, the yield of 4, or the 16 oz bottle size? Fill HORSEY_MAYO_RULING and re-run.",
+    });
+    return null;
+  }
+
+  const candidates = activeItemsByName.get("Horsey Mayo") ?? [];
+  if (candidates.length !== 1) {
+    refusals.push({ item: "Horsey Mayo", subject: "item", code: "AMBIGUOUS_ITEM", detail: `${candidates.length} active items named Horsey Mayo — refusing` });
+    return null;
+  }
+  const item = candidates[0]!;
+  const { data: outs } = await sb.from("recipe_outputs").select("id, recipe_id, yield").eq("output_item_id", item.id)
+    .returns<Array<{ id: string; recipe_id: string; yield: number | string }>>();
+  const outRow = (outs ?? [])[0];
+  if (!outRow) { refusals.push({ item: "Horsey Mayo", subject: "recipe", code: "NO_RECIPE", detail: "no producing recipe output row" }); return null; }
+  const { data: ins } = await sb.from("recipe_inputs").select("id, component_sku_id, quantity, unit").eq("recipe_id", outRow.recipe_id)
+    .returns<Array<{ id: string; component_sku_id: string | null; quantity: number | string; unit: string | null }>>();
+  const { data: skus } = await sb.from("vendor_items").select("id, name")
+    .in("id", (ins ?? []).map((i) => i.component_sku_id).filter((x): x is string => x != null))
+    .returns<Array<{ id: string; name: string }>>();
+  const skuName = new Map((skus ?? []).map((s) => [s.id, s.name]));
+  const oldYield = num(outRow.yield) ?? 0;
+  const oldOpp = num(item.oz_per_par_unit) ?? 0;
+
+  if (ruling.kind === "inputs_wrong") {
+    // ONE number from Juan (the real batch input mass) scales every input line by a
+    // single factor, preserving the ratio the recipe already states. Scaling the
+    // ratio would be a second, unasked-for decision.
+    const currentOz = (ins ?? []).reduce((s, i) => s + (i.unit === "oz" ? num(i.quantity) ?? 0 : 0), 0);
+    if (currentOz <= 0) { refusals.push({ item: "Horsey Mayo", subject: "inputs", code: "NOT_A_COUNT_UNIT", detail: "inputs are not all oz-denominated — scale by hand" }); return null; }
+    const factor = ruling.batchInputOz / currentOz;
+    return {
+      kind: "inputs_wrong", itemId: item.id, recipeId: outRow.recipe_id, note: ruling.note,
+      before: `${round(currentOz, 2)} oz in vs ${round(oldYield * oldOpp, 2)} oz declared`,
+      after: `${round(ruling.batchInputOz, 2)} oz in vs ${round(oldYield * oldOpp, 2)} oz declared`,
+      inputScale: (ins ?? []).filter((i) => i.unit === "oz").map((i) => ({
+        id: i.id, name: i.component_sku_id != null ? skuName.get(i.component_sku_id) ?? "(sku)" : "(item)",
+        oldQty: num(i.quantity) ?? 0, newQty: round((num(i.quantity) ?? 0) * factor), unit: i.unit,
+      })),
+    };
+  }
+  if (ruling.kind === "yield_wrong") {
+    return {
+      kind: "yield_wrong", itemId: item.id, recipeId: outRow.recipe_id, note: ruling.note,
+      before: `yield ${oldYield} x ${oldOpp} oz = ${round(oldYield * oldOpp, 2)} oz declared`,
+      after: `yield ${ruling.outputYield} x ${oldOpp} oz = ${round(ruling.outputYield * oldOpp, 2)} oz declared`,
+      outputRow: { id: outRow.id, oldYield, newYield: ruling.outputYield },
+    };
+  }
+  return {
+    kind: "bottle_size_wrong", itemId: item.id, recipeId: outRow.recipe_id, note: ruling.note,
+    before: `yield ${oldYield} x ${oldOpp} oz = ${round(oldYield * oldOpp, 2)} oz declared`,
+    after: `yield ${oldYield} x ${ruling.ozPerParUnit} oz = ${round(oldYield * ruling.ozPerParUnit, 2)} oz declared`,
+    newOzPerParUnit: { old: oldOpp, next: ruling.ozPerParUnit },
+  };
 }
 
 // ── Pure helpers over the graph ───────────────────────────────────────────────
 
-/** Apply the planned quantities to a graph IN PLACE. Call before anything reads it. */
+/**
+ * Apply §1's and §2's planned quantities to a graph IN PLACE. Call before anything
+ * reads it — the mass-balance index is memoized per graph object.
+ *
+ * §2 is applied too, deliberately: an "after" that showed §1's 32 oz mozzarella pan
+ * without §2's corrected 3 oz line would report a $23 sandwich that this PR never
+ * intends to ship, and the two halves are only honest read together.
+ */
 function applyPlansTo(graph: RecipeGraph): void {
   for (const w of plans) {
     const node = graph.byOutputItem.get(w.itemId);
     if (!node || node.recipeId !== w.recipeId) continue; // the dormant-producer case
     for (const c of node.inputs) {
       if (c.componentSkuId === w.skuId) c.quantity = w.newQty;
+    }
+  }
+  for (const l of linePlans) {
+    const node = l.menuItemId != null ? graph.byOutputMenuItem.get(l.menuItemId) : undefined;
+    if (!node) continue;
+    for (const c of node.inputs) {
+      if (c.componentItemId === l.prepItemId && c.unit === l.oldUnit) {
+        c.quantity = l.newQty;
+        c.unit = "oz"; // re-denominated: the engine now converts oz -> par-units honestly
+      }
     }
   }
 }
@@ -900,7 +1282,92 @@ async function execute(sb: ReturnType<typeof getServiceRoleClient>): Promise<voi
     });
   }
 
-  p(`\nSeed 22 done (${plans.length} planned).`);
+  // ── §2: re-denominate the adjudicated build lines ───────────────────────────
+  for (const l of linePlans) {
+    const { data: cur, error: cErr } = await sb
+      .from("recipe_inputs").select("id, component_item_id, quantity, unit").eq("id", l.inputId)
+      .maybeSingle<{ id: string; component_item_id: string | null; quantity: number | string; unit: string | null }>();
+    if (cErr) throw new Error(`re-read ${l.consumer}/${l.prep} line: ${cErr.message}`);
+    if (!cur) throw new Error(`FATAL: ${l.consumer}/${l.prep} line [${l.inputId}] disappeared between the dry run and the write`);
+    if (cur.component_item_id !== l.prepItemId) throw new Error(`FATAL: ${l.consumer}/${l.prep} line now references item ${cur.component_item_id} — refusing`);
+
+    const curQty = num(cur.quantity);
+    if (cur.unit === "oz" && curQty != null && Math.abs(curQty - l.newQty) < 1e-9) {
+      p(`  = line ${l.consumer}/${l.prep}: already ${l.newQty} oz — skipping`);
+      continue;
+    }
+    // Guard BOTH columns: a row that already reads oz at a different quantity is not
+    // the row this plan adjudicated, and re-denominating it again would compound.
+    if (cur.unit !== l.oldUnit || curQty == null || Math.abs(curQty - l.oldQty) > 1e-9) {
+      throw new Error(`FATAL: ${l.consumer}/${l.prep} line is now ${cur.quantity} ${cur.unit ?? "(null)"}, planned against ${l.oldQty} ${l.oldUnit ?? "(null)"} — someone edited the build, re-run the dry run`);
+    }
+    const { error: uErr, count } = await sb
+      .from("recipe_inputs").update({ quantity: l.newQty, unit: "oz" }, { count: "exact" })
+      .eq("id", l.inputId).eq("component_item_id", l.prepItemId);
+    if (uErr) throw new Error(`line ${l.consumer}/${l.prep}: ${uErr.message}`);
+    if (!count) throw new Error(`line ${l.consumer}/${l.prep}: UPDATE affected 0 rows (silent RLS denial?)`);
+    p(`  + line ${l.consumer}/${l.prep}: ${l.oldQty} ${l.oldUnit ?? "(null)"} -> ${l.newQty} oz`);
+
+    void audit({
+      actorId: null, actorRole: null,
+      action: "recipe_input.update", resourceTable: "recipe_inputs", resourceId: l.inputId,
+      metadata: {
+        consumer: l.consumer, prep: l.prep, component_item_id: l.prepItemId,
+        quantity_before: l.oldQty, unit_before: l.oldUnit,
+        quantity_after: l.newQty, unit_after: "oz",
+        piece_oz: l.pieceOz, piece_provenance: l.pieceProvenance,
+        sheet_quote: l.sheetQuote, sheet_source: SHEET_CSV,
+        arithmetic: `${l.oldQty} x ${l.pieceOz} oz per each = ${l.newQty} oz`,
+        phase: "portioned_mass_fix", reason: "build_line_redenominated_from_par_units_to_oz",
+        script: SCRIPT, source: SOURCE_KEY, source_note: SOURCE_FINDING,
+      },
+      ipAddress: null, userAgent: null,
+    });
+  }
+
+  // ── §3: Horsey Mayo, only when Juan has ruled ───────────────────────────────
+  if (horseyPlan != null) await executeHorsey(sb, horseyPlan);
+
+  p(`\nSeed 22 done (§1 ${plans.length} · §2 ${linePlans.length} · §3 ${horseyPlan == null ? 0 : 1}).`);
+}
+
+/** One column's worth of write, whichever of the three numbers Juan named. */
+async function executeHorsey(sb: ReturnType<typeof getServiceRoleClient>, h: HorseyPlan): Promise<void> {
+  if (h.inputScale) {
+    for (const i of h.inputScale) {
+      const { error, count } = await sb.from("recipe_inputs")
+        .update({ quantity: i.newQty }, { count: "exact" }).eq("id", i.id);
+      if (error) throw new Error(`horsey input ${i.name}: ${error.message}`);
+      if (!count) throw new Error(`horsey input ${i.name}: UPDATE affected 0 rows`);
+      p(`  + horsey ${i.name}: ${i.oldQty} -> ${i.newQty} ${i.unit ?? ""}`);
+    }
+  }
+  if (h.outputRow) {
+    const { error, count } = await sb.from("recipe_outputs")
+      .update({ yield: h.outputRow.newYield }, { count: "exact" }).eq("id", h.outputRow.id);
+    if (error) throw new Error(`horsey yield: ${error.message}`);
+    if (!count) throw new Error("horsey yield: UPDATE affected 0 rows");
+    p(`  + horsey yield: ${h.outputRow.oldYield} -> ${h.outputRow.newYield}`);
+  }
+  if (h.newOzPerParUnit) {
+    const { error, count } = await sb.from("items")
+      .update({ oz_per_par_unit: h.newOzPerParUnit.next, updated_at: new Date().toISOString(), updated_by: null }, { count: "exact" })
+      .eq("id", h.itemId);
+    if (error) throw new Error(`horsey oz_per_par_unit: ${error.message}`);
+    if (!count) throw new Error("horsey oz_per_par_unit: UPDATE affected 0 rows");
+    p(`  + horsey bottle size: ${h.newOzPerParUnit.old} -> ${h.newOzPerParUnit.next} oz`);
+  }
+  void audit({
+    actorId: null, actorRole: null,
+    action: "recipe.update", resourceTable: "recipes", resourceId: h.recipeId,
+    metadata: {
+      name: "Horsey Mayo (house — approximate)", ruling_kind: h.kind, ruling_note: h.note,
+      before: h.before, after: h.after,
+      phase: "portioned_mass_fix", reason: "horsey_mayo_mass_balance_ruling_applied",
+      script: SCRIPT, source: SOURCE_KEY, source_note: SOURCE_FINDING,
+    },
+    ipAddress: null, userAgent: null,
+  });
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]!).href) main().catch((e) => { console.error(e); process.exit(1); });
