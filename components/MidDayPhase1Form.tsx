@@ -112,7 +112,7 @@ export function MidDayPhase1Form({
                 >
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-co-text">{it.label}</p>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-text-dim">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-co-text-dim">
                       {t("mid_day_prep.page.section_par")} {it.parValue ?? "—"}
                       {it.parUnit ? ` ${it.parUnit}` : ""}
                       {need !== null ? ` · ${t("mid_day_prep.phase1.need")} ${need}` : ""}

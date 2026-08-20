@@ -21,7 +21,7 @@ export function CashDepositTile({
     : serverT(language, "cash.status.not_started");
   return (
     <div className="co-card p-4">
-      <p className="text-xs font-bold uppercase tracking-[0.16em] text-co-text-dim">
+      <p className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
         {serverT(language, "cash.tile_label")}
       </p>
       <p className="mt-1 text-sm font-semibold text-co-text">{statusLine}</p>

@@ -1383,7 +1383,7 @@ export function OpeningClient({
     <div className="flex flex-col gap-4 pb-32">
       {/* Header */}
       <div>
-        <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
+        <p className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
           {t("opening.page.label")}
         </p>
         <h2 className="mt-1 text-2xl font-extrabold leading-tight text-co-text">

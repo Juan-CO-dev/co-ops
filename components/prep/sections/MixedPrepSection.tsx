@@ -123,7 +123,7 @@ function MixedYesNoRow({
             onClick={() => onChange(templateItemId, "yesNo", "true")}
             className={[
               "inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md",
-              "border-2 px-3 text-xs font-bold uppercase tracking-[0.12em]",
+              "border-2 px-3 text-xs font-bold uppercase tracking-[0.08em]",
               "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
               "disabled:cursor-not-allowed disabled:opacity-60",
               isYes
@@ -140,7 +140,7 @@ function MixedYesNoRow({
             onClick={() => onChange(templateItemId, "yesNo", "false")}
             className={[
               "inline-flex min-h-[44px] min-w-[44px] items-center justify-center rounded-md",
-              "border-2 px-3 text-xs font-bold uppercase tracking-[0.12em]",
+              "border-2 px-3 text-xs font-bold uppercase tracking-[0.08em]",
               "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
               "disabled:cursor-not-allowed disabled:opacity-60",
               isNo

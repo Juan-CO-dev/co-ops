@@ -237,7 +237,7 @@ export function MidDayPhase2Form({
                   <div className="flex items-center gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold text-co-text">{it.label}</p>
-                      <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-text-dim">
+                      <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-co-text-dim">
                         {it.need !== null
                           ? `${t("mid_day_prep.phase1.need")} ${it.need}`
                           : `${t("mid_day_prep.page.section_par")} ${it.parValue ?? "—"}`}
@@ -306,7 +306,7 @@ export function MidDayPhase2Form({
                     />
                   ) : null}
                   {st.status === "saved" ? (
-                    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-confirm-text">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-co-confirm-text">
                       {st.savedBy
                         ? t("mid_day_prep.phase2.saved_by", { name: st.savedBy })
                         : t("mid_day_prep.phase2.saved")}

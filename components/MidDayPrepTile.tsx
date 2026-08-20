@@ -34,7 +34,7 @@ export function MidDayPrepTile({
 }) {
   return (
     <div className="co-card p-4">
-      <p className="text-xs font-bold uppercase tracking-[0.16em] text-co-text-dim">
+      <p className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
         {serverT(language, "dashboard.mid_day_prep.tile_label")}
       </p>
 
@@ -79,7 +79,7 @@ export function MidDayPrepTile({
                           <span className="text-[11px] text-co-text-dim">{provenance}</span>
                         ) : null}
                       </span>
-                      <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.1em] text-co-text-muted">
+                      <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.08em] text-co-text-muted">
                         {serverT(
                           language,
                           STATUS_KEY[inst.status] ?? "dashboard.mid_day_prep.status.open",

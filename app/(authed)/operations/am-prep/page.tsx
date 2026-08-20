@@ -195,7 +195,7 @@ export default async function AmPrepPage({ searchParams }: PageProps) {
 
       {/* Header — visual parallel to closing-client header. */}
       <div>
-        <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
+        <p className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
           {serverT(auth.user.language, "am_prep.page.title")}
         </p>
         <h1 className="mt-1 text-2xl font-extrabold leading-tight text-co-text">
@@ -317,7 +317,7 @@ function NoTemplateView({
 }) {
   return (
     <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl p-4 sm:p-6">
-      <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
+      <p className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
         {serverT(language, "am_prep.page.title")}
       </p>
       <h1 className="mt-1 text-2xl font-extrabold text-co-text">{locationLabel}</h1>

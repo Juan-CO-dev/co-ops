@@ -796,7 +796,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
 
       {/* Header */}
       <div>
-        <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
+        <p className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
           {t("closing.page.title")}
         </p>
         <h1 className="mt-1 text-2xl font-extrabold leading-tight text-co-text">
@@ -1306,7 +1306,7 @@ function ReviewSection({
       aria-label={t("closing.review.button_complete")}
       className="mt-6 rounded-2xl border-2 border-co-text bg-co-surface p-5 sm:p-6"
     >
-      <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
+      <p className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
         {t("closing.review.button_complete")}
       </p>
       <h2 className="mt-1 text-lg font-extrabold text-co-text">

@@ -52,7 +52,7 @@ export function OpeningTile({
 
   return (
     <div className="co-card p-4">
-      <p className="text-xs font-bold uppercase tracking-[0.16em] text-co-text-dim">
+      <p className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
         {serverT(language, "dashboard.opening.tile_label")}
       </p>
 

@@ -174,7 +174,7 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
         <DashboardBackLink />
       </div>
 
-      <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
+      <p className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
         {serverT(lang, "mid_day_prep.page.title")}
       </p>
       <h1 className="mt-1 text-lg font-bold text-co-text">{phaseHeading}</h1>
@@ -220,7 +220,7 @@ export default async function MidDayPrepPage({ searchParams }: PageProps) {
                       >
                         <span className="font-semibold text-co-text">{item.label}</span>
                         {par !== null && par !== undefined ? (
-                          <span className="shrink-0 text-xs font-bold uppercase tracking-[0.1em] text-co-text-muted">
+                          <span className="shrink-0 text-xs font-bold uppercase tracking-[0.08em] text-co-text-muted">
                             {serverT(lang, "mid_day_prep.page.section_par")} {par}
                             {item.prepMeta?.parUnit ? ` ${item.prepMeta.parUnit}` : ""}
                           </span>

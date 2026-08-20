@@ -323,7 +323,7 @@ function ScaffoldHeader({ language }: { language: Language }) {
   return (
     <div className="mb-4">
       <DashboardBackLink />
-      <p className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
+      <p className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
         {serverT(language, "opening.page.label")}
       </p>
       <h2 className="mt-1 text-2xl font-extrabold leading-tight text-co-text">
@@ -433,7 +433,7 @@ function ReadOnlyBanner({
 }) {
   return (
     <section className="rounded-2xl border-2 border-co-border bg-co-surface p-5 sm:p-6">
-      <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-co-text-dim">
+      <p className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
         {serverT(language, "opening.read_only.label", { code: location.code })}
       </p>
       <h3 className="mt-1 text-xl font-extrabold leading-tight text-co-text">
