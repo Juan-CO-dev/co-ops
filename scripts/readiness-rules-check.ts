@@ -55,8 +55,18 @@ check("item upstream via recipe", iUp.status === "upstream_gaps" && iUp.reasons[
 check("item upstream via amber recipe", itemReadiness({ hasProducingRecipe: true, ozPerParUnit: 1, soldDirectly: false, sellPortionComplete: true }, "upstream_gaps").status === "upstream_gaps");
 check("non-sold item ignores sell fields", itemReadiness({ hasProducingRecipe: true, ozPerParUnit: 1, soldDirectly: false, sellPortionComplete: false }, "ready").status === "ready");
 
+// ── Item: duplicate ACTIVE producers (multi-vendor audit P5, 2026-08-20) ──
+const iDup = itemReadiness({ hasProducingRecipe: true, ozPerParUnit: 32, soldDirectly: false, sellPortionComplete: true, activeProducerCount: 2 }, "ready");
+check("two active producers → amber with the count", iDup.status === "upstream_gaps"
+  && iDup.reasons[0]?.code === "duplicate_producers" && iDup.reasons[0]?.count === 2);
+check("duplicates ride alongside a red row", itemReadiness({ hasProducingRecipe: true, ozPerParUnit: null, soldDirectly: false, sellPortionComplete: true, activeProducerCount: 2 }, "ready")
+  .reasons.some((r) => r.code === "duplicate_producers"));
+
 // ── Vocabulary closed set ──
-check("KNOWN_REASONS has 12 codes", KNOWN_REASONS.length === 12);
+// NOTE: this count is a tripwire, not the real guard. The authoritative check —
+// every KNOWN_REASONS code has an i18n key in BOTH en and es, and no orphan keys
+// exist — lives in tests/readiness.test.ts, which runs in CI. This script does not.
+check("KNOWN_REASONS has 13 codes", KNOWN_REASONS.length === 13);
 
 if (failures > 0) { console.error(`\n${failures} failure(s)`); process.exit(1); }
 console.log("\nAll readiness rule checks passed.");
