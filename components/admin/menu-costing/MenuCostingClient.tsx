@@ -19,6 +19,12 @@
  *    correct day-one output, with the counts falling as prices land.
  *  - "No recipe" and "cost unresolved" are different badges. The first is work
  *    not started; the second is a data bug in the recipe graph.
+ *  - "Recipe weights don't add up" is a THIRD kind of failure and gets its own
+ *    badge and group: the cost could be computed, and would be wrong, because a
+ *    prep this item is built from claims to produce more weight than it is made
+ *    of. It is the only failure mode that used to render as a confident number,
+ *    which is why it sorts ABOVE unresolved and why the drawer names the exact
+ *    prep to go fix rather than leaving the operator to hunt for it.
  *
  * DISCLOSURE DOCTRINE (D1-D10): identity + every alert badge ride the always-
  * visible summary line (D1/D2); the per-row detail is a lazy drawer (D3/D10);
@@ -51,6 +57,7 @@ const GROUPS: ReadonlyArray<{ status: MenuCostStatus; titleKey: TranslationKey }
   { status: "costed", titleKey: "admin.menu_costing.group.costed" },
   { status: "partial", titleKey: "admin.menu_costing.group.partial" },
   { status: "unpriced", titleKey: "admin.menu_costing.group.unpriced" },
+  { status: "inconsistent", titleKey: "admin.menu_costing.group.inconsistent" },
   { status: "unresolved", titleKey: "admin.menu_costing.group.unresolved" },
   { status: "no_recipe", titleKey: "admin.menu_costing.group.no_recipe" },
 ];
@@ -59,10 +66,12 @@ export function MenuCostingClient({
   rows,
   totals,
   skuNames,
+  itemNames,
 }: {
   rows: MenuCostRow[];
   totals: MenuCostTotals;
   skuNames: Record<string, string>;
+  itemNames: Record<string, { en: string; es: string | null }>;
 }) {
   const { t, language } = useTranslation();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -116,6 +125,14 @@ export function MenuCostingClient({
         <Metric
           label={t("admin.menu_costing.totals.blocking_skus")}
           value={String(totals.blockingSkuCount)}
+        />
+        {/* Always rendered, zero included — same contract as "Over target". A
+            zero here is the good news this card exists to deliver, and a metric
+            that appears only on bad days teaches nobody where to look. */}
+        <Metric
+          label={t("admin.menu_costing.totals.inconsistent_items")}
+          value={String(totals.inconsistentItemCount)}
+          danger={totals.inconsistentItemCount > 0}
         />
         <p className="w-full text-[11px] font-medium text-co-text-muted">
           {t("admin.menu_costing.threshold_note", { pct: FOOD_COST_RED_THRESHOLD_PCT })}
@@ -173,7 +190,14 @@ export function MenuCostingClient({
                     }
                     badges={<RowBadges row={row} t={t} />}
                   >
-                    <RowDrawer row={row} skuNames={skuNames} money={money} t={t} />
+                    <RowDrawer
+                      row={row}
+                      skuNames={skuNames}
+                      itemNames={itemNames}
+                      language={language}
+                      money={money}
+                      t={t}
+                    />
                   </SummaryRow>
                 </li>
               ))}
@@ -232,6 +256,13 @@ function RowBadges({
       </AlertPill>,
     );
   }
+  if (row.rollup.status === "inconsistent") {
+    badges.push(
+      <AlertPill key="inconsistent" tone="danger">
+        {t("admin.menu_costing.badge.inconsistent")}
+      </AlertPill>,
+    );
+  }
   if (row.rollup.status === "unresolved") {
     badges.push(
       <AlertPill key="unresolved" tone="danger">
@@ -252,21 +283,48 @@ function RowBadges({
 function RowDrawer({
   row,
   skuNames,
+  itemNames,
+  language,
   money,
   t,
 }: {
   row: MenuCostRow;
   skuNames: Record<string, string>;
+  itemNames: Record<string, { en: string; es: string | null }>;
+  language: string;
   money: (v: number | null) => string;
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }) {
-  const { status, pricedCost, pricedLineCount, unpricedSkuIds } = row.rollup;
+  const { status, pricedCost, pricedLineCount, unpricedSkuIds, inconsistentItemIds } = row.rollup;
 
   if (status === "no_recipe") {
     return <p className="text-xs text-co-text-muted">{t("admin.menu_costing.drawer.no_recipe_help")}</p>;
   }
   if (status === "unresolved") {
     return <p className="text-xs text-co-text-muted">{t("admin.menu_costing.drawer.unresolved_help")}</p>;
+  }
+  if (status === "inconsistent") {
+    return (
+      <>
+        <p className="text-xs text-co-text-muted">{t("admin.menu_costing.drawer.inconsistent_help")}</p>
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
+            {t("admin.menu_costing.drawer.inconsistent_preps", { n: inconsistentItemIds.length })}
+          </p>
+          <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+            {inconsistentItemIds.map((id) => {
+              const name = itemNames[id];
+              return (
+                <li key={id} className="text-xs font-medium text-co-text">
+                  {(language === "es" ? name?.es ?? name?.en : name?.en) ??
+                    t("admin.menu_costing.drawer.unknown_item")}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      </>
+    );
   }
 
   return (

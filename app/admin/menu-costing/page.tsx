@@ -33,7 +33,7 @@ export default async function AdminMenuCostingPage() {
   if (level < MENU_COSTING_READ_MIN) redirect("/dashboard");
   const lang = auth.user.language;
 
-  const { rows, totals, skuNames } = await loadMenuCostingBoard(auth);
+  const { rows, totals, skuNames, itemNames } = await loadMenuCostingBoard(auth);
 
   return (
     <div>
@@ -41,7 +41,7 @@ export default async function AdminMenuCostingPage() {
         title={serverT(lang, "admin.menu_costing.title")}
         subtitle={serverT(lang, "admin.menu_costing.subtitle")}
       />
-      <MenuCostingClient rows={rows} totals={totals} skuNames={skuNames} />
+      <MenuCostingClient rows={rows} totals={totals} skuNames={skuNames} itemNames={itemNames} />
     </div>
   );
 }

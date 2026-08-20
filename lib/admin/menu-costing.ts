@@ -7,8 +7,9 @@
  *
  * BATCH-LOADED, NEVER PER-NODE (the loadRecipeGraph law, AGENTS.md): ONE
  * loadRecipeGraph() for the whole recipe universe (6 fixed queries) + ONE
- * price read + ONE menu_items read + ONE name read for the blocking SKUs.
- * Cost for 68 menu items costs the same number of queries as cost for one.
+ * price read + ONE menu_items read + at most TWO name reads (the blocking SKUs
+ * and the mass-inconsistent prep items, each skipped when that failure mode is
+ * absent). Cost for 68 menu items costs the same number of queries as for one.
  *
  * COST/OZ COMES OFF THE GRAPH'S OWN SKU PACK DATA, on purpose. loadRecipeGraph
  * already hydrates every referenced SKU's pack fields AND its active pack chain
@@ -83,6 +84,12 @@ export interface MenuCostingBoard {
   totals: MenuCostTotals;
   /** Display names for the SKUs blocking at least one row, so the UI can name them. */
   skuNames: Record<string, string>;
+  /**
+   * Display names (en + es) for the mass-inconsistent PREP ITEMS blocking at
+   * least one row. Same job as skuNames on the other failure mode: the drawer
+   * must be able to say WHICH recipe is out of balance, not just that one is.
+   */
+  itemNames: Record<string, { en: string; es: string | null }>;
 }
 
 /**
@@ -119,15 +126,21 @@ export async function loadMenuCostingBoard(actor: AuthContext): Promise<MenuCost
   const totals = summarizeMenuCostRows(rows);
 
   const blocking = [...new Set(rows.flatMap((r) => r.rollup.unpricedSkuIds))];
+  const broken = [...new Set(rows.flatMap((r) => r.rollup.inconsistentItemIds))];
   const skuNames: Record<string, string> = {};
-  if (blocking.length > 0) {
-    const { data } = await sb
-      .from("vendor_items")
-      .select("id, name")
-      .in("id", blocking)
-      .returns<Array<{ id: string; name: string }>>();
-    for (const s of data ?? []) skuNames[s.id] = s.name;
-  }
+  const itemNames: Record<string, { en: string; es: string | null }> = {};
+  // Two name lookups, each skipped entirely when its failure mode is absent —
+  // so a clean board still costs exactly the queries the header promises.
+  const [skuRes, itemRes] = await Promise.all([
+    blocking.length > 0
+      ? sb.from("vendor_items").select("id, name").in("id", blocking).returns<Array<{ id: string; name: string }>>()
+      : Promise.resolve({ data: [] as Array<{ id: string; name: string }> }),
+    broken.length > 0
+      ? sb.from("items").select("id, name, name_es").in("id", broken).returns<Array<{ id: string; name: string; name_es: string | null }>>()
+      : Promise.resolve({ data: [] as Array<{ id: string; name: string; name_es: string | null }> }),
+  ]);
+  for (const s of skuRes.data ?? []) skuNames[s.id] = s.name;
+  for (const i of itemRes.data ?? []) itemNames[i.id] = { en: i.name, es: i.name_es };
 
-  return { rows, totals, skuNames };
+  return { rows, totals, skuNames, itemNames };
 }
