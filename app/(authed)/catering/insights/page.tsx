@@ -117,7 +117,7 @@ export default async function CateringInsightsPage() {
                   </span>
                   <span className="flex items-center gap-2 text-xs text-co-text-dim">
                     {f.followUpNeeded && (
-                      <span className="rounded-full border border-co-cta/40 bg-co-cta/10 px-2 py-0.5 font-bold text-co-cta">
+                      <span className="rounded-full border border-co-cta/40 bg-co-cta/10 px-2 py-0.5 font-bold text-co-cta-text">
                         {serverT(lang, "catering.insights.follow_up")}
                       </span>
                     )}

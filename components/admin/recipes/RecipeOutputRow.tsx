@@ -45,14 +45,14 @@ export function RecipeOutputRow({
           <button
             type="button"
             onClick={() => setConfirming((v) => !v)}
-            className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta hover:border-co-cta"
+            className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta"
           >
             {t(rk("recipes.row.remove"))}
           </button>
         ) : null}
       </div>
       {confirming && canEdit ? (
-        <div className="mt-3 rounded-lg border-2 border-co-cta bg-co-cta/10 p-3">
+        <div className="mt-3 rounded-lg border-2 border-co-cta-text bg-co-cta/10 p-3">
           <p className="text-sm font-bold text-co-text">{t(rk("recipes.row.confirm_remove"))}</p>
           <div className="mt-3 flex justify-end gap-2">
             <button

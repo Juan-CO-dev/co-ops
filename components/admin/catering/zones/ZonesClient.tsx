@@ -182,7 +182,7 @@ export function ZonesClient({
       ))}
 
       {errorMsg && editingId === null && addingLocationId === null ? (
-        <p className="text-sm text-co-cta">{errorMsg}</p>
+        <p className="text-sm text-co-cta-text">{errorMsg}</p>
       ) : null}
     </div>
   );

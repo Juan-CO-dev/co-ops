@@ -193,7 +193,7 @@ function LocationRow({
             />
           </label>
         </div>
-        {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+        {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
         {saved ? <p className="text-sm text-co-gold-text">{t("admin.skus.saved")}</p> : null}
         <div className="flex justify-end">
           <button

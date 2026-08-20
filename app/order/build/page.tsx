@@ -577,7 +577,7 @@ function OrderBuild() {
                         <span className="mt-1 inline-block text-[11px] font-bold uppercase tracking-wide text-co-text-dim">{affordanceText}</span>
                       </button>
                       <div className="flex shrink-0 items-center gap-3 pr-4">
-                        <span className="text-sm font-bold text-co-cta">{priceDisplay}</span>
+                        <span className="text-sm font-bold text-co-cta-text">{priceDisplay}</span>
                         <button type="button" onClick={() => quickAdd(card.key)} aria-label={t("order.build.quick_add", { item: card.label })} className="grid h-9 w-9 place-items-center rounded-full bg-co-text text-xl font-bold text-co-cta transition hover:bg-co-text/90 focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">+</button>
                       </div>
                     </div>
@@ -605,7 +605,7 @@ function OrderBuild() {
                         )}
                       </div>
                       <div className="flex shrink-0 items-center gap-3">
-                        <span className="text-sm font-bold text-co-cta">from {money(pkg.priceCents)}</span>
+                        <span className="text-sm font-bold text-co-cta-text">from {money(pkg.priceCents)}</span>
                         <button
                           type="button"
                           onClick={() => openPkgAdd(pkg)}
@@ -846,7 +846,7 @@ function Cart({ lines, pkgEntries, subtotalCents, headcount, setHeadcount, cover
                     >
                       {!hasOptions ? "Choose your subs →" : "Configure"}
                     </button>
-                    <span className="text-[11px] font-bold text-co-cta">{money(e.pkg.priceCents * e.quantity)}</span>
+                    <span className="text-[11px] font-bold text-co-cta-text">{money(e.pkg.priceCents * e.quantity)}</span>
                   </div>
                 </li>
               );
@@ -966,7 +966,7 @@ function PackageConfigurator({ pkg, existing, leadHeadcount, onClose, onSave }: 
           <div className="flex items-start justify-between gap-3">
             <div>
               <h2 className="text-xl font-extrabold text-co-text">{pkg.labelEn}</h2>
-              <p className="mt-0.5 text-sm font-bold text-co-cta">from {money(pkg.priceCents)}</p>
+              <p className="mt-0.5 text-sm font-bold text-co-cta-text">from {money(pkg.priceCents)}</p>
             </div>
             <button type="button" onClick={onClose} aria-label="Close" className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-co-surface text-lg font-bold text-co-text-dim focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60">×</button>
           </div>
@@ -1175,7 +1175,7 @@ function CustomizeModal({ card, existing, onClose, onSave }: { card: MenuCard; e
               <h2 className="text-xl font-extrabold text-co-text">{item.name}</h2>
               {item.section && <p className="mt-1 text-sm text-co-text-muted">{item.section}</p>}
             </div>
-            <span className="shrink-0 text-lg font-extrabold text-co-cta">{money(card.priceCents)}</span>
+            <span className="shrink-0 text-lg font-extrabold text-co-cta-text">{money(card.priceCents)}</span>
           </div>
 
           {portionable && (

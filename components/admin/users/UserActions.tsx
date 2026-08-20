@@ -192,7 +192,7 @@ export function UserActions({
                 <p className="text-sm text-co-text">{t("admin.users.confirm.activate")}</p>
               ) : null}
 
-              {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+              {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
             </div>
 
             <div className="mt-5 flex justify-end gap-2">

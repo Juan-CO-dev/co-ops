@@ -21,7 +21,7 @@ const STATUS_KEY: Record<FridgeStatus, TranslationKey> = {
 
 const STATUS_CLASS: Record<FridgeStatus, string> = {
   ok: "text-co-confirm-text",
-  out_of_range: "text-co-cta",
+  out_of_range: "text-co-cta-text",
   no_reading_today: "text-co-text-muted",
 };
 

@@ -73,7 +73,7 @@ export function CashReportDetailView({ detail, language }: Props) {
             overShortCents > 0
               ? "border-co-border bg-co-surface text-co-confirm-text"
               : overShortCents < 0
-                ? "border-co-border bg-co-surface text-co-danger"
+                ? "border-co-border bg-co-surface text-co-cta-text"
                 : "border-co-border bg-co-surface text-co-text-muted",
           ].join(" ")}
         >
@@ -98,7 +98,7 @@ export function CashReportDetailView({ detail, language }: Props) {
                 className={
                   label === "reports.cash.over_short"
                     ? detail.overShortCents < 0
-                      ? "font-semibold text-co-danger"
+                      ? "font-semibold text-co-cta-text"
                       : detail.overShortCents > 0
                         ? "font-semibold text-co-confirm-text"
                         : "font-semibold text-co-text"

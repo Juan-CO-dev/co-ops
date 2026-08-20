@@ -105,7 +105,7 @@ export function ReportList({ items, locationId, language, viewerLevel, searchQue
               {s ? (
                 <div className="mt-1 flex flex-wrap gap-1.5">
                   {s.underPar > 0 ? (
-                    <span className="rounded-full border border-co-cta/30 bg-co-cta/10 px-2 py-0.5 text-xs font-semibold text-co-cta">
+                    <span className="rounded-full border border-co-cta/30 bg-co-cta/10 px-2 py-0.5 text-xs font-semibold text-co-cta-text">
                       {t("reports.badge.under_par").replace("{count}", String(s.underPar))}
                     </span>
                   ) : null}
@@ -120,7 +120,7 @@ export function ReportList({ items, locationId, language, viewerLevel, searchQue
                     </span>
                   ) : null}
                   {canSeeCash && s.cashOverShortCents !== null && s.cashOverShortCents < 0 ? (
-                    <span className="rounded-full border border-co-cta/30 bg-co-cta/10 px-2 py-0.5 text-xs font-semibold text-co-cta">
+                    <span className="rounded-full border border-co-cta/30 bg-co-cta/10 px-2 py-0.5 text-xs font-semibold text-co-cta-text">
                       {t("reports.signal.cash_short").replace("{amount}", formatCents(s.cashOverShortCents))}
                     </span>
                   ) : null}

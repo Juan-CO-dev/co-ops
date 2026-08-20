@@ -84,7 +84,7 @@ export function NeedsLinkQueue({
 
   return (
     <div className="flex flex-col gap-3">
-      {errorKey && <p className="text-sm font-semibold text-co-cta">{t(errorKey)}</p>}
+      {errorKey && <p className="text-sm font-semibold text-co-cta-text">{t(errorKey)}</p>}
       {rows.map((r) => (
         <NeedsLinkCard
           key={r.lineId}

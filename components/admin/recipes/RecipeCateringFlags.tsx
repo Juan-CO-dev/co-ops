@@ -120,7 +120,7 @@ function FlagRow({ output, canEdit }: { output: RecipeMenuOutputFlags; canEdit: 
   return (
     <div className="rounded-lg border-2 border-co-border/70 bg-co-surface p-3">
       <p className="text-sm font-bold text-co-text">{output.name}</p>
-      {errorKey && <p className="mt-1 text-xs text-co-cta">{t(errorKey)}</p>}
+      {errorKey && <p className="mt-1 text-xs text-co-cta-text">{t(errorKey)}</p>}
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <button
           type="button"

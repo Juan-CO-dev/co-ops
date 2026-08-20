@@ -402,7 +402,7 @@ function SurplusPrepLine({
   const prefix = portionPrefix(line.portion);
   return (
     <div className="flex flex-wrap items-start gap-2 rounded-lg border-2 border-co-border bg-co-surface px-3 py-2 text-sm text-co-text">
-      <span className="font-medium text-co-cta">
+      <span className="font-medium text-co-cta-text">
         {line.qty}
         {" × "}
         {prefix}

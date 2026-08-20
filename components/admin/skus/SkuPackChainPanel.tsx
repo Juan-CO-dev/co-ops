@@ -258,7 +258,7 @@ export function SkuPackChainPanel({
               >
                 {t("admin.skus.chain.add_level")}
               </button>
-              {err ? <p className="text-sm text-co-cta">{err}</p> : null}
+              {err ? <p className="text-sm text-co-cta-text">{err}</p> : null}
               <div className="flex justify-end gap-2">
                 <button
                   type="button"
@@ -290,7 +290,7 @@ export function SkuPackChainPanel({
             </button>
           ) : null}
 
-          {err && !editing ? <p className="mt-2 text-sm text-co-cta">{err}</p> : null}
+          {err && !editing ? <p className="mt-2 text-sm text-co-cta-text">{err}</p> : null}
         </div>
       ) : null}
     </div>

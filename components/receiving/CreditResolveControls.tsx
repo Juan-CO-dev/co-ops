@@ -171,7 +171,7 @@ export function CreditResolveControls({
                         {t("receiving.credits.cancel")}
                       </button>
                     </div>
-                    {err ? <p className="text-xs text-co-danger">{err}</p> : null}
+                    {err ? <p className="text-xs text-co-cta-text">{err}</p> : null}
                   </div>
                 ) : (
                   <div className="mt-2">

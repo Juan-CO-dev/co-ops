@@ -46,7 +46,7 @@ function QuestionAnswer({
     return <span className="font-bold text-co-confirm-text">{t("reports.detail.answer_yes")}</span>;
   }
   if (answer.kind === "no") {
-    return <span className="font-bold text-co-cta">{t("reports.detail.answer_no")}</span>;
+    return <span className="font-bold text-co-cta-text">{t("reports.detail.answer_no")}</span>;
   }
   if (answer.kind === "text") {
     const text = typeof answer.value === "string" ? answer.value : "";
@@ -127,7 +127,7 @@ export function OpeningReportDetailView({ detail, language }: Props) {
           })}
         </span>
         {signals.tempFlags > 0 && (
-          <span className="font-semibold text-co-danger">
+          <span className="font-semibold text-co-cta-text">
             {t("reports.signal.temp_flag", { n: signals.tempFlags })}
           </span>
         )}
@@ -244,7 +244,7 @@ export function OpeningReportDetailView({ detail, language }: Props) {
                         href={`/api/photos/${item.photoId}`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="mt-1 inline-flex text-xs font-semibold text-co-cta underline"
+                        className="mt-1 inline-flex text-xs font-semibold text-co-cta-text underline"
                       >
                         {t("reports.detail.photo")}
                       </a>

@@ -56,7 +56,7 @@ export default async function CateringQuoteLabelPage({ params }: { params: Promi
 
               <div className="mt-3 border-t-2 border-co-border pt-2">
                 {contains.length > 0 && (
-                  <p className="text-sm font-bold text-co-cta">
+                  <p className="text-sm font-bold text-co-cta-text">
                     {serverT(lang, "catering.labels.contains")}: {contains.map(allergenLabel).join(", ")}
                   </p>
                 )}
@@ -66,7 +66,7 @@ export default async function CateringQuoteLabelPage({ params }: { params: Promi
                   </p>
                 )}
                 {needsVerify && (
-                  <p className="rounded-lg border-2 border-co-cta bg-co-cta/10 px-2 py-1.5 text-xs font-bold text-co-cta">
+                  <p className="rounded-lg border-2 border-co-cta-text bg-co-cta/10 px-2 py-1.5 text-xs font-bold text-co-cta-text">
                     ⚠ {serverT(lang, "catering.labels.unverified")}
                   </p>
                 )}

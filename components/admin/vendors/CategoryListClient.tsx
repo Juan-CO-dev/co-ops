@@ -93,7 +93,7 @@ export function CategoryListClient({
               <span className="text-sm font-bold text-co-text">{t("admin.categories.field.label_es")}</span>
               <input className={fieldCls} value={labelEs} onChange={(e) => setLabelEs(e.target.value)} />
             </label>
-            {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+            {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
             <div className="flex justify-end gap-2">
               <button
                 type="button"

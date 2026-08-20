@@ -102,7 +102,7 @@ function AddCompanyForm({ onDone, onCancel }: { onDone: () => void; onCancel: ()
         <input value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="acme.com" className="min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text" />
         <span className="text-xs text-co-text-dim">{t("catering.companies.domain_hint")}</span>
       </label>
-      {errorKey && <p className="text-sm font-semibold text-co-cta">{t(errorKey)}</p>}
+      {errorKey && <p className="text-sm font-semibold text-co-cta-text">{t(errorKey)}</p>}
       <div className="flex gap-2">
         <button type="button" onClick={submit} disabled={busy} className="inline-flex min-h-[44px] items-center justify-center rounded-xl bg-co-text px-5 py-2 text-sm font-bold uppercase tracking-[0.12em] text-co-cta disabled:opacity-50">
           {busy ? t("catering.companies.saving") : t("catering.companies.create")}
@@ -162,7 +162,7 @@ function CompanyDetailPanel({ id, canWrite, onChange }: { id: string; canWrite: 
   };
 
   if (loading) return <p className="px-4 py-3 text-sm text-co-text-muted">{t("catering.companies.loading")}</p>;
-  if (!detail) return <p className="px-4 py-3 text-sm font-semibold text-co-cta">{t(errorKey ?? "catering.companies.error.generic")}</p>;
+  if (!detail) return <p className="px-4 py-3 text-sm font-semibold text-co-cta-text">{t(errorKey ?? "catering.companies.error.generic")}</p>;
 
   return (
     <div className="mt-2 flex flex-col gap-3 rounded-xl border-2 border-co-border-2 bg-co-surface p-4">
@@ -177,7 +177,7 @@ function CompanyDetailPanel({ id, canWrite, onChange }: { id: string; canWrite: 
               <li key={d.id} className="inline-flex items-center gap-2 rounded-full border-2 border-co-border-2 bg-co-bg px-3 py-1 text-sm text-co-text">
                 {d.domain}
                 {canWrite && (
-                  <button type="button" onClick={() => void mutate({ removeDomainId: d.id })} disabled={busy} aria-label={t("catering.companies.remove_domain")} className="text-co-text-dim hover:text-co-cta">×</button>
+                  <button type="button" onClick={() => void mutate({ removeDomainId: d.id })} disabled={busy} aria-label={t("catering.companies.remove_domain")} className="text-co-text-dim hover:text-co-cta-text">×</button>
                 )}
               </li>
             ))}
@@ -219,7 +219,7 @@ function CompanyDetailPanel({ id, canWrite, onChange }: { id: string; canWrite: 
         <p className="mt-1 text-xs text-co-text-dim">{t("catering.companies.attach_hint")}</p>
       </div>
 
-      {errorKey && <p className="text-sm font-semibold text-co-cta">{t(errorKey)}</p>}
+      {errorKey && <p className="text-sm font-semibold text-co-cta-text">{t(errorKey)}</p>}
     </div>
   );
 }

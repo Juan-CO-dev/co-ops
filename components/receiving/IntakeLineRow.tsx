@@ -396,7 +396,7 @@ export function IntakeLineRow({
           type="button"
           disabled={busy}
           onClick={onRemove}
-          className="mt-2 text-xs font-bold text-co-cta"
+          className="mt-2 text-xs font-bold text-co-cta-text"
         >
           {t("receiving.form.remove_line")}
         </button>

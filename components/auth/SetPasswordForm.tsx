@@ -114,11 +114,11 @@ export function SetPasswordForm({
             text-base text-co-text placeholder:text-co-text-faint
             focus:outline-none focus:ring-4 focus:ring-co-gold/60
             disabled:opacity-50
-            ${fieldError?.field === "password" ? "border-co-cta" : "border-co-border-2"}
+            ${fieldError?.field === "password" ? "border-co-cta-text" : "border-co-border-2"}
           `}
         />
         {fieldError?.field === "password" ? (
-          <p id="new-password-error" role="alert" className="text-sm font-semibold text-co-cta">
+          <p id="new-password-error" role="alert" className="text-sm font-semibold text-co-cta-text">
             {fieldError.message}
           </p>
         ) : (
@@ -151,11 +151,11 @@ export function SetPasswordForm({
             text-base text-co-text placeholder:text-co-text-faint
             focus:outline-none focus:ring-4 focus:ring-co-gold/60
             disabled:opacity-50
-            ${fieldError?.field === "confirm" ? "border-co-cta" : "border-co-border-2"}
+            ${fieldError?.field === "confirm" ? "border-co-cta-text" : "border-co-border-2"}
           `}
         />
         {fieldError?.field === "confirm" && (
-          <p id="confirm-password-error" role="alert" className="text-sm font-semibold text-co-cta">
+          <p id="confirm-password-error" role="alert" className="text-sm font-semibold text-co-cta-text">
             {fieldError.message}
           </p>
         )}

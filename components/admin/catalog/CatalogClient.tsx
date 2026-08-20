@@ -176,7 +176,7 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
 
   return (
     <div className="mt-4 flex flex-col gap-5">
-      {errorKey && <p className="text-sm font-semibold text-co-cta">{t(errorKey)}</p>}
+      {errorKey && <p className="text-sm font-semibold text-co-cta-text">{t(errorKey)}</p>}
 
       {/* Lens chips */}
       <div className="flex flex-wrap gap-2">
@@ -239,7 +239,7 @@ export function CatalogClient({ entities, actorLevel }: { entities: CatalogEntit
 function IssueBadge({ issue }: { issue: CatalogIssue }) {
   const { t } = useTranslation();
   return (
-    <span className="inline-flex items-center rounded-full border border-co-cta/50 bg-co-cta/10 px-2 py-0.5 text-[11px] font-bold text-co-cta">
+    <span className="inline-flex items-center rounded-full border border-co-cta/50 bg-co-cta/10 px-2 py-0.5 text-[11px] font-bold text-co-cta-text">
       {t(tk(`admin.catalog.issue.${issue}`))}
     </span>
   );
@@ -343,7 +343,7 @@ function CatalogRow({
             </span>
           )}
           {e.issues.length > 0 && (
-            <span className="rounded-full border border-co-cta/50 bg-co-cta/10 px-2 py-0.5 text-[11px] font-bold text-co-cta">
+            <span className="rounded-full border border-co-cta/50 bg-co-cta/10 px-2 py-0.5 text-[11px] font-bold text-co-cta-text">
               {t("admin.catalog.badge.issues", { n: String(e.issues.length) })}
             </span>
           )}

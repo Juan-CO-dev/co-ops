@@ -106,7 +106,7 @@ export function PipelineClient({ staff, leads, followUps, locations, actorLevel,
                       {l.contactName}
                       {l.company ? ` · ${l.company}` : ""}
                     </span>
-                    <span className="text-co-cta">
+                    <span className="text-co-cta-text">
                       {t("catering.pipeline.follow_ups.due")}{" "}
                       {l.followUpDate ? formatDateLabel(l.followUpDate, language) : ""}
                     </span>
@@ -430,7 +430,7 @@ function LeadDetail({
         </div>
       )}
 
-      {errorMsg && <p className="mt-2 text-xs text-co-cta">{errorMsg}</p>}
+      {errorMsg && <p className="mt-2 text-xs text-co-cta-text">{errorMsg}</p>}
     </div>
   );
 }
@@ -535,7 +535,7 @@ function AddLeadRow({ locations, staff }: { locations: LocationOpt[]; staff: Ass
           <textarea name="notes" rows={2} className="mt-1 w-full rounded-md border border-co-border bg-co-surface p-2 text-co-text" />
         </label>
       </div>
-      {errorMsg && <p className="text-xs text-co-cta">{errorMsg}</p>}
+      {errorMsg && <p className="text-xs text-co-cta-text">{errorMsg}</p>}
       <div className="flex gap-2">
         <button type="submit" disabled={busy} className="rounded-md bg-co-text px-4 py-2 text-sm font-semibold text-co-bg disabled:opacity-50">
           {t("catering.pipeline.add")}

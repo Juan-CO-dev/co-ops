@@ -129,7 +129,7 @@ export function CapacityPolicyForm({
         {t("admin.catering.capacity.caps_hint" as TranslationKey)}
       </p>
 
-      {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+      {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
 
       <div className="flex justify-end gap-2">
         <button

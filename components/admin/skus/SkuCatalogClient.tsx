@@ -422,7 +422,7 @@ export function SkuCatalogClient({
       )}
 
       {errorMsg && editingId === null && !adding ? (
-        <p className="mt-2 text-sm text-co-cta">{errorMsg}</p>
+        <p className="mt-2 text-sm text-co-cta-text">{errorMsg}</p>
       ) : null}
     </div>
   );

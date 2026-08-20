@@ -209,12 +209,12 @@ export function ManagerLoginForm({ onSuccess, onTransientError }: ManagerLoginFo
             text-base text-co-text placeholder:text-co-text-faint
             focus:outline-none focus:ring-4 focus:ring-co-gold/60
             disabled:opacity-50
-            ${fieldError?.field === "email" ? "border-co-cta" : "border-co-border-2"}
+            ${fieldError?.field === "email" ? "border-co-cta-text" : "border-co-border-2"}
           `}
           placeholder={t("auth.manager.email_placeholder")}
         />
         {fieldError?.field === "email" && (
-          <p id="manager-email-error" role="alert" className="text-sm font-semibold text-co-cta">
+          <p id="manager-email-error" role="alert" className="text-sm font-semibold text-co-cta-text">
             {fieldError.message}
           </p>
         )}
@@ -243,11 +243,11 @@ export function ManagerLoginForm({ onSuccess, onTransientError }: ManagerLoginFo
             text-base text-co-text placeholder:text-co-text-faint
             focus:outline-none focus:ring-4 focus:ring-co-gold/60
             disabled:opacity-50
-            ${fieldError?.field === "password" ? "border-co-cta co-shake" : "border-co-border-2"}
+            ${fieldError?.field === "password" ? "border-co-cta-text co-shake" : "border-co-border-2"}
           `}
         />
         {fieldError?.field === "password" && (
-          <p id="manager-password-error" role="alert" className="text-sm font-semibold text-co-cta">
+          <p id="manager-password-error" role="alert" className="text-sm font-semibold text-co-cta-text">
             {fieldError.message}
           </p>
         )}
@@ -256,9 +256,9 @@ export function ManagerLoginForm({ onSuccess, onTransientError }: ManagerLoginFo
       {isLocked && lock && (
         <div
           role="alert"
-          className="rounded-xl border-2 border-co-cta bg-co-cta/10 px-4 py-3 text-center"
+          className="rounded-xl border-2 border-co-cta-text bg-co-cta/10 px-4 py-3 text-center"
         >
-          <p className="text-sm font-bold uppercase tracking-wide text-co-cta">
+          <p className="text-sm font-bold uppercase tracking-wide text-co-cta-text">
             {t("auth.manager.locked_title")}
           </p>
           <p className="mt-1 text-2xl font-extrabold tabular-nums text-co-text">

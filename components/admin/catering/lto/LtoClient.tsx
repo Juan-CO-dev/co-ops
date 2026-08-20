@@ -299,7 +299,7 @@ function LineCard({ line, locationId, busy, setBusy, onSuccess }: LineCardProps)
             />
           </label>
 
-          {errorMsg && <p className="text-sm text-co-cta">{errorMsg}</p>}
+          {errorMsg && <p className="text-sm text-co-cta-text">{errorMsg}</p>}
 
           <button
             type="button"
@@ -384,13 +384,13 @@ function EventRow({ ev, busy, setBusy, onSuccess }: EventRowProps) {
             type="button"
             disabled={busy}
             onClick={() => void handleCancel()}
-            className="shrink-0 inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border px-3 text-xs font-bold uppercase tracking-[0.08em] text-co-cta transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
+            className="shrink-0 inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border px-3 text-xs font-bold uppercase tracking-[0.08em] text-co-cta-text transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
           >
             {t("admin.catering.lto.cancel_event" as TranslationKey)}
           </button>
         )}
       </div>
-      {errorMsg && <p className="mt-1 text-xs text-co-cta">{errorMsg}</p>}
+      {errorMsg && <p className="mt-1 text-xs text-co-cta-text">{errorMsg}</p>}
     </li>
   );
 }

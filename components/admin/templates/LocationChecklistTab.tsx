@@ -350,7 +350,7 @@ function LocationItemRow({
 
       {open ? (
         <div className="mt-3 flex flex-col gap-3">
-          {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+          {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
 
           {/* Label / question — editable on the line, or read-only w/ Global hint. */}
           {labelEditsLine ? (
@@ -449,7 +449,7 @@ function LocationItemRow({
                 type="button"
                 disabled={submitting}
                 onClick={() => void unlink()}
-                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-surface px-3 text-xs font-bold text-co-cta hover:bg-co-cta hover:text-co-text disabled:opacity-50"
+                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta-text bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:bg-co-cta hover:text-co-text disabled:opacity-50"
               >
                 {t("admin.templates.line_edit.unlink")}
               </button>
@@ -461,7 +461,7 @@ function LocationItemRow({
               type="button"
               disabled={submitting}
               onClick={() => void disableItem()}
-              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-surface px-3 text-xs font-bold text-co-cta hover:bg-co-cta hover:text-co-text disabled:opacity-50"
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta-text bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:bg-co-cta hover:text-co-text disabled:opacity-50"
             >
               {t("admin.templates.disable_item")}
             </button>
@@ -533,7 +533,7 @@ function EnableFromRegistry({
       </div>
       {open ? (
         <div className="mt-3 flex flex-col gap-2">
-          {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+          {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
           {enableable.map((r) => (
             <div
               key={r.itemId}

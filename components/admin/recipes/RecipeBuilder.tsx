@@ -389,7 +389,7 @@ export function RecipeBuilder({
             ) : null}
           </div>
 
-          {patchError ? <p className="text-sm text-co-cta">{patchError}</p> : null}
+          {patchError ? <p className="text-sm text-co-cta-text">{patchError}</p> : null}
         </div>
       </div>
 
@@ -431,7 +431,7 @@ export function RecipeBuilder({
       {/* ── DRAFT save bar ── */}
       {recipe === null && canEdit ? (
         <div className="mt-4 rounded-lg border-2 border-co-gold-deep bg-co-surface p-4">
-          {saveError ? <p className="mb-3 text-sm text-co-cta">{saveError}</p> : null}
+          {saveError ? <p className="mb-3 text-sm text-co-cta-text">{saveError}</p> : null}
           <div className="flex justify-end gap-2">
             <button
               type="button"
@@ -475,7 +475,7 @@ export function RecipeBuilder({
           title={t(rk("recipes.delete.danger_title"))}
           // D2 strict: a persisted delete error stays visible even if the section is
           // re-collapsed after the failure (badge slot renders in both states).
-          badge={deleteError ? <span className="text-xs font-semibold text-co-cta">{deleteError}</span> : undefined}
+          badge={deleteError ? <span className="text-xs font-semibold text-co-cta-text">{deleteError}</span> : undefined}
         >
           {confirmDelete ? (
             <div className="flex justify-end gap-2">
@@ -501,7 +501,7 @@ export function RecipeBuilder({
               <button
                 type="button"
                 onClick={() => { setDeleteError(null); setConfirmDelete(true); }}
-                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-surface px-4 text-sm font-bold text-co-cta hover:border-co-cta"
+                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta-text bg-co-surface px-4 text-sm font-bold text-co-cta-text hover:border-co-cta"
               >
                 {t(rk("recipes.delete.button"))}
               </button>
@@ -782,7 +782,7 @@ function ConsumesSection({
                   />
                   <span className="text-sm font-bold text-co-text">{t(rk("recipes.input.portioned"))}</span>
                 </label>
-                {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+                {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
                 <div className="flex justify-end gap-2">
                   <button type="button" disabled={busy} onClick={() => { resetForms(); setAddKind(null); }}
                     className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text disabled:opacity-50">
@@ -817,7 +817,7 @@ function ConsumesSection({
                     onChange={(e) => setItemUnit(e.target.value)}
                     placeholder={t(rk("recipes.input.unit_placeholder"))} />
                 </label>
-                {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+                {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
                 <div className="flex justify-end gap-2">
                   <button type="button" disabled={busy} onClick={() => { resetForms(); setAddKind(null); }}
                     className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text disabled:opacity-50">
@@ -886,13 +886,13 @@ function DraftInputRow({
         <button
           type="button"
           onClick={() => setConfirming((v) => !v)}
-          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta hover:border-co-cta"
+          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta"
         >
           {t(rk("recipes.row.remove"))}
         </button>
       </div>
       {confirming ? (
-        <div className="mt-3 rounded-lg border-2 border-co-cta bg-co-cta/10 p-3">
+        <div className="mt-3 rounded-lg border-2 border-co-cta-text bg-co-cta/10 p-3">
           <p className="text-sm font-bold text-co-text">{t(rk("recipes.row.confirm_remove"))}</p>
           <div className="mt-3 flex justify-end gap-2">
             <button type="button" onClick={() => setConfirming(false)}
@@ -1125,7 +1125,7 @@ function ProducesSection({
                     {unitRegistryOptions.map((u) => (<option key={u.id} value={u.label}>{u.label}</option>))}
                   </select>
                 </label>
-                {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+                {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
                 <div className="flex justify-end gap-2">
                   <button type="button" disabled={busy} onClick={() => { resetForms(); setAddOpen(false); }}
                     className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text disabled:opacity-50">
@@ -1160,7 +1160,7 @@ function ProducesSection({
                   <input className={fieldCls} type="number" min={0.001} step="any" inputMode="decimal"
                     value={menuItemYield} disabled={busy} onChange={(e) => setMenuItemYield(e.target.value)} />
                 </label>
-                {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+                {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
                 <div className="flex justify-end gap-2">
                   <button type="button" disabled={busy} onClick={() => { resetForms(); setAddOpen(false); }}
                     className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text disabled:opacity-50">
@@ -1206,12 +1206,12 @@ function DraftOutputRow({
           {meta ? <p className="text-xs text-co-text-muted">{meta}</p> : null}
         </div>
         <button type="button" onClick={() => setConfirming((v) => !v)}
-          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta hover:border-co-cta">
+          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta">
           {t(rk("recipes.row.remove"))}
         </button>
       </div>
       {confirming ? (
-        <div className="mt-3 rounded-lg border-2 border-co-cta bg-co-cta/10 p-3">
+        <div className="mt-3 rounded-lg border-2 border-co-cta-text bg-co-cta/10 p-3">
           <p className="text-sm font-bold text-co-text">{t(rk("recipes.row.confirm_remove"))}</p>
           <div className="mt-3 flex justify-end gap-2">
             <button type="button" onClick={() => setConfirming(false)}
