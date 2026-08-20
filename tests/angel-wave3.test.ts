@@ -29,7 +29,9 @@ import {
   parsePieceStructure, parsePackRecheck, packRecheckKey,
   crossCheckSlice, parseSliceCount, pieceWeightInRange,
   ozPerStripFromSlicesPerLb, costPerOz, costPerOzUnchanged,
-  JUAN_SLICE_OZ, PIECE_MODEL_RULES, JUG_SUPERSEDES,
+  rulingStatus, sliceEconomics,
+  SPEC_SLICE_OZ, OPERATIONAL_SLICE_OZ, JUAN_RULING,
+  PIECE_MODEL_RULES, JUG_SUPERSEDES,
   BACON_SLICE_SPEC, BACON_CORRECTION, MOZZARELLA_CASE, DRIED_CHIVES,
   SLICE_CROSSCHECK_TOLERANCE, PERMANENT_SUPPLY_RUN_GAPS, WAVE3_REASONS,
   type Wave3Code,
@@ -126,7 +128,7 @@ describe("parseSliceCount", () => {
 // ── The slice cross-check ──────────────────────────────────────────────────────
 
 describe("crossCheckSlice", () => {
-  it("reproduces Juan's table from the piece model for every SKU that has both", () => {
+  it("reproduces the SPEC table from the piece model for every SKU that has both", () => {
     // The real numbers, straight off docs/angel-piece-structure.csv. This is the
     // check the whole of section A hangs on: if the piece reframe had shifted a
     // decimal anywhere, at least one of these would miss.
@@ -139,7 +141,7 @@ describe("crossCheckSlice", () => {
       ["Pepperoni", 55.9, 224],
     ];
     for (const [sku, pieceOz, slices] of cases) {
-      const check = crossCheckSlice(pieceOz, slices, JUAN_SLICE_OZ[sku]!);
+      const check = crossCheckSlice(pieceOz, slices, SPEC_SLICE_OZ[sku]!);
       expect(check.verdict, `${sku} should agree with Juan's table`).toBe("AGREES");
     }
   });
@@ -155,10 +157,11 @@ describe("crossCheckSlice", () => {
     expect(SLICE_CROSSCHECK_TOLERANCE).toBeGreaterThan(capicola.deltaFraction! * 2);
   });
 
-  it("CATCHES the live-database divergences — the finding wave 3 exists to surface", () => {
+  it("MEASURES the spec-to-operational gap — the quantity Juan's ruling made meaningful", () => {
     // These are the values production actually carries, checked against the piece
-    // model. Every one of them must come back DISAGREES or the STOP list is empty
-    // and four SKUs get silently overwritten.
+    // model. Pre-ruling these were the STOP list; post-ruling they are the measured
+    // gap between what a slice should weigh and what it does. Either way the detector
+    // must fire, or the five ruled SKUs get silently overwritten with spec numbers.
     expect(crossCheckSlice(103.0, 103, 0.4).verdict).toBe("DISAGREES"); // Genoa, live 0.4
     expect(crossCheckSlice(57.5, 57, 0.4).verdict).toBe("DISAGREES"); // Capicola, live 0.4
     expect(crossCheckSlice(88.0, 117, 0.7).verdict).toBe("DISAGREES"); // Provolone, live 0.7
@@ -190,6 +193,94 @@ describe("crossCheckSlice", () => {
     expect(crossCheckSlice(100, 100, 1.06).verdict).toBe("DISAGREES"); // −5.7%
     expect(crossCheckSlice(100, 100, 0.96).verdict).toBe("AGREES"); // +4.2%
     expect(crossCheckSlice(100, 100, 0.94).verdict).toBe("DISAGREES"); // +6.4%
+  });
+});
+
+// ── Juan's ruling ──────────────────────────────────────────────────────────────
+
+describe("the operational-weight ruling (Juan 2026-08-20)", () => {
+  it("covers exactly the five SKUs that diverged from seed 10, and no others", () => {
+    // The divergence IS the evidence a measurement happened. Turkey, Roast Beef and
+    // Bacon never moved off the spec table, so there is nothing recorded for them —
+    // and adding one would be ratifying an estimate by association.
+    expect(Object.keys(OPERATIONAL_SLICE_OZ).sort()).toEqual(
+      ["Capicola", "Genoa", "Ham", "Pepperoni", "Provolone"],
+    );
+    for (const unmeasured of ["Turkey", "Roast Beef", "Bacon"]) {
+      expect(OPERATIONAL_SLICE_OZ[unmeasured]).toBeUndefined();
+    }
+  });
+
+  it("records a real gap on every ruled SKU — a no-op entry would be noise", () => {
+    for (const [sku, operational] of Object.entries(OPERATIONAL_SLICE_OZ)) {
+      const spec = SPEC_SLICE_OZ[sku];
+      expect(spec, `${sku} must have a spec value to have superseded`).toBeDefined();
+      expect(operational, `${sku} operational must differ from spec`).not.toBe(spec);
+    }
+  });
+
+  it("has four SKUs lighter than spec and ham heavier — the shape of the finding", () => {
+    // Direction matters: a line slicing to a visual target rather than a scale tends
+    // to run thin. If this ever flips wholesale, something other than slicing changed.
+    const lighter = Object.entries(OPERATIONAL_SLICE_OZ).filter(([s, op]) => op < SPEC_SLICE_OZ[s]!);
+    const heavier = Object.entries(OPERATIONAL_SLICE_OZ).filter(([s, op]) => op > SPEC_SLICE_OZ[s]!);
+    expect(lighter.map(([s]) => s).sort()).toEqual(["Capicola", "Genoa", "Pepperoni", "Provolone"]);
+    expect(heavier.map(([s]) => s)).toEqual(["Ham"]);
+  });
+
+  it("states the ruling in a form that survives into an audit row", () => {
+    expect(JUAN_RULING).toMatch(/surprise/i);
+    expect(JUAN_RULING).toMatch(/operational/i);
+    expect(JUAN_RULING).toMatch(/2026-08-20/);
+  });
+});
+
+describe("rulingStatus", () => {
+  it("KEEPS LIVE when production still carries the ruled weight", () => {
+    expect(rulingStatus("Genoa", 0.4)).toBe("RULED_KEEP_LIVE");
+    expect(rulingStatus("Ham", 1.2)).toBe("RULED_KEEP_LIVE");
+    expect(rulingStatus("Pepperoni", 0.2)).toBe("RULED_KEEP_LIVE");
+  });
+
+  it("flags DRIFT when a ruled row moves AGAIN — including back to spec", () => {
+    // The failure mode this exists to catch: someone "fixes" genoa back to the spec
+    // 1.0 from a cut sheet. That must surface as a new divergence, not be accepted.
+    expect(rulingStatus("Genoa", 1.0)).toBe("RULED_DRIFTED");
+    expect(rulingStatus("Ham", 1.0)).toBe("RULED_DRIFTED");
+    expect(rulingStatus("Genoa", null)).toBe("RULED_DRIFTED");
+  });
+
+  it("reports UNRULED where no measurement exists, so spec logic still applies", () => {
+    expect(rulingStatus("Turkey", 1.0)).toBe("UNRULED");
+    expect(rulingStatus("Ever Roast Chicken", null)).toBe("UNRULED");
+    expect(rulingStatus("Bacon", 0.75)).toBe("UNRULED");
+  });
+});
+
+describe("sliceEconomics", () => {
+  it("recomputes the harvest's per-slice numbers at the operational weight", () => {
+    // Genoa is the headline correction: the harvest doc says 103 slices at $0.2744,
+    // both computed off the spec weight. On the line it is 257 at ~$0.11 — a 2.5x
+    // error in per-slice cost, in the direction that overstates food cost.
+    const spec = sliceEconomics(103.0, SPEC_SLICE_OZ.Genoa!, 28.26);
+    const operational = sliceEconomics(103.0, OPERATIONAL_SLICE_OZ.Genoa!, 28.26);
+    expect(spec.slicesPerPiece).toBe(103);
+    expect(spec.costPerSlice).toBeCloseTo(0.2744, 3);
+    expect(operational.slicesPerPiece).toBe(257);
+    expect(operational.costPerSlice).toBeCloseTo(0.11, 2);
+    expect(spec.costPerSlice! / operational.costPerSlice!).toBeCloseTo(2.5, 1);
+  });
+
+  it("floors the slice count — a partial slice is not a slice", () => {
+    expect(sliceEconomics(57.5, 0.4, 19.59).slicesPerPiece).toBe(143); // 143.75 floored
+  });
+
+  it("returns nulls rather than Infinity/NaN on bad input", () => {
+    expect(sliceEconomics(null, 1, 10).slicesPerPiece).toBeNull();
+    expect(sliceEconomics(100, 0, 10).slicesPerPiece).toBeNull();
+    expect(sliceEconomics(100, 200, 10).slicesPerPiece).toBeNull(); // slice heavier than the piece
+    expect(sliceEconomics(100, 1, null).costPerSlice).toBeNull();
+    expect(sliceEconomics(100, 1, 0).costPerSlice).toBeNull();
   });
 });
 
@@ -378,7 +469,8 @@ describe("wave-3 rule tables", () => {
   it("gives every refusal code a reason string", () => {
     const codes: Wave3Code[] = [
       "SKU_UNRESOLVED", "VENDOR_DRIFT", "NO_MEASURED_WEIGHT", "PIECE_WEIGHT_OUT_OF_RANGE",
-      "SLICE_TABLE_DISAGREEMENT", "LIVE_WEIGHT_UNEXPLAINED", "PACK_SHAPE_CHANGED",
+      "SLICE_TABLE_DISAGREEMENT", "OPERATIONAL_KEEP_LIVE", "OPERATIONAL_DRIFT",
+      "LIVE_WEIGHT_UNEXPLAINED", "PACK_SHAPE_CHANGED",
       "OUR_PACK_UNRESOLVABLE", "ALREADY_CORRECT",
     ];
     for (const c of codes) expect(WAVE3_REASONS[c]?.length ?? 0).toBeGreaterThan(30);

@@ -75,7 +75,9 @@ import { parseAngelRollup, classifyWeightSource, priceFromPerLb, parseAngelDate 
 import {
   parsePieceStructure, parsePackRecheck, packRecheckKey,
   crossCheckSlice, parseSliceCount, pieceWeightInRange, costPerOz, costPerOzUnchanged,
-  PIECE_MODEL_RULES, JUAN_SLICE_OZ, JUG_SUPERSEDES, PENDING_RECHECKS,
+  rulingStatus, sliceEconomics,
+  PIECE_MODEL_RULES, SPEC_SLICE_OZ, OPERATIONAL_SLICE_OZ, JUAN_RULING,
+  JUG_SUPERSEDES, PENDING_RECHECKS,
   BACON_CORRECTION, BACON_SLICE_SPEC, MOZZARELLA_CASE, DRIED_CHIVES,
   PERMANENT_SUPPLY_RUN_GAPS, WAVE3_REASONS,
   type Wave3Code, type PieceRow,
@@ -208,8 +210,29 @@ interface WeightWrite {
   toOz: number;
   arithmetic: string;
   note: string;
+  /**
+   * OPERATIONAL = measured on our line (or the vendor's own spec where WE do not
+   * produce the portion — see BACON_CORRECTION). SPEC = derived, awaiting a weigh.
+   * Carried into the audit row so a future reader can tell which numbers were
+   * observed and which were inferred, without re-deriving the distinction.
+   */
+  weightClass: "OPERATIONAL" | "SPEC";
   depletionImpact: string | null;
   metadata: Record<string, unknown>;
+}
+
+/** A STOP row that Juan's 2026-08-20 ruling settled. Reported, never written. */
+interface Resolved {
+  skuName: string;
+  specOz: number;
+  operationalOz: number;
+  gapFraction: number;
+  specSlices: number | null;
+  opSlices: number | null;
+  specCostPerSlice: number | null;
+  opCostPerSlice: number | null;
+  harvestCostPerSlice: string;
+  pinLine: string | null;
 }
 
 interface PriceWrite {
@@ -246,6 +269,7 @@ const weightWrites: WeightWrite[] = [];
 const priceWrites: PriceWrite[] = [];
 const refusals: Refused[] = [];
 const stops: Stop[] = [];
+const resolved: Resolved[] = [];
 
 // ── Main ───────────────────────────────────────────────────────────────────────
 
@@ -352,18 +376,21 @@ async function main(): Promise<void> {
     p("2. **Bacon is 64% understated, and this changes nightly depletion.** `avg_oz_per_each`");
     p("   0.75 -> 1.23 oz/strip. See the callout in section B — it is the only change in this");
     p("   wave that moves a number the business already consumes every night.");
-    p("3. **Four SKUs STOP.** Genoa, Capicola, Provolone and Pepperoni carry live");
-    p("   `avg_oz_per_each` values that are neither Juan's measured table nor the piece-derived");
-    p("   figure, and **no audit row explains how they got there**. Their packs and prices are");
-    p("   written; their weights are not. This is the wave's most valuable finding and it");
-    p("   needs Juan's word, not a script's.");
+    p("3. **The STOP list is RESOLVED — and it produced a distinction worth keeping.** The first");
+    p("   dry run refused five weights as unexplained. Juan's 2026-08-20 ruling: those live values");
+    p("   are **his own surprise measurements**, so they are not a competing opinion about one");
+    p("   number — they are a *different* number. **Operational** (what a slice really weighs)");
+    p("   versus **spec** (what it is supposed to weigh) had been sharing one column. Costing and");
+    p("   depletion take operational. Nothing is written to those five rows; the seed-10 constants");
+    p("   are amended to match so a re-run cannot regress his measurements.");
     p("4. **The jug supersede corrects a pack and a price together, or not at all.** Oregano");
     p("   and onion powder are single jugs. Writing the jug price against our quarter-jug pack");
     p("   would produce a **four-fold** cost error — worse than today. Section C shows the");
     p("   arithmetic that makes the paired write cost-per-ounce NEUTRAL.");
-    p("5. **Section D's pin move unblocks for mozzarella and stays blocked for ham** — for the");
-    p("   same unexplained-live-weight reason as (3). Predicted, not assumed: the gate is");
-    p("   computed here through the real production function.");
+    p("5. **Section D now unblocks BOTH pairs.** With PFG/Ham mirroring the Baldor twin's measured");
+    p("   1.2 oz, seed 18's pin gate passes for ham as well as mozzarella, so both recipe pins");
+    p("   follow the par to the PFG primaries on execute. Predicted, not assumed: the gate is");
+    p("   computed here through the real production function against post-§B shapes.");
   }
 
   // ══ SECTION A — the Boar's Head piece model ══════════════════════════════════
@@ -491,26 +518,34 @@ async function main(): Promise<void> {
     // ── the slice weight: cross-check, then decide ──────────────────────────
     const slices = parseSliceCount(piece.slicesPerPieceRaw);
     const slicesN = slices && slices.lo === slices.hi ? slices.lo : null;
-    const juanOz = JUAN_SLICE_OZ[sku.name] ?? null;
-    const vsJuan = crossCheckSlice(pieceOz, slicesN, juanOz);
+    const specOz = SPEC_SLICE_OZ[sku.name] ?? null;
+    const vsSpec = crossCheckSlice(pieceOz, slicesN, specOz);
     const vsLive = crossCheckSlice(pieceOz, slicesN, sku.avgOzPerEach);
-    const derived = vsJuan.derivedOzPerSlice;
+    const derived = vsSpec.derivedOzPerSlice;
+    const ruled = OPERATIONAL_SLICE_OZ[sku.name] ?? null;
+    const status = rulingStatus(sku.name, sku.avgOzPerEach);
 
     const pins = await loadPins(sku.id);
     const countPin = pins.find((pn) => pn.unit != null && (measures.get(pn.unit)?.dimension === "count"));
+
+    // Economics at the weight that will actually be used for costing + depletion.
+    const piecePrice = price.unitPrice;
+    const opEcon = sliceEconomics(pieceOz, sku.avgOzPerEach, piecePrice);
+    const specEcon = sliceEconomics(pieceOz, specOz, piecePrice);
 
     sliceRows.push([
       sku.name,
       `${pieceOz} / ${slicesN ?? piece.slicesPerPieceRaw}`,
       derived != null ? `${derived.toFixed(4)}` : "—",
-      juanOz != null ? `${juanOz}` : "_(no entry)_",
+      specOz != null ? `${specOz}` : "_(no entry)_",
       sku.avgOzPerEach != null ? `${sku.avgOzPerEach}` : "NULL",
-      vsJuan.verdict === "AGREES" ? "✓" : vsJuan.verdict === "NO_REFERENCE" ? "n/a" : `**${vsJuan.verdict}**`,
-      vsLive.verdict === "AGREES" ? "✓" : vsLive.verdict === "NO_REFERENCE" ? "NULL" : `**${pct(vsLive.deltaFraction ?? 0)}**`,
+      ruled != null ? `**${ruled}** ✓ruled` : "_(unruled)_",
+      vsLive.verdict === "DISAGREES" ? `**${pct(vsLive.deltaFraction ?? 0)}**` : vsLive.verdict === "NO_REFERENCE" ? "NULL" : "≈0%",
       derived == null ? "—"
-        : vsJuan.verdict === "DISAGREES" ? "STOP (vs Juan)"
-        : vsLive.verdict === "DISAGREES" ? "**STOP (live unexplained)**"
-        : sku.avgOzPerEach == null ? `**WRITE ${juanOz ?? Number(derived.toFixed(2))}**`
+        : status === "RULED_KEEP_LIVE" ? "**KEEP LIVE (ruled)**"
+        : status === "RULED_DRIFTED" ? "**STOP — drifted off the ruling**"
+        : sku.avgOzPerEach == null ? `**WRITE ${Number(derived.toFixed(2))}** (spec — pending weigh)`
+        : vsLive.verdict === "DISAGREES" ? "**STOP (unruled + unexplained)**"
         : "no-op (already right)",
     ]);
 
@@ -518,55 +553,69 @@ async function main(): Promise<void> {
       refusals.push({ section: "A", skuName: sku.name, subject: "avg_oz_per_each", code: "NO_MEASURED_WEIGHT", detail: `slices_per_piece "${piece.slicesPerPieceRaw}" is not a single integer` });
       continue;
     }
-    if (vsJuan.verdict === "DISAGREES") {
-      // Juan's table is floor truth. A derived number never overwrites a measured one.
-      stops.push({
-        section: "A", skuName: sku.name,
-        headline: `piece model disagrees with Juan's measured slice table by ${pct(vsJuan.deltaFraction!)}`,
-        detail: [`derived ${derived.toFixed(4)} oz/slice (${pieceOz} oz / ${slicesN} slices) vs Juan's ${juanOz}`],
-        unblock: "Adjudicate which is right. His table is floor truth, so the piece model is what moves.",
+
+    // ── Juan's ruling, applied ────────────────────────────────────────────────
+    if (status === "RULED_KEEP_LIVE") {
+      resolved.push({
+        skuName: sku.name,
+        specOz: specOz!,
+        operationalOz: sku.avgOzPerEach!,
+        gapFraction: sku.avgOzPerEach! / specOz! - 1,
+        specSlices: specEcon.slicesPerPiece,
+        opSlices: opEcon.slicesPerPiece,
+        specCostPerSlice: specEcon.costPerSlice,
+        opCostPerSlice: opEcon.costPerSlice,
+        harvestCostPerSlice: piece.costPerSliceRaw,
+        pinLine: countPin ? `"${countPin.recipeName}" ${countPin.quantity} ${countPin.unit}` : null,
       });
-      refusals.push({ section: "A", skuName: sku.name, subject: "avg_oz_per_each", code: "SLICE_TABLE_DISAGREEMENT", detail: `derived ${derived.toFixed(4)} vs Juan's ${juanOz} (${pct(vsJuan.deltaFraction!)})` });
+      refusals.push({ section: "A", skuName: sku.name, subject: "avg_oz_per_each", code: "OPERATIONAL_KEEP_LIVE", detail: `live ${sku.avgOzPerEach} = the ruled operational weight; spec was ${specOz}` });
       continue;
     }
-    if (sku.avgOzPerEach != null && vsLive.verdict === "DISAGREES") {
-      // The finding. Live carries a number that is neither reference, unaudited.
-      const target = juanOz ?? Number(derived.toFixed(2));
-      const before = countPin ? ozForRecipeInput(countPin.quantity, countPin.unit, shapeOf(sku), measures) : null;
-      const after = countPin ? ozForRecipeInput(countPin.quantity, countPin.unit, shapeOf(sku, { avgOzPerEach: target }), measures) : null;
+    if (status === "RULED_DRIFTED") {
       stops.push({
         section: "A", skuName: sku.name,
-        headline: `live avg_oz_per_each ${sku.avgOzPerEach} is neither Juan's ${juanOz} nor the piece-derived ${derived.toFixed(4)} — and no audit row explains it`,
+        headline: `LIVE has moved off the ruled operational weight — ruled ${ruled}, live ${sku.avgOzPerEach ?? "NULL"}`,
         detail: [
-          `Juan's measured table (seed 10):   ${juanOz} oz/slice — written 2026-07-22, audit row present`,
-          `piece model (harvest 2):           ${derived.toFixed(4)} oz/slice = ${pieceOz} oz / ${slicesN} slices`,
-          `LIVE in prod today:                ${sku.avgOzPerEach} oz/slice (${pct(vsLive.deltaFraction!)} from the piece model)`,
-          `slices per piece at the live weight: ${Math.floor(pieceOz / sku.avgOzPerEach)} (harvest 2 reports ${slicesN})`,
-          `$/slice at the live weight:        ${money4(priceFromPerLb(ppl, pieceOz).unitPrice / Math.floor(pieceOz / sku.avgOzPerEach))} (harvest 2 reports $${piece.costPerSliceRaw}) — the harvest's $/slice is computed off seed 10's constants, so if LIVE is right this whole column is wrong`,
-          countPin
-            ? `depletion if overwritten:          "${countPin.recipeName}" ${countPin.quantity} ${countPin.unit} -> ${oz(before)} becomes ${oz(after)}`
-            : "no count-unit recipe pin on this SKU today",
+          `Juan's 2026-08-20 ruling recorded: ${ruled} oz/slice (surprise 3-sample average)`,
+          `LIVE in prod right now:            ${sku.avgOzPerEach ?? "NULL"} oz/slice`,
+          "This is a NEW divergence, not the one the ruling settled.",
         ],
-        unblock: `Confirm the real slice weight with Juan. If ${sku.avgOzPerEach} is his floor number, seed 10's constant is the stale one and BOTH the harvest's slices-per-piece and its $/slice need recomputing. If ${juanOz} is right, an unaudited edit is live in production.`,
+        unblock: "Re-weigh, or find who changed it. Re-applying the old ruled value would paper over a second unaudited edit.",
       });
-      refusals.push({ section: "A", skuName: sku.name, subject: "avg_oz_per_each", code: "LIVE_WEIGHT_UNEXPLAINED", detail: `live ${sku.avgOzPerEach}, Juan's table ${juanOz}, piece-derived ${derived.toFixed(4)}` });
+      refusals.push({ section: "A", skuName: sku.name, subject: "avg_oz_per_each", code: "OPERATIONAL_DRIFT", detail: `ruled ${ruled}, live ${sku.avgOzPerEach ?? "NULL"}` });
       continue;
     }
+
+    // ── Unruled SKUs: the pre-ruling logic still applies ──────────────────────
     if (sku.avgOzPerEach == null) {
-      // Nobody had a number. The piece model supplies one; where Juan has an entry it wins.
-      const target = juanOz ?? Number(derived.toFixed(2));
+      // Nobody has measured this one. The piece model supplies a SPEC number, and it is
+      // marked as such — visibly second-class beside the five Juan actually weighed.
+      const target = Number(derived.toFixed(2));
       weightWrites.push({
         section: "A", skuId: sku.id, skuName: sku.name, vendorName: sku.vendorName,
         fromOz: null, toOz: target,
         arithmetic: `${pieceOz} oz / ${slicesN} slices = ${derived.toFixed(4)} -> ${target}`,
-        note: juanOz != null ? `Juan's measured table value, corroborated by the piece model` : `piece model (harvest 2); no entry in Juan's measured table — behaves like turkey`,
+        note: `PIECE-MODEL DERIVED (SPEC) — pending Juan surprise-weigh. No operational measurement exists for this SKU. Juan's 2026-08-20 ruling established that spec and operational weights differ on every deli item he has actually weighed (by -20% to -60%), so treat this number as a placeholder that gets replaced the first time it goes on a scale, not as a peer of the five measured values.`,
+        weightClass: "SPEC",
         depletionImpact: countPin
           ? `"${countPin.recipeName}" ${countPin.quantity} ${countPin.unit}: NULL (unresolvable) -> ${oz(ozForRecipeInput(countPin.quantity, countPin.unit, shapeOf(sku, { avgOzPerEach: target }), measures))}`
           : "no count-unit recipe pin — this SKU's lines are weight-denominated, so nothing depletes differently",
-        metadata: { angel_product: rule.product, piece_oz: pieceOz, slices_per_piece: slicesN, derived_oz_per_slice: derived, juan_table_oz: juanOz },
+        metadata: {
+          angel_product: rule.product, piece_oz: pieceOz, slices_per_piece: slicesN,
+          derived_oz_per_slice: derived, spec_table_oz: specOz,
+          weight_class: "SPEC", pending_operational_weigh: true, ruling: JUAN_RULING,
+        },
       });
+    } else if (vsLive.verdict === "DISAGREES") {
+      stops.push({
+        section: "A", skuName: sku.name,
+        headline: `live ${sku.avgOzPerEach} matches neither the spec table (${specOz}) nor the piece model (${derived.toFixed(4)}), and the ruling does not cover this SKU`,
+        detail: [`spec ${specOz} · piece-derived ${derived.toFixed(4)} · LIVE ${sku.avgOzPerEach} (${pct(vsLive.deltaFraction!)})`],
+        unblock: "Surprise-weigh it, the same way the five ruled SKUs were settled.",
+      });
+      refusals.push({ section: "A", skuName: sku.name, subject: "avg_oz_per_each", code: "LIVE_WEIGHT_UNEXPLAINED", detail: `live ${sku.avgOzPerEach}, spec ${specOz}, piece-derived ${derived.toFixed(4)}` });
     } else {
-      refusals.push({ section: "A", skuName: sku.name, subject: "avg_oz_per_each", code: "ALREADY_CORRECT", detail: `live ${sku.avgOzPerEach} already matches Juan's table and the piece model` });
+      refusals.push({ section: "A", skuName: sku.name, subject: "avg_oz_per_each", code: "ALREADY_CORRECT", detail: `live ${sku.avgOzPerEach} matches both the spec table and the piece model — spec and operations agree here` });
     }
   }
 
@@ -590,18 +639,25 @@ async function main(): Promise<void> {
   p("the piece CSV quotes $5.09/lb (the window's FIRST price) while the rollup's latest is");
   p("$5.19 — we use the latest, which is why $18.13 here vs $17.79 in the doc.");
   p("");
-  p("── THE SLICE CROSS-CHECK (three opinions per SKU) ──");
-  p("`derived` is piece_oz / slices_per_piece. Note what it is NOT: the harvest computed");
-  p("`slices_per_piece` as floor(piece_oz / Juan's oz-per-slice), so dividing back is close to");
-  p("an identity and the `vs Juan` column is a ROUNDING check, not corroboration. The column");
-  p("that earns its place is `vs LIVE`.");
+  p("── THE SLICE TABLE: SPEC vs OPERATIONAL ──");
+  p("`derived` is piece_oz / slices_per_piece — the piece model's implied slice weight. Note what");
+  p("it is NOT: the harvest computed `slices_per_piece` as floor(piece_oz / the SPEC oz-per-slice),");
+  p("so dividing back is near-identity. `derived` and `spec` agreeing means the harvest's own");
+  p("arithmetic is self-consistent, and says nothing about what the line produces.");
   p("");
-  table(["our SKU", "piece oz / slices", "derived", "Juan (seed 10)", "LIVE", "derived vs Juan", "derived vs LIVE", "action"],
-    sliceRows, ["", "r", "r", "r", "r", "", "r", ""]);
+  p("**The `LIVE` column is the operational weight, and Juan's ruling makes it the one that");
+  p("counts.** Where a `ruled` value appears, that row is settled: live stands, nothing is written,");
+  p("and the seed-10 constant moves to match it.");
   p("");
-  p("Read the `derived vs LIVE` percentages in that direction: `+150.0%` on Genoa means the piece");
-  p("model's slice is two and a half times the live one — equivalently, production carries a slice");
-  p("**60% lighter** than both other sources say.");
+  table(["our SKU", "piece oz / slices", "derived", "spec (seed 10)", "LIVE", "ruled (Juan)", "spec vs live gap", "action"],
+    sliceRows, ["", "r", "r", "r", "r", "r", "r", ""]);
+  p("");
+  p("Read the gap column as *how far spec sits above operational*: `+150.0%` on Genoa means the");
+  p("spec slice is two and a half times the real one — the line cuts genoa **60% thinner than the");
+  p("spec assumed.** Four of five gaps run the same direction (operational lighter than spec),");
+  p("which is what you would expect from a line slicing to a visual target rather than a scale,");
+  p("and ham runs the other way (+20% heavier). None of that is a defect; it is the difference");
+  p("between an intention and a measurement, and it is exactly the quantity costing needs.");
 
   // ══ SECTION B — weight-file corrections ══════════════════════════════════════
   h(2, "Section B — weight-file corrections (DB + the seed-10 constants)");
@@ -662,12 +718,15 @@ async function main(): Promise<void> {
         section: "B", skuId: bacon.id, skuName: bacon.name, vendorName: bacon.vendorName,
         fromOz: bacon.avgOzPerEach, toOz: target,
         arithmetic: `16 oz / 13 strips-per-lb (the "12/14" spec) = ${(16 / 13).toFixed(4)} -> ${target}`,
-        note: `Angel subtitle "IMP LAYER BACON 12/14": 12-14 strips per POUND. The live 0.75 implies 21.3/lb. Corroborated by the 240 oz box / ${target} = ${Math.round(BACON_CORRECTION.boxOz / target)} strips, inside 180-210.`,
+        note: `Angel subtitle "IMP LAYER BACON 12/14": 12-14 strips per POUND. The live 0.75 implies 21.3/lb. Corroborated by the 240 oz box / ${target} = ${Math.round(BACON_CORRECTION.boxOz / target)} strips, inside 180-210. NOT covered by Juan's 2026-08-20 operational ruling, and deliberately so: bacon arrives pre-portioned in the vendor's layer box, so WE do not produce the portion and the vendor's spec IS the operational fact. Its live 0.75 also never moved after seed 10 ran, so it is that seed's untouched estimate rather than an observation.`,
+        weightClass: "OPERATIONAL",
         depletionImpact: impacts.map((i) => `${i[0]}: ${i[2]} -> ${i[3]} (${i[4]})`).join("; "),
         metadata: {
           angel_product: "IMP LAYER BACON 12/14", slice_spec: "12/14 strips per lb",
           box_oz: BACON_CORRECTION.boxOz, implied_strips_per_box: Math.round(BACON_CORRECTION.boxOz / target),
           understatement_fraction: target / BACON_CORRECTION.fromOz - 1,
+          weight_class: "OPERATIONAL",
+          outside_ruling_because: "vendor pre-portions this product; we do not slice it, so the vendor spec is the operational fact and there is no local process for a surprise weigh to observe",
           depletion_note: "changes nightly Toast depletion going forward; historical rows are append-only and point-in-time correct",
         },
       });
@@ -756,9 +815,15 @@ async function main(): Promise<void> {
           section: "B", skuId: sku.id, skuName: sku.name, vendorName: sku.vendorName,
           fromOz: null, toOz: MOZZARELLA_CASE.ozPerSlice,
           arithmetic: `the SKU name says it: MOZZ 1OZ SLCD, and 32 CT x 1 oz = 2 lb closes against the 6/2 LB pack field`,
-          note: "1 oz slice, confirmed by the product name and the case arithmetic from two directions",
+          note: "1 oz slice, confirmed by the product name and the case arithmetic from two directions. Like bacon and unlike the deli meats, this portion is cut by the MANUFACTURER (BelGioioso ships a 32-CT sliced log), so the vendor's 1 oz is the operational fact — there is no slicer of ours for a surprise weigh to observe. The Baldor twin's live 1.0 independently agrees.",
+          weightClass: "OPERATIONAL",
           depletionImpact: "none today (this twin carries no recipe pins); it is what lets section D's pin move preserve its oz meaning",
-          metadata: { angel_product: "CHEESE MOZZ 1OZ SLCD LOG 32 CT", basis: "SKU name MOZZ 1OZ SLCD + 32 CT x 1 oz = 2 lb" },
+          metadata: {
+            angel_product: "CHEESE MOZZ 1OZ SLCD LOG 32 CT",
+            basis: "SKU name MOZZ 1OZ SLCD + 32 CT x 1 oz = 2 lb; manufacturer-portioned",
+            weight_class: "OPERATIONAL",
+            outside_ruling_because: "manufacturer-sliced (32 CT log), not cut on our line",
+          },
         });
       } else if (Math.abs(sku.avgOzPerEach - MOZZARELLA_CASE.ozPerSlice) > 1e-9) {
         refusals.push({ section: "B2", skuName: `${side.vendor}/Fresh Mozzarella`, subject: "avg_oz_per_each", code: "LIVE_WEIGHT_UNEXPLAINED", detail: `live ${sku.avgOzPerEach}, expected ${MOZZARELLA_CASE.ozPerSlice}` });
@@ -789,56 +854,77 @@ async function main(): Promise<void> {
     }
   }
 
-  // B3 — PFG ham slice weight
-  h(3, "B3 — PFG Ham avg_oz_per_each = 1.0 (from Juan's own measured table)");
+  // B3 — PFG ham slice weight, MIRRORING the operationally-measured backup twin.
+  h(3, "B3 — PFG Ham avg_oz_per_each = 1.2 (mirrors the Baldor twin's measured weight)");
   const hamPfg = resolveSku("Ham", "PFG");
   const hamBaldor = resolveSku("Ham", "Baldor");
   if ("error" in hamPfg) {
     refusals.push({ section: "B3", skuName: "PFG/Ham", subject: "avg_oz_per_each", code: hamPfg.code, detail: hamPfg.error });
     p(`REFUSED: ${hamPfg.error}`);
+  } else if ("error" in hamBaldor) {
+    refusals.push({ section: "B3", skuName: "PFG/Ham", subject: "avg_oz_per_each", code: hamBaldor.code, detail: `cannot mirror the backup twin: ${hamBaldor.error}` });
+    p(`REFUSED: ${hamBaldor.error}`);
   } else {
-    const target = JUAN_SLICE_OZ.Ham ?? 1.0;
-    const baldorOz = "error" in hamBaldor ? null : hamBaldor.sku.avgOzPerEach;
+    const ruledHam = OPERATIONAL_SLICE_OZ.Ham!;
+    const baldorOz = hamBaldor.sku.avgOzPerEach;
     pre();
-    p(`PFG/Ham   [${hamPfg.sku.id}] avg_oz_per_each = ${hamPfg.sku.avgOzPerEach ?? "NULL"}  (seed 18 PRIMARY: holds the par, the price and — eventually — the pins)`);
-    p(`Baldor/Ham${"error" in hamBaldor ? " NOT RESOLVED" : ` [${hamBaldor.sku.id}] avg_oz_per_each = ${baldorOz ?? "NULL"}  (seed 18 BACKUP: holds the pins today)`}`);
-    p(`Juan's measured table (seed 10): Ham 1.0 oz, "unit = one thin deli slice"`);
+    p(`PFG/Ham    [${hamPfg.sku.id}] avg_oz_per_each = ${hamPfg.sku.avgOzPerEach ?? "NULL"}  (seed 18 PRIMARY: holds the par, the price and — eventually — the pins)`);
+    p(`Baldor/Ham [${hamBaldor.sku.id}] avg_oz_per_each = ${baldorOz ?? "NULL"}  (seed 18 BACKUP: holds the pins today)`);
+    p(`Juan's ruling (2026-08-20):        ${ruledHam} oz — the OPERATIONAL weight, surprise 3-sample average`);
+    p(`seed 10's SPEC table (superseded): ${SPEC_SLICE_OZ.Ham} oz — "unit = one thin deli slice"`);
     pre();
     p("");
-    if (hamPfg.sku.avgOzPerEach != null && Math.abs(hamPfg.sku.avgOzPerEach - target) < 1e-9) {
-      refusals.push({ section: "B3", skuName: "PFG/Ham", subject: "avg_oz_per_each", code: "ALREADY_CORRECT", detail: `already ${target}` });
-      p(`  = already ${target} — no write.`);
+    p("**The earlier dry run proposed 1.0 here and that was wrong.** It read the seed-10 table as");
+    p("floor truth and the live 1.2 as an unexplained edit. Juan's ruling inverts that: the 1.2 is");
+    p("his own surprise measurement and the 1.0 was the aspirational figure. So the PFG twin takes");
+    p("**1.2**, and the reason it may take it from the Baldor row rather than needing its own weigh");
+    p("is physical, not clerical: **it is the same ham through the same slicer.** The twins are two");
+    p("vendor identities for one product — that is the entire premise of the P1 adjudication — so a");
+    p("slice off the PFG case and a slice off the Baldor case are the same slice. One measurement");
+    p("covers both.");
+    p("");
+    if (baldorOz == null || Math.abs(baldorOz - ruledHam) > 1e-9) {
+      // The mirror is only sound while the row being mirrored still says what the ruling says.
+      refusals.push({ section: "B3", skuName: "PFG/Ham", subject: "avg_oz_per_each", code: "OPERATIONAL_DRIFT", detail: `refusing to mirror: Baldor/Ham reads ${baldorOz ?? "NULL"}, the ruling recorded ${ruledHam}` });
+      p(`  ! REFUSING to mirror: Baldor/Ham reads ${baldorOz ?? "NULL"} but the ruling recorded ${ruledHam}.`);
+      p("    Mirroring a row that has drifted would propagate the drift to a second SKU.");
+    } else if (hamPfg.sku.avgOzPerEach != null && Math.abs(hamPfg.sku.avgOzPerEach - ruledHam) < 1e-9) {
+      refusals.push({ section: "B3", skuName: "PFG/Ham", subject: "avg_oz_per_each", code: "ALREADY_CORRECT", detail: `already ${ruledHam}` });
+      p(`  = already ${ruledHam} — no write.`);
     } else if (hamPfg.sku.avgOzPerEach != null) {
-      refusals.push({ section: "B3", skuName: "PFG/Ham", subject: "avg_oz_per_each", code: "LIVE_WEIGHT_UNEXPLAINED", detail: `live ${hamPfg.sku.avgOzPerEach}, Juan's table ${target}` });
+      refusals.push({ section: "B3", skuName: "PFG/Ham", subject: "avg_oz_per_each", code: "LIVE_WEIGHT_UNEXPLAINED", detail: `live ${hamPfg.sku.avgOzPerEach}, ruled ${ruledHam}` });
+      p(`  ! REFUSING: PFG/Ham already carries ${hamPfg.sku.avgOzPerEach}, which is neither NULL nor the ruled ${ruledHam}.`);
     } else {
       weightWrites.push({
         section: "B", skuId: hamPfg.sku.id, skuName: hamPfg.sku.name, vendorName: hamPfg.sku.vendorName,
-        fromOz: null, toOz: target,
-        arithmetic: `Juan's measured slice table, scripts/seed/10-fill-sku-weights.ts: { name: "Ham", avgOz: 1.0, note: "unit = one thin deli slice" }`,
-        note: "Not derived from Angel at all — Angel has no per-slice data for ham. This is Juan's own hand-measured number, applied to the twin that will carry the PO.",
-        depletionImpact: "none today (the PFG twin carries no recipe pins); it exists so section D's pin move has a value to preserve",
-        metadata: { basis: "scripts/seed/10-fill-sku-weights.ts FILLS table (Juan-measured)", juan_table_oz: target, backup_twin_live_oz: baldorOz },
+        fromOz: null, toOz: ruledHam,
+        arithmetic: `mirror of Baldor/Ham's live ${baldorOz} oz — the same physical ham through the same slicer`,
+        note: `Juan's 2026-08-20 ruling: ${ruledHam} oz/slice is the OPERATIONAL weight (surprise 3-sample average), superseding seed 10's aspirational ${SPEC_SLICE_OZ.Ham}. Applied to the PFG twin by MIRROR rather than by its own measurement because the twins are two vendor identities for one product — the P1 adjudication's own premise — so one measurement covers both. Angel supplies no per-slice data for ham at all; this number is Juan's, not Angel's.`,
+        weightClass: "OPERATIONAL",
+        depletionImpact: `none today (the PFG twin carries no recipe pins). Its purpose is section D: with ${ruledHam} on both twins the pin's oz meaning is preserved and seed 18's gate passes, so the ham pin can finally follow the par to the primary.`,
+        metadata: {
+          basis: "mirror of the Baldor twin's operationally-measured weight",
+          operational_oz: ruledHam, superseded_spec_oz: SPEC_SLICE_OZ.Ham,
+          mirrored_from_sku_id: hamBaldor.sku.id, mirrored_from_vendor: hamBaldor.sku.vendorName,
+          weight_class: "OPERATIONAL", ruling: JUAN_RULING,
+        },
       });
+      p(`  → PFG/Ham NULL -> **${ruledHam}**, and with ${ruledHam} on both twins section D's ham gate now PASSES.`);
     }
-    if (baldorOz != null && Math.abs(baldorOz - target) > 1e-9) {
-      p("");
-      p("⚠ **This does NOT unblock section D for ham, and the brief expected it to.** Seed 18's pin");
-      p(`gate requires the line's oz MEANING to be identical on both twins. The Baldor twin carries`);
-      p(`**${baldorOz}** oz/slice, not ${target} — so after this write the gate compares ${baldorOz} against ${target}, still`);
-      p("refuses, and the pins stay on the backup. Writing 1.0 here is nonetheless correct: it is");
-      p("Juan's own measured number and the PFG twin currently has nothing at all. What is NOT");
-      p("resolved is which twin is wrong, and that is the same unexplained-live-weight question as");
-      p("section A's four STOPs. See the STOP list.");
-      stops.push({
-        section: "B3/D", skuName: "Ham",
-        headline: `Baldor/Ham carries ${baldorOz} oz/slice; Juan's measured table and seed 10's own audit row both say ${target}`,
-        detail: [
-          `Juan's measured table (seed 10): ${target} oz — and the audit row from 2026-07-22 records seed 10 writing exactly ${target} to this row`,
-          `LIVE on Baldor/Ham today:        ${baldorOz} oz — changed since, with NO audit row`,
-          `PFG/Ham (the primary):           ${hamPfg.sku.avgOzPerEach ?? "NULL"}`,
-          `consequence: seed 18's pin gate compares ${baldorOz} vs ${target} and REFUSES; the ham pin stays on the backup twin`,
-        ],
-        unblock: `Decide the real ham slice weight. Setting PFG/Ham to ${baldorOz} instead would make the gate pass immediately — but it would ratify an unaudited value over Juan's measured one, which is the wrong way round to decide it.`,
+    // Ham is the fifth ruled row. It is settled here rather than in section A's loop
+    // (it is a PFG product, not a Delmar piece), so it is registered explicitly —
+    // otherwise the RESOLVED table would show four and the prose would say five.
+    if (baldorOz != null && Math.abs(baldorOz - ruledHam) < 1e-9) {
+      resolved.push({
+        skuName: "Ham (Baldor — the measured twin)",
+        specOz: SPEC_SLICE_OZ.Ham!,
+        operationalOz: baldorOz,
+        gapFraction: baldorOz / SPEC_SLICE_OZ.Ham! - 1,
+        // No piece model for ham — it is a PFG 13 lb case, not a Delmar catch-weight
+        // piece — so there is no slices-per-piece to restate. Null, not zero.
+        specSlices: null, opSlices: null, specCostPerSlice: null, opCostPerSlice: null,
+        harvestCostPerSlice: "n/a (not a Delmar piece)",
+        pinLine: `"Ham (portioned)" 1 unit — moves to the PFG primary in §D`,
       });
     }
   }
@@ -987,7 +1073,7 @@ async function main(): Promise<void> {
   const dRows: string[][] = [];
   const pairs = [
     { product: "Fresh Mozzarella", primaryVendor: "PFG", backupVendor: "Baldor", plannedPrimaryOz: MOZZARELLA_CASE.ozPerSlice },
-    { product: "Ham", primaryVendor: "PFG", backupVendor: "Baldor", plannedPrimaryOz: JUAN_SLICE_OZ.Ham ?? 1.0 },
+    { product: "Ham", primaryVendor: "PFG", backupVendor: "Baldor", plannedPrimaryOz: OPERATIONAL_SLICE_OZ.Ham! },
   ];
   let predictedMoves = 0;
   let predictedRefusals = 0;
@@ -1017,13 +1103,25 @@ async function main(): Promise<void> {
   table(["pair", "pinned line", "oz on BACKUP", "oz on PRIMARY (post-B)", "predicted gate"], dRows);
   p("");
   p(`Predicted: **${predictedMoves} pin(s) move, ${predictedRefusals} still refuse.**`);
-  if (predictedRefusals > 0) {
+  if (predictedRefusals === 0) {
     p("");
-    p("The ham refusal is NOT the same failure seed 18 reported. Seed 18 refused because the PFG");
-    p("side resolved to NULL — nothing to preserve. After section B it resolves to a real number");
-    p("that simply is not the backup's, so the gate now refuses for the honest reason: **the two");
-    p("twins disagree about what one slice of ham weighs.** That is the P2 product-identity gap the");
-    p("seed-18 header predicted, arriving on schedule. It is in the STOP list.");
+    p("**Both pairs clear the gate.** Mozzarella was always going to once the PFG twin had a slice");
+    p("weight. Ham is the one the ruling unlocked: the earlier dry run proposed writing the spec 1.0");
+    p("to the PFG twin, which would have left the gate comparing 1.0 against the backup's measured");
+    p("1.2 and refusing a second time — the right refusal for the wrong reason. Mirroring the");
+    p("operational 1.2 instead makes the two sides agree because they now describe the same physical");
+    p("slice, which is what the gate was always asking about.");
+    p("");
+    p("Worth being precise about what the gate proves and what it does not. It proves the pinned");
+    p("line's oz value is IDENTICAL before and after the move, so no recipe silently changes what it");
+    p("costs or depletes. It does not prove 1.2 is the right number — that comes from Juan's scale,");
+    p("not from this script. The gate is a preservation check, and preservation is exactly what a");
+    p("re-point should guarantee.");
+  } else {
+    p("");
+    p("A refusal here means the two twins still disagree about what one slice weighs — the P2");
+    p("product-identity gap the seed-18 header predicted. The pins stay on the backup, which is the");
+    p("safe end-state: nothing is un-costed, nothing is un-depleted, the pair is still orderable.");
   }
   p("");
   p(`In \`--execute\` mode this script then RUNS \`${SEED_18} --execute\` as a child process,`);
@@ -1113,8 +1211,61 @@ async function main(): Promise<void> {
   p("`effective_date`: per-product `last_seen` from the harvest, never today.");
   p("");
 
+  // ── The resolved STOP list ──────────────────────────────────────────────────
+  h(2, `RESOLVED — the STOP list, settled by Juan's ruling (${resolved.length} rows)`);
+  p("The first dry run refused five weights because production carried values matching neither the");
+  p("seed-10 table nor the piece model, with no audit row explaining them. The ruling:");
+  p("");
+  p(MD ? `> ${JUAN_RULING}` : `  ${JUAN_RULING}`);
+  p("");
+  p("**Why that is more than a tie-break.** The two numbers were never rival measurements of one");
+  p("quantity — they are two quantities that had been sharing a column. A slice's SPEC weight is");
+  p("what it should be at the intended thickness; its OPERATIONAL weight is what the line actually");
+  p("produces. Costing and depletion answer \"how much product left the building\", so they take the");
+  p("operational number. The measurements were taken as a SURPRISE check, so nobody was slicing to");
+  p("the scale — which is what makes them usable as a baseline rather than a demonstration.");
+  p("");
+  p("**No measured row is overwritten.** Every value in the `operational` column below is left");
+  p("exactly as production carries it — the original refusal stands, now for a good reason rather");
+  p("than an unresolved one. What DOES change is `scripts/seed/10-fill-sku-weights.ts`: its");
+  p("constants move to the operational values with the ruling recorded inline, so a future re-run");
+  p("of that seed cannot quietly restore the spec numbers over his measurements.");
+  p("");
+  p("The one write in this neighbourhood is §B3, and it is a fill rather than an overwrite: the");
+  p("PFG ham twin held NULL and now MIRRORS the Baldor twin's measured 1.2. Same ham, same slicer,");
+  p("so one measurement covers both identities — and it is what lets §D's ham pin move.");
+  p("");
+  table(
+    ["our SKU", "spec (was)", "**operational (live, kept)**", "gap", "slices/piece spec -> real", "$/slice spec -> real", "harvest doc said"],
+    resolved.map((r) => [
+      r.skuName, `${r.specOz}`, `**${r.operationalOz}**`, `**${pct(r.gapFraction)}**`,
+      r.opSlices == null ? "—" : `${r.specSlices ?? "—"} -> **${r.opSlices}**`,
+      r.opCostPerSlice == null ? "—" : `${r.specCostPerSlice != null ? money4(r.specCostPerSlice) : "—"} -> **${money4(r.opCostPerSlice)}**`,
+      /^[\d.]/.test(r.harvestCostPerSlice) ? `$${r.harvestCostPerSlice}` : r.harvestCostPerSlice,
+    ]),
+    ["", "r", "r", "r", "r", "r", "r"],
+  );
+  p("");
+  p("**The last three columns are the deliverable.** The harvest's own slices-per-piece and $/slice");
+  p("tables were computed off the spec constants, so for these five they are wrong in the direction");
+  p("that matters most: they UNDERSTATE how many slices a piece yields and therefore OVERSTATE what");
+  p("a slice costs. Genoa is the extreme — 103 slices at $0.2744 on paper against 257 at $0.1100 on");
+  p("the line, a 2.5x error in per-slice cost. Anyone costing a sandwich off the harvest doc rather");
+  p("than this table is working from the wrong number.");
+  p("");
+  p("Note the ruling does NOT reach every weight in this wave, and the boundary is physical rather");
+  p("than clerical. It governs portions **we** cut, because only observing our line can tell you");
+  p("what our slice weighs. Bacon (vendor-portioned 12/14 layer box) and fresh mozzarella");
+  p("(manufacturer-sliced 32 CT log) are cut before they reach us, so the vendor spec IS their");
+  p("operational fact — there is no slicer of ours for a surprise weigh to observe. Both also never");
+  p("moved after seed 10 ran, where all five ruled SKUs did; that movement is the fingerprint of a");
+  p("measurement, and its absence is the fingerprint of an untouched estimate.");
+  p("");
+
   p(`── STOP LIST: ${stops.length} — none of these are written; each needs Juan's word ──`);
-  if (stops.length === 0) p(MD ? "_(none)_" : "  (none)");
+  if (stops.length === 0) {
+    p(MD ? "_(none — the ruling cleared the list, and no row has drifted off it since.)_" : "  (none — the ruling cleared the list.)");
+  }
   for (const s of stops) {
     p(MD ? `\n#### ${s.skuName} — ${s.headline}\n` : `\n  ${s.skuName} — ${s.headline}`);
     pre();
@@ -1122,16 +1273,6 @@ async function main(): Promise<void> {
     pre();
     p(MD ? `> **UNBLOCK:** ${s.unblock}` : `    UNBLOCK: ${s.unblock}`);
   }
-  p("");
-  p("These four-plus-one all have one shape, and it is worth naming: **a live `avg_oz_per_each`");
-  p("that matches neither Juan's measured table nor the piece model, with no audit row explaining");
-  p("the change.** Seed 10's audit rows from 2026-07-22 record it writing Juan's values to these");
-  p("exact SKU ids; the values in production today are different, and nothing in `audit_log`");
-  p("covers the difference. Either an unaudited edit reached production, or Juan corrected these");
-  p("by hand from the floor and the seed file is the stale copy. **Both readings are plausible and");
-  p("they imply opposite fixes**, which is why this script writes neither. If the live numbers are");
-  p("his, then the harvest's own slices-per-piece and $/slice tables are computed off stale");
-  p("constants and need recomputing — the corrected figures are in the section A table.");
   p("");
 
   p(`── REFUSALS / NO-OPS: ${refusals.length} ──`);
@@ -1158,8 +1299,17 @@ async function main(): Promise<void> {
   p("");
   p(`**Weights (${weightWrites.length})** — \`vendor_items.avg_oz_per_each\`, the value every COUNT-unit recipe line depletes.`);
   p("");
-  table(["§", "SKU", "vendor", "from", "to", "arithmetic", "depletion impact"],
-    weightWrites.map((w) => [w.section, w.skuName, w.vendorName, w.fromOz == null ? "NULL" : String(w.fromOz), `**${w.toOz}**`, w.arithmetic, w.depletionImpact ?? "—"]));
+  p("The `class` column carries Juan's spec-vs-operational distinction into the data. **OPERATIONAL**");
+  p("= observed, or set by whoever actually cuts the portion. **SPEC** = derived and awaiting a");
+  p("weigh — a placeholder, not a peer of the measured values. It rides into the audit row so a");
+  p("future reader can tell which numbers were seen and which were inferred.");
+  p("");
+  table(["§", "SKU", "vendor", "class", "from", "to", "arithmetic", "depletion impact"],
+    weightWrites.map((w) => [
+      w.section, w.skuName, w.vendorName,
+      w.weightClass === "SPEC" ? "**SPEC** ⚠" : "OPERATIONAL",
+      w.fromOz == null ? "NULL" : String(w.fromOz), `**${w.toOz}**`, w.arithmetic, w.depletionImpact ?? "—",
+    ]));
   p("");
   p(`**Prices (${priceWrites.length})** — appended to \`vendor_price_history\`; nothing is ever modified in place.`);
   p("");
@@ -1263,7 +1413,12 @@ async function execute(
         name: w.skuName, vendor: w.vendorName,
         before_avg_oz_per_each: w.fromOz, avg_oz_per_each: w.toOz,
         arithmetic: w.arithmetic, note: w.note, depletion_impact: w.depletionImpact,
-        estimate: false,
+        weight_class: w.weightClass,
+        // seed 10 stamped `estimate: true` on every fill. These are not estimates in
+        // that sense — but a SPEC-class row is still awaiting a scale, and saying so
+        // here is what lets a later reader tell the two apart without re-deriving it.
+        estimate: w.weightClass === "SPEC",
+        pending_operational_weigh: w.weightClass === "SPEC",
         phase: "angel_data_arc", reason: `angel_harvest2_wave3_section_${w.section.toLowerCase()}_weight`,
         script: "scripts/seed/20-angel-wave3.ts", source_report: SOURCE_REPORTS,
         ...w.metadata,

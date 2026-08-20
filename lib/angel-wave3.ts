@@ -201,15 +201,42 @@ export const PIECE_MODEL_RULES: readonly PieceModelRule[] = [
 ];
 
 /**
- * Juan's measured oz-per-slice table, transcribed verbatim from the FILLS array of
- * scripts/seed/10-fill-sku-weights.ts.
+ * Juan's ruling of 2026-08-20, which settles wave 3's STOP list and — more usefully —
+ * names a distinction this codebase did not previously have.
  *
- * This is the FLOOR TRUTH the piece model is checked against, not the other way
- * round. Where the derived number and this table disagree materially the row STOPS.
- * Absent from the table (Ever Roast Chicken) is a legitimate state — it means the
- * piece model is supplying a number nobody had, which is a fill, not a contest.
+ * The dry run found five SKUs whose live `avg_oz_per_each` matched neither the seed-10
+ * table nor the piece model, with no audit row explaining the change, and refused to
+ * write any of them. The answer: **the live values are his own measurements.** He took
+ * 3-sample averages as a SURPRISE check — slicing unchanged, nobody adjusting for the
+ * scale — so they are unbiased observations of what the line actually produces.
+ *
+ * So the two numbers were never competing measurements of one quantity. They are two
+ * different quantities that had been sharing a column:
+ *
+ *   SPEC / ASPIRATIONAL  what a slice is supposed to weigh at the intended thickness
+ *                        (seed 10's estimates — reasonable, and not what happens)
+ *   OPERATIONAL          what a slice actually weighs coming off our slicer, measured
+ *                        under observation-free conditions
+ *
+ * Costing and depletion must use OPERATIONAL: the question they answer is "how much
+ * product left the building", and the answer is the real slice, not the intended one.
+ * Slices are normal thickness — operations simply differ from spec, which is the
+ * ordinary condition of every kitchen and not a defect to be corrected away.
  */
-export const JUAN_SLICE_OZ: Readonly<Record<string, number>> = {
+export const JUAN_RULING =
+  "Juan 2026-08-20: the live avg_oz_per_each values are HIS OWN measurements — 3-sample averages taken as a SURPRISE check, slicing unchanged and unbiased. Live = OPERATIONAL truth (what a slice really weighs); the seed-10 table = ASPIRATIONAL/SPEC weights (what it is supposed to weigh). Slices are normal thickness; operations differ from spec. Costing and depletion use the operational number. Do not 'correct' back from spec sheets.";
+
+/**
+ * The SPEC (aspirational) oz-per-slice table, transcribed verbatim from the FILLS array
+ * of scripts/seed/10-fill-sku-weights.ts as it stood BEFORE the ruling.
+ *
+ * Kept, not deleted, because it is what the piece model's `slices_per_piece` column was
+ * computed from — so it is the only thing that explains why the harvest's slices-per-piece
+ * and $/slice tables read the way they do. It is NO LONGER a truth reference: after the
+ * ruling, a derived-vs-spec agreement says the harvest's arithmetic is self-consistent
+ * and says nothing about what the line produces.
+ */
+export const SPEC_SLICE_OZ: Readonly<Record<string, number>> = {
   Turkey: 1.0,
   "Roast Beef": 1.5,
   Provolone: 0.75,
@@ -217,16 +244,91 @@ export const JUAN_SLICE_OZ: Readonly<Record<string, number>> = {
   Capicola: 1.0,
   Pepperoni: 0.25,
   Bacon: 0.75,
+  /** Ham lives outside the piece model (it is a PFG product, not a Delmar piece), but
+   *  it is one of the five rows the ruling covers, so its spec value belongs here —
+   *  otherwise the ruling's own gap cannot be stated for it. */
+  Ham: 1.0,
 };
 
 /**
- * How far the derived oz-per-slice may sit from Juan's table before the row stops.
+ * The OPERATIONAL oz-per-slice table — Juan's surprise 3-sample averages, 2026-08-20.
+ *
+ * These are exactly the five rows where production diverged from seed 10, which is the
+ * evidence that a measurement happened: Turkey, Roast Beef and Bacon never moved, so
+ * either he did not weigh them or they came back at spec, and in both cases there is
+ * nothing to record.
+ *
+ * ── WHY THIS EXISTS AS A CONSTANT WHEN THE SCRIPT READS LIVE ──────────────────
+ * The script resolves every weight live and writes none of these. The table's job is to
+ * let it ASSERT that live still equals the ruling — so that if one of these drifts again
+ * without an audit row, wave 3 catches it as a NEW divergence instead of silently
+ * accepting whatever is there. A ruling that cannot be checked is a comment.
+ */
+export const OPERATIONAL_SLICE_OZ: Readonly<Record<string, number>> = {
+  Genoa: 0.4,
+  Capicola: 0.4,
+  Provolone: 0.7,
+  Pepperoni: 0.2,
+  /** The Baldor twin's measured value; the PFG twin mirrors it (§B3) — same physical
+   *  ham through the same slicer, so one measurement covers both. */
+  Ham: 1.2,
+};
+
+/**
+ * Does the ruling cover this SKU's weight, and does production still agree with it?
+ *
+ * Three outcomes, and they are genuinely different situations:
+ *   RULED_KEEP_LIVE  live matches the ruling — the operational number stands, no write
+ *   RULED_DRIFTED    the ruling covers this SKU but live has moved off it AGAIN
+ *   UNRULED          no measurement exists; fall back to spec/piece-model comparison
+ */
+export type RulingStatus = "RULED_KEEP_LIVE" | "RULED_DRIFTED" | "UNRULED";
+
+export function rulingStatus(skuName: string, liveOz: number | null): RulingStatus {
+  const ruled = OPERATIONAL_SLICE_OZ[skuName];
+  if (ruled == null) return "UNRULED";
+  if (liveOz == null) return "RULED_DRIFTED";
+  return Math.abs(liveOz - ruled) < 1e-9 ? "RULED_KEEP_LIVE" : "RULED_DRIFTED";
+}
+
+/**
+ * Slices actually obtainable from one piece, and what each really costs — recomputed at
+ * the OPERATIONAL weight.
+ *
+ * This is the deliverable the ruling unlocks. The harvest's own slices-per-piece and
+ * $/slice columns were computed off the spec table, so for the five ruled SKUs they are
+ * wrong in the direction that matters most: they UNDERSTATE how many slices a piece
+ * yields and therefore OVERSTATE what a slice costs. Genoa is the extreme — 103 slices
+ * at $0.2744 on paper against 257 at $0.1100 on the line.
+ */
+export function sliceEconomics(
+  pieceOz: number | null,
+  ozPerSlice: number | null,
+  piecePrice: number | null,
+): { slicesPerPiece: number | null; costPerSlice: number | null } {
+  if (pieceOz == null || ozPerSlice == null || !(pieceOz > 0) || !(ozPerSlice > 0)) {
+    return { slicesPerPiece: null, costPerSlice: null };
+  }
+  const slicesPerPiece = Math.floor(pieceOz / ozPerSlice);
+  if (slicesPerPiece <= 0) return { slicesPerPiece: null, costPerSlice: null };
+  return {
+    slicesPerPiece,
+    costPerSlice: piecePrice != null && piecePrice > 0 ? piecePrice / slicesPerPiece : null,
+  };
+}
+
+/**
+ * How far the derived oz-per-slice may sit from a reference before the row is called a
+ * disagreement.
  *
  * 5% is chosen against the actual rounding floor, not picked round. `slices_per_piece`
- * is an INTEGER floor of piece_oz ÷ juan_oz, so the derived value is biased high by
+ * is an INTEGER floor of piece_oz ÷ spec_oz, so the derived value is biased high by
  * at most 1/slices — worst case in this dataset is capicola at 57 slices (+0.88%).
  * 5% clears every rounding artifact with five times the headroom and still catches
- * the smallest real disagreement present (pepperoni's live 0.2 vs 0.25 is -20%).
+ * the smallest spec-vs-operational gap present (pepperoni's 0.2 vs 0.25 is -20%).
+ *
+ * Post-ruling, a derived-vs-LIVE disagreement is no longer a defect — it is the
+ * measured spec-to-operational gap, and its SIZE is the useful output.
  */
 export const SLICE_CROSSCHECK_TOLERANCE = 0.05;
 
@@ -349,7 +451,25 @@ export function ozPerStripFromSlicesPerLb(slicesPerLbLo: number, slicesPerLbHi: 
   return Number(`${Math.round(Number(`${16 / mid}e2`))}e-2`);
 }
 
-/** The corrected bacon strip weight, and the value it supersedes. */
+/**
+ * The corrected bacon strip weight, and the value it supersedes.
+ *
+ * ── WHY JUAN'S RULING DOES NOT SWEEP THIS ALONG WITH THE DELI SLICES ──────────
+ * The ruling says operational beats spec. It is tempting to read that as "never write a
+ * spec number again", and that would be wrong here, for a reason worth stating.
+ *
+ * The ruling's force comes from WHERE the variance lives: a deli slice's weight is set
+ * by OUR slicer, so only observing our line can tell you what a slice weighs. Bacon is
+ * not sliced by us — it arrives pre-portioned in a 15 lb layer box built to the vendor's
+ * `12/14` count. The strip weight is a property of the product AS DELIVERED, so the
+ * vendor's spec IS the operational fact, and there is no local process for a surprise
+ * weigh to observe.
+ *
+ * The other half of the argument is evidential. The five ruled SKUs are exactly the five
+ * whose live value MOVED after seed 10 ran — that movement is the fingerprint of a
+ * measurement. Bacon never moved: its live 0.75 is seed 10's own untouched estimate, not
+ * an observation. Applying the ruling to it would ratify a guess by association.
+ */
 export const BACON_CORRECTION = {
   skuName: "Bacon",
   expectVendor: "Boar's Head",
@@ -572,6 +692,8 @@ export type Wave3Code =
   | "NO_MEASURED_WEIGHT"
   | "PIECE_WEIGHT_OUT_OF_RANGE"
   | "SLICE_TABLE_DISAGREEMENT"
+  | "OPERATIONAL_KEEP_LIVE"
+  | "OPERATIONAL_DRIFT"
   | "LIVE_WEIGHT_UNEXPLAINED"
   | "PACK_SHAPE_CHANGED"
   | "OUR_PACK_UNRESOLVABLE"
@@ -588,8 +710,12 @@ export const WAVE3_REASONS: Record<Wave3Code, string> = {
     "Harvest 2's per-piece weight falls outside the min/max range harvest 1 derived algebraically from the same invoices. The two harvests disagree about the same physical fact — that is a data question, not a fill.",
   SLICE_TABLE_DISAGREEMENT:
     "The piece model's implied oz-per-slice disagrees with Juan's measured slice table by more than the tolerance. His table is floor truth; the row stops and reports rather than overwriting a hand-measured number with a derived one.",
+  OPERATIONAL_KEEP_LIVE:
+    "RESOLVED by Juan's 2026-08-20 ruling: the live value is his own surprise-measured 3-sample average — the OPERATIONAL weight — and the seed-10 figure was the aspirational/spec one. Live stands, no write. The seed-10 constant is amended to match so a future re-run cannot regress the measurement.",
+  OPERATIONAL_DRIFT:
+    "The ruling covers this SKU, but LIVE has moved off the ruled operational value AGAIN. That is a new divergence, not the one Juan settled, and it needs a fresh measurement rather than a re-application of the old one.",
   LIVE_WEIGHT_UNEXPLAINED:
-    "The LIVE avg_oz_per_each is neither Juan's table value nor the piece-derived value, and no audit row explains how it got there. Overwriting it would silently change what every consuming recipe depletes, in a direction nobody has signed off. Adjudicate before writing.",
+    "The LIVE avg_oz_per_each matches neither the spec table nor the piece-derived value, and the ruling does not cover this SKU. Overwriting it would silently change what every consuming recipe depletes, in a direction nobody has signed off. Adjudicate before writing.",
   PACK_SHAPE_CHANGED:
     "The live pack chain is not the shape this correction was written against. Someone changed it since the harvest; re-derive the fix rather than flattening whatever is there now.",
   OUR_PACK_UNRESOLVABLE:

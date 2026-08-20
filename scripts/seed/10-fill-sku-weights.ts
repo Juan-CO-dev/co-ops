@@ -30,11 +30,35 @@
  * Full evidence + the arithmetic: docs/ANGEL-HARVEST-2-PIECES.md §1 and §3, and the
  * dry-run report docs/seed/source/angel-wave3-dryrun.md.
  *
- * ⚠ NOT amended, deliberately: Genoa, Capicola, Provolone and Pepperoni. Production
- * carries 0.4, 0.4, 0.7 and 0.2 for those — none of which is the value in this file,
- * and no audit row explains the change (this seed's own 2026-07-22 rows record it
- * writing the values below). Until Juan says which set is real, changing either side
- * would harden a guess. Wave 3 STOPS on all four; see the dry-run's STOP list.
+ * ── JUAN'S RULING, 2026-08-20: OPERATIONAL WEIGHTS SUPERSEDE THIS FILE'S SPEC ─────
+ * Wave 3's dry run STOPPED on five rows whose production values matched neither this
+ * file nor the piece model, with no audit row explaining them. Juan's answer: **the
+ * live values are his own measurements** — 3-sample averages taken as a SURPRISE
+ * check, slicing unchanged and unbiased.
+ *
+ * So the numbers below were never rival readings of one quantity. They are two
+ * different quantities that had been sharing a column:
+ *
+ *   SPEC / ASPIRATIONAL   what a slice should weigh at the intended thickness
+ *   OPERATIONAL           what a slice actually weighs coming off our slicer
+ *
+ * Costing and depletion answer "how much product left the building", so they take the
+ * OPERATIONAL number. Slices are normal thickness — operations simply differ from
+ * spec, which is the ordinary condition of every kitchen and not a defect.
+ *
+ * The five ruled rows below are therefore updated to Juan's measured values:
+ *   Genoa 1.0 → 0.4 · Capicola 1.0 → 0.4 · Provolone 0.75 → 0.7 ·
+ *   Pepperoni 0.25 → 0.2 · Ham 1.0 → 1.2
+ *
+ * ⚠⚠ **DO NOT "CORRECT" THESE BACK FROM A SPEC SHEET.** A Boar's Head cut sheet, a
+ * recipe card or a food-knowledge prior will all disagree with these numbers, and all
+ * three are describing the spec quantity, not this one. They were measured on OUR
+ * line. Anything that moves them needs another weigh, not another reference.
+ *
+ * Turkey (1.0), Roast Beef (1.5) and Bacon never diverged from this file, so either
+ * they were not weighed or they came back at spec; both leave nothing to record.
+ * Bacon's separate 0.75 → 1.23 correction is NOT the ruling — it is vendor-portioned
+ * (a 12/14 layer box we do not slice), so the vendor spec IS its operational fact.
  *
  * ── SELECTING THE RIGHT ROW WHEN A NAME IS DUPLICATED ─────────────────────────
  * `Ham` and `Fresh Mozzarella` each have TWO active twins (PFG + Baldor) since the
@@ -79,23 +103,26 @@ interface Pack { unitsPerPack: number; eachSize: number; eachMeasure: string; pa
  *  header. Elsewhere it is omitted and the placeholder heuristic still applies. */
 const FILLS: Array<{ name: string; avgOz: number; note: string; pack?: Pack; vendor?: string }> = [
   { name: "Sub Roll", avgOz: 4.0, note: "each = one 8in roll; 6/pack, 5 packs/rack (Juan)", pack: { unitsPerPack: 6, eachSize: 1, eachMeasure: "each", packFormat: "pack" } },
-  { name: "Ham", avgOz: 1.0, note: "unit = one thin deli slice", vendor: "Baldor", pack: { unitsPerPack: 1, eachSize: 16, eachMeasure: "oz", packFormat: "case" } },
+  { name: "Ham", avgOz: 1.2, note: "unit = one deli slice — OPERATIONAL, Juan surprise 3-sample 2026-08-20 (spec was 1.0); do not correct back from spec", vendor: "Baldor", pack: { unitsPerPack: 1, eachSize: 16, eachMeasure: "oz", packFormat: "case" } },
   { name: "Mortadella", avgOz: 1.0, note: "unit = one slice", pack: { unitsPerPack: 1, eachSize: 16, eachMeasure: "oz", packFormat: "case" } },
   { name: "Prosciutto", avgOz: 0.5, note: "each = one thin slice", pack: { unitsPerPack: 1, eachSize: 12, eachMeasure: "oz", packFormat: "case" } },
   // CORRECTED 2026-08-20 (harvest 2): "12/14" on the Angel subtitle is 12-14 strips per POUND,
   // so 16/13 = 1.23 oz/strip. The prior 0.75 implied 21.3/lb and understated bacon cost 64%.
   // The 240 oz case was already right — it matches Angel's 15.0 lb box to the ounce.
   { name: "Bacon", avgOz: 1.23, note: "each = one strip; 12/14 slice spec = 12-14 per lb → 16/13 (harvest 2, was 0.75)", pack: { unitsPerPack: 1, eachSize: 240, eachMeasure: "oz", packFormat: "case" } },
-  { name: "Capicola", avgOz: 1.0, note: "unit = one slice" },
-  { name: "Genoa", avgOz: 1.0, note: "unit = one slice" },
-  { name: "Pepperoni", avgOz: 0.25, note: "unit = one thin slice" },
-  { name: "Provolone", avgOz: 0.75, note: "unit = one slice" },
+  // ── The four ruled deli slices. OPERATIONAL weights (Juan surprise 3-sample averages,
+  // 2026-08-20). The parenthesised figure is the SPEC value these replace — kept in the
+  // note so nobody has to go digging for what changed, and so the gap stays visible.
+  { name: "Capicola", avgOz: 0.4, note: "unit = one slice — OPERATIONAL, Juan surprise 3-sample 2026-08-20 (spec was 1.0); do not correct back from spec" },
+  { name: "Genoa", avgOz: 0.4, note: "unit = one slice — OPERATIONAL, Juan surprise 3-sample 2026-08-20 (spec was 1.0); do not correct back from spec" },
+  { name: "Pepperoni", avgOz: 0.2, note: "unit = one thin slice — OPERATIONAL, Juan surprise 3-sample 2026-08-20 (spec was 0.25); do not correct back from spec" },
+  { name: "Provolone", avgOz: 0.7, note: "unit = one slice — OPERATIONAL, Juan surprise 3-sample 2026-08-20 (spec was 0.75); do not correct back from spec" },
   { name: "Cheddar", avgOz: 0.75, note: "unit = one slice" },
   { name: "Roast Beef", avgOz: 1.5, note: "unit = one slice (thicker cut)" },
   { name: "Turkey", avgOz: 1.0, note: "unit = one slice" },
   // ADDED 2026-08-20 (harvest 2): had no entry at all. Sliced deli chicken breast, behaves like
   // turkey; the piece model agrees (74.1 oz / 74 slices = 1.0014).
-  { name: "Ever Roast Chicken", avgOz: 1.0, note: "unit = one slice; behaves like turkey (harvest 2)" },
+  { name: "Ever Roast Chicken", avgOz: 1.0, note: "unit = one slice; behaves like turkey (harvest 2). SPEC — piece-model derived, PENDING a Juan surprise-weigh; every deli slice he has actually weighed came in 20-60% off spec, so treat this as a placeholder" },
   // CORRECTED 2026-08-20 (harvest 2): unitsPerPack 72 → 192. One case = 6 logs x 32 CT x 1 oz =
   // 192 slices = 12 lb, closing against both the "6/2 LB" pack field and the "12 LB" subtitle.
   // At 72 the implied case is 4.5 lb — neither the nominal nor the 12.76 lb measured.

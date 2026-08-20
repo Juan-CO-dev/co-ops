@@ -20,18 +20,21 @@ vendor, pack chain and existing price below was resolved live at run time.
 2. **Bacon is 64% understated, and this changes nightly depletion.** `avg_oz_per_each`
    0.75 -> 1.23 oz/strip. See the callout in section B — it is the only change in this
    wave that moves a number the business already consumes every night.
-3. **Four SKUs STOP.** Genoa, Capicola, Provolone and Pepperoni carry live
-   `avg_oz_per_each` values that are neither Juan's measured table nor the piece-derived
-   figure, and **no audit row explains how they got there**. Their packs and prices are
-   written; their weights are not. This is the wave's most valuable finding and it
-   needs Juan's word, not a script's.
+3. **The STOP list is RESOLVED — and it produced a distinction worth keeping.** The first
+   dry run refused five weights as unexplained. Juan's 2026-08-20 ruling: those live values
+   are **his own surprise measurements**, so they are not a competing opinion about one
+   number — they are a *different* number. **Operational** (what a slice really weighs)
+   versus **spec** (what it is supposed to weigh) had been sharing one column. Costing and
+   depletion take operational. Nothing is written to those five rows; the seed-10 constants
+   are amended to match so a re-run cannot regress his measurements.
 4. **The jug supersede corrects a pack and a price together, or not at all.** Oregano
    and onion powder are single jugs. Writing the jug price against our quarter-jug pack
    would produce a **four-fold** cost error — worse than today. Section C shows the
    arithmetic that makes the paired write cost-per-ounce NEUTRAL.
-5. **Section D's pin move unblocks for mozzarella and stays blocked for ham** — for the
-   same unexplained-live-weight reason as (3). Predicted, not assumed: the gate is
-   computed here through the real production function.
+5. **Section D now unblocks BOTH pairs.** With PFG/Ham mirroring the Baldor twin's measured
+   1.2 oz, seed 18's pin gate passes for ham as well as mozzarella, so both recipe pins
+   follow the par to the PFG primaries on execute. Predicted, not assumed: the gate is
+   computed here through the real production function against post-§B shapes.
 
 ## Section A — the Boar's Head piece model (7 SKUs)
 
@@ -75,25 +78,32 @@ content the same fact; borrowing the doc's cent would not. Pepperoni is the one 
 the piece CSV quotes $5.09/lb (the window's FIRST price) while the rollup's latest is
 $5.19 — we use the latest, which is why $18.13 here vs $17.79 in the doc.
 
-── THE SLICE CROSS-CHECK (three opinions per SKU) ──
-`derived` is piece_oz / slices_per_piece. Note what it is NOT: the harvest computed
-`slices_per_piece` as floor(piece_oz / Juan's oz-per-slice), so dividing back is close to
-an identity and the `vs Juan` column is a ROUNDING check, not corroboration. The column
-that earns its place is `vs LIVE`.
+── THE SLICE TABLE: SPEC vs OPERATIONAL ──
+`derived` is piece_oz / slices_per_piece — the piece model's implied slice weight. Note what
+it is NOT: the harvest computed `slices_per_piece` as floor(piece_oz / the SPEC oz-per-slice),
+so dividing back is near-identity. `derived` and `spec` agreeing means the harvest's own
+arithmetic is self-consistent, and says nothing about what the line produces.
 
-| our SKU | piece oz / slices | derived | Juan (seed 10) | LIVE | derived vs Juan | derived vs LIVE | action |
-|---|---:|---:|---:|---:|---|---:|---|
-| Turkey | 148 / 148 | 1.0000 | 1 | 1 | ✓ | ✓ | no-op (already right) |
-| Roast Beef | 110.9 / 74 | 1.4986 | 1.5 | 1.5 | ✓ | ✓ | no-op (already right) |
-| Provolone | 88 / 117 | 0.7521 | 0.75 | 0.7 | ✓ | **+7.4%** | **STOP (live unexplained)** |
-| Genoa | 103 / 103 | 1.0000 | 1 | 0.4 | ✓ | **+150.0%** | **STOP (live unexplained)** |
-| Capicola | 57.5 / 57 | 1.0088 | 1 | 0.4 | ✓ | **+152.2%** | **STOP (live unexplained)** |
-| Ever Roast Chicken | 74.1 / 74 | 1.0014 | _(no entry)_ | NULL | n/a | NULL | **WRITE 1** |
-| Pepperoni | 55.9 / 224 | 0.2496 | 0.25 | 0.2 | ✓ | **+24.8%** | **STOP (live unexplained)** |
+**The `LIVE` column is the operational weight, and Juan's ruling makes it the one that
+counts.** Where a `ruled` value appears, that row is settled: live stands, nothing is written,
+and the seed-10 constant moves to match it.
 
-Read the `derived vs LIVE` percentages in that direction: `+150.0%` on Genoa means the piece
-model's slice is two and a half times the live one — equivalently, production carries a slice
-**60% lighter** than both other sources say.
+| our SKU | piece oz / slices | derived | spec (seed 10) | LIVE | ruled (Juan) | spec vs live gap | action |
+|---|---:|---:|---:|---:|---:|---:|---|
+| Turkey | 148 / 148 | 1.0000 | 1 | 1 | _(unruled)_ | ≈0% | no-op (already right) |
+| Roast Beef | 110.9 / 74 | 1.4986 | 1.5 | 1.5 | _(unruled)_ | ≈0% | no-op (already right) |
+| Provolone | 88 / 117 | 0.7521 | 0.75 | 0.7 | **0.7** ✓ruled | **+7.4%** | **KEEP LIVE (ruled)** |
+| Genoa | 103 / 103 | 1.0000 | 1 | 0.4 | **0.4** ✓ruled | **+150.0%** | **KEEP LIVE (ruled)** |
+| Capicola | 57.5 / 57 | 1.0088 | 1 | 0.4 | **0.4** ✓ruled | **+152.2%** | **KEEP LIVE (ruled)** |
+| Ever Roast Chicken | 74.1 / 74 | 1.0014 | _(no entry)_ | NULL | _(unruled)_ | NULL | **WRITE 1** (spec — pending weigh) |
+| Pepperoni | 55.9 / 224 | 0.2496 | 0.25 | 0.2 | **0.2** ✓ruled | **+24.8%** | **KEEP LIVE (ruled)** |
+
+Read the gap column as *how far spec sits above operational*: `+150.0%` on Genoa means the
+spec slice is two and a half times the real one — the line cuts genoa **60% thinner than the
+spec assumed.** Four of five gaps run the same direction (operational lighter than spec),
+which is what you would expect from a line slicing to a visual target rather than a scale,
+and ham runs the other way (+20% heavier). None of that is a defect; it is the difference
+between an intention and a measurement, and it is exactly the quantity costing needs.
 
 ## Section B — weight-file corrections (DB + the seed-10 constants)
 
@@ -160,22 +170,25 @@ Case price verified live from the rollup: unit_price_min = unit_price_max = $47.
     what section D needs. Flagged rather than buried.
 
 
-### B3 — PFG Ham avg_oz_per_each = 1.0 (from Juan's own measured table)
+### B3 — PFG Ham avg_oz_per_each = 1.2 (mirrors the Baldor twin's measured weight)
 
 ```
-PFG/Ham   [804cb32d-ea68-4467-8479-b82f34a143a0] avg_oz_per_each = NULL  (seed 18 PRIMARY: holds the par, the price and — eventually — the pins)
+PFG/Ham    [804cb32d-ea68-4467-8479-b82f34a143a0] avg_oz_per_each = NULL  (seed 18 PRIMARY: holds the par, the price and — eventually — the pins)
 Baldor/Ham [15944b2d-881b-419e-bcdb-8d8c5412de5a] avg_oz_per_each = 1.2  (seed 18 BACKUP: holds the pins today)
-Juan's measured table (seed 10): Ham 1.0 oz, "unit = one thin deli slice"
+Juan's ruling (2026-08-20):        1.2 oz — the OPERATIONAL weight, surprise 3-sample average
+seed 10's SPEC table (superseded): 1 oz — "unit = one thin deli slice"
 ```
 
+**The earlier dry run proposed 1.0 here and that was wrong.** It read the seed-10 table as
+floor truth and the live 1.2 as an unexplained edit. Juan's ruling inverts that: the 1.2 is
+his own surprise measurement and the 1.0 was the aspirational figure. So the PFG twin takes
+**1.2**, and the reason it may take it from the Baldor row rather than needing its own weigh
+is physical, not clerical: **it is the same ham through the same slicer.** The twins are two
+vendor identities for one product — that is the entire premise of the P1 adjudication — so a
+slice off the PFG case and a slice off the Baldor case are the same slice. One measurement
+covers both.
 
-⚠ **This does NOT unblock section D for ham, and the brief expected it to.** Seed 18's pin
-gate requires the line's oz MEANING to be identical on both twins. The Baldor twin carries
-**1.2** oz/slice, not 1 — so after this write the gate compares 1.2 against 1, still
-refuses, and the pins stay on the backup. Writing 1.0 here is nonetheless correct: it is
-Juan's own measured number and the PFG twin currently has nothing at all. What is NOT
-resolved is which twin is wrong, and that is the same unexplained-live-weight question as
-section A's four STOPs. See the STOP list.
+  → PFG/Ham NULL -> **1.2**, and with 1.2 on both twins section D's ham gate now PASSES.
 
 ### B4 — Ever Roast Chicken: a new entry in the weights file
 
@@ -239,15 +252,22 @@ prediction with the real function, not a claim.
 | pair | pinned line | oz on BACKUP | oz on PRIMARY (post-B) | predicted gate |
 |---|---|---|---|---|
 | Fresh Mozzarella | Fresh Mozzarella (portioned) · 1 unit | Baldor 1 oz | PFG 1 oz | **GATE PASSES -> pin moves** |
-| Ham | Ham (portioned) · 1 unit | Baldor 1.2 oz | PFG 1 oz | **GATE REFUSES -> pin stays** |
+| Ham | Ham (portioned) · 1 unit | Baldor 1.2 oz | PFG 1.2 oz | **GATE PASSES -> pin moves** |
 
-Predicted: **1 pin(s) move, 1 still refuse.**
+Predicted: **2 pin(s) move, 0 still refuse.**
 
-The ham refusal is NOT the same failure seed 18 reported. Seed 18 refused because the PFG
-side resolved to NULL — nothing to preserve. After section B it resolves to a real number
-that simply is not the backup's, so the gate now refuses for the honest reason: **the two
-twins disagree about what one slice of ham weighs.** That is the P2 product-identity gap the
-seed-18 header predicted, arriving on schedule. It is in the STOP list.
+**Both pairs clear the gate.** Mozzarella was always going to once the PFG twin had a slice
+weight. Ham is the one the ruling unlocked: the earlier dry run proposed writing the spec 1.0
+to the PFG twin, which would have left the gate comparing 1.0 against the backup's measured
+1.2 and refusing a second time — the right refusal for the wrong reason. Mirroring the
+operational 1.2 instead makes the two sides agree because they now describe the same physical
+slice, which is what the gate was always asking about.
+
+Worth being precise about what the gate proves and what it does not. It proves the pinned
+line's oz value is IDENTICAL before and after the move, so no recipe silently changes what it
+costs or depletes. It does not prove 1.2 is the right number — that comes from Juan's scale,
+not from this script. The gate is a preservation check, and preservation is exactly what a
+re-point should guarantee.
 
 In `--execute` mode this script then RUNS `scripts/seed/18-twin-adjudication.ts --execute` as a child process,
 after sections A-C have landed, and reads the post-state back from the destination. In dry-run
@@ -324,82 +344,63 @@ with the vendorless decision table from wave 2, not on the list above.
 | **Section A — Boar's Head piece model** | **7** | **1** | **7** |
 | **Section B — weight corrections** | **2** | **3** | **1** |
 | **Section C — jug supersedes** | **2** | **0** | **2** |
-| Section D — seed-18 re-run | — | — | 1 pin move(s) predicted |
+| Section D — seed-18 re-run | — | — | 2 pin move(s) predicted |
 | Section E — decision tables only | 0 | 0 | 0 |
 | **TOTAL would-write rows** | **11** | **4** | **10** |
 
 `source` stamped on every written price row: `angel-harvest2-2026-08-20`
 `effective_date`: per-product `last_seen` from the harvest, never today.
 
-── STOP LIST: 5 — none of these are written; each needs Juan's word ──
 
-#### Provolone — live avg_oz_per_each 0.7 is neither Juan's 0.75 nor the piece-derived 0.7521 — and no audit row explains it
+## RESOLVED — the STOP list, settled by Juan's ruling (5 rows)
 
-```
-  Juan's measured table (seed 10):   0.75 oz/slice — written 2026-07-22, audit row present
-  piece model (harvest 2):           0.7521 oz/slice = 88 oz / 117 slices
-  LIVE in prod today:                0.7 oz/slice (+7.4% from the piece model)
-  slices per piece at the live weight: 125 (harvest 2 reports 117)
-  $/slice at the live weight:        $0.1536 (harvest 2 reports $0.1636) — the harvest's $/slice is computed off seed 10's constants, so if LIVE is right this whole column is wrong
-  depletion if overwritten:          "Provolone (portioned)" 1 unit -> 0.7 oz becomes 0.75 oz
-```
-> **UNBLOCK:** Confirm the real slice weight with Juan. If 0.7 is his floor number, seed 10's constant is the stale one and BOTH the harvest's slices-per-piece and its $/slice need recomputing. If 0.75 is right, an unaudited edit is live in production.
+The first dry run refused five weights because production carried values matching neither the
+seed-10 table nor the piece model, with no audit row explaining them. The ruling:
 
-#### Genoa — live avg_oz_per_each 0.4 is neither Juan's 1 nor the piece-derived 1.0000 — and no audit row explains it
+> Juan 2026-08-20: the live avg_oz_per_each values are HIS OWN measurements — 3-sample averages taken as a SURPRISE check, slicing unchanged and unbiased. Live = OPERATIONAL truth (what a slice really weighs); the seed-10 table = ASPIRATIONAL/SPEC weights (what it is supposed to weigh). Slices are normal thickness; operations differ from spec. Costing and depletion use the operational number. Do not 'correct' back from spec sheets.
 
-```
-  Juan's measured table (seed 10):   1 oz/slice — written 2026-07-22, audit row present
-  piece model (harvest 2):           1.0000 oz/slice = 103 oz / 103 slices
-  LIVE in prod today:                0.4 oz/slice (+150.0% from the piece model)
-  slices per piece at the live weight: 257 (harvest 2 reports 103)
-  $/slice at the live weight:        $0.1100 (harvest 2 reports $0.2744) — the harvest's $/slice is computed off seed 10's constants, so if LIVE is right this whole column is wrong
-  depletion if overwritten:          "Genoa (portioned)" 1 unit -> 0.4 oz becomes 1 oz
-```
-> **UNBLOCK:** Confirm the real slice weight with Juan. If 0.4 is his floor number, seed 10's constant is the stale one and BOTH the harvest's slices-per-piece and its $/slice need recomputing. If 1 is right, an unaudited edit is live in production.
+**Why that is more than a tie-break.** The two numbers were never rival measurements of one
+quantity — they are two quantities that had been sharing a column. A slice's SPEC weight is
+what it should be at the intended thickness; its OPERATIONAL weight is what the line actually
+produces. Costing and depletion answer "how much product left the building", so they take the
+operational number. The measurements were taken as a SURPRISE check, so nobody was slicing to
+the scale — which is what makes them usable as a baseline rather than a demonstration.
 
-#### Capicola — live avg_oz_per_each 0.4 is neither Juan's 1 nor the piece-derived 1.0088 — and no audit row explains it
+**No measured row is overwritten.** Every value in the `operational` column below is left
+exactly as production carries it — the original refusal stands, now for a good reason rather
+than an unresolved one. What DOES change is `scripts/seed/10-fill-sku-weights.ts`: its
+constants move to the operational values with the ruling recorded inline, so a future re-run
+of that seed cannot quietly restore the spec numbers over his measurements.
 
-```
-  Juan's measured table (seed 10):   1 oz/slice — written 2026-07-22, audit row present
-  piece model (harvest 2):           1.0088 oz/slice = 57.5 oz / 57 slices
-  LIVE in prod today:                0.4 oz/slice (+152.2% from the piece model)
-  slices per piece at the live weight: 143 (harvest 2 reports 57)
-  $/slice at the live weight:        $0.1370 (harvest 2 reports $0.3406) — the harvest's $/slice is computed off seed 10's constants, so if LIVE is right this whole column is wrong
-  depletion if overwritten:          "Capicola (portioned)" 1 unit -> 0.4 oz becomes 1 oz
-```
-> **UNBLOCK:** Confirm the real slice weight with Juan. If 0.4 is his floor number, seed 10's constant is the stale one and BOTH the harvest's slices-per-piece and its $/slice need recomputing. If 1 is right, an unaudited edit is live in production.
+The one write in this neighbourhood is §B3, and it is a fill rather than an overwrite: the
+PFG ham twin held NULL and now MIRRORS the Baldor twin's measured 1.2. Same ham, same slicer,
+so one measurement covers both identities — and it is what lets §D's ham pin move.
 
-#### Pepperoni — live avg_oz_per_each 0.2 is neither Juan's 0.25 nor the piece-derived 0.2496 — and no audit row explains it
+| our SKU | spec (was) | **operational (live, kept)** | gap | slices/piece spec -> real | $/slice spec -> real | harvest doc said |
+|---|---:|---:|---:|---:|---:|---:|
+| Provolone | 0.75 | **0.7** | **-6.7%** | 117 -> **125** | $0.1641 -> **$0.1536** | $0.1636 |
+| Genoa | 1 | **0.4** | **-60.0%** | 103 -> **257** | $0.2744 -> **$0.1100** | $0.2744 |
+| Capicola | 1 | **0.4** | **-60.0%** | 57 -> **143** | $0.3437 -> **$0.1370** | $0.3406 |
+| Pepperoni | 0.25 | **0.2** | **-20.0%** | 223 -> **279** | $0.0813 -> **$0.0650** | $0.0795 |
+| Ham (Baldor — the measured twin) | 1 | **1.2** | **+20.0%** | — | — | n/a (not a Delmar piece) |
 
-```
-  Juan's measured table (seed 10):   0.25 oz/slice — written 2026-07-22, audit row present
-  piece model (harvest 2):           0.2496 oz/slice = 55.9 oz / 224 slices
-  LIVE in prod today:                0.2 oz/slice (+24.8% from the piece model)
-  slices per piece at the live weight: 279 (harvest 2 reports 224)
-  $/slice at the live weight:        $0.0650 (harvest 2 reports $0.0795) — the harvest's $/slice is computed off seed 10's constants, so if LIVE is right this whole column is wrong
-  depletion if overwritten:          "Pepperoni (portioned)" 1 unit -> 0.2 oz becomes 0.25 oz
-```
-> **UNBLOCK:** Confirm the real slice weight with Juan. If 0.2 is his floor number, seed 10's constant is the stale one and BOTH the harvest's slices-per-piece and its $/slice need recomputing. If 0.25 is right, an unaudited edit is live in production.
+**The last three columns are the deliverable.** The harvest's own slices-per-piece and $/slice
+tables were computed off the spec constants, so for these five they are wrong in the direction
+that matters most: they UNDERSTATE how many slices a piece yields and therefore OVERSTATE what
+a slice costs. Genoa is the extreme — 103 slices at $0.2744 on paper against 257 at $0.1100 on
+the line, a 2.5x error in per-slice cost. Anyone costing a sandwich off the harvest doc rather
+than this table is working from the wrong number.
 
-#### Ham — Baldor/Ham carries 1.2 oz/slice; Juan's measured table and seed 10's own audit row both say 1
+Note the ruling does NOT reach every weight in this wave, and the boundary is physical rather
+than clerical. It governs portions **we** cut, because only observing our line can tell you
+what our slice weighs. Bacon (vendor-portioned 12/14 layer box) and fresh mozzarella
+(manufacturer-sliced 32 CT log) are cut before they reach us, so the vendor spec IS their
+operational fact — there is no slicer of ours for a surprise weigh to observe. Both also never
+moved after seed 10 ran, where all five ruled SKUs did; that movement is the fingerprint of a
+measurement, and its absence is the fingerprint of an untouched estimate.
 
-```
-  Juan's measured table (seed 10): 1 oz — and the audit row from 2026-07-22 records seed 10 writing exactly 1 to this row
-  LIVE on Baldor/Ham today:        1.2 oz — changed since, with NO audit row
-  PFG/Ham (the primary):           NULL
-  consequence: seed 18's pin gate compares 1.2 vs 1 and REFUSES; the ham pin stays on the backup twin
-```
-> **UNBLOCK:** Decide the real ham slice weight. Setting PFG/Ham to 1.2 instead would make the gate pass immediately — but it would ratify an unaudited value over Juan's measured one, which is the wrong way round to decide it.
-
-These four-plus-one all have one shape, and it is worth naming: **a live `avg_oz_per_each`
-that matches neither Juan's measured table nor the piece model, with no audit row explaining
-the change.** Seed 10's audit rows from 2026-07-22 record it writing Juan's values to these
-exact SKU ids; the values in production today are different, and nothing in `audit_log`
-covers the difference. Either an unaudited edit reached production, or Juan corrected these
-by hand from the floor and the seed file is the stale copy. **Both readings are plausible and
-they imply opposite fixes**, which is why this script writes neither. If the live numbers are
-his, then the harvest's own slices-per-piece and $/slice tables are computed off stale
-constants and need recomputing — the corrected figures are in the section A table.
+── STOP LIST: 0 — none of these are written; each needs Juan's word ──
+_(none — the ruling cleared the list, and no row has drifted off it since.)_
 
 ── REFUSALS / NO-OPS: 8 ──
 
@@ -407,18 +408,18 @@ constants and need recomputing — the corrected figures are in the section A ta
 
 > The live row already carries the corrected value. Idempotency working — reported, not written.
 
-- §A **Turkey** (avg_oz_per_each): live 1 already matches Juan's table and the piece model
-- §A **Roast Beef** (avg_oz_per_each): live 1.5 already matches Juan's table and the piece model
+- §A **Turkey** (avg_oz_per_each): live 1 matches both the spec table and the piece model — spec and operations agree here
+- §A **Roast Beef** (avg_oz_per_each): live 1.5 matches both the spec table and the piece model — spec and operations agree here
 - §B2 **Baldor/Fresh Mozzarella** (avg_oz_per_each): already 1
 
-**LIVE_WEIGHT_UNEXPLAINED** — 4
+**OPERATIONAL_KEEP_LIVE** — 4
 
-> The LIVE avg_oz_per_each is neither Juan's table value nor the piece-derived value, and no audit row explains how it got there. Overwriting it would silently change what every consuming recipe depletes, in a direction nobody has signed off. Adjudicate before writing.
+> RESOLVED by Juan's 2026-08-20 ruling: the live value is his own surprise-measured 3-sample average — the OPERATIONAL weight — and the seed-10 figure was the aspirational/spec one. Live stands, no write. The seed-10 constant is amended to match so a future re-run cannot regress the measurement.
 
-- §A **Provolone** (avg_oz_per_each): live 0.7, Juan's table 0.75, piece-derived 0.7521
-- §A **Genoa** (avg_oz_per_each): live 0.4, Juan's table 1, piece-derived 1.0000
-- §A **Capicola** (avg_oz_per_each): live 0.4, Juan's table 1, piece-derived 1.0088
-- §A **Pepperoni** (avg_oz_per_each): live 0.2, Juan's table 0.25, piece-derived 0.2496
+- §A **Provolone** (avg_oz_per_each): live 0.7 = the ruled operational weight; spec was 0.75
+- §A **Genoa** (avg_oz_per_each): live 0.4 = the ruled operational weight; spec was 1
+- §A **Capicola** (avg_oz_per_each): live 0.4 = the ruled operational weight; spec was 1
+- §A **Pepperoni** (avg_oz_per_each): live 0.2 = the ruled operational weight; spec was 0.25
 
 **OUR_PACK_UNRESOLVABLE** — 1
 
@@ -447,12 +448,17 @@ pure function the admin lib's sync-on-save uses. Never an in-place UPDATE, never
 
 **Weights (4)** — `vendor_items.avg_oz_per_each`, the value every COUNT-unit recipe line depletes.
 
-| § | SKU | vendor | from | to | arithmetic | depletion impact |
-|---|---|---|---|---|---|---|
-| A | Ever Roast Chicken | Boar's Head | NULL | **1** | 74.1 oz / 74 slices = 1.0014 -> 1 | no count-unit recipe pin — this SKU's lines are weight-denominated, so nothing depletes differently |
-| B | Bacon | Boar's Head | 0.75 | **1.23** | 16 oz / 13 strips-per-lb (the "12/14" spec) = 1.2308 -> 1.23 | Cooked Bacon: 9 oz -> 14.76 oz (**+64.0%**) |
-| B | Fresh Mozzarella | PFG | NULL | **1** | the SKU name says it: MOZZ 1OZ SLCD, and 32 CT x 1 oz = 2 lb closes against the 6/2 LB pack field | none today (this twin carries no recipe pins); it is what lets section D's pin move preserve its oz meaning |
-| B | Ham | PFG | NULL | **1** | Juan's measured slice table, scripts/seed/10-fill-sku-weights.ts: { name: "Ham", avgOz: 1.0, note: "unit = one thin deli slice" } | none today (the PFG twin carries no recipe pins); it exists so section D's pin move has a value to preserve |
+The `class` column carries Juan's spec-vs-operational distinction into the data. **OPERATIONAL**
+= observed, or set by whoever actually cuts the portion. **SPEC** = derived and awaiting a
+weigh — a placeholder, not a peer of the measured values. It rides into the audit row so a
+future reader can tell which numbers were seen and which were inferred.
+
+| § | SKU | vendor | class | from | to | arithmetic | depletion impact |
+|---|---|---|---|---|---|---|---|
+| A | Ever Roast Chicken | Boar's Head | **SPEC** ⚠ | NULL | **1** | 74.1 oz / 74 slices = 1.0014 -> 1 | no count-unit recipe pin — this SKU's lines are weight-denominated, so nothing depletes differently |
+| B | Bacon | Boar's Head | OPERATIONAL | 0.75 | **1.23** | 16 oz / 13 strips-per-lb (the "12/14" spec) = 1.2308 -> 1.23 | Cooked Bacon: 9 oz -> 14.76 oz (**+64.0%**) |
+| B | Fresh Mozzarella | PFG | OPERATIONAL | NULL | **1** | the SKU name says it: MOZZ 1OZ SLCD, and 32 CT x 1 oz = 2 lb closes against the 6/2 LB pack field | none today (this twin carries no recipe pins); it is what lets section D's pin move preserve its oz meaning |
+| B | Ham | PFG | OPERATIONAL | NULL | **1.2** | mirror of Baldor/Ham's live 1.2 oz — the same physical ham through the same slicer | none today (the PFG twin carries no recipe pins). Its purpose is section D: with 1.2 on both twins the pin's oz meaning is preserved and seed 18's gate passes, so the ham pin can finally follow the par to the primary. |
 
 **Prices (10)** — appended to `vendor_price_history`; nothing is ever modified in place.
 
