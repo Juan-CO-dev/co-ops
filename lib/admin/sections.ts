@@ -35,6 +35,10 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   { id: "skus",                i18nKey: "admin.section.skus",                href: "/admin/skus",                minLevel: 6 },
   { id: "recipes",             i18nKey: "admin.section.recipes" as TranslationKey,             href: "/admin/recipes",             minLevel: 6 },
   { id: "items",               i18nKey: "admin.section.items" as TranslationKey,               href: "/admin/items",               minLevel: 6 },
+  // The payoff of the derivation chain above: what the menu actually COSTS.
+  // Sits here (not under catering) because it reads the whole regular menu, and
+  // at 6 because it is a cost READ (lib/admin/cost.ts COST_READ_MIN).
+  { id: "menu-costing",        i18nKey: "admin.section.menu-costing",                          href: "/admin/menu-costing",        minLevel: 6 },
   { id: "catering",            i18nKey: "admin.section.catering" as TranslationKey,            href: "/admin/catering",            minLevel: 6 },
   { id: "checklist-templates", i18nKey: "admin.section.checklist-templates", href: "/admin/checklist-templates", minLevel: 7 },
   { id: "categories",          i18nKey: "admin.section.categories",          href: "/admin/categories",          minLevel: 8 },
