@@ -215,7 +215,7 @@ export function PinKeypad({ userName, role, onSubmit, onBack }: PinKeypadProps) 
         </div>
 
         {error && error.kind !== "locked" && (
-          <p className="text-center text-sm font-semibold text-co-cta" role="alert">
+          <p className="text-center text-sm font-semibold text-co-cta-text" role="alert">
             {error.kind === "invalid" && (error.message ?? t("auth.pin.error_invalid"))}
             {error.kind === "inactive" && t("auth.pin.error_inactive")}
             {error.kind === "network" && (error.message ?? t("auth.pin.error_network"))}
