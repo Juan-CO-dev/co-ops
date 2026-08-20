@@ -895,6 +895,7 @@
   "admin.skus.builder.section_pack": "Pack truth",
   "admin.skus.builder.section_cost": "Cost & usage",
   "admin.skus.builder.name_collision": "Heads up: {names} already use this name. Save anyway, or rename.",
+  "admin.skus.builder.name_twin": "Backup item: {vendors} also carries this. That's fine — one item per vendor is how backups work.",
   "admin.skus.builder.chain_intro": "This SKU has a pack chain — the source of truth for how it's packed.",
   "admin.skus.builder.add_detail_later": "You can add the full pack chain later.",
   "admin.skus.builder.chain_toggle_show": "Edit pack chain",

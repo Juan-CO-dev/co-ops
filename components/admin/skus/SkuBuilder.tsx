@@ -246,9 +246,14 @@ export function SkuBuilder({
     return trimmed === "" ? null : Number(trimmed);
   };
 
+  // P7: compares against the vendor SELECTED IN THE FORM (vendorId state), so retargeting
+  // a SKU to another vendor re-classifies the collision live rather than on save.
   const collisions = useMemo(
-    () => (allSkus ? skuNameCollisions(name, allSkus, initial?.id ?? null) : []),
-    [name, allSkus, initial?.id],
+    () =>
+      allSkus
+        ? skuNameCollisions(name, allSkus, initial?.id ?? null, vendorId || null)
+        : { duplicates: [], twins: [] },
+    [name, allSkus, initial?.id, vendorId],
   );
 
   const showVendorDropdown = vendors !== undefined;
@@ -371,9 +376,20 @@ export function SkuBuilder({
         <Labeled label={t("admin.skus.field.name")}>
           <input className={fieldCls} value={name} disabled={busy} onChange={(e) => setName(e.target.value)} />
         </Labeled>
-        {collisions.length > 0 ? (
+        {/* P7 — two classes, rendered distinctly. Same-vendor is a real duplicate (warn
+            tone); cross-vendor is the BACKUP twin the multi-vendor doctrine asks for, so
+            it is affirmed, not nagged about. Warning on correct behavior is how warnings
+            get ignored. */}
+        {collisions.duplicates.length > 0 ? (
           <p className="text-xs font-semibold text-co-cta-text" role="status">
-            {t("admin.skus.builder.name_collision", { names: collisions.map((c) => c.name).join(", ") })}
+            {t("admin.skus.builder.name_collision", { names: collisions.duplicates.map((c) => c.name).join(", ") })}
+          </p>
+        ) : null}
+        {collisions.twins.length > 0 ? (
+          <p className="text-xs font-semibold text-co-confirm-text" role="status">
+            {t("admin.skus.builder.name_twin", {
+              vendors: [...new Set(collisions.twins.map((c) => c.vendorName).filter((v): v is string => v != null))].join(", "),
+            })}
           </p>
         ) : null}
 
