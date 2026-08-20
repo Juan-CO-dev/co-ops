@@ -895,6 +895,7 @@
   "admin.skus.builder.section_pack": "Empaque real",
   "admin.skus.builder.section_cost": "Costo y uso",
   "admin.skus.builder.name_collision": "Ojo: {names} ya usan este nombre. Guarda de todos modos o cámbialo.",
+  "admin.skus.builder.name_twin": "Artículo de respaldo: {vendors} también lo maneja. Está bien — así funcionan los respaldos, uno por proveedor.",
   "admin.skus.builder.chain_intro": "Este SKU tiene cadena de empaque — la fuente de verdad de cómo se empaca.",
   "admin.skus.builder.add_detail_later": "Puedes agregar la cadena de empaque completa después.",
   "admin.skus.builder.chain_toggle_show": "Editar cadena de empaque",

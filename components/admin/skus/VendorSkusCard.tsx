@@ -79,8 +79,13 @@ export function VendorSkusCard({
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Collision candidates for the builder's non-blocking name warning.
-  const collisionCandidates: SkuNameCollisionCandidate[] = skus.map((s) => ({ id: s.id, name: s.name, active: s.active }));
+  // Collision candidates for the builder's non-blocking name feedback. vendorId/vendorName
+  // ride along so the builder can tell a same-vendor DUPLICATE from a cross-vendor backup
+  // twin (audit P7). This card is scoped to one vendor, so in practice every match here is
+  // a duplicate; the catalog view is where twins surface.
+  const collisionCandidates: SkuNameCollisionCandidate[] = skus.map((s) => ({
+    id: s.id, name: s.name, active: s.active, vendorId: s.vendorId, vendorName: s.vendorName,
+  }));
 
   const create = async (values: SkuFormValues, chain: StarterChainLevel[] | null) => {
     if (busy) return;

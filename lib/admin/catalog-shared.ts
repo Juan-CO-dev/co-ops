@@ -413,25 +413,68 @@ export interface SkuNameCollisionCandidate {
   id: string;
   name: string;
   active: boolean;
+  /** Owning vendor, null when the SKU is unassigned ("manual"). */
+  vendorId: string | null;
+  /** Display name for the affirmation copy; null when unassigned or unresolved. */
+  vendorName: string | null;
 }
 
 /**
- * Find ACTIVE SKUs whose name collides with `name` (case-insensitive, trimmed),
- * excluding the SKU being edited (`selfId`). Pure — powers the NON-BLOCKING
- * name-collision warning on save (design §1: "11 dup pairs live"; dedupe is a
- * warning, never a hard gate). Returns the colliding candidates (so the UI can
- * name them); empty when the name is clean or blank.
+ * A name collision, split by whether it is a PROBLEM or the doctrine working.
+ *
+ * MULTI-VENDOR AUDIT P7 (docs/audits/2026-08-20-multivendor-semantics-audit.md).
+ * Juan's ratified model says the same product carries a SEPARATE SKU per vendor, and
+ * that multiple actives are BACKUPS ("vendor down, order from the other"). The old
+ * check compared names only — so the instant a twin pair goes both-active, the builder
+ * nags the manager for doing exactly what the doctrine asks. A warning that fires on
+ * correct behavior trains people to ignore warnings.
+ */
+export interface SkuNameCollisionResult {
+  /**
+   * Same-vendor name matches — a REAL duplicate: one vendor selling you one product
+   * under two rows splits its par, price history and count lines in half.
+   *
+   * Also holds matches where either side has NO vendor. That is deliberate: an
+   * unassigned SKU cannot be PROVEN to be a deliberate per-vendor twin, so it keeps
+   * the conservative warning rather than being affirmed on a guess.
+   */
+  duplicates: SkuNameCollisionCandidate[];
+  /**
+   * Same name at a DIFFERENT, named vendor — the backup twin the doctrine wants.
+   * Informational: affirm it, never warn about it.
+   */
+  twins: SkuNameCollisionCandidate[];
+}
+
+/**
+ * Split ACTIVE SKUs whose name collides with `name` (case-insensitive, trimmed) into
+ * same-vendor duplicates vs cross-vendor twins, excluding the SKU being edited
+ * (`selfId`). Pure — powers the NON-BLOCKING name feedback on save (design §1: "11 dup
+ * pairs live"; dedupe is a warning, never a hard gate). Both lists are empty when the
+ * name is clean or blank.
+ *
+ * `selfVendorId` is the vendor currently selected in the form (not necessarily the saved
+ * one — retargeting a SKU to another vendor should re-classify live). When it is null,
+ * every match lands in `duplicates` per the rule above.
  */
 export function skuNameCollisions(
   name: string,
   skus: readonly SkuNameCollisionCandidate[],
   selfId?: string | null,
-): SkuNameCollisionCandidate[] {
+  selfVendorId?: string | null,
+): SkuNameCollisionResult {
   const needle = name.trim().toLowerCase();
-  if (needle === "") return [];
-  return skus.filter(
-    (s) => s.active && s.id !== selfId && s.name.trim().toLowerCase() === needle,
-  );
+  if (needle === "") return { duplicates: [], twins: [] };
+  const duplicates: SkuNameCollisionCandidate[] = [];
+  const twins: SkuNameCollisionCandidate[] = [];
+  for (const s of skus) {
+    if (!s.active || s.id === selfId || s.name.trim().toLowerCase() !== needle) continue;
+    // Cross-vendor ONLY when both sides name a vendor and they differ — anything else
+    // (same vendor, or an unassigned side) stays a warning.
+    if (selfVendorId != null && s.vendorId != null && s.vendorId !== selfVendorId) twins.push(s);
+    else duplicates.push(s);
+  }
+  return { duplicates, twins };
 }
 
 // ── Assembled catalog entity (TYPE-only import for the client) ────────────────
