@@ -137,7 +137,7 @@ export default async function CateringInsightsPage() {
 function RevenueCard({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
   return (
     <div className={`co-card p-4 ${accent ? "ring-2 ring-co-gold/40" : ""}`}>
-      <p className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim">{label}</p>
+      <p className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-dim">{label}</p>
       <p className="mt-1 text-2xl font-extrabold tabular-nums text-co-text">{value}</p>
     </div>
   );

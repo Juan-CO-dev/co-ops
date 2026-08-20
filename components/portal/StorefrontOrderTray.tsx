@@ -45,7 +45,7 @@ function Stepper({
       <button
         onClick={onRemove}
         aria-label="Remove one"
-        className="flex h-9 w-9 items-center justify-center rounded-full border border-co-border bg-co-bg text-lg font-bold text-co-text transition hover:bg-co-surface-2"
+        className="flex h-11 w-11 items-center justify-center rounded-full border border-co-border bg-co-bg text-lg font-bold text-co-text transition hover:bg-co-surface-2"
       >
         −
       </button>
@@ -55,7 +55,7 @@ function Stepper({
       <button
         onClick={onAdd}
         aria-label="Add one more"
-        className="flex h-9 w-9 items-center justify-center rounded-full bg-co-text text-lg font-bold text-co-cta transition hover:bg-co-text/90"
+        className="flex h-11 w-11 items-center justify-center rounded-full bg-co-text text-lg font-bold text-co-cta transition hover:bg-co-text/90"
       >
         +
       </button>
@@ -137,7 +137,7 @@ function CompactRow({
           <button
             onClick={onRemove}
             aria-label={`Remove ${item.name}`}
-            className="flex h-8 w-8 items-center justify-center rounded-full border border-co-bg/30 text-co-bg/80 transition hover:border-co-bg"
+            className="flex h-11 w-11 items-center justify-center rounded-full border border-co-bg/30 text-co-bg/80 transition hover:border-co-bg"
           >
             −
           </button>
@@ -147,7 +147,7 @@ function CompactRow({
           <button
             onClick={onAdd}
             aria-label={`Add another ${item.name}`}
-            className="flex h-8 w-8 items-center justify-center rounded-full bg-co-gold text-co-text transition hover:bg-co-gold/90"
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-co-gold text-co-text transition hover:bg-co-gold/90"
           >
             +
           </button>
@@ -155,7 +155,7 @@ function CompactRow({
       ) : (
         <button
           onClick={onAdd}
-          className="shrink-0 rounded-full bg-co-bg/15 px-3 py-1.5 text-xs font-bold text-co-bg transition hover:bg-co-bg/25"
+          className="inline-flex min-h-[44px] shrink-0 items-center rounded-full bg-co-bg/15 px-3 py-1.5 text-xs font-bold text-co-bg transition hover:bg-co-bg/25"
         >
           Add
         </button>
@@ -195,7 +195,7 @@ function SizedRow({
                   <button
                     onClick={() => onRemove(sz.id)}
                     aria-label={`Remove ${item.name} ${sz.label}`}
-                    className="flex h-7 w-7 items-center justify-center rounded-full border border-co-bg/30 text-co-bg/80 transition hover:border-co-bg"
+                    className="flex h-11 w-11 items-center justify-center rounded-full border border-co-bg/30 text-co-bg/80 transition hover:border-co-bg"
                   >
                     −
                   </button>
@@ -203,7 +203,7 @@ function SizedRow({
                   <button
                     onClick={() => onAdd(sz.id)}
                     aria-label={`Add another ${item.name} ${sz.label}`}
-                    className="flex h-7 w-7 items-center justify-center rounded-full bg-co-gold text-co-text transition hover:bg-co-gold/90"
+                    className="flex h-11 w-11 items-center justify-center rounded-full bg-co-gold text-co-text transition hover:bg-co-gold/90"
                   >
                     +
                   </button>
@@ -212,7 +212,7 @@ function SizedRow({
                 <button
                   onClick={() => onAdd(sz.id)}
                   aria-label={`Add ${item.name} ${sz.label}`}
-                  className="flex h-7 w-7 items-center justify-center rounded-full bg-co-bg text-co-text transition hover:bg-co-bg/80"
+                  className="flex h-11 w-11 items-center justify-center rounded-full bg-co-bg text-co-text transition hover:bg-co-bg/80"
                 >
                   +
                 </button>

@@ -25,7 +25,7 @@ export default function DeliveryRouteMap({ mapKey, lat, lng, onPinChange }: Deli
   const center: [number, number] = [lat, lng];
   return (
     <MapContainer key={mapKey} center={center} zoom={13} style={{ height: "320px", width: "100%" }}
-      className="rounded-xl border-2 border-co-border-2">
+      className="rounded-3xl border-2 border-co-border-2">
       <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' />
       <Marker position={center} draggable

@@ -119,7 +119,7 @@ export function QuotesClient({ quotes, locations, customers, leads, pricingByLoc
         <div className="flex flex-col gap-6">
           {grouped.map((g) => (
             <section key={g.status}>
-              <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
+              <h2 className="mb-2 text-xs font-bold uppercase tracking-wide text-co-text-muted">
                 {t(`catering.quotes.status.${g.status}` as TranslationKey)} · {g.rows.length}
               </h2>
               <ul className="flex flex-col gap-2">
@@ -457,7 +457,7 @@ function QuoteBuilder({
             <select
               value=""
               onChange={(e) => { const pkg = packages.find((p) => p.id === e.target.value); if (pkg) addPackage(pkg); }}
-              className="min-h-[40px] rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text"
+              className="min-h-[44px] rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text"
             >
               <option value="">{t("catering.quotes.add_package")}</option>
               {packages.map((p) => (
@@ -469,7 +469,7 @@ function QuoteBuilder({
             <select
               value=""
               onChange={(e) => { const item = menuItems.find((m) => m.id === e.target.value); if (item) addALaCarte(item); }}
-              className="min-h-[40px] rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text"
+              className="min-h-[44px] rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text"
             >
               <option value="">{t("catering.quotes.add_ala_carte")}</option>
               {menuItems.map((m) => (
@@ -524,7 +524,7 @@ function QuoteBuilder({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="flex flex-col gap-1">
-      <span className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim">{label}</span>
+      <span className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-dim">{label}</span>
       {children}
     </label>
   );
@@ -602,7 +602,7 @@ function PaymentsSection({
                   if (window.confirm(t("catering.quotes.payments.mark_paid"))) onMarkPaid(p.id);
                 }}
                 disabled={payingId !== null}
-                className="inline-flex min-h-[36px] items-center rounded-full border-2 border-co-success/50 bg-co-success/10 px-3 text-xs font-bold text-co-confirm-text disabled:opacity-50"
+                className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-success/50 bg-co-success/10 px-3 text-xs font-bold text-co-confirm-text disabled:opacity-50"
               >
                 {payingId === p.id ? t("catering.quotes.payments.marking") : t("catering.quotes.payments.mark_paid")}
               </button>

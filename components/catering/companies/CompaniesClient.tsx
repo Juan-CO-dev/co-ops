@@ -94,11 +94,11 @@ function AddCompanyForm({ onDone, onCancel }: { onDone: () => void; onCancel: ()
   return (
     <div className="co-card flex flex-col gap-3 p-4">
       <label className="flex flex-col gap-1">
-        <span className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim">{t("catering.companies.field.name")}</span>
+        <span className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-dim">{t("catering.companies.field.name")}</span>
         <input value={name} onChange={(e) => setName(e.target.value)} className="min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text" />
       </label>
       <label className="flex flex-col gap-1">
-        <span className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim">{t("catering.companies.field.domain")}</span>
+        <span className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-dim">{t("catering.companies.field.domain")}</span>
         <input value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="acme.com" className="min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text" />
         <span className="text-xs text-co-text-dim">{t("catering.companies.domain_hint")}</span>
       </label>
@@ -107,7 +107,7 @@ function AddCompanyForm({ onDone, onCancel }: { onDone: () => void; onCancel: ()
         <button type="button" onClick={submit} disabled={busy} className="inline-flex min-h-[44px] items-center justify-center rounded-xl bg-co-text px-5 py-2 text-sm font-bold uppercase tracking-[0.12em] text-co-cta disabled:opacity-50">
           {busy ? t("catering.companies.saving") : t("catering.companies.create")}
         </button>
-        <button type="button" onClick={onCancel} disabled={busy} className="inline-flex min-h-[44px] items-center justify-center rounded-xl border-2 border-co-border-2 bg-co-surface px-5 py-2 text-sm font-semibold text-co-text-muted">
+        <button type="button" onClick={onCancel} disabled={busy} className="inline-flex min-h-[44px] items-center justify-center rounded-xl border-2 border-co-border-2 bg-co-surface px-5 py-2 text-sm font-semibold text-co-text">
           {t("catering.companies.cancel")}
         </button>
       </div>
@@ -165,10 +165,10 @@ function CompanyDetailPanel({ id, canWrite, onChange }: { id: string; canWrite: 
   if (!detail) return <p className="px-4 py-3 text-sm font-semibold text-co-cta-text">{t(errorKey ?? "catering.companies.error.generic")}</p>;
 
   return (
-    <div className="mt-2 flex flex-col gap-3 rounded-xl border-2 border-co-border-2 bg-co-surface p-4">
+    <div className="mt-2 flex flex-col gap-3 rounded-2xl border-2 border-co-border-2 bg-co-surface p-4">
       {/* Domains */}
       <div>
-        <h3 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim">{t("catering.companies.domains")}</h3>
+        <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-co-text-muted">{t("catering.companies.domains")}</h3>
         {detail.domains.length === 0 ? (
           <p className="text-sm text-co-text-muted">{t("catering.companies.no_domains")}</p>
         ) : (
@@ -185,8 +185,8 @@ function CompanyDetailPanel({ id, canWrite, onChange }: { id: string; canWrite: 
         )}
         {canWrite && (
           <div className="mt-2 flex gap-2">
-            <input value={newDomain} onChange={(e) => setNewDomain(e.target.value)} placeholder="acme.com" className="min-h-[40px] flex-1 rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text" />
-            <button type="button" disabled={busy || !newDomain.trim()} onClick={async () => { if (await mutate({ addDomain: newDomain.trim() })) setNewDomain(""); }} className="inline-flex min-h-[40px] items-center rounded-lg bg-co-text px-4 text-xs font-bold uppercase tracking-wide text-co-cta disabled:opacity-50">
+            <input value={newDomain} onChange={(e) => setNewDomain(e.target.value)} placeholder="acme.com" className="min-h-[44px] flex-1 rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text" />
+            <button type="button" disabled={busy || !newDomain.trim()} onClick={async () => { if (await mutate({ addDomain: newDomain.trim() })) setNewDomain(""); }} className="inline-flex min-h-[44px] items-center rounded-xl bg-co-text px-4 text-xs font-bold uppercase tracking-[0.12em] text-co-cta disabled:opacity-50">
               {t("catering.companies.add_domain")}
             </button>
           </div>
@@ -195,7 +195,7 @@ function CompanyDetailPanel({ id, canWrite, onChange }: { id: string; canWrite: 
 
       {/* Contacts */}
       <div className="border-t-2 border-co-border pt-3">
-        <h3 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim">{t("catering.companies.contacts")}</h3>
+        <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-co-text-muted">{t("catering.companies.contacts")}</h3>
         {detail.contacts.length === 0 ? (
           <p className="text-sm text-co-text-muted">{t("catering.companies.no_contacts")}</p>
         ) : (
@@ -210,8 +210,8 @@ function CompanyDetailPanel({ id, canWrite, onChange }: { id: string; canWrite: 
         )}
         {canWrite && (
           <div className="mt-2 flex gap-2">
-            <input type="email" value={attachEmail} onChange={(e) => setAttachEmail(e.target.value)} placeholder={t("catering.companies.attach_placeholder")} className="min-h-[40px] flex-1 rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text" />
-            <button type="button" disabled={busy || !attachEmail.trim()} onClick={async () => { if (await mutate({ attachContactEmail: attachEmail.trim() })) setAttachEmail(""); }} className="inline-flex min-h-[40px] items-center rounded-lg border-2 border-co-border-2 bg-co-surface px-4 text-xs font-bold uppercase tracking-wide text-co-text disabled:opacity-50">
+            <input type="email" value={attachEmail} onChange={(e) => setAttachEmail(e.target.value)} placeholder={t("catering.companies.attach_placeholder")} className="min-h-[44px] flex-1 rounded-lg border-2 border-co-border-2 bg-co-bg px-3 text-sm text-co-text" />
+            <button type="button" disabled={busy || !attachEmail.trim()} onClick={async () => { if (await mutate({ attachContactEmail: attachEmail.trim() })) setAttachEmail(""); }} className="inline-flex min-h-[44px] items-center rounded-xl border-2 border-co-border-2 bg-co-surface px-4 text-xs font-bold uppercase tracking-[0.12em] text-co-text disabled:opacity-50">
               {t("catering.companies.attach")}
             </button>
           </div>

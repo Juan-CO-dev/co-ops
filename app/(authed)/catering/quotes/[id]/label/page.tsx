@@ -47,7 +47,7 @@ export default async function CateringQuoteLabelPage({ params }: { params: Promi
           return (
             <div
               key={item.id}
-              className="break-inside-avoid rounded-xl border-2 border-co-text bg-white p-4 text-co-text"
+              className="break-inside-avoid rounded-2xl border-2 border-co-text bg-white p-4 text-co-text"
             >
               <p className="text-base font-extrabold leading-tight">{item.description ?? serverT(lang, "catering.labels.unnamed_item")}</p>
               <p className="mt-0.5 text-sm text-co-text-muted">
