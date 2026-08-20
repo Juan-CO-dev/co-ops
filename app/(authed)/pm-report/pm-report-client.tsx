@@ -454,7 +454,7 @@ export function PmReportClient({
 
       {/* ── MVP SECTION ── */}
       <section>
-        <h2 className="mb-3 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
+        <h2 className="mb-3 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
           {t("pm.mvp.heading")}
         </h2>
         <div className="flex flex-col gap-3">
@@ -504,7 +504,7 @@ export function PmReportClient({
 
       {/* ── EVAL CARDS ── */}
       <section>
-        <h2 className="mb-3 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
+        <h2 className="mb-3 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
           {t("pm.eval.attitude")}
         </h2>
         {/* Eval cards two-up at lg (recomposition PR 4b); the add-picker spans. */}
@@ -581,7 +581,7 @@ function WrapUpSection({
 
   return (
     <section>
-      <h2 className="mb-3 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
+      <h2 className="mb-3 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
         {t("pm.wrapup.heading")}
       </h2>
 

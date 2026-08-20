@@ -50,7 +50,7 @@ export function SectionsTab({
     <div className="mt-4 flex flex-col gap-6">
       <p className="rounded-lg border-2 border-co-gold-deep bg-co-gold/15 px-3 py-2 text-xs font-bold text-co-text">
         {t("admin.templates.items_moved")}{" "}
-        <Link href="/admin/items" className="underline decoration-2 underline-offset-2 hover:text-co-gold-deep">
+        <Link href="/admin/items" className="underline decoration-2 underline-offset-2 hover:text-co-gold-text">
           {t("admin.templates.items_moved_link")}
         </Link>
       </p>
@@ -283,7 +283,7 @@ function SectionRow({
               type="button"
               disabled={submitting}
               onClick={() => void disable()}
-              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-cta px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-surface disabled:opacity-50"
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-cta px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50"
             >
               {t("admin.templates.sections_panel.disable_confirm")}
             </button>
@@ -583,7 +583,7 @@ function SectionQuestionRow({
           <p className="text-xs text-co-text-muted">{sectionLabel}</p>
           <p className="text-sm font-bold text-co-text">
             {question.label}
-            <span className="ml-2 rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.05em] text-co-gold-deep">
+            <span className="ml-2 rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.05em] text-co-gold-text">
               {t(inputTypeKey)}
             </span>
           </p>
@@ -700,7 +700,7 @@ function SectionQuestionRow({
               type="button"
               disabled={submitting}
               onClick={() => void disable()}
-              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-cta px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-surface disabled:opacity-50"
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-cta px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50"
             >
               {t("admin.templates.section_questions_panel.disable")}
             </button>

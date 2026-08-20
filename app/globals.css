@@ -21,14 +21,21 @@
   /* Surface palette — light, branded warmth */
   --co-bg: #FFF9E4;          /* Mayo */
   --co-surface: #FFFFFF;     /* Pure white card surface on Mayo */
-  --co-surface-2: #FFF4D0;   /* Slightly deeper Mayo for hover/pressed */
+  --co-surface-2: #FFF4D0;   /* Slightly deeper Mayo for hover/pressed STATES only — not a resting fill */
+  --co-surface-inset: #FFFDF5; /* Nested/inset panel fill — the level BETWEEN white surface and the Mayo ground.
+                                * Distinct role from --co-surface-2: this is a resting fill for panels nested
+                                * inside a card; --co-surface-2 is the hover/pressed state of a control. */
   --co-border: #E8DEB8;      /* Hairline border, derived from Mayo */
   --co-border-2: #D4C98E;    /* Stronger border for emphasis */
 
   /* Brand */
   --co-gold: #FFE560;        /* Mustard — anchor */
-  --co-gold-deep: #E6C84A;   /* Pressed/hover Mustard */
-  --co-cta: #FF3A44;         /* Brand Red — CTA text ONLY (use sparingly) */
+  --co-gold-deep: #E6C84A;   /* Pressed states, borders, fills — NEVER a text color on light grounds (1.50:1 on Mayo) */
+  --co-gold-text: #7A6015;   /* AA dark-bronze gold TEXT on light grounds — 5.42:1 worst-case over the body gradient */
+  --co-cta: #FF3A44;         /* Brand Red — FILLS and the edge of a filled red control (use sparingly). Never text on light grounds */
+  --co-cta-text: #B3252C;    /* AA red TEXT on light grounds — 5.43:1 on danger-surface, 6.19:1 on Mayo, 6.53:1 on white.
+                              * Also the EDGE of a red outline on a light fill: --co-cta drops to 2.94:1 against the
+                              * hover tint, under the 3:1 non-text floor, so edge and label move together. */
 
   /* Text */
   --co-text: #141414;        /* Diet Coke — primary */
@@ -39,8 +46,14 @@
   /* Status */
   --co-success: #28B25C;     /* Brand Green */
   --co-warning: #F59E0B;
-  --co-danger: #FF3A44;      /* Brand Red */
+  --co-danger: #FF3A44;      /* Brand Red — same value as --co-cta; fill/border role. Text role = --co-cta-text */
   --co-info: #3F73B9;        /* Brand Blue */
+
+  /* Confirm affordance — reserved for the confirm/reject pairs the restyle sweep will apply.
+   * NOT covered by --co-success #28B25C, which is a fill/dot color: as text it measures
+   * 2.76:1 on white and 2.49:1 on its own success-surface, i.e. below AA in both text roles. */
+  --co-confirm: #1F7A44;      /* Confirm FILL (white text on it = 5.35:1) */
+  --co-confirm-text: #14532D; /* Confirm TEXT on light grounds — 9.11:1 on white */
 
   /* Status surfaces — pale tints for status banners/cards on the Mayo bg.
    * Centralizes the scattered bg-[#...] hex tints that drifted across the
@@ -63,6 +76,11 @@
 
   /* Direction C — warm-tinted elevation scale + card system. Shadows lean olive-
    * gold (not neutral grey) so they read intentional on the Mayo background. */
+  /* --co-card-border is the `.co-card` 1px hairline ONLY and deliberately gets NO
+   * @theme entry — there is no `border-co-card-border` utility and there must not be.
+   * At 1.23:1 on a white fill it is an invisible edge on anything that isn't a card;
+   * controls and panels take --co-border / --co-border-2 instead. (Consumed as a raw
+   * var() by .co-card below and by trends/BarChart's SVG axis stroke.) */
   --co-card-border: #F0E7C4;
   --co-shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(120, 100, 20, 0.09);
   --co-shadow-card-hover: 0 2px 4px rgba(0, 0, 0, 0.05), 0 14px 34px rgba(120, 100, 20, 0.14);
@@ -74,13 +92,17 @@
   --color-co-bg: var(--co-bg);
   --color-co-surface: var(--co-surface);
   --color-co-surface-2: var(--co-surface-2);
+  --color-co-surface-inset: var(--co-surface-inset);
   --color-co-border: var(--co-border);
   --color-co-border-2: var(--co-border-2);
+  /* NOTE: --co-card-border is intentionally absent — see its comment in :root. */
 
   /* Brand */
   --color-co-gold: var(--co-gold);
   --color-co-gold-deep: var(--co-gold-deep);
+  --color-co-gold-text: var(--co-gold-text);
   --color-co-cta: var(--co-cta);
+  --color-co-cta-text: var(--co-cta-text);
 
   /* Text */
   --color-co-text: var(--co-text);
@@ -93,6 +115,8 @@
   --color-co-warning: var(--co-warning);
   --color-co-danger: var(--co-danger);
   --color-co-info: var(--co-info);
+  --color-co-confirm: var(--co-confirm);
+  --color-co-confirm-text: var(--co-confirm-text);
 
   /* Status surfaces */
   --color-co-success-surface: var(--co-success-surface);

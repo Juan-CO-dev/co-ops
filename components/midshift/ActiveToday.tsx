@@ -19,7 +19,7 @@ export function ActiveToday({
 }) {
   return (
     <section>
-      <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
+      <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
         {serverT(language, "midshift.active.heading")}
       </h2>
 

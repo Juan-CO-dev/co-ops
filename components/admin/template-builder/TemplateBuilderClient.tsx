@@ -366,7 +366,7 @@ export function TemplateBuilderClient({
                 {tpl.name}
                 {dirty && <span aria-hidden className="text-co-cta">●</span>}
                 {alerts > 0 && (
-                  <span className="inline-flex items-center rounded-full bg-co-cta/15 px-1.5 text-[11px] font-bold text-co-cta">
+                  <span className="inline-flex items-center rounded-full bg-co-danger-surface px-1.5 text-[11px] font-bold text-co-cta-text">
                     {alerts}
                   </span>
                 )}
@@ -472,7 +472,7 @@ function TemplateDoctorPanel({
       ✓ {t("admin.templates.doctor.all_clear")}
     </span>
   ) : (
-    <span className="inline-flex items-center gap-1 rounded-full bg-co-cta/15 px-2 py-0.5 text-[11px] font-bold text-co-cta">
+    <span className="inline-flex items-center gap-1 rounded-full bg-co-danger-surface px-2 py-0.5 text-[11px] font-bold text-co-cta-text">
       {t("admin.templates.doctor.issues_n", { n: String(issueCount) })}
     </span>
   );
@@ -1073,12 +1073,12 @@ function ItemRow({
             </span>
           )}
           {missingEs && !isDraftAdd && (
-            <span className="inline-flex items-center rounded-full bg-co-cta/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-cta">
+            <span className="inline-flex items-center rounded-full bg-co-danger-surface px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-cta-text">
               {t("admin.templates.builder.badge.missing_es")}
             </span>
           )}
           {needsLink && (
-            <span className="inline-flex items-center rounded-full bg-co-cta/15 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-cta">
+            <span className="inline-flex items-center rounded-full bg-co-danger-surface px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.06em] text-co-cta-text">
               {t("admin.templates.builder.badge.needs_link")}
             </span>
           )}
@@ -2338,7 +2338,7 @@ function PreviewStationGroups({
                       {/* PR-4: a hard-gated line gets a distinct preview marker (staff
                           cannot submit until it's done) — shown INSTEAD of "required". */}
                       {it.hardGate ? (
-                        <span className="rounded bg-co-cta/15 px-1 text-[10px] font-bold uppercase tracking-wide text-co-cta">
+                        <span className="rounded bg-co-danger-surface px-1 text-[10px] font-bold uppercase tracking-wide text-co-cta-text">
                           {t("admin.templates.builder.preview.hard_gate")}
                         </span>
                       ) : it.required ? (

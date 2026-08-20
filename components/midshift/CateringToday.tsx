@@ -20,7 +20,7 @@ export function CateringToday({
 
   return (
     <section>
-      <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
+      <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
         {serverT(language, "midshift.catering.heading")}
       </h2>
       <ul className="flex flex-col gap-2">

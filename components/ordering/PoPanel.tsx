@@ -964,7 +964,7 @@ function TrailView({
           <ul className="mt-2 flex flex-col gap-1">
             {detail.deliveryIds.map((did) => (
               <li key={did}>
-                <a href={`/operations/receiving/${did}`} className="text-[13px] font-bold text-co-gold-deep underline">
+                <a href={`/operations/receiving/${did}`} className="text-[13px] font-bold text-co-gold-text underline">
                   {t("ordering.po.open_delivery")}
                 </a>
               </li>

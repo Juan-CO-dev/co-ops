@@ -49,7 +49,7 @@ export function EquipmentOverview({
     <div className="flex flex-col gap-6">
       {overview.fridges.length > 0 && (
         <section>
-          <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
+          <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
             {serverT(language, "maintenance.overview.fridges_heading")}
           </h2>
           <ul className="flex flex-col gap-2">
@@ -98,7 +98,7 @@ export function EquipmentOverview({
 
       {overview.equipment.length > 0 && (
         <section>
-          <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
+          <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
             {serverT(language, "maintenance.overview.equipment_heading")}
           </h2>
           <ul className="grid grid-cols-2 gap-2">

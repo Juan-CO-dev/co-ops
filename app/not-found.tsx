@@ -10,7 +10,7 @@ export default function NotFound() {
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src="/brand/co-wordmark.png" alt="Compliments Only" className="h-6 w-auto sm:h-7" />
       <div className="max-w-sm">
-        <p className="text-4xl font-extrabold tracking-tight text-co-gold-deep">404</p>
+        <p className="text-4xl font-extrabold tracking-tight text-co-gold-text">404</p>
         <h1 className="mt-2 text-xl font-bold">Page not found</h1>
         <p className="text-lg font-semibold text-co-text-muted">Página no encontrada</p>
         <p className="mt-3 text-sm text-co-text-muted">

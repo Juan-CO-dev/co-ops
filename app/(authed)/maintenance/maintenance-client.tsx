@@ -64,7 +64,7 @@ export function AddMaintenanceNote({
 
   return (
     <section className="flex flex-col gap-4">
-      <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
+      <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
         {t("maintenance.add_note.title")}
       </h2>
 

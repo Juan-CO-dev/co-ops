@@ -112,7 +112,7 @@ export function CashClient({
     <div className="flex flex-col gap-6 lg:grid lg:grid-cols-[3fr_2fr] lg:items-start lg:gap-8">
       {/* === CASH SECTION === */}
       <section>
-        <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
+        <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
           {t("cash.section.cash")}
         </h2>
 
@@ -231,7 +231,7 @@ export function CashClient({
       <div className="flex flex-col gap-6">
       {/* === TIPS SECTION === */}
       <section>
-        <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
+        <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
           {t("cash.section.tips")}
         </h2>
 
@@ -257,7 +257,7 @@ export function CashClient({
 
       {/* === ON SHIFT SECTION === */}
       <section>
-        <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
+        <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
           {t("cash.section.on_shift")}
         </h2>
 

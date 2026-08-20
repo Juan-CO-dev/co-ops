@@ -26,8 +26,8 @@ const SCORE_KEY: Record<PulseScore, TranslationKey> = {
 };
 const SCORE_CHIP_CLASS: Record<PulseScore, string> = {
   green: "bg-co-success/15 text-co-success",
-  yellow: "bg-co-gold/25 text-co-gold-deep",
-  red: "bg-co-cta/15 text-co-cta",
+  yellow: "bg-co-gold/25 text-co-gold-text",
+  red: "bg-co-danger-surface text-co-cta-text",
 };
 
 function ScoreChip({ score, language }: { score: PulseScore; language: Language }) {
@@ -64,7 +64,7 @@ export function AttentionBanner({
   }
 
   const border = score === "red" ? "border-co-cta" : "border-co-gold-deep";
-  const headingTone = score === "red" ? "text-co-cta" : "text-co-gold-deep";
+  const headingTone = score === "red" ? "text-co-cta-text" : "text-co-gold-text";
   return (
     // role="alert" — attention items are the page's urgency signal.
     <div role="alert" className={`rounded-lg border-2 ${border} bg-co-surface px-4 py-3`}>

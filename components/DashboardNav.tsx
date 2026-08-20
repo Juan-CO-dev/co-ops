@@ -34,7 +34,7 @@ const CHIP_CLASS =
 export function DashboardNav({ language, actorLevel, selectedLocationId }: DashboardNavProps) {
   return (
     <nav aria-label={serverT(language, "nav.aria_label")}>
-      <p className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
+      <p className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
         {serverT(language, "nav.section_label")}
       </p>
       <div className="flex flex-wrap gap-2">

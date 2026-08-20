@@ -16,7 +16,7 @@ export function FridgeStrip({
 }) {
   return (
     <section>
-      <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
+      <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
         {serverT(language, "midshift.fridges.heading")}
       </h2>
 

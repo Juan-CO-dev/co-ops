@@ -233,7 +233,7 @@ function clearDrafts(locationId: string): void {
 
 const field =
   "min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-60";
-const stepHeadClass = "flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep";
+const stepHeadClass = "flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text";
 const stepNumClass =
   "inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 border-co-gold-deep bg-co-gold text-[13px] font-bold text-co-text";
 

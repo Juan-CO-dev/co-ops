@@ -93,7 +93,7 @@ export function OrderingCalendar({
                     {serverT(language, `people.weekday.${suffix}` as "people.weekday.sun")}
                   </span>
                   {isToday ? (
-                    <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-co-gold-deep">
+                    <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-co-gold-text">
                       {serverT(language, "admin.vendors.ordering_calendar.today")}
                     </span>
                   ) : null}

@@ -220,7 +220,7 @@ function ItemQuestionRow({ question }: { question: ItemQuestionView }) {
       <div className="flex items-center justify-between gap-2">
         <p className="min-w-0 text-sm font-bold text-co-text">
           {question.label}
-          <span className="ml-2 rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.05em] text-co-gold-deep">
+          <span className="ml-2 rounded border border-co-gold-deep px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.05em] text-co-gold-text">
             {t(inputTypeKey)}
           </span>
         </p>
@@ -256,7 +256,7 @@ function ItemQuestionRow({ question }: { question: ItemQuestionView }) {
               type="button"
               disabled={submitting}
               onClick={() => void disable()}
-              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-cta px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-surface disabled:opacity-50"
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-cta px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50"
             >
               {t("admin.templates.item_questions.disable")}
             </button>

@@ -491,7 +491,7 @@ export function RecipeBuilder({
                 type="button"
                 disabled={deleteBusy}
                 onClick={() => void deleteRecipe()}
-                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-cta px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-surface disabled:opacity-50"
+                className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-cta px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50"
               >
                 {t(rk("recipes.delete.confirm"))}
               </button>
@@ -900,7 +900,7 @@ function DraftInputRow({
               {t(rk("recipes.row.cancel"))}
             </button>
             <button type="button" onClick={() => { setConfirming(false); onRemove(); }}
-              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-cta px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-surface">
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-cta px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text">
               {t(rk("recipes.row.remove"))}
             </button>
           </div>
@@ -1219,7 +1219,7 @@ function DraftOutputRow({
               {t(rk("recipes.row.cancel"))}
             </button>
             <button type="button" onClick={() => { setConfirming(false); onRemove(); }}
-              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-cta px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-surface">
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-cta px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text">
               {t(rk("recipes.row.remove"))}
             </button>
           </div>

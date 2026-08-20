@@ -29,8 +29,8 @@ interface Props {
 const SIGNAL_TONE: Record<CateringCapacityResult["signal"], string> = {
   available: "bg-co-success/15 text-co-success",
   limited: "bg-co-gold/25 text-co-text",
-  unavailable: "bg-co-cta/15 text-co-cta",
-  blackout: "bg-co-cta/15 text-co-cta",
+  unavailable: "bg-co-danger-surface text-co-cta-text",
+  blackout: "bg-co-danger-surface text-co-cta-text",
   below_lead_time: "bg-co-gold/25 text-co-text",
   unconfigured: "bg-co-surface text-co-text-muted",
 };
@@ -81,14 +81,14 @@ export function PipelineClient({ staff, leads, followUps, locations, actorLevel,
 
           <div className="flex flex-wrap items-center gap-2">
             <label className="text-xs text-co-text-muted" htmlFor="pl-f-assignee">{t("catering.intake.filter.assignee")}</label>
-            <select id="pl-f-assignee" value={filterAssignee} onChange={(e) => setFilterAssignee(e.target.value)} className="rounded-md border border-co-card-border bg-co-surface p-1.5 text-sm text-co-text">
+            <select id="pl-f-assignee" value={filterAssignee} onChange={(e) => setFilterAssignee(e.target.value)} className="rounded-md border border-co-border bg-co-surface p-1.5 text-sm text-co-text">
               <option value="">{t("catering.intake.filter.all")}</option>
               {staff.map((m) => (
                 <option key={m.id} value={m.id}>{m.name}</option>
               ))}
             </select>
             <label className="text-xs text-co-text-muted" htmlFor="pl-f-source">{t("catering.intake.filter.source")}</label>
-            <select id="pl-f-source" value={filterSource} onChange={(e) => setFilterSource(e.target.value)} className="rounded-md border border-co-card-border bg-co-surface p-1.5 text-sm text-co-text">
+            <select id="pl-f-source" value={filterSource} onChange={(e) => setFilterSource(e.target.value)} className="rounded-md border border-co-border bg-co-surface p-1.5 text-sm text-co-text">
               <option value="">{t("catering.intake.filter.all")}</option>
               {LEAD_SOURCES.map((sc) => (
                 <option key={sc} value={sc}>{t(`catering.intake.source.${sc}` as TranslationKey)}</option>
@@ -176,7 +176,7 @@ function SearchBox({ searchQuery }: { searchQuery: string }) {
           value={value}
           onChange={(e) => setValue(e.target.value)}
           placeholder={t("catering.pipeline.search.placeholder" as TranslationKey)}
-          className="w-full min-h-[44px] rounded-md border border-co-card-border bg-co-surface px-3 py-2 text-sm text-co-text placeholder:text-co-text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60"
+          className="w-full min-h-[44px] rounded-md border border-co-border bg-co-surface px-3 py-2 text-sm text-co-text placeholder:text-co-text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60"
         />
       </div>
       <button
@@ -189,7 +189,7 @@ function SearchBox({ searchQuery }: { searchQuery: string }) {
         <button
           type="button"
           onClick={handleClear}
-          className="min-h-[44px] rounded-md border border-co-card-border px-3 py-2 text-sm text-co-text-muted hover:text-co-text"
+          className="min-h-[44px] rounded-md border border-co-border px-3 py-2 text-sm text-co-text-muted hover:text-co-text"
         >
           {t("catering.pipeline.search.clear" as TranslationKey)}
         </button>
@@ -256,7 +256,7 @@ function SearchResultCard({
           <span className="font-semibold text-co-text">{r.contactName}</span>
           {r.company && <span className="ml-2 text-sm text-co-text-muted">{r.company}</span>}
         </div>
-        <span className="inline-block rounded-md bg-co-surface px-2 py-0.5 text-xs font-medium text-co-text-muted border border-co-card-border">
+        <span className="inline-block rounded-md bg-co-surface px-2 py-0.5 text-xs font-medium text-co-text-muted border border-co-border">
           {t(stageKey(r.stage))}
         </span>
       </div>
@@ -378,7 +378,7 @@ function LeadDetail({
   const otherStages = PIPELINE_STAGES.filter((s) => s !== lead.stage);
 
   return (
-    <div className="mt-3 border-t border-co-card-border pt-3 text-sm">
+    <div className="mt-3 border-t border-co-border pt-3 text-sm">
       {capacity && lead.eventDate && (
         <div className="mb-2">
           <span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ${SIGNAL_TONE[capacity.signal]}`}>
@@ -421,7 +421,7 @@ function LeadDetail({
                 type="button"
                 disabled={busy}
                 onClick={() => void moveTo(s)}
-                className="rounded-md border border-co-card-border px-2 py-1 text-xs text-co-text disabled:opacity-50"
+                className="rounded-md border border-co-border px-2 py-1 text-xs text-co-text disabled:opacity-50"
               >
                 {t(stageKey(s))}
               </button>
@@ -503,7 +503,7 @@ function AddLeadRow({ locations, staff }: { locations: LocationOpt[]; staff: Ass
         <Field label={t("catering.pipeline.field.headcount")} name="headcount" type="number" />
         <label className="block text-sm">
           <span className="text-co-text-muted">{t("catering.pipeline.field.lead_source")}</span>
-          <select name="leadSource" defaultValue="staff" className="mt-1 w-full rounded-md border border-co-card-border bg-co-surface p-2 text-co-text">
+          <select name="leadSource" defaultValue="staff" className="mt-1 w-full rounded-md border border-co-border bg-co-surface p-2 text-co-text">
             {LEAD_SOURCES.map((sc) => (
               <option key={sc} value={sc}>{t(`catering.intake.source.${sc}` as TranslationKey)}</option>
             ))}
@@ -511,7 +511,7 @@ function AddLeadRow({ locations, staff }: { locations: LocationOpt[]; staff: Ass
         </label>
         <label className="block text-sm">
           <span className="text-co-text-muted">{t("catering.intake.field.assigned_to")}</span>
-          <select name="assignedTo" defaultValue="" className="mt-1 w-full rounded-md border border-co-card-border bg-co-surface p-2 text-co-text">
+          <select name="assignedTo" defaultValue="" className="mt-1 w-full rounded-md border border-co-border bg-co-surface p-2 text-co-text">
             <option value="">{t("catering.intake.unassigned")}</option>
             {staff.map((m) => (
               <option key={m.id} value={m.id}>{m.name}</option>
@@ -521,7 +521,7 @@ function AddLeadRow({ locations, staff }: { locations: LocationOpt[]; staff: Ass
         <Field label={t("catering.pipeline.field.follow_up_date")} name="followUpDate" type="date" />
         <label className="block text-sm">
           <span className="text-co-text-muted">{t("catering.pipeline.field.location")}</span>
-          <select name="locationId" className="mt-1 w-full rounded-md border border-co-card-border bg-co-surface p-2 text-co-text">
+          <select name="locationId" className="mt-1 w-full rounded-md border border-co-border bg-co-surface p-2 text-co-text">
             <option value="">{t("catering.pipeline.global")}</option>
             {locations.map((l) => (
               <option key={l.id} value={l.id}>
@@ -532,7 +532,7 @@ function AddLeadRow({ locations, staff }: { locations: LocationOpt[]; staff: Ass
         </label>
         <label className="block text-sm sm:col-span-2">
           <span className="text-co-text-muted">{t("catering.pipeline.field.notes")}</span>
-          <textarea name="notes" rows={2} className="mt-1 w-full rounded-md border border-co-card-border bg-co-surface p-2 text-co-text" />
+          <textarea name="notes" rows={2} className="mt-1 w-full rounded-md border border-co-border bg-co-surface p-2 text-co-text" />
         </label>
       </div>
       {errorMsg && <p className="text-xs text-co-cta">{errorMsg}</p>}
@@ -569,7 +569,7 @@ function Field({
         name={name}
         type={type}
         required={required}
-        className="mt-1 w-full rounded-md border border-co-card-border bg-co-surface p-2 text-co-text"
+        className="mt-1 w-full rounded-md border border-co-border bg-co-surface p-2 text-co-text"
       />
     </label>
   );

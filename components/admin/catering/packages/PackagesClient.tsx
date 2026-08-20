@@ -653,12 +653,12 @@ function LineItemsSubList({
                                   aria-pressed={opt.classic}
                                   title={t("admin.catering.packages.classic_badge" as TranslationKey)}
                                   onClick={() => onSetOptionClassic(opt.id, !opt.classic)}
-                                  className={`inline-flex h-4 w-4 items-center justify-center rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60 disabled:opacity-50 ${opt.classic ? "text-co-gold-deep" : "text-co-text-muted hover:text-co-gold-deep"}`}
+                                  className={`inline-flex h-4 w-4 items-center justify-center rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60 disabled:opacity-50 ${opt.classic ? "text-co-gold-text" : "text-co-text-muted hover:text-co-gold-text"}`}
                                 >
                                   {opt.classic ? "★" : "☆"}
                                 </button>
                               ) : opt.classic ? (
-                                <span aria-label={t("admin.catering.packages.classic_badge" as TranslationKey)} className="text-co-gold-deep">★</span>
+                                <span aria-label={t("admin.catering.packages.classic_badge" as TranslationKey)} className="text-co-gold-text">★</span>
                               ) : null}
                               {canManage ? (
                                 <button

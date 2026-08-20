@@ -14,8 +14,14 @@ import type { ComponentProps, ReactNode } from "react";
  * and `<Link>` correctly typed for their element. The component owns the LOOK;
  * callers own PLACEMENT (pass `className` for `w-full`, margins, etc.).
  *
- * Brand: red ("co-cta") is used sparingly per the brand book — the `danger`
- * variant is a red OUTLINE/TEXT accent, not a red fill.
+ * Brand: red is used sparingly per the brand book — the `danger` variant is a red
+ * OUTLINE/TEXT accent, not a red fill.
+ *
+ * AA NOTE (token floor, 2026-08-19): `danger` reads --co-cta-text #B3252C for BOTH
+ * its edge and its label, not --co-cta #FF3A44. Full-strength brand red measured
+ * 3.54:1 as text on the white fill — below AA — and its edge dropped to 2.94:1
+ * against the hover tint, below the 3:1 non-text floor. Edge and label move
+ * together so the control reads as one object; the variant is still an outline.
  */
 
 export type ActionVariant = "primary" | "secondary" | "danger";
@@ -37,7 +43,7 @@ const SIZE: Record<ActionSize, string> = {
 const VARIANT: Record<ActionVariant, string> = {
   primary: "border-co-text bg-co-gold text-co-text hover:bg-co-gold-deep",
   secondary: "border-co-border-2 bg-co-surface text-co-text hover:border-co-text",
-  danger: "border-co-cta bg-co-surface text-co-cta hover:bg-co-danger-surface",
+  danger: "border-co-cta-text bg-co-surface text-co-cta-text hover:bg-co-danger-surface",
 };
 
 export function actionButtonClass(

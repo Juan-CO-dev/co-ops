@@ -163,7 +163,7 @@ export function EquipmentDetail({
       {/* Readings timeline */}
       {isFridge && detail.readings.length > 0 && (
         <section>
-          <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
+          <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
             {serverT(language, "maintenance.detail.readings_heading")}
           </h2>
           <ul className="flex flex-col gap-1.5">
@@ -209,7 +209,7 @@ export function EquipmentDetail({
 
       {/* Maintenance history */}
       <section>
-        <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-deep">
+        <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
           {serverT(language, "maintenance.detail.history_heading")}
         </h2>
         {detail.notes.length === 0 ? (

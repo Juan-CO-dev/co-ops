@@ -543,7 +543,7 @@ function SkuRow({
             {t("ordering.row.par", { n: sku.parToday })}
           </span>
           {sku.parIsWeekend && (
-            <span className="rounded-md bg-co-gold/25 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.06em] text-co-gold-deep">
+            <span className="rounded-md bg-co-gold/25 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.06em] text-co-gold-text">
               {t("ordering.row.weekend")}
             </span>
           )}
