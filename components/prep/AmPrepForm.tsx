@@ -863,7 +863,7 @@ export function AmPrepForm({
               onClick={handleDiscard}
               className="
                 inline-flex min-h-[44px] items-center justify-center self-center
-                px-3 text-xs font-semibold uppercase tracking-[0.12em] text-co-text-dim
+                px-3 text-xs font-semibold uppercase tracking-[0.12em] text-co-text-muted
                 transition hover:text-co-text
                 focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/40
                 rounded-md
@@ -883,7 +883,7 @@ export function AmPrepForm({
               onClick={handleCancelEdit}
               className="
                 inline-flex min-h-[44px] items-center justify-center self-center
-                px-3 text-xs font-semibold uppercase tracking-[0.12em] text-co-text-dim
+                px-3 text-xs font-semibold uppercase tracking-[0.12em] text-co-text-muted
                 transition hover:text-co-text
                 focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/40
                 rounded-md
