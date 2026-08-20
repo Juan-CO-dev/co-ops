@@ -113,7 +113,9 @@ export function SkuCatalogClient({
 
   // Collision candidates for the builder's name warning (active raw SKUs live).
   const collisionCandidates: SkuNameCollisionCandidate[] = useMemo(
-    () => skus.map((s) => ({ id: s.id, name: s.name, active: s.active })),
+    // vendorId/vendorName ride along so the builder distinguishes a same-vendor DUPLICATE
+    // from a cross-vendor backup twin (audit P7).
+    () => skus.map((s) => ({ id: s.id, name: s.name, active: s.active, vendorId: s.vendorId, vendorName: s.vendorName })),
     [skus],
   );
 

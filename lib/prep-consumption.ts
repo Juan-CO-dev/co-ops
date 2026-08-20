@@ -96,7 +96,20 @@ export async function loadRecipeGraph(): Promise<RecipeGraph> {
   const sb = getServiceRoleClient();
   const measures = await loadMeasures();
   const [{ data: recRows }, { data: inRows }, { data: outRows }] = await Promise.all([
+    // DETERMINISTIC ORDER (multi-vendor audit P5). buildRecipeGraph indexes producers
+    // FIRST-WINS per output (prep-consumption-graph.ts ~:210), so when two ACTIVE recipes
+    // produce the same item the winner is decided purely by the order rows come back in —
+    // and an unordered select gives no such guarantee. That is not an abstract worry: live,
+    // the two Hot Peppers recipes pin DIFFERENT vendor SKUs (Baldor 512 oz vs Boar's Head
+    // 1 unit), so a row-order coin-flip picked both a vendor AND a 512x oz basis for
+    // costing. Ordering here does not FIX dual producers — it makes them repeatable, so
+    // the number stops changing under you. Surfacing the ambiguity to an admin is the
+    // follow-up the audit files separately.
+    // created_at is nullable, so `id` (PK, never null) is the tiebreak that makes the
+    // order total rather than merely mostly-stable.
     sb.from("recipes").select("id, batch_yield")
+      .order("created_at", { ascending: true, nullsFirst: true })
+      .order("id", { ascending: true })
       .returns<Array<{ id: string; batch_yield: number | string | null }>>(),
     sb.from("recipe_inputs").select("recipe_id, quantity, unit, component_sku_id, component_item_id")
       .returns<Array<{ recipe_id: string; quantity: number | string; unit: string | null; component_sku_id: string | null; component_item_id: string | null }>>(),

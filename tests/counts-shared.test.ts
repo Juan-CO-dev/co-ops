@@ -25,6 +25,8 @@ import {
   computeInferredBaselineOz,
   anchorAgeDays,
   chainLabelsInWalkOrder,
+  twinVendorLabels,
+  type CountSkuVendorLabel,
   type CountLineForAnchor,
   type CountLineInput,
 } from "@/lib/counts-shared";
@@ -496,5 +498,54 @@ describe("reconcileAnchorDimensions", () => {
     reconcileAnchorDimensions(weight, count);
     expect(weight.has("ham")).toBe(true);
     expect(count.has("gloves")).toBe(true);
+  });
+});
+
+// ── twinVendorLabels (multi-vendor audit P8) ──────────────────────────────────
+describe("twinVendorLabels", () => {
+  const o = (id: string, name: string, vendorName: string | null): CountSkuVendorLabel =>
+    ({ id, name, vendorName });
+
+  it("labels both sides when one name exists under two vendors", () => {
+    // The live case: two identical "Ham" rows in the count dropdown.
+    const m = twinVendorLabels([o("h1", "Ham", "Baldor"), o("h2", "Ham", "PFG")]);
+    expect(m.get("h1")).toBe("Baldor");
+    expect(m.get("h2")).toBe("PFG");
+  });
+
+  it("labels nothing in a single-vendor catalog (the ~95% case)", () => {
+    const m = twinVendorLabels([o("a", "Ham", "Baldor"), o("b", "Turkey", "Baldor")]);
+    expect(m.size).toBe(0);
+  });
+
+  it("does not label a same-vendor duplicate — the vendor disambiguates nothing", () => {
+    const m = twinVendorLabels([o("a", "Ham", "Baldor"), o("b", "Ham", "Baldor")]);
+    expect(m.size).toBe(0);
+  });
+
+  it("compares names case-insensitively and trimmed", () => {
+    const m = twinVendorLabels([o("a", "  ham ", "Baldor"), o("b", "HAM", "PFG")]);
+    expect(m.get("a")).toBe("Baldor");
+    expect(m.get("b")).toBe("PFG");
+  });
+
+  it("counts an unassigned SKU as ambiguity but never labels it", () => {
+    // No honest vendor to name — inventing one would be worse than the ambiguity.
+    const m = twinVendorLabels([o("a", "Sub Roll", null), o("b", "Sub Roll", "Baldor")]);
+    expect(m.has("a")).toBe(false);
+    expect(m.get("b")).toBe("Baldor");
+  });
+
+  it("labels nothing when every match is unassigned", () => {
+    expect(twinVendorLabels([o("a", "Sub Roll", null), o("b", "Sub Roll", null)]).size).toBe(0);
+  });
+
+  it("handles an empty option set", () => {
+    expect(twinVendorLabels([]).size).toBe(0);
+  });
+
+  it("labels three-way twins", () => {
+    const m = twinVendorLabels([o("a", "Ham", "V1"), o("b", "Ham", "V2"), o("c", "Ham", "V3")]);
+    expect([...m.values()].sort()).toEqual(["V1", "V2", "V3"]);
   });
 });

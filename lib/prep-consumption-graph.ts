@@ -197,7 +197,23 @@ export function perUnitSkuOzForMenuItemFromGraph(graph: RecipeGraph, menuItemId:
   return out;
 }
 
-/** Index raw recipe rows into a RecipeGraph (first-wins per output, mirroring the original limit-1 lookups). */
+/**
+ * Index raw recipe rows into a RecipeGraph (first-wins per output, mirroring the original
+ * limit-1 lookups).
+ *
+ * DUAL-PRODUCER CAVEAT (multi-vendor audit P5 —
+ * docs/audits/2026-08-20-multivendor-semantics-audit.md): when two ACTIVE recipes produce
+ * the SAME output, first-wins silently picks one and the other becomes invisible to every
+ * costing/depletion consumer. Because the losing recipe may pin a different vendor's SKU
+ * with a different pack basis, the choice can swing both vendor attribution and the oz
+ * math — live, the two Hot Peppers recipes pin Baldor (512 oz) vs Boar's Head (1 unit).
+ *
+ * The caller (loadRecipeGraph in lib/prep-consumption.ts) now orders its `recipes` select
+ * deterministically, so "first" is at least STABLE and repeatable. It is still arbitrary:
+ * nothing here knows which producer is operationally correct. Making that ambiguity
+ * visible to an admin is the audit's follow-up; do not mistake the stable order for a
+ * resolution of it.
+ */
 export function buildRecipeGraph(
   recipes: GraphRecipe[],
   skuPack: Map<string, RecipeInputSku>,

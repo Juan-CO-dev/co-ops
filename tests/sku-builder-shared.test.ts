@@ -23,40 +23,80 @@ import {
 import { skuContentOz, type MeasureUnitFactor } from "@/lib/recipe-math";
 
 // ── skuNameCollisions ─────────────────────────────────────────────────────────
+// P7: results split into same-vendor `duplicates` (warn) vs cross-vendor `twins`
+// (the backup the multi-vendor doctrine asks for — affirm, never nag).
 describe("skuNameCollisions", () => {
+  const V1 = "v-baldor";
+  const V2 = "v-pfg";
   const skus: SkuNameCollisionCandidate[] = [
-    { id: "a", name: "Fresh Mozzarella", active: true },
-    { id: "b", name: "fresh mozzarella", active: true }, // case/duplicate of a
-    { id: "c", name: "  Fresh Mozzarella  ", active: false }, // inactive → ignored
-    { id: "d", name: "Ham", active: true },
+    { id: "a", name: "Fresh Mozzarella", active: true, vendorId: V1, vendorName: "Baldor" },
+    { id: "b", name: "fresh mozzarella", active: true, vendorId: V1, vendorName: "Baldor" }, // same-vendor dup of a
+    { id: "c", name: "  Fresh Mozzarella  ", active: false, vendorId: V1, vendorName: "Baldor" }, // inactive → ignored
+    { id: "d", name: "Ham", active: true, vendorId: V1, vendorName: "Baldor" },
+    { id: "e", name: "Ham", active: true, vendorId: V2, vendorName: "PFG" }, // cross-vendor twin of d
+    { id: "f", name: "Sub Roll", active: true, vendorId: null, vendorName: null }, // unassigned
   ];
 
   it("matches case-insensitively and trimmed, active only", () => {
-    const hits = skuNameCollisions("FRESH MOZZARELLA", skus);
-    expect(hits.map((s) => s.id).sort()).toEqual(["a", "b"]);
+    const { duplicates } = skuNameCollisions("FRESH MOZZARELLA", skus, null, V1);
+    expect(duplicates.map((s) => s.id).sort()).toEqual(["a", "b"]);
   });
 
   it("excludes the SKU being edited via selfId", () => {
-    const hits = skuNameCollisions("Fresh Mozzarella", skus, "a");
-    expect(hits.map((s) => s.id)).toEqual(["b"]);
+    const { duplicates } = skuNameCollisions("Fresh Mozzarella", skus, "a", V1);
+    expect(duplicates.map((s) => s.id)).toEqual(["b"]);
   });
 
   it("ignores inactive matches", () => {
     // "c" is an exact (trimmed) match but inactive → never returned.
-    expect(skuNameCollisions("Fresh Mozzarella", skus).some((s) => s.id === "c")).toBe(false);
+    const { duplicates, twins } = skuNameCollisions("Fresh Mozzarella", skus, null, V1);
+    expect([...duplicates, ...twins].some((s) => s.id === "c")).toBe(false);
   });
 
-  it("returns [] for a blank / whitespace name", () => {
-    expect(skuNameCollisions("   ", skus)).toEqual([]);
-    expect(skuNameCollisions("", skus)).toEqual([]);
+  it("returns empty lists for a blank / whitespace name", () => {
+    expect(skuNameCollisions("   ", skus, null, V1)).toEqual({ duplicates: [], twins: [] });
+    expect(skuNameCollisions("", skus, null, V1)).toEqual({ duplicates: [], twins: [] });
   });
 
-  it("returns [] when nothing collides", () => {
-    expect(skuNameCollisions("Provolone", skus)).toEqual([]);
+  it("returns empty lists when nothing collides", () => {
+    expect(skuNameCollisions("Provolone", skus, null, V1)).toEqual({ duplicates: [], twins: [] });
   });
 
   it("trims the needle before comparing", () => {
-    expect(skuNameCollisions("  Ham  ", skus).map((s) => s.id)).toEqual(["d"]);
+    expect(skuNameCollisions("  Ham  ", skus, null, V1).duplicates.map((s) => s.id)).toEqual(["d"]);
+  });
+
+  // ── P7 classification ──
+  it("classifies another vendor's same-name SKU as a TWIN, not a duplicate", () => {
+    // Editing Baldor's Ham; PFG also carries Ham. Doctrine-correct backup → affirm.
+    const { duplicates, twins } = skuNameCollisions("Ham", skus, "d", V1);
+    expect(duplicates).toEqual([]);
+    expect(twins.map((s) => s.id)).toEqual(["e"]);
+    expect(twins[0]?.vendorName).toBe("PFG");
+  });
+
+  it("still warns on a same-vendor duplicate", () => {
+    // Editing PFG's Ham while ANOTHER PFG Ham exists would be a real split par.
+    const pfgDup: SkuNameCollisionCandidate[] = [
+      ...skus,
+      { id: "g", name: "Ham", active: true, vendorId: V2, vendorName: "PFG" },
+    ];
+    const { duplicates, twins } = skuNameCollisions("Ham", pfgDup, "e", V2);
+    expect(duplicates.map((s) => s.id)).toEqual(["g"]);
+    expect(twins.map((s) => s.id)).toEqual(["d"]); // Baldor's Ham is the backup
+  });
+
+  it("treats an unassigned candidate as a duplicate, never a twin", () => {
+    // Can't PROVE a vendorless SKU is a deliberate per-vendor twin → keep the warning.
+    const { duplicates, twins } = skuNameCollisions("Sub Roll", skus, null, V1);
+    expect(duplicates.map((s) => s.id)).toEqual(["f"]);
+    expect(twins).toEqual([]);
+  });
+
+  it("treats every match as a duplicate when the form names no vendor", () => {
+    const { duplicates, twins } = skuNameCollisions("Ham", skus, null, null);
+    expect(duplicates.map((s) => s.id).sort()).toEqual(["d", "e"]);
+    expect(twins).toEqual([]);
   });
 });
 

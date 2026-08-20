@@ -386,7 +386,38 @@ export interface WalkerData {
    * honestly null/stale — this flag only lets the UI SAY why).
    */
   advisoryPaused: boolean;
+  /** Par-carrying SKUs the walk dropped because nothing can order them (audit P4). */
+  unroutable: WalkerUnroutable;
   vendors: WalkerVendor[];
+}
+
+/**
+ * MULTI-VENDOR AUDIT P4 (docs/audits/2026-08-20-multivendor-semantics-audit.md).
+ *
+ * A par IS a demand statement: "keep 3 of these on the shelf". The walk gates on
+ * par AND active on the SAME row, and every exclusion below was a bare `continue` —
+ * so deactivating a SKU (or its vendor) silently DELETED that demand. No suggestion,
+ * no warning, no rerouting to the twin. The manager sees a shorter list and cannot
+ * tell the difference between "nothing needed" and "the system forgot".
+ *
+ * This is not hypothetical. Live at filing time: Ham and Fresh Mozzarella each have
+ * their par on the INACTIVE twin while the active twin carries no par — so both are
+ * UNORDERABLE, and Ham alone is ~$2,164.94/yr of spend the walker cannot suggest.
+ * They were invisible precisely because the drop was silent.
+ *
+ * Counting only — the walk itself is deliberately unchanged (rerouting demand to a
+ * backup SKU needs the product-identity layer, audit P2). This just makes the
+ * silence audible.
+ */
+export interface WalkerUnroutable {
+  /** Total par-carrying SKUs with no ordering path today (sum of the causes below). */
+  count: number;
+  /** The SKU itself is inactive (globally, or by per-location overlay) — the twin case. */
+  skuInactive: number;
+  /** The SKU's vendor is inactive or missing — the vendor-down case. */
+  vendorInactive: number;
+  /** The SKU names no vendor at all, so no one can be asked for it. */
+  noVendor: number;
 }
 
 /**
@@ -424,14 +455,21 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
       each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null;
     }>>();
   if (sErr) throw new Error(`loadWalkerData skus: ${sErr.message}`);
+  // P4: every exclusion from here on is COUNTED, not just skipped — a dropped par is
+  // deleted demand, and the manager has to be able to see it. Classification is
+  // first-cause-wins in walk order (vendorless → vendor-down → deactivated).
+  const unroutable: WalkerUnroutable = { count: 0, skuInactive: 0, vendorInactive: 0, noVendor: 0 };
   const skus = (skuRows ?? []).filter((s) => s.vendor_id != null); // a par'd SKU with no
   // vendor can't be ordered from anyone → excluded (schema allows null vendor_id, live
-  // data has none; defensive).
+  // data has none today; defensive — and now counted rather than silently dropped).
+  unroutable.noVendor = (skuRows ?? []).length - skus.length;
+  unroutable.count = unroutable.noVendor;
   if (skus.length === 0) {
     // No par'd SKUs anywhere → we return BEFORE the loadOnHand batch below, so
     // salesThrough is unknown here. Can't-know → don't claim: false (there is also no
-    // walker row for a blackout banner to explain).
-    return { walkDate: walkDateEt, isWeekendPar: weekend, advisoryPaused: false, vendors: [] };
+    // walker row for a blackout banner to explain). The unroutable tally still ships:
+    // "every par'd SKU is unorderable" is exactly when the notice matters most.
+    return { walkDate: walkDateEt, isWeekendPar: weekend, advisoryPaused: false, unroutable, vendors: [] };
   }
   const skuIds = skus.map((s) => s.id);
   const vendorIds = [...new Set(skus.map((s) => s.vendor_id as string))];
@@ -470,7 +508,11 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
   const skusByVendor = new Map<string, WalkerSku[]>();
   for (const s of skus) {
     const vendorId = s.vendor_id as string;
-    if (!vendorById.has(vendorId)) continue; // vendor inactive/missing → SKU dropped with it.
+    if (!vendorById.has(vendorId)) {
+      // Vendor inactive/missing → SKU dropped with it (P4: counted, not silent).
+      unroutable.vendorInactive += 1; unroutable.count += 1;
+      continue;
+    }
     // Resolve active + par through the per-location overlay (D1). Day-one: no overlay rows →
     // resolveActive/resolvePar reduce to the global values, byte-identical to prior behavior.
     const overlayRow = overlayBySku.get(s.id) ?? null;
@@ -481,7 +523,12 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
     // active_override wins over the global `active` flag — so a promotional SKU
     // (override true, globally inactive) is INCLUDED and a locally-deactivated SKU
     // (override false, globally active) is EXCLUDED. Global inactive + no override → excluded.
-    if (!resolveActive(overlayRow?.activeOverride, s.active)) continue;
+    if (!resolveActive(overlayRow?.activeOverride, s.active)) {
+      // P4 — THE live case: the par sits on a deactivated twin (Ham, Fresh Mozzarella)
+      // while the active twin carries no par, so the product is unorderable from either.
+      unroutable.skuInactive += 1; unroutable.count += 1;
+      continue;
+    }
     const par = resolvePar(overlayForPar, { weekdayPar: num(s.weekday_par), weekendPar: num(s.weekend_par) }, weekend);
     if (par == null) continue; // neither resolved par applies today (excluded from walk).
 
@@ -574,7 +621,7 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
     return a.name.localeCompare(b.name);
   });
 
-  return { walkDate: walkDateEt, isWeekendPar: weekend, advisoryPaused, vendors };
+  return { walkDate: walkDateEt, isWeekendPar: weekend, advisoryPaused, unroutable, vendors };
 }
 
 /**

@@ -108,6 +108,47 @@ export function deriveMissingCreditDrafts(lines: MissingExpectedLine[]): CreditD
   );
 }
 
+// ── Vendor binding: a receipt line belongs to the truck that delivered it ──────
+//
+// MULTI-VENDOR AUDIT P3 (docs/audits/2026-08-20-multivendor-semantics-audit.md).
+// Under Juan's ratified doctrine the same product carries a SEPARATE SKU per vendor
+// ("Ham" at Baldor and "Ham" at PFG are two independent rows). The receiving UI scopes
+// its picker to the delivering vendor, but that is BROWSER-side only — the server
+// accepted any skuId. A cross-vendor line therefore wrote unit_price into
+// vendor_price_history and folded avg_oz_per_each onto the WRONG twin: the vendor whose
+// truck never came gets a price history it never quoted, and costing reads it as real.
+//
+// NULL-TOLERANT BY DESIGN (verified live 2026-08-20): vendor_items.vendor_id is nullable
+// and 11 ACTIVE SKUs carry NULL (Sub Roll, Mortadella, Utz Ripples, Pepperoncini, …).
+// Those are unassigned, not "owned by someone else" — they are receivable against any
+// vendor today, and rejecting them would make real ingredients un-receivable at the door.
+// So the rule is: reject only when the SKU NAMES a vendor and it is a DIFFERENT one.
+// The DB floor (migration 0178) mirrors this exact tolerance via MATCH SIMPLE composite
+// FKs, so the two layers agree instead of one silently being stricter than the other.
+
+/** The minimal SKU shape the vendor-binding check reads. */
+export interface SkuVendorBinding {
+  id: string;
+  vendorId: string | null;
+}
+
+/**
+ * First SKU in `skus` that belongs to a vendor OTHER than `deliveryVendorId`, or null
+ * when every line is bindable. Pure. A SKU with a null vendorId is UNASSIGNED and always
+ * passes (see the null-tolerance note above); a null/empty `deliveryVendorId` disables
+ * the check entirely (nothing to bind to — never invent a mismatch).
+ */
+export function findVendorMismatch(
+  deliveryVendorId: string | null | undefined,
+  skus: readonly SkuVendorBinding[],
+): SkuVendorBinding | null {
+  if (!deliveryVendorId) return null;
+  for (const s of skus) {
+    if (s.vendorId != null && s.vendorId !== deliveryVendorId) return s;
+  }
+  return null;
+}
+
 /** A single line as it lands in a delivery-append batch (identity tuple only). */
 export interface AppendLine {
   skuId: string;
