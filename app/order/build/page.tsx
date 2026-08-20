@@ -726,7 +726,7 @@ function Bar({ label, served, headcount, softer }: { label: string; served: numb
   const c = coverLabel(served, headcount);
   return (
     <div>
-      <div className="flex items-center justify-between text-xs"><span className="font-semibold text-co-text">{label}</span><span className={c.done ? "font-bold text-co-success" : "text-co-text-dim"}>{c.text}</span></div>
+      <div className="flex items-center justify-between text-xs"><span className="font-semibold text-co-text">{label}</span><span className={c.done ? "font-bold text-co-confirm-text" : "text-co-text-dim"}>{c.text}</span></div>
       <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-co-border/50"><div className={`h-full rounded-full ${c.done ? "bg-co-success" : softer ? "bg-co-gold" : "bg-co-text"}`} style={{ width: `${c.pct}%` }} /></div>
     </div>
   );
@@ -981,7 +981,7 @@ function PackageConfigurator({ pkg, existing, leadHeadcount, onClose, onSave }: 
                   <div className="flex items-center justify-between">
                     <p className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim">{slot.label}</p>
                     {slot.pickN > 1 && (
-                      <span className={`text-xs font-bold ${isSlotDone ? "text-co-success" : "text-co-text-muted"}`}>
+                      <span className={`text-xs font-bold ${isSlotDone ? "text-co-confirm-text" : "text-co-text-muted"}`}>
                         {isSlotDone ? `✓ ${sum} of ${slot.pickN}` : `${sum} of ${slot.pickN} subs`}
                       </span>
                     )}

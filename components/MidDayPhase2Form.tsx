@@ -306,7 +306,7 @@ export function MidDayPhase2Form({
                     />
                   ) : null}
                   {st.status === "saved" ? (
-                    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-success">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-confirm-text">
                       {st.savedBy
                         ? t("mid_day_prep.phase2.saved_by", { name: st.savedBy })
                         : t("mid_day_prep.phase2.saved")}

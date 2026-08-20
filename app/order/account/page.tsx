@@ -50,7 +50,7 @@ function StatusBadge({ status }: { status: CustomerStatus }) {
       : status.tone === "pending"
         ? "bg-co-gold/50 text-co-text"
         : status.tone === "success"
-          ? "bg-co-success-surface text-co-success"
+          ? "bg-co-success-surface text-co-confirm-text"
           : "bg-co-border/50 text-co-text-dim";
   return (
     <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-bold ${toneClass}`}>

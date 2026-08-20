@@ -44,16 +44,27 @@
   --co-text-faint: #A0A0A0;  /* Faint helper text */
 
   /* Status */
-  --co-success: #28B25C;     /* Brand Green */
-  --co-warning: #F59E0B;
+  /* Every status color splits the same way the brand red does: the brand value is the
+   * FILL/dot/border, and a separate darkened value carries the TEXT role. On their own
+   * pale surfaces the brand values measure 2.49:1 / 1.95:1 / 2.94:1 — all under the
+   * 4.5:1 AA text floor, and the last two under the 3:1 non-text floor too. */
+  --co-success: #28B25C;     /* Brand Green — fill/dot/border. Text role = --co-confirm-text */
+  --co-warning: #F59E0B;     /* Brand Amber — fill/dot/border. Text role = --co-warning-text */
+  --co-warning-text: #8A5700;/* AA amber TEXT on light grounds — 5.55:1 on warning-surface, 5.78:1 on Mayo,
+                              * 5.52:1 worst-case over the body gradient (#FFF3D4 end), 6.10:1 on white.
+                              * Hue-faithful darkening of --co-warning (37.8° vs the brand amber's 37.7°)
+                              * and fully saturated, so it still reads amber rather than brown. */
   --co-danger: #FF3A44;      /* Brand Red — same value as --co-cta; fill/border role. Text role = --co-cta-text */
   --co-info: #3F73B9;        /* Brand Blue */
 
-  /* Confirm affordance — reserved for the confirm/reject pairs the restyle sweep will apply.
-   * NOT covered by --co-success #28B25C, which is a fill/dot color: as text it measures
-   * 2.76:1 on white and 2.49:1 on its own success-surface, i.e. below AA in both text roles. */
+  /* Confirm affordance + THE dark-green text role. */
   --co-confirm: #1F7A44;      /* Confirm FILL (white text on it = 5.35:1) */
-  --co-confirm-text: #14532D; /* Confirm TEXT on light grounds — 9.11:1 on white */
+  --co-confirm-text: #14532D; /* Dark-green TEXT on light grounds — confirm affordances AND success/ok
+                               * status text (AlertPill `ok`, done/at-par/accepted/paid labels). There is
+                               * deliberately NO --co-success-text: a second name for one role is exactly
+                               * the drift the token floor exists to prevent.
+                               * 9.11:1 on white, 8.23:1 on success-surface, 8.29:1 on warning-surface,
+                               * 8.25:1 worst-case over the body gradient. */
 
   /* Status surfaces — pale tints for status banners/cards on the Mayo bg.
    * Centralizes the scattered bg-[#...] hex tints that drifted across the
@@ -113,6 +124,7 @@
   /* Status */
   --color-co-success: var(--co-success);
   --color-co-warning: var(--co-warning);
+  --color-co-warning-text: var(--co-warning-text);
   --color-co-danger: var(--co-danger);
   --color-co-info: var(--co-info);
   --color-co-confirm: var(--co-confirm);

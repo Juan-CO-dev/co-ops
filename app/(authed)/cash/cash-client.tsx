@@ -202,7 +202,7 @@ export function CashClient({
                 overShortCents === 0
                   ? "text-co-text-muted"
                   : overShortCents > 0
-                    ? "text-co-success"
+                    ? "text-co-confirm-text"
                     : "text-co-cta"
               }
             >

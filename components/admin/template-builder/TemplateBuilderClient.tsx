@@ -468,7 +468,7 @@ function TemplateDoctorPanel({
   const clean = issueCount === 0;
 
   const badge = clean ? (
-    <span className="inline-flex items-center gap-1 rounded-full bg-co-success/15 px-2 py-0.5 text-[11px] font-bold text-co-success">
+    <span className="inline-flex items-center gap-1 rounded-full bg-co-success/15 px-2 py-0.5 text-[11px] font-bold text-co-confirm-text">
       ✓ {t("admin.templates.doctor.all_clear")}
     </span>
   ) : (
@@ -624,7 +624,7 @@ function DriftReconcileGroup({
                         })}
                       </span>
                       {s === "added" ? (
-                        <span className="inline-flex items-center rounded-full bg-co-success/15 px-2 py-0.5 text-[11px] font-bold text-co-success">
+                        <span className="inline-flex items-center rounded-full bg-co-success/15 px-2 py-0.5 text-[11px] font-bold text-co-confirm-text">
                           {t("admin.templates.doctor.reconcile_added")}
                         </span>
                       ) : s !== undefined ? (
@@ -1457,7 +1457,7 @@ function ConnectionsEditor({
           </span>
           {currentTarget ? (
             <div className="mt-1 flex items-center justify-between gap-2">
-              <span className="text-sm text-co-success">{currentTarget.label}</span>
+              <span className="text-sm text-co-confirm-text">{currentTarget.label}</span>
               <button
                 type="button"
                 onClick={() => onEdit({ op: "ref_track", itemId: item.id, targetItemId: null })}
@@ -1769,7 +1769,7 @@ function QuickAdd({
       {expectsCount && (
         <div className="rounded-lg border border-co-border/60 bg-co-bg p-2">
           {spine ? (
-            <p className="text-sm text-co-success">{spine.name}</p>
+            <p className="text-sm text-co-confirm-text">{spine.name}</p>
           ) : (
             <>
               <input
@@ -2034,7 +2034,7 @@ function SpineLinkBlock({
         {t("admin.templates.builder.spine_link")}
       </p>
       {linked ? (
-        <p className="mt-1 text-sm text-co-success">{t("admin.templates.builder.linked")}</p>
+        <p className="mt-1 text-sm text-co-confirm-text">{t("admin.templates.builder.linked")}</p>
       ) : !canFill ? (
         <p className="mt-1 text-sm text-co-cta">{t("admin.templates.builder.needs_link_body")}</p>
       ) : (

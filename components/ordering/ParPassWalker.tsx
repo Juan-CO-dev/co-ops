@@ -617,7 +617,7 @@ function SkuRow({
             />
             {/* The explicit-zero overlay label — makes "0 · full" unmistakable vs empty. */}
             {isFull && (
-              <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-[11px] font-bold uppercase tracking-[0.08em] text-co-success">
+              <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-[11px] font-bold uppercase tracking-[0.08em] text-co-confirm-text">
                 {t("ordering.row.full_tag")}
               </span>
             )}

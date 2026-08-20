@@ -59,7 +59,7 @@ export function CompaniesClient({ companies, actorLevel }: CompaniesClientProps)
                   {!c.active && <span className="text-xs text-co-text-dim">{t("catering.companies.inactive")}</span>}
                 </span>
                 {c.claimedByCustomerId && (
-                  <span className="shrink-0 rounded-full border-2 border-co-success/40 bg-co-success/10 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-co-success">
+                  <span className="shrink-0 rounded-full border-2 border-co-success/40 bg-co-success/10 px-2.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-co-confirm-text">
                     {t("catering.companies.claimed")}
                   </span>
                 )}

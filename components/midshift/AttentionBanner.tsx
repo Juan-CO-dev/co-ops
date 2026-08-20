@@ -25,7 +25,7 @@ const SCORE_KEY: Record<PulseScore, TranslationKey> = {
   red: "midshift.score.red",
 };
 const SCORE_CHIP_CLASS: Record<PulseScore, string> = {
-  green: "bg-co-success/15 text-co-success",
+  green: "bg-co-success/15 text-co-confirm-text",
   yellow: "bg-co-gold/25 text-co-gold-text",
   red: "bg-co-danger-surface text-co-cta-text",
 };
@@ -56,7 +56,7 @@ export function AttentionBanner({
       // role="status" — announce the calm state politely (a11y, council E).
       <div role="status" className="flex items-center gap-2 rounded-lg border-2 border-co-success bg-co-surface px-4 py-3">
         <ScoreChip score="green" language={language} />
-        <p className="text-sm text-co-success">
+        <p className="text-sm text-co-confirm-text">
           {serverT(language, "midshift.all_clear")}
         </p>
       </div>
