@@ -1439,6 +1439,7 @@
   "midshift.catering.covers_other": "{count} people",
   "midshift.catering.delivery": "Delivery",
   "midshift.catering.pickup": "Pickup",
+  "midshift.ops.heading": "Today's operation",
   "midshift.reports.heading": "Today's reports",
   "midshift.progress.done": "Done",
   "midshift.progress.in_progress": "In progress",

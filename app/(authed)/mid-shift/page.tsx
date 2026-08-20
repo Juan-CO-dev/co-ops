@@ -32,6 +32,17 @@ import { formatTime } from "@/lib/i18n/format";
 import { isAllLocationsAccess, lockLocationContext } from "@/lib/locations";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { OperationalStrip } from "@/components/midshift/OperationalStrip";
+import { loadRecentDeliveries } from "@/lib/receiving";
+import { loadTodaysOrders } from "@/lib/purchase-orders";
+import { loadOrderingAttention } from "@/lib/ordering";
+import { loadCountsTileState, COUNT_READ_MIN } from "@/lib/counts";
+import {
+  deriveMissingEmailIds,
+  type ReceivingDeliveryFacts,
+  type OrderingCutoffFacts,
+  type OrderingOrderFacts,
+} from "@/lib/dashboard-status-shared";
 
 export default async function MidShiftPage({
   searchParams,
@@ -114,6 +125,58 @@ export default async function MidShiftPage({
     }),
   ]);
 
+  // Operational strip payloads (design §2) — the same reads the dashboard tiles
+  // compose. Fail-soft per lane, matching the pulse's shrinkage/cutoff discipline:
+  // a secondary read hiccup must never break the pulse. A null lane is omitted,
+  // never rendered as a false empty.
+  const [stripDeliveries, stripOrders, stripCutoffs, stripCounts] = await Promise.all([
+    loadRecentDeliveries(auth, locationId, 20).catch((e) => {
+      console.error("midshift strip receiving failed", e);
+      return null;
+    }),
+    loadTodaysOrders(auth, locationId).catch((e) => {
+      console.error("midshift strip orders failed", e);
+      return null;
+    }),
+    loadOrderingAttention(auth, locationId).catch((e) => {
+      console.error("midshift strip cutoffs failed", e);
+      return null;
+    }),
+    auth.level >= COUNT_READ_MIN
+      ? loadCountsTileState(auth, locationId).catch((e) => {
+          console.error("midshift strip counts failed", e);
+          return null;
+        })
+      : null,
+  ]);
+
+  const stripMissingEmailIds = stripDeliveries
+    ? deriveMissingEmailIds(stripDeliveries, Date.now())
+    : new Set<string>();
+  const stripReceivingFacts: ReceivingDeliveryFacts[] | null = stripDeliveries
+    ? stripDeliveries.map((d) => ({
+        id: d.id,
+        vendorName: d.vendorName,
+        deliveryDate: d.deliveryDate,
+        matchState: d.matchState,
+        deliveryStatus: d.deliveryStatus,
+        receiptUrl: d.receiptUrl,
+        arrivedAt: formatTime(d.createdAt, language),
+        missingEmail: stripMissingEmailIds.has(d.id),
+      }))
+    : null;
+  const stripOrderFacts: OrderingOrderFacts[] | null = stripOrders
+    ? stripOrders.map((o) => ({ poId: o.poId, vendorName: o.vendorName, status: o.status }))
+    : null;
+  const stripCutoffFacts: OrderingCutoffFacts[] | null = stripCutoffs
+    ? stripCutoffs.vendors.map((v) => ({
+        vendorId: v.vendorId,
+        vendorName: v.vendorName,
+        cutoffTime: v.cutoffTime,
+        hasDraft: v.hasDraft,
+      }))
+    : null;
+
   // Same-day freshness trigger (council 2026-07-31): AFTER the response, pull
   // today's Toast events if the last pull is stale (debounced in the lib; a
   // failure is logged + audited, never surfaced). The refreshed numbers appear
@@ -164,6 +227,15 @@ export default async function MidShiftPage({
       </div>
       <AttentionBanner items={pulse.attention} locationId={locationId} language={language} />
       <CateringToday items={pulse.cateringToday} language={language} />
+      <OperationalStrip
+        language={language}
+        locationId={locationId}
+        today={date}
+        deliveries={stripReceivingFacts}
+        openCutoffs={stripCutoffFacts}
+        orders={stripOrderFacts}
+        countsState={stripCounts}
+      />
       <ReportStatusList reports={pulse.reports} language={language} />
       <FridgeStrip
         fridges={pulse.fridges}
