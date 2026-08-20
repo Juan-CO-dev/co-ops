@@ -167,7 +167,6 @@ export default async function MidShiftPage({
       <ReportStatusList reports={pulse.reports} language={language} />
       <FridgeStrip
         fridges={pulse.fridges}
-        flagCount={pulse.fridgeFlagCount}
         locationId={locationId}
         language={language}
       />
