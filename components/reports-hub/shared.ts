@@ -16,7 +16,17 @@
 
 import type { TranslationKey } from "@/lib/i18n/types";
 
-/** DB checklist/report status enum → translation key. Complete as of 0165. */
+/**
+ * DB checklist/report status enum → translation key. Complete as of 0165.
+ *
+ * ONE OF THREE STATUS SETS THAT MUST MOVE TOGETHER when a checklist status is
+ * added or renamed — the other two are `CLOSED_STATUSES` (lib/dashboard-status-shared.ts,
+ * feeding the 4-state `deriveCloseState`) and `SUBMITTED_STATUSES`
+ * (lib/midshift-shared.ts, the pulse's done/in-progress split). This map is the
+ * FINEST-grained of the three and is the reference vocabulary; the other two
+ * fold it down. A new status that lands in only one of the three is exactly how
+ * the dashboard came to render `auto_finalized` days as "In progress" (design §2).
+ */
 export const REPORT_STATUS_LABEL_KEYS: Partial<Record<string, TranslationKey>> = {
   open: "reports.status.open",
   in_progress: "reports.status.in_progress",

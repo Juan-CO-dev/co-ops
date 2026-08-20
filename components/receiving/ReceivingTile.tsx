@@ -73,8 +73,10 @@ export function ReceivingTile({
     );
   }
 
+  // `vm.totalCount` is today's delivery count as the COMPOSE counted it — the
+  // render must not re-apply the today-filter, or the label and the rows could
+  // disagree if that rule ever changes in one place only.
   const summary = serverT(language, vm.headline.key, vm.headline.params);
-  const todaysCount = deliveries.filter((d) => d.deliveryDate === today).length;
 
   return (
     <section
@@ -89,7 +91,7 @@ export function ReceivingTile({
       >
         <p className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-dim">
           {serverT(language, "dashboard.receiving.tile_label")} ·{" "}
-          {serverT(language, "dashboard.receiving.label_count", { count: todaysCount })}
+          {serverT(language, "dashboard.receiving.label_count", { count: vm.totalCount })}
         </p>
 
         <p

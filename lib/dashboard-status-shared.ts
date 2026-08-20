@@ -68,10 +68,40 @@ export interface TileViewModel {
   headline: StatusHeadline;
   pills: StatusPill[];
   rows: StatusRow[];
+  /**
+   * Row-eligible items BEFORE the cap — what a "N today" label counts. Always
+   * `rows.length + overflowCount`; 0 for tiles that render no rows (counts,
+   * ordering). Carried on the VM so a render never re-derives it by filtering
+   * the raw loader output a second time (the compose already did that filter,
+   * and a second copy of the rule is a second place for it to drift).
+   */
+  totalCount: number;
   /** Rows suppressed by the row cap; 0 when nothing was hidden. */
   overflowCount: number;
   /** True when the tile should render its own empty/action state instead. */
   empty: boolean;
+}
+
+/**
+ * Pick the `_one`/`_other` half of a pluralized key pair — the house i18n
+ * convention (cf. `midshift.attention.fridge_unchecked_one/_other` and its use
+ * in components/midshift/AttentionBanner.tsx). The `_one` string bakes the
+ * literal "1" and takes NO params; `_other` carries `{count}`.
+ *
+ * The branch lives HERE, in the compose, rather than at each render: the view
+ * models already carry keys + params, so choosing the key by count keeps every
+ * render a thin `serverT(language, key, params)` and gives the plural rule one
+ * home. Both keys are passed as literals so `TranslationKey` still checks them
+ * (a `${base}_one` template would erase to `string` and defeat the union).
+ *
+ * Spread into a headline/pill: `{ ...pluralKey(n, oneKey, otherKey), tone: … }`.
+ */
+function pluralKey(
+  count: number,
+  oneKey: TranslationKey,
+  otherKey: TranslationKey,
+): { key: TranslationKey; params?: Record<string, string | number> } {
+  return count === 1 ? { key: oneKey } : { key: otherKey, params: { count } };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -97,7 +127,16 @@ export interface CloseState {
   incomplete: boolean;
 }
 
-/** Raw checklist_instances.status values that mean "manually finalized". */
+/**
+ * Raw checklist_instances.status values that mean "manually finalized".
+ *
+ * ONE OF THREE STATUS SETS THAT MUST MOVE TOGETHER when a checklist status is
+ * added or renamed — the other two are `SUBMITTED_STATUSES` (lib/midshift-shared.ts,
+ * the pulse's done/in-progress split) and `REPORT_STATUS_LABEL_KEYS`
+ * (components/reports-hub/shared.ts, the full raw-status label vocabulary).
+ * A new status that lands in only one of the three is exactly how the dashboard
+ * came to render `auto_finalized` days as "In progress" (design §2).
+ */
 const CLOSED_STATUSES: ReadonlySet<string> = new Set([
   "confirmed",
   "incomplete_confirmed",
@@ -193,8 +232,11 @@ export function composeFridgeAggregate(fridges: FridgeFacts[]): FridgeAggregateV
   if (inRangeCount > 0) {
     pills.push({
       id: "in-range",
-      key: "midshift.fridges.pill_in_range_of_read",
-      params: { count: inRangeCount },
+      ...pluralKey(
+        inRangeCount,
+        "midshift.fridges.pill_in_range_of_read_one",
+        "midshift.fridges.pill_in_range_of_read_other",
+      ),
       tone: "ok",
     });
   }
@@ -221,8 +263,7 @@ export function composeFridgeAggregate(fridges: FridgeFacts[]): FridgeAggregateV
     return {
       state: "alert",
       headline: {
-        key: "midshift.fridges.none_read",
-        params: { count: total },
+        ...pluralKey(total, "midshift.fridges.none_read_one", "midshift.fridges.none_read_other"),
         form: "text",
         value: null,
         tone: "danger",
@@ -255,8 +296,11 @@ export function composeFridgeAggregate(fridges: FridgeFacts[]): FridgeAggregateV
   return {
     state: "ok",
     headline: {
-      key: "midshift.fridges.all_read_in_range",
-      params: { count: total },
+      ...pluralKey(
+        total,
+        "midshift.fridges.all_read_in_range_one",
+        "midshift.fridges.all_read_in_range_other",
+      ),
       form: "text",
       value: null,
       tone: "ok",
@@ -422,6 +466,7 @@ export function composeReceivingTile(input: ReceivingTileInput): TileViewModel {
       headline: { key: "dashboard.receiving.headline_none", form: "text", value: null, tone: "info" },
       pills: [],
       rows: [],
+      totalCount: 0,
       overflowCount: 0,
       empty: true,
     };
@@ -443,21 +488,28 @@ export function composeReceivingTile(input: ReceivingTileInput): TileViewModel {
     headline:
       problemCount > 0
         ? {
-            key: "dashboard.receiving.headline_problems",
-            params: { count: problemCount },
+            ...pluralKey(
+              problemCount,
+              "dashboard.receiving.headline_problems_one",
+              "dashboard.receiving.headline_problems_other",
+            ),
             form: "text",
             value: null,
             tone: "danger",
           }
         : {
-            key: "dashboard.receiving.headline_clean",
-            params: { count: todays.length },
+            ...pluralKey(
+              todays.length,
+              "dashboard.receiving.headline_clean_one",
+              "dashboard.receiving.headline_clean_other",
+            ),
             form: "text",
             value: null,
             tone: "ok",
           },
     pills: [],
     rows,
+    totalCount: todays.length,
     overflowCount: Math.max(0, sorted.length - rows.length),
     empty: false,
   };
@@ -504,6 +556,7 @@ export function composeCountsTile(input: CountsTileInput): TileViewModel {
       },
       pills: [{ id: "first-count", key: "dashboard.counts.never_pill", tone: "warn" }],
       rows: [],
+      totalCount: 0,
       overflowCount: 0,
       empty: true,
     };
@@ -519,16 +572,22 @@ export function composeCountsTile(input: CountsTileInput): TileViewModel {
   if (input.varianceCount != null && input.varianceCount > 0) {
     pills.push({
       id: "variances",
-      key: "dashboard.counts.pill_variances",
-      params: { count: input.varianceCount },
+      ...pluralKey(
+        input.varianceCount,
+        "dashboard.counts.pill_variances_one",
+        "dashboard.counts.pill_variances_other",
+      ),
       tone: "danger",
     });
   }
   if (input.anchoredSkuCount > 0) {
     pills.push({
       id: "anchored",
-      key: "dashboard.counts.pill_anchored",
-      params: { count: input.anchoredSkuCount },
+      ...pluralKey(
+        input.anchoredSkuCount,
+        "dashboard.counts.pill_anchored_one",
+        "dashboard.counts.pill_anchored_other",
+      ),
       tone: "warn",
     });
   }
@@ -542,6 +601,7 @@ export function composeCountsTile(input: CountsTileInput): TileViewModel {
     },
     pills,
     rows: [],
+    totalCount: 0,
     overflowCount: 0,
     empty: false,
   };
@@ -629,6 +689,7 @@ export function composeOrderingTile(input: OrderingTileInput): TileViewModel {
       },
       pills,
       rows: [],
+      totalCount: 0,
       overflowCount: 0,
       empty: false,
     };
@@ -645,6 +706,7 @@ export function composeOrderingTile(input: OrderingTileInput): TileViewModel {
       },
       pills,
       rows: [],
+      totalCount: 0,
       overflowCount: 0,
       empty: false,
     };
@@ -654,6 +716,7 @@ export function composeOrderingTile(input: OrderingTileInput): TileViewModel {
     headline: { key: "dashboard.ordering.headline_none", form: "text", value: null, tone: "info" },
     pills: [],
     rows: [],
+    totalCount: 0,
     overflowCount: 0,
     empty: true,
   };

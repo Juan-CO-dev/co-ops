@@ -87,6 +87,7 @@ describe("composeReceivingTile", () => {
     });
     expect(vm.empty).toBe(true);
     expect(vm.rows).toEqual([]);
+    expect(vm.totalCount).toBe(0);
   });
 
   it("leads with the problem count and sorts problem rows first", () => {
@@ -97,11 +98,24 @@ describe("composeReceivingTile", () => {
       ],
       today,
     });
-    expect(vm.headline.key).toBe("dashboard.receiving.headline_problems");
-    expect(vm.headline.params).toEqual({ count: 1 });
+    // ONE problem → the singular key, which bakes the "1" and takes no params.
+    expect(vm.headline.key).toBe("dashboard.receiving.headline_problems_one");
+    expect(vm.headline.params).toBeUndefined();
     expect(vm.headline.tone).toBe("danger");
     expect(vm.rows.map((r) => r.id)).toEqual(["short", "clean"]);
     expect(vm.rows[0]!.problem).toBe(true);
+  });
+
+  it("pluralizes the problem headline past one", () => {
+    const vm = composeReceivingTile({
+      deliveries: [
+        delivery({ id: "short", matchState: "discrepant" }),
+        delivery({ id: "nophoto", receiptUrl: null }),
+      ],
+      today,
+    });
+    expect(vm.headline.key).toBe("dashboard.receiving.headline_problems_other");
+    expect(vm.headline.params).toEqual({ count: 2 });
   });
 
   it("all-clean reads as received-and-clean, not as a problem", () => {
@@ -109,10 +123,17 @@ describe("composeReceivingTile", () => {
       deliveries: [delivery({ id: "a" }), delivery({ id: "b" })],
       today,
     });
-    expect(vm.headline.key).toBe("dashboard.receiving.headline_clean");
+    expect(vm.headline.key).toBe("dashboard.receiving.headline_clean_other");
     expect(vm.headline.params).toEqual({ count: 2 });
     expect(vm.headline.tone).toBe("ok");
     expect(vm.rows[0]!.pills.map((p) => p.key)).toEqual(["dashboard.receiving.badge_complete"]);
+  });
+
+  it("a single clean truck reads in the singular ('1 received', never '1 recibidas')", () => {
+    const vm = composeReceivingTile({ deliveries: [delivery({ id: "a" })], today });
+    expect(vm.headline.key).toBe("dashboard.receiving.headline_clean_one");
+    expect(vm.headline.params).toBeUndefined();
+    expect(vm.totalCount).toBe(1);
   });
 
   it("reuses the receiving page's badge vocabulary", () => {
@@ -134,6 +155,22 @@ describe("composeReceivingTile", () => {
     });
     expect(vm.rows).toHaveLength(3);
     expect(vm.overflowCount).toBe(2);
+    // totalCount is the pre-cap truth the "N today" label renders, and the
+    // rows + overflow invariant holds.
+    expect(vm.totalCount).toBe(5);
+    expect(vm.rows.length + vm.overflowCount).toBe(vm.totalCount);
+  });
+
+  it("totalCount counts only TODAY's trucks, never the loader's whole window", () => {
+    const vm = composeReceivingTile({
+      deliveries: [
+        delivery({ id: "today-1" }),
+        delivery({ id: "today-2" }),
+        delivery({ id: "yesterday", deliveryDate: "2026-08-18" }),
+      ],
+      today,
+    });
+    expect(vm.totalCount).toBe(2);
   });
 });
 
@@ -169,9 +206,24 @@ describe("composeCountsTile", () => {
       anchoredSkuCount: 163,
       varianceCount: null,
     });
-    const anchored = vm.pills.find((p) => p.key === "dashboard.counts.pill_anchored");
+    const anchored = vm.pills.find((p) => p.key === "dashboard.counts.pill_anchored_other");
     expect(anchored?.params).toEqual({ count: 163 });
     expect(anchored?.tone).toBe("warn");
+  });
+
+  it("a single anchored SKU reads '1 SKU anchored', not '1 SKUs'", () => {
+    const vm = composeCountsTile({
+      lastCountDate: "2026-08-18",
+      today: "2026-08-19",
+      anchoredSkuCount: 1,
+      varianceCount: 1,
+    });
+    const anchored = vm.pills.find((p) => p.id === "anchored");
+    expect(anchored?.key).toBe("dashboard.counts.pill_anchored_one");
+    expect(anchored?.params).toBeUndefined();
+    const variance = vm.pills.find((p) => p.id === "variances");
+    expect(variance?.key).toBe("dashboard.counts.pill_variances_one");
+    expect(variance?.params).toBeUndefined();
   });
 
   it("NO INVENTED DATA: a null variance term renders no variance pill at all", () => {
@@ -181,7 +233,9 @@ describe("composeCountsTile", () => {
       anchoredSkuCount: 163,
       varianceCount: null,
     });
-    expect(vm.pills.some((p) => p.key === "dashboard.counts.pill_variances")).toBe(false);
+    // Absence is asserted on the stable pill ID, so it holds for BOTH halves of
+    // the pluralized key pair — "no variance pill at all", not "not this key".
+    expect(vm.pills.some((p) => p.id === "variances")).toBe(false);
   });
 
   it("renders the red variance pill when the term IS supplied, and omits it at zero", () => {
@@ -191,7 +245,7 @@ describe("composeCountsTile", () => {
       anchoredSkuCount: 163,
       varianceCount: 4,
     });
-    const pill = withVar.pills.find((p) => p.key === "dashboard.counts.pill_variances");
+    const pill = withVar.pills.find((p) => p.key === "dashboard.counts.pill_variances_other");
     expect(pill?.params).toEqual({ count: 4 });
     expect(pill?.tone).toBe("danger");
 
@@ -201,7 +255,7 @@ describe("composeCountsTile", () => {
       anchoredSkuCount: 163,
       varianceCount: 0,
     });
-    expect(zeroVar.pills.some((p) => p.key === "dashboard.counts.pill_variances")).toBe(false);
+    expect(zeroVar.pills.some((p) => p.id === "variances")).toBe(false);
   });
 });
 

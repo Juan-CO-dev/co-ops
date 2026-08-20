@@ -13,7 +13,16 @@ const OPERATIONAL_TZ = "America/New_York";
 
 export type ReportKey = "opening" | "am_prep" | "mid_day" | "cash" | "closing";
 
-/** Instance statuses that count as "submitted/done" for pulse purposes. */
+/**
+ * Instance statuses that count as "submitted/done" for pulse purposes.
+ *
+ * ONE OF THREE STATUS SETS THAT MUST MOVE TOGETHER when a checklist status is
+ * added or renamed — the other two are `CLOSED_STATUSES` (lib/dashboard-status-shared.ts,
+ * feeding the 4-state `deriveCloseState`) and `REPORT_STATUS_LABEL_KEYS`
+ * (components/reports-hub/shared.ts, the full raw-status label vocabulary).
+ * A new status that lands in only one of the three is exactly how the dashboard
+ * came to render `auto_finalized` days as "In progress" (design §2).
+ */
 const SUBMITTED_STATUSES = new Set([
   "phase2_complete",
   "confirmed",
