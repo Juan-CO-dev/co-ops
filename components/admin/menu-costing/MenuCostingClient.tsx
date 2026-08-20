@@ -274,10 +274,14 @@ function RowDrawer({
       <p className="text-xs text-co-text-muted">
         {status === "costed"
           ? t("admin.menu_costing.drawer.costed_lines", { n: pricedLineCount })
-          : t("admin.menu_costing.drawer.known_so_far", {
-              amount: money(pricedCost),
-              n: pricedLineCount,
-            })}
+          : pricedLineCount === 0
+            ? // The day-one state for every row — "$0.00 across 0 priced lines"
+              // is arithmetically true and reads like noise, so say it plainly.
+              t("admin.menu_costing.drawer.none_priced")
+            : t("admin.menu_costing.drawer.known_so_far", {
+                amount: money(pricedCost),
+                n: pricedLineCount,
+              })}
       </p>
       {unpricedSkuIds.length > 0 && (
         <div>

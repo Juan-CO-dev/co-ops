@@ -382,6 +382,7 @@
   "admin.menu_costing.toggle.hide": "Hide",
   "admin.menu_costing.drawer.costed_lines": "Every ingredient priced ({n} lines).",
   "admin.menu_costing.drawer.known_so_far": "Known so far: {amount} across {n} priced lines. The real cost is higher — the ingredients below have no price yet.",
+  "admin.menu_costing.drawer.none_priced": "Nothing on this item has a price yet, so there is no cost to show. Record prices for the ingredients below and the cost appears.",
   "admin.menu_costing.drawer.blocking": "Needs a price ({n})",
   "admin.menu_costing.drawer.unresolved_help": "This item has a build, but we can't turn its ingredients into ounces yet — a SKU is missing pack info, or a line uses a unit we can't convert. Fix the SKU or the recipe line and the cost appears.",
   "admin.menu_costing.drawer.no_recipe_help": "No build recipe for this item yet, so there is nothing to cost. Add one under Recipes.",

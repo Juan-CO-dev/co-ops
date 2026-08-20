@@ -382,6 +382,7 @@
   "admin.menu_costing.toggle.hide": "Ocultar",
   "admin.menu_costing.drawer.costed_lines": "Todos los ingredientes tienen precio ({n} líneas).",
   "admin.menu_costing.drawer.known_so_far": "Hasta ahora: {amount} en {n} líneas con precio. El costo real es más alto — los ingredientes de abajo todavía no tienen precio.",
+  "admin.menu_costing.drawer.none_priced": "Todavía nada de este platillo tiene precio, así que no hay costo que mostrar. Registra precios para los ingredientes de abajo y el costo aparece.",
   "admin.menu_costing.drawer.blocking": "Falta precio ({n})",
   "admin.menu_costing.drawer.unresolved_help": "Este platillo tiene receta, pero todavía no podemos convertir sus ingredientes a onzas — a un SKU le falta info del empaque, o una línea usa una unidad que no podemos convertir. Arregla el SKU o la línea y el costo aparece.",
   "admin.menu_costing.drawer.no_recipe_help": "Todavía no hay receta para este platillo, así que no hay nada que costear. Agrega una en Recetas.",
