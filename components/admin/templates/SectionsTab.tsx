@@ -350,7 +350,7 @@ function SectionRow({
       </div>
 
       {confirmingShape && shapeChanged ? (
-        <div className="mt-3 rounded-lg border-2 border-co-gold-deep bg-co-gold/10 p-3">
+        <div className="mt-3 rounded-lg border-2 border-co-warning bg-co-warning-surface p-3">
           <p className="text-sm font-bold text-co-text">
             {t("admin.templates.sections_panel.change_input_type_confirm_title")
               .replace("{count}", itemsInSection.length.toString())

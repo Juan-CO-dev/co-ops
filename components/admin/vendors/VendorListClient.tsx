@@ -286,7 +286,7 @@ function AddVendorForm({
       aria-modal="true"
       className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-co-text/40 p-4"
     >
-      <div className="mt-8 mb-8 w-full max-w-md rounded-xl border-2 border-co-border bg-co-surface p-5 shadow-lg">
+      <div className="mt-8 mb-8 w-full max-w-md rounded-2xl border-2 border-co-border bg-co-surface p-5 shadow-lg">
         <h2 className="text-base font-extrabold text-co-text">{t("admin.vendors.create.title")}</h2>
 
         <div className="mt-4 flex flex-col gap-3">
