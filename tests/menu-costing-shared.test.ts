@@ -8,14 +8,20 @@
  *    poisoned row, and never an FC%/margin derived from a partial cost;
  *  - cook-down: a declared finished weight (items.oz_per_par_unit) changes what
  *    a downstream ounce COSTS, and the undeclared fallback understates it;
- *  - "unresolved" (a data bug) never masquerades as "no_recipe" or as $0.
+ *  - "unresolved" (a data bug) never masquerades as "no_recipe" or as $0;
+ *  - mass balance (D2): a prep declaring MORE finished weight than it is made of
+ *    refuses to cost anything downstream, while a cook-down (less out than in)
+ *    keeps costing normally — the check is one-sided on purpose.
  */
 import { describe, it, expect } from "vitest";
 
 import {
   FOOD_COST_RED_THRESHOLD_PCT,
+  MASS_BALANCE_TOLERANCE,
   compareMenuCostRows,
   composeMenuCostRows,
+  itemMassBalance,
+  massBalanceIndex,
   rollupItemCost,
   rollupMenuItemCost,
   summarizeMenuCostRows,
@@ -222,9 +228,135 @@ describe("cook-down costing (declared finished weight)", () => {
     const r = rollupMenuItemCost(g, "M", prices([["sku1", 0.10]]));
     expect(r.status).toBe("costed");
     expect(r.cost).toBeCloseTo(0.4, 10);
-    // 4× understated vs the declared-finished-weight truth above — the documented
-    // gap: the engine has cook-down SEMANTICS (oz_per_par_unit) but no cook-down
-    // FLAG and no declared-vs-input variance warning to make the omission loud.
+    // 4× understated vs the declared-finished-weight truth above. Still a
+    // documented gap — the engine has cook-down SEMANTICS (oz_per_par_unit) but
+    // no cook-down FLAG, so an item that simply never had its finished weight
+    // entered is indistinguishable from one that doesn't need one. The
+    // declared-vs-input variance half of that gap IS now closed, in the one
+    // direction that can be judged without a flag (see mass balance below): an
+    // UNDECLARED item has nothing to contradict and stays silent, which is why
+    // this row keeps costing rather than flipping to "inconsistent".
+    expect(itemMassBalance(g, "Onion")).toBeNull();
+  });
+});
+
+describe("mass balance — declared output vs resolved input (D2)", () => {
+  /**
+   * The live defect this check was written for, in miniature: a slicing recipe
+   * seeded with a placeholder "1 unit in" against a pan that declares 34.4 oz
+   * out. The engine's arithmetic is right; the DATA violates conservation of
+   * mass, and the board used to print a confident, badly understated cost.
+   */
+  const portioned = (inputOz: number, declaredOz: number | null): GraphRecipe[] => [
+    { recipeId: "rHam", batchYield: 1, inputs: [ozIn(inputOz, "sku1")], outputs: [itemOut("Ham", 1, declaredOz)] },
+    { recipeId: "rM", batchYield: 1, inputs: [itemOzIn(3.6, "Ham")], outputs: [menuOut("M", 1)] },
+  ];
+
+  it("declared >> input → the menu item reads inconsistent, with NO cost and NO subtotal", () => {
+    const g = graphOf(portioned(1.2, 34.4));
+    const r = rollupMenuItemCost(g, "M", prices([["sku1", 0.173125]]));
+    expect(r.status).toBe("inconsistent");
+    expect(r.cost).toBeNull();
+    // Not even a "known so far" figure: every ounce feeding it came out of a
+    // flatten we just proved wrong.
+    expect(r.pricedCost).toBe(0);
+    expect(r.pricedLineCount).toBe(0);
+    // …and the row names the prep to go fix, not just that something is wrong.
+    expect(r.inconsistentItemIds).toEqual(["Ham"]);
+  });
+
+  it("the SAME recipe mass-corrected costs normally again", () => {
+    // 3.6 oz of ham on the sub, +2% slicing trim → 3.6735 oz of raw ham bought.
+    const g = graphOf(portioned(34.4 / 0.98, 34.4));
+    const r = rollupMenuItemCost(g, "M", prices([["sku1", 0.173125]]));
+    expect(r.status).toBe("costed");
+    expect(r.cost).toBeCloseTo((3.6 / 0.98) * 0.173125, 6);
+  });
+
+  it("output BELOW input never flags — cook-downs and trim are the normal direction", () => {
+    const g = graphOf(portioned(16, 4)); // 4:1 cook-down
+    expect(itemMassBalance(g, "Ham")!.ratio).toBeCloseTo(0.25, 10);
+    expect(massBalanceIndex(g).size).toBe(0);
+    expect(rollupMenuItemCost(g, "M", prices([["sku1", 0.1]])).status).toBe("costed");
+  });
+
+  it("the tolerance is a rounding allowance, not slack for reality", () => {
+    expect(MASS_BALANCE_TOLERANCE).toBe(0.02);
+    // 1% over — the kind of drift one-decimal data entry produces. Passes.
+    expect(massBalanceIndex(graphOf(portioned(100, 101))).size).toBe(0);
+    // 5% over — no rounding explains this. Flags.
+    expect(massBalanceIndex(graphOf(portioned(100, 105))).has("Ham")).toBe(true);
+  });
+
+  it("an item with no declared finished weight is unjudgeable, not a violation", () => {
+    const g = graphOf(portioned(1.2, null));
+    expect(itemMassBalance(g, "Ham")).toBeNull();
+    expect(massBalanceIndex(g).size).toBe(0);
+  });
+
+  it("declared weight out of ZERO input is the extreme of the same defect, not a skip", () => {
+    const g = graphOf([
+      { recipeId: "rEmpty", batchYield: 1, inputs: [], outputs: [itemOut("Ham", 1, 8)] },
+      { recipeId: "rM", batchYield: 1, inputs: [itemOzIn(1, "Ham")], outputs: [menuOut("M", 1)] },
+    ]);
+    expect(itemMassBalance(g, "Ham")!.ratio).toBe(Infinity);
+    expect(massBalanceIndex(g).has("Ham")).toBe(true);
+  });
+
+  it("an UNRESOLVABLE flatten still reads unresolved — inconsistency is the later question", () => {
+    const g = graphOf([
+      {
+        recipeId: "rHam", batchYield: 1,
+        inputs: [{ quantity: 1, unit: null, componentSkuId: "sku1", componentItemId: null }],
+        outputs: [itemOut("Ham", 1, 34.4)],
+      },
+      { recipeId: "rM", batchYield: 1, inputs: [itemOzIn(3.6, "Ham")], outputs: [menuOut("M", 1)] },
+    ]);
+    expect(itemMassBalance(g, "Ham")).toBeNull(); // no input mass to compare against
+    expect(rollupMenuItemCost(g, "M", prices([["sku1", 1]])).status).toBe("unresolved");
+  });
+
+  it("a bad prep NESTED two levels down still poisons the row it feeds", () => {
+    const g = graphOf([
+      { recipeId: "rBad", batchYield: 1, inputs: [ozIn(1, "sku1")], outputs: [itemOut("Bad", 1, 20)] },
+      { recipeId: "rMid", batchYield: 1, inputs: [itemIn(1, "Bad")], outputs: [itemOut("Mid", 1)] },
+      { recipeId: "rM", batchYield: 1, inputs: [itemIn(1, "Mid")], outputs: [menuOut("M", 1)] },
+    ]);
+    const r = rollupMenuItemCost(g, "M", prices([["sku1", 1]]));
+    expect(r.status).toBe("inconsistent");
+    expect(r.inconsistentItemIds).toEqual(["Bad"]);
+  });
+
+  it("rollupItemCost judges the item's OWN recipe, not only its sub-preps", () => {
+    const g = graphOf(portioned(1.2, 34.4));
+    const r = rollupItemCost(g, "Ham", prices([["sku1", 1]]));
+    expect(r.status).toBe("inconsistent");
+    expect(r.inconsistentItemIds).toEqual(["Ham"]);
+  });
+
+  it("summarize counts inconsistent rows and the DISTINCT preps behind them", () => {
+    const g = graphOf([
+      { recipeId: "rBad", batchYield: 1, inputs: [ozIn(1, "sku1")], outputs: [itemOut("Bad", 1, 20)] },
+      { recipeId: "rA", batchYield: 1, inputs: [itemIn(1, "Bad")], outputs: [menuOut("a", 1)] },
+      { recipeId: "rB", batchYield: 1, inputs: [itemIn(1, "Bad")], outputs: [menuOut("b", 1)] },
+    ]);
+    const inputs: MenuCostInput[] = [
+      { id: "a", name: "A", nameEs: null, section: null, menuPrice: 10 },
+      { id: "b", name: "B", nameEs: null, section: null, menuPrice: 10 },
+    ];
+    const t = summarizeMenuCostRows(composeMenuCostRows(inputs, g, prices([["sku1", 1]])));
+    expect(t.inconsistentCount).toBe(2);
+    expect(t.inconsistentItemCount).toBe(1); // one broken prep behind both rows
+  });
+
+  it("inconsistent sorts ABOVE unresolved — the silent wrong answer outranks the loud missing one", () => {
+    const mk = (id: string, status: "inconsistent" | "unresolved") =>
+      toMenuCostRow(
+        { id, name: id, nameEs: null, section: null, menuPrice: 10 },
+        { status, cost: null, pricedCost: 0, pricedLineCount: 0, unpricedLineCount: 0, unpricedSkuIds: [], inconsistentItemIds: [] },
+      );
+    expect([mk("u", "unresolved"), mk("i", "inconsistent")].sort(compareMenuCostRows).map((r) => r.id))
+      .toEqual(["i", "u"]);
   });
 });
 
@@ -256,7 +388,7 @@ describe("board composition + ordering", () => {
     expect(rows[1]!.overThreshold).toBe(false);
     const exactly = toMenuCostRow(
       { id: "x", name: "x", nameEs: null, section: null, menuPrice: 10 },
-      { status: "costed", cost: 3, pricedCost: 3, pricedLineCount: 1, unpricedLineCount: 0, unpricedSkuIds: [] },
+      { status: "costed", cost: 3, pricedCost: 3, pricedLineCount: 1, unpricedLineCount: 0, unpricedSkuIds: [], inconsistentItemIds: [] },
     );
     expect(exactly.foodCostPct).toBeCloseTo(30, 10);
     expect(exactly.overThreshold).toBe(false); // AT the threshold is not OVER it
@@ -265,7 +397,7 @@ describe("board composition + ordering", () => {
   it("a costed row with no menu price sorts after priced ones instead of ranking as worst", () => {
     const noPrice = toMenuCostRow(
       { id: "np", name: "No Price", nameEs: null, section: null, menuPrice: null },
-      { status: "costed", cost: 1, pricedCost: 1, pricedLineCount: 1, unpricedLineCount: 0, unpricedSkuIds: [] },
+      { status: "costed", cost: 1, pricedCost: 1, pricedLineCount: 1, unpricedLineCount: 0, unpricedSkuIds: [], inconsistentItemIds: [] },
     );
     expect(compareMenuCostRows(noPrice, rows[0]!)).toBeGreaterThan(0);
   });
@@ -274,7 +406,7 @@ describe("board composition + ordering", () => {
     const mk = (id: string, unpriced: number) =>
       toMenuCostRow(
         { id, name: id, nameEs: null, section: null, menuPrice: 10 },
-        { status: "partial", cost: null, pricedCost: 1, pricedLineCount: 1, unpricedLineCount: unpriced, unpricedSkuIds: [] },
+        { status: "partial", cost: null, pricedCost: 1, pricedLineCount: 1, unpricedLineCount: unpriced, unpricedSkuIds: [], inconsistentItemIds: [] },
       );
     expect([mk("b", 3), mk("a", 1)].sort(compareMenuCostRows).map((r) => r.id)).toEqual(["a", "b"]);
   });

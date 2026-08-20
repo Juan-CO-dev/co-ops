@@ -42,6 +42,26 @@ export interface GraphOutput {
 }
 export interface GraphRecipe {
   recipeId: string;
+  /**
+   * ⚠ TRIPWIRE — `recipes.batch_yield` is LOADED AND VALIDATED HERE BUT NEVER
+   * DIVIDED BY. Do not trust it as a divisor, a scale factor, or a batch size.
+   *
+   * Every engine below reads it exactly once, as a GUARD (`== null || <= 0` →
+   * unresolvable) and never again; the per-unit division is always by the
+   * OUTPUT's own `yield` (`recipe_outputs.yield`), which is the number that
+   * actually says how many par-units one batch makes. Two fields that sound
+   * like the same fact are not: live, the `Hot Peppers` recipe carries
+   * batch_yield = 1 against an output yield of 10, and the flatten is right to
+   * use the 10. A future "simplification" that divides batch oz by batchYield —
+   * or that multiplies an input by it to get a batch — would silently rescale
+   * every cost and depletion number in the app by whatever ratio those two
+   * fields happen to sit at, per recipe, with no error anywhere.
+   *
+   * If you need a real batch size, derive it: Σ(output.yield × ozPerParUnit).
+   * If you want to make batch_yield meaningful, that is a data + migration
+   * arc (reconcile all 60-odd recipes first), not an arithmetic edit here.
+   * (Debug finding D5, 2026-08-20.)
+   */
   batchYield: number | null;
   inputs: GraphInput[];
   outputs: GraphOutput[];
@@ -105,6 +125,26 @@ export function itemOzWeight(o: GraphOutput): number {
  */
 export function perUnitSkuOzForItemFromGraph(graph: RecipeGraph, itemId: string): Map<string, number> {
   return perUnitFromNode(graph, itemId, new Set()) ?? new Map();
+}
+
+/**
+ * Total leaf-SKU ounces going INTO one whole batch of the recipe that produces
+ * `itemId` — i.e. the flatten BEFORE the fan-out share and the ÷ yield. Null
+ * when the recipe is missing or the flatten is unresolvable (same all-or-nothing
+ * poisoning as everything else here).
+ *
+ * Exposed for the mass-balance consistency check (lib/menu-costing-shared.ts,
+ * debug finding D2), which compares this against what the recipe's outputs
+ * DECLARE they weigh. It is deliberately the engine's own `batchOz` rather than
+ * a re-implementation: a consistency check computed by a second, subtly
+ * different flatten would report on a recipe nobody is actually costing.
+ */
+export function batchInputOzForItem(graph: RecipeGraph, itemId: string): number | null {
+  const batch = batchOz(graph, itemId, new Set());
+  if (batch == null) return null;
+  let total = 0;
+  for (const oz of batch.values()) total += oz;
+  return Number.isFinite(total) ? total : null;
 }
 
 function batchOz(graph: RecipeGraph, outItemId: string, visiting: Set<string>): Map<string, number> | null {
