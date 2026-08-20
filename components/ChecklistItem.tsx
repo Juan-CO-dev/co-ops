@@ -1885,8 +1885,8 @@ function YesNoButtons({
           base +
           " " +
           (isYes
-            ? "border-co-success bg-co-success/15 text-co-confirm-text"
-            : "border-co-border bg-co-surface text-co-text-muted hover:border-co-success/60 hover:text-co-confirm-text")
+            ? "border-co-confirm bg-co-success-surface text-co-confirm-text"
+            : "border-co-border bg-co-surface text-co-text-muted hover:border-co-confirm/60 hover:text-co-confirm-text")
         }
       >
         {t("closing.answer.yes")}
