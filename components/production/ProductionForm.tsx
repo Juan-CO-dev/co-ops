@@ -44,7 +44,7 @@ export function ProductionForm({ formData, locationId }: { formData: ProductionF
   };
 
   return (
-    <div className="rounded-xl border-2 border-co-border bg-co-surface p-4">
+    <div className="rounded-2xl border-2 border-co-border bg-co-surface p-4">
       <h2 className="text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">{t("production.form.title")}</h2>
       <label className="mt-3 block"><span className="text-sm font-bold text-co-text">{t("production.form.sku")}</span>
         <select className={field} value={skuId} disabled={busy} onChange={(e) => { setSkuId(e.target.value); setItemId(""); setPredicted(null); }}>

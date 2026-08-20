@@ -127,7 +127,7 @@ function EmployeeEvalCard({
         : t("pm.save");
 
   return (
-    <div className="rounded-xl border-2 border-co-border bg-co-surface p-4">
+    <div className="rounded-2xl border-2 border-co-border bg-co-surface p-4">
       <p className="mb-3 text-sm font-bold text-co-text">{employeeName}</p>
 
       {/* Arrived ready 3-way */}
