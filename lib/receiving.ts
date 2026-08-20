@@ -41,6 +41,7 @@ import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import {
   deriveCreditDrafts,
   deriveMissingCreditDrafts,
+  findVendorMismatch,
   isDuplicateAppend,
   type AppendLine,
   type IntakeLineForCredits,
@@ -413,7 +414,7 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
     }
   }
 
-  const resolved = await validateAndResolveDeliveryLines(sb, input.lines);
+  const resolved = await validateAndResolveDeliveryLines(sb, input.lines, input.vendorId);
 
   // Missing-item honesty gate (PO-LINKED ONLY). An expectation is a vendor DEBT only when
   // the vendor was ordered the item; a last-delivery prefill is a habit, not an order. The
@@ -449,7 +450,7 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   if (!header) throw new Error("recordDelivery header returned no row");
 
   const { error: lErr } = await sb.from("vendor_delivery_items").insert(
-    buildLineRows(header.id, input.lines, resolved.resolvedOzByLineIdx, actor.user.id),
+    buildLineRows(header.id, input.lines, resolved.resolvedOzByLineIdx, actor.user.id, resolved.vendorIdBySku),
   );
   if (lErr) throw new Error(`recordDelivery lines: ${lErr.message}`);
 
@@ -576,6 +577,14 @@ interface ResolvedLines {
   resolvedOzByLineIdx: Array<number | null>;
   /** SKU ids that have an active pack chain (avg-refinement gate, council L8). */
   chained: Set<string>;
+  /**
+   * Each referenced SKU's OWN vendor_id (P3) — persisted onto the line so migration
+   * 0178's composite FKs can hold the binding at the DB floor. Deliberately the SKU's
+   * vendor, not the delivery's: for a vendorless SKU this is null, which is exactly
+   * what makes the MATCH SIMPLE FKs skip the (unbindable) row instead of rejecting it.
+   * The guard above has already proven a non-null value equals the delivery's vendor.
+   */
+  vendorIdBySku: Map<string, string | null>;
 }
 
 /**
@@ -584,8 +593,14 @@ interface ResolvedLines {
  * observed, confirms every referenced SKU is active, then batch-loads measures +
  * chains once (loadRecipeGraph law) and resolves each line's received oz (council L3).
  * Throws ReceivingError on any validation failure; the caller owns the header/insert.
+ *
+ * MULTI-VENDOR AUDIT P3: `deliveryVendorId` binds every line to the truck that brought
+ * it. The picker's vendor scoping is browser-side UX; THIS is the enforcement (see
+ * findVendorMismatch in receiving-shared for the null-tolerance rule and the why).
  */
-async function validateAndResolveDeliveryLines(sb: ServiceClient, lines: DeliveryLineInput[]): Promise<ResolvedLines> {
+async function validateAndResolveDeliveryLines(
+  sb: ServiceClient, lines: DeliveryLineInput[], deliveryVendorId: string | null,
+): Promise<ResolvedLines> {
   if (!Array.isArray(lines) || lines.length === 0) throw new ReceivingError(400, "no_lines", "At least one line is required");
   for (const l of lines) {
     if (!Number.isFinite(l.qtyReceived) || l.qtyReceived <= 0) throw new ReceivingError(400, "invalid_qty", "Quantity must be positive");
@@ -595,24 +610,34 @@ async function validateAndResolveDeliveryLines(sb: ServiceClient, lines: Deliver
   }
   const skuIds = [...new Set(lines.map((l) => l.skuId))];
   const { data: activeSkus } = await sb.from("vendor_items")
-    .select("id, pack_format, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each")
+    .select("id, vendor_id, pack_format, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each")
     .in("id", skuIds).eq("active", true)
-    .returns<Array<{ id: string; pack_format: string | null; each_container_label: string | null; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>>();
+    .returns<Array<{ id: string; vendor_id: string | null; pack_format: string | null; each_container_label: string | null; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>>();
   const activeSet = new Set((activeSkus ?? []).map((s) => s.id));
   for (const id of skuIds) if (!activeSet.has(id)) throw new ReceivingError(400, "invalid_sku", "A SKU is not found or inactive");
+
+  // Vendor binding (P3) — a line for another vendor's twin would write this delivery's
+  // price + observed-oz onto a SKU the truck never carried.
+  const mismatch = findVendorMismatch(deliveryVendorId, (activeSkus ?? []).map((s) => ({ id: s.id, vendorId: s.vendor_id })));
+  if (mismatch) {
+    throw new ReceivingError(400, "sku_vendor_mismatch", "An item belongs to a different vendor than this delivery");
+  }
 
   const [measures, chainsBySku] = await Promise.all([loadMeasures(), loadSkuPackChains(skuIds)]);
   const skuById = new Map((activeSkus ?? []).map((s) => [s.id, s]));
   const chained = new Set([...chainsBySku.entries()].filter(([, lv]) => lv.length > 0).map(([id]) => id));
   const resolvedOzByLineIdx = lines.map((l) => resolveReceivedOz(l, skuById.get(l.skuId), chainsBySku.get(l.skuId) ?? null, measures));
-  return { resolvedOzByLineIdx, chained };
+  const vendorIdBySku = new Map((activeSkus ?? []).map((s) => [s.id, s.vendor_id]));
+  return { resolvedOzByLineIdx, chained, vendorIdBySku };
 }
 
 /** Build the vendor_delivery_items rows for a set of input lines (shared shape for
- *  recordDelivery + addDeliveryLines). resolvedOzByLineIdx is index-aligned with lines. */
-function buildLineRows(deliveryId: string, lines: DeliveryLineInput[], resolvedOzByLineIdx: Array<number | null>, createdBy: string) {
+ *  recordDelivery + addDeliveryLines). resolvedOzByLineIdx is index-aligned with lines.
+ *  vendorIdBySku carries each SKU's own vendor onto the row (P3 / migration 0178). */
+function buildLineRows(deliveryId: string, lines: DeliveryLineInput[], resolvedOzByLineIdx: Array<number | null>, createdBy: string, vendorIdBySku: Map<string, string | null>) {
   return lines.map((l, i) => ({
     delivery_id: deliveryId, vendor_item_id: l.skuId, qty_received: l.qtyReceived,
+    vendor_id: vendorIdBySku.get(l.skuId) ?? null,
     unit_price: l.unitPrice ?? null, observed_oz_per_each: l.observedOzPerEach ?? null,
     notes: l.notes?.trim() || null, created_by: createdBy,
     received_level_label: l.receivedLevelLabel?.trim() || null,
@@ -727,11 +752,19 @@ async function insertMissingExpectedCredits(
 
   const skuIds = usable.map((m) => m.skuId);
   const { data: activeSkus, error: sErr } = await sb.from("vendor_items")
-    .select("id").in("id", skuIds).eq("active", true)
-    .returns<Array<{ id: string }>>();
+    .select("id, vendor_id").in("id", skuIds).eq("active", true)
+    .returns<Array<{ id: string; vendor_id: string | null }>>();
   if (sErr) throw new Error(`insertMissingExpectedCredits skus: ${sErr.message}`);
   const activeSet = new Set((activeSkus ?? []).map((s) => s.id));
   for (const id of skuIds) if (!activeSet.has(id)) throw new ReceivingError(400, "invalid_sku", "A SKU is not found or inactive");
+
+  // Vendor binding (P3) — mirrors validateAndResolveDeliveryLines. A short credit is a
+  // DEBT claim against `vendorId`; claiming another vendor's twin invents a debt the
+  // named vendor never owed.
+  const mismatch = findVendorMismatch(vendorId, (activeSkus ?? []).map((s) => ({ id: s.id, vendorId: s.vendor_id })));
+  if (mismatch) {
+    throw new ReceivingError(400, "sku_vendor_mismatch", "A missing item belongs to a different vendor than this delivery");
+  }
 
   const drafts = deriveMissingCreditDrafts(usable);
   const { error: cErr } = await sb.from("vendor_credits").insert(
@@ -963,7 +996,7 @@ export async function addDeliveryLines(
   if (!lockLocationContext(actorLoc(actor), h.location_id)) throw new ReceivingError(404, "not_found", "Delivery not found");
   if (h.delivery_status !== "in_progress") throw new ReceivingError(409, "delivery_complete", "This delivery is complete — reopen or start a new one");
 
-  const resolved = await validateAndResolveDeliveryLines(sb, lines);
+  const resolved = await validateAndResolveDeliveryLines(sb, lines, h.vendor_id);
 
   // Double-submit guard (P1 pragmatic window): a network retry / double-tap on the
   // append route would duplicate every line (and each dup spawns its own credit).
@@ -988,7 +1021,7 @@ export async function addDeliveryLines(
   }
 
   const { error: lErr } = await sb.from("vendor_delivery_items").insert(
-    buildLineRows(h.id, lines, resolved.resolvedOzByLineIdx, actor.user.id),
+    buildLineRows(h.id, lines, resolved.resolvedOzByLineIdx, actor.user.id, resolved.vendorIdBySku),
   );
   if (lErr) throw new Error(`addDeliveryLines lines: ${lErr.message}`);
 

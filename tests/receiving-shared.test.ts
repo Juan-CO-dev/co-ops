@@ -9,12 +9,14 @@ import { describe, it, expect } from "vitest";
 import {
   deriveCreditDrafts,
   deriveMissingCreditDrafts,
+  findVendorMismatch,
   isDuplicateAppend,
   upsertIntakeDraft,
   removeIntakeDraft,
   INTAKE_DRAFT_CAP,
   type AppendLine,
   type IntakeLineForCredits,
+  type SkuVendorBinding,
 } from "../lib/receiving-shared";
 
 const line = (over: Partial<IntakeLineForCredits>): IntakeLineForCredits => ({
@@ -179,5 +181,41 @@ describe("intake draft shelf", () => {
     const shelf = [d("v-1", "t1")];
     expect(removeIntakeDraft(shelf, "v-1", "t-other")).toEqual(shelf);
     expect(removeIntakeDraft(shelf, "v-other", "t1")).toEqual(shelf);
+  });
+});
+
+// ── findVendorMismatch (multi-vendor audit P3) ────────────────────────────────
+describe("findVendorMismatch", () => {
+  const sku = (id: string, vendorId: string | null): SkuVendorBinding => ({ id, vendorId });
+
+  it("passes when every SKU belongs to the delivering vendor", () => {
+    expect(findVendorMismatch("v-baldor", [sku("a", "v-baldor"), sku("b", "v-baldor")])).toBeNull();
+  });
+
+  it("catches a twin from another vendor (the P3 bug)", () => {
+    // Baldor's truck, but a line names PFG's "Ham" — this is what wrote price history
+    // onto the twin that never arrived.
+    const hit = findVendorMismatch("v-baldor", [sku("a", "v-baldor"), sku("ham-pfg", "v-pfg")]);
+    expect(hit?.id).toBe("ham-pfg");
+  });
+
+  it("returns the FIRST offender when several cross vendors", () => {
+    expect(findVendorMismatch("v-1", [sku("x", "v-2"), sku("y", "v-3")])?.id).toBe("x");
+  });
+
+  it("tolerates vendorless SKUs — unassigned is not another vendor", () => {
+    // 11 ACTIVE SKUs carry a null vendor in prod (Sub Roll, Mortadella, …). Rejecting
+    // them would make real ingredients un-receivable at the door.
+    expect(findVendorMismatch("v-baldor", [sku("sub-roll", null), sku("a", "v-baldor")])).toBeNull();
+  });
+
+  it("disables the check when the delivery names no vendor", () => {
+    expect(findVendorMismatch(null, [sku("a", "v-1")])).toBeNull();
+    expect(findVendorMismatch("", [sku("a", "v-1")])).toBeNull();
+    expect(findVendorMismatch(undefined, [sku("a", "v-1")])).toBeNull();
+  });
+
+  it("passes on an empty line set", () => {
+    expect(findVendorMismatch("v-1", [])).toBeNull();
   });
 });

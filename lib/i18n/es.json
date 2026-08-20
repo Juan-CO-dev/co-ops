@@ -2511,6 +2511,7 @@
   "receiving.error.invalid_date": "Elige una fecha de entrega válida.",
   "receiving.error.invalid_vendor": "Ese proveedor no está disponible.",
   "receiving.error.invalid_sku": "Uno de los artículos no está disponible.",
+  "receiving.error.sku_vendor_mismatch": "Uno de los artículos es de otro proveedor. Elige los artículos que este proveedor sí entregó.",
   "receiving.error.not_found": "No encontrado.",
   "receiving.error.forbidden": "No tienes permiso para recibir.",
   "receiving.error.already_complete": "Esta entrega ya está completa.",
