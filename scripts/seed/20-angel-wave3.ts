@@ -1321,9 +1321,21 @@ async function execute(
   // 5) Read the post-state back FROM THE DESTINATION, through the real function.
   p("\n── section D post-state (read back from the destination) ──");
   for (const product of ["Fresh Mozzarella", "Ham"]) {
-    const { data, error } = await sb
+    // Resolve the twin ids FIRST and filter on them. Selecting every recipe_input and
+    // filtering in JS would silently truncate at PostgREST's default page size — and a
+    // read-back that quietly returns fewer rows than exist is worse than no read-back,
+    // because it reports success over the rows it never saw.
+    const { data: twinRows, error: tErr } = await sb
+      .from("vendor_items").select("id").eq("name", product).is("location_id", null)
+      .returns<Array<{ id: string }>>();
+    if (tErr) throw new Error(`read back ${product} twins: ${tErr.message}`);
+    const twinIds = (twinRows ?? []).map((r) => r.id);
+    if (twinIds.length === 0) { p(`  ! ${product}: no global rows found on read-back`); continue; }
+
+    const { data, error, count } = await sb
       .from("recipe_inputs")
-      .select("id, quantity, unit, recipes(name), vendor_items!recipe_inputs_component_sku_id_fkey(id, name, pack_format, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each, vendors(name))")
+      .select("id, quantity, unit, recipes(name), vendor_items!recipe_inputs_component_sku_id_fkey(id, name, pack_format, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each, vendors(name))", { count: "exact" })
+      .in("component_sku_id", twinIds)
       .returns<Array<{
         id: string; quantity: number | string; unit: string | null;
         recipes: { name: string } | null;
@@ -1333,8 +1345,9 @@ async function execute(
           avg_oz_per_each: number | string | null; vendors: { name: string } | null;
         } | null;
       }>>();
-    if (error) throw new Error(`read back pins: ${error.message}`);
-    const mine = (data ?? []).filter((r) => r.vendor_items?.name === product);
+    if (error) throw new Error(`read back ${product} pins: ${error.message}`);
+    const mine = data ?? [];
+    if (count != null && mine.length < count) throw new Error(`read back ${product} pins truncated: got ${mine.length} of ${count}`);
     const chainsAfter = await loadSkuPackChains(mine.map((r) => r.vendor_items!.id));
     for (const r of mine) {
       const vi = r.vendor_items!;
