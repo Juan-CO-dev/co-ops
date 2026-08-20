@@ -307,7 +307,7 @@ export function CashClient({
               <button
                 type="button"
                 onClick={() => setExtraNames(extraNames.filter((_, j) => j !== i))}
-                className="inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-md border-2 border-co-border-2 bg-co-surface px-2 text-sm font-bold text-co-cta transition-colors hover:border-co-cta focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
+                className="inline-flex min-h-[44px] min-w-[44px] shrink-0 items-center justify-center rounded-md border-2 border-co-border-2 bg-co-surface px-2 text-sm font-bold text-co-cta transition-colors hover:border-co-cta-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
               >
                 ✕
               </button>

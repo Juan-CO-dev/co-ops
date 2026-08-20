@@ -71,7 +71,7 @@ export function OpeningCountInput({
         "text-base font-semibold text-co-text",
         "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
         hasError
-          ? "border-co-danger bg-co-surface"
+          ? "border-co-cta-text bg-co-surface"
           : "border-co-border-2 bg-co-surface hover:border-co-text",
         disabled && "opacity-50",
       ]

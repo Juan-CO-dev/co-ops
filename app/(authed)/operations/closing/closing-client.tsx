@@ -925,7 +925,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
         * clear prompt + one-tap CTA to the cash page.
         * Hidden once cashDeposited is true (canFinalize's banner takes over). */}
       {!readOnly && actor.level >= 4 && walkOutVerificationComplete && !cashDeposited ? (
-        <div className="mt-6 rounded-2xl border-2 border-co-cta bg-co-danger-surface p-4">
+        <div className="mt-6 rounded-2xl border-2 border-co-cta-text bg-co-danger-surface p-4">
           <p className="text-sm font-bold text-co-text">{t("closing.cash_required.banner")}</p>
           <div className="mt-3">
             <ActionLink

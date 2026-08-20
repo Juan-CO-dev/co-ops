@@ -993,7 +993,7 @@ export function ChecklistItem({
     instanceLocked ? "opacity-70 cursor-not-allowed" : "",
     readOnly ? "opacity-70 cursor-default" : "",
     inFlight ? "ring-2 ring-co-gold-deep cursor-wait" : "",
-    error ? "border-co-cta/60" : "",
+    error ? "border-co-cta-text/60" : "",
     isCompleted && !error ? "bg-co-surface-2/60" : "",
   ]
     .filter(Boolean)
@@ -1301,7 +1301,7 @@ function UndoButton({ onClick, disabled }: { onClick: () => void; disabled: bool
         shrink-0 inline-flex min-h-[48px] min-w-[64px] items-center justify-center rounded-lg
         border-2 border-co-border bg-co-surface px-3
         text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-muted
-        transition hover:border-co-cta/60 hover:text-co-cta active:bg-co-surface-2
+        transition hover:border-co-cta-text/60 hover:text-co-cta active:bg-co-surface-2
         focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
         disabled:cursor-not-allowed disabled:opacity-50
       "
@@ -1363,7 +1363,7 @@ function MarkNotDoneButton({
         shrink-0 inline-flex min-h-[48px] min-w-[64px] items-center justify-center rounded-lg
         border-2 border-co-border bg-co-surface px-3
         text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-muted
-        transition hover:border-co-cta/60 hover:text-co-cta active:bg-co-surface-2
+        transition hover:border-co-cta-text/60 hover:text-co-cta active:bg-co-surface-2
         focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
         disabled:cursor-not-allowed disabled:opacity-50
       "
@@ -1901,8 +1901,8 @@ function YesNoButtons({
           base +
           " " +
           (isNo
-            ? "border-co-cta bg-co-cta/10 text-co-cta"
-            : "border-co-border bg-co-surface text-co-text-muted hover:border-co-cta/60 hover:text-co-cta")
+            ? "border-co-cta-text bg-co-cta/10 text-co-cta"
+            : "border-co-border bg-co-surface text-co-text-muted hover:border-co-cta-text/60 hover:text-co-cta")
         }
       >
         {t("closing.answer.no")}

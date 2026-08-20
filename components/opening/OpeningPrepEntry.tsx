@@ -695,7 +695,7 @@ function PrepEntryRow({
             readOnly ? "cursor-not-allowed" : "",
             value.underPar
               ? "border-2 border-co-success bg-co-success-surface text-co-text"
-              : "border-2 border-co-danger bg-co-danger-surface text-co-text hover:bg-[#FFD0D0]",
+              : "border-2 border-co-cta-text bg-co-danger-surface text-co-text hover:bg-[#FFD0D0]",
           ].join(" ")}
         >
           {value.underPar
@@ -741,7 +741,7 @@ function PrepEntryRow({
                 className="
                   inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 py-1
                   text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-muted
-                  transition hover:border-co-danger hover:text-co-danger
+                  transition hover:border-co-cta-text hover:text-co-danger
                   focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
                   disabled:cursor-not-allowed disabled:opacity-60
                 "
@@ -768,7 +768,7 @@ function PrepEntryRow({
                 onClick={() => onSave(value)}
                 aria-label={t("opening.phase2.save.retry_aria", { item: resolved.label })}
                 className="
-                  inline-flex min-h-[44px] items-center rounded-full border-2 border-co-danger bg-co-surface px-3 py-1
+                  inline-flex min-h-[44px] items-center rounded-full border-2 border-co-cta-text bg-co-surface px-3 py-1
                   text-[10px] font-bold uppercase tracking-[0.12em] text-co-text
                   transition hover:bg-co-danger-surface
                   focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
@@ -862,7 +862,7 @@ function NumericInput({
         disabled
           ? "border-co-border-2 bg-co-bg/40 text-co-text-muted cursor-not-allowed"
           : hasError
-            ? "border-co-danger bg-co-surface"
+            ? "border-co-cta-text bg-co-surface"
             : "border-co-border-2 bg-co-surface hover:border-co-text",
       ].join(" ")}
     />
