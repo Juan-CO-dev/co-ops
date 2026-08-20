@@ -5,6 +5,7 @@ import { useTranslation } from "@/lib/i18n/provider";
 import { ActionButton } from "@/components/ActionButton";
 import { PasswordModal } from "@/components/auth/PasswordModal";
 import type { CountSkuOption } from "@/lib/counts";
+import { twinVendorLabels } from "@/lib/counts-shared";
 
 interface LineDraft {
   skuId: string;
@@ -31,6 +32,14 @@ export function CountForm({ skus, locationId }: { skus: CountSkuOption[]; locati
   const pendingRef = useRef<(() => void) | null>(null);
 
   const skuById = new Map(skus.map((s) => [s.id, s]));
+  // P8: only names that exist under 2+ vendors get a vendor suffix. Computed ONCE for the
+  // whole option set, not per row — and empty for the ~95% single-vendor catalog, so the
+  // common case renders exactly as before.
+  const twinLabels = twinVendorLabels(skus);
+  const optionLabel = (s: CountSkuOption) => {
+    const v = twinLabels.get(s.id);
+    return v ? `${s.name} — ${v}` : s.name;
+  };
   const setLine = (i: number, patch: Partial<LineDraft>) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
 
   const canSubmit =
@@ -90,7 +99,7 @@ export function CountForm({ skus, locationId }: { skus: CountSkuOption[]; locati
             <div key={i} className="rounded-lg border-2 border-co-border-2 p-3">
               <select className={field} value={l.skuId} disabled={busy} onChange={(e) => setLine(i, { skuId: e.target.value, level: "" })} aria-label={t("counts.form.pick_sku")}>
                 <option value="">{t("counts.form.pick_sku")}</option>
-                {skus.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                {skus.map((s) => <option key={s.id} value={s.id}>{optionLabel(s)}</option>)}
               </select>
               <div className="mt-2 grid grid-cols-2 gap-2">
                 <label className="block">

@@ -106,6 +106,11 @@ export interface CountSkuOption {
   name: string;
   chainLabels: string[];
   packFormat: string | null;
+  /**
+   * Owning vendor's display name, null when unassigned (audit P8). Rendered ONLY when the
+   * same name appears under 2+ vendors — see twinVendorLabels in lib/counts-shared.ts.
+   */
+  vendorName: string | null;
 }
 export interface CountFormData {
   skus: CountSkuOption[];
@@ -116,13 +121,28 @@ export async function loadCountFormData(actor: AuthContext, locationId: string):
   requireLevel(actor, COUNT_READ_MIN);
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new CountError(404, "not_found", "Location not found");
   const sb = getServiceRoleClient();
-  const { data: skus, error } = await sb.from("vendor_items").select("id, name, pack_format").eq("active", true).order("name", { ascending: true })
-    .returns<Array<{ id: string; name: string; pack_format: string | null }>>();
+  const { data: skus, error } = await sb.from("vendor_items").select("id, name, pack_format, vendor_id").eq("active", true).order("name", { ascending: true })
+    .returns<Array<{ id: string; name: string; pack_format: string | null; vendor_id: string | null }>>();
   if (error) throw new Error(`loadCountFormData skus: ${error.message}`);
   const list = skus ?? [];
+  // Vendor names (P8) — ONE batched lookup over the distinct vendors, never per-SKU.
+  // LABEL-ONLY: a failure here must not break the count sheet, so it degrades to null
+  // labels (the twin rows just stay ambiguous, exactly as they were before P8).
+  const vendorIds = [...new Set(list.map((s) => s.vendor_id).filter((v): v is string => v !== null))];
+  const vendorNameById = new Map<string, string>();
+  if (vendorIds.length > 0) {
+    const { data: vs, error: vErr } = await sb.from("vendors").select("id, name").in("id", vendorIds)
+      .returns<Array<{ id: string; name: string }>>();
+    if (vErr) console.error(`[counts] loadCountFormData vendor names lookup failed:`, vErr.message);
+    for (const v of vs ?? []) vendorNameById.set(v.id, v.name);
+  }
   const chainsBySku = await loadSkuPackChains(list.map((s) => s.id));
   return {
-    skus: list.map((s) => ({ id: s.id, name: s.name, packFormat: s.pack_format, chainLabels: chainLabelsInWalkOrder(chainsBySku.get(s.id) ?? []) })),
+    skus: list.map((s) => ({
+      id: s.id, name: s.name, packFormat: s.pack_format,
+      vendorName: s.vendor_id != null ? vendorNameById.get(s.vendor_id) ?? null : null,
+      chainLabels: chainLabelsInWalkOrder(chainsBySku.get(s.id) ?? []),
+    })),
   };
 }
 

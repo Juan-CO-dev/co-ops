@@ -16,7 +16,17 @@ import { EmptyState } from "@/components/EmptyState";
  * Anchor age + retro-edit staleness surfaced. Juan's model: receiving feeds, counts
  * verify, the difference is variance (weight) / "used or lost" (count).
  */
-export function OnHandPanel({ view, lang }: { view: OnHandView; lang: Language }) {
+export function OnHandPanel({ view, lang, twinVendorBySkuId }: {
+  view: OnHandView;
+  lang: Language;
+  /**
+   * P8 (multi-vendor audit) — skuId → vendor label, ONLY for names that exist under 2+
+   * vendors. Derived once by the page from the count form's option set and shared here so
+   * both halves of the page disambiguate twins identically. A row absent from the map (an
+   * inactive SKU, or an unambiguous name) simply renders no vendor — the ~95% case.
+   */
+  twinVendorBySkuId: Map<string, string>;
+}) {
   // Show the panel whenever there are rows — a location may have NO census event yet
   // and still surface inferred baselines (spec D6 cold-start). The `anchorAt` header
   // hint is census-only (the last physical count) and is omitted when null.
@@ -36,8 +46,8 @@ export function OnHandPanel({ view, lang }: { view: OnHandView; lang: Language }
       <ul className="mt-2 flex flex-col gap-1.5">
         {view.rows.map((r) =>
           r.dimension === "count"
-            ? <CountRow key={r.skuId} r={r} lang={lang} />
-            : <WeightRow key={r.skuId} r={r} lang={lang} />,
+            ? <CountRow key={r.skuId} r={r} lang={lang} vendorName={twinVendorBySkuId.get(r.skuId) ?? null} />
+            : <WeightRow key={r.skuId} r={r} lang={lang} vendorName={twinVendorBySkuId.get(r.skuId) ?? null} />,
         )}
       </ul>
     </div>
@@ -88,8 +98,23 @@ function SourceChip({ source, anchorAt, lang }: { source: AnchorSource; anchorAt
   );
 }
 
+/**
+ * SKU name, with the vendor appended ONLY when this name is ambiguous across vendors
+ * (P8). Two identical "Ham" rows gave the counter nothing to choose between, so the count
+ * landed on whichever twin they happened to hit — silently corrupting the anchor the whole
+ * drift/variance model rests on.
+ */
+function SkuNameLabel({ name, vendorName }: { name: string; vendorName: string | null }) {
+  return (
+    <span className="font-semibold text-co-text">
+      {name}
+      {vendorName ? <span className="font-normal text-co-text-dim"> — {vendorName}</span> : null}
+    </span>
+  );
+}
+
 /** Weight-anchored row (raw SKU) — oz drift + variance, unchanged voice. */
-function WeightRow({ r, lang }: { r: OnHandWeightRow; lang: Language }) {
+function WeightRow({ r, lang, vendorName }: { r: OnHandWeightRow; lang: Language; vendorName: string | null }) {
   const oz = (v: number | null): string => (v == null ? "—" : `${v.toFixed(1)} oz`);
   const signedOz = (v: number | null): string => (v == null ? "—" : `${v > 0 ? "+" : ""}${v.toFixed(1)} oz`);
   const varianceLabel = (v: number): string | null =>
@@ -98,7 +123,7 @@ function WeightRow({ r, lang }: { r: OnHandWeightRow; lang: Language }) {
   return (
     <li className="rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2 text-sm">
       <div className="flex items-center justify-between gap-2">
-        <span className="font-semibold text-co-text">{r.skuName}</span>
+        <SkuNameLabel name={r.skuName} vendorName={vendorName} />
         <span className="flex items-center gap-2">
           <SourceChip source={r.anchorSource} anchorAt={r.anchorAt} lang={lang} />
           <span className="text-xs text-co-text-muted">
@@ -124,13 +149,13 @@ function WeightRow({ r, lang }: { r: OnHandWeightRow; lang: Language }) {
 
 /** Count-anchored row (packaging/cleaning/misc) — leaf-unit on-hand + "used or
  *  lost since last count" (advisory; NEVER "variance"/"loss"). */
-function CountRow({ r, lang }: { r: OnHandCountRow; lang: Language }) {
+function CountRow({ r, lang, vendorName }: { r: OnHandCountRow; lang: Language; vendorName: string | null }) {
   const units = (v: number | null): string =>
     v == null ? "—" : serverT(lang, "counts.onhand.units", { n: round(v), unit: r.unitLabel });
   return (
     <li className="rounded-lg border-2 border-co-border-2 bg-co-surface px-3 py-2 text-sm">
       <div className="flex items-center justify-between gap-2">
-        <span className="font-semibold text-co-text">{r.skuName}</span>
+        <SkuNameLabel name={r.skuName} vendorName={vendorName} />
         <span className="flex items-center gap-2">
           {/* Count rows are always census — packaging has no consumption ledger to infer from. */}
           <SourceChip source="census" anchorAt={r.anchorAt} lang={lang} />
