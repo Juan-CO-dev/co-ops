@@ -92,7 +92,7 @@ export function SetPasswordForm({
   return (
     <form onSubmit={submit} noValidate className="flex flex-col gap-5">
       <div className="flex flex-col gap-1.5">
-        <label htmlFor="new-password" className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
+        <label htmlFor="new-password" className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-dim">
           {t("auth.set_password.new_label")}
         </label>
         <input
@@ -129,7 +129,7 @@ export function SetPasswordForm({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <label htmlFor="confirm-password" className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
+        <label htmlFor="confirm-password" className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-dim">
           {t("auth.set_password.confirm_label")}
         </label>
         <input

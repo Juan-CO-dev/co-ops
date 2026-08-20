@@ -87,7 +87,7 @@ export async function PlaceholderCard({
         <h2 className="m-0 text-base font-bold text-co-text">{title}</h2>
       </div>
       <div className="co-card border-co-gold p-5 text-center">
-        <h3 className="m-0 mb-1.5 text-sm font-bold text-co-gold">
+        <h3 className="m-0 mb-1.5 text-sm font-bold text-co-gold-text">
           {serverT(lang, "placeholder.coming_in", { shippingIn })}
         </h3>
         <p className="m-0 mb-3 text-[11px] text-co-text-muted">

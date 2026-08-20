@@ -34,7 +34,7 @@ export function LocationTile({ name, code, onSelect, disabled = false }: Locatio
         disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0
       "
     >
-      <span className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim">
+      <span className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-dim">
         {code}
       </span>
       <span className="text-xl font-bold leading-tight text-co-text">{name}</span>

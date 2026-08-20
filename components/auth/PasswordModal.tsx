@@ -190,7 +190,7 @@ export function PasswordModal({ open, onConfirm, onCancel }: PasswordModalProps)
           <div className="flex flex-col gap-1.5">
             <label
               htmlFor="step-up-password"
-              className="text-xs font-bold uppercase tracking-[0.18em] text-co-text-dim"
+              className="text-xs font-bold uppercase tracking-[0.12em] text-co-text-dim"
             >
               {t("auth.step_up.password_label")}
             </label>

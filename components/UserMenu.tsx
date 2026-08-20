@@ -21,6 +21,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 
+import { ActionButton } from "@/components/ActionButton";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { Language } from "@/lib/i18n/types";
 
@@ -144,7 +145,7 @@ export function UserMenu({ userName, userEmail, actorLevel, initialBlurb }: User
         aria-expanded={open}
         aria-label={t("user_menu.aria_label")}
         className="
-          inline-flex h-10 w-10 items-center justify-center rounded-full
+          inline-flex h-11 w-11 items-center justify-center rounded-full
           border-2 border-co-border bg-co-surface
           text-sm font-bold text-co-text
           transition hover:border-co-gold-deep active:bg-co-surface-2
@@ -228,19 +229,12 @@ export function UserMenu({ userName, userEmail, actorLevel, initialBlurb }: User
                 <span className="text-[11px] text-co-text-dim">
                   {t("user_menu.blurb.counter", { n: blurb.trim().length })}
                 </span>
-                <button
-                  type="button"
+                <ActionButton
                   onClick={() => void handleBlurbSave()}
                   disabled={blurbSaving || blurb.trim() === savedBlurb.trim()}
-                  className="
-                    inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep
-                    bg-co-gold px-3 text-sm font-bold uppercase tracking-[0.1em] text-co-text
-                    transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
-                    disabled:cursor-not-allowed disabled:opacity-50
-                  "
                 >
                   {blurbSaving ? t("user_menu.blurb.saving") : t("user_menu.blurb.save")}
-                </button>
+                </ActionButton>
               </div>
               {blurbStatus === "saved" ? (
                 <div className="mt-1 px-1 text-[11px] text-co-text-dim">{t("user_menu.blurb.saved")}</div>
@@ -314,7 +308,7 @@ function LanguageButton({
       disabled={disabled || active}
       className={[
         "flex-1 inline-flex min-h-[44px] items-center justify-center rounded-lg",
-        "border-2 px-3 text-sm font-bold uppercase tracking-[0.12em]",
+        "border-2 px-3 text-sm font-bold uppercase tracking-[0.1em]",
         "transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60",
         active
           ? "border-co-gold-deep bg-co-gold text-co-text cursor-default"

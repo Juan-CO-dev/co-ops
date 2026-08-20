@@ -30,7 +30,7 @@ export function ProfileDirectory({
     <div>
       {leadership.length > 0 ? (
         <section>
-          <p className="mb-2 text-xs font-bold uppercase tracking-[0.12em] text-co-gold-text">
+          <p className="mb-2 text-xs font-bold uppercase tracking-wide text-co-text-muted">
             {serverT(language, "profile.leadership.section")}
           </p>
           <div className="mb-4 grid grid-cols-2 gap-2">
