@@ -252,7 +252,7 @@ export function ItemRow({
                 onChange={(e) => setSpecialInstructionEs(e.target.value)}
               />
             </Labeled>
-            <label className="mt-2 flex items-center gap-2 text-sm font-bold text-co-text">
+            <label className="mt-2 flex min-h-[44px] items-center gap-2 text-sm font-bold text-co-text">
               <input
                 type="checkbox"
                 className="h-5 w-5 accent-co-gold"
@@ -302,7 +302,7 @@ export function ItemRow({
             <h3 className="text-sm font-extrabold uppercase tracking-wide text-co-text-muted">
               {t("admin.templates.sold_directly.title" as TranslationKey)}
             </h3>
-            <label className="mt-2 flex items-center gap-2 text-sm font-bold text-co-text">
+            <label className="mt-2 flex min-h-[44px] items-center gap-2 text-sm font-bold text-co-text">
               <input
                 type="checkbox"
                 className="h-5 w-5 accent-co-gold"

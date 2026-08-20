@@ -669,7 +669,7 @@ function LineItemsSubList({
                                     { name: opt.name, slot: li.description ?? "" },
                                   )}
                                   onClick={() => onRemoveSlotOption(opt.id)}
-                                  className="ml-0.5 inline-flex h-4 w-4 items-center justify-center rounded-full text-co-text-muted hover:text-co-cta focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60 disabled:opacity-50"
+                                  className="ml-0.5 inline-flex h-11 w-11 items-center justify-center rounded-full text-co-text-muted hover:text-co-cta focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60 disabled:opacity-50"
                                 >
                                   ×
                                 </button>

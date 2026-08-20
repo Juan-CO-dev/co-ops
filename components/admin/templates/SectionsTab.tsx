@@ -327,7 +327,7 @@ function SectionRow({
           </select>
         </label>
         {shape === "yes_no" ? (
-          <label className="flex items-center gap-2 text-sm font-bold text-co-text sm:pb-2">
+          <label className="flex min-h-[44px] items-center gap-2 text-sm font-bold text-co-text sm:pb-2">
             <input
               type="checkbox"
               className="h-5 w-5 accent-co-gold"
@@ -468,7 +468,7 @@ function AddSectionForm() {
           </select>
         </Labeled>
         {shape === "yes_no" ? (
-          <label className="flex items-center gap-2 text-sm font-bold text-co-text">
+          <label className="flex min-h-[44px] items-center gap-2 text-sm font-bold text-co-text">
             <input
               type="checkbox"
               className="h-5 w-5 accent-co-gold"
@@ -627,7 +627,7 @@ function SectionQuestionRow({
             </select>
           </label>
           {inputType === "yes_no" ? (
-            <label className="flex items-center gap-2 text-sm font-bold text-co-text">
+            <label className="flex min-h-[44px] items-center gap-2 text-sm font-bold text-co-text">
               <input
                 type="checkbox"
                 className="h-5 w-5 accent-co-gold"
@@ -647,7 +647,7 @@ function SectionQuestionRow({
             </select>
           </label>
           <p className="-mt-1 text-xs text-co-text-muted">{t("admin.templates.min_role.hint")}</p>
-          <label className="flex items-center gap-2 text-sm font-bold text-co-text">
+          <label className="flex min-h-[44px] items-center gap-2 text-sm font-bold text-co-text">
             <input
               type="checkbox"
               className="h-5 w-5 accent-co-gold"
@@ -814,7 +814,7 @@ function AddSectionQuestionForm({ sections }: { sections: PrepSectionDefn[] }) {
           </select>
         </Labeled>
         {inputType === "yes_no" ? (
-          <label className="flex items-center gap-2 text-sm font-bold text-co-text">
+          <label className="flex min-h-[44px] items-center gap-2 text-sm font-bold text-co-text">
             <input
               type="checkbox"
               className="h-5 w-5 accent-co-gold"
@@ -833,7 +833,7 @@ function AddSectionQuestionForm({ sections }: { sections: PrepSectionDefn[] }) {
           </select>
         </Labeled>
         <p className="-mt-1 text-xs text-co-text-muted">{t("admin.templates.min_role.hint")}</p>
-        <label className="flex items-center gap-2 text-sm font-bold text-co-text">
+        <label className="flex min-h-[44px] items-center gap-2 text-sm font-bold text-co-text">
           <input
             type="checkbox"
             className="h-5 w-5 accent-co-gold"

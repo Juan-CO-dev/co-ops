@@ -1561,7 +1561,7 @@ function SubmissionGateSetting({
         <p className="text-sm text-co-text-muted">{t("admin.templates.builder.gate_setting.custom")}</p>
       ) : (
         <div className="flex flex-col gap-2">
-          <label className="flex items-start gap-2 text-sm text-co-text">
+          <label className="flex min-h-[44px] items-start gap-2 text-sm text-co-text">
             <input
               type="radio"
               name="tb-submission-gate"
@@ -1571,7 +1571,7 @@ function SubmissionGateSetting({
             />
             {t("admin.templates.builder.gate_setting.none")}
           </label>
-          <label className="flex items-start gap-2 text-sm text-co-text">
+          <label className="flex min-h-[44px] items-start gap-2 text-sm text-co-text">
             <input
               type="radio"
               name="tb-submission-gate"
@@ -1725,7 +1725,7 @@ function QuickAdd({
           </select>
         </label>
       </div>
-      <label className="flex items-center gap-2 text-sm text-co-text">
+      <label className="flex min-h-[44px] items-center gap-2 text-sm text-co-text">
         <input type="checkbox" checked={required} onChange={(e) => setRequired(e.target.checked)} className="h-5 w-5" />
         {t("admin.templates.builder.add_required_label")}
       </label>
@@ -1803,7 +1803,7 @@ function QuickAdd({
           = "this location only" (the per-item intentional-drift choice at add time). Only
           shown when >1 location is visible. */}
       {multiLocation && (
-        <label className="flex items-start gap-2 rounded-lg border border-co-gold-deep/40 bg-co-gold/5 p-2 text-sm text-co-text">
+        <label className="flex min-h-[44px] items-start gap-2 rounded-lg border border-co-gold-deep/40 bg-co-gold/5 p-2 text-sm text-co-text">
           <input
             type="checkbox"
             checked={bothLocations}
@@ -2242,7 +2242,7 @@ function PublishBar({
             )}
 
             {/* Apply-now toggle behind its own explicit control + warning. */}
-            <label className="mt-3 flex items-start gap-2 text-sm text-co-text">
+            <label className="mt-3 flex min-h-[44px] items-start gap-2 text-sm text-co-text">
               <input type="checkbox" checked={applyNow} onChange={(e) => setApplyNow(e.target.checked)} className="mt-0.5 h-5 w-5" />
               <span>
                 {t("admin.templates.builder.apply_now_toggle")}

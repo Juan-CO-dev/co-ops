@@ -419,7 +419,7 @@ function LocationItemRow({
                   </select>
                 </label>
                 {inputType === "yes_no" ? (
-                  <label className="flex items-center gap-2 text-sm font-bold text-co-text sm:pb-2">
+                  <label className="flex min-h-[44px] items-center gap-2 text-sm font-bold text-co-text sm:pb-2">
                     <input
                       type="checkbox"
                       className="h-5 w-5 accent-co-gold"

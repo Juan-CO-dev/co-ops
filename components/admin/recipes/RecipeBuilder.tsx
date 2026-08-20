@@ -772,7 +772,7 @@ function ConsumesSection({
                     {skuQty} {skuUnit} {skuOzReadout}
                   </p>
                 ) : null}
-                <label className="flex items-center gap-2">
+                <label className="flex min-h-[44px] items-center gap-2">
                   <input
                     type="checkbox"
                     checked={skuPortioned}
