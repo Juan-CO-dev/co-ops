@@ -286,7 +286,7 @@ function EmployeeEvalCard({
       </div>
 
       {errorMsg && (
-        <p className="mb-2 text-sm text-co-cta">{errorMsg}</p>
+        <p className="mb-2 text-sm text-co-cta-text">{errorMsg}</p>
       )}
 
       {!readOnly && (
@@ -551,7 +551,7 @@ export function PmReportClient({
       {/* ── SUBMIT ── */}
       <section className="flex flex-col gap-2">
         {submitError && (
-          <p className="text-sm text-co-cta">{submitError}</p>
+          <p className="text-sm text-co-cta-text">{submitError}</p>
         )}
         <ActionButton
           size="lg"
@@ -619,7 +619,7 @@ function WrapUpSection({
               badgeClasses = "text-co-confirm-text font-semibold";
             } else if (row.overdue === "overdue") {
               label = t("midshift.overdue.badge");
-              badgeClasses = "text-co-cta font-bold";
+              badgeClasses = "text-co-cta-text font-bold";
             } else if (row.overdue === "not_due_yet") {
               label = t("midshift.overdue.not_due_yet");
               badgeClasses = "text-co-text-muted";

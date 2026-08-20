@@ -146,7 +146,7 @@ export function OpeningChecklistItem({
                 disabled={verificationLocked}
               />
               {hasMissingCountError ? (
-                <span className="text-xs text-co-danger">
+                <span className="text-xs text-co-cta-text">
                   {t("opening.item.count_required_inline")}
                 </span>
               ) : null}
@@ -193,7 +193,7 @@ export function OpeningChecklistItem({
               <span
                 className={[
                   "shrink-0 text-xs font-bold uppercase tracking-[0.12em]",
-                  isNullSource ? "text-co-danger" : "text-co-text-muted",
+                  isNullSource ? "text-co-cta-text" : "text-co-text-muted",
                 ].join(" ")}
               >
                 {t("opening.recount.label")}

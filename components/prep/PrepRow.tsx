@@ -244,7 +244,7 @@ export function PrepRow({
             {fieldError ? (
               <span
                 role="alert"
-                className="text-[10px] leading-tight text-co-cta text-center"
+                className="text-[10px] leading-tight text-co-cta-text text-center"
               >
                 {fieldError}
               </span>

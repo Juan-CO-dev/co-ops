@@ -669,7 +669,7 @@ function PrepEntryRow({
             readOnly ? "cursor-not-allowed" : "",
             value.overPar
               ? "border-2 border-co-success bg-co-success-surface text-co-text"
-              : "border-2 border-co-gold-deep bg-co-warning-surface text-co-text hover:bg-co-gold/30",
+              : "border-2 border-co-gold-deep bg-co-warning-surface text-co-text hover:bg-co-gold",
           ].join(" ")}
         >
           {value.overPar
@@ -741,7 +741,7 @@ function PrepEntryRow({
                 className="
                   inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 py-1
                   text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-muted
-                  transition hover:border-co-cta-text hover:text-co-danger
+                  transition hover:border-co-cta-text hover:text-co-cta-text
                   focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
                   disabled:cursor-not-allowed disabled:opacity-60
                 "
@@ -752,14 +752,14 @@ function PrepEntryRow({
               </button>
             ) : null}
             {revokeError ? (
-              <span role="alert" className="font-bold text-co-danger">
+              <span role="alert" className="font-bold text-co-cta-text">
                 {t("opening.phase2.revoke.error")}
               </span>
             ) : null}
           </>
         ) : saveState.status === "failed" ? (
           <>
-            <span role="alert" className="font-bold text-co-danger">
+            <span role="alert" className="font-bold text-co-cta-text">
               {t("opening.phase2.save.failed")}
             </span>
             {!readOnly ? (
@@ -796,17 +796,17 @@ function PrepEntryRow({
 
       {/* Submit-gate inline error badges — render only when showMissingErrors active */}
       {sectionUnverifiedAndNoRecount ? (
-        <p role="alert" className="self-start text-[11px] font-medium text-co-danger">
+        <p role="alert" className="self-start text-[11px] font-medium text-co-cta-text">
           {t("opening.phase2.gate.section_unverified")}
         </p>
       ) : null}
       {prepAmountMissing && !sectionUnverifiedAndNoRecount ? (
-        <p role="alert" className="self-start text-[11px] font-medium text-co-danger">
+        <p role="alert" className="self-start text-[11px] font-medium text-co-cta-text">
           {t("opening.phase2.gate.prep_amount_required")}
         </p>
       ) : null}
       {reasonMissing ? (
-        <p role="alert" className="self-start text-[11px] font-medium text-co-danger">
+        <p role="alert" className="self-start text-[11px] font-medium text-co-cta-text">
           {t("opening.phase2.gate.reason_required")}
         </p>
       ) : null}

@@ -69,7 +69,7 @@ export function ProductionForm({ formData, locationId }: { formData: ProductionF
       </div>
       <label className="mt-3 block"><span className="text-sm font-bold text-co-text">{t("production.form.notes")}</span>
         <textarea className={`${field} min-h-[60px] py-2`} value={notes} disabled={busy} onChange={(e) => setNotes(e.target.value)} /></label>
-      {err ? <p className="mt-3 text-sm text-co-cta">{err}</p> : null}
+      {err ? <p className="mt-3 text-sm text-co-cta-text">{err}</p> : null}
       <div className="mt-4 flex justify-end">
         <ActionButton disabled={!canSubmit} onClick={() => void submit()}>{t("production.form.submit")}</ActionButton>
       </div>

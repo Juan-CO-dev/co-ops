@@ -141,7 +141,7 @@ export function MidDayPhase1Form({
         </section>
       ))}
 
-      {error ? <p className="px-1 text-[11px] text-co-cta">{error}</p> : null}
+      {error ? <p className="px-1 text-[11px] text-co-cta-text">{error}</p> : null}
 
       <ActionButton onClick={() => void onSubmit()} disabled={submitting} className="w-full">
         {submitting ? t("mid_day_prep.phase1.submitting") : t("mid_day_prep.phase1.submit")}

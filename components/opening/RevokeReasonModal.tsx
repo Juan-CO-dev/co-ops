@@ -166,7 +166,7 @@ export function RevokeReasonModal({
           </div>
 
           {errorCode ? (
-            <p role="alert" className="text-sm font-medium text-co-danger">
+            <p role="alert" className="text-sm font-medium text-co-cta-text">
               {t("opening.phase2.revoke.error")}
             </p>
           ) : null}

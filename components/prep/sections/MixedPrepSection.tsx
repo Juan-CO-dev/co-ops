@@ -154,7 +154,7 @@ function MixedYesNoRow({
       </div>
 
       {yesNoError ? (
-        <span role="alert" className="text-[11px] leading-tight text-co-cta font-semibold">
+        <span role="alert" className="text-[11px] leading-tight text-co-cta-text font-semibold">
           {yesNoError}
         </span>
       ) : null}
@@ -221,7 +221,7 @@ function MixedFreeTextRow({
         />
       </label>
       {freeTextError ? (
-        <span role="alert" className="text-[11px] leading-tight text-co-cta font-semibold">
+        <span role="alert" className="text-[11px] leading-tight text-co-cta-text font-semibold">
           {freeTextError}
         </span>
       ) : null}

@@ -1038,7 +1038,7 @@ export function ChecklistItem({
             <span
               className={[
                 "shrink-0 text-[11px] font-medium tabular-nums",
-                error ? "text-co-cta" : "text-co-text-dim",
+                error ? "text-co-cta-text" : "text-co-text-dim",
               ].join(" ")}
             >
               {rightSlotText}
@@ -1091,7 +1091,7 @@ export function ChecklistItem({
       {(metaPrimaryText || taggedAnnotationText || noteText) ? (
         <div className="ml-15 mt-1 flex flex-col gap-0.5 text-[11px] leading-tight">
           {metaPrimaryText ? (
-            <span className={metaIsDanger ? "tabular-nums font-semibold text-co-cta" : "tabular-nums text-co-text-dim"}>
+            <span className={metaIsDanger ? "tabular-nums font-semibold text-co-cta-text" : "tabular-nums text-co-text-dim"}>
               {metaPrimaryText}
             </span>
           ) : null}
@@ -1301,7 +1301,7 @@ function UndoButton({ onClick, disabled }: { onClick: () => void; disabled: bool
         shrink-0 inline-flex min-h-[48px] min-w-[64px] items-center justify-center rounded-lg
         border-2 border-co-border bg-co-surface px-3
         text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-muted
-        transition hover:border-co-cta-text/60 hover:text-co-cta active:bg-co-surface-2
+        transition hover:border-co-cta-text/60 hover:text-co-cta-text active:bg-co-surface-2
         focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
         disabled:cursor-not-allowed disabled:opacity-50
       "
@@ -1363,7 +1363,7 @@ function MarkNotDoneButton({
         shrink-0 inline-flex min-h-[48px] min-w-[64px] items-center justify-center rounded-lg
         border-2 border-co-border bg-co-surface px-3
         text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-muted
-        transition hover:border-co-cta-text/60 hover:text-co-cta active:bg-co-surface-2
+        transition hover:border-co-cta-text/60 hover:text-co-cta-text active:bg-co-surface-2
         focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60
         disabled:cursor-not-allowed disabled:opacity-50
       "
@@ -1901,8 +1901,8 @@ function YesNoButtons({
           base +
           " " +
           (isNo
-            ? "border-co-cta-text bg-co-cta/10 text-co-cta"
-            : "border-co-border bg-co-surface text-co-text-muted hover:border-co-cta-text/60 hover:text-co-cta")
+            ? "border-co-cta-text bg-co-danger-surface text-co-cta-text"
+            : "border-co-border bg-co-surface text-co-text-muted hover:border-co-cta-text/60 hover:text-co-cta-text")
         }
       >
         {t("closing.answer.no")}

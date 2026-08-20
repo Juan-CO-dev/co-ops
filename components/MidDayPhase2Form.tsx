@@ -301,7 +301,7 @@ export function MidDayPhase2Form({
                     </p>
                   ) : null}
                   {st.status === "error" && st.error ? (
-                    <p className="text-[10px] text-co-cta">{st.error}</p>
+                    <p className="text-[10px] text-co-cta-text">{st.error}</p>
                   ) : null}
 
                   {st.modalOpen && over ? (
@@ -330,7 +330,7 @@ export function MidDayPhase2Form({
         </section>
       ))}
 
-      {finalizeError ? <p className="px-1 text-[11px] text-co-cta">{finalizeError}</p> : null}
+      {finalizeError ? <p className="px-1 text-[11px] text-co-cta-text">{finalizeError}</p> : null}
 
       <ActionButton onClick={() => void onFinalize()} disabled={finalizing} className="w-full">
         {finalizing ? t("mid_day_prep.phase2.finalizing") : t("mid_day_prep.phase2.finalize")}

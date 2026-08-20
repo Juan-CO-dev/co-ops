@@ -165,7 +165,7 @@ export function ProductionConsumptionPanel(props: {
         type="button"
         aria-expanded={expanded}
         onClick={() => setExpanded((v) => !v)}
-        className="flex min-h-[44px] w-full items-center gap-2 rounded-lg border border-co-gold/40 bg-co-gold/5 px-3 py-2 text-left text-sm text-co-text-dim hover:bg-co-gold/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60"
+        className="flex min-h-[44px] w-full items-center gap-2 rounded-lg border border-co-border bg-co-surface-inset px-3 py-2 text-left text-sm text-co-text-dim hover:bg-co-surface-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60"
       >
         <span aria-hidden className={`text-co-gold transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}>▸</span>
         <span className="flex-1 truncate">
@@ -203,7 +203,7 @@ export function ProductionConsumptionPanel(props: {
                     <button
                       type="button"
                       onClick={() => handleUnitSwitch(d, "case")}
-                      className={`min-h-[44px] min-w-[44px] rounded-l-md px-2 font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60 ${unit === "case" ? "bg-co-gold text-co-text" : "text-co-text-dim hover:bg-co-gold/10"}`}
+                      className={`min-h-[44px] min-w-[44px] rounded-l-md px-2 font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60 ${unit === "case" ? "bg-co-gold text-co-text" : "text-co-text-dim hover:bg-co-surface-2"}`}
                     >
                       {t("production.panel.unit_case")}
                     </button>
@@ -212,7 +212,7 @@ export function ProductionConsumptionPanel(props: {
                     <button
                       type="button"
                       onClick={() => handleUnitSwitch(d, "each")}
-                      className={`min-h-[44px] min-w-[44px] px-2 font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60 ${canCase ? "" : "rounded-l-md"} ${unit === "each" ? "bg-co-gold text-co-text" : "text-co-text-dim hover:bg-co-gold/10"}`}
+                      className={`min-h-[44px] min-w-[44px] px-2 font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60 ${canCase ? "" : "rounded-l-md"} ${unit === "each" ? "bg-co-gold text-co-text" : "text-co-text-dim hover:bg-co-surface-2"}`}
                     >
                       {t("production.panel.unit_each")}
                     </button>
@@ -220,7 +220,7 @@ export function ProductionConsumptionPanel(props: {
                   <button
                     type="button"
                     onClick={() => handleUnitSwitch(d, "oz")}
-                    className={`min-h-[44px] min-w-[44px] px-2 font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60 ${canCase || canEach ? "hidden" : "rounded-md"} ${unit === "oz" ? "bg-co-gold text-co-text" : "text-co-text-dim hover:bg-co-gold/10"}`}
+                    className={`min-h-[44px] min-w-[44px] px-2 font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-co-gold/60 ${canCase || canEach ? "hidden" : "rounded-md"} ${unit === "oz" ? "bg-co-gold text-co-text" : "text-co-text-dim hover:bg-co-surface-2"}`}
                   >
                     oz
                   </button>

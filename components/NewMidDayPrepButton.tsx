@@ -64,7 +64,7 @@ export function NewMidDayPrepButton({
       <ActionButton onClick={() => void onClick()} disabled={creating} className="w-full sm:w-auto">
         {creating ? t("dashboard.mid_day_prep.creating") : t("dashboard.mid_day_prep.new_cta")}
       </ActionButton>
-      {error ? <p className="px-1 text-[11px] text-co-cta">{error}</p> : null}
+      {error ? <p className="px-1 text-[11px] text-co-cta-text">{error}</p> : null}
     </div>
   );
 }
