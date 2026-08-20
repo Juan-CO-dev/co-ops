@@ -697,6 +697,56 @@ export function chainLabelsInWalkOrder(levels: PackChainLevel[]): string[] {
   return out;
 }
 
+// ── Twin disambiguation on the count sheet (multi-vendor audit P8) ────────────
+
+/** Minimal structural shape the twin check reads (matches CountSkuOption). */
+export interface CountSkuVendorLabel {
+  id: string;
+  name: string;
+  vendorName: string | null;
+}
+
+/**
+ * SKU ids whose NAME is ambiguous in this option set — i.e. the same name appears under
+ * 2+ distinct vendors — mapped to the vendor label that disambiguates them.
+ *
+ * MULTI-VENDOR AUDIT P8 (docs/audits/2026-08-20-multivendor-semantics-audit.md).
+ * The doctrine says two vendors' hams are two SKUs. On the count sheet that rendered as
+ * two identical "Ham" rows in the dropdown, with nothing to tell them apart — so the
+ * counter picked one at random and the count landed on whichever twin they happened to
+ * hit. That is a silent corruption of the anchor the whole drift/variance model rests on.
+ *
+ * ONLY ambiguous names get a label: ~95% of the catalog is single-vendor and does not need
+ * "Ham (Baldor)" cluttering the row. Names are compared case-insensitively and trimmed,
+ * matching skuNameCollisions.
+ *
+ * A null vendorName counts as its own bucket for AMBIGUITY (an unassigned SKU beside a
+ * vendored one is just as confusing), but never produces a label — there is no honest
+ * vendor to name, and inventing one would be worse than the ambiguity.
+ *
+ * Pure; computed ONCE per render, not per row.
+ */
+export function twinVendorLabels(
+  options: ReadonlyArray<CountSkuVendorLabel>,
+): Map<string, string> {
+  const key = (n: string) => n.trim().toLowerCase();
+  // name → distinct vendor buckets ("" is the unassigned bucket).
+  const vendorsByName = new Map<string, Set<string>>();
+  for (const o of options) {
+    const k = key(o.name);
+    const set = vendorsByName.get(k) ?? new Set<string>();
+    set.add(o.vendorName ?? "");
+    vendorsByName.set(k, set);
+  }
+  const out = new Map<string, string>();
+  for (const o of options) {
+    if (o.vendorName == null) continue; // nothing honest to render
+    if ((vendorsByName.get(key(o.name))?.size ?? 0) < 2) continue; // unambiguous → no clutter
+    out.set(o.id, o.vendorName);
+  }
+  return out;
+}
+
 /** Unused re-export to keep buildPackChain/walkChainToOz reachable from tests
  *  that assert the shared math wires the spine (no behavior). */
 export { buildPackChain, walkChainToOz };
