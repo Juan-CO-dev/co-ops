@@ -14,6 +14,37 @@
  * reorder-packs math, so "order N packs" is exact regardless. Ambiguous "unit" produce, the Onion
  * each/quart conflict, cans, Mixed Herbs, Shredded Mozz are DEFERRED to the checklist (not guessed).
  *
+ * ── AMENDED 2026-08-20 BY THE ANGEL HARVEST-2 PIECE MODEL (wave 3) ────────────
+ * Three constants below are no longer estimates — they are corrected against vendor
+ * spec data, and they are amended HERE as well as in the DB so that a future re-run
+ * of this seed cannot silently regress them (which is exactly what a re-run of the
+ * un-amended file would do):
+ *   · Bacon 0.75 → 1.23 oz/strip. The Angel subtitle `IMP LAYER BACON 12/14` is a
+ *     SLICE SPEC — 12-14 strips per POUND — so 16/13 = 1.23. The old 0.75 implied
+ *     21.3 strips/lb and understated bacon cost by 64%. Corroborated from the other
+ *     direction: the 240 oz box ÷ 1.23 = 195 strips, dead centre of 180-210.
+ *   · Fresh Mozzarella unitsPerPack 72 → 192. One case is 6 logs × 32 CT × 1 oz =
+ *     192 slices = 12 lb, which closes against BOTH the `6/2 LB` pack field and the
+ *     `12 LB` subtitle. At 72 the implied case is 4.5 lb — neither number.
+ *   · Ever Roast Chicken added at 1.0 oz/slice (it had no entry at all).
+ * Full evidence + the arithmetic: docs/ANGEL-HARVEST-2-PIECES.md §1 and §3, and the
+ * dry-run report docs/seed/source/angel-wave3-dryrun.md.
+ *
+ * ⚠ NOT amended, deliberately: Genoa, Capicola, Provolone and Pepperoni. Production
+ * carries 0.4, 0.4, 0.7 and 0.2 for those — none of which is the value in this file,
+ * and no audit row explains the change (this seed's own 2026-07-22 rows record it
+ * writing the values below). Until Juan says which set is real, changing either side
+ * would harden a guess. Wave 3 STOPS on all four; see the dry-run's STOP list.
+ *
+ * ── SELECTING THE RIGHT ROW WHEN A NAME IS DUPLICATED ─────────────────────────
+ * `Ham` and `Fresh Mozzarella` each have TWO active twins (PFG + Baldor) since the
+ * multi-vendor P1 adjudication. The placeholder-preferring heuristic below used to
+ * disambiguate them by accident; now that both twins carry pack data it would fall
+ * through to `list[0]`, whose ORDER IS UNDEFINED — a coin flip over which twin gets
+ * written. The optional `vendor` field pins those two rows to the twin this seed
+ * historically wrote (confirmed against its own audit rows), so a re-run is
+ * deterministic rather than lucky.
+ *
  * Idempotent. SEED_DRY=1 → report. Run:
  *   SEED_DRY=1 npx tsx --env-file=.env.local scripts/seed/10-fill-sku-weights.ts   (dry)
  *   npx tsx --env-file=.env.local scripts/seed/10-fill-sku-weights.ts               (prod)
@@ -44,12 +75,17 @@ const UNITS: Array<{ label: string; dimension: "count" | "volume"; factor: numbe
 // (2) CONFIDENT SKU fills. avgOz = oz per ONE of its recipe unit (estimate). pack (placeholders only)
 // = units_per_pack × each_size × each_measure for content/cost.
 interface Pack { unitsPerPack: number; eachSize: number; eachMeasure: string; packFormat: string }
-const FILLS: Array<{ name: string; avgOz: number; note: string; pack?: Pack }> = [
+/** `vendor` is set ONLY on the duplicated names (Ham, Fresh Mozzarella) — see the
+ *  header. Elsewhere it is omitted and the placeholder heuristic still applies. */
+const FILLS: Array<{ name: string; avgOz: number; note: string; pack?: Pack; vendor?: string }> = [
   { name: "Sub Roll", avgOz: 4.0, note: "each = one 8in roll; 6/pack, 5 packs/rack (Juan)", pack: { unitsPerPack: 6, eachSize: 1, eachMeasure: "each", packFormat: "pack" } },
-  { name: "Ham", avgOz: 1.0, note: "unit = one thin deli slice", pack: { unitsPerPack: 1, eachSize: 16, eachMeasure: "oz", packFormat: "case" } },
+  { name: "Ham", avgOz: 1.0, note: "unit = one thin deli slice", vendor: "Baldor", pack: { unitsPerPack: 1, eachSize: 16, eachMeasure: "oz", packFormat: "case" } },
   { name: "Mortadella", avgOz: 1.0, note: "unit = one slice", pack: { unitsPerPack: 1, eachSize: 16, eachMeasure: "oz", packFormat: "case" } },
   { name: "Prosciutto", avgOz: 0.5, note: "each = one thin slice", pack: { unitsPerPack: 1, eachSize: 12, eachMeasure: "oz", packFormat: "case" } },
-  { name: "Bacon", avgOz: 0.75, note: "each = one strip", pack: { unitsPerPack: 1, eachSize: 240, eachMeasure: "oz", packFormat: "case" } },
+  // CORRECTED 2026-08-20 (harvest 2): "12/14" on the Angel subtitle is 12-14 strips per POUND,
+  // so 16/13 = 1.23 oz/strip. The prior 0.75 implied 21.3/lb and understated bacon cost 64%.
+  // The 240 oz case was already right — it matches Angel's 15.0 lb box to the ounce.
+  { name: "Bacon", avgOz: 1.23, note: "each = one strip; 12/14 slice spec = 12-14 per lb → 16/13 (harvest 2, was 0.75)", pack: { unitsPerPack: 1, eachSize: 240, eachMeasure: "oz", packFormat: "case" } },
   { name: "Capicola", avgOz: 1.0, note: "unit = one slice" },
   { name: "Genoa", avgOz: 1.0, note: "unit = one slice" },
   { name: "Pepperoni", avgOz: 0.25, note: "unit = one thin slice" },
@@ -57,7 +93,13 @@ const FILLS: Array<{ name: string; avgOz: number; note: string; pack?: Pack }> =
   { name: "Cheddar", avgOz: 0.75, note: "unit = one slice" },
   { name: "Roast Beef", avgOz: 1.5, note: "unit = one slice (thicker cut)" },
   { name: "Turkey", avgOz: 1.0, note: "unit = one slice" },
-  { name: "Fresh Mozzarella", avgOz: 1.0, note: "unit = one piece", pack: { unitsPerPack: 72, eachSize: 1, eachMeasure: "each", packFormat: "case" } },
+  // ADDED 2026-08-20 (harvest 2): had no entry at all. Sliced deli chicken breast, behaves like
+  // turkey; the piece model agrees (74.1 oz / 74 slices = 1.0014).
+  { name: "Ever Roast Chicken", avgOz: 1.0, note: "unit = one slice; behaves like turkey (harvest 2)" },
+  // CORRECTED 2026-08-20 (harvest 2): unitsPerPack 72 → 192. One case = 6 logs x 32 CT x 1 oz =
+  // 192 slices = 12 lb, closing against both the "6/2 LB" pack field and the "12 LB" subtitle.
+  // At 72 the implied case is 4.5 lb — neither the nominal nor the 12.76 lb measured.
+  { name: "Fresh Mozzarella", avgOz: 1.0, note: "unit = one 1 oz slice; case = 6 logs x 32 CT (harvest 2, units was 72)", vendor: "Baldor", pack: { unitsPerPack: 192, eachSize: 1, eachMeasure: "each", packFormat: "case" } },
   { name: "Eggs", avgOz: 1.8, note: "each = one large egg" },
   { name: "Utz Ripples", avgOz: 1.0, note: "handful ≈ 1 oz", pack: { unitsPerPack: 1, eachSize: 7.75, eachMeasure: "oz", packFormat: "bag" } },
   { name: "Arugula", avgOz: 0.5, note: "handful of leaves ≈ 0.5 oz" },
@@ -109,13 +151,17 @@ async function main() {
   for (const f of FILLS) {
     // Some names are duplicated (an auto-placeholder + a real twin); the recipes reference the
     // PLACEHOLDER, so prefer it when there are dups (else the single row).
-    const { data: rows } = await sb.from("vendor_items").select("id, avg_oz_per_each, units_per_pack, each_size, each_measure, pack_format")
+    const { data: rows } = await sb.from("vendor_items").select("id, avg_oz_per_each, units_per_pack, each_size, each_measure, pack_format, vendors(name)")
       .eq("name", f.name).is("location_id", null).eq("active", true)
-      .returns<Array<{ id: string; avg_oz_per_each: number | string | null; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; pack_format: string | null }>>();
-    const list = rows ?? [];
+      .returns<Array<{ id: string; avg_oz_per_each: number | string | null; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; pack_format: string | null; vendors: { name: string } | null }>>();
+    // A `vendor` on the fill pins a duplicated name to one twin. Without it the
+    // placeholder heuristic runs, and its `list[0]` fallback is order-undefined —
+    // fine while a name is unique, a coin flip once it is not.
+    const all = rows ?? [];
+    const list = f.vendor ? all.filter((r) => r.vendors?.name === f.vendor) : all;
     const isPh = (r: typeof list[number]) => r.pack_format == null && r.units_per_pack == null && r.each_size == null && r.avg_oz_per_each == null;
     const sku = list.find(isPh) ?? list[0];
-    if (!sku) { missing.push(f.name); continue; }
+    if (!sku) { missing.push(f.vendor ? `${f.name} [${f.vendor}]` : f.name); continue; }
     const update: Record<string, unknown> = { avg_oz_per_each: f.avgOz };
     if (f.pack) { update.units_per_pack = f.pack.unitsPerPack; update.each_size = f.pack.eachSize; update.each_measure = f.pack.eachMeasure; update.pack_format = f.pack.packFormat; }
     const already = Number(sku.avg_oz_per_each) === f.avgOz && (!f.pack || (sku.units_per_pack === f.pack.unitsPerPack && Number(sku.each_size) === f.pack.eachSize && sku.each_measure === f.pack.eachMeasure && sku.pack_format === f.pack.packFormat));
