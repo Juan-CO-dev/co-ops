@@ -133,3 +133,76 @@ describe("resolveProductMember", () => {
     expect(r.skuId).toBe("good");
   });
 });
+
+import { productInputBasis, membersDisagreeOnUnitOz } from "@/lib/products-shared";
+import { ozForRecipeInput, type MeasureUnitFactor } from "@/lib/recipe-math";
+
+const measures = new Map<string, MeasureUnitFactor>([
+  ["oz", { dimension: "weight", toBaseFactor: 1 }],
+  ["unit", { dimension: "count", toBaseFactor: 1 }],
+]);
+
+describe("productInputBasis (deviation D3 — measure-registry only)", () => {
+  it("a count-denominated line reads the PRODUCT's unit_oz, not the member's", () => {
+    const basis = productInputBasis(
+      { productId: "P", unitOz: 1.2 },
+      member({ skuId: "pfg", avgOzPerEach: null }),
+    );
+    expect(ozForRecipeInput(1, "unit", basis, measures)).toBe(1.2);
+  });
+
+  it("REGRESSION (seed 18): flipping the resolved member does NOT change the line's oz", () => {
+    const product = { productId: "P", unitOz: 1.2 };
+    const onBaldor = productInputBasis(product, member({ skuId: "baldor", avgOzPerEach: 1.2 }));
+    const onPfg = productInputBasis(product, member({ skuId: "pfg", avgOzPerEach: null }));
+    expect(ozForRecipeInput(1, "unit", onBaldor, measures))
+      .toBe(ozForRecipeInput(1, "unit", onPfg, measures));
+  });
+
+  it("falls back to the member's avg_oz_per_each only when the product is unweighed", () => {
+    const basis = productInputBasis({ productId: "P", unitOz: null }, member({ skuId: "b", avgOzPerEach: 1.2 }));
+    expect(basis.avgOzPerEach).toBe(1.2);
+  });
+
+  it("a weight-denominated line is member-independent regardless", () => {
+    const basis = productInputBasis({ productId: "P", unitOz: null }, null);
+    expect(ozForRecipeInput(3, "oz", basis, measures)).toBe(3);
+  });
+
+  it("a PACK label refuses — 'case' is a per-vendor spelling a product cannot own", () => {
+    const basis = productInputBasis({ productId: "P", unitOz: 1.2 }, member({ skuId: "b", avgOzPerEach: 1.2 }));
+    expect(ozForRecipeInput(1, "case", basis, measures)).toBeNull();
+  });
+
+  it("unweighed product + no member weight -> null, never 0", () => {
+    const basis = productInputBasis({ productId: "P", unitOz: null }, member({ skuId: "b", avgOzPerEach: null }));
+    expect(ozForRecipeInput(1, "unit", basis, measures)).toBeNull();
+  });
+});
+
+describe("membersDisagreeOnUnitOz", () => {
+  it("1.2 vs 1.0 disagree", () => {
+    expect(membersDisagreeOnUnitOz([
+      member({ skuId: "a", avgOzPerEach: 1.2 }),
+      member({ skuId: "b", avgOzPerEach: 1.0 }),
+    ])).toBe(true);
+  });
+  it("one known value cannot disagree with an unknown one", () => {
+    expect(membersDisagreeOnUnitOz([
+      member({ skuId: "a", avgOzPerEach: 1.2 }),
+      member({ skuId: "b", avgOzPerEach: null }),
+    ])).toBe(false);
+  });
+  it("inactive members do not vote", () => {
+    expect(membersDisagreeOnUnitOz([
+      member({ skuId: "a", avgOzPerEach: 1.2 }),
+      member({ skuId: "dead", active: false, avgOzPerEach: 5 }),
+    ])).toBe(false);
+  });
+  it("rounding-scale differences do not count as disagreement", () => {
+    expect(membersDisagreeOnUnitOz([
+      member({ skuId: "a", avgOzPerEach: 1.2 }),
+      member({ skuId: "b", avgOzPerEach: 1.21 }),
+    ])).toBe(false);
+  });
+});
