@@ -31,9 +31,9 @@
 import { describe, it, expect } from "vitest";
 import {
   parsePurchaseHistory, purchaseRowKey, invoiceAverageLbs, classifyPackPremise, lbsToPackOz,
-  VENDOR_BINDINGS, DRIED_CHIVES_PACK, BEEF_BASE_CANDIDATES,
+  VENDOR_BINDINGS, DRIED_CHIVES_PACK, BEEF_BASE_CANDIDATES, BEEF_BASE_PACK, BEEF_BASE_RULING,
   LETTUCE_PAIR, PFG_LETTUCE_CANDIDATES,
-  VARIABLE_CATCH_RULES, BASIL_DUPLICATE_CLUSTER,
+  VARIABLE_CATCH_RULES, BASIL_DUPLICATE_CLUSTER, GARLIC_RATIFICATION,
   HERB_WEIGHT_POLICY, AVERAGE_DEFINITION, WEIGHT_CLASS_MEANING, CONSTANT_WEIGHT_SPREAD_CEILING,
   STILL_STUCK, WAVE4_REASONS,
   type Wave4Code, type WeightClass,
@@ -276,9 +276,15 @@ describe("the wave-4 rulings, as constants", () => {
       .toEqual(["PFG", "Boar's Head", "Country Snacks", "US Foods"]);
   });
 
-  it("prices exactly ONE of the four, and every BIND_ONLY row says why", () => {
+  it("prices the two SKUs Juan supplied a pack for, and every BIND_ONLY row says why", () => {
     const priced = VENDOR_BINDINGS.filter((b) => b.priceIntent === "PRICE_FROM_ANGEL");
-    expect(priced.map((b) => b.skuName)).toEqual(["Dried Chives"]);
+    // Beef Base joined this list on 2026-08-20 when Juan ratified the jar model;
+    // run 1 refused it for OUR_PACK_UNRESOLVABLE.
+    expect(priced.map((b) => b.skuName).sort()).toEqual(["Beef Base", "Dried Chives"]);
+    // The two that stay bind-only are the two Angel has never invoiced — a fact no
+    // ruling can change, so this pair should not drift.
+    expect(VENDOR_BINDINGS.filter((b) => b.angelProduct == null).map((b) => b.skuName).sort())
+      .toEqual(["Mortadella", "Utz Ripples"]);
     for (const b of VENDOR_BINDINGS) {
       if (b.priceIntent === "BIND_ONLY") {
         expect(b.whyBindOnly, `${b.skuName} must explain its bind-only status`).toBeTruthy();
@@ -293,6 +299,25 @@ describe("the wave-4 rulings, as constants", () => {
     expect(DRIED_CHIVES_PACK.truePricePerLb).toBeCloseTo(23.142857, 5);
     // Angel prints exactly 6x that — the dropped-multiplier bug, not a rounding gap.
     expect(DRIED_CHIVES_PACK.angelStatedPricePerLb / DRIED_CHIVES_PACK.truePricePerLb).toBeCloseTo(6, 2);
+  });
+
+  it("writes the ratified beef-base pack, and records the route it rejected", () => {
+    expect(BEEF_BASE_PACK.caseOz).toBe(96); // 6 jars x 16 oz
+    expect(BEEF_BASE_PACK.contentPricePerLb).toBeCloseTo(10.435, 3);
+    expect(BEEF_BASE_PACK.casePriceUsd / BEEF_BASE_PACK.jarsPerCase).toBeCloseTo(10.435, 3);
+    // The tare reading that justifies ignoring Angel's measured weight: 6.703 lb of
+    // product-plus-glass against 6.0 lb of product, which is harvest 2's bottle pattern.
+    expect(BEEF_BASE_PACK.tareRatio).toBeCloseTo(1.117, 3);
+    // And the rejected route, kept computable so the 10.5% gap is auditable rather
+    // than asserted in prose.
+    expect(BEEF_BASE_PACK.rejectedPerLbRouteUsd).toBeCloseTo(56.04, 2);
+    expect(BEEF_BASE_PACK.rejectedPerLbRouteUsd / BEEF_BASE_PACK.casePriceUsd - 1).toBeCloseTo(-0.1049, 3);
+    // The ruling names both halves of the decision.
+    expect(BEEF_BASE_RULING).toMatch(/MINORS/);
+    expect(BEEF_BASE_RULING).toMatch(/gross|GROSS/);
+    // The pack we write is the MINORS row, not the competing one.
+    expect(BEEF_BASE_PACK.angelProduct).toBe(BEEF_BASE_CANDIDATES[0]!.product);
+    expect(BEEF_BASE_PACK.brand).toBe(BEEF_BASE_CANDIDATES[0]!.brand);
   });
 
   it("keeps both beef-base candidates within 7% per jar — the reason it is a low-stakes question", () => {
@@ -336,9 +361,26 @@ describe("the wave-4 rulings, as constants", () => {
     expect(cheapest.verdict).toBe("REJECT");
   });
 
-  it("marks garlic — and only garlic — as scale-gated among the variable-catch rules", () => {
-    expect(VARIABLE_CATCH_RULES.filter((r) => r.scaleGated).map((r) => r.skuName)).toEqual(["Garlic"]);
+  it("leaves NO variable-catch rule scale-gated after the garlic ratification", () => {
+    // Run 1 held garlic here. Juan ratified the fingerprint argument on 2026-08-20,
+    // so the gate narrowed to oregano + onion powder — neither of which is in this
+    // table at all. If a row ever gets re-flagged, this test is how you find out.
+    expect(VARIABLE_CATCH_RULES.filter((r) => r.scaleGated)).toEqual([]);
+    // The original ruling is kept verbatim, amendment recorded separately — a ruling
+    // edited in place is a ruling nobody can audit.
     expect(HERB_WEIGHT_POLICY).toMatch(/SCALE-GATED/);
+    expect(GARLIC_RATIFICATION).toMatch(/ONLY oregano and onion powder/);
+    expect(GARLIC_RATIFICATION).toMatch(/VARIES/);
+  });
+
+  it("narrows the scale gate in the ledger to the two jugs, with garlic gone from it", () => {
+    const gated = STILL_STUCK.filter((s) => s.category === "SCALE_GATED");
+    expect(gated).toHaveLength(1);
+    expect(gated[0]!.item).toMatch(/Oregano/);
+    expect(gated[0]!.item).toMatch(/Onion Powder/);
+    for (const s of STILL_STUCK) {
+      expect(s.item.startsWith("Garlic"), "garlic must no longer be a stuck item").toBe(false);
+    }
   });
 
   it("gives every variable-catch rule a unique Angel-row identity", () => {

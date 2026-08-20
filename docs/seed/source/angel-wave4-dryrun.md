@@ -18,11 +18,14 @@ price below was resolved live at run time.
    column a count-unit recipe line consumes. Wave 3 moved bacon by 64% and that was worth
    a callout — this wave's equivalent callout is that there is nothing to call out.
    Costing moves; depletion does not.
-2. **Two of the five SKUs the herb policy names fall outside it on inspection.** Garlic
-   is caught between Juan's own two rulings, and fresh chives breaks the policy's hidden
-   premise (that one of our packs is one Angel unit). Both are reported with the
-   arithmetic finished so approving either is one line. Finding this was worth more than
-   the two rows it costs.
+2. **This is the SECOND dry run, and two of its predecessors' held rows are now writes.**
+   Run 1 refused Beef Base (no pack on our side, two competing Angel rows) and held garlic
+   (caught between Juan's own two rulings), tabling both with the arithmetic finished. He
+   ruled on 2026-08-20 and both are folded in below — §A2 and §C — with his words quoted at
+   the point of the write. **The garlic ratification also narrows the scale gate to oregano
+   and onion powder alone**, which is now the only physical measurement this arc still waits
+   on. One row from the herb policy is still refused: fresh chives breaks the policy's
+   hidden premise (that one of our packs is one Angel unit).
 3. **Angel's lettuce belongs to neither twin.** Our registry says Sysco or Baldor; every
    head of iceberg in the window came from PFG or US Foods, for $3,230.74. The pair can
    be shaped correctly (section B) and cannot be priced at all. Section B names the four
@@ -43,14 +46,19 @@ All four SKUs below sat in wave 2's `vendor unknown` decision table. Juan ruled 
 (Dried Chives) overrides a LOW-confidence guess with a found invoice, which is the
 system working as designed.
 
-**A binding is not a price.** Two of these four SKUs have no pack of any kind and two
-have no Angel row at all, so three of the four bind and stop. That is the intended
-outcome, not a shortfall — binding an unpriceable SKU still makes it orderable, which is
-what a vendor is FOR.
+**A binding is not a price, and two of these four bind and stop.** Mortadella and Utz
+Ripples have no Angel row at all — one because nothing on the menu uses it, one because
+Angel has never seen a bag of chips — so there is no invoice to derive a price from and
+there never will be. That is the intended outcome rather than a shortfall: binding an
+unpriceable SKU still makes it ORDERABLE, which is what a vendor is for.
+
+The other two both had packless SKUs on our side, and run 1 refused both prices for it. Juan
+has since supplied the missing pack for each — the wave-3 table for Dried Chives (§A1) and
+the jar model for Beef Base (§A2) — so both now carry a pack and a price.
 
 | our SKU | vendor (Juan) | binding | price | Angel row |
 |---|---|---|---|---|
-| Beef Base | PFG | **BIND** (vendor was NULL) | bind only | `BASE BEEF NO MSG` |
+| Beef Base | PFG | **BIND** (vendor was NULL) | price follows (§A1) | `BASE BEEF NO MSG` |
 | Mortadella | Boar's Head | **BIND** (vendor was NULL) | bind only | _(no Angel row)_ |
 | Utz Ripples | Country Snacks | **BIND** (vendor was NULL) | bind only | _(no Angel row)_ |
 | Dried Chives | US Foods | **BIND** (vendor was NULL) | price follows (§A1) | `Spice, Chive Chopped Plastic Shaker Shelf Stable Seasoning` |
@@ -84,18 +92,17 @@ Our SKU   : Dried Chives [d0ae6c94-26e8-48a7-9b73-857d4428270a] vendor=(no vendo
 
 → WOULD WRITE pack `case=6→shaker / shaker=1.12oz` and price **$9.72** (eff 2026-07-17), giving **$23.14/lb**.
 
-### A2 — Beef Base: bound, and deliberately unpriced
+### A2 — Beef Base: the jar model, ratified
 
-The binding is written; the price is not, for two independent reasons and either would
-be enough on its own.
+The first dry run bound the vendor and refused the price, for two reasons: our SKU had no
+pack of any kind, and PFG shows two competing beef-base rows that fail in opposite
+directions. It tabled both questions with the arithmetic finished and a recommendation.
+Juan took the recommendation.
 
-**Our side has no pack.** No chain, no `pack_format`, no `units_per_pack`, no `each_size`.
-There is no denominator. This is the same shape as Dried Chives — with one difference that
-decides the outcome: wave 3 put the chives pack in front of Juan and nobody has ever put
-this one in front of him. So it goes in a table rather than into the database.
+> Juan 2026-08-20: Beef Base takes the jar model — the MINORS `BASE BEEF NO MSG` row, pack = 6 x 16 oz jars, unit_price = the $62.61 case price. The $/lb route is rejected: Angel's $9.34/lb is the case price over a GROSS weight that includes the glass jar (6.703 lb against a 6.0 lb nominal = 1.117x, the tare pattern harvest 2 §5 names for bottles), so multiplying it back by a nominal pack understates by 10.5%.
 
-**And PFG shows two competing rows.** They fail in opposite directions, which is why a
-tie-break rule cannot settle it:
+**The two candidate rows, kept in the record because a pick only means something beside
+what it rejected:**
 
 | Angel row | brand | pack | case $ | Angel $/lb | measured lb | nominal lb | lines | last seen | implied $/1 lb jar |
 |---|---|---|---:|---:|---:|---:|---:|---|---:|
@@ -105,24 +112,33 @@ tie-break rule cannot settle it:
 - `BASE BEEF NO MSG` [MINORS] — A 6-pack of 1 lb jars. 6.703/6.0 = 1.117x = glass tare, so the 6.0 lb is the product and the case price is the contract term.
 - `BASE BEEF NO MSG JAR` [RDGCRST] — Pack string says one 1 lb jar; the weight field says 6.943 lb. One of the two is wrong and Angel cannot say which. Bought 3x to MINORS' 1x, and more recently — so this may well be the actual buy.
 
-**Why `$9.34/lb x our pack` is NOT the arithmetic to use here, even though Angel offers
-that $/lb.** `priceFromPerLb` exists for CATCH-WEIGHT products, where the $/lb is the
-contract term and the delivered weight is what varies — Delmar's deli meats. A Minor's
-beef base is the opposite: a manufactured fixed pack where the CASE PRICE is the contract
-term and the weight is incidental. Worse, Angel's 6.703 lb includes the glass, so its
-$9.34/lb is case-price-over-GROSS-weight. Multiplying it back by a 6.0 lb nominal pack
-gives $56.04 against a true $62.61 — a 10.5% understatement, in a wave whose whole
-premise is that we stopped inventing denominators.
+**Why `$9.34/lb x our pack` was rejected, and why that reasoning outlives this row.** It is a
+rule about a CLASS of product, not a fact about beef base. `priceFromPerLb` exists for
+CATCH-WEIGHT goods — Delmar's deli meats — where the $/lb is the contract term and the
+delivered weight is what varies; anchoring on $/lb there is right, and reading one invoice's
+case price would freeze that delivery's particular weight into our cost forever. A Minor's
+beef base is the mirror image: a manufactured fixed pack whose contract term IS the case
+price. And Angel's weight here is worse than incidental —
+```
+  Angel measured case : 6.703 lb   against a 6 lb nominal = 1.117x
+                        = the glass/bottle TARE pattern harvest 2 §5 names (bottles 1.17x)
+  so Angel's $/lb     : $62.61 / 6.703 lb = $9.34/lb  <- case price over GROSS weight
+  rejected route      : $9.34/lb x 6 lb = $56.04
+  written instead     : $62.61 (the case price) = $10.44/lb of CONTENT
+  gap                 : -10.5% — an understatement arrived at by an arithmetic
+                        that looks MORE rigorous than the one it replaces
+```
 
-**The reassuring part:** both candidate readings land within 7% of each other per 1 lb jar
-($10.44 vs $9.72). Whichever row Juan picks, beef base costs about ten dollars a jar — so
-this is a low-stakes question that nonetheless has to be asked, because writing the wrong
-one of the two would be silently wrong rather than visibly uncertain.
+→ WOULD WRITE pack `case=6→jar / jar=16oz` (96 oz) and price **$62.61** (eff 2026-07-24), giving **$10.44/lb** of content.
 
-**Recommended, if he wants it in one word:** the MINORS row, pack `case = 6 x jar; jar =
-16 oz`, `unit_price = $62.61`. It is the row with a coherent pack string, its 1.117x is a
-named and understood tare pattern rather than an unexplained 7x, and its per-jar figure
-brackets the other candidate from above.
+**What this lights up.** The pin below is un-costed today — the SKU has no pack, so there is
+no denominator to turn a recipe line into money. Nothing about its DEPLETION changes (a
+weight-denominated line consumes the same ounces either way); what changes is that the line
+acquires a cost for the first time.
+
+| recipe | line | costs today | costs after |
+|---|---|---:|---:|
+| Beef Jus | 5 oz | **NULL — un-costed** | $3.26 |
 
 ## Section B — the lettuce pair: both-active, Sysco primary
 
@@ -201,6 +217,18 @@ not an inference this script can make from a spend table.
 
 > Juan 2026-08-20: for fresh herbs and the variable-catch produce class, pack weight = the AVERAGE of the derived invoice weights, refreshed as new invoices land. The pack string is a unit size, not a content weight; the invoice is the measurement. Applies to basil, thyme, chives, parsley, garlic. The jug trio (oregano, onion powder, and the garlic pack WEIGHT) stays SCALE-GATED — that cluster is a separate question and one tub on a scale settles it.
 
+**And the amendment, recorded rather than folded back in** — because a ruling edited in place
+is a ruling nobody can audit:
+
+> Juan 2026-08-20 (amending the jug-trio carve-out): the invoice evidence is accepted — a weight that VARIES per delivery is a real weighing and a weight that never moves is a feed constant. Garlic is the produce tub, it varies, so it takes the INVOICE_DERIVED average like the other fresh produce. The scale gate now covers ONLY oregano and onion powder, whose weights are byte-identical on every invoice.
+
+Run 1 held garlic rather than picking, because the policy's two halves both landed on it: it
+is named in the variable class AND our `Garlic` SKU is the very produce tub the jug-trio scale
+gate covers. What it could add to the decision was one fact nobody had — the `spread` column
+below. Garlic's per-tub weight moves between deliveries; oregano's is byte-identical on every
+invoice for three months. Same 1.20x ratio, opposite fingerprints. Juan accepted that reading,
+so garlic is written here and the gate narrows to the two jugs.
+
 **Why this is a third weight class rather than a variant of the two we have.** Wave 3 split
 one column into SPEC (what the label says) and OPERATIONAL (what our line produces). A box of
 basil is neither: nobody here weighs it, and its `1 LB` pack string is a unit size rather than
@@ -229,12 +257,33 @@ safety property — and section C1 shows it earning its keep on basil.
 | Basil | `BASIL FRSH` [PEAK FRS] | 4 / 7 | 1.4501 lb | 1.4495–1.4505 | 1.45x | 16 -> **23.2 oz** | — | $20.25 | — | **$0.8728** | _(was unpriced)_ |
 | Thyme | `THYME FRSH` [PEAK FRS] | 1 / 1 | 0.47 lb | 0.47–0.47 | 1.88x | 4 -> **7.52 oz** | — | $16.54 | — | **$2.1995** | _(was unpriced)_ |
 | Parsley | `PARSLEY FRSH FLAT ITAL` [PEAK FRS] | 6 / 8 | 1.3998 lb | 1.3995–1.4 | 1.4x | 16 -> **22.4 oz** | $15.20 | $15.20 | $0.9500 | **$0.6786** | **-28.6%** |
+| Garlic | `GARLIC WHL PLD DOM` [PEAK FRS] | 7 / 21 | 5.996 lb | 5.9935–6.0077 | 1.199x | 80 -> **95.94 oz** | $19.72 | $19.72 | $0.2465 | **$0.2055** | **-16.6%** |
 
 **Read the `$/oz change` column as the whole point of section C.** These are all corrections
 in the SAFE direction — the pack gets bigger, so cost per ounce falls. A 16 oz nominal box of
 basil that really holds 23.2 oz was making every basil-bearing recipe look 45% more expensive
 than it is. Nothing here makes anything cheaper to BUY; it makes the cost we record match
 what we actually received.
+
+**Two of the four are live movers, and garlic is the bigger one.** Basil and thyme were
+carrying no price at all, so their change is NULL-to-a-number and nothing re-costs. Parsley
+and garlic already had prices, so every recipe consuming them re-costs the first time this
+lands. Garlic's move also arrives exactly where wave 3 forecast it: its §C pending-recheck
+table predicted $0.2465 -> $0.2054, -17%.
+
+Recipe lines affected, read live rather than asserted:
+
+| SKU | pins | recipes that re-cost |
+|---|---:|---|
+| Parsley | 1 | Garlic Bread / Compound Butter |
+| Garlic | 8 | Garlic Mayo (Aioli) · Honey Chili Aioli · Mustard Aioli · Italian Salsa Verde · Garlic Bread / Compound Butter · Marinara · Green Goddess · Cesear Dressing |
+
+**On garlic's 95.94 oz, where the ruling said 96.** The policy's own output is the invoice
+mean, 5.9960 lb = 95.94 oz, and that is what is written. 96 is the same number to the nearest
+ounce and reads better in a sentence, but hand-rounding it here would make the NEXT refresh —
+which recomputes from the invoices — look like an unexplained drift of 0.06 oz. The other
+three rows took their computed value for the same reason. Difference in cost per ounce:
+0.06%.
 
 **And nothing here changes depletion.** `avg_oz_per_each` is the column a count-unit recipe
 line consumes, and section C does not touch it on any SKU. Basil's `6 leaf` pin still resolves
@@ -248,7 +297,7 @@ cost side moves.
 | Thyme | 4 oz | 4 oz | ✓ our pack = 1 Angel unit | 0.47 lb (n=1) | _(n=1 — no spread)_ | **WRITE pack 4 -> 7.52 oz + price $16.54** ⚠ n=1 |
 | Parsley | 16 oz | 16 oz | ✓ our pack = 1 Angel unit | 1.3998 lb (n=6) | 0.00036 | **WRITE pack 16 -> 22.4 oz** (price already correct) |
 | Chives | 4 oz | 8 oz | ⚠ OUR_PACK_IS_A_FRACTION | 0.81 lb (n=7) | **0 — never moved** | **REFUSED — OUR_PACK_IS_A_FRACTION** |
-| Garlic | 80 oz | 80 oz | ✓ our pack = 1 Angel unit | 5.996 lb (n=7) | 0.00237 | **HELD — scale-gated** |
+| Garlic | 80 oz | 80 oz | ✓ our pack = 1 Angel unit | 5.996 lb (n=7) | 0.00237 | **WRITE pack 80 -> 95.94 oz** (price already correct) |
 
 **The `spread` column is the column to read twice.** It answers one binary question —
 *did this number ever move?* — and it is the only thing in this table that distinguishes a
@@ -256,7 +305,14 @@ weight somebody weighed from a weight somebody stored. The ratio column cannot: 
 oregano both sit at 1.20x nominal, and one of them varies per delivery while the other is
 byte-identical on every invoice for three months.
 
-Two rows deserve a second look before approval:
+It is also the column that settled garlic. **Garlic moves; oregano does not** — and the
+ratification turns that observation into the rule the next refresh will apply: a varying
+weight is a weighing and takes the average, a frozen one is a stored number and waits for a
+scale. Note what that does NOT claim: a zero spread is not proof of fabrication (a
+manufactured jug fill really is constant). It proves only that no evidence of weighing is
+present, which is exactly the state in which ninety seconds with a scale is worth spending.
+
+Two rows still deserve a second look before approval:
 
 - **Thyme rests on ONE invoice line.** An average of one is that one. The policy still
   applies — Juan's ruling is about which SOURCE to trust, not about sample size — and 0.47 lb
@@ -309,12 +365,11 @@ out not to reach a row it named. Filing them all as "TODO" would lose exactly th
 distinction that tells you which to do first.
 
 
-**SCALE_GATED** — 2
+**SCALE_GATED** — 1
 
 | item | stuck on | unblock |
 |---|---|---|
-| Oregano (both jug sizes) + Onion Powder — pack WEIGHT | Angel measures the 5 lb jug at 6.001 lb on all THREE oregano lines and 6.002 on onion powder's single line — oregano's never moved in three months. A weight that never moves is a stored number rather than a weighing, so the 1.20x may be a feed artifact, in which case cost/oz is overstated by 17%. | One oregano jug on a scale. Settles both jugs at once. |
-| Garlic — pack WEIGHT | Named by the herb policy AND by the jug-trio scale gate; our `Garlic` SKU is the produce tub, so both rulings land on the same row and disagree. Unlike the jugs, its weight VARIES per delivery (5.9935-6.0077 lb), which argues it really is weighed. | One garlic tub on the scale, or one word from Juan on which of his two rulings governs this row. |
+| Oregano (both jug sizes) + Onion Powder — pack WEIGHT | Angel measures the 5 lb jug at 6.001 lb on all THREE oregano lines and 6.002 on onion powder's single line — oregano's never moved in three months. A weight that never moves is a stored number rather than a weighing, so the 1.20x may be a feed artifact, in which case cost/oz is overstated by 17%. **This is now the WHOLE of the scale gate**: garlic left the cluster on 2026-08-20 when Juan accepted that its varying per-delivery weight is evidence of a real weighing, which is exactly the evidence these two lack. | One oregano jug on a scale. Settles both jugs at once — and it is the only physical measurement this arc is still waiting on for pricing. |
 
 **WEIGH_PENDING** — 1
 
@@ -380,24 +435,18 @@ that is only obviously right until someone needs the second lane back.
 
 |  | vendor binds | activations | pack chains | prices |
 |---|---:|---:|---:|---:|
-| **Section A — vendor bindings** | **4** | **0** | **1** | **1** |
+| **Section A — vendor bindings** | **4** | **0** | **2** | **2** |
 | **Section B — the lettuce pair** | **0** | **1** | **0** | **0** |
-| **Section C — herb weight policy** | **0** | **0** | **3** | **2** |
+| **Section C — herb weight policy** | **0** | **0** | **4** | **2** |
 | Section D — report only | 0 | 0 | 0 | 0 |
-| **TOTAL would-write rows** | **4** | **1** | **4** | **3** |
+| **TOTAL would-write rows** | **4** | **1** | **6** | **4** |
 
 `source` stamped on every written price row: `angel-wave4-2026-08-20`
 `effective_date`: the observed invoice date, never today.
 
 **Weight classes written this wave:** `SPEC`, `INVOICE_DERIVED`. No `avg_oz_per_each` is touched anywhere in this wave, so nothing depletes differently.
 
-── REFUSALS / NO-OPS: 8 ──
-
-**OUR_PACK_UNRESOLVABLE** — 1
-
-> Our own SKU cannot say what one pack is: no chain, and the flat columns carry no each_size/each_measure. There is no denominator, and inventing one is the PICKLES CHIPS $35.95/lb failure.
-
-- §A **Beef Base** (price): Our `Beef Base` SKU has no pack of any kind — no chain, no pack_format, no units_per_pack, no each_size. There is no denominator, and a price against a SKU that cannot say what one pack is, is how `PICKLES CHIPS` became $35.95/lb. Compounding it, PFG shows TWO competing beef-base rows and Juan named neither explicitly. Both questions are tabled with the arithmetic already done.
+── REFUSALS / NO-OPS: 7 ──
 
 **NO_ANGEL_ROW** — 2
 
@@ -418,23 +467,18 @@ that is only obviously right until someone needs the second lane back.
 
 - §B1 **Lettuce** (price): Angel's 4 iceberg rows ($3230.74) are all PFG or US Foods; our twins are Sysco and Baldor. No Angel price is attributable to either twin.
 
-**ALREADY_CORRECT** — 1
+**ALREADY_CORRECT** — 2
 
 > The live row already carries the value this wave would write. Idempotency working — reported, not written.
 
 - §C **Parsley** (price): live price is already $15.20 — only the pack moves, and cost/oz moves with it
+- §C **Garlic** (price): live price is already $19.72 — only the pack moves, and cost/oz moves with it
 
 **PACK_PREMISE_BROKEN** — 1
 
 > The herb policy assumes one of OUR packs is one ANGEL unit. Here it is not, so the average would have to be divided by a number that came from the same pack string the measurement just contradicted. Per wave 2's conflictImpact rule, that puts the price in doubt as well as the weight.
 
 - §C **Chives** (pack weight): our pack is 4 oz against an Angel nominal of 8 oz (OUR_PACK_IS_A_FRACTION). Our pack is HALF an Angel unit (wave 1 records it as CASE_MULTIPLE, divisor 2) — so the policy's premise does not hold and the average cannot be applied directly. Note this is the FRESH chive, a different product from the `Dried Chives` SKU section A binds to US Foods.
-
-**SCALE_GATED** — 1
-
-> Juan's ruling explicitly holds this weight back for a physical measurement. The arithmetic is done and reported so that approving it later is one line, but the 1.20x cluster is not resolved by more reading.
-
-- §C **Garlic** (pack weight): invoice average 5.996 lb (95.94 oz) over 7 line(s) / 21 units, range 5.9935–6.0077 lb — but Named by the herb policy AND held back by the jug-trio scale gate. Our `Garlic` SKU is the produce TUB, which is the row the scale gate covers, so the two rulings genuinely collide on it. Unwritten pending Juan's pick.
 
 ── EVERY WOULD-WRITE ROW, IN FULL ──
 
@@ -444,7 +488,7 @@ different decision from attributing.
 
 | § | SKU | vendor | ruling |
 |---|---|---|---|
-| A | Beef Base | PFG | Juan 2026-08-20: Beef Base -> PFG. |
+| A | Beef Base | PFG | Juan 2026-08-20: Beef Base -> PFG, and the jar model — MINORS row, 6 x 16 oz jars, $62.61/case. |
 | A | Mortadella | Boar's Head | Juan 2026-08-20: Mortadella -> Boar's Head. His note: no current sub uses mortadella — keep it anyway, a shelf for the future. |
 | A | Utz Ripples | Country Snacks | Juan 2026-08-20: Utz Ripples -> Country Snacks. |
 | A | Dried Chives | US Foods | Juan 2026-08-20: Dried Chives -> US Foods. |
@@ -455,15 +499,17 @@ different decision from attributing.
 |---|---|---|---|---|
 | B | Lettuce | Baldor | backup | Juan 2026-08-20: the Lettuce pair goes BOTH-ACTIVE, primary + backup like ham. The backup is the inactive side here, which is the mirror of the ham case seed 18 handles. |
 
-**Pack chains (4)** — supersede-as-a-SET, then flat fields derived through the same
+**Pack chains (6)** — supersede-as-a-SET, then flat fields derived through the same
 pure function the admin lib's sync-on-save uses. Never an in-place UPDATE, never a DELETE.
 
 | § | SKU | vendor | class | before | after |
 |---|---|---|---|---|---|
 | A | Dried Chives | US Foods | `SPEC` | `(no chain) flat - -x-` | `case=6→shaker / shaker=1.12oz \| flat case 6x1.12oz` |
+| A | Beef Base | PFG | `SPEC` | `(no chain) flat - -x-` | `case=6→jar / jar=16oz \| flat case 6x16oz` |
 | C | Basil | PFG | `INVOICE_DERIVED` | `case=16oz` | `case=23.2oz \| flat case 1x23.2oz` |
 | C | Thyme | PFG | `INVOICE_DERIVED` | `case=4oz` | `case=7.52oz \| flat case 1x7.52oz` |
 | C | Parsley | PFG | `INVOICE_DERIVED` | `container=16oz` | `container=22.4oz \| flat container 1x22.4oz` |
+| C | Garlic | PFG | `INVOICE_DERIVED` | `case=80oz` | `case=95.94oz \| flat case 1x95.94oz` |
 
 ⚠ **One deliberate non-change inside the chain sync.** `deriveFlatFieldsFromChain` derives
 `pack_format` from the chain's ROOT LABEL, and on three of these SKUs the stored `pack_format`
@@ -473,11 +519,12 @@ would silently rename a display field this wave was not asked to touch, so the s
 **preserved** where one exists. The pre-existing desync is flagged rather than fixed — it
 belongs to whoever owns that mirror, not to a weight-policy wave.
 
-**Prices (3)** — appended to `vendor_price_history`; nothing is ever modified in place.
+**Prices (4)** — appended to `vendor_price_history`; nothing is ever modified in place.
 
 | § | SKU | vendor | Angel row | unit price | effective | arithmetic |
 |---|---|---|---|---:|---|---|
 | A | Dried Chives | US Foods | `Spice, Chive Chopped Plastic Shaker Shelf Stable Seasoning` | **$9.72** | 2026-07-17 | $9.72 per case / 1 (our pack IS the case: 6.72 oz) = $9.72  [= $23.14/lb] |
+| A | Beef Base | PFG | `BASE BEEF NO MSG` | **$62.61** | 2026-07-24 | $62.61 per case / 1 (our pack IS the case: 96 oz) = $62.61  [= $10.44/lb of content, $10.44/jar] |
 | C | Basil | PFG | `BASIL FRSH` | **$20.25** | 2026-08-14 | $20.25 per 1/1 LB unit / 1 (our pack IS one Angel unit) = $20.25  [= $0.8728/oz at the corrected 23.2 oz] |
 | C | Thyme | PFG | `THYME FRSH` | **$16.54** | 2026-08-07 | $16.54 per 1/4 OZ unit / 1 (our pack IS one Angel unit) = $16.54  [= $2.1995/oz at the corrected 7.52 oz] |
 

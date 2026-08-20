@@ -74,9 +74,9 @@ import { parseAngelRollup, parseAngelDate, classifyWeightSource } from "@/lib/an
 import { costPerOz } from "@/lib/angel-wave3";
 import {
   parsePurchaseHistory, purchaseRowKey, invoiceAverageLbs, classifyPackPremise, lbsToPackOz,
-  VENDOR_BINDINGS, DRIED_CHIVES_PACK, BEEF_BASE_CANDIDATES,
+  VENDOR_BINDINGS, DRIED_CHIVES_PACK, BEEF_BASE_CANDIDATES, BEEF_BASE_PACK, BEEF_BASE_RULING,
   LETTUCE_PAIR, PFG_LETTUCE_CANDIDATES,
-  VARIABLE_CATCH_RULES, BASIL_DUPLICATE_CLUSTER,
+  VARIABLE_CATCH_RULES, BASIL_DUPLICATE_CLUSTER, GARLIC_RATIFICATION,
   HERB_WEIGHT_POLICY, AVERAGE_DEFINITION, WEIGHT_CLASS_MEANING, CONSTANT_WEIGHT_SPREAD_CEILING,
   STILL_STUCK, WAVE4_REASONS,
   type Wave4Code, type WeightClass, type InvoiceAverage,
@@ -394,11 +394,14 @@ async function main(): Promise<void> {
     p("   column a count-unit recipe line consumes. Wave 3 moved bacon by 64% and that was worth");
     p("   a callout — this wave's equivalent callout is that there is nothing to call out.");
     p("   Costing moves; depletion does not.");
-    p("2. **Two of the five SKUs the herb policy names fall outside it on inspection.** Garlic");
-    p("   is caught between Juan's own two rulings, and fresh chives breaks the policy's hidden");
-    p("   premise (that one of our packs is one Angel unit). Both are reported with the");
-    p("   arithmetic finished so approving either is one line. Finding this was worth more than");
-    p("   the two rows it costs.");
+    p("2. **This is the SECOND dry run, and two of its predecessors' held rows are now writes.**");
+    p("   Run 1 refused Beef Base (no pack on our side, two competing Angel rows) and held garlic");
+    p("   (caught between Juan's own two rulings), tabling both with the arithmetic finished. He");
+    p("   ruled on 2026-08-20 and both are folded in below — §A2 and §C — with his words quoted at");
+    p("   the point of the write. **The garlic ratification also narrows the scale gate to oregano");
+    p("   and onion powder alone**, which is now the only physical measurement this arc still waits");
+    p("   on. One row from the herb policy is still refused: fresh chives breaks the policy's");
+    p("   hidden premise (that one of our packs is one Angel unit).");
     p("3. **Angel's lettuce belongs to neither twin.** Our registry says Sysco or Baldor; every");
     p("   head of iceberg in the window came from PFG or US Foods, for $3,230.74. The pair can");
     p("   be shaped correctly (section B) and cannot be priced at all. Section B names the four");
@@ -420,10 +423,15 @@ async function main(): Promise<void> {
   p("(Dried Chives) overrides a LOW-confidence guess with a found invoice, which is the");
   p("system working as designed.");
   p("");
-  p("**A binding is not a price.** Two of these four SKUs have no pack of any kind and two");
-  p("have no Angel row at all, so three of the four bind and stop. That is the intended");
-  p("outcome, not a shortfall — binding an unpriceable SKU still makes it orderable, which is");
-  p("what a vendor is FOR.");
+  p("**A binding is not a price, and two of these four bind and stop.** Mortadella and Utz");
+  p("Ripples have no Angel row at all — one because nothing on the menu uses it, one because");
+  p("Angel has never seen a bag of chips — so there is no invoice to derive a price from and");
+  p("there never will be. That is the intended outcome rather than a shortfall: binding an");
+  p("unpriceable SKU still makes it ORDERABLE, which is what a vendor is for.");
+  p("");
+  p("The other two both had packless SKUs on our side, and run 1 refused both prices for it. Juan");
+  p("has since supplied the missing pack for each — the wave-3 table for Dried Chives (§A1) and");
+  p("the jar model for Beef Base (§A2) — so both now carry a pack and a price.");
   p("");
 
   const bindRows: string[][] = [];
@@ -579,18 +587,17 @@ async function main(): Promise<void> {
     p(`→ WOULD WRITE pack \`${describeLevels(levels)}\` and price **${money(DRIED_CHIVES_PACK.casePriceUsd)}** (eff ${effectiveDate}), giving **$${perLb.toFixed(2)}/lb**.`);
   }
 
-  // ── A2: Beef Base — bound, and deliberately unpriced ────────────────────────
-  h(3, "A2 — Beef Base: bound, and deliberately unpriced");
-  p("The binding is written; the price is not, for two independent reasons and either would");
-  p("be enough on its own.");
+  // ── A2: Beef Base — the jar model, ratified ────────────────────────────────
+  h(3, "A2 — Beef Base: the jar model, ratified");
+  p("The first dry run bound the vendor and refused the price, for two reasons: our SKU had no");
+  p("pack of any kind, and PFG shows two competing beef-base rows that fail in opposite");
+  p("directions. It tabled both questions with the arithmetic finished and a recommendation.");
+  p("Juan took the recommendation.");
   p("");
-  p("**Our side has no pack.** No chain, no `pack_format`, no `units_per_pack`, no `each_size`.");
-  p("There is no denominator. This is the same shape as Dried Chives — with one difference that");
-  p("decides the outcome: wave 3 put the chives pack in front of Juan and nobody has ever put");
-  p("this one in front of him. So it goes in a table rather than into the database.");
+  p(MD ? `> ${BEEF_BASE_RULING}` : `  ${BEEF_BASE_RULING}`);
   p("");
-  p("**And PFG shows two competing rows.** They fail in opposite directions, which is why a");
-  p("tie-break rule cannot settle it:");
+  p("**The two candidate rows, kept in the record because a pick only means something beside");
+  p("what it rejected:**");
   p("");
   table(
     ["Angel row", "brand", "pack", "case $", "Angel $/lb", "measured lb", "nominal lb", "lines", "last seen", "implied $/1 lb jar"],
@@ -604,24 +611,112 @@ async function main(): Promise<void> {
   p("");
   for (const c of BEEF_BASE_CANDIDATES) p(`- \`${c.product}\` [${c.brand}] — ${c.reading}`);
   p("");
-  p("**Why `$9.34/lb x our pack` is NOT the arithmetic to use here, even though Angel offers");
-  p("that $/lb.** `priceFromPerLb` exists for CATCH-WEIGHT products, where the $/lb is the");
-  p("contract term and the delivered weight is what varies — Delmar's deli meats. A Minor's");
-  p("beef base is the opposite: a manufactured fixed pack where the CASE PRICE is the contract");
-  p("term and the weight is incidental. Worse, Angel's 6.703 lb includes the glass, so its");
-  p("$9.34/lb is case-price-over-GROSS-weight. Multiplying it back by a 6.0 lb nominal pack");
-  p(`gives ${money(9.34 * 6)} against a true ${money(62.61)} — a 10.5% understatement, in a wave whose whole`);
-  p("premise is that we stopped inventing denominators.");
+  p("**Why `$9.34/lb x our pack` was rejected, and why that reasoning outlives this row.** It is a");
+  p("rule about a CLASS of product, not a fact about beef base. `priceFromPerLb` exists for");
+  p("CATCH-WEIGHT goods — Delmar's deli meats — where the $/lb is the contract term and the");
+  p("delivered weight is what varies; anchoring on $/lb there is right, and reading one invoice's");
+  p("case price would freeze that delivery's particular weight into our cost forever. A Minor's");
+  p("beef base is the mirror image: a manufactured fixed pack whose contract term IS the case");
+  p("price. And Angel's weight here is worse than incidental —");
+  pre();
+  p(`  Angel measured case : ${BEEF_BASE_PACK.angelMeasuredCaseLbs} lb   against a ${BEEF_BASE_PACK.caseOz / 16} lb nominal = ${BEEF_BASE_PACK.tareRatio.toFixed(3)}x`);
+  p(`                        = the glass/bottle TARE pattern harvest 2 §5 names (bottles 1.17x)`);
+  p(`  so Angel's $/lb     : ${money(BEEF_BASE_PACK.casePriceUsd)} / ${BEEF_BASE_PACK.angelMeasuredCaseLbs} lb = ${money(BEEF_BASE_PACK.angelStatedPricePerLb)}/lb  <- case price over GROSS weight`);
+  p(`  rejected route      : ${money(BEEF_BASE_PACK.angelStatedPricePerLb)}/lb x ${BEEF_BASE_PACK.caseOz / 16} lb = ${money(BEEF_BASE_PACK.rejectedPerLbRouteUsd)}`);
+  p(`  written instead     : ${money(BEEF_BASE_PACK.casePriceUsd)} (the case price) = ${money(BEEF_BASE_PACK.contentPricePerLb)}/lb of CONTENT`);
+  p(`  gap                 : ${pct(BEEF_BASE_PACK.rejectedPerLbRouteUsd / BEEF_BASE_PACK.casePriceUsd - 1)} — an understatement arrived at by an arithmetic`);
+  p(`                        that looks MORE rigorous than the one it replaces`);
+  pre();
   p("");
-  p("**The reassuring part:** both candidate readings land within 7% of each other per 1 lb jar");
-  p("($10.44 vs $9.72). Whichever row Juan picks, beef base costs about ten dollars a jar — so");
-  p("this is a low-stakes question that nonetheless has to be asked, because writing the wrong");
-  p("one of the two would be silently wrong rather than visibly uncertain.");
-  p("");
-  p("**Recommended, if he wants it in one word:** the MINORS row, pack `case = 6 x jar; jar =");
-  p("16 oz`, `unit_price = $62.61`. It is the row with a coherent pack string, its 1.117x is a");
-  p("named and understood tare pattern rather than an unexplained 7x, and its per-jar figure");
-  p("brackets the other candidate from above.");
+
+  const beefHit = resolveSku(BEEF_BASE_PACK.skuName, "(no vendor)");
+  const beefSku = "error" in beefHit
+    ? ((byName.get(BEEF_BASE_PACK.skuName) ?? []).filter((s) => s.active)[0] ?? null)
+    : beefHit.sku;
+  if (!beefSku) {
+    refusals.push({ section: "A2", skuName: BEEF_BASE_PACK.skuName, subject: "pack + price", code: "SKU_UNRESOLVED", detail: "no ACTIVE global SKU named Beef Base" });
+    p("REFUSED: no ACTIVE global SKU named `Beef Base`.");
+  } else if (beefSku.chain.length > 0 || beefSku.eachSize != null) {
+    refusals.push({ section: "A2", skuName: BEEF_BASE_PACK.skuName, subject: "pack + price", code: "PACK_SHAPE_CHANGED", detail: `the SKU acquired pack data since the first dry run: ${describeChain(beefSku)} — re-derive rather than flatten` });
+    p(`REFUSED: the SKU now carries pack data (\`${describeChain(beefSku)}\`). Re-derive before writing.`);
+  } else {
+    const levels = twoLevelChain(
+      BEEF_BASE_PACK.caseLabel, BEEF_BASE_PACK.jarsPerCase,
+      BEEF_BASE_PACK.jarLabel, BEEF_BASE_PACK.ozPerJar,
+    );
+    const collision = firstLabelMeasureCollision(levels.map((l) => l.label), measureLabels);
+    if (collision != null) {
+      throw new Error(`FATAL: chain label "${collision}" IS an active measure_units label — it would shadow that measure in the chain-first ozForRecipeInput walk. Aborting (no writes).`);
+    }
+    const flat = deriveFlatFieldsFromChain(levels);
+    if (flat.eachSize == null) throw new Error("FATAL: the Beef Base chain did not derive flat fields — malformed levels.");
+    const effectiveDate = parseAngelDate(BEEF_BASE_PACK.lastSeen);
+    if (!effectiveDate) throw new Error(`could not parse last_seen "${BEEF_BASE_PACK.lastSeen}" for Beef Base`);
+    const beefPins = await loadPins(beefSku.id);
+    const notChosen = BEEF_BASE_CANDIDATES[1]!;
+
+    chainWrites.push({
+      section: "A", skuId: beefSku.id, skuName: beefSku.name, vendorName: BEEF_BASE_PACK.expectVendor,
+      levels, preservePackFormat: beefSku.packFormat,
+      beforeDescriptor: describeChain(beefSku),
+      afterDescriptor: `${describeLevels(levels)} | flat ${flat.packFormat} ${flat.unitsPerPack}x${flat.eachSize}${flat.eachMeasure}`,
+      weightClass: "SPEC",
+      sourceNote: `Pack from Angel's pack string \`${BEEF_BASE_PACK.packSizeRaw}\` on ${BEEF_BASE_PACK.angelProduct} [${BEEF_BASE_PACK.brand}]: ${BEEF_BASE_PACK.jarsPerCase} jars x ${BEEF_BASE_PACK.ozPerJar} oz = ${BEEF_BASE_PACK.caseOz} oz of CONTENT. weight_class SPEC — a manufacturer's stated fill, not a weighing. Angel's own measured ${BEEF_BASE_PACK.angelMeasuredCaseLbs} lb is ${BEEF_BASE_PACK.tareRatio.toFixed(3)}x the nominal and is deliberately NOT used: that excess is the glass jars (harvest 2 §5's bottle-tare pattern), and costing per ounce of glass is not a thing we want to do. ${BEEF_BASE_RULING}`,
+      evidence: `Juan's 2026-08-20 ruling on the first dry run's §A2 decision table; Angel pack string \`${BEEF_BASE_PACK.packSizeRaw}\`, ${BEEF_BASE_CANDIDATES[0]!.purchaseLines} invoice line(s)`,
+      metadata: {
+        angel_product: BEEF_BASE_PACK.angelProduct, angel_brand: BEEF_BASE_PACK.brand,
+        angel_pack_string: BEEF_BASE_PACK.packSizeRaw,
+        jars_per_case: BEEF_BASE_PACK.jarsPerCase, oz_per_jar: BEEF_BASE_PACK.ozPerJar,
+        case_oz: BEEF_BASE_PACK.caseOz, weight_class: "SPEC",
+        angel_measured_case_lbs: BEEF_BASE_PACK.angelMeasuredCaseLbs,
+        tare_ratio: round(BEEF_BASE_PACK.tareRatio, 4),
+        tare_reading: "glass/bottle tare — harvest 2 §5 names bottles at 1.17x; the excess is packaging, not product",
+        ruling: BEEF_BASE_RULING,
+        competing_row_not_chosen: notChosen.product,
+      },
+    });
+
+    priceWrites.push({
+      section: "A", skuId: beefSku.id, skuName: beefSku.name, vendorName: BEEF_BASE_PACK.expectVendor,
+      angelProduct: BEEF_BASE_PACK.angelProduct,
+      unitPrice: BEEF_BASE_PACK.casePriceUsd, effectiveDate,
+      arithmetic: `${money(BEEF_BASE_PACK.casePriceUsd)} per case / 1 (our pack IS the case: ${BEEF_BASE_PACK.caseOz} oz) = ${money(BEEF_BASE_PACK.casePriceUsd)}  [= ${money(BEEF_BASE_PACK.contentPricePerLb)}/lb of content, ${money(BEEF_BASE_PACK.casePriceUsd / BEEF_BASE_PACK.jarsPerCase)}/jar]`,
+      sourceNote:
+        `${BEEF_BASE_PACK.angelProduct} [${BEEF_BASE_PACK.brand}] · PFG · ${BEEF_BASE_PACK.packSizeRaw} · ${money(BEEF_BASE_PACK.casePriceUsd)}/case, observed ${BEEF_BASE_PACK.lastSeen}. ` +
+        `Our pack IS one Angel case (${BEEF_BASE_PACK.jarsPerCase} x ${BEEF_BASE_PACK.ozPerJar} oz = ${BEEF_BASE_PACK.caseOz} oz), so divisor = 1 and unit_price = the case price = ${money(BEEF_BASE_PACK.contentPricePerLb)}/lb of content (${money(BEEF_BASE_PACK.casePriceUsd / BEEF_BASE_PACK.jarsPerCase)} per 1 lb jar). ` +
+        `WHY NOT Angel's ${money(BEEF_BASE_PACK.angelStatedPricePerLb)}/lb: that figure is the case price divided by Angel's MEASURED ${BEEF_BASE_PACK.angelMeasuredCaseLbs} lb, which is ${BEEF_BASE_PACK.tareRatio.toFixed(3)}x the ${BEEF_BASE_PACK.caseOz / 16} lb nominal — the glass/bottle tare pattern harvest 2 §5 names (bottles 1.17x). It is a $/lb of product-PLUS-JAR. Multiplying it back by our nominal pack gives ${money(BEEF_BASE_PACK.rejectedPerLbRouteUsd)} against the true ${money(BEEF_BASE_PACK.casePriceUsd)}, a ${pct(BEEF_BASE_PACK.rejectedPerLbRouteUsd / BEEF_BASE_PACK.casePriceUsd - 1)} understatement. ` +
+        `wave 2's priceFromPerLb is for CATCH-WEIGHT goods where the $/lb is the contract term and the delivered weight varies; a manufactured fixed pack is the mirror image and its contract term is the case price. ` +
+        `Competing row NOT chosen: \`${notChosen.product}\` [${notChosen.brand}] at ${money(notChosen.casePriceUsd)} — bought more often (${notChosen.purchaseLines} lines) and more recently (${notChosen.lastSeen}), but its pack string (${notChosen.packSizeRaw}) and its ${notChosen.measuredLbsPerUnit} lb weight field contradict each other by nearly 7x. Both readings land within 7% per jar, so this pick is low-stakes either way. ` +
+        `Supersedes the first dry run's OUR_PACK_UNRESOLVABLE refusal, per: ${BEEF_BASE_RULING}`,
+      metadata: {
+        angel_product: BEEF_BASE_PACK.angelProduct, angel_vendor: "PFG", angel_brand: BEEF_BASE_PACK.brand,
+        case_oz: BEEF_BASE_PACK.caseOz, relation: "OUR_PACK_IS_THE_ANGEL_CASE",
+        content_price_per_lb: round(BEEF_BASE_PACK.contentPricePerLb, 4),
+        price_per_jar: round(BEEF_BASE_PACK.casePriceUsd / BEEF_BASE_PACK.jarsPerCase, 4),
+        angel_stated_price_per_lb: BEEF_BASE_PACK.angelStatedPricePerLb,
+        rejected_per_lb_route_usd: round(BEEF_BASE_PACK.rejectedPerLbRouteUsd, 2),
+        rejected_because: "Angel's $/lb divides by a GROSS weight that includes the glass jars; priceFromPerLb is for catch-weight goods whose contract term is the $/lb, which a manufactured fixed pack is not",
+        competing_row_not_chosen: notChosen.product,
+        supersedes: "wave 4 dry run 1 §A2 OUR_PACK_UNRESOLVABLE",
+        ruling: BEEF_BASE_RULING,
+      },
+    });
+    p(`→ WOULD WRITE pack \`${describeLevels(levels)}\` (${BEEF_BASE_PACK.caseOz} oz) and price **${money(BEEF_BASE_PACK.casePriceUsd)}** (eff ${effectiveDate}), giving **${money(BEEF_BASE_PACK.contentPricePerLb)}/lb** of content.`);
+    if (beefPins.length > 0) {
+      p("");
+      p("**What this lights up.** The pin below is un-costed today — the SKU has no pack, so there is");
+      p("no denominator to turn a recipe line into money. Nothing about its DEPLETION changes (a");
+      p("weight-denominated line consumes the same ounces either way); what changes is that the line");
+      p("acquires a cost for the first time.");
+      p("");
+      table(["recipe", "line", "costs today", "costs after"],
+        beefPins.map((pin) => [
+          pin.recipeName, `${pin.quantity} ${pin.unit ?? "(no unit)"}`, "**NULL — un-costed**",
+          pin.unit === "oz" ? money(pin.quantity * (BEEF_BASE_PACK.casePriceUsd / BEEF_BASE_PACK.caseOz)) : "(non-oz unit — resolves through the chain walk)",
+        ]),
+        ["", "", "r", "r"]);
+    }
+  }
 
   // ══ SECTION B — the lettuce pair ═════════════════════════════════════════════
   h(2, "Section B — the lettuce pair: both-active, Sysco primary");
@@ -771,6 +866,18 @@ async function main(): Promise<void> {
   h(2, "Section C — the fresh-herb / variable-catch weight policy");
   p(MD ? `> ${HERB_WEIGHT_POLICY}` : `  ${HERB_WEIGHT_POLICY}`);
   p("");
+  p("**And the amendment, recorded rather than folded back in** — because a ruling edited in place");
+  p("is a ruling nobody can audit:");
+  p("");
+  p(MD ? `> ${GARLIC_RATIFICATION}` : `  ${GARLIC_RATIFICATION}`);
+  p("");
+  p("Run 1 held garlic rather than picking, because the policy's two halves both landed on it: it");
+  p("is named in the variable class AND our `Garlic` SKU is the very produce tub the jug-trio scale");
+  p("gate covers. What it could add to the decision was one fact nobody had — the `spread` column");
+  p("below. Garlic's per-tub weight moves between deliveries; oregano's is byte-identical on every");
+  p("invoice for three months. Same 1.20x ratio, opposite fingerprints. Juan accepted that reading,");
+  p("so garlic is written here and the gate narrows to the two jugs.");
+  p("");
   p("**Why this is a third weight class rather than a variant of the two we have.** Wave 3 split");
   p("one column into SPEC (what the label says) and OPERATIONAL (what our line produces). A box of");
   p("basil is neither: nobody here weighs it, and its `1 LB` pack string is a unit size rather than");
@@ -800,6 +907,8 @@ async function main(): Promise<void> {
     latestCasePrice: number | null;
     effectiveDate: string | null;
     livePrice: number | null;
+    /** Recipe lines that re-cost when this pack moves. Live, never asserted in prose. */
+    pins: PinRow[];
     verdict: string;
   }
   const herbPlans: HerbPlan[] = [];
@@ -809,7 +918,7 @@ async function main(): Promise<void> {
     const hit = resolveSku(rule.skuName, rule.expectVendor);
     if ("error" in hit) {
       refusals.push({ section: "C", skuName: rule.skuName, subject: "pack weight", code: hit.code, detail: hit.error });
-      herbPlans.push({ skuName: rule.skuName, sku: null, avg: null, newPackOz: null, ourPackOz: null, premise: "PREMISE_BROKEN", latestCasePrice: null, effectiveDate: null, livePrice: null, verdict: `UNRESOLVED — ${hit.error}` });
+      herbPlans.push({ skuName: rule.skuName, sku: null, avg: null, newPackOz: null, ourPackOz: null, premise: "PREMISE_BROKEN", latestCasePrice: null, effectiveDate: null, livePrice: null, pins: [], verdict: `UNRESOLVED — ${hit.error}` });
       continue;
     }
     const sku = hit.sku;
@@ -848,6 +957,7 @@ async function main(): Promise<void> {
       latestCasePrice: latest?.price ?? null,
       effectiveDate: latest?.iso ?? null,
       livePrice,
+      pins: await loadPins(sku.id),
       verdict: "",
     };
 
@@ -986,6 +1096,27 @@ async function main(): Promise<void> {
   p("than it is. Nothing here makes anything cheaper to BUY; it makes the cost we record match");
   p("what we actually received.");
   p("");
+  p("**Two of the four are live movers, and garlic is the bigger one.** Basil and thyme were");
+  p("carrying no price at all, so their change is NULL-to-a-number and nothing re-costs. Parsley");
+  p("and garlic already had prices, so every recipe consuming them re-costs the first time this");
+  p("lands. Garlic's move also arrives exactly where wave 3 forecast it: its §C pending-recheck");
+  p("table predicted $0.2465 -> $0.2054, -17%.");
+  p("");
+  p("Recipe lines affected, read live rather than asserted:");
+  p("");
+  table(["SKU", "pins", "recipes that re-cost"],
+    herbPlans
+      .filter((pl) => pl.livePrice != null && pl.verdict.includes("WRITE"))
+      .map((pl) => [pl.skuName, String(pl.pins.length), pl.pins.map((pn) => pn.recipeName).join(" · ") || "_(none)_"]),
+    ["", "r", ""]);
+  p("");
+  p("**On garlic's 95.94 oz, where the ruling said 96.** The policy's own output is the invoice");
+  p("mean, 5.9960 lb = 95.94 oz, and that is what is written. 96 is the same number to the nearest");
+  p("ounce and reads better in a sentence, but hand-rounding it here would make the NEXT refresh —");
+  p("which recomputes from the invoices — look like an unexplained drift of 0.06 oz. The other");
+  p("three rows took their computed value for the same reason. Difference in cost per ounce:");
+  p("0.06%.");
+  p("");
   p("**And nothing here changes depletion.** `avg_oz_per_each` is the column a count-unit recipe");
   p("line consumes, and section C does not touch it on any SKU. Basil's `6 leaf` pin still resolves");
   p("through its 0.017 oz/leaf; thyme's `12 sprig` still resolves through 0.02 oz/sprig. Only the");
@@ -1017,7 +1148,14 @@ async function main(): Promise<void> {
   p("oregano both sit at 1.20x nominal, and one of them varies per delivery while the other is");
   p("byte-identical on every invoice for three months.");
   p("");
-  p("Two rows deserve a second look before approval:");
+  p("It is also the column that settled garlic. **Garlic moves; oregano does not** — and the");
+  p("ratification turns that observation into the rule the next refresh will apply: a varying");
+  p("weight is a weighing and takes the average, a frozen one is a stored number and waits for a");
+  p("scale. Note what that does NOT claim: a zero spread is not proof of fabrication (a");
+  p("manufactured jug fill really is constant). It proves only that no evidence of weighing is");
+  p("present, which is exactly the state in which ninety seconds with a scale is worth spending.");
+  p("");
+  p("Two rows still deserve a second look before approval:");
   p("");
   p("- **Thyme rests on ONE invoice line.** An average of one is that one. The policy still");
   p("  applies — Juan's ruling is about which SOURCE to trust, not about sample size — and 0.47 lb");

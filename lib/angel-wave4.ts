@@ -72,6 +72,44 @@ export const HERB_WEIGHT_POLICY =
   "Juan 2026-08-20: for fresh herbs and the variable-catch produce class, pack weight = the AVERAGE of the derived invoice weights, refreshed as new invoices land. The pack string is a unit size, not a content weight; the invoice is the measurement. Applies to basil, thyme, chives, parsley, garlic. The jug trio (oregano, onion powder, and the garlic pack WEIGHT) stays SCALE-GATED — that cluster is a separate question and one tub on a scale settles it.";
 
 /**
+ * The amendment, recorded rather than folded back into the ruling above.
+ *
+ * The first dry run found garlic caught between the policy's own two halves — named
+ * in the variable class AND held by the jug-trio scale gate, with our `Garlic` SKU
+ * resolving to the very row the gate covers. It reported the collision rather than
+ * picking, and offered one fact nobody had: **garlic's per-tub weight varies across
+ * deliveries (5.9935–6.0077 lb over 7 lines) while oregano's is byte-identical on
+ * every invoice for three months.** Same 1.20x ratio, opposite fingerprints.
+ *
+ * Juan ratified that reading. So the gate narrows to what it was actually about —
+ * the two JUGS, whose constant weight is evidence of a stored number rather than a
+ * scale — and garlic joins the invoice-averaged class.
+ *
+ * The original text is kept verbatim above because a ruling edited in place is a
+ * ruling nobody can audit. This is an amendment, and it reads like one.
+ */
+export const GARLIC_RATIFICATION =
+  "Juan 2026-08-20 (amending the jug-trio carve-out): the invoice evidence is accepted — a weight that VARIES per delivery is a real weighing and a weight that never moves is a feed constant. Garlic is the produce tub, it varies, so it takes the INVOICE_DERIVED average like the other fresh produce. The scale gate now covers ONLY oregano and onion powder, whose weights are byte-identical on every invoice.";
+
+/**
+ * Juan's ruling on the Beef Base pack, which the first dry run tabled rather than
+ * guessed at.
+ *
+ * The dry run refused to price it for two reasons: our SKU had no pack of any kind,
+ * and PFG carries two competing beef-base rows that fail in opposite directions. It
+ * put both questions in a table with a recommendation. He took the recommendation.
+ *
+ * Worth keeping the second half of that reasoning, because it is the part that
+ * survives into the source_note: the naive `$9.34/lb x our pack` was rejected
+ * BEFORE the row was picked, on the grounds that `priceFromPerLb` is for catch-weight
+ * goods where $/lb is the contract term. Beef base is a manufactured fixed pack whose
+ * contract term is the case price, and Angel's $/lb is case-price-over-GROSS-weight
+ * because the 6.703 lb includes the glass.
+ */
+export const BEEF_BASE_RULING =
+  "Juan 2026-08-20: Beef Base takes the jar model — the MINORS `BASE BEEF NO MSG` row, pack = 6 x 16 oz jars, unit_price = the $62.61 case price. The $/lb route is rejected: Angel's $9.34/lb is the case price over a GROSS weight that includes the glass jar (6.703 lb against a 6.0 lb nominal = 1.117x, the tare pattern harvest 2 §5 names for bottles), so multiplying it back by a nominal pack understates by 10.5%.";
+
+/**
  * How the average is defined, pinned so a refresh is deterministic.
  *
  * Two readings of "average" are available and they are not the same computation:
@@ -393,8 +431,8 @@ export const VARIABLE_CATCH_RULES: readonly VariableCatchRule[] = [
     skuName: "Garlic", expectVendor: "PFG",
     ourPackOzExpected: 80, angelNominalOz: 80,
     latestCasePriceUsd: 19.72, lastSeen: "Aug 14, 2026",
-    scaleGated: true,
-    note: "Named by the herb policy AND held back by the jug-trio scale gate. Our `Garlic` SKU is the produce TUB, which is the row the scale gate covers, so the two rulings genuinely collide on it. Unwritten pending Juan's pick.",
+    scaleGated: false,
+    note: "RATIFIED. The first dry run held this row because the herb policy and the jug-trio scale gate both landed on it. Juan accepted the fingerprint argument: garlic's per-tub weight VARIES across deliveries (5.9935-6.0077 lb over 7 lines) where the jugs' never moves, so the tub is genuinely weighed and takes the invoice average. The scale gate narrows to oregano + onion powder. See GARLIC_RATIFICATION.",
   },
 ];
 
@@ -467,11 +505,10 @@ export const VENDOR_BINDINGS: readonly VendorBinding[] = [
   {
     skuName: "Beef Base", vendorName: "PFG",
     angelProduct: "BASE BEEF NO MSG",
-    ruling: "Juan 2026-08-20: Beef Base -> PFG.",
-    evidence: "PFG carries two beef-base rows in the window; wave 2 guessed PFG at HIGH confidence off the `BASE BEEF NO MSG JAR` line. The binding is unambiguous even though WHICH row is the buy is not.",
-    priceIntent: "BIND_ONLY",
-    whyBindOnly:
-      "Our `Beef Base` SKU has no pack of any kind — no chain, no pack_format, no units_per_pack, no each_size. There is no denominator, and a price against a SKU that cannot say what one pack is, is how `PICKLES CHIPS` became $35.95/lb. Compounding it, PFG shows TWO competing beef-base rows and Juan named neither explicitly. Both questions are tabled with the arithmetic already done.",
+    ruling: "Juan 2026-08-20: Beef Base -> PFG, and the jar model — MINORS row, 6 x 16 oz jars, $62.61/case.",
+    evidence: "PFG carries two beef-base rows in the window; wave 2 guessed PFG at HIGH confidence off the `BASE BEEF NO MSG JAR` line. The first dry run tabled WHICH row is the buy rather than guessing; Juan picked the MINORS row, so the pack and the price follow.",
+    priceIntent: "PRICE_FROM_ANGEL",
+    whyBindOnly: null,
   },
   {
     skuName: "Mortadella", vendorName: "Boar's Head",
@@ -571,6 +608,59 @@ export interface BeefBaseCandidate {
   reading: string;
   impliedPerJarUsd: number;
 }
+
+/**
+ * The Beef Base pack Juan ratified, and the arithmetic that justifies each half.
+ *
+ * ── WHY THE CASE PRICE AND NOT `$/lb x pack` ──────────────────────────────────
+ * This is the part worth preserving, because it is a rule about a CLASS of product
+ * rather than a fact about this one. `priceFromPerLb` (wave 2) exists for
+ * catch-weight goods — Delmar's deli meats — where the $/lb is the contract term
+ * and the delivered weight is what varies. Anchoring on $/lb there is right, and
+ * reading a case price off one invoice would freeze that delivery's particular
+ * weight into our cost forever.
+ *
+ * Beef base is the mirror image: a manufactured fixed pack where the CASE PRICE is
+ * the contract term and the weight is incidental. And Angel's weight is worse than
+ * incidental here — 6.703 lb against a 6.0 lb nominal is 1.117x, the glass/bottle
+ * tare pattern harvest 2 §5 names explicitly. So Angel's $9.34/lb is
+ * case-price-over-GROSS-weight, and multiplying it back by a 6.0 lb nominal pack
+ * gives $56.04 against a true $62.61 — a 10.5% understatement, arrived at by an
+ * arithmetic that looks more rigorous than the one it replaces.
+ *
+ * The 16 oz jar, not the 96 oz case, is the level that carries the measure: the
+ * case's `6` is a COUNT of jars, which is what the pack string `6/1 LB` says.
+ */
+export const BEEF_BASE_PACK = {
+  skuName: "Beef Base",
+  expectVendor: "PFG",
+  angelProduct: "BASE BEEF NO MSG",
+  brand: "MINORS",
+  packSizeRaw: "6/1 LB",
+  caseLabel: "case",
+  jarLabel: "jar",
+  jarsPerCase: 6,
+  ozPerJar: 16,
+  casePriceUsd: 62.61,
+  lastSeen: "Jul 24, 2026",
+  /** Angel's derived $/lb — recorded as the number REJECTED, with the reason. */
+  angelStatedPricePerLb: 9.34,
+  angelMeasuredCaseLbs: 6.703,
+  get caseOz(): number {
+    return BEEF_BASE_PACK.jarsPerCase * BEEF_BASE_PACK.ozPerJar;
+  },
+  /** What the product really costs per pound of CONTENT (not of content+glass). */
+  get contentPricePerLb(): number {
+    return BEEF_BASE_PACK.casePriceUsd / (BEEF_BASE_PACK.caseOz / 16);
+  },
+  /** The rejected route's answer, kept so the gap is auditable rather than asserted. */
+  get rejectedPerLbRouteUsd(): number {
+    return BEEF_BASE_PACK.angelStatedPricePerLb * (BEEF_BASE_PACK.caseOz / 16);
+  },
+  get tareRatio(): number {
+    return BEEF_BASE_PACK.angelMeasuredCaseLbs / (BEEF_BASE_PACK.caseOz / 16);
+  },
+} as const;
 
 export const BEEF_BASE_CANDIDATES: readonly BeefBaseCandidate[] = [
   {
@@ -715,14 +805,8 @@ export const STILL_STUCK: readonly StuckItem[] = [
   {
     item: "Oregano (both jug sizes) + Onion Powder — pack WEIGHT",
     category: "SCALE_GATED",
-    stuckOn: "Angel measures the 5 lb jug at 6.001 lb on all THREE oregano lines and 6.002 on onion powder's single line — oregano's never moved in three months. A weight that never moves is a stored number rather than a weighing, so the 1.20x may be a feed artifact, in which case cost/oz is overstated by 17%.",
-    unblock: "One oregano jug on a scale. Settles both jugs at once.",
-  },
-  {
-    item: "Garlic — pack WEIGHT",
-    category: "SCALE_GATED",
-    stuckOn: "Named by the herb policy AND by the jug-trio scale gate; our `Garlic` SKU is the produce tub, so both rulings land on the same row and disagree. Unlike the jugs, its weight VARIES per delivery (5.9935-6.0077 lb), which argues it really is weighed.",
-    unblock: "One garlic tub on the scale, or one word from Juan on which of his two rulings governs this row.",
+    stuckOn: "Angel measures the 5 lb jug at 6.001 lb on all THREE oregano lines and 6.002 on onion powder's single line — oregano's never moved in three months. A weight that never moves is a stored number rather than a weighing, so the 1.20x may be a feed artifact, in which case cost/oz is overstated by 17%. **This is now the WHOLE of the scale gate**: garlic left the cluster on 2026-08-20 when Juan accepted that its varying per-delivery weight is evidence of a real weighing, which is exactly the evidence these two lack.",
+    unblock: "One oregano jug on a scale. Settles both jugs at once — and it is the only physical measurement this arc is still waiting on for pricing.",
   },
   {
     item: "Ever Roast Chicken — oz per slice",
