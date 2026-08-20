@@ -76,7 +76,7 @@ export function AddMaintenanceNote({
         <select
           value={selectedId}
           onChange={(e) => setSelectedId(e.target.value)}
-          className="h-10 w-full rounded-md border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text focus:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
+          className="min-h-[44px] w-full rounded-md border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text focus:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
         >
           {equipment.map((e) => (
             <option key={e.id} value={e.id}>
@@ -96,7 +96,7 @@ export function AddMaintenanceNote({
             value={otherLabel}
             onChange={(e) => setOtherLabel(e.target.value)}
             placeholder={t("maintenance.add_note.other_placeholder")}
-            className="h-10 w-full rounded-md border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text focus:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
+            className="min-h-[44px] w-full rounded-md border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text focus:border-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
           />
         </label>
       )}

@@ -179,7 +179,7 @@ export default async function ReportsPage({ searchParams }: PageProps) {
         </h1>
         <Link
           href={`/reports/trends?location=${locationId}`}
-          className="inline-flex min-h-[40px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-4 text-xs font-bold uppercase tracking-[0.1em] text-co-text-muted transition hover:border-co-text hover:text-co-text"
+          className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-4 text-xs font-bold uppercase tracking-[0.1em] text-co-text-muted transition hover:border-co-text hover:text-co-text"
         >
           {serverT(lang, "reports.trends.nav_label")}
         </Link>

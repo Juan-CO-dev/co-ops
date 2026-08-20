@@ -63,7 +63,7 @@ export function TrendCard({
       </p>
 
       <div className="mt-2 rounded-md border-l-[3px] border-co-gold bg-co-warning-surface px-3 py-2">
-        <p className="text-[10px] font-bold uppercase tracking-[0.04em] text-co-text-dim">
+        <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
           {serverT(language, "reports.trends.how_to_read")}
         </p>
         <p className="mt-0.5 text-xs leading-relaxed text-co-text">{serverT(language, howToReadKey)}</p>

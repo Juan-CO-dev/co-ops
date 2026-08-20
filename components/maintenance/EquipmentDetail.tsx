@@ -83,7 +83,7 @@ export function EquipmentDetail({
             <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
               {detail.stats.latest !== null && (
                 <div className="rounded-md border border-co-border bg-co-surface px-2 py-1.5 text-center">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-text-dim">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
                     {serverT(language, "maintenance.stat.latest")}
                   </p>
                   <p className="text-sm font-semibold text-co-text">
@@ -95,7 +95,7 @@ export function EquipmentDetail({
               )}
               {detail.stats.amPmSwingToday !== null && (
                 <div className="rounded-md border border-co-border bg-co-surface px-2 py-1.5 text-center">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-text-dim">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
                     {serverT(language, "maintenance.stat.swing")}
                   </p>
                   <p className="text-sm font-semibold text-co-text">
@@ -107,7 +107,7 @@ export function EquipmentDetail({
               )}
               {detail.stats.min !== null && (
                 <div className="rounded-md border border-co-border bg-co-surface px-2 py-1.5 text-center">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-text-dim">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
                     {serverT(language, "maintenance.stat.min")}
                   </p>
                   <p className="text-sm font-semibold text-co-text">
@@ -119,7 +119,7 @@ export function EquipmentDetail({
               )}
               {detail.stats.max !== null && (
                 <div className="rounded-md border border-co-border bg-co-surface px-2 py-1.5 text-center">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-text-dim">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
                     {serverT(language, "maintenance.stat.max")}
                   </p>
                   <p className="text-sm font-semibold text-co-text">
@@ -131,7 +131,7 @@ export function EquipmentDetail({
               )}
               {detail.stats.avg !== null && (
                 <div className="rounded-md border border-co-border bg-co-surface px-2 py-1.5 text-center">
-                  <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-text-dim">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
                     {serverT(language, "maintenance.stat.avg")}
                   </p>
                   <p className="text-sm font-semibold text-co-text">
@@ -142,7 +142,7 @@ export function EquipmentDetail({
                 </div>
               )}
               <div className="rounded-md border border-co-border bg-co-surface px-2 py-1.5 text-center">
-                <p className="text-[10px] font-bold uppercase tracking-[0.1em] text-co-text-dim">
+                <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
                   {serverT(language, "maintenance.stat.out_of_range")}
                 </p>
                 <p

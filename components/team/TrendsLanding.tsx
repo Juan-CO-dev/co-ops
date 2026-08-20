@@ -68,7 +68,7 @@ export function TrendsLanding({
 
       {/* Relevant right now */}
       <div className="flex flex-col gap-2">
-        <p className="text-xs font-bold uppercase tracking-[0.1em] text-co-gold-text">
+        <p className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
           {serverT(language, "reports.trends.landing.relevant_now")}
         </p>
         {attention.length === 0 ? (
@@ -105,7 +105,7 @@ export function TrendsLanding({
       {ops ? (
         <div className="flex flex-col gap-2 rounded-2xl border-2 border-co-border bg-co-surface p-4">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-bold uppercase tracking-[0.1em] text-co-text">
+            <p className="text-sm font-bold uppercase tracking-[0.12em] text-co-text">
               {serverT(language, "reports.trends.landing.ops_snapshot")}
             </p>
             <Link
@@ -131,7 +131,7 @@ export function TrendsLanding({
       {canSeeTeam && team ? (
         <div className="flex flex-col gap-2 rounded-2xl border-2 border-co-border bg-co-surface p-4">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-bold uppercase tracking-[0.1em] text-co-text">
+            <p className="text-sm font-bold uppercase tracking-[0.12em] text-co-text">
               {serverT(language, "reports.trends.landing.team_snapshot")}
             </p>
             <Link

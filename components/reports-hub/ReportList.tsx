@@ -110,7 +110,7 @@ export function ReportList({ items, locationId, language, viewerLevel, searchQue
                     </span>
                   ) : null}
                   {s.tempFlags > 0 ? (
-                    <span className="rounded-full border border-co-border bg-co-gold/20 px-2 py-0.5 text-xs font-semibold text-co-text">
+                    <span className="rounded-full border border-co-border bg-co-warning-surface px-2 py-0.5 text-xs font-semibold text-co-warning-text">
                       {t("reports.badge.temp").replace("{count}", String(s.tempFlags))}
                     </span>
                   ) : null}

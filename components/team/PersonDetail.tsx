@@ -12,7 +12,7 @@ import type { Language, TranslationKey } from "@/lib/i18n/types";
 /** Card-chrome section wrapper for the detail body. */
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="rounded-xl border border-co-border bg-co-surface p-3">
+    <section className="rounded-2xl border-2 border-co-border bg-co-surface p-3">
       <h3 className="text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
         {title}
       </h3>
@@ -102,7 +102,7 @@ export function PersonDetail({
 
       {/* 3. The read */}
       <div className="rounded-md border-l-[3px] border-co-gold bg-co-warning-surface px-3 py-2">
-        <p className="text-[10px] font-bold uppercase tracking-[0.04em] text-co-text-dim">
+        <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
           {serverT(language, "people.detail.the_read")}
         </p>
         <p className="mt-0.5 text-sm leading-relaxed text-co-text">
@@ -112,7 +112,7 @@ export function PersonDetail({
 
       {/* 4. AI Insight */}
       <div className="rounded-md border border-dashed border-co-border-2 px-3 py-2">
-        <p className="text-[10px] font-bold uppercase tracking-[0.04em] text-co-text-dim">
+        <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
           {serverT(language, "people.detail.ai_insight")}
         </p>
         <p className="mt-0.5 text-xs italic leading-relaxed text-co-text-muted">

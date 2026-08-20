@@ -34,7 +34,7 @@ export function UnifiedSearchResults({
               <li key={p.userId}>
                 <Link
                   href={`/profile/${p.userId}`}
-                  className="flex items-center gap-2 rounded-lg border-2 border-co-border bg-co-surface px-3 py-2 text-sm text-co-text transition hover:border-co-text"
+                  className="flex min-h-[44px] items-center gap-2 rounded-lg border-2 border-co-border bg-co-surface px-3 py-2 text-sm text-co-text transition hover:border-co-text"
                 >
                   <span aria-hidden className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-co-gold text-xs font-bold text-co-text">
                     {(p.name.charAt(0) || "?").toUpperCase()}
@@ -63,7 +63,7 @@ export function UnifiedSearchResults({
               <a
                 key={pg.href}
                 href={chipHref(pg.href, pg.scoped, locationId)}
-                className="rounded-full border-2 border-co-border bg-co-surface px-3 py-1.5 text-sm font-semibold text-co-text transition hover:border-co-text"
+                className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border bg-co-surface px-3 py-1.5 text-sm font-semibold text-co-text transition hover:border-co-text"
               >
                 {pg.label}
               </a>
