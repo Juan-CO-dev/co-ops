@@ -28,7 +28,7 @@ function errKey(code: string): TranslationKey {
 
 function ModBadge({ r, t }: { r: import("@/lib/admin/toast-map").ToastMapRow; t: (k: TranslationKey) => string }) {
   if (!r.isModifier) return null;
-  const tone = r.disposition === "remove" ? "border-co-cta text-co-cta" : r.disposition === "ignore" ? "border-co-border-2 text-co-text-dim" : "border-co-gold text-co-text";
+  const tone = r.disposition === "remove" ? "border-co-cta-text text-co-cta-text" : r.disposition === "ignore" ? "border-co-border-2 text-co-text-dim" : "border-co-gold text-co-text";
   return (
     <span className={`ml-2 rounded-full border px-2 py-0.5 text-xs font-bold ${tone}`}>
       {t(`admin.toast.disposition.${r.disposition}` as TranslationKey)}
@@ -117,7 +117,7 @@ export function ToastTab({ state, ezcater, canWrite }: { state: ToastMapState; e
 
   return (
     <div className="mt-4 flex flex-col gap-6">
-      {errorKey && <p className="text-sm font-semibold text-co-cta">{t(errorKey)}</p>}
+      {errorKey && <p className="text-sm font-semibold text-co-cta-text">{t(errorKey)}</p>}
 
       {!state.configured && (
         <div className="co-card p-4">
@@ -222,7 +222,7 @@ export function ToastTab({ state, ezcater, canWrite }: { state: ToastMapState; e
                         <span className="text-co-text-dim"> ↔ </span>
                         <span className="font-semibold">{r.toastItemName}</span>
                         {r.matchStatus === "stale" && (
-                          <span className="ml-2 rounded-full border border-co-cta px-2 py-0.5 text-xs font-bold text-co-cta">{t("admin.toast.stale_badge")}</span>
+                          <span className="ml-2 rounded-full border border-co-cta-text px-2 py-0.5 text-xs font-bold text-co-cta-text">{t("admin.toast.stale_badge")}</span>
                         )}
                         <ModBadge r={r} t={t} />
                       </span>

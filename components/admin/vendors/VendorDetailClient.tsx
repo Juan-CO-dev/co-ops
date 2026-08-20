@@ -275,7 +275,7 @@ function CoreCard({
         {!canEdit ? (
           <p className="text-xs italic text-co-text-muted">{t("admin.vendors.core.readonly_note")}</p>
         ) : null}
-        {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+        {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
         {saved ? <p className="text-sm text-co-gold-text">{t("admin.vendors.saved")}</p> : null}
 
         {canEdit ? (
@@ -407,7 +407,7 @@ function ClassificationCard({
         {!canEdit ? (
           <p className="text-xs italic text-co-text-muted">{t("admin.vendors.classification.readonly_note")}</p>
         ) : null}
-        {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+        {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
         {saved ? <p className="text-sm text-co-gold-text">{t("admin.vendors.saved")}</p> : null}
 
         {canEdit ? (
@@ -613,7 +613,7 @@ function ScheduleCard({
         {!canEdit ? (
           <p className="text-xs italic text-co-text-muted">{t("admin.vendors.schedule.readonly_note")}</p>
         ) : null}
-        {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+        {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
         {saved ? <p className="text-sm text-co-gold-text">{t("admin.vendors.saved")}</p> : null}
 
         {canEdit ? (
@@ -731,7 +731,7 @@ function TransmissionCard({
         {!canEdit ? (
           <p className="text-xs italic text-co-text-muted">{t("admin.vendors.transmission.readonly_note")}</p>
         ) : null}
-        {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+        {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
         {saved ? <p className="text-sm text-co-gold-text">{t("admin.vendors.saved")}</p> : null}
 
         {canEdit ? (
@@ -867,7 +867,7 @@ function CutoffsSection({
           </ul>
         )}
 
-        {errorMsg ? <p className="mt-1 text-sm text-co-cta">{errorMsg}</p> : null}
+        {errorMsg ? <p className="mt-1 text-sm text-co-cta-text">{errorMsg}</p> : null}
 
         {canAppend ? (
           adding ? (
@@ -949,7 +949,7 @@ function NotesCard({ vendor, canEdit }: { vendor: VendorView; canEdit: boolean }
         {!canEdit ? (
           <p className="text-xs italic text-co-text-muted">{t("admin.vendors.notes.readonly_note")}</p>
         ) : null}
-        {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+        {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
         {saved ? <p className="text-sm text-co-gold-text">{t("admin.vendors.saved")}</p> : null}
         {canEdit ? (
           <div className="flex justify-end">
@@ -1115,7 +1115,7 @@ function ContactsCard({
         ))}
       </ul>
 
-      {errorMsg ? <p className="mt-2 text-sm text-co-cta">{errorMsg}</p> : null}
+      {errorMsg ? <p className="mt-2 text-sm text-co-cta-text">{errorMsg}</p> : null}
 
       {canAppend ? (
         adding ? (
@@ -1286,7 +1286,7 @@ function OrderingCard({
         ))}
       </ul>
 
-      {errorMsg ? <p className="mt-2 text-sm text-co-cta">{errorMsg}</p> : null}
+      {errorMsg ? <p className="mt-2 text-sm text-co-cta-text">{errorMsg}</p> : null}
 
       {canAppend ? (
         adding ? (
@@ -1336,7 +1336,7 @@ function ActiveCard({ vendor, requestStepUp }: { vendor: VendorView; requestStep
         <p className="text-sm text-co-text">
           {vendor.active ? t("admin.vendors.status.is_active") : t("admin.vendors.status.is_inactive")}
         </p>
-        {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+        {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
         {confirming ? (
           <div className="flex items-center justify-end gap-2">
             <PlainBtn label={t("admin.vendors.cancel")} disabled={busy} onClick={() => setConfirming(false)} />

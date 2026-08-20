@@ -222,7 +222,7 @@ function RateInput({
               type="button"
               disabled={busy}
               onClick={() => void remove()}
-              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta transition hover:border-co-cta focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text transition hover:border-co-cta focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-50"
             >
               {t("admin.catering.rate.confirm_remove" as TranslationKey)}
             </button>
@@ -412,7 +412,7 @@ function LocationCard({
       <h2 className="font-bold text-co-text">{locationName}</h2>
 
       {errorMsg ? (
-        <p className="mt-2 text-sm text-co-cta">{errorMsg}</p>
+        <p className="mt-2 text-sm text-co-cta-text">{errorMsg}</p>
       ) : null}
 
       {canManage && atBaseline ? (

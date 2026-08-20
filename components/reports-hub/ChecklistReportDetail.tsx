@@ -44,7 +44,7 @@ function QuestionAnswer({
     return <span className="font-bold text-co-confirm-text">{t("reports.detail.answer_yes")}</span>;
   }
   if (answer.kind === "no") {
-    return <span className="font-bold text-co-cta">{t("reports.detail.answer_no")}</span>;
+    return <span className="font-bold text-co-cta-text">{t("reports.detail.answer_no")}</span>;
   }
   if (answer.kind === "text") {
     const text = typeof answer.value === "string" ? answer.value : "";
@@ -95,7 +95,7 @@ function PrepValuesTable({ rows, t }: PrepValuesTableProps) {
                 key={idx}
                 className={
                   row.parStatus === "under"
-                    ? "text-co-cta"
+                    ? "text-co-cta-text"
                     : row.parStatus === "over"
                       ? "text-co-gold-text"
                       : "text-co-text"
@@ -242,7 +242,7 @@ export function ChecklistReportDetailView({ detail, language }: Props) {
               {countItems.map((item, idx) => (
                 <li
                   key={idx}
-                  className={`flex items-center justify-between gap-2 text-xs${item.isTempFlag ? " text-co-cta" : " text-co-text"}`}
+                  className={`flex items-center justify-between gap-2 text-xs${item.isTempFlag ? " text-co-cta-text" : " text-co-text"}`}
                 >
                   <span className="font-medium">{item.label}</span>
                   <span>{item.countValue}</span>
@@ -309,7 +309,7 @@ export function ChecklistReportDetailView({ detail, language }: Props) {
                       href={`/api/photos/${item.photoId}`}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="mt-1 inline-flex text-xs font-semibold text-co-cta underline"
+                      className="mt-1 inline-flex text-xs font-semibold text-co-cta-text underline"
                     >
                       {t("reports.detail.photo")}
                     </a>

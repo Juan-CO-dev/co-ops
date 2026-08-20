@@ -157,14 +157,14 @@ function VendorCard({
             {firstContact ? <> · {firstContact.name}</> : null}
           </span>
         ) : (
-          <span className="font-bold text-co-cta">{t("admin.vendors.card.no_contacts")}</span>
+          <span className="font-bold text-co-cta-text">{t("admin.vendors.card.no_contacts")}</span>
         )}
         {v.orderingDetails.length > 0 ? (
           <span className="font-bold text-co-text">
             {t("admin.vendors.card.ordering_count", { count: v.orderingDetails.length })}
           </span>
         ) : (
-          <span className="font-bold text-co-cta">{t("admin.vendors.card.no_ordering")}</span>
+          <span className="font-bold text-co-cta-text">{t("admin.vendors.card.no_ordering")}</span>
         )}
       </div>
 
@@ -358,7 +358,7 @@ function AddVendorForm({
             </Labeled>
           </Fieldset>
 
-          {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+          {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
         </div>
 
         <div className="mt-5 flex justify-end gap-2">

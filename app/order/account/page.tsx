@@ -46,7 +46,7 @@ function Shell({ children }: { children: React.ReactNode }) {
 function StatusBadge({ status }: { status: CustomerStatus }) {
   const toneClass =
     status.tone === "action"
-      ? "bg-co-cta/10 text-co-cta"
+      ? "bg-co-cta/10 text-co-cta-text"
       : status.tone === "pending"
         ? "bg-co-gold/50 text-co-text"
         : status.tone === "success"

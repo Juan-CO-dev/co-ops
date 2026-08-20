@@ -159,7 +159,7 @@ function StatusBadge({ status, isExpired, t }: { status: Quote["status"]; isExpi
     draft: "bg-co-surface text-co-text-muted border-co-border-2",
     sent: "bg-co-info/10 text-co-info border-co-info/40",
     accepted: "bg-co-success/10 text-co-confirm-text border-co-success/40",
-    declined: "bg-co-cta/10 text-co-cta border-co-cta/40",
+    declined: "bg-co-cta/10 text-co-cta-text border-co-cta/40",
     expired: "bg-co-surface text-co-text-dim border-co-border-2",
   };
   return (
@@ -371,7 +371,7 @@ function QuoteBuilder({
         </Field>
 
         {pricing && !pricing.hasPricingRule && (
-          <p className="rounded-lg border-2 border-co-cta/40 bg-co-cta/10 px-3 py-2 text-xs font-semibold text-co-cta">
+          <p className="rounded-lg border-2 border-co-cta/40 bg-co-cta/10 px-3 py-2 text-xs font-semibold text-co-cta-text">
             {t("catering.quotes.no_pricing_rule")}
           </p>
         )}
@@ -507,7 +507,7 @@ function QuoteBuilder({
       {/* Live breakdown */}
       {preview && <ChargeStackTable stack={preview} money={money} t={t} />}
 
-      {errorKey && <p className="text-sm font-semibold text-co-cta">{t(errorKey)}</p>}
+      {errorKey && <p className="text-sm font-semibold text-co-cta-text">{t(errorKey)}</p>}
 
       <button
         type="button"
@@ -722,7 +722,7 @@ function QuoteDetailPanel({
   if (!detail) {
     return (
       <div className="mt-4">
-        <p className="text-sm font-semibold text-co-cta">{t(errorKey ?? "catering.quotes.error.generic")}</p>
+        <p className="text-sm font-semibold text-co-cta-text">{t(errorKey ?? "catering.quotes.error.generic")}</p>
         <button type="button" onClick={onBack} className="mt-3 text-sm font-semibold text-co-text-muted underline">{t("catering.quotes.back")}</button>
       </div>
     );
@@ -781,7 +781,7 @@ function QuoteDetailPanel({
       )}
 
       {flashKey && <p className="rounded-lg border-2 border-co-success/40 bg-co-success/10 px-3 py-2 text-sm font-semibold text-co-confirm-text">{t(flashKey)}</p>}
-      {errorKey && <p className="text-sm font-semibold text-co-cta">{t(errorKey)}</p>}
+      {errorKey && <p className="text-sm font-semibold text-co-cta-text">{t(errorKey)}</p>}
 
       {canWrite && (
         <div className="flex flex-wrap gap-2">
@@ -798,7 +798,7 @@ function QuoteDetailPanel({
               <button type="button" onClick={() => void setStatus("accepted")} disabled={busy} className="inline-flex min-h-[48px] items-center justify-center rounded-xl border-2 border-co-success/50 bg-co-success/10 px-5 py-2.5 text-sm font-bold text-co-confirm-text disabled:opacity-50">
                 {t("catering.quotes.mark_accepted")}
               </button>
-              <button type="button" onClick={() => void setStatus("declined")} disabled={busy} className="inline-flex min-h-[48px] items-center justify-center rounded-xl border-2 border-co-cta/50 bg-co-cta/10 px-5 py-2.5 text-sm font-bold text-co-cta disabled:opacity-50">
+              <button type="button" onClick={() => void setStatus("declined")} disabled={busy} className="inline-flex min-h-[48px] items-center justify-center rounded-xl border-2 border-co-cta/50 bg-co-cta/10 px-5 py-2.5 text-sm font-bold text-co-cta-text disabled:opacity-50">
                 {t("catering.quotes.mark_declined")}
               </button>
             </>

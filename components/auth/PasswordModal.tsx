@@ -213,21 +213,21 @@ export function PasswordModal({ open, onConfirm, onCancel }: PasswordModalProps)
                 text-base text-co-text placeholder:text-co-text-faint
                 focus:outline-none focus:ring-4 focus:ring-co-gold/60
                 disabled:opacity-50
-                ${error ? "border-co-cta" : "border-co-border-2"}
+                ${error ? "border-co-cta-text" : "border-co-border-2"}
               `}
             />
             {error && error.kind === "wrong_password" && (
-              <p role="alert" className="text-sm font-semibold text-co-cta">
+              <p role="alert" className="text-sm font-semibold text-co-cta-text">
                 {t("auth.step_up.error_wrong_password")}
               </p>
             )}
             {error && error.kind === "not_available" && (
-              <p role="alert" className="text-sm font-semibold text-co-cta">
+              <p role="alert" className="text-sm font-semibold text-co-cta-text">
                 {error.message}
               </p>
             )}
             {error && error.kind === "transient" && (
-              <p role="alert" className="text-sm font-semibold text-co-cta">
+              <p role="alert" className="text-sm font-semibold text-co-cta-text">
                 {error.message}
               </p>
             )}
@@ -236,9 +236,9 @@ export function PasswordModal({ open, onConfirm, onCancel }: PasswordModalProps)
           {isLocked && retryRemaining !== null && (
             <div
               role="alert"
-              className="rounded-xl border-2 border-co-cta bg-co-cta/10 px-4 py-3 text-center"
+              className="rounded-xl border-2 border-co-cta-text bg-co-cta/10 px-4 py-3 text-center"
             >
-              <p className="text-sm font-bold uppercase tracking-wide text-co-cta">
+              <p className="text-sm font-bold uppercase tracking-wide text-co-cta-text">
                 {t("auth.step_up.locked_title")}
               </p>
               <p className="mt-1 text-2xl font-extrabold tabular-nums text-co-text">

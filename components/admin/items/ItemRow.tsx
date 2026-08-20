@@ -202,7 +202,7 @@ export function ItemRow({
 
       {open && canEdit ? (
         <div className="mt-3 flex flex-col gap-3">
-          {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+          {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
           {readiness ? <ReadinessReasons reasons={readiness.reasons} /> : null}
 
           <section className="rounded-lg border-2 border-co-border p-3">
@@ -358,7 +358,7 @@ export function ItemRow({
                 </Labeled>
               </div>
             )}
-            {soldDirectError ? <p className="mt-2 text-sm text-co-cta">{soldDirectError}</p> : null}
+            {soldDirectError ? <p className="mt-2 text-sm text-co-cta-text">{soldDirectError}</p> : null}
             <div className="mt-3 flex justify-end">
               <button
                 type="button"

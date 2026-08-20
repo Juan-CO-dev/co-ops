@@ -1074,7 +1074,7 @@ export function ReceivingForm({
           {dupId ? (
             <Link
               href={`/operations/receiving/${dupId}`}
-              className="mt-1 inline-flex min-h-[44px] items-center font-bold text-co-cta underline"
+              className="mt-1 inline-flex min-h-[44px] items-center font-bold text-co-cta-text underline"
             >
               {t("receiving.door.view_existing")}
             </Link>

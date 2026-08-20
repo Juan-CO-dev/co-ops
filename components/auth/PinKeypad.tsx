@@ -225,9 +225,9 @@ export function PinKeypad({ userName, role, onSubmit, onBack }: PinKeypadProps) 
         {isLocked && retryRemaining !== null && (
           <div
             role="alert"
-            className="w-full rounded-xl border-2 border-co-cta bg-co-cta/10 px-4 py-3 text-center"
+            className="w-full rounded-xl border-2 border-co-cta-text bg-co-cta/10 px-4 py-3 text-center"
           >
-            <p className="text-sm font-bold uppercase tracking-wide text-co-cta">{t("auth.pin.locked_title")}</p>
+            <p className="text-sm font-bold uppercase tracking-wide text-co-cta-text">{t("auth.pin.locked_title")}</p>
             <p className="mt-1 text-2xl font-extrabold tabular-nums text-co-text">
               {formatRetryAfter(retryRemaining)}
             </p>

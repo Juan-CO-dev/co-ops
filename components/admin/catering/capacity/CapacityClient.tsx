@@ -272,7 +272,7 @@ export function CapacityClient({
       })}
 
       {errorMsg && editingLocationId === null ? (
-        <p className="text-sm text-co-cta">{errorMsg}</p>
+        <p className="text-sm text-co-cta-text">{errorMsg}</p>
       ) : null}
     </div>
   );

@@ -200,7 +200,7 @@ export function UserMenu({ userName, userEmail, actorLevel, initialBlurb }: User
               </div>
             ) : null}
             {error ? (
-              <div className="mt-2 px-1 text-[11px] text-co-cta">{error}</div>
+              <div className="mt-2 px-1 text-[11px] text-co-cta-text">{error}</div>
             ) : null}
           </div>
 
@@ -246,7 +246,7 @@ export function UserMenu({ userName, userEmail, actorLevel, initialBlurb }: User
                 <div className="mt-1 px-1 text-[11px] text-co-text-dim">{t("user_menu.blurb.saved")}</div>
               ) : null}
               {blurbStatus === "error" ? (
-                <div className="mt-1 px-1 text-[11px] text-co-cta">{t("user_menu.blurb.error")}</div>
+                <div className="mt-1 px-1 text-[11px] text-co-cta-text">{t("user_menu.blurb.error")}</div>
               ) : null}
             </div>
           ) : null}

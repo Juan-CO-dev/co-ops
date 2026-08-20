@@ -103,7 +103,7 @@ export function MenuClient({ items: initial, canWrite }: { items: AdminMenuItem[
 
   return (
     <div className="mt-4 flex flex-col gap-8">
-      {errorKey && <p className="text-sm font-semibold text-co-cta">{t(errorKey)}</p>}
+      {errorKey && <p className="text-sm font-semibold text-co-cta-text">{t(errorKey)}</p>}
       {items.length === 0 && <p className="co-card p-6 text-sm text-co-text-muted">{t("admin.catering.menu.empty")}</p>}
 
       {/* Item registry (with per-item catering sizes). */}

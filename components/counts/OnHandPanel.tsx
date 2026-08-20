@@ -116,7 +116,7 @@ function WeightRow({ r, lang }: { r: OnHandWeightRow; lang: Language }) {
       </div>
       {disjointAnnotations(r, lang)}
       {r.anchorStale ? (
-        <p className="mt-1 text-[11px] font-bold text-co-cta">{serverT(lang, "counts.onhand.stale")}</p>
+        <p className="mt-1 text-[11px] font-bold text-co-cta-text">{serverT(lang, "counts.onhand.stale")}</p>
       ) : null}
     </li>
   );
@@ -158,7 +158,7 @@ function CountRow({ r, lang }: { r: OnHandCountRow; lang: Language }) {
       </div>
       {disjointAnnotations(r, lang)}
       {r.anchorStale ? (
-        <p className="mt-1 text-[11px] font-bold text-co-cta">{serverT(lang, "counts.onhand.stale")}</p>
+        <p className="mt-1 text-[11px] font-bold text-co-cta-text">{serverT(lang, "counts.onhand.stale")}</p>
       ) : null}
     </li>
   );

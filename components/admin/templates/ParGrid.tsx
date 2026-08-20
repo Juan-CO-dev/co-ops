@@ -95,7 +95,7 @@ export function ParGrid({
       <h3 className="text-sm font-extrabold uppercase tracking-[0.1em] text-co-text-muted">
         {t("admin.templates.par_grid.title")}
       </h3>
-      {errorMsg ? <p className="mt-2 text-sm text-co-cta">{errorMsg}</p> : null}
+      {errorMsg ? <p className="mt-2 text-sm text-co-cta-text">{errorMsg}</p> : null}
       {itemUnit ? (
         <p className="mt-2 text-xs text-co-text-muted">
           {t("admin.templates.field.par_unit")}: <span className="font-bold text-co-text">{itemUnit}</span>

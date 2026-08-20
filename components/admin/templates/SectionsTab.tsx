@@ -245,7 +245,7 @@ function SectionRow({
               type="button"
               disabled={submitting}
               onClick={() => setConfirmingDisable((v) => !v)}
-              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta hover:border-co-cta disabled:opacity-50"
+              className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta disabled:opacity-50"
             >
               {t("admin.templates.sections_panel.disable")}
             </button>
@@ -378,7 +378,7 @@ function SectionRow({
         </div>
       ) : null}
 
-      {errorMsg ? <p className="mt-2 text-sm text-co-cta">{errorMsg}</p> : null}
+      {errorMsg ? <p className="mt-2 text-sm text-co-cta-text">{errorMsg}</p> : null}
       <div className="mt-3 flex justify-end">
         <button
           type="button"
@@ -478,7 +478,7 @@ function AddSectionForm() {
             {t("admin.templates.sections_panel.add_include_note")}
           </label>
         ) : null}
-        {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+        {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
         <div className="flex justify-end">
           <button
             type="button"
@@ -601,7 +601,7 @@ function SectionQuestionRow({
             type="button"
             disabled={submitting}
             onClick={() => { setConfirmingDisable((v) => !v); setEditing(false); }}
-            className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta hover:border-co-cta disabled:opacity-50"
+            className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta disabled:opacity-50"
           >
             {t("admin.templates.section_questions_panel.disable")}
           </button>
@@ -656,7 +656,7 @@ function SectionQuestionRow({
             />
             {t("admin.templates.section_questions_panel.add_required")}
           </label>
-          {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+          {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
           <div className="flex justify-end gap-2">
             <button
               type="button"
@@ -686,7 +686,7 @@ function SectionQuestionRow({
           <p className="mt-2 text-xs text-co-text-muted">
             {t("admin.templates.section_questions_panel.disable_confirm")}
           </p>
-          {errorMsg ? <p className="mt-2 text-sm text-co-cta">{errorMsg}</p> : null}
+          {errorMsg ? <p className="mt-2 text-sm text-co-cta-text">{errorMsg}</p> : null}
           <div className="mt-3 flex justify-end gap-2">
             <button
               type="button"
@@ -707,7 +707,7 @@ function SectionQuestionRow({
           </div>
         </div>
       ) : (
-        errorMsg ? <p className="mt-2 text-sm text-co-cta">{errorMsg}</p> : null
+        errorMsg ? <p className="mt-2 text-sm text-co-cta-text">{errorMsg}</p> : null
       )}
     </div>
   );
@@ -842,7 +842,7 @@ function AddSectionQuestionForm({ sections }: { sections: PrepSectionDefn[] }) {
           />
           {t("admin.templates.section_questions_panel.add_required")}
         </label>
-        {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+        {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
         <div className="flex justify-end gap-2">
           <button
             type="button"

@@ -628,7 +628,7 @@ function DriftReconcileGroup({
                           {t("admin.templates.doctor.reconcile_added")}
                         </span>
                       ) : s !== undefined ? (
-                        <span className="text-xs font-semibold text-co-cta">{t(blockKey(s))}</span>
+                        <span className="text-xs font-semibold text-co-cta-text">{t(blockKey(s))}</span>
                       ) : canReconcile ? (
                         <button
                           type="button"
@@ -684,7 +684,7 @@ function DoctorTemplateBlock({
         {/* Needs-link — each deep-links to the item drawer (spec §6). */}
         {tpl.needsLink.length > 0 && (
           <div>
-            <p className="text-sm font-bold text-co-cta">
+            <p className="text-sm font-bold text-co-cta-text">
               {t("admin.templates.doctor.needs_link_n", { n: String(tpl.needsLink.length) })}
             </p>
             <ul className="mt-1 flex flex-col gap-1">
@@ -707,7 +707,7 @@ function DoctorTemplateBlock({
         {/* Role-floor — impossible = the never-confirmable trap (spec §6). */}
         {impossible.length > 0 && (
           <div>
-            <p className="text-sm font-bold text-co-cta">{t("admin.templates.doctor.role_floor_impossible")}</p>
+            <p className="text-sm font-bold text-co-cta-text">{t("admin.templates.doctor.role_floor_impossible")}</p>
             <ul className="mt-1 flex flex-col gap-1">
               {impossible.map((f) => (
                 <li key={f.itemId} className="text-sm text-co-text">
@@ -732,7 +732,7 @@ function DoctorTemplateBlock({
             target no longer exists on the referenced list, so the auto-tick can't fire. */}
         {tpl.danglingRefs.length > 0 && (
           <div>
-            <p className="text-sm font-bold text-co-cta">
+            <p className="text-sm font-bold text-co-cta-text">
               {t("admin.templates.doctor.dangling_refs_n", { n: String(tpl.danglingRefs.length) })}
             </p>
             <ul className="mt-1 flex flex-col gap-1">
@@ -1009,7 +1009,7 @@ function ItemRow({
     "inline-flex items-center rounded-full border border-co-border px-2 py-0.5 text-[11px] font-semibold text-co-text-muted";
   // PR-4: hard-gated lines get an emphatic chip (they can block a whole submission).
   const chipHardGate =
-    "inline-flex items-center rounded-full border-2 border-co-cta/60 bg-co-cta/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.04em] text-co-cta";
+    "inline-flex items-center rounded-full border-2 border-co-cta/60 bg-co-cta/10 px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.04em] text-co-cta-text";
   const moveBtn =
     "inline-flex h-8 w-8 items-center justify-center rounded-lg border-2 border-co-border-2 bg-co-surface text-sm font-bold text-co-text disabled:opacity-30";
 
@@ -1296,7 +1296,7 @@ function StructuralEdits({
               <option value="hard_gate">{t("admin.templates.builder.gate.hard_gate")}</option>
             </select>
             {item.hardGate && (
-              <span className="mt-1 block text-xs font-semibold text-co-cta">
+              <span className="mt-1 block text-xs font-semibold text-co-cta-text">
                 {t("admin.templates.builder.gate.hard_gate_warning")}
               </span>
             )}
@@ -1361,7 +1361,7 @@ function StructuralEdits({
         <button
           type="button"
           onClick={() => onRemoveDraftAdd(item.id.slice("draft-".length))}
-          className="inline-flex min-h-[40px] items-center justify-center rounded-lg border-2 border-co-cta/50 bg-co-surface px-4 text-sm font-bold text-co-cta"
+          className="inline-flex min-h-[40px] items-center justify-center rounded-lg border-2 border-co-cta-text/50 bg-co-surface px-4 text-sm font-bold text-co-cta-text"
         >
           {t("admin.templates.builder.remove_draft_add")}
         </button>
@@ -1373,7 +1373,7 @@ function StructuralEdits({
             "inline-flex min-h-[40px] items-center justify-center rounded-lg border-2 px-4 text-sm font-bold " +
             (disabled
               ? "border-co-gold-deep bg-co-gold text-co-text"
-              : "border-co-cta/50 bg-co-surface text-co-cta")
+              : "border-co-cta-text/50 bg-co-surface text-co-cta-text")
           }
         >
           {disabled ? t("admin.templates.builder.enable") : t("admin.templates.builder.disable")}
@@ -1461,7 +1461,7 @@ function ConnectionsEditor({
               <button
                 type="button"
                 onClick={() => onEdit({ op: "ref_track", itemId: item.id, targetItemId: null })}
-                className="inline-flex min-h-[32px] items-center rounded-full border-2 border-co-cta/50 bg-co-surface px-3 text-xs font-bold text-co-cta"
+                className="inline-flex min-h-[32px] items-center rounded-full border-2 border-co-cta-text/50 bg-co-surface px-3 text-xs font-bold text-co-cta-text"
               >
                 {t("admin.templates.builder.connections.ref_track_clear")}
               </button>
@@ -1582,7 +1582,7 @@ function SubmissionGateSetting({
             {t(tk(`admin.templates.builder.gate_setting.requires_${partner}`))}
           </label>
           {draftPredicate !== undefined && (
-            <p className="text-xs font-semibold text-co-cta">
+            <p className="text-xs font-semibold text-co-cta-text">
               {t("admin.templates.builder.gate_setting.pending_publish")}
             </p>
           )}
@@ -1821,7 +1821,7 @@ function QuickAdd({
         </label>
       )}
 
-      {error && <p className="text-sm font-semibold text-co-cta">{t(error)}</p>}
+      {error && <p className="text-sm font-semibold text-co-cta-text">{t(error)}</p>}
 
       <div className="flex items-center gap-2">
         <button
@@ -1948,7 +1948,7 @@ function SpanishBlock({
           ),
         )}
       </div>
-      {errorKey && <p className="mt-2 text-sm font-semibold text-co-cta">{t(errorKey)}</p>}
+      {errorKey && <p className="mt-2 text-sm font-semibold text-co-cta-text">{t(errorKey)}</p>}
       {canFill && emptyFields.length > 0 && (
         <button
           type="button"
@@ -2036,10 +2036,10 @@ function SpineLinkBlock({
       {linked ? (
         <p className="mt-1 text-sm text-co-confirm-text">{t("admin.templates.builder.linked")}</p>
       ) : !canFill ? (
-        <p className="mt-1 text-sm text-co-cta">{t("admin.templates.builder.needs_link_body")}</p>
+        <p className="mt-1 text-sm text-co-cta-text">{t("admin.templates.builder.needs_link_body")}</p>
       ) : (
         <div className="mt-1">
-          <p className="text-sm text-co-cta">{t("admin.templates.builder.needs_link_body")}</p>
+          <p className="text-sm text-co-cta-text">{t("admin.templates.builder.needs_link_body")}</p>
           <div className="mt-2 flex flex-wrap items-center gap-2">
             <button type="button" className={kindChip(kindFilter === "all")} aria-pressed={kindFilter === "all"} onClick={() => setKindFilter("all")}>
               {t("admin.templates.needs_link.filter_all")}
@@ -2060,7 +2060,7 @@ function SpineLinkBlock({
             onChange={(e) => setQuery(e.target.value)}
             className="mt-2 min-h-[40px] w-full max-w-sm rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text disabled:opacity-50"
           />
-          {errorKey && <p className="mt-2 text-sm font-semibold text-co-cta">{t(errorKey)}</p>}
+          {errorKey && <p className="mt-2 text-sm font-semibold text-co-cta-text">{t(errorKey)}</p>}
           <ul className="mt-2 flex flex-col gap-1">
             {filtered.length === 0 ? (
               <li className="text-xs text-co-text-muted">{t("admin.templates.needs_link.no_targets")}</li>
@@ -2195,7 +2195,7 @@ function PublishBar({
           {/* PR-5 (spec §8): the peer location's draft is also dirty. Publish is PER
               TEMPLATE (two taps) — remind the manager to publish the other location too. */}
           {otherLocationDirty && (
-            <span className="text-xs font-semibold text-co-cta">
+            <span className="text-xs font-semibold text-co-cta-text">
               {t("admin.templates.builder.also_publish_other", { other: otherLocationName ?? "" })}
             </span>
           )}
@@ -2246,11 +2246,11 @@ function PublishBar({
               <input type="checkbox" checked={applyNow} onChange={(e) => setApplyNow(e.target.checked)} className="mt-0.5 h-5 w-5" />
               <span>
                 {t("admin.templates.builder.apply_now_toggle")}
-                <span className="mt-0.5 block text-xs text-co-cta">{t("admin.templates.builder.apply_now_warning")}</span>
+                <span className="mt-0.5 block text-xs text-co-cta-text">{t("admin.templates.builder.apply_now_warning")}</span>
               </span>
             </label>
 
-            {errorKey && <p className="mt-2 text-sm font-semibold text-co-cta">{t(errorKey)}</p>}
+            {errorKey && <p className="mt-2 text-sm font-semibold text-co-cta-text">{t(errorKey)}</p>}
 
             <div className="mt-4 flex items-center justify-end gap-2">
               <button

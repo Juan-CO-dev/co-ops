@@ -56,7 +56,7 @@ function GradientTallyCard({ tally, t }: GradientTallyCardProps) {
                 <span className="font-semibold text-co-text">
                   {t("pm.attitude.good")} {entry.good}
                 </span>
-                <span className="font-semibold text-co-danger">
+                <span className="font-semibold text-co-cta-text">
                   {t("pm.attitude.needs_work")} {entry.needsWork}
                 </span>
               </span>
@@ -96,7 +96,7 @@ function EvalCard({ ev, t }: EvalCardProps) {
                 value === "great"
                   ? "text-xs font-semibold text-co-confirm-text"
                   : value === "needs_work"
-                    ? "text-xs font-semibold text-co-danger"
+                    ? "text-xs font-semibold text-co-cta-text"
                     : "text-xs font-semibold text-co-text"
               }
             >

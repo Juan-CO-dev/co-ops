@@ -76,7 +76,7 @@ export function PayButtons({ quoteId, options }: { quoteId: string; options: Pay
         </div>
       )}
       {error && (
-        <div className="rounded-2xl border border-co-cta/40 bg-co-cta/5 px-5 py-4 text-sm font-semibold text-co-cta">
+        <div className="rounded-2xl border border-co-cta/40 bg-co-cta/5 px-5 py-4 text-sm font-semibold text-co-cta-text">
           {error}
         </div>
       )}

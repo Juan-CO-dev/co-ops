@@ -37,7 +37,7 @@ export function MaintenanceReportDetailView({ detail, language }: Props) {
         <span
           className={
             detail.flagCount > 0
-              ? "text-xs font-semibold text-co-danger"
+              ? "text-xs font-semibold text-co-cta-text"
               : "text-xs font-semibold text-co-text-muted"
           }
         >
@@ -59,7 +59,7 @@ export function MaintenanceReportDetailView({ detail, language }: Props) {
               <span
                 className={
                   e.status === "out_of_range"
-                    ? "shrink-0 text-[11px] font-bold uppercase text-co-danger"
+                    ? "shrink-0 text-[11px] font-bold uppercase text-co-cta-text"
                     : "shrink-0 text-[11px] font-bold uppercase text-co-text-muted"
                 }
               >

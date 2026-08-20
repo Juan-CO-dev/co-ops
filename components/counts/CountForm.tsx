@@ -119,7 +119,7 @@ export function CountForm({ skus, locationId }: { skus: CountSkuOption[]; locati
                 </label>
               </div>
               {lines.length > 1 ? (
-                <button type="button" disabled={busy} onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))} className="mt-2 text-xs font-bold text-co-cta">{t("counts.form.remove_line")}</button>
+                <button type="button" disabled={busy} onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))} className="mt-2 text-xs font-bold text-co-cta-text">{t("counts.form.remove_line")}</button>
               ) : null}
             </div>
           );
@@ -130,7 +130,7 @@ export function CountForm({ skus, locationId }: { skus: CountSkuOption[]; locati
       <label className="mt-3 block"><span className="text-sm font-bold text-co-text">{t("counts.form.note")}</span>
         <textarea className={`${field} min-h-[60px] py-2`} value={note} disabled={busy} onChange={(e) => setNote(e.target.value)} placeholder={t("counts.form.note_hint")} aria-label={t("counts.form.note")} /></label>
 
-      {err ? <p className="mt-3 text-sm text-co-cta">{err}</p> : null}
+      {err ? <p className="mt-3 text-sm text-co-cta-text">{err}</p> : null}
       {/* Pre-submit visibility for the drop that submit() still performs (council P2):
           submit stays enabled — an operator may legitimately skip a line they started —
           but the notice surfaces the drop BEFORE they tap Record. */}

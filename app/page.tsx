@@ -260,7 +260,7 @@ function LoginPageContent() {
           onClick={() => setSurface((s) => (s === "tile" ? "manager" : "tile"))}
           className="
             text-sm font-semibold text-co-text-dim
-            hover:text-co-cta hover:underline focus:outline-none
+            hover:text-co-cta-text hover:underline focus:outline-none
             focus-visible:ring-2 focus-visible:ring-co-gold
           "
         >
@@ -270,7 +270,7 @@ function LoginPageContent() {
 
       {toast && (
         <div role="alert" className="mx-auto mt-3 w-full max-w-md px-4 sm:px-6">
-          <div className="rounded-xl border-2 border-co-cta bg-co-cta/10 px-4 py-3 text-center text-sm font-semibold text-co-text">
+          <div className="rounded-xl border-2 border-co-cta-text bg-co-cta/10 px-4 py-3 text-center text-sm font-semibold text-co-text">
             {toast}
           </div>
         </div>
@@ -462,7 +462,7 @@ function LocationStep({
     return (
       <div
         role="alert"
-        className="rounded-xl border-2 border-co-cta bg-co-cta/10 px-4 py-3 text-center text-sm font-semibold text-co-text"
+        className="rounded-xl border-2 border-co-cta-text bg-co-cta/10 px-4 py-3 text-center text-sm font-semibold text-co-text"
       >
         {error}
       </div>
@@ -515,7 +515,7 @@ function NameStep({
     return (
       <div
         role="alert"
-        className="mt-3 rounded-xl border-2 border-co-cta bg-co-cta/10 px-4 py-3 text-center text-sm font-semibold text-co-text"
+        className="mt-3 rounded-xl border-2 border-co-cta-text bg-co-cta/10 px-4 py-3 text-center text-sm font-semibold text-co-text"
       >
         {error}
       </div>

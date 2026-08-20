@@ -119,7 +119,7 @@ function ClaimAsset({ asset, t }: { asset: ReceiptAsset; t: (k: TranslationKey, 
           href={asset.signedUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="inline-flex min-h-[44px] items-center px-3 font-bold text-co-cta underline"
+          className="inline-flex min-h-[44px] items-center px-3 font-bold text-co-cta-text underline"
         >
           {t("receiving.claim.open_new_tab", { name: asset.filename })}
         </a>
@@ -353,7 +353,7 @@ function UnlinkedReceiptRow({
                 ? t("receiving.claim.parse_now_retry")
                 : t("receiving.claim.parse_now")}
           </button>
-          {parseErr ? <p className="text-[11px] text-co-danger">{parseErr}</p> : null}
+          {parseErr ? <p className="text-[11px] text-co-cta-text">{parseErr}</p> : null}
         </div>
       ) : null}
 
@@ -397,7 +397,7 @@ function UnlinkedReceiptRow({
                   ))}
                 </ul>
               )}
-              {attachErr ? <p className="mt-1 text-[11px] text-co-danger">{attachErr}</p> : null}
+              {attachErr ? <p className="mt-1 text-[11px] text-co-cta-text">{attachErr}</p> : null}
             </div>
           ) : null}
         </div>
@@ -698,14 +698,14 @@ export function VendorClaimPanel({
                         setNote("");
                         setErr(null);
                       }}
-                      className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-danger bg-co-surface px-3 text-xs font-bold text-co-danger transition hover:bg-co-danger-surface disabled:opacity-50"
+                      className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta-text bg-co-surface px-3 text-xs font-bold text-co-cta-text transition hover:bg-co-danger-surface disabled:opacity-50"
                     >
                       {t("receiving.claim.attest_override")}
                     </button>
                   ) : null}
                 </div>
               )}
-              {err ? <p className="mt-2 text-xs text-co-danger">{err}</p> : null}
+              {err ? <p className="mt-2 text-xs text-co-cta-text">{err}</p> : null}
             </div>
           )}
         </>
@@ -729,7 +729,7 @@ export function VendorClaimPanel({
               className="mt-2 block w-full text-sm text-co-text file:mr-3 file:min-h-[44px] file:rounded-lg file:border-2 file:border-co-gold-deep file:bg-co-gold file:px-3 file:text-xs file:font-bold file:text-co-text disabled:opacity-60"
             />
             {uploading ? <p className="mt-2 text-[11px] text-co-text-dim">{t("receiving.claim.uploading")}</p> : null}
-            {uploadErr ? <p className="mt-2 text-xs text-co-danger">{uploadErr}</p> : null}
+            {uploadErr ? <p className="mt-2 text-xs text-co-cta-text">{uploadErr}</p> : null}
           </div>
 
           {/* Link an existing unlinked receipt — SECONDARY, default-collapsed (D3/D4). */}
@@ -754,7 +754,7 @@ export function VendorClaimPanel({
                 ))}
               </ul>
             )}
-            {err ? <p className="mt-2 text-xs text-co-danger">{err}</p> : null}
+            {err ? <p className="mt-2 text-xs text-co-cta-text">{err}</p> : null}
           </CollapsibleSection>
         </div>
       )}

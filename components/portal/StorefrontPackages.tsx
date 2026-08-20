@@ -79,7 +79,7 @@ function AddButton({ id, onAdd, dark, small }: { id: string; onAdd: (id: string)
     <button
       onClick={click}
       className={`inline-flex ${base} items-center gap-1 rounded-full font-bold transition hover:gap-2 ${
-        dark ? "bg-co-bg text-co-cta hover:bg-white" : "bg-co-text text-co-cta hover:bg-co-text/90"
+        dark ? "bg-co-bg text-co-cta-text hover:bg-white" : "bg-co-text text-co-cta hover:bg-co-text/90"
       }`}
     >
       Add to order <span aria-hidden>→</span>
@@ -148,7 +148,7 @@ export function StorefrontPackages({
                     <Reveal key={p.id} delay={160 + i * 70} className="flex flex-col rounded-2xl border border-co-border/70 bg-co-surface p-4 transition hover:border-co-text/30 hover:shadow-md">
                       <div className="text-lg font-extrabold text-co-text">{pieces || ""} pc</div>
                       {pieces > 0 && <div className="text-xs text-co-text-dim">serves ~{Math.round(pieces / 2)}–{pieces}</div>}
-                      <div className="mt-1 text-lg font-extrabold text-co-cta">{money(p.priceCents)}</div>
+                      <div className="mt-1 text-lg font-extrabold text-co-cta-text">{money(p.priceCents)}</div>
                       <div className="mt-3">
                         <AddButton id={p.id} onAdd={handleAdd} small />
                       </div>
@@ -179,7 +179,7 @@ export function StorefrontPackages({
                     <Reveal key={p.id} delay={120 + i * 90} className="flex items-center justify-between gap-4 rounded-2xl border border-co-border/70 bg-co-bg p-4">
                       <div className="min-w-0">
                         <p className="text-base font-extrabold text-co-text">{p.labelEn}</p>
-                        <p className="text-sm font-bold text-co-cta">{money(p.priceCents)}<span className="ml-1 text-xs font-semibold text-co-text-dim">/ person</span></p>
+                        <p className="text-sm font-bold text-co-cta-text">{money(p.priceCents)}<span className="ml-1 text-xs font-semibold text-co-text-dim">/ person</span></p>
                       </div>
                       <AddButton id={p.id} onAdd={handleAdd} small />
                     </Reveal>
@@ -239,7 +239,7 @@ export function StorefrontPackages({
             {other.map((p, i) => (
               <Reveal key={p.id} delay={80 + i * 70} className="flex h-full flex-col rounded-2xl border border-co-border/70 bg-co-surface p-6">
                 <h3 className="text-xl font-extrabold text-co-text">{p.labelEn}</h3>
-                <div className="mt-1 text-2xl font-extrabold text-co-cta">{money(p.priceCents)}</div>
+                <div className="mt-1 text-2xl font-extrabold text-co-cta-text">{money(p.priceCents)}</div>
                 <div className="mt-auto pt-4"><AddButton id={p.id} onAdd={handleAdd} /></div>
               </Reveal>
             ))}

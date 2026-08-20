@@ -49,7 +49,7 @@ export function EquipmentDetail({
                 status === "ok"
                   ? "text-co-confirm-text"
                   : status === "out_of_range"
-                    ? "text-co-cta"
+                    ? "text-co-cta-text"
                     : "text-co-text-muted"
               }`}
             >
@@ -148,7 +148,7 @@ export function EquipmentDetail({
                 <p
                   className={`text-sm font-semibold ${
                     detail.stats.outOfRangeCount > 0
-                      ? "text-co-cta"
+                      ? "text-co-cta-text"
                       : "text-co-text"
                   }`}
                 >
@@ -186,7 +186,7 @@ export function EquipmentDetail({
                       </span>
                       <span
                         className={`text-sm font-semibold ${
-                          r.valueF > safeMax ? "text-co-cta" : "text-co-text"
+                          r.valueF > safeMax ? "text-co-cta-text" : "text-co-text"
                         }`}
                       >
                         {serverT(language, "maintenance.degrees", {

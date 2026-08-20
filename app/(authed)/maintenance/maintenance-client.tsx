@@ -114,7 +114,7 @@ export function AddMaintenanceNote({
       </label>
 
       {errorMsg && (
-        <p className="text-sm font-semibold text-co-cta">{errorMsg}</p>
+        <p className="text-sm font-semibold text-co-cta-text">{errorMsg}</p>
       )}
 
       <ActionButton

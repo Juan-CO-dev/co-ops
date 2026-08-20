@@ -70,7 +70,7 @@ export function LanguageSettingCard() {
       {updating ? (
         <p className="mt-2 text-[11px] text-co-text-dim">{t("settings.language.saving")}</p>
       ) : null}
-      {error ? <p className="mt-2 text-sm text-co-cta">{error}</p> : null}
+      {error ? <p className="mt-2 text-sm text-co-cta-text">{error}</p> : null}
     </section>
   );
 }

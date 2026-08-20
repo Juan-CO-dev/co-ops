@@ -177,7 +177,7 @@ export function AddItemForm({
           {t("admin.templates.add_global_is_default")}
         </label>
         <p className="text-xs text-co-text-muted">{t("admin.templates.global_blast_radius_note")}</p>
-        {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+        {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
         <div className="flex justify-end gap-2">
           <button
             type="button"

@@ -155,7 +155,7 @@ function CustomerDetailPanel({ customer, canWrite }: { customer: CateringCustome
             <span className="text-co-text-muted">{t("catering.customers.field.notes")}</span>
             <textarea name="notes" rows={2} defaultValue={customer.notes ?? ""} className="mt-1 w-full rounded-md border border-co-border bg-co-surface p-2 text-co-text" />
           </label>
-          {errorMsg && <p className="text-xs text-co-cta">{errorMsg}</p>}
+          {errorMsg && <p className="text-xs text-co-cta-text">{errorMsg}</p>}
           <div className="flex gap-2">
             <button type="submit" disabled={busy} className="rounded-md bg-co-text px-3 py-1.5 text-xs font-semibold text-co-bg disabled:opacity-50">
               {t("catering.customers.save")}
@@ -200,7 +200,7 @@ function CustomerDetailPanel({ customer, canWrite }: { customer: CateringCustome
               )}
             </div>
           </div>
-          {errorMsg && <p className="mt-2 text-xs text-co-cta">{errorMsg}</p>}
+          {errorMsg && <p className="mt-2 text-xs text-co-cta-text">{errorMsg}</p>}
           {canWrite && (
             <div className="mt-3 flex gap-2">
               <button type="button" onClick={() => setEditing(true)} className="rounded-md border border-co-border px-3 py-1 text-xs text-co-text">
@@ -289,7 +289,7 @@ function AddCustomerRow({ locations }: { locations: LocationOpt[] }) {
           <textarea name="notes" rows={2} className="mt-1 w-full rounded-md border border-co-border bg-co-surface p-2 text-co-text" />
         </label>
       </div>
-      {errorMsg && <p className="text-xs text-co-cta">{errorMsg}</p>}
+      {errorMsg && <p className="text-xs text-co-cta-text">{errorMsg}</p>}
       <div className="flex gap-2">
         <button type="submit" disabled={busy} className="rounded-md bg-co-text px-4 py-2 text-sm font-semibold text-co-bg disabled:opacity-50">
           {t("catering.customers.add")}

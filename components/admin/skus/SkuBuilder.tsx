@@ -372,7 +372,7 @@ export function SkuBuilder({
           <input className={fieldCls} value={name} disabled={busy} onChange={(e) => setName(e.target.value)} />
         </Labeled>
         {collisions.length > 0 ? (
-          <p className="text-xs font-semibold text-co-cta" role="status">
+          <p className="text-xs font-semibold text-co-cta-text" role="status">
             {t("admin.skus.builder.name_collision", { names: collisions.map((c) => c.name).join(", ") })}
           </p>
         ) : null}
@@ -520,7 +520,7 @@ export function SkuBuilder({
                   busy={busy || wizardBusy}
                   onChange={setWizardChain}
                 />
-                {wizardErr ? <p className="text-sm text-co-cta">{wizardErr}</p> : null}
+                {wizardErr ? <p className="text-sm text-co-cta-text">{wizardErr}</p> : null}
                 <div className="flex flex-wrap justify-end gap-2">
                   <button
                     type="button"
@@ -573,7 +573,7 @@ export function SkuBuilder({
         </div>
       ) : null}
 
-      {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+      {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
 
       <div className="flex justify-end gap-2 border-t-2 border-co-border pt-3">
         <button
@@ -664,7 +664,7 @@ function ChainEditor({
       <button type="button" disabled={busy} onClick={onAdd} className="inline-flex min-h-[44px] items-center justify-center rounded-lg border-2 border-dashed border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-text disabled:opacity-50">
         {t("admin.skus.chain.add_level")}
       </button>
-      {err ? <p className="text-sm text-co-cta">{err}</p> : null}
+      {err ? <p className="text-sm text-co-cta-text">{err}</p> : null}
       <div className="flex justify-end gap-2">
         <button type="button" disabled={busy} onClick={onCancel} className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text disabled:opacity-50">
           {t("admin.skus.builder.chain_toggle_hide")}

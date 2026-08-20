@@ -82,7 +82,7 @@ export function SkuCostPanel({ skuId, cost, ledger, consumption, canRecord }: { 
           <div className="mt-2 flex flex-col gap-2">
             <input className={field} type="number" min={0} step="any" inputMode="decimal" placeholder={t("admin.skus.cost.price_placeholder")} value={price} disabled={busy} onChange={(e) => setPrice(e.target.value)} />
             <input className={field} type="date" value={date} disabled={busy} onChange={(e) => setDate(e.target.value)} />
-            {err ? <p className="text-sm text-co-cta">{err}</p> : null}
+            {err ? <p className="text-sm text-co-cta-text">{err}</p> : null}
             <div className="flex justify-end gap-2">
               <button type="button" disabled={busy} onClick={() => { setOpen(false); setErr(null); }} className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text disabled:opacity-50">{t("admin.skus.cancel")}</button>
               <button type="button" disabled={busy} onClick={() => void record()} className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-3 text-xs font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50">{t("admin.skus.cost.record")}</button>

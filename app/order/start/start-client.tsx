@@ -409,7 +409,7 @@ export function OrderStartClient({ locations, deliveryNodesExist, pickupNodes, i
                                   <p className={`text-sm font-semibold ${
                                     route.status === "routed"
                                       ? "text-co-text"
-                                      : "text-co-cta"
+                                      : "text-co-cta-text"
                                   }`}>
                                     {route.status === "routed"
                                       ? t("order.route.in_zone" as TranslationKey, { location: route.locationName })

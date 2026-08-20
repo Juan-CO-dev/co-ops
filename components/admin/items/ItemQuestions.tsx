@@ -153,7 +153,7 @@ export function ItemQuestionsEditor({
               />
               {t("admin.templates.item_questions.add_required")}
             </label>
-            {errorMsg ? <p className="text-sm text-co-cta">{errorMsg}</p> : null}
+            {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
             <div className="flex justify-end gap-2">
               <button
                 type="button"
@@ -228,21 +228,21 @@ function ItemQuestionRow({ question }: { question: ItemQuestionView }) {
           type="button"
           disabled={submitting}
           onClick={() => setConfirmingDisable((v) => !v)}
-          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta hover:border-co-cta disabled:opacity-50"
+          className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-cta-text hover:border-co-cta disabled:opacity-50"
         >
           {t("admin.templates.item_questions.disable")}
         </button>
       </div>
 
       {confirmingDisable ? (
-        <div className="mt-3 rounded-lg border-2 border-co-cta bg-co-cta/10 p-3">
+        <div className="mt-3 rounded-lg border-2 border-co-cta-text bg-co-cta/10 p-3">
           <p className="text-sm font-bold text-co-text">
             {t("admin.templates.item_questions.disable_confirm_title", { label: question.label })}
           </p>
           <p className="mt-2 text-xs text-co-text-muted">
             {t("admin.templates.item_questions.disable_confirm")}
           </p>
-          {errorMsg ? <p className="mt-2 text-sm text-co-cta">{errorMsg}</p> : null}
+          {errorMsg ? <p className="mt-2 text-sm text-co-cta-text">{errorMsg}</p> : null}
           <div className="mt-3 flex justify-end gap-2">
             <button
               type="button"
@@ -263,7 +263,7 @@ function ItemQuestionRow({ question }: { question: ItemQuestionView }) {
           </div>
         </div>
       ) : (
-        errorMsg ? <p className="mt-2 text-sm text-co-cta">{errorMsg}</p> : null
+        errorMsg ? <p className="mt-2 text-sm text-co-cta-text">{errorMsg}</p> : null
       )}
     </div>
   );

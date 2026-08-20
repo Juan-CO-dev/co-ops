@@ -96,7 +96,7 @@ export default async function DeliveryDetailPage({ params }: { params: Promise<{
         <p className="mt-1 text-sm">
           <Link
             href={`/ordering?location=${encodeURIComponent(detail.locationId)}&po=${encodeURIComponent(detail.purchaseOrderId)}`}
-            className="inline-flex min-h-[44px] items-center gap-1.5 font-bold text-co-cta underline underline-offset-2"
+            className="inline-flex min-h-[44px] items-center gap-1.5 font-bold text-co-cta-text underline underline-offset-2"
           >
             <span>{serverT(lang, "receiving.detail.received_against")}</span>
             <span className="font-mono tracking-wide">{detail.purchaseOrderCode}</span>
@@ -145,7 +145,7 @@ export default async function DeliveryDetailPage({ params }: { params: Promise<{
           <p className="text-[13px] text-co-text">{serverT(lang, "receiving.detail.continue_note")}</p>
           <Link
             href={`/operations/receiving?location=${encodeURIComponent(detail.locationId)}`}
-            className="mt-1 inline-flex min-h-[44px] items-center font-bold text-co-cta underline"
+            className="mt-1 inline-flex min-h-[44px] items-center font-bold text-co-cta-text underline"
           >
             {serverT(lang, "receiving.detail.continue_intake")}
           </Link>
