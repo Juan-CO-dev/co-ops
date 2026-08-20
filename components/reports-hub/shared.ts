@@ -42,3 +42,28 @@ export function reportStatusLabel(status: string, t: (k: TranslationKey) => stri
   const key = reportStatusLabelKey(status);
   return key ? t(key) : status;
 }
+
+import type { CloseStatus, CloseState } from "@/lib/dashboard-status-shared";
+
+/**
+ * Close-STATE → translation key. The sibling of REPORT_STATUS_LABEL_KEYS above:
+ * that map is the fine-grained RAW status vocabulary the reports surfaces render
+ * (phase1_complete, submitted, …); this one is the 4-state operational close
+ * reading the dashboard tile and the mid-shift strip render. Both live here so
+ * the three surfaces share ONE vocabulary module (design §2).
+ */
+export const CLOSE_STATE_LABEL_KEYS: Record<CloseStatus, TranslationKey> = {
+  pending: "close.status.pending",
+  in_progress: "close.status.in_progress",
+  closed: "close.status.closed",
+  auto_finalized: "close.status.auto_finalized",
+};
+
+/**
+ * Translation key for a close state. The `incomplete` flag promotes `closed` to
+ * its more honest label — the day IS closed, but with required items unfinished.
+ */
+export function closeStateLabelKey(state: CloseState): TranslationKey {
+  if (state.status === "closed" && state.incomplete) return "close.status.closed_incomplete";
+  return CLOSE_STATE_LABEL_KEYS[state.status];
+}
