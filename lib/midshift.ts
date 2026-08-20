@@ -377,6 +377,9 @@ export async function loadMidShiftPulse(
     name: f.equip.name,
     latestF: f.latest?.valueF ?? null,
     outOfRange: f.status === "out_of_range",
+    // SIM-25: today-scoped. `f.status` is computed from TODAY's readings
+    // (lib/maintenance.ts:159); `f.latest` is not.
+    hasReadingToday: f.status !== "no_reading_today",
   }));
   const fridgeFlagCount = fridges.filter((f) => f.outOfRange).length;
 

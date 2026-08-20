@@ -13,7 +13,16 @@ const OPERATIONAL_TZ = "America/New_York";
 
 export type ReportKey = "opening" | "am_prep" | "mid_day" | "cash" | "closing";
 
-/** Instance statuses that count as "submitted/done" for pulse purposes. */
+/**
+ * Instance statuses that count as "submitted/done" for pulse purposes.
+ *
+ * ONE OF THREE STATUS SETS THAT MUST MOVE TOGETHER when a checklist status is
+ * added or renamed — the other two are `CLOSED_STATUSES` (lib/dashboard-status-shared.ts,
+ * feeding the 4-state `deriveCloseState`) and `REPORT_STATUS_LABEL_KEYS`
+ * (components/reports-hub/shared.ts, the full raw-status label vocabulary).
+ * A new status that lands in only one of the three is exactly how the dashboard
+ * came to render `auto_finalized` days as "In progress" (design §2).
+ */
 const SUBMITTED_STATUSES = new Set([
   "phase2_complete",
   "confirmed",
@@ -58,8 +67,21 @@ export interface PulseFridge {
   /** Equipment-registry id — the stable React key (names can collide). */
   equipId: string;
   name: string;
+  /**
+   * The latest reading value SINCE the overview's window start — NOT necessarily
+   * today's (lib/maintenance.ts loadMaintenanceOverview computes `latest` over
+   * `sinceDate` while `status` is today-scoped). Only claim this as a current
+   * temperature when `hasReadingToday` is true.
+   */
   latestF: number | null;
   outOfRange: boolean; // any reading today > safe max
+  /**
+   * SIM-25: did anyone actually temp this fridge TODAY? Derived from the
+   * today-scoped FridgeStatus, never from `latestF != null` — a fridge unread
+   * today can still carry yesterday's value, and treating that as "read" is
+   * exactly the false all-clear this field exists to prevent.
+   */
+  hasReadingToday: boolean;
 }
 
 export interface AttentionItem {

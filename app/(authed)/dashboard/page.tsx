@@ -46,6 +46,19 @@ import { loadTrendSeries } from "@/lib/reports-trends";
 import { TrendsWidget } from "@/components/trends/TrendsWidget";
 import { loadTeamOperatingHealth, TEAM_VIEW_LEVEL } from "@/lib/team-metrics";
 import { TeamRosterTable } from "@/components/team/TeamRosterTable";
+import { loadRecentDeliveries } from "@/lib/receiving";
+import { loadTodaysOrders } from "@/lib/purchase-orders";
+import { loadOrderingAttention } from "@/lib/ordering";
+import { loadCountsTileState, COUNT_READ_MIN } from "@/lib/counts";
+import { OrderingTile } from "@/components/ordering/OrderingTile";
+import {
+  deriveCloseState,
+  deriveMissingEmailIds,
+  type ReceivingDeliveryFacts,
+  type OrderingCutoffFacts,
+  type OrderingOrderFacts,
+} from "@/lib/dashboard-status-shared";
+import { closeStateLabelKey } from "@/components/reports-hub/shared";
 
 import { ActionLink } from "@/components/ActionButton";
 import { CashDepositTile } from "@/components/CashDepositTile";
@@ -65,7 +78,11 @@ interface LocationLite {
   code: string;
 }
 
-type ClosingStatus = "open" | "confirmed" | "incomplete_confirmed";
+/** Raw checklist_instances.status. Kept as a string: `auto_finalized` (and the
+ *  phase statuses) are reachable here, and narrowing them away is what let the
+ *  dashboard render an auto-finalized day as "in progress". deriveCloseState
+ *  owns the interpretation. */
+type ClosingStatus = string;
 
 interface ClosingInstanceLite {
   id: string;
@@ -234,6 +251,13 @@ interface StatusCopy {
   ctaTone: "primary" | "review";
 }
 
+/**
+ * Today's closing status copy. The close STATE comes from the one shared
+ * derivation (lib/dashboard-status-shared.ts deriveCloseState) — this used to
+ * branch on a 3-value union with no `auto_finalized` case, so an auto-finalized
+ * day fell through to the "open" branch and rendered "In progress" with a
+ * "Continue closing" CTA (design §2 "one close reading three different ways").
+ */
 function statusCopyFor(state: OperationalState, language: Language): StatusCopy {
   if (!state.hasClosingTemplate) {
     return {
@@ -242,40 +266,37 @@ function statusCopyFor(state: OperationalState, language: Language): StatusCopy 
       ctaTone: "review",
     };
   }
-  const inst = state.todayInstance;
-  if (!inst) {
+
+  const close = deriveCloseState(state.todayInstance?.status ?? null);
+
+  if (close.status === "pending") {
     return {
       label: serverT(language, "dashboard.status.not_started"),
       cta: serverT(language, "dashboard.cta.start_closing"),
       ctaTone: "primary",
     };
   }
-  if (inst.status === "confirmed") {
+
+  if (close.status === "in_progress") {
+    const p = state.todayProgress;
+    const progress = p
+      ? serverT(language, "dashboard.status.in_progress_progress", {
+          completed: p.completed,
+          required: p.required,
+        })
+      : serverT(language, "dashboard.status.in_progress_fallback");
     return {
-      label: serverT(language, "dashboard.status.confirmed"),
-      cta: serverT(language, "dashboard.cta.review_closing"),
-      ctaTone: "review",
+      label: serverT(language, "dashboard.status.in_progress", { progress }),
+      cta: serverT(language, "dashboard.cta.continue_closing"),
+      ctaTone: "primary",
     };
   }
-  if (inst.status === "incomplete_confirmed") {
-    return {
-      label: serverT(language, "dashboard.status.incomplete_confirmed"),
-      cta: serverT(language, "dashboard.cta.review_closing"),
-      ctaTone: "review",
-    };
-  }
-  // open
-  const p = state.todayProgress;
-  const progress = p
-    ? serverT(language, "dashboard.status.in_progress_progress", {
-        completed: p.completed,
-        required: p.required,
-      })
-    : serverT(language, "dashboard.status.in_progress_fallback");
+
+  // closed / closed-incomplete / auto_finalized — all resolved days, review-tone.
   return {
-    label: serverT(language, "dashboard.status.in_progress", { progress }),
-    cta: serverT(language, "dashboard.cta.continue_closing"),
-    ctaTone: "primary",
+    label: serverT(language, closeStateLabelKey(close)),
+    cta: serverT(language, "dashboard.cta.review_closing"),
+    ctaTone: "review",
   };
 }
 
@@ -368,6 +389,69 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         ? loadTeamOperatingHealth(sb, { viewer: dashViewer, locationId: selectedLocation.id, granularity: "day", compare: false, today: operational.todayDate })
         : null,
     ]);
+
+  // Status-tile payloads (dashboard operational legibility, 2026-08-19). These
+  // are READ surfaces over existing artifacts — no new capture, no writes.
+  //
+  // FAIL-SOFT, BUT NEVER FABRICATING: a loader hiccup must not 500 the whole
+  // dashboard, and it must also not render an empty state that would falsely
+  // claim "no trucks today". Each catch returns null, which the tile renders as
+  // an explicit "couldn't load" — distinct from a genuine empty.
+  const tileLocationId = selectedLocation?.id ?? null;
+  const [receivingRaw, todaysOrders, cutoffAttention, countsState] = await Promise.all([
+    tileLocationId && auth.level >= 4
+      ? loadRecentDeliveries(auth, tileLocationId, 20).catch((e) => {
+          console.error("dashboard receiving tile load failed", e);
+          return null;
+        })
+      : null,
+    tileLocationId && auth.level >= 4
+      ? loadTodaysOrders(auth, tileLocationId).catch((e) => {
+          console.error("dashboard ordering tile orders load failed", e);
+          return null;
+        })
+      : null,
+    tileLocationId && auth.level >= 4
+      ? loadOrderingAttention(auth, tileLocationId).catch((e) => {
+          console.error("dashboard ordering tile cutoff load failed", e);
+          return null;
+        })
+      : null,
+    tileLocationId && auth.level >= COUNT_READ_MIN
+      ? loadCountsTileState(auth, tileLocationId).catch((e) => {
+          console.error("dashboard counts tile load failed", e);
+          return null;
+        })
+      : null,
+  ]);
+
+  // Project the loader rows into the pure compose functions' fact shapes. The
+  // missing-email rule and the arrival-time formatting both read a clock / the
+  // viewer's language, so they happen HERE — never inside a compose or a render.
+  const missingEmailIds = receivingRaw ? deriveMissingEmailIds(receivingRaw, Date.now()) : new Set<string>();
+  const receivingFacts: ReceivingDeliveryFacts[] | null = receivingRaw
+    ? receivingRaw.map((d) => ({
+        id: d.id,
+        vendorName: d.vendorName,
+        deliveryDate: d.deliveryDate,
+        matchState: d.matchState,
+        deliveryStatus: d.deliveryStatus,
+        receiptUrl: d.receiptUrl,
+        arrivedAt: formatTime(d.createdAt, language),
+        missingEmail: missingEmailIds.has(d.id),
+      }))
+    : null;
+  const orderFacts: OrderingOrderFacts[] | null = todaysOrders
+    ? todaysOrders.map((o) => ({ poId: o.poId, vendorName: o.vendorName, status: o.status }))
+    : null;
+  const cutoffFacts: OrderingCutoffFacts[] | null = cutoffAttention
+    ? cutoffAttention.vendors.map((v) => ({
+        vendorId: v.vendorId,
+        vendorName: v.vendorName,
+        cutoffTime: v.cutoffTime,
+        hasDraft: v.hasDraft,
+      }))
+    : null;
 
   // Opening Report tile state (C.53) — resolve template + today's status inline
   // (the /operations/opening page owns the gate + 3-phase flow). Visible to
@@ -648,12 +732,24 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
               <ReceivingTile
                 language={language}
                 locationId={selectedLocation.id}
+                deliveries={receivingFacts}
+                today={operational.todayDate}
               />
             ) : null}
-            {auth.level >= 6 ? (
+            {auth.level >= 4 ? (
+              <OrderingTile
+                language={language}
+                locationId={selectedLocation.id}
+                openCutoffs={cutoffFacts}
+                orders={orderFacts}
+              />
+            ) : null}
+            {auth.level >= COUNT_READ_MIN ? (
               <CountsTile
                 language={language}
                 locationId={selectedLocation.id}
+                state={countsState}
+                today={operational.todayDate}
               />
             ) : null}
             {cashDashboard?.isVisibleToActor ? (

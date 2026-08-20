@@ -5,41 +5,13 @@ import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { etCalendarDate } from "@/lib/operational-day";
 import { requireSessionFromHeaders } from "@/lib/session";
 import { loadReceivingFormData, loadRecentDeliveries } from "@/lib/receiving";
-import type { DeliveryView } from "@/lib/receiving";
+import { deriveMissingEmailIds } from "@/lib/dashboard-status-shared";
 import { loadOpenCreditsSummary } from "@/lib/credits";
 import { ReceivingForm } from "@/components/receiving/ReceivingForm";
 import { OpenCreditsPanel } from "@/components/receiving/OpenCreditsPanel";
 import { AlertPill } from "@/components/ui/AlertPill";
 import { DashboardBackLink } from "@/components/DashboardBackLink";
 import { EmptyState } from "@/components/EmptyState";
-
-/** Grace window before a completed, unclaimed, never-attested delivery flags "missing
- *  email": an emailed vendor receipt usually arrives same-day, so 48h of silence is a
- *  real gap for a manager to chase. */
-const MISSING_EMAIL_GRACE_MS = 48 * 60 * 60 * 1000;
-/**
- * IDs of deliveries that should flag "missing email" — a completed delivery with no
- * vendor claim on file, never attested (still counted_only), older than the 48h grace
- * window. The clock is read INSIDE this helper (once per request) so no impure call
- * lands in the component render tree (react-hooks/purity). A null created_at (shouldn't
- * happen — default now()) is treated as too-new to flag.
- */
-function deriveMissingEmailIds(deliveries: DeliveryView[]): Set<string> {
-  const nowMs = Date.now();
-  const out = new Set<string>();
-  for (const d of deliveries) {
-    if (
-      d.deliveryStatus === "complete" &&
-      d.matchState === "counted_only" &&
-      !d.emailReceiptId &&
-      d.createdAt != null &&
-      nowMs - Date.parse(d.createdAt) > MISSING_EMAIL_GRACE_MS
-    ) {
-      out.add(d.id);
-    }
-  }
-  return out;
-}
 
 export default async function ReceivingPage({ searchParams }: { searchParams: Promise<{ location?: string }> }) {
   const auth = await requireSessionFromHeaders("/operations/receiving");
@@ -55,8 +27,10 @@ export default async function ReceivingPage({ searchParams }: { searchParams: Pr
     loadRecentDeliveries(auth, location, 20),
     loadOpenCreditsSummary(auth, location),
   ]);
-  // Missing-email flags derived once per request (clock read inside the helper).
-  const missingEmailIds = deriveMissingEmailIds(recent);
+  // Missing-email flags derived once per request — the ONE rule, shared with the
+  // dashboard's receiving tile (lib/dashboard-status-shared.ts). The clock is read
+  // here so no impure call lands in the render tree (react-hooks/purity).
+  const missingEmailIds = deriveMissingEmailIds(recent, Date.now());
 
   return (
     <main className="mx-auto max-w-2xl md:max-w-3xl lg:max-w-5xl xl:max-w-6xl px-4 pb-32 pt-4 sm:px-6">
