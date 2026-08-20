@@ -324,7 +324,7 @@ export function PinConfirmModal({
         </div>
 
         {error && (
-          <p className="mt-3 text-center text-sm font-semibold text-co-cta" role="alert">
+          <p className="mt-3 text-center text-sm font-semibold text-co-cta-text" role="alert">
             {error}
           </p>
         )}
