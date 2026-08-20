@@ -1,0 +1,13 @@
+product,brand,vendor,pack_size_field,angel_pack_descriptor,units_per_case,nominal_lbs,angel_net_lbs_per_case,net_over_nominal,case_price,angel_price_per_lb,price_per_lb_if_nominal,structure
+OREGANO LEAVES,ROMA,PFG,1/5 LB,5 LB,1,5.0,6.0,1.2,55.27,9.21,11.05,single 5 lb jug
+OREGANO LEAVES,ROMA,PFG,1/24 OZ,1.5 LB,1,1.5,1.8,1.2,24.41,13.34,16.27,single 24 oz jug
+ONION PWDR,ROMA,PFG,1/5 LB,5 LB,1,5.0,6.0,1.2,33.25,5.54,6.65,single 5 lb jug
+GARLIC WHL PLD DOM,PEAK FRS,PFG,1/5 LB,5 LB,1,5.0,6.0,1.2,19.72,3.29,3.94,single 5 lb tub
+PARSLEY FRSH FLAT ITAL,PEAK FRS,PFG,1/1 LB,1 LB,1,1.0,1.4,1.4,15.2,10.86,15.2,single 1 lb box
+BASIL FRSH,FRSH ADV,PFG,1/1 LB,1 LB,1,1.0,1.0,1.0,10.34,10.34,10.34,single 1 lb box
+BASIL FRSH,PEAK FRS,PFG,1/1 LB,1 LB,1,1.0,1.45,1.45,20.25,13.97,20.25,single 1 lb box
+THYME FRSH,PEAK FRS,PFG,1/4 OZ,(none),1,0.25,0.5,2.0,16.54,35.19,66.16,single 4 oz unit
+CHIVES FRSH,PEAK FRS,PFG,1/8 OZ,0.5 LB,1,0.5,0.8,1.6,17.88,22.07,35.76,single 8 oz unit
+"Spice, Oregano Leaf Dried Plastic Jug Shelf Stable Seasoning",Monarch,US Foods,24 OZ,1.5 LB,1,1.5,1.5,1.0,29.19,19.46,19.46,single 24 oz jug
+"Spice, Chive Chopped Plastic Shaker Shelf Stable Seasoning",Monarch,US Foods,6/1.12 OZ,0.5 LB,6,0.42,0.07,0.167,9.72,138.86,23.14,6 x 1.12 oz shakers
+"Basil, Fresh Herb",Cross Valley Farms,US Foods,1 LB,1 LB,1,1.0,1.0,1.0,16.08,16.08,16.08,single 1 lb box

@@ -1,0 +1,10 @@
+product,angel_subtitle,unit_descriptor,pieces_per_invoice_unit,lbs_per_piece,lbs_per_piece_min,lbs_per_piece_max,oz_per_piece,coops_sku,coops_oz_per_slice,slices_per_piece,price_per_lb,cost_per_slice,cost_per_piece
+OVENGOLD TURKEY,GROCERY-REF-FZN · TURKEY · TURKEY · 1 CT,1 CT (sold by the piece),1,9.251,9.161,9.297,148.0,Turkey,1.0,148,6.29,0.3931,58.19
+LONDON BROIL,GROCERY-DRY · MISCELLANEOUS ITEM · BROIL · 1 CT,1 CT (sold by the piece),1,6.93,6.55,7.185,110.9,Roast Beef,1.5,74,8.69,0.8147,60.22
+MILD PROVOLONE,DAIRY · CHEESE · PROVOLONE · 1 CT,1 CT (sold by the piece),1,5.502,5.5,5.517,88.0,Provolone,0.75,117,3.49,0.1636,19.2
+DILANDRI GENOA SALAME,GROCERY-REF-FZN · SALAMI · GENOA SLICED · 1 CT,1 CT (sold by the piece),1,6.44,6.267,6.562,103.0,Genoa,1.0,103,4.39,0.2744,28.27
+HOT BUTT CAPPY,GROCERY-REF-FZN · PORK · BUTT CAPPY · 1 CT,1 CT (sold by the piece),1,3.592,3.59,3.593,57.5,Capicola,1.0,57,5.45,0.3406,19.57
+EVERROAST CHICKEN,GROCERY-REF-FZN · CHICKEN · CHICKEN · 1 CT,1 CT (sold by the piece),1,4.633,4.622,4.667,74.1,(chicken — no co-ops entry),1.0,74,5.99,0.3744,27.75
+Pepperoni Slicing,GROCERY-REF-FZN · PEPPERONI · SLICING · 1 CT,1 CT (sold by the piece),1,3.494,3.483,3.5,55.9,Pepperoni,0.25,224,5.09,0.0795,17.79
+IMP LAYER BACON 12/14,GROCERY-REF-FZN · BACON · LAYER BACON · 12/14 · 1 CT,1 CT (sold by the 15 lb box),180-210 strips,15.0,15.0,15.0,240.0,Bacon,0.75,180-210,4.69,0.3350-0.3908,70.35
+CHEESE MOZZ 1OZ SLCD LOG 32 CT,DAIRY · CHEESE · MOZZ 1OZ · SLCD LOG 32 CT · BRANDED-PREMIUM · BELGIOIOSO CHEESE · 12 LB,6 logs/case; 32 x 1oz slices per log = 192 slices/case,192,12.75,12.75,12.76,204.0,Fresh Mozzarella,1.0,192,3.69,0.2453,47.1
