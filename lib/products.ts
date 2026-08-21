@@ -232,15 +232,25 @@ async function loadPinnedRecipesByProduct(
   );
   if (pins.length === 0) return out;
 
+  // PAGED like the read above it, and for a sharper reason than symmetry: past the
+  // 1000-row cap a truncated page drops real recipes out of `activeById`, and the
+  // `name == null` branch below would then reclassify them as RETIRED. The warning
+  // would UNDER-report — the one direction this function's header says must never
+  // happen — and the undercount would ride into the audit row as fact.
   const recipeIds = [...new Set(pins.map((p) => p.recipe_id))];
-  const { data: recipeRows, error: rErr } = await sb
-    .from("recipes")
-    .select("id, name")
-    .in("id", recipeIds)
-    .eq("active", true)
-    .returns<Array<{ id: string; name: string }>>();
-  if (rErr) throw new Error(`loadPinnedRecipesByProduct recipes: ${rErr.message}`);
-  const activeById = new Map((recipeRows ?? []).map((r) => [r.id, r.name]));
+  const recipeRows = await selectAllRows<{ id: string; name: string }>(async (from, to) => {
+    const { data, error } = await sb
+      .from("recipes")
+      .select("id, name")
+      .in("id", recipeIds)
+      .eq("active", true)
+      .order("id", { ascending: true })
+      .range(from, to)
+      .returns<Array<{ id: string; name: string }>>();
+    if (error) throw new Error(`loadPinnedRecipesByProduct recipes: ${error.message}`);
+    return { data };
+  });
+  const activeById = new Map(recipeRows.map((r) => [r.id, r.name]));
 
   // One entry per (product, recipe): a recipe pinning the same product on two
   // lines is still ONE recipe to go re-point, and "2 recipes" would be a lie.
@@ -262,9 +272,9 @@ async function loadPinnedRecipesByProduct(
 }
 
 /**
- * The whole registry in FOUR batch queries + one label lookup — never per-product
+ * The whole registry in FIVE batch queries + one label lookup — never per-product
  * (the loadRecipeGraph law): products · member SKUs (`.in("product_id", ids)`) ·
- * product_primaries · the pinning recipes. Vendor names ride ONE batched vendors
+ * product_primaries · the pinning recipe_inputs · the recipes behind them. Vendor names ride ONE batched vendors
  * read and degrade to null labels on failure rather than failing the page (the
  * loadCountFormData LABEL-ONLY precedent).
  */

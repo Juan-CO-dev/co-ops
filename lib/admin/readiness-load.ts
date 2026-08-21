@@ -157,9 +157,18 @@ export async function loadGraphReadiness(actor: AuthContext): Promise<{
   const retiredSkuIds = new Set<string>();
   if (pinnedSkuIds.length > 0) {
     const sb = getServiceRoleClient();
-    const rows = await selectAllRows<{ id: string }>((from, to) =>
-      sb.from("vendor_items").select("id").in("id", pinnedSkuIds).eq("active", false)
-        .order("id", { ascending: true }).range(from, to));
+    // THROWS on a page error rather than taking selectAllRows' silent `data ?? []`
+    // (which ignores `error` entirely). The sibling loaders in this file can afford
+    // that posture; this one cannot. A swallowed failure here yields an EMPTY set,
+    // which reads as "nothing is discontinued" and silently deletes the exact
+    // loudness this rule exists to buy — a failure that looks like good news.
+    const rows = await selectAllRows<{ id: string }>(async (from, to) => {
+      const { data, error } = await sb.from("vendor_items").select("id").in("id", pinnedSkuIds)
+        .eq("active", false).order("id", { ascending: true }).range(from, to)
+        .returns<Array<{ id: string }>>();
+      if (error) throw new Error(`loadGraphReadiness retired SKU pins: ${error.message}`);
+      return { data };
+    });
     for (const r of rows) retiredSkuIds.add(r.id);
   }
 

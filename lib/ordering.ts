@@ -704,6 +704,13 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
   // row is the RESOLVED member; if the resolution is not among today's walkable
   // candidates, the designated primary, else a stable name order. The dropped rows
   // are NOT unroutable: their demand is carried by the row we kept.
+  //
+  // A RETIRED product resolves to null (rung ⓪, 2026-08-21) and simply falls through
+  // to the next preference — deliberately. Retiring an identity is a statement about
+  // what RECIPES mean; a par is a per-SKU standing instruction on a still-active
+  // vendor_item, and suppressing the row would silently overrule it. Twins of a
+  // retired product still need de-duping into one row, and this still picks one
+  // deterministically. See the failover below for the same boundary.
   const vendorOf = (skuId: string): string | null => skus.find((s) => s.id === skuId)?.vendor_id ?? null;
   for (const [productId, candidates] of candidatesByProduct) {
     const entry = productIndex.byProduct.get(productId) ?? null;
@@ -766,6 +773,16 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
     if (covered) { unroutable.reroutedToBackup += 1; releaseDropped(dropped); continue; }
     // Nobody walked for this product — try the resolved member, else any active member
     // with a live vendor. Both must be a DIFFERENT sku than the one that dropped.
+    //
+    // A RETIRED product resolves to null, so the first arm is empty and the rescue
+    // falls to "any active member" — DELIBERATE, and the boundary is worth stating
+    // because it is the one place retirement and pars visibly disagree. Retirement
+    // says "recipes should stop meaning this identity"; a par says "keep N of THIS
+    // vendor_item on the shelf", and it lives on a row that is still active. The par
+    // is the operator's own standing instruction about the floor, so it wins — the
+    // same posture that made retiring never hard-block. Clearing the pars (or
+    // deactivating the SKUs) is how you stop ordering; that is a separate act, and
+    // it is the one the walk is entitled to obey.
     const droppedIds = new Set(dropped.map((d) => d.row.id));
     const byPreference = [
       ...entry.members.filter((m) => m.skuId === entry.resolution.skuId),
