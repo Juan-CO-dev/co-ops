@@ -31,7 +31,7 @@ export default async function AdminRecipeDetailPage({
 
   const sb = getServiceRoleClient();
 
-  const [recipe, skusRes, itemsRes, unitsRes, measuresRes] = await Promise.all([
+  const [recipe, skusRes, itemsRes, unitsRes, measuresRes, productsRes] = await Promise.all([
     loadRecipe(auth, id),
     sb
       .from("vendor_items")
@@ -63,6 +63,15 @@ export default async function AdminRecipeDetailPage({
       .from("measure_units")
       .select("label, dimension, to_base_factor")
       .returns<Array<{ label: string; dimension: string; to_base_factor: number | string }>>(),
+    // Products a recipe line may pin instead of one vendor's SKU (0179). Read the
+    // same way every other picker on this page is; an error yields [] and the
+    // product affordance simply does not render.
+    sb
+      .from("products")
+      .select("id, name, unit_oz")
+      .eq("active", true)
+      .order("name")
+      .returns<Array<{ id: string; name: string; unit_oz: number | string | null }>>(),
   ]);
 
   if (!recipe) notFound();
@@ -112,6 +121,11 @@ export default async function AdminRecipeDetailPage({
     avgOzPerEach: s.avg_oz_per_each != null ? Number(s.avg_oz_per_each) : null,
   }));
   const items = (itemsRes.data ?? []).map((i) => ({ id: i.id, name: i.name }));
+  const products = (productsRes.data ?? []).map((p) => ({
+    id: p.id,
+    name: p.name,
+    unitOz: p.unit_oz != null ? Number(p.unit_oz) : null,
+  }));
   const unitOptions = (unitsRes.data ?? []).map((u) => ({
     id: u.id,
     label: u.label,
@@ -132,6 +146,7 @@ export default async function AdminRecipeDetailPage({
         recipe={recipe}
         skus={skus}
         items={items}
+        products={products}
         unitOptions={unitOptions}
         measures={measures}
         level={level}

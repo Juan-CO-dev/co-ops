@@ -41,7 +41,7 @@ export default async function AdminRecipesNewPage({
   const lang = auth.user.language;
   const sb = getServiceRoleClient();
 
-  const [skusRes, itemsRes, unitsRes, measuresRes] = await Promise.all([
+  const [skusRes, itemsRes, unitsRes, measuresRes, productsRes] = await Promise.all([
     sb
       .from("vendor_items")
       .select("id, name, pack_format, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each")
@@ -72,6 +72,15 @@ export default async function AdminRecipesNewPage({
       .from("measure_units")
       .select("label, dimension, to_base_factor")
       .returns<Array<{ label: string; dimension: string; to_base_factor: number | string }>>(),
+    // Products a recipe line may pin instead of one vendor's SKU (0179). Read the
+    // same way every other picker on this page is; an error yields [] and the
+    // product affordance simply does not render.
+    sb
+      .from("products")
+      .select("id, name, unit_oz")
+      .eq("active", true)
+      .order("name")
+      .returns<Array<{ id: string; name: string; unit_oz: number | string | null }>>(),
   ]);
 
   const skus = (skusRes.data ?? []).map((s) => ({
@@ -85,6 +94,11 @@ export default async function AdminRecipesNewPage({
     avgOzPerEach: s.avg_oz_per_each != null ? Number(s.avg_oz_per_each) : null,
   }));
   const items = (itemsRes.data ?? []).map((i) => ({ id: i.id, name: i.name }));
+  const products = (productsRes.data ?? []).map((p) => ({
+    id: p.id,
+    name: p.name,
+    unitOz: p.unit_oz != null ? Number(p.unit_oz) : null,
+  }));
   const unitOptions = (unitsRes.data ?? []).map((u) => ({
     id: u.id,
     label: u.label,
@@ -109,6 +123,7 @@ export default async function AdminRecipesNewPage({
         recipe={null}
         skus={skus}
         items={items}
+        products={products}
         unitOptions={unitOptions}
         measures={measures}
         level={level}

@@ -35,6 +35,7 @@ import type { RegistryOption } from "@/lib/admin/skus";
 import type { TranslationKey } from "@/lib/i18n/types";
 import type { MeasureUnitFactor, RecipeInputSku } from "@/lib/recipe-math";
 import { ozForRecipeInput } from "@/lib/recipe-math";
+import { productInputBasis } from "@/lib/products-shared";
 import { postJson, resolveErrorKey } from "./shared";
 
 const rk = (k: string): TranslationKey => k as TranslationKey;
@@ -53,12 +54,21 @@ export interface RecipeBuilderSku extends RecipeInputSku {
   name: string;
 }
 
+/** A PRODUCT the recipe can pin instead of one vendor's SKU (0179). */
+export interface RecipeBuilderProduct {
+  id: string;
+  name: string;
+  /** products.unit_oz — what ONE unit weighs. null = a count-denominated line refuses. */
+  unitOz: number | null;
+}
+
 // ── Draft input/output shapes ────────────────────────────────────────────────
 interface DraftInput {
   _key: number;
-  kind: "sku" | "item";
+  kind: "sku" | "item" | "product";
   componentSkuId: string | null;
   componentItemId: string | null;
+  componentProductId: string | null;
   componentName: string;
   quantity: number;
   unit: string | null;
@@ -75,13 +85,14 @@ interface DraftOutput {
   outputContainerLabel: string | null;
 }
 
-type InputKind = "sku" | "item";
+type InputKind = "sku" | "item" | "product";
 
 // ── RecipeBuilder ────────────────────────────────────────────────────────────
 export function RecipeBuilder({
   recipe,
   skus,
   items,
+  products = [],
   unitOptions,
   measures,
   level,
@@ -91,6 +102,8 @@ export function RecipeBuilder({
   recipe: RecipeView | null;
   skus: RecipeBuilderSku[];
   items: Array<{ id: string; name: string }>;
+  /** Active products (0179). Empty → the product affordance never renders. */
+  products?: RecipeBuilderProduct[];
   unitOptions: Array<{ id: string; label: string }>;
   measures: Map<string, MeasureUnitFactor>;
   level: number;
@@ -400,6 +413,7 @@ export function RecipeBuilder({
         draftInputs={draftInputs}
         skus={skus}
         items={items}
+        products={products}
         measures={measures}
         unitRegistryOptions={unitRegistryOptions}
         canEdit={canEdit}
@@ -521,6 +535,7 @@ function ConsumesSection({
   draftInputs,
   skus,
   items,
+  products,
   measures,
   unitRegistryOptions,
   canEdit,
@@ -535,6 +550,7 @@ function ConsumesSection({
   draftInputs: DraftInput[];
   skus: RecipeBuilderSku[];
   items: Array<{ id: string; name: string }>;
+  products: RecipeBuilderProduct[];
   measures: Map<string, MeasureUnitFactor>;
   unitRegistryOptions: RegistryOption[];
   canEdit: boolean;
@@ -570,10 +586,83 @@ function ConsumesSection({
   const [itemQty, setItemQty] = useState("");
   const [itemUnit, setItemUnit] = useState("");
 
+  // Product form state (0179)
+  const [productId, setProductId] = useState("");
+  const [productQty, setProductQty] = useState("");
+  const [productUnit, setProductUnit] = useState("");
+  const [productPortioned, setProductPortioned] = useState(false);
+
   const resetForms = () => {
     setSkuId(""); setSkuQty(""); setSkuUnit(""); setSkuPortioned(false);
     setItemId(""); setItemQty(""); setItemUnit("");
+    setProductId(""); setProductQty(""); setProductUnit(""); setProductPortioned(false);
     setErrorMsg(null);
+  };
+
+  // ── Product line: MEASURE UNITS ONLY (deviation D3) ────────────────────────
+  // The unit control offers the measure registry and nothing else — never a SKU's
+  // pack or chain label, because "1 case" of one vendor's ham is not "1 case" of
+  // another's and a product has no honest way to choose. The server refuses such a
+  // line (`product_line_needs_measure_unit`); the UI expresses the same rule so an
+  // author cannot author the refusal in the first place.
+  const measureLabels = [...measures.keys()].sort((a, b) => a.localeCompare(b));
+  const selectedProduct = products.find((p) => p.id === productId) ?? null;
+  /** The measure-only basis a product line resolves through — the SAME pure
+   *  function the flatten uses, so this readout cannot disagree with the board. */
+  const productBasis: RecipeInputSku | null = selectedProduct
+    ? productInputBasis({ productId: selectedProduct.id, unitOz: selectedProduct.unitOz }, null)
+    : null;
+  const productOzReadout: string | null = (() => {
+    if (!productBasis || !productUnit || !productQty) return null;
+    const qty = Number(productQty);
+    if (!Number.isFinite(qty) || qty <= 0) return null;
+    const oz = ozForRecipeInput(qty, productUnit, productBasis, measures);
+    if (oz == null) return null;
+    return `≈ ${oz.toFixed(1)} oz`;
+  })();
+  /** A count-denominated line on a product nobody has weighed cannot resolve —
+   *  say so HERE rather than letting it read `unresolved` on the cost board. */
+  const productNeedsUnitOz =
+    selectedProduct != null &&
+    selectedProduct.unitOz == null &&
+    productUnit !== "" &&
+    measures.get(productUnit)?.dimension !== "weight";
+
+  const submitProductInput = async () => {
+    if (busy) return;
+    setErrorMsg(null);
+    const qty = Number(productQty);
+    if (!productId) { setErrorMsg(t(rk("recipes.error.invalid_component_product"))); return; }
+    if (!Number.isFinite(qty) || qty <= 0) { setErrorMsg(t(rk("recipes.error.invalid_quantity"))); return; }
+    if (!productUnit) { setErrorMsg(t(rk("recipes.error.product_line_needs_measure_unit"))); return; }
+    if ((await requestStepUp("B")) !== "ok") return;
+
+    if (isDraft) {
+      onAddDraftInput({
+        kind: "product",
+        componentSkuId: null,
+        componentItemId: null,
+        componentProductId: productId,
+        componentName: selectedProduct?.name ?? productId,
+        quantity: qty,
+        unit: productUnit,
+        eachContainerLabel: null,
+        portioned: productPortioned,
+      });
+      resetForms(); setAddKind(null);
+    } else {
+      if (!recipeId) return;
+      setBusy(true);
+      const result = await postJson(`/api/admin/recipes/${recipeId}/inputs`, {
+        componentProductId: productId,
+        quantity: qty,
+        unit: productUnit,
+        portioned: productPortioned,
+      });
+      setBusy(false);
+      if (result.ok) { resetForms(); setAddKind(null); router.refresh(); }
+      else setErrorMsg(t(resolveErrorKey(result.code)));
+    }
   };
 
   // Derive unit options for the selected SKU
@@ -618,6 +707,7 @@ function ConsumesSection({
         kind: "sku",
         componentSkuId: skuId,
         componentItemId: null,
+        componentProductId: null,
         componentName: skuObj?.name ?? skuId,
         quantity: qty,
         unit: skuUnit || null,
@@ -656,6 +746,7 @@ function ConsumesSection({
         kind: "item",
         componentSkuId: null,
         componentItemId: itemId,
+        componentProductId: null,
         componentName: itemObj?.name ?? itemId,
         quantity: qty,
         unit: itemUnit.trim() || null,
@@ -705,6 +796,7 @@ function ConsumesSection({
               key={di._key}
               di={di}
               skus={skus}
+              products={products}
               measures={measures}
               onRemove={() => onRemoveDraftInput(di._key)}
             />
@@ -734,6 +826,75 @@ function ConsumesSection({
               >
                 {t(rk("recipes.builder.add_item_input"))}
               </button>
+              {/* Product pin (0179) — only offered where products exist, so a system
+                  with none never sees a third button it cannot use. */}
+              {products.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => { resetForms(); setAddKind("product"); }}
+                  className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-xs font-bold text-co-text hover:border-co-text"
+                >
+                  {t(rk("recipes.builder.add_product_input"))}
+                </button>
+              ) : null}
+            </div>
+          ) : addKind === "product" ? (
+            <div className="rounded-lg border-2 border-co-gold-deep bg-co-surface p-3">
+              <h3 className="text-sm font-extrabold text-co-text">{t(rk("recipes.builder.add_product_input"))}</h3>
+              <p className="mt-1 text-xs text-co-text-muted">{t(rk("recipes.input.product_hint"))}</p>
+              <div className="mt-3 flex flex-col gap-3">
+                <label className="block">
+                  <span className="text-sm font-bold text-co-text">{t(rk("recipes.input.pick_product"))}</span>
+                  <select className={fieldCls} value={productId} disabled={busy}
+                    onChange={(e) => { setProductId(e.target.value); setProductUnit(""); }}>
+                    <option value="">{t(rk("recipes.input.pick_product"))}</option>
+                    {products.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="text-sm font-bold text-co-text">{t(rk("recipes.input.quantity"))}</span>
+                  <input className={fieldCls} type="number" min={0.001} step="any" inputMode="decimal"
+                    value={productQty} disabled={busy} onChange={(e) => setProductQty(e.target.value)} />
+                </label>
+                {/* MEASURE UNITS ONLY — never a vendor's pack label (D3). */}
+                <label className="block">
+                  <span className="text-sm font-bold text-co-text">{t(rk("recipes.input.unit"))}</span>
+                  <select className={fieldCls} value={productUnit} disabled={busy || !productId}
+                    onChange={(e) => setProductUnit(e.target.value)}>
+                    <option value="">{t(rk("recipes.input.unit_placeholder"))}</option>
+                    {measureLabels.map((u) => (<option key={u} value={u}>{u}</option>))}
+                  </select>
+                </label>
+                {productOzReadout ? (
+                  <p className="text-xs text-co-text-muted">
+                    {productQty} {productUnit} {productOzReadout}
+                  </p>
+                ) : null}
+                {productNeedsUnitOz ? (
+                  <p className="text-xs text-co-warning-text">{t(rk("recipes.input.product_needs_unit_oz"))}</p>
+                ) : null}
+                <label className="flex min-h-[44px] items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={productPortioned}
+                    disabled={busy}
+                    onChange={(e) => setProductPortioned(e.target.checked)}
+                    className="h-5 w-5 rounded border-2 border-co-border"
+                  />
+                  <span className="text-sm font-bold text-co-text">{t(rk("recipes.input.portioned"))}</span>
+                </label>
+                {errorMsg ? <p className="text-sm text-co-cta-text">{errorMsg}</p> : null}
+                <div className="flex justify-end gap-2">
+                  <button type="button" disabled={busy} onClick={() => { resetForms(); setAddKind(null); }}
+                    className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-border bg-co-surface px-4 text-sm font-bold text-co-text disabled:opacity-50">
+                    {t(rk("recipes.builder.cancel"))}
+                  </button>
+                  <button type="button" disabled={busy || !productId || !productQty || !productUnit} onClick={() => void submitProductInput()}
+                    className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-gold-deep bg-co-gold px-4 text-sm font-bold uppercase tracking-[0.1em] text-co-text disabled:opacity-50">
+                    {t(rk("recipes.builder.save"))}
+                  </button>
+                </div>
+              </div>
             </div>
           ) : addKind === "sku" ? (
             <div className="rounded-lg border-2 border-co-gold-deep bg-co-surface p-3">
@@ -842,11 +1003,13 @@ function ConsumesSection({
 function DraftInputRow({
   di,
   skus,
+  products,
   measures,
   onRemove,
 }: {
   di: DraftInput;
   skus: RecipeBuilderSku[];
+  products: RecipeBuilderProduct[];
   measures: Map<string, MeasureUnitFactor>;
   onRemove: () => void;
 }) {
@@ -868,11 +1031,24 @@ function DraftInputRow({
       if (oz != null) ozNote = `≈ ${oz.toFixed(1)} oz`;
     }
   }
+  // …and for a draft PRODUCT input, through the SAME measure-only basis the flatten
+  // uses (productInputBasis), never through whichever member happens to be primary.
+  if (di.kind === "product" && di.componentProductId && di.unit) {
+    const p = products.find((x) => x.id === di.componentProductId);
+    if (p) {
+      const oz = ozForRecipeInput(di.quantity, di.unit, productInputBasis({ productId: p.id, unitOz: p.unitOz }, null), measures);
+      if (oz != null) ozNote = `≈ ${oz.toFixed(1)} oz`;
+    }
+  }
 
   const metaParts: string[] = [];
   if (di.eachContainerLabel) metaParts.push(t(rk("recipes.input.container_label")) + ": " + di.eachContainerLabel);
   if (di.portioned) metaParts.push(t(rk("recipes.input.portioned_tag")));
-  metaParts.push(di.kind === "sku" ? t(rk("recipes.input.sku_tag")) : t(rk("recipes.input.item_tag")));
+  metaParts.push(
+    di.kind === "product" ? t(rk("recipes.input.product_tag"))
+      : di.kind === "sku" ? t(rk("recipes.input.sku_tag"))
+        : t(rk("recipes.input.item_tag")),
+  );
   if (ozNote) metaParts.push(ozNote);
   const meta = metaParts.join(" · ");
 
