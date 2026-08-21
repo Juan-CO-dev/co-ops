@@ -16,6 +16,7 @@ import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadSkus, loadPackFormats, loadMeasureUnits, loadLocationSkuSettings } from "@/lib/admin/skus";
+import { listProducts, ProductError, type ProductView } from "@/lib/products";
 import { loadVendors } from "@/lib/admin/vendors";
 import { loadCurrentSkuPrices, computeSkuCostPerOz, loadSkuUsageMap, loadSkuReceivingLedger, loadSkuConsumption, type SkuConsumption } from "@/lib/admin/cost";
 import { skuPackComplete, skuReadiness, type Readiness } from "@/lib/readiness";
@@ -47,6 +48,24 @@ export default async function AdminSkusPage() {
     id: (r as { id: string }).id,
     name: (r as { name: string }).name,
   }));
+
+  // Product registry (0179) — the SKU form's membership picker. The registry is
+  // ALSO where membership is read from: vendor_items.product_id stays out of the
+  // SKU loader's column list until migration 0179 is applied (GATE M1), so this
+  // page degrades to "no products, no picker" and the catalog is unchanged.
+  let productList: ProductView[] = [];
+  try {
+    productList = await listProducts(auth);
+  } catch (e) {
+    if (!(e instanceof ProductError && e.code === "products_schema_pending")) throw e;
+  }
+  const products = productList
+    .filter((p) => p.active)
+    .map((p) => ({ id: p.id, name: p.name }));
+  const productIdBySku: Record<string, string> = {};
+  for (const p of productList) {
+    for (const m of p.members) productIdBySku[m.skuId] = p.id;
+  }
 
   const prices = await loadCurrentSkuPrices(skus.map((s) => s.id));
   const costPerOz = computeSkuCostPerOz(skus, prices, measureUnits);
@@ -122,6 +141,8 @@ export default async function AdminSkusPage() {
         chainsBySku={chainsBySku}
         chainUnverifiedBySku={chainUnverifiedBySku}
         overlaysBySku={overlaysBySku}
+        products={products}
+        productIdBySku={productIdBySku}
         actorLevel={level}
         canManage={level >= 7}
       />

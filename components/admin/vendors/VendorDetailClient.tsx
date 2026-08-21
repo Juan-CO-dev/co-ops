@@ -33,7 +33,7 @@ import { postJson, resolveErrorKey, ORDERING_METHODS } from "./shared";
 import { MultiSelectChips } from "./MultiSelectChips";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import type { RegistryOption, MeasureUnitOption, SkuView } from "@/lib/admin/skus";
-import type { SkuFormLocationOption } from "@/components/admin/skus/SkuBuilder";
+import type { SkuFormLocationOption, SkuFormProductOption } from "@/components/admin/skus/SkuBuilder";
 import type { LocationSkuOverlayView } from "@/components/admin/skus/SkuLocationOverlay";
 import { VendorSkusCard } from "@/components/admin/skus/VendorSkusCard";
 import type { SkuCostInfo } from "@/components/admin/skus/SkuCostPanel";
@@ -63,6 +63,8 @@ export function VendorDetailClient({
   skuChains,
   skuChainUnverified,
   skuOverlays,
+  skuProducts,
+  skuProductIdBySku,
   actorLevel,
 }: {
   vendor: VendorView;
@@ -86,6 +88,10 @@ export function VendorDetailClient({
   skuChainUnverified: Record<string, boolean>;
   /** VO-7: per-location overlay rows per SKU (edit-mode overlay section). */
   skuOverlays: Record<string, LocationSkuOverlayView[]>;
+  /** Products a SKU may join (0179); empty until the registry has rows. */
+  skuProducts: SkuFormProductOption[];
+  /** skuId -> its product (0179), seeded from the registry. */
+  skuProductIdBySku: Record<string, string>;
   actorLevel: number;
 }) {
   const { t } = useTranslation();
@@ -147,6 +153,8 @@ export function VendorDetailClient({
         chainsBySku={skuChains}
         chainUnverifiedBySku={skuChainUnverified}
         overlaysBySku={skuOverlays}
+        products={skuProducts}
+        productIdBySku={skuProductIdBySku}
         actorLevel={actorLevel}
         canManage={canManage}
       />

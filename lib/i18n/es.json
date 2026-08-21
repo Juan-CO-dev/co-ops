@@ -3728,5 +3728,7 @@
   "admin.products.error.not_a_member": "Agrega ese SKU a este producto antes de hacerlo principal.",
   "admin.products.error.primary_must_be_reassigned": "Elige otro principal primero — este SKU es el principal de una ubicación.",
   "admin.products.error.primary_not_found": "Esa designación de principal ya no existe.",
-  "admin.products.error.products_schema_pending": "El registro de productos llega con la migración 0179."
+  "admin.products.error.products_schema_pending": "El registro de productos llega con la migración 0179.",
+  "admin.skus.field.product": "Producto",
+  "admin.skus.product_none": "— ninguno (solo este) —"
 }

@@ -30,6 +30,7 @@ import { SkuCostPanel, type SkuCostInfo } from "./SkuCostPanel";
 import { SkuBuilder } from "./SkuBuilder";
 import type {
   SkuFormLocationOption,
+  SkuFormProductOption,
   SkuFormValues,
   SkuFormVendorOption,
 } from "./SkuBuilder";
@@ -60,6 +61,8 @@ export function SkuCatalogClient({
   chainsBySku,
   chainUnverifiedBySku,
   overlaysBySku,
+  products,
+  productIdBySku,
   actorLevel,
   canManage,
 }: {
@@ -78,6 +81,13 @@ export function SkuCatalogClient({
   chainUnverifiedBySku: Record<string, boolean>;
   /** VO-7: per-location overlay rows per SKU (edit-mode overlay section). */
   overlaysBySku: Record<string, LocationSkuOverlayView[]>;
+  /** Products a SKU may join (0179). Empty until the registry has rows — the
+   *  builder then renders no picker and sends no productId key. */
+  products: SkuFormProductOption[];
+  /** skuId → its product (0179), seeded from the registry rather than from the
+   *  SKU loader (vendor_items.product_id is not in SKU_COLS while 0179 is
+   *  unapplied). Absent = implicit singleton. */
+  productIdBySku: Record<string, string>;
   actorLevel: number;
   canManage: boolean; // GM+
 }) {
@@ -259,6 +269,8 @@ export function SkuCatalogClient({
           initialChainUnverified={chainUnverifiedBySku[s.id] ?? false}
           vendors={vendors}
           locations={locations}
+          products={products}
+          initialProductId={productIdBySku[s.id] ?? null}
           packFormats={packFormats}
           measureUnits={measureUnits}
           actorLevel={actorLevel}
@@ -390,6 +402,7 @@ export function SkuCatalogClient({
           <SkuBuilder
             vendors={vendors}
             locations={locations}
+            products={products}
             packFormats={packFormats}
             measureUnits={measureUnits}
             actorLevel={actorLevel}

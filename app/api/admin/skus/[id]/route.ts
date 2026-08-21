@@ -28,6 +28,8 @@ const UPDATE_KEYS = [
   "weekendPar",
   "notes",
   "skuClass",
+  // Product membership (0179). Key-present null = detach to implicit singleton.
+  "productId",
 ] as const;
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -125,6 +127,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if ("skuClass" in b) {
       if (!isSkuClass(b.skuClass)) return jsonError(400, "invalid_payload", { field: "skuClass" });
       changes.skuClass = b.skuClass as SkuClass;
+    }
+    if ("productId" in b) {
+      if (b.productId !== null && typeof b.productId !== "string") return jsonError(400, "invalid_payload", { field: "productId" });
+      changes.productId = b.productId as string | null;
     }
 
     await updateSku(ctx, { id, changes });

@@ -3728,5 +3728,7 @@
   "admin.products.error.not_a_member": "Attach that SKU to this product before making it primary.",
   "admin.products.error.primary_must_be_reassigned": "Pick a different primary first — this SKU is the primary for a location.",
   "admin.products.error.primary_not_found": "That primary designation no longer exists.",
-  "admin.products.error.products_schema_pending": "The product registry arrives with migration 0179."
+  "admin.products.error.products_schema_pending": "The product registry arrives with migration 0179.",
+  "admin.skus.field.product": "Product",
+  "admin.skus.product_none": "— none (singleton) —"
 }
