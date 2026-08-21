@@ -3222,6 +3222,7 @@
   "readiness.reason.sell_incomplete": "venta directa sin porción/precio",
   "readiness.reason.upstream_recipe": "su receta no está lista",
   "readiness.reason.duplicate_producers": "una sola receta productora ({count} están activas — los costos siguen solo a una)",
+  "readiness.reason.unresolved_product": "un producto utilizable en {count} línea(s) — ningún artículo de proveedor activo, o nada dice cuánto pesa una unidad",
   "readiness.hub.count": "{count} sin alistar",
   "catering.hub.title": "Catering",
   "catering.hub.subtitle": "Flujo, cotizaciones y clientes en un solo lugar.",

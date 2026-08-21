@@ -147,7 +147,7 @@ async function outputNamesByRecipe(recipeIds: string[]): Promise<Map<string, str
   }
   return out;
 }
-async function namesById(table: "items" | "menu_items" | "vendor_items", ids: string[]): Promise<Map<string, string>> {
+async function namesById(table: "items" | "menu_items" | "vendor_items" | "products", ids: string[]): Promise<Map<string, string>> {
   const m = new Map<string, string>(); if (ids.length === 0) return m;
   const sb = getServiceRoleClient();
   const { data } = await sb.from(table).select("id, name").in("id", ids).returns<Array<{ id: string; name: string }>>();
@@ -162,18 +162,25 @@ export async function loadRecipe(actor: AuthContext, recipeId: string): Promise<
     .maybeSingle<{ id: string; name: string; name_es: string | null; recipe_type: RecipeType; batch_yield: number | string; directions: string | null; directions_es: string | null; active: boolean }>();
   if (!r) return null;
   const { data: inRows } = await sb.from("recipe_inputs").select("*").eq("recipe_id", recipeId).order("display_order")
-    .returns<Array<{ id: string; component_sku_id: string | null; component_item_id: string | null; quantity: number | string; unit: string | null; each_container_label: string | null; portioned: boolean; display_order: number }>>();
+    .returns<Array<{ id: string; component_sku_id: string | null; component_item_id: string | null; component_product_id: string | null; quantity: number | string; unit: string | null; each_container_label: string | null; portioned: boolean; display_order: number }>>();
   const { data: outRows } = await sb.from("recipe_outputs").select("*").eq("recipe_id", recipeId).order("display_order")
     .returns<Array<{ id: string; output_item_id: string | null; output_menu_item_id: string | null; yield: number | string; output_container_label: string | null; oz_alloc_share: number | string | null; display_order: number }>>();
   const skuNames = await namesById("vendor_items", (inRows ?? []).map((x) => x.component_sku_id).filter((v): v is string => !!v));
   const subNames = await namesById("items", (inRows ?? []).map((x) => x.component_item_id).filter((v): v is string => !!v));
+  // Product lines resolve their own name (0179) — without this lookup a re-pointed
+  // line falls through to the item branch and renders "(item)".
+  const productNames = await namesById("products", (inRows ?? []).map((x) => x.component_product_id).filter((v): v is string => !!v));
   const outItemNames = await namesById("items", (outRows ?? []).map((x) => x.output_item_id).filter((v): v is string => !!v));
   const outMenuNames = await namesById("menu_items", (outRows ?? []).map((x) => x.output_menu_item_id).filter((v): v is string => !!v));
   return {
     id: r.id, name: r.name, nameEs: r.name_es, recipeType: r.recipe_type, batchYield: num(r.batch_yield) ?? 1,
     directions: r.directions, directionsEs: r.directions_es, active: r.active,
     inputs: (inRows ?? []).map((x) => ({ id: x.id, componentSkuId: x.component_sku_id, componentItemId: x.component_item_id,
-      componentName: x.component_sku_id ? (skuNames.get(x.component_sku_id) ?? "(sku)") : (subNames.get(x.component_item_id ?? "") ?? "(item)"),
+      componentProductId: x.component_product_id,
+      componentName: x.component_product_id
+        ? (productNames.get(x.component_product_id) ?? "(product)")
+        : x.component_sku_id ? (skuNames.get(x.component_sku_id) ?? "(sku)") : (subNames.get(x.component_item_id ?? "") ?? "(item)"),
+      kind: x.component_product_id ? ("product" as const) : x.component_sku_id ? ("sku" as const) : ("item" as const),
       quantity: num(x.quantity) ?? 0, unit: x.unit, eachContainerLabel: x.each_container_label, portioned: x.portioned, displayOrder: x.display_order })),
     outputs: (outRows ?? []).map((x) => ({ id: x.id, outputItemId: x.output_item_id, outputMenuItemId: x.output_menu_item_id,
       outputName: x.output_item_id ? (outItemNames.get(x.output_item_id) ?? "(item)") : (outMenuNames.get(x.output_menu_item_id ?? "") ?? "(menu item)"),

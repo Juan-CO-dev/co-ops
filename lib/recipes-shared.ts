@@ -16,9 +16,20 @@ export const MENU_PRICE_MIN = 8;
 
 export type RecipeType = "production" | "consumer";
 
+/** Which of the THREE component targets a recipe line names (0179). */
+export type RecipeInputKind = "sku" | "item" | "product";
+
 export interface RecipeInputView {
   id: string; componentSkuId: string | null; componentItemId: string | null;
-  componentName: string; quantity: number; unit: string | null;
+  componentProductId: string | null;
+  /**
+   * The target's own name. A product line resolves through the PRODUCTS lookup —
+   * without it a re-pointed line renders "(item)", which is both wrong and silent.
+   */
+  componentName: string;
+  /** Discriminator so the builder can render the product chip without re-deriving it. */
+  kind: RecipeInputKind;
+  quantity: number; unit: string | null;
   eachContainerLabel: string | null; portioned: boolean; displayOrder: number;
 }
 export interface RecipeOutputView {

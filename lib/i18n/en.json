@@ -3222,6 +3222,7 @@
   "readiness.reason.sell_incomplete": "sold-directly missing portion/price",
   "readiness.reason.upstream_recipe": "its recipe isn't ready",
   "readiness.reason.duplicate_producers": "one producing recipe ({count} are active — costs follow only one of them)",
+  "readiness.reason.unresolved_product": "a usable product on {count} line(s) — no active vendor item, or nothing says what one unit weighs",
   "readiness.hub.count": "{count} not ready",
   "catering.hub.title": "Catering",
   "catering.hub.subtitle": "Pipeline, quotes, and customers in one place.",
