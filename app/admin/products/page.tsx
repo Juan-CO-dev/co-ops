@@ -15,6 +15,7 @@
 import { redirect } from "next/navigation";
 
 import { requireSessionFromHeaders } from "@/lib/session";
+import { lockLocationContext } from "@/lib/locations";
 import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -47,10 +48,14 @@ export default async function AdminProductsPage() {
   const skuOptions = skus
     .filter((s) => s.active)
     .map((s) => ({ id: s.id, name: s.name, vendorName: s.vendorName, active: s.active }));
-  const locations = (locRes.data ?? []).map((r) => ({
-    id: (r as { id: string }).id,
-    name: (r as { name: string }).name,
-  }));
+  // SCOPED to the actor's shops (2026-08-21 T0 sweep). The per-location primary rows
+  // are a WRITE surface, so listing every shop in the tenant handed a location-bound
+  // GM a control for a shop they are not assigned to — the UI half of the bind that
+  // setPrimary now enforces server-side. All-locations roles keep the full list.
+  const actorLocations = { role: auth.user.role, locations: auth.locations };
+  const locations = (locRes.data ?? [])
+    .map((r) => ({ id: (r as { id: string }).id, name: (r as { name: string }).name }))
+    .filter((l) => lockLocationContext(actorLocations, l.id));
 
   return (
     <div>

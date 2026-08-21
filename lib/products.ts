@@ -30,6 +30,7 @@ import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import { resolveActive } from "@/lib/location-sku-shared";
+import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import type { AuthContext } from "@/lib/session";
 import {
   resolveProductMember,
@@ -57,6 +58,9 @@ export class ProductError extends Error {
   }
 }
 
+function actorLoc(actor: AuthContext): LocationActor {
+  return { role: actor.user.role, locations: actor.locations };
+}
 function requireLevel(actor: AuthContext, min: number): void {
   if (getRoleLevel(actor.user.role) < min) {
     throw new ProductError(403, "forbidden", "Insufficient role level for this action");
@@ -680,14 +684,31 @@ export async function recordResolutionFlips(
     const productIds = [...resolutions.keys()];
     // The last audited answer per (location, product). One batched read over the
     // flip rows for these products; newest first, first-seen-wins per product.
+    //
+    // `occurred_at` IS THE TIMESTAMP COLUMN ON audit_log — there is no `created_at`
+    // (SIM-PI-3, 2026-08-21). The original spelling made this SELECT 400 on every
+    // invocation, and because the function is fail-open and dispatched with `void`
+    // from materializeDailyDepletion, the failure was completely silent: the
+    // resolution-flip trail the spec promises ("why did ham cost move Tuesday always
+    // has an answer") was never written even once. A schema-name mismatch inside a
+    // fail-open path is invisible to a diff review and to a smoke; it took a sim run
+    // through the real writer to surface it.
+    //
+    // The location filter now runs IN SQL rather than over the fetched page: with the
+    // JS filter, one location's flip volume could evict the other's history out of the
+    // 500-row window, and a product whose prior row fell off is re-seeded as a first
+    // observation — losing exactly the event this trail exists to record. `id` breaks
+    // an occurred_at tie so the first-seen-wins map below is fed a TOTAL order.
     const { data: priorRows, error } = await sb
       .from("audit_log")
-      .select("resource_id, metadata, created_at")
+      .select("resource_id, metadata, occurred_at")
       .eq("action", "product.resolution_flip")
       .in("resource_id", productIds)
-      .order("created_at", { ascending: false })
+      .filter("metadata->>location_id", "eq", locationId)
+      .order("occurred_at", { ascending: false })
+      .order("id", { ascending: false })
       .limit(500)
-      .returns<Array<{ resource_id: string; metadata: Record<string, unknown> | null; created_at: string }>>();
+      .returns<Array<{ resource_id: string; metadata: Record<string, unknown> | null; occurred_at: string }>>();
     if (error) {
       console.error("[products] recordResolutionFlips prior lookup failed:", error.message);
       return;
@@ -695,7 +716,6 @@ export async function recordResolutionFlips(
     const lastTo = new Map<string, string | null>();
     for (const r of priorRows ?? []) {
       const meta = r.metadata ?? {};
-      if (meta["location_id"] !== locationId) continue;
       if (lastTo.has(r.resource_id)) continue; // newest wins (ordered desc).
       const to = meta["to_sku_id"];
       lastTo.set(r.resource_id, typeof to === "string" ? to : null);
@@ -962,6 +982,15 @@ export async function setPrimary(
   args: { productId: string; locationId: string | null; primarySkuId: string; note?: string | null },
 ): Promise<void> {
   requireLevel(actor, PRODUCT_WRITE_MIN);
+  // TENANCY BIND (2026-08-21 T0 sweep). `locationId` arrives from the client and was
+  // shape-checked only, so a location-bound GM could designate the primary vendor for
+  // a shop they are not assigned to — silently re-pointing THAT shop's resolution for
+  // costing, counts and the order walk. The level gate is only half; the record has to
+  // be bound too (the IDOR two-halves law). `null` is the GLOBAL default row and is
+  // deliberately org-scope, so only a real location id is bound.
+  if (args.locationId !== null && !lockLocationContext(actorLoc(actor), args.locationId)) {
+    throw new ProductError(404, "not_found", "Location not found");
+  }
   const sb = getServiceRoleClient();
 
   const sku = await loadSkuMembership(args.primarySkuId);
