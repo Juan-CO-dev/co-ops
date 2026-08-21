@@ -364,12 +364,15 @@ function ProductRow({
 }
 
 function Pill({ tone, label }: { tone: "danger" | "warning" | "muted"; label: string }) {
+  // Neutral tone rides the live status-chip spelling (bg-co-text/10, the
+  // CapacityClient "unconfigured" chip) — co-surface-2 is a hover/pressed token,
+  // never a badge tint, and co-warning/danger-surface carry status meaning.
   const cls =
     tone === "danger"
       ? "bg-co-danger-surface text-co-cta-text"
       : tone === "warning"
         ? "bg-co-warning-surface text-co-warning-text"
-        : "bg-co-surface-2 text-co-text-muted";
+        : "bg-co-text/10 text-co-text-muted";
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] ${cls}`}>
       {label}
@@ -527,6 +530,14 @@ function PrimaryScopeRow({
   const { t } = useTranslation();
   const current = product.primaries.find((p) => p.locationId === locationId)?.primarySkuId ?? "";
   const [choice, setChoice] = useState(current);
+  // Prop-driven state reset, the house pattern: compare-during-render, never an
+  // effect (router.refresh() re-renders with fresh props but does NOT reset
+  // client state, so a server-side change would otherwise leave a stale pick).
+  const [seenCurrent, setSeenCurrent] = useState(current);
+  if (seenCurrent !== current) {
+    setSeenCurrent(current);
+    setChoice(current);
+  }
   const selectId = useId();
 
   const dirty = choice !== "" && choice !== current;
@@ -588,9 +599,19 @@ function UnitOzPanel({
   onMutate: (tier: "A" | "B", url: string, body: unknown, method?: "POST" | "PATCH" | "DELETE") => Promise<boolean>;
 }) {
   const { t } = useTranslation();
-  const [value, setValue] = useState(product.unitOz != null ? String(product.unitOz) : "");
+  const serverValue = product.unitOz != null ? String(product.unitOz) : "";
+  const [value, setValue] = useState(serverValue);
   const [cls, setCls] = useState(product.unitOzClass ?? "");
   const [note, setNote] = useState(product.unitOzSourceNote ?? "");
+  // Same compare-during-render reset as the primary picker: a refreshed prop wins
+  // over stale client state (AGENTS.md — never an effect for this).
+  const [seenValue, setSeenValue] = useState(serverValue);
+  if (seenValue !== serverValue) {
+    setSeenValue(serverValue);
+    setValue(serverValue);
+    setCls(product.unitOzClass ?? "");
+    setNote(product.unitOzSourceNote ?? "");
+  }
   const ozId = useId();
   const clsId = useId();
   const noteId = useId();
