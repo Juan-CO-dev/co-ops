@@ -67,8 +67,16 @@ export default async function AdminSkusPage() {
     for (const m of p.members) productIdBySku[m.skuId] = p.id;
   }
 
+  // ── Pack chains (batch, ONE query — loadRecipeGraph law) so the SkuBuilder
+  //    seeds Section B without a lazy GET, the catalog can show "unchained (N)" +
+  //    a per-chain "unverified" badge, skuPackComplete is chain-aware (PR-C), AND
+  //    $/oz rides the same oz resolution as the costing board (2026-08-21). It is
+  //    loaded HERE, above the cost derivation, because computeSkuCostPerOz now
+  //    requires it. ──
+  const chainMap = await loadSkuPackChains(skus.map((s) => s.id));
+
   const prices = await loadCurrentSkuPrices(skus.map((s) => s.id));
-  const costPerOz = computeSkuCostPerOz(skus, prices, measureUnits);
+  const costPerOz = computeSkuCostPerOz(skus, prices, measureUnits, chainMap);
   const usage = await loadSkuUsageMap();
   const skuCost: Record<string, { currentPrice: number | null; costPerOz: number | null; usedBy: string[] }> =
     Object.fromEntries(skus.map((s) => [s.id, { currentPrice: prices.get(s.id) ?? null, costPerOz: costPerOz.get(s.id) ?? null, usedBy: usage.get(s.id) ?? [] }]));
@@ -82,10 +90,6 @@ export default async function AdminSkusPage() {
   const overlaysBySku: Record<string, import("@/components/admin/skus/SkuLocationOverlay").LocationSkuOverlayView[]> =
     Object.fromEntries([...overlayMap.entries()]);
 
-  // ── Pack chains (batch, ONE query — loadRecipeGraph law) so the SkuBuilder
-  //    seeds Section B without a lazy GET, the catalog can show "unchained (N)" +
-  //    a per-chain "unverified" badge, AND skuPackComplete is chain-aware (PR-C). ──
-  const chainMap = await loadSkuPackChains(skus.map((s) => s.id));
   const measuresByLabel = new Map<string, MeasureUnitFactor>(
     measureUnits.map((m) => [m.label, { dimension: m.dimension, toBaseFactor: m.toBaseFactor }]),
   );
