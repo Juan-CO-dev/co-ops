@@ -69,14 +69,21 @@ export function RecipeInputRow({
         <div className="min-w-0">
           <p className="text-sm font-bold text-co-text">{label}</p>
           {retired ? (
-            <p
-              className="mt-1 inline-flex items-center rounded-full bg-co-surface px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-cta-text"
-              // The badge is the whole message, so it needs no separate label — but
-              // the row it indicts does: a screen reader must hear WHICH ingredient
-              // is discontinued, not just that something on the page is.
-              aria-label={t(rk("recipes.input.retired_aria"), { name: input.componentName })}
-            >
-              {t(rk("recipes.input.retired_badge"))}
+            <p className="mt-1">
+              {/* A screen reader must hear WHICH ingredient is discontinued, not just
+                  that something on the page is — and `aria-label` cannot deliver that
+                  here: the implicit `paragraph`/`generic` roles do not support naming
+                  from author, so the label would be silently dropped. The house
+                  sr-only + aria-hidden pair (ParGrid.tsx) is what actually speaks. */}
+              <span className="sr-only">
+                {t(rk("recipes.input.retired_aria"), { name: input.componentName })}
+              </span>
+              <span
+                aria-hidden
+                className="inline-flex items-center rounded-full bg-co-surface px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-cta-text"
+              >
+                {t(rk("recipes.input.retired_badge"))}
+              </span>
             </p>
           ) : null}
           {meta ? <p className="text-xs text-co-text-muted">{meta}</p> : null}
