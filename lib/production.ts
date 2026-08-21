@@ -86,7 +86,14 @@ export interface ProductionView {
  *  as an input. Reads the canonical `recipes` graph (recipe_inputs → recipe →
  *  recipe_outputs), matching prep-consumption / cost / readiness. Previously read
  *  the legacy `item_components` graph, which diverged from recipes after migration
- *  0104 — so recipe-authored items were invisible to the manual production form. */
+ *  0104 — so recipe-authored items were invisible to the manual production form.
+ *
+ *  THE AMPLIFIER FIX (multi-vendor audit P2, 2026-08-20): a recipe may pin a
+ *  PRODUCT rather than one vendor's SKU (0179). A product-pinned recipe expands to
+ *  EVERY member SKU here — because the cook standing at the bench with the backup
+ *  vendor's ham is making the same thing, and before this the dropdown derived
+ *  purely from pins so they simply could not record it. Both passes stay batched
+ *  (`.in(...)`) — the loadRecipeGraph law applies to this module too. */
 async function loadSkuToItems(skuIds: string[]): Promise<Record<string, Array<{ itemId: string; name: string }>>> {
   const out: Record<string, Array<{ itemId: string; name: string }>> = {};
   if (skuIds.length === 0) return out;
@@ -94,7 +101,35 @@ async function loadSkuToItems(skuIds: string[]): Promise<Record<string, Array<{ 
   // Recipe inputs that consume one of these SKUs.
   const { data: ins } = await sb.from("recipe_inputs").select("recipe_id, component_sku_id").in("component_sku_id", skuIds).not("component_sku_id", "is", null)
     .returns<Array<{ recipe_id: string; component_sku_id: string }>>();
-  const recipeIds = [...new Set((ins ?? []).map((i) => i.recipe_id))];
+
+  // PRODUCT pass: which of these SKUs are members of a product, and which recipes
+  // pin those products. One membership read + one pins read, both batched.
+  const { data: memberRows } = await sb.from("vendor_items").select("id, product_id")
+    .in("id", skuIds).not("product_id", "is", null)
+    .returns<Array<{ id: string; product_id: string }>>();
+  const membersByProduct = new Map<string, string[]>();
+  for (const m of memberRows ?? []) {
+    const list = membersByProduct.get(m.product_id) ?? [];
+    list.push(m.id);
+    membersByProduct.set(m.product_id, list);
+  }
+  const productIds = [...membersByProduct.keys()];
+  const productIns: Array<{ recipe_id: string; component_sku_id: string }> = [];
+  if (productIds.length > 0) {
+    const { data: pins } = await sb.from("recipe_inputs").select("recipe_id, component_product_id")
+      .in("component_product_id", productIds)
+      .returns<Array<{ recipe_id: string; component_product_id: string }>>();
+    for (const p of pins ?? []) {
+      for (const skuId of membersByProduct.get(p.component_product_id) ?? []) {
+        // Flattened into the same shape the SKU pass produces, so ONE downstream
+        // loop maps recipes to output items — no second, subtly different copy.
+        productIns.push({ recipe_id: p.recipe_id, component_sku_id: skuId });
+      }
+    }
+  }
+  const allIns = [...(ins ?? []), ...productIns];
+
+  const recipeIds = [...new Set(allIns.map((i) => i.recipe_id))];
   if (recipeIds.length === 0) return out;
   // Keep only ACTIVE recipes (inactive-edge rule, per readiness/consumption).
   const { data: activeRows } = await sb.from("recipes").select("id").in("id", recipeIds).eq("active", true).returns<Array<{ id: string }>>();
@@ -112,7 +147,7 @@ async function loadSkuToItems(skuIds: string[]): Promise<Record<string, Array<{ 
     for (const it of items ?? []) nameById.set(it.id, it.name);
   }
   // For each SKU input into an active recipe, expose that recipe's output items.
-  for (const i of ins ?? []) {
+  for (const i of allIns) {
     if (!activeRecipes.has(i.recipe_id)) continue;
     const list = out[i.component_sku_id] ?? (out[i.component_sku_id] = []);
     for (const itemId of itemsByRecipe.get(i.recipe_id) ?? []) {
@@ -205,7 +240,8 @@ export async function recordProduction(actor: AuthContext, input: RecordProducti
   if (!Number.isFinite(input.inputQty) || input.inputQty <= 0) throw new ProductionError(400, "invalid_input_qty", "Input qty must be positive");
   if (!Number.isFinite(input.outputQty) || input.outputQty <= 0) throw new ProductionError(400, "invalid_output_qty", "Output qty must be positive");
   const sb = getServiceRoleClient();
-  const { data: sku } = await sb.from("vendor_items").select("id").eq("id", input.inputSkuId).eq("active", true).maybeSingle<{ id: string }>();
+  const { data: sku } = await sb.from("vendor_items").select("id, product_id").eq("id", input.inputSkuId).eq("active", true)
+    .maybeSingle<{ id: string; product_id: string | null }>();
   if (!sku) throw new ProductionError(400, "invalid_sku", "SKU not found or inactive");
   const { data: item } = await sb.from("items").select("id").eq("id", input.outputItemId).eq("active", true).maybeSingle<{ id: string }>();
   if (!item) throw new ProductionError(400, "invalid_item", "Item not found or inactive");
@@ -214,7 +250,16 @@ export async function recordProduction(actor: AuthContext, input: RecordProducti
   // (not an embedded filter) per the AGENTS.md RLS/embedded-select note.
   const { data: inRows } = await sb.from("recipe_inputs").select("recipe_id").eq("component_sku_id", input.inputSkuId)
     .returns<Array<{ recipe_id: string }>>();
-  const skuRecipeIds = [...new Set((inRows ?? []).map((r) => r.recipe_id))];
+  // A recipe pinning this SKU's PRODUCT counts as a valid conversion for EVERY
+  // member (0179) — the same expansion loadSkuToItems does for the dropdown, so a
+  // cook offered the backup SKU does not then hit `invalid_conversion` on submit.
+  let productRecipeIds: string[] = [];
+  if (sku.product_id != null) {
+    const { data: pinRows } = await sb.from("recipe_inputs").select("recipe_id").eq("component_product_id", sku.product_id)
+      .returns<Array<{ recipe_id: string }>>();
+    productRecipeIds = (pinRows ?? []).map((r) => r.recipe_id);
+  }
+  const skuRecipeIds = [...new Set([...(inRows ?? []).map((r) => r.recipe_id), ...productRecipeIds])];
   let validConversion = false;
   if (skuRecipeIds.length > 0) {
     const { data: outRows } = await sb.from("recipe_outputs").select("recipe_id").eq("output_item_id", input.outputItemId).in("recipe_id", skuRecipeIds)
