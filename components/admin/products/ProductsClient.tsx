@@ -37,13 +37,20 @@ import { postJson, resolveErrorKey } from "./shared";
 const PRODUCT_WRITE_MIN = 7;
 
 /** The live weight vocabulary (lib/angel-wave4.ts WeightClass). The column is
- *  deliberately unconstrained text (0177 precedent); these are the three the UI
+ *  deliberately unconstrained text (0177 precedent); these are the four the UI
  *  offers. SYSTEM KEY: the value written is the English original; only the label
- *  is translated. */
+ *  is translated.
+ *
+ *  Listed in DESCENDING WEIGHT_CLASS_RANK order — the two measured classes, then
+ *  the documented one, then the guess — so the picker reads as the ladder Juan
+ *  ruled on 2026-08-21 rather than an arbitrary list. ESTIMATE is offered here
+ *  deliberately: a GM setting a product's unit_oz from food knowledge should be
+ *  able to SAY that is what they did, which is the whole point of the class. */
 const WEIGHT_CLASSES: ReadonlyArray<{ value: WeightClass; key: TranslationKey }> = [
   { value: "OPERATIONAL", key: "admin.products.unit_oz.class.operational" },
-  { value: "SPEC", key: "admin.products.unit_oz.class.spec" },
   { value: "INVOICE_DERIVED", key: "admin.products.unit_oz.class.invoice_derived" },
+  { value: "SPEC", key: "admin.products.unit_oz.class.spec" },
+  { value: "ESTIMATE", key: "admin.products.unit_oz.class.estimate" },
 ];
 
 const fieldCls =
