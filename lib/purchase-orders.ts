@@ -406,6 +406,19 @@ export async function updateDraftLines(
   }
 
   // INSERT genuinely-new SKUs (fetch their current guide positions in one batch).
+  //
+  // PRODUCT RETIREMENT DOES NOT GATE THIS, DELIBERATELY (Juan's ruling, 2026-08-21).
+  // Retirement stops the par pass from SUGGESTING a product; a draft PO line that was
+  // already placed — or one a manager adds on purpose to burn down the last of it —
+  // must still go through, for the same reason receiving still accepts the truck
+  // (lib/receiving.ts). Ordering stops at the suggestion layer, not at the door.
+  //
+  // This module reads no `products` at all, so a "discontinued" badge on the PO panel
+  // is a new loader integration rather than a widened read; filed as debt in
+  // docs/ROADMAP.md alongside the receiving one. NOTE the pre-existing, unrelated gap
+  // this read already has: it does not check `active`, existence, or vendor-match on
+  // an incoming skuId (sim P2 territory) — do not mistake the retirement note for
+  // coverage of that.
   if (toInsert.length > 0) {
     const newSkuIds = toInsert.map((l) => l.skuId);
     const { data: skuRows, error: sErr } = await sb.from("vendor_items")

@@ -318,6 +318,14 @@ function ProductRow({
           ? t("admin.products.field.unit_oz", { oz: product.unitOz })
           : t("admin.products.field.unit_oz_unknown")}
       </span>
+      {/* What retiring this would cost, visible BEFORE anyone reaches for the
+          button — the pre-flight warning starts on the summary row, not in the
+          confirm. Absent at zero: "0 recipes" is noise on every singleton. */}
+      {product.pinnedRecipes.length > 0 ? (
+        <span className="text-xs text-co-text-muted">
+          {t("admin.products.field.pinned_recipes", { n: product.pinnedRecipes.length })}
+        </span>
+      ) : null}
     </span>
   );
 
@@ -366,7 +374,125 @@ function ProductRow({
         onMutate={onMutate}
       />
       <UnitOzPanel product={product} canManage={canManage} busy={busy} onMutate={onMutate} />
+      <LifecyclePanel product={product} canManage={canManage} busy={busy} onMutate={onMutate} />
     </SummaryRow>
+  );
+}
+
+/**
+ * Discontinue this product, or bring it back (Juan's ruling A+, 2026-08-21).
+ *
+ * IT WARNS, IT NEVER BLOCKS. The confirm names how many ACTIVE recipes still pin
+ * this identity — and names the recipes themselves when there are few enough to
+ * read — then lets the manager proceed. That is the module's count-beats-theory
+ * posture applied to config: Juan's declaration of reality wins, and the system's
+ * job is to make sure he can see what it costs before he says yes. A hard block
+ * would put the software in charge of what the kitchen buys.
+ *
+ * Tier B, not the Tier A its sibling panels use: a membership edit moves which
+ * vendor a product means; this decides whether it means anything at all.
+ */
+function LifecyclePanel({
+  product,
+  canManage,
+  busy,
+  onMutate,
+}: {
+  product: ProductView;
+  canManage: boolean;
+  busy: boolean;
+  onMutate: (tier: "A" | "B", url: string, body: unknown, method?: "POST" | "PATCH" | "DELETE") => Promise<boolean>;
+}) {
+  const { t } = useTranslation();
+  const [confirming, setConfirming] = useState(false);
+
+  if (!canManage) return null;
+
+  const pins = product.pinnedRecipes;
+  // Named when the list is short enough to READ; a count alone past that, because a
+  // wall of forty names is the same as no information (disclosure doctrine D4).
+  const NAME_LIMIT = 5;
+
+  const submit = async (active: boolean) => {
+    const ok = await onMutate("B", `/api/admin/products/${product.id}/active`, { active });
+    if (ok) setConfirming(false);
+  };
+
+  return (
+    <section>
+      <h3 className={groupHeaderCls}>{t("admin.products.lifecycle.heading")}</h3>
+
+      {!product.active ? (
+        <>
+          <p className="mt-1 text-xs text-co-text-muted">{t("admin.products.lifecycle.restore_hint")}</p>
+          <button
+            type="button"
+            disabled={busy}
+            aria-label={t("admin.products.lifecycle.restore_aria", { product: product.name })}
+            onClick={() => void submit(true)}
+            className={`mt-2 ${secondaryBtnCls}`}
+          >
+            {t("admin.products.lifecycle.restore")}
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="mt-1 text-xs text-co-text-muted">{t("admin.products.lifecycle.retire_hint")}</p>
+          {!confirming ? (
+            <button
+              type="button"
+              disabled={busy}
+              aria-label={t("admin.products.lifecycle.retire_aria", { product: product.name })}
+              onClick={() => setConfirming(true)}
+              // Danger OUTLINE, never a red fill — and the edge and the label move
+              // together on co-cta-text (AGENTS.md token roles).
+              className="mt-2 inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta-text bg-co-surface px-3 text-xs font-bold uppercase tracking-[0.1em] text-co-cta-text transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {t("admin.products.lifecycle.retire")}
+            </button>
+          ) : (
+            <div className="mt-2 rounded-lg border-2 border-co-cta-text bg-co-danger-surface p-3">
+              <p className="text-sm font-bold text-co-text">
+                {t("admin.products.lifecycle.confirm_heading", { product: product.name })}
+              </p>
+              {/* THE PRE-FLIGHT. The count is the warning; the names are the errand. */}
+              <p className="mt-1 text-xs text-co-text">
+                {pins.length === 0
+                  ? t("admin.products.lifecycle.confirm_no_pins")
+                  : t("admin.products.lifecycle.confirm_pins", { n: pins.length })}
+              </p>
+              {pins.length > 0 && pins.length <= NAME_LIMIT ? (
+                <p className="mt-1 text-xs text-co-text-muted">
+                  {t("admin.products.lifecycle.confirm_recipes", {
+                    names: pins.map((r) => r.name).join(", "),
+                  })}
+                </p>
+              ) : null}
+              <div className="mt-3 flex flex-wrap justify-end gap-2">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setConfirming(false)}
+                  className={secondaryBtnCls}
+                >
+                  {t("admin.products.lifecycle.cancel")}
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  aria-label={t("admin.products.lifecycle.retire_aria", { product: product.name })}
+                  onClick={() => void submit(false)}
+                  // Destructive FILL = ink on cta (never white or cream on cta).
+                  className="inline-flex min-h-[44px] items-center rounded-lg border-2 border-co-cta bg-co-cta px-4 text-xs font-bold uppercase tracking-[0.1em] text-co-text transition focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {t("admin.products.lifecycle.confirm")}
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </section>
   );
 }
 

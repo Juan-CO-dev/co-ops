@@ -15,6 +15,7 @@ import {
   type GraphRecipe,
 } from "@/lib/prep-consumption-graph";
 import type { MeasureUnitFactor, RecipeInputSku } from "@/lib/recipe-math";
+import type { ProductUnresolvedReason } from "@/lib/products-shared";
 
 const MEASURES = new Map<string, MeasureUnitFactor>([
   ["oz", { dimension: "weight", toBaseFactor: 1 }],
@@ -383,10 +384,22 @@ describe("product-pinned recipe inputs (spec 2026-08-20)", () => {
     ["unit", { dimension: "count", toBaseFactor: 1 }],
   ]);
 
-  const productIndex = (skuId: string | null, unitOz: number | null) => ({
+  const productIndex = (
+    skuId: string | null,
+    unitOz: number | null,
+    // WHY the product did not resolve (2026-08-21). The flatten refuses on
+    // `skuId == null` regardless of the cause — this rides along so the fixture
+    // can express a RETIRED product, which the costing board names separately.
+    reason: ProductUnresolvedReason | null = skuId ? null : "no_active_member",
+  ) => ({
     resolution: new Map([[
       "HAM",
-      { productId: "HAM", skuId, rung: skuId ? ("primary" as const) : ("unresolved" as const), consideredSkuIds: ["pfg", "baldor"] },
+      {
+        productId: "HAM", skuId,
+        rung: skuId ? ("primary" as const) : ("unresolved" as const),
+        reason,
+        consideredSkuIds: ["pfg", "baldor"],
+      },
     ]]),
     basis: new Map([["HAM", {
       packFormat: null, eachContainerLabel: null, unitsPerPack: null,
@@ -415,6 +428,17 @@ describe("product-pinned recipe inputs (spec 2026-08-20)", () => {
   it("an UNRESOLVED product poisons the flatten to empty — never a partial number", () => {
     const g = buildRecipeGraph([recipe()], new Map(), measures, productIndex(null, 1.2));
     expect(perUnitSkuOzForItemFromGraph(g, "SLICED_HAM").size).toBe(0);
+  });
+
+  it("a RETIRED product poisons the flatten exactly like any other refusal", () => {
+    // Rung 0 (Juan's ruling A+, 2026-08-21). The math must not distinguish the two
+    // causes — a poisoned flatten is a poisoned flatten — while the named reason
+    // rides along for the surfaces that owe the operator an errand.
+    const g = buildRecipeGraph([recipe()], new Map(), measures, productIndex(null, 1.2, "retired_product"));
+    expect(perUnitSkuOzForItemFromGraph(g, "SLICED_HAM").size).toBe(0);
+    const memberless = buildRecipeGraph([recipe()], new Map(), measures, productIndex(null, 1.2, "no_active_member"));
+    expect([...perUnitSkuOzForItemFromGraph(g, "SLICED_HAM")])
+      .toEqual([...perUnitSkuOzForItemFromGraph(memberless, "SLICED_HAM")]);
   });
 
   it("a resolved product with NO unit_oz refuses rather than guessing", () => {

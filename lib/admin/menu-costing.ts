@@ -93,6 +93,13 @@ export interface MenuCostingBoard {
    * because both lists are item ids and both drawers render the same lookup.
    */
   itemNames: Record<string, { en: string; es: string | null }>;
+  /**
+   * Display names (en + es) for the RETIRED PRODUCTS behind any `unresolved` row.
+   * A separate map from `itemNames` because these are `products` ids, not `items`
+   * ids — merging two registries into one lookup is how a name silently resolves
+   * to the wrong row's label the first time the two collide.
+   */
+  productNames: Record<string, { en: string; es: string | null }>;
 }
 
 /**
@@ -132,20 +139,29 @@ export async function loadMenuCostingBoard(actor: AuthContext): Promise<MenuCost
   const broken = [
     ...new Set(rows.flatMap((r) => [...r.rollup.inconsistentItemIds, ...r.rollup.unweighedItemIds])),
   ];
+  // Retired products behind any `unresolved` row (Juan's ruling A+, 2026-08-21).
+  // Zero today and zero on any board with no retired product — the lookup is
+  // skipped entirely, so the tripwire costs nothing until it fires.
+  const retired = [...new Set(rows.flatMap((r) => r.rollup.retiredProductIds))];
   const skuNames: Record<string, string> = {};
   const itemNames: Record<string, { en: string; es: string | null }> = {};
-  // Two name lookups, each skipped entirely when its failure mode is absent —
+  const productNames: Record<string, { en: string; es: string | null }> = {};
+  // Three name lookups, each skipped entirely when its failure mode is absent —
   // so a clean board still costs exactly the queries the header promises.
-  const [skuRes, itemRes] = await Promise.all([
+  const [skuRes, itemRes, productRes] = await Promise.all([
     blocking.length > 0
       ? sb.from("vendor_items").select("id, name").in("id", blocking).returns<Array<{ id: string; name: string }>>()
       : Promise.resolve({ data: [] as Array<{ id: string; name: string }> }),
     broken.length > 0
       ? sb.from("items").select("id, name, name_es").in("id", broken).returns<Array<{ id: string; name: string; name_es: string | null }>>()
       : Promise.resolve({ data: [] as Array<{ id: string; name: string; name_es: string | null }> }),
+    retired.length > 0
+      ? sb.from("products").select("id, name, name_es").in("id", retired).returns<Array<{ id: string; name: string; name_es: string | null }>>()
+      : Promise.resolve({ data: [] as Array<{ id: string; name: string; name_es: string | null }> }),
   ]);
   for (const s of skuRes.data ?? []) skuNames[s.id] = s.name;
   for (const i of itemRes.data ?? []) itemNames[i.id] = { en: i.name, es: i.name_es };
+  for (const p of productRes.data ?? []) productNames[p.id] = { en: p.name, es: p.name_es };
 
-  return { rows, totals, skuNames, itemNames };
+  return { rows, totals, skuNames, itemNames, productNames };
 }

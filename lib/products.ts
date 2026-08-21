@@ -177,6 +177,18 @@ export interface ProductView {
   unresolved: boolean;
   /** Active members disagree about what one unit weighs (advisory, D2/D3). */
   membersDisagree: boolean;
+  /**
+   * ACTIVE recipes whose lines pin this product — the pre-flight the retire
+   * affordance warns with (Juan's ruling A+, 2026-08-21): "N recipes still pin
+   * this — they will read unresolved until re-pointed".
+   *
+   * Loaded here rather than fetched on demand so the warning is a fact the row
+   * already holds when the manager reaches for the button, not a round-trip that
+   * can fail mid-decision. Batched (two queries for the whole registry, the
+   * loadRecipeGraph law) and ACTIVE-only, because a retired recipe's pin costs
+   * nothing — loadRecipeGraph has filtered `recipes.active` since #272.
+   */
+  pinnedRecipes: Array<{ id: string; name: string }>;
 }
 
 const PRODUCT_COLS =
@@ -185,11 +197,86 @@ const PRODUCT_COLS =
 // ── Read ─────────────────────────────────────────────────────────────────────
 
 /**
- * The whole registry in THREE batch queries + one label lookup — never per-product
+ * ACTIVE recipes that pin each of these products — the retire pre-flight's count.
+ *
+ * TWO batched queries for the whole registry (the loadRecipeGraph law): the pinning
+ * `recipe_inputs` rows, then the recipes behind them filtered to `active`. Paged on
+ * the inputs read because recipe_inputs is the row-cap-crossing table here, and a
+ * truncated page would UNDER-report the warning — the one direction that matters,
+ * since the whole point is not to let a manager retire an identity believing nothing
+ * points at it.
+ *
+ * LABEL-TOLERANT, not label-only: a failure here would understate the consequences
+ * of a retirement, so it THROWS rather than degrading to an empty list. The registry
+ * page already renders a named pending state when a products read fails.
+ */
+async function loadPinnedRecipesByProduct(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  productIds: string[],
+): Promise<Map<string, Array<{ id: string; name: string }>>> {
+  const out = new Map<string, Array<{ id: string; name: string }>>();
+  if (productIds.length === 0) return out;
+
+  const pins = await selectAllRows<{ recipe_id: string; component_product_id: string | null }>(
+    async (from, to) => {
+      const { data, error } = await sb
+        .from("recipe_inputs")
+        .select("recipe_id, component_product_id")
+        .in("component_product_id", productIds)
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<{ recipe_id: string; component_product_id: string | null }>>();
+      if (error) throw new Error(`loadPinnedRecipesByProduct pins: ${error.message}`);
+      return { data };
+    },
+  );
+  if (pins.length === 0) return out;
+
+  // PAGED like the read above it, and for a sharper reason than symmetry: past the
+  // 1000-row cap a truncated page drops real recipes out of `activeById`, and the
+  // `name == null` branch below would then reclassify them as RETIRED. The warning
+  // would UNDER-report — the one direction this function's header says must never
+  // happen — and the undercount would ride into the audit row as fact.
+  const recipeIds = [...new Set(pins.map((p) => p.recipe_id))];
+  const recipeRows = await selectAllRows<{ id: string; name: string }>(async (from, to) => {
+    const { data, error } = await sb
+      .from("recipes")
+      .select("id, name")
+      .in("id", recipeIds)
+      .eq("active", true)
+      .order("id", { ascending: true })
+      .range(from, to)
+      .returns<Array<{ id: string; name: string }>>();
+    if (error) throw new Error(`loadPinnedRecipesByProduct recipes: ${error.message}`);
+    return { data };
+  });
+  const activeById = new Map(recipeRows.map((r) => [r.id, r.name]));
+
+  // One entry per (product, recipe): a recipe pinning the same product on two
+  // lines is still ONE recipe to go re-point, and "2 recipes" would be a lie.
+  const seen = new Set<string>();
+  for (const p of pins) {
+    const productId = p.component_product_id;
+    if (productId == null) continue;
+    const name = activeById.get(p.recipe_id);
+    if (name == null) continue; // retired recipe — its pin costs nothing (#272).
+    const key = `${productId}:${p.recipe_id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const list = out.get(productId) ?? [];
+    list.push({ id: p.recipe_id, name });
+    out.set(productId, list);
+  }
+  for (const list of out.values()) list.sort((a, b) => a.name.localeCompare(b.name));
+  return out;
+}
+
+/**
+ * The whole registry in FIVE batch queries + one label lookup — never per-product
  * (the loadRecipeGraph law): products · member SKUs (`.in("product_id", ids)`) ·
- * product_primaries. Vendor names ride ONE batched vendors read and degrade to
- * null labels on failure rather than failing the page (the loadCountFormData
- * LABEL-ONLY precedent).
+ * product_primaries · the pinning recipe_inputs · the recipes behind them. Vendor names ride ONE batched vendors
+ * read and degrade to null labels on failure rather than failing the page (the
+ * loadCountFormData LABEL-ONLY precedent).
  */
 export async function listProducts(actor: AuthContext): Promise<ProductView[]> {
   requireLevel(actor, PRODUCT_READ_MIN);
@@ -265,12 +352,15 @@ export async function listProducts(actor: AuthContext): Promise<ProductView[]> {
     primariesByProduct.set(p.product_id, list);
   }
 
+  const pinnedByProduct = await loadPinnedRecipesByProduct(sb, ids);
+
   return products.map((p) => {
     const mem = membersByProduct.get(p.id) ?? [];
     const prim = primariesByProduct.get(p.id) ?? [];
     const globalPrimarySkuId = prim.find((r) => r.locationId === null)?.primarySkuId ?? null;
     const resolution = resolveProductMember({
       productId: p.id,
+      active: p.active ?? true,
       primarySkuId: globalPrimarySkuId,
       members: mem,
     });
@@ -288,8 +378,14 @@ export async function listProducts(actor: AuthContext): Promise<ProductView[]> {
       members: mem,
       primaries: prim,
       globalPrimarySkuId,
-      unresolved: resolution.rung === "unresolved",
+      // NO_ACTIVE_MEMBER specifically, NOT `rung === "unresolved"` (2026-08-21).
+      // Rung 0 makes a RETIRED product unresolved too, and badging that row "no
+      // active member" would be an accusation against members that are usually
+      // perfectly healthy — the retirement is the fact, and the row already carries
+      // its own discontinued badge. One flag per fault.
+      unresolved: resolution.reason === "no_active_member",
       membersDisagree: membersDisagreeOnUnitOz(mem),
+      pinnedRecipes: pinnedByProduct.get(p.id) ?? [],
     };
   });
 }
@@ -300,6 +396,10 @@ export async function listProducts(actor: AuthContext): Promise<ProductView[]> {
 export interface ProductIndexEntry {
   productId: string;
   name: string;
+  /** `products.active`. False = RETIRED — `resolution` is already `unresolved`
+   *  with reason `retired_product`; this is carried so a consumer can NAME the
+   *  product it is refusing without a second read. */
+  active: boolean;
   unitOz: number | null;
   /** Every member SKU, with `active` already resolved through this location's overlay. */
   members: ProductMemberView[];
@@ -397,9 +497,36 @@ async function loadLastReceivedAt(
  * never per-product (the loadRecipeGraph law). `productIds` empty → ZERO queries,
  * which is why a system with no products pays nothing for this layer existing.
  *
- * `active` is the location-RESOLVED value (`resolveActive(overlay, global)`), so the
- * ladder sees the same activation the order walk does. Costing/counts read the
- * per-location overlay through this path for the first time (previously ordering-only).
+ * A MEMBER's `active` is the location-RESOLVED value (`resolveActive(overlay,
+ * global)`), so the ladder sees the same activation the order walk does.
+ * Costing/counts read the per-location overlay through this path for the first time
+ * (previously ordering-only).
+ *
+ * ── THE PRODUCTS READ IS NOT `.eq("active", true)`-FILTERED, DELIBERATELY ─────
+ * (Juan's retirement ruling A+, 2026-08-21 — the reconciliation sim P1-9 asked for.)
+ *
+ * The obvious fix for "a retired product keeps costing" is a filter on this select,
+ * the way #272 filtered `recipes.active` in loadRecipeGraph. It is the wrong shape
+ * HERE, for two reasons:
+ *
+ *  1. A filtered-away product falls out of `byProduct` entirely, so the flatten
+ *     poisons with NO NAME — indistinguishable from a product that resolved to
+ *     nothing, or from a dangling id. The ruling asks for the opposite: an
+ *     `unresolved` that says WHY. So the row is READ, `active` rides into the
+ *     ladder, and rung 0 refuses it with `reason: "retired_product"`. The active
+ *     filter still lands where resolution happens — it just lands INSIDE the pure
+ *     resolver instead of in SQL, which is the only place that can name itself.
+ *  2. `productBySku` (the D9 usage rollup) and the member list are still true facts
+ *     about a retired identity, and the count sheet / order walk read them to
+ *     LABEL rows. Dropping the entry would silently un-group those twins.
+ *
+ * HISTORICAL-REPLAY BOUNDARY (the same one #272 drew for inactive recipes): nothing
+ * replays history through this loader. Every consumer — costing, counts, ordering,
+ * the nightly depletion materialization — asks it what is true TODAY, and today a
+ * retired identity is not something the kitchen buys. Ledger rows already written
+ * against a member SKU keep their meaning; they are keyed by `vendor_items.id` and
+ * never re-resolved. If a genuine as-of replay is ever needed, it needs an as-of
+ * parameter and its own decision, not a silently permissive default here.
  */
 export async function loadProductIndex(
   productIds: string[],
@@ -411,9 +538,9 @@ export async function loadProductIndex(
 
   const { data: productRows, error: pErr } = await sb
     .from("products")
-    .select("id, name, unit_oz")
+    .select("id, name, unit_oz, active")
     .in("id", ids)
-    .returns<Array<{ id: string; name: string; unit_oz: number | string | null }>>();
+    .returns<Array<{ id: string; name: string; unit_oz: number | string | null; active: boolean | null }>>();
   throwIfSchemaPending(pErr, "loadProductIndex products");
   if (pErr) throw new Error(`loadProductIndex products failed: ${pErr.message}`);
   const products = productRows ?? [];
@@ -509,8 +636,10 @@ export async function loadProductIndex(
     const locationRow = locationId != null ? scopes.find((r) => r.location_id === locationId) : undefined;
     const globalRow = scopes.find((r) => r.location_id === null);
     const chosen = locationRow ?? globalRow ?? null;
+    const productActive = p.active ?? true; // nullable in DB → null is active (skus.ts idiom)
     const res = resolveProductMember({
       productId: p.id,
+      active: productActive,
       primarySkuId: chosen?.primary_sku_id ?? null,
       members,
     });
@@ -521,6 +650,7 @@ export async function loadProductIndex(
     byProduct.set(p.id, {
       productId: p.id,
       name: p.name,
+      active: productActive,
       unitOz: num(p.unit_oz),
       members,
       primarySkuId: chosen?.primary_sku_id ?? null,
@@ -854,6 +984,84 @@ export async function createProduct(
   });
 
   return { id: inserted.id };
+}
+
+/**
+ * Retire a product, or bring it back (`products.active`). Append-only: there is no
+ * DELETE path, and history is untouched — every ledger row already written against a
+ * member SKU keeps its exact meaning.
+ *
+ * ── IT NEVER HARD-BLOCKS (Juan's ruling A+, 2026-08-21) ──────────────────────
+ * Pinned recipes do not refuse this write, and that is the point. Retiring a product
+ * is Juan declaring a fact about the kitchen — we do not buy this any more — and the
+ * system's job is to make the CONSEQUENCES visible, not to argue with reality. It is
+ * the same count-beats-theory posture `count_exceeds_lots` took: the floor's
+ * statement wins, and the ledger's disagreement becomes an advisory, not a veto.
+ *
+ * The consequence is real and it is loud: every pinned line resolves `unresolved`
+ * with reason `retired_product` (rung 0), the costing board names the product in its
+ * drawer, and the recipe builder badges the line "discontinued — needs re-point".
+ * The pre-flight warning lives in the UI (which already holds `pinnedRecipes`); the
+ * COUNT is recorded here, in the audit row, so the trail says what was known at the
+ * moment the decision was made.
+ */
+export async function setProductActive(
+  actor: AuthContext,
+  args: { productId: string; active: boolean },
+): Promise<{ pinnedRecipeCount: number }> {
+  requireLevel(actor, PRODUCT_WRITE_MIN);
+  const sb = getServiceRoleClient();
+
+  const { data: before, error: bErr } = await sb
+    .from("products")
+    .select("id, name, active")
+    .eq("id", args.productId)
+    .maybeSingle<{ id: string; name: string; active: boolean | null }>();
+  throwIfSchemaPending(bErr, "setProductActive lookup");
+  if (bErr) throw new Error(`setProductActive lookup failed: ${bErr.message}`);
+  if (!before) throw new ProductError(404, "not_found", "Product not found");
+
+  // Read the pins BEFORE the write so the audit row records what was true at the
+  // moment of the decision — a count taken afterwards answers a different question.
+  const pinned = await loadPinnedRecipesByProduct(sb, [args.productId]);
+  const pinnedRecipes = pinned.get(args.productId) ?? [];
+
+  const { error, count } = await sb
+    .from("products")
+    .update(
+      { active: args.active, updated_by: actor.user.id, updated_at: new Date().toISOString() },
+      { count: "exact" },
+    )
+    .eq("id", args.productId);
+  throwIfSchemaPending(error, "setProductActive");
+  // The partial unique index on lower(name) WHERE active is what a restore can
+  // collide with: someone created a new active product under the retired one's name.
+  if (error?.code === "23505") {
+    throw new ProductError(409, "duplicate_name", "An active product already uses that name");
+  }
+  if (error) throw new Error(`setProductActive failed: ${error.message}`);
+  if (count === 0) throw new ProductError(404, "not_found", "Product not found");
+
+  await audit({
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    action: "product.set_active",
+    resourceTable: "products",
+    resourceId: args.productId,
+    metadata: {
+      name: before.name,
+      before_active: before.active ?? true,
+      after_active: args.active,
+      // The forensic half of "why did ham stop costing on Thursday": the recipes
+      // that were pinning this identity when it was retired, named, not just counted.
+      pinned_recipe_count: pinnedRecipes.length,
+      pinned_recipe_ids: pinnedRecipes.map((r) => r.id),
+    },
+    ipAddress: null,
+    userAgent: null,
+  });
+
+  return { pinnedRecipeCount: pinnedRecipes.length };
 }
 
 /** Rows in product_primaries that name this SKU as primary (any scope). */

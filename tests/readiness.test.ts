@@ -9,7 +9,13 @@
  */
 import { describe, it, expect } from "vitest";
 
-import { KNOWN_REASONS, itemReadiness, type ReasonCode } from "@/lib/readiness";
+import {
+  KNOWN_REASONS,
+  itemReadiness,
+  composeRecipeReadiness,
+  type Readiness,
+  type ReasonCode,
+} from "@/lib/readiness";
 import en from "@/lib/i18n/en.json";
 import es from "@/lib/i18n/es.json";
 
@@ -69,6 +75,86 @@ describe("itemReadiness — duplicate active producers (audit P5)", () => {
       .toEqual({ status: "upstream_gaps", reasons: [{ code: "upstream_recipe" }] });
     expect(itemReadiness({ ...BASE, soldDirectly: true, sellPortionComplete: false, activeProducerCount: 1 }, "ready"))
       .toEqual({ status: "incomplete", reasons: [{ code: "sell_incomplete" }] });
+  });
+});
+
+/**
+ * RETIREMENT in the readiness lane (Juan's ruling A+, 2026-08-21; sim P1-9).
+ *
+ * Two codes, deliberately asymmetric:
+ *   - retired_product = a RED own-fault. The pin refuses at the resolution ladder,
+ *     so the recipe genuinely has no cost and no depletion.
+ *   - retired_sku     = an amber RIDER that can never move a status. That is the
+ *     ruling's scope line: for a deactivated SKU pin this PR buys LOUDNESS only.
+ */
+describe("composeRecipeReadiness — retirement pins", () => {
+  const OWN_READY: Readiness = { status: "ready", reasons: [] };
+
+  it("no pins at all → byte-identical to the pre-retirement behavior", () => {
+    expect(composeRecipeReadiness(OWN_READY, [], [])).toEqual({ status: "ready", reasons: [] });
+    expect(composeRecipeReadiness(OWN_READY, [], [], 0, {})).toEqual({ status: "ready", reasons: [] });
+  });
+
+  it("a RETIRED-PRODUCT pin makes an otherwise-clean recipe RED, with the count", () => {
+    const r = composeRecipeReadiness(OWN_READY, [], [], 0, { retiredProducts: 2 });
+    expect(r.status).toBe("incomplete");
+    expect(r.reasons).toEqual([{ code: "retired_product", count: 2 }]);
+  });
+
+  it("retired_product and unresolved_product are counted SEPARATELY, never folded", () => {
+    // Different errands: re-point this line vs fix the SKU catalog / weigh it.
+    const r = composeRecipeReadiness(OWN_READY, [], [], 1, { retiredProducts: 1 });
+    expect(r.status).toBe("incomplete");
+    expect(r.reasons).toEqual([
+      { code: "unresolved_product", count: 1 },
+      { code: "retired_product", count: 1 },
+    ]);
+  });
+
+  it("a retired-product pin rides ALONGSIDE the recipe's own red fields", () => {
+    const own: Readiness = { status: "incomplete", reasons: [{ code: "no_batch_yield" }] };
+    const r = composeRecipeReadiness(own, [], [], 0, { retiredProducts: 1 });
+    expect(r.reasons).toEqual([
+      { code: "no_batch_yield" },
+      { code: "retired_product", count: 1 },
+    ]);
+  });
+
+  it("RETIRED-SKU is a RIDER: it never changes a status, only names one", () => {
+    // The realistic shape — an inactive SKU is absent from the readiness map, so
+    // the same pin already contributes a not-ready status. Status stays amber; the
+    // rider says WHY that SKU is not ready.
+    const withRider = composeRecipeReadiness(OWN_READY, ["incomplete"], [], 0, { retiredSkus: 1 });
+    const without = composeRecipeReadiness(OWN_READY, ["incomplete"], []);
+    expect(withRider.status).toBe(without.status);
+    expect(withRider.status).toBe("upstream_gaps");
+    expect(withRider.reasons).toEqual([
+      { code: "not_ready_skus", count: 1 },
+      { code: "retired_sku", count: 1 },
+    ]);
+  });
+
+  it("a retired-SKU rider can NEVER make a row RED — amber is its ceiling", () => {
+    // The guard that keeps "loudness only" true: a deactivated SKU pin still
+    // resolves (loadSkuPack includes inactive SKUs), so asserting a refusal would
+    // be a lie. Even in the shape the live loader cannot produce — the count with
+    // no matching not-ready SKU status — the worst it can do is amber.
+    const r = composeRecipeReadiness(OWN_READY, [], [], 0, { retiredSkus: 3 });
+    expect(r.status).toBe("upstream_gaps");
+    expect(r.reasons).toEqual([{ code: "retired_sku", count: 3 }]);
+  });
+
+  it("both riders coexist: red product pin + amber SKU pin, red wins the badge", () => {
+    const r = composeRecipeReadiness(OWN_READY, ["incomplete"], [], 0, {
+      retiredProducts: 1,
+      retiredSkus: 1,
+    });
+    expect(r.status).toBe("incomplete");
+    expect(r.reasons).toEqual([
+      { code: "retired_product", count: 1 },
+      { code: "not_ready_skus", count: 1 },
+      { code: "retired_sku", count: 1 },
+    ]);
   });
 });
 

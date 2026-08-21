@@ -127,11 +127,50 @@ export async function loadGraphReadiness(actor: AuthContext): Promise<{
   const pinnedProductIds = [...new Set(g.inputs.map((i) => i.component_product_id).filter((v): v is string => v != null))];
   const { byProduct } = await loadProductIndex(pinnedProductIds, null);
   const weightUnits = new Set(measureUnits.filter((m) => m.dimension === "weight").map((m) => m.label));
-  const productInputResolves = (i: GraphRows["inputs"][number]): boolean => {
+
+  /**
+   * How a product-pinned line reads today. THREE outcomes, and the split between the
+   * last two is the retirement ruling (2026-08-21): both poison the flatten, but they
+   * are different errands. `retired` sends the author to THIS recipe to re-point the
+   * line; `unresolved` sends them to the SKU catalog or a scale. Every pin lands in
+   * exactly one bucket, so the two counts can never double-report one line.
+   */
+  const productPinState = (i: GraphRows["inputs"][number]): "ok" | "retired" | "unresolved" => {
     const entry = i.component_product_id != null ? byProduct.get(i.component_product_id) ?? null : null;
-    if (entry == null || entry.resolution.skuId == null) return false;
-    return entry.unitOz != null || (i.unit != null && weightUnits.has(i.unit));
+    if (entry == null) return "unresolved"; // dangling pin — nothing to name.
+    if (entry.resolution.reason === "retired_product") return "retired";
+    if (entry.resolution.skuId == null) return "unresolved";
+    return entry.unitOz != null || (i.unit != null && weightUnits.has(i.unit)) ? "ok" : "unresolved";
   };
+
+  /**
+   * SKU pins whose vendor_item is DEACTIVATED (Juan's "discontinued sku in the
+   * recipe"). LOUDNESS ONLY — nothing about resolution changes here; this is the set
+   * that turns the existing bare `not_ready_skus` tally into a named cause.
+   *
+   * A targeted read rather than a widened `loadSkuReadinessMap`: absence from that
+   * map is ambiguous (inactive SKU vs dangling id vs a SKU the loader filtered), and
+   * "discontinued" is a specific accusation that needs a specific fact behind it.
+   * Scoped to the ids recipes actually pin, so it stays one small query.
+   */
+  const pinnedSkuIds = [...new Set(g.inputs.map((i) => i.component_sku_id).filter((v): v is string => v != null))];
+  const retiredSkuIds = new Set<string>();
+  if (pinnedSkuIds.length > 0) {
+    const sb = getServiceRoleClient();
+    // THROWS on a page error rather than taking selectAllRows' silent `data ?? []`
+    // (which ignores `error` entirely). The sibling loaders in this file can afford
+    // that posture; this one cannot. A swallowed failure here yields an EMPTY set,
+    // which reads as "nothing is discontinued" and silently deletes the exact
+    // loudness this rule exists to buy — a failure that looks like good news.
+    const rows = await selectAllRows<{ id: string }>(async (from, to) => {
+      const { data, error } = await sb.from("vendor_items").select("id").in("id", pinnedSkuIds)
+        .eq("active", false).order("id", { ascending: true }).range(from, to)
+        .returns<Array<{ id: string }>>();
+      if (error) throw new Error(`loadGraphReadiness retired SKU pins: ${error.message}`);
+      return { data };
+    });
+    for (const r of rows) retiredSkuIds.add(r.id);
+  }
 
   const inputsOfRecipe = new Map<string, GraphRows["inputs"]>();
   for (const i of g.inputs) {
@@ -179,17 +218,27 @@ export async function loadGraphReadiness(actor: AuthContext): Promise<{
     const skuStatuses: ReadinessStatus[] = [];
     const subStatuses: ReadinessStatus[] = [];
     let unresolvedProducts = 0;
+    let retiredProducts = 0;
+    let retiredSkus = 0;
     for (const i of ins) {
       if (i.component_product_id) {
-        if (!productInputResolves(i)) unresolvedProducts += 1;
+        const state = productPinState(i);
+        if (state === "retired") retiredProducts += 1;
+        else if (state === "unresolved") unresolvedProducts += 1;
       } else if (i.component_sku_id) {
         // inactive SKU is absent from skuStatus → treat as not ready (it's out of play)
         skuStatuses.push(skuStatus.get(i.component_sku_id)?.status ?? "incomplete");
+        // …and NAME why it is out of play when the reason is that it was retired.
+        // The status above is unchanged; this only adds the word "discontinued".
+        if (retiredSkuIds.has(i.component_sku_id)) retiredSkus += 1;
       } else if (i.component_item_id) {
         subStatuses.push(itemStatus(i.component_item_id).status);
       }
     }
-    const composed = composeRecipeReadiness(own, skuStatuses, subStatuses, unresolvedProducts);
+    const composed = composeRecipeReadiness(own, skuStatuses, subStatuses, unresolvedProducts, {
+      retiredProducts,
+      retiredSkus,
+    });
     visiting.delete(key);
     recipeMemo.set(recipeId, composed);
     return composed;

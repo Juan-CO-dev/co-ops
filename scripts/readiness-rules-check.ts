@@ -66,7 +66,7 @@ check("duplicates ride alongside a red row", itemReadiness({ hasProducingRecipe:
 // NOTE: this count is a tripwire, not the real guard. The authoritative check —
 // every KNOWN_REASONS code has an i18n key in BOTH en and es, and no orphan keys
 // exist — lives in tests/readiness.test.ts, which runs in CI. This script does not.
-check("KNOWN_REASONS has 14 codes", KNOWN_REASONS.length === 14);
+check("KNOWN_REASONS has 16 codes", KNOWN_REASONS.length === 16);
 
 // ── Recipe: an unresolved PRODUCT pin is RED, not amber (0179) ──
 const rProd = composeRecipeReadiness({ status: "ready", reasons: [] }, [], [], 2);
@@ -74,6 +74,19 @@ check("unresolved product → red with the count", rProd.status === "incomplete"
   && rProd.reasons.some((r) => r.code === "unresolved_product" && r.count === 2));
 check("zero unresolved products changes nothing",
   composeRecipeReadiness({ status: "ready", reasons: [] }, [], []).status === "ready");
+
+// ── Recipe: RETIREMENT pins (Juan's ruling A+, 2026-08-21) ──
+const rRetProd = composeRecipeReadiness({ status: "ready", reasons: [] }, [], [], 0, { retiredProducts: 1 });
+check("retired product pin → red with the count", rRetProd.status === "incomplete"
+  && rRetProd.reasons.some((r) => r.code === "retired_product" && r.count === 1));
+const rBoth = composeRecipeReadiness({ status: "ready", reasons: [] }, [], [], 1, { retiredProducts: 1 });
+check("retired and unresolved product pins are counted SEPARATELY",
+  rBoth.reasons.some((r) => r.code === "unresolved_product" && r.count === 1)
+  && rBoth.reasons.some((r) => r.code === "retired_product" && r.count === 1));
+const rRetSku = composeRecipeReadiness({ status: "ready", reasons: [] }, ["incomplete"], [], 0, { retiredSkus: 1 });
+check("retired SKU pin is an AMBER rider — it names, it never reddens",
+  rRetSku.status === "upstream_gaps"
+  && rRetSku.reasons.some((r) => r.code === "retired_sku" && r.count === 1));
 
 if (failures > 0) { console.error(`\n${failures} failure(s)`); process.exit(1); }
 console.log("\nAll readiness rule checks passed.");

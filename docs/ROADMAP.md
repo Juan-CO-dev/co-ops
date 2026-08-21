@@ -186,6 +186,35 @@ Logged-deferred → DEBT table.
   velocity have a couple of weeks of data. Weather bootstraps from the existing
   manual weather field on the daily report before any feed is built. Then
   EZCater 2c-b when the ezManage token lands.
+  - **THE THESIS IS JUAN'S, stated while ruling on product retirement (2026-08-21):**
+    > *"it should be loud about going and changing the pars down… suggesting lower
+    > pars when ordering because demand is lower from retiring a product from a
+    > recipe… the pars should be loud about why they need to be tuned down when
+    > demand lessens because of retirement. **The system recognizes what's going on
+    > before the human does.**"*
+
+    Pars are DOWNSTREAM of demand — they exist because recipes create demand — and
+    that is the whole arc in one sentence. PR #283 shipped the **event-attributed**
+    half: a retired product's par'd members are suppressed from the walk (suppressed,
+    never mutated, so a restore is exact), and a SKU whose recipe stopped using it
+    gets a cause-named par-review advisory that points at the par edit.
+    **What #283 deliberately did NOT ship is the NUMBER** — "try 3 instead of 5"
+    needs demand-rate math over a velocity window, which is this arc. Design it as
+    the continuous form of the rule whose binary form already exists: the walk's
+    `parReview` lane and `parReviewAdvisory` are the seam to extend, not to replace.
+  - **Two known blockers on the general form, both live-verified 2026-08-21:** (a)
+    there is no RESALE marker on `vendor_items`, so "no recipe uses this" cannot be
+    told apart from "sold as-is" — 16 of the 20 non-inventory par'd SKUs with zero
+    recipe references are sodas/water/candy and are correct; (b) trailing usage is
+    zero for all 20 (no `toast_daily_depletion.direct_oz` reaches resale SKUs and
+    none has ever been received), so usage cannot substitute for the marker today.
+    A resale flag, or a depletion path that reaches resale SKUs, unblocks the static
+    sweep — and until one exists, static-state advisories stay refused.
+  - **Deferred detection half:** a `recipe_input` row DELETED outright leaves no trace
+    in the graph, so it needs the `recipe_input.remove` audit trail rather than the
+    active/inactive-recipe derivation #283 uses. Live count of those rows today: ZERO,
+    so it was not built onto the walk's hot read path. | trigger: the first real
+    `recipe_input.remove`, or the Dynamic Pars build, whichever comes first |
 - ✅ **P2 — THE PRODUCT-IDENTITY ARC IS SHIPPED (2026-08-20/21, PRs #273–#281, migrations
   0179/0180/0181 applied).** The audit's deepest finding is closed: `products` sits above
   `vendor_items`, recipes pin the PRODUCT, and ONE pure resolution ladder
@@ -327,6 +356,7 @@ offline/dead-zone resilience (walk-ins, basements) · customer-facing menu displ
 | ~~`skuNameCollisions` will nag on doctrine-correct twins~~ — **CLOSED** (P7, folded into the product-identity arc: same-product twins are AFFIRMED, not nagged) | — |
 | ~~Count sheet shows no vendor label on twins~~ — **CLOSED** (#267, and consumed by the count sheet's C-mode split rows) | — |
 | `lib/types.ts` `VendorItem` ~10 columns stale (missing locationId, packFormat, unitsPerPack, eachSize, eachMeasure, avgOzPerEach, eachContainerLabel, inventoryOnly, skuClass, guidePosition) + vendorId/unit mistyped as non-nullable | next `types.ts` touch |
+| **Receiving + PO panels are product-UNAWARE**: neither `lib/receiving.ts` nor `lib/purchase-orders.ts` reads `products`, so receiving or hand-adding a member of a DISCONTINUED product works with no badge saying so. Working-as-intended (burning down a final order is real — PR #283 documents the fall-through in both modules); what is missing is only the WARN. A notice is a new loader integration on two product-unaware modules, not a widened read — cheapest seams are `lib/receiving.ts` loadReceivingFormData's picker payload and `lib/purchase-orders.ts` loadPoDetail | first time a product is actually retired (zero today) |
 | `/admin/menu-costing` is location-blind (`loadMenuCostingBoard` takes no location) — with per-location product primaries two shops could cost a sandwich differently; it prices against the GLOBAL primary today | when a shop's primaries genuinely diverge (deviation D7) |
 
 ### Product-identity arc — the sim day's leftovers (2026-08-21)
@@ -337,7 +367,7 @@ Six P1s were fixed inside the sim PR; these are what it left.
 | Item | Fire when |
 |---|---|
 | **P1 · `loadProductLots` / `loadLastReceivedAt` spend the FULL delivery-id list as a GET `.in()` filter** — unbounded by design ("the full receipt history"), ~39 bytes/uuid against Kong's 8–16 KB request line ⇒ a hard 414/400 at roughly 200–400 deliveries. `loadCountFormData` has no try/catch, so it 500s the whole count sheet, not just the product rows | **BEFORE receiving starts writing lots against member SKUs** — that is the day the list starts growing |
-| **P1 · `loadProductIndex` reads `products` with no `.eq("active", true)`** — a retired product keeps costing, depleting, routing and rendering a count row, while `lib/recipes.ts` refuses writes on the premise that it would not. **Needs a lead ruling on what retirement MEANS** (registry-only, or operational), then one filter or one comment | next products touch — the ambiguity is the bug |
+| ~~**P1 · `loadProductIndex` reads `products` with no `.eq("active", true)`**~~ — **✅ SHIPPED PR #283 (2026-08-21).** Juan ruled A+ ("Option A + loud recipes"): retirement is OPERATIONAL. `resolveProductMember` refuses a retired product at a new rung ⓪ with a named `reason`, so `lib/recipes.ts`'s premise is finally true. The fix is deliberately NOT the SQL filter — a filtered-away row poisons with no name; the active flag rides into the pure resolver instead. Plus a discontinue affordance that warns "N recipes still pin this" and never blocks, a loud recipe-line badge, and two readiness codes (`retired_product` red · `retired_sku` amber, loudness-only). Zero live triggers today | — |
 | P2 · the 0179 provenance quartet goes stale — `lib/receiving.ts` + `lib/admin/skus.ts` overwrite `avg_oz_per_each` without touching `weight_class`/`weight_established_*`, so the board renders "OPERATIONAL, established by <old person>" for a number they never weighed | next receiving or SKU-editor touch (INVOICE_DERIVED already exists as the class for it) |
 | P2 · item weights edited through the normal admin path write `item.update`, which the weight board's provenance lookup does not match → every one reads "nobody recorded where this came from" | with the quartet row above |
 | P2 · `PATCH /api/admin/skus/[id]` sets `product_id` with none of `attachMember`'s invariants (silent re-parenting, attach-to-inactive, composite-FK **500** where the other writer raises a named 409) | next SKU-editor touch |

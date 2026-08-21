@@ -9,7 +9,14 @@
  *   resolveActive: overlayActive ?? globalActive.
  */
 import { describe, it, expect } from "vitest";
-import { resolvePar, resolveActive } from "../lib/location-sku-shared";
+import {
+  resolvePar,
+  resolveActive,
+  walkDisposition,
+  parReviewAdvisory,
+  type WalkDispositionInput,
+  type ParAdvisoryInput,
+} from "../lib/location-sku-shared";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -175,5 +182,159 @@ describe("resolveActive — promotional true-override", () => {
 
   it("true with globalActive = true: stays true", () => {
     expect(resolveActive(true, true)).toBe(true);
+  });
+});
+
+/**
+ * THE WALK CAUSE LADDER — first-cause-wins (`walkDisposition`).
+ *
+ * Extracted pure when Juan's retirement ruling (2026-08-21) added a FIFTH outcome and
+ * a new top rung: `loadWalkerData` is DB-coupled and stays off this spine, so the
+ * ORDER — the part that is easy to get wrong and that the ruling changed — lives here.
+ *
+ * The ruling: *"discontinuation is about stopping the SKU from being ordered etc…
+ * pars should be affected if less demand for that SKU is happening."* Pars are
+ * downstream of demand, so a retired product's pars are stale by definition.
+ */
+describe("walkDisposition — the par pass's cause ladder", () => {
+  const OK: WalkDispositionInput = {
+    productRetired: false, vendorKnown: true, skuActive: true, par: 4,
+  };
+
+  it("a healthy par'd SKU WALKS", () => {
+    expect(walkDisposition(OK)).toBe("walk");
+  });
+
+  it("the four exclusions each classify on their own", () => {
+    expect(walkDisposition({ ...OK, productRetired: true })).toBe("productRetired");
+    expect(walkDisposition({ ...OK, vendorKnown: false })).toBe("vendorInactive");
+    expect(walkDisposition({ ...OK, skuActive: false })).toBe("skuInactive");
+    expect(walkDisposition({ ...OK, par: null })).toBe("parNull");
+  });
+
+  it("RETIREMENT OUTRANKS EVERY SKU-LEVEL CAUSE — the ruling's whole point", () => {
+    // Reporting "turn the vendor back on" for a product Juan discontinued sends him
+    // on an errand he already decided against. The product-level fact wins.
+    expect(walkDisposition({
+      productRetired: true, vendorKnown: false, skuActive: false, par: null,
+    })).toBe("productRetired");
+    expect(walkDisposition({ ...OK, productRetired: true, vendorKnown: false })).toBe("productRetired");
+    expect(walkDisposition({ ...OK, productRetired: true, skuActive: false })).toBe("productRetired");
+    expect(walkDisposition({ ...OK, productRetired: true, par: null })).toBe("productRetired");
+  });
+
+  it("a retired product suppresses the row EVEN WITH a live par — suppressed, not deleted", () => {
+    // The par value is untouched and still present in the input; the walk simply
+    // stops acting on it. That is what makes a restore exact — see the restore test.
+    const r = walkDisposition({ ...OK, productRetired: true, par: 12 });
+    expect(r).toBe("productRetired");
+  });
+
+  it("RESTORE IS EXACT: flipping the product back reproduces the prior disposition", () => {
+    // The reversibility contract. Retirement is a read-time gate over untouched par
+    // columns, so un-retiring restores the identical walk for every input shape —
+    // there is no par to re-enter because none was ever cleared.
+    const shapes: WalkDispositionInput[] = [
+      { ...OK },
+      { ...OK, par: 12 },
+      { ...OK, vendorKnown: false },
+      { ...OK, skuActive: false },
+      { ...OK, par: null },
+      { productRetired: false, vendorKnown: false, skuActive: false, par: null },
+    ];
+    for (const shape of shapes) {
+      const before = walkDisposition(shape);
+      const retired = walkDisposition({ ...shape, productRetired: true });
+      const restored = walkDisposition({ ...shape, productRetired: false });
+      expect(retired).toBe("productRetired");
+      expect(restored).toBe(before);
+    }
+  });
+
+  it("the pre-retirement ladder is byte-identical when no product is retired", () => {
+    // ①–③ are unchanged: any SKU whose product is not retired classifies exactly as
+    // it did before the ruling. This is the regression guard on the refactor that
+    // moved the order out of loadWalkerData's if-chain and into this function.
+    expect(walkDisposition({ ...OK, vendorKnown: false, skuActive: false })).toBe("vendorInactive");
+    expect(walkDisposition({ ...OK, vendorKnown: false, par: null })).toBe("vendorInactive");
+    expect(walkDisposition({ ...OK, skuActive: false, par: null })).toBe("skuInactive");
+  });
+
+  it("par 0 is a REAL par, not an absent one — only null excludes", () => {
+    expect(walkDisposition({ ...OK, par: 0 })).toBe("walk");
+  });
+});
+
+/**
+ * PAR-REVIEW ADVISORIES — cause-attributed, never numeric (Juan, 2026-08-21:
+ * "the pars should be loud about why they need to be tuned down when demand lessens
+ * because of retirement. The system recognizes what's going on before the human does.")
+ *
+ * The load-bearing test in here is the INVENTORY-ONLY carve-out and the
+ * no-event-no-advisory rule. Both come straight off a live check run before the rule
+ * was written: 57 of 141 par'd SKUs are inventory-only with zero recipe refs, and 20
+ * more are non-inventory with zero refs of which 16 are RESALE goods (Coke, Saratoga,
+ * Frooties…) that correctly have no recipe. Firing on the static state would have
+ * cried wolf on ~73 rows on day one.
+ */
+describe("parReviewAdvisory — cause-attributed par nudges", () => {
+  const BASE: ParAdvisoryInput = {
+    inventoryOnly: false, productRetired: false, activeRecipeRefs: 2, removedSources: [],
+  };
+
+  it("says NOTHING when nothing changed — a healthy par is silent", () => {
+    expect(parReviewAdvisory(BASE)).toBeNull();
+  });
+
+  it("A STATE IS NOT A TRIGGER: zero active refs alone raises nothing", () => {
+    // This is the resale case — Coke has no recipe and never had one. Only a CHANGE
+    // (a removed source) speaks, because only a change is news.
+    expect(parReviewAdvisory({ ...BASE, activeRecipeRefs: 0 })).toBeNull();
+  });
+
+  it("INVENTORY-ONLY is never advised, even with a removed source", () => {
+    // A par on to-go cups was never recipe-derived; "no recipe uses this" is a
+    // category error on it. This rung outranks every other, including retirement.
+    expect(parReviewAdvisory({
+      ...BASE, inventoryOnly: true, activeRecipeRefs: 0, removedSources: ["Ham Sub"],
+    })).toBeNull();
+    expect(parReviewAdvisory({
+      ...BASE, inventoryOnly: true, productRetired: true,
+    })).toBeNull();
+  });
+
+  it("a removed source with others remaining → demand_source_removed, recipe NAMED", () => {
+    const r = parReviewAdvisory({ ...BASE, activeRecipeRefs: 1, removedSources: ["Ham Sub"] });
+    expect(r).toEqual({
+      code: "demand_source_removed", removedSources: ["Ham Sub"], activeRecipeRefs: 1,
+    });
+  });
+
+  it("a removed source with NOTHING left → no_demand_source, the stronger form", () => {
+    const r = parReviewAdvisory({ ...BASE, activeRecipeRefs: 0, removedSources: ["Ham Sub"] });
+    expect(r?.code).toBe("no_demand_source");
+    expect(r?.removedSources).toEqual(["Ham Sub"]);
+  });
+
+  it("a retired PRODUCT outranks the removal codes", () => {
+    const r = parReviewAdvisory({
+      ...BASE, productRetired: true, activeRecipeRefs: 0, removedSources: ["Ham Sub"],
+    });
+    expect(r?.code).toBe("product_retired");
+  });
+
+  it("NEVER invents a number — the advisory carries causes, not a suggested par", () => {
+    // Dynamic Pars owns numeric suggestion; this rule must stay descriptive. If a
+    // `suggestedPar`-shaped field ever appears here, that scope line has been crossed.
+    const r = parReviewAdvisory({ ...BASE, activeRecipeRefs: 0, removedSources: ["A", "B"] });
+    expect(Object.keys(r ?? {}).sort()).toEqual(["activeRecipeRefs", "code", "removedSources"]);
+  });
+
+  it("reports EVERY removed source, and does not mutate its input", () => {
+    const removedSources = ["Zeta Sub", "Alpha Sub"];
+    const r = parReviewAdvisory({ ...BASE, activeRecipeRefs: 0, removedSources });
+    expect(r?.removedSources).toEqual(["Zeta Sub", "Alpha Sub"]);
+    r?.removedSources.push("mutated");
+    expect(removedSources).toEqual(["Zeta Sub", "Alpha Sub"]);
   });
 });

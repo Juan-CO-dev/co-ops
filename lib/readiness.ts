@@ -32,6 +32,21 @@ export const KNOWN_REASONS = [
   // the flatten poisons and the recipe genuinely cannot be costed — a RED fault,
   // not the amber ambiguity duplicate_producers describes.
   "unresolved_product",
+  // ── Retirement (Juan's ruling A+, 2026-08-21; sim P1-9) ───────────────────
+  // A recipe line pins a RETIRED product (`products.active = false`). RED, and
+  // deliberately SEPARATE from unresolved_product: that one says "no vendor sells
+  // this right now / nobody weighed it" and the errand is the SKU catalog or a
+  // scale; this one says "we do not buy this identity any more" and the errand is
+  // the RECIPE — re-point the line. One word covering both would point half the
+  // repairs at the wrong shelf.
+  "retired_product",
+  // A recipe line pins a vendor SKU that has been DEACTIVATED. LOUDNESS ONLY: it
+  // never changes a status, because such a line's resolution behavior is unchanged
+  // by this rule (loadSkuPack includes inactive SKUs deliberately, for historical
+  // replay — flipping that moves live numbers and is its own decision). The line
+  // ALREADY reads amber through not_ready_skus; this names WHY that SKU is not
+  // ready, so the author sees "discontinued" instead of a bare count.
+  "retired_sku",
 ] as const;
 export type ReasonCode = (typeof KNOWN_REASONS)[number];
 
@@ -89,6 +104,36 @@ export function recipeOwnReadiness(r: {
   return reasons.length === 0 ? READY : { status: "incomplete", reasons };
 }
 
+/**
+ * RETIREMENT PINS on one recipe (Juan's ruling A+, 2026-08-21). Both counts are
+ * optional and default to 0, so every caller that predates retirement keeps its
+ * exact behavior. They are an OBJECT rather than two more positional parameters:
+ * six positional args, four of them numbers, is a call site nobody can read.
+ */
+export interface RecipeRetirementPins {
+  /**
+   * How many inputs pin a RETIRED product. RED and counted alongside — never
+   * folded into — `unresolvedProducts`: both poison the flatten identically, but
+   * they send an author to different places (re-point this line vs fix the SKU
+   * catalog), and the loader classifies each pin into exactly one of them.
+   */
+  retiredProducts?: number;
+  /**
+   * How many inputs pin a DEACTIVATED vendor SKU. An AMBER RIDER, never a red
+   * fault — that is the scope line of the ruling: for a deactivated SKU pin this
+   * PR buys LOUDNESS only, because such a pin's resolution behavior is
+   * deliberately unchanged (lib/prep-consumption.ts loadSkuPack includes inactive
+   * SKUs for historical replay; flipping that moves live numbers and is its own
+   * decision). Making the row RED would assert a refusal that does not exist.
+   *
+   * In the live loader it changes the status not at all: an inactive SKU is absent
+   * from the readiness map, so the SAME pin already contributes a not-ready status
+   * to `inputSkuStatuses` and the row is amber with or without this count. All the
+   * rider adds is the WHY — "discontinued" instead of a bare not-ready tally.
+   */
+  retiredSkus?: number;
+}
+
 /** Two-level compose: own red wins; else any not-ready input → amber.
  * inputSkuStatuses / inputSubItemStatuses = readiness statuses of the recipe's
  * SKU inputs and sub-item-input CHAINS respectively (sub-item chain status =
@@ -104,16 +149,25 @@ export function composeRecipeReadiness(
    * so every caller that predates products keeps its exact behavior (0 = none).
    */
   unresolvedProducts = 0,
+  pins: RecipeRetirementPins = {},
 ): Readiness {
+  const retiredProducts = pins.retiredProducts ?? 0;
+  const retiredSkus = pins.retiredSkus ?? 0;
+
   const badSkus = inputSkuStatuses.filter((s) => s !== "ready").length;
   const badSubs = inputSubItemStatuses.filter((s) => s !== "ready").length;
   const upstreamReasons: Reason[] = [];
   if (badSkus > 0) upstreamReasons.push({ code: "not_ready_skus", count: badSkus });
   if (badSubs > 0) upstreamReasons.push({ code: "not_ready_subitems", count: badSubs });
-  const ownReasons = unresolvedProducts > 0
-    ? [...own.reasons, { code: "unresolved_product" as const, count: unresolvedProducts }]
-    : own.reasons;
-  if (own.status === "incomplete" || unresolvedProducts > 0) {
+  // The SKU-retirement rider, in the AMBER bucket beside the count it explains —
+  // never in `ownReasons`, so it can never make a row red (see the type's doc).
+  if (retiredSkus > 0) upstreamReasons.push({ code: "retired_sku", count: retiredSkus });
+
+  const ownReasons: Reason[] = [...own.reasons];
+  if (unresolvedProducts > 0) ownReasons.push({ code: "unresolved_product", count: unresolvedProducts });
+  if (retiredProducts > 0) ownReasons.push({ code: "retired_product", count: retiredProducts });
+
+  if (own.status === "incomplete" || unresolvedProducts > 0 || retiredProducts > 0) {
     return { status: "incomplete", reasons: [...ownReasons, ...upstreamReasons] };
   }
   if (upstreamReasons.length > 0) return { status: "upstream_gaps", reasons: upstreamReasons };
