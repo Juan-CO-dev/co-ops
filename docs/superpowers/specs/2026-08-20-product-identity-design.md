@@ -2,6 +2,22 @@
 
 Brainstormed with Juan 2026-08-20 evening (visual-companion session; mockups in `.superpowers/brainstorm/415939-1787264489/content/`). Every locked decision below is his; the drafting is CC's. Foundation docs: `docs/audits/2026-08-20-multivendor-semantics-audit.md` (the gap this closes), the Angel arc's data trail (`docs/seed/source/angel-*`), the truth-model doctrine (audit = owner-invoked tool, never a gate — 2026-08-02 reframe).
 
+
+> **✅ SHIPPED 2026-08-21 — arc closed.** Seven phases, PRs #273–#281; migrations 0179
+> (product layer + primaries + the weight-provenance quartet) · 0180 (count allocation
+> provenance) · 0181 (equipment link) all applied live, each at its named gate on Juan's
+> word. Every section below is BUILT except the four named non-goals. Eleven deviations
+> from this spec were argued and lead-blessed in the plan — read them before treating any
+> line here as the last word, especially **D1** (the phase swap: the engine ships before
+> the re-point), **D5** (FIFO is a READ-TIME attribution; the depletion ledgers are never
+> re-keyed) and **D8** (a product count writes ordinary per-SKU lines). The lead ruling on
+> `count_exceeds_lots` REVERSED this spec's implied refusal: a count is ground truth and
+> theory yields to it, so the unexplained oz is absorbed by the resolved primary and
+> reported, never refused.
+> Plan: `docs/superpowers/plans/2026-08-20-product-identity.md` ·
+> verification: `docs/sim/2026-08-21-product-identity-simday.md` (2 sim days, 43
+> assertions, 6 P1s found and fixed) · law: `AGENTS.md` § Product identity.
+
 ## The problem (proven)
 
 Recipes pin ONE vendor's SKU; nothing above the SKU knows two hams are one product. Consequences (all live-verified): vendor-down demand evaporates; depletion follows dead pins producing mirrored false SHORT/OVER variance; counts can't roll twins up; "what we buy most" has no grain to live at; $3,230.74 of real iceberg spend attributes to no SKU we hold; 8 multi-vendor pairs await adjudication with no vocabulary to adjudicate in.

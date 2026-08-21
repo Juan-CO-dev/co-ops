@@ -186,22 +186,42 @@ Logged-deferred → DEBT table.
   velocity have a couple of weeks of data. Weather bootstraps from the existing
   manual weather field on the daily report before any feed is built. Then
   EZCater 2c-b when the ezManage token lands.
-- ⭐ **P2 — THE PRODUCT-IDENTITY NODE (brainstorm w/ Juan first, then build).** The
-  multi-vendor audit's deepest finding: there is no identity layer above SKUs, so two
-  vendors' hams are two independent universes and the doctrine's backup/failover/guidance
-  half has NO representation. Consumption pins to one SKU with no failover, so a dead pin
-  plus a live receipt drifts BOTH twins in opposite directions and nothing nets them.
-  **Blocks, and is blocked by, real decisions** — it is a truth-model question, not a
-  refactor, and its blast radius is the whole arc (flatten, depletion, counts, ordering,
-  production, usageRank). **8 multi-vendor pairs are still un-adjudicated** (Ham and Fresh
-  Mozzarella were settled in #265/#267; the rest, incl. the PFG-lettuce attribution
-  question, wait on this brainstorm). P6 (usageRank seeded from Angel spend as a
-  null-fallback) SEQUENCES AFTER it. Audit:
-  `docs/audits/2026-08-20-multivendor-semantics-audit.md`.
-- **Weight / trim audit** — the trim registry shipped as `OPERATIONAL_ESTIMATE` for four
-  of its five classes (a named physical loss, reasoned, not observed). First in line to be
-  replaced by observed trim once production capture runs. Pair it with the surprise-weigh
-  pass so one floor session settles both.
+- ✅ **P2 — THE PRODUCT-IDENTITY ARC IS SHIPPED (2026-08-20/21, PRs #273–#281, migrations
+  0179/0180/0181 applied).** The audit's deepest finding is closed: `products` sits above
+  `vendor_items`, recipes pin the PRODUCT, and ONE pure resolution ladder
+  (`resolveProductMember`, run once at graph build) answers for costing, depletion,
+  production, counts and ordering — never four private opinions. A vendor going down now
+  reroutes the par to the backup with the demand intact; two twins roll up to one on-hand
+  number with a per-vendor split and a FIFO lot shelf underneath; a product-level count
+  writes per-SKU lines that sum to the counted number exactly, so the mirrored false
+  SHORT/OVER pair is dead. Shipped alongside: the weight & trim audit board
+  (`/admin/weights`), the equipment link that dropped the needs-link backlog 34 → 2, and
+  the twin-affirming collision check. Spec
+  `docs/superpowers/specs/2026-08-20-product-identity-design.md` · plan
+  `docs/superpowers/plans/2026-08-20-product-identity.md` · audit
+  `docs/audits/2026-08-20-multivendor-semantics-audit.md` · sim day
+  `docs/sim/2026-08-21-product-identity-simday.md`.
+  **The follow-ons it created are in DEBT below; the two P1s there should land before
+  receiving starts writing lots against member SKUs.**
+- **P6 — usageRank seeded from Angel spend as a null-fallback.** Explicitly deferred out
+  of the product-identity arc and now UNBLOCKED by it: members of one product already
+  share the product's live trailing usage (`rollupUsageByProduct`), so the seed is a pure
+  null-fallback beneath a working signal rather than the only signal. Prefer a nullable
+  `seed_usage` column read ONLY when live rank is null (it decays naturally); **not**
+  `guide_position`, which is a dead column with different semantics (walk order).
+- **Weight / trim audit — SHIPPED as a board (`/admin/weights`); two things still owed.**
+  (a) The trim registry shipped as `OPERATIONAL_ESTIMATE` for four of its five classes (a
+  named physical loss, reasoned, not observed) — **Juan's ESTIMATE-class decision is still
+  open**: does an estimated class keep its own name forever, or is `OPERATIONAL_ESTIMATE`
+  a temporary badge that observed trim retires? The board ranks them but cannot rule.
+  (b) First in line to be replaced by observed trim once production capture runs — pair it
+  with the surprise-weigh pass so one floor session settles both.
+- **Fresh Mozzarella's primary is still an INFERENCE, and it is the only one.** Juan named
+  the SHAPE ("both active — one primary, one backup") but never the sides; seed 18 flagged
+  it, seed 24 wrote it flagged (`primary_is_inferred: true`), and it is now live as PFG
+  primary / Baldor backup. **One field vetoes it.** Ham and the other eight pairs are
+  explicit; ICEBERG was ruled 2026-08-21 (disposition A, PFG primary, no separate LETTUCE
+  product). Say it out loud rather than letting an inference harden into a fact.
 
 ## LATER (sequenced, not forgotten)
 
@@ -246,7 +266,7 @@ offline/dead-zone resilience (walk-ins, basements) · customer-facing menu displ
 | Opening photo capture UI (server ready) | next opening-client touch |
 | Orphaned-mirror Doctor check | NOW (comment already promises it) |
 | reconcileRefTrackItems N+1 batch | before ref_track real adoption |
-| Spine-link DB CHECK + item_id FK action | after the 34-line needs-link backlog clears |
+| Spine-link DB CHECK + item_id FK action — **RE-TRIGGERED, NOT RETIRED**: the 0163 DEFERRED block was commented out because a `NOT VALID` CHECK would 500 the es-fill campaign on 34 legacy unlinked rows. Migration 0181 dropped that backlog to **2**, so the constraint is finally near-shippable | the last 2 unlinked lines get a target (then enable the 0163 block) |
 | warn/info token surface hex collision | next theme touch |
 | TemplateBuilderClient updater side-effect | next builder-client touch |
 | order/build textarea aria association | next storefront touch |
@@ -268,8 +288,33 @@ offline/dead-zone resilience (walk-ins, basements) · customer-facing menu displ
 | `computeSkuCostPerOz` pack-chain-blind on /admin/skus + /admin/vendors/[id] | next cost-surface touch (menu-costing already routes around it) |
 | `ladle` measure row — seed 23 written, gate CLOSED | `Jus.oz_per_par_unit` filled (see the costing open list) |
 | Seed 22 §4 refusals: the radish line | Juan rules on "4 Julliened" |
-| `location_sku_settings` unseeded (0 rows) — the per-location activation overlay is BUILT and correct, just carrying no data; counts never reads it at all | "shops use what they carry" becomes real, i.e. with the P2 arc |
-| `skuNameCollisions` will nag on doctrine-correct twins | P7 — when more pairs go both-active |
-| Count sheet shows no vendor label on twins (two identical "Ham" rows) | P8 — blocks P2's usefulness |
+| `location_sku_settings` STILL unseeded (0 rows) — but the overlay is no longer counts-blind: Phase 3 routes counts AND costing through `loadProductIndex`, which resolves `active` as `resolveActive(overlay, global)`. What remains is purely the DATA task | "shops use what they carry" becomes real (seed the overlay) |
+| ~~`skuNameCollisions` will nag on doctrine-correct twins~~ — **CLOSED** (P7, folded into the product-identity arc: same-product twins are AFFIRMED, not nagged) | — |
+| ~~Count sheet shows no vendor label on twins~~ — **CLOSED** (#267, and consumed by the count sheet's C-mode split rows) | — |
 | `lib/types.ts` `VendorItem` ~10 columns stale (missing locationId, packFormat, unitsPerPack, eachSize, eachMeasure, avgOzPerEach, eachContainerLabel, inventoryOnly, skuClass, guidePosition) + vendorId/unit mistyped as non-nullable | next `types.ts` touch |
 | `/admin/menu-costing` is location-blind (`loadMenuCostingBoard` takes no location) — with per-location product primaries two shops could cost a sandwich differently; it prices against the GLOBAL primary today | when a shop's primaries genuinely diverge (deviation D7) |
+
+### Product-identity arc — the sim day's leftovers (2026-08-21)
+
+Full detail, class labels and file:line in `docs/sim/2026-08-21-product-identity-simday.md`.
+Six P1s were fixed inside the sim PR; these are what it left.
+
+| Item | Fire when |
+|---|---|
+| **P1 · `loadProductLots` / `loadLastReceivedAt` spend the FULL delivery-id list as a GET `.in()` filter** — unbounded by design ("the full receipt history"), ~39 bytes/uuid against Kong's 8–16 KB request line ⇒ a hard 414/400 at roughly 200–400 deliveries. `loadCountFormData` has no try/catch, so it 500s the whole count sheet, not just the product rows | **BEFORE receiving starts writing lots against member SKUs** — that is the day the list starts growing |
+| **P1 · `loadProductIndex` reads `products` with no `.eq("active", true)`** — a retired product keeps costing, depleting, routing and rendering a count row, while `lib/recipes.ts` refuses writes on the premise that it would not. **Needs a lead ruling on what retirement MEANS** (registry-only, or operational), then one filter or one comment | next products touch — the ambiguity is the bug |
+| P2 · the 0179 provenance quartet goes stale — `lib/receiving.ts` + `lib/admin/skus.ts` overwrite `avg_oz_per_each` without touching `weight_class`/`weight_established_*`, so the board renders "OPERATIONAL, established by <old person>" for a number they never weighed | next receiving or SKU-editor touch (INVOICE_DERIVED already exists as the class for it) |
+| P2 · item weights edited through the normal admin path write `item.update`, which the weight board's provenance lookup does not match → every one reads "nobody recorded where this came from" | with the quartet row above |
+| P2 · `PATCH /api/admin/skus/[id]` sets `product_id` with none of `attachMember`'s invariants (silent re-parenting, attach-to-inactive, composite-FK **500** where the other writer raises a named 409) | next SKU-editor touch |
+| P2 · `ReconcileSource.equipmentId` never populated → "Make B match A" on a fridge temp line is falsely refused as `unlinked_count`, the exact false positive 0181 exists to clear; and `copyItemsToVersion` writes `equipment_id` across versions with **no location check** | next template-builder touch (fix together — the second opens when the first closes) |
+| P2 · `RecipeReadout` omits product lines from the per-batch oz while leaving `anyOz` true — prints a partial as a total on all 11 re-pointed recipes | next recipe-builder touch |
+| P2 · `readiness-load` pushes nothing into `skuStatuses` for a RESOLVED product line → a recipe whose inputs are all product pins reads READY with every member SKU incomplete | next readiness touch |
+| P2 · a member deactivated *at this location only* appears on neither the count sheet's product row nor its singleton list — uncountable, while `OnHandPanel` still shows its stock | when `location_sku_settings` gets seeded (the two rows are one task) |
+| P2 · `CountForm` picks its advisory sentence off `absorbedByVendorName` when the field that means "nothing absorbed it" is `absorbedBySkuId` (which the client type does not carry) | next counts-UI touch |
+| P2 · `QuickAdd` filters link targets by name only — no kind filter and **no location filter**, unlike the two pickers that were fixed | next template-builder touch |
+| P2 · `lib/weights.ts` slices a UTC ISO to compare against an ET `business_date`; and `num(input_oz) ?? 0` fabricates a zero into the **denominator** of observed trim | next weights touch |
+| P2 · seven new `product.*` / `*.weight_fill` audit actions absent from `DESTRUCTIVE_ACTIONS`; 0181's 32-row backfill wrote no `migration_apply` audit row (it cites 0071, which does) | next audit-vocabulary touch |
+| P2 · `.or()` string interpolation without the house UUID guard in `loadProductIndex` (`lib/ordering.ts` has the same gap pre-existing) | one sweep, both sites |
+| P2 · product routes hardcode `< 6` / `< 7` instead of importing `PRODUCT_READ_MIN` / `PRODUCT_WRITE_MIN`; 0179's two `alter table … add/drop constraint` statements are not re-runnable | next products touch |
+| P2 · dead/unwired: `trimStandardForItem` (zero references), `lib/types.ts` `Product` + `VendorItem.productId` (zero importers), `attributeFifo` (named in the module header as one of the three answers, no app consumer) | next `types.ts` / knip sweep |
+| **DATA · 4 of 11 product rows have an EMPTY level picker** (Banana Peppers, **Ham**, Hot Peppers, Sweet Peppers) — their resolved primary has no pack chain, so the count sheet asks the operator to type the unit. Not a code defect; the weigh / pack-chain errand surfacing as a UX cliff | Juan's first count — **tell him before it, not during** |

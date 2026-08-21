@@ -6,6 +6,18 @@
 >
 > **⛔ SEED LAW: the same rule covers every `scripts/seed/*.ts` in this plan.** They ship dry-run-by-default (the seed-18 idiom: `const EXECUTE = process.argv.includes("--execute")`). A build agent may run the DRY RUN and paste its output. Only the lead runs `--execute`.
 
+
+> **✅ SHIPPED 2026-08-21 — every phase merged, every gate discharged.**
+> P1 #273 (0179 · 🔒 M1 applied) · P2 #274 (🔒 S1 run, the 8-pair adjudication sheet) ·
+> P3 #275 (resolution + read-time FIFO through all nine consumers) · P4 #276 (🔒 S2 run,
+> oz-parity gated) · P5 #278 (0180 · 🔒 M2 applied) · P6a #279 (weight & trim board) ·
+> P6b #280 (0181 · 🔒 M3 applied) · **P7 #281 (this one: the two sim days, the T0 sweep
+> over the cumulative diff, and the arc close).**
+> Findings: `docs/sim/2026-08-21-product-identity-simday.md` — 43 assertions, 0 failures,
+> **6 P1s found and fixed inside Phase 7** (every one a path that had never executed), 2
+> P1s + a P2 list filed to `docs/ROADMAP.md`. The arc's law now lives in `AGENTS.md`
+> § Product identity.
+
 **Base:** repo `C:\Users\conta\co-ops`, branch `main` @ `69404ac`.
 **Spec (the contract):** `docs/superpowers/specs/2026-08-20-product-identity-design.md` — Juan-ratified 2026-08-20.
 **Foundation audit (the integration checklist):** `docs/audits/2026-08-20-multivendor-semantics-audit.md`, gap P2.
