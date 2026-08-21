@@ -37,6 +37,7 @@ import {
   membersDisagreeOnUnitOz,
   type ProductMember,
   type ProductResolution,
+  type ReceiptLot,
 } from "@/lib/products-shared";
 import type { ProductIndex } from "@/lib/prep-consumption-graph";
 
@@ -526,6 +527,133 @@ export async function loadProductIndex(
   }
 
   return { index: { resolution, basis }, byProduct, productBySku };
+}
+
+// ── Receipt lots (Phase 5 — the FIFO shelf under the count sheet) ────────────
+
+export interface ProductLotLoad {
+  /** productId → its members' receipt lots at this location, OLDEST FIRST. */
+  lotsByProduct: Map<string, ReceiptLot[]>;
+  /**
+   * productId → receipt lines DROPPED because resolved_oz was NULL. A dropped line
+   * is real stock the lot view cannot see, so the caller treats the product's FIFO
+   * views as ADVISORY rather than presenting a split it knows is short
+   * (buildProductOnHandRow's `lotsTainted`). Absent = zero. NEVER coerced to 0 oz —
+   * the same taint discipline lib/counts.ts sumReceivedOzWindow already applies.
+   */
+  nullOzLotCountByProduct: Map<string, number>;
+}
+
+const EMPTY_LOT_LOAD: ProductLotLoad = {
+  lotsByProduct: new Map(),
+  nullOzLotCountByProduct: new Map(),
+};
+
+/**
+ * Every delivery id at a location. The lot shelf is the FULL receipt history (a lot
+ * only leaves it by being eaten), so unlike lib/counts.ts locationDeliveryIds there
+ * is no window to bound it with.
+ *
+ * PAGED (the PR #63 lesson) under `id` (the PK) as the stable total order: a short id
+ * list silently zeroes intake for every delivery it drops, which here would read as
+ * "that vendor has no stock" and hand the whole count to the other twin. The caller
+ * only uses set membership, so row order is not otherwise load-bearing.
+ */
+async function allLocationDeliveryIds(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+): Promise<string[]> {
+  const rows = await selectAllRows<{ id: string }>(async (from, to) => {
+    const { data, error } = await sb
+      .from("vendor_deliveries")
+      .select("id")
+      .eq("location_id", locationId)
+      .order("id", { ascending: true })
+      .range(from, to)
+      .returns<Array<{ id: string }>>();
+    if (error) throw new Error(`loadProductLots deliveries: ${error.message}`);
+    return { data };
+  });
+  return rows.map((r) => r.id);
+}
+
+/**
+ * Load the receipt LOTS behind a set of products at one location — the shelf the
+ * FIFO functions in lib/products-shared.ts walk (spec: "Lot data already exists
+ * (vendor_delivery_items are dated)"; nothing new is captured).
+ *
+ * Takes the member map the PRODUCT INDEX already built rather than re-querying
+ * membership: a second membership read is a second opinion about which SKUs a
+ * product means, which is exactly what this layer exists to end (the loadRecipeGraph
+ * law). Callers pass `loadProductIndex(...).byProduct`'s member ids.
+ *
+ * `created_at` is the lot instant, deliberately: it is the true write instant, which
+ * is what an anchor timestamp is comparable to (delivery_date is a bare date). CC
+ * verified 2026-08-20 that zero of the live deliveries are backdated; if retro-entry
+ * ever becomes practice, that is the moment to add an explicit received_at — not now.
+ *
+ * DB-COUPLED, so it stays off the vitest spine per the house law; the pure half it
+ * feeds (remainingByLot / allocateProductCount / buildProductOnHandRow) is fully
+ * pinned in tests/products-count-mode.test.ts and tests/products-fifo.test.ts.
+ *
+ * NOT ROLE-GATED, like loadProductIndex beside it: an internal resolution step inside
+ * a caller that has already gated (loadCountFormData / loadOnHand both do).
+ */
+export async function loadProductLots(
+  locationId: string,
+  memberSkuIdsByProduct: ReadonlyMap<string, ReadonlyArray<string>>,
+): Promise<ProductLotLoad> {
+  const productOfSku = new Map<string, string>();
+  for (const [productId, skuIds] of memberSkuIdsByProduct) {
+    for (const skuId of skuIds) productOfSku.set(skuId, productId);
+  }
+  const skuIds = [...productOfSku.keys()];
+  if (skuIds.length === 0) return EMPTY_LOT_LOAD;
+
+  const sb = getServiceRoleClient();
+  const deliveryIds = await allLocationDeliveryIds(sb, locationId);
+  if (deliveryIds.length === 0) return EMPTY_LOT_LOAD;
+
+  // PAGED for the same reason the delivery ids are: a truncated page drops real lots
+  // and silently mis-attributes the FIFO split.
+  const lines = await selectAllRows<{
+    id: string;
+    vendor_item_id: string;
+    created_at: string;
+    resolved_oz: number | string | null;
+  }>(async (from, to) => {
+    const { data, error } = await sb
+      .from("vendor_delivery_items")
+      .select("id, vendor_item_id, created_at, resolved_oz")
+      .in("vendor_item_id", skuIds)
+      .in("delivery_id", deliveryIds)
+      .order("id", { ascending: true })
+      .range(from, to)
+      .returns<
+        Array<{ id: string; vendor_item_id: string; created_at: string; resolved_oz: number | string | null }>
+      >();
+    if (error) throw new Error(`loadProductLots lines: ${error.message}`);
+    return { data };
+  });
+
+  const lotsByProduct = new Map<string, ReceiptLot[]>();
+  const nullOzLotCountByProduct = new Map<string, number>();
+  for (const l of lines) {
+    const productId = productOfSku.get(l.vendor_item_id);
+    if (productId == null) continue; // defensive — the .in() filter already scoped it.
+    const oz = num(l.resolved_oz);
+    if (oz == null || oz <= 0) {
+      // DROPPED AND REPORTED, never coerced to 0: a legacy line with no resolved_oz
+      // is real stock the lot view cannot see, and a zero would silently hand that
+      // stock to the other twin.
+      nullOzLotCountByProduct.set(productId, (nullOzLotCountByProduct.get(productId) ?? 0) + 1);
+      continue;
+    }
+    const list = lotsByProduct.get(productId) ?? [];
+    list.push({ lotId: l.id, skuId: l.vendor_item_id, receivedAt: l.created_at, oz });
+    lotsByProduct.set(productId, list);
+  }
+  return { lotsByProduct, nullOzLotCountByProduct };
 }
 
 /**
