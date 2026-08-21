@@ -61,6 +61,8 @@ import {
 import { loadOnHandDerived, type OnHandRow } from "@/lib/counts";
 import { etBusinessDate } from "@/lib/counts-shared";
 import { resolvePar, resolveActive, type LocationSkuOverlay } from "@/lib/location-sku-shared";
+import { loadProductIndex } from "@/lib/products";
+import { rollupUsageByProduct } from "@/lib/products-shared";
 import {
   createDraftsFromLines,
   PurchaseOrderError,
@@ -354,6 +356,24 @@ export interface WalkerSku {
    * in every case.
    */
   canImplyOz: boolean;
+  /** The product this SKU is a member of (0179). null = implicit singleton. */
+  productId: string | null;
+  /** Display label for the product headline ("HAM"). null for a singleton. */
+  productName: string | null;
+  /**
+   * `solo` = not a member of any product · `primary` = the DESIGNATED primary for
+   * this scope (product_primaries, location row over global) · `backup` = an active
+   * member that is not the designated primary. Deliberately the DESIGNATION, not the
+   * ladder's runtime answer: "Baldor — backup" is what a manager needs to read on a
+   * vendor-down day, and it stays true whichever rung answered.
+   */
+  memberRole: "primary" | "backup" | "solo";
+  /**
+   * True when this row exists because ANOTHER member's par could not be routed
+   * today (its vendor is down or the SKU is deactivated) and the demand moved here.
+   * The par shown is the unroutable member's par — the demand did not evaporate.
+   */
+  reroutedFromSkuId: string | null;
 }
 export interface WalkerVendor {
   vendorId: string;
@@ -418,6 +438,33 @@ export interface WalkerUnroutable {
   vendorInactive: number;
   /** The SKU names no vendor at all, so no one can be asked for it. */
   noVendor: number;
+  /**
+   * A par'd member of a PRODUCT dropped out today (deactivated / vendor down) and
+   * the product had no other member that could carry it either. The one cause that
+   * only exists because products exist: a member with no par of its own used to be
+   * invisible here, and its product's demand vanished with it.
+   */
+  productUnroutable: number;
+  /**
+   * NOT a fault — the POSITIVE signal (0179). A par whose own SKU could not be
+   * routed today was carried by another member of the same product, so the demand
+   * MOVED instead of evaporating. Rendered informationally, never as an alarm, and
+   * deliberately NOT summed into `count`: nothing here needs fixing.
+   */
+  reroutedToBackup: number;
+}
+
+/** The columns every walker row needs — one spelling, shared by the par'd-SKU read
+ *  and the rerouted-backup read (a member with no par of its own is not in the first). */
+const WALKER_SKU_COLUMNS =
+  "id, name, vendor_id, item_number, active, pack_format, weekday_par, weekend_par, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each, product_id";
+
+interface WalkerSkuRow {
+  id: string; name: string; vendor_id: string | null; item_number: string | null; active: boolean;
+  pack_format: string | null; weekday_par: number | string | null; weekend_par: number | string | null;
+  each_container_label: string | null; units_per_pack: number | null;
+  each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null;
+  product_id: string | null;
 }
 
 /**
@@ -446,19 +493,17 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
   // (active_override = true on a globally-INACTIVE SKU, spec §2.1) surfaces. Filtering
   // on the global flag first would make that override dead. `active` is selected.
   const { data: skuRows, error: sErr } = await sb.from("vendor_items")
-    .select("id, name, vendor_id, item_number, active, pack_format, weekday_par, weekend_par, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each")
+    .select(WALKER_SKU_COLUMNS)
     .or("weekday_par.not.is.null,weekend_par.not.is.null")
-    .returns<Array<{
-      id: string; name: string; vendor_id: string | null; item_number: string | null; active: boolean;
-      pack_format: string | null; weekday_par: number | string | null; weekend_par: number | string | null;
-      each_container_label: string | null; units_per_pack: number | null;
-      each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null;
-    }>>();
+    .returns<WalkerSkuRow[]>();
   if (sErr) throw new Error(`loadWalkerData skus: ${sErr.message}`);
   // P4: every exclusion from here on is COUNTED, not just skipped — a dropped par is
   // deleted demand, and the manager has to be able to see it. Classification is
   // first-cause-wins in walk order (vendorless → vendor-down → deactivated).
-  const unroutable: WalkerUnroutable = { count: 0, skuInactive: 0, vendorInactive: 0, noVendor: 0 };
+  const unroutable: WalkerUnroutable = {
+    count: 0, skuInactive: 0, vendorInactive: 0, noVendor: 0,
+    productUnroutable: 0, reroutedToBackup: 0,
+  };
   const skus = (skuRows ?? []).filter((s) => s.vendor_id != null); // a par'd SKU with no
   // vendor can't be ordered from anyone → excluded (schema allows null vendor_id, live
   // data has none today; defensive — and now counted rather than silently dropped).
@@ -476,7 +521,8 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
 
   // BATCH loads (one each — loadRecipeGraph law).
   // overlayBySku: per-location active/par overrides; empty map = day-one (pure inheritance).
-  const [chainsBySku, measures, usageBySku, onHandView, { data: vendorRows, error: vErr }, lastOrderBySku, overlayBySku, cutoffsByVendor] =
+  const productIds = [...new Set(skus.map((s) => s.product_id).filter((v): v is string => v != null))];
+  const [chainsBySku, measures, rawUsageBySku, onHandView, { data: vendorRows, error: vErr }, lastOrderBySku, overlayBySku, cutoffsByVendor, productIndex] =
     await Promise.all([
       loadSkuPackChains(skuIds),
       loadMeasures(),
@@ -487,10 +533,18 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
       loadLatestOrderQtyBySku(sb, skuIds),
       loadOverlayBySku(sb, locationId),
       loadCutoffsByVendor(sb, vendorIds, locationId, todayDow),
+      // THE SAME loader the recipe graph uses — one resolution ladder, not two
+      // (0179). Zero products → zero queries.
+      loadProductIndex(productIds, locationId),
     ]);
   if (vErr) throw new Error(`loadWalkerData vendors: ${vErr.message}`);
   const vendorById = new Map((vendorRows ?? []).map((v) => [v.id, v]));
   const advisoryBySku = advisoryOnHandBySku(onHandView);
+  // D9 — members of one product SHARE the product's trailing usage, so the backup
+  // twin stops sorting dead last (`?? -Infinity`) just because every pin points at
+  // its sibling. Applied at the call site so the two loads stay parallel; the
+  // rollup itself is pure and test-pinned (tests/products-rollup.test.ts).
+  const usageBySku = rollupUsageByProduct(rawUsageBySku, productIndex.productBySku);
 
   // Advisory blackout (council UX finding 2026-08-08): the depletion ledger lags the
   // register by a day — the nightly cron materializes T-1. If it has materialized
@@ -504,34 +558,16 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
   const advisoryPaused =
     onHandView.salesThrough != null && onHandView.salesThrough < yesterdayEt;
 
-  // Build a per-SKU WalkerSku, grouped under its (active) vendor.
-  const skusByVendor = new Map<string, WalkerSku[]>();
-  for (const s of skus) {
-    const vendorId = s.vendor_id as string;
-    if (!vendorById.has(vendorId)) {
-      // Vendor inactive/missing → SKU dropped with it (P4: counted, not silent).
-      unroutable.vendorInactive += 1; unroutable.count += 1;
-      continue;
-    }
-    // Resolve active + par through the per-location overlay (D1). Day-one: no overlay rows →
-    // resolveActive/resolvePar reduce to the global values, byte-identical to prior behavior.
-    const overlayRow = overlayBySku.get(s.id) ?? null;
-    const overlayForPar: LocationSkuOverlay | null = overlayRow
-      ? { weekdayPar: overlayRow.weekdayPar, weekendPar: overlayRow.weekendPar }
-      : null;
-    // Inclusion governed by the overlay-over-global active resolution (D1): an overlay
-    // active_override wins over the global `active` flag — so a promotional SKU
-    // (override true, globally inactive) is INCLUDED and a locally-deactivated SKU
-    // (override false, globally active) is EXCLUDED. Global inactive + no override → excluded.
-    if (!resolveActive(overlayRow?.activeOverride, s.active)) {
-      // P4 — THE live case: the par sits on a deactivated twin (Ham, Fresh Mozzarella)
-      // while the active twin carries no par, so the product is unorderable from either.
-      unroutable.skuInactive += 1; unroutable.count += 1;
-      continue;
-    }
-    const par = resolvePar(overlayForPar, { weekdayPar: num(s.weekday_par), weekendPar: num(s.weekend_par) }, weekend);
-    if (par == null) continue; // neither resolved par applies today (excluded from walk).
-
+  // ── Row construction, shared by the par'd walk AND the rerouted-backup path ──
+  // A backup member carries no par of its own, so it is not in `skus`; when a
+  // product's par'd member cannot be routed today its row is built from the SAME
+  // function, with the unroutable member's par. One builder, no second opinion.
+  const buildRow = (
+    s: WalkerSkuRow,
+    par: number,
+    parIsWeekend: boolean,
+    reroutedFromSkuId: string | null,
+  ): WalkerSku => {
     const chain = chainsBySku.get(s.id) ?? null;
     const skuShape: RecipeInputSku = {
       packFormat: s.pack_format, eachContainerLabel: s.each_container_label,
@@ -553,12 +589,8 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
         suggestedQty = Math.max(Math.ceil(par - orderUnits), 0);
       }
     }
-
-    // parIsWeekend: true when the resolved par came from the weekend_par slot. Mirrors
-    // The day rule (weekend pair member w/ weekday fallback) applied to already-resolved values.
-    const resolvedWeekendPar = overlayForPar?.weekendPar ?? num(s.weekend_par);
-    const parIsWeekend = weekend && resolvedWeekendPar != null;
-    const row: WalkerSku = {
+    const entry = s.product_id != null ? productIndex.byProduct.get(s.product_id) ?? null : null;
+    return {
       skuId: s.id,
       name: s.name,
       itemNumber: s.item_number,
@@ -571,10 +603,178 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
       // Display-only (see WalkerSku.canImplyOz): same gate as orderUnits above, so the
       // row can explain a permanently absent estimate/chip instead of just showing none.
       canImplyOz: perUnitOz != null && perUnitOz > 0,
+      productId: s.product_id,
+      productName: entry?.name ?? null,
+      memberRole: entry == null ? "solo" : entry.primarySkuId === s.id ? "primary" : "backup",
+      reroutedFromSkuId,
     };
+  };
+
+  /** A par'd row that could not be routed today, kept so its product can rescue it. */
+  interface DroppedPar {
+    row: WalkerSkuRow;
+    productId: string;
+    par: number;
+    parIsWeekend: boolean;
+    cause: "skuInactive" | "vendorInactive";
+  }
+
+  // Build a per-SKU WalkerSku, grouped under its (active) vendor.
+  const skusByVendor = new Map<string, WalkerSku[]>();
+  /** Walkable candidates per product — the dedupe input (two members, ONE suggestion). */
+  const candidatesByProduct = new Map<string, WalkerSku[]>();
+  const droppedByProduct = new Map<string, DroppedPar[]>();
+  /** Member rows that dropped for par-null; a finding only if the product ends unwalked. */
+  const parNullMemberProducts = new Set<string>();
+  const walkedSkuIds = new Set<string>();
+  for (const s of skus) {
+    const vendorId = s.vendor_id as string;
+    if (!vendorById.has(vendorId)) {
+      // Vendor inactive/missing → SKU dropped with it (P4: counted, not silent).
+      unroutable.vendorInactive += 1; unroutable.count += 1;
+      // Hold the par for the product: a vendor going down is exactly when another
+      // member should carry the demand (0179), rather than it evaporating silently.
+      if (s.product_id != null) {
+        const ov = overlayBySku.get(s.id) ?? null;
+        const forPar: LocationSkuOverlay | null = ov ? { weekdayPar: ov.weekdayPar, weekendPar: ov.weekendPar } : null;
+        const heldPar = resolvePar(forPar, { weekdayPar: num(s.weekday_par), weekendPar: num(s.weekend_par) }, weekend);
+        if (heldPar != null) {
+          const list = droppedByProduct.get(s.product_id) ?? [];
+          list.push({
+            row: s, productId: s.product_id, par: heldPar,
+            parIsWeekend: weekend && (forPar?.weekendPar ?? num(s.weekend_par)) != null,
+            cause: "vendorInactive",
+          });
+          droppedByProduct.set(s.product_id, list);
+        }
+      }
+      continue;
+    }
+    // Resolve active + par through the per-location overlay (D1). Day-one: no overlay rows →
+    // resolveActive/resolvePar reduce to the global values, byte-identical to prior behavior.
+    const overlayRow = overlayBySku.get(s.id) ?? null;
+    const overlayForPar: LocationSkuOverlay | null = overlayRow
+      ? { weekdayPar: overlayRow.weekdayPar, weekendPar: overlayRow.weekendPar }
+      : null;
+    // Inclusion governed by the overlay-over-global active resolution (D1): an overlay
+    // active_override wins over the global `active` flag — so a promotional SKU
+    // (override true, globally inactive) is INCLUDED and a locally-deactivated SKU
+    // (override false, globally active) is EXCLUDED. Global inactive + no override → excluded.
+    // parIsWeekend: true when the resolved par came from the weekend_par slot. Mirrors
+    // The day rule (weekend pair member w/ weekday fallback) applied to already-resolved values.
+    const resolvedWeekendPar = overlayForPar?.weekendPar ?? num(s.weekend_par);
+    const parIsWeekend = weekend && resolvedWeekendPar != null;
+    if (!resolveActive(overlayRow?.activeOverride, s.active)) {
+      // P4 — the deactivated-twin case. With products (0179) this is no longer the end
+      // of the story: the par is held for the product below, and if another member can
+      // carry it the demand MOVES instead of evaporating.
+      unroutable.skuInactive += 1; unroutable.count += 1;
+      const heldPar = resolvePar(overlayForPar, { weekdayPar: num(s.weekday_par), weekendPar: num(s.weekend_par) }, weekend);
+      if (s.product_id != null && heldPar != null) {
+        const list = droppedByProduct.get(s.product_id) ?? [];
+        list.push({ row: s, productId: s.product_id, par: heldPar, parIsWeekend, cause: "skuInactive" });
+        droppedByProduct.set(s.product_id, list);
+      }
+      continue;
+    }
+    const par = resolvePar(overlayForPar, { weekdayPar: num(s.weekday_par), weekendPar: num(s.weekend_par) }, weekend);
+    if (par == null) {
+      // Neither resolved par applies today (excluded from the walk — normal for a
+      // weekday-only par on a weekend). For a MEMBER it is worth remembering: if the
+      // product ends the walk with no row at all, that silence is a finding.
+      if (s.product_id != null) parNullMemberProducts.add(s.product_id);
+      continue;
+    }
+
+    const row = buildRow(s, par, parIsWeekend, null);
+    walkedSkuIds.add(s.id);
+    if (s.product_id != null) {
+      const list = candidatesByProduct.get(s.product_id) ?? [];
+      list.push(row);
+      candidatesByProduct.set(s.product_id, list);
+      continue; // grouped after the product dedupe below.
+    }
     const arr = skusByVendor.get(vendorId) ?? [];
     arr.push(row);
     skusByVendor.set(vendorId, arr);
+  }
+
+  // ── Product dedupe: two active members of one product = ONE suggestion ────────
+  // (audit P2 — "the walk double-suggests when both twins carry a par"). The kept
+  // row is the RESOLVED member; if the resolution is not among today's walkable
+  // candidates, the designated primary, else a stable name order. The dropped rows
+  // are NOT unroutable: their demand is carried by the row we kept.
+  const vendorOf = (skuId: string): string | null => skus.find((s) => s.id === skuId)?.vendor_id ?? null;
+  for (const [productId, candidates] of candidatesByProduct) {
+    const entry = productIndex.byProduct.get(productId) ?? null;
+    const preferred =
+      candidates.find((c) => c.skuId === entry?.resolution.skuId) ??
+      candidates.find((c) => c.skuId === entry?.primarySkuId) ??
+      [...candidates].sort((a, b) => a.name.localeCompare(b.name))[0]!;
+    for (const c of candidates) {
+      if (c.skuId !== preferred.skuId) walkedSkuIds.delete(c.skuId);
+    }
+    const vendorId = vendorOf(preferred.skuId);
+    if (vendorId == null) continue; // unreachable: a candidate always had a live vendor.
+    const arr = skusByVendor.get(vendorId) ?? [];
+    arr.push(preferred);
+    skusByVendor.set(vendorId, arr);
+  }
+
+  // ── Vendor-down failover: a dropped par is carried by another member ──────────
+  // THE behavior this arc exists for. A par'd member that cannot be routed today
+  // (deactivated, or its vendor is down) hands its par to the product's resolved
+  // active member. If that member is already walked, the demand is simply covered;
+  // if it carries no par of its own it is not in `skus` at all, so its row is loaded
+  // here and built with the DROPPED member's par.
+  const rescueTargets = new Map<string, DroppedPar>(); // member sku id → the par it carries
+  for (const [productId, dropped] of droppedByProduct) {
+    const entry = productIndex.byProduct.get(productId) ?? null;
+    if (entry == null) { unroutable.productUnroutable += dropped.length; continue; }
+    // Highest par first: if two members dropped, the survivor carries the larger demand.
+    const worst = [...dropped].sort((a, b) => b.par - a.par)[0]!;
+    const covered = (candidatesByProduct.get(productId) ?? []).some((c) => walkedSkuIds.has(c.skuId));
+    if (covered) { unroutable.reroutedToBackup += 1; continue; }
+    // Nobody walked for this product — try the resolved member, else any active member
+    // with a live vendor. Both must be a DIFFERENT sku than the one that dropped.
+    const droppedIds = new Set(dropped.map((d) => d.row.id));
+    const byPreference = [
+      ...entry.members.filter((m) => m.skuId === entry.resolution.skuId),
+      ...entry.members,
+    ];
+    const target = byPreference.find(
+      (m) => m.active && !droppedIds.has(m.skuId) && m.vendorId != null && vendorById.has(m.vendorId),
+    );
+    if (!target) { unroutable.productUnroutable += 1; continue; }
+    rescueTargets.set(target.skuId, worst);
+  }
+
+  if (rescueTargets.size > 0) {
+    const rescueIds = [...rescueTargets.keys()];
+    const [{ data: rescueRows, error: rErr }, rescueChains] = await Promise.all([
+      sb.from("vendor_items").select(WALKER_SKU_COLUMNS).in("id", rescueIds).returns<WalkerSkuRow[]>(),
+      loadSkuPackChains(rescueIds),
+    ]);
+    if (rErr) throw new Error(`loadWalkerData rerouted backups: ${rErr.message}`);
+    for (const [id, chain] of rescueChains) chainsBySku.set(id, chain);
+    for (const r of rescueRows ?? []) {
+      const carried = rescueTargets.get(r.id);
+      if (!carried || r.vendor_id == null || !vendorById.has(r.vendor_id)) continue;
+      const row = buildRow(r, carried.par, carried.parIsWeekend, carried.row.id);
+      walkedSkuIds.add(r.id);
+      unroutable.reroutedToBackup += 1;
+      const arr = skusByVendor.get(r.vendor_id) ?? [];
+      arr.push(row);
+      skusByVendor.set(r.vendor_id, arr);
+    }
+  }
+
+  // A member that dropped for par-null AND whose product ends the walk with no row
+  // at all: the one genuinely silent drop left in the loop, now named.
+  for (const productId of parNullMemberProducts) {
+    const walked = (candidatesByProduct.get(productId) ?? []).some((c) => walkedSkuIds.has(c.skuId));
+    const rescued = [...rescueTargets.keys()].some((id) => productIndex.productBySku.get(id) === productId && walkedSkuIds.has(id));
+    if (!walked && !rescued) unroutable.productUnroutable += 1;
   }
 
   // Assemble vendor groups: usage desc then name within a vendor; vendors isOrderDay-first
@@ -800,17 +1000,26 @@ export async function submitParPass(
   // SKU is rejected. A SKU row simply MISSING (bad id) is still rejected loudly. overlayBySku
   // batch-loads per-location active/par overrides (D1); empty map = day-one (pure inheritance).
   const { data: skuRows, error: sErr } = await sb.from("vendor_items")
-    .select("id, name, vendor_id, item_number, active, pack_format, weekday_par, weekend_par, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each")
+    .select(WALKER_SKU_COLUMNS)
     .in("id", skuIds)
-    .returns<Array<{
-      id: string; name: string; vendor_id: string | null; item_number: string | null; active: boolean;
-      pack_format: string | null; weekday_par: number | string | null; weekend_par: number | string | null;
-      each_container_label: string | null; units_per_pack: number | null;
-      each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null;
-    }>>();
+    .returns<WalkerSkuRow[]>();
   if (sErr) throw new Error(`submitParPass skus: ${sErr.message}`);
   const skuById = new Map((skuRows ?? []).map((s) => [s.id, s]));
   for (const id of skuIds) if (!skuById.has(id)) throw new OrderingError(400, "invalid_sku", "A SKU is not found or inactive");
+  // Reject two lines naming two MEMBERS of one product (0179), for the same reason
+  // duplicate_sku exists: the walk shows ONE row per product, so two lines would
+  // double-order the same thing under two vendor names. The walk cannot produce
+  // this (loadWalkerData dedupes by product) — it is the backstop, exactly like
+  // duplicate_sku. lib/purchase-orders.ts keeps its per-SKU identity check: a PO is
+  // per-vendor and per-SKU by nature.
+  const seenProducts = new Set<string>();
+  for (const s of skuRows ?? []) {
+    if (s.product_id == null) continue;
+    if (seenProducts.has(s.product_id)) {
+      throw new OrderingError(400, "duplicate_product", "Two items of the same product appear in one walk");
+    }
+    seenProducts.add(s.product_id);
+  }
 
   const [chainsBySku, measures, overlayBySku] = await Promise.all([
     loadSkuPackChains(skuIds),
@@ -1302,9 +1511,19 @@ export async function generateDraftForVendor(
   // Reuse the walker payload (per-location overlay + suggested qtys are computed there).
   const walker = await loadWalkerData(actor, locationId);
   const vendor = walker.vendors.find((v) => v.vendorId === vendorId);
-  const suggestable = (vendor?.skus ?? []).filter(
+  const suggestableAll = (vendor?.skus ?? []).filter(
     (s): s is WalkerSku & { suggestedQty: number } => s.suggestedQty != null && s.suggestedQty > 0,
   );
+  // ONE line per product (0179). loadWalkerData already deduped, so this only fires
+  // if a future caller hands us a walk that did not — a suggestion per twin would
+  // order the same product twice from the same vendor.
+  const seenProduct = new Set<string>();
+  const suggestable = suggestableAll.filter((s) => {
+    if (s.productId == null) return true;
+    if (seenProduct.has(s.productId)) return false;
+    seenProduct.add(s.productId);
+    return true;
+  });
   if (suggestable.length === 0) {
     throw new OrderingError(409, "no_suggestions", "No suggested quantities to draft for this vendor today");
   }
