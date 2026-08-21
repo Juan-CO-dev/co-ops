@@ -24,18 +24,25 @@
  *       default that Juan's eyeball confirms or amends. That table IS gate S1.
  *   (4) the ICEBERG attribution question, presented and NOT resolved.
  *
- * ── WHAT IS ALREADY RULED, AND WHERE THAT IS AN INFERENCE ─────────────────────
+ * ── WHAT IS RULED, AND WHERE THAT IS STILL AN INFERENCE ───────────────────────
  * HAM — PFG primary, Baldor backup. EXPLICIT (Juan 2026-08-20; the Angel row behind
  *   the $2,164.94 spend is a PFG product). Source: seed 18.
- * FRESH MOZZARELLA — PFG primary, Baldor backup. **INFERRED**, flagged as such by
- *   seed 18 and still flagged here: Juan named the SHAPE ("both — one primary, one
- *   backup"), not the sides. Veto is one field.
- * LETTUCE — Sysco primary, Baldor backup. **INFERRED**, flagged by seed 21 wave 4
- *   §B: Sysco is the currently-active twin and the only one with a pack chain.
- * THE OTHER 8 — unruled. They get a product row and members and **NO PRIMARY ROW**,
- *   because a primary nobody designated is a fact invented by a script. Resolution
- *   then answers on the ladder's lower rungs, which is honest and (verified live,
- *   printed in the report) lands on the same member the default proposes.
+ * FRESH MOZZARELLA — PFG primary, Baldor backup. **STILL INFERRED**, flagged as such
+ *   by seed 18 and still flagged here: Juan named the SHAPE ("both — one primary, one
+ *   backup"), not the sides. It is the ONE designation this seed writes that nobody
+ *   has said out loud. Veto is one field.
+ * ICEBERG — **RULED 2026-08-21, disposition A**: one product, three members
+ *   (PFG/Iceberg + BOTH "Lettuce" twins as backups), PFG/Iceberg primary — Juan's
+ *   "go with PFG for iceberg". This SUPERSEDES wave 4 §B's INFERRED Sysco-primary
+ *   designation for the Lettuce pair, and the supersession is recorded in the
+ *   primary's note and its audit row rather than dropped. There is deliberately NO
+ *   separate LETTUCE product: "retire it" is discharged by never creating it.
+ * THE OTHER 8 — **RULED 2026-08-21**: Juan read this seed's own proposed default and
+ *   confirmed all eight at Boar's Head in one sitting, exactly as wave 4 §D1 said he
+ *   would ("one decision applied eight times"). Recorded as
+ *   `confirms_proposed_default: true` alongside `primary_is_inferred: false`, because
+ *   "he said Boar's Head" and "he read our reading and said yes" are both explicit but
+ *   only one of them started life as ours.
  *
  * Say so out loud rather than letting an inference harden into a fact — seed 18's
  * discipline, verbatim.
@@ -84,7 +91,7 @@ const EXECUTE = process.argv.includes("--execute");
 const MD = process.argv.includes("--markdown");
 
 const SCRIPT = "scripts/seed/24-product-identity.ts";
-const SOURCE_REPORT = "docs/seed/source/product-seed-dryrun.md";
+const SOURCE_REPORT = "docs/seed/source/product-identity-dryrun.md";
 const PHASE = "product_identity";
 const DECISION_SOURCES =
   "docs/superpowers/specs/2026-08-20-product-identity-design.md §2 · " +
@@ -170,6 +177,14 @@ interface PrimaryPlan {
   /** Who decided, and when. Rides into the audit row. */
   decidedBy: string;
   basis: string;
+  /** TRUE where Juan CONFIRMED a default this script proposed. Recorded distinctly
+   *  from `isInferred: false`: "he said PFG" and "he read our proposal and said yes"
+   *  are both explicit, but only one of them started life as our reading, and an
+   *  auditor a year from now should be able to tell which. */
+  confirmsProposedDefault?: boolean;
+  /** What earlier standing ruling this designation SUPERSEDES, if any. A ruling
+   *  replaced silently is a ruling nobody can audit (wave 4's own amendment rule). */
+  supersedes?: string;
 }
 
 /** A primary NOBODY has designated — printed as a proposal, never written. */
@@ -204,11 +219,20 @@ const OPERATIONAL_NOTE =
   "Juan's surprise 3-sample slice weighing, 2026-08-20 (OPERATIONAL_SLICE_OZ, lib/angel-wave3.ts:267). " +
   "Not a spec figure and not an invoice derivation — a measurement on the line.";
 
-/** The shape all 8 unruled pairs share, live-verified 2026-08-20 (wave 4 §D1). */
+/** The shape all 8 pairs share, live-verified 2026-08-20 (wave 4 §D1). */
 const BH_SHAPE_RATIONALE =
   "Boar's Head is the only ACTIVE member and holds the par; the Baldor twin is inactive, parless and priceless. " +
   "The resolution ladder already answers Boar's Head today (rung 3 — see the ladder column); a primary row makes " +
   "that explicit and keeps it true the day the Baldor row is reactivated as a backup.";
+
+/** Juan's ruling on all 8, 2026-08-21. One decision applied eight times, as wave 4
+ *  §D1 predicted it would be ("worth one question to Juan rather than eight"). */
+const BH_RULING_BASIS =
+  "Juan read the proposed default in the seed-24 dry run (§3) and CONFIRMED all eight at Boar's Head. " +
+  BH_SHAPE_RATIONALE +
+  " This is a confirmation of a default the script proposed, not a value the script inferred: the proposal was " +
+  "presented as a decision row and he answered it.";
+const BH_DECIDED_BY = "Juan 2026-08-21 (confirmed the proposed default, all 8 in one sitting)";
 
 const PRODUCTS: readonly ProductPlan[] = [
   {
@@ -253,36 +277,29 @@ const PRODUCTS: readonly ProductPlan[] = [
       "Juan 2026-08-20 for the SHAPE; the SIDE is an INFERENCE carried forward from seed 18 and still flagged. No unit_oz: mozzarella is not in OPERATIONAL_SLICE_OZ, so nobody has weighed it.",
   },
   {
-    name: "Lettuce",
+    name: "Iceberg",
     notes:
-      "Two vendors, both active since seed 21 (wave 4 §B). Neither twin has ever carried a par — the pair is correctly shaped and still unorderable, and a par is a floor decision.",
+      "THREE members after Juan's 2026-08-21 merge ruling (disposition A): PFG/Iceberg — active, par 4, the recipe pin, 640 oz case — plus BOTH 'Lettuce' twins, Sysco and Baldor, which join as backups carrying no par. One product, three vendor spellings. The $3,230.74 of Angel iceberg spend now has a grain to attribute to.",
     members: [
+      { skuName: "Iceberg", expectVendor: "PFG" },
       { skuName: "Lettuce", expectVendor: "Sysco" },
       { skuName: "Lettuce", expectVendor: "Baldor" },
     ],
     primary: {
       locationId: null,
-      vendor: "Sysco",
-      isInferred: true,
-      decidedBy: "Juan 2026-08-20 (shape only) — SIDE INFERRED by seed 21 wave 4 §B",
+      vendor: "PFG",
+      isInferred: false,
+      decidedBy: "Juan 2026-08-21 (explicit) — 'go with PFG for iceberg'",
       basis:
-        "Juan named the shape (both-active, primary + backup, like ham). Sysco was inferred because it is the currently-active twin and the only one with a pack chain (box = 15 × 15 oz = 225 oz); the Baldor row is packless, priceless and pinless. Veto = swap the vendor on this one line.",
+        "Disposition A of the seed-24 dry run §4b: the Lettuce twins fold into ICEBERG as members and PFG/Iceberg is primary. It is the SKU that carries the par, the recipe pin and the pack (640 oz), the prep layer already calls the thing Iceberg, and every Angel iceberg row in the window is PFG or US Foods. SUPERSEDES the Sysco-primary side-inference that wave 4 §B recorded for the Lettuce pair — that inference was about a Lettuce product which, under this ruling, does not exist.",
+      confirmsProposedDefault: false,
+      supersedes:
+        "wave 4 §B's INFERRED Sysco-primary designation for the Lettuce twins (docs/seed/source/angel-wave4-dryrun.md §B). Juan named the shape there and the side was read off the evidence; he has now named the side, and it is PFG at the ICEBERG grain. The wave 4 SKU-level writes (Baldor/Lettuce activation) stand untouched — only the product-layer primary is decided here.",
     },
     proposed: null,
     unitOz: null,
     decision:
-      "Juan 2026-08-20 for the SHAPE; the SIDE is an INFERENCE carried forward from wave 4 §B and still flagged. See the ICEBERG section — whether this product and ICEBERG are ONE product is an OPEN question this seed does not answer.",
-  },
-  {
-    name: "Iceberg",
-    notes:
-      "One member today (PFG/Iceberg — active, par 4, one recipe pin, 640 oz case). The product row exists because the $3,230.74 Angel attribution question needs a grain to live at, not because plurality exists yet.",
-    members: [{ skuName: "Iceberg", expectVendor: "PFG" }],
-    primary: null,
-    proposed: null,
-    unitOz: null,
-    decision:
-      "Created per spec §2/§Payoff ('ICEBERG product absorbs the $3,231 attribution'). NO primary row: with exactly one member the ladder already answers it on rung 3, and designating a primary before the MEMBERSHIP question is settled would encode an answer to the open question. See the ICEBERG section.",
+      "Juan 2026-08-21, EXPLICIT — disposition A (merge) + PFG primary. There is deliberately NO separate LETTUCE product: 'retire the separate LETTUCE product' is discharged by never creating it, since nothing had been written. Both twins keep their current active/par state as backups; this seed does not touch either.",
   },
   {
     name: "Turkey",
@@ -291,10 +308,18 @@ const PRODUCTS: readonly ProductPlan[] = [
       { skuName: "Turkey", expectVendor: "Boar's Head" },
       { skuName: "Turkey", expectVendor: "Baldor" },
     ],
-    primary: null,
-    proposed: { vendor: "Boar's Head", rationale: BH_SHAPE_RATIONALE },
+    primary: {
+      locationId: null,
+      vendor: "Boar's Head",
+      isInferred: false,
+      decidedBy: BH_DECIDED_BY,
+      basis: BH_RULING_BASIS,
+      confirmsProposedDefault: true,
+    },
+    proposed: null,
     unitOz: null,
-    decision: "UNADJUDICATED — awaiting Juan (gate S1). Product + members only; NO primary row is written.",
+    decision:
+      "RULED 2026-08-21 — Juan confirmed the proposed Boar's Head default. Product + members + the global primary row.",
   },
   {
     name: "Roast Beef",
@@ -303,10 +328,18 @@ const PRODUCTS: readonly ProductPlan[] = [
       { skuName: "Roast Beef", expectVendor: "Boar's Head" },
       { skuName: "Roast Beef", expectVendor: "Baldor" },
     ],
-    primary: null,
-    proposed: { vendor: "Boar's Head", rationale: BH_SHAPE_RATIONALE },
+    primary: {
+      locationId: null,
+      vendor: "Boar's Head",
+      isInferred: false,
+      decidedBy: BH_DECIDED_BY,
+      basis: BH_RULING_BASIS,
+      confirmsProposedDefault: true,
+    },
+    proposed: null,
     unitOz: null,
-    decision: "UNADJUDICATED — awaiting Juan (gate S1). Product + members only; NO primary row is written.",
+    decision:
+      "RULED 2026-08-21 — Juan confirmed the proposed Boar's Head default. Product + members + the global primary row.",
   },
   {
     name: "Provolone",
@@ -315,11 +348,18 @@ const PRODUCTS: readonly ProductPlan[] = [
       { skuName: "Provolone", expectVendor: "Boar's Head" },
       { skuName: "Provolone", expectVendor: "Baldor" },
     ],
-    primary: null,
-    proposed: { vendor: "Boar's Head", rationale: BH_SHAPE_RATIONALE },
+    primary: {
+      locationId: null,
+      vendor: "Boar's Head",
+      isInferred: false,
+      decidedBy: BH_DECIDED_BY,
+      basis: BH_RULING_BASIS,
+      confirmsProposedDefault: true,
+    },
+    proposed: null,
     unitOz: { value: OPERATIONAL_SLICE_OZ.Provolone!, klass: "OPERATIONAL", sourceNote: OPERATIONAL_NOTE },
     decision:
-      "UNADJUDICATED primary — awaiting Juan. unit_oz 0.7 IS ruled (Juan's own weighing) and is written regardless: what one slice weighs is a fact about the product, not about which vendor sells it.",
+      "RULED 2026-08-21 — Juan confirmed the proposed Boar's Head default. unit_oz 0.7 was already ruled by his own weighing and is written independently: what one slice weighs is a fact about the product, not about which vendor sells it.",
   },
   {
     name: "Capicola",
@@ -328,11 +368,18 @@ const PRODUCTS: readonly ProductPlan[] = [
       { skuName: "Capicola", expectVendor: "Boar's Head" },
       { skuName: "Capicola", expectVendor: "Baldor" },
     ],
-    primary: null,
-    proposed: { vendor: "Boar's Head", rationale: BH_SHAPE_RATIONALE },
+    primary: {
+      locationId: null,
+      vendor: "Boar's Head",
+      isInferred: false,
+      decidedBy: BH_DECIDED_BY,
+      basis: BH_RULING_BASIS,
+      confirmsProposedDefault: true,
+    },
+    proposed: null,
     unitOz: { value: OPERATIONAL_SLICE_OZ.Capicola!, klass: "OPERATIONAL", sourceNote: OPERATIONAL_NOTE },
     decision:
-      "UNADJUDICATED primary — awaiting Juan. unit_oz 0.4 IS ruled (Juan's own weighing) and is written regardless.",
+      "RULED 2026-08-21 — Juan confirmed the proposed Boar's Head default. unit_oz 0.4 was already ruled by his own weighing and is written independently.",
   },
   {
     name: "Pepperoni",
@@ -341,11 +388,18 @@ const PRODUCTS: readonly ProductPlan[] = [
       { skuName: "Pepperoni", expectVendor: "Boar's Head" },
       { skuName: "Pepperoni", expectVendor: "Baldor" },
     ],
-    primary: null,
-    proposed: { vendor: "Boar's Head", rationale: BH_SHAPE_RATIONALE },
+    primary: {
+      locationId: null,
+      vendor: "Boar's Head",
+      isInferred: false,
+      decidedBy: BH_DECIDED_BY,
+      basis: BH_RULING_BASIS,
+      confirmsProposedDefault: true,
+    },
+    proposed: null,
     unitOz: { value: OPERATIONAL_SLICE_OZ.Pepperoni!, klass: "OPERATIONAL", sourceNote: OPERATIONAL_NOTE },
     decision:
-      "UNADJUDICATED primary — awaiting Juan. unit_oz 0.2 IS ruled (Juan's own weighing) and is written regardless.",
+      "RULED 2026-08-21 — Juan confirmed the proposed Boar's Head default. unit_oz 0.2 was already ruled by his own weighing and is written independently.",
   },
   {
     name: "Banana Peppers",
@@ -355,10 +409,18 @@ const PRODUCTS: readonly ProductPlan[] = [
       { skuName: "Banana Peppers", expectVendor: "Boar's Head" },
       { skuName: "Banana Peppers", expectVendor: "Baldor" },
     ],
-    primary: null,
-    proposed: { vendor: "Boar's Head", rationale: BH_SHAPE_RATIONALE },
+    primary: {
+      locationId: null,
+      vendor: "Boar's Head",
+      isInferred: false,
+      decidedBy: BH_DECIDED_BY,
+      basis: BH_RULING_BASIS,
+      confirmsProposedDefault: true,
+    },
+    proposed: null,
     unitOz: null,
-    decision: "UNADJUDICATED — awaiting Juan (gate S1). Product + members only; NO primary row is written.",
+    decision:
+      "RULED 2026-08-21 — Juan confirmed the proposed Boar's Head default. Product + members + the global primary row.",
   },
   {
     name: "Hot Peppers",
@@ -368,11 +430,18 @@ const PRODUCTS: readonly ProductPlan[] = [
       { skuName: "Hot Peppers", expectVendor: "Boar's Head" },
       { skuName: "Hot Peppers", expectVendor: "Baldor" },
     ],
-    primary: null,
-    proposed: { vendor: "Boar's Head", rationale: BH_SHAPE_RATIONALE },
+    primary: {
+      locationId: null,
+      vendor: "Boar's Head",
+      isInferred: false,
+      decidedBy: BH_DECIDED_BY,
+      basis: BH_RULING_BASIS,
+      confirmsProposedDefault: true,
+    },
+    proposed: null,
     unitOz: null,
     decision:
-      "UNADJUDICATED — awaiting Juan (gate S1). This is the ONE pair that is not the common shape: a pin sits on the INACTIVE Baldor row too. Product identity is what eventually fixes that (Phase 4 re-points both pins at the product), but this seed does not touch a pin.",
+      "RULED 2026-08-21 — Juan confirmed the proposed Boar's Head default, and the confirmation is worth MORE here than on the other seven: this is the one pair that is not the common shape, because a pin sits on the INACTIVE Baldor row too (audit P5). A designated primary is what Phase 4 will re-point both pins at. This seed still touches no pin.",
   },
   {
     name: "Sweet Peppers",
@@ -381,10 +450,18 @@ const PRODUCTS: readonly ProductPlan[] = [
       { skuName: "Sweet Peppers", expectVendor: "Boar's Head" },
       { skuName: "Sweet Peppers", expectVendor: "Baldor" },
     ],
-    primary: null,
-    proposed: { vendor: "Boar's Head", rationale: BH_SHAPE_RATIONALE },
+    primary: {
+      locationId: null,
+      vendor: "Boar's Head",
+      isInferred: false,
+      decidedBy: BH_DECIDED_BY,
+      basis: BH_RULING_BASIS,
+      confirmsProposedDefault: true,
+    },
+    proposed: null,
     unitOz: null,
-    decision: "UNADJUDICATED — awaiting Juan (gate S1). Product + members only; NO primary row is written.",
+    decision:
+      "RULED 2026-08-21 — Juan confirmed the proposed Boar's Head default. Product + members + the global primary row.",
   },
 ];
 
@@ -757,7 +834,13 @@ interface Candidate {
 
 function discoverCandidates(cat: Catalog): Candidate[] {
   const out: Candidate[] = [];
-  const plannedKeys = new Set(PRODUCTS.map((p) => key(p.name)));
+  // A discovered NAME is "planned" when every SKU wearing it is claimed as a member
+  // of some product — NOT when a product happens to share its name. Since Juan's
+  // merge ruling, "Lettuce" is planned as two members of ICEBERG and no product
+  // carries that name, so a name-keyed check would report a false drift.
+  const plannedMembers = new Set(
+    PRODUCTS.flatMap((p) => p.members.map((m) => `${key(m.skuName)}|${m.expectVendor}`)),
+  );
 
   for (const [k, list] of cat.byKey) {
     const vendors = new Set(list.map((s) => s.vendorId ?? "NULL"));
@@ -765,7 +848,7 @@ function discoverCandidates(cat: Catalog): Candidate[] {
     out.push({
       productName: list[0]!.name.trim(),
       skus: [...list].sort((a, b) => a.vendorName.localeCompare(b.vendorName)),
-      planned: plannedKeys.has(k),
+      planned: list.every((s) => plannedMembers.has(`${k}|${s.vendorName}`)),
     });
   }
   // Names the PLAN carries that are NOT multi-vendor (Iceberg): included so the
@@ -785,11 +868,19 @@ function reportDiscovery(cat: Catalog, candidates: Candidate[]): void {
   );
   p();
 
+  // Since the merge ruling a SKU's NAME no longer implies its product, so the table
+  // says which product each row lands under rather than leaving it inferred.
+  const productOfMember = new Map<string, string>();
+  for (const plan of PRODUCTS) {
+    for (const m of plan.members) productOfMember.set(`${key(m.skuName)}|${m.expectVendor}`, plan.name);
+  }
+
   const rows: string[][] = [];
   for (const c of candidates) {
     for (const s of c.skus) {
       rows.push([
         c.productName,
+        productOfMember.get(`${key(s.name)}|${s.vendorName}`) ?? "— *(unplanned)*",
         s.vendorName,
         s.active ? "**active**" : "inactive",
         parStr(s.weekdayPar, s.weekendPar),
@@ -802,9 +893,9 @@ function reportDiscovery(cat: Catalog, candidates: Candidate[]): void {
     }
   }
   table(
-    ["product", "vendor", "state", "par wd/we", "avg_oz_per_each", "content", "pins", "latest price", "product_id"],
+    ["SKU name", "→ product", "vendor", "state", "par wd/we", "avg_oz_per_each", "content", "pins", "latest price", "product_id"],
     rows,
-    ["", "", "", "r", "r", "r", "r", "", ""],
+    ["", "", "", "", "r", "r", "r", "r", "", ""],
   );
 
   const unplanned = candidates.filter((c) => !c.planned);
@@ -1010,66 +1101,85 @@ function reportPlan(resolved: ResolvedProduct[]): void {
   h(3, "2b — Who decided each product, and where that is an inference");
   for (const r of resolved) {
     p(`- **${r.plan.name}** — ${r.plan.decision}`);
-    if (r.plan.primary != null) {
+    // The 8 confirmed defaults share ONE basis string. Printing it eight times buries
+    // the two designations that genuinely differ, so it is stated once below instead.
+    if (r.plan.primary != null && r.plan.primary.confirmsProposedDefault !== true) {
       p(`  - primary basis (${r.plan.primary.decidedBy}): ${r.plan.primary.basis}`);
+      if (r.plan.primary.supersedes != null) p(`  - **SUPERSEDES:** ${r.plan.primary.supersedes}`);
     }
+  }
+  const confirmed = resolved.filter((r) => r.plan.primary?.confirmsProposedDefault === true);
+  if (confirmed.length > 0) {
+    p();
+    p(
+      `> **The ${confirmed.length} confirmed defaults share one basis**, because they were one decision applied ` +
+        `${confirmed.length} times (${BH_DECIDED_BY}): ${BH_RULING_BASIS}`,
+    );
   }
 }
 
-// ── (3) The decision table (gate S1) ─────────────────────────────────────────
+// ── (3) The adjudication sheet — RULED 2026-08-21 ────────────────────────────
 
 function reportDecisionTable(cat: Catalog, resolved: ResolvedProduct[]): void {
-  const open = resolved.filter((r) => r.plan.primary == null && r.plan.proposed != null);
-  h(2, `3 — THE DECISION TABLE: ${open.length} pairs awaiting Juan's word 🔒 GATE S1`);
+  const confirmed = resolved.filter((r) => r.plan.primary?.confirmsProposedDefault === true);
+  const stillOpen = resolved.filter((r) => r.plan.primary == null && r.plan.proposed != null);
+  h(2, `3 — THE ${confirmed.length} PAIRS: ✅ RULED (Juan, 2026-08-21)`);
   p(
-    "**This table is the adjudication sheet.** For each pair: which vendor is PRIMARY, and is that answer explicit or " +
-      "an inference. A default is proposed for every row — the reading the live data already supports — so the sitting " +
-      "is a confirm-or-amend, not a blank page. **Nothing in this section is written until the answers are encoded in " +
-      "`PRODUCTS` and the dry run is re-run.**",
+    `**Gate S1's adjudication is done.** The previous revision of this page proposed a Boar's Head default for all ` +
+      `${confirmed.length} pairs and asked Juan to confirm or amend each. **He confirmed all ${confirmed.length} in one ` +
+      "sitting** — which is what wave 4 §D1 predicted would happen (*\"one decision applied eight times … worth one " +
+      "question to Juan rather than eight\"*). Every row below now writes a global `product_primaries` row.",
   );
   p();
 
   const rows: string[][] = [];
-  for (const r of open) {
-    const bh = r.members.find((m) => m.sku.vendorName === r.plan.proposed!.vendor);
-    const other = r.members.filter((m) => m.sku.vendorName !== r.plan.proposed!.vendor);
-    const ladderSku = r.ladderUnruled.skuId;
-    const ladderVendor = r.members.find((m) => m.sku.id === ladderSku)?.sku.vendorName ?? "unresolved";
+  for (const r of confirmed) {
+    const primaryVendor = r.plan.primary!.vendor;
+    const bh = r.members.find((m) => m.sku.vendorName === primaryVendor);
+    const other = r.members.filter((m) => m.sku.vendorName !== primaryVendor);
+    const ladderVendor = r.members.find((m) => m.sku.id === r.ladderUnruled.skuId)?.sku.vendorName ?? "unresolved";
     rows.push([
       r.plan.name,
-      `${bh?.sku.vendorName ?? "?"} (active, par ${parStr(bh?.sku.weekdayPar ?? null, bh?.sku.weekendPar ?? null)}, ${bh?.sku.pins ?? 0} pin)`,
+      `**${primaryVendor}** (active, par ${parStr(bh?.sku.weekdayPar ?? null, bh?.sku.weekendPar ?? null)}, ${bh?.sku.pins ?? 0} pin)`,
       other.map((m) => `${m.sku.vendorName} (${m.sku.active ? "active" : "inactive"}, ${m.sku.pins} pin)`).join(" · "),
-      `**${r.plan.proposed!.vendor}**`,
       `${ladderVendor} *(rung ${RUNG_LABEL[r.ladderUnruled.rung] ?? r.ladderUnruled.rung})*`,
-      "☐ confirm  ☐ amend → ______",
+      "✅ **CONFIRMED** — writes a primary row",
     ]);
   }
   table(
-    ["pair", "proposed primary", "the other member", "DEFAULT", "ladder answers today", "Juan"],
+    ["pair", "PRIMARY (ruled)", "backup member", "ladder answers without the row", "Juan 2026-08-21"],
     rows,
   );
 
-  p();
-  p(`> **Why this default.** ${BH_SHAPE_RATIONALE}`);
+  if (stillOpen.length > 0) {
+    p();
+    p(`> ⚠ **${stillOpen.length} pair(s) still carry no ruling** and get no primary row: ${stillOpen.map((r) => r.plan.name).join(", ")}.`);
+  }
+
   p();
   p(
-    "> **Confirming the default changes nothing operationally today** — the ladder already lands on the same member, " +
-      "because it is the only active one. What the primary row buys is durability: the day a Baldor row is reactivated " +
-      "as a backup, resolution keeps answering Boar's Head instead of silently re-deciding on rung 3.",
+    "> **The ruling is recorded as a CONFIRMED DEFAULT, not as an inference and not as a cold instruction.** " +
+      "`product_primaries.note` and every audit row carry `primary_is_inferred: false` **and** " +
+      "`confirms_proposed_default: true`, because \"he said Boar's Head\" and \"he read our reading and said yes\" are " +
+      "both explicit but only one of them started life as ours — and an auditor a year from now should be able to tell " +
+      "which.",
   );
   p();
   p(
-    "> **Amending is one field.** Swap `proposed` → `primary` with the other vendor in `PRODUCTS` and re-run the dry " +
-      "run; nothing else in this script encodes the choice.",
+    "> **What the rows buy.** Operationally nothing changes today: the ladder already lands on Boar's Head for all " +
+      `${confirmed.length}, because it is the only ACTIVE member (rung 3, the column above). What the designation buys ` +
+      "is durability — the day a Baldor row is reactivated as a backup, resolution keeps answering Boar's Head instead " +
+      "of silently re-deciding on a uuid sort.",
   );
 
   const oddities = resolved.filter((r) => r.members.filter((m) => m.sku.pins > 0).length > 1);
   if (oddities.length > 0) {
     p();
     p(
-      `> ⚠ **Not all ${open.length} are the same shape.** ${oddities.map((r) => `**${r.plan.name}**`).join(", ")} carries a recipe pin on MORE THAN ONE member — ` +
+      `> ⚠ **One of them was never the same shape.** ${oddities.map((r) => `**${r.plan.name}**`).join(", ")} carries a recipe pin on MORE THAN ONE member — ` +
         "including an inactive one. That is audit gap P5 (two recipes pinning different vendors, resolved by a row-order " +
-        "coin flip inside `buildRecipeGraph`). Product identity is the eventual fix; this seed does not touch a pin.",
+        "coin flip inside `buildRecipeGraph`). The ruled primary is exactly what Phase 4 will re-point both pins at; this " +
+        "seed still touches no pin.",
     );
   }
 
@@ -1085,13 +1195,14 @@ function reportDecisionTable(cat: Catalog, resolved: ResolvedProduct[]): void {
 // ── (4) ICEBERG — the attribution question, presented not answered ───────────
 
 function reportIceberg(resolved: ResolvedProduct[]): void {
-  h(2, "4 — ICEBERG: the $3,230.74 attribution question 🔒 DECISION, NOT A WRITE");
+  h(2, "4 — ICEBERG: the $3,230.74 attribution question — ✅ RULED (Juan, 2026-08-21)");
   const total = ICEBERG_ANGEL_ROWS.reduce((a, r) => a + r.spend, 0);
   const lines = ICEBERG_ANGEL_ROWS.reduce((a, r) => a + r.lines, 0);
   p(
     `Angel invoiced **${money(total)} of iceberg across ${lines} lines** in the five-week window. Every one of those ` +
-      "rows is a **PFG** or **US Foods** row. Our registry's lettuce lane is **Sysco** and **Baldor** — neither twin " +
-      "appears in the purchase history once, under any spelling (wave 4 §B1).",
+      "rows is a **PFG** or **US Foods** row, while our registry's lettuce lane was **Sysco** and **Baldor** — neither " +
+      "twin appears in the purchase history once, under any spelling (wave 4 §B1). Juan's merge ruling is what closes " +
+      "that gap: after this seed, those invoices attribute to a product we hold.",
   );
   p();
   table(
@@ -1103,62 +1214,71 @@ function reportIceberg(resolved: ResolvedProduct[]): void {
   p();
   h(3, "4a — what we actually hold, live");
   const iceberg = resolved.find((r) => key(r.plan.name) === "iceberg");
-  const lettuce = resolved.find((r) => key(r.plan.name) === "lettuce");
   const skuRows: string[][] = [];
-  for (const r of [iceberg, lettuce]) {
-    if (r == null) continue;
-    for (const m of r.members) {
-      skuRows.push([
-        `${m.sku.vendorName}/${m.sku.name}`,
-        m.sku.active ? "active" : "inactive",
-        parStr(m.sku.weekdayPar, m.sku.weekendPar),
-        ozStr(m.sku.contentOz),
-        String(m.sku.pins),
-        m.sku.latestPrice?.unitPrice == null ? "—" : money(m.sku.latestPrice.unitPrice),
-      ]);
-    }
+  for (const m of iceberg?.members ?? []) {
+    const isPrimary = m.sku.vendorName === iceberg?.plan.primary?.vendor;
+    skuRows.push([
+      `${m.sku.vendorName}/${m.sku.name}`,
+      isPrimary ? "**PRIMARY**" : "backup",
+      m.sku.active ? "active" : "inactive",
+      parStr(m.sku.weekdayPar, m.sku.weekendPar),
+      ozStr(m.sku.contentOz),
+      String(m.sku.pins),
+      m.sku.latestPrice?.unitPrice == null ? "—" : money(m.sku.latestPrice.unitPrice),
+    ]);
   }
-  table(["our SKU", "state", "par wd/we", "pack content", "pins", "latest price"], skuRows, ["", "", "r", "r", "r", "r"]);
+  table(
+    ["our SKU", "role", "state", "par wd/we", "pack content", "pins", "latest price"],
+    skuRows,
+    ["", "", "", "r", "r", "r", "r"],
+  );
   p();
   p(
-    "Three facts that bear on the question and are easy to miss: (a) the **prep layer already calls this thing " +
-      "Iceberg** — there is an active `items` row named *Iceberg* and **no item named Lettuce**; (b) the only SKU " +
-      "carrying a par, a recipe pin and a price is **PFG/Iceberg**; (c) both `Lettuce` twins carry **zero** pins, " +
-      "**zero** pars and no price, and the Baldor one has no pack chain at all.",
+    "Three facts stood behind the ruling: (a) the **prep layer already calls this thing Iceberg** — there is an " +
+      "active `items` row named *Iceberg* and **no item named Lettuce**; (b) the only SKU carrying a par, a recipe " +
+      "pin and a resolved pack is **PFG/Iceberg**; (c) both `Lettuce` rows carry **zero** pins, **zero** pars and no " +
+      "price, and the Baldor one has no pack chain at all.",
   );
 
   p();
-  h(3, "4b — the question, and the three dispositions");
-  p("**Does the ICEBERG product absorb the Lettuce twins, or are they two different products?**");
+  h(3, "4b — the ruling");
+  p("**Juan 2026-08-21, disposition A: one product, PFG primary.** *\"go with PFG for iceberg.\"*");
   p();
   p(
-    "- **A — one product.** Attach `Sysco/Lettuce` and `Baldor/Lettuce` to **ICEBERG** as members and retire the " +
-      "separate LETTUCE product (`active = false`; nothing is ever deleted). Reading: shredduce is shredduce, the " +
-      "vendor lane moved to PFG, and the Sysco/Baldor rows are the backup lane. This is the disposition the live data " +
-      "leans toward — but leaning is not ruling.",
+    "- `Sysco/Lettuce` and `Baldor/Lettuce` attach to **ICEBERG** as members. Shredduce is shredduce; the vendor lane " +
+      "is PFG and the two Lettuce rows are the backup lane. This is the reading the live data leaned toward and it is " +
+      "now ruled rather than leaned.",
   );
   p(
-    "- **B — two products.** ICEBERG (the PFG whole-head lane, which is what the recipes consume) stays distinct from " +
-      "LETTUCE (the Sysco/Baldor lane). Reading: `LETTUCE ICEBERG LINER` at ~1.75 lb/head is whole heads, while the " +
-      "C&T rows are a genuinely different, pre-trimmed product — two products that happen to share a word.",
+    "- **No separate LETTUCE product is created.** Disposition A says to retire it; nothing had been written, so " +
+      "retiring it means never creating it. That is the cleanest possible discharge of the ruling — no row to " +
+      "deactivate, no orphaned identity, no second Spanish word for one thing.",
   );
   p(
-    "- **C — retire the twins.** If the Sysco/Baldor lettuce lane is simply dead history, deactivate both SKUs and let " +
-      "ICEBERG be a singleton. Reading: the twins have never been received, priced, pinned or par'd. **Note this is " +
-      "the one disposition that touches `active`, which this seed will not do** — it would be a separate, named write.",
-  );
-  p();
-  p(
-    "> **This seed answers none of the three.** It creates the ICEBERG product with `PFG/Iceberg` attached and **no " +
-      "primary row**, and it creates LETTUCE with its ruled (inferred) Sysco primary. Whichever way Juan rules, the " +
-      "move is one attach/detach and one `active` flip from `/admin/products` — no migration, no re-seed. What the " +
-      "product row buys today is a **grain for the question to live at**, which is the whole reason the spec names " +
-      "ICEBERG explicitly.",
+    "- **`PFG/Iceberg` is the global primary.** It carries the par (4), the recipe pin and the only resolved pack " +
+      "(640 oz); the prep layer already calls the thing *Iceberg*; and every Angel iceberg row in the window is PFG or " +
+      "US Foods.",
   );
   p();
   p(
-    "> **What it does NOT decide.** Whether a `PFG/Lettuce` SKU should be created for `LETTUCE ICEBERG LINER` " +
-      "(wave 4 §B1's open registry question) is still open and still not a thing a script can infer from a spend table.",
+    "> **This SUPERSEDES a standing inference, and says so out loud.** Wave 4 §B recorded a **Sysco-primary** " +
+      "designation for the Lettuce pair — Juan named the shape there and the SIDE was read off the evidence (Sysco was " +
+      "the active twin with the only pack chain). That inference was about a LETTUCE product which, under this ruling, " +
+      "does not exist. The supersession is written into `product_primaries.note` and into the audit row's `supersedes` " +
+      "key rather than being quietly dropped — a ruling replaced silently is a ruling nobody can audit.",
+  );
+  p();
+  p(
+    "> **The SKU layer is untouched.** Wave 4's activation of `Baldor/Lettuce` stands; both twins keep their current " +
+      "`active` state and their NULL pars, exactly as backups should. This seed writes identity only, and the " +
+      "orderability assertion in section 6 proves it rather than promising it.",
+  );
+  p();
+  p(
+    "> **What is still open.** Whether a `PFG/Lettuce` SKU should be created for `LETTUCE ICEBERG LINER` (wave 4 §B1's " +
+      "registry question) is untouched by this ruling, and neither twin has ever carried a par — so ICEBERG is now one " +
+      "product with three vendor lanes and still no floor number. A par is a floor decision; seed 18's rule holds: " +
+      "*refusing to invent one.*",
   );
 }
 
@@ -1218,6 +1338,13 @@ function reportUnitOz(resolved: ResolvedProduct[]): void {
   p(
     "> Genoa (0.4) is in `OPERATIONAL_SLICE_OZ` and is deliberately **absent** here: Genoa is a single-vendor SKU, so " +
       "it is an implicit singleton and needs no product row. Its weight already lives where it belongs, on the SKU.",
+  );
+  p(
+    "> **ICEBERG is now the sharpest NULL in the table.** After the merge ruling its three members denominate " +
+      "differently — PFG/Iceberg is a 640 oz case with a 20 oz/head estimate, the Sysco row is a 15 × 15 oz box, the " +
+      "Baldor row has no pack at all. \"One unit of ICEBERG\" therefore has no honest number yet, and that is exactly " +
+      "the condition `unit_oz` exists to make visible rather than paper over. It is the first row the Phase-6 weight " +
+      "board should rank.",
   );
 }
 
@@ -1438,7 +1565,11 @@ async function applyProduct(sb: Sb, r: ResolvedProduct): Promise<Outcome> {
           product_id: productId,
           location_id: null,
           primary_sku_id: primarySku.sku.id,
-          note: `${primaryPlan.decidedBy}${primaryPlan.isInferred ? " — SIDE IS AN INFERENCE" : ""}. ${primaryPlan.basis}`,
+          note:
+            `${primaryPlan.decidedBy}${primaryPlan.isInferred ? " — SIDE IS AN INFERENCE" : ""}` +
+            `${primaryPlan.confirmsProposedDefault ? " — CONFIRMED a default this seed proposed" : ""}. ` +
+            `${primaryPlan.basis}` +
+            `${primaryPlan.supersedes == null ? "" : ` SUPERSEDES: ${primaryPlan.supersedes}`}`,
           updated_by: null,
         })
         .select("id")
@@ -1459,8 +1590,12 @@ async function applyProduct(sb: Sb, r: ResolvedProduct): Promise<Outcome> {
           primary_sku_id: primarySku.sku.id,
           primary_vendor: primaryPlan.vendor,
           primary_is_inferred: primaryPlan.isInferred,
+          // "He said PFG" and "he read our proposal and said yes" are both explicit;
+          // only one started life as our reading. An auditor should be able to tell.
+          confirms_proposed_default: primaryPlan.confirmsProposedDefault === true,
           decided_by: primaryPlan.decidedBy,
           basis: primaryPlan.basis,
+          ...(primaryPlan.supersedes == null ? {} : { supersedes: primaryPlan.supersedes }),
         }),
         ipAddress: null,
         userAgent: null,
@@ -1582,15 +1717,23 @@ async function main(): Promise<void> {
   const sb = getServiceRoleClient();
 
   if (MD) {
-    p("# Product identity — seed 24 DRY RUN (the 8-pair adjudication sheet)");
+    p("# Product identity — seed 24 DRY RUN (adjudication RULED, 2026-08-21)");
     p();
     p(
       EXECUTE
         ? "> **STATUS: EXECUTE MODE.** This run WRITES to `products`, `vendor_items.product_id` and `product_primaries`."
         : "> **STATUS: NOTHING HAS BEEN WRITTEN.** This is the output of `scripts/seed/24-product-identity.ts` in its " +
-            "default (dry-run) mode. The script writes only under an explicit `--execute` flag, and that flag is " +
-            "**gate S1** — it is not used until Juan has eyeballed section 3 and adjudicated the open pairs.",
+            "default (dry-run) mode. The script writes only under an explicit `--execute` flag, which is **gate S1** " +
+            "and belongs to the lead.",
     );
+    if (!EXECUTE) {
+      p();
+      p(
+        "> **Juan's rulings of 2026-08-21 are encoded in this revision** — all 8 pairs confirmed at the Boar's Head " +
+          "default (§3), and ICEBERG ruled at disposition A with a PFG primary (§4). This page is the record of what " +
+          "WILL be written, not a page of open questions.",
+      );
+    }
     p();
     p(
       `**Generated:** ${new Date().toISOString().slice(0, 10)}, against live prod (\`bgcvurheqzylyfehqgzh\`) with migration ` +
@@ -1668,8 +1811,8 @@ async function main(): Promise<void> {
       p(`  would attach ${memberWrites} member${memberWrites === 1 ? "" : "s"}${memberSkips > 0 ? ` (${memberSkips} already attached)` : ""}`);
       p(
         r.plan.primary == null
-          ? `  NO primary row${r.plan.proposed == null ? " (single member)" : ` — UNADJUDICATED (proposal: ${r.plan.proposed.vendor})`}`
-          : `  would set primary = ${r.plan.primary.vendor}${r.plan.primary.isInferred ? "  ⚠ INFERRED" : ""}`,
+          ? `  NO primary row${r.plan.proposed == null ? "" : ` — UNADJUDICATED (proposal: ${r.plan.proposed.vendor})`}`
+          : `  would set primary = ${r.plan.primary.vendor}${r.plan.primary.isInferred ? "  ⚠ INFERRED" : r.plan.primary.confirmsProposedDefault ? "  (confirmed default)" : ""}`,
       );
       if (r.plan.unitOz != null) p(`  would set unit_oz = ${r.plan.unitOz.value} (${r.plan.unitOz.klass})`);
     }
@@ -1687,7 +1830,11 @@ async function main(): Promise<void> {
   h(2, "8 — Summary");
   const plannedProducts = resolved.filter((r) => r.existing == null).length;
   const plannedMembers = resolved.reduce((a, r) => a + r.members.filter((m) => m.sku.productId == null).length, 0);
-  const plannedPrimaries = resolved.filter((r) => r.plan.primary != null).length;
+  const withPrimary = resolved.filter((r) => r.plan.primary != null);
+  const plannedPrimaries = withPrimary.length;
+  const inferredPrimaries = withPrimary.filter((r) => r.plan.primary!.isInferred).length;
+  const confirmedDefaults = withPrimary.filter((r) => r.plan.primary!.confirmsProposedDefault === true).length;
+  const namedOutright = plannedPrimaries - inferredPrimaries - confirmedDefaults;
   const plannedUnitOz = resolved.filter((r) => r.plan.unitOz != null).length;
   const openPairs = resolved.filter((r) => r.plan.proposed != null).length;
 
@@ -1697,26 +1844,42 @@ async function main(): Promise<void> {
       [
         ["`products` rows", String(plannedProducts)],
         ["member attachments (`vendor_items.product_id`)", String(plannedMembers)],
-        ["`product_primaries` rows", `${plannedPrimaries}  *(1 explicit, ${plannedPrimaries - 1} inferred)*`],
+        [
+          "`product_primaries` rows",
+          `${plannedPrimaries}  *(${namedOutright} named outright · ${confirmedDefaults} confirmed defaults · ${inferredPrimaries} inferred)*`,
+        ],
         ["`products.unit_oz` fills", String(plannedUnitOz)],
-        ["**pairs left UNADJUDICATED (no primary row)**", `**${openPairs}**`],
+        ["products left with NO primary row", String(resolved.length - plannedPrimaries)],
         ["rows touching `active` / par / pins / prices", "**0**"],
       ],
       ["", "r"],
     );
     p();
+    if (openPairs > 0) {
+      p(
+        `**${openPairs} product(s) still carry no ruling** and get no primary row: resolution answers them on the ` +
+          "ladder's lower rungs, and a primary nobody designated would be a fact invented by a script.",
+      );
+    } else {
+      p(
+        `**Every one of the ${resolved.length} products carries a designated primary.** Gate S1's adjudication is ` +
+          `complete: ${namedOutright} named outright by Juan, ${confirmedDefaults} confirmed at the default this seed ` +
+          `proposed, and ${inferredPrimaries} still carrying an INFERENCE flag (Fresh Mozzarella — Juan named the ` +
+          "shape, never the side, and the flag stays until he does).",
+      );
+    }
+    p();
     p(
-      `**${openPairs} of ${resolved.length} products will have no primary row after this seed runs.** That is the ` +
-        "designed end-state of the dry run, not a shortfall: resolution answers them on the ladder's lower rungs " +
-        "(section 3's ladder column shows exactly what each one answers today), and a primary nobody designated would " +
-        "be a fact invented by a script.",
+      "> **Why the merge did not RAISE these counts.** The previous revision planned 12 products / 23 attachments / 3 " +
+        "primaries. Folding the Lettuce twins into ICEBERG **moves** two attachments rather than adding them — " +
+        "`vendor_items.product_id` is a single FK, so a SKU belongs to exactly one product — and it removes the " +
+        "LETTUCE product along with the primary row it would have carried. Net: one product fewer, the same 23 " +
+        "attachments, and 8 more primaries from the confirmed defaults. A merge can only ever reduce the product count.",
     );
     p();
     h(3, "To proceed");
     pre();
-    p("# 1. Juan adjudicates section 3 (and rules on section 4's ICEBERG question).");
-    p("# 2. LEAD encodes the answers in PRODUCTS (swap `proposed` -> `primary`) and re-runs the dry run.");
-    p("# 3. LEAD runs, and pastes the output into the PR:");
+    p("# Gate S1's adjudication is DONE. The lead runs this and pastes the output into the PR:");
     p(`npx tsx --conditions=react-server --env-file=.env.local ${SCRIPT} --execute`);
     pre();
     p();
