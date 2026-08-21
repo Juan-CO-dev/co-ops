@@ -616,6 +616,22 @@ async function validateAndResolveDeliveryLines(
   const activeSet = new Set((activeSkus ?? []).map((s) => s.id));
   for (const id of skuIds) if (!activeSet.has(id)) throw new ReceivingError(400, "invalid_sku", "A SKU is not found or inactive");
 
+  // PRODUCT RETIREMENT DOES NOT REACH HERE, DELIBERATELY (Juan's ruling, 2026-08-21).
+  //
+  // This gate reads `vendor_items.active`, and retiring a PRODUCT does not deactivate
+  // its member SKUs — so a truck carrying the last case of a discontinued product
+  // still receives normally, which is the point: BURNING DOWN A FINAL ORDER IS REAL,
+  // and refusing the door would strand paid-for stock outside the ledger. The
+  // retirement effect lives one step upstream, in the par pass, which stops
+  // SUGGESTING the product (loadWalkerData's `productRetired` lane). Ordering stops;
+  // receiving what was already ordered does not.
+  //
+  // NO WARNING BADGE YET, and that is a scope call rather than an oversight: neither
+  // this module nor lib/purchase-orders.ts reads `products` at all, so a "belongs to a
+  // discontinued product" notice is a NEW loader integration on two product-unaware
+  // modules, not a widening of an existing read. Filed as debt in docs/ROADMAP.md;
+  // zero live triggers today (no product is retired).
+
   // Vendor binding (P3) — a line for another vendor's twin would write this delivery's
   // price + observed-oz onto a SKU the truck never carried.
   const mismatch = findVendorMismatch(deliveryVendorId, (activeSkus ?? []).map((s) => ({ id: s.id, vendorId: s.vendor_id })));

@@ -419,6 +419,14 @@ export function ParPassWalker({
             {walker.unroutable.productUnroutable > 0 && (
               <li>{t("ordering.walker.unroutable_product", { n: walker.unroutable.productUnroutable })}</li>
             )}
+            {/* Discontinued (Juan's ruling, 2026-08-21). Not a routing FAILURE — the
+                walk is obeying a decision — but it belongs in this lane because the
+                demand is deliberately deleted and a stale par row is left behind, so
+                there is a real errand. Last in the list: it is the one cause here
+                that is working as intended. */}
+            {walker.unroutable.productRetired > 0 && (
+              <li>{t("ordering.walker.unroutable_product_retired", { n: walker.unroutable.productRetired })}</li>
+            )}
           </ul>
         </div>
       )}
@@ -437,6 +445,23 @@ export function ParPassWalker({
           {walker.unroutable.reroutedToBackup === 1
             ? t("ordering.walker.rerouted_to_backup_one")
             : t("ordering.walker.rerouted_to_backup_other", { n: walker.unroutable.reroutedToBackup })}
+        </div>
+      )}
+
+      {/* PAR-REVIEW lane (Juan, 2026-08-21) — its own ADVISORY block, gold, sitting
+          between the warn box and the informational failover notice, which is exactly
+          where it belongs in the severity ladder: nothing is broken (these rows order
+          fine today), but something DID change and a standing number is now probably
+          too high. "The system recognizes what's going on before the human does."
+          Deliberately not inside the warn box — a par that wants tuning is not a
+          routing failure, and mixing the two teaches managers to ignore both. */}
+      {walker.unroutable.parReview > 0 && (
+        <div
+          role="status"
+          className="rounded-xl border-2 border-co-gold-deep bg-co-gold/20 px-4 py-3 text-[13px] text-co-text"
+        >
+          <p className="font-bold">{t("ordering.walker.par_review", { n: walker.unroutable.parReview })}</p>
+          <p className="mt-0.5 text-co-gold-text">{t("ordering.walker.par_review_hint")}</p>
         </div>
       )}
 
@@ -611,6 +636,30 @@ function SkuRow({
           {sku.reroutedFromSkuId != null && (
             <span className="mt-0.5 block text-[12px] text-co-text-muted">
               {t("ordering.row.rerouted_here")}
+            </span>
+          )}
+          {/* PAR-REVIEW ADVISORY (Juan, 2026-08-21) — the cause, on the row that owns
+              the par. Gold/advisory, never danger: this row orders perfectly well
+              today; what changed is that its demand lost a source, and the system is
+              saying so before the walk-in fills up. It NAMES the recipe and points at
+              the par edit — it never suggests a number (Dynamic Pars owns that). */}
+          {sku.parAdvisory != null && (
+            <span
+              className="mt-1 block rounded-md bg-co-gold/20 px-2 py-1 text-[12px] font-medium text-co-gold-text"
+              role="note"
+              aria-label={t(
+                sku.parAdvisory.code === "no_demand_source"
+                  ? "ordering.row.par_review_none_aria"
+                  : "ordering.row.par_review_aria",
+                { sku: sku.name, recipes: sku.parAdvisory.removedSources.join(", ") },
+              )}
+            >
+              {t(
+                sku.parAdvisory.code === "no_demand_source"
+                  ? "ordering.row.par_review_none"
+                  : "ordering.row.par_review",
+                { recipes: sku.parAdvisory.removedSources.join(", ") },
+              )}
             </span>
           )}
         </div>

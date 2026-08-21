@@ -60,7 +60,10 @@ import {
 } from "@/lib/pack-chain-shared";
 import { loadOnHandDerived, type OnHandRow } from "@/lib/counts";
 import { etBusinessDate } from "@/lib/counts-shared";
-import { resolvePar, resolveActive, type LocationSkuOverlay } from "@/lib/location-sku-shared";
+import {
+  resolvePar, resolveActive, walkDisposition, parReviewAdvisory,
+  type LocationSkuOverlay, type ParAdvisory,
+} from "@/lib/location-sku-shared";
 import { loadProductIndex } from "@/lib/products";
 import { rollupUsageByProduct } from "@/lib/products-shared";
 import {
@@ -215,6 +218,99 @@ function orderUnitLabelFor(packFormat: string | null, chain: PackChainLevel[] | 
   return packFormat;
 }
 
+/**
+ * Which recipes create demand for a SKU today, and which STOPPED — the input to the
+ * par-review advisories (Juan, 2026-08-21: "the system recognizes what's going on
+ * before the human does").
+ *
+ * TWO paged reads over the WHOLE (small) recipe universe — `recipe_inputs` and
+ * `recipes` — never an `.in()` list of the 141 par'd SKU ids. That is deliberate: a
+ * SKU-id `.in()` filter is spent on the GET request line, which is the 414/400 cliff
+ * sim P1 #6/#24 named, and the recipe graph is ~60 recipes. Reading it whole and
+ * filtering in memory is both cheaper and immune to that failure.
+ *
+ * THE "REMOVED" SIGNAL IS DERIVED FROM THE GRAPH, NOT FROM HISTORY: a reference that
+ * survives only on an INACTIVE recipe is proof that a recipe which used this SKU was
+ * retired. No audit query, no time window, no chance of a stale window hiding it —
+ * and it names the recipe. (The other half of the story, a `recipe_input` row DELETED
+ * outright, leaves no graph trace and would need the `recipe_input.remove` audit
+ * trail; live count of those rows today is ZERO, so it is documented as deferred
+ * rather than built on a hot read path — see docs/ROADMAP.md.)
+ */
+interface DemandSources {
+  /** skuId → count of ACTIVE recipes referencing it (directly or via its product). */
+  activeRefsBySku: Map<string, number>;
+  /** skuId → names of RETIRED recipes that used to reference it, sorted. */
+  removedSourcesBySku: Map<string, string[]>;
+}
+
+async function loadDemandSources(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  skus: ReadonlyArray<{ id: string; product_id: string | null }>,
+): Promise<DemandSources> {
+  const activeRefsBySku = new Map<string, number>();
+  const removedSourcesBySku = new Map<string, string[]>();
+  if (skus.length === 0) return { activeRefsBySku, removedSourcesBySku };
+
+  const [inputs, recipes] = await Promise.all([
+    selectAllRows<{ recipe_id: string; component_sku_id: string | null; component_product_id: string | null }>(
+      async (from, to) => {
+        const { data, error } = await sb.from("recipe_inputs")
+          .select("recipe_id, component_sku_id, component_product_id")
+          .order("id", { ascending: true }).range(from, to)
+          .returns<Array<{ recipe_id: string; component_sku_id: string | null; component_product_id: string | null }>>();
+        if (error) throw new Error(`loadDemandSources inputs: ${error.message}`);
+        return { data };
+      },
+    ),
+    selectAllRows<{ id: string; name: string; active: boolean }>(async (from, to) => {
+      const { data, error } = await sb.from("recipes").select("id, name, active")
+        .order("id", { ascending: true }).range(from, to)
+        .returns<Array<{ id: string; name: string; active: boolean }>>();
+      if (error) throw new Error(`loadDemandSources recipes: ${error.message}`);
+      return { data };
+    }),
+  ]);
+
+  const recipeById = new Map(recipes.map((r) => [r.id, r]));
+  // A SKU is referenced by a line that names it DIRECTLY or names its PRODUCT — the
+  // product pin is the same demand, one layer up (0179), and missing it would report
+  // every re-pointed line as a lost source.
+  const skusOfProduct = new Map<string, string[]>();
+  for (const s of skus) {
+    if (s.product_id == null) continue;
+    const list = skusOfProduct.get(s.product_id) ?? [];
+    list.push(s.id);
+    skusOfProduct.set(s.product_id, list);
+  }
+  const pardIds = new Set(skus.map((s) => s.id));
+  // De-dup per (sku, recipe): two lines of one recipe naming the same SKU is ONE
+  // demand source, and "2 recipes stopped using this" would be a lie.
+  const seen = new Set<string>();
+
+  for (const i of inputs) {
+    const recipe = recipeById.get(i.recipe_id);
+    if (recipe == null) continue;
+    const targets: string[] = [];
+    if (i.component_sku_id != null && pardIds.has(i.component_sku_id)) targets.push(i.component_sku_id);
+    if (i.component_product_id != null) targets.push(...(skusOfProduct.get(i.component_product_id) ?? []));
+    for (const skuId of targets) {
+      const key = `${skuId}:${i.recipe_id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      if (recipe.active) {
+        activeRefsBySku.set(skuId, (activeRefsBySku.get(skuId) ?? 0) + 1);
+      } else {
+        const list = removedSourcesBySku.get(skuId) ?? [];
+        list.push(recipe.name);
+        removedSourcesBySku.set(skuId, list);
+      }
+    }
+  }
+  for (const list of removedSourcesBySku.values()) list.sort((a, b) => a.localeCompare(b));
+  return { activeRefsBySku, removedSourcesBySku };
+}
+
 // ── Usage rank (trailing-30d consumed oz; mirrors receiving.ts loadSkuUsageRank) ──
 /**
  * Trailing-30-day consumed oz per SKU at a location — the "most used" ordering rank
@@ -356,6 +452,16 @@ export interface WalkerSku {
    * in every case.
    */
   canImplyOz: boolean;
+  /**
+   * PAR-REVIEW ADVISORY (Juan, 2026-08-21) — null when there is nothing to say.
+   *
+   * A cause-attributed nudge that this par may now be too high because demand LOST A
+   * SOURCE: a recipe that used this SKU was retired, or its product was discontinued.
+   * It names the recipe; it deliberately does NOT suggest a number (that is the
+   * Dynamic Pars arc). Advisory tone, never an alarm — nothing is broken, the system
+   * is just noticing before the human does.
+   */
+  parAdvisory: ParAdvisory | null;
   /** The product this SKU is a member of (0179). null = implicit singleton. */
   productId: string | null;
   /** Display label for the product headline ("HAM"). null for a singleton. */
@@ -446,6 +552,35 @@ export interface WalkerUnroutable {
    */
   productUnroutable: number;
   /**
+   * A par'd SKU whose PRODUCT is retired — the par is suppressed, not mutated
+   * (Juan's ruling, 2026-08-21).
+   *
+   * WHY THIS REACHES ORDERING AT ALL. Juan: *"discontinuation is about stopping the
+   * SKU from being ordered etc… pars should be affected if less demand for that SKU
+   * is happening."* Pars are DOWNSTREAM of demand — they exist because recipes create
+   * demand — so a retired product's pars are stale by definition and continuing to
+   * suggest them orders stock nothing consumes. Swapping a product out of ONE recipe
+   * is just recipe editing and touches none of this; RETIREMENT means "we stop buying
+   * this entirely", which is precisely an ordering-layer decision.
+   *
+   * SUPPRESSED, NEVER MUTATED. The `weekday_par`/`weekend_par` columns are untouched,
+   * so bringing the product back restores the exact prior walk with no par re-entry —
+   * reversibility is the whole reason this is a read-time gate and not a write.
+   *
+   * SUMMED into `count` and rendered in the warn lane, unlike `reroutedToBackup`
+   * below: the demand is being deliberately deleted and a now-stale par row is left
+   * behind, so there IS an errand (clear the par once the last order is burned down,
+   * or bring the product back). Loud, never silent — the P4 law.
+   */
+  productRetired: number;
+  /**
+   * How many WALKED rows carry a par-review advisory (Juan, 2026-08-21). NOT a fault
+   * and deliberately NOT summed into `count`: these rows order perfectly well today.
+   * The par behind them has simply lost a demand source, and saying so early is the
+   * whole point — "the system recognizes what's going on before the human does".
+   */
+  parReview: number;
+  /**
    * NOT a fault — the POSITIVE signal (0179). A par whose own SKU could not be
    * routed today was carried by another member of the same product, so the demand
    * MOVED instead of evaporating. Rendered informationally, never as an alarm, and
@@ -457,7 +592,7 @@ export interface WalkerUnroutable {
 /** The columns every walker row needs — one spelling, shared by the par'd-SKU read
  *  and the rerouted-backup read (a member with no par of its own is not in the first). */
 const WALKER_SKU_COLUMNS =
-  "id, name, vendor_id, item_number, active, pack_format, weekday_par, weekend_par, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each, product_id";
+  "id, name, vendor_id, item_number, active, pack_format, weekday_par, weekend_par, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each, product_id, inventory_only";
 
 interface WalkerSkuRow {
   id: string; name: string; vendor_id: string | null; item_number: string | null; active: boolean;
@@ -465,6 +600,8 @@ interface WalkerSkuRow {
   each_container_label: string | null; units_per_pack: number | null;
   each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null;
   product_id: string | null;
+  /** Packaging / cleaning supplies — their pars were never recipe-derived. */
+  inventory_only: boolean | null;
 }
 
 /**
@@ -502,7 +639,7 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
   // first-cause-wins in walk order (vendorless → vendor-down → deactivated).
   const unroutable: WalkerUnroutable = {
     count: 0, skuInactive: 0, vendorInactive: 0, noVendor: 0,
-    productUnroutable: 0, reroutedToBackup: 0,
+    productUnroutable: 0, productRetired: 0, parReview: 0, reroutedToBackup: 0,
   };
   const skus = (skuRows ?? []).filter((s) => s.vendor_id != null); // a par'd SKU with no
   // vendor can't be ordered from anyone → excluded (schema allows null vendor_id, live
@@ -522,7 +659,7 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
   // BATCH loads (one each — loadRecipeGraph law).
   // overlayBySku: per-location active/par overrides; empty map = day-one (pure inheritance).
   const productIds = [...new Set(skus.map((s) => s.product_id).filter((v): v is string => v != null))];
-  const [chainsBySku, measures, rawUsageBySku, onHandView, { data: vendorRows, error: vErr }, lastOrderBySku, overlayBySku, cutoffsByVendor, productIndex] =
+  const [chainsBySku, measures, rawUsageBySku, onHandView, { data: vendorRows, error: vErr }, lastOrderBySku, overlayBySku, cutoffsByVendor, productIndex, demandSources] =
     await Promise.all([
       loadSkuPackChains(skuIds),
       loadMeasures(),
@@ -536,6 +673,8 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
       // THE SAME loader the recipe graph uses — one resolution ladder, not two
       // (0179). Zero products → zero queries.
       loadProductIndex(productIds, locationId),
+      // Which recipes still create demand for these pars, and which stopped (2026-08-21).
+      loadDemandSources(sb, skus),
     ]);
   if (vErr) throw new Error(`loadWalkerData vendors: ${vErr.message}`);
   const vendorById = new Map((vendorRows ?? []).map((v) => [v.id, v]));
@@ -590,9 +729,24 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
       }
     }
     const entry = s.product_id != null ? productIndex.byProduct.get(s.product_id) ?? null : null;
+    // The par-review advisory (Juan, 2026-08-21). Computed HERE, in the one row
+    // builder both the par'd walk and the rerouted-backup path share, so a rescued
+    // backup row carries the same nudge its twin would have — the advisory is about
+    // the PAR, and the par is what moved.
+    //
+    // `product_retired` cannot actually reach a row: those SKUs are suppressed by the
+    // walk's cause ladder before a row is built, and they surface in the notice lane
+    // instead. It stays in the pure rule as the documented top rung.
+    const parAdvisory = parReviewAdvisory({
+      inventoryOnly: s.inventory_only ?? false,
+      productRetired: entry?.resolution.reason === "retired_product",
+      activeRecipeRefs: demandSources.activeRefsBySku.get(s.id) ?? 0,
+      removedSources: demandSources.removedSourcesBySku.get(s.id) ?? [],
+    });
     return {
       skuId: s.id,
       name: s.name,
+      parAdvisory,
       itemNumber: s.item_number,
       orderUnitLabel: orderUnitLabelFor(s.pack_format, chain),
       parToday: par,
@@ -629,56 +783,89 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
   const walkedSkuIds = new Set<string>();
   for (const s of skus) {
     const vendorId = s.vendor_id as string;
-    if (!vendorById.has(vendorId)) {
-      // Vendor inactive/missing → SKU dropped with it (P4: counted, not silent).
-      unroutable.vendorInactive += 1; unroutable.count += 1;
-      // Hold the par for the product: a vendor going down is exactly when another
-      // member should carry the demand (0179), rather than it evaporating silently.
-      if (s.product_id != null) {
-        const ov = overlayBySku.get(s.id) ?? null;
-        const forPar: LocationSkuOverlay | null = ov ? { weekdayPar: ov.weekdayPar, weekendPar: ov.weekendPar } : null;
-        const heldPar = resolvePar(forPar, { weekdayPar: num(s.weekday_par), weekendPar: num(s.weekend_par) }, weekend);
-        if (heldPar != null) {
-          const list = droppedByProduct.get(s.product_id) ?? [];
-          list.push({
-            row: s, productId: s.product_id, par: heldPar,
-            parIsWeekend: weekend && (forPar?.weekendPar ?? num(s.weekend_par)) != null,
-            cause: "vendorInactive",
-          });
-          droppedByProduct.set(s.product_id, list);
-        }
-      }
-      continue;
-    }
-    // Resolve active + par through the per-location overlay (D1). Day-one: no overlay rows →
-    // resolveActive/resolvePar reduce to the global values, byte-identical to prior behavior.
-    const overlayRow = overlayBySku.get(s.id) ?? null;
-    const overlayForPar: LocationSkuOverlay | null = overlayRow
-      ? { weekdayPar: overlayRow.weekdayPar, weekendPar: overlayRow.weekendPar }
-      : null;
+    // Resolve active + par through the per-location overlay (D1) BEFORE the cause
+    // ladder, so the ladder judges the same values the walk would use. Day-one: no
+    // overlay rows → resolveActive/resolvePar reduce to the global values,
+    // byte-identical to prior behavior. These are pure map lookups with no I/O, so
+    // hoisting them above the vendor check costs nothing and buys the thing that
+    // matters: ONE place where the exclusion order is decided.
+    //
     // Inclusion governed by the overlay-over-global active resolution (D1): an overlay
     // active_override wins over the global `active` flag — so a promotional SKU
     // (override true, globally inactive) is INCLUDED and a locally-deactivated SKU
     // (override false, globally active) is EXCLUDED. Global inactive + no override → excluded.
     // parIsWeekend: true when the resolved par came from the weekend_par slot. Mirrors
-    // The day rule (weekend pair member w/ weekday fallback) applied to already-resolved values.
+    // the day rule (weekend pair member w/ weekday fallback) applied to resolved values.
+    const overlayRow = overlayBySku.get(s.id) ?? null;
+    const overlayForPar: LocationSkuOverlay | null = overlayRow
+      ? { weekdayPar: overlayRow.weekdayPar, weekendPar: overlayRow.weekendPar }
+      : null;
     const resolvedWeekendPar = overlayForPar?.weekendPar ?? num(s.weekend_par);
     const parIsWeekend = weekend && resolvedWeekendPar != null;
-    if (!resolveActive(overlayRow?.activeOverride, s.active)) {
-      // P4 — the deactivated-twin case. With products (0179) this is no longer the end
-      // of the story: the par is held for the product below, and if another member can
-      // carry it the demand MOVES instead of evaporating.
-      unroutable.skuInactive += 1; unroutable.count += 1;
-      const heldPar = resolvePar(overlayForPar, { weekdayPar: num(s.weekday_par), weekendPar: num(s.weekend_par) }, weekend);
-      if (s.product_id != null && heldPar != null) {
+    const par = resolvePar(overlayForPar, { weekdayPar: num(s.weekday_par), weekendPar: num(s.weekend_par) }, weekend);
+
+    // ── THE CAUSE LADDER — decided ONCE, by the pure rule ────────────────────────
+    // `walkDisposition` (lib/location-sku-shared.ts) owns first-cause-wins so the
+    // order is stated in exactly one place and is unit-testable; re-expressing it as
+    // a chain of conditions here would be a second opinion about which cause wins.
+    //
+    // Retirement ranks FIRST (Juan's ruling, 2026-08-21). A retired product means "we
+    // stop buying this entirely", so it does not matter that the vendor is down or the
+    // twin is deactivated — reporting "turn the vendor back on" for something Juan
+    // discontinued sends him on an errand he already decided against.
+    //
+    // Read through `resolution.reason`, not the raw column: the ladder in
+    // lib/products-shared.ts is the one authority on what retirement means, and the
+    // costing drawer and the readiness lane ask it the same way.
+    const productEntry = s.product_id != null ? productIndex.byProduct.get(s.product_id) ?? null : null;
+    const disposition = walkDisposition({
+      productRetired: productEntry?.resolution.reason === "retired_product",
+      vendorKnown: vendorById.has(vendorId),
+      skuActive: resolveActive(overlayRow?.activeOverride, s.active),
+      par,
+    });
+
+    if (disposition === "productRetired") {
+      // SUPPRESSED, NOT MUTATED: the par columns are untouched, so bringing the
+      // product back restores this exact walk with no par re-entry.
+      //
+      // The `continue` is load-bearing in three places at once — the row never
+      // reaches `candidatesByProduct` (no suggestion), never reaches
+      // `droppedByProduct` (no vendor-down rescue to a sibling member, which would
+      // re-order the very product we stopped buying), and never reaches
+      // `parNullMemberProducts` (so it cannot ALSO be counted as productUnroutable
+      // below). One row, one cause.
+      unroutable.productRetired += 1; unroutable.count += 1;
+      continue;
+    }
+    if (disposition === "vendorInactive") {
+      // Vendor inactive/missing → SKU dropped with it (P4: counted, not silent).
+      unroutable.vendorInactive += 1; unroutable.count += 1;
+      // Hold the par for the product: a vendor going down is exactly when another
+      // member should carry the demand (0179), rather than it evaporating silently.
+      if (s.product_id != null && par != null) {
         const list = droppedByProduct.get(s.product_id) ?? [];
-        list.push({ row: s, productId: s.product_id, par: heldPar, parIsWeekend, cause: "skuInactive" });
+        list.push({ row: s, productId: s.product_id, par, parIsWeekend, cause: "vendorInactive" });
         droppedByProduct.set(s.product_id, list);
       }
       continue;
     }
-    const par = resolvePar(overlayForPar, { weekdayPar: num(s.weekday_par), weekendPar: num(s.weekend_par) }, weekend);
-    if (par == null) {
+    if (disposition === "skuInactive") {
+      // P4 — the deactivated-twin case. With products (0179) this is no longer the end
+      // of the story: the par is held for the product below, and if another member can
+      // carry it the demand MOVES instead of evaporating.
+      unroutable.skuInactive += 1; unroutable.count += 1;
+      if (s.product_id != null && par != null) {
+        const list = droppedByProduct.get(s.product_id) ?? [];
+        list.push({ row: s, productId: s.product_id, par, parIsWeekend, cause: "skuInactive" });
+        droppedByProduct.set(s.product_id, list);
+      }
+      continue;
+    }
+    // `par == null` is IMPLIED by the disposition (that is what "parNull" means once
+    // the three causes above have not fired); it is repeated only so the type checker
+    // can narrow `par` for buildRow below. The DECISION still has one author.
+    if (disposition === "parNull" || par == null) {
       // Neither resolved par applies today (excluded from the walk — normal for a
       // weekday-only par on a weekend). For a MEMBER it is worth remembering: if the
       // product ends the walk with no row at all, that silence is a finding.
@@ -705,12 +892,11 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
   // candidates, the designated primary, else a stable name order. The dropped rows
   // are NOT unroutable: their demand is carried by the row we kept.
   //
-  // A RETIRED product resolves to null (rung ⓪, 2026-08-21) and simply falls through
-  // to the next preference — deliberately. Retiring an identity is a statement about
-  // what RECIPES mean; a par is a per-SKU standing instruction on a still-active
-  // vendor_item, and suppressing the row would silently overrule it. Twins of a
-  // retired product still need de-duping into one row, and this still picks one
-  // deterministically. See the failover below for the same boundary.
+  // A RETIRED product never gets here: the retirement gate at the top of the walk
+  // loop `continue`s before a candidate is recorded, so `candidatesByProduct` holds
+  // no entry for one. `entry.resolution.skuId` is therefore non-null for every
+  // product this loop actually sees, and the two fallbacks below remain what they
+  // always were — the vendor-down and not-walkable-today cases, not retirement.
   const vendorOf = (skuId: string): string | null => skus.find((s) => s.id === skuId)?.vendor_id ?? null;
   for (const [productId, candidates] of candidatesByProduct) {
     const entry = productIndex.byProduct.get(productId) ?? null;
@@ -774,15 +960,11 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
     // Nobody walked for this product — try the resolved member, else any active member
     // with a live vendor. Both must be a DIFFERENT sku than the one that dropped.
     //
-    // A RETIRED product resolves to null, so the first arm is empty and the rescue
-    // falls to "any active member" — DELIBERATE, and the boundary is worth stating
-    // because it is the one place retirement and pars visibly disagree. Retirement
-    // says "recipes should stop meaning this identity"; a par says "keep N of THIS
-    // vendor_item on the shelf", and it lives on a row that is still active. The par
-    // is the operator's own standing instruction about the floor, so it wins — the
-    // same posture that made retiring never hard-block. Clearing the pars (or
-    // deactivating the SKUs) is how you stop ordering; that is a separate act, and
-    // it is the one the walk is entitled to obey.
+    // A RETIRED product cannot reach this loop either: the gate at the top of the
+    // walk `continue`s before its members are held in `droppedByProduct`, so there
+    // is nothing here to rescue. That is the point — rescuing a dropped par to a
+    // sibling member would re-order the very product we stopped buying, which is
+    // exactly what Juan's ruling forbids.
     const droppedIds = new Set(dropped.map((d) => d.row.id));
     const byPreference = [
       ...entry.members.filter((m) => m.skuId === entry.resolution.skuId),
@@ -825,6 +1007,14 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
     const walked = (candidatesByProduct.get(productId) ?? []).some((c) => walkedSkuIds.has(c.skuId));
     const rescued = [...rescueTargets.keys()].some((id) => productIndex.productBySku.get(id) === productId && walkedSkuIds.has(id));
     if (!walked && !rescued) unroutable.productUnroutable += 1;
+  }
+
+  // Par-review advisories, counted off the FINAL rendered rows rather than inside
+  // buildRow: the product dedupe builds a row for every walkable twin and then keeps
+  // only one, so counting at construction would report advisories the manager never
+  // sees. The notice must match the badges exactly or it is just noise.
+  for (const rows of skusByVendor.values()) {
+    for (const r of rows) if (r.parAdvisory != null) unroutable.parReview += 1;
   }
 
   // Assemble vendor groups: usage desc then name within a vendor; vendors isOrderDay-first
