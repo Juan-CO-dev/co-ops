@@ -442,8 +442,17 @@ export async function loadWeightBoard(actor: AuthContext): Promise<WeightBoard> 
     return {
       establishedByName: personId ? (userNames.get(personId) ?? null) : null,
       // A script name only counts as provenance when NOBODY is named — otherwise
-      // the human is the answer and the script field is noise.
-      seedScript: personId == null && typeof meta.script === "string" ? meta.script : null,
+      // the human is the answer and the script field is noise. Seed 10 recorded
+      // only `phase`, never `script`, so it is the fallback: a row that DOES say
+      // where it came from must not render as "nobody recorded this".
+      seedScript:
+        personId == null
+          ? typeof meta.script === "string"
+            ? meta.script
+            : typeof meta.phase === "string"
+              ? meta.phase
+              : null
+          : null,
       auditNote: typeof meta.note === "string" ? meta.note : null,
     };
   };
