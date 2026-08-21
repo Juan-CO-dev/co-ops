@@ -307,6 +307,23 @@ export const DESTRUCTIVE_ACTIONS = [
   "sku.weight_fill",
   "item.weight_fill",
 
+  // ── Basis-altering edits (lead ruling on the 2026-08-21 sweep) ────────────
+  // Both alter a BASIS other data silently depends on — the registry's own
+  // criterion — and since membership is forensic-only (see the header), there is
+  // no behavioural risk in flagging them.
+  // — sku.pack_chain_update replaces a SKU's whole active pack chain, which IS
+  //   the oz denominator every cost, depletion and variance number divides by.
+  //   `vendor_item.update` has been registered since the catalog shipped; a
+  //   chain edit moves the same arithmetic harder, and it is the write whose
+  //   flat-field mirror going stale silently splits the cost board from the
+  //   catalog screens (the defect this PR's second commit fixes).
+  "sku.pack_chain_update",
+  // — item.set_type changes an item's semantic CLASS, which re-routes how every
+  //   downstream reader treats it (what it can be counted in, whether it is a
+  //   production output, which surfaces list it). Same shape as the registered
+  //   item.set_sold_directly / item.set_default, which flip narrower flags.
+  "item.set_type",
+
   // Bulk / sensitive
   "reports.bulk_export",
   "reports.bulk_correct",

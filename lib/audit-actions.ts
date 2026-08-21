@@ -161,7 +161,6 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "delivery.match_overridden",
   "delivery.receipt_linked",
   "delivery.received",
-  "item.set_type",
   "item_size.create",
   "measure_unit.create",
   "par_pass.submitted",
@@ -179,7 +178,6 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "recipe.input_unit_normalize",
   "recipe_input.update",
   "sku.deduplicate",
-  "sku.pack_chain_update",
   "sku_count.recorded",
   "vendor_item.price_recorded",
 

@@ -122,6 +122,27 @@ describe("the 2026-08-21 sweep — the filed gap is closed and stays closed", ()
     expect(isDestructive(action)).toBe(true);
   });
 
+  it.each(["sku.pack_chain_update", "item.set_type"])(
+    "%s is registered destructive (lead ruling on the sweep's open families)",
+    (action) => {
+      // Both alter a BASIS other data silently depends on — the oz denominator
+      // every cost divides by, and an item's semantic class. Classified by lead
+      // ruling once this PR established the flag is forensic-only, so there was
+      // no behavioural risk in flagging them.
+      expect(isDestructive(action)).toBe(true);
+    },
+  );
+
+  it("the two DEFERRED families stay unclassified until the criterion review", () => {
+    // NOT an endorsement of their current classification — a pin that they were
+    // left alone deliberately rather than missed. `catering.kb.*` and
+    // measure_unit.create want the registry-criterion review the header fix
+    // started (what exactly earns the flag), in one sitting, not a drive-by.
+    expect(NON_DESTRUCTIVE_ACTIONS).toContain("measure_unit.create");
+    expect(NON_DESTRUCTIVE_ACTIONS.filter((a) => a.startsWith("catering.kb.")).length).toBeGreaterThan(0);
+    expect(DESTRUCTIVE_ACTIONS.filter((a) => a.startsWith("catering.kb."))).toEqual([]);
+  });
+
   it("product.resolution_flip is deliberately NOT destructive", () => {
     // The one member of the product.* family that is a SYSTEM OBSERVATION, not a
     // human act: materializeDailyDepletion writes it with actor_id null when a
