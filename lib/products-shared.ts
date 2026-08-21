@@ -315,3 +315,79 @@ export function allocateProductVariance(
   }
   return out;
 }
+
+// -- Two-grain rollup (spec: "On-hand") ---------------------------------------
+
+export interface ProductGrainInput {
+  productId: string;
+  /** oz per member; null = that member's own derivation could not resolve. */
+  members: Array<{ skuId: string; oz: number | null }>;
+}
+
+export interface ProductGrainRollup {
+  productId: string;
+  /** NON-NULL only when EVERY member resolved (the MenuCostRollup completeness rule). */
+  totalOz: number | null;
+  /** Sum of what we COULD resolve. A lower bound, never "the total". */
+  knownOz: number;
+  knownMemberCount: number;
+  /** Which members we could not resolve, sorted — name the address, not just the fault. */
+  unknownSkuIds: string[];
+}
+
+/**
+ * Roll member SKUs up to the product grain. The per-SKU ledgers stay the source of
+ * truth; this is their sum, and it is where the audit's mirrored false SHORT/OVER
+ * alarm dies: a twin reading +140 and a twin reading -40 net to the 100 that is
+ * actually on the shelf, without re-keying a single ledger row.
+ */
+export function rollupProductGrain(input: ProductGrainInput): ProductGrainRollup {
+  let knownOz = 0;
+  let knownMemberCount = 0;
+  const unknownSkuIds: string[] = [];
+  for (const m of input.members) {
+    if (m.oz == null || !Number.isFinite(m.oz)) { unknownSkuIds.push(m.skuId); continue; }
+    knownOz += m.oz;
+    knownMemberCount += 1;
+  }
+  unknownSkuIds.sort();
+  const complete = unknownSkuIds.length === 0 && input.members.length > 0;
+  return {
+    productId: input.productId,
+    totalOz: complete ? knownOz : null,
+    knownOz,
+    knownMemberCount,
+    unknownSkuIds,
+  };
+}
+
+/**
+ * Give every member of a product the PRODUCT's total trailing usage (deviation D9).
+ *
+ * Today all consumption is pinned to one twin (production_inputs.input_sku_id and
+ * toast_daily_depletion.sku_id are both pin-derived), so the un-pinned twin reads
+ * null and `?? -Infinity` sorts it dead last on the order walk — the audit's "the
+ * twin with the real spend reads null and sorts LAST". Sharing the product's number
+ * makes both members sort where the PRODUCT belongs.
+ *
+ * A SKU whose product has zero total stays ABSENT from the map (not zero), so the
+ * caller's existing `?? -Infinity` null-sorts-last semantics are preserved exactly.
+ * Returns a NEW map; never mutates the input.
+ */
+export function rollupUsageByProduct(
+  usageBySku: ReadonlyMap<string, number>,
+  productBySku: ReadonlyMap<string, string>,
+): Map<string, number> {
+  const totalByProduct = new Map<string, number>();
+  for (const [skuId, oz] of usageBySku) {
+    const p = productBySku.get(skuId);
+    if (p == null) continue;
+    totalByProduct.set(p, (totalByProduct.get(p) ?? 0) + oz);
+  }
+  const out = new Map(usageBySku);
+  for (const [skuId, productId] of productBySku) {
+    const total = totalByProduct.get(productId);
+    if (total != null && total > 0) out.set(skuId, total);
+  }
+  return out;
+}
