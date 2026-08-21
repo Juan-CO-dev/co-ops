@@ -361,6 +361,256 @@ export function rollupProductGrain(input: ProductGrainInput): ProductGrainRollup
   };
 }
 
+// -- Count sheet C-mode (spec "Counting UX (locked: option C)", plan Phase 5) ---
+
+/** Why a product-level count could not be fully placed on the receipt ledger. */
+export type ProductCountAllocationReason = "count_exceeds_lots" | null;
+
+export interface ProductCountAllocation {
+  /** One entry per member SKU, in the order the lots named them. */
+  perSku: Array<{ skuId: string; oz: number }>;
+  /** Counted oz the receipt lots could not explain (an unrecorded delivery, a
+   *  pre-ledger opening balance, or simply the first count at this location). */
+  unallocatedOz: number;
+  /** The member that ABSORBED `unallocatedOz`. null when there was none to absorb,
+   *  or when no primary could be named (then the oz genuinely stays unplaced). */
+  absorbedBySkuId: string | null;
+  reason: ProductCountAllocationReason;
+}
+
+/**
+ * Turn ONE product-level count into the per-SKU anchor lines the existing engine
+ * eats (deviation D8), and decide what happens to the part the ledger cannot place.
+ *
+ * LEAD RULING 2026-08-20 — `count_exceeds_lots` NEVER HARD-REFUSES. The earlier
+ * plan draft refused the line outright; the ruling reversed it, and the reasoning is
+ * the module's own doctrine: A COUNT IS GROUND TRUTH AND THEORY YIELDS TO IT. The
+ * counter is standing at the shelf; the lot ledger is a belief about how the shelf
+ * got that way. So the counted oz is preserved EXACTLY — `perSku` always sums to
+ * `countedOz` whenever a primary can be named — and the ledger-unexplained portion
+ * is attributed to the RESOLVED PRIMARY (the honest default vendor: the one we buy
+ * this product from) and carried as an advisory `reason` the caller surfaces and
+ * audits. WHOSE stock it is remains a claim; THAT it is there is a measurement.
+ *
+ * With no primary to name (an `unresolved` product — every member inactive) the
+ * remainder stays UNALLOCATED rather than being fabricated onto an arbitrary member.
+ * Callers reject an unresolved product before they get here; this is the backstop.
+ *
+ * PURE. `remaining` is oldest-first (the shelf); allocateProductCount walks it
+ * newest-back because the freshest lots are what the counter is looking at.
+ */
+export function allocateProductCountToMembers(
+  countedOz: number,
+  remaining: ReadonlyArray<LotShare>,
+  fallbackSkuId: string | null,
+): ProductCountAllocation {
+  const base = allocateProductCount(countedOz, remaining);
+  if (base.unallocatedOz <= 0) {
+    return { perSku: base.perSku, unallocatedOz: 0, absorbedBySkuId: null, reason: null };
+  }
+  if (fallbackSkuId == null) {
+    return {
+      perSku: base.perSku,
+      unallocatedOz: base.unallocatedOz,
+      absorbedBySkuId: null,
+      reason: "count_exceeds_lots",
+    };
+  }
+  // MERGE, never append a second line for the same SKU: two lines for one SKU in one
+  // event would break the disjointness the anchor sum rests on (council L5).
+  const perSku = base.perSku.map((p) => ({ ...p }));
+  const existing = perSku.find((p) => p.skuId === fallbackSkuId);
+  if (existing) existing.oz += base.unallocatedOz;
+  else perSku.push({ skuId: fallbackSkuId, oz: base.unallocatedOz });
+  return {
+    perSku,
+    unallocatedOz: base.unallocatedOz,
+    absorbedBySkuId: fallbackSkuId,
+    reason: "count_exceeds_lots",
+  };
+}
+
+/**
+ * Give EVERY active member a line, including the ones the shelf allocated nothing to.
+ *
+ * A product count is a statement about the whole product, so it must RE-ANCHOR the
+ * whole product. Without this, a count of "HAM 300 oz" that the lots place entirely
+ * under PFG writes one line, Baldor keeps whatever stale anchor it had, and the two
+ * grains disagree forever — which is precisely the mirrored false SHORT/OVER pair the
+ * arc exists to kill. A zero here is a MEASURED zero ("the product totals 300 and none
+ * of it is Baldor's"), categorically different from the F3 refusal of an operator
+ * typing 0 on a SKU row, which means "I did not count this".
+ *
+ * The counted total is untouched — the added lines carry 0 oz. Allocated members keep
+ * their lot order; the zero tail sorts on skuId so the order is TOTAL.
+ */
+export function withZeroMemberShares(
+  perSku: ReadonlyArray<{ skuId: string; oz: number }>,
+  memberSkuIds: ReadonlyArray<string>,
+): Array<{ skuId: string; oz: number }> {
+  const seen = new Set(perSku.map((p) => p.skuId));
+  const missing = [...new Set(memberSkuIds)].filter((id) => !seen.has(id)).sort((a, b) => a.localeCompare(b));
+  return [...perSku.map((p) => ({ ...p })), ...missing.map((skuId) => ({ skuId, oz: 0 }))];
+}
+
+export interface ProductSplitAvailability {
+  /** Does the count sheet offer tap-to-split for this product at this location? */
+  splitAvailable: boolean;
+  /** Distinct ACTIVE members with at least one positive-oz receipt lot here. */
+  lotBearingMemberCount: number;
+}
+
+/**
+ * Does the count sheet offer TAP-TO-SPLIT? (spec: "when 2+ members carry expected
+ * stock at that location".)
+ *
+ * RULED (lead, flag ④): this derives from the LOT LOADER + the member count, and
+ * NEVER from `loadOnHand`. loadOnHand WRITES on read (the sku_inferred_baselines
+ * upsert, lib/counts.ts) — the loadCountsTileState lesson — so it is never safe on
+ * a render path, and this is a per-render decision.
+ *
+ * Three cases, and the middle one is the point:
+ *   - 2+ members carry positive-oz lots here → both are stocked → SPLIT (the spec's
+ *     trigger, read literally off the receipt ledger).
+ *   - ZERO members carry lots here → the ledger knows nothing about this product at
+ *     this location and cannot say the split is pointless. The member count alone
+ *     opens it: a counter who finds real stock the ledger has not seen must never be
+ *     trapped in product-only mode (count beats theory — the same doctrine that made
+ *     count_exceeds_lots advisory rather than a refusal).
+ *   - exactly ONE member carries lots → the ledger positively says only that vendor
+ *     is stocked here, so the product row already IS that vendor's row and a split
+ *     would be one real row beside an empty one. No split.
+ *
+ * PURE. A lot naming a non-member (or an inactive member) is ignored entirely.
+ */
+export function productSplitAvailability(input: {
+  activeMemberSkuIds: ReadonlyArray<string>;
+  lots: ReadonlyArray<ReceiptLot>;
+}): ProductSplitAvailability {
+  const active = new Set(input.activeMemberSkuIds);
+  const bearing = new Set<string>();
+  for (const l of input.lots) {
+    if (!active.has(l.skuId)) continue;
+    if (!Number.isFinite(l.oz) || l.oz <= 0) continue;
+    bearing.add(l.skuId);
+  }
+  const lotBearingMemberCount = bearing.size;
+  const splitAvailable =
+    active.size >= 2 && (lotBearingMemberCount >= 2 || lotBearingMemberCount === 0);
+  return { splitAvailable, lotBearingMemberCount };
+}
+
+/** One member SKU's on-hand row, as the product grain needs to see it. */
+export interface ProductGrainMemberInput {
+  skuId: string;
+  skuName: string;
+  vendorName: string | null;
+  /** The member row's on-hand oz. null = advisory, or not weight-anchored at all. */
+  onHandOz: number | null;
+  /** The member row's variance oz. null = advisory or a non-census anchor. */
+  varianceOz: number | null;
+  /** True ONLY for a WEIGHT-dimension, CENSUS-anchored row. Variance is census-only
+   *  (spec D6): a par_estimate or inferred anchor can never be a variance reference. */
+  censusAnchored: boolean;
+}
+
+/** The product-grain on-hand row: headline number, per-vendor split, lot shelf. */
+export interface ProductOnHandRow {
+  productId: string;
+  productName: string;
+  /** rollupProductGrain over the member rows. NON-NULL only when every member resolved. */
+  totalOz: number | null;
+  /** Sum of what we COULD resolve. A LOWER BOUND — never render it where totalOz belongs. */
+  knownOz: number;
+  unknownSkuIds: string[];
+  /** The per-vendor split — Juan's "200 PFG + 100 Baldor". */
+  members: Array<{ skuId: string; skuName: string; vendorName: string | null; onHandOz: number | null }>;
+  /** Product-grain variance: the members' variances summed, null if ANY is null or
+   *  any member is non-census. This is where the audit's mirrored false SHORT/OVER dies. */
+  varianceOz: number | null;
+  /** Advisory FIFO attribution of varianceOz to lots (oldest absorbs). */
+  varianceLots: LotShare[];
+  /** Lot-level remaining, oldest-first — the shelf, filled newest-back. */
+  remaining: LotShare[];
+}
+
+/**
+ * THE TWO-GRAIN READ (spec "On-hand"): the per-SKU ledgers stay the source of truth
+ * and are not touched; the product grain is their SUM, with the per-vendor split and
+ * the lot remaining underneath.
+ *
+ * Two rules carried in from the engine rather than re-decided here:
+ *   - COMPLETENESS (the MenuCostRollup rule): one member we could not resolve makes
+ *     `totalOz` null. `knownOz` is a lower bound and must never be rendered as the
+ *     total (recurring bug class: "partial results presented as totals").
+ *   - VARIANCE IS CENSUS-ONLY (spec D6): every member must be census-anchored AND
+ *     carry a non-null variance, or the product's variance is null. A par_estimate
+ *     or inferred anchor is not a counted ground truth.
+ *
+ * The lot shelf is derived, not stored: what the members say is on hand, distributed
+ * back over the receipt lots newest-back. A product holding MORE than the ledger ever
+ * received here consumes nothing (never a negative shelf); an unresolved product has
+ * no honest shelf at all and gets an empty one rather than a guess.
+ *
+ * PURE, and totally ordered: members sort on (name, skuId) so two callers holding the
+ * same data in different row order can never disagree.
+ */
+export function buildProductOnHandRow(input: {
+  productId: string;
+  productName: string;
+  members: ReadonlyArray<ProductGrainMemberInput>;
+  lots: ReadonlyArray<ReceiptLot>;
+  /** A receipt line at this location carried a NULL resolved_oz, so the lot set is
+   *  INCOMPLETE (lib/products.ts loadProductLots drops and reports those lines, the
+   *  same taint discipline sumReceivedOzWindow already applies). The member totals
+   *  are unaffected — they come from the per-SKU ledgers — but the lot shelf and its
+   *  variance attribution go ADVISORY-EMPTY rather than presenting a split we know
+   *  is missing stock. */
+  lotsTainted?: boolean;
+}): ProductOnHandRow {
+  const rollup = rollupProductGrain({
+    productId: input.productId,
+    members: input.members.map((m) => ({ skuId: m.skuId, oz: m.onHandOz })),
+  });
+
+  const varianceComplete =
+    input.members.length > 0 &&
+    input.members.every((m) => m.censusAnchored && m.varianceOz != null && Number.isFinite(m.varianceOz));
+  const varianceOz = varianceComplete
+    ? input.members.reduce((s, m) => s + (m.varianceOz ?? 0), 0)
+    : null;
+
+  const lotTotalOz = input.lots.reduce(
+    (s, l) => s + (Number.isFinite(l.oz) && l.oz > 0 ? l.oz : 0),
+    0,
+  );
+  // The shelf only exists when the product grain does: distributing an unknown total
+  // would be a fabricated split of a number we do not have.
+  const remaining =
+    rollup.totalOz == null || input.lotsTainted === true
+      ? []
+      : remainingByLot(input.lots, Math.max(0, lotTotalOz - rollup.totalOz));
+
+  const varianceLots =
+    varianceOz == null || varianceOz === 0 ? [] : allocateProductVariance(varianceOz, remaining);
+
+  const members = [...input.members]
+    .sort((a, b) => (a.skuName !== b.skuName ? a.skuName.localeCompare(b.skuName) : a.skuId.localeCompare(b.skuId)))
+    .map((m) => ({ skuId: m.skuId, skuName: m.skuName, vendorName: m.vendorName, onHandOz: m.onHandOz }));
+
+  return {
+    productId: input.productId,
+    productName: input.productName,
+    totalOz: rollup.totalOz,
+    knownOz: rollup.knownOz,
+    unknownSkuIds: rollup.unknownSkuIds,
+    members,
+    varianceOz,
+    varianceLots,
+    remaining,
+  };
+}
+
 /**
  * Give every member of a product the PRODUCT's total trailing usage (deviation D9).
  *

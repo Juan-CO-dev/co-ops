@@ -5,6 +5,7 @@ import type { AnchorSource } from "@/lib/counts-shared";
 import type { OnHandView, OnHandRow, OnHandWeightRow, OnHandCountRow } from "@/lib/counts";
 import { AlertPill } from "@/components/ui/AlertPill";
 import { EmptyState } from "@/components/EmptyState";
+import { ProductOnHandCard } from "@/components/counts/ProductOnHandCard";
 
 /**
  * On-hand panel (server-rendered). PER-SKU anchors (F1): each row's anchor timestamp
@@ -15,6 +16,15 @@ import { EmptyState } from "@/components/EmptyState";
  * F5: a weight variance is LABELED short/over. F6: loose/partial line counts surfaced.
  * Anchor age + retro-edit staleness surfaced. Juan's model: receiving feeds, counts
  * verify, the difference is variance (weight) / "used or lost" (count).
+ *
+ * TWO GRAINS (Phase 5). `view.products` rolls member SKUs up to the product they are
+ * members of and renders ONE headline row each, with the per-vendor split and the lot
+ * shelf in a drawer. Those members' own SKU rows are then folded INTO that row rather
+ * than repeated beside it — rendering both grains at once is how twins produced the
+ * mirrored false SHORT/OVER pair in the first place. Everything else — singletons,
+ * packaging, an inactive twin still carrying an anchor — renders exactly as it always
+ * has, and `view.products` is empty before migration 0180 applies, so this whole
+ * branch is dormant until the lead opens the gate.
  */
 export function OnHandPanel({ view, lang, twinVendorBySkuId }: {
   view: OnHandView;
@@ -33,6 +43,9 @@ export function OnHandPanel({ view, lang, twinVendorBySkuId }: {
   if (view.rows.length === 0) {
     return <EmptyState message={serverT(lang, "counts.onhand.none")} />;
   }
+  // Members covered by a product row are rendered INSIDE it, never twice.
+  const coveredSkuIds = new Set(view.products.flatMap((p) => p.members.map((m) => m.skuId)));
+  const looseRows = view.rows.filter((r) => !coveredSkuIds.has(r.skuId));
   return (
     <div className="mt-2">
       <p className="text-[11px] text-co-text-dim">
@@ -44,7 +57,8 @@ export function OnHandPanel({ view, lang, twinVendorBySkuId }: {
           : ""}
       </p>
       <ul className="mt-2 flex flex-col gap-1.5">
-        {view.rows.map((r) =>
+        {view.products.map((p) => <ProductOnHandCard key={p.productId} row={p} />)}
+        {looseRows.map((r) =>
           r.dimension === "count"
             ? <CountRow key={r.skuId} r={r} lang={lang} vendorName={twinVendorBySkuId.get(r.skuId) ?? null} />
             : <WeightRow key={r.skuId} r={r} lang={lang} vendorName={twinVendorBySkuId.get(r.skuId) ?? null} />,

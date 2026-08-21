@@ -66,10 +66,25 @@ import {
   etBusinessDate,
   isGapEligibleDate,
   salesWindowUntrustworthy,
+  isProductCountLine,
   type CountLineInput,
+  type CountLineEntry,
+  type CountProductLineInput,
   type OnHandResult,
   type OnHandUnitsResult,
 } from "@/lib/counts-shared";
+import { loadProductIndex, loadProductLots, type ProductIndexEntry } from "@/lib/products";
+import {
+  allocateProductCountToMembers,
+  withZeroMemberShares,
+  buildProductOnHandRow,
+  productSplitAvailability,
+  remainingByLot,
+  type LotShare,
+  type ProductGrainMemberInput,
+  type ProductOnHandRow,
+  type ReceiptLot,
+} from "@/lib/products-shared";
 
 /** Trailing calendar window (days) for the inference bootstrap (spec D6, locked). */
 const INFERRED_WINDOW_DAYS = 28;
@@ -100,6 +115,44 @@ function actorLoc(actor: AuthContext): LocationActor {
   return { role: actor.user.role, locations: actor.locations };
 }
 
+// ── Migration gate M2: is 0180_count_product_allocation applied? ─────────────────
+/**
+ * PRE-M2 DEGRADATION — the products_schema_pending pattern (Phase 1, lib/products.ts).
+ *
+ * The count C-mode ships BEFORE `sku_count_lines.allocated_from_product_id` exists:
+ * migration 0180 is authored in this PR and applied only at the named LEAD/JUAN gate.
+ * A product count without that column would write anchor lines with no provenance —
+ * an auditor could not tell a measurement from an allocation — so instead the whole
+ * C-mode surface stays DARK until the column lands:
+ *   - loadCountFormData returns `products: []`  → the sheet is byte-identical to today
+ *   - loadOnHand returns `products: []`         → the panel is byte-identical to today
+ *   - createCountEvent refuses a product line with a named 503, never a silent write
+ *
+ * The probe caches only the TRUE answer and re-probes while false (one head request
+ * against an indexed table), so the surface lights itself up the moment the migration
+ * applies — no redeploy, no flag to flip, and no stale `false` stranded in a warm
+ * serverless process.
+ */
+let countProductAllocationColumnReady = false;
+let countProductAllocationPendingLogged = false;
+async function countProductAllocationReady(
+  sb: ReturnType<typeof getServiceRoleClient>,
+): Promise<boolean> {
+  if (countProductAllocationColumnReady) return true;
+  const { error } = await sb.from("sku_count_lines").select("allocated_from_product_id").limit(1);
+  if (error) {
+    if (!countProductAllocationPendingLogged) {
+      countProductAllocationPendingLogged = true;
+      console.warn(
+        `[counts] product count allocation is DORMANT — migration 0180 (GATE M2) is not applied yet: ${error.message}`,
+      );
+    }
+    return false;
+  }
+  countProductAllocationColumnReady = true;
+  return true;
+}
+
 // ── Form data (SKUs + their chain labels for the level picker) ───────────────────
 export interface CountSkuOption {
   id: string;
@@ -111,9 +164,44 @@ export interface CountSkuOption {
    * same name appears under 2+ vendors — see twinVendorLabels in lib/counts-shared.ts.
    */
   vendorName: string | null;
+  /** The product this SKU is a member of; null = an implicit SINGLETON (the ~95%
+   *  case), which is what the sheet lists as its own row. */
+  productId: string | null;
+  /** That product's display name — what a split row is grouped under. */
+  productName: string | null;
 }
+
+/** One PRODUCT row on the count sheet (spec option C). */
+export interface CountProductOption {
+  productId: string;
+  name: string;
+  /** Member SKU ids at this location, active first — the tap-to-split rows. */
+  memberSkuIds: string[];
+  /** The resolved primary — whose chain labels the product row's level picker uses. */
+  defaultSkuId: string | null;
+  /** Level labels borrowed from the resolved primary (see the note below). */
+  chainLabels: string[];
+  /** True when the spec's tap-to-split trigger fires — productSplitAvailability. */
+  splitAvailable: boolean;
+  /** How many members carry positive-oz receipt lots here (the split's other half). */
+  lotBearingMemberCount: number;
+  /**
+   * The members do NOT all spell their pack chain the same way, so the borrowed level
+   * labels are the PRIMARY's vocabulary and may not fit another member's containers.
+   * The form says so and points at tap-to-split — the honest minimum. A product-owned
+   * unit vocabulary is a bigger design and is explicitly not in this arc.
+   */
+  chainsDiffer: boolean;
+}
+
 export interface CountFormData {
   skus: CountSkuOption[];
+  /**
+   * The PRODUCT rows (spec option C: one product, one number, by default). EMPTY
+   * before migration 0180 applies — see countProductAllocationReady. Empty is
+   * "C-mode is not available", not "no products exist".
+   */
+  products: CountProductOption[];
 }
 
 /** Load active SKUs + each one's root→leaf chain labels for the count level picker. */
@@ -121,8 +209,8 @@ export async function loadCountFormData(actor: AuthContext, locationId: string):
   requireLevel(actor, COUNT_READ_MIN);
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new CountError(404, "not_found", "Location not found");
   const sb = getServiceRoleClient();
-  const { data: skus, error } = await sb.from("vendor_items").select("id, name, pack_format, vendor_id").eq("active", true).order("name", { ascending: true })
-    .returns<Array<{ id: string; name: string; pack_format: string | null; vendor_id: string | null }>>();
+  const { data: skus, error } = await sb.from("vendor_items").select("id, name, pack_format, vendor_id, product_id").eq("active", true).order("name", { ascending: true })
+    .returns<Array<{ id: string; name: string; pack_format: string | null; vendor_id: string | null; product_id: string | null }>>();
   if (error) throw new Error(`loadCountFormData skus: ${error.message}`);
   const list = skus ?? [];
   // Vendor names (P8) — ONE batched lookup over the distinct vendors, never per-SKU.
@@ -137,13 +225,99 @@ export async function loadCountFormData(actor: AuthContext, locationId: string):
     for (const v of vs ?? []) vendorNameById.set(v.id, v.name);
   }
   const chainsBySku = await loadSkuPackChains(list.map((s) => s.id));
+  const chainLabelsFor = (skuId: string): string[] =>
+    chainLabelsInWalkOrder(chainsBySku.get(skuId) ?? []);
+
+  const productIds = [...new Set(list.map((s) => s.product_id).filter((v): v is string => v !== null))];
+  const products =
+    productIds.length > 0 && (await countProductAllocationReady(sb))
+      ? await loadCountProductOptions(locationId, productIds, chainLabelsFor)
+      : [];
+
+  // A member's productName is only known while C-mode is live; before migration 0180
+  // it stays null and the SKU renders exactly as it does today.
+  const productNameById = new Map(products.map((p) => [p.productId, p.name]));
   return {
     skus: list.map((s) => ({
       id: s.id, name: s.name, packFormat: s.pack_format,
       vendorName: s.vendor_id != null ? vendorNameById.get(s.vendor_id) ?? null : null,
-      chainLabels: chainLabelsInWalkOrder(chainsBySku.get(s.id) ?? []),
+      productId: s.product_id,
+      productName: s.product_id != null ? productNameById.get(s.product_id) ?? null : null,
+      chainLabels: chainLabelsFor(s.id),
     })),
+    products,
   };
+}
+
+/**
+ * Build the C-mode PRODUCT rows: one row, one number, with tap-to-split underneath.
+ *
+ * Reads the SAME product index every other consumer reads (lib/products.ts
+ * loadProductIndex) — never a second opinion about which member a product means —
+ * plus the receipt lots, which are what the split trigger and the write-time
+ * allocation both stand on.
+ *
+ * A product with NO active member is skipped entirely: the ladder's honest
+ * `unresolved` rung has no row to offer and its members are not on the sheet either.
+ *
+ * NOTE ON LEVEL LABELS (plan Task 5.3). A product's members may carry different pack
+ * chains, so there is no product-owned level vocabulary. The C-mode row borrows the
+ * RESOLVED PRIMARY's chainLabels, and when the members' chains differ the form says
+ * so and points at tap-to-split. That is the honest minimum; a product-owned unit
+ * vocabulary is a bigger design and is explicitly not in this arc.
+ */
+async function loadCountProductOptions(
+  locationId: string,
+  productIds: string[],
+  chainLabelsFor: (skuId: string) => string[],
+): Promise<CountProductOption[]> {
+  const { byProduct } = await loadProductIndex(productIds, locationId);
+  if (byProduct.size === 0) return [];
+
+  // ACTIVE members only, and `active` here is the LOCATION-resolved value the index
+  // computed (overlay ?? global) — the same activation the order walk sees.
+  const activeMembersByProduct = new Map<string, ProductIndexEntry["members"]>();
+  for (const [productId, entry] of byProduct) {
+    const active = entry.members.filter((m) => m.active);
+    if (active.length > 0) activeMembersByProduct.set(productId, active);
+  }
+  if (activeMembersByProduct.size === 0) return [];
+
+  const memberIdsByProduct = new Map<string, string[]>(
+    [...activeMembersByProduct].map(([productId, members]) => [productId, members.map((m) => m.skuId)]),
+  );
+  const { lotsByProduct } = await loadProductLots(locationId, memberIdsByProduct);
+
+  const options: CountProductOption[] = [];
+  for (const [productId, members] of activeMembersByProduct) {
+    const entry = byProduct.get(productId)!;
+    const defaultSkuId = entry.resolution.skuId;
+    const lots = lotsByProduct.get(productId) ?? [];
+    const split = productSplitAvailability({
+      activeMemberSkuIds: members.map((m) => m.skuId),
+      lots,
+    });
+    // Active first is already true (we filtered), but the order must be TOTAL so two
+    // renders of the same data never disagree: name, then skuId.
+    const ordered = [...members].sort((a, b) =>
+      a.name !== b.name ? a.name.localeCompare(b.name) : a.skuId.localeCompare(b.skuId),
+    );
+    const primaryChain = defaultSkuId != null ? chainLabelsFor(defaultSkuId) : [];
+    const chainKey = (skuId: string) => chainLabelsFor(skuId).join("");
+    const primaryKey = primaryChain.join("");
+    options.push({
+      productId,
+      name: entry.name,
+      memberSkuIds: ordered.map((m) => m.skuId),
+      defaultSkuId,
+      chainLabels: primaryChain,
+      splitAvailable: split.splitAvailable,
+      lotBearingMemberCount: split.lotBearingMemberCount,
+      chainsDiffer: ordered.some((m) => chainKey(m.skuId) !== primaryKey),
+    });
+  }
+  options.sort((a, b) => (a.name !== b.name ? a.name.localeCompare(b.name) : a.productId.localeCompare(b.productId)));
+  return options;
 }
 
 // ── Load per-SKU RecipeInputSku shapes (chain-aware) for oz resolution ───────────
@@ -169,7 +343,60 @@ async function loadRecipeSkus(skuIds: string[]): Promise<Map<string, RecipeInput
 export interface CreateCountEventInput {
   locationId: string;
   note?: string | null;
-  lines: CountLineInput[];
+  /** SKU lines (as always) and/or PRODUCT lines (spec option C, Phase 5). */
+  lines: CountLineEntry[];
+}
+
+/**
+ * A non-blocking finding raised while recording the count. Returned to the caller so
+ * the surface can say it out loud; also written into the audit metadata.
+ *
+ * `count_exceeds_lots` — the receipt lots exist but could not place all of a product
+ * count's oz. That is a real finding: an unrecorded delivery, or a pre-ledger opening
+ * balance. LEAD RULING 2026-08-20: it NEVER refuses the line. A count is ground truth
+ * and theory yields to it; the unexplained oz is attributed to the resolved primary
+ * and reported. The operator's precise alternative is tap-to-split, which the message
+ * names.
+ *
+ * `no_lot_history` — the SAME arithmetic with a different meaning, and conflating the
+ * two would cry wolf on every count this month. When a product has NO receipt lots at
+ * this location, the whole count lands on the primary BY DEFINITION; nothing is
+ * anomalous, the ledger simply has not started. Verified live 2026-08-20: 8 delivery
+ * lines exist company-wide and exactly one names a product member (an inactive twin,
+ * with a NULL resolved_oz), so today this is the case EVERY product count hits.
+ */
+export interface CountAdvisory {
+  code: "count_exceeds_lots" | "no_lot_history";
+  productId: string;
+  productName: string;
+  /** Oz the lots could not explain (already included in the written anchor). */
+  unallocatedOz: number;
+  /** The member that absorbed it — the resolved primary. */
+  absorbedBySkuId: string | null;
+  absorbedByVendorName: string | null;
+}
+
+/** One product line, resolved and allocated, ready to become sku_count_lines. */
+interface AllocatedProductLine {
+  productId: string;
+  productName: string;
+  levelLabel: string;
+  qty: number;
+  isLoose: boolean;
+  countedOz: number;
+  primarySkuId: string | null;
+  rung: string;
+  perSku: Array<{ skuId: string; oz: number }>;
+  unallocatedOz: number;
+  absorbedBySkuId: string | null;
+  absorbedByVendorName: string | null;
+  /** False when the consumption side could not be derived, so the shelf the split was
+   *  computed against is the full receipt history rather than what is left of it. */
+  consumedTermKnown: boolean;
+  nullOzLotCount: number;
+  /** Receipt lots this product has at this location. ZERO means the ledger has not
+   *  started here, which is a different finding from "the lots do not add up". */
+  lotCount: number;
 }
 
 /**
@@ -180,24 +407,64 @@ export interface CreateCountEventInput {
  * latest counted line for a SKU wins, so a spot count of one SKU must not strand
  * any other SKU's anchor). Append-only — never DELETE, never deactivate. Audited.
  */
-export async function createCountEvent(actor: AuthContext, input: CreateCountEventInput): Promise<{ countEventId: string }> {
+export async function createCountEvent(actor: AuthContext, input: CreateCountEventInput): Promise<{ countEventId: string; advisories: CountAdvisory[] }> {
   requireLevel(actor, COUNT_WRITE_MIN);
   if (!lockLocationContext(actorLoc(actor), input.locationId)) throw new CountError(404, "not_found", "Location not found");
   if (!Array.isArray(input.lines) || input.lines.length === 0) throw new CountError(400, "no_lines", "At least one count line is required");
+  // Phase 5: the sheet's default row is a PRODUCT (spec option C); tap-to-split writes
+  // the per-SKU lines it always did. Both forms are validated identically below —
+  // the product form only differs in which pointer it carries.
+  const productLineInputs: CountProductLineInput[] = [];
+  const lines: CountLineInput[] = [];
   for (const l of input.lines) {
-    if (typeof l.skuId !== "string" || !l.skuId) throw new CountError(400, "invalid_sku", "Each line needs a SKU");
     if (typeof l.levelLabel !== "string" || !l.levelLabel.trim()) throw new CountError(400, "invalid_level", "Each line needs a level");
     // F3: count lines require a POSITIVE qty — a zero-qty line counts nothing and
     // must not anchor. The migration CHECK stays qty >= 0 for schema tolerance, but
     // the app is the authority for count semantics; a real count is always > 0.
     if (!Number.isFinite(l.qty) || l.qty <= 0) throw new CountError(400, "invalid_qty", "Quantity must be greater than zero");
-    if (l.partialFraction != null && !(l.partialFraction > 0 && l.partialFraction <= 1)) {
+    const frac = l.partialFraction ?? null;
+    if (frac != null && !(frac > 0 && frac <= 1)) {
       throw new CountError(400, "invalid_fraction", "Partial fraction must be between 0 and 1");
     }
+    if (isProductCountLine(l)) {
+      if (!l.productId) throw new CountError(400, "invalid_product", "Each product line needs a product");
+      productLineInputs.push(l);
+      continue;
+    }
+    if (typeof l.skuId !== "string" || !l.skuId) throw new CountError(400, "invalid_sku", "Each line needs a SKU");
+    lines.push(l);
   }
 
   const sb = getServiceRoleClient();
-  const skuIds = [...new Set(input.lines.map((l) => l.skuId))];
+
+  // GATE M2: a product line needs sku_count_lines.allocated_from_product_id to record
+  // that its anchor was DERIVED rather than measured at that vendor. Until migration
+  // 0180 applies, refuse the line by name instead of writing an un-provenanced anchor.
+  // The sheet never offers a product row while the column is missing, so this is the
+  // backstop for a direct POST, not a path an operator can reach.
+  if (productLineInputs.length > 0 && !(await countProductAllocationReady(sb))) {
+    throw new CountError(503, "count_allocation_schema_pending", "Product counts arrive with migration 0180");
+  }
+
+  const allocated = productLineInputs.length > 0
+    ? await allocateProductLines(sb, input.locationId, productLineInputs)
+    : [];
+
+  // A member SKU counted BOTH through its product and directly would be counted
+  // twice: the anchor sums a SKU's lines within an event by law (council L5
+  // disjointness), and a product total already covers every member. Refuse by name —
+  // the UI cannot produce it (tap-to-split REPLACES the product row), so this is the
+  // API's own guard.
+  const directSkuIds = new Set(lines.map((l) => l.skuId));
+  for (const p of allocated) {
+    for (const a of p.perSku) {
+      if (directSkuIds.has(a.skuId)) {
+        throw new CountError(400, "product_line_overlaps_sku", "A SKU is counted both on its own and through its product");
+      }
+    }
+  }
+
+  const skuIds = [...new Set(lines.map((l) => l.skuId))];
   // Feeds the active-SKU validation gate — a swallowed error rejects the whole event
   // as "SKU not found or inactive". Throw so the real cause surfaces.
   const { data: activeSkus, error: asErr } = await sb.from("vendor_items").select("id").in("id", skuIds).eq("active", true).returns<Array<{ id: string }>>();
@@ -210,9 +477,12 @@ export async function createCountEvent(actor: AuthContext, input: CreateCountEve
   // line persists resolved_units in LEAF units + resolved_oz NULL. Reject the whole
   // event if ANY line resolves to NEITHER space — a line with no anchor can't verify.
   const [measures, recipeSkus] = await Promise.all([loadMeasures(), loadRecipeSkus(skuIds)]);
-  const resolution = resolveCountLinesDim(input.lines, recipeSkus, measures);
+  const resolution = resolveCountLinesDim(lines, recipeSkus, measures);
   if (!resolution.ok) {
     throw new CountError(400, "unresolvable_line", `Can't anchor "${resolution.badLine.levelLabel}" for a SKU — set the SKU's pack chain (a count leaf like "each" is enough for packaging) or its avg oz first`);
+  }
+  if (resolution.resolved.length === 0 && allocated.length === 0) {
+    throw new CountError(400, "no_lines", "At least one count line is required");
   }
 
   // F1: NO location-wide supersede. Events are immutable sessions; anchors are
@@ -229,23 +499,266 @@ export async function createCountEvent(actor: AuthContext, input: CreateCountEve
   // 2) insert the resolved lines. Each carries its anchor_dimension + the matching
   //    space's value (weight → resolved_oz; count → resolved_units; the other NULL,
   //    per migration 0161's invariant CHECK).
-  const { error: lErr } = await sb.from("sku_count_lines").insert(
-    resolution.resolved.map((l) => ({
-      count_event_id: ev.id, sku_id: l.skuId, level_label: l.levelLabel.trim(), qty: l.qty,
-      is_loose: l.isLoose === true, partial_fraction: l.partialFraction ?? null,
-      anchor_dimension: l.anchorDimension, resolved_oz: l.resolvedOz, resolved_units: l.resolvedUnits,
+  // PRE-M2: an event with no product lines writes EXACTLY today's column set. Naming
+  // allocated_from_product_id on a database that does not have it yet would 400 every
+  // count sheet in the building, so the column appears only when this very event also
+  // carries derived rows — which can only happen once the migration has applied.
+  const withAllocationColumn = allocated.length > 0;
+  const skuRows = resolution.resolved.map((l) => ({
+    count_event_id: ev.id, sku_id: l.skuId, level_label: l.levelLabel.trim(), qty: l.qty,
+    is_loose: l.isLoose === true, partial_fraction: l.partialFraction ?? null,
+    anchor_dimension: l.anchorDimension, resolved_oz: l.resolvedOz, resolved_units: l.resolvedUnits,
+    // Counted DIRECTLY at this SKU — the pre-existing meaning of every row (0161
+    // LOCK-1: NULL is the honest value, never a sentinel).
+    ...(withAllocationColumn ? { allocated_from_product_id: null as string | null } : {}),
+  }));
+  // 2b) a product line becomes ORDINARY per-SKU lines (deviation D8). resolved_oz is
+  //     the allocated share and is the ANCHOR the engine reads; `qty` carries the
+  //     entered level pro-rata so the row still reads as a count, with the partial
+  //     fraction ALREADY INSIDE the allocated oz — carrying it forward as a column
+  //     too would invite a double application on any recompute.
+  const productRows = allocated.flatMap((p) =>
+    p.perSku.map((a) => ({
+      count_event_id: ev.id,
+      sku_id: a.skuId,
+      level_label: p.levelLabel,
+      qty: p.countedOz > 0 ? p.qty * (a.oz / p.countedOz) : p.qty,
+      is_loose: p.isLoose,
+      partial_fraction: null as number | null,
+      anchor_dimension: "weight" as const,
+      resolved_oz: a.oz,
+      resolved_units: null as number | null,
+      allocated_from_product_id: p.productId,
     })),
   );
+  const allRows = [...skuRows, ...productRows];
+  const { error: lErr } = await sb.from("sku_count_lines").insert(allRows);
   if (lErr) throw new Error(`createCountEvent lines: ${lErr.message}`);
+
+  const advisories: CountAdvisory[] = [];
+  for (const p of allocated) {
+    if (p.unallocatedOz <= 0) continue;
+    advisories.push({
+      // No lots at all is the ledger not having started, not an anomaly — see the
+      // CountAdvisory doc. Same number, different sentence.
+      code: p.lotCount === 0 ? "no_lot_history" : "count_exceeds_lots",
+      productId: p.productId,
+      productName: p.productName,
+      unallocatedOz: p.unallocatedOz,
+      absorbedBySkuId: p.absorbedBySkuId,
+      absorbedByVendorName: p.absorbedByVendorName,
+    });
+  }
 
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "sku_count.recorded", resourceTable: "sku_count_events", resourceId: ev.id,
-    metadata: { location_id: input.locationId, line_count: resolution.resolved.length, sku_ids: skuIds },
+    metadata: {
+      location_id: input.locationId,
+      line_count: allRows.length,
+      sku_ids: [...new Set(allRows.map((r) => r.sku_id))],
+      // The derivation, reconstructible: which product, which primary answered and on
+      // which rung, what the lots could place, and what the primary absorbed.
+      allocated_line_count: productRows.length,
+      product_lines: allocated.map((p) => ({
+        product_id: p.productId,
+        product_name: p.productName,
+        level_label: p.levelLabel,
+        qty: p.qty,
+        counted_oz: p.countedOz,
+        primary_sku_id: p.primarySkuId,
+        resolution_rung: p.rung,
+        allocated: p.perSku,
+        unallocated_oz: p.unallocatedOz,
+        absorbed_by_sku_id: p.absorbedBySkuId,
+        reason: p.unallocatedOz > 0 ? (p.lotCount === 0 ? "no_lot_history" : "count_exceeds_lots") : null,
+        consumed_term_known: p.consumedTermKnown,
+        lot_count: p.lotCount,
+        null_oz_lot_count: p.nullOzLotCount,
+      })),
+    },
     ipAddress: null, userAgent: null,
   });
 
-  return { countEventId: ev.id };
+  return { countEventId: ev.id, advisories };
+}
+
+/**
+ * Resolve + allocate every PRODUCT line of a count event (spec option C, D8).
+ *
+ * Per line: resolve the entered qty at the entered level to OZ through the RESOLVED
+ * PRIMARY's own pack chain (the existing resolveCountLinesDim machinery, unchanged —
+ * there is no second oz resolver), then distribute that oz across the product's
+ * member lots NEWEST-BACK and hand back ordinary per-SKU shares.
+ *
+ * THE SHELF the allocation runs against is the product's receipt lots minus what the
+ * ledgers say has been eaten off them, over the window that starts at the OLDEST lot
+ * — the two lanes counts already trusts (live production inputs + the direct sales
+ * lane; `flattened_oz` is never summed, the double-count law is untouched). When
+ * either lane cannot derive for a member, the consumed term is UNKNOWN and the shelf
+ * falls back to the full receipt history: the counted total is preserved either way,
+ * and `consumed_term_known: false` rides into the audit metadata so the attribution
+ * can be read for what it is — a claim about WHOSE stock, never about how much.
+ *
+ * Deactivated members are excluded from both the shelf and the split; residual stock
+ * under a retired twin lands on the active members, which is what deactivating it
+ * asserted.
+ */
+async function allocateProductLines(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+  productLines: CountProductLineInput[],
+): Promise<AllocatedProductLine[]> {
+  const productIds = [...new Set(productLines.map((l) => l.productId))];
+  const { byProduct } = await loadProductIndex(productIds, locationId);
+  for (const id of productIds) {
+    if (!byProduct.has(id)) throw new CountError(400, "invalid_product", "A product was not found");
+  }
+
+  // ACTIVE members only, with the location overlay already resolved by the index.
+  const activeMembersByProduct = new Map<string, ProductIndexEntry["members"]>();
+  const memberIdsByProduct = new Map<string, string[]>();
+  for (const id of productIds) {
+    const entry = byProduct.get(id)!;
+    if (entry.resolution.skuId == null) {
+      throw new CountError(400, "product_unresolved", `"${entry.name}" has no active vendor to count against`);
+    }
+    const active = entry.members.filter((m) => m.active);
+    activeMembersByProduct.set(id, active);
+    memberIdsByProduct.set(id, active.map((m) => m.skuId));
+  }
+
+  const { lotsByProduct, nullOzLotCountByProduct } = await loadProductLots(locationId, memberIdsByProduct);
+  const consumedByProduct = await loadProductConsumedOz(sb, locationId, memberIdsByProduct, lotsByProduct);
+
+  // ONE oz resolution pass over the primaries, through the SAME machinery a per-SKU
+  // line uses (council L3): the product row's level picker borrows the primary's
+  // chain labels, so the primary's chain is what those labels mean.
+  const primaryIds = [...new Set(productIds.map((id) => byProduct.get(id)!.resolution.skuId!))];
+  const [measures, recipeSkus] = await Promise.all([loadMeasures(), loadRecipeSkus(primaryIds)]);
+
+  const out: AllocatedProductLine[] = [];
+  for (const line of productLines) {
+    const entry = byProduct.get(line.productId)!;
+    const primarySkuId = entry.resolution.skuId!;
+    const resolved = resolveCountLinesDim(
+      [{
+        skuId: primarySkuId,
+        levelLabel: line.levelLabel,
+        qty: line.qty,
+        isLoose: line.isLoose === true,
+        partialFraction: line.partialFraction ?? null,
+      }],
+      recipeSkus,
+      measures,
+    );
+    if (!resolved.ok) {
+      throw new CountError(400, "unresolvable_line", `Can't anchor "${line.levelLabel}" for "${entry.name}" — set the primary vendor's pack chain or avg oz first`);
+    }
+    const only = resolved.resolved[0]!;
+    if (only.anchorDimension !== "weight" || only.resolvedOz == null) {
+      // A count-terminated chain (packaging) has no honest ounce, so there is nothing
+      // to allocate across vendors. Count those per SKU — the split is the way.
+      throw new CountError(400, "product_count_dimension", `"${entry.name}" is counted by unit, not by weight — count it by vendor instead`);
+    }
+    const countedOz = only.resolvedOz;
+    const lots = lotsByProduct.get(line.productId) ?? [];
+    const consumed = consumedByProduct.get(line.productId) ?? { oz: 0, known: false };
+    const remaining: LotShare[] = remainingByLot(lots, consumed.oz);
+    const alloc = allocateProductCountToMembers(countedOz, remaining, primarySkuId);
+    const members = activeMembersByProduct.get(line.productId) ?? [];
+    const absorbed = alloc.absorbedBySkuId != null
+      ? members.find((m) => m.skuId === alloc.absorbedBySkuId) ?? null
+      : null;
+    // Re-anchor the WHOLE product: a member the shelf gave nothing to is counted at
+    // zero, not left drifting on a stale anchor beside a freshly-counted twin.
+    const perSku = withZeroMemberShares(alloc.perSku, members.map((m) => m.skuId));
+    out.push({
+      productId: line.productId,
+      productName: entry.name,
+      levelLabel: line.levelLabel.trim(),
+      qty: line.qty,
+      isLoose: line.isLoose === true,
+      countedOz,
+      primarySkuId,
+      rung: entry.resolution.rung,
+      perSku,
+      unallocatedOz: alloc.unallocatedOz,
+      absorbedBySkuId: alloc.absorbedBySkuId,
+      absorbedByVendorName: absorbed?.vendorName ?? null,
+      consumedTermKnown: consumed.known,
+      nullOzLotCount: nullOzLotCountByProduct.get(line.productId) ?? 0,
+      lotCount: lots.length,
+    });
+  }
+  return out;
+}
+
+/**
+ * Product-grain consumed oz over the lot window — what has come OFF the shelf since
+ * its oldest surviving receipt. The two lanes are exactly the ones the drift model
+ * already sums (lib/counts.ts loadOnHand): live production inputs + the DIRECT sales
+ * lane. `flattened_oz` is never touched; the double-count law is not in play here.
+ *
+ * `known: false` when any member's lane cannot derive (a NULL input_oz, a sales
+ * coverage gap). The caller then allocates over the full receipt history rather than
+ * fabricating a zero — the counted total is identical either way, and the audit row
+ * says which shelf the vendor split was computed against.
+ */
+async function loadProductConsumedOz(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+  memberIdsByProduct: ReadonlyMap<string, string[]>,
+  lotsByProduct: ReadonlyMap<string, ReceiptLot[]>,
+): Promise<Map<string, { oz: number; known: boolean }>> {
+  const out = new Map<string, { oz: number; known: boolean }>();
+  if (memberIdsByProduct.size === 0) return out;
+
+  // EACH product's window starts at ITS OWN oldest lot, never at a global earliest.
+  // A shared window would charge a product with consumption that predates its first
+  // receipt here — emptying its shelf and raising a count_exceeds_lots nobody earned.
+  // Products sharing an instant share a query pass (the anchor-group idiom this file
+  // already uses for the census / par_estimate / inferred tiers): one pass per
+  // distinct oldest-lot instant, which is at most the number of product lines in one
+  // count event.
+  const groups = new Map<string, string[]>();
+  for (const [productId, memberIds] of memberIdsByProduct) {
+    const lots = lotsByProduct.get(productId) ?? [];
+    if (lots.length === 0 || memberIds.length === 0) {
+      // Nothing was ever received here: there is no shelf and nothing to have eaten.
+      out.set(productId, { oz: 0, known: true });
+      continue;
+    }
+    const earliest = lots.reduce((min, l) => (l.receivedAt < min ? l.receivedAt : min), lots[0]!.receivedAt);
+    const g = groups.get(earliest) ?? [];
+    g.push(productId);
+    groups.set(earliest, g);
+  }
+  if (groups.size === 0) return out;
+
+  const openEtDate = etBusinessDate(new Date().toISOString());
+  await Promise.all(
+    [...groups.entries()].map(async ([earliest, productIds]) => {
+      const memberIds = [...new Set(productIds.flatMap((id) => memberIdsByProduct.get(id) ?? []))];
+      const gapDates = await loadSalesGapDates(sb, locationId, etBusinessDate(earliest), openEtDate);
+      const [production, sales] = await Promise.all([
+        sumConsumedOzSince(sb, memberIds, locationId, earliest),
+        sumSalesDirectOzSince(sb, memberIds, locationId, earliest, gapDates),
+      ]);
+      for (const productId of productIds) {
+        let oz = 0;
+        let known = true;
+        for (const skuId of memberIdsByProduct.get(productId) ?? []) {
+          const p = production.get(skuId) ?? null;
+          const s = sales.get(skuId) ?? null;
+          if (p == null || s == null) { known = false; continue; }
+          oz += p + s;
+        }
+        out.set(productId, known ? { oz, known: true } : { oz: 0, known: false });
+      }
+    }),
+  );
+  return out;
 }
 
 // ── On-hand read (AGM+): anchor + drift + variance ───────────────────────────────
@@ -289,7 +802,18 @@ export interface OnHandView {
    *  (the ledger lags one day behind the register). Null = no ledger yet. */
   salesThrough: string | null;
   rows: OnHandRow[];
+  /**
+   * THE PRODUCT GRAIN (Phase 5). Computed PURELY from `rows` plus the receipt lots —
+   * `rows` is untouched and remains the source of truth. Populated only by
+   * `loadOnHand` (the counts surface); `loadOnHandDerived`'s advisory callers (the
+   * order walk) get `[]` and must NOT read that as "no products exist". Also `[]`
+   * before migration 0180 applies.
+   */
+  products: ProductOnHandRow[];
 }
+
+/** Re-exported so server consumers keep their `@/lib/counts` paths (the *-shared law). */
+export type { ProductOnHandRow } from "@/lib/products-shared";
 
 // ── Inference bootstrap (spec D6) ────────────────────────────────────────────────
 /**
@@ -724,7 +1248,9 @@ async function loadParEstimateRows(
  */
 export async function loadOnHand(actor: AuthContext, locationId: string, now: number = Date.now()): Promise<OnHandView> {
   requireLevel(actor, COUNT_READ_MIN);
-  return loadOnHandDerived(actor, locationId, now);
+  // The counts SURFACE gets the product grain; the advisory derivation below does not
+  // (see withProducts). This is the only entry point that renders a two-grain panel.
+  return loadOnHandDerived(actor, locationId, now, { withProducts: true });
 }
 
 /** KH+ floor for the ADVISORY on-hand derivation — matches the ordering walker's
@@ -742,8 +1268,20 @@ export const ON_HAND_DERIVED_MIN = 4;
  * (security review 2026-08-11): KH+ + location bind enforced HERE, never
  * delegated to callers — an exported service-role read must carry its own gate.
  */
-export async function loadOnHandDerived(actor: AuthContext, locationId: string, now: number = Date.now()): Promise<OnHandView> {
+export async function loadOnHandDerived(
+  actor: AuthContext,
+  locationId: string,
+  now: number = Date.now(),
+  /**
+   * `withProducts` OPTS IN to the product grain. It is deliberately off by default:
+   * the order walk consumes this loader as advisory and would pay ~8 extra queries
+   * (product index + receipt lots) for a view it never renders. The counts surface
+   * turns it on; every other caller keeps its cost byte-identical to today.
+   */
+  opts: { withProducts?: boolean } = {},
+): Promise<OnHandView> {
   requireLevel(actor, ON_HAND_DERIVED_MIN);
+  const withProducts = opts.withProducts === true;
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new CountError(404, "not_found", "Location not found");
   const sb = getServiceRoleClient();
   const salesThrough = await salesLedgerThrough(sb, locationId);
@@ -778,7 +1316,7 @@ export async function loadOnHandDerived(actor: AuthContext, locationId: string, 
     const parEstimate = await loadParEstimateRows(sb, locationId, new Set<string>(), now);
     const inferredRows = await loadInferredRows(sb, locationId, new Set(parEstimate.skuIds), now);
     const rows = [...parEstimate.rows, ...inferredRows].sort((a, b) => a.skuName.localeCompare(b.skuName));
-    return { locationId, anchorAt: null, salesThrough, rows };
+    return { locationId, anchorAt: null, salesThrough, rows, products: await loadProductOnHandRows(sb, locationId, rows, withProducts) };
   }
   const eventAt = new Map(evList.map((e) => [e.id, e.counted_at]));
   const locationLastCountedAt = evList[0]!.counted_at; // header hint only.
@@ -847,7 +1385,7 @@ export async function loadOnHandDerived(actor: AuthContext, locationId: string, 
     const parEstimate = await loadParEstimateRows(sb, locationId, new Set<string>(), now);
     const inferredRows = await loadInferredRows(sb, locationId, new Set(parEstimate.skuIds), now);
     const rows = [...parEstimate.rows, ...inferredRows].sort((a, b) => a.skuName.localeCompare(b.skuName));
-    return { locationId, anchorAt: locationLastCountedAt, salesThrough, rows };
+    return { locationId, anchorAt: locationLastCountedAt, salesThrough, rows, products: await loadProductOnHandRows(sb, locationId, rows, withProducts) };
   }
 
   // SKU names + chains (count rows derive received-units read-time from the chain).
@@ -1029,7 +1567,106 @@ export async function loadOnHandDerived(actor: AuthContext, locationId: string, 
   const inferredRows = await loadInferredRows(sb, locationId, inferredExcluded, now);
 
   const rows = [...weightRows, ...countRows, ...parEstimate.rows, ...inferredRows].sort((a, b) => a.skuName.localeCompare(b.skuName));
-  return { locationId, anchorAt: locationLastCountedAt, salesThrough, rows };
+  return { locationId, anchorAt: locationLastCountedAt, salesThrough, rows, products: await loadProductOnHandRows(sb, locationId, rows, withProducts) };
+}
+
+/**
+ * THE TWO-GRAIN READ (spec "On-hand", plan Task 5.5). The per-SKU `rows` above are
+ * the source of truth and are NOT touched; this is a VIEW over them — their sum at
+ * the product grain, with the per-vendor split and the lot shelf underneath. It is
+ * where the audit's mirrored false SHORT/OVER pair dies: a twin reading +140 and a
+ * twin reading −40 net to the +100 that is actually on the shelf.
+ *
+ * Every active member is included, and a member with NO row on the panel contributes
+ * `onHandOz: null` — which nulls the product total. That is the honest answer: the
+ * panel genuinely does not know that vendor's stock, and presenting the members it
+ * DOES know as "the total" is the "partial results presented as totals" bug class.
+ * `knownOz` carries the lower bound for the surface to say so out loud.
+ *
+ * FAIL-SOFT: the product grain is a view over rows that already exist, so a failure
+ * here loses no truth. It logs and degrades to `[]` rather than 500-ing the count
+ * sheet — the panel then reads exactly as it did before this arc.
+ */
+async function loadProductOnHandRows(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+  rows: OnHandRow[],
+  enabled: boolean,
+): Promise<ProductOnHandRow[]> {
+  if (!enabled || rows.length === 0) return [];
+  try {
+    if (!(await countProductAllocationReady(sb))) return []; // GATE M2 — see the probe.
+
+    // Which of these rows' SKUs belong to a product? ONE batched read — never per-row
+    // — and PAGED (the PR #63 lesson): a truncated page would silently drop a product
+    // from the panel and leave its members rendering as unrolled twins, which is the
+    // exact display this arc exists to end. `id` (the PK) is the stable total order.
+    const rowSkuIds = [...new Set(rows.map((r) => r.skuId))];
+    const memberRows = await selectAllRows<{ id: string; product_id: string | null }>(
+      async (from, to) => {
+        const { data, error } = await sb
+          .from("vendor_items")
+          .select("id, product_id")
+          .in("id", rowSkuIds)
+          .not("product_id", "is", null)
+          .order("id", { ascending: true })
+          .range(from, to)
+          .returns<Array<{ id: string; product_id: string | null }>>();
+        if (error) throw new Error(`loadProductOnHandRows membership: ${error.message}`);
+        return { data };
+      },
+    );
+    const productIds = [...new Set(memberRows.map((m) => m.product_id).filter((v): v is string => v != null))];
+    if (productIds.length === 0) return [];
+
+    const { byProduct } = await loadProductIndex(productIds, locationId);
+    if (byProduct.size === 0) return [];
+
+    const memberIdsByProduct = new Map<string, string[]>();
+    for (const [productId, entry] of byProduct) {
+      const active = entry.members.filter((m) => m.active).map((m) => m.skuId);
+      if (active.length > 0) memberIdsByProduct.set(productId, active);
+    }
+    if (memberIdsByProduct.size === 0) return [];
+    const { lotsByProduct, nullOzLotCountByProduct } = await loadProductLots(locationId, memberIdsByProduct);
+
+    const rowBySku = new Map(rows.map((r) => [r.skuId, r]));
+    const out: ProductOnHandRow[] = [];
+    for (const [productId, memberIds] of memberIdsByProduct) {
+      const entry = byProduct.get(productId)!;
+      const members: ProductGrainMemberInput[] = memberIds.map((skuId) => {
+        const m = entry.members.find((x) => x.skuId === skuId)!;
+        const row = rowBySku.get(skuId);
+        // A COUNT-dimension row (packaging) has no honest ounce and no product grain
+        // to sum into, so it reads as unresolved here — plan Task 5.5, verbatim.
+        const weightRow = row != null && row.dimension === "weight" ? row : null;
+        return {
+          skuId,
+          skuName: m.name,
+          vendorName: m.vendorName,
+          onHandOz: weightRow?.onHandOz ?? null,
+          varianceOz: weightRow?.varianceOz ?? null,
+          // VARIANCE IS CENSUS-ONLY (spec D6): a par_estimate or inferred anchor is
+          // not a counted ground truth and can never be a variance reference.
+          censusAnchored: weightRow?.anchorSource === "census",
+        };
+      });
+      out.push(
+        buildProductOnHandRow({
+          productId,
+          productName: entry.name,
+          members,
+          lots: lotsByProduct.get(productId) ?? [],
+          lotsTainted: (nullOzLotCountByProduct.get(productId) ?? 0) > 0,
+        }),
+      );
+    }
+    out.sort((a, b) => (a.productName !== b.productName ? a.productName.localeCompare(b.productName) : a.productId.localeCompare(b.productId)));
+    return out;
+  } catch (err) {
+    console.error("[counts] loadProductOnHandRows failed (degrading to per-SKU rows):", err);
+    return [];
+  }
 }
 
 // ── Dashboard counts-tile state (READ-ONLY, cheap) ───────────────────────────────

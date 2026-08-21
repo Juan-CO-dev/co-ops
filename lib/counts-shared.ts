@@ -50,6 +50,43 @@ export interface CountLineInput {
   partialFraction: number | null;
 }
 
+/**
+ * A PRODUCT-level count line (spec 2026-08-20, "Counting UX (locked: option C)").
+ *
+ * The count sheet's DEFAULT row: one product, one number ("HAM … 300 oz"). It is a
+ * DISCRIMINATED ALTERNATIVE to the per-SKU form above, which is left byte-identical
+ * so every existing caller compiles unchanged — tap-to-split writes exactly the
+ * per-SKU lines it always did.
+ *
+ * The line never reaches the database in this shape: lib/counts.ts createCountEvent
+ * resolves it to oz through the RESOLVED PRIMARY's pack chain and allocates that oz
+ * across member SKUs newest-back over the receipt lots (deviation D8), writing one
+ * ORDINARY sku_count_line per member with allocated_from_product_id set. The
+ * anchor/drift/variance engine never learns that products exist.
+ *
+ * isLoose / partialFraction are OPTIONAL here (they default the way the form does)
+ * because a product row is the simple row: the disjointness annotations belong to
+ * the per-container counting the split rows do.
+ */
+export interface CountProductLineInput {
+  productId: string;
+  /** Chain level, borrowed from the resolved primary (there is no product-owned
+   *  unit vocabulary — see the note on CountProductOption.chainLabels). */
+  levelLabel: string;
+  qty: number;
+  isLoose?: boolean;
+  partialFraction?: number | null;
+}
+
+/** Either form of count line, as the API and createCountEvent accept them. */
+export type CountLineEntry = CountLineInput | CountProductLineInput;
+
+/** Discriminate the two line forms. A product line carries `productId`; a SKU line
+ *  carries `skuId`; the API narrows an untrusted body to exactly one of them. */
+export function isProductCountLine(line: CountLineEntry): line is CountProductLineInput {
+  return typeof (line as CountProductLineInput).productId === "string";
+}
+
 /** Reason-code display seam for a variance/shrinkage delta (L8). Kept simple. */
 export type CountVarianceReason = "waste" | "over_portion" | "uncounted" | "unknown";
 export const COUNT_VARIANCE_REASONS: readonly CountVarianceReason[] = [
@@ -750,3 +787,11 @@ export function twinVendorLabels(
 /** Unused re-export to keep buildPackChain/walkChainToOz reachable from tests
  *  that assert the shared math wires the spine (no behavior). */
 export { buildPackChain, walkChainToOz };
+
+// ── The product grain, re-exported for the panel (Phase 5) ────────────────────
+// The two-grain on-hand row is built in lib/products-shared.ts (the pure product
+// core — one place decides what a product means, forever). The count surfaces reach
+// it through here so a client component never has to know which module owns which
+// half of the arc; lib/counts.ts re-exports the same type so server consumers keep
+// their `@/lib/counts` paths. Types only — the panel renders, it does not compute.
+export type { ProductOnHandRow, LotShare } from "@/lib/products-shared";
