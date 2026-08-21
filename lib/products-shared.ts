@@ -430,6 +430,29 @@ export function allocateProductCountToMembers(
   };
 }
 
+/**
+ * Give EVERY active member a line, including the ones the shelf allocated nothing to.
+ *
+ * A product count is a statement about the whole product, so it must RE-ANCHOR the
+ * whole product. Without this, a count of "HAM 300 oz" that the lots place entirely
+ * under PFG writes one line, Baldor keeps whatever stale anchor it had, and the two
+ * grains disagree forever — which is precisely the mirrored false SHORT/OVER pair the
+ * arc exists to kill. A zero here is a MEASURED zero ("the product totals 300 and none
+ * of it is Baldor's"), categorically different from the F3 refusal of an operator
+ * typing 0 on a SKU row, which means "I did not count this".
+ *
+ * The counted total is untouched — the added lines carry 0 oz. Allocated members keep
+ * their lot order; the zero tail sorts on skuId so the order is TOTAL.
+ */
+export function withZeroMemberShares(
+  perSku: ReadonlyArray<{ skuId: string; oz: number }>,
+  memberSkuIds: ReadonlyArray<string>,
+): Array<{ skuId: string; oz: number }> {
+  const seen = new Set(perSku.map((p) => p.skuId));
+  const missing = [...new Set(memberSkuIds)].filter((id) => !seen.has(id)).sort((a, b) => a.localeCompare(b));
+  return [...perSku.map((p) => ({ ...p })), ...missing.map((skuId) => ({ skuId, oz: 0 }))];
+}
+
 export interface ProductSplitAvailability {
   /** Does the count sheet offer tap-to-split for this product at this location? */
   splitAvailable: boolean;

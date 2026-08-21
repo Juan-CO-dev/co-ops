@@ -76,6 +76,7 @@ import {
 import { loadProductIndex, loadProductLots, type ProductIndexEntry } from "@/lib/products";
 import {
   allocateProductCountToMembers,
+  withZeroMemberShares,
   buildProductOnHandRow,
   productSplitAvailability,
   remainingByLot,
@@ -350,15 +351,22 @@ export interface CreateCountEventInput {
  * A non-blocking finding raised while recording the count. Returned to the caller so
  * the surface can say it out loud; also written into the audit metadata.
  *
- * `count_exceeds_lots` — the receipt-lot ledger could not place all of a product
- * count's oz (an unrecorded delivery, a pre-ledger opening balance, or simply the
- * first count here). LEAD RULING 2026-08-20: this NEVER refuses the line. A count is
- * ground truth and theory yields to it; the unexplained oz is attributed to the
- * resolved primary and reported. The operator's precise alternative is tap-to-split,
- * which the message names.
+ * `count_exceeds_lots` — the receipt lots exist but could not place all of a product
+ * count's oz. That is a real finding: an unrecorded delivery, or a pre-ledger opening
+ * balance. LEAD RULING 2026-08-20: it NEVER refuses the line. A count is ground truth
+ * and theory yields to it; the unexplained oz is attributed to the resolved primary
+ * and reported. The operator's precise alternative is tap-to-split, which the message
+ * names.
+ *
+ * `no_lot_history` — the SAME arithmetic with a different meaning, and conflating the
+ * two would cry wolf on every count this month. When a product has NO receipt lots at
+ * this location, the whole count lands on the primary BY DEFINITION; nothing is
+ * anomalous, the ledger simply has not started. Verified live 2026-08-20: 8 delivery
+ * lines exist company-wide and exactly one names a product member (an inactive twin,
+ * with a NULL resolved_oz), so today this is the case EVERY product count hits.
  */
 export interface CountAdvisory {
-  code: "count_exceeds_lots";
+  code: "count_exceeds_lots" | "no_lot_history";
   productId: string;
   productName: string;
   /** Oz the lots could not explain (already included in the written anchor). */
@@ -386,6 +394,9 @@ interface AllocatedProductLine {
    *  computed against is the full receipt history rather than what is left of it. */
   consumedTermKnown: boolean;
   nullOzLotCount: number;
+  /** Receipt lots this product has at this location. ZERO means the ledger has not
+   *  started here, which is a different finding from "the lots do not add up". */
+  lotCount: number;
 }
 
 /**
@@ -528,7 +539,9 @@ export async function createCountEvent(actor: AuthContext, input: CreateCountEve
   for (const p of allocated) {
     if (p.unallocatedOz <= 0) continue;
     advisories.push({
-      code: "count_exceeds_lots",
+      // No lots at all is the ledger not having started, not an anomaly — see the
+      // CountAdvisory doc. Same number, different sentence.
+      code: p.lotCount === 0 ? "no_lot_history" : "count_exceeds_lots",
       productId: p.productId,
       productName: p.productName,
       unallocatedOz: p.unallocatedOz,
@@ -558,8 +571,9 @@ export async function createCountEvent(actor: AuthContext, input: CreateCountEve
         allocated: p.perSku,
         unallocated_oz: p.unallocatedOz,
         absorbed_by_sku_id: p.absorbedBySkuId,
-        reason: p.unallocatedOz > 0 ? "count_exceeds_lots" : null,
+        reason: p.unallocatedOz > 0 ? (p.lotCount === 0 ? "no_lot_history" : "count_exceeds_lots") : null,
         consumed_term_known: p.consumedTermKnown,
+        lot_count: p.lotCount,
         null_oz_lot_count: p.nullOzLotCount,
       })),
     },
@@ -652,9 +666,13 @@ async function allocateProductLines(
     const consumed = consumedByProduct.get(line.productId) ?? { oz: 0, known: false };
     const remaining: LotShare[] = remainingByLot(lots, consumed.oz);
     const alloc = allocateProductCountToMembers(countedOz, remaining, primarySkuId);
+    const members = activeMembersByProduct.get(line.productId) ?? [];
     const absorbed = alloc.absorbedBySkuId != null
-      ? (activeMembersByProduct.get(line.productId) ?? []).find((m) => m.skuId === alloc.absorbedBySkuId) ?? null
+      ? members.find((m) => m.skuId === alloc.absorbedBySkuId) ?? null
       : null;
+    // Re-anchor the WHOLE product: a member the shelf gave nothing to is counted at
+    // zero, not left drifting on a stale anchor beside a freshly-counted twin.
+    const perSku = withZeroMemberShares(alloc.perSku, members.map((m) => m.skuId));
     out.push({
       productId: line.productId,
       productName: entry.name,
@@ -664,12 +682,13 @@ async function allocateProductLines(
       countedOz,
       primarySkuId,
       rung: entry.resolution.rung,
-      perSku: alloc.perSku,
+      perSku,
       unallocatedOz: alloc.unallocatedOz,
       absorbedBySkuId: alloc.absorbedBySkuId,
       absorbedByVendorName: absorbed?.vendorName ?? null,
       consumedTermKnown: consumed.known,
       nullOzLotCount: nullOzLotCountByProduct.get(line.productId) ?? 0,
+      lotCount: lots.length,
     });
   }
   return out;
@@ -1568,17 +1587,26 @@ async function loadProductOnHandRows(
   try {
     if (!(await countProductAllocationReady(sb))) return []; // GATE M2 — see the probe.
 
-    // Which of these rows' SKUs belong to a product? ONE batched read (the roster is
-    // the active catalog, ~163 rows, well inside one page) — never per-row.
+    // Which of these rows' SKUs belong to a product? ONE batched read — never per-row
+    // — and PAGED (the PR #63 lesson): a truncated page would silently drop a product
+    // from the panel and leave its members rendering as unrolled twins, which is the
+    // exact display this arc exists to end. `id` (the PK) is the stable total order.
     const rowSkuIds = [...new Set(rows.map((r) => r.skuId))];
-    const { data: memberRows, error } = await sb
-      .from("vendor_items")
-      .select("id, product_id")
-      .in("id", rowSkuIds)
-      .not("product_id", "is", null)
-      .returns<Array<{ id: string; product_id: string | null }>>();
-    if (error) throw new Error(`loadProductOnHandRows membership: ${error.message}`);
-    const productIds = [...new Set((memberRows ?? []).map((m) => m.product_id).filter((v): v is string => v != null))];
+    const memberRows = await selectAllRows<{ id: string; product_id: string | null }>(
+      async (from, to) => {
+        const { data, error } = await sb
+          .from("vendor_items")
+          .select("id, product_id")
+          .in("id", rowSkuIds)
+          .not("product_id", "is", null)
+          .order("id", { ascending: true })
+          .range(from, to)
+          .returns<Array<{ id: string; product_id: string | null }>>();
+        if (error) throw new Error(`loadProductOnHandRows membership: ${error.message}`);
+        return { data };
+      },
+    );
+    const productIds = [...new Set(memberRows.map((m) => m.product_id).filter((v): v is string => v != null))];
     if (productIds.length === 0) return [];
 
     const { byProduct } = await loadProductIndex(productIds, locationId);
