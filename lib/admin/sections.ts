@@ -43,6 +43,12 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   // Sits here (not under catering) because it reads the whole regular menu, and
   // at 6 because it is a cost READ (lib/admin/cost.ts COST_READ_MIN).
   { id: "menu-costing",        i18nKey: "admin.section.menu-costing",                          href: "/admin/menu-costing",        minLevel: 6 },
+  // BESIDE the costing board, by the spec's own placement — the weight audit is
+  // what makes the costing board's numbers mean anything. It is an ON-DEMAND TOOL
+  // (Juan, 2026-08-20: "triggered on demand, behaves just like the regular audit"),
+  // so it deliberately carries NO AlertPill on the hub card: the hub's pills are
+  // readiness signals, and a count here would turn a tool into a nag.
+  { id: "weights",             i18nKey: "admin.section.weights",             href: "/admin/weights",             minLevel: 6 },
   { id: "catering",            i18nKey: "admin.section.catering" as TranslationKey,            href: "/admin/catering",            minLevel: 6 },
   { id: "checklist-templates", i18nKey: "admin.section.checklist-templates", href: "/admin/checklist-templates", minLevel: 7 },
   { id: "categories",          i18nKey: "admin.section.categories",          href: "/admin/categories",          minLevel: 8 },
