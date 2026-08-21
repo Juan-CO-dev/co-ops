@@ -11,24 +11,32 @@ rather than quoted from a previous wave's document.
 
 ---
 
-## The reading
+## The reading, and the two answers that followed it
 
 > Juan 2026-08-21, from the shop: "Garlic powder tub is 6 LB, oregano tub is 6 LB, garlic tub is 5 LB, crushed red pepper tub is 4 LB, whole black pepper is 5.75 LB — those are all the tubs I see."
 
-**Evidence class: `SPEC`** (the DEFAULT — Juan has not answered yet).
+Two follow-up questions went back to him, and both are answered:
 
-> Asked of Juan 2026-08-21, unanswered at authoring time: were the five tub weights READ OFF THE TUBS (a printed net weight -> weight_class SPEC) or WEIGHED ON A SCALE (our own measurement -> weight_class OPERATIONAL)? The two classes are not interchangeable: wave 3 measured spec running 20-60% above operational on every deli item Juan has actually weighed, so a SPEC number is a placeholder awaiting a scale and an OPERATIONAL one is the answer. This wave is authored with the class as a single constant (--evidence-class), defaulting to the conservative SPEC, so his one-word answer is a one-constant fill and never a re-derivation.
+> Juan 2026-08-21, asked whether the five tub weights were label reads or scale weighings: "It's the label."
+
+> Juan 2026-08-21, asked which garlic the "garlic tub is 5 LB" line referred to: "It's garlic powder tub."
+
+**Evidence class: `SPEC`** (the default, which is now also the RULING).
+
+_The question, as it was asked:_ Asked of Juan 2026-08-21, unanswered at authoring time: were the five tub weights READ OFF THE TUBS (a printed net weight -> weight_class SPEC) or WEIGHED ON A SCALE (our own measurement -> weight_class OPERATIONAL)? The two classes are not interchangeable: wave 3 measured spec running 20-60% above operational on every deli item Juan has actually weighed, so a SPEC number is a placeholder awaiting a scale and an OPERATIONAL one is the answer. This wave is authored with the class as a single constant (--evidence-class), defaulting to the conservative SPEC, so his one-word answer is a one-constant fill and never a re-derivation.
+
+**The answer:** Juan 2026-08-21, asked whether the five tub weights were label reads or scale weighings: "It's the label." -> weight_class SPEC on every row of this wave. The readings are printed net weights on the tubs, not weighings. RETRACTS the first dry run's inference that oregano's agreement with Angel's measurement implied a scale: it conflated the TUB's label with PFG's CATALOG pack string, which are different documents. The observation stands and is stronger than the inference was — the tub's label and the vendor's invoice agree on 6 lb independently, and the catalog is the odd one out. A label corroborated by a measurement is still a label, and it is the best SPEC we hold.
 
 Basis stamped on every row this run writes: _Juan read the weight PRINTED ON THE TUB. A document states it; no scale was involved here, so it is a placeholder of documentary standing awaiting a weighing — wave 3's SPEC, exactly._
 
-**The class is ONE CONSTANT.** When Juan answers, re-run with `--evidence-class SPEC|OPERATIONAL` and every source note, audit row and table below follows. Nothing is re-derived and no row moves; only what the record CLAIMS about where these numbers came from changes — which is the entire point of having the class at all.
+**The class stayed ONE CONSTANT and that is why the answer cost nothing.** The first dry run defaulted to the conservative side, he said "it's the label", and SPEC is what the conservative side already was — so not one row's class moved. Had he said "scale", the same single flag would have moved all of them. That is what the parameter bought.
 
 ## Read this first — the four things that matter
 
-1. **The scale gate closes on oregano, and it closes the way nobody predicted.** Wave 3 wrote the jug at its pack string's nominal 5 lb and waited for a scale. Juan says 6 LB — which is Angel's MEASURED value, not the pack string. Two independent sources now say 6 and only PFG's catalog says 5.
-2. **Garlic is a CONFLICT and is not written.** His 5 LB contradicts wave 4's 95.94 oz INVOICE_DERIVED pack — seven real deliveries, ratified 2026-08-20. Both numbers are in section C with the arithmetic, the two hypotheses and a recommendation. Neither is written today.
+1. **The scale gate closes on oregano.** Wave 3 wrote the jug at its catalog string's nominal 5 lb and waited for a scale. The tub's own label says 6 LB — agreeing with Angel's MEASURED 6.001 and contradicting PFG's CATALOG, which are two different documents. The jug really is a 6 lb jug and the catalog is the stale side.
+2. **THE GARLIC CONFLICT DISSOLVED — it was a garlic POWDER tub.** The first dry run built a tare hypothesis, a beef-base precedent and a drain-and-weigh test around "garlic tub is 5 LB" contradicting wave 4's 95.94 oz. None of it was needed: Juan was looking at garlic powder. `Garlic` keeps 95.94 oz, INVOICE_DERIVED, untouched — nothing was overturned, because there was never a reading about it. Section C.
 3. **Two SKUs get their first denominator ever.** `Garlic Powder` and `Black peppercorn` have carried no pack of any kind, which is why neither has ever had a price and why black pepper blocks menu items it appears in. Section B counts exactly how many, computed through the production costing engine rather than asserted.
-4. **The 5.75 is NOT the scale tell it looks like.** McCormick's pack string is literally `1/5.75LB`. The quarter pound comes from the vendor's pack size, and Juan's reading matches it exactly — so it is the one row where a suspicion the brief raised is answered by the data rather than carried forward.
+4. **Two suspicions the brief raised are answered by the data, both negative.** The 5.75 is NOT a scale tell — McCormick's pack string is literally `1/5.75LB`. And oregano's agreement with the invoice was NOT evidence of a scale — the first dry run inferred that and Juan's "it's the label" retracted it. Every row here is SPEC.
 
 ## Section A — the five tubs, resolved live
 
@@ -40,7 +48,6 @@ informative; see the note under the table.
 |---|---|---|---|---:|---:|---|---|---|
 | "Garlic powder tub is 6 LB" | `Garlic Powder` | PFG | verbatim | **96 oz** | **(none)** | _(unclassed)_ | matches pack string | **write new pack** |
 | "oregano tub is 6 LB" | `Oregano` | PFG | verbatim | **96 oz** | 80 oz | _(unclassed)_ | matches measurement | **write resolution** |
-| "garlic tub is 5 LB" | `Garlic` | PFG | verbatim | **80 oz** | 95.94 oz | INVOICE_DERIVED | matches pack string | **conflict present only** |
 | "crushed red pepper tub is 4 LB" | `Chili Flake` | PFG | **synonym** | **64 oz** | 64 oz | _(unclassed)_ | no angel row | **confirms live** |
 | "whole black pepper is 5.75 LB" | `Black peppercorn` | PFG | **synonym** | **92 oz** | **(none)** | _(unclassed)_ | matches pack string | **write new pack** |
 
@@ -50,10 +57,9 @@ informative; see the note under the table.
 |---|---:|---|---:|---:|---:|---|
 | `Garlic Powder` | 6 lb | `3/6 LB` → 6 lb | 6.624 lb | 1 | _(n=1)_ | matches pack string |
 | `Oregano` | 6 lb | `1/5 LB` → 5 lb | 6.001 lb | 3 | +0.00% | matches measurement |
-| `Garlic` | 5 lb | `1/5 LB` → 5 lb | 5.996 lb | 7 | +0.24% | matches pack string |
 | `Black peppercorn` | 5.75 lb | `1/5.75LB` → 5.75 lb | 6.119 lb | 3 | +0.05% | matches pack string |
 
-_Equals the invoice measurement and CONTRADICTS the pack string. Whatever produced this number, it was not the vendor's catalog — the strongest evidence in the wave that these readings are of the physical tubs._ Oregano is that row: 6 against a measured 6.001 lb, and against a pack string that says 5.
+_The tub's label agrees with the INVOICE and contradicts PFG's CATALOG string — a disagreement between two of the vendor's own documents, in which the one a scale produced sides with the label. The catalog is the outlier. Still SPEC (a label is a label), but a label corroborated by an independent measurement is the strongest SPEC this arc holds._ Oregano is that row: 6 against a measured 6.001 lb, and against a pack string that says 5.
 
 Chili Flake has no Angel row at all, in the catalog or in 441 invoice lines, so it is absent
 from the table above by construction rather than by omission.
@@ -64,7 +70,6 @@ from the table above by construction rather than by omission.
 |---|---|---|
 | "Garlic powder tub is 6 LB" | `Garlic Powder` | his phrase IS the SKU name |
 | "oregano tub is 6 LB" | `Oregano` | his phrase IS the SKU name |
-| "garlic tub is 5 LB" | `Garlic` | his phrase IS the SKU name |
 | "crushed red pepper tub is 4 LB" | `Chili Flake` | `crushed red pepper` and `chili flake` are the same product; the recipe seed's own alias table maps both (`scripts/seed/lib-recipe-seed.ts`: "chili flake" and "red pepper flakes" -> "Chili Flake"). It is also the only candidate: no live SKU matches `crushed`, `red pepper` or `flake` under any spelling. The pack agreeing to the ounce is itself corroboration of the match. |
 | "whole black pepper is 5.75 LB" | `Black peppercorn` | Our SKU is named `Black peppercorn`; Juan said `whole black pepper`, which is the same product said the other way round and is how Angel spells it too (`PEPPER BLK WHL`). The recipe seed's alias table maps "black pepper" -> "Black peppercorn", and it is the only pepper SKU under PFG. |
 
@@ -106,53 +111,44 @@ makes — against live prices. A count, not a claim.
 |---|---:|---:|---:|---|
 | `Garlic Powder` | **no pack** | **no price** | 3 | Side of Meatballs · Turkey Caesar Sub · Vesuvio II |
 | `Oregano` | 80 oz | $55.27 | 0 | — |
-| `Garlic` | 95.94 oz | $19.72 | 0 | — |
 | `Chili Flake` | 64 oz | **no price** | 0 | — |
 | `Black peppercorn` | **no pack** | **no price** | 7 | Chicken Salad · Tuna Salad Sub · Egg Salad Sub · Side of Meatballs · Turkey Caesar Sub · Vesuvio II · Chicken parm |
 
 **A pack is the denominator, not the price.** `costPerOzFromGraph` returns null when a SKU has no price OR no resolvable content ounces, and the board cannot tell the two apart — so writing a pack does NOT clear a row on its own. What it does is remove the reason the price could never be written: a price against a SKU with no pack is exactly how `PICKLES CHIPS` became $35.95/lb. Section D does that arithmetic and stops short of the write.
 
-## Section C — the garlic conflict (PRESENTED, NOT WRITTEN)
+## Section C — the garlic conflict DISSOLVED (reattribution)
 
-This is the one row where Juan's reading contradicts a weight a scale produced, and it is the reason this run has an `--execute` flag it is not expected to use on all five rows.
+> Juan 2026-08-21, asked which garlic the "garlic tub is 5 LB" line referred to: "It's garlic powder tub."
 
-|  | LIVE (wave 4 §C) | JUAN 2026-08-21 |
-|---|---:|---:|
-| pack | **95.94 oz** | **80 oz** |
-| class | INVOICE_DERIVED | SPEC _(pending his answer)_ |
-| basis | quantity-weighted mean of 7 invoice lines / 21 tubs, 5.9935-6.0077 lb (wave 4 §C, Juan-ratified 2026-08-20) | Juan 2026-08-21: "garlic tub is 5 LB" — which is also, exactly, PFG's `1/5 LB` pack string |
-| unit price | $19.72 | $19.72 _(unchanged either way)_ |
-| $/oz | $0.2055 | **$0.2465** |
-| live value in prod right now | 95.94 oz | — |
+The first dry run presented a CONFLICT here: "garlic tub is 5 LB" against wave 4's INVOICE_DERIVED 95.94 oz, with a brine-tare hypothesis, a beef-base precedent and a drain-and-weigh test to settle it. **None of it was needed. He was looking at a garlic POWDER tub.**
 
-Moving to 80 oz would raise garlic's cost per ounce by **+19.9%** and re-cost 8 recipe line(s): Cesear Dressing · Garlic Bread / Compound Butter · Garlic Mayo (Aioli) · Green Goddess · Honey Chili Aioli · Italian Salsa Verde · Marinara · Mustard Aioli.
+**The conflict was never real — no reading bears on peeled garlic. Wave 4's 95.94 oz stands untouched, its ratification unchanged, and nothing was overturned. A conflict that dissolves is not a conflict that was decided.**
 
+|  | value |
+|---|---|
+| reattributed FROM | `Garlic` (peeled garlic, PFG) |
+| reattributed TO | `Garlic Powder` |
+| `Garlic` pack, live in prod right now | **95.94 oz** — unchanged |
+| `Garlic` class | INVOICE_DERIVED — unchanged |
+| rows this wave writes against `Garlic` | **0** |
 
-### C1 — the two hypotheses
-
-**If the reading is a NET weight:** The invoice weight is GROSS (garlic + brine + tub) and the label's 5 lb is NET product. 0.996 lb of water and plastic on a 5 lb fill is an ordinary tare for a brine-packed produce tub.
-
-**If the reading is a pack-string read:** The tubs really do hold ~6 lb of garlic and Juan read the pack string off the lid rather than weighing anything — in which case the reading adds no information wave 4 did not already have.
-
-The gap is **15.94 oz** — just under a pound of water and plastic on a 5 lb fill. Suspiciously round, and entirely ordinary for a brine-packed produce tub.
+Note what did NOT happen: no ruling was overturned, no evidence was re-weighed, and wave 4's §C reasoning is exactly as sound today as it was yesterday. A conflict that dissolves is not a conflict that was decided.
 
 
-### C2 — why the ratification's own evidence does not settle it
+### C1 — what survives, and it is worth more than the conflict was
 
-`GARLIC_RATIFICATION` turns on ONE observation: garlic's per-tub weight VARIES while oregano's never moves, so garlic's is a real weighing. That inference is sound, and it is also insufficient. It establishes that something was weighed; it does not establish WHAT was weighed. A tub of peeled garlic packed in water weighs its garlic plus its water plus its tub, and all three vary a little from tub to tub. The spread column discriminates a measurement from a stored constant. It cannot discriminate NET product from GROSS shipping weight, and that is the question in front of us.
-
-**And the precedent is already in this repo, pointing the other way.** Wave 4 §A2 (BEEF_BASE_RULING) refused a GROSS invoice weight as a costing denominator at 1.117x nominal because the excess was glass. Garlic sits at 1.199x and was accepted in the same wave. The two calls need one reconciliation, and it is Juan's to make.
+**The note class.** `BILLED_VS_NET` was minted to describe this conflict and it outlives it — a real phenomenon with a real precedent already in the repo, waiting for the next brine- or ice-packed row:
 
 > BILLED_VS_NET — the vendor's invoice weight includes packaging or packing medium that the recipe cannot use (brine, glass, ice). The invoice figure stays true as a BILLED weight; the costing denominator should be USABLE product ounces. Precedents: beef base's glass jars (wave 4 §A2, refused the gross denominator), garlic's brine (wave 5, open). Distinguishable from a feed artifact by the fact that tare is physical and scales with the container, not with a constant multiplier.
 
+**And an OPEN QUESTION that never depended on the reading in the first place.** Independent of any tub reading: wave 4 §A2 refused a GROSS invoice weight as a costing denominator at 1.117x nominal (beef base, the excess being glass) while wave 4 §C accepted one at 1.199x (garlic, on the strength of a varying weight). The spread column distinguishes a measurement from a stored constant but not NET product from GROSS shipping weight, and peeled garlic ships in water. Open, unaffected by this wave, and evidence-free in both directions today.
 
-### C3 — recommendation
+It is recorded rather than closed because this wave has no evidence bearing on it in either direction. It is not a wave-5 finding; it is a wave-4 tension wave 5 happened to walk past.
 
-**DO NOT WRITE either way today. Ask one question — label or scale — and if scale, whether the tub was weighed full and undrained. If the tare reading holds, supersede the pack to 80 oz and the costing denominator becomes usable product; the $19.72 price is correct under BOTH readings and does not move.**
 
-**The decisive test:** Weigh one full tub, drain it, weigh the garlic. Gross ~6 lb with net ~5 lb settles it in 90 seconds — the same 90 seconds wave 3 asked for and got.
+### C2 — the lesson
 
-Worth being precise about what is NOT claimed here: that wave 4 is wrong. 95.94 oz is very likely the correct BILLED weight — what PFG weighed and charged for. The open question is whether a billed weight is the right denominator under a recipe's ounces, and the beef-base ruling already said it is not.
+The first dry run built a careful argument — two hypotheses, a repo precedent, a cheap decisive test — on top of one unverified assumption: that "garlic" meant the `Garlic` SKU. Every step above that assumption was sound and every one of them was irrelevant. **That is exactly why the row was PRESENTED rather than written**, and it is the argument for the `CONFLICT_PRESENT_ONLY` disposition surviving in the code even though nothing exercises it this run.
 
 ## Section D — decisions this script will not make
 
@@ -171,7 +167,21 @@ one step.
 
 **A note on the census.** `docs/seed/source/angel-reconciliation-report.md` §E.2 lists `Garlic Powder` among nine PFG SKUs "absent from the Angel export". That is true of the CATALOG export and false of the purchase history, which carries a `GARLIC PWDR` invoice line. The two are different harvest artifacts and the census only ever read the first. `Chili Flake` IS genuinely absent from both — no crushed-red-pepper row exists anywhere in Angel — so its half of that list stands.
 
-### D2 — onion powder: the half of the gate that stays shut
+### D2 — the second garlic powder tub (unresolved, recorded, not written)
+
+The reattribution left `Garlic Powder` with TWO sighted tubs. Only one can be the pack, and 6 lb is the one with two documents behind it — the tub's own label and Angel's `3/6 LB` catalog string agree. The 5 lb sighting matches neither that string nor the invoice's 6.624 lb per tub.
+
+| Juan said | SKU | reading | agreement | status |
+|---|---|---:|---|---|
+| "garlic tub is 5 LB" | `Garlic Powder` | 5 lb (80 oz) | matches neither | **UNRESOLVED — not written** |
+
+**Why it is not written:** Reattributed to Garlic Powder by Juan on 2026-08-21, which leaves that SKU with two sighted tubs (6 LB and 5 LB). 6 lb is written because the tub's label and Angel's `3/6 LB` catalog string agree on it; 5 lb matches neither that string nor the invoice's 6.624 lb per tub, so it is evidence of SOMETHING — most likely a second tub size or brand on the shelf — and not evidence of what this SKU's pack is. Writing a second pack level off one ambiguous sighting would put an invented number under every garlic-powder recipe.
+
+**Unblock:** One shelf glance: are there two different garlic powder tubs out there, and if so what does the smaller one's label say — brand, net weight, and is it the same product? If confirmed, garlic powder becomes the pantry's first multi-pack-size SKU and needs its own decision about which pack the par and the price are denominated in.
+
+**The third option is the honest one.** Inventing a second pack level from one ambiguous sighting would put a number under every garlic-powder recipe on the strength of a glance; discarding it would lose the only evidence anyone has that a second tub exists. A named unresolved observation keeps the fact without spending it.
+
+### D3 — onion powder: the half of the gate that stays shut
 
 | field | value |
 |---|---|
@@ -185,28 +195,28 @@ one step.
 
 **And a question to put back to Juan.** His "those are all the tubs I see" is a completeness claim about what was VISIBLE on the floor, not an inventory. Onion powder's absence from the list reads as *not observed*, never as *does not exist* — and its single invoice line is from Jul 31, which is consistent with a tub that has since been used up. One question closes both halves of the gate: **is there an onion powder tub out there, and what does it say?**
 
-### D3 — tubs with no matching SKU
+### D4 — tubs with no matching SKU
 
 _(none)_
 
-All five tubs resolved to exactly one active PFG SKU each. The table is empty, and that is
-the finding: nothing Juan is looking at is missing from our catalog.
+All 4 readings resolved to exactly one active PFG SKU each. The table is empty, and
+that is the finding: nothing Juan is looking at is missing from our catalog.
 
 ## Everything this run did NOT do, and why
 
 | our SKU | subject | code | detail |
 |---|---|---|---|
-| `Garlic` | pack | `MEASURED_CONFLICT` | reading 80 oz against a live 95.94 oz whose class is INVOICE_DERIVED (a scale produced it) — see section C |
 | `Chili Flake` | pack | `ALREADY_CORRECT` | live pack is already 64 oz and the reading is 64 oz — a corroboration, and there is nothing to write |
 | `Garlic Powder` | price | `PRICE_NEEDS_APPROVAL` | $210.84 per Angel unit / 3 / our 96 oz pack = $0.7321/oz — derivable now, but a tub reading is evidence about a WEIGHT |
 | `Black peppercorn` | price | `PRICE_NEEDS_APPROVAL` | $53.52 per Angel unit / our 92 oz pack = $0.5817/oz — derivable now, but a tub reading is evidence about a WEIGHT |
+| `Garlic Powder` | second pack | `UNRESOLVED_SIGHTING` | a second tub was sighted at 5 lb; the 6 lb tub is written because label and catalog string agree on it, and 5 lb matches neither |
 | `Onion Powder` | pack | `NOT_IN_READING` | Juan named five tubs and onion powder was not one of them; its live 80 oz stands |
 
 | code | what it means |
 |---|---|
-| `MEASURED_CONFLICT` | The reading contradicts a pack a scale produced. Presented in full with both numbers and a recommendation; never silently overwritten. |
 | `ALREADY_CORRECT` | The live value already equals the reading. Corroboration, and nothing to write. |
 | `PRICE_NEEDS_APPROVAL` | A price is newly derivable now that a pack exists, but pricing is not what a tub reading is evidence about. The arithmetic is done and put in a decision table for one approval. |
+| `UNRESOLVED_SIGHTING` | Something was seen that this wave will neither write nor discard. It is evidence of SOMETHING — most often a second pack size on the shelf — without being evidence of what a SKU's pack is. Recorded by name with the one glance that would settle it, because inventing a pack from an ambiguous sighting and throwing the sighting away are both worse. |
 | `NOT_IN_READING` | Juan did not name this tub, so this wave has nothing to say about it. Absence from his list is 'not observed', never 'does not exist'. |
 
 ## Summary
@@ -214,12 +224,12 @@ the finding: nothing Juan is looking at is missing from our catalog.
 |  | pack chains | weights | prices |
 |---|---:|---:|---:|
 | **Section B — first packs + the oregano resolution** | **3** | 0 | 0 |
-| Section C — garlic conflict | 0 _(presented)_ | 0 | 0 |
+| Section C — garlic reattribution | 0 _(conflict dissolved)_ | 0 | 0 |
 | Section D — decision tables only | 0 | 0 | 0 _(2 proposed)_ |
 | **TOTAL would-write rows** | **3** | **0** | **0** |
 
 `source` stamped in the audit metadata of every written row: `juan-tub-readings-2026-08-21`
-`weight_class` stamped in that same metadata: `SPEC` (default — pending Juan's answer)
+`weight_class` stamped in that same metadata: `SPEC` — Juan's ruling ("it's the label"), which the default already matched
 
 **Where the weight class does and does not go.** It rides in the `sku.pack_chain_update` audit metadata, exactly as wave 4 wrote it, and `vendor_items.weight_class` is NOT touched on any row. That column describes the EACH weight — garlic's 0.17 oz/clove, classed `ESTIMATE` by seed 26 — and a pack's contents are a different number. Writing one into the other is how a single column came to mean two things the first time, which is the defect wave 3's spec-versus-operational split exists to repair.
 
@@ -228,7 +238,7 @@ the finding: nothing Juan is looking at is missing from our catalog.
 | `WRITE_NEW_PACK` | our SKU had no pack at all; the reading gives it its first denominator | 2 |
 | `WRITE_RESOLUTION` | a pack exists, the reading moves it, and nothing measured is being overruled | 1 |
 | `CONFIRMS_LIVE` | the reading and the live pack are the same number — corroboration, no write | 1 |
-| `CONFLICT_PRESENT_ONLY` | the reading contradicts a weight a scale produced; present both, write neither | 1 |
+| `CONFLICT_PRESENT_ONLY` | the reading contradicts a weight a scale produced; present both, write neither | 0 |
 | `NO_MATCHING_SKU` | no live SKU answers to this tub — the answer goes in a decision table | 0 |
 
 **NOTHING HAS BEEN WRITTEN.** Re-run with `--execute` only on the lead's word.

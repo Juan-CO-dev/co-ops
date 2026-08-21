@@ -66,14 +66,17 @@ import { parsePurchaseHistory, purchaseRowKey, invoiceAverageLbs } from "@/lib/a
 import { costPerOz } from "@/lib/angel-wave3";
 import {
   JUAN_TUB_READING,
+  JUAN_CLARIFICATIONS,
   EVIDENCE_CLASS_QUESTION,
+  EVIDENCE_CLASS_ANSWER,
   EVIDENCE_CLASS_BASIS,
   resolveEvidenceClass,
   classifyReadingAgainstPackString,
   READING_AGREEMENT_MEANING,
   measuredSpreadFraction,
   TUB_READINGS,
-  GARLIC_TARE_CONFLICT,
+  STRAY_SHELF_OBSERVATIONS,
+  GARLIC_REATTRIBUTION,
   BILLED_VS_NET_NOTE_CLASS,
   billedVsNetGapOz,
   ONION_POWDER_STILL_GATED,
@@ -376,40 +379,47 @@ async function main(): Promise<void> {
     p("---");
   }
 
-  h(2, "The reading");
+  h(2, "The reading, and the two answers that followed it");
   p(`> ${JUAN_TUB_READING}`);
+  p("");
+  p("Two follow-up questions went back to him, and both are answered:");
+  p("");
+  p(`> ${JUAN_CLARIFICATIONS.evidenceClass}`);
+  p("");
+  p(`> ${JUAN_CLARIFICATIONS.garlicReattribution}`);
   p("");
   p(
     `**Evidence class: \`${EVIDENCE_CLASS}\`** ` +
-      (EVIDENCE_CLASS_EXPLICIT
-        ? "(set explicitly via `--evidence-class`)."
-        : "(the DEFAULT — Juan has not answered yet)."),
+      (EVIDENCE_CLASS_EXPLICIT ? "(set explicitly via `--evidence-class`)." : "(the default, which is now also the RULING)."),
   );
   p("");
-  p(`> ${EVIDENCE_CLASS_QUESTION}`);
+  p(`_The question, as it was asked:_ ${EVIDENCE_CLASS_QUESTION}`);
+  p("");
+  p(`**The answer:** ${EVIDENCE_CLASS_ANSWER}`);
   p("");
   p(`Basis stamped on every row this run writes: _${EVIDENCE_CLASS_BASIS[EVIDENCE_CLASS]}_`);
   p("");
   p(
-    "**The class is ONE CONSTANT.** When Juan answers, re-run with `--evidence-class " +
-      "SPEC|OPERATIONAL` and every source note, audit row and table below follows. Nothing is " +
-      "re-derived and no row moves; only what the record CLAIMS about where these numbers came " +
-      "from changes — which is the entire point of having the class at all.",
+    "**The class stayed ONE CONSTANT and that is why the answer cost nothing.** The first dry run " +
+      "defaulted to the conservative side, he said \"it's the label\", and SPEC is what the " +
+      "conservative side already was — so not one row's class moved. Had he said \"scale\", the same " +
+      "single flag would have moved all of them. That is what the parameter bought.",
   );
 
   // ══ READ THIS FIRST ══════════════════════════════════════════════════════════
   h(2, "Read this first — the four things that matter");
   p(
-    "1. **The scale gate closes on oregano, and it closes the way nobody predicted.** Wave 3 " +
-      "wrote the jug at its pack string's nominal 5 lb and waited for a scale. Juan says 6 LB — " +
-      "which is Angel's MEASURED value, not the pack string. Two independent sources now say 6 " +
-      "and only PFG's catalog says 5.",
+    "1. **The scale gate closes on oregano.** Wave 3 wrote the jug at its catalog string's " +
+      "nominal 5 lb and waited for a scale. The tub's own label says 6 LB — agreeing with " +
+      "Angel's MEASURED 6.001 and contradicting PFG's CATALOG, which are two different " +
+      "documents. The jug really is a 6 lb jug and the catalog is the stale side.",
   );
   p(
-    "2. **Garlic is a CONFLICT and is not written.** His 5 LB contradicts wave 4's 95.94 oz " +
-      "INVOICE_DERIVED pack — seven real deliveries, ratified 2026-08-20. Both numbers are in " +
-      "section C with the arithmetic, the two hypotheses and a recommendation. Neither is " +
-      "written today.",
+    "2. **THE GARLIC CONFLICT DISSOLVED — it was a garlic POWDER tub.** The first dry run built " +
+      "a tare hypothesis, a beef-base precedent and a drain-and-weigh test around \"garlic tub " +
+      "is 5 LB\" contradicting wave 4's 95.94 oz. None of it was needed: Juan was looking at " +
+      "garlic powder. `Garlic` keeps 95.94 oz, INVOICE_DERIVED, untouched — nothing was " +
+      "overturned, because there was never a reading about it. Section C.",
   );
   p(
     "3. **Two SKUs get their first denominator ever.** `Garlic Powder` and `Black peppercorn` " +
@@ -418,10 +428,10 @@ async function main(): Promise<void> {
       "through the production costing engine rather than asserted.",
   );
   p(
-    "4. **The 5.75 is NOT the scale tell it looks like.** McCormick's pack string is literally " +
-      "`1/5.75LB`. The quarter pound comes from the vendor's pack size, and Juan's reading " +
-      "matches it exactly — so it is the one row where a suspicion the brief raised is " +
-      "answered by the data rather than carried forward.",
+    "4. **Two suspicions the brief raised are answered by the data, both negative.** The 5.75 is " +
+      "NOT a scale tell — McCormick's pack string is literally `1/5.75LB`. And oregano's " +
+      "agreement with the invoice was NOT evidence of a scale — the first dry run inferred that " +
+      "and Juan's \"it's the label\" retracted it. Every row here is SPEC.",
   );
 
   // ══ SECTION A — the five tubs ════════════════════════════════════════════════
@@ -806,75 +816,75 @@ async function main(): Promise<void> {
       "write.",
   );
 
-  // ══ SECTION C — the garlic conflict ══════════════════════════════════════════
-  h(2, "Section C — the garlic conflict (PRESENTED, NOT WRITTEN)");
-  const garlicRow = rows.find((r) => r.reading.skuName === "Garlic");
+  // ══ SECTION C — the reattribution ════════════════════════════════════════════
+  h(2, "Section C — the garlic conflict DISSOLVED (reattribution)");
+  p(`> ${GARLIC_REATTRIBUTION.clarification}`);
+  p("");
   p(
-    "This is the one row where Juan's reading contradicts a weight a scale produced, and it is " +
-      "the reason this run has an `--execute` flag it is not expected to use on all five rows.",
+    "The first dry run presented a CONFLICT here: \"garlic tub is 5 LB\" against wave 4's " +
+      "INVOICE_DERIVED 95.94 oz, with a brine-tare hypothesis, a beef-base precedent and a " +
+      "drain-and-weigh test to settle it. **None of it was needed. He was looking at a garlic " +
+      "POWDER tub.**",
   );
   p("");
+  p(`**${GARLIC_REATTRIBUTION.dissolvedNotResolved}**`);
+  p("");
+
+  // Read the peeled-garlic row back live, so "untouched" is a verified claim.
+  const { data: garlicLive, error: gErr } = await sb
+    .from("vendor_items")
+    .select("id, name, each_size, each_measure, vendors(name)")
+    .eq("name", GARLIC_REATTRIBUTION.reattributedFrom)
+    .eq("active", true)
+    .returns<Array<{ id: string; name: string; each_size: number | string | null; each_measure: string | null; vendors: { name: string } | null }>>();
+  if (gErr) throw new Error(`garlic read-back: ${gErr.message}`);
+  const garlicPfg = (garlicLive ?? []).find((g) => g.vendors?.name === "PFG");
+  const garlicOz = num(garlicPfg?.each_size ?? null);
+
   table(
-    ["", "LIVE (wave 4 §C)", "JUAN 2026-08-21"],
+    ["", "value"],
     [
-      ["pack", `**${GARLIC_TARE_CONFLICT.liveOz} oz**`, `**${GARLIC_TARE_CONFLICT.readingOz} oz**`],
-      ["class", GARLIC_TARE_CONFLICT.liveClass, `${EVIDENCE_CLASS} _(pending his answer)_`],
-      ["basis", GARLIC_TARE_CONFLICT.liveBasis, GARLIC_TARE_CONFLICT.readingBasis],
-      ["unit price", money(GARLIC_TARE_CONFLICT.unitPriceUsd), `${money(GARLIC_TARE_CONFLICT.unitPriceUsd)} _(unchanged either way)_`],
-      [
-        "$/oz",
-        money4(costPerOz(GARLIC_TARE_CONFLICT.unitPriceUsd, GARLIC_TARE_CONFLICT.liveOz)!),
-        `**${money4(costPerOz(GARLIC_TARE_CONFLICT.unitPriceUsd, GARLIC_TARE_CONFLICT.readingOz)!)}**`,
-      ],
-      ["live value in prod right now", garlicRow?.liveOz == null ? "?" : `${garlicRow.liveOz} oz`, "—"],
+      ["reattributed FROM", `\`${GARLIC_REATTRIBUTION.reattributedFrom}\` (peeled garlic, PFG)`],
+      ["reattributed TO", `\`${GARLIC_REATTRIBUTION.reattributedTo}\``],
+      ["`Garlic` pack, live in prod right now", garlicOz == null ? "?" : `**${garlicOz} oz** — unchanged`],
+      ["`Garlic` class", `${GARLIC_REATTRIBUTION.garlicLiveClass} — unchanged`],
+      ["rows this wave writes against `Garlic`", "**0**"],
     ],
-    ["", "r", "r"],
   );
   p("");
   p(
-    `Moving to 80 oz would raise garlic's cost per ounce by **${pct(
-      (costPerOz(GARLIC_TARE_CONFLICT.unitPriceUsd, GARLIC_TARE_CONFLICT.readingOz)! /
-        costPerOz(GARLIC_TARE_CONFLICT.unitPriceUsd, GARLIC_TARE_CONFLICT.liveOz)!) - 1,
-    )}** and re-cost ${garlicRow?.pins.length ?? 0} recipe line(s): ` +
-      (garlicRow?.pins.map((x) => x.recipeName).join(" · ") ?? "—") +
-      ".",
+    "Note what did NOT happen: no ruling was overturned, no evidence was re-weighed, and wave 4's " +
+      "§C reasoning is exactly as sound today as it was yesterday. A conflict that dissolves is " +
+      "not a conflict that was decided.",
   );
   p("");
-  h(3, "C1 — the two hypotheses");
-  p(`**If the reading is a NET weight:** ${GARLIC_TARE_CONFLICT.hypothesis}`);
-  p("");
-  p(`**If the reading is a pack-string read:** ${GARLIC_TARE_CONFLICT.counterHypothesis}`);
-  p("");
+  h(3, "C1 — what survives, and it is worth more than the conflict was");
   p(
-    `The gap is **${GARLIC_TARE_CONFLICT.gapOz} oz** — just under a pound of water and plastic on a ` +
-      "5 lb fill. Suspiciously round, and entirely ordinary for a brine-packed produce tub.",
+    "**The note class.** `BILLED_VS_NET` was minted to describe this conflict and it outlives it — " +
+      "a real phenomenon with a real precedent already in the repo, waiting for the next brine- " +
+      "or ice-packed row:",
   );
-  p("");
-  h(3, "C2 — why the ratification's own evidence does not settle it");
-  p(
-    "`GARLIC_RATIFICATION` turns on ONE observation: garlic's per-tub weight VARIES while " +
-      "oregano's never moves, so garlic's is a real weighing. That inference is sound, and it is " +
-      "also insufficient. It establishes that something was weighed; it does not establish WHAT " +
-      "was weighed. A tub of peeled garlic packed in water weighs its garlic plus its water plus " +
-      "its tub, and all three vary a little from tub to tub. The spread column discriminates a " +
-      "measurement from a stored constant. It cannot discriminate NET product from GROSS shipping " +
-      "weight, and that is the question in front of us.",
-  );
-  p("");
-  p(`**And the precedent is already in this repo, pointing the other way.** ${GARLIC_TARE_CONFLICT.precedent}`);
   p("");
   p(`> ${BILLED_VS_NET_NOTE_CLASS}`);
   p("");
-  h(3, "C3 — recommendation");
-  p(`**${GARLIC_TARE_CONFLICT.recommendation}**`);
-  p("");
-  p(`**The decisive test:** ${GARLIC_TARE_CONFLICT.decisiveTest}`);
+  p(
+    "**And an OPEN QUESTION that never depended on the reading in the first place.** " +
+      `${GARLIC_REATTRIBUTION.openQuestionSurviving}`,
+  );
   p("");
   p(
-    "Worth being precise about what is NOT claimed here: that wave 4 is wrong. 95.94 oz is very " +
-      "likely the correct BILLED weight — what PFG weighed and charged for. The open question is " +
-      "whether a billed weight is the right denominator under a recipe's ounces, and the " +
-      "beef-base ruling already said it is not.",
+    "It is recorded rather than closed because this wave has no evidence bearing on it in either " +
+      "direction. It is not a wave-5 finding; it is a wave-4 tension wave 5 happened to walk past.",
+  );
+  p("");
+  h(3, "C2 — the lesson");
+  p(
+    "The first dry run built a careful argument — two hypotheses, a repo precedent, a cheap " +
+      "decisive test — on top of one unverified assumption: that \"garlic\" meant the `Garlic` " +
+      "SKU. Every step above that assumption was sound and every one of them was irrelevant. " +
+      "**That is exactly why the row was PRESENTED rather than written**, and it is the argument " +
+      "for the `CONFLICT_PRESENT_ONLY` disposition surviving in the code even though nothing " +
+      "exercises it this run.",
   );
 
   // ══ SECTION D — decision tables ══════════════════════════════════════════════
@@ -949,8 +959,49 @@ async function main(): Promise<void> {
       "Angel — so its half of that list stands.",
   );
 
-  // D2 — onion powder
-  h(3, "D2 — onion powder: the half of the gate that stays shut");
+  // D2 — the stray shelf observation the reattribution created
+  h(3, "D2 — the second garlic powder tub (unresolved, recorded, not written)");
+  p(
+    "The reattribution left `Garlic Powder` with TWO sighted tubs. Only one can be the pack, and " +
+      "6 lb is the one with two documents behind it — the tub's own label and Angel's `3/6 LB` " +
+      "catalog string agree. The 5 lb sighting matches neither that string nor the invoice's " +
+      "6.624 lb per tub.",
+  );
+  p("");
+  table(
+    ["Juan said", "SKU", "reading", "agreement", "status"],
+    STRAY_SHELF_OBSERVATIONS.map((s) => {
+      const reading = TUB_READINGS.find((t) => t.skuName === s.skuName);
+      return [
+        `"${s.spoken}"`,
+        `\`${s.skuName}\``,
+        `${s.lbs} lb (${tubPackOz(s.lbs)} oz)`,
+        classifyReadingAgainstPackString(s.lbs, reading?.angel ?? null).toLowerCase().replace(/_/g, " "),
+        "**UNRESOLVED — not written**",
+      ];
+    }),
+    ["", "", "r", "", ""],
+  );
+  p("");
+  for (const s of STRAY_SHELF_OBSERVATIONS) {
+    p(`**Why it is not written:** ${s.whyNotWritten}`);
+    p("");
+    p(`**Unblock:** ${s.unblock}`);
+    p("");
+  }
+  p(
+    "**The third option is the honest one.** Inventing a second pack level from one ambiguous " +
+      "sighting would put a number under every garlic-powder recipe on the strength of a glance; " +
+      "discarding it would lose the only evidence anyone has that a second tub exists. A named " +
+      "unresolved observation keeps the fact without spending it.",
+  );
+  refusals.push({
+    skuName: "Garlic Powder", subject: "second pack", code: "UNRESOLVED_SIGHTING",
+    detail: `a second tub was sighted at 5 lb; the 6 lb tub is written because label and catalog string agree on it, and 5 lb matches neither`,
+  });
+
+  // D3 — onion powder
+  h(3, "D3 — onion powder: the half of the gate that stays shut");
   refusals.push({
     skuName: ONION_POWDER_STILL_GATED.skuName, subject: "pack", code: "NOT_IN_READING",
     detail: `Juan named five tubs and onion powder was not one of them; its live ${ONION_POWDER_STILL_GATED.livePackOz} oz stands`,
@@ -978,7 +1029,7 @@ async function main(): Promise<void> {
   );
 
   // D3 — tubs with no SKU
-  h(3, "D3 — tubs with no matching SKU");
+  h(3, "D4 — tubs with no matching SKU");
   const unmatched = rows.filter((r) => r.sku == null);
   table(
     ["Juan said", "asserted SKU", "why it did not resolve"],
@@ -990,8 +1041,8 @@ async function main(): Promise<void> {
   );
   if (unmatched.length === 0) {
     p("");
-    p("All five tubs resolved to exactly one active PFG SKU each. The table is empty, and that is");
-    p("the finding: nothing Juan is looking at is missing from our catalog.");
+    p(`All ${rows.length} readings resolved to exactly one active PFG SKU each. The table is empty, and`);
+    p("that is the finding: nothing Juan is looking at is missing from our catalog.");
   }
 
   // ══ REFUSALS ═════════════════════════════════════════════════════════════════
@@ -1012,7 +1063,7 @@ async function main(): Promise<void> {
     ["", "pack chains", "weights", "prices"],
     [
       ["**Section B — first packs + the oregano resolution**", `**${chainWrites.length}**`, "0", "0"],
-      ["Section C — garlic conflict", "0 _(presented)_", "0", "0"],
+      ["Section C — garlic reattribution", "0 _(conflict dissolved)_", "0", "0"],
       ["Section D — decision tables only", "0", "0", `0 _(${priceDecisions.length} proposed)_`],
       ["**TOTAL would-write rows**", `**${chainWrites.length}**`, "**0**", "**0**"],
     ],
@@ -1020,7 +1071,10 @@ async function main(): Promise<void> {
   );
   p("");
   p(`\`source\` stamped in the audit metadata of every written row: \`${SOURCE_KEY}\``);
-  p(`\`weight_class\` stamped in that same metadata: \`${EVIDENCE_CLASS}\`${EVIDENCE_CLASS_EXPLICIT ? "" : " (default — pending Juan's answer)"}`);
+  p(
+    `\`weight_class\` stamped in that same metadata: \`${EVIDENCE_CLASS}\`` +
+      (EVIDENCE_CLASS_EXPLICIT ? " (set explicitly)" : " — Juan's ruling (\"it's the label\"), which the default already matched"),
+  );
   p("");
   p(
     "**Where the weight class does and does not go.** It rides in the `sku.pack_chain_update` " +

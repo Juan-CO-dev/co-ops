@@ -12,35 +12,42 @@
  *
  * Juan walked the shop and read five tubs. That is the unblock arriving.
  *
- * ── THE EVIDENCE CLASS IS NOT YET KNOWN, AND THAT IS DELIBERATE ──────────────
- * One question decides how every row below is classed: did he read the tubs'
+ * ── THE EVIDENCE CLASS: ASKED, AND ANSWERED ─────────────────────────────────
+ * One question decided how every row below is classed: did he read the tubs'
  * printed weights, or did he put them on a scale?
  *
  *   label -> SPEC          a document states it; nothing was weighed here
  *   scale -> OPERATIONAL   our own measurement, the class wave 3 minted
  *
- * The answer is ONE CONSTANT (`resolveEvidenceClass`), not a rewrite, and the
- * script defaults to the conservative side (SPEC) until he answers. Guessing the
- * class from the numbers is exactly what `WEIGHT_CLASS_MEANING.ESTIMATE` forbids:
- * "a number cannot tell you whether somebody weighed it or guessed it".
+ * **He answered: "it's the label."** Every reading here is SPEC. The class is
+ * still ONE CONSTANT (`resolveEvidenceClass`) rather than a hard-coded literal,
+ * because the parameter is what made the answer a one-word fill instead of a
+ * re-derivation — and the question, the answer and the default are all recorded
+ * so the trail shows a ruling rather than a coincidence.
  *
- * What the numbers CAN tell us is which SOURCE each reading agrees with, and that
- * is `classifyReadingAgainstPackString` — a discriminator, not a verdict. Its
- * output on today's data is the single most useful thing in this file, so it is
- * stated here rather than buried. Four of the five tubs have an Angel row to
- * compare against; **three of those four readings equal a pack string, and
- * oregano equals the MEASUREMENT (6 against 6.001) while CONTRADICTING its pack
- * string (5).** A pure label-reader could not have produced the oregano number,
- * which is the wave's strongest evidence that these are readings of physical
- * tubs. The fifth tub, chili flake, has no Angel row at all and agrees with our
- * own live pack to the ounce.
+ * **The retraction that matters.** The first dry run observed that oregano's 6
+ * equals Angel's MEASURED 6.001 while contradicting PFG's `1/5 LB` pack string,
+ * and inferred from that that a pack-string reader could not have produced it —
+ * i.e. that a scale was involved. **That inference is RETRACTED.** It confused
+ * two different documents: the TUB's own printed label and PFG's CATALOG string
+ * are not the same artifact, and Juan was reading the first. The observation
+ * survives intact and is worth more than the inference was: the tub's label and
+ * the vendor's invoice independently agree on 6 lb, and PFG's catalog is the
+ * outlier. That is a label CORROBORATED BY A MEASUREMENT — still SPEC, and the
+ * strongest SPEC this arc has.
  *
  * ── WHAT THIS FILE DELIBERATELY DOES NOT DO ─────────────────────────────────
  * It does not overwrite a MEASURED weight with a reading. `disposeTub` routes
- * that case to `CONFLICT_PRESENT_ONLY` — the garlic row — because an
- * INVOICE_DERIVED pack is the average of seven real deliveries and a conflict
- * between two evidence classes is a question for Juan, not an arithmetic to
- * resolve in a seed. See `GARLIC_TARE_CONFLICT`.
+ * that case to `CONFLICT_PRESENT_ONLY`: an INVOICE_DERIVED pack is the average
+ * of real deliveries, and a conflict between two evidence classes is a question
+ * for Juan, not an arithmetic to resolve in a seed.
+ *
+ * That branch is UNEXERCISED this run, and the reason is the second answer.
+ * "Garlic tub is 5 LB" turned out to be a garlic POWDER tub, not the peeled
+ * garlic SKU — so no reading bears on `Garlic` at all, its 95.94 oz stands
+ * untouched, and the tare conflict the first dry run presented dissolved rather
+ * than being resolved. See `GARLIC_REATTRIBUTION`. The branch stays because the
+ * policy is right and the next wave will need it.
  */
 
 import { costPerOz } from "@/lib/angel-wave3";
@@ -65,8 +72,21 @@ export const JUAN_TUB_READING =
   'crushed red pepper tub is 4 LB, whole black pepper is 5.75 LB — those are all the tubs I see."';
 
 /**
- * The question that decides the whole wave's evidence class, recorded as asked so
- * the answer can be matched to it later.
+ * Juan's two follow-up answers, 2026-08-21, relayed through the lead. Verbatim,
+ * and kept SEPARATE from the reading above rather than folded into it — a relay
+ * edited in place is a relay nobody can audit, and the second of these
+ * REATTRIBUTES one of the five tubs to a different SKU. Which words were the
+ * original observation and which were the correction is exactly the thing a
+ * merged quote would destroy.
+ */
+export const JUAN_CLARIFICATIONS = {
+  evidenceClass: 'Juan 2026-08-21, asked whether the five tub weights were label reads or scale weighings: "It\'s the label."',
+  garlicReattribution: 'Juan 2026-08-21, asked which garlic the "garlic tub is 5 LB" line referred to: "It\'s garlic powder tub."',
+} as const;
+
+/**
+ * The question that decided the whole wave's evidence class, recorded as asked so
+ * the answer can be matched to it.
  */
 export const EVIDENCE_CLASS_QUESTION =
   "Asked of Juan 2026-08-21, unanswered at authoring time: were the five tub weights READ OFF THE TUBS " +
@@ -87,7 +107,25 @@ export const EVIDENCE_CLASS_QUESTION =
  */
 export type EvidenceClass = Extract<WeightClass, "SPEC" | "OPERATIONAL">;
 
-export const EVIDENCE_CLASS_DEFAULT: EvidenceClass = "SPEC";
+/**
+ * What Juan actually answered. The default below equals it — which is a fact
+ * worth stating rather than a tautology to hide: the run authored BEFORE he
+ * answered defaulted to the conservative side and the conservative side turned
+ * out to be right, so no row's class ever changed. Had he said "scale", one flag
+ * would have moved every row, which is the whole reason the class was a
+ * parameter.
+ */
+export const EVIDENCE_CLASS_RULED: EvidenceClass = "SPEC";
+
+export const EVIDENCE_CLASS_ANSWER =
+  `${JUAN_CLARIFICATIONS.evidenceClass} -> weight_class SPEC on every row of this wave. The readings are ` +
+  "printed net weights on the tubs, not weighings. RETRACTS the first dry run's inference that oregano's " +
+  "agreement with Angel's measurement implied a scale: it conflated the TUB's label with PFG's CATALOG " +
+  "pack string, which are different documents. The observation stands and is stronger than the inference " +
+  "was — the tub's label and the vendor's invoice agree on 6 lb independently, and the catalog is the odd " +
+  "one out. A label corroborated by a measurement is still a label, and it is the best SPEC we hold.";
+
+export const EVIDENCE_CLASS_DEFAULT: EvidenceClass = EVIDENCE_CLASS_RULED;
 
 /** What each answer to `EVIDENCE_CLASS_QUESTION` means, for the source note. */
 export const EVIDENCE_CLASS_BASIS: Readonly<Record<EvidenceClass, string>> = {
@@ -149,12 +187,17 @@ export function measuredSpreadFraction(x: AngelCrossReference): number {
 /**
  * Which of the two documented numbers a reading matches.
  *
- * This is EVIDENCE ABOUT THE READING, not about the tub. A reading that equals
- * the pack string is consistent with a label read AND with a scale that happened
- * to confirm the label; a reading that equals the measurement while contradicting
- * the pack string can only have come from something other than that pack string.
- * The asymmetry is the whole value: `MATCHES_MEASUREMENT` is informative,
- * `MATCHES_PACK_STRING` is not.
+ * THE PACK STRING COMPARED AGAINST IS PFG'S CATALOG STRING, WHICH IS NOT THE
+ * DOCUMENT JUAN READ. He read the tub's own printed label. The first dry run
+ * conflated the two and drew an inference from the difference — that oregano's
+ * agreement with the invoice implied a scale — which his "it's the label" answer
+ * retracted.
+ *
+ * So this is EVIDENCE ABOUT WHICH OF THE VENDOR'S DOCUMENTS AGREE, not about how
+ * Juan obtained a number. `MATCHES_PACK_STRING` means the tub's label and the
+ * catalog agree. `MATCHES_MEASUREMENT` means the tub's label and the INVOICE
+ * agree while the catalog dissents — the interesting case, because it is the
+ * vendor disagreeing with itself and the scale siding with the label.
  */
 export type ReadingAgreement =
   | "MATCHES_PACK_STRING"
@@ -208,18 +251,20 @@ export function classifyReadingAgainstPackString(
 }
 
 /**
- * The one row whose agreement carries information, named so the finding cannot be
- * lost in a table. Read `CANNOT_BE_A_PACK_STRING_READ` as: whatever produced this
- * number, it was not PFG's catalog.
+ * What each answer means now that Juan has said the readings are LABELS.
+ *
+ * The column no longer tells us anything about HOW he obtained a number — he told
+ * us. It tells us which of PFG's own two documents the tub's label agrees with,
+ * and the interesting case is where they disagree with EACH OTHER.
  */
 export const READING_AGREEMENT_MEANING: Readonly<Record<ReadingAgreement, string>> = {
   MATCHES_PACK_STRING:
-    "Equals the vendor's pack string. Consistent with a label read AND with a scale that confirmed the label — so it distinguishes nothing on its own.",
+    "The tub's label and PFG's catalog string agree. Two documents, one number — and no measurement involved on either side, so it stays a documented weight awaiting a scale.",
   MATCHES_MEASUREMENT:
-    "Equals the invoice measurement and CONTRADICTS the pack string. Whatever produced this number, it was not the vendor's catalog — the strongest evidence in the wave that these readings are of the physical tubs.",
-  MATCHES_BOTH: "Pack string and measurement agree with each other and with the reading. Three sources, one number.",
+    "The tub's label agrees with the INVOICE and contradicts PFG's CATALOG string — a disagreement between two of the vendor's own documents, in which the one a scale produced sides with the label. The catalog is the outlier. Still SPEC (a label is a label), but a label corroborated by an independent measurement is the strongest SPEC this arc holds.",
+  MATCHES_BOTH: "Pack string and measurement agree with each other and with the label. Three sources, one number.",
   MATCHES_NEITHER: "Agrees with neither documented number — investigate before writing anything.",
-  NO_ANGEL_ROW: "Angel carries no row for this product, so there is nothing to agree or disagree with. The reading is the only evidence that exists.",
+  NO_ANGEL_ROW: "Angel carries no row for this product, so there is nothing to agree or disagree with. The label is the only evidence that exists.",
 };
 
 // ── The readings ──────────────────────────────────────────────────────────────
@@ -287,11 +332,14 @@ export const TUB_READINGS: readonly TubReading[] = [
     note:
       "OUR SKU HAS NO PACK OF ANY KIND — no pack_format, no units, no each_size. It has never had a " +
       "denominator, which is why it has never had a price. Juan's 6 LB names the INNER unit of Angel's " +
-      "`3/6 LB` exactly, so the case is 3 x his tub and the pack can be written at both levels with no " +
-      "divisor invented anywhere. NOTE the census (docs/seed/source/angel-reconciliation-report.md " +
-      "E.2) lists Garlic Powder as PFG-OMITTED — that is true of the Angel CATALOG export and FALSE of " +
-      "the purchase history, which carries one invoice line. The catalog and the invoice feed are " +
-      "different artifacts and the census only ever read the first.",
+      "`3/6 LB` exactly: label and catalog string agree. **THIS SKU HAS A SECOND, SMALLER TUB ON THE " +
+      "FLOOR** — his \"garlic tub is 5 LB\" line turned out to be garlic powder too (see " +
+      "GARLIC_REATTRIBUTION), and 5 lb matches neither the label written here nor the invoice. The 6 lb " +
+      "tub is the one written because two documents agree on it; the 5 lb sighting is recorded " +
+      "unresolved in STRAY_SHELF_OBSERVATIONS. NOTE the census " +
+      "(docs/seed/source/angel-reconciliation-report.md E.2) lists Garlic Powder as PFG-OMITTED — that " +
+      "is true of the Angel CATALOG export and FALSE of the purchase history, which carries one invoice " +
+      "line. The catalog and the invoice feed are different artifacts and the census only read the first.",
   },
   {
     spoken: "oregano tub is 6 LB",
@@ -316,36 +364,13 @@ export const TUB_READINGS: readonly TubReading[] = [
     note:
       "THE ROW THE SCALE GATE WAS ABOUT. Wave 3 §C wrote 80 oz at the pack string's NOMINAL 5 lb, " +
       "cost-neutral and explicitly pending a scale, because Angel's 6.001 lb never moved across three " +
-      "months and a weight that never moves might be a feed constant rather than a weighing. Juan's " +
-      "reading is 6 LB — the MEASURED value, not the pack string. Two independent sources now agree on " +
-      "6 lb and only PFG's catalog says 5, so the gate closes in favour of 96 oz and wave 4's own " +
-      "caveat is what turned out to be right: 'a zero spread is not proof of fabrication — a " +
-      "manufactured jug fill really is constant'.",
-  },
-  {
-    spoken: "garlic tub is 5 LB",
-    lbs: 5,
-    skuName: "Garlic",
-    vendor: "PFG",
-    nameMatch: "VERBATIM",
-    matchEvidence: "",
-    angel: {
-      product: "GARLIC WHL PLD DOM",
-      brand: "PEAK FRS",
-      vendor: "PFG",
-      packString: "1/5 LB",
-      packStringLbs: 5,
-      unitsPerAngelUnit: 1,
-      measured: { meanLbs: 5.996, minLbs: 5.9935, maxLbs: 6.0077, lines: 7 },
-      latestUnitPriceUsd: 19.72,
-      latestSeen: "2026-08-14",
-    },
-    expectedLivePackOz: 95.94,
-    expectedLivePackClass: "INVOICE_DERIVED",
-    note:
-      "THE CONFLICT. Wave 4 §C wrote 95.94 oz as INVOICE_DERIVED — the average of seven real deliveries, " +
-      "ratified by Juan on 2026-08-20 on the strength of its VARYING per-tub weight. His 5 LB reading " +
-      "contradicts it. Nothing is written here; see GARLIC_TARE_CONFLICT.",
+      "months and a weight that never moves might be a feed constant rather than a weighing. The tub's " +
+      "own label says 6 LB — agreeing with Angel's MEASUREMENT and contradicting PFG's CATALOG string, " +
+      "which are two different documents. So the jug really is a 6 lb jug, the catalog's `1/5 LB` is " +
+      "the stale side, and wave 4's own caveat is what turned out to be right: 'a zero spread is not " +
+      "proof of fabrication — a manufactured jug fill really is constant'. Still SPEC — a label is a " +
+      "label — but a label an invoice independently corroborates, which is the best evidence this arc " +
+      "has produced for any pack.",
   },
   {
     spoken: "crushed red pepper tub is 4 LB",
@@ -401,78 +426,58 @@ export const TUB_READINGS: readonly TubReading[] = [
   },
 ];
 
-// ── The garlic conflict ───────────────────────────────────────────────────────
+// ── The garlic reattribution: a conflict that dissolved ──────────────────────
 
 /**
- * Garlic is the only row where Juan's reading contradicts a MEASURED class, and
- * it is presented rather than written. The reasoning, in full, because the
- * recommendation is only worth as much as the argument behind it:
+ * The first dry run presented a CONFLICT on `Garlic`: Juan's "garlic tub is 5 LB"
+ * against wave 4's INVOICE_DERIVED 95.94 oz, with a tare hypothesis, a
+ * beef-base precedent and a drain-and-weigh test to settle it. **None of that was
+ * needed. He was looking at a garlic POWDER tub.**
  *
- * **What each side is.** Live is 95.94 oz, the quantity-weighted mean of seven
- * invoice lines covering 21 tubs (5.9935-6.0077 lb), written by wave 4 §C and
- * ratified by Juan on 2026-08-20. His reading is 5 LB = 80 oz, which is also
- * exactly what PFG's pack string says.
+ * So there was never a reading about peeled garlic at all. The conflict did not
+ * get RESOLVED — it was never real, and the difference matters: nothing about
+ * wave 4's evidence changed, no ruling was overturned, and `Garlic` keeps its
+ * 95.94 oz exactly as it was, still INVOICE_DERIVED, still Juan-ratified.
  *
- * **Why the ratification's evidence does not settle it.** `GARLIC_RATIFICATION`
- * turns on ONE observation: garlic's per-tub weight VARIES (0.24% spread) while
- * oregano's never moves, so garlic's is a real weighing. That inference is sound
- * and it is also insufficient — it establishes that something was weighed, not
- * WHAT was weighed. A tub of peeled garlic packed in water weighs its garlic plus
- * its water plus its tub, and all three vary a little from tub to tub. The spread
- * discriminates a measurement from a constant; it cannot discriminate NET product
- * from GROSS shipping weight, and that is the question here.
+ * **What survives.** Two things, and they are worth more than the conflict was.
  *
- * **The arithmetic of the gap.** 5.996 - 5.000 = 0.996 lb, just under 16 oz of
- * water and plastic on a 5 lb net fill. That is an entirely ordinary tare for a
- * brine-packed produce tub, and it is suspiciously round.
+ * First, `BILLED_VS_NET_NOTE_CLASS` — minted to describe this conflict, and it
+ * outlives it. It is a real phenomenon with a real precedent already in the repo
+ * (beef base's glass jars), and the next brine- or ice-packed row will need it.
  *
- * **THE PRECEDENT IS ALREADY IN THIS REPO, AND IT POINTS THE OTHER WAY.** Wave 4
- * §A2 refused Angel's beef-base $/lb for exactly this reason, in Juan's own
- * ruling: "Angel's $9.34/lb is the case price over a GROSS weight that includes
- * the glass jar (6.703 lb against a 6.0 lb nominal = 1.117x, the tare pattern
- * harvest 2 §5 names for bottles)". Beef base at 1.117x gross was refused as a
- * costing denominator; garlic at 1.199x gross was accepted as one, in the same
- * wave, on the strength of a spread column that beef base was never asked about.
- * The two calls are not obviously reconcilable, and noticing that is this row's
- * main contribution.
+ * Second, an OPEN QUESTION that never depended on Juan's reading in the first
+ * place: wave 4 §A2 refused a gross invoice weight as a costing denominator at
+ * 1.117x nominal because the excess was glass, and wave 4 §C accepted one at
+ * 1.199x because its weight varied. Both calls are in the same wave. The spread
+ * column distinguishes a measurement from a stored constant, but not NET product
+ * from GROSS shipping weight — and peeled garlic ships in water. That tension is
+ * a live question about garlic's denominator whatever anybody read off a lid, and
+ * it is recorded here rather than closed, because this wave has no evidence
+ * bearing on it either way.
  *
- * **What is NOT claimed.** That wave 4 is wrong. 95.94 oz is very likely the
- * correct BILLED weight — what PFG weighed and charged for. The question is
- * whether a billed weight is the right denominator under a recipe's ounces, and
- * the beef-base ruling says it is not: costing wants USABLE product.
- *
- * **The decisive test, and it is cheap.** Weigh one full tub, then drain it and
- * weigh the garlic. Gross ~6 lb with net ~5 lb proves the tare reading and 80 oz
- * becomes the costing denominator; gross ~5 lb proves the opposite and 95.94
- * stands with a puzzle attached.
+ * **The lesson worth keeping.** The first dry run built a careful argument on top
+ * of an unverified assumption — that "garlic" meant the garlic SKU — and every
+ * step above that assumption was sound and irrelevant. It is exactly why the row
+ * was PRESENTED rather than written.
  */
-export const GARLIC_TARE_CONFLICT = {
-  skuName: "Garlic",
-  liveOz: 95.94,
-  liveClass: "INVOICE_DERIVED" as WeightClass,
-  liveBasis: "quantity-weighted mean of 7 invoice lines / 21 tubs, 5.9935-6.0077 lb (wave 4 §C, Juan-ratified 2026-08-20)",
-  readingOz: 80,
-  readingBasis: "Juan 2026-08-21: \"garlic tub is 5 LB\" — which is also, exactly, PFG's `1/5 LB` pack string",
-  unitPriceUsd: 19.72,
-  /** The billed-versus-net gap, in ounces of one tub. */
-  gapOz: 15.94,
-  hypothesis:
-    "The invoice weight is GROSS (garlic + brine + tub) and the label's 5 lb is NET product. 0.996 lb of " +
-    "water and plastic on a 5 lb fill is an ordinary tare for a brine-packed produce tub.",
-  counterHypothesis:
-    "The tubs really do hold ~6 lb of garlic and Juan read the pack string off the lid rather than " +
-    "weighing anything — in which case the reading adds no information wave 4 did not already have.",
-  precedent:
-    "Wave 4 §A2 (BEEF_BASE_RULING) refused a GROSS invoice weight as a costing denominator at 1.117x " +
-    "nominal because the excess was glass. Garlic sits at 1.199x and was accepted in the same wave. The " +
-    "two calls need one reconciliation, and it is Juan's to make.",
-  recommendation:
-    "DO NOT WRITE either way today. Ask one question — label or scale — and if scale, whether the tub was " +
-    "weighed full and undrained. If the tare reading holds, supersede the pack to 80 oz and the costing " +
-    "denominator becomes usable product; the $19.72 price is correct under BOTH readings and does not move.",
-  decisiveTest:
-    "Weigh one full tub, drain it, weigh the garlic. Gross ~6 lb with net ~5 lb settles it in 90 seconds — " +
-    "the same 90 seconds wave 3 asked for and got.",
+export const GARLIC_REATTRIBUTION = {
+  clarification: JUAN_CLARIFICATIONS.garlicReattribution,
+  reattributedFrom: "Garlic",
+  reattributedTo: "Garlic Powder",
+  /** Untouched, and this is the point. */
+  garlicLivePackOz: 95.94,
+  garlicLiveClass: "INVOICE_DERIVED" as WeightClass,
+  dissolvedNotResolved:
+    "The conflict was never real — no reading bears on peeled garlic. Wave 4's 95.94 oz stands untouched, " +
+    "its ratification unchanged, and nothing was overturned. A conflict that dissolves is not a conflict " +
+    "that was decided.",
+  openQuestionSurviving:
+    "Independent of any tub reading: wave 4 §A2 refused a GROSS invoice weight as a costing denominator at " +
+    "1.117x nominal (beef base, the excess being glass) while wave 4 §C accepted one at 1.199x (garlic, on " +
+    "the strength of a varying weight). The spread column distinguishes a measurement from a stored " +
+    "constant but not NET product from GROSS shipping weight, and peeled garlic ships in water. Open, " +
+    "unaffected by this wave, and evidence-free in both directions today.",
+  noteClassSurvives: "BILLED_VS_NET_NOTE_CLASS, minted for this conflict, is kept for the next brine- or ice-packed row.",
 } as const;
 
 /**
@@ -491,6 +496,57 @@ export const BILLED_VS_NET_NOTE_CLASS =
   "denominator should be USABLE product ounces. Precedents: beef base's glass jars (wave 4 §A2, refused " +
   "the gross denominator), garlic's brine (wave 5, open). Distinguishable from a feed artifact by the " +
   "fact that tare is physical and scales with the container, not with a constant multiplier.";
+
+// ── Stray shelf observations ─────────────────────────────────────────────────
+
+/**
+ * A thing Juan saw that this wave will not write, and will not throw away either.
+ *
+ * The reattribution left garlic powder with TWO sighted tubs: 6 LB and 5 LB. Only
+ * one can be the pack, and 6 is the one with two documents behind it — the tub's
+ * own label and Angel's `3/6 LB` catalog string agree on it, while 5 matches
+ * neither that string nor the invoice's 6.624 lb/tub.
+ *
+ * The 5 lb sighting is most likely a SECOND TUB SIZE OR BRAND on the shelf, which
+ * is an ordinary thing in a kitchen that buys from more than one place, and a
+ * genuinely useful thing to know if true — it would make garlic powder the first
+ * multi-pack-size SKU in the pantry.
+ *
+ * **It is recorded, not written, and not guessed at.** Inventing a second pack
+ * level from one ambiguous sighting would put a number under every garlic-powder
+ * recipe on the strength of a glance. Discarding it would lose the only evidence
+ * anyone has that a second tub exists. A named unresolved observation is the
+ * honest third option, and the unblock is one shelf glance.
+ */
+export interface StrayShelfObservation {
+  spoken: string;
+  lbs: number;
+  skuName: string;
+  /** Why this observation is not being written. */
+  whyNotWritten: string;
+  /** The one thing that would resolve it. */
+  unblock: string;
+}
+
+export const STRAY_SHELF_OBSERVATIONS: readonly StrayShelfObservation[] = [
+  {
+    spoken: "garlic tub is 5 LB",
+    lbs: 5,
+    skuName: "Garlic Powder",
+    whyNotWritten:
+      "Reattributed to Garlic Powder by Juan on 2026-08-21, which leaves that SKU with two sighted tubs " +
+      "(6 LB and 5 LB). 6 lb is written because the tub's label and Angel's `3/6 LB` catalog string agree " +
+      "on it; 5 lb matches neither that string nor the invoice's 6.624 lb per tub, so it is evidence of " +
+      "SOMETHING — most likely a second tub size or brand on the shelf — and not evidence of what this " +
+      "SKU's pack is. Writing a second pack level off one ambiguous sighting would put an invented number " +
+      "under every garlic-powder recipe.",
+    unblock:
+      "One shelf glance: are there two different garlic powder tubs out there, and if so what does the " +
+      "smaller one's label say — brand, net weight, and is it the same product? If confirmed, garlic " +
+      "powder becomes the pantry's first multi-pack-size SKU and needs its own decision about which pack " +
+      "the par and the price are denominated in.",
+  },
+];
 
 /** Billed ounces minus usable ounces, or null when either side is unknown. */
 export function billedVsNetGapOz(billedOz: number | null, netOz: number | null): number | null {
@@ -645,6 +701,7 @@ export type Wave5Code =
   | "MEASURED_CONFLICT"
   | "ALREADY_CORRECT"
   | "NOT_IN_READING"
+  | "UNRESOLVED_SIGHTING"
   | "PRICE_NEEDS_APPROVAL";
 
 export const WAVE5_REASONS: Readonly<Record<Wave5Code, string>> = {
@@ -660,6 +717,8 @@ export const WAVE5_REASONS: Readonly<Record<Wave5Code, string>> = {
     "The reading contradicts a pack a scale produced. Presented in full with both numbers and a recommendation; never silently overwritten.",
   ALREADY_CORRECT: "The live value already equals the reading. Corroboration, and nothing to write.",
   NOT_IN_READING: "Juan did not name this tub, so this wave has nothing to say about it. Absence from his list is 'not observed', never 'does not exist'.",
+  UNRESOLVED_SIGHTING:
+    "Something was seen that this wave will neither write nor discard. It is evidence of SOMETHING — most often a second pack size on the shelf — without being evidence of what a SKU's pack is. Recorded by name with the one glance that would settle it, because inventing a pack from an ambiguous sighting and throwing the sighting away are both worse.",
   PRICE_NEEDS_APPROVAL:
     "A price is newly derivable now that a pack exists, but pricing is not what a tub reading is evidence about. The arithmetic is done and put in a decision table for one approval.",
 };

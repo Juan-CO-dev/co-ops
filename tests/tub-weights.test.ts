@@ -32,7 +32,10 @@
 import { describe, it, expect } from "vitest";
 import {
   JUAN_TUB_READING,
+  JUAN_CLARIFICATIONS,
   EVIDENCE_CLASS_QUESTION,
+  EVIDENCE_CLASS_ANSWER,
+  EVIDENCE_CLASS_RULED,
   EVIDENCE_CLASS_DEFAULT,
   EVIDENCE_CLASS_BASIS,
   resolveEvidenceClass,
@@ -40,7 +43,8 @@ import {
   READING_AGREEMENT_MEANING,
   measuredSpreadFraction,
   TUB_READINGS,
-  GARLIC_TARE_CONFLICT,
+  STRAY_SHELF_OBSERVATIONS,
+  GARLIC_REATTRIBUTION,
   BILLED_VS_NET_NOTE_CLASS,
   billedVsNetGapOz,
   ONION_POWDER_STILL_GATED,
@@ -77,14 +81,24 @@ describe("Juan's reading, verbatim", () => {
     expect(JUAN_TUB_READING).toContain("Juan 2026-08-21");
   });
 
-  it("carries exactly five readings, each matching the quote's pounds", () => {
-    expect(TUB_READINGS).toHaveLength(5);
+  it("carries FOUR readings — five tubs were spoken, and one was reattributed", () => {
+    // Juan named five tubs. "garlic tub is 5 LB" turned out to be a garlic POWDER
+    // tub, so it is not a reading about a fifth SKU; it is a second sighting of
+    // one that already has a reading, and it lives in STRAY_SHELF_OBSERVATIONS.
+    expect(TUB_READINGS).toHaveLength(4);
+    expect(TUB_READINGS.length + STRAY_SHELF_OBSERVATIONS.length).toBe(5);
     for (const t of TUB_READINGS) {
       expect(JUAN_TUB_READING).toContain(t.spoken);
       expect(t.lbs).toBeGreaterThan(0);
       expect(t.vendor).toBe("PFG");
     }
-    expect(TUB_READINGS.map((t) => t.lbs)).toEqual([6, 6, 5, 4, 5.75]);
+    expect(TUB_READINGS.map((t) => t.lbs)).toEqual([6, 6, 4, 5.75]);
+  });
+
+  it("no reading bears on the peeled-garlic SKU any more", () => {
+    // The whole point of the reattribution: `Garlic` is untouched by this wave.
+    expect(TUB_READINGS.some((t) => t.skuName === "Garlic")).toBe(false);
+    expect(TUB_READINGS.some((t) => t.skuName === "Garlic Powder")).toBe(true);
   });
 
   it("names the SKU for every reading, and justifies every non-verbatim match", () => {
@@ -105,11 +119,23 @@ describe("Juan's reading, verbatim", () => {
 });
 
 describe("resolveEvidenceClass — one constant, and it never falls back", () => {
-  it("defaults to the conservative class when unspecified", () => {
+  it("defaults to the class Juan RULED, and he ruled label", () => {
     expect(resolveEvidenceClass(null)).toBe("SPEC");
     expect(resolveEvidenceClass(undefined)).toBe("SPEC");
     expect(resolveEvidenceClass("")).toBe("SPEC");
     expect(EVIDENCE_CLASS_DEFAULT).toBe("SPEC");
+    // The default is the ruling, not a coincidence that happens to agree with it.
+    expect(EVIDENCE_CLASS_DEFAULT).toBe(EVIDENCE_CLASS_RULED);
+    expect(JUAN_CLARIFICATIONS.evidenceClass).toContain("It's the label");
+  });
+
+  it("records the answer, and records the inference the answer RETRACTED", () => {
+    expect(EVIDENCE_CLASS_ANSWER).toContain(JUAN_CLARIFICATIONS.evidenceClass);
+    expect(EVIDENCE_CLASS_ANSWER).toContain("SPEC");
+    // The retraction is the load-bearing half: the first dry run read oregano's
+    // agreement with the invoice as evidence of a scale. It was not.
+    expect(EVIDENCE_CLASS_ANSWER).toMatch(/RETRACTS/);
+    expect(EVIDENCE_CLASS_ANSWER).toMatch(/CATALOG/);
   });
 
   it("accepts both answers, in any casing, with surrounding space", () => {
@@ -145,22 +171,20 @@ describe("resolveEvidenceClass — one constant, and it never falls back", () =>
   });
 });
 
-describe("classifyReadingAgainstPackString — evidence about the READING", () => {
+describe("classifyReadingAgainstPackString — which of the vendor's documents agree", () => {
   const oregano = bySku("Oregano").angel!;
-  const garlic = bySku("Garlic").angel!;
   const pepper = bySku("Black peppercorn").angel!;
   const powder = bySku("Garlic Powder").angel!;
 
-  it("OREGANO is the informative row: it matches the measurement and NOT the pack string", () => {
-    // 6 lb against a `1/5 LB` pack string and a 6.001 lb invoice mean. This is the
-    // one reading a pack-string reader could not have produced, and it is the
-    // whole reason the scale gate closes.
+  it("OREGANO is the informative row: the tub's label sides with the INVOICE against the catalog", () => {
+    // 6 lb against a `1/5 LB` CATALOG string and a 6.001 lb invoice mean. Two of
+    // PFG's own documents disagree and the scale sides with the tub — which is
+    // why the gate closes at 96 oz, and why the row is still SPEC.
     expect(classifyReadingAgainstPackString(6, oregano)).toBe("MATCHES_MEASUREMENT");
+    expect(READING_AGREEMENT_MEANING.MATCHES_MEASUREMENT).toMatch(/Still SPEC/);
   });
 
-  it("the other three all match their pack strings, and only their pack strings", () => {
-    // Garlic: 5 against a `1/5 LB` string and a 5.996 lb mean (16.6% away).
-    expect(classifyReadingAgainstPackString(5, garlic)).toBe("MATCHES_PACK_STRING");
+  it("the other two match their pack strings, and only their pack strings", () => {
     // 5.75 is NOT a scale tell — McCormick's pack string is literally `1/5.75LB`,
     // and the invoice's 6.119 is 6.0% away, well outside the informative band.
     expect(classifyReadingAgainstPackString(5.75, pepper)).toBe("MATCHES_PACK_STRING");
@@ -168,6 +192,13 @@ describe("classifyReadingAgainstPackString — evidence about the READING", () =
     // Garlic powder: 6 is the `3/6 LB` inner unit exactly; the invoice's
     // 19.872/3 = 6.624 lb per tub is 9.4% away.
     expect(classifyReadingAgainstPackString(6, powder)).toBe("MATCHES_PACK_STRING");
+  });
+
+  it("the stray 5 lb garlic powder sighting matches NEITHER document", () => {
+    // Which is exactly why it is an unresolved observation rather than a pack:
+    // it is evidence of something (a second tub size), not evidence of what this
+    // SKU's pack is.
+    expect(classifyReadingAgainstPackString(5, powder)).toBe("MATCHES_NEITHER");
   });
 
   it("compares the measurement PER INNER UNIT, never per case", () => {
@@ -187,7 +218,7 @@ describe("classifyReadingAgainstPackString — evidence about the READING", () =
   it("holds the asymmetric tolerances: absolute on the string, relative and TIGHT on the measurement", () => {
     // A pack string is printed: equal or not.
     expect(PACK_STRING_TOLERANCE_LBS).toBeLessThan(0.05);
-    expect(classifyReadingAgainstPackString(5.02, garlic)).not.toBe("MATCHES_PACK_STRING");
+    expect(classifyReadingAgainstPackString(5.77, pepper)).not.toBe("MATCHES_PACK_STRING");
     // The informative label is not handed out cheaply. 2% of 6.001 is 0.12 lb.
     expect(MEASUREMENT_TOLERANCE_FRACTION).toBeLessThanOrEqual(0.02);
     expect(classifyReadingAgainstPackString(6.1, oregano)).toBe("MATCHES_MEASUREMENT");
@@ -203,11 +234,11 @@ describe("classifyReadingAgainstPackString — evidence about the READING", () =
 });
 
 describe("measuredSpreadFraction — did the vendor's number ever move?", () => {
-  it("garlic moves and oregano does not — wave 4's own discriminator", () => {
-    const garlic = measuredSpreadFraction(bySku("Garlic").angel!);
-    const oregano = measuredSpreadFraction(bySku("Oregano").angel!);
-    expect(garlic).toBeGreaterThan(0.002);
-    expect(oregano).toBe(0);
+  it("oregano's invoice weight never moved, and the tub's label explains why", () => {
+    // Wave 3 held this row on the suspicion that a frozen weight is a stored
+    // number. The label says the jug really is 6 lb, so the constant is a
+    // manufactured fill — wave 4's own caveat, now the answer.
+    expect(measuredSpreadFraction(bySku("Oregano").angel!)).toBe(0);
   });
 
   it("black pepper is NEAR-constant, which is why its pack string wins", () => {
@@ -265,7 +296,7 @@ describe("disposeTub — the ladder, and its order", () => {
     for (const d of all) expect(DISPOSITION_MEANING[d].length).toBeGreaterThan(30);
   });
 
-  it("dispatches today's five rows exactly as the wave describes them", () => {
+  it("dispatches today's four readings exactly as the wave describes them", () => {
     const outcomes = TUB_READINGS.map((t) =>
       disposeTub({
         skuFound: true,
@@ -275,12 +306,21 @@ describe("disposeTub — the ladder, and its order", () => {
       }),
     );
     expect(outcomes).toEqual([
-      "WRITE_NEW_PACK",        // Garlic Powder — no pack at all
-      "WRITE_RESOLUTION",      // Oregano — 80 -> 96, the scale gate closing
-      "CONFLICT_PRESENT_ONLY", // Garlic — 80 against an INVOICE_DERIVED 95.94
-      "CONFIRMS_LIVE",         // Chili Flake — 64 = 64
-      "WRITE_NEW_PACK",        // Black peppercorn — no pack at all
+      "WRITE_NEW_PACK",   // Garlic Powder — no pack at all
+      "WRITE_RESOLUTION", // Oregano — 80 -> 96, the scale gate closing
+      "CONFIRMS_LIVE",    // Chili Flake — 64 = 64
+      "WRITE_NEW_PACK",   // Black peppercorn — no pack at all
     ]);
+    // THREE pack chains, and no conflict row: the reattribution dissolved it.
+    expect(outcomes.filter((o) => o.startsWith("WRITE_"))).toHaveLength(3);
+    expect(outcomes).not.toContain("CONFLICT_PRESENT_ONLY");
+  });
+
+  it("keeps the CONFLICT branch even though nothing exercises it this run", () => {
+    // The policy is right and unexercised is not unneeded — the next wave that
+    // reads a tub against an INVOICE_DERIVED pack will land here.
+    expect(disposeTub({ skuFound: true, readingOz: 80, livePackOz: 95.94, livePackClass: "INVOICE_DERIVED" }))
+      .toBe("CONFLICT_PRESENT_ONLY");
   });
 });
 
@@ -328,41 +368,68 @@ describe("packRecostEffect — a content change is NOT a price change", () => {
   });
 });
 
-describe("the garlic conflict — presented, never written", () => {
-  it("carries both numbers, both hypotheses and the test that settles it", () => {
-    expect(GARLIC_TARE_CONFLICT.liveOz).toBe(95.94);
-    expect(GARLIC_TARE_CONFLICT.readingOz).toBe(80);
-    expect(isMeasuredWeightClass(GARLIC_TARE_CONFLICT.liveClass)).toBe(true);
-    expect(GARLIC_TARE_CONFLICT.hypothesis).toMatch(/GROSS|brine/i);
-    expect(GARLIC_TARE_CONFLICT.counterHypothesis.length).toBeGreaterThan(60);
-    expect(GARLIC_TARE_CONFLICT.recommendation).toContain("DO NOT WRITE");
-    expect(GARLIC_TARE_CONFLICT.decisiveTest).toMatch(/drain/i);
+describe("the garlic reattribution — a conflict that dissolved", () => {
+  it("quotes Juan's clarification and names both ends of the move", () => {
+    expect(GARLIC_REATTRIBUTION.clarification).toContain("garlic powder tub");
+    expect(GARLIC_REATTRIBUTION.clarification).toBe(JUAN_CLARIFICATIONS.garlicReattribution);
+    expect(GARLIC_REATTRIBUTION.reattributedFrom).toBe("Garlic");
+    expect(GARLIC_REATTRIBUTION.reattributedTo).toBe("Garlic Powder");
   });
 
-  it("names the beef-base precedent that points the other way", () => {
-    expect(GARLIC_TARE_CONFLICT.precedent).toContain("BEEF_BASE_RULING");
-    expect(GARLIC_TARE_CONFLICT.precedent).toContain("1.117");
-    expect(GARLIC_TARE_CONFLICT.precedent).toContain("1.199");
+  it("leaves the peeled-garlic pack EXACTLY as wave 4 wrote it", () => {
+    expect(GARLIC_REATTRIBUTION.garlicLivePackOz).toBe(95.94);
+    expect(isMeasuredWeightClass(GARLIC_REATTRIBUTION.garlicLiveClass)).toBe(true);
+    // Dissolved, not decided — nothing was overturned and no ruling moved.
+    expect(GARLIC_REATTRIBUTION.dissolvedNotResolved).toMatch(/never real/i);
+    expect(GARLIC_REATTRIBUTION.dissolvedNotResolved).toMatch(/stands untouched/i);
   });
 
-  it("the gap is the tare, and the arithmetic is checkable", () => {
-    // 95.94 billed - 80 usable = 15.94 oz of water and plastic.
-    expect(billedVsNetGapOz(95.94, 80)).toBe(15.94);
-    expect(GARLIC_TARE_CONFLICT.gapOz).toBe(15.94);
-    expect(billedVsNetGapOz(null, 80)).toBeNull();
-    expect(billedVsNetGapOz(95.94, null)).toBeNull();
+  it("keeps the beef-base tension as an OPEN question that never needed the reading", () => {
+    // This one survives the reattribution because it was never about Juan's tub:
+    // wave 4 refused a gross denominator at 1.117x and accepted one at 1.199x.
+    expect(GARLIC_REATTRIBUTION.openQuestionSurviving).toContain("1.117");
+    expect(GARLIC_REATTRIBUTION.openQuestionSurviving).toContain("1.199");
+    expect(GARLIC_REATTRIBUTION.openQuestionSurviving).toMatch(/GROSS/);
   });
 
-  it("the price is correct under BOTH readings, so nothing about it moves", () => {
-    expect(GARLIC_TARE_CONFLICT.unitPriceUsd).toBe(19.72);
-    expect(GARLIC_TARE_CONFLICT.recommendation).toContain("does not move");
-  });
-
-  it("names the BILLED_VS_NET class and both of its precedents", () => {
+  it("keeps BILLED_VS_NET for the next brine- or ice-packed row", () => {
+    expect(GARLIC_REATTRIBUTION.noteClassSurvives).toContain("BILLED_VS_NET");
     expect(BILLED_VS_NET_NOTE_CLASS).toContain("BILLED_VS_NET");
     expect(BILLED_VS_NET_NOTE_CLASS).toMatch(/glass/i);
     expect(BILLED_VS_NET_NOTE_CLASS).toMatch(/brine/i);
     expect(BILLED_VS_NET_NOTE_CLASS).toMatch(/USABLE/);
+  });
+
+  it("billedVsNetGapOz still computes, and still refuses on a missing side", () => {
+    expect(billedVsNetGapOz(95.94, 80)).toBe(15.94);
+    expect(billedVsNetGapOz(null, 80)).toBeNull();
+    expect(billedVsNetGapOz(95.94, null)).toBeNull();
+  });
+});
+
+describe("stray shelf observations — recorded, not written, not guessed at", () => {
+  it("holds the reattributed 5 lb sighting against Garlic Powder", () => {
+    expect(STRAY_SHELF_OBSERVATIONS).toHaveLength(1);
+    const stray = STRAY_SHELF_OBSERVATIONS[0]!;
+    expect(stray.spoken).toBe("garlic tub is 5 LB");
+    expect(JUAN_TUB_READING).toContain(stray.spoken);
+    expect(stray.lbs).toBe(5);
+    expect(stray.skuName).toBe("Garlic Powder");
+  });
+
+  it("says why it is not written, and what one glance would settle", () => {
+    const stray = STRAY_SHELF_OBSERVATIONS[0]!;
+    expect(stray.whyNotWritten).toMatch(/two sighted tubs/i);
+    expect(stray.unblock).toMatch(/shelf glance|label say/i);
+  });
+
+  it("does NOT become a second pack for a SKU that already has a reading", () => {
+    // Garlic Powder is written at 6 lb, on two agreeing documents. The 5 lb
+    // sighting must not silently become a competing pack for the same SKU.
+    const written = TUB_READINGS.filter((t) => t.skuName === "Garlic Powder");
+    expect(written).toHaveLength(1);
+    expect(written[0]!.lbs).toBe(6);
+    expect(tubPackOz(written[0]!.lbs)).toBe(96);
   });
 });
 
@@ -384,7 +451,8 @@ describe("WAVE5_REASONS — a closed refusal vocabulary", () => {
   it("explains every code, in a sentence a reader can act on", () => {
     const all: Wave5Code[] = [
       "SKU_UNRESOLVED", "VENDOR_DRIFT", "PACK_SHAPE_CHANGED", "PACK_CLASS_DRIFT",
-      "MEASURED_CONFLICT", "ALREADY_CORRECT", "NOT_IN_READING", "PRICE_NEEDS_APPROVAL",
+      "MEASURED_CONFLICT", "ALREADY_CORRECT", "NOT_IN_READING", "UNRESOLVED_SIGHTING",
+      "PRICE_NEEDS_APPROVAL",
     ];
     expect(Object.keys(WAVE5_REASONS).sort()).toEqual([...all].sort());
     for (const c of all) expect(WAVE5_REASONS[c].length).toBeGreaterThan(40);
