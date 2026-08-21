@@ -30,6 +30,10 @@ const ERROR_KEY_BY_CODE: Record<string, TranslationKey> = {
   not_countable: "admin.templates.needs_link.error_not_countable",
   already_linked: "admin.templates.needs_link.error_already_linked",
   invalid_target: "admin.templates.needs_link.error_invalid_target",
+  // 0181's two named refusals — both are states an operator can actually be in,
+  // and a generic "try again" would send them round the same loop forever.
+  equipment_link_unavailable: "admin.templates.needs_link.error_equipment_link_unavailable",
+  equipment_location_mismatch: "admin.templates.needs_link.error_equipment_location_mismatch",
 };
 
 export function NeedsLinkQueue({
@@ -114,15 +118,21 @@ function NeedsLinkCard({
 }) {
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
-  const [kindFilter, setKindFilter] = useState<"all" | "item" | "sku">("all");
+  const [kindFilter, setKindFilter] = useState<"all" | "item" | "sku" | "equipment">("all");
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return targets
       .filter((tg) => (kindFilter === "all" ? true : tg.kind === kindFilter))
+      // LOCATION SCOPE (0181): items and SKUs are global and carry locationId null,
+      // so this only ever narrows EQUIPMENT — which is location_id NOT NULL. Without
+      // it the hub, which spans every shop the actor can reach, would offer a Cap
+      // Hill fridge as the target for a P Street temp line. The server re-checks it;
+      // this is what keeps the affordance itself honest.
+      .filter((tg) => tg.locationId === null || tg.locationId === row.locationId)
       .filter((tg) => (q ? tg.name.toLowerCase().includes(q) : true))
       .slice(0, 20);
-  }, [targets, query, kindFilter]);
+  }, [targets, query, kindFilter, row.locationId]);
 
   const kindChip = (active: boolean) =>
     `inline-flex min-h-[44px] items-center rounded-full border-2 px-3 text-xs font-bold transition ${
@@ -153,6 +163,9 @@ function NeedsLinkCard({
             </button>
             <button type="button" className={kindChip(kindFilter === "sku")} aria-pressed={kindFilter === "sku"} onClick={() => setKindFilter("sku")}>
               {t("admin.templates.needs_link.filter_skus")}
+            </button>
+            <button type="button" className={kindChip(kindFilter === "equipment")} aria-pressed={kindFilter === "equipment"} onClick={() => setKindFilter("equipment")}>
+              {t("admin.templates.needs_link.filter_equipment")}
             </button>
           </div>
           <input

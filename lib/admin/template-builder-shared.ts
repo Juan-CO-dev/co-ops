@@ -83,7 +83,9 @@ export interface ItemTranslationFill {
 /** The spine-link fill (spec §1, §4): set item_id OR vendor_item_id where null. */
 export type SpineLinkTarget =
   | { kind: "item"; id: string }
-  | { kind: "sku"; id: string };
+  | { kind: "sku"; id: string }
+  /** The third target (0181): the maintenance_equipment asset a line measures. */
+  | { kind: "equipment"; id: string };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PR-4 (spec §5) — CROSS-LIST REFERENCES. The report_reference_type enum
@@ -218,10 +220,17 @@ export function esFillCount(
  * mirror-aware for the Doctor's per-template surface.)
  */
 export function itemNeedsLink(
-  item: Pick<ChecklistTemplateItem, "expectsCount" | "itemId" | "vendorItemId" | "prepMeta">,
+  item: Pick<ChecklistTemplateItem, "expectsCount" | "itemId" | "vendorItemId" | "equipmentId" | "prepMeta">,
 ): boolean {
   if (isMirrorItem(item.prepMeta)) return false;
-  return item.expectsCount && item.itemId === null && item.vendorItemId === null;
+  return (
+    item.expectsCount &&
+    item.itemId === null &&
+    item.vendorItemId === null &&
+    // The third arm (0181) — parity with needs-link-shared's `needsLink`. A
+    // temperature line linked to its fridge is LINKED.
+    item.equipmentId === null
+  );
 }
 
 /**
@@ -374,6 +383,9 @@ export interface ReconcileSource {
   inputType: "yes_no" | "free_text" | null;
   /** the source's registry item link (count-bearing rows). */
   itemId: string | null;
+  /** the source's EQUIPMENT link (0181; count-bearing rows). Optional so callers
+   *  built before the column existed still type-check. */
+  equipmentId?: string | null;
   /** the source's SKU link (count-bearing rows). */
   vendorItemId: string | null;
   /** whether this row is an Opening Phase-2 mirror — a mirror is NEVER a reconcile
@@ -409,7 +421,12 @@ export function buildReconcileAddEdit(
   ctx: { tempId: string; displayOrder: number },
 ): ReconcileAddResult {
   if (source.isMirror) return { ok: false, reason: "mirror" };
-  if (source.expectsCount && source.itemId === null && source.vendorItemId === null) {
+  if (
+    source.expectsCount &&
+    source.itemId === null &&
+    source.vendorItemId === null &&
+    (source.equipmentId ?? null) === null
+  ) {
     return { ok: false, reason: "unlinked_count" };
   }
   const spineLink: SpineLinkTarget | null = !source.expectsCount
@@ -418,7 +435,12 @@ export function buildReconcileAddEdit(
       ? { kind: "item", id: source.itemId }
       : source.vendorItemId !== null
         ? { kind: "sku", id: source.vendorItemId }
-        : null;
+        : // "Make B match A" must carry an EQUIPMENT link too, or reconciling a
+          // temp line would silently drop its referent and recreate the very
+          // false positive 0181 exists to clear.
+          (source.equipmentId ?? null) !== null
+          ? { kind: "equipment", id: source.equipmentId! }
+          : null;
 
   const edit: Extract<TemplateItemEdit, { op: "add" }> = {
     op: "add",
@@ -938,6 +960,7 @@ export function applyEditsToItems(
         reportReferenceType: null,
         referencesTemplateItemId: null,
         itemId: e.expectsCount && e.spineLink?.kind === "item" ? e.spineLink.id : null,
+        equipmentId: e.expectsCount && e.spineLink?.kind === "equipment" ? e.spineLink.id : null,
         // A quick-add row is a plain new line — ref-track defaults off (set later via a
         // set_report_ref / ref_track op on the persisted row). PR-5: a RECONCILE add
         // carries the source's hard gate so the drafted preview mirrors A faithfully.

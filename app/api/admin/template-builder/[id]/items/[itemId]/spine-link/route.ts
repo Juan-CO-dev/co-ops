@@ -23,7 +23,14 @@ export async function POST(
   if (!su.ok) return jsonError(403, su.code);
 
   const b = parsed as Record<string, unknown>;
-  const kind = b.targetKind === "item" ? "item" : b.targetKind === "sku" ? "sku" : null;
+  const kind =
+    b.targetKind === "item"
+      ? "item"
+      : b.targetKind === "sku"
+        ? "sku"
+        : b.targetKind === "equipment"
+          ? "equipment"
+          : null;
   if (!kind) return jsonError(400, "invalid_payload", { field: "targetKind" });
   if (typeof b.targetId !== "string" || !b.targetId) return jsonError(400, "invalid_payload", { field: "targetId" });
 

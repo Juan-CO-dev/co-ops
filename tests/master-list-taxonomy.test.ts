@@ -72,7 +72,7 @@ describe("taxonomy value sets + guards", () => {
 });
 
 describe("needsLink — the queue classifier", () => {
-  const base: NeedsLinkInput = { expectsCount: true, itemId: null, vendorItemId: null };
+  const base: NeedsLinkInput = { expectsCount: true, itemId: null, vendorItemId: null, equipmentId: null };
 
   it("an unlinked count line (both refs null) needs link", () => {
     expect(needsLink(base)).toBe(true);
@@ -87,6 +87,16 @@ describe("needsLink — the queue classifier", () => {
     expect(needsLink({ ...base, vendorItemId: "sku-1" })).toBe(false);
   });
   it("a count line with BOTH refs (defensive) is still out", () => {
-    expect(needsLink({ expectsCount: true, itemId: "item-1", vendorItemId: "sku-1" })).toBe(false);
+    expect(needsLink({ expectsCount: true, itemId: "item-1", vendorItemId: "sku-1", equipmentId: null })).toBe(false);
+  });
+
+  // The 32-row false positive in one assertion: a fridge TEMPERATURE line was never
+  // unlinked — the queue simply had no word for what it pointed at (0181).
+  it("a count line linked to EQUIPMENT is out of the queue", () => {
+    expect(needsLink({ ...base, equipmentId: "fridge-1" })).toBe(false);
+  });
+
+  it("ALL THREE refs null is the only needs-link shape", () => {
+    expect(needsLink({ expectsCount: true, itemId: null, vendorItemId: null, equipmentId: null })).toBe(true);
   });
 });

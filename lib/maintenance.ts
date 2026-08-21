@@ -38,6 +38,26 @@ export interface TempReading {
   at: string;
   note: string | null;
 }
+/**
+ * One checklist line that FEEDS this asset — the template-line provenance the
+ * equipment link (0181) finally makes expressible. Before `equipment_id` existed,
+ * a fridge page could show its readings but not say WHERE each reading comes from;
+ * these are the lines whose completions become this asset's temp history.
+ */
+export interface EquipmentSourceLine {
+  templateItemId: string;
+  label: string;
+  templateName: string | null;
+  /**
+   * AM / PM, derived from maintenance_equipment.opening_temp_item_id, NOT from
+   * equipment_id. `equipment_id` says WHICH ASSET a line measures; it cannot say
+   * WHICH READING of the day it is, and the two pointers answer different
+   * questions. null = a line linked to this asset that is neither temp pointer.
+   */
+  phase: "AM" | "PM" | null;
+  active: boolean;
+}
+
 export interface MaintenanceNote {
   id: string;
   equipmentId: string | null;
@@ -207,6 +227,75 @@ export interface EquipmentDetail {
     outOfRangeCount: number;
   } | null;
   notes: MaintenanceNote[]; // maintenance notes + checklist notes merged, newest first
+  /** The checklist lines that feed this asset (0181's equipment_id). */
+  lines: EquipmentSourceLine[];
+  /**
+   * TRUE until migration 0181 is applied (GATE M3): `equipment_id` does not exist
+   * yet, so the provenance question cannot be asked. The page says so honestly
+   * rather than rendering an empty list that reads as "no lines feed this fridge"
+   * — the same probe-and-degrade posture lib/products.ts takes for 0179.
+   */
+  linkSchemaPending: boolean;
+}
+
+/**
+ * Is this PostgREST error "the 0181 column does not exist yet"? The M3 gate means a
+ * preview deploy can precede the migration by design, and a 500 on a fridge page
+ * would be a lie about what is wrong. PostgREST reports an unknown column as
+ * PGRST204 / PGRST205 and Postgres as 42703.
+ */
+function isEquipmentLinkPending(err: { code?: string | null; message?: string | null } | null): boolean {
+  if (!err) return false;
+  const code = err.code ?? "";
+  if (code === "PGRST204" || code === "PGRST205" || code === "42703") return true;
+  const msg = (err.message ?? "").toLowerCase();
+  return msg.includes("equipment_id") && (msg.includes("does not exist") || msg.includes("could not find"));
+}
+
+/**
+ * The checklist lines feeding one asset. ONE query for the lines plus ONE for their
+ * template names — never per-line. Degrades to an empty list + a pending flag until
+ * 0181 lands rather than throwing.
+ */
+async function loadEquipmentSourceLines(
+  service: SupabaseClient,
+  equip: Equipment,
+): Promise<{ lines: EquipmentSourceLine[]; pending: boolean }> {
+  const { data, error } = await service
+    .from("checklist_template_items")
+    .select("id, label, template_id, active")
+    .eq("equipment_id", equip.id)
+    .returns<Array<{ id: string; label: string | null; template_id: string; active: boolean | null }>>();
+  if (isEquipmentLinkPending(error)) return { lines: [], pending: true };
+  if (error) throw new Error(`loadEquipmentSourceLines: ${error.message}`);
+  const rows = data ?? [];
+  if (rows.length === 0) return { lines: [], pending: false };
+
+  const templateIds = [...new Set(rows.map((r) => r.template_id))];
+  const { data: tRows } = await service
+    .from("checklist_templates")
+    .select("id, name")
+    .in("id", templateIds)
+    .returns<Array<{ id: string; name: string | null }>>();
+  const templateNames = new Map((tRows ?? []).map((t) => [t.id, t.name]));
+
+  const lines: EquipmentSourceLine[] = rows.map((r) => ({
+    templateItemId: r.id,
+    label: r.label ?? "",
+    templateName: templateNames.get(r.template_id) ?? null,
+    phase:
+      r.id === equip.openingTempItemId ? "AM" : r.id === equip.closingTempItemId ? "PM" : null,
+    active: r.active !== false,
+  }));
+  // Total order: AM before PM before unphased, then label, then id.
+  const rank = (p: EquipmentSourceLine["phase"]) => (p === "AM" ? 0 : p === "PM" ? 1 : 2);
+  lines.sort(
+    (a, b) =>
+      rank(a.phase) - rank(b.phase) ||
+      a.label.localeCompare(b.label) ||
+      a.templateItemId.localeCompare(b.templateItemId),
+  );
+  return { lines, pending: false };
 }
 
 export async function loadEquipmentDetail(
@@ -278,7 +367,9 @@ export async function loadEquipmentDetail(
     notes.sort((a, b) => (a.at < b.at ? 1 : -1));
   }
 
-  return { equip, readings, stats, notes };
+  const { lines, pending } = await loadEquipmentSourceLines(service, equip);
+
+  return { equip, readings, stats, notes, lines, linkSchemaPending: pending };
 }
 
 export async function addMaintenanceNote(

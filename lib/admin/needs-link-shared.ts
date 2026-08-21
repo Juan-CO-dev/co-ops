@@ -19,15 +19,26 @@ export interface NeedsLinkInput {
   itemId: string | null;
   /** the linked SKU (vendor_item), if any. */
   vendorItemId: string | null;
+  /**
+   * the linked maintenance_equipment asset, if any (0181). A fridge TEMPERATURE
+   * line is not unlinked — it was linked to a kind of thing the queue could not
+   * express. Null on every row until migration 0181 lands (GATE M3), which is
+   * exactly today's behaviour.
+   */
+  equipmentId: string | null;
 }
 
 /**
  * A template item "needs link" when it is item-shaped (expects_count) yet
- * references NEITHER a registry item NOR a SKU (spec §2). Pure — the caller
+ * references NEITHER a registry item NOR a SKU NOR a piece of EQUIPMENT (spec §2,
+ * extended by the 2026-08-20 equipment-identity spec). Pure — the caller
  * pre-filters to active lines on active templates.
+ *
+ * The third arm is what clears the 32-row false positive: those lines always had a
+ * referent, and the queue simply had no word for it.
  */
 export function needsLink(e: NeedsLinkInput): boolean {
-  return e.expectsCount && e.itemId === null && e.vendorItemId === null;
+  return e.expectsCount && e.itemId === null && e.vendorItemId === null && e.equipmentId === null;
 }
 
 /** One row rendered in the needs-link queue (a line awaiting a picker link). */
@@ -45,11 +56,23 @@ export interface NeedsLinkRow {
   locationName: string | null;
 }
 
-/** A pickable target for a needs-link row (an item or a SKU). */
+/** A pickable target for a needs-link row (an item, a SKU, or a piece of equipment). */
 export interface LinkTarget {
-  kind: "item" | "sku";
+  kind: "item" | "sku" | "equipment";
   id: string;
   name: string;
   /** taxonomy label for the type badge in the picker. */
   typeLabel: string;
+  /**
+   * Which shop this target belongs to, or null when it is GLOBAL.
+   *
+   * Items are read `.is("location_id", null)` (the global registry) and SKUs are
+   * not location-scoped at all, so both are honestly null — which is why the flat
+   * un-scoped list has always been correct. `maintenance_equipment.location_id` is
+   * NOT NULL, so equipment targets carry theirs and the picker filters them against
+   * the row's own location. Without that filter a Cap Hill temp line could be
+   * linked to a P Street fridge, and the two shops' codes are already known to be
+   * crossed in prod — a mislink there would be invisible and permanent.
+   */
+  locationId: string | null;
 }

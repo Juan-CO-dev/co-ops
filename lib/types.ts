@@ -666,6 +666,21 @@ export interface ChecklistTemplateItem {
   /** Item/Inventory Spine: linked registry item (migration 0079). */
   itemId: string | null;
   /**
+   * The maintenance_equipment asset this line MEASURES (migration 0181) — the
+   * third spine-link target beside itemId and vendorItemId, so a fridge
+   * temperature line is LINKED rather than a needs-link false positive.
+   *
+   * It does NOT replace maintenance_equipment.opening_temp_item_id /
+   * closing_temp_item_id: those carry the AM/PM PHASE discriminator, which this
+   * column cannot express. Two link directions, two different questions.
+   *
+   * ⚠ NULL on every read path that selects TEMPLATE_ITEM_COLUMNS, by design —
+   * see the comment on that constant in lib/template-items.ts. Only the paths
+   * that deliberately ask for it (the Doctor / needs-link queue) see a real
+   * value, and they probe for the column so they degrade before GATE M3.
+   */
+  equipmentId: string | null;
+  /**
    * Template Builder PR-4 (spec §3, migration 0163): the owner-ruled per-line
    * NO-OVERRIDE gate. When true on an active item, confirmInstance blocks
    * finalization until it is live-completed — no written-reason path (the

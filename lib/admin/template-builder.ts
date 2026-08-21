@@ -28,6 +28,10 @@ import "server-only";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
 import { isAllLocationsAccess, lockLocationContext } from "@/lib/locations";
+// The 0181 column probe lives with the needs-link layer so ONE function decides
+// whether equipment links exist yet, and the Doctor and the queue can never
+// disagree about it.
+import { equipmentLinkAvailable } from "@/lib/admin/needs-link";
 import { operationalNow } from "@/lib/midshift";
 import {
   TEMPLATE_ITEM_COLUMNS,
@@ -206,8 +210,29 @@ export async function loadTemplateBuilderView(
       .order("display_order", { ascending: true })
       .returns<TemplateItemRow[]>();
     if (iErr) throw new Error(`loadTemplateBuilderView items: ${iErr.message}`);
+
+    // The equipment link (0181) rides its OWN small read rather than joining
+    // TEMPLATE_ITEM_COLUMNS — that constant feeds seventeen call sites across
+    // opening, closing, prep and the templates admin, and naming a column the
+    // pre-M3 database does not have would 500 all of them on the preview. One
+    // extra id-keyed query, probe-guarded, keeps the blast radius at this surface.
+    const equipmentByItemId = new Map<string, string | null>();
+    if (await equipmentLinkAvailable(sb)) {
+      const { data: eqRows, error: eqErr } = await sb
+        .from("checklist_template_items")
+        .select("id, equipment_id")
+        .in("template_id", templateIds)
+        .eq("active", true)
+        .not("equipment_id", "is", null)
+        .returns<Array<{ id: string; equipment_id: string | null }>>();
+      if (eqErr) throw new Error(`loadTemplateBuilderView equipment links: ${eqErr.message}`);
+      for (const r of eqRows ?? []) equipmentByItemId.set(r.id, r.equipment_id);
+    }
+
     for (const raw of itemRows ?? []) {
       const item = rowToTemplateItem(raw);
+      // Absent from the map = genuinely unlinked (the read filters to non-null).
+      item.equipmentId = equipmentByItemId.get(item.id) ?? null;
       const arr = itemsByTemplate.get(item.templateId) ?? [];
       arr.push(item);
       itemsByTemplate.set(item.templateId, arr);
@@ -373,7 +398,7 @@ export async function fillItemSpineLink(
   actor: AuthContext,
   args: { templateId: string; itemId: string; target: SpineLinkTarget },
 ): Promise<void> {
-  const { item, templateType } = await loadAuthorizedItem(actor, { templateId: args.templateId, itemId: args.itemId });
+  const { item, templateType, locationId } = await loadAuthorizedItem(actor, { templateId: args.templateId, itemId: args.itemId });
 
   // Spec §2.3 — Opening Phase-2 mirrors are read-only (managed by AM Prep).
   assertNotMirrorItem(item.prepMeta);
@@ -384,11 +409,21 @@ export async function fillItemSpineLink(
     throw new TemplateBuilderError(409, "not_countable", "Only count-bearing lines take a spine link");
   }
 
-  if (item.itemId !== null || item.vendorItemId !== null) {
+  if (item.itemId !== null || item.vendorItemId !== null || item.equipmentId !== null) {
     throw new TemplateBuilderError(409, "already_linked", "This line is already linked");
   }
 
   const sb = getServiceRoleClient();
+  const equipAware = await equipmentLinkAvailable(sb);
+  if (args.target.kind === "equipment" && !equipAware) {
+    // Named refusal, not a 500 on an unknown column: equipment links genuinely do
+    // not exist until the lead applies 0181 (GATE M3).
+    throw new TemplateBuilderError(
+      503,
+      "equipment_link_unavailable",
+      "Equipment links arrive with migration 0181",
+    );
+  }
 
   // Verify the target exists + is active.
   const update: Record<string, unknown> = {};
@@ -398,23 +433,43 @@ export async function fillItemSpineLink(
     if (iErr) throw new Error(`fillItemSpineLink item check: ${iErr.message}`);
     if (!it) throw new TemplateBuilderError(400, "invalid_target", "Item not found or inactive");
     update.item_id = args.target.id;
-  } else {
+  } else if (args.target.kind === "sku") {
     const { data: sk, error: sErr } = await sb
       .from("vendor_items").select("id").eq("id", args.target.id).eq("active", true).maybeSingle<{ id: string }>();
     if (sErr) throw new Error(`fillItemSpineLink sku check: ${sErr.message}`);
     if (!sk) throw new TemplateBuilderError(400, "invalid_target", "SKU not found or inactive");
     update.vendor_item_id = args.target.id;
+  } else {
+    // Same location guard as needs-link's linkTemplateItem: the asset must live at
+    // the LINE'S OWN shop. A payload can name any uuid, and a cross-shop fridge
+    // link would be silent and permanent.
+    const { data: eq, error: eErr } = await sb
+      .from("maintenance_equipment").select("id, location_id")
+      .eq("id", args.target.id).eq("active", true)
+      .maybeSingle<{ id: string; location_id: string }>();
+    if (eErr) throw new Error(`fillItemSpineLink equipment check: ${eErr.message}`);
+    if (!eq) throw new TemplateBuilderError(400, "invalid_target", "Equipment not found or inactive");
+    if (eq.location_id !== locationId) {
+      throw new TemplateBuilderError(
+        400,
+        "equipment_location_mismatch",
+        "That equipment belongs to a different location",
+      );
+    }
+    update.equipment_id = args.target.id;
   }
 
-  const { error, count } = await sb
+  let updateQuery = sb
     .from("checklist_template_items")
     .update(update, { count: "exact" })
     .eq("id", args.itemId)
     .eq("template_id", args.templateId)
     .eq("active", true)
-    // Re-assert BOTH-null so a concurrent link can't be silently overwritten.
+    // Re-assert ALL-null so a concurrent link can't be silently overwritten.
     .is("item_id", null)
     .is("vendor_item_id", null);
+  if (equipAware) updateQuery = updateQuery.is("equipment_id", null);
+  const { error, count } = await updateQuery;
   if (error) throw new Error(`fillItemSpineLink update: ${error.message}`);
   if (count === 0) throw new TemplateBuilderError(409, "already_linked", "This line is already linked");
 
@@ -428,7 +483,12 @@ export async function fillItemSpineLink(
       template_id: args.templateId,
       template_type: templateType,
       field: "spine_link_fill",
-      after: args.target.kind === "item" ? { item_id: args.target.id } : { vendor_item_id: args.target.id },
+      after:
+        args.target.kind === "item"
+          ? { item_id: args.target.id }
+          : args.target.kind === "sku"
+            ? { vendor_item_id: args.target.id }
+            : { equipment_id: args.target.id },
     },
     ipAddress: null,
     userAgent: null,
@@ -1109,7 +1169,7 @@ async function copyItemsToVersion(
         throw new TemplateBuilderError(
           400,
           "spine_link_required",
-          `Count-bearing item "${a.label}" needs an item or SKU link`,
+          `Count-bearing item "${a.label}" needs an item, SKU or equipment link`,
         );
       }
       // Fulledit PR-2: a line is a count line or a question line, never both
@@ -1148,6 +1208,14 @@ async function copyItemsToVersion(
       expects_photo: a.expectsPhoto ?? false,
       item_id: a.expectsCount && a.spineLink?.kind === "item" ? a.spineLink.id : null,
       vendor_item_id: a.expectsCount && a.spineLink?.kind === "sku" ? a.spineLink.id : null,
+      // SPREAD, not a plain key: the column only exists after 0181 (GATE M3), and
+      // naming it unconditionally would make EVERY quick-add insert fail on a
+      // pre-migration preview. An equipment quick-add is unreachable before then
+      // anyway — the picker offers no equipment until the probe says the column is
+      // there — so the key appears exactly when it can be honoured.
+      ...(a.expectsCount && a.spineLink?.kind === "equipment"
+        ? { equipment_id: a.spineLink.id }
+        : {}),
       active: true,
       translations,
       prep_meta: null,

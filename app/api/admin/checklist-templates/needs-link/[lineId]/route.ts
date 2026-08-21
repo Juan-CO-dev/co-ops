@@ -1,5 +1,9 @@
-// POST — link an existing count-line to a master-list item or SKU (The Master
-// List, spec §2). GM+ (>= 7), Tier A step-up. In-place additive; id + label kept.
+// POST — link an existing count-line to a master-list item, a SKU, or a piece of
+// EQUIPMENT (The Master List, spec §2; the third target added by migration 0181).
+// GM+ (>= 7), Tier A step-up. In-place additive; id + label kept.
+//
+// An "equipment" target before 0181 lands is refused by the lib with a named
+// `equipment_link_unavailable` (503), never a 500 on an unknown column.
 import { type NextRequest } from "next/server";
 import { requireSession } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
@@ -19,7 +23,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ lin
   if (!su.ok) return jsonError(403, su.code);
 
   const b = parsed as Record<string, unknown>;
-  const targetKind = b.targetKind === "item" ? "item" : b.targetKind === "sku" ? "sku" : null;
+  const targetKind =
+    b.targetKind === "item"
+      ? "item"
+      : b.targetKind === "sku"
+        ? "sku"
+        : b.targetKind === "equipment"
+          ? "equipment"
+          : null;
   if (!targetKind) return jsonError(400, "invalid_payload", { field: "targetKind" });
   if (typeof b.targetId !== "string" || !b.targetId) return jsonError(400, "invalid_payload", { field: "targetId" });
 
