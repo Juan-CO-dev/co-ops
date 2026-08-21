@@ -16,6 +16,7 @@
 import { describe, it, expect } from "vitest";
 import {
   allocateProductCountToMembers,
+  withZeroMemberShares,
   productSplitAvailability,
   buildProductOnHandRow,
   type LotShare,
@@ -111,6 +112,40 @@ describe("allocateProductCountToMembers", () => {
     expect(allocateProductCountToMembers(0, [share("l1", "pfg", 10)], "pfg").perSku).toEqual([]);
     expect(allocateProductCountToMembers(-5, [share("l1", "pfg", 10)], "pfg").perSku).toEqual([]);
     expect(allocateProductCountToMembers(Number.NaN, [share("l1", "pfg", 10)], "pfg").reason).toBeNull();
+  });
+});
+
+describe("withZeroMemberShares", () => {
+  it("gives EVERY member a line — a member the shelf gave nothing to is counted at zero", () => {
+    // Without this, a product count re-anchors only the members the lots named, and
+    // the un-named twin keeps drifting on a stale anchor — which is the mirrored
+    // false SHORT/OVER pair the whole arc exists to kill.
+    const r = withZeroMemberShares([{ skuId: "pfg", oz: 300 }], ["pfg", "baldor"]);
+    expect(r).toEqual([
+      { skuId: "pfg", oz: 300 },
+      { skuId: "baldor", oz: 0 },
+    ]);
+  });
+
+  it("preserves the allocated order and totals exactly", () => {
+    const perSku = [{ skuId: "b", oz: 100 }, { skuId: "a", oz: 50 }];
+    const r = withZeroMemberShares(perSku, ["a", "b", "c"]);
+    expect(r.map((x) => x.skuId)).toEqual(["b", "a", "c"]);
+    expect(r.reduce((s, x) => s + x.oz, 0)).toBe(150);
+  });
+
+  it("the zero-filled tail is ordered on skuId, never on caller row order", () => {
+    expect(withZeroMemberShares([], ["zeta", "alpha"]).map((x) => x.skuId)).toEqual(["alpha", "zeta"]);
+    expect(withZeroMemberShares([], ["alpha", "zeta"]).map((x) => x.skuId)).toEqual(["alpha", "zeta"]);
+  });
+
+  it("allocates nothing when nothing was counted (an empty allocation stays empty)", () => {
+    expect(withZeroMemberShares([], [])).toEqual([]);
+  });
+
+  it("never duplicates a member that already has a share", () => {
+    const r = withZeroMemberShares([{ skuId: "pfg", oz: 10 }], ["pfg"]);
+    expect(r).toEqual([{ skuId: "pfg", oz: 10 }]);
   });
 });
 

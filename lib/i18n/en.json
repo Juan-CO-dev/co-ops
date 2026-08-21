@@ -2762,6 +2762,7 @@
   "counts.form.chains_differ": "These vendors pack this differently — the units below are {vendor}'s. Count by vendor for the others.",
   "counts.advisory.count_exceeds_lots": "{product}: {oz} oz more than deliveries here explain. It was counted under {vendor}. Count by vendor if it belongs elsewhere.",
   "counts.advisory.count_exceeds_lots_unattributed": "{product}: {oz} oz more than deliveries here explain, and no vendor could be named. Count by vendor to place it.",
+  "counts.advisory.no_lot_history": "{product}: no deliveries recorded here yet, so all {oz} oz was counted under {vendor}. Count by vendor to split it.",
   "counts.error.no_lines": "Add at least one item to count.",
   "counts.error.invalid_product": "One of the items isn't available.",
   "counts.error.product_unresolved": "That item has no active vendor right now — count it by vendor.",

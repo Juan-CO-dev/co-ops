@@ -283,20 +283,21 @@ export function CountForm({ skus, products, locationId }: {
           failures (lead ruling: a count is ground truth and theory yields to it). */}
       {advisories.length > 0 ? (
         <div role="status" className="mt-3 flex flex-col gap-2">
-          {advisories.map((a, k) => (
-            <p key={k} className="rounded-lg border-2 border-co-warning bg-co-warning-surface px-3 py-3 text-sm text-co-text">
-              {a.absorbedByVendorName
-                ? t("counts.advisory.count_exceeds_lots", {
-                    product: a.productName ?? "",
-                    oz: Math.round((a.unallocatedOz ?? 0) * 10) / 10,
-                    vendor: a.absorbedByVendorName,
-                  })
-                : t("counts.advisory.count_exceeds_lots_unattributed", {
-                    product: a.productName ?? "",
-                    oz: Math.round((a.unallocatedOz ?? 0) * 10) / 10,
-                  })}
-            </p>
-          ))}
+          {advisories.map((a, k) => {
+            const vars = { product: a.productName ?? "", oz: Math.round((a.unallocatedOz ?? 0) * 10) / 10 };
+            const vendor = a.absorbedByVendorName;
+            return (
+              <p key={k} className="rounded-lg border-2 border-co-warning bg-co-warning-surface px-3 py-3 text-sm text-co-text">
+                {vendor == null
+                  ? t("counts.advisory.count_exceeds_lots_unattributed", vars)
+                  : a.code === "no_lot_history"
+                    // The ledger has not started here — nothing anomalous, just nothing
+                    // to attribute against. A different sentence from the same number.
+                    ? t("counts.advisory.no_lot_history", { ...vars, vendor })
+                    : t("counts.advisory.count_exceeds_lots", { ...vars, vendor })}
+              </p>
+            );
+          })}
         </div>
       ) : null}
       {/* Pre-submit visibility for the drop that submit() still performs (council P2):
