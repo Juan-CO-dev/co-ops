@@ -4,6 +4,17 @@
  * Phase 6 of docs/superpowers/plans/2026-08-20-product-identity.md (Task 6.6),
  * folded into GATE M3's checklist rather than getting a gate of its own.
  *
+ * ── TWO SECTIONS, TWO DIFFERENT AUTHORITIES ──────────────────────────────────
+ *   §1  copies the class that EVIDENCE already recorded (audit metadata), and
+ *       refuses wherever the evidence describes a superseded value.
+ *   §2  supplies the class from a RULING for six rows §1 refused — Juan's
+ *       2026-08-20 standing widening ("you got it all"), which outranks the
+ *       documents §1 reasons from.
+ *
+ * Keeping them apart is the point. §1 must never guess and §2 must never pretend
+ * to be evidence; collapsing them would make the trail unreadable about which
+ * authority set any given column.
+ *
  * ── THE GAP THIS CLOSES ───────────────────────────────────────────────────────
  * Migration 0179 added `weight_class` / `weight_source_note` / `weight_established_at`
  * / `weight_established_by` to `vendor_items` (deviation D10) so the weight board is
@@ -453,8 +464,11 @@ async function main(): Promise<void> {
   // ── Write ───────────────────────────────────────────────────────────────────
   if (!EXECUTE) {
     p();
-    p(`Seed 26 done (dry run). Would write ${plans.length} row(s).`);
+    p(`§1 done (dry run). Would write ${plans.length} row(s).`);
     p("**NOTHING WAS WRITTEN.**");
+    // §2 still REPORTS in a dry run — a dry run that hides half the script is not
+    // a dry run. It writes nothing; the EXECUTE flag is checked inside it too.
+    await sectionTwo(sb);
     return;
   }
 
@@ -544,7 +558,290 @@ async function main(): Promise<void> {
   }
 
   p();
-  p(`Seed 26 done (execute). Wrote ${wrote} of ${plans.length} planned row(s).`);
+  p(`§1 done (execute). Wrote ${wrote} of ${plans.length} planned row(s).`);
+
+  await sectionTwo(sb);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// §2 — THE DELIBERATE OPERATIONAL WRITE
+// ═══════════════════════════════════════════════════════════════════════════
+/**
+ * §1 REFUSED these rows, correctly, and this is the deliberate write that answers
+ * the refusal. The two halves are not in tension: §1 declines to *guess* a class
+ * from evidence that describes a superseded number, and §2 supplies the class from
+ * a RULING instead. Evidence and rulings are different authorities, and mixing them
+ * in one pass is what would have been wrong.
+ *
+ * ── THE STANDING RULING ──────────────────────────────────────────────────────
+ * Juan, 2026-08-20, widening his own slice ruling when asked how far it reached:
+ *
+ *   "the live values are what i weighted myself... it wasnt just the ham and
+ *    stuff... you got it all"
+ *
+ * So the DEFAULT for a live weight that diverges from seed 10 with no competing
+ * provenance is: **he measured it.** That is the opposite of §1's default, and
+ * deliberately so — §1 is reasoning from documents, §2 is applying a ruling that
+ * outranks them.
+ *
+ * ── TWO EVIDENCE STRENGTHS, NAMED SEPARATELY ─────────────────────────────────
+ * Five of these six are ALSO pinned in `OPERATIONAL_SLICE_OZ` (lib/angel-wave3.ts)
+ * — a code-level record of the same measurements, written at the time. Cheddar is
+ * NOT; it rests on the widening alone. Those are genuinely different strengths of
+ * evidence and the audit trail says which is which (`evidence_basis`), the same way
+ * seed 24 distinguished "he said Boar's Head" from "he read our reading and said
+ * yes". An auditor a year from now should not have to guess.
+ *
+ * ── WHAT IS DELIBERATELY NOT HERE ────────────────────────────────────────────
+ * **Utz Ripples (1.0 -> 2.2) is EXCLUDED.** Its change came out of wave 4's PACK
+ * work, not off Juan's scale, so the widening does not reach it — a pack-derived
+ * number is not a measurement of a handful. It stays NULL and goes on the weigh
+ * list (docs/ROADMAP.md) where it belongs.
+ *
+ * ── THE GUARD ────────────────────────────────────────────────────────────────
+ * Same discipline as §1, pointed the other way: each row's LIVE value must still
+ * equal the ruled value. If it has moved again since the ruling, the ruling no
+ * longer describes what is on the row and the write is refused. A ruling is
+ * evidence about a NUMBER, not a permanent licence to stamp a column.
+ */
+const RULING_DATE = "2026-08-20";
+/** The ruling's DATE, not a captured instant — nobody recorded a clock time, and
+ *  inventing one would be a precision we do not have. Midnight UTC is the honest
+ *  floor of the day he gave it. */
+const RULING_INSTANT = `${RULING_DATE}T00:00:00.000Z`;
+
+const STANDING_RULING =
+  'Juan 2026-08-20 (standing, widening his own slice ruling): "the live values are what i weighted myself... ' +
+  'it wasnt just the ham and stuff... you got it all" — so a live weight diverging from seed 10 with no ' +
+  "competing provenance is HIS MEASUREMENT by default.";
+
+interface OperationalWrite {
+  name: string;
+  /** Pins a duplicated name to ONE twin. Ham has two; a coin flip is not a decision. */
+  vendor: string;
+  ruledOz: number;
+  /** true = also pinned in OPERATIONAL_SLICE_OZ; false = rests on the widening alone. */
+  inRuledTable: boolean;
+}
+
+const OPERATIONAL_WRITES: ReadonlyArray<OperationalWrite> = [
+  { name: "Genoa", vendor: "Boar's Head", ruledOz: 0.4, inRuledTable: true },
+  { name: "Capicola", vendor: "Boar's Head", ruledOz: 0.4, inRuledTable: true },
+  { name: "Provolone", vendor: "Boar's Head", ruledOz: 0.7, inRuledTable: true },
+  { name: "Pepperoni", vendor: "Boar's Head", ruledOz: 0.2, inRuledTable: true },
+  // The BALDOR twin. The PFG twin already carries OPERATIONAL from wave 3 (§1
+  // copied it), and OPERATIONAL_SLICE_OZ.Ham covers both by the mirror argument.
+  { name: "Ham", vendor: "Baldor", ruledOz: 1.2, inRuledTable: true },
+  // NOT in OPERATIONAL_SLICE_OZ. Covered by the widening only: 0.75 -> 0.4 is a
+  // -47% move, squarely inside the -20%/-60% band every deli slice he has actually
+  // weighed came back in, and nothing else claims authorship of the change.
+  { name: "Cheddar", vendor: "PFG", ruledOz: 0.4, inRuledTable: false },
+];
+
+function operationalNote(w: OperationalWrite): string {
+  const basis = w.inRuledTable
+    ? "Corroborated in code by `OPERATIONAL_SLICE_OZ` (lib/angel-wave3.ts), written at the time of the measurement."
+    : "Rests on the STANDING ruling alone — this SKU is not in `OPERATIONAL_SLICE_OZ`. The 0.75 -> 0.4 move is " +
+      "unattributed by any other writer and sits inside the -20%/-60% band every deli slice Juan has weighed came back in.";
+  return (
+    `unit = one slice — OPERATIONAL, Juan's surprise 3-sample weigh, ${RULING_DATE}. ${STANDING_RULING} ${basis} ` +
+    "THIS ROW IS THE DELIBERATE RECORD OF AN UN-AUDITED RE-VALUE: the value itself changed on or before " +
+    `${RULING_DATE} without its own sku.weight_fill audit row, which is why the provenance backfill (§1) refused ` +
+    "it — the newest evidence still described the superseded number. Do not 'correct' this back from a spec " +
+    "sheet; it was measured on OUR line, and anything that moves it needs another weigh, not another reference."
+  );
+}
+
+async function sectionTwo(sb: ReturnType<typeof getServiceRoleClient>): Promise<void> {
+  h(1, `§2 — deliberate OPERATIONAL write (${EXECUTE ? "EXECUTE" : "DRY RUN"})`);
+  p(STANDING_RULING);
+  p();
+
+  // SELF-CHECK, before touching anything: every row claiming to be in the ruled
+  // table must actually agree with it. This catches a typo in the list above at
+  // startup rather than as a wrong number in production.
+  for (const w of OPERATIONAL_WRITES) {
+    const pinned = OPERATIONAL_SLICE_OZ[w.name];
+    if (w.inRuledTable && (pinned == null || Math.abs(pinned - w.ruledOz) > 1e-9)) {
+      throw new Error(
+        `FATAL: ${w.name} claims OPERATIONAL_SLICE_OZ backing at ${w.ruledOz} oz but the table says ` +
+          `${pinned ?? "(absent)"}. Refusing to write a ruling the code does not corroborate.`,
+      );
+    }
+    if (!w.inRuledTable && pinned != null) {
+      throw new Error(
+        `FATAL: ${w.name} is marked as resting on the widening alone, but OPERATIONAL_SLICE_OZ pins it at ` +
+          `${pinned}. Mark it inRuledTable so the audit trail records the stronger evidence.`,
+      );
+    }
+  }
+
+  const rows: string[][] = [];
+  const writes: Array<{ w: OperationalWrite; skuId: string; label: string }> = [];
+
+  for (const w of OPERATIONAL_WRITES) {
+    const { data: found, error } = await sb
+      .from("vendor_items")
+      .select("id, name, active, avg_oz_per_each, weight_class, vendors(name)")
+      .eq("name", w.name)
+      .eq("active", true)
+      .returns<
+        Array<{
+          id: string;
+          name: string;
+          active: boolean | null;
+          avg_oz_per_each: number | string | null;
+          weight_class: string | null;
+          vendors: { name: string } | null;
+        }>
+      >();
+    if (error) throw new Error(`lookup ${w.name}: ${error.message}`);
+
+    const matches = (found ?? []).filter((r) => r.vendors?.name === w.vendor);
+    const label = `${w.name} · ${w.vendor}`;
+    if (matches.length === 0) {
+      rows.push([label, String(w.ruledOz), "—", "REFUSED — no active SKU for that name+vendor"]);
+      continue;
+    }
+    if (matches.length > 1) {
+      // Two active rows sharing a name AND a vendor is not something to pick from.
+      rows.push([label, String(w.ruledOz), "—", `REFUSED — ${matches.length} active twins share this name+vendor`]);
+      continue;
+    }
+    const sku = matches[0]!;
+    const liveOz = num(sku.avg_oz_per_each);
+
+    if (sku.weight_class != null) {
+      rows.push([label, String(w.ruledOz), String(liveOz ?? "—"), `already ${sku.weight_class} — never overwritten`]);
+      continue;
+    }
+    // THE GUARD. A ruling describes a NUMBER. If the row no longer holds that
+    // number, the ruling does not describe the row and this write is not licensed.
+    if (liveOz == null || Math.abs(liveOz - w.ruledOz) > 1e-9) {
+      rows.push([
+        label,
+        String(w.ruledOz),
+        String(liveOz ?? "—"),
+        "REFUSED — live value has moved off the ruled value; the ruling no longer describes this row",
+      ]);
+      continue;
+    }
+    rows.push([
+      label,
+      String(w.ruledOz),
+      String(liveOz),
+      `WOULD WRITE — OPERATIONAL @ ${RULING_DATE} (${w.inRuledTable ? "table-corroborated" : "widening only"})`,
+    ]);
+    writes.push({ w, skuId: sku.id, label });
+  }
+
+  table(["sku", "ruled oz", "live oz", "disposition"], rows);
+  p();
+  p(
+    "EXCLUDED BY DESIGN — Utz Ripples (1.0 -> 2.2): that change came out of wave 4's PACK work, not off Juan's " +
+      "scale, so the widening does not reach it. It stays NULL and goes on the weigh list (docs/ROADMAP.md).",
+  );
+
+  if (!EXECUTE) {
+    p();
+    p(`§2 done (dry run). Would write ${writes.length} row(s).`);
+    p("**NOTHING WAS WRITTEN.**");
+    return;
+  }
+
+  h(2, "Writing (§2)");
+  let wrote = 0;
+  for (const { w, skuId, label } of writes) {
+    // Re-read live at write time, and re-check BOTH invariants — the class is still
+    // absent AND the value is still the ruled one.
+    const { data: live, error: lErr } = await sb
+      .from("vendor_items")
+      .select("id, name, avg_oz_per_each, weight_class")
+      .eq("id", skuId)
+      .maybeSingle<{ id: string; name: string; avg_oz_per_each: number | string | null; weight_class: string | null }>();
+    if (lErr) throw new Error(`re-read ${w.name}: ${lErr.message}`);
+    if (!live) {
+      p(`  ✗ ${label} — row vanished between plan and write; skipped`);
+      continue;
+    }
+    if (live.name !== w.name) {
+      throw new Error(`FATAL: ${skuId} renamed ${w.name} -> ${live.name} mid-run. Stopping.`);
+    }
+    if (live.weight_class != null) {
+      p(`  = ${label} — classed since the plan (${live.weight_class}); left alone`);
+      continue;
+    }
+    const liveOz = num(live.avg_oz_per_each);
+    if (liveOz == null || Math.abs(liveOz - w.ruledOz) > 1e-9) {
+      p(`  ✗ ${label} — value moved to ${liveOz ?? "NULL"} since the plan; refused`);
+      continue;
+    }
+
+    const { error, count } = await sb
+      .from("vendor_items")
+      .update(
+        {
+          weight_class: "OPERATIONAL",
+          weight_source_note: operationalNote(w),
+          weight_established_at: RULING_INSTANT,
+          // weight_established_by STAYS NULL: a seed is writing this, not Juan
+          // clicking a weigh session. `decided_by` in the audit row names him.
+          // A placeholder actor here would be the 0161 LOCK-1 trap.
+        },
+        { count: "exact" },
+      )
+      .eq("id", skuId)
+      .is("weight_class", null);
+    if (error) throw new Error(`update ${w.name}: ${error.message}`);
+    // UPDATE denials are silent on Postgres — the rowcount is the only signal.
+    if (count === 0) {
+      p(`  = ${label} — raced by another writer; left alone`);
+      continue;
+    }
+
+    await audit({
+      actorId: null,
+      actorRole: null,
+      action: "sku.weight_fill",
+      resourceTable: "vendor_items",
+      resourceId: skuId,
+      metadata: {
+        name: w.name,
+        vendor: w.vendor,
+        phase: PHASE,
+        reason: "operational_class_from_standing_ruling",
+        script: SCRIPT,
+        section: "2",
+        actor_context: "seed",
+        weight_class: "OPERATIONAL",
+        weight_established_at: RULING_INSTANT,
+        avg_oz_per_each: liveOz,
+        before_avg_oz_per_each: liveOz,
+        // The VALUE is untouched. This row records provenance for a number that
+        // was already there — which is the whole point: it arrived un-audited.
+        value_unchanged: true,
+        class_source: "ruled_from_standing_ruling",
+        // The two evidence strengths, never collapsed.
+        evidence_basis: w.inRuledTable ? "operational_slice_oz_table" : "standing_ruling_widening",
+        ruled_oz: w.ruledOz,
+        ruling: STANDING_RULING,
+        decided_by: `Juan ${RULING_DATE} (standing ruling, widened)`,
+        records_unaudited_revalue: true,
+        why_section_1_refused:
+          "the newest sku.weight_fill row for this SKU records a SUPERSEDED avg_oz_per_each, so its class " +
+          "described the old number; §1 correctly declined to copy it forward",
+        established_by_left_null_because:
+          "a seed wrote this row, not a weigh session — decided_by names Juan; a placeholder actor would be worse than the absence",
+      },
+      ipAddress: null,
+      userAgent: null,
+    });
+    wrote += 1;
+    p(`  ✓ ${label} -> OPERATIONAL @ ${RULING_DATE} (${w.inRuledTable ? "table-corroborated" : "widening only"})`);
+  }
+
+  p();
+  p(`§2 done (execute). Wrote ${wrote} of ${writes.length} planned row(s).`);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1]!).href) {

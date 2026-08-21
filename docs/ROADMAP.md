@@ -227,22 +227,36 @@ Logged-deferred → DEBT table.
   pfg confirmed"). `scripts/seed/27-mozz-primary-confirm.ts` updated the note and appended
   an `audit.metadata_correction` against the stale seed-24 row (audit rows are never
   edited). Verified live: all 11 primaries read `primary_is_inferred: false`.
-- **Weight provenance backfill (seed 26) — RAN 2026-08-21, and it left 9 rows NULL on
-  purpose.** 32 of 41 weighed SKUs now carry a class (28 ESTIMATE · 3 OPERATIONAL · 1 SPEC).
-  The 9 that stayed NULL are a real to-do list, not residue:
-  (a) **FIVE ROWS HOLD JUAN'S 2026-08-20 SURPRISE 3-SAMPLE MEASUREMENTS BUT CANNOT PROVE
-  IT** — Genoa 0.4 · Capicola 0.4 · Provolone 0.7 · Pepperoni 0.2 · Ham 1.2 (Baldor twin),
-  the values pinned in `OPERATIONAL_SLICE_OZ`. That re-value landed **without its own
-  `sku.weight_fill` audit row**, so their newest evidence is still seed 10's estimate and
-  the backfill refuses them rather than stamping "educated guess, never weighed" on five
-  weighed values. **They want an OPERATIONAL class carrying the ruling's date** — a
-  deliberate write, and the natural moment to retire the legacy hardcoded
-  `OPERATIONAL_SLICE_OZ` table into the 0179 columns it was superseded by.
-  (b) **Cheddar (0.75 → 0.4) and Utz Ripples (1.0 → 2.2) drifted with no ruling and no
-  audit row at all** — nobody can say who changed them or why. Weigh or rule.
-  (c) **Basil** — audited, but seed 11's `data_cleanup` row never claimed `estimate: true`,
-  so the ESTIMATE ruling does not reach it. (d) **Banana Peppers (Baldor)** — a 512 oz
-  weight with no audit row anywhere.
+- ✅ **Weight provenance backfill (seed 26) — COMPLETE 2026-08-21. 38 of 41 weighed SKUs
+  carry a class** (28 ESTIMATE · 9 OPERATIONAL · 1 SPEC). Two sections, two authorities:
+  **§1** copies the class EVIDENCE recorded and refuses wherever that evidence describes a
+  superseded value; **§2** supplies OPERATIONAL from Juan's 2026-08-20 standing widening
+  (*"the live values are what i weighted myself... it wasnt just the ham and stuff... you
+  got it all"*) for six rows §1 refused — Genoa 0.4 · Capicola 0.4 · Provolone 0.7 ·
+  Pepperoni 0.2 · Ham 1.2 (Baldor twin) · Cheddar 0.4. Their re-value had landed **without
+  its own `sku.weight_fill` audit row**, which is exactly why §1 would not touch them.
+  The audit trail records the two evidence strengths separately (`evidence_basis`): five
+  are corroborated by `OPERATIONAL_SLICE_OZ`, **Cheddar rests on the widening alone**.
+  Both sections re-run to zero writes.
+- **THREE weights still carry no class, and each needs a different thing.**
+  (a) **Utz Ripples (1.0 → 2.2) — ON THE WEIGH LIST.** Deliberately excluded from the §2
+  widening: its change came out of **wave 4's PACK work, not off Juan's scale**, and a
+  pack-derived number is not a measurement of a handful. **Weigh one handful** and the row
+  settles itself. (b) **Basil (0.017)** — audited, but seed 11's `data_cleanup` row never
+  claimed `estimate: true`, so the ESTIMATE ruling does not reach it; reading "estimate"
+  out of its prose would be inferring a class from tone. Weigh or rule. (c) **Banana
+  Peppers (Baldor, 512 oz)** — no audit row anywhere; nobody can say where it came from.
+- **Retire the legacy `OPERATIONAL_SLICE_OZ` hardcode — FILED, NOT DONE (checked
+  2026-08-21).** The consumer set is **not** mechanical: `lib/weights.ts` is LIVE CODE and
+  uses it twice — the board's `ruling` field (`:502`) and the weigh-session drift tripwire
+  (`:783`) — on top of three seed scripts and the test suite. The blocker is not the call
+  sites, it is that **the table encodes a second fact the 0179 columns do not carry**: the
+  ruled value as an INDEPENDENT reference, which is what makes `RULED_DRIFTED` detectable.
+  `weight_class = OPERATIONAL` says a number was measured; it cannot say the row has since
+  moved OFF the measured value, because nothing remembers what that value was. **Retiring
+  the table therefore costs drift detection unless a `weight_ruled_oz` column lands first**
+  — a migration plus a `rulingStatus` rewrite, not a mechanical swap. Do it as its own
+  piece of work, or not at all.
 
 ## LATER (sequenced, not forgotten)
 
