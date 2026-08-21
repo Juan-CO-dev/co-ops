@@ -35,6 +35,7 @@ import {
   LETTUCE_PAIR, PFG_LETTUCE_CANDIDATES,
   VARIABLE_CATCH_RULES, BASIL_DUPLICATE_CLUSTER, GARLIC_RATIFICATION,
   HERB_WEIGHT_POLICY, AVERAGE_DEFINITION, WEIGHT_CLASS_MEANING, CONSTANT_WEIGHT_SPREAD_CEILING,
+  WEIGHT_CLASS_RANK, isMeasuredWeightClass, ESTIMATE_CLASS_RATIFICATION,
   STILL_STUCK, WAVE4_REASONS,
   type Wave4Code, type WeightClass,
 } from "@/lib/angel-wave4";
@@ -388,10 +389,54 @@ describe("the wave-4 rulings, as constants", () => {
     expect(new Set(keys).size).toBe(VARIABLE_CATCH_RULES.length);
   });
 
-  it("names all three weight classes, distinctly", () => {
-    const classes: WeightClass[] = ["OPERATIONAL", "SPEC", "INVOICE_DERIVED"];
+  it("names all four weight classes, distinctly", () => {
+    // ESTIMATE joined 2026-08-21 (Juan's ruling). The vocabulary is a closed set
+    // in TypeScript even though the COLUMN is unconstrained text (0177 precedent),
+    // so this list and the type must not drift apart.
+    const classes: WeightClass[] = ["OPERATIONAL", "SPEC", "INVOICE_DERIVED", "ESTIMATE"];
     for (const c of classes) expect(WEIGHT_CLASS_MEANING[c]).toBeTruthy();
-    expect(new Set(Object.values(WEIGHT_CLASS_MEANING)).size).toBe(3);
+    expect(Object.keys(WEIGHT_CLASS_MEANING).sort()).toEqual([...classes].sort());
+    expect(new Set(Object.values(WEIGHT_CLASS_MEANING)).size).toBe(4);
+  });
+
+  it("ranks ESTIMATE below SPEC, and SPEC below both measured classes", () => {
+    // The ladder IS the ruling: measured (scale) > documented (label) > guessed.
+    expect(WEIGHT_CLASS_RANK.ESTIMATE).toBeLessThan(WEIGHT_CLASS_RANK.SPEC);
+    expect(WEIGHT_CLASS_RANK.SPEC).toBeLessThan(WEIGHT_CLASS_RANK.OPERATIONAL);
+    expect(WEIGHT_CLASS_RANK.SPEC).toBeLessThan(WEIGHT_CLASS_RANK.INVOICE_DERIVED);
+  });
+
+  it("holds OPERATIONAL and INVOICE_DERIVED as PEERS — different scales, same standing", () => {
+    // Deliberately equal. Ordering them would assert a preference nobody ruled.
+    expect(WEIGHT_CLASS_RANK.OPERATIONAL).toBe(WEIGHT_CLASS_RANK.INVOICE_DERIVED);
+  });
+
+  it("gives every class a rank, and only the measured pair clears the floor", () => {
+    for (const c of Object.keys(WEIGHT_CLASS_MEANING) as WeightClass[]) {
+      expect(WEIGHT_CLASS_RANK[c], `${c} needs a rank`).toBeTypeOf("number");
+    }
+    expect(isMeasuredWeightClass("OPERATIONAL")).toBe(true);
+    expect(isMeasuredWeightClass("INVOICE_DERIVED")).toBe(true);
+    expect(isMeasuredWeightClass("SPEC")).toBe(false);
+    expect(isMeasuredWeightClass("ESTIMATE")).toBe(false);
+  });
+
+  it("refuses to call an unclassed or unknown weight measured", () => {
+    // NULL is the honest absence (0161 LOCK-1) and must never read as a claim of
+    // measurement. An unrecognised term gets the same conservative answer — the
+    // column is open text so the vocabulary CAN grow, and a term this build has
+    // never heard of has not earned the benefit of the doubt.
+    expect(isMeasuredWeightClass(null)).toBe(false);
+    expect(isMeasuredWeightClass("SOMETHING_A_LATER_WAVE_MINTED")).toBe(false);
+    expect(isMeasuredWeightClass("")).toBe(false);
+    // Not case-insensitive: the value written is the English original, verbatim.
+    expect(isMeasuredWeightClass("operational")).toBe(false);
+  });
+
+  it("records the ESTIMATE ratification verbatim, dated, and attributed", () => {
+    expect(ESTIMATE_CLASS_RATIFICATION).toContain("2026-08-21");
+    expect(ESTIMATE_CLASS_RATIFICATION).toContain("Juan");
+    expect(WEIGHT_CLASS_MEANING.ESTIMATE).toMatch(/educated guess/i);
   });
 
   it("gives every refusal code prose, and every stuck item an unblock", () => {

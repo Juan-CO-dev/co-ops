@@ -209,19 +209,54 @@ Logged-deferred → DEBT table.
   null-fallback beneath a working signal rather than the only signal. Prefer a nullable
   `seed_usage` column read ONLY when live rank is null (it decays naturally); **not**
   `guide_position`, which is a dead column with different semantics (walk order).
-- **Weight / trim audit — SHIPPED as a board (`/admin/weights`); two things still owed.**
-  (a) The trim registry shipped as `OPERATIONAL_ESTIMATE` for four of its five classes (a
-  named physical loss, reasoned, not observed) — **Juan's ESTIMATE-class decision is still
-  open**: does an estimated class keep its own name forever, or is `OPERATIONAL_ESTIMATE`
-  a temporary badge that observed trim retires? The board ranks them but cannot rule.
+- **Weight / trim audit — SHIPPED as a board (`/admin/weights`); one thing still owed.**
+  (a) ✅ **RULED 2026-08-21 — the `ESTIMATE` WEIGHT class is APPROVED** and minted in
+  `lib/angel-wave4.ts` (`WeightClass`, ranked below every measured class by
+  `WEIGHT_CLASS_RANK`). Seed 26's Phase-6a backfill ran on it — see below.
+  ⚠ **This ruling covered the WEIGHT vocabulary, NOT the TRIM one.** The trim registry's
+  `OPERATIONAL_ESTIMATE` (`lib/trim-standards-shared.ts`, `TrimEvidence`, four of its five
+  classes) is a SEPARATE question and remains **open**: does an estimated trim class keep
+  its own name forever, or is it a temporary badge that observed trim retires? The board
+  ranks them but cannot rule. Do not assume the weight ruling settled this one.
   (b) First in line to be replaced by observed trim once production capture runs — pair it
   with the surprise-weigh pass so one floor session settles both.
-- **Fresh Mozzarella's primary is still an INFERENCE, and it is the only one.** Juan named
-  the SHAPE ("both active — one primary, one backup") but never the sides; seed 18 flagged
-  it, seed 24 wrote it flagged (`primary_is_inferred: true`), and it is now live as PFG
-  primary / Baldor backup. **One field vetoes it.** Ham and the other eight pairs are
-  explicit; ICEBERG was ruled 2026-08-21 (disposition A, PFG primary, no separate LETTUCE
-  product). Say it out loud rather than letting an inference harden into a fact.
+- ✅ **Every product primary is now EXPLICIT — no inferences remain (2026-08-21).** Fresh
+  Mozzarella was the last one: Juan gave the SHAPE on 2026-08-20 ("both active — one
+  primary, one backup") but never the sides, so seed 18 inferred PFG and seed 24 wrote it
+  flagged (`primary_is_inferred: true`). Juan confirmed it out loud on 2026-08-21 ("mozz is
+  pfg confirmed"). `scripts/seed/27-mozz-primary-confirm.ts` updated the note and appended
+  an `audit.metadata_correction` against the stale seed-24 row (audit rows are never
+  edited). Verified live: all 11 primaries read `primary_is_inferred: false`.
+- ✅ **Weight provenance backfill (seed 26) — COMPLETE 2026-08-21. 38 of 41 weighed SKUs
+  carry a class** (28 ESTIMATE · 9 OPERATIONAL · 1 SPEC). Two sections, two authorities:
+  **§1** copies the class EVIDENCE recorded and refuses wherever that evidence describes a
+  superseded value; **§2** supplies OPERATIONAL from Juan's 2026-08-20 standing widening
+  (*"the live values are what i weighted myself... it wasnt just the ham and stuff... you
+  got it all"*) for six rows §1 refused — Genoa 0.4 · Capicola 0.4 · Provolone 0.7 ·
+  Pepperoni 0.2 · Ham 1.2 (Baldor twin) · Cheddar 0.4. Their re-value had landed **without
+  its own `sku.weight_fill` audit row**, which is exactly why §1 would not touch them.
+  The audit trail records the two evidence strengths separately (`evidence_basis`): five
+  are corroborated by `OPERATIONAL_SLICE_OZ`, **Cheddar rests on the widening alone**.
+  Both sections re-run to zero writes.
+- **THREE weights still carry no class, and each needs a different thing.**
+  (a) **Utz Ripples (1.0 → 2.2) — ON THE WEIGH LIST.** Deliberately excluded from the §2
+  widening: its change came out of **wave 4's PACK work, not off Juan's scale**, and a
+  pack-derived number is not a measurement of a handful. **Weigh one handful** and the row
+  settles itself. (b) **Basil (0.017)** — audited, but seed 11's `data_cleanup` row never
+  claimed `estimate: true`, so the ESTIMATE ruling does not reach it; reading "estimate"
+  out of its prose would be inferring a class from tone. Weigh or rule. (c) **Banana
+  Peppers (Baldor, 512 oz)** — no audit row anywhere; nobody can say where it came from.
+- **Retire the legacy `OPERATIONAL_SLICE_OZ` hardcode — FILED, NOT DONE (checked
+  2026-08-21).** The consumer set is **not** mechanical: `lib/weights.ts` is LIVE CODE and
+  uses it twice — the board's `ruling` field (`:502`) and the weigh-session drift tripwire
+  (`:783`) — on top of three seed scripts and the test suite. The blocker is not the call
+  sites, it is that **the table encodes a second fact the 0179 columns do not carry**: the
+  ruled value as an INDEPENDENT reference, which is what makes `RULED_DRIFTED` detectable.
+  `weight_class = OPERATIONAL` says a number was measured; it cannot say the row has since
+  moved OFF the measured value, because nothing remembers what that value was. **Retiring
+  the table therefore costs drift detection unless a `weight_ruled_oz` column lands first**
+  — a migration plus a `rulingStatus` rewrite, not a mechanical swap. Do it as its own
+  piece of work, or not at all.
 
 ## LATER (sequenced, not forgotten)
 

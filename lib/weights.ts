@@ -47,6 +47,7 @@ import { costPerOzFromGraph } from "@/lib/admin/menu-costing";
 import { loadRecipeGraph } from "@/lib/prep-consumption";
 import { perUnitSkuOzForItemFromGraph } from "@/lib/prep-consumption-graph";
 import { SPEC_SLICE_OZ, rulingStatus, OPERATIONAL_SLICE_OZ, type RulingStatus } from "@/lib/angel-wave3";
+import { isMeasuredWeightClass } from "@/lib/angel-wave4";
 import { membersDisagreeOnUnitOz, type ProductMember } from "@/lib/products-shared";
 import { PORTIONED_ITEMS, TRIM_STANDARDS, type TrimStandard } from "@/lib/trim-standards-shared";
 import {
@@ -500,7 +501,16 @@ export async function loadWeightBoard(actor: AuthContext): Promise<WeightBoard> 
       specOz: SPEC_SLICE_OZ[s.name] ?? null,
       ruling: ruled == null ? null : { status: rulingStatus(s.name, valueOz), ruledOz: ruled },
       invoiceDrift,
-      countImplicated: s.weight_class === "SPEC" && countedSkuIds.has(s.id),
+      // "A count leaned on a number nobody weighed." Was hardcoded to SPEC; now it
+      // asks the vocabulary, so ESTIMATE (Juan 2026-08-21) is covered without a
+      // second literal — and an ESTIMATE is MORE this than a SPEC is, not less.
+      //
+      // An UNCLASSED row (weight_class NULL) deliberately does NOT fire this. It is
+      // not being hidden: the board already gives it the red UNVERIFIED pill, which
+      // is the louder of the two signals. Adding a second, quieter advisory to a row
+      // that already wears the loud one buys nothing.
+      countImplicated:
+        s.weight_class != null && !isMeasuredWeightClass(s.weight_class) && countedSkuIds.has(s.id),
     });
   }
 

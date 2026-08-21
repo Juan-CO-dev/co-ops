@@ -68,6 +68,19 @@ const metricLabelCls = "text-[10px] font-bold uppercase tracking-[0.12em] text-c
  * label. OPERATIONAL green, SPEC gold and the red fourth state land exactly where
  * the mockup put them.
  *
+ * ESTIMATE (Juan 2026-08-21) takes `warn` — the SAME gold as SPEC — and that is a
+ * decision, not a shortage of tones. AlertPill has exactly four, all four are
+ * already spoken for, and AGENTS.md forbids minting a fifth for one pill. Gold is
+ * the right one of the four: SPEC and ESTIMATE are the two PLACEHOLDER classes,
+ * both saying "believe this until a scale says otherwise", and they are told apart
+ * by their label rather than their colour — precisely the move INVOICE already
+ * makes above.
+ *
+ * What matters more than the hue is what ESTIMATE is NOT: it is no longer the red
+ * UNVERIFIED. Thirty-five rows that read "we believe a number and cannot say why"
+ * now read "we can say why: somebody who knows food guessed it." Same number, and
+ * a strictly honest upgrade in what the board claims about it.
+ *
  * Two different absences, deliberately distinguished: a value with no recorded
  * class is UNVERIFIED (we believe a number and cannot say why), and no value at
  * all is NOT WEIGHED (we believe nothing). Collapsing them would hide which of the
@@ -84,6 +97,8 @@ function classPill(belief: WeightBelief, t: T): { tone: AlertPillTone; label: st
       return { tone: "warn", label: t("admin.weights.pill.spec") };
     case "INVOICE_DERIVED":
       return { tone: "info", label: t("admin.weights.pill.invoice") };
+    case "ESTIMATE":
+      return { tone: "warn", label: t("admin.weights.pill.estimate") };
     default:
       return { tone: "danger", label: t("admin.weights.pill.unverified") };
   }
@@ -231,11 +246,19 @@ export function WeightBoardClient({ board, canWeigh }: { board: WeightBoard; can
   };
 
   // ── The always-visible metrics strip (D2) ─────────────────────────────────
+  //
+  // ESTIMATE gets its OWN tile rather than being folded into `unverified`. Before
+  // Juan's 2026-08-21 ruling those rows had nowhere else to be counted; now they do,
+  // and merging them back would re-hide the distinction the class was minted to
+  // draw. `unverified` keeps its exact meaning — class NULL, nothing recorded — so
+  // the tile that used to read 39 now reads the handful genuinely unexplained, and
+  // that drop is the ruling landing, not a number going missing.
   const believed = board.rows.filter((r) => r.belief.valueOz != null);
   const counts = {
     believed: believed.length,
     operational: believed.filter((r) => r.belief.weightClass === "OPERATIONAL").length,
     spec: believed.filter((r) => r.belief.weightClass === "SPEC").length,
+    estimate: believed.filter((r) => r.belief.weightClass === "ESTIMATE").length,
     unverified: believed.filter((r) => r.belief.weightClass == null).length,
     unweighed: board.rows.length - believed.length,
   };
@@ -314,6 +337,7 @@ export function WeightBoardClient({ board, canWeigh }: { board: WeightBoard; can
           <Metric label={t("admin.weights.metric.believed")} value={String(counts.believed)} />
           <Metric label={t("admin.weights.metric.operational")} value={String(counts.operational)} />
           <Metric label={t("admin.weights.metric.spec")} value={String(counts.spec)} />
+          <Metric label={t("admin.weights.metric.estimate")} value={String(counts.estimate)} />
           <Metric label={t("admin.weights.metric.unverified")} value={String(counts.unverified)} />
           <Metric label={t("admin.weights.metric.unweighed")} value={String(counts.unweighed)} />
         </div>

@@ -29,6 +29,30 @@
  * our slicer, or the grower. Keeping them distinct is what lets the queued
  * weight-audit design tell a measured number from an inferred one without
  * re-deriving the distinction from scratch.
+ *
+ * ── AMENDED 2026-08-21 BY JUAN'S ESTIMATE-CLASS RULING ────────────────────────
+ * A FOURTH member, `ESTIMATE`, is minted. It is the one the first three could not
+ * cover, and seed 26's Phase-6a backfill stopped dead on the gap: 35 SKUs carry a
+ * weight and an audit row, and that row says `estimate: true` with no class —
+ * seed 10's own words, "my best food-knowledge inference pending Juan's scale".
+ *
+ * That is not OPERATIONAL (nobody weighed it), not SPEC (no label or pack
+ * arithmetic produced it) and not INVOICE_DERIVED (no delivery average behind it).
+ * Rather than stretch one of the three — the exact defect the spec-vs-operational
+ * split existed to repair — the vocabulary grows by one honest term.
+ *
+ * **AND THE FOURTH ONE IS RANKED, WHICH THE FIRST THREE ARE NOT.** The sentence
+ * above ("the three are not ranked") still holds for the three, and it holds for a
+ * reason: they answer different questions. ESTIMATE does not answer a fourth
+ * question — it answers the SAME question as the others with NO evidence behind
+ * it. So it sits strictly below all of them, and `WEIGHT_CLASS_RANK` says so in a
+ * form code can read rather than only prose a human can.
+ *
+ * NOT TO BE CONFUSED WITH `OPERATIONAL_ESTIMATE` (`lib/trim-standards-shared.ts`),
+ * which is a `TrimEvidence` value, a DIFFERENT vocabulary describing how a TRIM
+ * FRACTION was arrived at. The two never meet, and whether that one keeps its name
+ * is a separate still-open question (docs/ROADMAP.md). This ruling does not reach
+ * it, and nothing here touches it.
  */
 
 import { parseCsvLine } from "@/lib/angel-price-fill";
@@ -45,7 +69,7 @@ import { classifyWeightSource } from "@/lib/angel-wave2";
  * stretching is how a column ends up meaning two things again — the exact defect
  * Juan's spec-vs-operational ruling existed to repair.
  */
-export type WeightClass = "OPERATIONAL" | "SPEC" | "INVOICE_DERIVED";
+export type WeightClass = "OPERATIONAL" | "SPEC" | "INVOICE_DERIVED" | "ESTIMATE";
 
 export const WEIGHT_CLASS_MEANING: Readonly<Record<WeightClass, string>> = {
   OPERATIONAL:
@@ -54,7 +78,66 @@ export const WEIGHT_CLASS_MEANING: Readonly<Record<WeightClass, string>> = {
     "Derived from a label, a pack string or an arithmetic identity, and awaiting a scale. A placeholder, not a peer of a measured value — wave 3 established that spec and operational diverge by -20% to -60% on every deli item Juan has actually weighed.",
   INVOICE_DERIVED:
     "The average of what the vendor actually delivered, across every invoice line in the capture window. Neither a label nor a local measurement. This is the right class when the pack weight is genuinely a RANGE — bunch and catch-weight produce — because there is no single true number to measure, only a distribution to summarise. Refreshed as new invoices land.",
+  ESTIMATE:
+    "An EDUCATED GUESS. Nobody weighed it, no label states it, no invoice averages it — somebody who knows food reasoned a plausible number so a downstream calculation could run at all, and said out loud that that is what they were doing. Explicitly ranked BELOW every measured class (see WEIGHT_CLASS_RANK): it is not a peer of the other three, it is what a row carries until one of them can replace it. Ratified by Juan 2026-08-21 for seed 10's `estimate: true` fills. It is claimed only where the evidence SAYS so — never inferred from a value, because a number cannot tell you whether somebody weighed it or guessed it, and that distinction is the entire reason the class exists.",
 };
+
+/**
+ * How much a class rests on. THREE TIERS, and the tiers are the ruling:
+ *
+ *   2  MEASURED    somebody's scale produced this. OPERATIONAL is ours;
+ *                  INVOICE_DERIVED is the vendor's, averaged over real deliveries.
+ *                  Different scales, same standing — which is why they SHARE a
+ *                  rank rather than being ordered against each other. Ordering
+ *                  them would assert a preference nobody ruled.
+ *   1  DOCUMENTED  SPEC. A label or a pack identity states it. Real evidence, but
+ *                  nothing was ever put on a scale — wave 3 measured that gap at
+ *                  -20% to -60% on every deli item Juan has actually weighed.
+ *   0  GUESSED     ESTIMATE. No scale, no document. Juan's 2026-08-21 ruling put
+ *                  it here: below the measured classes, and below SPEC too, but
+ *                  emphatically above a blank column — a named guess you can
+ *                  argue with beats a number with no story at all.
+ *
+ * A NULL class has NO RANK and is deliberately absent from this table. "We believe
+ * a number and cannot say why" is not a tier, it is the absence of one, and
+ * handing callers a 0 for it would quietly equate an unexplained number with an
+ * honestly-labelled guess. Every predicate below takes the null explicitly.
+ */
+export const MEASURED_FLOOR = 2;
+
+export const WEIGHT_CLASS_RANK: Readonly<Record<WeightClass, number>> = {
+  OPERATIONAL: 2,
+  INVOICE_DERIVED: 2,
+  SPEC: 1,
+  ESTIMATE: 0,
+};
+
+/**
+ * Has a scale ever produced this number? OPERATIONAL and INVOICE_DERIVED yes;
+ * SPEC and ESTIMATE no.
+ *
+ * NULL answers `false`, and that is the conservative direction: an unexplained
+ * number has not earned the claim "measured". Unknown strings answer `false` for
+ * the same reason — the column is unconstrained text (0177's precedent) so the
+ * vocabulary CAN grow, and a term this build has never heard of does not get the
+ * benefit of the doubt.
+ *
+ * Callers that must distinguish "unclassed" from "classed but unmeasured" have to
+ * check the null themselves; this predicate deliberately collapses them, because
+ * for the question it answers they are the same answer.
+ */
+export function isMeasuredWeightClass(cls: string | null): boolean {
+  if (cls == null) return false;
+  const rank = WEIGHT_CLASS_RANK[cls as WeightClass];
+  return rank != null && rank >= MEASURED_FLOOR;
+}
+
+/**
+ * Juan's ruling, verbatim, because a ruling paraphrased into code is a ruling
+ * nobody can audit — the same discipline as HERB_WEIGHT_POLICY above.
+ */
+export const ESTIMATE_CLASS_RATIFICATION =
+  "Juan 2026-08-21: the ESTIMATE weight class is APPROVED. Seed 10's `estimate: true` fills are educated guesses and should say so, ranked below every measured class rather than left blank. This retires the gap seed 26's Phase-6a dry run stopped on.";
 
 /**
  * Juan's fresh-herb / variable-catch weight policy, 2026-08-20 — verbatim, because
