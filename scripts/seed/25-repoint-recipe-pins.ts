@@ -14,6 +14,29 @@
  * that LIGHTS it. Deviation D1 is exactly this ordering — re-pointing before the reader
  * exists does not shift a number, it DELETES one.
  *
+ * ── JUAN'S WEIGH RULING (2026-08-21) — §2 OF THIS SEED ────────────────────────
+ * The first dry run refused SIX lines as PRODUCT_UNWEIGHED, on the reading that the
+ * members' `avg_oz_per_each` values were seed-10 ESTIMATES. Juan's ruling corrects the
+ * premise, verbatim: *"i think there is an issue here, because i literally weighted all
+ * of that... like extensively, it wasnt just the ham and stuff... and you got it all."*
+ * Those numbers are his own extensive surprise-weigh MEASUREMENTS. Turkey 1.0 · Roast
+ * Beef 1.5 · Sweet Peppers 4.0 · Hot Peppers 1.0 · Fresh Mozzarella 1.0 · Iceberg 20 oz
+ * per head. So the seed now runs a `products.unit_oz` FILL step BEFORE the gate: each
+ * ruled product takes its ACTIVE member's measured value, class OPERATIONAL, with a
+ * source note quoting the ruling and naming the member the number came off.
+ *
+ * The fill is DERIVED LIVE and CROSS-CHECKED against the ruling, never copied from it:
+ * a product whose active members carry no weight, or carry DIFFERENT weights, or whose
+ * live value does not match the ruled one, REFUSES its fill and says why. A weight is a
+ * ruling, not an average. The ruling is also the ceiling — a product the ruling does not
+ * name is never filled, even if the live data would support one (Banana Peppers).
+ *
+ * Once a product owns `unit_oz`, `productInputBasis` reads THAT number and never the
+ * resolved member's, so the line is member-INDEPENDENT and the parity gate below
+ * evaluates it on the merits. Iceberg is the sharpest case and is deliberately INCLUDED:
+ * its other two members carry NULL, and that no longer matters — the PRODUCT owns the
+ * weight now, which is the entire point of the column.
+ *
  * ── THE GATE (Task 4.2 — the task that matters) ───────────────────────────────
  * Nothing is re-pointed on faith. For every candidate line the script computes the
  * line's ounces TWICE, through the REAL production function `ozForRecipeInput`
@@ -119,6 +142,31 @@ const DECISION_SOURCES =
 
 /** Equality, not "close enough to a rounding". Seed 18's number, deliberately kept. */
 const TOLERANCE = 1e-9;
+
+/** Juan's ruling, verbatim enough to survive in an audit row a year from now. */
+const WEIGH_RULING =
+  'Juan 2026-08-21, verbatim: "i think there is an issue here, because i literally weighted all of that... ' +
+  'like extensively, it wasnt just the ham and stuff... and you got it all." The avg_oz_per_each values on these ' +
+  "products' ACTIVE members are his own extensive surprise-weigh MEASUREMENTS — not seed estimates, not spec sheets. " +
+  "Ruled at the PRODUCT grain: what one unit weighs is a fact about the product, not about which vendor sells it.";
+
+/**
+ * The products the ruling covers, with the member value each is expected to carry.
+ *
+ * This list is the CEILING, not the source. Every value is re-derived live from the
+ * ACTIVE members below; this table only decides WHICH products may be filled and gives
+ * the derivation something to disagree with. A live value that does not match the ruled
+ * one REFUSES the fill — the seed-24 "has the ground moved under the source document"
+ * discipline, applied to a ruling instead of a report.
+ */
+const RULED_UNIT_OZ: ReadonlyArray<{ product: string; ruledOz: number; note: string }> = [
+  { product: "Turkey", ruledOz: 1, note: "sliced turkey, one slice" },
+  { product: "Roast Beef", ruledOz: 1.5, note: "sliced roast beef, one slice" },
+  { product: "Sweet Peppers", ruledOz: 4, note: "sweet peppers, one portion" },
+  { product: "Hot Peppers", ruledOz: 1, note: "hot peppers, one portion" },
+  { product: "Fresh Mozzarella", ruledOz: 1, note: "fresh mozzarella, one slice (both members agree)" },
+  { product: "Iceberg", ruledOz: 20, note: "iceberg, ONE HEAD — Juan's number; the other members' NULLs no longer matter once the PRODUCT owns the weight" },
+];
 
 // ── Output helpers (seed 21/24's idiom — ONE writer for both renderings) ───────
 
@@ -368,6 +416,114 @@ function memberView(entry: ProductIndexEntry, skuId: string): ProductMember | nu
   return entry.members.find((m) => m.skuId === skuId) ?? null;
 }
 
+// ── The unit_oz fill (Juan's weigh ruling, 2026-08-21) ────────────────────────
+
+interface UnitOzFill {
+  product: LiveProduct;
+  value: number;
+  klass: "OPERATIONAL";
+  /** vendor/SKU labels the measured value was read off, live. */
+  measuredOn: string;
+  activeSpread: string;
+  sourceNote: string;
+}
+
+interface UnitOzSkip {
+  productName: string;
+  state: "already" | "refused";
+  why: string;
+}
+
+/**
+ * Plan one `products.unit_oz` fill per RULED product that still reads NULL, deriving the
+ * value LIVE off its ACTIVE members and refusing anything the evidence does not carry.
+ *
+ * Four refusals, each named rather than silently skipped:
+ *   · the ruling does not name this product   → never filled, even if derivable.
+ *   · no ACTIVE member carries a weight        → nothing to carry (Banana Peppers).
+ *   · active members carry DIFFERENT weights   → a weight is a ruling, not an average.
+ *   · the live value ≠ the ruled value         → the ground moved under the ruling.
+ *
+ * A member with a NULL weight is an UNKNOWN, not a dissent (the `membersDisagreeOnUnitOz`
+ * semantics, applied consistently): Iceberg's Sysco and Baldor NULLs do not block PFG's
+ * measured 20, which is exactly what Juan ruled.
+ */
+function planUnitOzFills(
+  products: ReadonlyArray<{ product: LiveProduct; entry: ProductIndexEntry }>,
+): { fills: UnitOzFill[]; skips: UnitOzSkip[] } {
+  const fills: UnitOzFill[] = [];
+  const skips: UnitOzSkip[] = [];
+  for (const { product, entry } of products) {
+    const active = entry.members.filter((m) => m.active);
+    const spread =
+      active.map((m) => `${m.vendorName ?? "(no vendor)"} ${m.avgOzPerEach ?? "NULL"}`).join(" · ") || "(no active member)";
+
+    if (product.unitOz != null) {
+      skips.push({
+        productName: product.name,
+        state: "already",
+        why: `already owns unit_oz = ${product.unitOz} (${product.unitOzClass ?? "unclassed"}) — seed 24 wrote it; not re-touched.`,
+      });
+      continue;
+    }
+
+    const ruled = RULED_UNIT_OZ.find((r) => r.product === product.name);
+    if (ruled == null) {
+      skips.push({
+        productName: product.name,
+        state: "refused",
+        why: `Juan's 2026-08-21 ruling does not name this product, so no weight is written for it. Active members: ${spread}.`,
+      });
+      continue;
+    }
+
+    const known = active
+      .map((m) => ({ label: `${m.vendorName ?? "(no vendor)"}/${m.name}`, oz: m.avgOzPerEach }))
+      .filter((m): m is { label: string; oz: number } => m.oz != null && Number.isFinite(m.oz) && m.oz > 0);
+    if (known.length === 0) {
+      skips.push({
+        productName: product.name,
+        state: "refused",
+        why: `no ACTIVE member carries an avg_oz_per_each, so there is no measured number to carry up to the product. Active members: ${spread}.`,
+      });
+      continue;
+    }
+    const distinct = [...new Set(known.map((m) => m.oz))];
+    if (distinct.length > 1) {
+      skips.push({
+        productName: product.name,
+        state: "refused",
+        why: `the ACTIVE members carry DIFFERENT weights (${spread}) — a weight is a ruling, not an average, and this seed will not pick one. Rule on it, then re-run.`,
+      });
+      continue;
+    }
+    const value = distinct[0]!;
+    if (Math.abs(value - ruled.ruledOz) > TOLERANCE) {
+      skips.push({
+        productName: product.name,
+        state: "refused",
+        why: `MOVED — the ruling records ${ruled.ruledOz} oz but the live active member reads ${value}. Refusing to write a number the ruling did not name; re-confirm with Juan, then re-run.`,
+      });
+      continue;
+    }
+
+    const measuredOn = known.map((m) => m.label).join(" · ");
+    fills.push({
+      product,
+      value,
+      klass: "OPERATIONAL",
+      measuredOn,
+      activeSpread: spread,
+      sourceNote:
+        `OPERATIONAL — ${value} oz (${ruled.note}). Read LIVE off ${measuredOn}'s avg_oz_per_each and ruled up to the ` +
+        `PRODUCT grain. ${WEIGH_RULING} Written by ${SCRIPT} (Phase 4) so that a product-pinned recipe line is ` +
+        "member-INDEPENDENT: lib/products-shared.ts productInputBasis reads THIS number, never the resolved member's, " +
+        "so a vendor flip can no longer re-denominate the line.",
+    });
+  }
+  return { fills, skips };
+}
+
 // ── The gate (Task 4.2) ───────────────────────────────────────────────────────
 
 type Verdict = "PASS" | "PRODUCT_UNWEIGHED" | "MEMBERS_DISAGREE" | "PACK_LABEL_LINE" | "OZ_WOULD_MOVE" | "RETIRED_RECIPE";
@@ -377,6 +533,11 @@ interface Judged {
   sku: LiveSku;
   product: LiveProduct;
   entry: ProductIndexEntry;
+  /** products.unit_oz as it will read AFTER this run's fill step — the number the gate,
+   *  the failover proof and the projected graph all evaluate against. */
+  effectiveUnitOz: number | null;
+  /** True when `effectiveUnitOz` comes from THIS run's fill rather than the live column. */
+  fillPending: boolean;
   /** The member the ladder answers for this product at the GLOBAL scope. */
   resolvedSkuId: string | null;
   resolvedLabel: string;
@@ -410,7 +571,15 @@ function judge(
   product: LiveProduct,
   entry: ProductIndexEntry,
   measures: Map<string, MeasureUnitFactor>,
+  /** The fill this run plans for this product, if any (Juan's weigh ruling). */
+  fill: UnitOzFill | null,
 ): Judged {
+  // The gate evaluates against the weight the product will OWN after this run's fill
+  // step, because the fill and the re-point ship in the same execute and the fill runs
+  // first. In dry run the verdict is therefore explicitly CONDITIONAL on that fill, and
+  // the report says so rather than implying the column already reads it.
+  const effectiveUnitOz = product.unitOz ?? fill?.value ?? null;
+  const fillPending = product.unitOz == null && fill != null;
   const measure = row.unit == null ? undefined : measures.get(row.unit);
   const dimension = measure?.dimension ?? "(unregistered)";
   // The line's oz DEPENDS on avg_oz_per_each exactly when it converts through a
@@ -430,11 +599,11 @@ function judge(
   // BOTH sides through the REAL production function. The AFTER basis is the one
   // lib/prep-consumption-graph productLineOz will use, built by the same call.
   const ozBefore = ozForRecipeInput(row.quantity, row.unit, sku.shape, measures);
-  const basis = productInputBasis({ productId: product.id, unitOz: product.unitOz }, resolvedMember);
+  const basis = productInputBasis({ productId: product.id, unitOz: effectiveUnitOz }, resolvedMember);
   const ozAfter = ozForRecipeInput(row.quantity, row.unit, basis, measures);
 
   const base = {
-    row, sku, product, entry, resolvedSkuId, resolvedLabel,
+    row, sku, product, entry, effectiveUnitOz, fillPending, resolvedSkuId, resolvedLabel,
     rung: entry.resolution.rung, ozBefore, ozAfter, countDenominated, dimension,
   };
   const refuse = (verdict: Exclude<Verdict, "PASS">, why: string): Judged => ({
@@ -466,7 +635,7 @@ function judge(
 
   // (2) The member-dependence refusals. The numbers can agree PERFECTLY today and
   //     these still stand: what is refused is the DEPENDENCE, not the arithmetic.
-  if (countDenominated && product.unitOz == null) {
+  if (countDenominated && effectiveUnitOz == null) {
     const activeMembers = entry.members.filter((m) => m.active);
     const spread = activeMembers
       .map((m) => `${m.vendorName ?? "(no vendor)"} ${m.avgOzPerEach ?? "NULL"}`)
@@ -505,7 +674,9 @@ function judge(
     ...base,
     verdict: "PASS",
     why: countDenominated
-      ? `${dimension}-denominated and the PRODUCT owns its own unit_oz (${product.unitOz} oz, ${product.unitOzClass ?? "unclassed"}) — the basis is member-INDEPENDENT by construction`
+      ? `${dimension}-denominated and the PRODUCT owns its own unit_oz (${effectiveUnitOz} oz, ` +
+        `${fillPending ? `${"OPERATIONAL"} — filled by THIS run's §2 step` : product.unitOzClass ?? "unclassed"}) — ` +
+        "the basis is member-INDEPENDENT by construction"
       : `weight-denominated ("${row.unit}") — the measure registry decides the oz and \`avg_oz_per_each\` never enters, so no member can move it`,
     unblock: "",
   };
@@ -622,7 +793,7 @@ async function main(): Promise<void> {
     p();
     p(
       EXECUTE
-        ? "> **STATUS: EXECUTE MODE.** This run WRITES to `recipe_inputs` and `recipes.notes`."
+        ? "> **STATUS: EXECUTE MODE.** This run WRITES to `products.unit_oz`, `recipe_inputs` and `recipes.notes`."
         : "> **STATUS: NOTHING HAS BEEN WRITTEN.** This is the output of `scripts/seed/25-repoint-recipe-pins.ts` in " +
             "its default (dry-run) mode. The script writes only under an explicit `--execute` flag, which is " +
             "**gate S2** and belongs to the lead, after Juan's eyeball.",
@@ -635,11 +806,18 @@ async function main(): Promise<void> {
         "**live at run time** through the real production functions — nothing is copied from a plan table.",
     );
     p();
+    p(
+      "> **Revised after Juan's weigh ruling of 2026-08-21.** The first revision refused six lines as " +
+        "`PRODUCT_UNWEIGHED`; his ruling establishes that those member weights are his own extensive measurements, " +
+        "so this revision carries them up to the product grain first (§2) and the gate then evaluates every line on " +
+        "the merits.",
+    );
+    p();
     p(`**Sources:** ${DECISION_SOURCES}`);
   } else {
     p(
       EXECUTE
-        ? "══ EXECUTE MODE — this run WRITES to recipe_inputs / recipes.notes ══"
+        ? "══ EXECUTE MODE — this run WRITES to products.unit_oz / recipe_inputs / recipes.notes ══"
         : "══ DRY RUN (default) — no writes. Pass --execute to write (GATE S2: lead only). ══",
     );
     p(`\nSOURCES: ${DECISION_SOURCES}`);
@@ -711,15 +889,77 @@ async function main(): Promise<void> {
   ];
   const globalIndex = await loadProductIndex(productIds, null);
 
-  // ── §2 The gate, line by line ──────────────────────────────────────────────
-  h(2, "2 — The gate, line by line (oz computed through the real production functions)");
+  // ── §2 The unit_oz fill (Juan's weigh ruling) ──────────────────────────────
+  h(2, "2 — `products.unit_oz` fill (Juan's weigh ruling, 2026-08-21)");
+  p(plain(`> ${WEIGH_RULING}`));
+  p();
+  p(
+    plain(
+      "The first dry run refused six lines as `PRODUCT_UNWEIGHED` on the reading that these members' " +
+        "`avg_oz_per_each` values were seed estimates. Juan's ruling corrects the premise: they are his own " +
+        "measurements. So each ruled product takes its ACTIVE member's measured value up to the PRODUCT grain — " +
+        "**derived live and cross-checked against the ruling, never copied from it.** Once a product owns `unit_oz`, " +
+        "`productInputBasis` reads THAT number and never the resolved member's, so the line becomes " +
+        "member-INDEPENDENT and the gate below can evaluate it on the merits.",
+    ),
+  );
+  p();
+
+  const scopedProducts: Array<{ product: LiveProduct; entry: ProductIndexEntry }> = [];
+  for (const pid of productIds) {
+    const product = uni.productById.get(pid);
+    const entry = globalIndex.byProduct.get(pid);
+    if (product == null || entry == null) {
+      throw new Error(
+        `FATAL: product ${pid} is a member's product but the catalog or loadProductIndex has no entry — the resolution seam disagrees with the membership. Refusing.`,
+      );
+    }
+    scopedProducts.push({ product, entry });
+  }
+  scopedProducts.sort((a, b) => a.product.name.localeCompare(b.product.name));
+  const { fills, skips } = planUnitOzFills(scopedProducts);
+  const fillByProduct = new Map(fills.map((f) => [f.product.id, f]));
+
+  table(
+    ["product", "unit_oz", "class", "read live off", "active members (avg_oz_per_each)", "ruled"],
+    fills.map((f) => [
+      f.product.name,
+      `**${f.value}**`,
+      f.klass,
+      f.measuredOn,
+      f.activeSpread,
+      `✅ ${RULED_UNIT_OZ.find((r) => r.product === f.product.name)!.ruledOz} oz — matches`,
+    ]),
+    ["", "r", "", "", "", ""],
+  );
+  p();
+  h(3, "2a — Products NOT filled, and why");
+  table(
+    ["product", "state", "why"],
+    skips.map((s) => [s.productName, s.state === "already" ? "✅ already weighed" : "➖ not filled", s.why]),
+  );
+  p();
+  p(
+    plain(
+      "> **A member with a NULL weight is an UNKNOWN, not a dissent** — the same semantics " +
+        "`membersDisagreeOnUnitOz` uses. That is why **ICEBERG is filled at 20 oz per head** even though its Sysco " +
+        "and Baldor members carry NULL: Juan measured the PFG head, and once the PRODUCT owns the weight the other " +
+        "members' silence stops mattering. That is the entire reason the column exists. The refusals above are the " +
+        "converse: a product the ruling does not name is never filled, and active members carrying DIFFERENT weights " +
+        "would refuse outright — a weight is a ruling, not an average.",
+    ),
+  );
+
+  // ── §3 The gate, line by line ──────────────────────────────────────────────
+  h(2, "3 — The gate, line by line (oz computed through the real production functions)");
   p(
     plain(
       "For every candidate the line's ounces are computed **twice** — through `ozForRecipeInput` " +
         "(`lib/recipe-math.ts`), the same call `lib/prep-consumption-graph.ts productLineOz` makes — against (a) the " +
         "currently pinned SKU's live shape, pack chain and all, and (b) `productInputBasis(product, resolvedMember)`. " +
         `The pin moves only when the two agree within \`${TOLERANCE}\`. A reviewer can see that the number does not ` +
-        "move without running anything.",
+        "move without running anything. The `unit_oz` used is the one the product will own **after §2's fill**, " +
+        "because the fill and the re-point ship in the same `--execute` and the fill runs first.",
     ),
   );
   p();
@@ -734,7 +974,7 @@ async function main(): Promise<void> {
         `FATAL: product ${product.name} [${product.id}] is a member's product but loadProductIndex returned no entry — the resolution seam disagrees with the membership. Refusing.`,
       );
     }
-    judged.push(judge(row, sku, product, entry, measures));
+    judged.push(judge(row, sku, product, entry, measures, fillByProduct.get(product.id) ?? null));
   }
   judged.sort((a, b) => a.row.recipeName.localeCompare(b.row.recipeName));
 
@@ -765,7 +1005,7 @@ async function main(): Promise<void> {
     ),
   );
 
-  h(3, "2a — Why each PASSING line is safe");
+  h(3, "3a — Why each PASSING line is safe");
   table(
     ["recipe", "product", "unit", "dimension", "product unit_oz", "why it is member-independent"],
     passing.map((j) => [
@@ -773,12 +1013,14 @@ async function main(): Promise<void> {
       j.product.name,
       j.row.unit ?? "(none)",
       j.dimension,
-      j.product.unitOz == null ? "— *(not needed)*" : `${j.product.unitOz} (${j.product.unitOzClass ?? "unclassed"})`,
+      j.effectiveUnitOz == null
+        ? "— *(not needed)*"
+        : `${j.effectiveUnitOz} (${j.fillPending ? "OPERATIONAL — filled this run" : j.product.unitOzClass ?? "unclassed"})`,
       j.why,
     ]),
   );
 
-  h(3, "2b — Every REFUSAL, with its unblock");
+  h(3, "3b — Every REFUSAL, with its unblock");
   if (refused.length === 0) {
     p(MD ? "_(none — every candidate passes.)_" : "  (none)");
   } else {
@@ -825,7 +1067,7 @@ async function main(): Promise<void> {
   );
 
   // ── §3 Failover proof (Task 4.4, second half) ──────────────────────────────
-  h(2, "3 — Failover proof: the arc's thesis, on real data");
+  h(2, "4 — Failover proof: the arc's thesis, on real data");
   p(
     plain(
       "For every product a line would move to, each member is forced INACTIVE in turn and the line is re-resolved " +
@@ -857,7 +1099,7 @@ async function main(): Promise<void> {
           : ozForRecipeInput(
               j.row.quantity,
               j.row.unit,
-              productInputBasis({ productId: j.product.id, unitOz: j.product.unitOz }, rm),
+              productInputBasis({ productId: j.product.id, unitOz: j.effectiveUnitOz }, rm),
               measures,
             );
       let verdict: string;
@@ -913,7 +1155,7 @@ async function main(): Promise<void> {
   // basis cannot vary by shop. Prove it rather than assert it — D7 lets each location
   // resolve its own primary, and a per-location primary row would be invisible here
   // otherwise.
-  h(3, "3a — Per-location resolution (deviation D7)");
+  h(3, "4a — Per-location resolution (deviation D7)");
   const locRows: string[][] = [];
   for (const loc of uni.locations) {
     const idx = await loadProductIndex(productIds, loc.id);
@@ -928,9 +1170,17 @@ async function main(): Promise<void> {
           : ozForRecipeInput(
               j.row.quantity,
               j.row.unit,
-              productInputBasis({ productId: j.product.id, unitOz: e.unitOz }, rm),
+              // e.unitOz is the LIVE column; §2's fill has not landed in dry run, so the
+              // effective value is what a post-fill read would return. Assert the two agree
+              // wherever the column IS already populated, so a divergence cannot hide here.
+              productInputBasis({ productId: j.product.id, unitOz: e.unitOz ?? j.effectiveUnitOz }, rm),
               measures,
             );
+      if (e.unitOz != null && j.effectiveUnitOz != null && Math.abs(e.unitOz - j.effectiveUnitOz) > TOLERANCE) {
+        throw new Error(
+          `FATAL: ${j.product.name} reads unit_oz ${e.unitOz} at ${loc.name} but the gate evaluated ${j.effectiveUnitOz}. Refusing.`,
+        );
+      }
       const same = oz != null && j.ozAfter != null && Math.abs(oz - j.ozAfter) <= TOLERANCE;
       if (!same) {
         throw new Error(
@@ -950,7 +1200,7 @@ async function main(): Promise<void> {
   table(["location", "recipe", "product", "resolves to", "oz", "verdict"], locRows, ["", "", "", "", "r", ""]);
 
   // ── §4 Post-move verification through loadRecipeGraph (Task 4.4) ───────────
-  h(2, "4 — Post-move verification: the whole flatten, re-derived");
+  h(2, "5 — Post-move verification: the whole flatten, re-derived");
   p(
     plain(
       "The per-unit SKU-oz map is re-derived for **every node in the graph** — not only the touched ones — through " +
@@ -969,7 +1219,21 @@ async function main(): Promise<void> {
     unit: j.row.unit,
     productId: j.product.id,
   }));
-  const { graph: graphAfter, applied } = projectGraph(graphBefore, moves, globalIndex.index);
+  // The live index built each basis from the LIVE unit_oz, which is still NULL for every
+  // product §2 will fill. Rebuild the basis map against the EFFECTIVE weight, through the
+  // same pure productInputBasis, so the projection models the post-fill world rather than
+  // the pre-fill one. The resolution map is untouched — the ladder's answer does not move.
+  const effectiveIndex: ProductIndex = {
+    resolution: globalIndex.index.resolution,
+    basis: new Map(
+      [...globalIndex.byProduct].map(([pid, e]) => {
+        const eff = e.unitOz ?? fillByProduct.get(pid)?.value ?? null;
+        const rm = e.resolution.skuId != null ? e.members.find((m) => m.skuId === e.resolution.skuId) ?? null : null;
+        return [pid, productInputBasis({ productId: pid, unitOz: eff }, rm)] as const;
+      }),
+    ),
+  };
+  const { graph: graphAfter, applied } = projectGraph(graphBefore, moves, effectiveIndex);
   if (applied !== moves.length) {
     throw new Error(
       `FATAL: projected ${applied} pin move(s) into the graph but ${moves.length} line(s) passed the gate. A candidate row is invisible to loadRecipeGraph (retired recipe? duplicate producer shadowing?) — refusing to claim a verification it did not perform.`,
@@ -1005,7 +1269,7 @@ async function main(): Promise<void> {
       Math.abs(sum(a) - sum(b)) <= TOLERANCE ? "✅ 0.000000" : `❌ ${sum(a) - sum(b)}`,
     ]);
   }
-  h(3, "4a — The touched nodes, before and after");
+  h(3, "5a — The touched nodes, before and after");
   table(
     ["node", "grain", "leaf SKUs", "Σ oz before", "Σ oz after", "delta"],
     touchedRows.sort((a, b) => a[0]!.localeCompare(b[0]!)),
@@ -1031,7 +1295,7 @@ async function main(): Promise<void> {
   }
 
   // ── §5 The write half (Task 4.3) ───────────────────────────────────────────
-  h(2, "5 — Writes");
+  h(2, "6 — Writes");
 
   // Snapshot orderability BEFORE anything, so the assertion is a claim about the live
   // rows rather than an intention (seed 24's invariant, carried).
@@ -1047,6 +1311,7 @@ async function main(): Promise<void> {
   }
 
   let moved = 0;
+  let filled = 0;
   let notesWritten = 0;
   const notesByRecipe = new Map<string, Judged[]>();
   for (const j of passing) {
@@ -1055,11 +1320,19 @@ async function main(): Promise<void> {
     notesByRecipe.set(j.row.recipeId, list);
   }
 
-  if (passing.length === 0) {
+  if (passing.length === 0 && fills.length === 0) {
     p(MD ? "_(nothing to write — every candidate refused.)_" : "  (nothing to write — every candidate refused)");
   }
 
   pre();
+  for (const f of fills) {
+    p(
+      `${f.product.name}\n` +
+        `  ${EXECUTE ? "-" : "would"} set products.unit_oz [${f.product.id}]\n` +
+        `      unit_oz NULL -> ${f.value}   unit_oz_class -> ${f.klass}\n` +
+        `      read live off ${f.measuredOn}`,
+    );
+  }
   for (const j of passing) {
     p(
       `${j.row.recipeName}\n` +
@@ -1072,6 +1345,101 @@ async function main(): Promise<void> {
   pre();
 
   if (EXECUTE) {
+    // ── unit_oz FIRST. The re-point gate was computed against the post-fill weight,
+    //    so a re-point that landed before its fill would be a pin nothing can resolve.
+    for (const f of fills) {
+      const { data: before, error: bErr } = await sb
+        .from("products")
+        .select("id, name, unit_oz, unit_oz_class")
+        .eq("id", f.product.id)
+        .maybeSingle<{ id: string; name: string; unit_oz: number | string | null; unit_oz_class: string | null }>();
+      if (bErr) throw new Error(`unit_oz lookup ${f.product.name}: ${bErr.message}`);
+      if (!before) throw new Error(`FATAL: product ${f.product.name} [${f.product.id}] vanished mid-run.`);
+      if (before.name !== f.product.name) {
+        throw new Error(`FATAL: product [${f.product.id}] is now named "${before.name}", expected "${f.product.name}" — refusing.`);
+      }
+      const liveOz = num(before.unit_oz);
+      if (liveOz != null && Math.abs(liveOz - f.value) <= TOLERANCE) {
+        p(`  = unit_oz ${f.product.name} already ${f.value} — no write (idempotent).`);
+        continue;
+      }
+      if (liveOz != null) {
+        throw new Error(
+          `FATAL: "${f.product.name}" already carries unit_oz = ${liveOz} (class ${before.unit_oz_class ?? "—"}); this run planned ${f.value}. Somebody weighed it between the dry run and now. Refusing to overwrite — re-run the dry run.`,
+        );
+      }
+      const nowIso = new Date().toISOString();
+      const { error, count } = await sb
+        .from("products")
+        .update(
+          {
+            unit_oz: f.value,
+            unit_oz_class: f.klass,
+            unit_oz_source_note: f.sourceNote,
+            unit_oz_established_at: nowIso,
+            // NULL is honest: the seeds audit with actorId null, so there is genuinely
+            // nobody to name. Never backfill a placeholder actor (0179's own comment) —
+            // the ruling itself is named in unit_oz_source_note and in the audit row.
+            unit_oz_established_by: null,
+            updated_at: nowIso,
+            updated_by: null,
+          },
+          { count: "exact" },
+        )
+        .eq("id", f.product.id)
+        .is("unit_oz", null); // guard: only fill a row still reading NULL.
+      if (error) throw new Error(`set unit_oz ${f.product.name}: ${error.message}`);
+      if (!count) {
+        throw new Error(`FATAL: unit_oz write for ${f.product.name} matched 0 rows — the row moved under the guard. Refusing.`);
+      }
+      filled += 1;
+      p(`  + unit_oz ${f.product.name} = ${f.value} (${f.klass})`);
+      await audit({
+        actorId: null,
+        actorRole: null,
+        action: "product.unit_oz_set",
+        resourceTable: "products",
+        resourceId: f.product.id,
+        metadata: seedMeta("juan_weigh_ruling_carried_to_product_grain", {
+          product_name: f.product.name,
+          before_unit_oz: null,
+          before_unit_oz_class: before.unit_oz_class,
+          after_unit_oz: f.value,
+          after_unit_oz_class: f.klass,
+          weight_class: f.klass,
+          measured_on: f.measuredOn,
+          active_member_spread: f.activeSpread,
+          ruled_oz: RULED_UNIT_OZ.find((r) => r.product === f.product.name)?.ruledOz ?? null,
+          ruling: WEIGH_RULING,
+          source_note: f.sourceNote,
+        }),
+        ipAddress: null,
+        userAgent: null,
+      });
+    }
+
+    // Re-read from the destination before a single pin moves: the whole gate above was
+    // computed against these numbers, so a fill that did not land the way it was planned
+    // invalidates every verdict that follows.
+    if (fills.length > 0) {
+      const { data: back, error: fErr } = await sb
+        .from("products")
+        .select("id, name, unit_oz, unit_oz_class")
+        .in("id", fills.map((f) => f.product.id))
+        .returns<Array<{ id: string; name: string; unit_oz: number | string | null; unit_oz_class: string | null }>>();
+      if (fErr) throw new Error(`unit_oz read-back: ${fErr.message}`);
+      for (const f of fills) {
+        const row = (back ?? []).find((r) => r.id === f.product.id);
+        const live = num(row?.unit_oz ?? null);
+        if (live == null || Math.abs(live - f.value) > TOLERANCE) {
+          throw new Error(
+            `FATAL: ${f.product.name} reads unit_oz ${live ?? "NULL"} after the fill, expected ${f.value}. The gate below was computed against ${f.value} — refusing to re-point a single pin.`,
+          );
+        }
+      }
+      p(`  ✓ unit_oz read back from the destination on all ${fills.length} filled product(s).`);
+    }
+
     for (const j of passing) {
       // Re-read at write time. A quantity/unit that moved under us invalidates the gate
       // the whole run was built on — that is plan drift, and it is FATAL, not a warning.
@@ -1198,7 +1566,7 @@ async function main(): Promise<void> {
     }
 
     // ── Re-read from the destination (never trust the write's own report). ────
-    h(3, "5a — Read back from the destination");
+    h(3, "6a — Read back from the destination");
     const { data: after, error: aErr } = await sb
       .from("recipe_inputs")
       .select("id, component_sku_id, component_item_id, component_product_id, quantity, unit")
@@ -1252,7 +1620,7 @@ async function main(): Promise<void> {
   }
 
   // ── §6 What this seed will NOT touch ───────────────────────────────────────
-  h(2, "6 — What this seed will NOT touch");
+  h(2, "7 — What this seed will NOT touch");
   p(
     plain(
       "- **`active`, `weekday_par`, `weekend_par`** on any SKU. Seed 18 adjudicated orderability; the execute run " +
@@ -1260,8 +1628,12 @@ async function main(): Promise<void> {
         "- **`recipe_inputs.quantity` / `unit`.** Not one number is re-denominated. Seed 22 owns the portioned " +
         "quantities; this seed only moves WHICH THING the line points at, and refuses whenever that would change WHAT " +
         "IT MEANS.\n" +
-        "- **`products.unit_oz`.** A weight is a measurement and belongs to seed 24 / the Phase-6 weight board. Where " +
-        "one is missing this seed REFUSES the line rather than inventing the number that would let it pass.\n" +
+        "- **`avg_oz_per_each` on any SKU.** The SKU layer's weights are the SKU layer's business; §2 READS them and " +
+        "carries the number up to the product grain, and writes nothing back down.\n" +
+        "- **`products.unit_oz` outside Juan's ruling.** A weight is a measurement, and the ruling is the ceiling: a " +
+        "product it does not name is never filled, active members carrying DIFFERENT weights refuse outright, and a " +
+        "live value that has drifted from the ruled one refuses rather than being overwritten. Where no weight can be " +
+        "established the seed REFUSES the line instead of inventing the number that would let it pass.\n" +
         "- **Anything on a RETIRED recipe.** Reported with its numbers, never written.\n" +
         "- **The depletion ledgers.** `toast_daily_depletion` is untouched and the double-count law is not in play " +
         "(deviation D5).",
@@ -1269,10 +1641,11 @@ async function main(): Promise<void> {
   );
 
   // ── §7 Summary ─────────────────────────────────────────────────────────────
-  h(2, "7 — Summary");
+  h(2, "8 — Summary");
   table(
     [EXECUTE ? "wrote" : "would write", "count"],
     [
+      ["`products.unit_oz` fills (Juan's weigh ruling)", EXECUTE ? String(filled) : String(fills.length)],
       ["`recipe_inputs` pins moved SKU → product", EXECUTE ? String(moved) : String(passing.length)],
       ["`recipes.notes` stanzas", EXECUTE ? String(notesWritten) : String(notesByRecipe.size)],
       ["lines REFUSED (no write)", String(refused.length)],
@@ -1283,14 +1656,31 @@ async function main(): Promise<void> {
 
   p();
   if (refused.length > 0) {
-    p(
-      plain(
-        `> ⚠ **${refused.length} line(s) refuse.** Gate S2's protocol is explicit: *"If ANY line refuses, do not ` +
-          'execute."* The refusals and their unblocks go to Juan; a refusal is the script working, and the honest move ' +
-          "is to fix the input, not the gate. Everything that passes is independently safe, so a partial execute is " +
-          "defensible — but that is the LEAD's call with Juan, not this script's.",
-      ),
-    );
+    // A RETIRED_RECIPE refusal is CORRECT FOREVER — there is no input to fix, because
+    // nothing reads the row. Lumping it in with a fixable refusal would misreport the
+    // run's state to the one person who has to decide whether to execute.
+    const permanent = refused.filter((j) => j.verdict === "RETIRED_RECIPE");
+    const fixable = refused.filter((j) => j.verdict !== "RETIRED_RECIPE");
+    if (fixable.length > 0) {
+      p(
+        plain(
+          `> ⚠ **${fixable.length} line(s) refuse with a FIXABLE cause.** Gate S2's protocol is explicit: *"If ANY ` +
+            'line refuses, do not execute."* The refusals and their unblocks go to Juan; a refusal is the script ' +
+            "working, and the honest move is to fix the input, not the gate. Everything that passes is independently " +
+            "safe, so a partial execute is defensible — but that is the LEAD's call with Juan, not this script's.",
+        ),
+      );
+    } else {
+      p(
+        plain(
+          `> ✅ **Zero fixable refusals.** The residue is ${permanent.length} \`RETIRED_RECIPE\` row(s), and that ` +
+            "refusal is **correct forever**, not a blocker: the row hangs off an inactive recipe, `loadRecipeGraph` " +
+            "does not read it, and there is no input to fix. Gate S2's *\"if ANY line refuses, do not execute\"* " +
+            "clause exists to stop a re-point the gate could not prove safe — it cannot be satisfied by writing to a " +
+            "row nothing reads, so the honest reading is that every line the gate CAN speak about has passed.",
+        ),
+      );
+    }
     p();
   }
   p(`Seed 25 done (${EXECUTE ? "execute" : "dry run"}).`);
