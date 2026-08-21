@@ -27,6 +27,7 @@ import {
   type IngestExclusion, type ExclusionTarget,
 } from "./toast-sales-shared";
 import { loadRecipeGraph } from "@/lib/prep-consumption";
+import { recordResolutionFlipsForLocation } from "@/lib/products";
 import {
   perUnitSkuOzForItemFromGraph, perUnitDirectSkuOzForMenuItem, firstLevelItemConsumption,
 } from "@/lib/prep-consumption-graph";
@@ -322,6 +323,12 @@ export async function materializeDailyDepletion(
     metadata: { business_date: businessDate, rows: rows.length, actor_context: "cron" },
     ipAddress: null, userAgent: null,
   });
+  // Resolution-flip trail (spec: "why did ham cost move Tuesday" always has an
+  // answer). Placed on THE ONE writer that already runs once a day per location —
+  // never on loadRecipeGraph, which is a hot read path on nine callers. One row per
+  // real flip, zero rows on a normal day, zero queries with no product pins.
+  // fail-open + `void`: forensic, and it may never fail the materialization.
+  void recordResolutionFlipsForLocation(locationId);
   return { rows: rows.length };
 }
 
@@ -500,7 +507,9 @@ export async function deriveSalesConsumption(locationId: string, businessDate: s
   //    itemUnits takes item bases + platter item options + item modifiers,
   //    then clamps and flattens to SKUs. Flatten stays split direct/first-level
   //    (PR #180 invariant: recombination === full flatten, no 2× SKUs). ─────
-  const graph = await loadRecipeGraph();
+  // locationId scopes product resolution (0179): this shop's primary designation,
+  // its activation overlay and its receipt history — never another shop's.
+  const graph = await loadRecipeGraph({ locationId });
   const menuItemUnits = new Map<string, number>();   // signed whole-sub units per menu_item
   const itemUnits = new Map<string, number>();       // signed par-units per item
   const removedByItem = new Map<string, number>();   // visible removal truth

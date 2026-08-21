@@ -14,6 +14,7 @@ import {
   type GraphRecipe,
   type RecipeGraph,
 } from "@/lib/prep-consumption-graph";
+import { loadProductIndex } from "@/lib/products";
 import { audit } from "@/lib/audit";
 import type { RoleCode } from "@/lib/roles";
 
@@ -102,8 +103,23 @@ async function loadItemParBasis(
  * The graph is small (dozens of recipes / a few hundred rows); resolution is
  * pure + in-memory via lib/prep-consumption-graph.ts. Loops (W4b sku-demand,
  * surplus, loadDerivedForItems) load ONE graph and resolve every line against it.
+ *
+ * PRODUCT PINS RESOLVE HERE, ONCE (0179). A recipe_inputs row may name a PRODUCT
+ * instead of a vendor's SKU; lib/products.ts loadProductIndex runs the ONE ladder
+ * (resolveProductMember) and builds each product's measure-only basis, and the graph
+ * carries the ANSWER. Every downstream consumer keeps its SKU-keyed output and gains
+ * failover for free — one seam, nine callers. The product reads are SKIPPED entirely
+ * when no input names a product (`productIds.length === 0`), so the query count stays
+ * at 6 for a system with no products and rises to 8-11 only where plurality exists.
+ *
+ * `opts.locationId` (deviation D7) scopes the resolution: the per-location primary
+ * row, that location's activation overlay, and that location's receipt history.
+ * Location-aware callers (toast-sales, sku-demand, surplus) pass theirs; costing,
+ * catalog, toast-map, readiness and the scripts pass nothing and resolve against the
+ * GLOBAL primary row — the honest org-level replacement cost the board prices at.
  */
-export async function loadRecipeGraph(): Promise<RecipeGraph> {
+export async function loadRecipeGraph(opts?: { locationId?: string | null }): Promise<RecipeGraph> {
+  const locationId = opts?.locationId ?? null;
   const sb = getServiceRoleClient();
   const measures = await loadMeasures();
   const [{ data: recRows }, { data: inRows }, { data: outRows }] = await Promise.all([
@@ -133,19 +149,25 @@ export async function loadRecipeGraph(): Promise<RecipeGraph> {
       .order("created_at", { ascending: true, nullsFirst: true })
       .order("id", { ascending: true })
       .returns<Array<{ id: string; batch_yield: number | string | null }>>(),
-    sb.from("recipe_inputs").select("recipe_id, quantity, unit, component_sku_id, component_item_id")
-      .returns<Array<{ recipe_id: string; quantity: number | string; unit: string | null; component_sku_id: string | null; component_item_id: string | null }>>(),
+    sb.from("recipe_inputs").select("recipe_id, quantity, unit, component_sku_id, component_item_id, component_product_id")
+      .returns<Array<{ recipe_id: string; quantity: number | string; unit: string | null; component_sku_id: string | null; component_item_id: string | null; component_product_id: string | null }>>(),
     sb.from("recipe_outputs").select("recipe_id, output_item_id, output_menu_item_id, yield")
       .returns<Array<{ recipe_id: string; output_item_id: string | null; output_menu_item_id: string | null; yield: number | string }>>(),
   ]);
   const outputItemIds = [...new Set((outRows ?? []).filter((o) => o.output_item_id).map((o) => o.output_item_id!))];
   const skuIds = [...new Set((inRows ?? []).filter((c) => c.component_sku_id).map((c) => c.component_sku_id!))];
-  const [parBasis, skuPack] = await Promise.all([loadItemParBasis(outputItemIds), loadSkuPack(skuIds)]);
+  const productIds = [...new Set((inRows ?? []).filter((c) => c.component_product_id).map((c) => c.component_product_id!))];
+  const [parBasis, skuPack, productIndex] = await Promise.all([
+    loadItemParBasis(outputItemIds),
+    loadSkuPack(skuIds),
+    // Zero product-pinned rows → zero queries (loadProductIndex returns early).
+    loadProductIndex(productIds, locationId),
+  ]);
 
   const inputsByRecipe = new Map<string, GraphRecipe["inputs"]>();
   for (const c of inRows ?? []) {
     const list = inputsByRecipe.get(c.recipe_id) ?? [];
-    list.push({ quantity: num(c.quantity) ?? 0, unit: c.unit, componentSkuId: c.component_sku_id, componentItemId: c.component_item_id });
+    list.push({ quantity: num(c.quantity) ?? 0, unit: c.unit, componentSkuId: c.component_sku_id, componentItemId: c.component_item_id, componentProductId: c.component_product_id });
     inputsByRecipe.set(c.recipe_id, list);
   }
   const outputsByRecipe = new Map<string, GraphRecipe["outputs"]>();
@@ -164,7 +186,7 @@ export async function loadRecipeGraph(): Promise<RecipeGraph> {
     recipeId: r.id, batchYield: num(r.batch_yield),
     inputs: inputsByRecipe.get(r.id) ?? [], outputs: outputsByRecipe.get(r.id) ?? [],
   }));
-  return buildRecipeGraph(recipes, skuPack, measures);
+  return buildRecipeGraph(recipes, skuPack, measures, productIndex.index);
 }
 
 /** Per-one-unit leaf-SKU oz for an ITEM (one-shot; loops should loadRecipeGraph once and use the FromGraph variant). */

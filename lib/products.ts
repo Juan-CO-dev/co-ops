@@ -26,14 +26,19 @@
 import "server-only";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
+import { resolveActive } from "@/lib/location-sku-shared";
 import type { AuthContext } from "@/lib/session";
 import {
   resolveProductMember,
+  productInputBasis,
   membersDisagreeOnUnitOz,
   type ProductMember,
+  type ProductResolution,
 } from "@/lib/products-shared";
+import type { ProductIndex } from "@/lib/prep-consumption-graph";
 
 // ── Authority floors (the lib is the authority per-action) ───────────────────
 /** AGM+ — read the registry (the vendor_items read / cost-read floor). */
@@ -282,6 +287,373 @@ export async function listProducts(actor: AuthContext): Promise<ProductView[]> {
       membersDisagree: membersDisagreeOnUnitOz(mem),
     };
   });
+}
+
+// ── The graph-time product index (Phase 3) ───────────────────────────────────
+
+/** One product, fully resolved for ONE scope (a location, or the global default). */
+export interface ProductIndexEntry {
+  productId: string;
+  name: string;
+  unitOz: number | null;
+  /** Every member SKU, with `active` already resolved through this location's overlay. */
+  members: ProductMemberView[];
+  /** The primary designated for this scope: the location row, else the global row. */
+  primarySkuId: string | null;
+  /** True when the primary came from a LOCATION-specific row (not the global default). */
+  primaryIsLocationSpecific: boolean;
+  resolution: ProductResolution;
+  /** The measure-only basis a product-pinned recipe line resolves through (D3). */
+  basis: ReturnType<typeof productInputBasis>;
+}
+
+export interface ProductIndexLoad {
+  /** The shape lib/prep-consumption-graph.ts consumes (resolution + basis). */
+  index: ProductIndex;
+  byProduct: Map<string, ProductIndexEntry>;
+  /** member SKU id → its product id. The usage rollup (D9) reads exactly this. */
+  productBySku: Map<string, string>;
+}
+
+const EMPTY_PRODUCT_INDEX: ProductIndexLoad = {
+  index: { resolution: new Map(), basis: new Map() },
+  byProduct: new Map(),
+  productBySku: new Map(),
+};
+
+/** ISO of the most recent receipt line per member SKU (rung 2's only input). */
+async function loadLastReceivedAt(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  skuIds: string[],
+  locationId: string | null,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (skuIds.length === 0) return out;
+
+  // Scope to this location's deliveries when we have one. With NO location (the
+  // costing board — deviation D7) the honest analog is org-wide: "most recently
+  // received" at org grain means by anybody, so the delivery join is skipped
+  // entirely rather than silently reading one shop's ledger as if it were both.
+  let deliveryIds: string[] | null = null;
+  if (locationId != null) {
+    const rows = await selectAllRows<{ id: string }>(async (from, to) => {
+      const { data, error } = await sb.from("vendor_deliveries")
+        .select("id")
+        .eq("location_id", locationId)
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<{ id: string }>>();
+      if (error) throw new Error(`loadLastReceivedAt deliveries: ${error.message}`);
+      return { data };
+    });
+    deliveryIds = rows.map((r) => r.id);
+    if (deliveryIds.length === 0) return out; // nothing ever received here.
+  }
+
+  // PAGED (the PR #63 lesson): the delivery ledger crosses the 1000-row cap and a
+  // truncated page would silently mis-rank rung 2 — the ladder would answer with a
+  // stale member and nothing anywhere would say so. `id` (the PK) is the stable
+  // total order paging needs; a max() per SKU is order-insensitive.
+  const lines = await selectAllRows<{ vendor_item_id: string; created_at: string }>(
+    async (from, to) => {
+      let q = sb.from("vendor_delivery_items")
+        .select("vendor_item_id, created_at")
+        .in("vendor_item_id", skuIds);
+      if (deliveryIds != null) q = q.in("delivery_id", deliveryIds);
+      const { data, error } = await q
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<{ vendor_item_id: string; created_at: string }>>();
+      if (error) throw new Error(`loadLastReceivedAt lines: ${error.message}`);
+      return { data };
+    },
+  );
+  for (const l of lines) {
+    const prev = out.get(l.vendor_item_id);
+    if (prev == null || l.created_at > prev) out.set(l.vendor_item_id, l.created_at);
+  }
+  return out;
+}
+
+/**
+ * Resolve a set of products for ONE scope — THE seam of the whole arc.
+ *
+ * ONE loader, consumed by lib/prep-consumption.ts (graph build) AND lib/ordering.ts
+ * (the walk). There is deliberately no second copy: a second loader is a second
+ * opinion about which vendor a product means, which is exactly what this layer was
+ * built to end.
+ *
+ * NOT ROLE-GATED, on purpose: this is an internal resolution step inside a caller
+ * that has already gated (loadMeasures / loadSkuPackChains take the same posture).
+ * The user-facing registry read is `listProducts`, which gates at PRODUCT_READ_MIN.
+ *
+ * Queries: products · members · vendors (LABEL-ONLY, degrades) · primaries ·
+ * location overlay (only with a location) · last-received (paged). All batched —
+ * never per-product (the loadRecipeGraph law). `productIds` empty → ZERO queries,
+ * which is why a system with no products pays nothing for this layer existing.
+ *
+ * `active` is the location-RESOLVED value (`resolveActive(overlay, global)`), so the
+ * ladder sees the same activation the order walk does. Costing/counts read the
+ * per-location overlay through this path for the first time (previously ordering-only).
+ */
+export async function loadProductIndex(
+  productIds: string[],
+  locationId: string | null = null,
+): Promise<ProductIndexLoad> {
+  const ids = [...new Set(productIds.filter(Boolean))];
+  if (ids.length === 0) return EMPTY_PRODUCT_INDEX;
+  const sb = getServiceRoleClient();
+
+  const { data: productRows, error: pErr } = await sb
+    .from("products")
+    .select("id, name, unit_oz")
+    .in("id", ids)
+    .returns<Array<{ id: string; name: string; unit_oz: number | string | null }>>();
+  throwIfSchemaPending(pErr, "loadProductIndex products");
+  if (pErr) throw new Error(`loadProductIndex products failed: ${pErr.message}`);
+  const products = productRows ?? [];
+  if (products.length === 0) return EMPTY_PRODUCT_INDEX;
+  const presentIds = products.map((p) => p.id);
+
+  const { data: memberRows, error: mErr } = await sb
+    .from("vendor_items")
+    .select("id, name, vendor_id, product_id, active, avg_oz_per_each")
+    .in("product_id", presentIds)
+    .order("name", { ascending: true })
+    .returns<DbMemberRow[]>();
+  throwIfSchemaPending(mErr, "loadProductIndex members");
+  if (mErr) throw new Error(`loadProductIndex members failed: ${mErr.message}`);
+  const memberRowList = memberRows ?? [];
+  const memberIds = memberRowList.map((m) => m.id);
+
+  let primaryQuery = sb
+    .from("product_primaries")
+    .select("id, product_id, location_id, primary_sku_id, note")
+    .in("product_id", presentIds);
+  // The vendor_cutoffs "null = global" idiom (lib/ordering.ts loadOrderingAttention):
+  // read the location row AND the global row, then let the location row win below.
+  primaryQuery = locationId != null
+    ? primaryQuery.or(`location_id.is.null,location_id.eq.${locationId}`)
+    : primaryQuery.is("location_id", null);
+  const { data: primaryRows, error: prErr } = await primaryQuery.returns<DbPrimaryRow[]>();
+  throwIfSchemaPending(prErr, "loadProductIndex primaries");
+  if (prErr) throw new Error(`loadProductIndex primaries failed: ${prErr.message}`);
+
+  // Per-location activation overlay (0174). Without a location there is no overlay
+  // to read and `active` reduces to the global column, byte-identical to before.
+  const overlayBySku = new Map<string, boolean | null>();
+  if (locationId != null && memberIds.length > 0) {
+    const { data: ovRows, error: ovErr } = await sb
+      .from("location_sku_settings")
+      .select("sku_id, active_override")
+      .eq("location_id", locationId)
+      .in("sku_id", memberIds)
+      .returns<Array<{ sku_id: string; active_override: boolean | null }>>();
+    if (ovErr) throw new Error(`loadProductIndex overlay failed: ${ovErr.message}`);
+    for (const r of ovRows ?? []) overlayBySku.set(r.sku_id, r.active_override);
+  }
+
+  // LABEL-ONLY (the listProducts precedent): a vendors failure leaves twins
+  // unlabelled; it must never fail costing, ordering or the count sheet.
+  const vendorIds = [...new Set(memberRowList.map((m) => m.vendor_id).filter((v): v is string => v !== null))];
+  const vendorNameById = new Map<string, string>();
+  if (vendorIds.length > 0) {
+    const { data: vs, error: vErr } = await sb
+      .from("vendors")
+      .select("id, name")
+      .in("id", vendorIds)
+      .returns<Array<{ id: string; name: string }>>();
+    if (vErr) console.error("[products] loadProductIndex vendor names lookup failed:", vErr.message);
+    for (const v of vs ?? []) vendorNameById.set(v.id, v.name);
+  }
+
+  const lastReceived = await loadLastReceivedAt(sb, memberIds, locationId);
+
+  const membersByProduct = new Map<string, ProductMemberView[]>();
+  const productBySku = new Map<string, string>();
+  for (const m of memberRowList) {
+    if (m.product_id == null) continue;
+    productBySku.set(m.id, m.product_id);
+    const list = membersByProduct.get(m.product_id) ?? [];
+    list.push({
+      skuId: m.id,
+      name: m.name,
+      vendorId: m.vendor_id,
+      vendorName: m.vendor_id != null ? vendorNameById.get(m.vendor_id) ?? null : null,
+      active: resolveActive(overlayBySku.get(m.id) ?? null, m.active ?? true),
+      avgOzPerEach: num(m.avg_oz_per_each),
+      lastReceivedAt: lastReceived.get(m.id) ?? null,
+    });
+    membersByProduct.set(m.product_id, list);
+  }
+
+  const primariesByProduct = new Map<string, DbPrimaryRow[]>();
+  for (const p of primaryRows ?? []) {
+    const list = primariesByProduct.get(p.product_id) ?? [];
+    list.push(p);
+    primariesByProduct.set(p.product_id, list);
+  }
+
+  const resolution = new Map<string, ProductResolution>();
+  const basis = new Map<string, ReturnType<typeof productInputBasis>>();
+  const byProduct = new Map<string, ProductIndexEntry>();
+  for (const p of products) {
+    const members = membersByProduct.get(p.id) ?? [];
+    const scopes = primariesByProduct.get(p.id) ?? [];
+    // A location-specific row BEATS the global row (the house "null = global" idiom).
+    const locationRow = locationId != null ? scopes.find((r) => r.location_id === locationId) : undefined;
+    const globalRow = scopes.find((r) => r.location_id === null);
+    const chosen = locationRow ?? globalRow ?? null;
+    const res = resolveProductMember({
+      productId: p.id,
+      primarySkuId: chosen?.primary_sku_id ?? null,
+      members,
+    });
+    const resolvedMember = res.skuId != null ? members.find((m) => m.skuId === res.skuId) ?? null : null;
+    const b = productInputBasis({ productId: p.id, unitOz: num(p.unit_oz) }, resolvedMember);
+    resolution.set(p.id, res);
+    basis.set(p.id, b);
+    byProduct.set(p.id, {
+      productId: p.id,
+      name: p.name,
+      unitOz: num(p.unit_oz),
+      members,
+      primarySkuId: chosen?.primary_sku_id ?? null,
+      primaryIsLocationSpecific: locationRow != null,
+      resolution: res,
+      basis: b,
+    });
+  }
+
+  return { index: { resolution, basis }, byProduct, productBySku };
+}
+
+/**
+ * Append a `product.resolution_flip` audit row for every product whose resolved
+ * member CHANGED since the last audited answer (spec: "every resolution flip writes
+ * an audit row — 'why did ham cost move Tuesday' always has an answer").
+ *
+ * DELIBERATE PLACEMENT: this is called from the ONE writer that already runs once a
+ * day per location (materializeDailyDepletion), NOT from loadRecipeGraph. The graph
+ * loader is a hot read path on nine callers; audit() is fail-open but not free, and
+ * a read that writes is the hazard loadCountsTileState was written to avoid. One row
+ * per real flip, zero rows on a normal day.
+ *
+ * Fail-open like audit() itself: a flip row is forensic, never load-bearing, and it
+ * must not be able to fail the nightly depletion materialization.
+ */
+export async function recordResolutionFlips(
+  locationId: string,
+  resolutions: ReadonlyMap<string, ProductResolution>,
+): Promise<void> {
+  if (resolutions.size === 0) return;
+  try {
+    const sb = getServiceRoleClient();
+    const productIds = [...resolutions.keys()];
+    // The last audited answer per (location, product). One batched read over the
+    // flip rows for these products; newest first, first-seen-wins per product.
+    const { data: priorRows, error } = await sb
+      .from("audit_log")
+      .select("resource_id, metadata, created_at")
+      .eq("action", "product.resolution_flip")
+      .in("resource_id", productIds)
+      .order("created_at", { ascending: false })
+      .limit(500)
+      .returns<Array<{ resource_id: string; metadata: Record<string, unknown> | null; created_at: string }>>();
+    if (error) {
+      console.error("[products] recordResolutionFlips prior lookup failed:", error.message);
+      return;
+    }
+    const lastTo = new Map<string, string | null>();
+    for (const r of priorRows ?? []) {
+      const meta = r.metadata ?? {};
+      if (meta["location_id"] !== locationId) continue;
+      if (lastTo.has(r.resource_id)) continue; // newest wins (ordered desc).
+      const to = meta["to_sku_id"];
+      lastTo.set(r.resource_id, typeof to === "string" ? to : null);
+    }
+
+    for (const [productId, res] of resolutions) {
+      const prior = lastTo.get(productId);
+      // No history at all → nothing FLIPPED; the first observation is not a change.
+      if (!lastTo.has(productId)) continue;
+      if ((prior ?? null) === (res.skuId ?? null)) continue;
+      await audit({
+        actorId: null,
+        actorRole: null,
+        action: "product.resolution_flip",
+        resourceTable: "products",
+        resourceId: productId,
+        metadata: {
+          product_id: productId,
+          location_id: locationId,
+          from_sku_id: prior ?? null,
+          to_sku_id: res.skuId,
+          rung: res.rung,
+          considered_sku_ids: res.consideredSkuIds,
+        },
+        ipAddress: null,
+        userAgent: null,
+      });
+    }
+    // First-ever observation per product: seed the trail so the NEXT change has a
+    // "from". Seeded rows carry seed: true so an auditor never reads one as a flip.
+    for (const [productId, res] of resolutions) {
+      if (lastTo.has(productId)) continue;
+      await audit({
+        actorId: null,
+        actorRole: null,
+        action: "product.resolution_flip",
+        resourceTable: "products",
+        resourceId: productId,
+        metadata: {
+          product_id: productId,
+          location_id: locationId,
+          from_sku_id: null,
+          to_sku_id: res.skuId,
+          rung: res.rung,
+          considered_sku_ids: res.consideredSkuIds,
+          seed: true,
+        },
+        ipAddress: null,
+        userAgent: null,
+      });
+    }
+  } catch (err) {
+    console.error("[products] recordResolutionFlips failed (fail-open):", err);
+  }
+}
+
+/**
+ * The entry point the daily depletion writer calls: resolve every PINNED product for
+ * this location and append a flip row for anything that moved.
+ *
+ * Self-contained on purpose — deriveSalesConsumption is shared with the ADMIN READ
+ * surface (lib/catering/toast-sales.ts salesConsumption), so the flip audit cannot
+ * ride the graph load without turning a read into a write. Two cheap queries on the
+ * nightly cron, and ZERO when no recipe line pins a product.
+ *
+ * Fail-open: forensic, never load-bearing.
+ */
+export async function recordResolutionFlipsForLocation(locationId: string): Promise<void> {
+  try {
+    const sb = getServiceRoleClient();
+    const { data, error } = await sb
+      .from("recipe_inputs")
+      .select("component_product_id")
+      .not("component_product_id", "is", null)
+      .returns<Array<{ component_product_id: string | null }>>();
+    if (error) {
+      console.error("[products] recordResolutionFlipsForLocation pins lookup failed:", error.message);
+      return;
+    }
+    const productIds = [...new Set((data ?? []).map((r) => r.component_product_id).filter((v): v is string => v != null))];
+    if (productIds.length === 0) return;
+    const { index } = await loadProductIndex(productIds, locationId);
+    await recordResolutionFlips(locationId, index.resolution);
+  } catch (err) {
+    console.error("[products] recordResolutionFlipsForLocation failed (fail-open):", err);
+  }
 }
 
 // ── Writers (GM+; every one: level → service-role write with an exact count →
