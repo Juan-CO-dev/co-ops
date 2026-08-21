@@ -16,12 +16,18 @@
  * already hydrates every referenced SKU's pack fields AND its active pack chain
  * (lib/prep-consumption.ts loadSkuPack), so deriving content_oz from
  * graph.skuPack means the dollars ride exactly the same oz resolution as the
- * flatten — chain-aware, count-aware, same nulls in the same places. Going
- * through lib/admin/cost.ts's computeSkuCostPerOz instead would silently use
- * the LEGACY FLAT-FIELD path (it takes no packChain), and 50 of the 77
- * recipe-referenced SKUs in prod carry chains — the two would disagree.
- * (That chain-blindness is pre-existing on /admin/skus and /admin/vendors/[id];
- * flagged, deliberately not changed here — different surface, own PR.)
+ * flatten — chain-aware, count-aware, same nulls in the same places.
+ *
+ * The chain-blindness this header used to flag on /admin/skus and
+ * /admin/vendors/[id] — `computeSkuCostPerOz` calling `skuContentOz` with no
+ * packChain — is FIXED (2026-08-21): that function now takes the chain map as a
+ * required argument and both pages pass the one they already load. All three
+ * derivations agree by construction.
+ *
+ * This board still derives from `graph.skuPack` rather than borrowing
+ * lib/admin/cost.ts, and the reason is scope, not correctness: the graph hydrates
+ * only the SKUs the RECIPE UNIVERSE references (64 of 182 live), which is exactly
+ * this board's population and a subset of the catalog those screens list.
  */
 import "server-only";
 

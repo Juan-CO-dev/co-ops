@@ -1,9 +1,38 @@
 /**
  * Destructive action registry — Foundation Spec v1.2 Section 7.3.
  *
- * These actions require step-up auth (password re-entry) for level 5+ users
- * before they can be executed. Modules cannot mark their own actions as
- * destructive — additions go through this list and a coordinated review.
+ * Modules cannot mark their own actions as destructive — additions go through
+ * this list and a coordinated review.
+ *
+ * ── WHAT MEMBERSHIP ACTUALLY DOES (corrected 2026-08-21) ────────────────────
+ *
+ * This header used to say these actions "require step-up auth (password
+ * re-entry) for level 5+ users before they can be executed." That is NOT what
+ * the registry does, and the stale claim is load-bearing enough to have already
+ * caused one wrong decision (see below).
+ *
+ * `isDestructive` has exactly ONE consumer in the entire codebase:
+ * lib/audit.ts's `destructive:` column on the audit row. Step-up is enforced
+ * somewhere else entirely — lib/admin/step-up.ts, gated by ROUTE/PATH via
+ * `isAdminPath`, with no reference to this list. So adding a name here changes
+ * one thing and nothing else: whether the forensic filter can find the row.
+ *
+ * That distinction resolved a genuine contradiction between two in-repo
+ * documents. docs/superpowers/plans/2026-08-20-product-identity.md ruled "None
+ * are destructive — do not add them to DESTRUCTIVE_ACTIONS" for the product.*
+ * family, while docs/sim/2026-08-21-product-identity-simday.md filed their
+ * absence as a gap ("forensic-filter gap only — step-up is enforced at the
+ * routes"). Both are right about their own subject: the plan was protecting a
+ * step-up behaviour this list does not control, and the sim was describing the
+ * forensic filter it does. The sim's reading is the operative one, so the family
+ * is registered below — with zero behavioural change to who can do what.
+ *
+ * THE CRITERION, as the entries below have applied it consistently: an action is
+ * destructive when a HUMAN act alters shared operational config or the
+ * accountability record — the things you would want to filter the audit log down
+ * to when asking "who changed the kitchen?". A system OBSERVATION is not
+ * destructive no matter how consequential (see product.resolution_flip in
+ * lib/audit-actions.ts's non-destructive list).
  */
 
 export const DESTRUCTIVE_ACTIONS = [
@@ -153,6 +182,16 @@ export const DESTRUCTIVE_ACTIONS = [
   "item_question.create",
   // — item_question.disable deactivates an item question + its propagated lines (MoO+).
   "item_question.disable",
+  // — the two EDIT actions for the same questions (2026-08-21 sweep). Their own
+  //   create/ and disable/ siblings four lines up were already registered, so
+  //   until now a forensic filter asking "who changed the prep questions?"
+  //   returned every ADD and every REMOVAL and silently missed every EDIT — the
+  //   one that changes what a question ASKS without changing that it exists.
+  //   Both are grep-invisible at the call site (routed through
+  //   lib/admin/templates.ts's `args.auditAction` variable), which is why the
+  //   pair was missed when the siblings were registered.
+  "section_question.update",
+  "item_question.update",
 
   // Checklist completion correction (per SPEC_AMENDMENTS.md C.28)
   // — destructive because they alter operational/accountability record.
@@ -224,6 +263,66 @@ export const DESTRUCTIVE_ACTIONS = [
   // metadata.orphaned_changes (op-by-op array), metadata.resolving_audit_row_id
   // (forward link to the row that completed the work in the recovery run).
   "audit.gap_recovery",
+
+  // ── Product identity (0179–0181; sim P2 sweep, 2026-08-21) ────────────────
+  // The registry gap the product-identity sim filed. Every one of these is a
+  // GM+ human act that re-points shared operational config — and this family is
+  // load-bearing in a way the SKU catalog is not, because one pointer decides
+  // which vendor's ounces and dollars every recipe, count and order walk means.
+  // Forensic-filter only: step-up on /admin/products is already enforced by
+  // path, so nothing about who may do these changes.
+  // — product.create adds a raw identity above the SKU catalog (GM+). The
+  //   registry analog of item.create / vendor_item.create, both already here.
+  "product.create",
+  // — member_attach / member_detach move a SKU under or out from a product,
+  //   which changes what a recipe pinned to that product will resolve to.
+  //   Same blast radius as item_component.add/remove, already here.
+  "product.member_attach",
+  "product.member_detach",
+  // — primary_set re-points which member a product means at a location. This is
+  //   THE pointer the whole layer exists to control; a wrong one silently
+  //   re-costs the menu. Location-bound at both layers since the T0 tenancy fix.
+  "product.primary_set",
+  // — unit_oz_set owns the count-denominated basis (AGENTS.md: "A PRODUCT OWNS
+  //   unit_oz, NOT A PACK"). Editing it re-denominates every count-based recipe
+  //   line for that identity at once. Mirrors item_par.update's rationale.
+  "product.unit_oz_set",
+  // — set_active is retirement: Juan declaring "we stop buying this identity".
+  //   It refuses at resolution rung 0, suppresses par'd member SKUs from the
+  //   order walk and turns pinned recipe lines red. Deliberately deferred by the
+  //   retirement PR (#283) to this sweep; the exact analog of
+  //   vendor_item.deactivate, already here.
+  "product.set_active",
+
+  // ── Weight provenance (0179 quartet; same sweep) ──────────────────────────
+  // A weight fill writes the oz basis that every cost, depletion and variance
+  // number divides by — the most numerically consequential edit in the admin
+  // console, and the one the costing board's `unweighed` status exists to
+  // refuse until a human does it. Both are human acts on shared config, so both
+  // belong here by the same criterion as vendor_item.update.
+  // (sku.weight_fill predates the product arc — PR #163 — so it is NOT one of
+  // the seven the sim filed; it is an older instance of the identical gap,
+  // swept here because splitting the pair would leave the weight board half
+  // filterable.)
+  "sku.weight_fill",
+  "item.weight_fill",
+
+  // ── Basis-altering edits (lead ruling on the 2026-08-21 sweep) ────────────
+  // Both alter a BASIS other data silently depends on — the registry's own
+  // criterion — and since membership is forensic-only (see the header), there is
+  // no behavioural risk in flagging them.
+  // — sku.pack_chain_update replaces a SKU's whole active pack chain, which IS
+  //   the oz denominator every cost, depletion and variance number divides by.
+  //   `vendor_item.update` has been registered since the catalog shipped; a
+  //   chain edit moves the same arithmetic harder, and it is the write whose
+  //   flat-field mirror going stale silently splits the cost board from the
+  //   catalog screens (the defect this PR's second commit fixes).
+  "sku.pack_chain_update",
+  // — item.set_type changes an item's semantic CLASS, which re-routes how every
+  //   downstream reader treats it (what it can be counted in, whether it is a
+  //   production output, which surfaces list it). Same shape as the registered
+  //   item.set_sold_directly / item.set_default, which flip narrower flags.
+  "item.set_type",
 
   // Bulk / sensitive
   "reports.bulk_export",

@@ -18,6 +18,15 @@
  * destructive flag: auto-derived from isDestructive(action) — actions listed
  * in DESTRUCTIVE_ACTIONS get destructive=true. Callers don't pass it.
  *
+ * CLOSED VOCABULARY (2026-08-21): `action` is typed as `AuditAction`, the union
+ * of lib/audit-actions.ts's whole vocabulary, NOT `string`. While it was
+ * `string`, a new action name compiled anywhere and defaulted silently to
+ * destructive=false — which is exactly how the product-identity family shipped
+ * unregistered, and how two `*_question.update` actions sat unregistered beside
+ * their own registered create/disable siblings. A new action must now be
+ * adjudicated into DESTRUCTIVE_ACTIONS or NON_DESTRUCTIVE_ACTIONS before it will
+ * compile, and a typo can no longer reach the audit log at all.
+ *
  * Schema convention: audit_log has no dedicated ip_address / user_agent
  * columns. The helper merges those caller-supplied fields into the metadata
  * JSONB under the keys `ip_address` and `user_agent`. All callers must pass
@@ -29,12 +38,14 @@
 
 import { getServiceRoleClient } from "./supabase-server";
 import { isDestructive } from "./destructive-actions";
+import type { AuditAction } from "./audit-actions";
 import type { RoleCode } from "./roles";
 
 export interface AuditInput {
   actorId: string | null;
   actorRole: RoleCode | null;
-  action: string;
+  /** Closed vocabulary — see lib/audit-actions.ts. Deliberately not `string`. */
+  action: AuditAction;
   resourceTable: string;
   resourceId: string | null;
   metadata: Record<string, unknown>;

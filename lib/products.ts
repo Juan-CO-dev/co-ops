@@ -426,6 +426,42 @@ const EMPTY_PRODUCT_INDEX: ProductIndexLoad = {
   productBySku: new Map(),
 };
 
+// ── Location scoping WITHOUT spending the delivery-id list in the request line ──
+/**
+ * The PostgREST embed that scopes a `vendor_delivery_items` read to one location.
+ *
+ * WHY THIS EXISTS. Both receipt readers below need "lines whose delivery belongs
+ * to THIS location". The obvious spelling — read the location's delivery ids, then
+ * `.in("delivery_id", ids)` — spends the whole id list in the GET request line, and
+ * that list is UNBOUNDED BY DESIGN here (the lot shelf is the full receipt history;
+ * a lot only leaves it by being eaten). At ~37 bytes per uuid against Kong's 8 KB
+ * request line that is a hard 414/400 at ~220 deliveries — reachable within months
+ * of near-daily receiving at two shops. It fails on page 0, with zero rows read, so
+ * `selectAllRows` cannot help: paging the RESPONSE does nothing about the REQUEST.
+ * `loadCountFormData` has no try/catch, so the 414 would 500 the whole count sheet.
+ * (Arithmetic pinned in tests/supabase-paginate.test.ts.)
+ *
+ * The embed pushes the scoping into SQL, so the request line is CONSTANT in the
+ * number of deliveries — the id list is never built, never sent, and the extra
+ * paged scan of `vendor_deliveries` disappears with it.
+ *
+ * DISAMBIGUATED BY FK CONSTRAINT NAME, necessarily: `vendor_delivery_items` carries
+ * TWO foreign keys to `vendor_deliveries` — the plain `delivery_id` FK and 0178's
+ * composite `(delivery_id, vendor_id)` binding — so a bare
+ * `vendor_deliveries!inner(...)` fails with PGRST201 "more than one relationship was
+ * found" (verified against prod 2026-08-21, not inferred).
+ *
+ * ON THE HOUSE LAW "prefer two-step queries" (AGENTS.md): that law's stated hazard is
+ * RLS — an embedded filter over a relation the caller cannot see behaves
+ * unpredictably. Both readers here use the SERVICE-ROLE client, which bypasses RLS
+ * entirely, so the hazard is not in play; the same-client precedent is
+ * lib/checklists.ts's `checklist_templates!inner(type)`. Row-for-row parity with the
+ * old two-step was verified live before the swap.
+ */
+const DELIVERY_AT_LOCATION_EMBED =
+  "vendor_deliveries!vendor_delivery_items_delivery_id_fkey!inner(location_id)";
+const DELIVERY_LOCATION_COLUMN = "vendor_deliveries.location_id";
+
 /** ISO of the most recent receipt line per member SKU (rung 2's only input). */
 async function loadLastReceivedAt(
   sb: ReturnType<typeof getServiceRoleClient>,
@@ -435,36 +471,26 @@ async function loadLastReceivedAt(
   const out = new Map<string, string>();
   if (skuIds.length === 0) return out;
 
-  // Scope to this location's deliveries when we have one. With NO location (the
-  // costing board — deviation D7) the honest analog is org-wide: "most recently
-  // received" at org grain means by anybody, so the delivery join is skipped
-  // entirely rather than silently reading one shop's ledger as if it were both.
-  let deliveryIds: string[] | null = null;
-  if (locationId != null) {
-    const rows = await selectAllRows<{ id: string }>(async (from, to) => {
-      const { data, error } = await sb.from("vendor_deliveries")
-        .select("id")
-        .eq("location_id", locationId)
-        .order("id", { ascending: true })
-        .range(from, to)
-        .returns<Array<{ id: string }>>();
-      if (error) throw new Error(`loadLastReceivedAt deliveries: ${error.message}`);
-      return { data };
-    });
-    deliveryIds = rows.map((r) => r.id);
-    if (deliveryIds.length === 0) return out; // nothing ever received here.
-  }
-
   // PAGED (the PR #63 lesson): the delivery ledger crosses the 1000-row cap and a
   // truncated page would silently mis-rank rung 2 — the ladder would answer with a
   // stale member and nothing anywhere would say so. `id` (the PK) is the stable
   // total order paging needs; a max() per SKU is order-insensitive.
+  //
+  // Scoped to this location's deliveries by the embed above when we have one. With
+  // NO location (the costing board — deviation D7) the honest analog is org-wide:
+  // "most recently received" at org grain means by anybody, so the delivery join is
+  // skipped entirely rather than silently reading one shop's ledger as if it were
+  // both. A location with nothing ever received simply matches no lines — the same
+  // empty map the old explicit early-return produced.
   const lines = await selectAllRows<{ vendor_item_id: string; created_at: string }>(
     async (from, to) => {
+      // The embed rides along even with no location: `delivery_id` is NOT NULL with
+      // an FK, so `!inner` matches every line and filters nothing — which keeps ONE
+      // query shape instead of two divergent ones. Only the `.eq` is conditional.
       let q = sb.from("vendor_delivery_items")
-        .select("vendor_item_id, created_at")
+        .select(`vendor_item_id, created_at, ${DELIVERY_AT_LOCATION_EMBED}`)
         .in("vendor_item_id", skuIds);
-      if (deliveryIds != null) q = q.in("delivery_id", deliveryIds);
+      if (locationId != null) q = q.eq(DELIVERY_LOCATION_COLUMN, locationId);
       const { data, error } = await q
         .order("id", { ascending: true })
         .range(from, to)
@@ -684,34 +710,6 @@ const EMPTY_LOT_LOAD: ProductLotLoad = {
 };
 
 /**
- * Every delivery id at a location. The lot shelf is the FULL receipt history (a lot
- * only leaves it by being eaten), so unlike lib/counts.ts locationDeliveryIds there
- * is no window to bound it with.
- *
- * PAGED (the PR #63 lesson) under `id` (the PK) as the stable total order: a short id
- * list silently zeroes intake for every delivery it drops, which here would read as
- * "that vendor has no stock" and hand the whole count to the other twin. The caller
- * only uses set membership, so row order is not otherwise load-bearing.
- */
-async function allLocationDeliveryIds(
-  sb: ReturnType<typeof getServiceRoleClient>,
-  locationId: string,
-): Promise<string[]> {
-  const rows = await selectAllRows<{ id: string }>(async (from, to) => {
-    const { data, error } = await sb
-      .from("vendor_deliveries")
-      .select("id")
-      .eq("location_id", locationId)
-      .order("id", { ascending: true })
-      .range(from, to)
-      .returns<Array<{ id: string }>>();
-    if (error) throw new Error(`loadProductLots deliveries: ${error.message}`);
-    return { data };
-  });
-  return rows.map((r) => r.id);
-}
-
-/**
  * Load the receipt LOTS behind a set of products at one location — the shelf the
  * FIFO functions in lib/products-shared.ts walk (spec: "Lot data already exists
  * (vendor_delivery_items are dated)"; nothing new is captured).
@@ -745,11 +743,13 @@ export async function loadProductLots(
   if (skuIds.length === 0) return EMPTY_LOT_LOAD;
 
   const sb = getServiceRoleClient();
-  const deliveryIds = await allLocationDeliveryIds(sb, locationId);
-  if (deliveryIds.length === 0) return EMPTY_LOT_LOAD;
 
-  // PAGED for the same reason the delivery ids are: a truncated page drops real lots
-  // and silently mis-attributes the FIFO split.
+  // PAGED (the PR #63 lesson): a truncated page drops real lots and silently
+  // mis-attributes the FIFO split. Location scoping rides the EMBED rather than a
+  // delivery-id `.in()` list — see DELIVERY_AT_LOCATION_EMBED for why that list was
+  // a 414 waiting on the receiving ledger to grow. A location that has never
+  // received simply matches no lines, which is the same empty result the old
+  // explicit early-return produced.
   const lines = await selectAllRows<{
     id: string;
     vendor_item_id: string;
@@ -758,9 +758,9 @@ export async function loadProductLots(
   }>(async (from, to) => {
     const { data, error } = await sb
       .from("vendor_delivery_items")
-      .select("id, vendor_item_id, created_at, resolved_oz")
+      .select(`id, vendor_item_id, created_at, resolved_oz, ${DELIVERY_AT_LOCATION_EMBED}`)
       .in("vendor_item_id", skuIds)
-      .in("delivery_id", deliveryIds)
+      .eq(DELIVERY_LOCATION_COLUMN, locationId)
       .order("id", { ascending: true })
       .range(from, to)
       .returns<

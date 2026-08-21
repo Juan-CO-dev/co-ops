@@ -104,13 +104,22 @@ was defining Hot Peppers' and Antipasto Pasta's costs) · duplicate ACTIVE produ
 readiness warning · the mass guard's blind spot (never-weighed placeholder preps) gets its
 own `unweighed` status instead of flipping to `costed` the moment a price lands.
 
-**Engine hardening still owed:** `computeSkuCostPerOz` (`lib/admin/cost.ts`) is
-**pack-chain-blind** — it takes no `packChain`, so it silently uses the LEGACY flat-field
-path while 50 of the 77 recipe-referenced SKUs carry chains. `/admin/menu-costing` already
-routes around it (it derives cost/oz from the graph's own pack data); **`/admin/skus` and
-`/admin/vendors/[id]` do not**, so those two surfaces can show a different $/oz than the
-costing board for the same SKU. Flagged in #271, deliberately not fixed there — different
-surface, own PR.
+**Engine hardening ✅ DONE (2026-08-21).** `computeSkuCostPerOz` was
+**pack-chain-blind** — it took no `packChain`, so `/admin/skus` and
+`/admin/vendors/[id]` used the LEGACY flat-field path while `/admin/menu-costing`
+derived cost/oz from the graph's own chain-carrying pack data. The chain map is now a
+REQUIRED argument (both pages already loaded it for the readiness badge), and the same
+derivation feeds the received-oz ledger and consumed dollars, which were blind too —
+fixing only the displayed $/oz would have put two disagreeing numbers in one drawer.
+
+Correction to the old filing, verified live before building: the two paths did **not**
+disagree in production. All 182 SKUs (63 chained) produced identical content_oz, because
+`replaceSkuPackChain` writes a compensating flat-field mirror on every chain save. But that
+mirror is a documented stopgap, it fails NON-FATALLY ("chain saved; flat fields stale"),
+and `PATCH /api/admin/skus/[id]` writes `units_per_pack` without touching the chain — so
+the agreement was one failed sync away from a silent, permanent split. With a stale mirror
+the old code reported HALF the true $/oz. Pure math split to `lib/admin/cost-shared.ts` per
+the `*-shared` law so it is finally testable (10 tests incl. a board-parity oracle).
 
 ## NOW (build — small, unblocked, dormant→live)
 
@@ -349,7 +358,7 @@ offline/dead-zone resilience (walk-ins, basements) · customer-facing menu displ
 | catering_pipeline (location_id, event_date) index | real catering volume (table tiny today) |
 | maybeRefreshTodaySales audit_log debounce — one-time EXPLAIN | audit_log growth felt on /mid-shift loads |
 | loadMaintenanceOverview per-fridge serial loads | next maintenance-lib touch |
-| `computeSkuCostPerOz` pack-chain-blind on /admin/skus + /admin/vendors/[id] | next cost-surface touch (menu-costing already routes around it) |
+| ~~`computeSkuCostPerOz` pack-chain-blind on /admin/skus + /admin/vendors/[id]~~ — **✅ FIXED, engine-hardening batch (2026-08-21).** Chain map now a required argument; the received-oz ledger and consumed dollars share the same derivation. No live divergence existed (a compensating flat-field mirror was hiding it) — see the §Costing note above | — |
 | `ladle` measure row — seed 23 written, gate CLOSED | `Jus.oz_per_par_unit` filled (see the costing open list) |
 | Seed 22 §4 refusals: the radish line | Juan rules on "4 Julliened" |
 | `location_sku_settings` STILL unseeded (0 rows) — but the overlay is no longer counts-blind: Phase 3 routes counts AND costing through `loadProductIndex`, which resolves `active` as `resolveActive(overlay, global)`. What remains is purely the DATA task | "shops use what they carry" becomes real (seed the overlay) |
@@ -366,7 +375,7 @@ Six P1s were fixed inside the sim PR; these are what it left.
 
 | Item | Fire when |
 |---|---|
-| **P1 · `loadProductLots` / `loadLastReceivedAt` spend the FULL delivery-id list as a GET `.in()` filter** — unbounded by design ("the full receipt history"), ~39 bytes/uuid against Kong's 8–16 KB request line ⇒ a hard 414/400 at roughly 200–400 deliveries. `loadCountFormData` has no try/catch, so it 500s the whole count sheet, not just the product rows | **BEFORE receiving starts writing lots against member SKUs** — that is the day the list starts growing |
+| ~~**P1 · `loadProductLots` / `loadLastReceivedAt` spend the FULL delivery-id list as a GET `.in()` filter**~~ — **✅ FIXED, engine-hardening batch (2026-08-21).** Both loaders now scope to a location through an embedded join on `vendor_deliveries` instead of building the id list, so the request line is CONSTANT in the delivery count and the extra paged scan of the delivery ledger disappears. The embed must be disambiguated by FK constraint name (`vendor_delivery_items` carries TWO FKs to `vendor_deliveries` — 0178's composite binding is the second — and a bare `!inner` fails PGRST201; verified live, not inferred). Row-for-row parity confirmed before the swap. Arithmetic pinned at synthetic scale in `tests/supabase-paginate.test.ts` | — |
 | ~~**P1 · `loadProductIndex` reads `products` with no `.eq("active", true)`**~~ — **✅ SHIPPED PR #283 (2026-08-21).** Juan ruled A+ ("Option A + loud recipes"): retirement is OPERATIONAL. `resolveProductMember` refuses a retired product at a new rung ⓪ with a named `reason`, so `lib/recipes.ts`'s premise is finally true. The fix is deliberately NOT the SQL filter — a filtered-away row poisons with no name; the active flag rides into the pure resolver instead. Plus a discontinue affordance that warns "N recipes still pin this" and never blocks, a loud recipe-line badge, and two readiness codes (`retired_product` red · `retired_sku` amber, loudness-only). Zero live triggers today | — |
 | P2 · the 0179 provenance quartet goes stale — `lib/receiving.ts` + `lib/admin/skus.ts` overwrite `avg_oz_per_each` without touching `weight_class`/`weight_established_*`, so the board renders "OPERATIONAL, established by <old person>" for a number they never weighed | next receiving or SKU-editor touch (INVOICE_DERIVED already exists as the class for it) |
 | P2 · item weights edited through the normal admin path write `item.update`, which the weight board's provenance lookup does not match → every one reads "nobody recorded where this came from" | with the quartet row above |
@@ -378,7 +387,9 @@ Six P1s were fixed inside the sim PR; these are what it left.
 | P2 · `CountForm` picks its advisory sentence off `absorbedByVendorName` when the field that means "nothing absorbed it" is `absorbedBySkuId` (which the client type does not carry) | next counts-UI touch |
 | P2 · `QuickAdd` filters link targets by name only — no kind filter and **no location filter**, unlike the two pickers that were fixed | next template-builder touch |
 | P2 · `lib/weights.ts` slices a UTC ISO to compare against an ET `business_date`; and `num(input_oz) ?? 0` fabricates a zero into the **denominator** of observed trim | next weights touch |
-| P2 · seven new `product.*` / `*.weight_fill` audit actions absent from `DESTRUCTIVE_ACTIONS`; 0181's 32-row backfill wrote no `migration_apply` audit row (it cites 0071, which does) | next audit-vocabulary touch |
+| ~~P2 · seven new `product.*` / `*.weight_fill` audit actions absent from `DESTRUCTIVE_ACTIONS`~~ — **✅ FIXED, engine-hardening batch (2026-08-21).** The live enumeration found **ten**, not seven: `product.set_active` postdates the filing (#283 deferred it here), `sku.weight_fill` predates the arc (#163), and `section_question.update` / `item_question.update` sat unregistered beside their own registered create/disable siblings. The registry header's "requires step-up auth" claim was STALE and had already caused one wrong decision — `isDestructive` only feeds the audit row's `destructive` column; step-up is enforced by route. So the additions are forensic-filter-only, zero behaviour change. Also added `lib/audit-actions.ts`: all 216 emitted actions adjudicated destructive/non-destructive with no silent third state, `AuditInput.action` typed as that union so an unlisted spelling is now a BUILD failure, + 24 tests. **Lead ruled on the 4 open families (2026-08-21):** `sku.pack_chain_update` and `item.set_type` are now **destructive** — both alter a basis other data silently depends on (the oz denominator every cost divides by; the item's semantic class), which is the registry's own criterion, and the forensic-only finding meant zero behaviour risk. `catering.kb.*` and `measure_unit.create` deliberately **left as-is** — see the row below | — |
+| P2 · **classify the `catering.kb.*` shared-config family and `measure_unit.create`** — they look destructive by the same criterion as the registered `category.create`, but the real question underneath is *what exactly earns the flag*, which the registry-criterion review this batch's header fix started should settle. Not a drive-by: the answer likely reclassifies several families at once | **one sitting, as a criterion review** — not per-action |
+| P2 · 0181's 32-row backfill wrote no `migration_apply` audit row (it cites 0071, which does) | next audit-vocabulary touch |
 | P2 · `.or()` string interpolation without the house UUID guard in `loadProductIndex` (`lib/ordering.ts` has the same gap pre-existing) | one sweep, both sites |
 | P2 · product routes hardcode `< 6` / `< 7` instead of importing `PRODUCT_READ_MIN` / `PRODUCT_WRITE_MIN`; 0179's two `alter table … add/drop constraint` statements are not re-runnable | next products touch |
 | P2 · dead/unwired: `trimStandardForItem` (zero references), `lib/types.ts` `Product` + `VendorItem.productId` (zero importers), `attributeFifo` (named in the module header as one of the three answers, no app consumer) | next `types.ts` / knip sweep |

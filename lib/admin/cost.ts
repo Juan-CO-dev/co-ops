@@ -2,15 +2,57 @@
  * Admin cost/yield data layer (Item/Inventory Spine — R2). SERVER-ONLY,
  * service-role; authority re-checked per write. Composes R1's pure recipe-math
  * with prices from the append-only vendor_price_history ledger.
+ *
+ * ── EVERY content_oz IN THIS MODULE IS CHAIN-AWARE (2026-08-21) ──────────────
+ *
+ * `skuContentOz` resolves a SKU's ounces from its active PACK CHAIN when it has
+ * one and falls back to the legacy flat trio (units_per_pack × each_size ×
+ * oz-per-measure) only when it does not. Every derivation here used to omit the
+ * chain, so all three numbers this module produces — the $/oz on /admin/skus and
+ * /admin/vendors/[id], the received-oz ledger, and consumed dollars — rode the
+ * LEGACY path while lib/admin/menu-costing.ts's board derived from
+ * `graph.skuPack`, which carries the chain. Two derivations, one SKU.
+ *
+ * They agree in production TODAY (CC verified all 182 SKUs, 63 of them chained,
+ * 2026-08-21: zero divergence) — but only because `replaceSkuPackChain` writes a
+ * compensating flat-field mirror on every chain save. That mirror is explicitly a
+ * stopgap, it is NON-FATAL on failure ("chain saved; flat fields stale"), and the
+ * ordinary SKU edit path writes `units_per_pack` directly without touching the
+ * chain. So the agreement is one failed sync or one flat-field edit away from
+ * breaking, and when it breaks it is silent, permanent, and splits the cost board
+ * from the catalog screens on the same SKU.
+ *
+ * The fix is to stop having two derivations: the chain is threaded in here, so
+ * these screens ride the same oz resolution as the flatten and the board — same
+ * nulls in the same places. `computeSkuCostPerOz` takes the chain map as a
+ * REQUIRED argument on purpose; an optional one is exactly how the blindness
+ * would come back the first time a new caller forgot it.
+ *
+ * NOT routed through the board's own `costPerOzFromGraph` instead, deliberately:
+ * `graph.skuPack` only hydrates the SKUs the RECIPE UNIVERSE references (64 of
+ * 182 live), and these screens list the whole catalog. Borrowing the board's map
+ * would leave 118 SKUs uncosted on a page whose job is to cost them.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
-import type { MeasureUnitOption } from "@/lib/admin/skus";
 import { loadMeasureUnits } from "@/lib/admin/skus";
-import { skuContentOz, skuCostPerOz, type MeasureUnitFactor } from "@/lib/recipe-math";
+import { loadSkuPackChains } from "@/lib/prep-consumption";
+import type { MeasureUnitFactor } from "@/lib/recipe-math";
+// The PURE half lives in cost-shared.ts (the house *-shared law) so the
+// derivation is test-pinnable; re-exported here so server consumers' import
+// paths are unchanged.
+import { contentOzForSku } from "@/lib/admin/cost-shared";
+
+export {
+  computeSkuCostPerOz,
+  contentOzForSku,
+  measureFactorMap,
+  type SkuChainMap,
+  type SkuCostShape,
+} from "@/lib/admin/cost-shared";
 
 export const COST_READ_MIN = 6;  // AGM+ — view cost/yield
 export const PRICE_WRITE_MIN = 6; // AGM+ — record a SKU price (operational invoice logging)
@@ -77,19 +119,40 @@ export async function loadSkuPriceHistory(actor: AuthContext, skuId: string, lim
   return (data ?? []).map((r) => ({ unitPrice: num(r.unit_price) ?? 0, effectiveDate: r.effective_date }));
 }
 
-/** cost/oz per SKU = current price ÷ content_oz (content_oz from SkuView inputs + measures). */
-export function computeSkuCostPerOz(
-  skus: Array<{ id: string; unitsPerPack: number | null; eachSize: number | null; eachMeasure: string | null; avgOzPerEach: number | null }>,
-  prices: Map<string, number>,
-  measures: MeasureUnitOption[],
-): Map<string, number | null> {
-  const m = new Map<string, MeasureUnitFactor>(measures.map((x) => [x.label, { dimension: x.dimension, toBaseFactor: x.toBaseFactor }]));
-  const out = new Map<string, number | null>();
-  for (const s of skus) {
-    const content = skuContentOz({ unitsPerPack: s.unitsPerPack, eachSize: s.eachSize, eachMeasure: s.eachMeasure, avgOzPerEach: s.avgOzPerEach }, m);
-    out.set(s.id, skuCostPerOz(prices.get(s.id) ?? null, content));
-  }
-  return out;
+/**
+ * content_oz per SKU for this module's own loaders, chain-aware — the ONE
+ * derivation `loadSkuReceivingLedger` and `loadSkuConsumption` share.
+ *
+ * They read their own `vendor_items` rows (they are called with a SKU id list,
+ * not a hydrated SkuView[]), so they cannot take the pages' chain map; they load
+ * it themselves. Two queries, both batched over the whole id list — never
+ * per-SKU (the loadRecipeGraph law). The per-SKU math is `contentOzForSku` from
+ * cost-shared, the same one `computeSkuCostPerOz` uses: the three dollar figures
+ * this module produces must move together, because a $/oz that is chain-aware
+ * while consumed-dollars is not would put two disagreeing numbers in the SAME
+ * drawer.
+ */
+async function loadChainAwareContentOz(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  skuIds: string[],
+  measuresMap: Map<string, MeasureUnitFactor>,
+): Promise<Map<string, number | null>> {
+  if (skuIds.length === 0) return new Map();
+  const [{ data: skuRows }, chains] = await Promise.all([
+    sb.from("vendor_items").select("id, units_per_pack, each_size, each_measure, avg_oz_per_each").in("id", skuIds)
+      .returns<Array<{ id: string; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>>(),
+    loadSkuPackChains(skuIds),
+  ]);
+  return new Map<string, number | null>(
+    (skuRows ?? []).map((s) => [
+      s.id,
+      contentOzForSku(
+        { unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure, avgOzPerEach: num(s.avg_oz_per_each) },
+        chains.get(s.id) ?? null,
+        measuresMap,
+      ),
+    ]),
+  );
 }
 
 
@@ -228,11 +291,7 @@ export async function loadSkuReceivingLedger(actor: AuthContext, skuIds: string[
   const prices = await loadCurrentSkuPrices(skuIds);
   const measures = await loadMeasureUnits(actor);
   const measuresMap = new Map<string, MeasureUnitFactor>(measures.map((m) => [m.label, { dimension: m.dimension, toBaseFactor: m.toBaseFactor }]));
-  const { data: skuRows } = await sb.from("vendor_items").select("id, units_per_pack, each_size, each_measure, avg_oz_per_each").in("id", skuIds)
-    .returns<Array<{ id: string; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>>();
-  const contentOzById = new Map<string, number | null>(
-    (skuRows ?? []).map((s) => [s.id, skuContentOz({ unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure, avgOzPerEach: num(s.avg_oz_per_each) }, measuresMap)]),
-  );
+  const contentOzById = await loadChainAwareContentOz(sb, skuIds, measuresMap);
 
   const deliveryIds = [...new Set(lines.map((l) => l.delivery_id))];
   const delMeta = new Map<string, { date: string; vendorName: string }>();
@@ -278,9 +337,7 @@ export async function loadSkuConsumption(actor: AuthContext, skuIds: string[]): 
   const prices = await loadCurrentSkuPrices(skuIds);
   const measures = await loadMeasureUnits(actor);
   const measuresMap = new Map<string, MeasureUnitFactor>(measures.map((m) => [m.label, { dimension: m.dimension, toBaseFactor: m.toBaseFactor }]));
-  const { data: skuRows } = await sb.from("vendor_items").select("id, units_per_pack, each_size, each_measure, avg_oz_per_each").in("id", skuIds)
-    .returns<Array<{ id: string; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>>();
-  const contentOzById = new Map<string, number | null>((skuRows ?? []).map((s) => [s.id, skuContentOz({ unitsPerPack: s.units_per_pack, eachSize: num(s.each_size), eachMeasure: s.each_measure, avgOzPerEach: num(s.avg_oz_per_each) }, measuresMap)]));
+  const contentOzById = await loadChainAwareContentOz(sb, skuIds, measuresMap);
   // costPerOz = price-per-pack ÷ content_oz; null if either missing or content <= 0.
   const costPerOzById = new Map<string, number | null>();
   for (const id of skuIds) {
