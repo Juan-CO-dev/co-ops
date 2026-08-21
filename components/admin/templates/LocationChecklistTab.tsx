@@ -10,9 +10,12 @@
  *
  * Gating: everything here is AGM+ (the page gate is ≥6, so reaching this tab
  * implies AGM+). Disable + add-local + enable are all AGM+; the server routes
- * re-gate + step-up. The ONE exception is the per-line input-type conversion,
- * whose route requires ≥7 (MoO-adjacent structural edit) — the control is hidden
- * below 7 so L6 admins don't hit a naked 403 on a button they can see.
+ * re-gate + step-up. The ONE exception is per-line input-type CONVERSION, which
+ * requires ≥7 (MoO-adjacent structural edit) — the control is hidden below 7 so
+ * L6 admins don't hit a naked 403 on a button they can see. That same ≥7 authority
+ * now reaches the add form: creating a line with a shape its section doesn't carry
+ * IS the conversion, so `actorLevel` threads into AddPrepItemForm, where the
+ * divergent options go unselectable below 7 (the create itself stays ≥6).
  */
 
 import { useState } from "react";
@@ -128,7 +131,7 @@ export function LocationChecklistTab({
         sections={sections}
       />
 
-      <AddLocalItem templateId={templateId} subtype={subtype} sections={sections} units={units} />
+      <AddLocalItem templateId={templateId} subtype={subtype} sections={sections} units={units} actorLevel={actorLevel} />
     </div>
   );
 }
@@ -569,7 +572,7 @@ function EnableFromRegistry({
   );
 }
 
-function AddLocalItem({ templateId, subtype, sections, units }: { templateId: string; subtype: PrepSubtype; sections: PrepSectionDefn[]; units: Array<{ label: string }> }) {
+function AddLocalItem({ templateId, subtype, sections, units, actorLevel }: { templateId: string; subtype: PrepSubtype; sections: PrepSectionDefn[]; units: Array<{ label: string }>; actorLevel: number }) {
   const { t, language } = useTranslation();
   const [section, setSection] = useState<PrepSection | null>(null);
 
@@ -604,6 +607,7 @@ function AddLocalItem({ templateId, subtype, sections, units }: { templateId: st
             defaultSection={section}
             sections={sections}
             units={units}
+            actorLevel={actorLevel}
             onClose={() => setSection(null)}
           />
         </div>
