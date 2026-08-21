@@ -209,19 +209,40 @@ Logged-deferred → DEBT table.
   null-fallback beneath a working signal rather than the only signal. Prefer a nullable
   `seed_usage` column read ONLY when live rank is null (it decays naturally); **not**
   `guide_position`, which is a dead column with different semantics (walk order).
-- **Weight / trim audit — SHIPPED as a board (`/admin/weights`); two things still owed.**
-  (a) The trim registry shipped as `OPERATIONAL_ESTIMATE` for four of its five classes (a
-  named physical loss, reasoned, not observed) — **Juan's ESTIMATE-class decision is still
-  open**: does an estimated class keep its own name forever, or is `OPERATIONAL_ESTIMATE`
-  a temporary badge that observed trim retires? The board ranks them but cannot rule.
+- **Weight / trim audit — SHIPPED as a board (`/admin/weights`); one thing still owed.**
+  (a) ✅ **RULED 2026-08-21 — the `ESTIMATE` WEIGHT class is APPROVED** and minted in
+  `lib/angel-wave4.ts` (`WeightClass`, ranked below every measured class by
+  `WEIGHT_CLASS_RANK`). Seed 26's Phase-6a backfill ran on it — see below.
+  ⚠ **This ruling covered the WEIGHT vocabulary, NOT the TRIM one.** The trim registry's
+  `OPERATIONAL_ESTIMATE` (`lib/trim-standards-shared.ts`, `TrimEvidence`, four of its five
+  classes) is a SEPARATE question and remains **open**: does an estimated trim class keep
+  its own name forever, or is it a temporary badge that observed trim retires? The board
+  ranks them but cannot rule. Do not assume the weight ruling settled this one.
   (b) First in line to be replaced by observed trim once production capture runs — pair it
   with the surprise-weigh pass so one floor session settles both.
-- **Fresh Mozzarella's primary is still an INFERENCE, and it is the only one.** Juan named
-  the SHAPE ("both active — one primary, one backup") but never the sides; seed 18 flagged
-  it, seed 24 wrote it flagged (`primary_is_inferred: true`), and it is now live as PFG
-  primary / Baldor backup. **One field vetoes it.** Ham and the other eight pairs are
-  explicit; ICEBERG was ruled 2026-08-21 (disposition A, PFG primary, no separate LETTUCE
-  product). Say it out loud rather than letting an inference harden into a fact.
+- ✅ **Every product primary is now EXPLICIT — no inferences remain (2026-08-21).** Fresh
+  Mozzarella was the last one: Juan gave the SHAPE on 2026-08-20 ("both active — one
+  primary, one backup") but never the sides, so seed 18 inferred PFG and seed 24 wrote it
+  flagged (`primary_is_inferred: true`). Juan confirmed it out loud on 2026-08-21 ("mozz is
+  pfg confirmed"). `scripts/seed/27-mozz-primary-confirm.ts` updated the note and appended
+  an `audit.metadata_correction` against the stale seed-24 row (audit rows are never
+  edited). Verified live: all 11 primaries read `primary_is_inferred: false`.
+- **Weight provenance backfill (seed 26) — RAN 2026-08-21, and it left 9 rows NULL on
+  purpose.** 32 of 41 weighed SKUs now carry a class (28 ESTIMATE · 3 OPERATIONAL · 1 SPEC).
+  The 9 that stayed NULL are a real to-do list, not residue:
+  (a) **FIVE ROWS HOLD JUAN'S 2026-08-20 SURPRISE 3-SAMPLE MEASUREMENTS BUT CANNOT PROVE
+  IT** — Genoa 0.4 · Capicola 0.4 · Provolone 0.7 · Pepperoni 0.2 · Ham 1.2 (Baldor twin),
+  the values pinned in `OPERATIONAL_SLICE_OZ`. That re-value landed **without its own
+  `sku.weight_fill` audit row**, so their newest evidence is still seed 10's estimate and
+  the backfill refuses them rather than stamping "educated guess, never weighed" on five
+  weighed values. **They want an OPERATIONAL class carrying the ruling's date** — a
+  deliberate write, and the natural moment to retire the legacy hardcoded
+  `OPERATIONAL_SLICE_OZ` table into the 0179 columns it was superseded by.
+  (b) **Cheddar (0.75 → 0.4) and Utz Ripples (1.0 → 2.2) drifted with no ruling and no
+  audit row at all** — nobody can say who changed them or why. Weigh or rule.
+  (c) **Basil** — audited, but seed 11's `data_cleanup` row never claimed `estimate: true`,
+  so the ESTIMATE ruling does not reach it. (d) **Banana Peppers (Baldor)** — a 512 oz
+  weight with no audit row anywhere.
 
 ## LATER (sequenced, not forgotten)
 
