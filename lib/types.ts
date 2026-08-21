@@ -110,6 +110,9 @@ export interface Vendor {
 export interface VendorItem {
   id: string;
   vendorId: string;
+  /** Product this SKU is a member of (migration 0179). NULL = implicit singleton
+   *  (resolution is trivially itself) — the ~95% case, deliberately not backfilled. */
+  productId: string | null;
   name: string;
   category: string | null;
   unit: string;
@@ -180,6 +183,43 @@ export interface Item {
   required: boolean;
   /** When true (default), the item's AM-prep line gets an Opening Phase-2 verification mirror (migration 0089). Flip false to exclude it from Opening verification. */
   openingVerify: boolean;
+  active: boolean;
+  createdAt: string;
+  createdBy: string | null;
+  updatedAt: string;
+  updatedBy: string | null;
+}
+
+/**
+ * Product identity above SKUs (migration 0179). The raw thing a recipe means
+ * ("HAM"), independent of which vendor supplied it; member SKUs attach beneath
+ * it via vendor_items.product_id. A SKU with product_id NULL is an implicit
+ * SINGLETON and needs no row here — products exist only where plurality does.
+ */
+export interface Product {
+  id: string;
+  /** Display name, and the identity the whole system agrees on (0179). */
+  name: string;
+  /** Spanish sibling of `name` (the items/0079 name + name_es pattern). */
+  nameEs: string | null;
+  notes: string | null;
+  /**
+   * What ONE unit of this product weighs, in ounces (0179). THE reason a
+   * product-pinned recipe line survives a member flip: lib/products-shared.ts
+   * productInputBasis builds the line's basis from this, never from the resolved
+   * member's avg_oz_per_each. NULL = not yet established, and a count-denominated
+   * product-pinned line then refuses rather than guessing.
+   */
+  unitOz: number | null;
+  /** Provenance CLASS of unitOz: OPERATIONAL | SPEC | INVOICE_DERIVED
+   *  (lib/angel-wave4.ts WeightClass). Unconstrained text per 0177's precedent. */
+  unitOzClass: string | null;
+  /** Free-text provenance for unitOz (0179) — where the number came from. */
+  unitOzSourceNote: string | null;
+  unitOzEstablishedAt: string | null;
+  /** Who established unitOz (0179). NULL is honest: a seed-written weight has
+   *  genuinely nobody to name — never backfill a placeholder actor. */
+  unitOzEstablishedBy: string | null;
   active: boolean;
   createdAt: string;
   createdBy: string | null;

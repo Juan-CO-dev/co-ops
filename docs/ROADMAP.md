@@ -271,3 +271,5 @@ offline/dead-zone resilience (walk-ins, basements) · customer-facing menu displ
 | `location_sku_settings` unseeded (0 rows) — the per-location activation overlay is BUILT and correct, just carrying no data; counts never reads it at all | "shops use what they carry" becomes real, i.e. with the P2 arc |
 | `skuNameCollisions` will nag on doctrine-correct twins | P7 — when more pairs go both-active |
 | Count sheet shows no vendor label on twins (two identical "Ham" rows) | P8 — blocks P2's usefulness |
+| `lib/types.ts` `VendorItem` ~10 columns stale (missing locationId, packFormat, unitsPerPack, eachSize, eachMeasure, avgOzPerEach, eachContainerLabel, inventoryOnly, skuClass, guidePosition) + vendorId/unit mistyped as non-nullable | next `types.ts` touch |
+| `/admin/menu-costing` is location-blind (`loadMenuCostingBoard` takes no location) — with per-location product primaries two shops could cost a sandwich differently; it prices against the GLOBAL primary today | when a shop's primaries genuinely diverge (deviation D7) |
