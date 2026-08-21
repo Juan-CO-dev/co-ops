@@ -2764,6 +2764,7 @@
   "counts.advisory.count_exceeds_lots_unattributed": "{product}: {oz} oz more than deliveries here explain, and no vendor could be named. Count by vendor to place it.",
   "counts.advisory.no_lot_history": "{product}: no deliveries recorded here yet, so all {oz} oz was counted under {vendor}. Count by vendor to split it.",
   "counts.error.no_lines": "Add at least one item to count.",
+  "counts.error.duplicate_product_line": "That item is already on this sheet. Count it once, or tap Split to count each vendor.",
   "counts.error.invalid_product": "One of the items isn't available.",
   "counts.error.product_unresolved": "That item has no active vendor right now — count it by vendor.",
   "counts.error.product_count_dimension": "That item is counted by unit, not by weight — count it by vendor.",

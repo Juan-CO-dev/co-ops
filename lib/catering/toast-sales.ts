@@ -261,18 +261,33 @@ const ON_VISIT_DEBOUNCE_MS = 45 * 60 * 1000;
 export async function maybeRefreshTodaySales(locationId: string, businessDate: string): Promise<void> {
   try {
     const sb = getServiceRoleClient();
-    const { data } = await sb
+    // `occurred_at`, NOT `created_at` — audit_log has no created_at column, and this
+    // read has been 400-ing since it shipped (SIM-PI-4, found by the product-identity
+    // sim day 2026-08-21 while chasing the same misspelling in lib/products.ts). The
+    // error is not checked, so `data` came back null and `attemptedRecently` was
+    // ALWAYS false: the 45-minute debounce never debounced anything and every single
+    // /mid-shift render fired a fresh Toast pull. Pre-existing and outside the
+    // product-identity arc; fixed here because it is the same one-token defect, it is
+    // hitting a third-party API on every page load, and it was proven live.
+    const { data, error } = await sb
       .from("audit_log")
-      .select("created_at, metadata")
+      .select("occurred_at, metadata")
       .in("action", ["toast_sales.pull", "toast_sales.pull_failed"])
       .eq("resource_id", locationId)
-      .order("created_at", { ascending: false })
+      .order("occurred_at", { ascending: false })
       .limit(1)
-      .maybeSingle<{ created_at: string; metadata: { business_date?: string } | null }>();
+      .maybeSingle<{ occurred_at: string; metadata: { business_date?: string } | null }>();
+    if (error) {
+      // A failed debounce READ must not be read as "no recent attempt" — that is what
+      // turned this into a pull-per-render. Skip the trigger and let the next visit
+      // (or the cron) decide with real evidence.
+      console.error(`[toast-sales midshift_on_visit] debounce read failed for ${locationId}:`, error.message);
+      return;
+    }
     const attemptedRecently =
       data != null &&
       data.metadata?.business_date === businessDate &&
-      Date.now() - new Date(data.created_at).getTime() < ON_VISIT_DEBOUNCE_MS;
+      Date.now() - new Date(data.occurred_at).getTime() < ON_VISIT_DEBOUNCE_MS;
     if (attemptedRecently) return;
     await pullSalesSystemTrigger(locationId, businessDate, { context: "midshift_on_visit" });
   } catch (e) {

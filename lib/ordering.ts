@@ -710,7 +710,11 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
     const preferred =
       candidates.find((c) => c.skuId === entry?.resolution.skuId) ??
       candidates.find((c) => c.skuId === entry?.primarySkuId) ??
-      [...candidates].sort((a, b) => a.name.localeCompare(b.name))[0]!;
+      // TOTAL order: twins share a NAME by construction (that is what makes them twins —
+      // see counts-shared twinVendorLabels), so name alone leaves the winner to the
+      // unordered vendor_items select that filled `skus`, and which vendor gets today's
+      // suggestion would differ between two renders of the same data. `skuId` decides it.
+      [...candidates].sort((a, b) => (a.name !== b.name ? a.name.localeCompare(b.name) : a.skuId.localeCompare(b.skuId)))[0]!;
     for (const c of candidates) {
       if (c.skuId !== preferred.skuId) walkedSkuIds.delete(c.skuId);
     }
@@ -727,14 +731,39 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
   // active member. If that member is already walked, the demand is simply covered;
   // if it carries no par of its own it is not in `skus` at all, so its row is loaded
   // here and built with the DROPPED member's par.
-  const rescueTargets = new Map<string, DroppedPar>(); // member sku id → the par it carries
+  /**
+   * A par whose demand ENDED UP ORDERED is not a lost par, so it must leave the fault
+   * tally it was provisionally counted into at drop time (SIM-PI-1, sim day
+   * 2026-08-21). Without this the vendor-down day renders both halves of a
+   * contradiction at once: the amber box says "1 par'd product has no ordering path
+   * today — nothing will be suggested for them" directly above the blue notice saying
+   * "1 par moved to a backup item". The amber sentence is simply false, and it is
+   * false on exactly the day this whole layer exists for. Same class as the August
+   * sim's SIM-25 false all-clear, with the sign flipped: a false ALARM standing beside
+   * its own resolution.
+   *
+   * The whole product's dropped pars are released, not just the carried one: the walk
+   * shows ONE row per product, so once that row exists the product is being ordered
+   * and no par under it went unrouted.
+   */
+  const releaseDropped = (dropped: ReadonlyArray<DroppedPar>): void => {
+    for (const d of dropped) {
+      unroutable[d.cause] = Math.max(0, unroutable[d.cause] - 1);
+      unroutable.count = Math.max(0, unroutable.count - 1);
+    }
+  };
+
+  /** member sku id → the par it carries + every dropped par its product releases. */
+  const rescueTargets = new Map<string, { carried: DroppedPar; dropped: DroppedPar[] }>();
   for (const [productId, dropped] of droppedByProduct) {
     const entry = productIndex.byProduct.get(productId) ?? null;
     if (entry == null) { unroutable.productUnroutable += dropped.length; continue; }
     // Highest par first: if two members dropped, the survivor carries the larger demand.
-    const worst = [...dropped].sort((a, b) => b.par - a.par)[0]!;
+    // `par` ties are the common case (two twins on the same number), so `row.id` makes
+    // the order TOTAL rather than dependent on the unordered select that filled `skus`.
+    const worst = [...dropped].sort((a, b) => (b.par !== a.par ? b.par - a.par : a.row.id.localeCompare(b.row.id)))[0]!;
     const covered = (candidatesByProduct.get(productId) ?? []).some((c) => walkedSkuIds.has(c.skuId));
-    if (covered) { unroutable.reroutedToBackup += 1; continue; }
+    if (covered) { unroutable.reroutedToBackup += 1; releaseDropped(dropped); continue; }
     // Nobody walked for this product — try the resolved member, else any active member
     // with a live vendor. Both must be a DIFFERENT sku than the one that dropped.
     const droppedIds = new Set(dropped.map((d) => d.row.id));
@@ -746,7 +775,7 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
       (m) => m.active && !droppedIds.has(m.skuId) && m.vendorId != null && vendorById.has(m.vendorId),
     );
     if (!target) { unroutable.productUnroutable += 1; continue; }
-    rescueTargets.set(target.skuId, worst);
+    rescueTargets.set(target.skuId, { carried: worst, dropped });
   }
 
   if (rescueTargets.size > 0) {
@@ -758,11 +787,15 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
     if (rErr) throw new Error(`loadWalkerData rerouted backups: ${rErr.message}`);
     for (const [id, chain] of rescueChains) chainsBySku.set(id, chain);
     for (const r of rescueRows ?? []) {
-      const carried = rescueTargets.get(r.id);
-      if (!carried || r.vendor_id == null || !vendorById.has(r.vendor_id)) continue;
+      const rescue = rescueTargets.get(r.id);
+      if (!rescue || r.vendor_id == null || !vendorById.has(r.vendor_id)) continue;
+      const { carried } = rescue;
       const row = buildRow(r, carried.par, carried.parIsWeekend, carried.row.id);
       walkedSkuIds.add(r.id);
       unroutable.reroutedToBackup += 1;
+      // Released only once the row REALLY exists — a rescue that fell through the two
+      // guards above leaves the fault standing, which is the honest reading.
+      releaseDropped(rescue.dropped);
       const arr = skusByVendor.get(r.vendor_id) ?? [];
       arr.push(row);
       skusByVendor.set(r.vendor_id, arr);

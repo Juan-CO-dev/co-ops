@@ -232,6 +232,14 @@ export function RecipeBuilder({
       inputs: draftInputs.map((inp) => ({
         componentSkuId: inp.componentSkuId ?? undefined,
         componentItemId: inp.componentItemId ?? undefined,
+        // The THIRD target must ride the wire too (SIM-PI-8, 2026-08-21). Omitted, a
+        // product-pinned draft line arrived at createRecipeFull with all three targets
+        // null, failed `exactly one component` and 400'd the WHOLE recipe with a
+        // generic invalid_component that named no line — so the product picker this
+        // arc added to the builder was a dead end from the day it shipped.
+        // `RecipeDraftInput.componentProductId` is optional, which is why the omission
+        // type-checked; the route already forwards the field.
+        componentProductId: inp.componentProductId ?? undefined,
         quantity: inp.quantity,
         unit: inp.unit ?? undefined,
         eachContainerLabel: inp.eachContainerLabel ?? undefined,

@@ -175,7 +175,14 @@ function coerceEdit(raw: unknown): TemplateItemEdit | null {
         const sl = o.spineLink;
         if (typeof sl !== "object" || sl === null) return null;
         const slo = sl as Record<string, unknown>;
-        const kind = slo.kind === "item" ? "item" : slo.kind === "sku" ? "sku" : null;
+        // THREE targets since 0181 — item · sku · equipment (SIM-PI-9, 2026-08-21).
+        // Every other SpineLinkTarget site learned the third one; this wire guard did
+        // not, and `coerceEdit` returning null fails the ENTIRE publish with a generic
+        // invalid_payload, discarding every unrelated edit in the batch. QuickAdd
+        // offers equipment targets the moment the migration lands, so the drop was
+        // reachable from the normal builder flow.
+        const kind: "item" | "sku" | "equipment" | null =
+          slo.kind === "item" ? "item" : slo.kind === "sku" ? "sku" : slo.kind === "equipment" ? "equipment" : null;
         if (!kind || !str(slo.id)) return null;
         edit.spineLink = { kind, id: slo.id };
       }

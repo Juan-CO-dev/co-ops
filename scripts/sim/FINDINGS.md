@@ -78,3 +78,45 @@ Two P1s hot-fixed mid-sim (unambiguous, obvious fix, re-verified live). One defe
 hot-fix's caller-delegated-gate shape → hardened. Data-integrity proven post-run.
 Go/no-go: **GO for the full multi-day run** once the dashboard-legibility build lands —
 that's the surface a multi-day run most needs to be worth watching.
+
+---
+
+# SIM DAY — product identity (2026-08-21)
+
+Two days against the product-identity arc (#273–#280): a **vendor-down day** and a
+**two-vendor count day**, per the spec's own verification clause. Full report:
+`docs/sim/2026-08-21-product-identity-simday.md`. Harness: `scripts/sim/product-identity/`.
+
+**Different shape from the 2026-08-11 day, deliberately.** That one drove nine Playwright
+personas against a prod-schema clone (`co-ops-sim`). No clone exists today and this ran at
+08:58 ET on a Friday, so instead the day runs the REAL server code against REAL production
+rows behind a **mechanical write guard** — every non-GET PostgREST request is intercepted
+at the fetch boundary and either captured (payload asserted on) or refused. Zero rows
+written to prod. "The vendor is out" is injected in the PostgREST *response*, so every
+layer above the wire is untouched real code. Trade: no fixture drift; writes proven by
+captured payload rather than read back.
+
+**VERDICT: 43 assertions, 0 failures.** All five of the arc's payoffs proved out — the walk
+reroutes with the par carried, the cost board moves **0 of 68 rows** under a member flip,
+the cook can record from the backup, two par'd twins give one suggestion, and a product
+count writes member lines summing exactly to the entered oz with `allocated_from_product_id`
+set. The mirrored false SHORT/OVER pair nets to zero at the product grain.
+
+**6 P1s found and fixed, every one a path that had never executed** — invisible to a
+phase-by-phase smoke by construction:
+- the `product.resolution_flip` trail had **never been written once** (`audit_log.created_at`
+  does not exist; fail-open + `void` dispatch hid it completely);
+- the same misspelling in `maybeRefreshTodaySales` (pre-existing) meant the mid-shift Toast
+  debounce **never debounced** — a fresh API pull on every render;
+- the vendor-down walk rendered a false amber "nothing will be suggested" **above** its own
+  blue "1 par moved to a backup" notice (the August SIM-25 class, sign flipped);
+- two product lines for one product wrote two anchors per member SKU (council-L5);
+- the recipe builder's new product picker was a **dead end** (the wire mapper dropped the field);
+- the template publish guard rejected the new `equipment` link kind, failing the whole batch;
+- plus a tenancy hole: a location-bound GM could set another shop's product primary.
+
+**Open (data state, not code):** the entire delivery ledger holds ONE line for any product
+member and its `resolved_oz` is NULL, so every FIFO surface is correct-but-silent until
+receiving runs · 4 of 11 product rows (incl. HAM) have an empty level picker because their
+primary has no pack chain — tell Juan before his first count, not during · the two-grain
+on-hand panel is dark for HAM until that count.

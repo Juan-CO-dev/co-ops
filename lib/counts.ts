@@ -428,6 +428,19 @@ export async function createCountEvent(actor: AuthContext, input: CreateCountEve
     }
     if (isProductCountLine(l)) {
       if (!l.productId) throw new CountError(400, "invalid_product", "Each product line needs a product");
+      // ONE line per product per event (SIM-PI-5, sim day 2026-08-21). This is the
+      // SAME council-L5 disjointness `product_line_overlaps_sku` below protects, in
+      // its product-vs-product form, and it was the one form nothing guarded. Two
+      // HAM lines ("2 cases" + "3 lb loose") wrote TWO sku_count_lines per member —
+      // and the anchor engine sums a SKU's lines within an event by law, so the
+      // product would have anchored at double. They also both allocate against the
+      // same undecremented shelf, so the vendor split over-attributes to lots that
+      // could not have held both. A product row is the SIMPLE row: one product, one
+      // number. An operator with two containers to describe taps to split, which is
+      // per-SKU and where isLoose / partialFraction actually live.
+      if (productLineInputs.some((prev) => prev.productId === l.productId)) {
+        throw new CountError(400, "duplicate_product_line", "That product is already on this count sheet — count it once, or tap to split");
+      }
       productLineInputs.push(l);
       continue;
     }
