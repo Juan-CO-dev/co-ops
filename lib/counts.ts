@@ -712,42 +712,52 @@ async function loadProductConsumedOz(
   lotsByProduct: ReadonlyMap<string, ReceiptLot[]>,
 ): Promise<Map<string, { oz: number; known: boolean }>> {
   const out = new Map<string, { oz: number; known: boolean }>();
-  const allMemberIds = [...new Set([...memberIdsByProduct.values()].flat())];
-  if (allMemberIds.length === 0) return out;
+  if (memberIdsByProduct.size === 0) return out;
 
-  // The earliest lot instant across every product in play — one window, one pass.
-  let earliest: string | null = null;
-  for (const lots of lotsByProduct.values()) {
-    for (const l of lots) if (earliest == null || l.receivedAt < earliest) earliest = l.receivedAt;
-  }
-  if (earliest == null) {
-    // Nothing was ever received here: there is no shelf and nothing to have eaten.
-    for (const productId of memberIdsByProduct.keys()) out.set(productId, { oz: 0, known: true });
-    return out;
-  }
-
-  const gapDates = await loadSalesGapDates(
-    sb,
-    locationId,
-    etBusinessDate(earliest),
-    etBusinessDate(new Date().toISOString()),
-  );
-  const [production, sales] = await Promise.all([
-    sumConsumedOzSince(sb, allMemberIds, locationId, earliest),
-    sumSalesDirectOzSince(sb, allMemberIds, locationId, earliest, gapDates),
-  ]);
-
+  // EACH product's window starts at ITS OWN oldest lot, never at a global earliest.
+  // A shared window would charge a product with consumption that predates its first
+  // receipt here — emptying its shelf and raising a count_exceeds_lots nobody earned.
+  // Products sharing an instant share a query pass (the anchor-group idiom this file
+  // already uses for the census / par_estimate / inferred tiers): one pass per
+  // distinct oldest-lot instant, which is at most the number of product lines in one
+  // count event.
+  const groups = new Map<string, string[]>();
   for (const [productId, memberIds] of memberIdsByProduct) {
-    let oz = 0;
-    let known = true;
-    for (const skuId of memberIds) {
-      const p = production.get(skuId) ?? null;
-      const s = sales.get(skuId) ?? null;
-      if (p == null || s == null) { known = false; continue; }
-      oz += p + s;
+    const lots = lotsByProduct.get(productId) ?? [];
+    if (lots.length === 0 || memberIds.length === 0) {
+      // Nothing was ever received here: there is no shelf and nothing to have eaten.
+      out.set(productId, { oz: 0, known: true });
+      continue;
     }
-    out.set(productId, known ? { oz, known: true } : { oz: 0, known: false });
+    const earliest = lots.reduce((min, l) => (l.receivedAt < min ? l.receivedAt : min), lots[0]!.receivedAt);
+    const g = groups.get(earliest) ?? [];
+    g.push(productId);
+    groups.set(earliest, g);
   }
+  if (groups.size === 0) return out;
+
+  const openEtDate = etBusinessDate(new Date().toISOString());
+  await Promise.all(
+    [...groups.entries()].map(async ([earliest, productIds]) => {
+      const memberIds = [...new Set(productIds.flatMap((id) => memberIdsByProduct.get(id) ?? []))];
+      const gapDates = await loadSalesGapDates(sb, locationId, etBusinessDate(earliest), openEtDate);
+      const [production, sales] = await Promise.all([
+        sumConsumedOzSince(sb, memberIds, locationId, earliest),
+        sumSalesDirectOzSince(sb, memberIds, locationId, earliest, gapDates),
+      ]);
+      for (const productId of productIds) {
+        let oz = 0;
+        let known = true;
+        for (const skuId of memberIdsByProduct.get(productId) ?? []) {
+          const p = production.get(skuId) ?? null;
+          const s = sales.get(skuId) ?? null;
+          if (p == null || s == null) { known = false; continue; }
+          oz += p + s;
+        }
+        out.set(productId, known ? { oz, known: true } : { oz: 0, known: false });
+      }
+    }),
+  );
   return out;
 }
 
