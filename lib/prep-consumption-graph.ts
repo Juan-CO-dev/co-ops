@@ -26,12 +26,24 @@
  *    menu outputs weighted by yield since they carry no oz_per_par_unit).
  */
 import { ozForRecipeInput, type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
+import type { ProductResolution } from "@/lib/products-shared";
 
 export interface GraphInput {
   quantity: number;
   unit: string | null;
   componentSkuId: string | null;
   componentItemId: string | null;
+  /**
+   * `recipe_inputs.component_product_id` — the THIRD component target (0179): the
+   * line pins a PRODUCT, not a vendor's SKU. Resolution to a member happened ONCE,
+   * at graph build (lib/prep-consumption.ts loadRecipeGraph); this module only
+   * reads the answer out of `graph.products` and has no opinion of its own.
+   *
+   * Optional for the same reason GraphOutput.parUnitLabel is (see its doc): the
+   * many fixtures and constructors that predate it keep compiling untouched, and
+   * absent means "not a product line", which is exactly what every pre-0179 row is.
+   */
+  componentProductId?: string | null;
 }
 export interface GraphOutput {
   outputItemId: string | null;
@@ -79,6 +91,20 @@ export interface GraphRecipe {
   outputs: GraphOutput[];
 }
 
+/**
+ * Product pins, pre-resolved ONCE by the loader. Keyed by product id.
+ *
+ * The whole trick of the product layer: `resolveProductMember` runs at graph-build
+ * time and every consumer downstream stays SKU-keyed. Never resolve a product a
+ * second time inside a consumer — four private opinions about which vendor a
+ * product means is precisely what this layer exists to end.
+ */
+export interface ProductIndex {
+  resolution: ReadonlyMap<string, ProductResolution>;
+  /** The measure-only pack basis for each product (lib/products-shared productInputBasis). */
+  basis: ReadonlyMap<string, RecipeInputSku>;
+}
+
 /** The whole (small) recipe universe, pre-indexed for resolution. */
 export interface RecipeGraph {
   /** First recipe producing a given ITEM (mirrors the original limit-1 lookup). */
@@ -88,6 +114,8 @@ export interface RecipeGraph {
   /** SKU pack info for every SKU referenced by any input. */
   skuPack: Map<string, RecipeInputSku>;
   measures: Map<string, MeasureUnitFactor>;
+  /** Pre-resolved product pins (empty when no recipe_inputs row names a product). */
+  products: ProductIndex;
 }
 
 /** The sub-item's own `default_par_unit` label, from the recipe that produces it. */
@@ -197,6 +225,31 @@ export function batchInputOzForItem(graph: RecipeGraph, itemId: string): number 
   return Number.isFinite(total) ? total : null;
 }
 
+/**
+ * Resolve ONE product-pinned input line to (resolved member SKU, oz), or null to
+ * REFUSE. ONE copy, consumed by all three flatten engines, so the item engine and
+ * the two menu engines can never drift into disagreeing about a product line.
+ *
+ * Two refusals, both honest and both poisoning the flatten exactly like an unknown
+ * SKU pack does (module header, "Preserved semantics"):
+ *   - the product does not RESOLVE (no active member) → `unresolved`;
+ *   - the line's unit does not convert through the product's measure-only basis —
+ *     which is what a count-denominated line whose product has no unit_oz hits, and
+ *     what a pack/chain-label spelling hits (deviation D3: a pack label is a
+ *     per-vendor spelling and a product pin has no honest way to choose between two
+ *     vendors' "case").
+ */
+function productLineOz(graph: RecipeGraph, c: GraphInput): { skuId: string; oz: number } | null {
+  const productId = c.componentProductId;
+  if (productId == null) return null;
+  const res = graph.products.resolution.get(productId);
+  const basis = graph.products.basis.get(productId);
+  if (res == null || res.skuId == null || basis == null) return null;
+  const oz = ozForRecipeInput(c.quantity, c.unit, basis, graph.measures);
+  if (oz == null) return null;
+  return { skuId: res.skuId, oz };
+}
+
 function batchOz(graph: RecipeGraph, outItemId: string, visiting: Set<string>): Map<string, number> | null {
   if (visiting.has(outItemId)) return null;
   const node = graph.byOutputItem.get(outItemId) ?? null;
@@ -204,6 +257,13 @@ function batchOz(graph: RecipeGraph, outItemId: string, visiting: Set<string>): 
   const next = new Set(visiting).add(outItemId);
   const out = new Map<string, number>();
   for (const c of node.inputs) {
+    if (c.componentProductId != null) {
+      // Product pin: resolution already happened at load (ONE ladder, no opinions here).
+      const line = productLineOz(graph, c);
+      if (line == null) return null;
+      out.set(line.skuId, (out.get(line.skuId) ?? 0) + line.oz);
+      continue;
+    }
     if (c.componentSkuId != null) {
       const sku = graph.skuPack.get(c.componentSkuId);
       const oz = sku ? ozForRecipeInput(c.quantity, c.unit, sku, graph.measures) : null;
@@ -266,6 +326,14 @@ export function perUnitSkuOzForMenuItemFromGraph(graph: RecipeGraph, menuItemId:
 
   const batch = new Map<string, number>();
   for (const c of node.inputs) {
+    if (c.componentProductId != null) {
+      // Product pin: resolved once at load; an unresolved product poisons like any
+      // other unresolvable input (never a partial flatten).
+      const line = productLineOz(graph, c);
+      if (line == null) return new Map();
+      batch.set(line.skuId, (batch.get(line.skuId) ?? 0) + line.oz);
+      continue;
+    }
     if (c.componentSkuId != null) {
       const sku = graph.skuPack.get(c.componentSkuId);
       const oz = sku ? ozForRecipeInput(c.quantity, c.unit, sku, graph.measures) : null;
@@ -308,6 +376,15 @@ export function buildRecipeGraph(
   recipes: GraphRecipe[],
   skuPack: Map<string, RecipeInputSku>,
   measures: Map<string, MeasureUnitFactor>,
+  /**
+   * PRODUCT RESOLUTION IS PRE-COMPUTED, NOT DONE HERE (0179). `products` arrives
+   * already resolved — loadRecipeGraph ran the ONE ladder (`resolveProductMember`)
+   * and built each product's measure-only basis (`productInputBasis`) before
+   * calling this, so this module has NO opinion about which vendor a product
+   * means; it reads the answer. Defaulted so every existing fixture and caller
+   * compiles and behaves byte-identically.
+   */
+  products: ProductIndex = { resolution: new Map(), basis: new Map() },
 ): RecipeGraph {
   const byOutputItem = new Map<string, GraphRecipe>();
   const byOutputMenuItem = new Map<string, GraphRecipe>();
@@ -317,7 +394,7 @@ export function buildRecipeGraph(
       if (o.outputMenuItemId != null && !byOutputMenuItem.has(o.outputMenuItemId)) byOutputMenuItem.set(o.outputMenuItemId, r);
     }
   }
-  return { byOutputItem, byOutputMenuItem, skuPack, measures };
+  return { byOutputItem, byOutputMenuItem, skuPack, measures, products };
 }
 
 /**
@@ -382,6 +459,15 @@ export function perUnitDirectSkuOzForMenuItem(graph: RecipeGraph, menuItemId: st
 
   const batch = new Map<string, number>();
   for (const c of node.inputs) {
+    if (c.componentProductId != null) {
+      // A product pin resolves to a RAW SKU, so it belongs in the DIRECT lane exactly
+      // like a SKU-ref line: it is not routed through the item-units lane and cannot
+      // double-count. The PR #180 invariant is test-pinned for a product line too.
+      const line = productLineOz(graph, c);
+      if (line == null) return new Map();
+      batch.set(line.skuId, (batch.get(line.skuId) ?? 0) + line.oz);
+      continue;
+    }
     if (c.componentSkuId != null) {
       const skuInfo = graph.skuPack.get(c.componentSkuId);
       const oz = skuInfo ? ozForRecipeInput(c.quantity, c.unit, skuInfo, graph.measures) : null;
