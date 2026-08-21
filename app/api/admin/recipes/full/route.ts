@@ -26,6 +26,7 @@ export async function POST(req: NextRequest) {
       inputs: Array.isArray(b.inputs) ? (b.inputs as Array<Record<string, unknown>>).map((i) => ({
         componentSkuId: i.componentSkuId != null ? (i.componentSkuId as string) : null,
         componentItemId: i.componentItemId != null ? (i.componentItemId as string) : null,
+        componentProductId: i.componentProductId != null ? (i.componentProductId as string) : null,
         quantity: Number(i.quantity),
         unit: i.unit != null ? (i.unit as string) : null,
         eachContainerLabel: i.eachContainerLabel != null ? (i.eachContainerLabel as string) : null,
