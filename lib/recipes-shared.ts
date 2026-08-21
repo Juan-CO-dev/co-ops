@@ -29,6 +29,22 @@ export interface RecipeInputView {
   componentName: string;
   /** Discriminator so the builder can render the product chip without re-deriving it. */
   kind: RecipeInputKind;
+  /**
+   * The pinned target is DISCONTINUED — a retired product (`products.active =
+   * false`) or a deactivated vendor SKU (Juan's ruling A+, 2026-08-21: "the recipe
+   * should be loud too, so that they know they have a discontinued sku in the recipe
+   * that needs to be updated").
+   *
+   * ONE flag for both kinds, because the errand is one errand: re-point this line.
+   * `kind` already says which registry to go to. What it does NOT say is what the
+   * line does today — those differ, deliberately: a retired PRODUCT refuses at the
+   * resolution ladder, while a deactivated SKU still resolves (loadSkuPack includes
+   * inactive SKUs for historical replay). The badge is loud for both; only the
+   * readiness lane distinguishes the red one from the amber one.
+   *
+   * Never true for an item line: `items` retirement is not part of this ruling.
+   */
+  componentRetired: boolean;
   quantity: number; unit: string | null;
   eachContainerLabel: string | null; portioned: boolean; displayOrder: number;
 }

@@ -1086,6 +1086,10 @@ async function main(): Promise<void> {
       const flipped = members.map((m) => (m.skuId === forced.skuId ? { ...m, active: false } : m));
       const res = resolveProductMember({
         productId: j.product.id,
+        // The probe forces one MEMBER down; the product itself is whatever the
+        // live index says it is. Hardcoding true here would let the probe pass on
+        // a retired product that refuses in production (rung 0, 2026-08-21).
+        active: j.entry.active,
         primarySkuId: j.entry.primarySkuId,
         members: flipped,
       });

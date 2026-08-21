@@ -63,8 +63,22 @@ function normStr(s: string | null | undefined): string | null {
  * builder and Juan seeing an `unresolved` row on the cost board three days later —
  * the same reasoning as the ladle refusal (2026-08-20).
  *
- * Also proves the product EXISTS and is ACTIVE: a pin at a retired identity would
- * resolve to nothing and silently un-cost every recipe consuming it.
+ * Also proves the product EXISTS and is ACTIVE: a pin at a retired identity resolves
+ * to nothing and un-costs every recipe consuming it.
+ *
+ * ⚠ THAT SECOND SENTENCE WAS ASPIRATIONAL UNTIL 2026-08-21 (sim P1-9). This guard
+ * shipped citing a refusal that did not exist: `loadProductIndex` read `products`
+ * with no active filter, so a pin at a retired identity kept resolving, costing and
+ * depleting — the write was refused on a premise the read did not honour, which is
+ * the worst of both (an author blocked by a rule the system did not actually
+ * enforce). Juan's ruling A+ made the premise TRUE: `resolveProductMember` refuses a
+ * retired product at rung 0 with a named reason. This guard is now what it always
+ * claimed to be — the early half of one consistent rule, saving the author a trip to
+ * the cost board three days later, exactly like the ladle refusal (2026-08-20).
+ *
+ * It stays a WRITE-time refusal only. Retiring a product that existing lines already
+ * pin is deliberately never blocked (setProductActive) — the existing lines go loud,
+ * they do not get rewritten, and nobody may author a NEW one into that state.
  */
 async function assertProductLineIsValid(
   sb: ReturnType<typeof getServiceRoleClient>,
@@ -154,6 +168,29 @@ async function namesById(table: "items" | "menu_items" | "vendor_items" | "produ
   for (const r of data ?? []) m.set(r.id, r.name); return m;
 }
 
+/**
+ * Name AND activeness for a set of ids — the loud-recipes lookup (2026-08-21).
+ *
+ * A separate function rather than widening `namesById`, because every OTHER caller
+ * wants a plain label map and would have to unwrap a pair for nothing. Same one
+ * batched read; `active` NULL is read as active (the skus.ts idiom), and an id the
+ * table does not return at all is reported as NOT retired — a dangling pin is a
+ * different fault with a different fix, and "discontinued" would be the wrong
+ * accusation to put on it.
+ */
+async function namesAndActiveById(
+  table: "vendor_items" | "products",
+  ids: string[],
+): Promise<Map<string, { name: string; active: boolean }>> {
+  const m = new Map<string, { name: string; active: boolean }>();
+  if (ids.length === 0) return m;
+  const sb = getServiceRoleClient();
+  const { data } = await sb.from(table).select("id, name, active").in("id", ids)
+    .returns<Array<{ id: string; name: string; active: boolean | null }>>();
+  for (const r of data ?? []) m.set(r.id, { name: r.name, active: r.active ?? true });
+  return m;
+}
+
 /** Full recipe with hydrated inputs + outputs (>=6). */
 export async function loadRecipe(actor: AuthContext, recipeId: string): Promise<RecipeView | null> {
   requireLevel(actor, RECIPE_READ_MIN);
@@ -165,11 +202,14 @@ export async function loadRecipe(actor: AuthContext, recipeId: string): Promise<
     .returns<Array<{ id: string; component_sku_id: string | null; component_item_id: string | null; component_product_id: string | null; quantity: number | string; unit: string | null; each_container_label: string | null; portioned: boolean; display_order: number }>>();
   const { data: outRows } = await sb.from("recipe_outputs").select("*").eq("recipe_id", recipeId).order("display_order")
     .returns<Array<{ id: string; output_item_id: string | null; output_menu_item_id: string | null; yield: number | string; output_container_label: string | null; oz_alloc_share: number | string | null; display_order: number }>>();
-  const skuNames = await namesById("vendor_items", (inRows ?? []).map((x) => x.component_sku_id).filter((v): v is string => !!v));
+  // SKU and PRODUCT lines read `active` alongside the name (2026-08-21): the builder
+  // badges a discontinued pin, and asking here means the row does not have to
+  // re-derive it from a second query it would then have to keep in sync.
+  const skus = await namesAndActiveById("vendor_items", (inRows ?? []).map((x) => x.component_sku_id).filter((v): v is string => !!v));
   const subNames = await namesById("items", (inRows ?? []).map((x) => x.component_item_id).filter((v): v is string => !!v));
   // Product lines resolve their own name (0179) — without this lookup a re-pointed
   // line falls through to the item branch and renders "(item)".
-  const productNames = await namesById("products", (inRows ?? []).map((x) => x.component_product_id).filter((v): v is string => !!v));
+  const products = await namesAndActiveById("products", (inRows ?? []).map((x) => x.component_product_id).filter((v): v is string => !!v));
   const outItemNames = await namesById("items", (outRows ?? []).map((x) => x.output_item_id).filter((v): v is string => !!v));
   const outMenuNames = await namesById("menu_items", (outRows ?? []).map((x) => x.output_menu_item_id).filter((v): v is string => !!v));
   return {
@@ -178,9 +218,14 @@ export async function loadRecipe(actor: AuthContext, recipeId: string): Promise<
     inputs: (inRows ?? []).map((x) => ({ id: x.id, componentSkuId: x.component_sku_id, componentItemId: x.component_item_id,
       componentProductId: x.component_product_id,
       componentName: x.component_product_id
-        ? (productNames.get(x.component_product_id) ?? "(product)")
-        : x.component_sku_id ? (skuNames.get(x.component_sku_id) ?? "(sku)") : (subNames.get(x.component_item_id ?? "") ?? "(item)"),
+        ? (products.get(x.component_product_id)?.name ?? "(product)")
+        : x.component_sku_id ? (skus.get(x.component_sku_id)?.name ?? "(sku)") : (subNames.get(x.component_item_id ?? "") ?? "(item)"),
       kind: x.component_product_id ? ("product" as const) : x.component_sku_id ? ("sku" as const) : ("item" as const),
+      // A pin whose target is missing from the lookup is NOT retired — see
+      // namesAndActiveById. `?? true` is "we found nothing to accuse it of".
+      componentRetired: x.component_product_id
+        ? !(products.get(x.component_product_id)?.active ?? true)
+        : x.component_sku_id ? !(skus.get(x.component_sku_id)?.active ?? true) : false,
       quantity: num(x.quantity) ?? 0, unit: x.unit, eachContainerLabel: x.each_container_label, portioned: x.portioned, displayOrder: x.display_order })),
     outputs: (outRows ?? []).map((x) => ({ id: x.id, outputItemId: x.output_item_id, outputMenuItemId: x.output_menu_item_id,
       outputName: x.output_item_id ? (outItemNames.get(x.output_item_id) ?? "(item)") : (outMenuNames.get(x.output_menu_item_id ?? "") ?? "(menu item)"),

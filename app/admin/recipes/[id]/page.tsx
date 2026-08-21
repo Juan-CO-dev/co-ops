@@ -66,6 +66,12 @@ export default async function AdminRecipeDetailPage({
     // Products a recipe line may pin instead of one vendor's SKU (0179). Read the
     // same way every other picker on this page is; an error yields [] and the
     // product affordance simply does not render.
+    //
+    // `.eq("active", true)` is LOAD-BEARING, not tidiness (Juan's ruling A+,
+    // 2026-08-21): a retired product refuses at the resolution ladder, so offering
+    // one here would let an author pick an ingredient that reads `unresolved` the
+    // moment it is saved. lib/recipes.ts assertProductLineIsValid refuses the write
+    // anyway; this is the half that means nobody has to hit that refusal.
     sb
       .from("products")
       .select("id, name, unit_oz")

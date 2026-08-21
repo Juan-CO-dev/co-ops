@@ -68,11 +68,13 @@ export function MenuCostingClient({
   totals,
   skuNames,
   itemNames,
+  productNames,
 }: {
   rows: MenuCostRow[];
   totals: MenuCostTotals;
   skuNames: Record<string, string>;
   itemNames: Record<string, { en: string; es: string | null }>;
+  productNames: Record<string, { en: string; es: string | null }>;
 }) {
   const { t, language } = useTranslation();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -202,6 +204,7 @@ export function MenuCostingClient({
                       row={row}
                       skuNames={skuNames}
                       itemNames={itemNames}
+                      productNames={productNames}
                       language={language}
                       money={money}
                       t={t}
@@ -299,6 +302,7 @@ function RowDrawer({
   row,
   skuNames,
   itemNames,
+  productNames,
   language,
   money,
   t,
@@ -306,26 +310,33 @@ function RowDrawer({
   row: MenuCostRow;
   skuNames: Record<string, string>;
   itemNames: Record<string, { en: string; es: string | null }>;
+  productNames: Record<string, { en: string; es: string | null }>;
   language: string;
   money: (v: number | null) => string;
   t: (key: TranslationKey, params?: Record<string, string | number>) => string;
 }) {
-  const { status, pricedCost, pricedLineCount, unpricedSkuIds, inconsistentItemIds, unweighedItemIds } =
-    row.rollup;
+  const {
+    status, pricedCost, pricedLineCount, unpricedSkuIds,
+    inconsistentItemIds, unweighedItemIds, retiredProductIds,
+  } = row.rollup;
 
-  /** Shared renderer for the two prep-blocked drawers — same list, different errand. */
-  const prepList = (ids: string[], labelKey: TranslationKey) => (
+  /** Shared renderer for a named-address list — same shape, different registry. */
+  const nameList = (
+    ids: string[],
+    labelKey: TranslationKey,
+    names: Record<string, { en: string; es: string | null }>,
+    unknownKey: TranslationKey,
+  ) => (
     <div>
       <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
         {t(labelKey, { n: ids.length })}
       </p>
       <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
         {ids.map((id) => {
-          const name = itemNames[id];
+          const name = names[id];
           return (
             <li key={id} className="text-xs font-medium text-co-text">
-              {(language === "es" ? name?.es ?? name?.en : name?.en) ??
-                t("admin.menu_costing.drawer.unknown_item")}
+              {(language === "es" ? name?.es ?? name?.en : name?.en) ?? t(unknownKey)}
             </li>
           );
         })}
@@ -333,10 +344,31 @@ function RowDrawer({
     </div>
   );
 
+  /** The two prep-blocked drawers — same list, different errand. */
+  const prepList = (ids: string[], labelKey: TranslationKey) =>
+    nameList(ids, labelKey, itemNames, "admin.menu_costing.drawer.unknown_item");
+
   if (status === "no_recipe") {
     return <p className="text-xs text-co-text-muted">{t("admin.menu_costing.drawer.no_recipe_help")}</p>;
   }
   if (status === "unresolved") {
+    // SAME status, two different errands (Juan's ruling A+, 2026-08-21). A row
+    // blocked by a discontinued product is not "a SKU is missing pack info" — it is
+    // a recipe edit, and pointing the manager at the SKU catalog would waste the
+    // trip. Naming the product is what makes the shared status honest.
+    if (retiredProductIds.length > 0) {
+      return (
+        <>
+          <p className="text-xs text-co-text-muted">{t("admin.menu_costing.drawer.retired_product_help")}</p>
+          {nameList(
+            retiredProductIds,
+            "admin.menu_costing.drawer.retired_products",
+            productNames,
+            "admin.menu_costing.drawer.unknown_product",
+          )}
+        </>
+      );
+    }
     return <p className="text-xs text-co-text-muted">{t("admin.menu_costing.drawer.unresolved_help")}</p>;
   }
   if (status === "inconsistent") {

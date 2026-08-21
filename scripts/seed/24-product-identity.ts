@@ -1051,8 +1051,10 @@ function resolvePlan(cat: Catalog, plan: ProductPlan): ResolvedProduct {
     members,
     existing,
     nameEs: cat.itemNameEs.get(key(plan.name)) ?? null,
-    ladderToday: resolveProductMember({ productId: plan.name, primarySkuId, members: memberViews }),
-    ladderUnruled: resolveProductMember({ productId: plan.name, primarySkuId: null, members: memberViews }),
+    // `active: true` — this sheet plans products that do not exist yet, and a
+    // product is born active (createProduct). Rung 0 cannot fire on a plan.
+    ladderToday: resolveProductMember({ productId: plan.name, active: true, primarySkuId, members: memberViews }),
+    ladderUnruled: resolveProductMember({ productId: plan.name, active: true, primarySkuId: null, members: memberViews }),
     disagree: membersDisagreeOnUnitOz(memberViews),
   };
 }

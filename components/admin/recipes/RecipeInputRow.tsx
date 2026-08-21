@@ -4,6 +4,18 @@
  * RecipeInputRow — one existing recipe_input edge with a remove (✕) button.
  * Matches MadeFromEditor's MadeFromRow look (border-2 border-co-border card).
  * Calls onRemove(edgeId) on confirm.
+ *
+ * LOUD ON A DISCONTINUED PIN (Juan's ruling A+, 2026-08-21 — "the recipe should be
+ * loud too, so that they know they have a discontinued sku in the recipe that needs
+ * to be updated"). A retired product or a deactivated SKU turns the whole row
+ * danger-adjacent — a red-outline card plus an inline badge — because the fault is
+ * the LINE, not a detail inside it, and a quiet chip on a normal-looking card is how
+ * a manager scrolls past the one row that is broken.
+ *
+ * DANGER-ADJACENT, NOT DANGER-FILLED (AGENTS.md token roles): the edge and the label
+ * both take `co-cta-text` — `co-cta` is a fill token and falls under the 3:1 floor as
+ * an edge on a light ground — and the tint is `co-danger-surface`, the badge tint the
+ * product registry's own danger Pill already uses.
  */
 
 import { useState } from "react";
@@ -45,11 +57,28 @@ export function RecipeInputRow({
     .filter(Boolean)
     .join(" · ");
 
+  const retired = input.componentRetired;
+
   return (
-    <div className="rounded-lg border-2 border-co-border bg-co-surface p-3">
+    <div
+      className={`rounded-lg border-2 p-3 ${
+        retired ? "border-co-cta-text bg-co-danger-surface" : "border-co-border bg-co-surface"
+      }`}
+    >
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <p className="text-sm font-bold text-co-text">{label}</p>
+          {retired ? (
+            <p
+              className="mt-1 inline-flex items-center rounded-full bg-co-surface px-2 py-0.5 text-[11px] font-bold uppercase tracking-[0.08em] text-co-cta-text"
+              // The badge is the whole message, so it needs no separate label — but
+              // the row it indicts does: a screen reader must hear WHICH ingredient
+              // is discontinued, not just that something on the page is.
+              aria-label={t(rk("recipes.input.retired_aria"), { name: input.componentName })}
+            >
+              {t(rk("recipes.input.retired_badge"))}
+            </p>
+          ) : null}
           {meta ? <p className="text-xs text-co-text-muted">{meta}</p> : null}
         </div>
         {canEdit ? (

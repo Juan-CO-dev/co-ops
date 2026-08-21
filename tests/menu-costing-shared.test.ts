@@ -32,6 +32,7 @@ import {
 } from "@/lib/menu-costing-shared";
 import { buildRecipeGraph, type GraphRecipe } from "@/lib/prep-consumption-graph";
 import type { MeasureUnitFactor, RecipeInputSku } from "@/lib/recipe-math";
+import type { ProductUnresolvedReason } from "@/lib/products-shared";
 
 const MEASURES = new Map<string, MeasureUnitFactor>([
   ["oz", { dimension: "weight", toBaseFactor: 1 }],
@@ -355,7 +356,7 @@ describe("mass balance — declared output vs resolved input (D2)", () => {
     const mk = (id: string, status: "inconsistent" | "unresolved") =>
       toMenuCostRow(
         { id, name: id, nameEs: null, section: null, menuPrice: 10 },
-        { status, cost: null, pricedCost: 0, pricedLineCount: 0, unpricedLineCount: 0, unpricedSkuIds: [], inconsistentItemIds: [], unweighedItemIds: [] },
+        { status, cost: null, pricedCost: 0, pricedLineCount: 0, unpricedLineCount: 0, unpricedSkuIds: [], inconsistentItemIds: [], unweighedItemIds: [], retiredProductIds: [] },
       );
     expect([mk("u", "unresolved"), mk("i", "inconsistent")].sort(compareMenuCostRows).map((r) => r.id))
       .toEqual(["i", "u"]);
@@ -390,7 +391,7 @@ describe("board composition + ordering", () => {
     expect(rows[1]!.overThreshold).toBe(false);
     const exactly = toMenuCostRow(
       { id: "x", name: "x", nameEs: null, section: null, menuPrice: 10 },
-      { status: "costed", cost: 3, pricedCost: 3, pricedLineCount: 1, unpricedLineCount: 0, unpricedSkuIds: [], inconsistentItemIds: [], unweighedItemIds: [] },
+      { status: "costed", cost: 3, pricedCost: 3, pricedLineCount: 1, unpricedLineCount: 0, unpricedSkuIds: [], inconsistentItemIds: [], unweighedItemIds: [], retiredProductIds: [] },
     );
     expect(exactly.foodCostPct).toBeCloseTo(30, 10);
     expect(exactly.overThreshold).toBe(false); // AT the threshold is not OVER it
@@ -399,7 +400,7 @@ describe("board composition + ordering", () => {
   it("a costed row with no menu price sorts after priced ones instead of ranking as worst", () => {
     const noPrice = toMenuCostRow(
       { id: "np", name: "No Price", nameEs: null, section: null, menuPrice: null },
-      { status: "costed", cost: 1, pricedCost: 1, pricedLineCount: 1, unpricedLineCount: 0, unpricedSkuIds: [], inconsistentItemIds: [], unweighedItemIds: [] },
+      { status: "costed", cost: 1, pricedCost: 1, pricedLineCount: 1, unpricedLineCount: 0, unpricedSkuIds: [], inconsistentItemIds: [], unweighedItemIds: [], retiredProductIds: [] },
     );
     expect(compareMenuCostRows(noPrice, rows[0]!)).toBeGreaterThan(0);
   });
@@ -408,7 +409,7 @@ describe("board composition + ordering", () => {
     const mk = (id: string, unpriced: number) =>
       toMenuCostRow(
         { id, name: id, nameEs: null, section: null, menuPrice: 10 },
-        { status: "partial", cost: null, pricedCost: 1, pricedLineCount: 1, unpricedLineCount: unpriced, unpricedSkuIds: [], inconsistentItemIds: [], unweighedItemIds: [] },
+        { status: "partial", cost: null, pricedCost: 1, pricedLineCount: 1, unpricedLineCount: unpriced, unpricedSkuIds: [], inconsistentItemIds: [], unweighedItemIds: [], retiredProductIds: [] },
       );
     expect([mk("b", 3), mk("a", 1)].sort(compareMenuCostRows).map((r) => r.id)).toEqual(["a", "b"]);
   });
@@ -503,7 +504,7 @@ describe("unweighed placeholder preps (the mass guard's blind spot, 2026-08-20)"
     const mk = (id: string, status: "inconsistent" | "unweighed") =>
       toMenuCostRow(
         { id, name: id, nameEs: null, section: null, menuPrice: 10 },
-        { status, cost: null, pricedCost: 0, pricedLineCount: 0, unpricedLineCount: 0, unpricedSkuIds: [], inconsistentItemIds: [], unweighedItemIds: [] },
+        { status, cost: null, pricedCost: 0, pricedLineCount: 0, unpricedLineCount: 0, unpricedSkuIds: [], inconsistentItemIds: [], unweighedItemIds: [], retiredProductIds: [] },
       );
     expect([mk("w", "unweighed"), mk("i", "inconsistent")].sort(compareMenuCostRows).map((r) => r.id))
       .toEqual(["i", "w"]);
@@ -513,7 +514,7 @@ describe("unweighed placeholder preps (the mass guard's blind spot, 2026-08-20)"
     const mk = (id: string, status: "unweighed" | "unresolved") =>
       toMenuCostRow(
         { id, name: id, nameEs: null, section: null, menuPrice: 10 },
-        { status, cost: null, pricedCost: 0, pricedLineCount: 0, unpricedLineCount: 0, unpricedSkuIds: [], inconsistentItemIds: [], unweighedItemIds: [] },
+        { status, cost: null, pricedCost: 0, pricedLineCount: 0, unpricedLineCount: 0, unpricedSkuIds: [], inconsistentItemIds: [], unweighedItemIds: [], retiredProductIds: [] },
       );
     expect([mk("u", "unresolved"), mk("w", "unweighed")].sort(compareMenuCostRows).map((r) => r.id))
       .toEqual(["w", "u"]);
@@ -532,5 +533,109 @@ describe("unweighed placeholder preps (the mass guard's blind spot, 2026-08-20)"
     const t = summarizeMenuCostRows(composeMenuCostRows(inputs, g, prices([["skuCount", 2]])));
     expect(t.unweighedCount).toBe(2);
     expect(t.unweighedItemCount).toBe(1); // one unweighed prep behind both rows
+  });
+});
+
+/**
+ * RETIRED PRODUCTS on the costing board (Juan's ruling A+, 2026-08-21; sim P1-9).
+ *
+ * No new status: the ruling is explicit that the existing `unresolved` carries the
+ * fault. What is new is the ADDRESS — `retiredProductIds` names the discontinued
+ * identity so the drawer can send the manager to the RECIPE instead of the SKU
+ * catalog. The two refusals are otherwise indistinguishable on the board, and that
+ * is exactly why the list has to exist.
+ */
+describe("retired-product pins (the third address on `unresolved`)", () => {
+  const productIn = (quantity: number, productId: string): GraphRecipe["inputs"][number] => ({
+    quantity, unit: "oz", componentSkuId: null, componentItemId: null, componentProductId: productId,
+  });
+
+  /** A product index entry, resolved or refused, with the named cause. */
+  const index = (entries: Array<[string, string | null, ProductUnresolvedReason | null]>) => ({
+    resolution: new Map(entries.map(([productId, skuId, reason]) => [productId, {
+      productId, skuId,
+      rung: skuId ? ("primary" as const) : ("unresolved" as const),
+      reason, consideredSkuIds: [],
+    }])),
+    basis: new Map(entries.map(([productId]) => [productId, { ...PLAIN, avgOzPerEach: 1 }])),
+  });
+
+  const graphWithProducts = (
+    recipes: GraphRecipe[],
+    entries: Array<[string, string | null, ProductUnresolvedReason | null]>,
+  ) => buildRecipeGraph(recipes, PACK, MEASURES, index(entries));
+
+  const MENU: GraphRecipe = {
+    recipeId: "rM", batchYield: 1,
+    inputs: [productIn(4, "HAM")], outputs: [menuOut("m", 1)],
+  };
+
+  it("a RETIRED product pin reads `unresolved` and NAMES the product", () => {
+    const g = graphWithProducts([MENU], [["HAM", null, "retired_product"]]);
+    const r = rollupMenuItemCost(g, "m", prices([]));
+    expect(r.status).toBe("unresolved");
+    expect(r.retiredProductIds).toEqual(["HAM"]);
+    expect(r.cost).toBeNull();
+    expect(r.pricedCost).toBe(0); // an unresolved row carries no money, unchanged
+  });
+
+  it("a product unresolved for ANY OTHER reason names nothing — different errand", () => {
+    // Same status, same badge, same sort rank. The empty list is what tells the
+    // drawer to send this manager to the SKU catalog, not to the recipe.
+    const g = graphWithProducts([MENU], [["HAM", null, "no_active_member"]]);
+    const r = rollupMenuItemCost(g, "m", prices([]));
+    expect(r.status).toBe("unresolved");
+    expect(r.retiredProductIds).toEqual([]);
+  });
+
+  it("names the retired product even when the row reaches it through NESTING", () => {
+    const g = graphWithProducts(
+      [
+        { recipeId: "rPrep", batchYield: 1, inputs: [productIn(4, "HAM")], outputs: [itemOut("Sliced", 1, 4)] },
+        { recipeId: "rM2", batchYield: 1, inputs: [itemOzIn(2, "Sliced")], outputs: [menuOut("m2", 1)] },
+      ],
+      [["HAM", null, "retired_product"]],
+    );
+    expect(rollupMenuItemCost(g, "m2", prices([])).retiredProductIds).toEqual(["HAM"]);
+  });
+
+  it("reports EVERY retired product behind the row, sorted and de-duplicated", () => {
+    const g = graphWithProducts(
+      [{
+        recipeId: "rM3", batchYield: 1,
+        inputs: [productIn(1, "PROV"), productIn(2, "HAM"), productIn(1, "HAM")],
+        outputs: [menuOut("m3", 1)],
+      }],
+      [["HAM", null, "retired_product"], ["PROV", null, "retired_product"]],
+    );
+    expect(rollupMenuItemCost(g, "m3", prices([])).retiredProductIds).toEqual(["HAM", "PROV"]);
+  });
+
+  it("a RESOLVED product contributes nothing to the list — this is a tripwire", () => {
+    // The live state today: eleven products, none retired, eleven pinned lines.
+    const g = graphWithProducts([MENU], [["HAM", "sku1", null]]);
+    const r = rollupMenuItemCost(g, "m", prices([["sku1", 1]]));
+    expect(r.status).toBe("costed");
+    expect(r.retiredProductIds).toEqual([]);
+  });
+
+  it("rollupItemCost carries the same address for a PREP row", () => {
+    const g = graphWithProducts(
+      [{ recipeId: "rP", batchYield: 1, inputs: [productIn(4, "HAM")], outputs: [itemOut("Sliced", 1, 4)] }],
+      [["HAM", null, "retired_product"]],
+    );
+    const r = rollupItemCost(g, "Sliced", prices([]));
+    expect(r.status).toBe("unresolved");
+    expect(r.retiredProductIds).toEqual(["HAM"]);
+  });
+
+  it("a graph with NO product index at all is byte-identical to before", () => {
+    const g = graphOf([{ recipeId: "rX", batchYield: 1, inputs: [ozIn(4, "sku1")], outputs: [menuOut("mX", 1)] }]);
+    expect(rollupMenuItemCost(g, "mX", prices([["sku1", 1]])).retiredProductIds).toEqual([]);
+    // …and an honestly-unresolvable row still refuses, with nothing to name.
+    const gBad = graphOf([{ recipeId: "rY", batchYield: 1, inputs: [ozIn(4, "ghost")], outputs: [menuOut("mY", 1)] }]);
+    const bad = rollupMenuItemCost(gBad, "mY", prices([]));
+    expect(bad.status).toBe("unresolved");
+    expect(bad.retiredProductIds).toEqual([]);
   });
 });

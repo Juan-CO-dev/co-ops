@@ -232,7 +232,13 @@ export function batchInputOzForItem(graph: RecipeGraph, itemId: string): number 
  *
  * Two refusals, both honest and both poisoning the flatten exactly like an unknown
  * SKU pack does (module header, "Preserved semantics"):
- *   - the product does not RESOLVE (no active member) → `unresolved`;
+ *   - the product does not RESOLVE → `unresolved`. Since 2026-08-21 that covers
+ *     TWO causes, and this function deliberately does not care which: a RETIRED
+ *     product (rung 0 — Juan's ruling A+) and a product whose every member is
+ *     inactive both hand back `skuId: null`, and a poisoned flatten is a poisoned
+ *     flatten. The named `reason` rides on the resolution for the surfaces that owe
+ *     the operator an errand (the costing drawer, the readiness lane); the math has
+ *     no use for it and must not grow an opinion about it;
  *   - the line's unit does not convert through the product's measure-only basis —
  *     which is what a count-denominated line whose product has no unit_oz hits, and
  *     what a pack/chain-label spelling hits (deviation D3: a pack label is a

@@ -119,6 +119,18 @@ export interface MenuCostRollup {
    * finished par-unit on a scale, then fill `items.oz_per_par_unit`.
    */
   unweighedItemIds: string[];
+  /**
+   * The RETIRED PRODUCTS this row's recipes still pin, sorted. Non-empty only when
+   * status === "unresolved" (Juan's ruling A+, 2026-08-21).
+   *
+   * Retirement gets no status of its own — the ruling is explicit that the existing
+   * `unresolved` carries it — so this is how the drawer says WHY. It is the same
+   * "name the address" contract as the two lists above, and the errand is the third
+   * distinct one: not a price, not a scale, but a RECIPE EDIT. Without it, a row
+   * that broke because Juan discontinued an ingredient reads identically to one
+   * whose SKU is missing pack info, and the manager goes to the wrong screen.
+   */
+  retiredProductIds: string[];
 }
 
 const EMPTY_ROLLUP = (status: MenuCostStatus): MenuCostRollup => ({
@@ -130,6 +142,7 @@ const EMPTY_ROLLUP = (status: MenuCostStatus): MenuCostRollup => ({
   unpricedSkuIds: [],
   inconsistentItemIds: [],
   unweighedItemIds: [],
+  retiredProductIds: [],
 });
 
 // ── Mass balance (debug finding D2) ──────────────────────────────────────────
@@ -345,6 +358,41 @@ function unweighedReach(graph: RecipeGraph, node: GraphRecipe, seed: string[] = 
 }
 
 /**
+ * The RETIRED PRODUCTS pinned anywhere in this row's reach, sorted (2026-08-21).
+ *
+ * Same walk the two `*Reach` helpers above use — `collectItemRefs` for the item
+ * closure, then the pins on `node` plus each reached item's producing recipe. It
+ * reads the ANSWER out of `graph.products.resolution`, which the loader already
+ * computed through the ONE ladder; it does not re-decide anything (AGENTS.md: never
+ * resolve a product a second time in a consumer).
+ *
+ * Empty when no product is retired, which is the state of the live system today —
+ * this is a tripwire, not a backlog.
+ */
+function retiredProductReach(graph: RecipeGraph, node: GraphRecipe, seed: string[] = []): string[] {
+  if (graph.products.resolution.size === 0) return [];
+  const seen = new Set<string>(seed);
+  collectItemRefs(graph, node, seen);
+
+  const retired = new Set<string>();
+  const scan = (r: GraphRecipe): void => {
+    for (const c of r.inputs) {
+      const productId = c.componentProductId;
+      if (productId == null) continue;
+      if (graph.products.resolution.get(productId)?.reason === "retired_product") {
+        retired.add(productId);
+      }
+    }
+  };
+  scan(node);
+  for (const itemId of seen) {
+    const sub = graph.byOutputItem.get(itemId);
+    if (sub) scan(sub);
+  }
+  return [...retired].sort();
+}
+
+/**
  * Layer dollars onto an already-resolved per-unit SKU-oz map.
  *
  * `costPerOzBySku` missing a key and mapping it to null mean the SAME thing —
@@ -385,6 +433,7 @@ function rollupFromPerUnitOz(
     unpricedSkuIds,
     inconsistentItemIds: [],
     unweighedItemIds: [],
+    retiredProductIds: [],
   };
 }
 
@@ -418,6 +467,21 @@ const UNWEIGHED_ROLLUP = (itemIds: string[]): MenuCostRollup => ({
 });
 
 /**
+ * An unresolved rollup, optionally naming the RETIRED PRODUCTS behind it.
+ *
+ * NO NEW STATUS, deliberately (Juan's ruling A+): a retired pin poisons the flatten
+ * exactly like an unknown pack does, the badge and the sort rank are the same, and
+ * inventing an eighth status for one cause of one refusal would split a group the
+ * board reads as one. What changes is the ADDRESS — an empty list means "we could
+ * not turn this into ounces", a non-empty one means "…because you discontinued
+ * these", and the drawer tells the two apart.
+ */
+const UNRESOLVED_ROLLUP = (retiredProductIds: string[]): MenuCostRollup => ({
+  ...EMPTY_ROLLUP("unresolved"),
+  retiredProductIds,
+});
+
+/**
  * Cost of ONE unit of a MENU_ITEM (a sub/side as sold), flattened to leaf SKUs.
  *
  * The empty oz map is ambiguous by itself (poisoned flatten vs no recipe), so
@@ -439,7 +503,7 @@ export function rollupMenuItemCost(
   const node = graph.byOutputMenuItem.get(menuItemId);
   if (!node) return EMPTY_ROLLUP("no_recipe");
   const perUnitOz = perUnitSkuOzForMenuItemFromGraph(graph, menuItemId);
-  if (perUnitOz.size === 0) return EMPTY_ROLLUP("unresolved");
+  if (perUnitOz.size === 0) return UNRESOLVED_ROLLUP(retiredProductReach(graph, node));
   const bad = inconsistentReach(graph, node);
   if (bad.length > 0) return INCONSISTENT_ROLLUP(bad);
   const unweighed = unweighedReach(graph, node);
@@ -463,7 +527,7 @@ export function rollupItemCost(
   const node = graph.byOutputItem.get(itemId);
   if (!node) return EMPTY_ROLLUP("no_recipe");
   const perUnitOz = perUnitSkuOzForItemFromGraph(graph, itemId);
-  if (perUnitOz.size === 0) return EMPTY_ROLLUP("unresolved");
+  if (perUnitOz.size === 0) return UNRESOLVED_ROLLUP(retiredProductReach(graph, node, [itemId]));
   const bad = inconsistentReach(graph, node, [itemId]);
   if (bad.length > 0) return INCONSISTENT_ROLLUP(bad);
   const unweighed = unweighedReach(graph, node, [itemId]);

@@ -276,8 +276,17 @@ async function loadCountProductOptions(
 
   // ACTIVE members only, and `active` here is the LOCATION-resolved value the index
   // computed (overlay ?? global) — the same activation the order walk sees.
+  //
+  // A PRODUCT THAT DOES NOT RESOLVE OFFERS NO PRODUCT ROW (2026-08-21). One rule,
+  // two causes: every member inactive, or — since Juan's retirement ruling — the
+  // identity itself retired. Either way there is no primary to borrow level labels
+  // from, `allocateProductLines` refuses the submit with `product_unresolved`, and
+  // rendering the row anyway would be an affordance that cannot be completed. The
+  // physical stock is NOT hidden: the members stay countable as ordinary per-SKU
+  // rows, which is the honest question to ask about an identity we no longer buy.
   const activeMembersByProduct = new Map<string, ProductIndexEntry["members"]>();
   for (const [productId, entry] of byProduct) {
+    if (entry.resolution.skuId == null) continue;
     const active = entry.members.filter((m) => m.active);
     if (active.length > 0) activeMembersByProduct.set(productId, active);
   }
@@ -1599,6 +1608,13 @@ export async function loadOnHandDerived(
  * FAIL-SOFT: the product grain is a view over rows that already exist, so a failure
  * here loses no truth. It logs and degrades to `[]` rather than 500-ing the count
  * sheet — the panel then reads exactly as it did before this arc.
+ *
+ * A RETIRED PRODUCT STILL GETS AN ON-HAND ROW, deliberately (2026-08-21). Unlike the
+ * count sheet's C-mode — which asks a question and therefore needs a primary to ask
+ * it through — this is a READ over per-SKU ledgers that are still true: discontinuing
+ * ham does not empty the fridge, and hiding the rollup would leave real stock visible
+ * only as two unlinked twin rows, which is exactly the mirrored SHORT/OVER read the
+ * grain exists to kill. Retirement suppresses RESOLUTION, not arithmetic over ledgers.
  */
 async function loadProductOnHandRows(
   sb: ReturnType<typeof getServiceRoleClient>,

@@ -39,6 +39,16 @@ export interface ProductMember {
 
 export interface ProductResolutionInput {
   productId: string;
+  /**
+   * `products.active` — is this identity still something the kitchen buys?
+   *
+   * REQUIRED, deliberately (Juan's retirement ruling, 2026-08-21). A retired
+   * product must stop resolving, and the compiler forcing every construction site
+   * to STATE the flag is the guard: an optional-defaulting-true `active` is exactly
+   * how a retired identity keeps costing, depleting and ordering with nothing
+   * anywhere saying so — the defect sim P1-9 found.
+   */
+  active: boolean;
   /** The primary designated for this location, else the global default, else null. */
   primarySkuId: string | null;
   members: ProductMember[];
@@ -47,11 +57,24 @@ export interface ProductResolutionInput {
 /** Which rung of the ladder answered. Carried into the audit row on every flip. */
 export type ProductResolutionRung = "primary" | "recent" | "any" | "unresolved";
 
+/**
+ * WHY a product did not resolve. The status is `unresolved` either way — this names
+ * the fault so the drawer, the readiness lane and the audit row can say which errand
+ * fixes it, instead of one word covering two different repairs:
+ *   - `retired_product`  → the identity itself is retired. Re-point the recipe line
+ *     (or un-retire the product). Its members may be perfectly healthy.
+ *   - `no_active_member` → the identity is live but every vendor SKU under it is
+ *     inactive. Re-activate a member or attach one; the line is fine.
+ */
+export type ProductUnresolvedReason = "retired_product" | "no_active_member";
+
 export interface ProductResolution {
   productId: string;
   /** null ONLY on rung "unresolved" — never a fabricated pick. */
   skuId: string | null;
   rung: ProductResolutionRung;
+  /** Non-null ONLY on rung "unresolved" — the named cause (see the type's doc). */
+  reason: ProductUnresolvedReason | null;
   /** Every member id considered, in input order — the "why" half of the audit row. */
   consideredSkuIds: string[];
 }
@@ -65,6 +88,7 @@ function receivedMs(iso: string | null): number | null {
 
 /**
  * THE resolution ladder (spec, "the stable question"):
+ *   (0) the PRODUCT itself is retired            → honest `unresolved`
  *   (1) the member flagged primary for this location, IF ACTIVE
  *   (2) else the most-recently-RECEIVED active member
  *   (3) else any active member (skuId ascending — a STABLE, not arbitrary, pick)
@@ -74,17 +98,41 @@ function receivedMs(iso: string | null): number | null {
  * the whole product. That is the vendor-down behavior the entire arc exists for.
  * Rungs 2 and 3 break ties on skuId so two callers holding the same data in
  * different row order can never disagree.
+ *
+ * ── RUNG 0: RETIREMENT REFUSES (Juan's ruling A+, 2026-08-21) ────────────────
+ * Retiring a product is Juan declaring a fact about the kitchen: we do not buy this
+ * any more. Falling through to a member would be the system overruling that
+ * declaration with an inference — and the members of a retired product are usually
+ * still ACTIVE rows (retiring the identity says nothing about the vendors' SKUs), so
+ * the fall-through is not a rare edge but the normal case. It comes FIRST, ahead of
+ * the member check, so the reason names the identity rather than blaming its members
+ * for a decision that was never theirs.
+ *
+ * This is not a hard block anywhere upstream — `/admin/products` warns and proceeds
+ * (count beats theory: Juan's declaration of reality wins, the system surfaces the
+ * consequences). The refusal is what makes those consequences VISIBLE: every pinned
+ * line reads `unresolved` with a named cause instead of quietly costing a product
+ * nobody buys. It also makes lib/recipes.ts assertProductLineIsValid's stated premise
+ * — "a pin at a retired identity would resolve to nothing" — true, which it was not
+ * before (sim P1-9).
  */
 export function resolveProductMember(input: ProductResolutionInput): ProductResolution {
   const consideredSkuIds = input.members.map((m) => m.skuId);
   const base = { productId: input.productId, consideredSkuIds };
 
+  // (0) the identity is retired — refuse before looking at a single member.
+  if (!input.active) {
+    return { ...base, skuId: null, rung: "unresolved", reason: "retired_product" };
+  }
+
   const active = input.members.filter((m) => m.active);
-  if (active.length === 0) return { ...base, skuId: null, rung: "unresolved" };
+  if (active.length === 0) {
+    return { ...base, skuId: null, rung: "unresolved", reason: "no_active_member" };
+  }
 
   // (1) flagged primary, if it is an ACTIVE member of this product.
   if (input.primarySkuId != null && active.some((m) => m.skuId === input.primarySkuId)) {
-    return { ...base, skuId: input.primarySkuId, rung: "primary" };
+    return { ...base, skuId: input.primarySkuId, rung: "primary", reason: null };
   }
 
   // (2) most-recently-received active member.
@@ -92,11 +140,13 @@ export function resolveProductMember(input: ProductResolutionInput): ProductReso
     .map((m) => ({ skuId: m.skuId, ms: receivedMs(m.lastReceivedAt) }))
     .filter((m): m is { skuId: string; ms: number } => m.ms != null)
     .sort((a, b) => (b.ms !== a.ms ? b.ms - a.ms : a.skuId.localeCompare(b.skuId)));
-  if (received.length > 0) return { ...base, skuId: received[0]!.skuId, rung: "recent" };
+  if (received.length > 0) {
+    return { ...base, skuId: received[0]!.skuId, rung: "recent", reason: null };
+  }
 
   // (3) any active member, stably.
   const any = [...active].sort((a, b) => a.skuId.localeCompare(b.skuId));
-  return { ...base, skuId: any[0]!.skuId, rung: "any" };
+  return { ...base, skuId: any[0]!.skuId, rung: "any", reason: null };
 }
 
 // -- Recipe basis (deviation D3) ----------------------------------------------
