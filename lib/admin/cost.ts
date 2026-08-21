@@ -38,10 +38,9 @@ import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
-import type { MeasureUnitOption } from "@/lib/admin/skus";
 import { loadMeasureUnits } from "@/lib/admin/skus";
 import { loadSkuPackChains } from "@/lib/prep-consumption";
-import { skuCostPerOz, type MeasureUnitFactor } from "@/lib/recipe-math";
+import type { MeasureUnitFactor } from "@/lib/recipe-math";
 // The PURE half lives in cost-shared.ts (the house *-shared law) so the
 // derivation is test-pinnable; re-exported here so server consumers' import
 // paths are unchanged.

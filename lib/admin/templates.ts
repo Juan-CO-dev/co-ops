@@ -15,6 +15,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { audit } from "@/lib/audit";
+import type { AuditAction } from "@/lib/audit-actions";
 import { isAllLocationsAccess, lockLocationContext } from "@/lib/locations";
 import { ROLES } from "@/lib/roles";
 import {
@@ -3964,7 +3965,11 @@ async function updateQuestionCore(
   args: {
     table: "section_questions" | "item_questions";
     linkColumn: "section_question_id" | "item_question_id";
-    auditAction: string;
+    /** Narrowed from `string` (2026-08-21): this indirection is why these two
+     *  actions were grep-invisible and went unregistered while their own
+     *  create/disable siblings were registered. The closed vocabulary now
+     *  reaches them through the parameter type. */
+    auditAction: Extract<AuditAction, `${"section" | "item"}_question.update`>;
     notFoundCode: string;
     questionId: string;
     patch: QuestionEditPatch;
