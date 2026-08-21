@@ -74,7 +74,23 @@ import type {
   ReportType,
 } from "./types";
 
-/** Column list for SELECTs against `checklist_template_items` — single source of truth. */
+/**
+ * Column list for SELECTs against `checklist_template_items` — single source of truth.
+ *
+ * ⚠ `equipment_id` (migration 0181) is DELIBERATELY ABSENT, and adding it here would
+ * be a production incident. This constant feeds seventeen `.select()` call sites
+ * across opening, closing, prep, the templates admin and the builder. Migration 0181
+ * is a NAMED LEAD GATE (M3) applied AFTER this code is reviewed, so the Vercel
+ * PREVIEW runs this branch against a database that does not yet have the column —
+ * and PostgREST answers an unknown column with an error, not a null. Naming it here
+ * would 500 every checklist surface on the preview Juan is meant to smoke.
+ *
+ * The paths that genuinely need the link (the needs-link queue and the Template
+ * Doctor) read it in their own small, PROBE-GUARDED query and merge it in. Everywhere
+ * else `ChecklistTemplateItem.equipmentId` is null, which is byte-identical to
+ * today's behaviour. Revisit only once 0181 is applied everywhere, and even then the
+ * gain is one query, not correctness.
+ */
 export const TEMPLATE_ITEM_COLUMNS =
   "id, template_id, station, display_order, label, description, min_role_level, required, expects_count, expects_photo, vendor_item_id, active, translations, prep_meta, report_reference_type, references_template_item_id, item_id, hard_gate, ref_track_item_completion, input_type";
 
@@ -114,6 +130,12 @@ export interface TemplateItemRow {
    * pin the input_type a completion was answered under.
    */
   input_type: "yes_no" | "free_text" | null;
+  /**
+   * migration 0181. OPTIONAL because TEMPLATE_ITEM_COLUMNS deliberately does not
+   * request it (see the comment there) — the key is simply absent on those rows,
+   * and the mapper reads that absence as null.
+   */
+  equipment_id?: string | null;
 }
 
 /**
@@ -150,5 +172,8 @@ export function rowToTemplateItem(r: TemplateItemRow): ChecklistTemplateItem {
     hardGate: r.hard_gate,
     refTrackItemCompletion: r.ref_track_item_completion,
     inputType: r.input_type,
+    // Absent key -> undefined -> null. A row selected without equipment_id reads
+    // as "no equipment link", which is exactly what every pre-0181 row is.
+    equipmentId: r.equipment_id ?? null,
   };
 }

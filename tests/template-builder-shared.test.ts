@@ -63,6 +63,7 @@ function item(over: Partial<ChecklistTemplateItem>): ChecklistTemplateItem {
     reportReferenceType: null,
     referencesTemplateItemId: null,
     itemId: null,
+    equipmentId: null,
     hardGate: false,
     refTrackItemCompletion: false,
     inputType: null,
@@ -212,6 +213,11 @@ describe("itemNeedsLink — mirror-aware spine-link classifier", () => {
   it("FALSE when linked to an item or a SKU", () => {
     expect(itemNeedsLink(item({ expectsCount: true, itemId: "x" }))).toBe(false);
     expect(itemNeedsLink(item({ expectsCount: true, vendorItemId: "y" }))).toBe(false);
+  });
+  // 0181: a fridge temp line linked to its asset is LINKED — the third arm is what
+  // clears the 32-row false positive the Doctor has been showing all along.
+  it("FALSE when linked to EQUIPMENT", () => {
+    expect(itemNeedsLink(item({ expectsCount: true, equipmentId: "fridge-1" }))).toBe(false);
   });
   it("FALSE for a plain tick (not count-bearing)", () => {
     expect(itemNeedsLink(item({ expectsCount: false }))).toBe(false);
@@ -817,6 +823,7 @@ function reconcileSrc(over: Partial<ReconcileSource> = {}): ReconcileSource {
     expectsPhoto: false,
     inputType: null,
     itemId: null,
+    equipmentId: null,
     vendorItemId: null,
     isMirror: false,
     es: null,

@@ -207,6 +207,53 @@ export function EquipmentDetail({
         </section>
       )}
 
+      {/* Where the readings come from — the template-line provenance the equipment
+          link (0181) makes expressible. A fridge page could always show its
+          readings; until equipment_id existed it could not say WHICH checklist
+          line produced each one. */}
+      <section>
+        <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
+          {serverT(language, "maintenance.detail.lines_heading")}
+        </h2>
+        {detail.linkSchemaPending ? (
+          <p className="text-sm text-co-text-muted">
+            {serverT(language, "maintenance.detail.lines_pending")}
+          </p>
+        ) : detail.lines.length === 0 ? (
+          <p className="text-sm text-co-text-muted">
+            {serverT(language, "maintenance.detail.lines_empty")}
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {detail.lines.map((l) => (
+              <li
+                key={l.templateItemId}
+                className="rounded-lg border border-co-border bg-co-surface px-3 py-2"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm text-co-text">{l.label}</span>
+                  {l.phase !== null && (
+                    <span className="rounded bg-co-border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.1em] text-co-text-dim">
+                      {l.phase === "AM"
+                        ? serverT(language, "maintenance.phase.am")
+                        : serverT(language, "maintenance.phase.pm")}
+                    </span>
+                  )}
+                  {!l.active && (
+                    <span className="text-xs text-co-text-muted">
+                      {serverT(language, "maintenance.detail.line_inactive")}
+                    </span>
+                  )}
+                </div>
+                {l.templateName !== null && (
+                  <p className="mt-0.5 text-xs text-co-text-muted">{l.templateName}</p>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
       {/* Maintenance history */}
       <section>
         <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">

@@ -1183,7 +1183,7 @@ function ItemDrawer({
             <>
               <SpanishBlock templateId={templateId} item={item} canFill={canFill} />
               {item.expectsCount && (
-                <SpineLinkBlock templateId={templateId} item={item} linkTargets={linkTargets} canFill={canFill} />
+                <SpineLinkBlock templateId={templateId} locationId={locationId} item={item} linkTargets={linkTargets} canFill={canFill} />
               )}
             </>
           )}
@@ -1967,11 +1967,14 @@ function SpanishBlock({
  *  the link read-only; when unlinked, GM+ gets the items+SKUs picker (Tier-A). */
 function SpineLinkBlock({
   templateId,
+  locationId,
   item,
   linkTargets,
   canFill,
 }: {
   templateId: string;
+  /** The template's shop — equipment targets are filtered against it (0181). */
+  locationId: string;
   item: ChecklistTemplateItem;
   linkTargets: LinkTarget[];
   canFill: boolean;
@@ -1980,9 +1983,9 @@ function SpineLinkBlock({
   const router = useRouter();
   const { requestStepUp } = useStepUp();
 
-  const linked = item.itemId !== null || item.vendorItemId !== null;
+  const linked = item.itemId !== null || item.vendorItemId !== null || item.equipmentId !== null;
   const [query, setQuery] = useState("");
-  const [kindFilter, setKindFilter] = useState<"all" | "item" | "sku">("all");
+  const [kindFilter, setKindFilter] = useState<"all" | "item" | "sku" | "equipment">("all");
   const [busy, setBusy] = useState(false);
   const [errorKey, setErrorKey] = useState<TranslationKey | null>(null);
 
@@ -1990,9 +1993,13 @@ function SpineLinkBlock({
     const q = query.trim().toLowerCase();
     return linkTargets
       .filter((tg) => (kindFilter === "all" ? true : tg.kind === kindFilter))
+      // LOCATION SCOPE (0181) — see the same filter in NeedsLinkQueue. Items and
+      // SKUs are global (locationId null); equipment belongs to one shop, and the
+      // builder renders templates from every shop the actor can reach.
+      .filter((tg) => tg.locationId === null || tg.locationId === locationId)
       .filter((tg) => (q ? tg.name.toLowerCase().includes(q) : true))
       .slice(0, 20);
-  }, [linkTargets, query, kindFilter]);
+  }, [linkTargets, query, kindFilter, locationId]);
 
   const link = async (target: LinkTarget) => {
     if (busy) return;
@@ -2049,6 +2056,9 @@ function SpineLinkBlock({
             </button>
             <button type="button" className={kindChip(kindFilter === "sku")} aria-pressed={kindFilter === "sku"} onClick={() => setKindFilter("sku")}>
               {t("admin.templates.needs_link.filter_skus")}
+            </button>
+            <button type="button" className={kindChip(kindFilter === "equipment")} aria-pressed={kindFilter === "equipment"} onClick={() => setKindFilter("equipment")}>
+              {t("admin.templates.needs_link.filter_equipment")}
             </button>
           </div>
           <input

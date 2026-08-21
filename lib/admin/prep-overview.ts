@@ -124,7 +124,11 @@ function projectLines(
       rawLabel: line.label,
       section: line.prepMeta?.section ?? line.station ?? "",
       inputType: shapeFromColumns(columns),
-      linked: line.itemId !== null,
+      // The third spine-link ref (0181). Prep lines link to registry ITEMS in
+      // practice — the equipment lines live on opening/closing temp logs — so this
+      // arm is null today on every prep row. It is here so the classifier cannot
+      // drift from needs-link-shared's `needsLink` if that ever changes.
+      linked: line.itemId !== null || line.equipmentId !== null,
       itemId: line.itemId,
       questionShaped,
       esMissing,
