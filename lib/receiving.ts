@@ -72,6 +72,7 @@ function requireReceive(actor: AuthContext): void {
 function actorLoc(actor: AuthContext): LocationActor {
   return { role: actor.user.role, locations: actor.locations };
 }
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface DeliveryLineInput {
   skuId: string;
@@ -1102,4 +1103,84 @@ export async function completeDelivery(actor: AuthContext, deliveryId: string): 
   if (h.purchase_order_id) {
     await advanceToReceived(sb, h.purchase_order_id);
   }
+}
+
+/**
+ * "PHOTO LATER" FINALLY GETS A LATER (Phase-3 UX pair, Juan-approved 2026-08-19).
+ *
+ * The door ceremony lets an operator submit an intake without the receipt photo;
+ * `receipt_url IS NULL` then IS the badge state — "Photo missing" on the receiving
+ * list and on the delivery detail header (report-B bug 6). Until now nothing could
+ * clear it: the only writer was recordDelivery, at intake time. This is the later.
+ *
+ * Takes a PHOTO ID, not a URL — the canonical /api/photos/{id} form is built HERE,
+ * so no caller can park an arbitrary string in a column the detail page renders as
+ * an href. The photo must already exist and be bound to the SAME location as the
+ * delivery; a photo from another shop is a 404, never a cross-location link.
+ *
+ * WRITE-ONCE. A receipt already attached is a 409, not an overwrite — the photo is
+ * evidence of what came off the truck, and silently replacing it would destroy the
+ * prior attachment with no forensic trail (append-only law; a wrong photo is a
+ * different, deliberate correction path). The 409 is decided twice: once on the
+ * pre-read for a clear message, and once by the guarded UPDATE (`.is(receipt_url,
+ * null)` + exact rowcount) so a rival attach between read and write loses honestly
+ * rather than clobbering (silent-UPDATE law).
+ *
+ * GATE: RECEIVE_MIN (4, KH+) — the same floor lib/email-receipts.ts sets as
+ * RECEIPT_MIN for the vendor-claim receipt surfaces. Same value, same operator:
+ * whoever may work the door may finish the door's paperwork.
+ */
+export async function attachDeliveryReceipt(
+  actor: AuthContext,
+  deliveryId: string,
+  photoId: string,
+): Promise<{ receiptUrl: string }> {
+  requireReceive(actor);
+  if (!UUID_RE.test(photoId)) {
+    throw new ReceivingError(400, "invalid_photo", "photoId must be a photo registry id");
+  }
+  const sb = getServiceRoleClient();
+
+  const { data: h, error } = await sb.from("vendor_deliveries")
+    .select("id, location_id, receipt_url")
+    .eq("id", deliveryId)
+    .maybeSingle<{ id: string; location_id: string; receipt_url: string | null }>();
+  if (error) throw new Error(`attachDeliveryReceipt load: ${error.message}`);
+  if (!h) throw new ReceivingError(404, "not_found", "Delivery not found");
+  if (!lockLocationContext(actorLoc(actor), h.location_id)) throw new ReceivingError(404, "not_found", "Delivery not found");
+  if (h.receipt_url !== null) {
+    throw new ReceivingError(409, "receipt_already_attached", "This delivery already has a receipt photo");
+  }
+
+  // Location-bind the PHOTO too. /api/photos/[id] re-checks on every read, so a
+  // mismatched link would only ever 404 for its readers — refuse to write it.
+  const { data: photo, error: pErr } = await sb.from("photos")
+    .select("id, location_id")
+    .eq("id", photoId)
+    .maybeSingle<{ id: string; location_id: string }>();
+  if (pErr) throw new Error(`attachDeliveryReceipt photo load: ${pErr.message}`);
+  if (!photo || photo.location_id !== h.location_id) {
+    throw new ReceivingError(404, "photo_not_found", "Photo not found");
+  }
+
+  const receiptUrl = `/api/photos/${photoId}`;
+  const { error: uErr, count } = await sb.from("vendor_deliveries")
+    .update({ receipt_url: receiptUrl }, { count: "exact" })
+    .eq("id", deliveryId)
+    .is("receipt_url", null);
+  if (uErr) throw new Error(`attachDeliveryReceipt update: ${uErr.message}`);
+  if (count === 0) {
+    // Not-found and already-set are both ruled out by the pre-read, so a zero
+    // rowcount can only mean a rival attached one first → 409, never 404.
+    throw new ReceivingError(409, "receipt_already_attached", "This delivery already has a receipt photo");
+  }
+
+  await audit({
+    actorId: actor.user.id, actorRole: actor.user.role,
+    action: "delivery.receipt_attached", resourceTable: "vendor_deliveries", resourceId: deliveryId,
+    metadata: { location_id: h.location_id, photo_id: photoId, receipt_url: receiptUrl },
+    ipAddress: null, userAgent: null,
+  });
+
+  return { receiptUrl };
 }

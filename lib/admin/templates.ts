@@ -26,7 +26,13 @@ import { setPrepItemMeta, setPrepItemSection, narrowPrepTemplateItem, isPrepMeta
 import { isQuestionShapedColumns, isQuestionShapedLine, resolvePrepLabelWriteTarget } from "@/lib/items";
 import { operationalNow } from "@/lib/midshift";
 import { applyEffectiveResolution, type EffectiveResolvableBuilder } from "@/lib/admin/template-builder-shared";
-import { shapeToColumns, isPrepSectionName } from "@/lib/prep-sections";
+import {
+  shapeToColumns,
+  isPrepSectionName,
+  isDivergentLineShape,
+  canCreateLineWithShape,
+  DIVERGENT_LINE_MIN_LEVEL,
+} from "@/lib/prep-sections";
 import { loadPrepSections } from "@/lib/prep-sections.server";
 import { loadUnits } from "@/lib/units.server";
 import type { AuthContext } from "@/lib/session";
@@ -882,11 +888,35 @@ export interface AddPrepItemInput {
   specialInstructionEs: string | null;
   minRoleLevel: number;
   required: boolean;
-  includeNote: boolean;        // Misc only: add the free_text column
+  /** yes_no lines only: add the free_text note column (shapeToColumns ignores it
+   *  for every other shape). Historically reachable only on Misc, whose seeded
+   *  shape IS yes_no (0086) — the picker generalises the reach, not the rule. */
+  includeNote: boolean;
+  /** Per-line input type (the add-form picker). `null` = take the SECTION's shape
+   *  — the pre-picker payload, unchanged. A DIVERGENT choice is structurally the
+   *  convert operation and carries its authority (see the split below). */
+  inputType: LineInputType | null;
   createOpeningMirror: boolean; // am_prep only; ignored for mid-day
 }
 
-/** Add a prep template item in place (Tier B). AM-prep optionally gets an Opening mirror. */
+/**
+ * Add a prep template item in place (Tier B). AM-prep optionally gets an Opening mirror.
+ *
+ * ── THE CREATE / CONVERT AUTHORITY SPLIT (report-A bug 4) ─────────────────────
+ * The route's door is ≥6 (AGM+) — that is what "add a line" has always cost. But
+ * converting a line's input type is ≥7 (the items/[itemId]/input-type route), and
+ * creating a line with a shape its section does not carry is that same conversion
+ * done one step earlier. So the divergent choice is re-gated HERE, against the
+ * section's shape, which only this layer knows (the route has not loaded it). Same
+ * predicate the client picker reads (lib/prep-sections), so the offered options
+ * and the accepted options cannot drift.
+ *
+ * The divergent path changes the line's COLUMNS and nothing else: the registry
+ * item, the all-days par override and the Opening mirror are still seeded exactly
+ * as they are for a same-shape create. That is deliberate — create-with-divergent-
+ * shape must equal create-then-convert, and setPrepItemInputType leaves item_id,
+ * the par row and the mirror untouched (unlink is its own separate action).
+ */
 export async function addPrepItem(
   actor: AuthContext,
   args: { templateId: string; input: AddPrepItemInput },
@@ -905,6 +935,22 @@ export async function addPrepItem(
   }
   if (!Number.isFinite(input.minRoleLevel) || input.minRoleLevel < 0 || input.minRoleLevel > 10) {
     throw new AdminTemplateError(400, "invalid_min_role", "Min role level must be between 0 and 10");
+  }
+
+  // Resolve the line's shape: an explicit picker choice, else the section's own.
+  if (input.inputType !== null && !LINE_INPUT_TYPES.includes(input.inputType)) {
+    throw new AdminTemplateError(400, "invalid_input_type", "Unknown input type");
+  }
+  const lineShape: LineInputType = input.inputType ?? sectionDef.shape;
+  const divergent = isDivergentLineShape(sectionDef.shape, input.inputType);
+  // The authority split: a divergent shape is the convert operation, so it takes
+  // the convert floor. Same-shape creates stay on the route's ≥6 door.
+  if (!canCreateLineWithShape(ROLES[actor.user.role].level, sectionDef.shape, input.inputType)) {
+    throw new AdminTemplateError(
+      403,
+      "forbidden",
+      `Creating a ${lineShape} line in a ${sectionDef.shape} section requires level ${DIVERGENT_LINE_MIN_LEVEL}`,
+    );
   }
 
   // Append to display order (no unique constraint; max+1 across the template).
@@ -941,7 +987,7 @@ export async function addPrepItem(
       parValue: input.parValue,
       parUnit,
       specialInstruction: input.specialInstruction?.trim() || null,
-      columns: shapeToColumns(sectionDef.shape, input.includeNote),
+      columns: shapeToColumns(lineShape, input.includeNote),
     },
     translations,
   });
@@ -1025,6 +1071,12 @@ export async function addPrepItem(
       prep_subtype: tmpl.prep_subtype,
       section: input.section,
       item_id: itemId,
+      // The shape the line was born with + whether it diverged from its section
+      // (the ≥7 door). A forensic reader can tell a plain create from a create
+      // that was really a conversion without re-deriving it from columns.
+      input_type: lineShape,
+      section_shape: sectionDef.shape,
+      divergent_input_type: divergent,
       created_opening_mirror_id: openingMirrorId,
       created_opening_mirror_ids: openingMirrorIds,
     },

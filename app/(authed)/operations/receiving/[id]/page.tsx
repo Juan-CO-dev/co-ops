@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { serverT } from "@/lib/i18n/server";
 import { requireSessionFromHeaders } from "@/lib/session";
-import { loadDeliveryDetail, ReceivingError } from "@/lib/receiving";
+import { loadDeliveryDetail, ReceivingError, RECEIVE_MIN } from "@/lib/receiving";
 import { loadCreditsForDelivery, CreditError } from "@/lib/credits";
 import {
   loadReceiptForDelivery,
@@ -13,6 +13,7 @@ import { BackLink } from "@/components/nav/BackLink";
 import { AlertPill } from "@/components/ui/AlertPill";
 import { CreditResolveControls } from "@/components/receiving/CreditResolveControls";
 import { VendorClaimPanel } from "@/components/receiving/VendorClaimPanel";
+import { ReceiptAttachPanel } from "@/components/receiving/ReceiptAttachPanel";
 import type { DeliveryDetail } from "@/lib/receiving";
 import type { CreditRow } from "@/lib/credits";
 import type { DeliveryReceiptView, UnlinkedReceiptView } from "@/lib/email-receipts";
@@ -134,6 +135,15 @@ export default async function DeliveryDetailPage({ params }: { params: Promise<{
             <AlertPill tone="info">{serverT(lang, "receiving.badge.in_progress")}</AlertPill>
           ) : null}
         </div>
+      ) : null}
+
+      {/* "Photo later" finally gets a later. Mounts ONLY while receipt_url IS NULL —
+          the same column that raises the "Photo missing" badge above — so attaching
+          one clears the badge and unmounts this panel on the very next render, with
+          no second piece of state to keep honest. KH+ (RECEIVE_MIN); the route
+          re-checks, and the page gate above is already ≥4. */}
+      {detail.receiptUrl === null && auth.level >= RECEIVE_MIN ? (
+        <ReceiptAttachPanel deliveryId={detail.id} locationId={detail.locationId} />
       ) : null}
 
       {/* Continue-intake affordance (decision 3 — link + note only). Full continue-

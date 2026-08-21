@@ -59,6 +59,58 @@ export function totalSourcesForShape(
   }
 }
 
+/* ── THE CREATE / CONVERT AUTHORITY SPLIT (Phase-3 UX pair, report-A bug 4) ────
+ *
+ * Adding a prep line is AGM+ (≥6, the items POST route). Converting an existing
+ * line's input type is MoO-adjacent (≥7, the items/[itemId]/input-type route) —
+ * an asymmetry that only became reachable when the add form gained a shape
+ * picker. A line created with a shape that DIVERGES from its section is
+ * structurally the convert operation performed one step earlier, so it takes the
+ * convert authority; a line created with the section's own shape is exactly
+ * today's create and keeps today's door.
+ *
+ * Both halves — the client picker and the server enforcement inside addPrepItem —
+ * read these predicates, so the offered options and the accepted options can
+ * never drift apart. PURE + CLIENT-SAFE.
+ */
+
+/** Authority floor for creating a prep line that takes its SECTION's shape. */
+export const CREATE_LINE_MIN_LEVEL = 6;
+/** Authority floor for creating a prep line with a DIVERGENT shape (= the convert floor). */
+export const DIVERGENT_LINE_MIN_LEVEL = 7;
+
+/**
+ * True when `requested` is a per-line shape the section does not itself carry.
+ * `null`/`undefined` means "take the section's shape" (the pre-picker payload)
+ * and is never divergent. `free_text` is always divergent — the section shape
+ * CHECK (migration 0086) admits only the four numeric/yes_no shapes.
+ */
+export function isDivergentLineShape(
+  sectionShape: PrepSectionShape,
+  requested: LineInputType | null | undefined,
+): boolean {
+  if (requested == null) return false;
+  return requested !== sectionShape;
+}
+
+/** The role level required to create a line of `requested` shape in this section. */
+export function requiredLevelForLineShape(
+  sectionShape: PrepSectionShape,
+  requested: LineInputType | null | undefined,
+): number {
+  return isDivergentLineShape(sectionShape, requested) ? DIVERGENT_LINE_MIN_LEVEL : CREATE_LINE_MIN_LEVEL;
+}
+
+/** True iff an actor at `actorLevel` may create a line of `requested` shape here. */
+export function canCreateLineWithShape(
+  actorLevel: number,
+  sectionShape: PrepSectionShape,
+  requested: LineInputType | null | undefined,
+): boolean {
+  if (!Number.isFinite(actorLevel)) return false;
+  return actorLevel >= requiredLevelForLineShape(sectionShape, requested);
+}
+
 /** True when `slug` is one of the active section slugs (runtime set, not a union). */
 export function isPrepSectionName(slug: unknown, activeSlugs: ReadonlySet<string>): slug is string {
   return typeof slug === "string" && activeSlugs.has(slug);
