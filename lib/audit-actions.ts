@@ -159,6 +159,16 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "delivery.completed",
   "delivery.match_attested",
   "delivery.match_overridden",
+  // MAIN WAS RED ON THIS ONE (2026-08-21). `delivery.receipt_attached` shipped in
+  // #284 (receipt attach) while `AuditInput.action` was still `string`; #285 closed
+  // the vocabulary and made an unlisted spelling a compile error. Both PRs were
+  // green alone and their MERGE was red — `next build` failed at
+  // lib/receiving.ts:1180 on origin/main. Adjudicated here beside its own sibling:
+  // attaching a receipt photo to a delivery is an operational event on the
+  // receiving spine that ADDS evidence, exactly like `receipt_linked` next to it,
+  // not a human act re-pointing shared config. Non-destructive, same as every
+  // other `delivery.*` row in this block.
+  "delivery.receipt_attached",
   "delivery.receipt_linked",
   "delivery.received",
   "item_size.create",
