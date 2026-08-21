@@ -33,6 +33,10 @@ export const ADMIN_SECTIONS: AdminSection[] = [
   { id: "users",               i18nKey: "admin.section.users",               href: "/admin/users",               minLevel: 8 },
   { id: "vendors",             i18nKey: "admin.section.vendors",             href: "/admin/vendors",             minLevel: 6 },
   { id: "skus",                i18nKey: "admin.section.skus",                href: "/admin/skus",                minLevel: 6 },
+  // A product sits ABOVE SKUs in the derivation order (vendors → SKUs →
+  // products → recipes → items): it is the raw thing a recipe means, and the
+  // member SKUs beneath it are the vendors' versions of it (migration 0179).
+  { id: "products",            i18nKey: "admin.section.products",            href: "/admin/products",            minLevel: 6 },
   { id: "recipes",             i18nKey: "admin.section.recipes" as TranslationKey,             href: "/admin/recipes",             minLevel: 6 },
   { id: "items",               i18nKey: "admin.section.items" as TranslationKey,               href: "/admin/items",               minLevel: 6 },
   // The payoff of the derivation chain above: what the menu actually COSTS.

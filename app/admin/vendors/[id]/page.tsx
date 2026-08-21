@@ -17,6 +17,7 @@ import { getVendor, loadCategories, loadOrderTypes, loadVendorCutoffs } from "@/
 import { loadVendorOutstandingCredits } from "@/lib/credits";
 import { formatCents } from "@/lib/i18n/format";
 import { loadSkus, loadPackFormats, loadMeasureUnits, loadLocationSkuSettings } from "@/lib/admin/skus";
+import { listProducts, ProductError, type ProductView } from "@/lib/products";
 import { loadCurrentSkuPrices, computeSkuCostPerOz, loadSkuUsageMap, loadSkuReceivingLedger, loadSkuConsumption, type SkuConsumption } from "@/lib/admin/cost";
 import { skuPackComplete, skuReadiness, type Readiness } from "@/lib/readiness";
 import { loadSkuPackChains } from "@/lib/prep-consumption";
@@ -66,6 +67,21 @@ export default async function AdminVendorDetailPage({
   const skuConsumption: Record<string, SkuConsumption> = Object.fromEntries([...consumptionMap.entries()]);
 
   // Per-location overlay rows (VO-7) so VendorSkusCard's SkuBuilder edit view seeds Section D.
+  // Product registry (0179) — feeds the SKU form membership picker. Degrades to
+  // "no products, no picker" until migration 0179 is applied (GATE M1), and
+  // membership is read from the registry rather than from SKU_COLS.
+  let productList: ProductView[] = [];
+  try {
+    productList = await listProducts(auth);
+  } catch (e) {
+    if (!(e instanceof ProductError && e.code === "products_schema_pending")) throw e;
+  }
+  const products = productList.filter((p) => p.active).map((p) => ({ id: p.id, name: p.name }));
+  const productIdBySku: Record<string, string> = {};
+  for (const p of productList) {
+    for (const m of p.members) productIdBySku[m.skuId] = p.id;
+  }
+
   const overlayMap = await loadLocationSkuSettings(auth, skus.map((s) => s.id));
   const overlaysBySku: Record<string, import("@/components/admin/skus/SkuLocationOverlay").LocationSkuOverlayView[]> =
     Object.fromEntries([...overlayMap.entries()]);
@@ -135,6 +151,8 @@ export default async function AdminVendorDetailPage({
         skuChains={chainsBySku}
         skuChainUnverified={chainUnverifiedBySku}
         skuOverlays={overlaysBySku}
+        skuProducts={products}
+        skuProductIdBySku={productIdBySku}
         actorLevel={level}
       />
     </div>

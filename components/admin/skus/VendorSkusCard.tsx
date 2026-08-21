@@ -33,6 +33,7 @@ import { StatusBadge, ReadinessReasons } from "@/components/admin/StatusBadge";
 import { SkuCostPanel, type SkuCostInfo } from "./SkuCostPanel";
 import { SkuBuilder } from "./SkuBuilder";
 import type { SkuFormLocationOption, SkuFormValues } from "./SkuBuilder";
+import type { SkuFormProductOption } from "./SkuBuilder";
 import type { LocationSkuOverlayView } from "./SkuLocationOverlay";
 
 export function VendorSkusCard({
@@ -48,6 +49,8 @@ export function VendorSkusCard({
   chainsBySku,
   chainUnverifiedBySku,
   overlaysBySku,
+  products,
+  productIdBySku,
   actorLevel,
   canManage,
 }: {
@@ -66,6 +69,10 @@ export function VendorSkusCard({
   chainUnverifiedBySku: Record<string, boolean>;
   /** VO-7: per-location overlay rows per SKU (edit-mode overlay section). */
   overlaysBySku: Record<string, LocationSkuOverlayView[]>;
+  /** Products a SKU may join (0179). Empty = no picker, no productId key. */
+  products: SkuFormProductOption[];
+  /** skuId -> its product (0179), seeded from the registry. */
+  productIdBySku: Record<string, string>;
   actorLevel: number;
   canManage: boolean; // GM+
 }) {
@@ -185,6 +192,8 @@ export function VendorSkusCard({
                     initialChainUnverified={chainUnverifiedBySku[s.id] ?? false}
                     fixedVendorId={vendorId}
                     locations={locations}
+                    products={products}
+                    initialProductId={productIdBySku[s.id] ?? null}
                     packFormats={packFormats}
                     measureUnits={measureUnits}
                     actorLevel={actorLevel}
@@ -244,6 +253,7 @@ export function VendorSkusCard({
               <SkuBuilder
                 fixedVendorId={vendorId}
                 locations={locations}
+                products={products}
                 packFormats={packFormats}
                 measureUnits={measureUnits}
                 actorLevel={actorLevel}

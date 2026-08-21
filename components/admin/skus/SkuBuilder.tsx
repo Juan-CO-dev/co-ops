@@ -58,6 +58,11 @@ export interface SkuFormLocationOption {
   id: string;
   name: string;
 }
+/** A product this SKU can be a member of (migration 0179). */
+export interface SkuFormProductOption {
+  id: string;
+  name: string;
+}
 
 /** Payload shape handed to the parent — matches the route contracts.
  *  each_container_label is retired from the UI (SKU Builder streamline design §4,
@@ -82,6 +87,10 @@ export interface SkuFormValues {
   weekendPar: number | null;
   notes: string | null;
   skuClass: SkuClass;
+  /** Product membership (0179). OMITTED whenever no product exists to pick — an
+   *  absent key leaves the column alone, which is what keeps this form legal
+   *  before migration 0179 is applied (GATE M1) and identical to today. */
+  productId?: string | null;
 }
 
 const fieldCls =
@@ -149,8 +158,10 @@ export function SkuBuilder({
   initialChain,
   initialChainUnverified,
   fixedVendorId,
+  initialProductId,
   vendors,
   locations,
+  products,
   packFormats,
   measureUnits,
   actorLevel,
@@ -174,8 +185,15 @@ export function SkuBuilder({
   initialChainUnverified?: boolean;
   /** When set, vendor is fixed (vendor-detail card) → no vendor dropdown. */
   fixedVendorId?: string | null;
+  /** This SKU's current product membership (0179), seeded by the page from the
+   *  product registry — vendor_items.product_id is deliberately NOT added to the
+   *  SKU loader's column list while migration 0179 is unapplied. */
+  initialProductId?: string | null;
   vendors?: SkuFormVendorOption[];
   locations: SkuFormLocationOption[];
+  /** Products this SKU may join (0179). Empty/absent → no picker is rendered and
+   *  no productId key is sent: products exist only where plurality does. */
+  products?: SkuFormProductOption[];
   packFormats: RegistryOption[];
   measureUnits: MeasureUnitOption[];
   actorLevel: number;
@@ -211,6 +229,9 @@ export function SkuBuilder({
     initial?.vendorId ?? (fixedVendorId !== undefined ? fixedVendorId : null);
   const [vendorId, setVendorId] = useState<string>(initialVendor ?? "");
   const [locationId, setLocationId] = useState<string>(initial?.locationId ?? "");
+  // Product membership (0179). "" = no product = implicit singleton, and it is
+  // NEVER defaulted to a product — plurality is declared, not assumed.
+  const [productId, setProductId] = useState<string>(initialProductId ?? "");
   const [name, setName] = useState(initial?.name ?? "");
   const [skuClass, setSkuClass] = useState<SkuClass>(initial?.skuClass ?? "raw");
   // avg_oz_per_each rides the submission (a raw count/volume leaf needs it so the
@@ -257,6 +278,9 @@ export function SkuBuilder({
   );
 
   const showVendorDropdown = vendors !== undefined;
+  // No products yet = nothing to join, so no picker AND no productId key on the
+  // payload (the M1 gate: the column may not exist yet).
+  const showProductPicker = products !== undefined && products.length > 0;
   const canSubmit = name.trim() !== "" && !busy; // pack_format gate removed (design §1)
 
   const assembleValues = (): SkuFormValues => ({
@@ -282,6 +306,7 @@ export function SkuBuilder({
     weekendPar: parseNum(weekendPar),
     notes: notes.trim() || null,
     skuClass,
+    ...(showProductPicker ? { productId: productId || null } : {}),
   });
 
   const submit = () => {
@@ -400,6 +425,20 @@ export function SkuBuilder({
             ))}
           </select>
         </Labeled>
+
+        {/* Product membership (0179) — only when a product exists to join. The
+            first option is an explicit "no product": a SKU with no product is an
+            implicit singleton, which is the normal case, never a gap to fill. */}
+        {showProductPicker ? (
+          <Labeled label={t("admin.skus.field.product")}>
+            <select className={fieldCls} value={productId} disabled={busy} onChange={(e) => setProductId(e.target.value)}>
+              <option value="">{t("admin.skus.product_none")}</option>
+              {products.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          </Labeled>
+        ) : null}
 
         <Labeled label={t("admin.skus.field.location")}>
           <select className={fieldCls} value={locationId} disabled={busy} onChange={(e) => setLocationId(e.target.value)}>

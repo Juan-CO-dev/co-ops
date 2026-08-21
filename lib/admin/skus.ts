@@ -451,6 +451,14 @@ export interface CreateSkuInput {
   leadTimeDays?: number | null;
   notes?: string | null;
   skuClass?: SkuClass | null;
+  /**
+   * Product this SKU is a member of (migration 0179). ABSENT (undefined) leaves
+   * the column untouched — which is also what null means on a create, since NULL
+   * is the column's own default and the implicit-singleton case. That absence is
+   * load-bearing while migration 0179 is unapplied (GATE M1): a payload without
+   * the key is byte-identical to today's insert.
+   */
+  productId?: string | null;
 }
 
 export async function createSku(actor: AuthContext, input: CreateSkuInput): Promise<{ id: string }> {
@@ -474,6 +482,10 @@ export async function createSku(actor: AuthContext, input: CreateSkuInput): Prom
   const { data: inserted, error } = await sb
     .from("vendor_items")
     .insert({
+      // product_id ONLY when a product was actually named: NULL is the column
+      // default anyway, and omitting the key keeps this insert legal against a
+      // schema where 0179 has not been applied yet.
+      ...(input.productId ? { product_id: input.productId } : {}),
       vendor_id: input.vendorId ?? null,
       location_id: input.locationId ?? null,
       name,
@@ -508,6 +520,7 @@ export async function createSku(actor: AuthContext, input: CreateSkuInput): Prom
       vendor_id: input.vendorId ?? null,
       location_id: input.locationId ?? null,
       pack_format: packFormat,
+      product_id: input.productId ?? null,
     },
     ipAddress: null,
     userAgent: null,
@@ -534,6 +547,8 @@ export interface UpdateSkuChanges {
   weekendPar?: number | null;
   notes?: string | null;
   skuClass?: SkuClass;
+  /** Product membership (0179). Absent = untouched; null = back to singleton. */
+  productId?: string | null;
 }
 
 export async function updateSku(
@@ -578,6 +593,10 @@ export async function updateSku(
     if (!isSkuClass(changes.skuClass)) throw new AdminSkuError(400, "invalid_sku_class", "Unknown SKU class");
     update.sku_class = changes.skuClass;
   }
+  // Membership (0179). Key-present null = detach back to implicit singleton; the
+  // key is absent on every payload that predates the product picker, so an edit
+  // made before migration 0179 lands never touches the column.
+  if (changes.productId !== undefined) update.product_id = changes.productId;
 
   if (Object.keys(update).length === 0) return;
   update.updated_by = actor.user.id;

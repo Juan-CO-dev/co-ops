@@ -51,6 +51,10 @@ export async function POST(req: NextRequest) {
   if (b.locationId !== undefined && b.locationId !== null && typeof b.locationId !== "string") {
     return jsonError(400, "invalid_payload", { field: "locationId" });
   }
+  // productId (0179): absent = implicit singleton, the default and the ~95% case.
+  if (b.productId !== undefined && b.productId !== null && typeof b.productId !== "string") {
+    return jsonError(400, "invalid_payload", { field: "productId" });
+  }
   for (const k of ["unitsPerPack", "eachSize", "avgOzPerEach", "leadTimeDays"] as const) {
     if (b[k] !== undefined && b[k] !== null && typeof b[k] !== "number") {
       return jsonError(400, "invalid_payload", { field: k });
@@ -110,6 +114,7 @@ export async function POST(req: NextRequest) {
     leadTimeDays: typeof b.leadTimeDays === "number" ? b.leadTimeDays : null,
     notes: typeof b.notes === "string" ? b.notes : null,
     skuClass: isSkuClass(b.skuClass) ? (b.skuClass as SkuClass) : null,
+    productId: typeof b.productId === "string" ? b.productId : null,
   };
 
   let id: string;
