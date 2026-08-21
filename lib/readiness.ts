@@ -27,6 +27,11 @@ export const KNOWN_REASONS = [
   "not_ready_skus", "not_ready_subitems",
   "no_recipe", "no_oz_per_par_unit", "sell_incomplete", "upstream_recipe",
   "duplicate_producers",
+  // A recipe line pins a PRODUCT that cannot be resolved to a member SKU today, or
+  // whose unit cannot be denominated without a products.unit_oz (0179). Either way
+  // the flatten poisons and the recipe genuinely cannot be costed — a RED fault,
+  // not the amber ambiguity duplicate_producers describes.
+  "unresolved_product",
 ] as const;
 export type ReasonCode = (typeof KNOWN_REASONS)[number];
 
@@ -92,14 +97,24 @@ export function composeRecipeReadiness(
   own: Readiness,
   inputSkuStatuses: ReadinessStatus[],
   inputSubItemStatuses: ReadinessStatus[],
+  /**
+   * How many PRODUCT-pinned inputs cannot resolve today (0179). RED, not amber: an
+   * unresolved product poisons the flatten, so the recipe has no cost and no
+   * depletion at all — the same grade of fault as a missing batch yield. Optional
+   * so every caller that predates products keeps its exact behavior (0 = none).
+   */
+  unresolvedProducts = 0,
 ): Readiness {
   const badSkus = inputSkuStatuses.filter((s) => s !== "ready").length;
   const badSubs = inputSubItemStatuses.filter((s) => s !== "ready").length;
   const upstreamReasons: Reason[] = [];
   if (badSkus > 0) upstreamReasons.push({ code: "not_ready_skus", count: badSkus });
   if (badSubs > 0) upstreamReasons.push({ code: "not_ready_subitems", count: badSubs });
-  if (own.status === "incomplete") {
-    return { status: "incomplete", reasons: [...own.reasons, ...upstreamReasons] };
+  const ownReasons = unresolvedProducts > 0
+    ? [...own.reasons, { code: "unresolved_product" as const, count: unresolvedProducts }]
+    : own.reasons;
+  if (own.status === "incomplete" || unresolvedProducts > 0) {
+    return { status: "incomplete", reasons: [...ownReasons, ...upstreamReasons] };
   }
   if (upstreamReasons.length > 0) return { status: "upstream_gaps", reasons: upstreamReasons };
   return READY;

@@ -94,12 +94,31 @@ export function computeSkuCostPerOz(
 
 
 /** Transitive reverse over the RECIPE graph: every output item that uses `skuId`
- * directly (recipe_inputs.component_sku_id) or through a sub-item input. Names only. */
+ * directly (recipe_inputs.component_sku_id) or through a sub-item input. Names only.
+ *
+ * PRODUCT PINS COUNT FOR EVERY MEMBER (0179). A recipe that pins HAM genuinely uses
+ * both hams — which one it means on a given day is the resolution's business, not
+ * this map's. Without this, a re-pointed SKU drops out of its own usage map and the
+ * SKU editor reports it as unused (the quiet reader). */
 export async function loadSkuUsageMap(): Promise<Map<string, string[]>> {
   const sb = getServiceRoleClient();
-  const { data: ins, error: e1 } = await sb.from("recipe_inputs").select("recipe_id, component_sku_id, component_item_id")
-    .returns<Array<{ recipe_id: string; component_sku_id: string | null; component_item_id: string | null }>>();
+  const { data: ins, error: e1 } = await sb.from("recipe_inputs").select("recipe_id, component_sku_id, component_item_id, component_product_id")
+    .returns<Array<{ recipe_id: string; component_sku_id: string | null; component_item_id: string | null; component_product_id: string | null }>>();
   if (e1) throw new Error(`loadSkuUsageMap inputs: ${e1.message}`);
+  const pinnedProductIds = [...new Set((ins ?? []).map((i) => i.component_product_id).filter((v): v is string => v != null))];
+  const membersByProduct = new Map<string, string[]>();
+  if (pinnedProductIds.length > 0) {
+    const { data: members, error: mErr } = await sb.from("vendor_items").select("id, product_id")
+      .in("product_id", pinnedProductIds)
+      .returns<Array<{ id: string; product_id: string | null }>>();
+    if (mErr) throw new Error(`loadSkuUsageMap members: ${mErr.message}`);
+    for (const m of members ?? []) {
+      if (m.product_id == null) continue;
+      const list = membersByProduct.get(m.product_id) ?? [];
+      list.push(m.id);
+      membersByProduct.set(m.product_id, list);
+    }
+  }
   const { data: outs, error: e2 } = await sb.from("recipe_outputs").select("recipe_id, output_item_id").not("output_item_id", "is", null)
     .returns<Array<{ recipe_id: string; output_item_id: string }>>();
   if (e2) throw new Error(`loadSkuUsageMap outputs: ${e2.message}`);
@@ -111,6 +130,11 @@ export async function loadSkuUsageMap(): Promise<Map<string, string[]>> {
   for (const i of ins ?? []) {
     if (i.component_sku_id) { const s = recipesUsingSku.get(i.component_sku_id) ?? new Set(); s.add(i.recipe_id); recipesUsingSku.set(i.component_sku_id, s); }
     if (i.component_item_id) { const s = recipesUsingItem.get(i.component_item_id) ?? new Set(); s.add(i.recipe_id); recipesUsingItem.set(i.component_item_id, s); }
+    if (i.component_product_id) {
+      for (const skuId of membersByProduct.get(i.component_product_id) ?? []) {
+        const s = recipesUsingSku.get(skuId) ?? new Set(); s.add(i.recipe_id); recipesUsingSku.set(skuId, s);
+      }
+    }
   }
 
   const allItemIds = new Set<string>();

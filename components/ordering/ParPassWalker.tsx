@@ -416,7 +416,27 @@ export function ParPassWalker({
             {walker.unroutable.noVendor > 0 && (
               <li>{t("ordering.walker.unroutable_no_vendor", { n: walker.unroutable.noVendor })}</li>
             )}
+            {walker.unroutable.productUnroutable > 0 && (
+              <li>{t("ordering.walker.unroutable_product", { n: walker.unroutable.productUnroutable })}</li>
+            )}
           </ul>
+        </div>
+      )}
+
+      {/* Failover notice (0179) — the POSITIVE half of the P4 story, and deliberately
+          its own block with an INFORMATIONAL tone rather than a line inside the warn
+          box above: nothing here needs fixing. A par whose own item could not be
+          routed today was carried by another member of the same product, so the
+          demand moved instead of evaporating. This is the vendor-down behavior the
+          whole product layer exists for, and the manager should be told it worked. */}
+      {walker.unroutable.reroutedToBackup > 0 && (
+        <div
+          role="status"
+          className="rounded-xl border-2 border-co-info/40 bg-co-info/10 px-4 py-3 text-[13px] text-co-text"
+        >
+          {walker.unroutable.reroutedToBackup === 1
+            ? t("ordering.walker.rerouted_to_backup_one")
+            : t("ordering.walker.rerouted_to_backup_other", { n: walker.unroutable.reroutedToBackup })}
         </div>
       )}
 
@@ -569,7 +589,30 @@ function SkuRow({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <span className="block text-base font-bold text-co-text">{sku.name}</span>
+          {/* Product identity (0179): which PRODUCT this vendor's item is, and whether
+              it is the designated primary or the backup lane. Silent for a singleton —
+              ~95% of the catalog — so the row is unchanged for almost everything. */}
+          {sku.productName != null && (
+            <span className="mt-0.5 inline-flex items-center gap-1.5">
+              <span className="rounded-md bg-co-gold/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.06em] text-co-gold-text">
+                {sku.productName}
+              </span>
+              {sku.memberRole === "backup" && (
+                <span className="text-[11px] font-bold uppercase tracking-[0.08em] text-co-text-dim">
+                  {t("ordering.row.member_backup")}
+                </span>
+              )}
+            </span>
+          )}
           <span className="block text-[12px] text-co-text-dim">{unit}</span>
+          {/* The failover, said out loud: this row is here because ANOTHER member's
+              par could not be routed today. Informational tone — it is the system
+              working, not a fault. */}
+          {sku.reroutedFromSkuId != null && (
+            <span className="mt-0.5 block text-[12px] text-co-text-muted">
+              {t("ordering.row.rerouted_here")}
+            </span>
+          )}
         </div>
         <span className="inline-flex shrink-0 items-center gap-1.5">
           <span className="rounded-md bg-co-surface-2 px-2 py-0.5 text-[12px] font-bold text-co-text">

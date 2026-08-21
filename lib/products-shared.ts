@@ -161,3 +161,233 @@ export function membersDisagreeOnUnitOz(
   const hi = Math.max(...vals);
   return hi > 0 && (hi - lo) / hi > tolerance;
 }
+
+// -- FIFO over receipt lots (spec: "what actually got eaten") ------------------
+
+/**
+ * ONE receipt line, pooled across every member of a product at one location. Lots
+ * come from vendor_delivery_items, which are already dated per delivery — the spec's
+ * "Lot data already exists" is literally true, and nothing new is captured.
+ */
+export interface ReceiptLot {
+  lotId: string;
+  skuId: string;
+  /** ISO receipt instant (vendor_delivery_items.created_at — the true write instant,
+   *  which is what an anchor timestamp is comparable to; delivery_date is a bare date). */
+  receivedAt: string;
+  /** vendor_delivery_items.resolved_oz. A NULL resolved_oz never becomes a lot — the
+   *  caller drops it and null-taints the term, exactly as the counts received term
+   *  already does (lib/counts.ts sumReceivedOzWindow). */
+  oz: number;
+}
+
+/** A slice of one lot. Negative oz is legal ONLY in allocateProductVariance. */
+export interface LotShare {
+  lotId: string;
+  skuId: string;
+  oz: number;
+}
+
+/** Oldest first, tie-broken on lotId so the order is TOTAL, not merely mostly-stable
+ *  (the same reasoning loadRecipeGraph's `created_at, id` ordering uses). */
+function oldestFirst(lots: ReadonlyArray<ReceiptLot>): ReceiptLot[] {
+  return [...lots]
+    .filter((l) => Number.isFinite(l.oz) && l.oz > 0)
+    .sort((a, b) => {
+      const ta = Date.parse(a.receivedAt);
+      const tb = Date.parse(b.receivedAt);
+      const va = Number.isFinite(ta) ? ta : Number.POSITIVE_INFINITY; // unparseable sorts LAST
+      const vb = Number.isFinite(tb) ? tb : Number.POSITIVE_INFINITY;
+      return va !== vb ? va - vb : a.lotId.localeCompare(b.lotId);
+    });
+}
+
+/**
+ * Attribute `consumeOz` of product-grain consumption across member lots, OLDEST
+ * FIRST, regardless of vendor — Juan: "we will FIFO operationally."
+ *
+ * `unattributedOz` is the honest remainder when the lots cannot explain the
+ * consumption (a pre-ledger opening balance, an unrecorded receipt). It is REPORTED,
+ * never smeared across lots and never silently dropped: a number the ledger cannot
+ * account for is a finding, not a rounding error.
+ */
+export function attributeFifo(
+  lots: ReadonlyArray<ReceiptLot>,
+  consumeOz: number,
+): { shares: LotShare[]; unattributedOz: number } {
+  if (!Number.isFinite(consumeOz) || consumeOz <= 0) return { shares: [], unattributedOz: 0 };
+  const shares: LotShare[] = [];
+  let left = consumeOz;
+  for (const l of oldestFirst(lots)) {
+    if (left <= 0) break;
+    const take = Math.min(l.oz, left);
+    shares.push({ lotId: l.lotId, skuId: l.skuId, oz: take });
+    left -= take;
+  }
+  return { shares, unattributedOz: left > 0 ? left : 0 };
+}
+
+/**
+ * What is LEFT after FIFO consumption — the newest-back tail. This is the spec's
+ * "Lot-level remaining = per-SKU on-hand distributed newest-back after FIFO
+ * consumption", and it is what a product-level count is allocated against.
+ * Returned OLDEST-FIRST (partial lot first) so callers can read it as a shelf.
+ */
+export function remainingByLot(
+  lots: ReadonlyArray<ReceiptLot>,
+  consumedOz: number,
+): LotShare[] {
+  const consumed = Number.isFinite(consumedOz) && consumedOz > 0 ? consumedOz : 0;
+  const out: LotShare[] = [];
+  let left = consumed;
+  for (const l of oldestFirst(lots)) {
+    const eaten = Math.min(l.oz, left);
+    left -= eaten;
+    const rest = l.oz - eaten;
+    if (rest > 0) out.push({ lotId: l.lotId, skuId: l.skuId, oz: rest });
+  }
+  return out;
+}
+
+/**
+ * Turn ONE product-level count into ordinary per-SKU count lines (deviation D8).
+ *
+ * NEWEST-BACK, deliberately: FIFO says the oldest stock left the shelf first, so what
+ * the counter is looking at is the freshest lots. Lots of the same SKU merge into one
+ * line because sku_count_lines is per-SKU and two lines for one SKU in one event would
+ * be a disjointness violation (council L5).
+ *
+ * `unallocatedOz` is counted stock the lot ledger cannot explain. It is REPORTED to
+ * the caller, which surfaces it rather than silently attributing it to a vendor — a
+ * count is ground truth, but WHOSE stock it is remains a claim the ledger must support.
+ */
+export function allocateProductCount(
+  countedOz: number,
+  remaining: ReadonlyArray<LotShare>,
+): { perSku: Array<{ skuId: string; oz: number }>; unallocatedOz: number } {
+  if (!Number.isFinite(countedOz) || countedOz <= 0) return { perSku: [], unallocatedOz: 0 };
+  const newestFirst = [...remaining].filter((l) => l.oz > 0).reverse();
+  const bySku = new Map<string, number>();
+  const order: string[] = [];
+  let left = countedOz;
+  for (const l of newestFirst) {
+    if (left <= 0) break;
+    const take = Math.min(l.oz, left);
+    if (!bySku.has(l.skuId)) order.push(l.skuId);
+    bySku.set(l.skuId, (bySku.get(l.skuId) ?? 0) + take);
+    left -= take;
+  }
+  return {
+    perSku: order.map((skuId) => ({ skuId, oz: bySku.get(skuId)! })),
+    unallocatedOz: left > 0 ? left : 0,
+  };
+}
+
+/**
+ * Allocate a product-grain VARIANCE down to lots — spec: "Product-level counts
+ * allocate variance FIFO (oldest lot absorbs)."
+ *
+ * NEGATIVE (counted less than predicted: shrinkage / waste / over-portion) spills
+ * oldest-first and is CAPPED at each lot's remaining oz, because a lot cannot lose
+ * more than it held. POSITIVE (counted more) lands whole on the oldest lot and is NOT
+ * capped: a surplus is an uncounted receipt or an earlier over-count, and spreading
+ * it would invent a distribution nothing supports. Advisory attribution for the
+ * reason-code trail — it never edits a ledger row.
+ */
+export function allocateProductVariance(
+  varianceOz: number,
+  remaining: ReadonlyArray<LotShare>,
+): LotShare[] {
+  if (!Number.isFinite(varianceOz) || varianceOz === 0) return [];
+  const oldest = [...remaining].filter((l) => l.oz > 0);
+  if (oldest.length === 0) return [];
+  if (varianceOz > 0) {
+    const head = oldest[0]!;
+    return [{ lotId: head.lotId, skuId: head.skuId, oz: varianceOz }];
+  }
+  const out: LotShare[] = [];
+  let left = -varianceOz;
+  for (const l of oldest) {
+    if (left <= 0) break;
+    const take = Math.min(l.oz, left);
+    out.push({ lotId: l.lotId, skuId: l.skuId, oz: -take });
+    left -= take;
+  }
+  return out;
+}
+
+// -- Two-grain rollup (spec: "On-hand") ---------------------------------------
+
+export interface ProductGrainInput {
+  productId: string;
+  /** oz per member; null = that member's own derivation could not resolve. */
+  members: Array<{ skuId: string; oz: number | null }>;
+}
+
+export interface ProductGrainRollup {
+  productId: string;
+  /** NON-NULL only when EVERY member resolved (the MenuCostRollup completeness rule). */
+  totalOz: number | null;
+  /** Sum of what we COULD resolve. A lower bound, never "the total". */
+  knownOz: number;
+  knownMemberCount: number;
+  /** Which members we could not resolve, sorted — name the address, not just the fault. */
+  unknownSkuIds: string[];
+}
+
+/**
+ * Roll member SKUs up to the product grain. The per-SKU ledgers stay the source of
+ * truth; this is their sum, and it is where the audit's mirrored false SHORT/OVER
+ * alarm dies: a twin reading +140 and a twin reading -40 net to the 100 that is
+ * actually on the shelf, without re-keying a single ledger row.
+ */
+export function rollupProductGrain(input: ProductGrainInput): ProductGrainRollup {
+  let knownOz = 0;
+  let knownMemberCount = 0;
+  const unknownSkuIds: string[] = [];
+  for (const m of input.members) {
+    if (m.oz == null || !Number.isFinite(m.oz)) { unknownSkuIds.push(m.skuId); continue; }
+    knownOz += m.oz;
+    knownMemberCount += 1;
+  }
+  unknownSkuIds.sort();
+  const complete = unknownSkuIds.length === 0 && input.members.length > 0;
+  return {
+    productId: input.productId,
+    totalOz: complete ? knownOz : null,
+    knownOz,
+    knownMemberCount,
+    unknownSkuIds,
+  };
+}
+
+/**
+ * Give every member of a product the PRODUCT's total trailing usage (deviation D9).
+ *
+ * Today all consumption is pinned to one twin (production_inputs.input_sku_id and
+ * toast_daily_depletion.sku_id are both pin-derived), so the un-pinned twin reads
+ * null and `?? -Infinity` sorts it dead last on the order walk — the audit's "the
+ * twin with the real spend reads null and sorts LAST". Sharing the product's number
+ * makes both members sort where the PRODUCT belongs.
+ *
+ * A SKU whose product has zero total stays ABSENT from the map (not zero), so the
+ * caller's existing `?? -Infinity` null-sorts-last semantics are preserved exactly.
+ * Returns a NEW map; never mutates the input.
+ */
+export function rollupUsageByProduct(
+  usageBySku: ReadonlyMap<string, number>,
+  productBySku: ReadonlyMap<string, string>,
+): Map<string, number> {
+  const totalByProduct = new Map<string, number>();
+  for (const [skuId, oz] of usageBySku) {
+    const p = productBySku.get(skuId);
+    if (p == null) continue;
+    totalByProduct.set(p, (totalByProduct.get(p) ?? 0) + oz);
+  }
+  const out = new Map(usageBySku);
+  for (const [skuId, productId] of productBySku) {
+    const total = totalByProduct.get(productId);
+    if (total != null && total > 0) out.set(skuId, total);
+  }
+  return out;
+}

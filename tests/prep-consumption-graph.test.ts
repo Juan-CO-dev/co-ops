@@ -376,3 +376,104 @@ describe("perUnitDirectSkuOzForMenuItem (SKU double-count guard, PR #180)", () =
     expect(perUnitSkuOzForMenuItemFromGraph(bad, "M").size).toBe(0);
   });
 });
+
+describe("product-pinned recipe inputs (spec 2026-08-20)", () => {
+  const measures = new Map<string, MeasureUnitFactor>([
+    ["oz", { dimension: "weight", toBaseFactor: 1 }],
+    ["unit", { dimension: "count", toBaseFactor: 1 }],
+  ]);
+
+  const productIndex = (skuId: string | null, unitOz: number | null) => ({
+    resolution: new Map([[
+      "HAM",
+      { productId: "HAM", skuId, rung: skuId ? ("primary" as const) : ("unresolved" as const), consideredSkuIds: ["pfg", "baldor"] },
+    ]]),
+    basis: new Map([["HAM", {
+      packFormat: null, eachContainerLabel: null, unitsPerPack: null,
+      eachSize: null, eachMeasure: null, avgOzPerEach: unitOz, packChain: null,
+    }]]),
+  });
+
+  const recipe = (): GraphRecipe => ({
+    recipeId: "R",
+    batchYield: 1,
+    inputs: [{ quantity: 4, unit: "unit", componentSkuId: null, componentItemId: null, componentProductId: "HAM" }],
+    outputs: [{ outputItemId: "SLICED_HAM", outputMenuItemId: null, yield: 1, ozPerParUnit: 4.8 }],
+  });
+
+  it("a resolved product line keys the flatten by the RESOLVED MEMBER", () => {
+    const g = buildRecipeGraph([recipe()], new Map(), measures, productIndex("pfg", 1.2));
+    expect([...perUnitSkuOzForItemFromGraph(g, "SLICED_HAM")]).toEqual([["pfg", 4.8]]);
+  });
+
+  it("the SAME line yields the SAME oz on a different member — the whole point", () => {
+    const onPfg = perUnitSkuOzForItemFromGraph(buildRecipeGraph([recipe()], new Map(), measures, productIndex("pfg", 1.2)), "SLICED_HAM");
+    const onBaldor = perUnitSkuOzForItemFromGraph(buildRecipeGraph([recipe()], new Map(), measures, productIndex("baldor", 1.2)), "SLICED_HAM");
+    expect(onPfg.get("pfg")).toBe(onBaldor.get("baldor"));
+  });
+
+  it("an UNRESOLVED product poisons the flatten to empty — never a partial number", () => {
+    const g = buildRecipeGraph([recipe()], new Map(), measures, productIndex(null, 1.2));
+    expect(perUnitSkuOzForItemFromGraph(g, "SLICED_HAM").size).toBe(0);
+  });
+
+  it("a resolved product with NO unit_oz refuses rather than guessing", () => {
+    const g = buildRecipeGraph([recipe()], new Map(), measures, productIndex("pfg", null));
+    expect(perUnitSkuOzForItemFromGraph(g, "SLICED_HAM").size).toBe(0);
+  });
+
+  it("BACK-COMPAT: omitting the product index leaves every existing fixture untouched", () => {
+    const skuRecipe: GraphRecipe = {
+      recipeId: "R2", batchYield: 1,
+      inputs: [{ quantity: 2, unit: "oz", componentSkuId: "S", componentItemId: null, componentProductId: null }],
+      outputs: [{ outputItemId: "I", outputMenuItemId: null, yield: 1, ozPerParUnit: 2 }],
+    };
+    const g = buildRecipeGraph([skuRecipe], new Map([["S", {
+      packFormat: null, eachContainerLabel: null, unitsPerPack: null,
+      eachSize: null, eachMeasure: null, avgOzPerEach: null, packChain: null,
+    }]]), measures);
+    expect([...perUnitSkuOzForItemFromGraph(g, "I")]).toEqual([["S", 2]]);
+  });
+
+  /**
+   * BUILDER-VERIFY FLAG (5) — plan LEAD RULINGS 2026-08-20: a product line lands in
+   * perUnitDirectSkuOzForMenuItem's DIRECT lane (it resolves to a raw SKU), so the
+   * PR #180 no-double-count invariant must still hold with one on the recipe.
+   *   direct(M) + Σ firstLevel(M)[i] × perUnitItem(i) === full flatten(M)
+   */
+  it("VERIFY (5): the PR #180 invariant holds with a product-pinned DIRECT line", () => {
+    const sub: GraphRecipe = {
+      recipeId: "RA", batchYield: 10,
+      inputs: [{ quantity: 20, unit: "oz", componentSkuId: "sku1", componentItemId: null, componentProductId: null }],
+      outputs: [{ outputItemId: "A", outputMenuItemId: null, yield: 10, ozPerParUnit: null }],
+    };
+    const menu: GraphRecipe = {
+      recipeId: "RM", batchYield: 2,
+      inputs: [
+        { quantity: 4, unit: "unit", componentSkuId: null, componentItemId: null, componentProductId: "HAM" },
+        { quantity: 3, unit: null, componentSkuId: null, componentItemId: "A", componentProductId: null },
+      ],
+      outputs: [{ outputItemId: null, outputMenuItemId: "M", yield: 2, ozPerParUnit: null }],
+    };
+    const g = buildRecipeGraph(
+      [sub, menu],
+      new Map([["sku1", {
+        packFormat: null, eachContainerLabel: null, unitsPerPack: null,
+        eachSize: null, eachMeasure: null, avgOzPerEach: null, packChain: null,
+      }]]),
+      measures,
+      productIndex("pfg", 1.2),
+    );
+    const full = perUnitSkuOzForMenuItemFromGraph(g, "M");
+    const recombined = new Map(perUnitDirectSkuOzForMenuItem(g, "M"));
+    for (const [itemId, units] of firstLevelItemConsumption(g, "M")) {
+      for (const [skuId, oz] of perUnitSkuOzForItemFromGraph(g, itemId)) {
+        recombined.set(skuId, (recombined.get(skuId) ?? 0) + oz * units);
+      }
+    }
+    expect([...recombined.keys()].sort()).toEqual([...full.keys()].sort());
+    for (const [skuId, oz] of full) expect(recombined.get(skuId)).toBeCloseTo(oz, 10);
+    // The product line really is IN the direct lane (not silently dropped from it).
+    expect(perUnitDirectSkuOzForMenuItem(g, "M").get("pfg")).toBeCloseTo(2.4, 10);
+  });
+});

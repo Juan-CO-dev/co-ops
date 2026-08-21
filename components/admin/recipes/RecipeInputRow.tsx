@@ -36,7 +36,11 @@ export function RecipeInputRow({
   const meta = [
     input.eachContainerLabel ? t(rk("recipes.input.container_label")) + ": " + input.eachContainerLabel : null,
     input.portioned ? t(rk("recipes.input.portioned_tag")) : null,
-    input.componentSkuId ? t(rk("recipes.input.sku_tag")) : t(rk("recipes.input.item_tag")),
+    // Which of the three targets this line names (0179). `kind` comes off the
+    // server view — the row does not re-derive it from which id is non-null.
+    input.kind === "product" ? t(rk("recipes.input.product_tag"))
+      : input.kind === "sku" ? t(rk("recipes.input.sku_tag"))
+        : t(rk("recipes.input.item_tag")),
   ]
     .filter(Boolean)
     .join(" · ");

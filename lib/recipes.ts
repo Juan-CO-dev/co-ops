@@ -51,6 +51,61 @@ function normStr(s: string | null | undefined): string | null {
   if (typeof s !== "string") return null; const t = s.trim(); return t || null;
 }
 
+/**
+ * Validate a PRODUCT-pinned input line at WRITE time (deviation D3).
+ *
+ * A product pin may only be denominated in an ACTIVE measure_units label. Steps 1
+ * and 2 of ozForRecipeInput match a unit against a SKU's OWN pack/chain spellings,
+ * and "1 case" of Baldor ham is not "1 case" of PFG ham — a product has no honest
+ * way to choose between two vendors' packs, so it is not offered the choice.
+ *
+ * Rejecting HERE is the difference between an author seeing the problem in the
+ * builder and Juan seeing an `unresolved` row on the cost board three days later —
+ * the same reasoning as the ladle refusal (2026-08-20).
+ *
+ * Also proves the product EXISTS and is ACTIVE: a pin at a retired identity would
+ * resolve to nothing and silently un-cost every recipe consuming it.
+ */
+async function assertProductLineIsValid(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  productId: string,
+  unit: string | null,
+): Promise<void> {
+  const { data: product, error: pErr } = await sb
+    .from("products")
+    .select("id, active")
+    .eq("id", productId)
+    .maybeSingle<{ id: string; active: boolean | null }>();
+  if (pErr) throw new Error(`assertProductLineIsValid product: ${pErr.message}`);
+  if (!product || product.active === false) throw new RecipeError(400, "invalid_component_product");
+
+  const label = normStr(unit);
+  if (label === null) throw new RecipeError(400, "product_line_needs_measure_unit");
+  // Read measure_units directly (service-role) rather than through the AGM+-gated
+  // admin helper — the same reasoning lib/production.ts loadMeasuresMap states.
+  const { data: measure, error: mErr } = await sb
+    .from("measure_units")
+    .select("label")
+    .eq("label", label)
+    .eq("active", true)
+    .maybeSingle<{ label: string }>();
+  if (mErr) throw new Error(`assertProductLineIsValid measure: ${mErr.message}`);
+  if (!measure) throw new RecipeError(400, "product_line_needs_measure_unit");
+}
+
+/** Exactly-one component target across the THREE kinds (0179's 3-way XOR). */
+function componentTargets(input: {
+  componentSkuId?: string | null;
+  componentItemId?: string | null;
+  componentProductId?: string | null;
+}): { skuId: string | null; itemId: string | null; productId: string | null; count: number } {
+  const skuId = input.componentSkuId ?? null;
+  const itemId = input.componentItemId ?? null;
+  const productId = input.componentProductId ?? null;
+  const count = (skuId !== null ? 1 : 0) + (itemId !== null ? 1 : 0) + (productId !== null ? 1 : 0);
+  return { skuId, itemId, productId, count };
+}
+
 /** List recipes (>=6), optional type filter, with hydrated output names + completeness flags. */
 export async function loadRecipes(actor: AuthContext, type?: RecipeType): Promise<RecipeListRow[]> {
   requireLevel(actor, RECIPE_READ_MIN);
@@ -92,7 +147,7 @@ async function outputNamesByRecipe(recipeIds: string[]): Promise<Map<string, str
   }
   return out;
 }
-async function namesById(table: "items" | "menu_items" | "vendor_items", ids: string[]): Promise<Map<string, string>> {
+async function namesById(table: "items" | "menu_items" | "vendor_items" | "products", ids: string[]): Promise<Map<string, string>> {
   const m = new Map<string, string>(); if (ids.length === 0) return m;
   const sb = getServiceRoleClient();
   const { data } = await sb.from(table).select("id, name").in("id", ids).returns<Array<{ id: string; name: string }>>();
@@ -107,18 +162,25 @@ export async function loadRecipe(actor: AuthContext, recipeId: string): Promise<
     .maybeSingle<{ id: string; name: string; name_es: string | null; recipe_type: RecipeType; batch_yield: number | string; directions: string | null; directions_es: string | null; active: boolean }>();
   if (!r) return null;
   const { data: inRows } = await sb.from("recipe_inputs").select("*").eq("recipe_id", recipeId).order("display_order")
-    .returns<Array<{ id: string; component_sku_id: string | null; component_item_id: string | null; quantity: number | string; unit: string | null; each_container_label: string | null; portioned: boolean; display_order: number }>>();
+    .returns<Array<{ id: string; component_sku_id: string | null; component_item_id: string | null; component_product_id: string | null; quantity: number | string; unit: string | null; each_container_label: string | null; portioned: boolean; display_order: number }>>();
   const { data: outRows } = await sb.from("recipe_outputs").select("*").eq("recipe_id", recipeId).order("display_order")
     .returns<Array<{ id: string; output_item_id: string | null; output_menu_item_id: string | null; yield: number | string; output_container_label: string | null; oz_alloc_share: number | string | null; display_order: number }>>();
   const skuNames = await namesById("vendor_items", (inRows ?? []).map((x) => x.component_sku_id).filter((v): v is string => !!v));
   const subNames = await namesById("items", (inRows ?? []).map((x) => x.component_item_id).filter((v): v is string => !!v));
+  // Product lines resolve their own name (0179) — without this lookup a re-pointed
+  // line falls through to the item branch and renders "(item)".
+  const productNames = await namesById("products", (inRows ?? []).map((x) => x.component_product_id).filter((v): v is string => !!v));
   const outItemNames = await namesById("items", (outRows ?? []).map((x) => x.output_item_id).filter((v): v is string => !!v));
   const outMenuNames = await namesById("menu_items", (outRows ?? []).map((x) => x.output_menu_item_id).filter((v): v is string => !!v));
   return {
     id: r.id, name: r.name, nameEs: r.name_es, recipeType: r.recipe_type, batchYield: num(r.batch_yield) ?? 1,
     directions: r.directions, directionsEs: r.directions_es, active: r.active,
     inputs: (inRows ?? []).map((x) => ({ id: x.id, componentSkuId: x.component_sku_id, componentItemId: x.component_item_id,
-      componentName: x.component_sku_id ? (skuNames.get(x.component_sku_id) ?? "(sku)") : (subNames.get(x.component_item_id ?? "") ?? "(item)"),
+      componentProductId: x.component_product_id,
+      componentName: x.component_product_id
+        ? (productNames.get(x.component_product_id) ?? "(product)")
+        : x.component_sku_id ? (skuNames.get(x.component_sku_id) ?? "(sku)") : (subNames.get(x.component_item_id ?? "") ?? "(item)"),
+      kind: x.component_product_id ? ("product" as const) : x.component_sku_id ? ("sku" as const) : ("item" as const),
       quantity: num(x.quantity) ?? 0, unit: x.unit, eachContainerLabel: x.each_container_label, portioned: x.portioned, displayOrder: x.display_order })),
     outputs: (outRows ?? []).map((x) => ({ id: x.id, outputItemId: x.output_item_id, outputMenuItemId: x.output_menu_item_id,
       outputName: x.output_item_id ? (outItemNames.get(x.output_item_id) ?? "(item)") : (outMenuNames.get(x.output_menu_item_id ?? "") ?? "(menu item)"),
@@ -140,7 +202,7 @@ export async function createRecipe(actor: AuthContext, input: { name: string; na
   return { id: data.id };
 }
 
-export interface RecipeDraftInput { componentSkuId?: string | null; componentItemId?: string | null; quantity: number; unit?: string | null; eachContainerLabel?: string | null; portioned?: boolean; }
+export interface RecipeDraftInput { componentSkuId?: string | null; componentItemId?: string | null; componentProductId?: string | null; quantity: number; unit?: string | null; eachContainerLabel?: string | null; portioned?: boolean; }
 export interface RecipeDraftOutput { outputItemId?: string | null; outputMenuItemId?: string | null; yield: number; outputContainerLabel?: string | null; }
 export interface RecipeDraft {
   name: string; nameEs?: string | null; recipeType: RecipeType; batchYield: number;
@@ -189,8 +251,7 @@ export async function createRecipeFull(actor: AuthContext, draft: RecipeDraft): 
   if (draft.recipeType !== "production" && draft.recipeType !== "consumer") throw new RecipeError(400, "invalid_type");
   if (draft.inputs.length === 0 || draft.outputs.length === 0) throw new RecipeError(400, "incomplete_recipe");
   for (const i of draft.inputs) {
-    const sku = i.componentSkuId ?? null, it = i.componentItemId ?? null;
-    if ((sku === null) === (it === null)) throw new RecipeError(400, "invalid_component");
+    if (componentTargets(i).count !== 1) throw new RecipeError(400, "invalid_component");
     if (!(i.quantity > 0)) throw new RecipeError(400, "invalid_quantity");
   }
   for (const o of draft.outputs) {
@@ -206,6 +267,11 @@ export async function createRecipeFull(actor: AuthContext, draft: RecipeDraft): 
     }
   }
   const sb = getServiceRoleClient();
+  // D3: a product-pinned line must name an ACTIVE measure unit and an ACTIVE product.
+  for (const i of draft.inputs) {
+    const productId = i.componentProductId ?? null;
+    if (productId !== null) await assertProductLineIsValid(sb, productId, i.unit ?? null);
+  }
   // Enforce one active producer per item (the model's single-producer assumption).
   for (const o of draft.outputs) {
     if (o.outputItemId && (await activeProducerExists(sb, o.outputItemId, null))) {
@@ -214,14 +280,14 @@ export async function createRecipeFull(actor: AuthContext, draft: RecipeDraft): 
   }
   const { data, error } = await sb.rpc("create_recipe_full", {
     p_header: { name: normStr(draft.name), name_es: normStr(draft.nameEs), recipe_type: draft.recipeType, batch_yield: draft.batchYield, directions: normStr(draft.directions), directions_es: normStr(draft.directionsEs) },
-    p_inputs: draft.inputs.map((i, idx) => ({ component_sku_id: i.componentSkuId ?? null, component_item_id: i.componentItemId ?? null, quantity: i.quantity, unit: normStr(i.unit), each_container_label: normStr(i.eachContainerLabel), portioned: i.portioned ?? false, display_order: idx })),
+    p_inputs: draft.inputs.map((i, idx) => ({ component_sku_id: i.componentSkuId ?? null, component_item_id: i.componentItemId ?? null, component_product_id: i.componentProductId ?? null, quantity: i.quantity, unit: normStr(i.unit), each_container_label: normStr(i.eachContainerLabel), portioned: i.portioned ?? false, display_order: idx })),
     p_outputs: draft.outputs.map((o, idx) => ({ output_item_id: o.outputItemId ?? null, output_menu_item_id: o.outputMenuItemId ?? null, yield: o.yield, output_container_label: normStr(o.outputContainerLabel), display_order: idx })),
     p_created_by: actor.user.id,
   });
   if (error) throw new Error(`createRecipeFull rpc: ${error.message}`);
   const id = typeof data === "string" ? data : (data as { id?: string } | null)?.id;
   if (!id) throw new Error("createRecipeFull returned no id");
-  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe.create", resourceTable: "recipes", resourceId: id, metadata: { name: draft.name, recipe_type: draft.recipeType, batch_yield: draft.batchYield, input_count: draft.inputs.length, output_count: draft.outputs.length, atomic: true }, ipAddress: null, userAgent: null });
+  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe.create", resourceTable: "recipes", resourceId: id, metadata: { name: draft.name, recipe_type: draft.recipeType, batch_yield: draft.batchYield, input_count: draft.inputs.length, output_count: draft.outputs.length, component_product_ids: draft.inputs.map((i) => i.componentProductId ?? null).filter((v): v is string => v !== null), atomic: true }, ipAddress: null, userAgent: null });
   return { id };
 }
 
@@ -305,18 +371,19 @@ async function outputWouldCycle(recipeId: string, childItemId: string): Promise<
   return recipeConsumesItem(recipeId, childItemId, recipeOfItem, inputItemsOfRecipe);
 }
 
-export async function addRecipeInput(actor: AuthContext, input: { recipeId: string; componentSkuId?: string | null; componentItemId?: string | null; quantity: number; unit?: string | null; eachContainerLabel?: string | null; portioned?: boolean }): Promise<{ id: string }> {
+export async function addRecipeInput(actor: AuthContext, input: { recipeId: string; componentSkuId?: string | null; componentItemId?: string | null; componentProductId?: string | null; quantity: number; unit?: string | null; eachContainerLabel?: string | null; portioned?: boolean }): Promise<{ id: string }> {
   requireLevel(actor, RECIPE_WRITE_MIN);
-  const skuId = input.componentSkuId ?? null, itemId = input.componentItemId ?? null;
-  if ((skuId === null) === (itemId === null)) throw new RecipeError(400, "invalid_component");
+  const { skuId, itemId, productId, count } = componentTargets(input);
+  if (count !== 1) throw new RecipeError(400, "invalid_component");
   if (!(input.quantity > 0)) throw new RecipeError(400, "invalid_quantity");
   const sb = getServiceRoleClient();
+  if (productId !== null) await assertProductLineIsValid(sb, productId, input.unit ?? null);
   const { data: max } = await sb.from("recipe_inputs").select("display_order").eq("recipe_id", input.recipeId).order("display_order", { ascending: false }).limit(1).maybeSingle<{ display_order: number }>();
-  const { data, error } = await sb.from("recipe_inputs").insert({ recipe_id: input.recipeId, component_sku_id: skuId, component_item_id: itemId, quantity: input.quantity, unit: normStr(input.unit), each_container_label: normStr(input.eachContainerLabel), portioned: input.portioned ?? false, display_order: (max?.display_order ?? 0) + 1, created_by: actor.user.id })
+  const { data, error } = await sb.from("recipe_inputs").insert({ recipe_id: input.recipeId, component_sku_id: skuId, component_item_id: itemId, component_product_id: productId, quantity: input.quantity, unit: normStr(input.unit), each_container_label: normStr(input.eachContainerLabel), portioned: input.portioned ?? false, display_order: (max?.display_order ?? 0) + 1, created_by: actor.user.id })
     .select("id").maybeSingle<{ id: string }>();
   if (error) throw new Error(`addRecipeInput: ${error.message}`);
   if (!data) throw new Error("addRecipeInput returned no row");
-  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe_input.add", resourceTable: "recipe_inputs", resourceId: data.id, metadata: { recipe_id: input.recipeId, component_sku_id: skuId, component_item_id: itemId, quantity: input.quantity }, ipAddress: null, userAgent: null });
+  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe_input.add", resourceTable: "recipe_inputs", resourceId: data.id, metadata: { recipe_id: input.recipeId, component_sku_id: skuId, component_item_id: itemId, component_product_id: productId, quantity: input.quantity }, ipAddress: null, userAgent: null });
   return { id: data.id };
 }
 

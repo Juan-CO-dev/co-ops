@@ -24,6 +24,7 @@ export async function POST(
       recipeId: id,
       componentSkuId: b.componentSkuId != null ? (b.componentSkuId as string) : undefined,
       componentItemId: b.componentItemId != null ? (b.componentItemId as string) : undefined,
+      componentProductId: b.componentProductId != null ? (b.componentProductId as string) : undefined,
       quantity: Number(b.quantity),
       unit: b.unit != null ? (b.unit as string) : undefined,
       eachContainerLabel: b.eachContainerLabel != null ? (b.eachContainerLabel as string) : undefined,

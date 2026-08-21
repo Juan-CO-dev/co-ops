@@ -141,7 +141,7 @@ export async function loadCateringSurplus(
     let perUnit = perUnitCache.get(cacheKey);
     if (!perUnit) {
       // ONE graph load for the whole pass (see loadRecipeGraph); resolution is pure/in-memory.
-      recipeGraph ??= await loadRecipeGraph();
+      recipeGraph ??= await loadRecipeGraph({ locationId: args.locationId });
       perUnit = isItem ? perUnitSkuOzForItemFromGraph(recipeGraph, refId) : perUnitSkuOzForMenuItemFromGraph(recipeGraph, refId);
       perUnitCache.set(cacheKey, perUnit);
     }

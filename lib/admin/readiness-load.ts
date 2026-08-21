@@ -13,6 +13,7 @@ import type { AuthContext } from "@/lib/session";
 import { loadSkus, loadMeasureUnits } from "@/lib/admin/skus";
 import { loadCurrentSkuPrices } from "@/lib/admin/cost";
 import { loadSkuPackChains } from "@/lib/prep-consumption";
+import { loadProductIndex } from "@/lib/products";
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
 import {
   skuPackComplete, skuReadiness, recipeOwnReadiness, composeRecipeReadiness,
@@ -76,7 +77,7 @@ export async function loadSkuReadinessMap(actor: AuthContext): Promise<Map<strin
 
 interface GraphRows {
   recipes: Array<{ id: string; batch_yield: number | string | null }>;
-  inputs: Array<{ recipe_id: string; component_sku_id: string | null; component_item_id: string | null }>;
+  inputs: Array<{ recipe_id: string; component_sku_id: string | null; component_item_id: string | null; component_product_id: string | null; unit: string | null }>;
   outputs: Array<{ recipe_id: string; output_item_id: string | null; output_menu_item_id: string | null }>;
   items: Array<{ id: string; oz_per_par_unit: number | string | null; sold_directly: boolean; sell_portion: number | string | null; sell_portion_unit: string | null; menu_price: number | string | null }>;
 }
@@ -90,8 +91,11 @@ async function loadGraphRows(): Promise<GraphRows> {
     selectAllRows<GraphRows["recipes"][number]>((from, to) =>
       sb.from("recipes").select("id, batch_yield").eq("active", true)
         .order("id", { ascending: true }).range(from, to)),
+    // component_product_id is SELECTED, not inferred: without it a re-pointed line
+    // is invisible here and readiness would see a recipe with fewer inputs than it
+    // has and call it ready (0179 — the quiet reader).
     selectAllRows<GraphRows["inputs"][number]>((from, to) =>
-      sb.from("recipe_inputs").select("recipe_id, component_sku_id, component_item_id")
+      sb.from("recipe_inputs").select("recipe_id, component_sku_id, component_item_id, component_product_id, unit")
         .order("id", { ascending: true }).range(from, to)),
     selectAllRows<GraphRows["outputs"][number]>((from, to) =>
       sb.from("recipe_outputs").select("recipe_id, output_item_id, output_menu_item_id")
@@ -112,7 +116,22 @@ export async function loadGraphReadiness(actor: AuthContext): Promise<{
   recipeReadiness: Map<string, Readiness>;
   itemReadiness: Map<string, Readiness>;
 }> {
-  const [skuStatus, g] = await Promise.all([loadSkuReadinessMap(actor), loadGraphRows()]);
+  const [skuStatus, g, measureUnits] = await Promise.all([
+    loadSkuReadinessMap(actor), loadGraphRows(), loadMeasureUnits(actor),
+  ]);
+
+  // PRODUCT-pinned inputs (0179). Resolution is the GLOBAL one (deviation D7 — this
+  // board has no location), and a line is ready iff the product resolves to a member
+  // AND the quantity can be denominated: either the product knows what one unit
+  // weighs, or the line is weight-denominated and needs no unit_oz at all.
+  const pinnedProductIds = [...new Set(g.inputs.map((i) => i.component_product_id).filter((v): v is string => v != null))];
+  const { byProduct } = await loadProductIndex(pinnedProductIds, null);
+  const weightUnits = new Set(measureUnits.filter((m) => m.dimension === "weight").map((m) => m.label));
+  const productInputResolves = (i: GraphRows["inputs"][number]): boolean => {
+    const entry = i.component_product_id != null ? byProduct.get(i.component_product_id) ?? null : null;
+    if (entry == null || entry.resolution.skuId == null) return false;
+    return entry.unitOz != null || (i.unit != null && weightUnits.has(i.unit));
+  };
 
   const inputsOfRecipe = new Map<string, GraphRows["inputs"]>();
   for (const i of g.inputs) {
@@ -159,15 +178,18 @@ export async function loadGraphReadiness(actor: AuthContext): Promise<{
     });
     const skuStatuses: ReadinessStatus[] = [];
     const subStatuses: ReadinessStatus[] = [];
+    let unresolvedProducts = 0;
     for (const i of ins) {
-      if (i.component_sku_id) {
+      if (i.component_product_id) {
+        if (!productInputResolves(i)) unresolvedProducts += 1;
+      } else if (i.component_sku_id) {
         // inactive SKU is absent from skuStatus → treat as not ready (it's out of play)
         skuStatuses.push(skuStatus.get(i.component_sku_id)?.status ?? "incomplete");
       } else if (i.component_item_id) {
         subStatuses.push(itemStatus(i.component_item_id).status);
       }
     }
-    const composed = composeRecipeReadiness(own, skuStatuses, subStatuses);
+    const composed = composeRecipeReadiness(own, skuStatuses, subStatuses, unresolvedProducts);
     visiting.delete(key);
     recipeMemo.set(recipeId, composed);
     return composed;
