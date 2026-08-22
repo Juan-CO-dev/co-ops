@@ -43,7 +43,7 @@ import type { MeasureUnitFactor, RecipeInputSku } from "@/lib/recipe-math";
 import { loadProductIndex } from "@/lib/products";
 import { rollupUsageByProduct } from "@/lib/products-shared";
 import { WALKER_SKU_COLUMNS, perOrderUnitOz } from "@/lib/ordering";
-import { resolveParSlot, type LocationSkuOverlay } from "@/lib/location-sku-shared";
+import { resolveActive, resolveParSlot, type LocationSkuOverlay } from "@/lib/location-sku-shared";
 import {
   loadRhythmByVendor, loadRhythmSkips, loadAllCutoffsByVendor,
 } from "@/lib/vendor-rhythm";
@@ -128,6 +128,14 @@ export const NIGHTLY_HORIZON_WALK_MINUTES = 0;
 
 /** Ledger inserts are chunked so one night's batch never becomes one giant request. */
 const LEDGER_INSERT_CHUNK = 500;
+
+/**
+ * How many production ids may ride ONE `.in()` filter. 150 uuids is ~5.6 KB of request line
+ * (`requestLineBytesForInList`, lib/supabase-paginate.ts) against an 8 KB budget that also
+ * has to hold the select list, the order clause and the range — comfortably inside the
+ * ~220-uuid 414 cliff with room for the rest of the request.
+ */
+const PRODUCTION_ID_CHUNK = 150;
 
 /**
  * How far back the hysteresis prior is sought. Longer than the budget window so a
@@ -218,6 +226,10 @@ export interface DemandInputs {
 
 /** The per-slot overlay the engine reads: the human lane, the machine lane, the pin. */
 export interface ParOverlayRow extends LocationSkuOverlay {
+  /** The per-location activation override. Read for the SAME reason loadWalkerData reads
+   *  it: `resolveActive(activeOverride, sku.active)` decides whether this SKU is part of
+   *  THIS shop's walk at all, and the ledger's universe must be the walker's universe. */
+  activeOverride: boolean | null;
   pinnedWeekdayAt: string | null;
   pinnedWeekendAt: string | null;
 }
@@ -259,10 +271,16 @@ export async function loadDemandInputs(
     .or("weekday_par.not.is.null,weekend_par.not.is.null")
     .returns<DbSkuRow[]>();
   if (sErr) throw new Error(`loadDemandInputs skus: ${sErr.message}`);
-  const rows = (skuRows ?? []).filter((s) => s.vendor_id != null);
-  const skuIds = rows.map((s) => s.id);
-  const vendorIds = [...new Set(rows.map((s) => s.vendor_id as string))];
-  const productIds = [...new Set(rows.map((s) => s.product_id).filter((v): v is string => v != null))];
+
+  // THE LEDGER'S UNIVERSE MUST BE THE WALKER'S UNIVERSE. The activation filter needs the
+  // overlay, so it runs after the overlay read below; these three id lists are only used to
+  // scope the batch reads, where a few extra ids cost nothing and dropping one would lose
+  // data. The `vendor_id != null` cut is safe here — loadWalkerData makes the identical one
+  // (a par'd SKU nobody can be asked for is unorderable) before it builds any id list.
+  const routable = (skuRows ?? []).filter((s) => s.vendor_id != null);
+  const skuIds = routable.map((s) => s.id);
+  const vendorIds = [...new Set(routable.map((s) => s.vendor_id as string))];
+  const productIds = [...new Set(routable.map((s) => s.product_id).filter((v): v is string => v != null))];
 
   const autoLane = await parAutoLaneReady(sb);
 
@@ -377,18 +395,36 @@ export async function loadDemandInputs(
       return d != null && d >= windowStart && d <= runDateEt;
     })
     .map((p) => p.id);
-  const productionInputs = prodIds.length === 0 ? [] : await selectAllRows<{ production_id: string; input_sku_id: string; input_oz: number | string | null }>(
-    async (from, to) => {
-      const { data, error } = await sb.from("production_inputs")
-        .select("production_id, input_sku_id, input_oz")
-        .in("production_id", prodIds)
-        .order("id", { ascending: true })
-        .range(from, to)
-        .returns<Array<{ production_id: string; input_sku_id: string; input_oz: number | string | null }>>();
-      if (error) throw new Error(`loadDemandInputs production_inputs: ${error.message}`);
-      return { data };
-    },
-  );
+  //
+  // ⚠ THE ID LIST IS WINDOWED, NOT SPENT WHOLE. `prodIds` is every live production at this
+  // location over 21 days and is unbounded by design, so a single `.in()` would put the
+  // 414 request-line cliff (~220 uuids against the 8 KB budget — lib/supabase-paginate.ts
+  // requestLineBytesForInList) on an UNATTENDED nightly path, where it fails on page 0 with
+  // zero rows and surfaces only as a swallowed console line in the cron's catch.
+  // `selectAllRows` pages the RESPONSE and cannot help with the REQUEST. The house doctrine
+  // names two remedies — a server-side embed or a windowed id set — and this is the second:
+  // the filter is identical, just split into disjoint chunks whose union is exactly the
+  // one-shot result, so there is no parity question to verify (which matters: production_
+  // inputs has 0 rows in prod today, so a semantic change could not be parity-checked).
+  // loadSkuUsageRank (lib/ordering.ts) still spends the whole list; that is pre-existing and
+  // is NOT fixed here, but this path does not inherit it.
+  const productionInputs: Array<{ production_id: string; input_sku_id: string; input_oz: number | string | null }> = [];
+  for (let i = 0; i < prodIds.length; i += PRODUCTION_ID_CHUNK) {
+    const chunk = prodIds.slice(i, i + PRODUCTION_ID_CHUNK);
+    const page = await selectAllRows<{ production_id: string; input_sku_id: string; input_oz: number | string | null }>(
+      async (from, to) => {
+        const { data, error } = await sb.from("production_inputs")
+          .select("production_id, input_sku_id, input_oz")
+          .in("production_id", chunk)
+          .order("id", { ascending: true })
+          .range(from, to)
+          .returns<Array<{ production_id: string; input_sku_id: string; input_oz: number | string | null }>>();
+        if (error) throw new Error(`loadDemandInputs production_inputs: ${error.message}`);
+        return { data };
+      },
+    );
+    productionInputs.push(...page);
+  }
 
   // ── The window, with both observability oracles resolved per day ──────────────
   const salesDays = new Set(salesEventDates.map((r) => r.business_date));
@@ -427,7 +463,20 @@ export async function loadDemandInputs(
     productBySku,
   );
 
-  // ── The SKU views ─────────────────────────────────────────────────────────────
+  // ── The SKU views, over the WALKER'S universe ─────────────────────────────────
+  // resolveActive(overlay.activeOverride, sku.active) is the SAME rule loadWalkerData
+  // applies (lib/ordering.ts), and applying it here is not cosmetic:
+  //   · a locally-deactivated SKU that still ledgered would inflate the run-level
+  //     reason_counts — i.e. pollute the errand list this phase is measured by, with rows
+  //     no walk will ever show;
+  //   · once the write bit flips, the machine would auto-write pars on SKUs this shop has
+  //     switched off.
+  // Note the filter is deliberately NOT `.eq("active", true)` in SQL, for the reason
+  // loadWalkerData spells out: a promotional overlay (active_override true on a globally
+  // inactive SKU) is genuinely part of this shop's walk, and a SQL filter would drop it.
+  const rows = routable.filter((s) =>
+    resolveActive(overlayBySku.get(s.id)?.activeOverride, s.active),
+  );
   const skus: DemandSku[] = rows.map((s) => {
     const chain = chainsBySku.get(s.id) ?? null;
     const skuShape: RecipeInputSku = {
@@ -534,14 +583,14 @@ async function loadParOverlay(
   locationId: string,
   autoLane: boolean,
 ): Promise<Map<string, ParOverlayRow>> {
-  const human = "sku_id, weekday_par, weekend_par";
+  const human = "sku_id, active_override, weekday_par, weekend_par";
   const auto =
     "auto_weekday_par, auto_weekend_par, auto_weekday_baseline_par, auto_weekend_baseline_par, pinned_weekday_at, pinned_weekend_at";
   const { data, error } = await sb.from("location_sku_settings")
     .select(autoLane ? `${human}, ${auto}` : human)
     .eq("location_id", locationId)
     .returns<Array<{
-      sku_id: string;
+      sku_id: string; active_override: boolean | null;
       weekday_par: number | string | null; weekend_par: number | string | null;
       auto_weekday_par?: number | string | null; auto_weekend_par?: number | string | null;
       auto_weekday_baseline_par?: number | string | null;
@@ -552,6 +601,7 @@ async function loadParOverlay(
   const out = new Map<string, ParOverlayRow>();
   for (const r of data ?? []) {
     const row: ParOverlayRow = {
+      activeOverride: r.active_override,
       weekdayPar: num(r.weekday_par),
       weekendPar: num(r.weekend_par),
       pinnedWeekdayAt: autoLane ? (r.pinned_weekday_at ?? null) : null,
@@ -957,15 +1007,25 @@ export async function recordParRunSkipped(
   const sb = getServiceRoleClient();
   if (!(await parAutoMovesReady(sb))) return { rows: 0, skipped: "schema_pending" };
 
-  const { data, error } = await sb.from("vendor_items")
-    .select("id, weekday_par, weekend_par, par_step")
-    .or("weekday_par.not.is.null,weekend_par.not.is.null")
-    .returns<Array<{ id: string; weekday_par: number | string | null; weekend_par: number | string | null; par_step: number | string | null }>>();
+  // THE SAME UNIVERSE THE FULL RUN WOULD HAVE COVERED — routable AND active at this shop.
+  // Two paths emitting different row counts for one catalog on one night would make the
+  // ledger's own row count meaningless as evidence, so the skip path pays for the overlay
+  // read too. Still only two reads: no demand, no rhythm, no product index.
+  const [{ data, error }, overlayBySku] = await Promise.all([
+    sb.from("vendor_items")
+      .select("id, vendor_id, active, weekday_par, weekend_par, par_step")
+      .or("weekday_par.not.is.null,weekend_par.not.is.null")
+      .returns<Array<{ id: string; vendor_id: string | null; active: boolean; weekday_par: number | string | null; weekend_par: number | string | null; par_step: number | string | null }>>(),
+    loadParOverlay(sb, locationId, await parAutoLaneReady(sb)),
+  ]);
   if (error) throw new Error(`recordParRunSkipped skus: ${error.message}`);
 
   const mode: "shadow" | "live" = PAR_AUTO_APPLY_ENABLED ? "live" : "shadow";
   const ledger: LedgerRow[] = [];
-  for (const s of data ?? []) {
+  const universe = (data ?? []).filter(
+    (s) => s.vendor_id != null && resolveActive(overlayBySku.get(s.id)?.activeOverride, s.active),
+  );
+  for (const s of universe) {
     const parStep = parStepFor({
       parStep: num(s.par_step), weekdayPar: num(s.weekday_par), weekendPar: num(s.weekend_par),
     });
@@ -1062,6 +1122,11 @@ export async function writeParFromSuggestion(input: ParWriteInput): Promise<void
   }
 
   const sb = getServiceRoleClient();
+  // Refuse UP FRONT, before anything is read or written: a human verdict that cannot be
+  // recorded may not move a par (0182 carries par_suggestion_actions).
+  if (input.actorKind !== "machine" && !(await parSuggestionActionsReady(sb))) {
+    throw new DynamicParsError(503, "par_ledger_pending", "Migration 0182 (GATE M1) is not applied");
+  }
   const autoLaneReady = await parAutoLaneReady(sb);
   const nowIso = new Date().toISOString();
   const effect = parWriteColumns({
@@ -1085,6 +1150,32 @@ export async function writeParFromSuggestion(input: ParWriteInput): Promise<void
 
   const before = await loadSlotValue(sb, input.locationId, input.skuId, input.dayClass, autoLaneReady);
 
+  // ⚠ THE ARBITER RUNS BEFORE THE MUTATION, AND THE ORDER IS THE GUARANTEE.
+  //
+  // par_suggestion_actions' UNIQUE (location, sku, day_class, generation_id) is what makes
+  // "one human verdict per generation" true, so it has to be claimed BEFORE the par moves.
+  // Writing first and claiming second loses both halves of its job:
+  //   · two taps on one generation would BOTH land their UPDATE and only then would one
+  //     get 23505 — a 409 telling the caller nothing happened after something did, and an
+  //     accept racing a revert settling on whichever UPDATE committed last;
+  //   · pre-0182 an accept would move the par and THEN throw `par_ledger_pending`, leaving
+  //     a changed par with no action row and no audit row.
+  //
+  // STATED TRADE-OFF: if the par write below fails after the claim lands, the generation is
+  // consumed and a retry gets 409 with the par unmoved. That is the RIGHT failure — the
+  // manager sees the number did not change and can edit it directly, and nothing altered
+  // the kitchen without an accountability record. The reverse orphan (a moved par with no
+  // audit row) is the one AGENTS.md's "who changed the kitchen?" filter exists to prevent.
+  if (input.actorKind !== "machine") {
+    await recordSuggestionAction(sb, {
+      locationId: input.locationId, skuId: input.skuId, dayClass: input.dayClass,
+      generationId: input.generationId ?? null,
+      action: input.actorKind === "revert" ? "revert" : "accept",
+      parBefore: before.humanPar, parAfter: input.value,
+      actorId: input.actor!.user.id,
+    });
+  }
+
   if (before.rowId == null) {
     const { error } = await sb.from("location_sku_settings").insert({
       location_id: input.locationId, sku_id: input.skuId, ...patch,
@@ -1099,13 +1190,6 @@ export async function writeParFromSuggestion(input: ParWriteInput): Promise<void
   }
 
   if (input.actorKind !== "machine") {
-    await recordSuggestionAction(sb, {
-      locationId: input.locationId, skuId: input.skuId, dayClass: input.dayClass,
-      generationId: input.generationId ?? null,
-      action: input.actorKind === "revert" ? "revert" : "accept",
-      parBefore: before.humanPar, parAfter: input.value,
-      actorId: input.actor!.user.id,
-    });
     await audit({
       actorId: input.actor!.user.id,
       actorRole: input.actor!.user.role,

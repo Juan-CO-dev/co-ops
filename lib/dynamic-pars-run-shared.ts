@@ -130,6 +130,13 @@ export interface PriorAndBudget {
  * are the only ones that will exist going forward and the simulated ones age out of the
  * 7-day window inside a week.
  *
+ * ⚠ BEFORE THE WRITE BIT IS FLIPPED, RE-READ THIS. Exclusion ② keeps the SHADOW run
+ * idempotent, but it is written in terms of `would_apply`. In `live` mode the run's own
+ * `applied` rows DO count on the run date (they must — they are real writes), so a second
+ * invocation of a live run would see a budget the first invocation spent and could reach a
+ * different verdict. That is dead code while `PAR_AUTO_APPLY_ENABLED` is false; it is a
+ * named precondition of turning it on, not an oversight.
+ *
  * `rows` must arrive newest-first (run_date DESC, id DESC) — the caller's stable order.
  */
 export function derivePriorAndBudget(

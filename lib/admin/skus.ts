@@ -794,6 +794,10 @@ export async function loadLocationSkuSettings(
       .from("location_sku_settings")
       .select("sku_id, location_id, active_override, weekday_par, weekend_par")
       .in("sku_id", ids)
+      // Opportunistic fix (Dynamic Pars P3 review): paging WITHOUT a stable total order is
+      // the PR #63 class — PostgREST may reorder between pages, so a row can be served
+      // twice and another never, silently dropping an overlay. `id` is the PK.
+      .order("id", { ascending: true })
       .range(from, to)
       .returns<Array<DbLocationSkuSettingRow & { sku_id: string }>>(),
   );

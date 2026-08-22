@@ -21,6 +21,13 @@
  * Probing the EXACT COLUMN/TABLE each writer touches, rather than one probe per
  * migration, is deliberate: a probe that answers for its neighbour is a probe that lies
  * the day a migration is applied in two pieces.
+ *
+ * ONE DOCUMENTED EXCEPTION TO THAT RULE. `parAutoMovesReady` also gates the engine's reads
+ * of `vendor_items.cushion_class` and `vendor_items.par_step`, which are columns, not this
+ * table — i.e. exactly the by-proxy probing the paragraph above warns against. It is safe
+ * only because 0182 is ONE atomic migration file that creates the table and adds both
+ * columns in the same transaction, so "the ledger exists" and "the two columns exist" are
+ * the same fact. If 0182 is ever split, this needs its own probe.
  */
 import type { getServiceRoleClient } from "@/lib/supabase-server";
 
