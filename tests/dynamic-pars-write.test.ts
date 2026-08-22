@@ -129,6 +129,39 @@ describe("parWriteColumns — the machine-lane bypass is STRUCTURAL", () => {
     expect(Object.keys(cols.autoLane).some((k) => k.includes("weekday"))).toBe(false);
   });
 
+  it("THROWS on a revert with no appliedAt — loud beats silent (LEAD RULING F4)", () => {
+    // The pure core may not read the clock (this module promises "PURE: zero I/O"), and the
+    // silent alternative is worse than the throw: `?? null` would DROP THE PIN on a caller
+    // that forgot the stamp, on the one column whose whole job is to stand until a human
+    // clears it. A missing stamp is a caller bug, so it fails at the caller.
+    for (const appliedAt of [undefined, null]) {
+      expect(() =>
+        parWriteColumns({ kind: "revert", dayClass: "weekday", value: 3, appliedAt }),
+      ).toThrow("parWriteColumns: revert requires appliedAt");
+    }
+  });
+
+  it("a revert pins to EXACTLY the stamp it was handed — no clock, no drift", () => {
+    for (const dayClass of DAY_CLASSES) {
+      const cols = parWriteColumns({ kind: "revert", dayClass, value: 3, appliedAt: AT });
+      expect(cols.autoLane[`pinned_${dayClass}_at`]).toBe(AT);
+    }
+  });
+
+  it("the OTHER kinds never require appliedAt — only a revert sets a pin", () => {
+    for (const kind of ["admin", "accept"] as const) {
+      expect(() => parWriteColumns({ kind, dayClass: "weekday", value: 3 })).not.toThrow();
+    }
+    expect(() =>
+      parWriteColumns({ kind: "machine", dayClass: "weekday", value: null, autoValue: 4 }),
+    ).not.toThrow();
+  });
+
+  it("is DETERMINISTIC: the same input gives the same output, twice", () => {
+    const input = { kind: "revert" as const, dayClass: "weekday" as const, value: 3, appliedAt: AT };
+    expect(parWriteColumns(input)).toEqual(parWriteColumns(input));
+  });
+
   it("`admin` and `accept` clear the pin; `revert` sets it", () => {
     const admin = parWriteColumns({ kind: "admin", dayClass: "weekday", value: 4 });
     const accept = parWriteColumns({ kind: "accept", dayClass: "weekday", value: 4 });

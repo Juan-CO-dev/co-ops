@@ -60,7 +60,8 @@ import {
   type VelocityDay, type WindowDay,
 } from "@/lib/dynamic-pars-shared";
 import {
-  derivePriorAndBudget, directionConfirmed, perSkuSeries, rollupPerDate, slotKey, tallyRun,
+  derivePriorAndBudget, directionConfirmed, normalizePerOrderUnitOz, perSkuSeries,
+  rollupPerDate, slotKey, tallyRun,
   type LedgerPrior, type ParRunCounts,
 } from "@/lib/dynamic-pars-run-shared";
 import {
@@ -503,7 +504,13 @@ export async function loadDemandInputs(
       }),
       globalWeekdayPar: num(s.weekday_par),
       globalWeekendPar: num(s.weekend_par),
-      perOrderUnitOz: perOrderUnitOz(skuShape, chain, measures as Map<string, MeasureUnitFactor>),
+      // Normalized to positive-or-null (LEAD RULING F5) — parity with the walker's own
+      // `perUnitOz != null && perUnitOz > 0` use site. A 0-oz denominator is a pack-data
+      // errand, and it must reach the reason ladder as `no_weight_basis`, not slip through
+      // as a null coverage that gets miscaused as thin history.
+      perOrderUnitOz: normalizePerOrderUnitOz(
+        perOrderUnitOz(skuShape, chain, measures as Map<string, MeasureUnitFactor>),
+      ),
       hasPackChain: chain != null && chain.length > 0,
       // R3-B — the DESIGNATED primary, not the ladder's runtime answer.
       writeHomeSkuId: entry?.primarySkuId ?? s.id,
@@ -618,8 +625,26 @@ async function loadParOverlay(
   return out;
 }
 
-/** The most recent recipe edit anywhere — the velocity series reset (r1-6). Recipe edits
- *  are global facts, so this is one row for the whole run, not one per SKU. */
+/**
+ * The most recent recipe edit ANYWHERE — the velocity series reset (r1-6). One row for the
+ * whole run, not one per SKU.
+ *
+ * ⚠ STATED v1 LIMITATION (LEAD RULING F6): this is COARSER than the reset the pure core's
+ * `VelocityInput.recipeEditedAt` would ideally receive. Any recipe edit anywhere resets
+ * velocity for EVERY SKU for `VELOCITY_MIN_PERSISTENCE_DAYS` — including SKUs the edited
+ * recipe has never touched.
+ *
+ * ACCEPTED for v1 on three grounds: the error direction is CONSERVATIVE (an over-reset can
+ * only withhold a velocity nudge, never fabricate one); velocity is suggestion-lane-only in
+ * v1, so the blast radius is a number not rendered rather than a par moved; and per-SKU
+ * attribution needs flatten-aware audit parsing — resolving each `recipe_input.*` row's
+ * component to a SKU *through the product ladder*, for edits whose recipe may reach the SKU
+ * only transitively — which is a real piece of work for a term that is already the arc's
+ * named drop-candidate.
+ *
+ * THE UPGRADE PATH, when it is worth it: return a Map<skuId, string> here and pass the
+ * per-SKU entry at the call site. `VelocityInput` needs no signature change.
+ */
 async function loadLatestRecipeEditAt(sb: ServiceClient): Promise<string | null> {
   const { data, error } = await sb.from("audit_log")
     .select("occurred_at")

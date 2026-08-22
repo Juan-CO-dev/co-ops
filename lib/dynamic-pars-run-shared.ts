@@ -61,6 +61,26 @@ export function rollupPerDate<T>(
   return out;
 }
 
+/**
+ * The order-unit denominator, normalized to the ONE shape the whole arc agrees on:
+ * a positive number, or null. Never zero, never negative (LEAD RULING F5).
+ *
+ * WHY THIS EXISTS. Two consumers disagreed about what "no honest denominator" looks like.
+ * `classifyParReason` silences on `perOrderUnitOz == null`; `computeCoverage` rejects
+ * `<= 0`. A SKU whose pack data resolves to a 0-oz order unit therefore slipped the reason
+ * ladder (0 is not null), reached coverage, got a null back, and was miscaused as
+ * `thin_history` — sending Juan to look at a demand window when the actual errand is the
+ * SKU's pack chain. A wrong cause is a wrong errand.
+ *
+ * The walker already draws the line in the right place at its own use site
+ * (`perUnitOz != null && perUnitOz > 0`, lib/ordering.ts buildRow), so this is parity with
+ * the shipped surface rather than a new rule — and normalizing at construction means every
+ * downstream consumer inherits it instead of each remembering to re-check.
+ */
+export function normalizePerOrderUnitOz(value: number | null | undefined): number | null {
+  return value != null && Number.isFinite(value) && value > 0 ? value : null;
+}
+
 /** One SKU's slice of a (date → sku → oz) map, in the shape the pure core wants. */
 export function perSkuSeries(
   byDate: ReadonlyMap<string, ReadonlyMap<string, number>>,

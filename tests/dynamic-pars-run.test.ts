@@ -15,6 +15,7 @@ import { describe, it, expect } from "vitest";
 import {
   derivePriorAndBudget,
   directionConfirmed,
+  normalizePerOrderUnitOz,
   perSkuSeries,
   rollupPerDate,
   slotKey,
@@ -23,7 +24,7 @@ import {
   type SuggestionActionRow,
   type TallyRow,
 } from "@/lib/dynamic-pars-run-shared";
-import type { ParReasonCode } from "@/lib/dynamic-pars-shared";
+import { classifyParReason, type ParReasonCode } from "@/lib/dynamic-pars-shared";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -97,6 +98,44 @@ describe("rollupPerDate — twins net at PRODUCT grain, per day", () => {
   it("ignores rows with an empty date rather than bucketing them under ''", () => {
     const out = rollup([dep("", "salt", 5)], new Map());
     expect(out.size).toBe(0);
+  });
+});
+
+// ── The order-unit denominator ────────────────────────────────────────────────
+
+describe("normalizePerOrderUnitOz — a 0-oz denominator is a WEIGHT errand (F5)", () => {
+  it("keeps a positive denominator untouched", () => {
+    expect(normalizePerOrderUnitOz(12.5)).toBe(12.5);
+  });
+
+  it("collapses 0, negatives and non-finite values to null", () => {
+    for (const v of [0, -1, NaN, Infinity]) expect(normalizePerOrderUnitOz(v)).toBeNull();
+  });
+
+  it("passes null and undefined straight through", () => {
+    expect(normalizePerOrderUnitOz(null)).toBeNull();
+    expect(normalizePerOrderUnitOz(undefined)).toBeNull();
+  });
+
+  it("A 0-OZ DENOMINATOR LEDGERS no_weight_basis, NEVER thin_history", () => {
+    // The bug this closes end to end: classifyParReason silences on `== null` while
+    // computeCoverage rejects `<= 0`, so an unnormalized 0 slipped the ladder, reached
+    // coverage, came back null, and got miscaused as thin history — an errand pointing at
+    // the demand window when the real fault is the SKU's pack chain.
+    const LADDER = {
+      inventoryOnly: false, productRetired: false, depletionCurrent: true,
+      laneNeverStarted: false, laneComplete: true, hasPackChain: false,
+      hasRhythm: true, thin: false, slotExists: true, noLocalHistory: false,
+    };
+    expect(classifyParReason({ ...LADDER, perOrderUnitOz: normalizePerOrderUnitOz(0) }))
+      .toBe("no_weight_basis");
+    // …and with a pack chain present the ladder names the chain instead, as it should.
+    expect(classifyParReason({
+      ...LADDER, hasPackChain: true, perOrderUnitOz: normalizePerOrderUnitOz(0),
+    })).toBe("unresolvable_pack");
+    // Sanity: a real denominator still reaches "ok".
+    expect(classifyParReason({ ...LADDER, perOrderUnitOz: normalizePerOrderUnitOz(12) }))
+      .toBe("ok");
   });
 });
 
