@@ -60,6 +60,10 @@ import {
   type VelocityDay, type WindowDay,
 } from "@/lib/dynamic-pars-shared";
 import {
+  derivePriorAndBudget, directionConfirmed, perSkuSeries, rollupPerDate, slotKey, tallyRun,
+  type LedgerPrior, type ParRunCounts,
+} from "@/lib/dynamic-pars-run-shared";
+import {
   parAutoLaneReady, parAutoMovesReady, parSuggestionActionsReady, salesSignalsReady,
 } from "@/lib/dynamic-pars-probes";
 
@@ -138,12 +142,22 @@ const RUN_AUDIT_ACTION: Record<"shadow" | "live", AuditAction> = {
   live: "par.auto_tune",
 };
 
-/** Recipe-edit oracle for the velocity reset (r1-6): the actions that change what a
- *  SKU MEANS inside a recipe. `occurred_at`, NEVER `created_at` — audit_log has no
- *  `created_at` column and that exact misspelling silently 400'd for weeks (SIM-PI-4). */
+/**
+ * Recipe-edit oracle for the velocity reset (r1-6): the actions that change what a SKU
+ * MEANS inside a recipe, so the series before one of them is a different signal.
+ *
+ * The plan names "`recipe_input.*` / `recipe.update`"; live, `recipe_input.*` is three
+ * spellings — add + remove sit in DESTRUCTIVE_ACTIONS, update in NON_DESTRUCTIVE — and
+ * all three change the flatten. Verified against both registries rather than assumed: an
+ * action name that does not exist here would not error, it would silently never match,
+ * and the reset would quietly stop working.
+ *
+ * `occurred_at`, NEVER `created_at` — audit_log has no `created_at` column and that exact
+ * misspelling silently 400'd for weeks (SIM-PI-4, lib/catering/toast-sales.ts).
+ */
 const RECIPE_EDIT_ACTIONS = [
-  "recipe_input.update", "recipe.update",
-] as const;
+  "recipe_input.add", "recipe_input.remove", "recipe_input.update", "recipe.update",
+] as const satisfies ReadonlyArray<AuditAction>;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Task 3.5 — the batched nightly loader
@@ -207,15 +221,6 @@ export interface ParOverlayRow extends LocationSkuOverlay {
   pinnedWeekdayAt: string | null;
   pinnedWeekendAt: string | null;
 }
-
-interface LedgerPrior {
-  suggestedPar: number | null;
-  generationId: string | null;
-  /** sign(suggested − current) on the previous run. 0 = no move proposed. */
-  direction: number;
-}
-
-const slotKey = (skuId: string, dayClass: DayClass) => `${skuId}:${dayClass}`;
 
 interface DbSkuRow {
   id: string; name: string; vendor_id: string | null; active: boolean;
@@ -403,6 +408,14 @@ export async function loadDemandInputs(
   // flip reads as demand collapse on one twin and a spike on the other. `rollupUsageByProduct`
   // is the shipped, test-pinned rollup (lib/products-shared.ts) — applied once per date so
   // there is no second opinion about how twins net, and the maps stay SKU-keyed.
+  //
+  // STATED CONSEQUENCE, and it is the intended one: when TWO members of one product both
+  // carry pars, both read the PRODUCT's demand and both therefore compute against the same
+  // rate. That is what product-grain means — the identity's demand does not halve because
+  // two vendors can supply it. The ledger still writes one row per (sku, day_class),
+  // because that is the table's grain and the walker renders per SKU; `detail.write_home_sku_id`
+  // names the single slot a GRADUATED write would ever target (R3-B), so the two rows can
+  // never become two auto-writes for one identity.
   const productBySku = productIndex.productBySku;
   const directOzByDate = rollupPerDate(depletionRows, (r) => r.business_date, (r) => r.sku_id, (r) => num(r.direct_oz) ?? 0, productBySku);
   const flattenedOzByDate = rollupPerDate(depletionRows, (r) => r.business_date, (r) => r.sku_id, (r) => num(r.flattened_oz) ?? 0, productBySku);
@@ -470,38 +483,20 @@ export async function loadDemandInputs(
     if (signalsStartAt == null || r.business_date < signalsStartAt) signalsStartAt = r.business_date;
   }
 
-  // ── The hysteresis prior + the budget ─────────────────────────────────────────
-  const priorBySlot = new Map<string, LedgerPrior>();
-  const budgetCount = new Map<string, number>();
-  for (const r of ledgerRows) {
-    if (r.day_class !== "weekday" && r.day_class !== "weekend") continue;
-    const key = slotKey(r.sku_id, r.day_class);
-    // PRIOR: the newest row STRICTLY BEFORE this run date. Excluding today's own row is
-    // what makes a re-invocation idempotent — this run is about to replace it.
-    if (r.run_date < runDateEt && !priorBySlot.has(key)) {
-      const current = num(r.current_par);
-      const suggested = num(r.suggested_par);
-      priorBySlot.set(key, {
-        suggestedPar: suggested,
-        generationId: r.generation_id,
-        direction: suggested != null && current != null ? Math.sign(suggested - current) : 0,
-      });
-    }
-    // BUDGET: `applied` always counts (it records a REAL par write). `would_apply` counts
-    // only from EARLIER runs — counting this run's own simulated opinion would make a
-    // retry suppress what the first invocation allowed (projects r3 P2-10).
-    if (r.run_date < budgetFrom) continue;
-    const counts = r.outcome === "applied" || (r.outcome === "would_apply" && r.run_date < runDateEt);
-    if (counts) budgetCount.set(key, (budgetCount.get(key) ?? 0) + 1);
-  }
-  for (const a of actionRows.data ?? []) {
-    if (a.action !== "revert") continue; // accepts are FREE (r2-8); dismisses change nothing.
-    if (a.day_class !== "weekday" && a.day_class !== "weekend") continue;
-    const key = slotKey(a.sku_id, a.day_class);
-    budgetCount.set(key, (budgetCount.get(key) ?? 0) + 1);
-  }
-  const budgetSpentBySlot = new Set<string>();
-  for (const [key, n] of budgetCount) if (n >= DYNAMIC_PARS.BUDGET_MOVES) budgetSpentBySlot.add(key);
+  // ── The hysteresis prior + the simulated budget ───────────────────────────────
+  // Both rules — including the two exclusions a re-invocation's idempotence rests on —
+  // live in the pure module so they are test-pinned (tests/dynamic-pars-run.test.ts).
+  const { priorBySlot, budgetSpentBySlot } = derivePriorAndBudget(
+    ledgerRows.map((r) => ({
+      skuId: r.sku_id, dayClass: r.day_class, runDate: r.run_date, outcome: r.outcome,
+      currentPar: num(r.current_par), suggestedPar: num(r.suggested_par),
+      generationId: r.generation_id,
+    })),
+    (actionRows.data ?? []).map((a) => ({
+      skuId: a.sku_id, dayClass: a.day_class, action: a.action,
+    })),
+    { runDateEt, budgetFrom },
+  );
 
   return {
     locationId,
@@ -529,32 +524,6 @@ interface DbLedgerPriorRow {
   sku_id: string; day_class: string; run_date: string; outcome: string;
   current_par: number | string | null; suggested_par: number | string | null;
   generation_id: string | null;
-}
-
-/**
- * Sum `value` per (date, key), then apply the ONE pure product rollup per date so twins
- * net at product grain while the map stays SKU-keyed.
- */
-function rollupPerDate<T>(
-  source: ReadonlyArray<T>,
-  dateOf: (r: T) => string,
-  skuOf: (r: T) => string,
-  valueOf: (r: T) => number,
-  productBySku: ReadonlyMap<string, string>,
-): Map<string, Map<string, number>> {
-  const raw = new Map<string, Map<string, number>>();
-  for (const r of source) {
-    const date = dateOf(r);
-    if (!date) continue;
-    const v = valueOf(r);
-    if (!Number.isFinite(v) || v === 0) continue;
-    const perSku = raw.get(date) ?? new Map<string, number>();
-    perSku.set(skuOf(r), (perSku.get(skuOf(r)) ?? 0) + v);
-    raw.set(date, perSku);
-  }
-  const out = new Map<string, Map<string, number>>();
-  for (const [date, perSku] of raw) out.set(date, rollupUsageByProduct(perSku, productBySku));
-  return out;
 }
 
 /** The per-location overlay with the machine lane + pins, probe-gated exactly like
@@ -616,15 +585,7 @@ async function loadLatestRecipeEditAt(sb: ServiceClient): Promise<string | null>
 // Task 3.6 — the shadow engine
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface ParRunCounts {
-  rows: number;
-  wouldApply: number;
-  applied: number;
-  suggestion: number;
-  advisoryNull: number;
-  suppressedBy: Record<string, number>;
-  byReason: Record<string, number>;
-}
+export type { ParRunCounts } from "@/lib/dynamic-pars-run-shared";
 
 export interface ParRunResult {
   rows: number;
@@ -847,7 +808,6 @@ export async function runParShadowForLocation(
       // ⑤ the guard stack — the SAME code live mode runs, with a mode flag (r2-7).
       const prior = inputs.priorBySlot.get(slotKey(sku.skuId, dayClass)) ?? null;
       const roundedTarget = roundToStep(coverage.targetUnits, sku.parStep);
-      const thisDirection = currentPar == null ? 0 : Math.sign(roundedTarget - currentPar);
       const verdict: GuardOutcome = applyGuardStack({
         locationId,
         skuId: sku.skuId,
@@ -859,8 +819,7 @@ export async function runParShadowForLocation(
         priorGenerationId: prior?.generationId ?? null,
         // Two consecutive runs must agree on the DIRECTION, or step-rounding of a
         // continuous target oscillates 2.49 <-> 2.51 forever (r1-6).
-        directionConfirmed:
-          prior != null && prior.direction !== 0 && prior.direction === thisDirection,
+        directionConfirmed: directionConfirmed(prior, currentPar, roundedTarget),
         budgetSpent: inputs.budgetSpentBySlot.has(slotKey(sku.skuId, dayClass)),
         pinned: (dayClass === "weekend" ? overlay?.pinnedWeekendAt : overlay?.pinnedWeekdayAt) != null,
         mode,
@@ -895,40 +854,17 @@ export async function runParShadowForLocation(
   }
 
   await writeLedger(sb, locationId, runDateEt, ledger);
-  const counts = tallyRun(ledger);
+  const counts = tallyRun(toTallyRows(ledger));
   await auditRun(locationId, runDateEt, mode, counts, runDateEt);
   return { rows: ledger.length, counts };
 }
 
-/** One SKU's slice of a (date → sku → oz) map, as the pure core wants it. */
-function perSkuSeries(
-  byDate: ReadonlyMap<string, Map<string, number>>,
-  skuId: string,
-): Map<string, number> {
-  const out = new Map<string, number>();
-  for (const [date, perSku] of byDate) {
-    const v = perSku.get(skuId);
-    if (v != null && v !== 0) out.set(date, v);
-  }
-  return out;
-}
-
-function tallyRun(ledger: ReadonlyArray<LedgerRow>): ParRunCounts {
-  const counts: ParRunCounts = {
-    rows: ledger.length, wouldApply: 0, applied: 0, suggestion: 0, advisoryNull: 0,
-    suppressedBy: {}, byReason: {},
-  };
-  for (const r of ledger) {
-    if (r.outcome === "would_apply") counts.wouldApply += 1;
-    if (r.outcome === "applied") counts.applied += 1;
-    if (r.outcome === "advisory_null") counts.advisoryNull += 1;
-    if (r.tier === "suggestion") counts.suggestion += 1;
-    if (r.suppressed_by != null) {
-      counts.suppressedBy[r.suppressed_by] = (counts.suppressedBy[r.suppressed_by] ?? 0) + 1;
-    }
-    counts.byReason[r.reason_code] = (counts.byReason[r.reason_code] ?? 0) + 1;
-  }
-  return counts;
+/** The ledger's DB-shaped rows in the tally's camelCase shape. The pure tally must not
+ *  learn the column spellings — that is what keeps it testable without a database. */
+function toTallyRows(ledger: ReadonlyArray<LedgerRow>) {
+  return ledger.map((r) => ({
+    outcome: r.outcome, tier: r.tier, suppressedBy: r.suppressed_by, reasonCode: r.reason_code,
+  }));
 }
 
 /**
@@ -1048,7 +984,7 @@ export async function recordParRunSkipped(
     }
   }
   await writeLedger(sb, locationId, runDateEt, ledger);
-  await auditRun(locationId, runDateEt, mode, tallyRun(ledger), watermark);
+  await auditRun(locationId, runDateEt, mode, tallyRun(toTallyRows(ledger)), watermark);
   return { rows: ledger.length, skipped: "stale_depletion" };
 }
 
