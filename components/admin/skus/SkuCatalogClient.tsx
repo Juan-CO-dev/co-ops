@@ -63,6 +63,7 @@ export function SkuCatalogClient({
   overlaysBySku,
   products,
   productIdBySku,
+  parsFieldsReady,
   actorLevel,
   canManage,
 }: {
@@ -88,6 +89,8 @@ export function SkuCatalogClient({
    *  SKU loader (vendor_items.product_id is not in SKU_COLS while 0179 is
    *  unapplied). Absent = implicit singleton. */
   productIdBySku: Record<string, string>;
+  /** True once migration 0182 (GATE M1) applied — gates the Ordering-rhythm group. */
+  parsFieldsReady: boolean;
   actorLevel: number;
   canManage: boolean; // GM+
 }) {
@@ -271,6 +274,7 @@ export function SkuCatalogClient({
           locations={locations}
           products={products}
           initialProductId={productIdBySku[s.id] ?? null}
+          parsFieldsReady={parsFieldsReady}
           packFormats={packFormats}
           measureUnits={measureUnits}
           actorLevel={actorLevel}
@@ -403,6 +407,7 @@ export function SkuCatalogClient({
             vendors={vendors}
             locations={locations}
             products={products}
+            parsFieldsReady={parsFieldsReady}
             packFormats={packFormats}
             measureUnits={measureUnits}
             actorLevel={actorLevel}

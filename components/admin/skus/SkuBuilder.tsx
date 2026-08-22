@@ -37,6 +37,7 @@ import type { TranslationKey } from "@/lib/i18n/types";
 import type { RegistryOption, MeasureUnitOption, SkuView } from "@/lib/admin/skus";
 import { SKU_CLASSES } from "@/lib/admin/catalog-shared";
 import type { SkuClass } from "@/lib/admin/catalog-shared";
+import { CUSHION_BY_CLASS, parStepFor } from "@/lib/dynamic-pars-shared";
 import {
   skuNameCollisions,
   type StarterChainLevel,
@@ -91,6 +92,10 @@ export interface SkuFormValues {
    *  absent key leaves the column alone, which is what keeps this form legal
    *  before migration 0179 is applied (GATE M1) and identical to today. */
   productId?: string | null;
+  /** Ordering rhythm (0182). Same discipline as productId above: both keys are
+   *  OMITTED until the columns exist, so this form stays legal before GATE M1. */
+  cushionClass?: string | null;
+  parStep?: number | null;
 }
 
 const fieldCls =
@@ -159,6 +164,7 @@ export function SkuBuilder({
   initialChainUnverified,
   fixedVendorId,
   initialProductId,
+  parsFieldsReady = false,
   vendors,
   locations,
   products,
@@ -194,6 +200,9 @@ export function SkuBuilder({
   /** Products this SKU may join (0179). Empty/absent → no picker is rendered and
    *  no productId key is sent: products exist only where plurality does. */
   products?: SkuFormProductOption[];
+  /** True once migration 0182 (GATE M1) is applied. Gates the "Ordering rhythm"
+   *  group: while false the group does not render and NEITHER key is sent. */
+  parsFieldsReady?: boolean;
   packFormats: RegistryOption[];
   measureUnits: MeasureUnitOption[];
   actorLevel: number;
@@ -246,6 +255,11 @@ export function SkuBuilder({
   const [weekdayPar, setWeekdayPar] = useState(initial?.weekdayPar != null ? String(initial.weekdayPar) : "");
   const [weekendPar, setWeekendPar] = useState(initial?.weekendPar != null ? String(initial.weekendPar) : "");
   const [notes, setNotes] = useState(initial?.notes ?? "");
+  // Ordering rhythm (0182). Free text by design — the cushion vocabulary is deliberately
+  // un-enumerated (plan D6), so the datalist SUGGESTS the shipped classes without
+  // forbidding a new one.
+  const [cushionClass, setCushionClass] = useState(initial?.cushionClass ?? "");
+  const [parStep, setParStep] = useState(initial?.parStep != null ? String(initial.parStep) : "");
 
   // ── Section B wizard state (unchained path — add + unchained edit) ──
   // The wizard is a TRIGGERED flow (D4): closed until the manager taps
@@ -266,6 +280,15 @@ export function SkuBuilder({
     const trimmed = s.trim();
     return trimmed === "" ? null : Number(trimmed);
   };
+
+  // The par-step placeholder (plan D7): what parStepFor would infer from the pars AS
+  // TYPED, so the manager sees the bootstrap value update live and only overrides it when
+  // it is actually wrong. One authority — the same fn the band and the rounding use.
+  const inferredParStep = parStepFor({
+    parStep: null,
+    weekdayPar: parseNum(weekdayPar),
+    weekendPar: parseNum(weekendPar),
+  });
 
   // P7: compares against the vendor SELECTED IN THE FORM (vendorId state), so retargeting
   // a SKU to another vendor re-classifies the collision live rather than on save.
@@ -307,6 +330,11 @@ export function SkuBuilder({
     notes: notes.trim() || null,
     skuClass,
     ...(showProductPicker ? { productId: productId || null } : {}),
+    // Both keys omitted entirely until migration 0182 applies — an absent key never
+    // touches a column that may not exist (the productId precedent above).
+    ...(parsFieldsReady
+      ? { cushionClass: cushionClass.trim() || null, parStep: parseNum(parStep) }
+      : {}),
   });
 
   const submit = () => {
@@ -487,6 +515,54 @@ export function SkuBuilder({
           </Labeled>
         </div>
         <p className="text-xs text-co-text-muted">{t("admin.skus.par_hint")}</p>
+
+        {/* ── Ordering rhythm (0182, GATE M1) — cushion class + par step ──
+            Hidden entirely until the migration applies, so nothing here can send a key
+            for a column that does not exist. Cushion class is free text WITH a datalist,
+            never a hard select: the vocabulary is deliberately un-enumerated (plan D6,
+            the 0177 precedent), so the shipped classes are suggestions, not a fence. */}
+        {parsFieldsReady ? (
+          <div className="flex flex-col gap-3 rounded-lg border-2 border-co-border p-3">
+            <h4 className="text-xs font-bold uppercase tracking-wide text-co-text-muted">
+              {t("admin.skus.rhythm.group")}
+            </h4>
+            <div className="grid grid-cols-2 gap-3">
+              <Labeled label={t("admin.skus.field.cushion_class")}>
+                <input
+                  className={fieldCls}
+                  list="sku-cushion-classes"
+                  value={cushionClass}
+                  disabled={busy}
+                  maxLength={40}
+                  placeholder={t("admin.skus.cushion_class_placeholder")}
+                  aria-label={t("admin.skus.field.cushion_class")}
+                  onChange={(e) => setCushionClass(e.target.value)}
+                />
+                <datalist id="sku-cushion-classes">
+                  {Object.keys(CUSHION_BY_CLASS).map((c) => (
+                    <option key={c} value={c} />
+                  ))}
+                </datalist>
+              </Labeled>
+              <Labeled label={t("admin.skus.field.par_step")}>
+                <input
+                  className={fieldCls}
+                  type="number"
+                  min={0}
+                  step="any"
+                  inputMode="decimal"
+                  value={parStep}
+                  disabled={busy}
+                  placeholder={t("admin.skus.par_step_placeholder", { n: String(inferredParStep) })}
+                  aria-label={t("admin.skus.field.par_step")}
+                  onChange={(e) => setParStep(e.target.value)}
+                />
+              </Labeled>
+            </div>
+            <p className="text-xs text-co-text-muted">{t("admin.skus.rhythm_hint")}</p>
+          </div>
+        ) : null}
+
         <Labeled label={t("admin.skus.field.notes")}>
           <textarea className={fieldCls} rows={2} value={notes} disabled={busy} onChange={(e) => setNotes(e.target.value)} />
         </Labeled>

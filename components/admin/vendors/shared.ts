@@ -76,6 +76,13 @@ const KNOWN_ERROR_CODES = new Set([
   "invalid_tier",
   "invalid_time",
   "invalid_location",
+  // Dynamic Pars Phase 1 — the delivery-rhythm + vendor-down surfaces.
+  "invalid_lead_days",
+  "invalid_skip_from",
+  "invalid_skip_through",
+  "invalid_skip_range",
+  "rhythm_schema_pending",
+  "rhythm_pair_conflict",
   "step_up_required",
   "step_up_stale",
 ]);

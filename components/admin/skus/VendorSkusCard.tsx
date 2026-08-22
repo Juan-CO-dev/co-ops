@@ -51,6 +51,7 @@ export function VendorSkusCard({
   overlaysBySku,
   products,
   productIdBySku,
+  parsFieldsReady,
   actorLevel,
   canManage,
 }: {
@@ -73,6 +74,8 @@ export function VendorSkusCard({
   products: SkuFormProductOption[];
   /** skuId -> its product (0179), seeded from the registry. */
   productIdBySku: Record<string, string>;
+  /** True once migration 0182 (GATE M1) applied — gates the Ordering-rhythm group. */
+  parsFieldsReady: boolean;
   actorLevel: number;
   canManage: boolean; // GM+
 }) {
@@ -194,6 +197,7 @@ export function VendorSkusCard({
                     locations={locations}
                     products={products}
                     initialProductId={productIdBySku[s.id] ?? null}
+                    parsFieldsReady={parsFieldsReady}
                     packFormats={packFormats}
                     measureUnits={measureUnits}
                     actorLevel={actorLevel}
@@ -254,6 +258,7 @@ export function VendorSkusCard({
                 fixedVendorId={vendorId}
                 locations={locations}
                 products={products}
+                parsFieldsReady={parsFieldsReady}
                 packFormats={packFormats}
                 measureUnits={measureUnits}
                 actorLevel={actorLevel}

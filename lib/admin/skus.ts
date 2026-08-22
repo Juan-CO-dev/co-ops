@@ -73,6 +73,12 @@ export interface SkuView {
   active: boolean;
   /** Taxonomy class (0157): raw | packaging | cleaning | misc. */
   skuClass: SkuClass;
+  /** Cushion policy class (0182). Deliberately un-enumerated free text; the percentages
+   *  live in lib/dynamic-pars-shared.ts CUSHION_BY_CLASS. Null until 0182 + authoring. */
+  cushionClass: string | null;
+  /** The par quantum in order units (0182). Null = inferred by parStepFor() from the
+   *  standing pars' grain — the column is the override, the inference is the bootstrap. */
+  parStep: number | null;
 }
 
 /** A registry option (pack format or measure unit). */
@@ -147,6 +153,30 @@ function normalizePar(v: number | null | undefined, field: string): number | nul
   return v;
 }
 
+/** cushion_class (0182): trimmed to ≤40 chars, or null. Deliberately NOT an enum — the
+ *  vocabulary is expected to grow (plan D6, the 0177 precedent), so the only rule is
+ *  "a short label or nothing". */
+function normalizeCushionClass(v: string | null | undefined): string | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v !== "string") throw new AdminSkuError(400, "invalid_cushion_class", "Cushion class must be text");
+  const t = v.trim();
+  if (!t) return null;
+  if (t.length > 40) {
+    throw new AdminSkuError(400, "invalid_cushion_class", "Cushion class must be 40 characters or fewer");
+  }
+  return t;
+}
+
+/** par_step (0182): null clears (→ inferred by parStepFor); a value must be finite > 0,
+ *  matching the DDL CHECK so the app never hands Postgres a row it will reject. */
+function normalizeParStep(v: number | null | undefined): number | null {
+  if (v === null || v === undefined) return null;
+  if (!Number.isFinite(v) || v <= 0) {
+    throw new AdminSkuError(400, "invalid_par_step", "Par step must be a positive number");
+  }
+  return v;
+}
+
 /** avg_oz_per_each: null clears; a value must be a positive number. */
 function normalizeAvgOzPerEach(v: number | null | undefined): number | null {
   if (v === null || v === undefined) return null;
@@ -201,11 +231,51 @@ interface DbSkuRow {
   notes: string | null;
   active: boolean | null;
   sku_class: SkuClass | null;
+  // 0182 (GATE M1). Absent from the select until the migration applies — hence optional.
+  cushion_class?: string | null;
+  par_step?: number | string | null;
 }
 
 // sku_class rides the STAGED 0157 migration (merges with it in this PR).
 const SKU_COLS =
   "id, vendor_id, location_id, name, pack_format, units_per_pack, each_size, each_measure, each_container_label, item_number, source_url, lead_time_days, weekday_par, weekend_par, notes, active, avg_oz_per_each, sku_class";
+
+// ── The 0182 ordering-rhythm columns (Dynamic Pars Phase 1, Task 1.6) ──────────
+//
+// cushion_class + par_step do not exist until migration 0182 (GATE M1) is applied, and
+// PostgREST rejects the WHOLE select when one column is missing — so naming them
+// unconditionally in SKU_COLS would 500 /admin/skus and /admin/vendors/[id] for every
+// deploy between this PR and the gate. They are therefore probe-gated exactly as
+// countProductAllocationReady gates its column (lib/counts.ts): probe once, cache ONLY
+// the true answer, re-probe while false, warn once. Pre-apply the two fields simply read
+// null and the form group does not render; post-apply the surface lights itself with no
+// redeploy. This is the plan's own pre-apply-degradation requirement applied to Task 1.6.
+const SKU_PARS_COLS = "cushion_class, par_step";
+
+let skuParsColumnsReady = false;
+let skuParsPendingLogged = false;
+
+/** True once vendor_items carries the 0182 ordering-rhythm columns. */
+export async function parsColumnsReady(): Promise<boolean> {
+  if (skuParsColumnsReady) return true;
+  const sb = getServiceRoleClient();
+  const { error } = await sb.from("vendor_items").select("par_step").limit(1);
+  if (error) {
+    if (!skuParsPendingLogged) {
+      skuParsPendingLogged = true;
+      console.warn(
+        `[skus] cushion_class / par_step are DORMANT — migration 0182 (GATE M1) is not applied yet: ${error.message}`,
+      );
+    }
+    return false;
+  }
+  skuParsColumnsReady = true;
+  return true;
+}
+
+async function skuCols(): Promise<string> {
+  return (await parsColumnsReady()) ? `${SKU_COLS}, ${SKU_PARS_COLS}` : SKU_COLS;
+}
 
 function toNum(v: number | string | null): number | null {
   if (v === null) return null;
@@ -265,6 +335,9 @@ async function hydrateSkus(rows: DbSkuRow[]): Promise<SkuView[]> {
     notes: r.notes,
     active: r.active ?? true, // nullable in DB → treat null as active
     skuClass: r.sku_class ?? "raw", // default to raw (matches the 0157 column default)
+    // Absent (undefined) pre-0182, null post-0182-but-unauthored — both read as null.
+    cushionClass: r.cushion_class ?? null,
+    parStep: toNum(r.par_step ?? null),
   }));
 }
 
@@ -282,8 +355,9 @@ export async function loadSkus(
   requireLevel(actor, SKU_READ_MIN);
   const sb = getServiceRoleClient();
 
+  const cols = await skuCols();
   const rows = await selectAllRows<DbSkuRow>((from, to) => {
-    let query = sb.from("vendor_items").select(SKU_COLS);
+    let query = sb.from("vendor_items").select(cols);
     if (opts && "vendorId" in opts) {
       if (opts.vendorId === null) {
         query = query.is("vendor_id", null);
@@ -549,6 +623,11 @@ export interface UpdateSkuChanges {
   skuClass?: SkuClass;
   /** Product membership (0179). Absent = untouched; null = back to singleton. */
   productId?: string | null;
+  /** Ordering rhythm (0182). Absent = untouched; null clears. The form OMITS both keys
+   *  while the migration is unapplied, and updateSku refuses them loudly if one arrives
+   *  anyway — a dropped write would be a silent failure. */
+  cushionClass?: string | null;
+  parStep?: number | null;
 }
 
 export async function updateSku(
@@ -597,6 +676,22 @@ export async function updateSku(
   // key is absent on every payload that predates the product picker, so an edit
   // made before migration 0179 lands never touches the column.
   if (changes.productId !== undefined) update.product_id = changes.productId;
+
+  // Ordering rhythm (0182, GATE M1). Refuse LOUDLY rather than dropping the write: the
+  // form omits these keys entirely while the columns are absent, so an arriving key means
+  // a stale client or a hand-rolled request, and silently ignoring it would look like a
+  // successful save that changed nothing.
+  if (changes.cushionClass !== undefined || changes.parStep !== undefined) {
+    if (!(await parsColumnsReady())) {
+      throw new AdminSkuError(
+        503,
+        "pars_schema_pending",
+        "Migration 0182 (GATE M1) has not been applied yet",
+      );
+    }
+    if (changes.cushionClass !== undefined) update.cushion_class = normalizeCushionClass(changes.cushionClass);
+    if (changes.parStep !== undefined) update.par_step = normalizeParStep(changes.parStep);
+  }
 
   if (Object.keys(update).length === 0) return;
   update.updated_by = actor.user.id;

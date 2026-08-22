@@ -30,6 +30,10 @@ const UPDATE_KEYS = [
   "skuClass",
   // Product membership (0179). Key-present null = detach to implicit singleton.
   "productId",
+  // Ordering rhythm (0182). Key-present null clears; the form omits both keys entirely
+  // until the migration applies, and the lib 503s if one arrives while it has not.
+  "cushionClass",
+  "parStep",
 ] as const;
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -131,6 +135,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if ("productId" in b) {
       if (b.productId !== null && typeof b.productId !== "string") return jsonError(400, "invalid_payload", { field: "productId" });
       changes.productId = b.productId as string | null;
+    }
+    if ("cushionClass" in b) {
+      if (b.cushionClass !== null && typeof b.cushionClass !== "string") return jsonError(400, "invalid_payload", { field: "cushionClass" });
+      changes.cushionClass = b.cushionClass as string | null;
+    }
+    if ("parStep" in b) {
+      if (b.parStep !== null && typeof b.parStep !== "number") return jsonError(400, "invalid_payload", { field: "parStep" });
+      changes.parStep = b.parStep as number | null;
     }
 
     await updateSku(ctx, { id, changes });
