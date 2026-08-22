@@ -2585,3 +2585,26 @@ Every clause of every layer, mapped to the task that implements or guards it. La
 **Recon-uncertainty dispositions:** ① the coveredDays boundary convention (evening-walk/morning-delivery) rides as authored — test-pinned, one-flag flippable, and flagged for Juan's one-word confirm at Phase-4 smoke (not blocking) · ②③④⑤ = builder-verified in-phase as flagged; ④'s degrade-to-never-firing is safe and its emptiness gets logged in the reason lane's aggregate.
 
 **Standing gates:** migrations at 🔒M1/🔒M2 on Juan's word only. Phase success = reason-lane completeness (the product), not suggestion volume. The auto tier's live population is 1 SKU — say so in every phase PR so nobody mistakes shadow-quiet for broken.
+
+---
+
+## LEAD RULINGS — Phase 2 close (CC, 2026-08-22; PR #289)
+
+The Phase-2 builder surfaced three places where a task's **bullet list** and that same task's **code block** disagree, and implemented the code blocks rather than improvising. Ruled here. Where a ruling contradicts the task text above, **this section wins** — the task text is not corrected in place, so read the two together.
+
+**F1 — the band is a GATE. Task 2.8's bullet at ~line 1468 is OVERRULED; the dead clip code is removed.**
+The spec's original layer governs: *"Bigger moves are suggestions… Nothing beyond the band ever moves itself,"* rendered at the FULL target (*"par 3 → suggested 5"*). The bullet's *"clamped to 2.5, re-rounded to 2 … assert 12, never 13"* invented partial application, which no spec layer authorises — and its arithmetic is unreachable anyway (`roundToStep(2.5, 1)` is 3, not 2). There is no auto-move toward an unreachable target: within the band the rounded target IS the move; beyond it, a suggestion at the honest number.
+
+**The builder's "P2-2 is satisfied vacuously" reading is wrong on substance, and the distinction matters.** P2-2's hazard was a band test on the **raw** delta: par 10 with a raw target of 12.5 gives a raw Δ2.5 that passes a ≤2.5 cap, and only *then* rounds to 13 — a 30% move under a 25% band. `applyGuardStack` tests the **rounded** delta (`stabilized` is already step-rounded), so the hazard is structurally closed. **"The cap clamps AFTER rounding" means round-first-then-test**, and the implementation honours it non-vacuously. Only the `Math.min` clip expression was vacuous, and it is deleted. Regression case pinned: `currentPar 10, step 1, targetUnits 12.5` → suggestion at 13, `suppressedBy: "band"`, never auto.
+
+**F2 — REAL DEFECT, fixed: `stabilizeSuggestion`'s comparison is `<=`, not `<`.**
+r3's *"the walker may not read 12 → 1 Monday and 12 → 2 Tuesday"* is behavioural text, not colour: that is a **one-step wobble and it must be damped**. Task 2.8's bullet (*"5 vs 5.25 at step 0.25 keeps 5"*) agrees; the code block's strict `<` is the error, and **the task text wins**. Accepted and stated cost: a *permanent* one-step drift renders stale until it reaches two steps — inherent to any deadband wide enough to damp one-step wobble, and one step is inside the band's own noise floor.
+
+**F3 — velocity gets STAGE-LENGTH cause attribution.**
+When the series ends shorter than `VELOCITY_MIN_PERSISTENCE_DAYS`, name the **first filter stage that took it below `need`** — the stage whose input was sufficient and whose output was not. Signals clamp → `signals_too_new`; else recipe filter → `recipe_edited`; else (suspect exclusion, or a series that simply arrived thin) → `no_persistence`. The ledger's velocity reasons are read as errands, so a wrong cause is a wrong errand.
+
+**Naming — the canonical name is `computeCoverage`.**
+Task 2.6's code block wins over the Architecture and File-structure tables' `computeCoverageSuggestion`, which is **superseded**. No alias is exported: a second name for one role is the drift this arc exists to end. **Phases 3 and 4 MUST import `computeCoverage`.**
+
+**Task 2.10's "zero imports outside `tests/`" grep — expected hit, not a violation.**
+Phase 1's `components/admin/skus/SkuBuilder.tsx` imports `CUSHION_BY_CLASS` and `parStepFor` (the seeded Task-1.6 primitives), byte-identical at `origin/main`. The check's intent is **zero call sites for PHASE-2 exports**, which holds. Read the close-check that way in future phases.
