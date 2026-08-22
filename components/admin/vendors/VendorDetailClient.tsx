@@ -31,6 +31,8 @@ import { VENDOR_COLOR_PALETTE } from "@/lib/admin/vendors-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { postJson, resolveErrorKey, ORDERING_METHODS } from "./shared";
 import { MultiSelectChips } from "./MultiSelectChips";
+import { VendorRhythmCard } from "./VendorRhythmCard";
+import type { RhythmPairView, RhythmSkipView } from "@/lib/vendor-rhythm";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import type { RegistryOption, MeasureUnitOption, SkuView } from "@/lib/admin/skus";
 import type { SkuFormLocationOption, SkuFormProductOption } from "@/components/admin/skus/SkuBuilder";
@@ -51,6 +53,9 @@ export function VendorDetailClient({
   categories,
   orderTypes,
   cutoffs,
+  rhythmPairs,
+  rhythmSkips,
+  rhythmSchemaReady,
   locations,
   skus,
   skuLocations,
@@ -72,6 +77,12 @@ export function VendorDetailClient({
   orderTypes: OrderTypeView[];
   /** VO-7: this vendor's active order cutoffs. */
   cutoffs: VendorCutoff[];
+  /** Dynamic Pars P1: active order→delivery pairs, all shops. Empty while 0182 is pending. */
+  rhythmPairs: RhythmPairView[];
+  /** Dynamic Pars P1: active vendor-down windows. Empty while 0182 is pending. */
+  rhythmSkips: RhythmSkipView[];
+  /** False until migration 0182 (GATE M1) is applied — the card renders its own note. */
+  rhythmSchemaReady: boolean;
   /** Active locations (Both/each) for the cutoff + transmission location selects. */
   locations: SkuFormLocationOption[];
   skus: SkuView[];
@@ -115,6 +126,20 @@ export function VendorDetailClient({
         requestStepUp={requestStepUp}
       />
       <ScheduleCard vendor={vendor} canEdit={canEditSchedule} requestStepUp={requestStepUp} />
+      {/* Delivery rhythm (Dynamic Pars Phase 1) — the per-location order→delivery PAIRS.
+          Sits directly beneath the schedule card because it answers the question that
+          card's two independent day-strips structurally cannot: which order lands on
+          which truck. Degrades to a "not switched on yet" note until migration 0182. */}
+      <VendorRhythmCard
+        vendorId={vendor.id}
+        pairs={rhythmPairs}
+        skips={rhythmSkips}
+        locations={locations}
+        schemaReady={rhythmSchemaReady}
+        canAppend={canAppend}
+        canManage={canManage}
+        requestStepUp={requestStepUp}
+      />
       {actorLevel >= 7 ? (
         <TransmissionCard
           vendor={vendor}

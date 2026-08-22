@@ -31,6 +31,7 @@ import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
+import { deliveryDowFor } from "@/lib/vendor-rhythm-shared";
 import type { RhythmRow, RhythmSkip } from "@/lib/vendor-rhythm-shared";
 
 type ServiceClient = ReturnType<typeof getServiceRoleClient>;
@@ -226,7 +227,7 @@ export async function loadVendorRhythmPairs(vendorId: string): Promise<RhythmPai
     locationId: r.location_id,
     orderDow: r.order_dow,
     leadDays: r.lead_days,
-    deliveryDow: (r.order_dow + r.lead_days) % 7,
+    deliveryDow: deliveryDowFor(r.order_dow, r.lead_days),
   }));
 }
 

@@ -72,6 +72,25 @@ export function addDaysEt(dateEt: string, n: number): string {
 }
 
 /**
+ * A reference week, Sunday-first, whose dows are 0..6 by construction (2026-08-23 is a
+ * Sunday). It exists so the dow arithmetic below can run through `addDaysEt` rather than
+ * inventing a second modulo.
+ */
+const REFERENCE_WEEK_SUNDAY = "2026-08-23";
+
+/**
+ * The delivery dow an authored pair produces — the SAME arithmetic the DB's
+ * `vendor_delivery_rhythm.delivery_dow` GENERATED column performs, expressed once here so
+ * the authoring UI can preview it live and the loader can hydrate it without either one
+ * re-deriving it. Routed through addDaysEt + etDayFromDate so there is exactly one place
+ * in this module that knows how a calendar advances.
+ */
+export function deliveryDowFor(orderDow: number, leadDays: number): number {
+  const orderDate = addDaysEt(REFERENCE_WEEK_SUNDAY, orderDow);
+  return etDayFromDate(addDaysEt(orderDate, leadDays)).dow;
+}
+
+/**
  * The governing cutoff for a SPECIFIC order dow at a location. Location-scoped rows beat
  * all-shops rows; among the survivors the EARLIEST time governs (it is the binding
  * deadline). Returns the bare time string, or null when nothing governs that dow.

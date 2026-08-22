@@ -14,6 +14,7 @@ import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getVendor, loadCategories, loadOrderTypes, loadVendorCutoffs } from "@/lib/admin/vendors";
+import { loadVendorRhythmPairs, loadVendorRhythmSkips, rhythmSchemaReady } from "@/lib/vendor-rhythm";
 import { loadVendorOutstandingCredits } from "@/lib/credits";
 import { formatCents } from "@/lib/i18n/format";
 import { loadSkus, loadPackFormats, loadMeasureUnits, loadLocationSkuSettings } from "@/lib/admin/skus";
@@ -38,18 +39,36 @@ export default async function AdminVendorDetailPage({
   const level = ROLES[auth.user.role].level;
 
   const sb = getServiceRoleClient();
-  const [vendor, categories, orderTypes, skus, packFormats, measureUnits, locRes, outstandingCredits, cutoffs] =
-    await Promise.all([
-      getVendor(auth, id),
-      loadCategories(auth),
-      loadOrderTypes(auth),
-      loadSkus(auth, { vendorId: id }),
-      loadPackFormats(auth),
-      loadMeasureUnits(auth),
-      sb.from("locations").select("id, name").eq("active", true).order("name"),
-      loadVendorOutstandingCredits(auth, id), // AGM+ (matches this page's ≥6 gate)
-      loadVendorCutoffs(auth, id), // VO-7 cutoffs (AGM+)
-    ]);
+  const [
+    vendor,
+    categories,
+    orderTypes,
+    skus,
+    packFormats,
+    measureUnits,
+    locRes,
+    outstandingCredits,
+    cutoffs,
+    // Dynamic Pars P1: the rhythm surface. All three degrade to empty/false while
+    // migration 0182 (GATE M1) is unapplied — the probe never throws, so this page
+    // renders identically before and after the gate.
+    rhythmPairs,
+    rhythmSkips,
+    rhythmReady,
+  ] = await Promise.all([
+    getVendor(auth, id),
+    loadCategories(auth),
+    loadOrderTypes(auth),
+    loadSkus(auth, { vendorId: id }),
+    loadPackFormats(auth),
+    loadMeasureUnits(auth),
+    sb.from("locations").select("id, name").eq("active", true).order("name"),
+    loadVendorOutstandingCredits(auth, id), // AGM+ (matches this page's ≥6 gate)
+    loadVendorCutoffs(auth, id), // VO-7 cutoffs (AGM+)
+    loadVendorRhythmPairs(id),
+    loadVendorRhythmSkips(id),
+    rhythmSchemaReady(sb),
+  ]);
   if (!vendor) notFound();
   const skuLocations = (locRes.data ?? []).map((r) => ({
     id: (r as { id: string }).id,
@@ -142,6 +161,9 @@ export default async function AdminVendorDetailPage({
         categories={categories}
         orderTypes={orderTypes}
         cutoffs={cutoffs}
+        rhythmPairs={rhythmPairs}
+        rhythmSkips={rhythmSkips}
+        rhythmSchemaReady={rhythmReady}
         locations={skuLocations}
         skus={skus}
         skuLocations={skuLocations}

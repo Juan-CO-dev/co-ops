@@ -20,6 +20,7 @@ import {
   addDaysEt,
   cutoffForOrderDay,
   cutoffMinutes,
+  deliveryDowFor,
   nextDeliveryAfter,
   coverageWindow,
   optimizationWalkDate,
@@ -93,6 +94,24 @@ describe("addDaysEt", () => {
 
   it("returns the input unchanged when it is not a parseable date", () => {
     expect(addDaysEt("not-a-date", 1)).toBe("not-a-date");
+  });
+});
+
+// ── deliveryDowFor — the same arithmetic as the DB's GENERATED column ─────────
+
+describe("deliveryDowFor", () => {
+  it("matches ((order_dow + lead_days) % 7) for every legal pair", () => {
+    for (let dow = 0; dow <= 6; dow += 1) {
+      for (let lead = 0; lead <= 14; lead += 1) {
+        expect(deliveryDowFor(dow, lead)).toBe((dow + lead) % 7);
+      }
+    }
+  });
+
+  it("reads the way the card renders it: Monday order + 1-day lead arrives Tuesday", () => {
+    expect(deliveryDowFor(1, 1)).toBe(2);
+    expect(deliveryDowFor(5, 0)).toBe(5); // same-day delivery stays on Friday
+    expect(deliveryDowFor(6, 1)).toBe(0); // Saturday order wraps to Sunday
   });
 });
 
