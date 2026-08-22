@@ -217,10 +217,13 @@ export function VendorRhythmCard({
   };
 
   // Pairs grouped by shop — the whole point of the surface is that the two shops can
-  // legitimately differ, so they are never merged into one list.
-  const byLocation = locations
-    .map((loc) => ({ loc, rows: pairs.filter((p) => p.locationId === loc.id) }))
-    .filter((g) => g.rows.length > 0 || locations.length > 0);
+  // legitimately differ, so they are never merged into one list. EVERY active shop gets a
+  // group, including an empty one: "no rhythm yet for this shop" IS the errand, and a shop
+  // that simply vanished from the list would hide it.
+  const byLocation = locations.map((loc) => ({
+    loc,
+    rows: pairs.filter((p) => p.locationId === loc.id),
+  }));
 
   return (
     <CollapsibleSection
