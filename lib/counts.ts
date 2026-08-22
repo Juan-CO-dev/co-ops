@@ -1306,7 +1306,7 @@ export async function loadOnHandDerived(
   const withProducts = opts.withProducts === true;
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new CountError(404, "not_found", "Location not found");
   const sb = getServiceRoleClient();
-  const salesThrough = await salesLedgerThrough(sb, locationId);
+  const salesThrough = await loadDepletionWatermark(locationId, sb);
 
   // ALL active count events at this location, newest first — every event is a live
   // session (F1: no supersede). We resolve each SKU's anchor across all of them.
@@ -2094,11 +2094,22 @@ async function loadSalesGapDates(
   return gaps;
 }
 
-/** The latest materialized sales business_date at a location (the coverage hint
- *  the counts UI renders: "sales counted through <date>"). Null = no ledger yet. */
-async function salesLedgerThrough(
-  sb: ReturnType<typeof getServiceRoleClient>,
+/**
+ * The latest materialized sales business_date at a location (the coverage hint
+ * the counts UI renders: "sales counted through <date>"). Null = no ledger yet.
+ *
+ * ── ALSO THE DEPLETION WATERMARK (Dynamic Pars, plan D9) ─────────────────────
+ * r3 asks the nightly pars step for "a `depletion_current_through` watermark per
+ * location". This query already IS that fact — one indexed ORDER BY … LIMIT 1 — so it
+ * is EXPORTED under the name the pars engine uses rather than stored a second time. A
+ * stored watermark would be a second opinion about something the ledger already states,
+ * and it would go stale the moment anyone ran a manual backfill.
+ *
+ * Actor-less by design: the caller (the cron) is already the system.
+ */
+export async function loadDepletionWatermark(
   locationId: string,
+  sb: ReturnType<typeof getServiceRoleClient> = getServiceRoleClient(),
 ): Promise<string | null> {
   const { data, error } = await sb.from("toast_daily_depletion")
     .select("business_date")
@@ -2106,7 +2117,7 @@ async function salesLedgerThrough(
     .order("business_date", { ascending: false })
     .limit(1)
     .maybeSingle<{ business_date: string }>();
-  if (error) throw new Error(`salesLedgerThrough: ${error.message}`);
+  if (error) throw new Error(`loadDepletionWatermark: ${error.message}`);
   return data?.business_date ?? null;
 }
 async function sumConsumedOzWindow(

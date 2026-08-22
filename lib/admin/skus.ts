@@ -42,6 +42,8 @@ import type { SkuClass } from "@/lib/admin/catalog-shared";
 // SKU form); re-export so server consumers keep importing from lib/admin/skus.
 export { SKU_CLASSES, isSkuClass } from "@/lib/admin/catalog-shared";
 import { isSkuClass } from "@/lib/admin/catalog-shared";
+import { parWriteColumns, type DayClass } from "@/lib/dynamic-pars-shared";
+import { parAutoLaneReady } from "@/lib/dynamic-pars-probes";
 
 // ── Authority floors (the lib is the authority per-action) ──────────────────
 export const SKU_READ_MIN = 6; // AGM+ — view the catalog + registries
@@ -850,19 +852,59 @@ export async function upsertLocationSkuSettings(
   if (!sku) throw new AdminSkuError(404, "sku_not_found", "SKU not found");
   await assertLocationActive(input.locationId);
 
-  // Find the existing (location, sku) row (the UNIQUE guarantees at most one).
+  // Find the existing (location, sku) row (the UNIQUE guarantees at most one). The two par
+  // columns come back too: a slot is "directly edited" only when its VALUE CHANGED, and
+  // that is what clears a pin (r3 — a resubmit of the same number is not an edit).
   const { data: existing, error: exErr } = await sb
     .from("location_sku_settings")
-    .select("id")
+    .select("id, weekday_par, weekend_par")
     .eq("location_id", input.locationId)
     .eq("sku_id", input.skuId)
-    .maybeSingle<{ id: string }>();
+    .maybeSingle<{ id: string; weekday_par: number | string | null; weekend_par: number | string | null }>();
   if (exErr) throw new Error(`upsertLocationSkuSettings lookup failed: ${exErr.message}`);
+
+  // ── THE MACHINE LANE, THROUGH THE ONE AUTHORITY (Dynamic Pars, Task 3.8) ──────
+  //
+  // THE AUTO COLUMNS ARE STRUCTURALLY UNREACHABLE FROM THE OPERATOR (r3's machine-lane
+  // bypass). This function's payload is an explicit field list that names only
+  // active_override and the two HUMAN par columns — there is no route by which a caller
+  // can set an auto value. What the operator's edit DOES to the machine's lane is decided
+  // by `parWriteColumns({ kind: "admin", … })` in the pure core, the same function the
+  // walker's accept/revert and the (dark) machine writer resolve their columns through:
+  // for kind "admin" every auto value it returns is NULL, for every input.
+  //
+  // WHY THE COLUMN HALF AND NOT THE ASYNC AUTHORITY. This function owns a row the walker
+  // lanes do not: it writes `active_override` and BOTH par slots in one upsert and must
+  // decide insert-vs-update. Delegating to the per-slot async writer would mean up to
+  // three UPDATEs racing on one row and three `vendor_item.update` audit rows for one
+  // edit. r3 asks that ONE PLACE DECIDE what a par write does to the machine lane, the
+  // baseline and the pin — that place is parWriteColumns, and it decides for both callers.
+  //
+  // Probe-gated: pre-0183 the auto columns do not exist, so the payload is byte-identical
+  // to the one this function shipped with.
+  const autoLaneReady = await parAutoLaneReady(sb);
+  const editedSlots: DayClass[] = [];
+  if (weekdayPar !== toNum(existing?.weekday_par ?? null)) editedSlots.push("weekday");
+  if (weekendPar !== toNum(existing?.weekend_par ?? null)) editedSlots.push("weekend");
+  const autoPatch: Record<string, number | string | null> = {};
+  if (autoLaneReady) {
+    for (const dayClass of editedSlots) {
+      // r3: a human blanking their own override also NULLS the auto column on that slot —
+      // blank-to-global must not resurrect a stale machine number the human never saw.
+      const effect = parWriteColumns({
+        kind: "admin",
+        dayClass,
+        value: dayClass === "weekend" ? weekendPar : weekdayPar,
+      });
+      Object.assign(autoPatch, effect.autoLane);
+    }
+  }
 
   const payloadFields = {
     active_override: activeOverride,
     weekday_par: weekdayPar,
     weekend_par: weekendPar,
+    ...autoPatch,
     updated_by: actor.user.id,
     updated_at: new Date().toISOString(),
   };
@@ -898,6 +940,9 @@ export async function upsertLocationSkuSettings(
       active_override: activeOverride,
       weekday_par: weekdayPar,
       weekend_par: weekendPar,
+      // Which slots the human DIRECTLY edited — the grain that clears a pin (r3).
+      edited_slots: editedSlots,
+      cleared_auto_slots: autoLaneReady ? editedSlots : [],
     },
     ipAddress: null,
     userAgent: null,
