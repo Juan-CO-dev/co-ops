@@ -15,7 +15,7 @@ import { requireSessionFromHeaders } from "@/lib/session";
 import { ROLES } from "@/lib/roles";
 import { serverT } from "@/lib/i18n/server";
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { loadSkus, loadPackFormats, loadMeasureUnits, loadLocationSkuSettings } from "@/lib/admin/skus";
+import { loadSkus, loadPackFormats, loadMeasureUnits, loadLocationSkuSettings, parsColumnsReady } from "@/lib/admin/skus";
 import { listProducts, ProductError, type ProductView } from "@/lib/products";
 import { loadVendors } from "@/lib/admin/vendors";
 import { loadCurrentSkuPrices, computeSkuCostPerOz, loadSkuUsageMap, loadSkuReceivingLedger, loadSkuConsumption, type SkuConsumption } from "@/lib/admin/cost";
@@ -126,6 +126,10 @@ export default async function AdminSkusPage() {
     if (unverified) chainUnverifiedBySku[skuId] = true;
   }
 
+  // Ordering rhythm (0182, GATE M1). False until the migration applies — the SKU form's
+  // Ordering-rhythm group then does not render and neither key is sent.
+  const parsReady = await parsColumnsReady();
+
   return (
     <div>
       <PageHeader
@@ -147,6 +151,7 @@ export default async function AdminSkusPage() {
         overlaysBySku={overlaysBySku}
         products={products}
         productIdBySku={productIdBySku}
+        parsFieldsReady={parsReady}
         actorLevel={level}
         canManage={level >= 7}
       />

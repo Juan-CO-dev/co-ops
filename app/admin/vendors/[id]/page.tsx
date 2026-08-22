@@ -17,7 +17,7 @@ import { getVendor, loadCategories, loadOrderTypes, loadVendorCutoffs } from "@/
 import { loadVendorRhythmPairs, loadVendorRhythmSkips, rhythmSchemaReady } from "@/lib/vendor-rhythm";
 import { loadVendorOutstandingCredits } from "@/lib/credits";
 import { formatCents } from "@/lib/i18n/format";
-import { loadSkus, loadPackFormats, loadMeasureUnits, loadLocationSkuSettings } from "@/lib/admin/skus";
+import { loadSkus, loadPackFormats, loadMeasureUnits, loadLocationSkuSettings, parsColumnsReady } from "@/lib/admin/skus";
 import { listProducts, ProductError, type ProductView } from "@/lib/products";
 import { loadCurrentSkuPrices, computeSkuCostPerOz, loadSkuUsageMap, loadSkuReceivingLedger, loadSkuConsumption, type SkuConsumption } from "@/lib/admin/cost";
 import { skuPackComplete, skuReadiness, type Readiness } from "@/lib/readiness";
@@ -55,6 +55,7 @@ export default async function AdminVendorDetailPage({
     rhythmPairs,
     rhythmSkips,
     rhythmReady,
+    parsReady,
   ] = await Promise.all([
     getVendor(auth, id),
     loadCategories(auth),
@@ -68,6 +69,7 @@ export default async function AdminVendorDetailPage({
     loadVendorRhythmPairs(id),
     loadVendorRhythmSkips(id),
     rhythmSchemaReady(sb),
+    parsColumnsReady(),
   ]);
   if (!vendor) notFound();
   const skuLocations = (locRes.data ?? []).map((r) => ({
@@ -178,6 +180,7 @@ export default async function AdminVendorDetailPage({
         skuOverlays={overlaysBySku}
         skuProducts={products}
         skuProductIdBySku={productIdBySku}
+        parsFieldsReady={parsReady}
         actorLevel={level}
       />
     </div>

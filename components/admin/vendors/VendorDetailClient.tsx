@@ -70,6 +70,7 @@ export function VendorDetailClient({
   skuOverlays,
   skuProducts,
   skuProductIdBySku,
+  parsFieldsReady,
   actorLevel,
 }: {
   vendor: VendorView;
@@ -103,6 +104,8 @@ export function VendorDetailClient({
   skuProducts: SkuFormProductOption[];
   /** skuId -> its product (0179), seeded from the registry. */
   skuProductIdBySku: Record<string, string>;
+  /** True once migration 0182 (GATE M1) applied — gates the SKU form's Ordering-rhythm group. */
+  parsFieldsReady: boolean;
   actorLevel: number;
 }) {
   const { t } = useTranslation();
@@ -180,6 +183,7 @@ export function VendorDetailClient({
         overlaysBySku={skuOverlays}
         products={skuProducts}
         productIdBySku={skuProductIdBySku}
+        parsFieldsReady={parsFieldsReady}
         actorLevel={actorLevel}
         canManage={canManage}
       />
