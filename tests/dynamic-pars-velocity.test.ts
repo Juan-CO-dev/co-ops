@@ -233,7 +233,7 @@ describe("computeVelocityRatio — the signals clamp (plan D4)", () => {
     expect(res.ratio).toBe(1.25);
   });
 
-  it("starves the series when the marker is too new to leave a run", () => {
+  it("names signals_too_new when the marker itself starves the series", () => {
     const res = computeVelocityRatio(
       input({
         series: series([100, 100, 100, 100, 140, 140, 140]),
@@ -242,10 +242,43 @@ describe("computeVelocityRatio — the signals clamp (plan D4)", () => {
     );
     expect(res.applied).toBe(false);
     expect(res.ratio).toBe(1);
-    // PHASE-2 FLAG F3: Task 2.4's bullet names `signals_too_new` for this case, but the task's
-    // own code block reaches it only when signalsStartAt is NULL; a clamp that starves the
-    // series falls through to the persistence verdict. Pinned as the code behaves, flagged
-    // for the lead — the two candidate fixes are one line each.
+    expect(res.reason).toBe("signals_too_new");
+  });
+});
+
+describe("computeVelocityRatio — stage attribution when the series is too short", () => {
+  // LEAD RULING F3: name the FIRST filter stage that took the series below the persistence
+  // requirement. A wrong cause here becomes a wrong errand on the ledger.
+
+  it("blames the SIGNALS clamp when it is the stage that cut the series short", () => {
+    const res = computeVelocityRatio(
+      input({ series: series([100, 100, 100, 140, 140]), signalsStartAt: WEEKDAYS[3]! }),
+    );
+    expect(res.reason).toBe("signals_too_new");
+  });
+
+  it("blames the RECIPE edit when the signals clamp left enough and the edit did not", () => {
+    const res = computeVelocityRatio(
+      input({
+        series: series([100, 100, 100, 140, 140]),
+        signalsStartAt: WEEKDAYS[0]!, // leaves all five
+        recipeEditedAt: WEEKDAYS[3]!, // leaves one
+      }),
+    );
+    expect(res.reason).toBe("recipe_edited");
+  });
+
+  it("blames PERSISTENCE when the suspect exclusion is what emptied the run", () => {
+    const res = computeVelocityRatio(
+      input({ series: series([100, 100, 140, 140, 140], [2, 3, 4]) }),
+    );
+    expect(res.reason).toBe("no_persistence");
+  });
+
+  it("blames PERSISTENCE when the series simply arrived thin — no stage dropped anything", () => {
+    // The signals clamp and the recipe filter both pass everything through here, so neither
+    // may be blamed: two days of history is the data's shape, not a filter's doing.
+    const res = computeVelocityRatio(input({ series: series([140, 140]) }));
     expect(res.reason).toBe("no_persistence");
   });
 });

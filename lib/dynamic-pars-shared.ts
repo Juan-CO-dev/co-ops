@@ -374,21 +374,32 @@ const NO_VELOCITY = (reason: VelocityGateReason): VelocitySignal => ({
 export function computeVelocityRatio(input: VelocityInput): VelocitySignal {
   if (input.perOrderUnitOz == null || input.perOrderUnitOz <= 0) return NO_VELOCITY("volume_floor");
 
+  const need = DYNAMIC_PARS.VELOCITY_MIN_PERSISTENCE_DAYS;
+
   let series = [...input.series];
+  const beforeFilters = series.length;
   if (input.signalsStartAt != null) {
     series = series.filter((d) => d.dateEt >= input.signalsStartAt!);
   } else {
     return NO_VELOCITY("signals_too_new"); // no marker at all => nothing is vettable yet.
   }
+  const afterSignals = series.length;
   if (input.recipeEditedAt != null) {
     // A recipe edit changes what this SKU MEANS; the series before it is a different signal.
     series = series.filter((d) => d.dateEt > input.recipeEditedAt!);
   }
+  const afterRecipe = series.length;
   series = series.filter((d) => !d.suspect).slice(-DYNAMIC_PARS.VELOCITY_LOOKBACK_DAYS);
 
-  const need = DYNAMIC_PARS.VELOCITY_MIN_PERSISTENCE_DAYS;
+  // STAGE ATTRIBUTION (LEAD RULING F3, Phase-2 close). When the series ends up too short to
+  // judge, name the FIRST filter stage that took it below `need` — i.e. the stage whose input
+  // was sufficient and whose output was not. A series that arrived thin was nobody's fault but
+  // the data's, and a suspect-day exclusion that breaks a run is a genuine persistence verdict.
+  // The ledger's velocity reasons are read as errands, so a wrong cause here is a wrong errand.
   if (series.length < need) {
-    return NO_VELOCITY(input.recipeEditedAt != null ? "recipe_edited" : "no_persistence");
+    if (beforeFilters >= need && afterSignals < need) return NO_VELOCITY("signals_too_new");
+    if (afterSignals >= need && afterRecipe < need) return NO_VELOCITY("recipe_edited");
+    return NO_VELOCITY("no_persistence");
   }
 
   // Residual per day against its OWN day-class trend.
@@ -681,9 +692,19 @@ export function generationIdFor(
   return `${locationId}:${skuId}:${dayClass}:${currentPar ?? "none"}>${suggestedPar}`;
 }
 
-/** Keep a standing suggestion unless the candidate is at least `SUGGESTION_DEADBAND_STEPS`
- *  steps away from it. Suggestion-lane hysteresis (r3): a number that wobbles nightly is a
- *  number a manager learns to ignore, which is the same failure as a thrashing par. */
+/**
+ * Keep a standing suggestion unless the candidate is MORE than `SUGGESTION_DEADBAND_STEPS`
+ * steps away from it. Suggestion-lane hysteresis (r3): a number that wobbles nightly is a
+ * number a manager learns to ignore, which is the same failure as a thrashing par.
+ *
+ * The comparison is `<=`, so a ONE-step wobble is damped (LEAD RULING F2, Phase-2 close).
+ * r3's sentence is behavioural, not colour: "the walker may not read 12 -> 1 Monday and
+ * 12 -> 2 Tuesday" — that is exactly a one-step wobble, and it must not render.
+ *
+ * ACCEPTED COST, stated: a PERMANENT one-step drift stays unrendered until it grows to two
+ * steps. That is inherent to any deadband wide enough to damp one-step wobble; r3 chose
+ * legibility, and one step is inside the band's own noise floor anyway.
+ */
 export function stabilizeSuggestion(
   priorSuggestedPar: number | null,
   candidate: number,
@@ -691,7 +712,7 @@ export function stabilizeSuggestion(
 ): number {
   if (priorSuggestedPar == null) return candidate;
   const deadband = DYNAMIC_PARS.SUGGESTION_DEADBAND_STEPS * parStep;
-  return Math.abs(candidate - priorSuggestedPar) < deadband ? priorSuggestedPar : candidate;
+  return Math.abs(candidate - priorSuggestedPar) <= deadband ? priorSuggestedPar : candidate;
 }
 
 /**
@@ -768,16 +789,23 @@ export function applyGuardStack(input: GuardInput): GuardOutcome {
     };
   }
 
-  // THE BAND, in par steps. Magnitude = max(1 step, 25% of par); the cap clamps AFTER the
-  // rounding (projects r3 P2-2: par 10 -> target 13 rounds to +3, which is a 30% move).
+  // THE BAND, in par steps. Magnitude = max(1 step, 25% of par). Two facts, both load-bearing
+  // (LEAD RULING F1, Phase-2 close):
+  //
+  //  1. THE BAND TEST RUNS ON THE ROUNDED DELTA, and that IS "the cap clamps AFTER rounding"
+  //     (projects r3 P2-2). `stabilized` is already step-rounded, so `delta` below is the
+  //     delta that would actually be written. P2-2's hazard was testing the RAW delta: par 10
+  //     with a raw target of 12.5 gives a raw delta of 2.5 which passes a <=2.5 cap, and only
+  //     THEN rounds to 13 — a 30% move that slipped a 25% cap. Rounding first structurally
+  //     closes that hole; there is nothing left to clip afterwards.
+  //  2. BEYOND THE BAND IS A SUGGESTION AT THE FULL, UN-CLIPPED TARGET. "Bigger moves are
+  //     suggestions… Nothing beyond the band ever moves itself" (spec, original layer) —
+  //     the machine does not part-apply toward a target it may not reach, and the manager
+  //     sees the honest number rather than a clipped one.
   const maxDelta = Math.max(step, DYNAMIC_PARS.BAND_PCT * current);
-  const rawDelta = stabilized - current;
-  const clamped = Math.sign(rawDelta) * Math.min(Math.abs(rawDelta), maxDelta);
-  const bandedDelta = roundToStep(clamped, step);
-  const withinBand = Math.abs(rawDelta) <= maxDelta + 1e-9;
+  const delta = stabilized - current;
+  const withinBand = Math.abs(delta) <= maxDelta + 1e-9;
 
-  // Beyond the band => a SUGGESTION at the full target. Nothing beyond the band ever moves
-  // itself; the manager sees the honest number, not a clipped one.
   if (!withinBand) {
     return {
       tier: "suggestion", suggestedPar: stabilized, outcome: "suppressed",
@@ -785,8 +813,9 @@ export function applyGuardStack(input: GuardInput): GuardOutcome {
     };
   }
 
-  // Never below one positive step, and never to zero.
-  const candidate = Math.max(round6(current + bandedDelta), step);
+  // Within the band the target IS the move — no clipping, by fact 2 above. Floored so a par
+  // never lands below one positive step, and never on zero.
+  const candidate = Math.max(stabilized, step);
   if (candidate === current) {
     return {
       tier: "none", suggestedPar: null, outcome: "advisory_null", suppressedBy: null,

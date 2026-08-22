@@ -172,26 +172,31 @@ describe("applyGuardStack — the band, in PAR STEPS (r2's THE FIX)", () => {
   });
 
   it("sends a BEYOND-BAND move to the suggestion lane at the honest target", () => {
-    // par 10, step 1, target 13: Δ3 against a cap of max(1, 2.5) = 2.5.
-    //
-    // ⚠ PHASE-2 FLAG F1 (lead ruling needed). Task 2.8's bullet for this exact example says
-    // "clamped to 2.5, re-rounded to 2 … assert 12, never 13" — i.e. the machine makes a
-    // CLIPPED auto move. Task 2.8's own code block instead treats the band as a GATE: beyond
-    // it, nothing moves itself and the manager sees the un-clipped number (r1: "Bigger moves
-    // are suggestions", "Nothing beyond the band ever moves itself"). The code block is what
-    // ships here and is what this test pins. Two consequences the lead should weigh:
-    //   · under the gate reading the `Math.min(..., maxDelta)` cap can never bind, so r3's
-    //     "the cap clamps AFTER rounding" ruling is satisfied vacuously;
-    //   · the bullet's own arithmetic is unreachable with the plan's primitive anyway —
-    //     roundToStep(2.5, 1) is 3, not 2, so "12" needs a floor-to-step that does not exist.
+    // par 10, step 1, target 13: Δ3 against a cap of max(1, 2.5) = 2.5. LEAD RULING F1: the
+    // band is a GATE — beyond it nothing moves itself and the manager sees the un-clipped
+    // number ("Bigger moves are suggestions"). Task 2.8's "assert 12" bullet is OVERRULED.
     const res = applyGuardStack(guard({ currentPar: 10, targetUnits: 13 }));
     expect(res.tier).toBe("suggestion");
     expect(res.suggestedPar).toBe(13);
     expect(res.suppressedBy).toBe("band");
     expect(res.reasonCode).toBe("ok");
-    // The invariant BOTH readings share, and the one that matters: no unilateral 10 → 13.
     expect(res.outcome).toBe("suppressed");
+    expect(res.tier).not.toBe("auto"); // never a unilateral 10 → 13, and never a clipped 12
+  });
+
+  it("tests the band on the ROUNDED delta — council P2-2's 30% escape is closed", () => {
+    // THE P2-2 REGRESSION. par 10, raw target 12.5: the RAW delta is 2.5, which slips through
+    // a ≤2.5 cap — and only then rounds to 13, applying a 30% move under a 25% band. Because
+    // the target is rounded BEFORE the band is tested (that IS "the cap clamps after
+    // rounding"), the tested delta is 3 and the move is refused. This is the case a raw-delta
+    // band test would have wrongly auto-applied.
+    const res = applyGuardStack(guard({ currentPar: 10, targetUnits: 12.5 }));
+    expect(res.suggestedPar).toBe(13);
+    expect(res.suppressedBy).toBe("band");
+    expect(res.tier).toBe("suggestion");
     expect(res.tier).not.toBe("auto");
+    expect(res.outcome).not.toBe("applied");
+    expect(res.outcome).not.toBe("would_apply");
   });
 
   it("keeps a 25%-of-par move inside the band on a large par", () => {
@@ -342,15 +347,15 @@ describe("generationIdFor + stabilizeSuggestion — one offer, one identity", ()
     expect(DYNAMIC_PARS.SUGGESTION_DEADBAND_STEPS).toBe(1);
   });
 
-  it("adopts a candidate a FULL step away", () => {
-    // ⚠ PHASE-2 FLAG F2 (lead ruling needed). Task 2.8's bullet asserts that a candidate of
-    // 5.25 against a standing 5 at step 0.25 "keeps 5" — but 0.25 is exactly one step, and
-    // the deadband comparison is strictly `<`, so the candidate is adopted. Pinned as coded:
-    // a deadband of one step damps only SUB-step wobble.
-    expect(stabilizeSuggestion(5, 5.25, 0.25)).toBe(5.25);
-    // Consequence the lead should note: r3's own example — "the walker may not read 12 → 1
-    // Monday and 12 → 2 Tuesday" — is a ONE-step wobble, and this deadband does not damp it.
-    expect(stabilizeSuggestion(1, 2, 1)).toBe(2);
+  it("DAMPS a one-step wobble: the walker may not read 12 → 1 Monday and 12 → 2 Tuesday", () => {
+    // LEAD RULING F2: r3's sentence is behavioural, so the deadband comparison is `<=` and a
+    // candidate exactly one step from the standing suggestion does NOT displace it.
+    expect(stabilizeSuggestion(1, 2, 1)).toBe(1);
+    expect(stabilizeSuggestion(5, 5.25, 0.25)).toBe(5);
+    expect(stabilizeSuggestion(5, 4.75, 0.25)).toBe(5);
+    // Accepted cost: a PERMANENT one-step drift stays unrendered until it reaches two steps.
+    expect(stabilizeSuggestion(1, 3, 1)).toBe(3);
+    expect(stabilizeSuggestion(5, 5.5, 0.25)).toBe(5.5);
   });
 });
 
