@@ -61,9 +61,10 @@ import {
 import { loadOnHandDerived, type OnHandRow } from "@/lib/counts";
 import { etBusinessDate } from "@/lib/counts-shared";
 import {
-  resolvePar, resolveActive, walkDisposition, parReviewAdvisory,
+  resolvePar, resolveParSlot, resolveActive, walkDisposition, parReviewAdvisory,
   type LocationSkuOverlay, type ParAdvisory,
 } from "@/lib/location-sku-shared";
+import { parAutoLaneReady } from "@/lib/dynamic-pars-probes";
 import { loadProductIndex } from "@/lib/products";
 import { rollupUsageByProduct } from "@/lib/products-shared";
 import {
@@ -193,8 +194,12 @@ async function loadCutoffsByVendor(
  *              A malformed / count-terminated-unresolvable chain → null.
  *   unchained→ skuContentOz(skuShape, measures) = oz of one pack (the pack_format unit).
  * Pure over the passed shapes; the caller batch-loads chains + measures once.
+ *
+ * EXPORTED for the nightly pars engine (lib/dynamic-pars.ts). The order-unit denominator
+ * is the whole coverage layer's arithmetic — a second spelling of it would let the engine
+ * suggest a par in units the walker does not mean.
  */
-function perOrderUnitOz(
+export function perOrderUnitOz(
   sku: RecipeInputSku,
   chain: PackChainLevel[] | null,
   measures: Map<string, MeasureUnitFactor>,
@@ -590,8 +595,11 @@ export interface WalkerUnroutable {
 }
 
 /** The columns every walker row needs — one spelling, shared by the par'd-SKU read
- *  and the rerouted-backup read (a member with no par of its own is not in the first). */
-const WALKER_SKU_COLUMNS =
+ *  and the rerouted-backup read (a member with no par of its own is not in the first).
+ *  EXPORTED for the nightly pars engine (lib/dynamic-pars.ts), which walks the same
+ *  par'd-SKU universe: one column list, so the engine can never read a narrower SKU
+ *  than the walker renders. */
+export const WALKER_SKU_COLUMNS =
   "id, name, vendor_id, item_number, active, pack_format, weekday_par, weekend_par, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each, product_id, inventory_only";
 
 interface WalkerSkuRow {
@@ -797,12 +805,16 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
     // parIsWeekend: true when the resolved par came from the weekend_par slot. Mirrors
     // the day rule (weekend pair member w/ weekday fallback) applied to resolved values.
     const overlayRow = overlayBySku.get(s.id) ?? null;
-    const overlayForPar: LocationSkuOverlay | null = overlayRow
-      ? { weekdayPar: overlayRow.weekdayPar, weekendPar: overlayRow.weekendPar }
-      : null;
-    const resolvedWeekendPar = overlayForPar?.weekendPar ?? num(s.weekend_par);
+    // The WHOLE overlay goes to the resolver, machine lane included. The old two-field
+    // copy predates that lane; keeping it would silently strip the auto columns and make
+    // resolvePar's third lane unreachable from the one surface that renders pars.
+    const overlayForPar: LocationSkuOverlay | null = overlayRow;
+    const globalPar = { weekdayPar: num(s.weekday_par), weekendPar: num(s.weekend_par) };
+    // Did the WEEKEND SLOT resolve to anything? That is a lane question, not a day-rule
+    // question, so it goes through the same ladder rather than a second `?? global` here.
+    const resolvedWeekendPar = resolveParSlot(overlayForPar, globalPar, "weekend").value;
     const parIsWeekend = weekend && resolvedWeekendPar != null;
-    const par = resolvePar(overlayForPar, { weekdayPar: num(s.weekday_par), weekendPar: num(s.weekend_par) }, weekend);
+    const par = resolvePar(overlayForPar, globalPar, weekend);
 
     // ── THE CAUSE LADDER — decided ONCE, by the pure rule ────────────────────────
     // `walkDisposition` (lib/location-sku-shared.ts) owns first-cause-wins so the
@@ -1102,32 +1114,65 @@ async function loadLatestOrderQtyBySku(
 }
 
 // ── Location SKU overlay batch-load ─────────────────────────────────────────────
+/** What loadOverlayBySku hands back per SKU: the human lane always, the MACHINE lane
+ *  only once migration 0183 is applied (the auto fields are ABSENT before that, which is
+ *  what keeps resolvePar's third lane inert and the walk byte-identical). */
+export interface OverlayRow extends LocationSkuOverlay {
+  activeOverride: boolean | null;
+}
+
+/** The human lane's columns — the exact select this function shipped with. */
+const OVERLAY_HUMAN_COLUMNS = "sku_id, active_override, weekday_par, weekend_par";
+/** …plus the machine lane (0183). Selected ONLY when the probe says the columns exist. */
+const OVERLAY_AUTO_COLUMNS =
+  "auto_weekday_par, auto_weekend_par, auto_weekday_baseline_par, auto_weekend_baseline_par";
+
 /**
  * One query: all location_sku_settings rows for a location, keyed by sku_id.
  * Returns an empty map when no overlay rows exist (day-one behavior — pure inheritance).
  * BATCH LAW: one query per loadWalkerData / submitParPass call; never per-SKU.
+ *
+ * ── PRE-0183 DEGRADATION (Task 3.3; the 0180 probe precedent) ──────────────────
+ * The select list is chosen by the probe, so before GATE M2 this issues EXACTLY the
+ * query it issues on main today and returns objects with no `auto*` keys at all.
+ * `resolveLane` then reads `undefined` for the machine lane and falls through to the
+ * global par — the two-layer answer. After M2 the columns exist and are all NULL
+ * (nothing writes them: PAR_AUTO_APPLY_ENABLED is false), so the resolved par is
+ * unchanged again. Both halves of "byte-identical" hold, and independently.
  */
 async function loadOverlayBySku(
   sb: ReturnType<typeof getServiceRoleClient>,
   locationId: string,
-): Promise<Map<string, { activeOverride: boolean | null; weekdayPar: number | null; weekendPar: number | null }>> {
+): Promise<Map<string, OverlayRow>> {
+  const autoLane = await parAutoLaneReady(sb);
   const { data, error } = await sb.from("location_sku_settings")
-    .select("sku_id, active_override, weekday_par, weekend_par")
+    .select(autoLane ? `${OVERLAY_HUMAN_COLUMNS}, ${OVERLAY_AUTO_COLUMNS}` : OVERLAY_HUMAN_COLUMNS)
     .eq("location_id", locationId)
     .returns<Array<{
       sku_id: string;
       active_override: boolean | null;
       weekday_par: number | string | null;
       weekend_par: number | string | null;
+      auto_weekday_par?: number | string | null;
+      auto_weekend_par?: number | string | null;
+      auto_weekday_baseline_par?: number | string | null;
+      auto_weekend_baseline_par?: number | string | null;
     }>>();
   if (error) throw new Error(`loadOverlayBySku: ${error.message}`);
-  const out = new Map<string, { activeOverride: boolean | null; weekdayPar: number | null; weekendPar: number | null }>();
+  const out = new Map<string, OverlayRow>();
   for (const r of data ?? []) {
-    out.set(r.sku_id, {
+    const row: OverlayRow = {
       activeOverride: r.active_override,
       weekdayPar: num(r.weekday_par),
       weekendPar: num(r.weekend_par),
-    });
+    };
+    if (autoLane) {
+      row.autoWeekdayPar = num(r.auto_weekday_par ?? null);
+      row.autoWeekendPar = num(r.auto_weekend_par ?? null);
+      row.autoWeekdayBaselinePar = num(r.auto_weekday_baseline_par ?? null);
+      row.autoWeekendBaselinePar = num(r.auto_weekend_baseline_par ?? null);
+    }
+    out.set(r.sku_id, row);
   }
   return out;
 }
@@ -1288,9 +1333,8 @@ export async function submitParPass(
     if (!resolveActive(overlayRow?.activeOverride, sku.active)) {
       throw new OrderingError(400, "invalid_sku", "A SKU is not found or inactive");
     }
-    const overlayForPar: LocationSkuOverlay | null = overlayRow
-      ? { weekdayPar: overlayRow.weekdayPar, weekendPar: overlayRow.weekendPar }
-      : null;
+    // The whole overlay, machine lane included — same reasoning as loadWalkerData above.
+    const overlayForPar: LocationSkuOverlay | null = overlayRow;
     const par = resolvePar(overlayForPar, { weekdayPar: num(sku.weekday_par), weekendPar: num(sku.weekend_par) }, weekend);
     if (par == null) throw new OrderingError(400, "no_par", "A SKU has no par set for today");
     const chain = chainsBySku.get(sku.id) ?? null;

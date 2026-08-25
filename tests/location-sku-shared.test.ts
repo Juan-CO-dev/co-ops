@@ -11,6 +11,7 @@
 import { describe, it, expect } from "vitest";
 import {
   resolvePar,
+  resolveParWithLane,
   resolveActive,
   walkDisposition,
   parReviewAdvisory,
@@ -29,6 +30,23 @@ const overlay = (weekdayPar: number | null, weekendPar: number | null) => ({
   weekdayPar,
   weekendPar,
 });
+
+/**
+ * The MACHINE lane (Dynamic Pars Phase 3, Task 3.3 — migration 0183).
+ *
+ * `auto*` fields are OPTIONAL on the overlay type on purpose: pre-0183-apply
+ * `loadOverlayBySku` does not select them, so they are ABSENT (not null), and every
+ * assertion in the four `resolvePar` blocks below — which pass two-field overlays —
+ * is the pre-apply behaviour, unchanged. That is the zero-diff proof, in test form.
+ */
+const autoOverlay = (o: {
+  weekdayPar?: number | null;
+  weekendPar?: number | null;
+  autoWeekdayPar?: number | null;
+  autoWeekendPar?: number | null;
+  autoWeekdayBaselinePar?: number | null;
+  autoWeekendBaselinePar?: number | null;
+}) => ({ weekdayPar: null, weekendPar: null, ...o });
 
 // ── resolvePar: no overlay (null) — today's behavior byte-identical ───────────
 
@@ -142,6 +160,103 @@ describe("resolvePar — null-par result", () => {
   it("all four par slots null, any walk day → null (SKU excluded from walk)", () => {
     expect(resolvePar(overlay(null, null), global(null, null), false)).toBeNull();
     expect(resolvePar(overlay(null, null), global(null, null), true)).toBeNull();
+  });
+});
+
+// ── THE THIRD LANE: human ?? auto ?? global (Task 3.3, migration 0183) ────────
+
+describe("resolvePar — three lanes (human ?? auto ?? global)", () => {
+  it("DAY ONE: no overlay at all is byte-identical to the two-layer form", () => {
+    // The whole pre-apply contract in one assertion: `null ?? global` = global.
+    expect(resolvePar(null, global(3, 5), false)).toBe(3);
+    expect(resolveParWithLane(null, global(3, 5), false)).toEqual({ par: 3, lane: "global" });
+    expect(resolveParWithLane(null, global(null, null), false)).toEqual({ par: null, lane: "none" });
+  });
+
+  it("PRE-APPLY: an overlay with the auto fields ABSENT resolves exactly as today", () => {
+    // This is the shape loadOverlayBySku hands back while the 0183 probe is false.
+    expect(resolvePar(overlay(7, null), global(3, 5), false)).toBe(7);
+    expect(resolvePar(overlay(7, null), global(3, 5), true)).toBe(5);
+    expect(resolveParWithLane(overlay(null, null), global(3, 5), true)).toEqual({
+      par: 5, lane: "global",
+    });
+  });
+
+  it("the HUMAN lane always wins over the machine's, per field", () => {
+    const o = autoOverlay({ weekdayPar: 7, autoWeekdayPar: 4, autoWeekdayBaselinePar: 3 });
+    expect(resolveParWithLane(o, global(3, null), false)).toEqual({ par: 7, lane: "human" });
+  });
+
+  it("the AUTO lane beats the global when the human lane is empty", () => {
+    const o = autoOverlay({ autoWeekdayPar: 4, autoWeekdayBaselinePar: 3 });
+    expect(resolveParWithLane(o, global(3, null), false)).toEqual({ par: 4, lane: "auto" });
+  });
+
+  it("SELF-INVALIDATION: a baseline that no longer matches the global is IGNORED", () => {
+    // r2-6: a human edited the global par from 3 to 6. The machine's 4 was an opinion
+    // about a baseline that no longer exists, so the human's global edit reasserts itself.
+    const o = autoOverlay({ autoWeekdayPar: 4, autoWeekdayBaselinePar: 3 });
+    expect(resolveParWithLane(o, global(6, null), false)).toEqual({ par: 6, lane: "global" });
+  });
+
+  it("SELF-INVALIDATION: the caller can SEE the auto value was ignored", () => {
+    const stale = autoOverlay({ autoWeekdayPar: 4, autoWeekdayBaselinePar: 3 });
+    const live = autoOverlay({ autoWeekdayPar: 4, autoWeekdayBaselinePar: 6 });
+    expect(resolveParWithLane(stale, global(6, null), false).lane).toBe("global");
+    expect(resolveParWithLane(live, global(6, null), false).lane).toBe("auto");
+  });
+
+  it("a MISSING baseline never validates an auto value against a non-null global", () => {
+    // Baseline null + global 3 must NOT match: an auto value with no recorded baseline
+    // cannot prove what it was computed against, and an unprovable claim loses.
+    const o = autoOverlay({ autoWeekdayPar: 4 });
+    expect(resolveParWithLane(o, global(3, null), false)).toEqual({ par: 3, lane: "global" });
+  });
+
+  it("baseline null DOES match a null global — the honest 'computed against no global'", () => {
+    const o = autoOverlay({ autoWeekdayPar: 4, autoWeekdayBaselinePar: null });
+    expect(resolveParWithLane(o, global(null, null), false)).toEqual({ par: 4, lane: "auto" });
+  });
+
+  it("the WEEKEND day rule is applied AFTER the three-lane resolution", () => {
+    // Weekend slot: human absent, auto valid → the weekend auto governs a weekend walk,
+    // and the weekday lanes govern a weekday walk. Byte-identical placement to parForDay.
+    const o = autoOverlay({
+      autoWeekdayPar: 4, autoWeekdayBaselinePar: 3,
+      autoWeekendPar: 9, autoWeekendBaselinePar: 8,
+    });
+    expect(resolveParWithLane(o, global(3, 8), true)).toEqual({ par: 9, lane: "auto" });
+    expect(resolveParWithLane(o, global(3, 8), false)).toEqual({ par: 4, lane: "auto" });
+  });
+
+  it("a weekend walk with NO weekend value anywhere falls to the weekday lane", () => {
+    // 121 of 141 par'd SKUs have no weekend slot — this is the majority path.
+    const o = autoOverlay({ autoWeekdayPar: 4, autoWeekdayBaselinePar: 3 });
+    expect(resolveParWithLane(o, global(3, null), true)).toEqual({ par: 4, lane: "auto" });
+  });
+
+  it("an auto value on a slot the HUMAN has filled is never consulted", () => {
+    const o = autoOverlay({
+      weekendPar: 12, autoWeekendPar: 9, autoWeekendBaselinePar: 8,
+      autoWeekdayPar: 4, autoWeekdayBaselinePar: 3,
+    });
+    expect(resolveParWithLane(o, global(3, 8), true)).toEqual({ par: 12, lane: "human" });
+  });
+
+  it("resolvePar is exactly resolveParWithLane().par for every shape", () => {
+    const shapes = [
+      autoOverlay({}),
+      autoOverlay({ weekdayPar: 7 }),
+      autoOverlay({ autoWeekdayPar: 4, autoWeekdayBaselinePar: 3 }),
+      autoOverlay({ autoWeekendPar: 9, autoWeekendBaselinePar: 8 }),
+    ];
+    for (const o of shapes) {
+      for (const weekend of [false, true]) {
+        expect(resolvePar(o, global(3, 8), weekend)).toBe(
+          resolveParWithLane(o, global(3, 8), weekend).par,
+        );
+      }
+    }
   });
 });
 

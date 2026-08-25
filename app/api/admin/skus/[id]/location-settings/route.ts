@@ -12,6 +12,17 @@ import { upsertLocationSkuSettings, AdminSkuError, SKU_WRITE_MIN } from "@/lib/a
 // Tri-state: null on activeOverride = inherit global; null on a par = inherit the
 // global par. Upsert-in-place keyed on (location_id, sku_id); revert-to-all-inherit
 // nulls the fields (never a delete — append-only).
+//
+// ── THE MACHINE-LANE BYPASS IS CLOSED HERE, STRUCTURALLY (Dynamic Pars, r3) ────────
+// NO BEHAVIOUR CHANGE in this file — it is recorded because r3 requires the exclusion to
+// be explicit. The body parser below is an EXPLICIT FIELD LIST: locationId,
+// activeOverride, weekdayPar, weekendPar. Migration 0183's auto_* / pinned_* columns are
+// not read from `b` anywhere, so no operator payload can reach them; an unknown key is
+// simply ignored. What an admin edit DOES to the machine's lane (null the auto value, the
+// baseline, the stamp, and clear the pin — on the slots whose value actually changed) is
+// decided by parWriteColumns() in lib/dynamic-pars-shared.ts, the one authority every par
+// writer resolves its columns through. This route keeps its own Tier-A step-up; only the
+// walker's accept/dismiss/revert drop it (plan D2).
 export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const parsed = await parseJsonBody(req);

@@ -28,6 +28,7 @@ import {
 } from "./toast-sales-shared";
 import { loadRecipeGraph } from "@/lib/prep-consumption";
 import { recordResolutionFlipsForLocation } from "@/lib/products";
+import { salesSignalsReady } from "@/lib/dynamic-pars-probes";
 import {
   perUnitSkuOzForItemFromGraph, perUnitDirectSkuOzForMenuItem, firstLevelItemConsumption,
 } from "@/lib/prep-consumption-graph";
@@ -332,6 +333,40 @@ export async function materializeDailyDepletion(
     const { error: insErr } = await sb.from("toast_daily_depletion").insert(rows);
     if (insErr) throw new Error(`toast-depletion insert: ${insErr.message}`);
   }
+
+  // ── The day-grain catering marker (Dynamic Pars, plan D4) ────────────────────
+  // WHY HERE AND NOT IN THE FILTER. `consumption.suspectedCatering` is computed BELOW,
+  // AFTER skuDirect has been summed over every counted line. Excluding suspect checks from
+  // that aggregation would change what direct_oz MEANS — the one lane the double-count law
+  // protects. So the detector's verdict is recorded BESIDE the day and the velocity layer
+  // reads it; direct_oz and flattened_oz are byte-identical to before this block existed.
+  // Same delete-then-insert scope as the ledger above, so a re-pull is idempotent for free.
+  //
+  // Probe-gated (0182 / GATE M1): pre-apply this is a SILENT NO-OP, not a per-night error
+  // log. Velocity then reads no signal row, clamps to `signals_too_new`, and emits an
+  // honest null — the degradation the layer was designed around.
+  if (await salesSignalsReady(sb)) {
+    const suspectQty = consumption.suspectedCatering.reduce((n, c) => n + c.totalQty, 0);
+    const countedQty = consumption.soldLines.reduce((n, l) => n + l.quantity, 0);
+    const { error: sigDelErr } = await sb.from("toast_daily_sales_signals")
+      .delete().eq("location_id", locationId).eq("business_date", businessDate);
+    if (sigDelErr) {
+      // NON-FATAL by design: the signal is a velocity input, not a ledger. Losing it degrades
+      // velocity to "signals_too_new" for that day, which is an honest null, and must never
+      // fail the materialization the drift engine depends on.
+      console.error(`[toast-depletion] sales-signal delete failed: ${sigDelErr.message}`);
+    } else {
+      const { error: sigInsErr } = await sb.from("toast_daily_sales_signals").insert({
+        location_id: locationId,
+        business_date: businessDate,
+        suspect_check_count: consumption.suspectedCatering.length,
+        suspect_qty: suspectQty,
+        counted_qty: countedQty,
+      });
+      if (sigInsErr) console.error(`[toast-depletion] sales-signal insert failed: ${sigInsErr.message}`);
+    }
+  }
+
   void audit({
     actorId: null, actorRole: null,
     action: "toast_depletion.materialize", resourceTable: "toast_daily_depletion", resourceId: locationId,

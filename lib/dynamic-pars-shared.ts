@@ -338,7 +338,21 @@ export interface VelocityInput {
   baseByDayClass: Record<DayClass, number | null>;
   /** oz of one order unit — the volume floor's denominator. */
   perOrderUnitOz: number | null;
-  /** ET date of the most recent recipe edit touching this SKU or its product. */
+  /**
+   * ET date of the most recent recipe edit whose effect could reach this SKU — the series
+   * before it is a different signal, so it is dropped.
+   *
+   * ⚠ THE RESET ORACLE MAY BE COARSER THAN PER-SKU, AND IN v1 IT IS (LEAD RULING F6).
+   * v1's loader (`loadLatestRecipeEditAt`, lib/dynamic-pars.ts) supplies the latest recipe
+   * edit GLOBALLY, so ANY recipe edit anywhere resets velocity for EVERY SKU for
+   * `VELOCITY_MIN_PERSISTENCE_DAYS`. That is a conservative OVER-reset — it can only
+   * withhold a velocity nudge, never invent one — and velocity is suggestion-lane-only, so
+   * the error direction is safe. It is stated here rather than implied because this field's
+   * doc previously promised a per-SKU grain the loader does not deliver, and a pure core
+   * that describes a contract its caller cannot meet is how a wrong assumption gets built
+   * on. Per-SKU attribution needs flatten-aware audit parsing; the upgrade lands here with
+   * no signature change.
+   */
   recipeEditedAt: string | null;
   /** First ET date a sales-signal row exists at this location (plan D4's clamp). */
   signalsStartAt: string | null;
@@ -900,6 +914,154 @@ export function trustRampState(input: TrustRampInput): TrustRampState {
     return { netAccepted, offered: input.offered, met: false, blockedBy: "count_anchor" };
   }
   return { netAccepted, offered: input.offered, met: true, blockedBy: null };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The par-write authority's PURE half (Task 3.8)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The floor for every par write, human or machine (plan D1).
+ *
+ * r3 §Authz wrote "GM >= 6". Live, `gm` is level 7 and level 6 is agm / catering_mgr /
+ * prep_mgr / **social_media_mgr** — so the r3 spelling would have handed par authority to
+ * the Social Media Manager. 7 is what "GM" means in this codebase and is exactly today's
+ * only par-write floor (`SKU_WRITE_MIN`, lib/admin/skus.ts).
+ *
+ * Declared in the PURE core, not imported from lib/admin/skus.ts, for two reasons: that
+ * module is server-only so a vitest case cannot reach it, and importing it into
+ * lib/dynamic-pars.ts would make the two mutually recursive (the admin overlay writer
+ * calls the authority). The drift guard is real instead of nominal —
+ * tests/dynamic-pars-write.test.ts asserts this equals `getRoleLevel("gm")`, so a role
+ * renumber fails the build rather than silently widening who may move a par.
+ */
+export const PAR_WRITE_MIN = 7;
+
+/** Who is writing. A REVERT is its own kind here even though it is an "accept"-class
+ *  human write, because its pin and budget effects are the opposite ones. */
+export type ParWriteActorKind = "admin" | "accept" | "revert" | "machine";
+
+export interface ParActionEffects {
+  writesPar: boolean;
+  setsPin: boolean;
+  clearsPin: boolean;
+  consumesBudget: boolean;
+}
+
+/**
+ * What each HUMAN verb on a suggestion does. The plan's Task 3.8 effect table, in code.
+ *
+ *   accept  — takes the machine's number. Clears the pin (a direct human write at this
+ *             grain IS the human re-engaging) and is FREE: the budget must never punish
+ *             engagement (r2-8).
+ *   revert  — undoes an applied auto-move. SETS the pin, and DOES consume the budget:
+ *             reverts are non-manual-origin par writes and the budget is what stops a
+ *             revert war (r2-8 final form). The act that sets a pin never clears it (r3).
+ *   dismiss — declines. Nothing changes; it exists so the trust ramp has a denominator
+ *             and the ledger can tell "offered and refused" from "offered and ignored".
+ */
+export function parActionEffects(action: "accept" | "dismiss" | "revert"): ParActionEffects {
+  switch (action) {
+    case "accept":
+      return { writesPar: true, setsPin: false, clearsPin: true, consumesBudget: false };
+    case "revert":
+      return { writesPar: true, setsPin: true, clearsPin: false, consumesBudget: true };
+    case "dismiss":
+      return { writesPar: false, setsPin: false, clearsPin: false, consumesBudget: false };
+  }
+}
+
+export interface ParWriteColumnsInput {
+  kind: ParWriteActorKind;
+  dayClass: DayClass;
+  /** The new HUMAN-lane value for this slot. null = blank-to-global. Ignored by "machine". */
+  value: number | null;
+  /** "machine" only: the number the engine is applying. */
+  autoValue?: number | null;
+  /** "machine" only: the global par it was computed against (r2-6 self-invalidation). */
+  baselinePar?: number | null;
+  /**
+   * ISO stamp for `auto_*_applied_at` ("machine") or `pinned_*_at` ("revert").
+   *
+   * TIME ENTERS A PURE FUNCTION AS A PARAMETER — never as `new Date()` inside it. For
+   * kind "revert" it is REQUIRED and its absence THROWS (see the doc block below).
+   */
+  appliedAt?: string | null;
+}
+
+export interface ParWriteColumnEffect {
+  /** Columns that exist TODAY. Always safe to write, pre- or post-0183. */
+  human: Record<string, number | null>;
+  /** Columns migration 0183 adds. The server includes these ONLY when the 0183 probe is
+   *  true — which is why the two halves are returned separately rather than merged. */
+  autoLane: Record<string, number | string | null>;
+}
+
+/**
+ * THE ONE PLACE THAT DECIDES WHAT A PAR WRITE DOES TO EACH COLUMN.
+ *
+ * Every par write in the system — the SKU admin's overlay editor, the walker's one-tap
+ * accept, a revert, and the graduated nightly engine — resolves its column patch here.
+ * That is the safety property r3 asked for: not that one FUNCTION performs every write
+ * (the admin path also owns `active_override` and the insert-vs-update dance on the same
+ * row), but that one place decides what a write does to the machine lane, the pin and the
+ * baseline. A second opinion about that is how the machine ends up masquerading as an
+ * operator.
+ *
+ * THE MACHINE-LANE BYPASS IS CLOSED STRUCTURALLY, not by validation: for `kind: "admin"`
+ * every value this function puts in `autoLane` is NULL, for every input. There is no
+ * operator payload that reaches a non-null auto write, which is stronger than the field
+ * list on the admin route (that too, but this holds even if the route changes).
+ *
+ * PER-SLOT, NOT PER-ROW: only the named day-class's columns appear. A weekday move must
+ * never stamp the weekend slot's history (aggie r3).
+ *
+ * THROWS on a "revert" with no `appliedAt` (LEAD RULING F4). This module's header promises
+ * "PURE: client-safe, zero I/O", and a `new Date()` fallback inside it would break that —
+ * the same input would stop producing the same output, and every test of the pin would be
+ * asserting against the clock. The alternative silent form, `?? null`, is worse: it would
+ * DROP THE PIN on a caller that forgot the stamp, silently, on the one column whose entire
+ * job is to stand until a human clears it. Loud beats silent, and time enters a pure
+ * function as a parameter.
+ */
+export function parWriteColumns(input: ParWriteColumnsInput): ParWriteColumnEffect {
+  const dc = input.dayClass;
+  const humanCol = dc === "weekend" ? "weekend_par" : "weekday_par";
+  const autoCol = `auto_${dc}_par`;
+  const baselineCol = `auto_${dc}_baseline_par`;
+  const appliedCol = `auto_${dc}_applied_at`;
+  const pinCol = `pinned_${dc}_at`;
+
+  if (input.kind === "machine") {
+    // Writes the AUTO lane ONLY. Never the human lane, never the pin, never the global
+    // vendor_items par. actor null. The baseline rides along so the read-time
+    // self-invalidation rule has something to compare against.
+    return {
+      human: {},
+      autoLane: {
+        [autoCol]: input.autoValue ?? null,
+        [baselineCol]: input.baselinePar ?? null,
+        [appliedCol]: input.appliedAt ?? null,
+      },
+    };
+  }
+
+  // A revert SETS the pin, so it MUST be handed the instant to set it to (see above).
+  if (input.kind === "revert" && input.appliedAt == null) {
+    throw new Error("parWriteColumns: revert requires appliedAt");
+  }
+
+  // Every human write moves the par, so the machine's standing opinion about the OLD par
+  // is stale by construction: value, baseline and stamp all go on this slot.
+  const autoLane: Record<string, number | string | null> = {
+    [autoCol]: null,
+    [baselineCol]: null,
+    [appliedCol]: null,
+    // admin + accept CLEAR the pin (a direct human edit at this exact grain is the only
+    // thing that does). A revert SETS it — and the act that sets a pin never clears it.
+    [pinCol]: input.kind === "revert" ? input.appliedAt! : null,
+  };
+  return { human: { [humanCol]: input.value }, autoLane };
 }
 
 /**

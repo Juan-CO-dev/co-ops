@@ -324,6 +324,21 @@ export const DESTRUCTIVE_ACTIONS = [
   //   item.set_sold_directly / item.set_default, which flip narrower flags.
   "item.set_type",
 
+  // ── Dynamic Pars (2026-08-22) ─────────────────────────────────────────────
+  // The criterion (this file's header): destructive = a HUMAN act altering shared
+  // operational config or the accountability record. Both of these are a human moving a
+  // par — the same edit vendor_item.update has covered since the catalog shipped, reached
+  // by a different affordance. Forensic-filter only: membership changes what is FINDABLE,
+  // never what is PERMITTED (step-up is route-gated, and these routes take none — plan D2).
+  // Placed after the 2026-08-21 sweep blocks rather than mid-sweep so the product-identity
+  // quartet and its weight/basis riders stay one contiguous narrative.
+  // — par.suggestion_accept: a manager taking the machine's number. Writes
+  //   location_sku_settings' HUMAN par lane at (sku, location, day-class) and clears the pin.
+  "par.suggestion_accept",
+  // — par.auto_tune_revert: a manager undoing an applied auto-move. Writes the human lane,
+  //   nulls the auto column, and SETS the pin. Consumes the weekly budget (r2-8 final).
+  "par.auto_tune_revert",
+
   // Bulk / sensitive
   "reports.bulk_export",
   "reports.bulk_correct",

@@ -23,7 +23,21 @@
 export interface LocationSkuOverlay {
   weekdayPar: number | null;
   weekendPar: number | null;
+  /**
+   * The MACHINE lane (Dynamic Pars, migration 0183). OPTIONAL, and that is the whole
+   * pre-apply contract: while the 0183 probe is false `loadOverlayBySku` does not select
+   * these columns, so they are ABSENT — not null — and `resolveLane` falls straight
+   * through to the global par, which is the two-layer answer this file shipped with.
+   */
+  autoWeekdayPar?: number | null;
+  autoWeekendPar?: number | null;
+  /** The global par each auto value was computed against (r2-6 self-invalidation). */
+  autoWeekdayBaselinePar?: number | null;
+  autoWeekendBaselinePar?: number | null;
 }
+
+/** One lane's resolution, so a caller can SAY which lane answered. */
+export type ParLane = "human" | "auto" | "global" | "none";
 
 /** Shape of global vendor_items par fields (camelCase, JS side). */
 export interface GlobalSkuPar {
@@ -32,28 +46,99 @@ export interface GlobalSkuPar {
 }
 
 /**
- * Resolve the effective par for a SKU on the given walk day, applying the two-layer
- * overlay (overlay field ?? global field) THEN the weekend-par day rule that
+ * THREE LANES: human ?? auto ?? global (r1 #4).
+ *
+ * A human's number ALWAYS beats the machine's — that is the whole contract, and it is why
+ * the machine was given its own columns instead of being allowed to write the human's.
+ *
+ * SELF-INVALIDATION (r2-6): each auto value records the GLOBAL par it was computed against.
+ * When a human edits that global par, the auto value is a stale opinion about a baseline
+ * that no longer exists, so it is skipped and the global reasserts itself. This is a READ
+ * rule, deliberately: no nightly job has to chase a global edit, and the human's edit takes
+ * effect the instant they save it.
+ *
+ * `(autoBaseline ?? null) === global` is the comparison, so an ABSENT baseline (pre-0183,
+ * or an auto value written without one) can only validate against a null global — an
+ * unprovable claim about what the machine computed against never wins.
+ */
+function resolveLane(
+  human: number | null | undefined,
+  auto: number | null | undefined,
+  autoBaseline: number | null | undefined,
+  global: number | null,
+): { value: number | null; lane: ParLane } {
+  if (human != null) return { value: human, lane: "human" };
+  if (auto != null && (autoBaseline ?? null) === global) return { value: auto, lane: "auto" };
+  return { value: global, lane: global == null ? "none" : "global" };
+}
+
+/**
+ * ONE SLOT's resolved par, before the weekend day rule.
+ *
+ * The day rule ("a weekend walk uses the weekend number when there is one") and the LANE
+ * ladder are two different questions, and several callers need the second one on its own:
+ * the walker asks "did the weekend SLOT resolve to anything?" to decide `parIsWeekend`,
+ * and the nightly engine asks "what is this day-class's standing par?" for the band.
+ * Exported so neither re-derives the ladder — a second opinion about which lane governs
+ * is exactly what giving the machine its own columns was meant to prevent.
+ *
+ * Structurally typed on the day-class so lib/dynamic-pars-shared.ts's `DayClass` is
+ * assignable without this pure leaf importing the pars core.
+ */
+export function resolveParSlot(
+  overlay: LocationSkuOverlay | null,
+  global: GlobalSkuPar,
+  dayClass: "weekday" | "weekend",
+): { value: number | null; lane: ParLane } {
+  return dayClass === "weekend"
+    ? resolveLane(
+        overlay?.weekendPar, overlay?.autoWeekendPar, overlay?.autoWeekendBaselinePar,
+        global.weekendPar,
+      )
+    : resolveLane(
+        overlay?.weekdayPar, overlay?.autoWeekdayPar, overlay?.autoWeekdayBaselinePar,
+        global.weekdayPar,
+      );
+}
+
+/**
+ * `resolvePar` plus the NAME of the lane that answered — the walker needs to know whether
+ * a rendered par is the manager's number or the machine's, and re-deriving that at the
+ * call site would be a second opinion about the resolution order.
+ */
+export function resolveParWithLane(
+  overlay: LocationSkuOverlay | null,
+  global: GlobalSkuPar,
+  weekend: boolean,
+): { par: number | null; lane: ParLane } {
+  const wd = resolveParSlot(overlay, global, "weekday");
+  const we = resolveParSlot(overlay, global, "weekend");
+  // Weekend-par day rule — byte-identical to lib/ordering.ts parForDay, applied AFTER the
+  // lane resolution exactly as the two-layer version applied it after the field resolution.
+  if (weekend && we.value != null) return { par: we.value, lane: we.lane };
+  return { par: wd.value, lane: wd.lane };
+}
+
+/**
+ * Resolve the effective par for a SKU on the given walk day, applying the overlay
+ * (human ?? auto ?? global, per field) THEN the weekend-par day rule that
  * lib/ordering.ts's parForDay uses — mirrored EXACTLY:
  *   if (weekend && resolvedWeekendPar != null) → resolvedWeekendPar
  *   else → resolvedWeekdayPar
  *
  * Returns null when the resolved applicable par is null (SKU excluded from the walk).
  * Callers must pass overlay = null when no location_sku_settings row exists for this SKU.
+ *
+ * THE SHIPPED SIGNATURE, UNCHANGED FOR EVERY EXISTING CALLER. Before migration 0183 the
+ * auto fields are absent from every overlay object in the system, so this reduces to
+ * `overlay?.field ?? global.field` — the exact expression it replaced.
  */
 export function resolvePar(
   overlay: LocationSkuOverlay | null,
   global: GlobalSkuPar,
   weekend: boolean,
 ): number | null {
-  // Two-layer field resolution: overlay value ?? global value.
-  const resolvedWeekdayPar = overlay?.weekdayPar ?? global.weekdayPar;
-  const resolvedWeekendPar = overlay?.weekendPar ?? global.weekendPar;
-
-  // Weekend-par day rule — byte-identical to lib/ordering.ts parForDay:
-  //   weekend && weekendPar != null → weekendPar, else weekdayPar.
-  if (weekend && resolvedWeekendPar != null) return resolvedWeekendPar;
-  return resolvedWeekdayPar;
+  return resolveParWithLane(overlay, global, weekend).par;
 }
 
 /**

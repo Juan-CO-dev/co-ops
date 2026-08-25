@@ -8,6 +8,8 @@ import { jsonError, jsonOk } from "@/lib/api-helpers";
 import { audit } from "@/lib/audit";
 import { pullSalesForAllLocations, materializeDailyDepletion } from "@/lib/catering/toast-sales";
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
+import { loadDepletionWatermark } from "@/lib/counts";
+import { runParShadowForLocation, recordParRunSkipped } from "@/lib/dynamic-pars";
 
 /** Truncate a caught error message so a giant stack never bloats the audit row. */
 function truncateErr(e: unknown): string {
@@ -59,6 +61,52 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // ── Dynamic Pars: the nightly shadow computation (spec 2026-08-21) ───────────
+    // CHAINED, NOT SCHEDULED. It runs here so the ordering is structural: the pars engine
+    // reads the ledger this handler just materialized, in the same request, for the same
+    // business date. No vercel.json entry, no second secret, no clock to keep in sync.
+    //
+    // GATED ON "DID THE MATERIALIZATION SUCCEED" (r3): a location whose depletion is not
+    // current through this business date is SKIPPED with an advisory-null run, never
+    // computed on a stale day. Recomputing yesterday's rates as today's is how a phantom
+    // velocity signal is born, and the pull is verifiably best-effort (the loop above
+    // swallows per-location failures by design).
+    //
+    // ⚠ THE ORACLE IS THE MATERIALIZE LOOP'S OWN RESULT, NOT `watermark === businessDate`.
+    // Two ways the strict equality is wrong, and both of them WRITE — recordParRunSkipped
+    // replaces the day's ledger rows, so a false skip is data loss, not a no-op:
+    //   · A ZERO-CONSUMPTION DAY materializes successfully with zero rows
+    //     (materializeDailyDepletion only inserts when rows.length > 0), so the watermark
+    //     stays on yesterday even though tonight succeeded. `depletionRows` has the key.
+    //   · A BACKFILL (`?date=` for a past date, which this route supports) has a watermark
+    //     LATER than the target date. "More than current" is not stale.
+    // So: the location is current if tonight's materialization succeeded for it, OR the
+    // ledger already reaches this business date. The watermark is still read — it is the
+    // evidence recorded on the skip row — but it is compared with `>=`, never `!==`.
+    //
+    // A par-step failure must NEVER fail the pull or the depletion materialization — the
+    // try/catch mirrors the depletion loop's own best-effort posture exactly.
+    let parRunFailures = 0;
+    const parRows: Record<string, number> = {};
+    for (const r of results) {
+      if (!r.ok) continue;
+      try {
+        const materialized = Object.prototype.hasOwnProperty.call(depletionRows, r.locationId);
+        const watermark = await loadDepletionWatermark(r.locationId);
+        const depletionCurrent = materialized || (watermark != null && watermark >= businessDate);
+        if (!depletionCurrent) {
+          const skipped = await recordParRunSkipped(r.locationId, businessDate, watermark);
+          parRows[r.locationId] = skipped.rows;
+          continue;
+        }
+        const { rows } = await runParShadowForLocation(r.locationId, businessDate);
+        parRows[r.locationId] = rows;
+      } catch (e) {
+        parRunFailures += 1;
+        console.error(`[cron toast-sales-pull] par shadow failed for ${r.locationId}:`, truncateErr(e));
+      }
+    }
+
     // Heartbeat (fail-open): a cron.success row lets the admin hub show "last run OK".
     // rowsPulled = total appended selections across locations (a cheap "did it do work"
     // signal); perLocationFailures counts locations that errored inside the batch (the
@@ -71,7 +119,7 @@ export async function GET(req: NextRequest) {
       action: "cron.success",
       resourceTable: "cron",
       resourceId: null,
-      metadata: { job: "toast-sales-pull", business_date: businessDate, rows_pulled: rowsPulled, per_location_failures: perLocationFailures, depletion_rows: depletionRows, depletion_failures: depletionFailures },
+      metadata: { job: "toast-sales-pull", business_date: businessDate, rows_pulled: rowsPulled, per_location_failures: perLocationFailures, depletion_rows: depletionRows, depletion_failures: depletionFailures, par_rows: parRows, par_run_failures: parRunFailures },
       ipAddress: null,
       userAgent: null,
     });

@@ -173,6 +173,24 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "delivery.received",
   "item_size.create",
   "measure_unit.create",
+  // ── Dynamic Pars (2026-08-22) ─────────────────────────────────────────────
+  // par.auto_tune / par.auto_tune_shadow are SYSTEM OBSERVATIONS with actor_id null — the
+  // product.resolution_flip precedent further down this block. Not destructive however
+  // consequential.
+  // TWO NAMES, DELIBERATELY (r2-4): one action name may not mean "computed" in v1 and
+  // "applied" in v2 under a closed vocabulary. _shadow is the run-level row the nightly
+  // simulation writes; par.auto_tune is the run-level row a GRADUATED location writes.
+  // ONE ROW PER (location, night), never per SKU: 282 per-SKU rows a night would be ~21x
+  // the entire audit log annually (r3). The per-SKU detail lives in par_auto_moves.
+  // Both are emitted from TypeScript (lib/dynamic-pars.ts, reached from
+  // app/api/cron/toast-sales-pull), NOT from SQL — so neither takes the
+  // RESERVED_ACTIONS/report.update path.
+  "par.auto_tune",
+  "par.auto_tune_shadow",
+  // par.suggestion_dismiss: a human DECLINING. Nothing changes — no par write, no pin, no
+  // budget. It exists so the trust ramp has a denominator and the ledger can tell "offered
+  // and refused" from "offered and ignored" (r2-2).
+  "par.suggestion_dismiss",
   "par_pass.submitted",
   "po.confirmed",
   "po.draft_created",
