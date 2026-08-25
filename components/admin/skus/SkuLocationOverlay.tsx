@@ -20,6 +20,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useTranslation } from "@/lib/i18n/provider";
+import { formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
 import { useStepUp } from "@/components/admin/StepUpProvider";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
@@ -32,6 +33,21 @@ export interface LocationSkuOverlayView {
   activeOverride: boolean | null;
   weekdayPar: number | null;
   weekendPar: number | null;
+  /**
+   * THE MACHINE'S STANDING NUMBER (Dynamic Pars, Task 4.9) — CONTEXT, NEVER AN INPUT.
+   *
+   * `resolvePar` is human ?? auto ?? global, so when the human field beside it is blank
+   * THIS is the number governing the shelf, and an editor that hid it would be lying by
+   * omission. It is rendered as read-only text: the auto lane belongs to the engine, and
+   * the route's payload structurally cannot carry an auto value (lib/admin/skus.ts —
+   * `parWriteColumns({ kind: "admin" })` returns NULL for every auto column, for every
+   * input). Typing a human number here nulls it, which is the intended way to overrule
+   * the machine. All null before migration 0183.
+   */
+  autoWeekdayPar?: number | null;
+  autoWeekendPar?: number | null;
+  autoWeekdayAppliedAt?: string | null;
+  autoWeekendAppliedAt?: string | null;
 }
 
 type ActiveState = "inherit" | "on" | "off";
@@ -79,6 +95,35 @@ export function SkuLocationOverlay({
         ))}
       </div>
     </CollapsibleSection>
+  );
+}
+
+/**
+ * THE MACHINE'S STANDING NUMBER FOR ONE SLOT — read-only, and only when one exists
+ * (Dynamic Pars, Task 4.9).
+ *
+ * Not an input, not a placeholder, not a "restore" affordance: text. `resolvePar` is
+ * human ?? auto ?? global, so when the field beside it is blank THIS is the number
+ * governing the shelf, and an editor that hid it would be lying by omission. Silent when
+ * the machine has no opinion — which is every slot in v1, and every slot before migration
+ * 0183. Typing a human number nulls it (parWriteColumns, kind "admin"), which is the
+ * intended way to overrule the machine; there is no affordance here that writes it.
+ */
+function AutoParNote({ value, appliedAt }: { value: number | null; appliedAt: string | null }) {
+  const { t, language } = useTranslation();
+  if (value == null) return null;
+  return (
+    <span
+      className="mt-1 block text-[11px] text-co-text-muted"
+      aria-label={t("admin.skus.auto_par_readonly_aria", { n: value })}
+    >
+      {appliedAt != null
+        ? t("admin.skus.auto_par_readonly", {
+            n: value,
+            day: formatDateLabel(appliedAt.slice(0, 10), language),
+          })
+        : t("admin.skus.auto_par_readonly_undated", { n: value })}
+    </span>
   );
 }
 
@@ -173,6 +218,10 @@ function LocationRow({
                 setWeekdayPar(e.target.value);
               }}
             />
+            <AutoParNote
+              value={overlay?.autoWeekdayPar ?? null}
+              appliedAt={overlay?.autoWeekdayAppliedAt ?? null}
+            />
           </label>
           <label className="block">
             <span className="text-xs font-bold text-co-text-muted">{t("admin.skus.location_overlay.weekend_par")}</span>
@@ -190,6 +239,10 @@ function LocationRow({
                 setSaved(false);
                 setWeekendPar(e.target.value);
               }}
+            />
+            <AutoParNote
+              value={overlay?.autoWeekendPar ?? null}
+              appliedAt={overlay?.autoWeekendAppliedAt ?? null}
             />
           </label>
         </div>

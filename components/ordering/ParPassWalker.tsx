@@ -38,6 +38,9 @@ import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { AlertPill } from "@/components/ui/AlertPill";
 import { EmptyState } from "@/components/EmptyState";
 import { CopyButton, DeliveryRow } from "@/components/ordering/delivery-affordances";
+import { ParSuggestionRow } from "@/components/ordering/ParSuggestionRow";
+import { ParSilencePanel } from "@/components/ordering/ParSilencePanel";
+import { formatDateLabel } from "@/lib/i18n/format";
 import type {
   WalkerData,
   WalkerVendor,
@@ -131,6 +134,19 @@ export function ParPassWalker({
         .filter((l): l is { skuId: string; orderQty: number } => l.orderQty !== null),
     [obs],
   );
+
+  // ── Accepting a par suggestion (Dynamic Pars, Task 4.3) ─────────────────────
+  // The server writes the par and returns it; the row's ORDER QTY is then recomputed
+  // here through `suggestedOrderQty` — the SAME pure function the server used for the
+  // Suggest chip, imported by ParSuggestionRow rather than re-derived, so the chip and
+  // the new par can never disagree mid-walk. `router.refresh()` re-pulls the
+  // server-authoritative par (the suggestion disappears with it, unmounting the block
+  // and its local state); it does NOT reset this island's useState — house law — which
+  // is exactly why the qty we just set survives the refresh.
+  const onSuggestionAccepted = (skuId: string, _newPar: number, newQty: number | null) => {
+    if (newQty != null) setSku(skuId, { qty: String(newQty), marked: true });
+    router.refresh();
+  };
 
   // ── Stepper ops ──────────────────────────────────────────────────────────────
   const stepBy = (skuId: string, delta: number) => {
@@ -465,6 +481,29 @@ export function ParPassWalker({
         </div>
       )}
 
+      {/* THE SHADOW BANNER (Dynamic Pars, Task 4.5) — ONE GLOBAL BANNER, NEVER A PER-ROW
+          REASON. In v1 100% of rows are in shadow, so a per-row shadow badge would badge
+          everything and destroy the reason lane sitting right below it (r3). Info tone on
+          the warning SURFACE token with the warning TEXT token — never `co-warning` as
+          text, which measures 1.95:1. Nothing here is a fault: the machine is doing
+          exactly what it was built to do first, which is watch. */}
+      {walker.shadowMode && (
+        <div
+          role="status"
+          className="rounded-xl border-2 border-co-warning bg-co-warning-surface px-4 py-3 text-[13px] text-co-text"
+        >
+          <p className="font-bold">{t("ordering.shadow.banner")}</p>
+          <p className="mt-0.5 text-co-warning-text">{t("ordering.shadow.banner_hint")}</p>
+        </div>
+      )}
+
+      {/* THE REASON LANE (Dynamic Pars, Task 4.6) — the aggregate line plus the
+          default-collapsed per-cause errand list. Mounted here, beneath the unroutable
+          notice block, because it answers the same class of question ("what is this walk
+          not telling me, and why?") one layer deeper: unroutable is demand with no
+          ordering path; this is a par with no opinion. */}
+      <ParSilencePanel silence={walker.parSilence} />
+
       {/* Recent-passes history affordance — collapsible, default-collapsed (D3). Each
           links to its recorded draft orders via the eventId GET (opened in a new view). */}
       {recent.length > 0 && <HistoryPanel recent={recent} shopLabel={shopLabel} dateLabel={dateLabel} />}
@@ -477,12 +516,16 @@ export function ParPassWalker({
             key={v.vendorId}
             vendor={v}
             obs={obs}
+            locationId={locationId}
+            dayClass={walker.isWeekendPar ? "weekend" : "weekday"}
+            shadowMode={walker.shadowMode}
             onStep={stepBy}
             onInput={(skuId, qty) => setSku(skuId, { qty, marked: true })}
             onSuggest={setSuggested}
             onFull={setFull}
             onOrderPar={setOrderPar}
             onClear={clearSku}
+            onSuggestionAccepted={onSuggestionAccepted}
           />
         ))
       )}
@@ -511,21 +554,30 @@ export function ParPassWalker({
 function VendorSection({
   vendor,
   obs,
+  locationId,
+  dayClass,
+  shadowMode,
   onStep,
   onInput,
   onSuggest,
   onFull,
   onOrderPar,
   onClear,
+  onSuggestionAccepted,
 }: {
   vendor: WalkerVendor;
   obs: Record<string, Obs>;
+  locationId: string;
+  /** The walk's own day-class — the slot every suggestion on this page is about. */
+  dayClass: "weekday" | "weekend";
+  shadowMode: boolean;
   onStep: (skuId: string, delta: number) => void;
   onInput: (skuId: string, qty: string) => void;
   onSuggest: (skuId: string, n: number) => void;
   onFull: (skuId: string) => void;
   onOrderPar: (skuId: string, par: number) => void;
   onClear: (skuId: string) => void;
+  onSuggestionAccepted: (skuId: string, newPar: number, newQty: number | null) => void;
 }) {
   const { t } = useTranslation();
   // Count of SKUs the operator has observed for THIS vendor (D2 alert, always visible).
@@ -559,12 +611,16 @@ function VendorSection({
             key={s.skuId}
             sku={s}
             value={obs[s.skuId] ?? { qty: "", marked: false }}
+            locationId={locationId}
+            dayClass={dayClass}
+            shadowMode={shadowMode}
             onStep={(d) => onStep(s.skuId, d)}
             onInput={(q) => onInput(s.skuId, q)}
             onSuggest={() => s.suggestedQty != null && onSuggest(s.skuId, s.suggestedQty)}
             onFull={() => onFull(s.skuId)}
             onOrderPar={() => onOrderPar(s.skuId, s.parToday)}
             onClear={() => onClear(s.skuId)}
+            onSuggestionAccepted={onSuggestionAccepted}
           />
         ))}
       </div>
@@ -576,23 +632,31 @@ function VendorSection({
 function SkuRow({
   sku,
   value,
+  locationId,
+  dayClass,
+  shadowMode,
   onStep,
   onInput,
   onSuggest,
   onFull,
   onOrderPar,
   onClear,
+  onSuggestionAccepted,
 }: {
   sku: WalkerSku;
   value: Obs;
+  locationId: string;
+  dayClass: "weekday" | "weekend";
+  shadowMode: boolean;
   onStep: (delta: number) => void;
   onInput: (qty: string) => void;
   onSuggest: () => void;
   onFull: () => void;
   onOrderPar: () => void;
   onClear: () => void;
+  onSuggestionAccepted: (skuId: string, newPar: number, newQty: number | null) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, language } = useTranslation();
   const unit = sku.orderUnitLabel ?? t("ordering.unit_generic");
   const parsed = parseQty(value.qty);
   // Explicit-zero state: marked AND resolves to exactly 0 → the "0 · full" filled look.
@@ -674,6 +738,34 @@ function SkuRow({
           )}
         </span>
       </div>
+
+      {/* THE NUMBER PAIR (Dynamic Pars, Task 4.3) — directly beneath the par chip it is
+          about. Mutually exclusive with the #283 cause advisory above by construction:
+          the server nulls one when the other exists, so this row says ONE numeric thing. */}
+      {sku.parSuggestion != null && (
+        <ParSuggestionRow
+          sku={sku}
+          suggestion={sku.parSuggestion}
+          locationId={locationId}
+          dayClass={dayClass}
+          shadowMode={shadowMode}
+          onAccepted={onSuggestionAccepted}
+        />
+      )}
+
+      {/* THE EVENT ADVISORY (Task 4.7) — NAMED, NEVER SUMMED. Booked catering inside the
+          horizon this par has to survive. Its own line, deliberately not part of the
+          suggestion block: it is true whether or not the engine has a number, and it is
+          NOT an input to one (a fulfilled event's consumption already enters the base
+          through toast/production, so adding it anywhere would double-count it). */}
+      {sku.parEvent != null && (
+        <p className="mt-1.5 text-[12px] text-co-text-dim">
+          {t("ordering.suggestion.reason_event", {
+            day: formatDateLabel(sku.parEvent.needDate, language),
+            oz: Math.round(sku.parEvent.oz),
+          })}
+        </p>
+      )}
 
       {/* Advisory on-hand + last-order hints. */}
       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px]">
