@@ -1080,3 +1080,280 @@ export function siblingBlendWeight(
   if (qualifyingDays <= 0) return 0;
   return round6(Math.max(0, Math.min(1, 1 - observedDays / qualifyingDays)));
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The WALKER's read-time half (Task 4.1) — pure, client-safe
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * What ONE walker row needs to render a suggestion and act on it.
+ *
+ * Everything here is either PERSISTED on the nightly ledger row or RE-SELECTED live at the
+ * walk instant; nothing is re-derived from history. Declared in the pure core (not in
+ * lib/dynamic-pars.ts) so the client island can import the type without pulling a
+ * server-only module into the bundle — the `*-shared.ts` law.
+ */
+export interface WalkerParSuggestion {
+  currentPar: number;
+  suggestedPar: number;
+  /** The identity the accept/dismiss routes echo back — the 409 idempotency key (plan D14). */
+  generationId: string;
+  tier: "auto" | "suggestion";
+  reasonCode: ParReasonCode;
+  /** RE-SELECTED AT THIS WALK'S INSTANT (R3-A) — named in the reason string. */
+  coverThroughDate: string;
+  coveredDayCount: number;
+  cushionPct: number;
+  flooredByPeak: boolean;
+  velocityApplied: boolean;
+  /** True for a day-class with no par slot: aggregate-only, never a row-level number (D16). */
+  slotCreation: boolean;
+  /** The level-7 check, resolved SERVER-side so the client renders authority without ever
+   *  knowing the role model (plan D1). */
+  canAct: boolean;
+}
+
+/**
+ * The nightly ledger row's DEMAND TERMS, in the shape the walk-time re-selection consumes.
+ * One camelCase mirror of the `par_auto_moves` columns this rule reads — the pure core must
+ * not learn the DB's spellings (the `toTallyRows` precedent, Task 3.6).
+ */
+export interface PersistedDemandTerms {
+  /** The par the NIGHTLY resolved. The identity is keyed on it, so it is not re-resolved. */
+  currentPar: number | null;
+  parStep: number;
+  baseOzPerDay: Record<DayClass, number | null>;
+  velocityRatio: number;
+  velocityApplied: boolean;
+  cushionPct: number | null;
+  perOrderUnitOz: number | null;
+  peakFloorOz: number | null;
+  /** The nightly's own hysteresis prior (`detail.prior_suggested_par`) — NOT its own
+   *  rendered suggestion, or the deadband would damp the live horizon away (R3-A). */
+  priorSuggestedPar: number | null;
+  /** `detail.prior_direction`: sign(suggested - current) on the run BEFORE the nightly. */
+  priorDirection: number;
+  /** The nightly's ladder verdict. A SILENCING code means no number may render. */
+  reasonCode: ParReasonCode;
+  /** The nightly's guard verdict tier — the walk-time tier is never richer than it. */
+  ledgerTier: "auto" | "suggestion" | "none";
+  /** Which guard fired last night, if any. The only window we have onto pin/budget state. */
+  suppressedBy: GuardName | null;
+}
+
+export interface WalkerSuggestionInput {
+  locationId: string;
+  skuId: string;
+  dayClass: DayClass;
+  terms: PersistedDemandTerms;
+  /** From coverageWindow, RE-SELECTED at the walk instant (R3-A). */
+  coveredDays: ReadonlyArray<string>;
+  coverThroughDate: string;
+  /** Resolved from the request's actor by the server, never by the component (plan D1). */
+  canAct: boolean;
+}
+
+/**
+ * THE WALK-TIME RE-SELECTION (head ruling R3-A), as a pure function.
+ *
+ * The nightly persists the demand TERMS and the horizon IT computed with. This rule re-runs
+ * the two TRIVIAL halves — `computeCoverage` and `applyGuardStack` — over those persisted
+ * terms against the horizon selected at the REAL walk instant. It never recomputes demand:
+ * no window, no lanes, no 21 days of history. That is what makes a 9:58 and a 10:02 walk
+ * render different, both-correct numbers out of one ledger row for one indexed query.
+ *
+ * Returns null whenever no number may render, and every way that happens is honest-null,
+ * never a fabricated number:
+ *   · the nightly's reason ladder already silenced the row (packaging, no weight basis,
+ *     no rhythm, thin history, slot creation — every member of SILENCING_REASONS);
+ *   · a term the coverage arithmetic needs is absent (cushion / per-order-unit oz);
+ *   · coverage itself declines (an unknown day-class rate inside the live horizon);
+ *   · the guard stack finds no movement worth rendering AT THIS HORIZON — the honest
+ *     answer, not a bug: the 10:02 walk really is ordering against a later truck.
+ *
+ * ── TWO STATED LIMITATIONS OF RE-RUNNING GUARDS OVER A LEDGER ROW ─────────────
+ * (1) `applyGuardStack` short-circuits at the FIRST guard that fires, so `suppressed_by`
+ *     tells us about that guard and nothing about the ones behind it. Pin and budget state
+ *     are therefore reconstructed from it, and are known only when they were the guard that
+ *     actually fired. The consequence is bounded by (2).
+ * (2) THE WALK-TIME TIER IS NEVER RICHER THAN THE LEDGER'S. If the live horizon pulls a
+ *     beyond-band target back inside the band, the re-run's "auto" is downgraded to
+ *     "suggestion" — the machine may not acquire an auto verdict on a read path that cannot
+ *     see the guards it would have to clear. The NUMBER is still the live, honest one.
+ */
+export function resolveWalkerSuggestion(input: WalkerSuggestionInput): WalkerParSuggestion | null {
+  const t = input.terms;
+  if (SILENCING_REASONS.has(t.reasonCode)) return null;
+  if (t.cushionPct == null || t.perOrderUnitOz == null || t.perOrderUnitOz <= 0) return null;
+  if (t.currentPar == null) return null; // slot creation renders in the aggregate only (D16).
+  if (!(t.parStep > 0)) return null;
+
+  const coverage = computeCoverage({
+    coveredDays: input.coveredDays,
+    baseOzPerDay: t.baseOzPerDay,
+    velocityRatio: t.velocityRatio,
+    cushionPct: t.cushionPct,
+    perOrderUnitOz: t.perOrderUnitOz,
+    peakFloorOz: t.peakFloorOz,
+  });
+  if (coverage == null) return null;
+
+  const roundedTarget = roundToStep(coverage.targetUnits, t.parStep);
+  const priorDirection = t.priorSuggestedPar != null ? t.priorDirection : 0;
+  const verdict = applyGuardStack({
+    locationId: input.locationId,
+    skuId: input.skuId,
+    dayClass: input.dayClass,
+    currentPar: t.currentPar,
+    targetUnits: coverage.targetUnits,
+    parStep: t.parStep,
+    priorSuggestedPar: t.priorSuggestedPar,
+    priorGenerationId: null,
+    directionConfirmed:
+      priorDirection !== 0 && priorDirection === Math.sign(roundedTarget - t.currentPar),
+    budgetSpent: t.suppressedBy === "budget",
+    pinned: t.suppressedBy === "pin",
+    // A READ PATH NEVER RUNS IN LIVE MODE. Even after the write bit is flipped this rule
+    // only renders; "shadow" is what makes applyGuardStack's auto branch say `would_apply`
+    // instead of claiming a write this code path will never perform.
+    mode: "shadow",
+  });
+  if (verdict.suggestedPar == null || verdict.generationId == null) return null;
+  if (verdict.tier === "none") return null;
+
+  return {
+    currentPar: t.currentPar,
+    suggestedPar: verdict.suggestedPar,
+    generationId: verdict.generationId,
+    // Limitation (2) above: the ledger's tier is the ceiling.
+    tier: verdict.tier === "auto" && t.ledgerTier === "auto" ? "auto" : "suggestion",
+    reasonCode: verdict.reasonCode,
+    coverThroughDate: input.coverThroughDate,
+    coveredDayCount: input.coveredDays.length,
+    cushionPct: t.cushionPct,
+    flooredByPeak: coverage.flooredByPeak,
+    velocityApplied: t.velocityApplied,
+    slotCreation: verdict.slotCreation,
+    canAct: input.canAct,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The reason lane's aggregate (Task 4.6) — pure, client-safe
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One cause of silence, with a capped sample of the SKUs it is speaking about. */
+export interface ParSilenceCauseRow {
+  cause: ParReasonCode;
+  count: number;
+  /** Capped at SILENCE_SAMPLE_CAP; the copy says "and N more" for the rest. */
+  sampleSkuNames: string[];
+}
+
+/**
+ * THE FLAGSHIP DELIVERABLE, as a payload. v1's engine can honestly speak for ~14 rows of
+ * ~282; the other ~268 are the product, and this is how they reach a human — one aggregate
+ * line plus a per-cause errand list, never a badge on 94% of the rows (plan D15).
+ */
+export interface ParSilenceSummary {
+  /** Rows the engine could speak for. */
+  speaking: number;
+  /** Rows silenced, per cause, in ERRAND_REASONS order then the rest. */
+  byCause: ParSilenceCauseRow[];
+  /** True when a per-row badge is warranted — false today, and it flips itself (D15). */
+  badgePerRow: boolean;
+  /** Suggestions offered but not yet actioned, and auto-moves in the last 7 days. */
+  suggestionsWaiting: number;
+  autoMovesThisWeek: number;
+  /** The run these numbers are about. null = the engine has never run here. */
+  runDate: string | null;
+  /**
+   * Did the run that produced these numbers APPLY anything, or only watch?
+   *
+   * An OBSERVED fact — the ledger's own `mode` column — not a re-read of the build's
+   * write bit, and deliberately so: the banner claims something about what happened at
+   * this shop, and the honest source for that is the row the engine wrote. It rides on
+   * this summary rather than on its own query because it comes off the same head read.
+   * `WalkerData.shadowMode` is set from it. False when the engine has never run here —
+   * nothing is watching, so there is nothing to announce.
+   */
+  shadowMode: boolean;
+}
+
+/** Named SKUs per cause, capped — the named-when-few discipline the products admin's
+ *  retirement warning already uses. Beyond the cap the copy counts instead of naming. */
+export const SILENCE_SAMPLE_CAP = 3;
+
+/**
+ * The two causes that are NOT errands and never will be: packaging was never
+ * demand-derived, and a retired product's par is suppressed on purpose (#283). They are
+ * still listed — a bucket that reads "other" is a bug — but they sort LAST, and the panel
+ * renders them in its quieter group.
+ */
+export const NOT_A_FAULT_REASONS: ReadonlySet<ParReasonCode> = new Set<ParReasonCode>([
+  "inventory_only", "product_retired",
+]);
+
+/** The empty summary: what a location with no ledger rows at all honestly reports. */
+export const EMPTY_PAR_SILENCE: ParSilenceSummary = {
+  speaking: 0, byCause: [], badgePerRow: false,
+  suggestionsWaiting: 0, autoMovesThisWeek: 0, runDate: null, shadowMode: false,
+};
+
+/** One `par_auto_moves` row, as much of it as the silence rollup reads. */
+export interface SilenceLedgerRow {
+  skuId: string;
+  reasonCode: ParReasonCode;
+  skuName: string | null;
+}
+
+/**
+ * Roll the latest run's rows into the errand list. PURE, so the ordering rule is stated
+ * once and unit-tested instead of living inside a query's `.order()`.
+ *
+ * `ok` is not a cause: a row the engine spoke for is counted in `speaking`, never listed.
+ * Every other reason code IS listed, including the two not-a-fault ones — the panel groups
+ * them visually, but a cause bucket that reads "other" is a bug (Task 4.6's success
+ * criterion), so nothing is swallowed here.
+ */
+export function rollupParSilence(
+  rows: ReadonlyArray<SilenceLedgerRow>,
+  extras: {
+    suggestionsWaiting: number;
+    autoMovesThisWeek: number;
+    runDate: string | null;
+    shadowMode: boolean;
+  },
+): ParSilenceSummary {
+  let speaking = 0;
+  const byCause = new Map<ParReasonCode, { count: number; names: string[] }>();
+  for (const r of rows) {
+    if (r.reasonCode === "ok") { speaking += 1; continue; }
+    const entry = byCause.get(r.reasonCode) ?? { count: 0, names: [] };
+    entry.count += 1;
+    if (r.skuName != null && entry.names.length < SILENCE_SAMPLE_CAP) entry.names.push(r.skuName);
+    byCause.set(r.reasonCode, entry);
+  }
+  // THREE TIERS, and the bottom one is why: 114 of CO's silent rows are packaging, and a
+  // plain vocabulary order would put `inventory_only` above every real errand and bury the
+  // list this panel exists for (Task 4.6). Errands in the r2-13 critical-path order · then
+  // the remaining faults · then the two NOT-A-FAULT causes, last, always.
+  const rank = (c: ParReasonCode): number => {
+    const errand = ERRAND_REASONS.indexOf(c);
+    if (errand >= 0) return errand;
+    return (NOT_A_FAULT_REASONS.has(c) ? 2000 : 1000) + PAR_REASON_CODES.indexOf(c);
+  };
+  const ordered: ParSilenceCauseRow[] = [...byCause.entries()]
+    .map(([cause, e]) => ({ cause, count: e.count, sampleSkuNames: e.names }))
+    .sort((a, b) => rank(a.cause) - rank(b.cause));
+  const silent = rows.length - speaking;
+  return {
+    speaking,
+    byCause: ordered,
+    badgePerRow: shouldBadgeSilencePerRow(silent, rows.length),
+    suggestionsWaiting: extras.suggestionsWaiting,
+    autoMovesThisWeek: extras.autoMovesThisWeek,
+    runDate: extras.runDate,
+    shadowMode: extras.shadowMode,
+  };
+}

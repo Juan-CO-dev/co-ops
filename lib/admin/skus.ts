@@ -768,6 +768,19 @@ export interface LocationSkuSetting {
   activeOverride: boolean | null;
   weekdayPar: number | null;
   weekendPar: number | null;
+  /**
+   * THE MACHINE'S STANDING NUMBER, READ-ONLY (Dynamic Pars, Task 4.9).
+   *
+   * Shown beside the human field so a manager can SEE what the system currently thinks
+   * without being able to type into it — the auto lane is the machine's, and an editable
+   * machine value is how the machine ends up masquerading as an operator. Absent (all
+   * null) before migration 0183: the probe chooses the select list, so pre-M2 this
+   * function issues exactly the query it shipped with.
+   */
+  autoWeekdayPar: number | null;
+  autoWeekendPar: number | null;
+  autoWeekdayAppliedAt: string | null;
+  autoWeekendAppliedAt: string | null;
 }
 
 interface DbLocationSkuSettingRow {
@@ -775,7 +788,17 @@ interface DbLocationSkuSettingRow {
   active_override: boolean | null;
   weekday_par: number | string | null;
   weekend_par: number | string | null;
+  auto_weekday_par?: number | string | null;
+  auto_weekend_par?: number | string | null;
+  auto_weekday_applied_at?: string | null;
+  auto_weekend_applied_at?: string | null;
 }
+
+/** The human lane — the exact select this function shipped with. */
+const OVERLAY_READ_HUMAN = "sku_id, location_id, active_override, weekday_par, weekend_par";
+/** …plus the machine lane, READ-ONLY here. Selected only when the 0183 probe is true. */
+const OVERLAY_READ_AUTO =
+  "auto_weekday_par, auto_weekend_par, auto_weekday_applied_at, auto_weekend_applied_at";
 
 /** Batch-load overlay rows for a set of SKUs (≥6 read). Returns a map skuId →
  *  rows[]; a SKU absent from the map (or with an empty array) has no overlays. */
@@ -789,10 +812,11 @@ export async function loadLocationSkuSettings(
   if (ids.length === 0) return out;
 
   const sb = getServiceRoleClient();
+  const autoLane = await parAutoLaneReady(sb);
   const rows = await selectAllRows<DbLocationSkuSettingRow & { sku_id: string }>((from, to) =>
     sb
       .from("location_sku_settings")
-      .select("sku_id, location_id, active_override, weekday_par, weekend_par")
+      .select(autoLane ? `${OVERLAY_READ_HUMAN}, ${OVERLAY_READ_AUTO}` : OVERLAY_READ_HUMAN)
       .in("sku_id", ids)
       // Opportunistic fix (Dynamic Pars P3 review): paging WITHOUT a stable total order is
       // the PR #63 class — PostgREST may reorder between pages, so a row can be served
@@ -808,6 +832,10 @@ export async function loadLocationSkuSettings(
       activeOverride: r.active_override,
       weekdayPar: toNum(r.weekday_par),
       weekendPar: toNum(r.weekend_par),
+      autoWeekdayPar: autoLane ? toNum(r.auto_weekday_par ?? null) : null,
+      autoWeekendPar: autoLane ? toNum(r.auto_weekend_par ?? null) : null,
+      autoWeekdayAppliedAt: autoLane ? r.auto_weekday_applied_at ?? null : null,
+      autoWeekendAppliedAt: autoLane ? r.auto_weekend_applied_at ?? null : null,
     });
     out.set(r.sku_id, arr);
   }

@@ -108,6 +108,23 @@ export function cutoffForOrderDay(
   return [...pool].sort((a, b) => a.cutoffTime.localeCompare(b.cutoffTime))[0]?.cutoffTime ?? null;
 }
 
+/**
+ * Minutes-of-day of an INSTANT in ET — the walk-time half of the cutoff comparison.
+ *
+ * It lives beside `cutoffMinutes` (its inverse-shaped twin) deliberately: one of them
+ * reads a stored deadline and the other reads the clock, they are compared against each
+ * other on every walk, and split across two modules they would drift. `en-GB` + hour12
+ * false gives a stable zero-padded "HH:MM:SS" in the operational zone, which is exactly
+ * the shape `cutoffMinutes` already parses — so there is still ONE parser.
+ */
+export function minutesOfDayEt(instant: Date): number {
+  const hhmmss = instant.toLocaleTimeString("en-GB", {
+    timeZone: "America/New_York", hour12: false,
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+  });
+  return cutoffMinutes(hhmmss) ?? 0;
+}
+
 /** Minutes-of-day for a bare "HH:MM[:SS]". Malformed → null (never fabricate a deadline). */
 export function cutoffMinutes(time: string): number | null {
   const parts = time.split(":");

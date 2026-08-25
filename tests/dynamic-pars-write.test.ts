@@ -11,6 +11,10 @@
  * writing the machine's lane. Both of those are properties of this table, so both are
  * asserted here rather than described in a comment.
  */
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, it, expect } from "vitest";
 
 import {
@@ -193,5 +197,50 @@ describe("parWriteColumns — the machine-lane bypass is STRUCTURAL", () => {
       expect(cols.autoLane.auto_weekday_baseline_par).toBeNull();
       expect(cols.autoLane.auto_weekday_applied_at).toBeNull();
     }
+  });
+});
+
+// ── THE ROUTES, AT THE SOURCE (Dynamic Pars Phase 4, Tasks 4.4 + 4.9) ─────────
+//
+// The two properties below are STRUCTURAL — they are true because of what the handlers do
+// not contain — so a unit test over their exports could never see them. Reading the file
+// is the only assertion that can. Same posture as the Task-4.7 grep over the pure core:
+// when the guarantee is an absence, assert the absence.
+
+const routeSrc = (rel: string) =>
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", ...rel.split("/")), "utf8");
+
+describe("the admin overlay route cannot reach the machine's lane", () => {
+  const src = routeSrc("app/api/admin/skus/[id]/location-settings/route.ts");
+
+  it("never names an auto_ or pinned_ column", () => {
+    // NOT a filter — a filter would imply the columns were once reachable. The handler's
+    // body parser is an explicit four-field list and these names simply do not occur in it.
+    expect(/\bauto_(weekday|weekend)_/.test(src)).toBe(false);
+    expect(/\bpinned_(weekday|weekend)_at\b/.test(src)).toBe(false);
+  });
+
+  it("still carries its own Tier-A step-up — only the walker's verbs drop it (plan D2)", () => {
+    expect(src.includes('assertStepUp(ctx, "A")')).toBe(true);
+  });
+});
+
+describe("the walker's suggestion route never takes a number from the client", () => {
+  const src = routeSrc("app/api/operations/ordering/suggestion/route.ts");
+
+  it("reads only identity fields off the body", () => {
+    // The par written is `suggestion.suggestedPar` — re-derived server-side at the walk
+    // instant. If a `b.par` / `b.value` / `b.suggestedPar` ever appears here, a tampered
+    // payload can move a par to a number the system never chose.
+    expect(/\bb\.(par|value|suggestedPar|currentPar)\b/.test(src)).toBe(false);
+    expect(src.includes("value: suggestion.suggestedPar")).toBe(true);
+  });
+
+  it("binds the location before it acts (IDOR)", () => {
+    expect(src.includes("lockLocationContext")).toBe(true);
+  });
+
+  it("takes NO step-up — a password prompt at 6 AM is the affordance's death (plan D2)", () => {
+    expect(src.includes("assertStepUp")).toBe(false);
   });
 });

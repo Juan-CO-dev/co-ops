@@ -21,6 +21,7 @@ import {
   cutoffForOrderDay,
   cutoffMinutes,
   deliveryDowFor,
+  minutesOfDayEt,
   nextDeliveryAfter,
   coverageWindow,
   optimizationWalkDate,
@@ -298,5 +299,35 @@ describe("optimizationWalkDate", () => {
     expect(optimizationWalkDate("weekday", FRI)).toBe("2026-08-31");
     expect(optimizationWalkDate("weekday", SAT)).toBe("2026-08-31");
     expect(optimizationWalkDate("weekday", SUN)).toBe("2026-08-31");
+  });
+});
+
+// ── minutesOfDayEt — the WALK side of the cutoff comparison (Task 4.2) ────────
+//
+// The cutoff side is `cutoffMinutes`; these two are compared against each other on
+// every walk, so they live and are tested together. Every instant below is an ABSOLUTE
+// UTC timestamp, so the assertions are independent of the machine's own zone.
+
+describe("minutesOfDayEt", () => {
+  it("reads the operational zone, not the host's — EDT (UTC-4) in August", () => {
+    // 13:58Z on 2026-08-25 is 09:58 ET.
+    expect(minutesOfDayEt(new Date("2026-08-25T13:58:00Z"))).toBe(9 * 60 + 58);
+    expect(minutesOfDayEt(new Date("2026-08-25T14:02:00Z"))).toBe(10 * 60 + 2);
+  });
+
+  it("straddles the 10:00 cutoff exactly where nextDeliveryAfter does", () => {
+    const bare = "10:00";
+    expect(minutesOfDayEt(new Date("2026-08-25T13:58:00Z"))).toBeLessThan(cutoffMinutes(bare)!);
+    expect(minutesOfDayEt(new Date("2026-08-25T14:00:00Z"))).toBe(cutoffMinutes(bare));
+    expect(minutesOfDayEt(new Date("2026-08-25T14:02:00Z"))).toBeGreaterThan(cutoffMinutes(bare)!);
+  });
+
+  it("is DST-correct — EST (UTC-5) in January", () => {
+    expect(minutesOfDayEt(new Date("2026-01-15T15:00:00Z"))).toBe(10 * 60);
+  });
+
+  it("handles midnight and the last minute of the ET day without wrapping", () => {
+    expect(minutesOfDayEt(new Date("2026-08-25T04:00:00Z"))).toBe(0);
+    expect(minutesOfDayEt(new Date("2026-08-26T03:59:00Z"))).toBe(23 * 60 + 59);
   });
 });

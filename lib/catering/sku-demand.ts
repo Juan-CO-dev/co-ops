@@ -50,12 +50,35 @@ export interface CateringSkuDemand {
 /**
  * Flatten a location's reserved catering prep-demand (over [from,to]) into raw SKU demand, with an
  * advisory on-hand shortfall / order-more signal. Read-only, level ≥ PREP_DEMAND_READ_MIN.
+ *
+ * The GATED wrapper. Its actor-less core is split out below for callers that are already
+ * authorized and location-bound at a LOWER floor — see `deriveCateringSkuDemand`.
  */
 export async function loadCateringSkuDemand(
   actor: AuthContext,
   args: { locationId: string; from: string; to: string },
 ): Promise<CateringSkuDemand> {
   requireLevel(actor, PREP_DEMAND_READ_MIN);
+  return deriveCateringSkuDemand(args);
+}
+
+/**
+ * THE ACTOR-LESS CORE (Dynamic Pars plan D11) — the exact `salesConsumption` →
+ * `deriveSalesConsumption` split this codebase already runs at lib/catering/toast-sales.ts.
+ *
+ * WHY IT EXISTS. The par-pass walker's floor is `PAR_PASS_MIN` (4, key-holder) and this
+ * module's is `PREP_DEMAND_READ_MIN` (6). The walker needs the catering EVENT ADVISORY —
+ * a name and a date, never a number — and it is already authorized for the shop it is
+ * walking and already bound to that one location. Threading an actor through would either
+ * lock the advisory to level 6 (so the person actually holding the phone at 6 AM never
+ * sees it) or quietly widen this module's own floor. Splitting the core keeps the gated
+ * wrapper's floor exactly where it is and lets each caller state its own.
+ *
+ * Pure refactor: zero behaviour change to the wrapper above.
+ */
+export async function deriveCateringSkuDemand(
+  args: { locationId: string; from: string; to: string },
+): Promise<CateringSkuDemand> {
   const sb = getServiceRoleClient();
   const { data: rows, error } = await sb
     .from("catering_prep_demand")

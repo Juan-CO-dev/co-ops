@@ -8,7 +8,13 @@
  * each would put 57 false chores at the head of Juan's list on day one (the parReviewAdvisory
  * precedent: a lane that cries wolf gets scrolled past).
  */
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, it, expect } from "vitest";
+import en from "@/lib/i18n/en.json";
+import es from "@/lib/i18n/es.json";
 import {
   ERRAND_REASONS,
   PAR_REASON_CODES,
@@ -216,5 +222,66 @@ describe("shouldBadgeSilencePerRow — the lane lights ITSELF (plan D15)", () =>
   it("never badges an empty walk", () => {
     expect(shouldBadgeSilencePerRow(0, 0)).toBe(false);
     expect(shouldBadgeSilencePerRow(5, -1)).toBe(false);
+  });
+});
+
+// ── THE CLOSED-VOCABULARY → CLOSED-COPY INVARIANT (Task 4.8) ─────────────────
+//
+// The reason lane IS the product, and a reason that renders as `ordering.silence.cause.
+// no_weight_basis` at 6 AM is worse than no lane at all. The union is closed by the
+// compiler; this closes the COPY the same way, in both languages, in the shape
+// tests/readiness.test.ts already uses for its own known-reasons invariant.
+
+describe("every reason code has full-sentence copy, en AND es", () => {
+  const enKeys = en as Record<string, string>;
+  const esKeys = es as Record<string, string>;
+
+  it.each(PAR_REASON_CODES)("%s has a cause and a fix in both files", (code) => {
+    for (const kind of ["cause", "fix"] as const) {
+      const key = `ordering.silence.${kind}.${code}`;
+      expect(enKeys[key], `${key} missing from en.json`).toBeTruthy();
+      expect(esKeys[key], `${key} missing from es.json`).toBeTruthy();
+    }
+  });
+
+  it("writes SENTENCES, not labels — the lane explains, it does not tag", () => {
+    for (const code of PAR_REASON_CODES) {
+      const cause = enKeys[`ordering.silence.cause.${code}`]!;
+      const fix = enKeys[`ordering.silence.fix.${code}`]!;
+      // A full sentence, per r3: ends in terminal punctuation and is not a two-word chip.
+      expect(cause, code).toMatch(/[.!?]$/);
+      expect(fix, code).toMatch(/[.!?]$/);
+      expect(cause.split(" ").length, code).toBeGreaterThan(4);
+    }
+  });
+
+  it("gives the SUGGESTION affordances an aria sibling in both languages", () => {
+    for (const key of [
+      "ordering.suggestion.pair_aria",
+      "ordering.suggestion.accept_aria",
+      "ordering.suggestion.dismiss_aria",
+      "ordering.auto.revert_aria",
+      "admin.skus.auto_par_readonly_aria",
+    ]) {
+      expect(enKeys[key], `${key} missing from en.json`).toBeTruthy();
+      expect(esKeys[key], `${key} missing from es.json`).toBeTruthy();
+    }
+  });
+});
+
+// ── r1-1, ENFORCED STRUCTURALLY: the event advisory is NEVER summed ───────────
+//
+// A fulfilled catering event's consumption already enters the base through toast and
+// production, and `productions` carries no catering attribution — so the base cannot be
+// cleaned and any target that added `parEvent` would double-count it. The rule is not "we
+// remembered not to": the pure core must not know the field EXISTS.
+
+describe("the pure core cannot see the event advisory", () => {
+  it("lib/dynamic-pars-shared.ts never names parEvent", () => {
+    const src = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "..", "lib", "dynamic-pars-shared.ts"),
+      "utf8",
+    );
+    expect(src.includes("parEvent")).toBe(false);
   });
 });

@@ -80,6 +80,16 @@ import {
  */
 export { parAutoMovesReady, parAutoLaneReady, parSuggestionActionsReady, salesSignalsReady };
 
+/**
+ * THE WALKER'S READ PATH LIVES IN A LEAF TOO (lib/dynamic-pars-walker.ts), AND FOR THE
+ * SAME REASON AS THE PROBES: its one caller is `lib/ordering.ts`, which THIS module
+ * imports (WALKER_SKU_COLUMNS, perOrderUnitOz). Defining it here would make the walker and
+ * the engine mutually recursive. The plan names this file as its home, so it is re-exported
+ * at this path — define in the leaf, re-export from the module the plan names.
+ */
+export { loadParSuggestions, loadParSilence } from "@/lib/dynamic-pars-walker";
+export type { WalkInstant, ParSkuIndexEntry } from "@/lib/dynamic-pars-walker";
+
 type ServiceClient = ReturnType<typeof getServiceRoleClient>;
 
 /** Typed error the (Phase-4) routes map to jsonError(status, code). */
