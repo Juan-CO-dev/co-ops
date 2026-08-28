@@ -65,6 +65,15 @@ import {
   type LocationSkuOverlay, type ParAdvisory,
 } from "@/lib/location-sku-shared";
 import { parAutoLaneReady } from "@/lib/dynamic-pars-probes";
+import {
+  loadParSuggestions, loadParSilence, type ParSkuIndexEntry,
+} from "@/lib/dynamic-pars-walker";
+import {
+  EMPTY_PAR_SILENCE, PAR_WRITE_MIN,
+  type ParSilenceSummary, type WalkerParSuggestion,
+} from "@/lib/dynamic-pars-shared";
+import { addDaysEt, minutesOfDayEt } from "@/lib/vendor-rhythm-shared";
+import { deriveCateringSkuDemand } from "@/lib/catering/sku-demand";
 import { loadProductIndex } from "@/lib/products";
 import { rollupUsageByProduct } from "@/lib/products-shared";
 import {
@@ -76,6 +85,18 @@ import {
 import { etCalendarDate, etYmdMinusDays, operationalDayUtcRange } from "@/lib/operational-day";
 import { etDayFromDate } from "@/lib/et-day-shared";
 import { formatTime } from "@/lib/i18n/format";
+
+/**
+ * How far ahead the walk looks for BOOKED CATERING when naming the event advisory.
+ *
+ * The advisory is per-row bounded by that row's own coverage horizon, but the catering
+ * read has to happen in the walk's ONE batch — before any horizon is known — so it needs
+ * a single outer bound. 14 days covers the longest coverage window a weekly rhythm can
+ * produce (an order day, its truck, and the truck after it), and an event further out
+ * than that is not something tonight's par can act on. Rows whose horizon is shorter
+ * filter the window down themselves; nothing outside a row's horizon is ever shown on it.
+ */
+const EVENT_ADVISORY_HORIZON_DAYS = 14;
 
 /** KH+ read/write floor for the par-pass. NO step-up (operational capture, spec D5). */
 export const PAR_PASS_MIN = 4; // key_holder+
@@ -467,6 +488,30 @@ export interface WalkerSku {
    * is just noticing before the human does.
    */
   parAdvisory: ParAdvisory | null;
+  /**
+   * THE NUMBER PAIR (r1 walker legibility + r3 suggestion governance). null = nothing to say.
+   *
+   * MUTUALLY EXCLUSIVE WITH `parAdvisory` BY CONSTRUCTION: the #283 cause advisory and the
+   * numeric suggestion never render on one row (r1). When both exist the NUMBER wins — a
+   * suggestion that names a coverage horizon is strictly more actionable than "a recipe
+   * changed", and two claimants on one row at 6 AM is the over-correction r2-9 rejected.
+   */
+  parSuggestion: WalkerParSuggestion | null;
+  /**
+   * THE EVENT ADVISORY — NAMED, NEVER SUMMED (r1-1, 6/6 unanimous).
+   *
+   * Booked catering demand for this SKU inside the horizon this par has to survive:
+   * "Catering Thursday needs 38 oz". A DISPLAY field and nothing else — a fulfilled
+   * event's consumption already enters the base through toast/production, and
+   * `productions` carries no catering attribution, so the base cannot be cleaned and
+   * adding this to any target would double-count it. Enforced structurally: nothing in
+   * lib/dynamic-pars-shared.ts knows this field exists (tests/dynamic-pars-reason.test.ts
+   * asserts the pure module never names it).
+   *
+   * STATED v1 LIMITATION (r2-12): recurring-event consumption pollutes the base once per
+   * cycle (single-count) until the `productions` quote-link enabler ships.
+   */
+  parEvent: { needDate: string; oz: number } | null;
   /** The product this SKU is a member of (0179). null = implicit singleton. */
   productId: string | null;
   /** Display label for the product headline ("HAM"). null for a singleton. */
@@ -519,6 +564,22 @@ export interface WalkerData {
   advisoryPaused: boolean;
   /** Par-carrying SKUs the walk dropped because nothing can order them (audit P4). */
   unroutable: WalkerUnroutable;
+  /**
+   * WHY THE QUIET PARS ARE QUIET — the Dynamic Pars reason lane (plan D15).
+   *
+   * One aggregate line plus a per-cause errand list, NEVER a per-row badge: with 94–100%
+   * of rows silent in v1 a badge would mark everything and destroy the lane it sits next
+   * to. `parSilence.badgePerRow` is the pure switch that turns row badges on by itself the
+   * day silence stops being the majority — no flag, no follow-up PR.
+   */
+  parSilence: ParSilenceSummary;
+  /**
+   * The machine is WATCHING, NOT TOUCHING. Drives ONE global banner above the vendor list
+   * — never a per-row reason (r3: in v1 100% of rows are in shadow, so a per-row badge
+   * would badge everything). Read off the ledger's own `mode`, so it says what actually
+   * happened at this shop rather than what the build believes.
+   */
+  shadowMode: boolean;
   vendors: WalkerVendor[];
 }
 
@@ -659,15 +720,38 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
     // salesThrough is unknown here. Can't-know → don't claim: false (there is also no
     // walker row for a blackout banner to explain). The unroutable tally still ships:
     // "every par'd SKU is unorderable" is exactly when the notice matters most.
-    return { walkDate: walkDateEt, isWeekendPar: weekend, advisoryPaused: false, unroutable, vendors: [] };
+    return {
+      walkDate: walkDateEt, isWeekendPar: weekend, advisoryPaused: false, unroutable,
+      // No par'd SKU anywhere means there is no par to be quiet ABOUT, and no walk for a
+      // banner to sit on. Claim nothing rather than reporting a zeroed summary.
+      parSilence: EMPTY_PAR_SILENCE, shadowMode: false, vendors: [],
+    };
   }
   const skuIds = skus.map((s) => s.id);
   const vendorIds = [...new Set(skus.map((s) => s.vendor_id as string))];
+  // The two facts the par ledger does not carry, from rows this function already holds —
+  // so the suggestion payload and the reason lane add no `vendor_items` read of their own.
+  const parSkuIndex: ReadonlyMap<string, ParSkuIndexEntry> = new Map(
+    skus.map((s) => [s.id, { vendorId: s.vendor_id, name: s.name }]),
+  );
+  // THE WALK INSTANT (R3-A). The day-class comes from the ALREADY-DERIVED `weekend` flag,
+  // never from a second derivation — etWalkDay() is the one home for the day rule, and a
+  // walk whose horizon disagreed with its own weekend badge would be incoherent.
+  const walkInstant = {
+    walkDateEt,
+    walkMinutesEt: minutesOfDayEt(new Date()),
+    dayClass: (weekend ? "weekend" : "weekday") as "weekday" | "weekend",
+    // THE LEVEL-7 CHECK, RESOLVED SERVER-SIDE (plan D1). The walker RENDERS at
+    // PAR_PASS_MIN (4) for transparency; ACTING on a suggestion is the same authority
+    // that may edit the par in the admin console today, no more and no less.
+    canAct: getRoleLevel(actor.user.role) >= PAR_WRITE_MIN,
+  };
 
   // BATCH loads (one each — loadRecipeGraph law).
   // overlayBySku: per-location active/par overrides; empty map = day-one (pure inheritance).
   const productIds = [...new Set(skus.map((s) => s.product_id).filter((v): v is string => v != null))];
-  const [chainsBySku, measures, rawUsageBySku, onHandView, { data: vendorRows, error: vErr }, lastOrderBySku, overlayBySku, cutoffsByVendor, productIndex, demandSources] =
+  const eventWindowEnd = addDaysEt(walkDateEt, EVENT_ADVISORY_HORIZON_DAYS);
+  const [chainsBySku, measures, rawUsageBySku, onHandView, { data: vendorRows, error: vErr }, lastOrderBySku, overlayBySku, cutoffsByVendor, productIndex, demandSources, suggestionBySku, parSilence, cateringDemand] =
     await Promise.all([
       loadSkuPackChains(skuIds),
       loadMeasures(),
@@ -683,6 +767,26 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
       loadProductIndex(productIds, locationId),
       // Which recipes still create demand for these pars, and which stopped (2026-08-21).
       loadDemandSources(sb, skus),
+      // ── DYNAMIC PARS (Task 4.2) — THREE MORE PARALLEL PROMISES, NO SERIAL STEP ──
+      // The batch law is preserved: the walk gains no round trip it did not already wait
+      // on, and none of the three reads is per-SKU. Each degrades to an honest empty
+      // before its migration is applied, so the walk is byte-identical pre-0182.
+      loadParSuggestions(sb, locationId, walkInstant, parSkuIndex),
+      loadParSilence(sb, locationId, walkDateEt, parSkuIndex),
+      // The catering event advisory (plan D11): its actor-less core, because this walk's
+      // floor is KH (4) and the catering-demand read's is 6. A NAME AND A DATE, never a
+      // number that enters any target.
+      //
+      // FAIL-SOFT, AND ONLY THIS ONE. The shelf walk never depended on the catering
+      // subsystem before this phase, and a 6 AM walk must not 500 because a dormant
+      // module hiccupped over a display line. The two par reads above are deliberately
+      // NOT wrapped: they are this arc's own, and swallowing their errors would hide the
+      // defect the reason lane exists to surface.
+      deriveCateringSkuDemand({ locationId, from: walkDateEt, to: eventWindowEnd })
+        .catch((e: unknown) => {
+          console.warn(`[ordering] catering event advisory unavailable: ${String(e)}`);
+          return { rows: [], unresolvedChoiceLines: 0, noRecipeLines: 0 };
+        }),
     ]);
   if (vErr) throw new Error(`loadWalkerData vendors: ${vErr.message}`);
   const vendorById = new Map((vendorRows ?? []).map((v) => [v.id, v]));
@@ -704,6 +808,15 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
   const yesterdayEt = etYmdMinusDays(etCalendarDate(new Date().toISOString()), 1);
   const advisoryPaused =
     onHandView.salesThrough != null && onHandView.salesThrough < yesterdayEt;
+
+  // Booked catering per SKU, as dated cells. Kept in date order so a row can take the
+  // EARLIEST event inside its own horizon without re-sorting per row.
+  const cateringBySku = new Map<string, Array<{ needDate: string; oz: number }>>(
+    cateringDemand.rows.map((r) => [
+      r.skuId,
+      [...r.byDate].sort((a, b) => a.needDate.localeCompare(b.needDate)),
+    ]),
+  );
 
   // ── Row construction, shared by the par'd walk AND the rerouted-backup path ──
   // A backup member carries no par of its own, so it is not in `skus`; when a
@@ -751,10 +864,36 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
       activeRecipeRefs: demandSources.activeRefsBySku.get(s.id) ?? 0,
       removedSources: demandSources.removedSourcesBySku.get(s.id) ?? [],
     });
+    // ── DYNAMIC PARS, IN THE ONE ROW BUILDER BOTH WALK PATHS SHARE (Task 4.2) ────
+    // KEYED ON THIS ROW'S OWN SKU, and that matters on the rerouted-backup path: unlike
+    // the #283 advisory (which is about the PAR, so it travels with a rescued par), a
+    // suggestion is a number in ONE vendor's order units, computed from that vendor's
+    // pack and weight. Handing the dropped twin's number to the backup would state it in
+    // the wrong unit. A rescued backup with no ledger row of its own therefore renders no
+    // number — the honest answer, not a gap.
+    //
+    // A RETIRED product never reaches here at all: those SKUs `continue` in the cause
+    // ladder above, so retirement suppression cannot be overridden by construction
+    // (spec, "What it never does").
+    const parSuggestion = suggestionBySku.get(s.id) ?? null;
+    // THE HORIZON THIS ROW IS BEING ASKED TO SURVIVE. With a suggestion it is the live
+    // re-selected coverThrough; without one the walk's outer event window, because a row
+    // with no coverage claim still has booked catering worth naming.
+    const eventThrough = parSuggestion?.coverThroughDate ?? eventWindowEnd;
+    const parEvent =
+      (cateringBySku.get(s.id) ?? []).find(
+        (c) => c.needDate > walkDateEt && c.needDate <= eventThrough,
+      ) ?? null;
     return {
       skuId: s.id,
       name: s.name,
-      parAdvisory,
+      // THE EXCLUSIVITY, ENFORCED IN THE ONE BUILDER (r1). When both exist the NUMBER
+      // wins: a suggestion naming a coverage horizon is strictly more actionable than
+      // "a recipe changed", and two claimants on one row at 6 AM is over-correction.
+      // The `parReview` counter reads the FINAL rows, so it reflects this automatically.
+      parAdvisory: parSuggestion != null ? null : parAdvisory,
+      parSuggestion,
+      parEvent: parEvent != null ? { needDate: parEvent.needDate, oz: parEvent.oz } : null,
       itemNumber: s.item_number,
       orderUnitLabel: orderUnitLabelFor(s.pack_format, chain),
       parToday: par,
@@ -1073,7 +1212,10 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
     return a.name.localeCompare(b.name);
   });
 
-  return { walkDate: walkDateEt, isWeekendPar: weekend, advisoryPaused, unroutable, vendors };
+  return {
+    walkDate: walkDateEt, isWeekendPar: weekend, advisoryPaused, unroutable,
+    parSilence, shadowMode: parSilence.shadowMode, vendors,
+  };
 }
 
 /**

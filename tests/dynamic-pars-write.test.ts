@@ -11,6 +11,10 @@
  * writing the machine's lane. Both of those are properties of this table, so both are
  * asserted here rather than described in a comment.
  */
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, it, expect } from "vitest";
 
 import {
@@ -21,6 +25,11 @@ import {
   type ParWriteActorKind,
 } from "@/lib/dynamic-pars-shared";
 import { getRoleLevel } from "@/lib/roles";
+import { dismissSuggestion, writeParFromSuggestion } from "@/lib/dynamic-pars";
+
+/** Two shops, so "bound to A, acting on B" is a fact and not a mood. */
+const LOCATION_A = "11111111-1111-4111-8111-111111111111";
+const LOCATION_B = "22222222-2222-4222-8222-222222222222";
 
 const KINDS: ParWriteActorKind[] = ["admin", "accept", "revert", "machine"];
 const DAY_CLASSES: DayClass[] = ["weekday", "weekend"];
@@ -193,5 +202,114 @@ describe("parWriteColumns — the machine-lane bypass is STRUCTURAL", () => {
       expect(cols.autoLane.auto_weekday_baseline_par).toBeNull();
       expect(cols.autoLane.auto_weekday_applied_at).toBeNull();
     }
+  });
+});
+
+// ── THE ROUTES, AT THE SOURCE (Dynamic Pars Phase 4, Tasks 4.4 + 4.9) ─────────
+//
+// The two properties below are STRUCTURAL — they are true because of what the handlers do
+// not contain — so a unit test over their exports could never see them. Reading the file
+// is the only assertion that can. Same posture as the Task-4.7 grep over the pure core:
+// when the guarantee is an absence, assert the absence.
+
+const routeSrc = (rel: string) =>
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", ...rel.split("/")), "utf8");
+
+describe("the admin overlay route cannot reach the machine's lane", () => {
+  const src = routeSrc("app/api/admin/skus/[id]/location-settings/route.ts");
+
+  it("never names an auto_ or pinned_ column", () => {
+    // NOT a filter — a filter would imply the columns were once reachable. The handler's
+    // body parser is an explicit four-field list and these names simply do not occur in it.
+    expect(/\bauto_(weekday|weekend)_/.test(src)).toBe(false);
+    expect(/\bpinned_(weekday|weekend)_at\b/.test(src)).toBe(false);
+  });
+
+  it("still carries its own Tier-A step-up — only the walker's verbs drop it (plan D2)", () => {
+    expect(src.includes('assertStepUp(ctx, "A")')).toBe(true);
+  });
+});
+
+// ── THE LOCATION BIND, IN THE LIB (LEAD RULING F7) ───────────────────────────
+//
+// PAR_WRITE_MIN is 7, and 7 is NOT all-locations — lockLocationContext's all-locations
+// grant starts at level 9 — so the role gate alone does not say WHICH shop's par an actor
+// may move. These two cases are the reason the bind moved out of the route and into the
+// authority: they run against the lib directly, with no route in the picture.
+//
+// "THE ARBITER WAS NEVER REACHED" IS PROVEN BY THE PAIR, not asserted by a mock. The
+// refused call comes back as a DynamicParsError 404; the permitted call gets past the
+// bind and dies on a missing Supabase env var. Since the arbiter's INSERT sits behind that
+// same boundary, a 404 that arrives instead of the env error can only mean the call was
+// refused before any database work — and no par_suggestion_actions row can exist.
+
+describe("writeParFromSuggestion / dismissSuggestion bind the location", () => {
+  const gmAtA = {
+    user: { id: "u1", role: "gm" as const, language: "en" as const },
+    locations: [LOCATION_A],
+  } as unknown as Parameters<typeof dismissSuggestion>[0];
+  // Level 9+ carries the all-locations grant, so the bind must let it through.
+  const ownerAnywhere = {
+    user: { id: "u2", role: "owner" as const, language: "en" as const },
+    locations: [],
+  } as unknown as Parameters<typeof dismissSuggestion>[0];
+
+  const args = {
+    locationId: LOCATION_B, skuId: "sku-1", dayClass: "weekday" as DayClass,
+    generationId: `${LOCATION_B}:sku-1:weekday:3>4`,
+  };
+
+  it("refuses a GM at shop A acting on shop B — 404, before the arbiter", async () => {
+    await expect(
+      writeParFromSuggestion({ actor: gmAtA, actorKind: "accept", value: 4, ...args }),
+    ).rejects.toMatchObject({ name: "DynamicParsError", status: 404, code: "not_found" });
+
+    await expect(
+      dismissSuggestion(gmAtA, { ...args, currentPar: 3 }),
+    ).rejects.toMatchObject({ name: "DynamicParsError", status: 404, code: "not_found" });
+  });
+
+  it("lets an all-locations actor through the bind (it then reaches the DB boundary)", async () => {
+    // Not a 404: the bind passed. What it hits next is the absent test-env Supabase
+    // config — which is exactly the boundary the refused calls above never got to.
+    for (const call of [
+      () => writeParFromSuggestion({ actor: ownerAnywhere, actorKind: "accept", value: 4, ...args }),
+      () => dismissSuggestion(ownerAnywhere, { ...args, currentPar: 3 }),
+    ]) {
+      const err = await call().catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(Error);
+      expect((err as { name?: string }).name).not.toBe("DynamicParsError");
+      expect(String((err as Error).message)).toMatch(/must be set/);
+    }
+  });
+
+  it("the MACHINE kind is exempt — it carries no actor to bind", async () => {
+    // The cron iterates every location by design. It is refused for a different reason
+    // (the write bit is off), and that refusal must not be a location error.
+    await expect(
+      writeParFromSuggestion({
+        actor: null, actorKind: "machine", value: null, autoValue: 4, ...args,
+      }),
+    ).rejects.toMatchObject({ status: 503, code: "auto_apply_disabled" });
+  });
+});
+
+describe("the walker's suggestion route never takes a number from the client", () => {
+  const src = routeSrc("app/api/operations/ordering/suggestion/route.ts");
+
+  it("reads only identity fields off the body", () => {
+    // The par written is `suggestion.suggestedPar` — re-derived server-side at the walk
+    // instant. If a `b.par` / `b.value` / `b.suggestedPar` ever appears here, a tampered
+    // payload can move a par to a number the system never chose.
+    expect(/\bb\.(par|value|suggestedPar|currentPar)\b/.test(src)).toBe(false);
+    expect(src.includes("value: suggestion.suggestedPar")).toBe(true);
+  });
+
+  it("binds the location before it acts (IDOR)", () => {
+    expect(src.includes("lockLocationContext")).toBe(true);
+  });
+
+  it("takes NO step-up — a password prompt at 6 AM is the affordance's death (plan D2)", () => {
+    expect(src.includes("assertStepUp")).toBe(false);
   });
 });

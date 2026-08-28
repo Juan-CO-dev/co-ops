@@ -34,6 +34,7 @@ import "server-only";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
+import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import type { AuditAction } from "@/lib/audit-actions";
@@ -80,6 +81,16 @@ import {
  */
 export { parAutoMovesReady, parAutoLaneReady, parSuggestionActionsReady, salesSignalsReady };
 
+/**
+ * THE WALKER'S READ PATH LIVES IN A LEAF TOO (lib/dynamic-pars-walker.ts), AND FOR THE
+ * SAME REASON AS THE PROBES: its one caller is `lib/ordering.ts`, which THIS module
+ * imports (WALKER_SKU_COLUMNS, perOrderUnitOz). Defining it here would make the walker and
+ * the engine mutually recursive. The plan names this file as its home, so it is re-exported
+ * at this path — define in the leaf, re-export from the module the plan names.
+ */
+export { loadParSuggestions, loadParSilence } from "@/lib/dynamic-pars-walker";
+export type { WalkInstant, ParSkuIndexEntry } from "@/lib/dynamic-pars-walker";
+
 type ServiceClient = ReturnType<typeof getServiceRoleClient>;
 
 /** Typed error the (Phase-4) routes map to jsonError(status, code). */
@@ -93,6 +104,34 @@ export class DynamicParsError extends Error {
 function requireLevel(actor: AuthContext, min: number): void {
   if (getRoleLevel(actor.user.role) < min) {
     throw new DynamicParsError(403, "forbidden", "Insufficient role level for this action");
+  }
+}
+
+function actorLoc(actor: AuthContext): LocationActor {
+  return { role: actor.user.role, locations: actor.locations };
+}
+
+/**
+ * THE LOCATION BIND, IN THE LIB (LEAD RULING F7, Phase-4 close).
+ *
+ * A par write floors the ROLE at 7, and 7 is NOT all-locations — `lockLocationContext`'s
+ * all-locations grant starts at level 9 (lib/locations.ts), so a GM is bound to their
+ * assignment list. Without this, a level-7 manager at one shop could move the other
+ * shop's par: the role gate would pass and nothing else would object.
+ *
+ * It lives HERE and not only on the route because the lib is the authority (AGENTS.md),
+ * and that law outranks Task 4.4's silence about it. The route's own bind stays as the
+ * outer layer — defence in depth, not redundancy — but a future caller (the Phase-5 sim
+ * harness, a fleet route, an admin affordance) that forgets it now fails closed instead
+ * of quietly crossing shops. Same shape and same 404 as `loadOnHandDerived` and every
+ * other location-scoped reader in lib/counts.ts.
+ *
+ * IT RUNS BEFORE THE ARBITER, AND BEFORE ANY I/O. A bind failure must not consume a
+ * suggestion generation — that would let a wrong-shop tap burn the right shop's offer.
+ */
+function requireLocation(actor: AuthContext, locationId: string): void {
+  if (!lockLocationContext(actorLoc(actor), locationId)) {
+    throw new DynamicParsError(404, "not_found", "Location not found");
   }
 }
 
@@ -1144,7 +1183,12 @@ export async function writeParFromSuggestion(input: ParWriteInput): Promise<void
   } else {
     if (input.actor == null) throw new DynamicParsError(401, "unauthorized", "Actor required");
     requireLevel(input.actor, PAR_WRITE_MIN);
+    // Level 7 is not all-locations (that grant starts at 9), so the role gate alone does
+    // NOT say which shop's par this actor may move. Before the arbiter, before any I/O.
+    requireLocation(input.actor, input.locationId);
   }
+  // The MACHINE kind is exempt by design: it carries no actor at all, and the nightly cron
+  // iterates every location on purpose. There is no session to bind it to.
 
   const sb = getServiceRoleClient();
   // Refuse UP FRONT, before anything is read or written: a human verdict that cannot be
@@ -1254,6 +1298,10 @@ export async function dismissSuggestion(
   args: { locationId: string; skuId: string; dayClass: DayClass; generationId: string | null; currentPar: number | null },
 ): Promise<void> {
   requireLevel(actor, PAR_WRITE_MIN);
+  // A dismiss writes no par, but it DOES consume a generation and feed the trust ramp's
+  // denominator — so a wrong-shop dismiss would let one shop's manager starve another
+  // shop's graduation gate. Bound before the arbiter, exactly like the write path.
+  requireLocation(actor, args.locationId);
   const sb = getServiceRoleClient();
   await recordSuggestionAction(sb, {
     locationId: args.locationId, skuId: args.skuId, dayClass: args.dayClass,
