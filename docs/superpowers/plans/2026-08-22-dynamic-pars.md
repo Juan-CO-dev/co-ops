@@ -2654,7 +2654,7 @@ Phase 4 shipped the walker's suggestion payload, the accept/dismiss/revert route
 
 ---
 
-## ARC CLOSE — Phase 5 (builder, 2026-08-28)
+## ARC CLOSE — Phase 5 (builder, 2026-08-28; PR #292)
 
 Phase 5 shipped the scenario regressions, the T0 sweep and the documentation. **No production
 code changed in this phase, by design** — an arc-close PR that edits the engine it is closing
