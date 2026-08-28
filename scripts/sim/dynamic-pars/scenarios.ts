@@ -40,6 +40,7 @@ import {
   computeVelocityRatio,
   cushionFor,
   observedPeakCoverageOz,
+  SILENCING_REASONS,
   roundToStep,
   siblingBlendWeight,
   trustRampState,
@@ -315,13 +316,11 @@ export function simulateNight(input: NightInput): NightResult {
     // The engine's own spelling: no day in the window produced anything in either lane.
     noLocalHistory: input.window.every((d) => !d.salesObserved && !d.productionObserved),
   });
-  // D16's carve-out: `slot_creation` silences the WALKER, never the computation.
-  const silencing = new Set<ParReasonCode>([
-    "inventory_only", "product_retired", "no_lane_start", "no_production_capture",
-    "no_weight_basis", "unresolvable_pack", "no_vendor_rhythm", "thin_history",
-    "stale_depletion", "no_local_history", "zero_target", "par_unit_suspect",
-  ]);
-  if (silencing.has(reason)) {
+  // D16's carve-out, in the engine's own spelling: `slot_creation` silences the WALKER,
+  // never the computation. SILENCING_REASONS is IMPORTED, never re-listed — a second copy
+  // of the vocabulary here would be a fixture with its own opinion about what silences a
+  // par, which is precisely the drift this arc's closed unions exist to end.
+  if (SILENCING_REASONS.has(reason) && reason !== "slot_creation") {
     const r = shell({ reasonCode: reason });
     return { ...r, terms: { ...r.terms, reasonCode: reason } };
   }

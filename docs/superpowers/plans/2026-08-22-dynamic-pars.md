@@ -2651,3 +2651,137 @@ Phase 4 shipped the walker's suggestion payload, the accept/dismiss/revert route
 **A note on how F7 is tested, because it amended the test spine.** `lib/dynamic-pars.ts` carries `import "server-only"`, which throws under vitest, so its front-door guards were structurally untestable — which is precisely how a missing IDOR check survives review. `vitest.config.ts` now aliases `server-only` to the package's own no-op `empty.js`. **The suite's pure-only scope still holds and now enforces itself:** no Supabase env is supplied, so any test that reaches `getServiceRoleClient()` fails loudly on a missing variable. That is what makes the assertion airtight rather than mocked — the refused call returns a `DynamicParsError` 404 while the permitted call dies at the env boundary, and since the arbiter's INSERT sits *behind* that boundary, a 404 proves no `par_suggestion_actions` row can exist. Verified by mutation: deleting the bind fails the case.
 
 **Standing, unchanged:** the auto tier's live population is **one SKU** and `sku_count_events` is 0. **New at Phase-4 close:** prod has **0 `par_auto_moves` rows, 0 active `vendor_delivery_rhythm` pairs, and no `par.auto_tune_shadow` audit row** — the nightly pars step has never executed. The surfaces therefore render the honest-empty path until the cron runs once AND at least one vendor rhythm is authored; smoke in that order, or the only cause the reason lane can show is `no_vendor_rhythm`.
+
+---
+
+## ARC CLOSE — Phase 5 (builder, 2026-08-28)
+
+Phase 5 shipped the scenario regressions, the T0 sweep and the documentation. **No production
+code changed in this phase, by design** — an arc-close PR that edits the engine it is closing
+has not closed anything.
+
+**LIVE GROUND TRUTH, re-probed against prod 2026-08-28 (not carried from a handoff):** both
+migrations are applied — **M1 (`0182`) and M2 (`0183`) are cleared** — and the engine has run
+**three nights** (2026-08-25/26/27) producing **1 692 `par_auto_moves` rows = 282 per shop per
+night** (141 par'd SKUs x 2 day-classes), every one `mode = shadow`, with exactly **one
+`par.auto_tune_shadow` audit row per (location, night)**. **Task 3.10's success measure was hit
+exactly.** The latest night's histogram per shop: `inventory_only` 114 · `no_lane_start` 98 ·
+`no_weight_basis` 54 · `no_production_capture` 10 · `no_vendor_rhythm` 4 · `unresolvable_pack` 2.
+Live `vendor_delivery_rhythm` pairs: **0**. `sku_count_events`: **0**. `par_suggestion_actions`: **0**.
+
+**Zero suggestions render today, and that is the arc succeeding.** The Scope-honesty section set
+the measure — reason-lane completeness, never suggestion volume — and 282 of 282 rows carry a
+correct, specific, i18n'd cause.
+
+**One honest delta from the plan's forecast, recorded so the ledger stays the authority.** Scope
+honesty predicted ~14 lit rows once rhythm is authored. The engine's own first three nights say
+**4 rows per shop** reach the rhythm rung; the rest are held earlier, chiefly at `no_lane_start`
+(98/shop), which the pre-build probe under-counted. The forecast was an estimate over
+`toast_daily_depletion`; the histogram is a measurement. **Nothing is wrong — the number is just
+now known**, and Juan's single highest-leverage errand is unchanged and sharper for it: author
+PFG's and Boar's Head's rhythm and those four rows speak.
+
+### Task 5.1 — the scenario fixtures ✅
+
+`scripts/sim/dynamic-pars/scenarios.ts` + `tests/dynamic-pars-scenarios.test.ts`. **Nine**
+scenarios, **32 cases**: the task's five, its two "cheap and high-value" adds, and two the lead
+named at the Phase-5 brief (graduation day · a count arriving mid-shadow). They are the only
+tests in the arc that run END TO END — `computeBaseRate` → `computeVelocityRatio` →
+`computeCoverage` → `applyGuardStack` → `resolveWalkerSuggestion`, composed in the engine's own
+order over hand-built inputs. `simulateNight` is a documented MIRROR of
+`runParShadowForLocation`'s (1)..(5) and delegates every decision to a shipped pure function; it
+IMPORTS `SILENCING_REASONS` rather than re-listing it, because a fixture with its own copy of the
+vocabulary is exactly the drift the closed unions exist to end.
+
+**Two arguable numbers, argued rather than smoothed over:**
+
+1. **The flat base breaks the band on night 16, not the task's "~day 18".** The band's own
+   arithmetic decides it: par 8, step 1, `max(1 step, 25%)` = 2, so the band breaks at a rounded
+   target of 11, which needs ~78% of the window's 12 weekday points to be post-step. "~day 18"
+   was an estimate on this same model. The DURABLE claim — over two weeks of latency, visible on
+   the ledger every night — is what is pinned.
+2. **AS SHIPPED, the peak-coverage floor is this arc's FAST responder, and it breaks the band on
+   night 7 — nine nights before the base.** The floor asks "what is the worst run this shop has
+   actually had over a horizon this long", and two days after a step that answer is already the
+   new level while the 21-day mean is three weeks from it. **This is the floor doing exactly its
+   job** (a percentage on a mean is not a service level — the Prosciutto proof), not a defect,
+   and it is pinned as a landmark so a later reader does not mistake it for one. A second fact
+   falls out of the same arithmetic and is pinned too: while the floor binds, velocity moves the
+   TARGET but not the rendered suggestion — the one-step deadband absorbs it, because the floor
+   already moved the number velocity was reaching for. Two safety terms, no double-count.
+
+The fixtures carry one FIXTURE-ONLY counterfactual (`counterfactualNoPeakFloor`), documented as
+not a knob the engine has. Attribution needs it: a scenario claiming "the FLOOR raised this
+number" can only prove it by re-running the identical night with that term withheld, and every
+scenario that uses it asserts BOTH runs, with the as-shipped run pinning the behaviour.
+
+### Task 5.2 — the T0 sweep over `f34b069..HEAD` (51 files, ~12k insertions) ✅
+
+Every class the plan names, plus the standing checklist. **CLEAN unless noted.**
+
+| Class | Verdict |
+| --- | --- |
+| **#9 active-filter blindness** | CLEAN. All four rhythm/skip reads carry `.eq("active", true)`; every deactivation is an UPDATE with `{ count: "exact" }` **and** `.eq("active", true)`; the partial unique indexes (`… WHERE active`) match the reads. `par_suggestion_actions` is an append-only EVENT ledger, not config — its unique index is the discipline, and an `active` column there would be wrong. |
+| **#6/#24 unbounded id lists** | CLEAN. No `.in()` over the 141 SKU ids anywhere in the engine; production ids are chunked at 150 with the reasoning in-file; every window read goes through `selectAllRows` with `.order(...).range(...)` under a stable **total** order (an `id` tiebreak on every one). |
+| **#13 unregistered audit actions** | CLEAN. Five names added and adjudicated with argument — `par.auto_tune`, `par.auto_tune_shadow`, `par.suggestion_dismiss` non-destructive (system observations / a human declining); `par.suggestion_accept`, `par.auto_tune_revert` destructive (a human moving a par). No template-literal action names; both `audit()` call sites pass a literal or a typed lookup. `tests/audit-actions.test.ts` 27/27. |
+| **#22 RLS** | CLEAN. All five new tables carry `ENABLE ROW LEVEL SECURITY` + the triple `REVOKE` (anon, authenticated, public) with **zero permissive policies** — the strictest posture, service-role only, matching the 0174 precedent. No `FOR ALL` anywhere. `0183` states `location_sku_settings`' inherited stance, as r3 required. |
+| **#26 unit heterogeneity** | CLEAN. Exactly TWO divisions by `perOrderUnitOz` exist in the whole arc, both in the pure core: the oz→order-unit conversion in `computeCoverage` (the one canonical site) and velocity's volume floor, deliberately expressed in order-units-per-day so the floor is dimensionally honest. No component, route or fixture re-derives it; the band operates on `targetUnits`/`parStep` only. |
+| **Silent UPDATE denial** | CLEAN. Every UPDATE passes `{ count: "exact" }`; the three that expect a row 404 on zero. The ONE exemption is `setVendorRhythmPair`'s append-only supersede, whose zero rowcount is the NORMAL case (a vendor's first pair for a shop) — a 404 there would make the feature unreachable. Argued in-file, and the rowcount still rides into the audit row as `superseded`. |
+| **Write-on-read** | CLEAN. Zero `insert`/`update`/`upsert`/`delete`/`rpc` anywhere in `lib/dynamic-pars-walker.ts` or in `lib/ordering.ts`'s additions. The horizon re-selection is a pure SELECTION over persisted terms. |
+| **Fail-open discipline** | CLEAN. `writeLedger` THROWS on both the delete and the insert (and `loadAppliedSlots` throws), so a failed ledger write fails the run rather than silently losing the guard's state home; the cron's per-location try/catch contains it and records `par_run_failures` on the heartbeat. Correctly the OPPOSITE of `audit()`'s fail-open posture. |
+| **Second-resolver** | CLEAN. Exactly one `loadProductIndex` call in the arc; `productBySku` feeds the one shipped `rollupUsageByProduct`; `primarySkuId` is read off that index, never re-resolved. No `resolveProductMember` call anywhere in the arc. |
+| Legacy `vendors.delivery_days` | CLEAN. Read only by the pre-existing vendor schedule editor; the rhythm code never touches it, and `VendorRhythmCard` states why in its header. |
+| i18n parity | CLEAN. `en.json` / `es.json` **4 025 keys each, zero missing in either direction**. |
+| Vocabulary ↔ DDL drift | CLEAN. Every DB `CHECK` matches its TS union exactly (`day_class`, `mode`, `tier`, `outcome`, `suppressed_by` vs `GuardName`, `action`). `reason_code` deliberately carries none — compiler-closed on the write side, the `AuditAction` posture, stated in the migration. |
+| Clock in a pure function | CLEAN. No `new Date()` / `Date.now()` in any `*-shared.ts`; F4's rule holds and the only occurrences are the doc blocks explaining it. |
+| Authz / step-up / IDOR | CLEAN. Walker routes: level 7, **no** step-up (D2), location-bound at the route AND inside the lib (F7). Admin rhythm routes: role gate + `assertStepUp(ctx, "A")`. The admin overlay route's step-up is untouched and its machine-lane exclusion is now stated in-file. |
+| 409 / idempotency | CLEAN. All three verbs; the unique index is the arbiter and it is claimed BEFORE the mutation. |
+| Shared-type consumers | CLEAN. Both `resolvePar` call sites migrated to the three-lane overlay; no stale caller anywhere in `lib/`, `app/` or `components/`. |
+| PostgREST numeric coercion | CLEAN. Every `numeric` column reads through `num()`; `order_dow`/`lead_days` are `smallint` and correctly typed as `number`. |
+
+**FLAGGED, NOT FIXED — one item, outside this task's authorization.**
+`loadVendorRhythmSkips` (`lib/vendor-rhythm.ts`) is an unpaged read: one vendor, all locations,
+`active = true`, **no date bound**. Skips retract via `active = false`, so an admin who never
+retracts accumulates rows forever and would eventually hit PostgREST's default 1 000-row ceiling
+and truncate SILENTLY on the admin list. **Severity: very low** — it needs 1 000 never-retracted
+outage windows on ONE vendor, it is display-only, and the three sibling reads are structurally
+bounded (the partial unique index caps rhythm pairs at `vendors x locations x 7`;
+`loadRhythmSkips` bounds itself with `.gte("skip_through", …)`). It is not one of the nine
+classes Task 5.2 authorizes, and paging it would change a lead-reviewed Phase-1 surface, so it is
+reported rather than fixed. **Fix ≈ 3 lines** (`selectAllRows` + an `id` tiebreak) whenever a
+rhythm surface is next touched.
+
+**One self-inflicted finding, fixed in place:** the first draft of `simulateNight` re-declared the
+silencing-reason set inline instead of importing `SILENCING_REASONS` — the exact
+second-vocabulary class this sweep hunts. Caught by running the sweep over my own diff.
+
+### Task 5.3 — documentation ✅
+
+- **`docs/ROADMAP.md`**: the "Dynamic Pars — design session" NEXT entry replaced by the shipped
+  block with the live ground truth above; the six enablers the four spec layers name filed with
+  triggers (**quote-link on `productions`** · **the resale marker on `vendor_items`** · **the
+  statistical cushion** and its data precondition · **Add-a-Location / sibling designation** ·
+  **the 27 contradictory flat weights** as the weight board's next census · **the day-class
+  boundary as tenant config**, queued with `tenant_role_labels`), plus the **par-history drawer**
+  the spec called "if cheap" and this plan did not build. The stale `parReviewAdvisory` "this is
+  the arc" framing and the `recipe_input.remove` trigger were corrected — the Dynamic Pars half of
+  that trigger fired and did NOT need it, because the demand engine reads oz lanes, never recipe
+  topology. Juan's errand list gains the arc's own #1: **author PFG's and Boar's Head's rhythm.**
+- **`AGENTS.md`**: a new **§ Dynamic pars** sibling to § Product identity, in the house voice —
+  the three-lane `resolvePar` and that a human always wins · the machine-lane law and its
+  STRUCTURAL (not validated) closure · the band in par steps and the ≤3-step manual-only rule ·
+  budget consumed by auto-writes and reverts, accepts free · the pin cleared only by a direct
+  human edit at the same slot · the second-next-delivery horizon selected at READ time · the
+  reason lane as the product and the closed reason vocabulary's posture · velocity as a bounded
+  dimensionless ratio that can never enter an oz sum · the event layer named and never summed ·
+  and that the double-count law is not in play and `direct_oz` was not touched. The stale
+  migration-lineage line (0181) is corrected to **0183** in the same PR, per this file's own law.
+- The durable memory topic file (`project_coops_dynamic_pars_arc.md`) is the **lead's** write —
+  memory curation is not a build agent's to perform. Everything it needs is in this block.
+
+### Gates
+
+`npm run build` ✅ · `npx tsc --noEmit` ✅ (0 errors) · `npm test` ✅ **1 583 passed / 76 files**
+(the arc's own suites contribute ~2 900 lines of cases; Phase 5 adds 32). No migration, no prod
+write — the ground-truth figures above come from read-only `SELECT`s. **Not merged**: the arc's
+merge is Juan's click, per the standing auto-mode boundary.

@@ -5,8 +5,9 @@
 > severely stale — do not plan from it). Update this file at every arc-close; keep NOW
 > capped at 3 builds. Dated entries; delete, don't strikethrough.
 >
-> **Last refreshed 2026-08-20** (costing-engine arc close). Every figure in the
-> 2026-08-20 blocks was re-verified live against prod, not carried from a handoff.
+> **Last refreshed 2026-08-28** (Dynamic Pars arc close). Every figure in the
+> 2026-08-20 and 2026-08-28 blocks was re-verified live against prod, not carried from
+> a handoff.
 
 **The strategic read (unanimous):** the center of gravity has moved from BUILDING to
 LIGHTING UP. The deepest stacks (Toast depletion, the catering moat, pack chains) are
@@ -39,15 +40,21 @@ built and dormant behind owner externals. Converting dormant→live outranks new
    banked but nothing consumes them yet → **depletion-into-drift is the real NEXT.**
 2. **Resend DNS** → magic links reach real customers (today the allowlist gates them
    to juan@). Unlocks: real catering leads → the W1/W4 moat finally breathes.
-3. **Two-minute decisions:** photo storage target (recommended: Supabase Storage);
+3. ⚡ **NEW (2026-08-28) — author PFG's and Boar's Head's order→delivery rhythm.**
+   Five minutes on `/admin/vendors/[id]` (the rhythm card shipped with Dynamic Pars
+   #288): for each shop, the days you ORDER and how many days later the truck lands.
+   Live `vendor_delivery_rhythm` pairs: **0**, and that single fact is what stands
+   between three nights of a working shadow engine and the first par number it ever
+   renders. Nothing else on this list is this cheap for this much.
+4. **Two-minute decisions:** photo storage target (recommended: Supabase Storage);
    cash-gate → hard_gate fold (a single data flip on the template item — zero code).
-4. Standing data errands (tools all built and waiting): 9 deli pack chains (the
+5. Standing data errands (tools all built and waiting): 9 deli pack chains (the
    wizard) · 34-line needs-link backlog (the builder's Doctor) · shop weigh pass 2
    (calibration checklist) · catalog curation (on_hand flips, cleaning/misc classes)
    · fulfillment nodes radius config · catering rate rules authoring.
-5. **Strategic decision when ready:** payment provider (Stripe/Square/Toast) — gates
+6. **Strategic decision when ready:** payment provider (Stripe/Square/Toast) — gates
    portal launch; has tax/accounting implications; deserves its own sit-down.
-6. ⭐ **THE COSTING OPEN LIST (2026-08-20)** — the Angel arc priced everything a
+7. ⭐ **THE COSTING OPEN LIST (2026-08-20)** — the Angel arc priced everything a
    distributor invoice can reach; what is left needs a scale or a receipt, and each row
    below unblocks a specific number rather than a vague "more data". Ordered by leverage:
    - **Finished-jus quart weight** — the highest-leverage single weigh on this list.
@@ -191,10 +198,86 @@ Logged-deferred → DEBT table.
   discrepancy flags → `vendor_credits` ledger, offline drafts, dedupe/partial guards
   (migration 0168). The two queued builds (mid-shift low-stock item; counts `loadOnHand`
   batching) now fire on the FIRST PAR-PASS or audit instead (P3/P2 of the spec).
-- **Dynamic Pars — design session** (owner-called) once a count cycle + sales
-  velocity have a couple of weeks of data. Weather bootstraps from the existing
-  manual weather field on the daily report before any feed is built. Then
-  EZCater 2c-b when the ezManage token lands.
+- ⭐⭐ **DYNAMIC PARS v1 IS SHIPPED AND WATCHING (2026-08-22/28, PRs #288–#292,
+  migrations 0182 + 0183 both applied — gates M1 and M2 cleared).** The par now moves
+  with demand and explains itself, in SHADOW: every night, chained after depletion
+  materialization, the engine computes a base consumption rate (trailing 21 days,
+  day-class split, observed-day denominators, lane- and time-clamped), a bounded
+  velocity ratio, a coverage window off the vendor's real order→delivery rhythm, a
+  policy cushion and an observed-peak floor — then simulates the FULL guard stack and
+  records would-apply-vs-suppressed-by-which-guard. **Nothing applies itself**
+  (`PAR_AUTO_APPLY_ENABLED` is false), and nothing can: `sku_count_events` is still 0,
+  so the graduation gate's count anchor is unreachable by construction.
+
+  **Live, re-probed 2026-08-28:** three nights have run (2026-08-25/26/27), **1 692
+  ledger rows = 282 per shop per night** (141 par'd SKUs × 2 day-classes), all
+  `mode = shadow`, exactly **one `par.auto_tune_shadow` audit row per (location,
+  night)** — the Phase-3 success measure hit on the nose. Latest histogram per shop:
+  `inventory_only` 114 · `no_lane_start` 98 · `no_weight_basis` 54 ·
+  `no_production_capture` 10 · `no_vendor_rhythm` 4 · `unresolvable_pack` 2.
+  **Zero suggestions render, and that is the arc succeeding, not failing** — the scope
+  read was always "the reason lane is the product". **All 282 rows carry a correct,
+  specific cause**, in English and Spanish, generated live: 114 are the NOT-A-FAULT
+  `inventory_only` (packaging was never demand-derived, and it ranks first in the reason
+  ladder precisely so those 114 never land on Juan's list as false chores), and **70 are
+  a genuine, actionable errand** — 54 weigh-ins, 10 production captures, 4 rhythm
+  authorings, 2 pack chains.
+
+  ⚡ **THE ARC'S OWN #1 ERRAND, and it is five minutes: author PFG's and Boar's Head's
+  order→delivery rhythm** (`/admin/vendors/[id]`, the new rhythm card). Live
+  `vendor_delivery_rhythm` pairs: **0**. Those four `no_vendor_rhythm` rows per shop are
+  the ONLY rows that clear every other rung — they are one authoring session away from
+  the first number this arc ever renders. (Note the honest delta from the plan's
+  forecast of ~14 lit rows: the engine's own first three nights say **4 per shop** reach
+  the rhythm rung, because more SKUs sit at `no_lane_start` than the pre-build probe
+  predicted. The ledger is now the authority on that number, not the estimate.)
+
+  Spec `docs/superpowers/specs/2026-08-21-dynamic-pars-design.md` (four binding layers)
+  · plan `docs/superpowers/plans/2026-08-22-dynamic-pars.md` (five phases, 16 blessed
+  deviations, four lead-ruling blocks) · scenario regressions
+  `scripts/sim/dynamic-pars/scenarios.ts` + `tests/dynamic-pars-scenarios.test.ts`.
+
+- **Dynamic Pars — the enablers v1 named and did NOT build.** Each unblocks a specific
+  term; none is a vague "more data".
+  - **Quote-link on `productions`** — a production row cannot say which catering quote
+    it was for, so the event layer can only NAME a catering date on the walker, never
+    net it out of demand. This is also what kills the **single-count pollution** r2-12
+    documents (a catering-driven prep is counted once, as ordinary demand). One FK and
+    one capture field; it is the cheapest of the six and it upgrades the event layer
+    from advisory to arithmetic. | trigger: real catering volume, or the first time an
+    event visibly distorts a par |
+  - **The resale marker on `vendor_items`** — still absent, still the blocker it was on
+    2026-08-21 (below): "no recipe uses this" cannot be told apart from "sold as-is",
+    and 16 of the 20 non-inventory par'd SKUs with zero recipe references are
+    sodas/water/candy that are correct as they are. Dynamic Pars inherits the same wall:
+    resale SKUs are scope-walled OUT of demand, and a marker is what would let them
+    back in honestly. | trigger: a resale SKU's par actually going wrong |
+  - **The statistical cushion** — the socket is BUILT and pinned (`cushionFor(sku,
+    location, demandStats)`, `DemandStats.stdDevOzPerDay` reserved); the implementation
+    (z × σ × √lead) waits on its data precondition: a year of per-location variance
+    history. Until then cushion is POLICY (a per-class percentage) and the observed-peak
+    floor carries the service level. Screwing the real one in touches no caller. |
+    trigger: ~12 months of `toast_daily_depletion` at both shops |
+  - **Add-a-Location / sibling designation** — the cold-start prior. `siblingBlendWeight`
+    ships tested and DELIBERATELY unwired; the whole v1 footprint is that seam plus the
+    `no_local_history` cause. Whole-pattern only — the depletion ledger has no channel
+    grain, so a delivery-only prior is structurally infeasible without a ledger
+    extension (r1-11). | trigger: shop #3 |
+  - **The 27 par'd SKUs with contradictory flat weights** (`each_size ≠ avg_oz_per_each`,
+    live-probed 2026-08-22) — **listed, never guessed.** This is the weight board's next
+    census, and it sits directly behind `no_weight_basis`, the third-largest cause in the
+    histogram above (54 rows/shop). | trigger: the next `/admin/weights` pass |
+  - **The day-class boundary as tenant config** — "weekend = Fri/Sat/Sun" is CO's
+    vocabulary, not a product invariant; a second restaurant's busy days differ. It is
+    already a single named constant (`isWeekendParDow`, `lib/et-day-shared.ts`) and
+    `dayClassForDate` is its one consumer in this arc, so the extraction is small — but
+    it belongs with `tenant_role_labels` in the T1 wave, not before it. | trigger:
+    tenant-config T1 (gate unchanged: 30 days of real use OR a named prospect) |
+  - **The par-history drawer** — spec'd "if cheap", not built. `par_auto_moves` is
+    indexed for exactly this read; it is one query and one `CollapsibleSection` on the
+    SKU page, and it is what turns the nightly ledger into something a human can browse.
+    | trigger: whenever the lead wants it — no dependency |
+
   - **THE THESIS IS JUAN'S, stated while ruling on product retirement (2026-08-21):**
     > *"it should be loud about going and changing the pars down… suggesting lower
     > pars when ordering because demand is lower from retiring a product from a
@@ -208,22 +291,30 @@ Logged-deferred → DEBT table.
     never mutated, so a restore is exact), and a SKU whose recipe stopped using it
     gets a cause-named par-review advisory that points at the par edit.
     **What #283 deliberately did NOT ship is the NUMBER** — "try 3 instead of 5"
-    needs demand-rate math over a velocity window, which is this arc. Design it as
-    the continuous form of the rule whose binary form already exists: the walk's
-    `parReview` lane and `parReviewAdvisory` are the seam to extend, not to replace.
-  - **Two known blockers on the general form, both live-verified 2026-08-21:** (a)
-    there is no RESALE marker on `vendor_items`, so "no recipe uses this" cannot be
-    told apart from "sold as-is" — 16 of the 20 non-inventory par'd SKUs with zero
-    recipe references are sodas/water/candy and are correct; (b) trailing usage is
-    zero for all 20 (no `toast_daily_depletion.direct_oz` reaches resale SKUs and
-    none has ever been received), so usage cannot substitute for the marker today.
-    A resale flag, or a depletion path that reaches resale SKUs, unblocks the static
-    sweep — and until one exists, static-state advisories stay refused.
+    needs demand-rate math over a velocity window. **That is the arc above, and it is
+    now shipped**: `parReviewAdvisory`'s binary, cause-attributed form was EXTENDED,
+    never replaced, and the two lanes are structurally forbidden from co-rendering
+    (the number wins; `lib/ordering.ts`'s one row builder enforces it).
+  - **Two known blockers on the STATIC form, both live-verified 2026-08-21 and both
+    still open:** (a) there is no RESALE marker on `vendor_items`, so "no recipe uses
+    this" cannot be told apart from "sold as-is" — 16 of the 20 non-inventory par'd
+    SKUs with zero recipe references are sodas/water/candy and are correct; (b)
+    trailing usage is zero for all 20 (no `toast_daily_depletion.direct_oz` reaches
+    resale SKUs and none has ever been received), so usage cannot substitute for the
+    marker today. A resale flag, or a depletion path that reaches resale SKUs, unblocks
+    the static sweep — and until one exists, static-state advisories stay refused.
+    **Dynamic Pars did not dissolve this**: it scope-walls resale and inventory-only
+    SKUs out of demand entirely (`inventory_only` is 114 of the 282 rows/shop, ranked
+    FIRST in the reason ladder precisely so 114 false chores never reach the errand
+    list). The marker is filed as an enabler above.
   - **Deferred detection half:** a `recipe_input` row DELETED outright leaves no trace
     in the graph, so it needs the `recipe_input.remove` audit trail rather than the
     active/inactive-recipe derivation #283 uses. Live count of those rows today: ZERO,
-    so it was not built onto the walk's hot read path. | trigger: the first real
-    `recipe_input.remove`, or the Dynamic Pars build, whichever comes first |
+    so it was not built onto the walk's hot read path. **The Dynamic Pars half of this
+    trigger has now fired and did NOT need it** — the demand engine reads oz lanes and
+    observability oracles, never recipe topology, so a removed input reaches it as a
+    falling rate like any other demand change. The trigger reduces to one condition. |
+    trigger: the first real `recipe_input.remove` |
 - ✅ **P2 — THE PRODUCT-IDENTITY ARC IS SHIPPED (2026-08-20/21, PRs #273–#281, migrations
   0179/0180/0181 applied).** The audit's deepest finding is closed: `products` sits above
   `vendor_items`, recipes pin the PRODUCT, and ONE pure resolution ladder
