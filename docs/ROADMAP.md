@@ -40,12 +40,15 @@ built and dormant behind owner externals. Converting dormant→live outranks new
    banked but nothing consumes them yet → **depletion-into-drift is the real NEXT.**
 2. **Resend DNS** → magic links reach real customers (today the allowlist gates them
    to juan@). Unlocks: real catering leads → the W1/W4 moat finally breathes.
-3. ⚡ **NEW (2026-08-28) — author PFG's and Boar's Head's order→delivery rhythm.**
-   Five minutes on `/admin/vendors/[id]` (the rhythm card shipped with Dynamic Pars
-   #288): for each shop, the days you ORDER and how many days later the truck lands.
-   Live `vendor_delivery_rhythm` pairs: **0**, and that single fact is what stands
-   between three nights of a working shadow engine and the first par number it ever
-   renders. Nothing else on this list is this cheap for this much.
+3. ~~⚡ author PFG's and Boar's Head's order→delivery rhythm~~ ✅ **DONE 2026-08-28,
+   the same day it was filed** — Cristian's schedule via Juan, seed 29 (executed,
+   lead-gated): 50 pairs + 25 cutoffs across PFG · Boar's Head · Trimark · Cardinal ·
+   Leonard Paper; vendors Leonard Paper / Whisked / Berger created. The recompute
+   rendered **the arc's first suggestion** (P Street Prosciutto weekend 6→4) and its
+   first five `par_unit_suspect` quarantine catches. Residue: confirm Leonard's
+   next-day delivery (assumption A3, vendor-admin correctable); author Whisked/Berger
+   pairs when their real weekly day is known; order MINIMUMS (PFG 10 cases · Leonard
+   $350 · Trimark $350) still need a schema home.
 4. **Two-minute decisions:** photo storage target (recommended: Supabase Storage);
    cash-gate → hard_gate fold (a single data flip on the template item — zero code).
 5. Standing data errands (tools all built and waiting): 9 deli pack chains (the
