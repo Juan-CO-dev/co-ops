@@ -95,7 +95,12 @@ const FACTS: PackFact[] = [
   { skuName: "Canola Oil", packFormat: "Each", unitsPerPack: 1, eachSize: 560, eachMeasure: "oz", provenance: "angel-catalog: OIL CANOLA CLR FRY 1/35 LB" },
   { skuName: "Watermelon Radish", packFormat: "Bag", unitsPerPack: 1, eachSize: 160, eachMeasure: "oz", provenance: "angel-catalog: RADISH WATERMELON 1/10 LB" },
   { skuName: "Chicken Breast", packFormat: "Case", unitsPerPack: 4, eachSize: 160, eachMeasure: "oz", provenance: "angel-catalog: CHICKEN BRST 4/10 LB — Juan RULED 2026-08-28: 'def a case' → Case of 4 × 10 lb bags", repair: true },
-  { skuName: "Eggs", packFormat: "Flat", unitsPerPack: 30, eachSize: 1.8, eachMeasure: "oz", provenance: "standard 30-egg flat, Juan CONFIRMED 2026-08-28, × CO's measured 1.8 oz/egg" },
+  // CORRECTED post-execute, same day: Juan first confirmed the 30-flat, then reversed on
+  // seeing it in context — "the eggs come in the 360 pack… we get way more than 30 at a
+  // time." Angel's catalog row (1/30 DZ = 360 eggs) was right all along. The live row was
+  // fixed directly (audited, source seed-30-correction-2026-08-28); this constant carries
+  // the FINAL fact so a re-read of this file never resurrects the flat.
+  { skuName: "Eggs", packFormat: "Case", unitsPerPack: 360, eachSize: 1.8, eachMeasure: "oz", provenance: "angel-catalog 1/30 DZ = 360-egg case, Juan RULED 2026-08-28 ('we get way more than 30 at a time') × CO's measured 1.8 oz/egg" },
   { skuName: "Cannoli Shell", packFormat: "Case", unitsPerPack: 120, eachSize: 1, eachMeasure: "count", provenance: "angel-catalog: SHELL CANNOLI SM 1/120 CT — COUNT ONLY; per-shell oz open until Juan weighs one" },
   { skuName: "Balsamic Glaze", packFormat: "Each", unitsPerPack: 1, eachSize: 27, eachMeasure: "oz", provenance: "juan-label-2026-08-28: '27oz per bottle'" },
   // Two VARIABLE-WEIGHT goods, shape recorded honestly. Neither clears the weight rung —
