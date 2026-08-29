@@ -8,7 +8,8 @@ import { upsertLocationSkuSettings, AdminSkuError, SKU_WRITE_MIN } from "@/lib/a
 // PUT — upsert the per-(location, sku) overlay row (VO-7). GM+ (≥7), Tier A —
 // mirrors a SKU edit / pack-chain replace (a SKU write). Body:
 //   { locationId, activeOverride: true|false|null, weekdayPar: number|null,
-//     weekendPar: number|null }
+//     weekendPar: number|null,
+//     expected: { activeOverride, weekdayPar, weekendPar } }   ← the row as loaded
 // Tri-state: null on activeOverride = inherit global; null on a par = inherit the
 // global par. Upsert-in-place keyed on (location_id, sku_id); revert-to-all-inherit
 // nulls the fields (never a delete — append-only).
@@ -62,6 +63,43 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
         : undefined;
   if (weekendPar === undefined) return jsonError(400, "invalid_payload", { field: "weekendPar" });
 
+  // ── `expected`: THE ROW AS THE EDITOR LOADED IT, AND IT IS REQUIRED ───────────
+  //
+  // This is the only par writer that submits BOTH day-classes at once; every other one
+  // patches a single slot. So a save that cannot say what it SAW cannot be told apart from a
+  // save whose page went stale while the walker moved the other slot — and the lib would
+  // write the stale number back over a live one, clearing that slot's pin on the way.
+  // Required rather than optional on purpose: the only client is the editor shipped in this
+  // same change, and the payload that omits its baseline is precisely the one that must not
+  // land. A stale tab across the deploy gets a loud 400 and reloads, which is the outcome
+  // this check exists to produce anyway.
+  const rawExpected = b.expected;
+  if (rawExpected === null || typeof rawExpected !== "object" || Array.isArray(rawExpected)) {
+    return jsonError(400, "invalid_payload", { field: "expected" });
+  }
+  const exp = rawExpected as Record<string, unknown>;
+  const expectedActive =
+    exp.activeOverride === null || exp.activeOverride === undefined
+      ? null
+      : exp.activeOverride === true || exp.activeOverride === false
+        ? exp.activeOverride
+        : undefined;
+  if (expectedActive === undefined) return jsonError(400, "invalid_payload", { field: "expected" });
+  const expectedWeekday =
+    exp.weekdayPar === null || exp.weekdayPar === undefined
+      ? null
+      : typeof exp.weekdayPar === "number"
+        ? exp.weekdayPar
+        : undefined;
+  if (expectedWeekday === undefined) return jsonError(400, "invalid_payload", { field: "expected" });
+  const expectedWeekend =
+    exp.weekendPar === null || exp.weekendPar === undefined
+      ? null
+      : typeof exp.weekendPar === "number"
+        ? exp.weekendPar
+        : undefined;
+  if (expectedWeekend === undefined) return jsonError(400, "invalid_payload", { field: "expected" });
+
   try {
     await upsertLocationSkuSettings(ctx, {
       skuId: id,
@@ -69,6 +107,11 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
       activeOverride,
       weekdayPar,
       weekendPar,
+      expected: {
+        activeOverride: expectedActive,
+        weekdayPar: expectedWeekday,
+        weekendPar: expectedWeekend,
+      },
     });
     return jsonOk({ ok: true });
   } catch (e) {

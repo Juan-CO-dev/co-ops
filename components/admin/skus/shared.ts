@@ -52,6 +52,15 @@ const KNOWN_ERROR_CODES = new Set([
   "invalid_active_override",
   "invalid_weekday_par",
   "invalid_weekend_par",
+  // The overlay's optimistic-concurrency refusal (audit fix): the row moved under the
+  // editor — most often /ordering accepting a par suggestion on the OTHER day-class.
+  "overlay_changed",
+  // Product membership (0179), now delegated to lib/products.ts's attach/detach writers.
+  // Their refusals reach this form, and a named 409 with a generic message is half a fix.
+  "already_member",
+  "primary_must_be_reassigned",
+  "invalid_product",
+  "products_schema_pending",
 ]);
 
 /** Resolve an error `code` to a localized message, falling back to generic. */
