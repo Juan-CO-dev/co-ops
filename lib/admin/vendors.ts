@@ -39,6 +39,12 @@
  *   vendor_cutoffs     — vendor_id, location_id (null = both shops), order_day
  *                        (0=Sun..6=Sat), cutoff_time (bare TIME, ET-evaluated),
  *                        active. Append-only: deactivate flips active=false.
+ *
+ * Migration 0184 (AUTHORED, NOT YET APPLIED — probe-gated throughout):
+ *   vendors.order_minimum — DISPLAY-ONLY advisory text ("$350", "10 case minimum").
+ *                        A CORE field: MoO+ (≥8) + Tier B, same as payment_terms.
+ *                        Nothing computes on it; it is rendered to the person placing
+ *                        the order (here and on the par-pass draft-order card).
  */
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -46,6 +52,7 @@ import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { emailFromDomain, RESEND_DEFAULT_DOMAIN } from "@/lib/po-email-shared";
+import { vendorOrderMinimumReady } from "@/lib/vendor-schema-probes";
 
 // ── Authority floors (the lib is the authority per-action) ──────────────────
 const READ_MIN = 6; // AGM+
@@ -129,6 +136,16 @@ export interface VendorView {
    *  transmit block; portalUrl deep-links the assisted tier. */
   transmissionTier: TransmissionTier;
   portalUrl: string | null;
+  /** The vendor's order minimum, in their own words ("$350", "10 case minimum") —
+   *  migration 0184. DISPLAY-ONLY: nothing computes against it. null = none on file,
+   *  AND null while 0184 is unapplied (read `orderMinimumAvailable` to tell those
+   *  apart — a pending schema is not the same fact as an empty field). */
+  orderMinimum: string | null;
+  /** Does this tenant's DB carry `vendors.order_minimum` yet (migration 0184)? A
+   *  schema-readiness flag, server-derived ONCE per load — not per vendor — exactly
+   *  like `autoTierAvailable` below. False → the editor renders a pending note instead
+   *  of a field, and a write of the field refuses with a named 503. */
+  orderMinimumAvailable: boolean;
   /** V2 §6: is the AUTO email tier selectable for THIS tenant? True when a verified
    *  sending domain is set (EMAIL_FROM domain ≠ resend.dev) AND ≥1 active location has a
    *  receipt_email_address alias. Server-derived per load (not per vendor — it's a
@@ -203,6 +220,9 @@ interface DbVendorRow {
   color: string | null;
   transmission_tier: string | null;
   portal_url: string | null;
+  /** Optional on the row type because the select list OMITS it while 0184 is
+   *  unapplied — the column is absent from the response, not null in it. */
+  order_minimum?: string | null;
 }
 interface DbContactRow {
   id: string;
@@ -243,6 +263,40 @@ interface DbVendorOrderTypeRow {
 }
 
 const VENDOR_COLS = "id, name, payment_terms, account_number, notes, active, category_id, order_days, delivery_days, color, transmission_tier, portal_url";
+
+// ── The 0184 order-minimum column ──────────────────────────────────────────────
+//
+// `order_minimum` does not exist until migration 0184 is applied, and PostgREST rejects
+// the WHOLE select when one named column is missing — so naming it unconditionally in
+// VENDOR_COLS would 500 /admin/vendors and /admin/vendors/[id] for every deploy between
+// this PR and the gate. Probe-gated exactly as `skuCols()` gates the 0182 par columns
+// (lib/admin/skus.ts) and `countProductAllocationReady` gates its column (lib/counts.ts).
+async function vendorCols(): Promise<string> {
+  const sb = getServiceRoleClient();
+  return (await vendorOrderMinimumReady(sb)) ? `${VENDOR_COLS}, order_minimum` : VENDOR_COLS;
+}
+
+/**
+ * The order minimum is free text by design (migration 0184 — the known minimums are two
+ * incompatible kinds and nothing computes on them), but it is NOT unbounded: unlike its
+ * core-field siblings it renders inline on the 6 AM draft-order card, where a pasted essay
+ * would displace the order it is meant to annotate. 120 characters holds every real form of
+ * this fact ("$350", "10 case minimum", "$350 or 10 cases, waived on standing orders") with
+ * room to spare, and refuses by NAME rather than truncating an operator's words silently.
+ */
+const ORDER_MINIMUM_MAX_LENGTH = 120;
+
+function normalizeOrderMinimum(s: string | null | undefined): string | null {
+  const t = normalizeOptional(s);
+  if (t !== null && t.length > ORDER_MINIMUM_MAX_LENGTH) {
+    throw new AdminVendorError(
+      400,
+      "invalid_order_minimum",
+      `Order minimum must be ${ORDER_MINIMUM_MAX_LENGTH} characters or fewer`,
+    );
+  }
+  return t;
+}
 
 // ── Categories ────────────────────────────────────────────────────────────────
 export async function loadCategories(actor: AuthContext): Promise<CategoryView[]> {
@@ -450,6 +504,11 @@ async function hydrateVendors(rows: DbVendorRow[]): Promise<VendorView[]> {
   // domain is dormant we skip the location query entirely (cheap short-circuit).
   const autoTierAvailable = await deriveAutoTierAvailable(sb);
 
+  // 0184 readiness — the same shape of flag, computed ONCE per load. The probe has
+  // already run inside vendorCols() for this request, so post-apply this is a cached
+  // boolean and costs nothing.
+  const orderMinimumAvailable = await vendorOrderMinimumReady(sb);
+
   // ── Categories via the vendor_categories join (batched .in() over vendor ids).
   const { data: vcJoins, error: vcErr } = await sb
     .from("vendor_categories")
@@ -585,6 +644,10 @@ async function hydrateVendors(rows: DbVendorRow[]): Promise<VendorView[]> {
         ? (r.transmission_tier as TransmissionTier)
         : "manual", // legacy null / unknown → the default seed tier
       portalUrl: r.portal_url ?? null,
+      // Absent from the select while 0184 is pending → null, which reads as "none on
+      // file". `orderMinimumAvailable` is what distinguishes the two.
+      orderMinimum: r.order_minimum ?? null,
+      orderMinimumAvailable,
       autoTierAvailable,
     };
   });
@@ -595,7 +658,7 @@ export async function loadVendors(actor: AuthContext): Promise<VendorView[]> {
   const sb = getServiceRoleClient();
   const { data, error } = await sb
     .from("vendors")
-    .select(VENDOR_COLS)
+    .select(await vendorCols())
     .order("name", { ascending: true })
     .returns<DbVendorRow[]>();
   if (error) throw new Error(`loadVendors failed: ${error.message}`);
@@ -637,7 +700,7 @@ export async function getVendor(actor: AuthContext, id: string): Promise<VendorV
   const sb = getServiceRoleClient();
   const { data, error } = await sb
     .from("vendors")
-    .select(VENDOR_COLS)
+    .select(await vendorCols())
     .eq("id", id)
     .maybeSingle<DbVendorRow>();
   if (error) throw new Error(`getVendor failed: ${error.message}`);
@@ -856,6 +919,10 @@ export interface UpdateVendorCoreChanges {
   name?: string;
   paymentTerms?: string | null;
   accountNumber?: string | null;
+  /** Migration 0184. Same MoO+ / Tier-B floor as its siblings — an order minimum is the
+   *  same kind of vendor-account fact as payment terms, not a third opinion about who
+   *  configures a vendor. Refuses with a named 503 while 0184 is unapplied. */
+  orderMinimum?: string | null;
 }
 
 export async function updateVendorCore(
@@ -874,6 +941,21 @@ export async function updateVendorCore(
   }
   if (changes.paymentTerms !== undefined) update.payment_terms = normalizeOptional(changes.paymentTerms);
   if (changes.accountNumber !== undefined) update.account_number = normalizeOptional(changes.accountNumber);
+  if (changes.orderMinimum !== undefined) {
+    // A mutation must REFUSE loudly, never no-op (the assertRhythmSchemaReady law). The
+    // client does not send this field while the probe is false, so this is defense in
+    // depth — but the alternative, dropping the key from the update, would report success
+    // on a write that never happened, and PostgREST would 500 the WHOLE core save
+    // (name + payment terms + account number) if the key were passed through blind.
+    if (!(await vendorOrderMinimumReady(getServiceRoleClient()))) {
+      throw new AdminVendorError(
+        503,
+        "order_minimum_schema_pending",
+        "Migration 0184 has not been applied yet",
+      );
+    }
+    update.order_minimum = normalizeOrderMinimum(changes.orderMinimum);
+  }
 
   if (Object.keys(update).length === 0) return;
   // NOTE: category is no longer a core field — classification edits go through

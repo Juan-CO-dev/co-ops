@@ -42,6 +42,7 @@
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
+import { vendorOrderMinimumReady } from "@/lib/vendor-schema-probes";
 import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
@@ -337,6 +338,16 @@ async function loadDemandSources(
   return { activeRefsBySku, removedSourcesBySku };
 }
 
+/**
+ * How many production ids may ride ONE `.in()` filter. MIRRORS lib/dynamic-pars.ts
+ * PRODUCTION_ID_CHUNK, which solved this exact problem on this exact table — 150 uuids is
+ * ~5.6 KB of request line (`requestLineBytesForInList`, lib/supabase-paginate.ts) against a
+ * conservative 8 KB budget that also has to hold the select list, the order clause and the
+ * range, comfortably inside the ~220-uuid 414 cliff. Kept as its own constant per module
+ * rather than shared, so neither module's ceiling can be retuned by an edit to the other.
+ */
+const PRODUCTION_ID_CHUNK = 150;
+
 // ── Usage rank (trailing-30d consumed oz; mirrors receiving.ts loadSkuUsageRank) ──
 /**
  * Trailing-30-day consumed oz per SKU at a location — the "most used" ordering rank
@@ -383,12 +394,26 @@ async function loadSkuUsageRank(
     },
   );
   const prodIds = prodHdrs.map((h) => h.id);
-  if (prodIds.length > 0) {
+  //
+  // ⚠ THE ID LIST IS WINDOWED, NOT SPENT WHOLE. `prodIds` is every live production at this
+  // location over 30 days and is unbounded by design, so a single `.in()` would put the 414
+  // request-line cliff (~220 uuids against the conservative 8 KB budget —
+  // lib/supabase-paginate.ts `requestLineBytesForInList`) on the par-pass walk, where it
+  // fails on page 0 with ZERO rows and no amount of paging or retrying helps:
+  // `selectAllRows` pages the RESPONSE and cannot touch the REQUEST. The house doctrine
+  // names two remedies — a server-side embed or a windowed id set — and this is the second,
+  // mirroring lib/dynamic-pars.ts `loadDemandInputs`, which fixed the identical shape
+  // against the identical table. The filter is IDENTICAL, just split into disjoint chunks
+  // whose union is exactly the one-shot result, so there is no parity question to verify
+  // and no behaviour change: `add()` sums into the same map in the same way, and both reads
+  // are order-insensitive sums.
+  for (let i = 0; i < prodIds.length; i += PRODUCTION_ID_CHUNK) {
+    const chunk = prodIds.slice(i, i + PRODUCTION_ID_CHUNK);
     const inputs = await selectAllRows<{ input_sku_id: string; input_oz: number | string | null }>(
       async (from, to) => {
         const { data, error } = await sb.from("production_inputs")
           .select("input_sku_id, input_oz")
-          .in("production_id", prodIds)
+          .in("production_id", chunk)
           .order("id", { ascending: true })
           .range(from, to)
           .returns<Array<{ input_sku_id: string; input_oz: number | string | null }>>();
@@ -1345,6 +1370,13 @@ export interface DraftOrder {
    *  the first line of the copy/mailto body ("PO {displayCode}"). null when draft-PO
    *  creation failed (walk still succeeded — poError on the submit response). */
   displayCode: string | null;
+  /** The vendor's order minimum in their own words (migration 0184) — "$350", "10 case
+   *  minimum". ADVISORY ONLY, in every sense: nothing here compares the order against it,
+   *  nothing warns, nothing blocks. It is the fact the person about to send this order
+   *  needs in front of them, and it is deliberately NOT in the copy/mailto body — that
+   *  body is what the VENDOR reads, and the vendor already knows their own minimum.
+   *  null = none on file, and null while migration 0184 is unapplied. */
+  orderMinimum: string | null;
 }
 export interface ShrinkageNotice {
   skuId: string;
@@ -1596,9 +1628,10 @@ export async function submitParPass(
 
 /**
  * Group orderQty > 0 lines into per-vendor draft orders, attaching each vendor's active
- * ordering-detail delivery affordances (method/value/label, display_order). ONE batched
- * vendor-name lookup + ONE batched ordering-details query (never per-vendor). A line with
- * no vendor is dropped (can't be delivered anywhere). Vendors ordered by name.
+ * ordering-detail delivery affordances (method/value/label, display_order) and its
+ * advisory order minimum (0184). ONE batched vendor lookup + ONE batched ordering-details
+ * query (never per-vendor). A line with no vendor is dropped (can't be delivered
+ * anywhere). Vendors ordered by name.
  */
 async function buildDraftOrders(
   sb: ReturnType<typeof getServiceRoleClient>,
@@ -1609,8 +1642,16 @@ async function buildDraftOrders(
   if (withVendor.length === 0) return [];
   const vendorIds = [...new Set(withVendor.map((e) => e.vendorId))];
 
+  // The 0184 order minimum rides the vendor-name read (no extra round trip), but the
+  // column must not be NAMED until it exists: PostgREST rejects the whole select when one
+  // named column is missing, which would 500 the par-pass submit for every deploy between
+  // this PR and the gate. Probe first, then build the column list — the 0180/0182 pattern.
+  const minimumReady = await vendorOrderMinimumReady(sb);
+  const vendorSelect = minimumReady ? "id, name, order_minimum" : "id, name";
+
   const [{ data: vendorRows, error: vErr }, { data: detailRows, error: dErr }] = await Promise.all([
-    sb.from("vendors").select("id, name").in("id", vendorIds).returns<Array<{ id: string; name: string }>>(),
+    sb.from("vendors").select(vendorSelect).in("id", vendorIds)
+      .returns<Array<{ id: string; name: string; order_minimum?: string | null }>>(),
     sb.from("vendor_ordering_details")
       .select("vendor_id, method, value, label, display_order")
       .in("vendor_id", vendorIds).eq("active", true)
@@ -1620,6 +1661,7 @@ async function buildDraftOrders(
   if (vErr) throw new Error(`buildDraftOrders vendors: ${vErr.message}`);
   if (dErr) throw new Error(`buildDraftOrders ordering details: ${dErr.message}`);
   const vName = new Map((vendorRows ?? []).map((v) => [v.id, v.name]));
+  const vMinimum = new Map((vendorRows ?? []).map((v) => [v.id, v.order_minimum ?? null]));
   const detailsByVendor = new Map<string, DraftOrderDelivery[]>();
   for (const d of detailRows ?? []) {
     const arr = detailsByVendor.get(d.vendor_id) ?? [];
@@ -1642,6 +1684,7 @@ async function buildDraftOrders(
       orderingDetails: detailsByVendor.get(vendorId) ?? [],
       lines: orderLines,
       displayCode: displayCodeByVendor?.get(vendorId) ?? null,
+      orderMinimum: vMinimum.get(vendorId) ?? null,
     });
   }
   orders.sort((a, b) => a.vendorName.localeCompare(b.vendorName));

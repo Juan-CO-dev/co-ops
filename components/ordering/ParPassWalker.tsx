@@ -943,6 +943,17 @@ function DraftOrderCard({
         )}
       </div>
 
+      {/* The vendor's order minimum (migration 0184) — ADVISORY, and nothing more: the
+          system does not compare this order against it, warn, or block. It sits under the
+          vendor's name because that is the moment the question ("have we hit their
+          minimum?") is actually asked. Neutral voice, not a warning surface: an
+          unevaluated fact rendered as an alert would teach the walk to ignore alerts. */}
+      {order.orderMinimum ? (
+        <p className="mt-1 text-[13px] text-co-text-dim">
+          {t("ordering.done.order_minimum", { value: order.orderMinimum })}
+        </p>
+      ) : null}
+
       <table className="mt-2 w-full text-[13px]">
         <thead>
           <tr className="text-left text-[11px] uppercase tracking-[0.1em] text-co-text-dim">

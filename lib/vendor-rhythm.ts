@@ -27,6 +27,7 @@
  */
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext } from "@/lib/locations";
 import { audit } from "@/lib/audit";
@@ -279,21 +280,51 @@ export async function loadRhythmSkips(
   return out;
 }
 
-/** The admin surface's read: every active skip for ONE vendor, all locations. */
+/**
+ * The admin surface's read: every active skip for ONE vendor, all locations.
+ *
+ * ── PAGED, AND ITS SIBLING ABOVE IS NOT (deliberate asymmetry) ────────────────────
+ * `loadVendorRhythmPairs` is STRUCTURALLY bounded — `vendor_delivery_rhythm_live_uq`
+ * permits at most one live pair per (vendor, location, order day), so its result can
+ * never exceed 7 × the shop count. Skips carry no such index: they are one append-only
+ * row per outage, retracted by `active = false` and never expired, so an old vendor at
+ * a busy shop accumulates them without limit. Unpaged, PostgREST would silently return
+ * the first 1000 and the admin card would show a truncated history with no error at all
+ * (the PR #63 lesson — the failure mode is silence, not a 500).
+ *
+ * ── WHY NO DATE BOUND, THOUGH THE SIBLING LOADER HAS ONE ──────────────────────────
+ * `loadRhythmSkips` (the walker's read) bounds on `skip_through >= fromDate` because it
+ * answers "is this vendor down for the horizon I am planning". This one is the ADMIN
+ * HISTORY: an expired window is exactly what an admin is looking at when they ask what
+ * happened last month. A bound here would change the contract — silently hiding rows the
+ * card exists to show — so the fix is paging alone, and the contract is byte-identical.
+ *
+ * The stable TOTAL order paging needs is `skip_from, id`: `skip_from` alone is not
+ * unique (two shops' outages routinely start the same day), and a non-total order lets
+ * a row appear on two pages or none. Output order is unchanged — still skip_from
+ * ascending, with ties now deterministic rather than arbitrary.
+ */
 export async function loadVendorRhythmSkips(vendorId: string): Promise<RhythmSkipView[]> {
   const sb = getServiceRoleClient();
   if (!(await rhythmSchemaReady(sb))) return [];
 
-  const { data, error } = await sb
-    .from("vendor_rhythm_skips")
-    .select("id, vendor_id, location_id, skip_from, skip_through, note")
-    .eq("vendor_id", vendorId)
-    .eq("active", true)
-    .order("skip_from", { ascending: true })
-    .returns<DbSkipRow[]>();
-  if (error) throw new Error(`loadVendorRhythmSkips failed: ${error.message}`);
+  const data = await selectAllRows<DbSkipRow>(async (from, to) => {
+    const { data, error } = await sb
+      .from("vendor_rhythm_skips")
+      .select("id, vendor_id, location_id, skip_from, skip_through, note")
+      .eq("vendor_id", vendorId)
+      .eq("active", true)
+      .order("skip_from", { ascending: true })
+      .order("id", { ascending: true })
+      .range(from, to)
+      .returns<DbSkipRow[]>();
+    if (error) throw new Error(`loadVendorRhythmSkips failed: ${error.message}`);
+    return { data };
+  });
 
-  return (data ?? []).map((r) => ({
+  // `selectAllRows` always resolves to an array, so the old `?? []` is gone with the
+  // nullable `data` it guarded.
+  return data.map((r) => ({
     id: r.id,
     vendorId: r.vendor_id,
     locationId: r.location_id,

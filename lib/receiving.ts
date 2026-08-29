@@ -235,6 +235,13 @@ export async function loadReceivingFormData(actor: AuthContext, locationId: stri
 }
 
 /**
+ * How many production ids may ride ONE `.in()` filter. Mirrors lib/dynamic-pars.ts and
+ * lib/ordering.ts: 150 uuids is ~5.6 KB of request line against the conservative 8 KB
+ * budget (lib/supabase-paginate.ts), comfortably inside the ~220-uuid 414 cliff.
+ */
+const PRODUCTION_ID_CHUNK = 150;
+
+/**
  * Trailing-30-day consumed oz per SKU at a location (the "most used per the depletion
  * mechanic" rank — Juan's door refinement). Mirrors the counts drift consumed term
  * (lib/counts.ts) EXACTLY — the SAME two tables/columns the double-count law sums:
@@ -284,12 +291,25 @@ async function loadSkuUsageRank(
     },
   );
   const prodIds = prodHdrs.map((h) => h.id);
-  if (prodIds.length > 0) {
+  //
+  // ⚠ THE ID LIST IS WINDOWED, NOT SPENT WHOLE — identical to lib/ordering.ts's twin of
+  // this function, and to lib/dynamic-pars.ts `loadDemandInputs` before it. 30 days of live
+  // productions is unbounded by design, and one `.in()` over the whole list meets the 414
+  // request-line cliff at ~220 uuids (lib/supabase-paginate.ts `requestLineBytesForInList`),
+  // failing on page 0 with zero rows where `selectAllRows` cannot help — it pages the
+  // RESPONSE, not the REQUEST. Disjoint chunks whose union is exactly the one-shot result:
+  // no parity question, no behaviour change (order-insensitive sums into the same map).
+  //
+  // Fixed in the SAME commit as the ordering twin on purpose. That function's header
+  // declares the two "mirror ... EXACTLY"; repairing one and leaving the other would make
+  // the mirror a lie and leave /receiving carrying the fault /ordering just shed.
+  for (let i = 0; i < prodIds.length; i += PRODUCTION_ID_CHUNK) {
+    const chunk = prodIds.slice(i, i + PRODUCTION_ID_CHUNK);
     const inputs = await selectAllRows<{ input_sku_id: string; input_oz: number | string | null }>(
       async (from, to) => {
         const { data, error } = await sb.from("production_inputs")
           .select("input_sku_id, input_oz")
-          .in("production_id", prodIds)
+          .in("production_id", chunk)
           .order("id", { ascending: true })
           .range(from, to)
           .returns<Array<{ input_sku_id: string; input_oz: number | string | null }>>();

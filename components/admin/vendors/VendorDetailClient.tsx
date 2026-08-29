@@ -268,6 +268,9 @@ function CoreCard({
   const [name, setName] = useState(vendor.name);
   const [paymentTerms, setPaymentTerms] = useState(vendor.paymentTerms ?? "");
   const [accountNumber, setAccountNumber] = useState(vendor.accountNumber ?? "");
+  // Migration 0184. While the probe is false the field is not rendered and is not sent —
+  // the card says why instead, exactly as VendorRhythmCard handles its pending 0182.
+  const [orderMinimum, setOrderMinimum] = useState(vendor.orderMinimum ?? "");
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -284,6 +287,9 @@ function CoreCard({
         name: name.trim(),
         paymentTerms: paymentTerms.trim() || null,
         accountNumber: accountNumber.trim() || null,
+        // Omitted entirely (not sent as null) while 0184 is pending: sending null would
+        // ask the server to CLEAR a column that does not exist yet.
+        ...(vendor.orderMinimumAvailable ? { orderMinimum: orderMinimum.trim() || null } : {}),
       },
       "PATCH",
     );
@@ -308,6 +314,29 @@ function CoreCard({
         <Labeled label={t("admin.vendors.field.account_number")}>
           <input className={fieldCls} value={accountNumber} disabled={!canEdit} onChange={(e) => setAccountNumber(e.target.value)} />
         </Labeled>
+
+        {/* Order minimum (migration 0184) — free text on purpose: the real minimums are
+            dollars for some vendors and cases for others, and nothing computes on it. It
+            renders back to whoever places the order, on the par-pass draft-order card. */}
+        {vendor.orderMinimumAvailable ? (
+          <div>
+            <Labeled label={t("admin.vendors.field.order_minimum")}>
+              <input
+                className={fieldCls}
+                value={orderMinimum}
+                disabled={!canEdit}
+                placeholder={t("admin.vendors.order_minimum.placeholder")}
+                aria-describedby="vendor-order-minimum-hint"
+                onChange={(e) => setOrderMinimum(e.target.value)}
+              />
+            </Labeled>
+            <p id="vendor-order-minimum-hint" className="mt-1 text-xs text-co-text-muted">
+              {t("admin.vendors.order_minimum.hint")}
+            </p>
+          </div>
+        ) : (
+          <p className="text-xs italic text-co-text-muted">{t("admin.vendors.order_minimum.schema_pending")}</p>
+        )}
 
         {!canEdit ? (
           <p className="text-xs italic text-co-text-muted">{t("admin.vendors.core.readonly_note")}</p>

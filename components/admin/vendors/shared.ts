@@ -83,6 +83,9 @@ const KNOWN_ERROR_CODES = new Set([
   "invalid_skip_range",
   "rhythm_schema_pending",
   "rhythm_pair_conflict",
+  // Migration 0184 — the vendor order-minimum advisory.
+  "order_minimum_schema_pending",
+  "invalid_order_minimum",
   "step_up_required",
   "step_up_stale",
 ]);
