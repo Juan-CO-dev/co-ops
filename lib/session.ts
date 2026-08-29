@@ -366,10 +366,28 @@ async function requireSessionCore(
   // clears so the next gated action requires fresh password re-confirmation.
   // proxy.ts cannot do this (no DB in edge runtime), so it lives here on the
   // Node-runtime side.
+  //
+  // The clear is HOUSEKEEPING, not the auth decision — so it may never fail the
+  // request. clearStepUp() throws on any Supabase error, and unguarded that
+  // throw propagated straight out of requireSessionCore: a transient blip on
+  // this one UPDATE turned an already-verified session into a 500 for the page
+  // render or route. Log-and-continue mirrors the last_activity_at touch above
+  // (same table, same request, deliberately non-blocking) and lib/audit.ts's
+  // fail-open posture. The flag stays set in the row, so the clear simply
+  // retries on the next request; the context below therefore reports the row as
+  // it actually stands rather than asserting a clear that did not land.
   let stepUpCleared = false;
   if (row.step_up_unlocked && !isStepUpSurface(currentPath)) {
-    await clearStepUp(row.id);
-    stepUpCleared = true;
+    try {
+      await clearStepUp(row.id);
+      stepUpCleared = true;
+    } catch (e) {
+      console.error(
+        `[session] step-up auto-clear failed for session ${row.id}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
+    }
   }
 
   return {
