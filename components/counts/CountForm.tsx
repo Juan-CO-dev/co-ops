@@ -21,14 +21,14 @@ import type { TranslationKey, TranslationParams } from "@/lib/i18n/types";
  * aria-controls, and its state is useState only — no URL, no storage.
  */
 
-interface MemberDraft {
+export interface MemberDraft {
   skuId: string;
   level: string;
   qty: string;
   isLoose: boolean;
   partial: string;
 }
-interface LineDraft {
+export interface LineDraft {
   /** "" until something is picked; "product:<id>" or "sku:<id>" thereafter. */
   pick: string;
   level: string;
@@ -42,6 +42,55 @@ interface LineDraft {
 }
 const emptyLine = (): LineDraft => ({ pick: "", level: "", qty: "", isLoose: false, partial: "", split: false, members: [] });
 const emptyMember = (skuId: string): MemberDraft => ({ skuId, level: "", qty: "", isLoose: false, partial: "" });
+
+// ── DRAFT ARITHMETIC — pure, module-scope, exported for the unit spine ───────
+// Two questions the sheet must answer identically for a product row and for a
+// split's vendor rows: what will submit() SEND, and what will it silently DROP.
+// They live out here (rather than as closures inside the component) so the drop
+// rule is pinned by tests instead of by re-reading submit().
+
+/** An entry is submittable only with BOTH a level and a qty. */
+export const entryFilled = (e: { level: string; qty: string }) =>
+  e.level.trim() !== "" && e.qty.trim() !== "";
+
+/** Every entry this line will actually submit. A split product line submits its
+ *  member entries; everything else submits itself. */
+export const filledEntries = (l: LineDraft): number =>
+  l.pick === "" ? 0 : l.split ? l.members.filter(entryFilled).length : entryFilled(l) ? 1 : 0;
+
+/**
+ * Entries submit() will DROP — surfaced to the operator BEFORE they tap Record.
+ *
+ * Council P2: submit() silently drops any line that's only partially filled (started
+ * but not finished) — the operator got a clean success having lost lines. A line with
+ * NOTHING touched is an untouched spare row, never counted/warned about; a line with
+ * SOME but not all of pick/level/qty filled is what gets silently dropped. A SPLIT
+ * line counts each half-filled VENDOR entry, so a dropped vendor is surfaced too.
+ *
+ * AUDIT FIX (2026-08-29): the split branch used to look ONLY at member-level partial
+ * fills, so the shape it never saw was the one the split itself creates — a product
+ * picked, Split tapped (which seeds blank member rows), every vendor row left blank.
+ * `filledEntries` is 0, no member is "started", so the whole product left the sheet
+ * with no notice at all, while the non-split branch flags the very same operator
+ * mistake via its `touched` check. Worse, tapping Split AFTER typing a level+qty on
+ * the product row drops that fully-typed entry too — a split line submits members
+ * only. A split line that submits nothing is therefore one dropped entry in its own
+ * right, counted ONLY when no vendor row is even started so one loss is never
+ * reported twice.
+ */
+export const incompleteEntryCount = (lines: LineDraft[]): number =>
+  lines.reduce((n, l) => {
+    if (l.split) {
+      const startedButUnfinished = l.members.filter(
+        (m) => (m.level.trim() !== "" || m.qty.trim() !== "") && !entryFilled(m),
+      ).length;
+      if (startedButUnfinished === 0 && filledEntries(l) === 0) return n + 1;
+      return n + startedButUnfinished;
+    }
+    const touched = l.pick !== "" || l.level.trim() !== "" || l.qty.trim() !== "";
+    return n + (touched && filledEntries(l) === 0 ? 1 : 0);
+  }, 0);
+
 const field = "mt-1 min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-60";
 const subLabel = "text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim";
 
@@ -113,27 +162,10 @@ export function CountForm({ skus, products, locationId }: {
     return { ...l, split: !l.split, members: p.memberSkuIds.map((id) => existing.get(id) ?? emptyMember(id)) };
   }));
 
-  const entryFilled = (e: { level: string; qty: string }) => e.level.trim() !== "" && e.qty.trim() !== "";
-  /** Every entry this line will actually submit. A split product line submits its
-   *  member entries; everything else submits itself. */
-  const filledEntries = (l: LineDraft): number =>
-    l.pick === "" ? 0 : l.split ? l.members.filter(entryFilled).length : entryFilled(l) ? 1 : 0;
-
   const canSubmit = !busy && lines.some((l) => filledEntries(l) > 0);
 
-  // Council P2: submit() silently drops any line that's only partially filled (started
-  // but not finished) — the operator got a clean success having lost lines. A line with
-  // NOTHING touched is an untouched spare row, never counted/warned about; a line with
-  // SOME but not all of pick/level/qty filled is what gets silently dropped below. A
-  // SPLIT line counts each half-filled VENDOR entry, so a dropped vendor is surfaced too.
-  const incompleteCount = lines.reduce((n, l) => {
-    if (l.split) {
-      const started = l.members.filter((m) => m.level.trim() !== "" || m.qty.trim() !== "");
-      return n + started.filter((m) => !entryFilled(m)).length;
-    }
-    const touched = l.pick !== "" || l.level.trim() !== "" || l.qty.trim() !== "";
-    return n + (touched && filledEntries(l) === 0 ? 1 : 0);
-  }, 0);
+  // What submit() will drop — see incompleteEntryCount's contract above.
+  const incompleteCount = incompleteEntryCount(lines);
 
   const submit = async () => {
     if (!canSubmit) return;
