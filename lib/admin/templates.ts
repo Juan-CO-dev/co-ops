@@ -505,21 +505,37 @@ export interface ItemDefinitionChanges {
  *       updates station + prep_meta.section only (no column re-derive —
  *       OpeningPhase2Meta has no columns).
  *
- * Returns the count of lines updated. Operator render + the completion gating in
+ * Returns { updated, skipped }. Operator render + the completion gating in
  * lib/checklists.ts keep reading LINE values — those are the columns we write.
+ *
+ * THE LINK RE-ASSERTION (wiring audit, 2026-08-29). The line list is SELECTed
+ * once, up front, and the loop then spends one to four round trips PER LINE — so
+ * another admin can unlink a line from the registry (`unlinkPrepItem`: item_id →
+ * null, label frozen) or deactivate it WHILE this pass is mid-flight. Writing by
+ * `id` alone lands the propagated value on a line that has just left the
+ * registry, which is the exact opposite of what the operator's unlink asked for,
+ * and the returned count would still report it as propagated. Every write in the
+ * loop therefore re-asserts `item_id = itemId AND active` — in the WHERE clause
+ * where it can be enforced, and as a re-read immediately before the two prep
+ * helpers, which write by id and own the station↔prep_meta invariant so their
+ * statements must not be inlined here. This NARROWS the window to a single round
+ * trip; it is not a transaction, and `skipped` is what makes the residual
+ * visible instead of silent.
  */
 async function propagateItemDefinitionToLines(
   sb: ReturnType<typeof getServiceRoleClient>,
   itemId: string,
   changes: ItemDefinitionChanges,
-): Promise<number> {
+): Promise<{ updated: number; skipped: number }> {
   // Nothing to propagate.
   const hasSi = changes.specialInstruction !== undefined;
   const hasSiEs = changes.specialInstructionEs !== undefined;
   const hasRequired = changes.required !== undefined;
   const hasMinRole = changes.minRoleLevel !== undefined;
   const hasSection = changes.section !== undefined;
-  if (!hasSi && !hasSiEs && !hasRequired && !hasMinRole && !hasSection) return 0;
+  if (!hasSi && !hasSiEs && !hasRequired && !hasMinRole && !hasSection) {
+    return { updated: 0, skipped: 0 };
+  }
 
   // Load ALL active lines linking the item (any template — all locations +
   // opening mirror). Section column-derive needs the per-section convention.
@@ -531,12 +547,13 @@ async function propagateItemDefinitionToLines(
     .returns<TemplateItemRow[]>();
   if (lErr) throw new Error(`propagateItemDefinitionToLines lines read failed: ${lErr.message}`);
   const rows = lines ?? [];
-  if (rows.length === 0) return 0;
+  if (rows.length === 0) return { updated: 0, skipped: 0 };
 
   // Section convention source (only needed when re-deriving columns).
   const sectionMap = hasSection ? await loadPrepSections(sb) : null;
 
   let updated = 0;
+  let skipped = 0;
   for (const raw of rows) {
     const item = rowToTemplateItem(raw);
     const isPrepLine = isPrepMeta(item.prepMeta);
@@ -588,6 +605,13 @@ async function propagateItemDefinitionToLines(
           specialInstruction: hasSi ? (changes.specialInstruction ?? null) : base.specialInstruction,
           columns: nextColumns,
         };
+        // LINK RE-ASSERTION before the helper writes (see the header): these two
+        // write by id and carry no link/active predicate of their own, so this
+        // re-read is the only place the guard can live for them.
+        if (!(await lineStillLinksItem(sb, item.id, itemId))) {
+          skipped += 1;
+          continue;
+        }
         // station must already be the new section for setPrepItemMeta's assert.
         if (hasSection) {
           await setPrepItemSection(sb, { templateItemId: item.id, section: nextSection });
@@ -609,16 +633,50 @@ async function propagateItemDefinitionToLines(
     }
 
     if (Object.keys(colUpdate).length > 0) {
-      const { error: uErr } = await sb
+      // LINK RE-ASSERTION in the WHERE clause (see the header) + rowcount: an
+      // UPDATE that matches nothing is silent on Supabase, so `count` is the only
+      // way to learn the line left the registry mid-pass.
+      const { error: uErr, count } = await sb
         .from("checklist_template_items")
-        .update(colUpdate)
-        .eq("id", item.id);
+        .update(colUpdate, { count: "exact" })
+        .eq("id", item.id)
+        .eq("item_id", itemId)
+        .eq("active", true);
       if (uErr) throw new Error(`propagateItemDefinitionToLines update ${item.id} failed: ${uErr.message}`);
+      if ((count ?? 0) === 0) {
+        skipped += 1;
+        continue;
+      }
     }
     updated += 1;
   }
 
-  return updated;
+  return { updated, skipped };
+}
+
+/**
+ * Is this line STILL linked to this registry item, and still active? The guard
+ * for the two prep helpers, which write by id (see propagateItemDefinitionToLines'
+ * header). A `false` means another admin unlinked or deactivated the line after
+ * the propagation pass read it — the line has left the registry and must not
+ * inherit the edit.
+ */
+async function lineStillLinksItem(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  lineId: string,
+  itemId: string,
+): Promise<boolean> {
+  const { data, error } = await sb
+    .from("checklist_template_items")
+    .select("id")
+    .eq("id", lineId)
+    .eq("item_id", itemId)
+    .eq("active", true)
+    .maybeSingle<{ id: string }>();
+  if (error) {
+    throw new Error(`propagateItemDefinitionToLines link re-check ${lineId} failed: ${error.message}`);
+  }
+  return data !== null;
 }
 
 export interface PrepItemContentPatch {
@@ -2692,7 +2750,7 @@ export async function updateRegistryItemDefinition(
   if (uErr) throw new Error(`updateRegistryItemDefinition update failed: ${uErr.message}`);
 
   // Propagate the changed full-definition subset to every active line.
-  const propagatedLineCount = await propagateItemDefinitionToLines(sb, args.itemId, changes);
+  const propagated = await propagateItemDefinitionToLines(sb, args.itemId, changes);
 
   await audit({
     actorId: actor.user.id,
@@ -2705,7 +2763,11 @@ export async function updateRegistryItemDefinition(
       before,
       after,
       changed_fields: Object.keys(after),
-      propagated_line_count: propagatedLineCount,
+      propagated_line_count: propagated.updated,
+      // Non-zero means a line was unlinked or deactivated by someone else while
+      // this edit propagated, and did NOT inherit it. Without the number the
+      // skip is indistinguishable from a line that never existed.
+      propagated_lines_skipped: propagated.skipped,
     },
     ipAddress: null,
     userAgent: null,
