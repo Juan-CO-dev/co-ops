@@ -18,7 +18,11 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import {
   ADOPTION_SURFACES,
   bucketAdoptionCounts,
+  cronRunFailures,
+  cronRunIsDegraded,
+  NO_CRON_RUN_FAILURES,
   type AdoptionSurfaceCount,
+  type CronRunFailures,
 } from "@/lib/admin/ops-health-shared";
 
 // ── Cron health ───────────────────────────────────────────────────────────────
@@ -35,6 +39,14 @@ export interface CronHealth {
   lastFailureError: string | null;
   /** ISO timestamp of the most recent successful run EVER (null when never run). */
   lastSuccessAt: string | null;
+  /**
+   * The newest `cron.success` run reported at least one swallowed per-location failure.
+   * A run can be BOTH "success" and degraded — that is the whole point (see
+   * ops-health-shared's CronRunFailures header).
+   */
+  lastRunDegraded: boolean;
+  /** That run's counters (all-zero when clean, or when the cron has never run). */
+  lastRunFailures: CronRunFailures;
 }
 
 /**
@@ -42,6 +54,15 @@ export interface CronHealth {
  * the newest cron.failure in the 48h window, and the newest cron.success ever.
  * DORMANT-aware: pre-creds the cron 503s and writes NO row, so this returns the
  * all-null "never run" shape — the hub renders nothing (no false alarm).
+ *
+ * THE SUCCESS ROW IS NOW READ FOR ITS METADATA, NOT JUST ITS CLOCK (wiring audit
+ * 2026-08-29). `cron.success` is written unconditionally at the end of every run that
+ * did not throw wholesale, and every per-location pull / depletion / par failure is
+ * only a counter inside it. Reading the timestamp alone is how the hub showed a quiet
+ * "last run OK" through four runs whose sales pull had actually died for one shop —
+ * the same runs whose ledger truncation is fixed in lib/catering/toast-sales.ts here.
+ * A degraded run is deliberately NOT promoted to `hasRecentFailure`: it is a different
+ * fact ("it ran, and part of it did not") and gets its own, calmer line.
  */
 export async function loadCronHealth(): Promise<CronHealth> {
   const sb = getServiceRoleClient();
@@ -59,22 +80,25 @@ export async function loadCronHealth(): Promise<CronHealth> {
       .maybeSingle<{ occurred_at: string; metadata: Record<string, unknown> | null }>(),
     sb
       .from("audit_log")
-      .select("occurred_at")
+      .select("occurred_at, metadata")
       .eq("action", "cron.success")
       .eq("resource_table", "cron")
       .order("occurred_at", { ascending: false })
       .limit(1)
-      .maybeSingle<{ occurred_at: string }>(),
+      .maybeSingle<{ occurred_at: string; metadata: Record<string, unknown> | null }>(),
   ]);
   if (failRes.error) throw new Error(`loadCronHealth failure read: ${failRes.error.message}`);
   if (okRes.error) throw new Error(`loadCronHealth success read: ${okRes.error.message}`);
 
   const failErr = failRes.data?.metadata?.["error"];
+  const lastRunFailures = okRes.data != null ? cronRunFailures(okRes.data.metadata) : NO_CRON_RUN_FAILURES;
   return {
     hasRecentFailure: failRes.data != null,
     lastFailureAt: failRes.data?.occurred_at ?? null,
     lastFailureError: typeof failErr === "string" ? failErr : null,
     lastSuccessAt: okRes.data?.occurred_at ?? null,
+    lastRunDegraded: cronRunIsDegraded(lastRunFailures),
+    lastRunFailures,
   };
 }
 

@@ -404,6 +404,8 @@
   "admin.hub.arrives": "Arrives in Phase 5",
   "admin.hub.cron.failed": "Cron failed",
   "admin.hub.cron.failed_line": "Nightly sales pull failed on {date} — check the logs.",
+  "admin.hub.cron.degraded": "Ran with failures",
+  "admin.hub.cron.degraded_line": "Nightly sales pull ran on {date}, but {count} step(s) failed — those locations have no depletion for that day.",
   "admin.hub.cron.ok_line": "Nightly sales pull last ran OK on {date}.",
   "admin.hub.adoption.title": "Used this week",
   "admin.hub.adoption.all_quiet": "No activity yet",
