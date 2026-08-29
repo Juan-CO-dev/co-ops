@@ -3246,6 +3246,7 @@
   "production.error.invalid_sku": "That SKU isn't available.",
   "production.error.invalid_item": "That item isn't available.",
   "production.error.invalid_conversion": "That item isn't made from that SKU.",
+  "production.error.retired_product": "That product is discontinued — the recipe needs updating before this can be recorded.",
   "production.error.not_found": "Not found.",
   "production.error.forbidden": "You don't have permission to log production.",
   "production.error.generic": "Something went wrong — try again.",

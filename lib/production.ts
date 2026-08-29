@@ -50,6 +50,39 @@ async function loadMeasuresMap(): Promise<Map<string, MeasureUnitFactor>> {
   return new Map<string, MeasureUnitFactor>((data ?? []).map((m) => [m.label, { dimension: m.dimension, toBaseFactor: Number(m.to_base_factor) }]));
 }
 
+/**
+ * Which of these products are RETIRED (`products.active = false`) — rung ⓪ of the
+ * resolution ladder, and the only rung this module is entitled to run.
+ *
+ * WHY A FLAG READ AND NOT `resolveProductMember` (AGENTS.md, product identity): the
+ * ladder answers "WHICH vendor does this product mean", and production must never form
+ * a second opinion about that — nor does it need one. The cook is holding a specific
+ * pack; the amplifier fix (2026-08-20) exists precisely so ANY member of a live product
+ * can be recorded, not only the resolved one. Rung ⓪ is different in kind: it is not a
+ * member choice at all but a fact about the IDENTITY — "we do not buy this any more" —
+ * and it is the one AGENTS.md names production among ("the STATUS stays the single
+ * `unresolved` everywhere downstream — costing board, depletion, production, ordering").
+ * Before this, production was the one such consumer that never read the flag.
+ *
+ * Returned as the RETIRED set, not the live set, so a dangling id (impossible under the
+ * FK, but cheap to be right about) reads as live rather than silently blocking a valid
+ * conversion. Batched — one query for every product in play, per the loadRecipeGraph law.
+ */
+async function loadRetiredProductIds(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  productIds: string[],
+): Promise<Set<string>> {
+  const retired = new Set<string>();
+  const ids = [...new Set(productIds.filter(Boolean))];
+  if (ids.length === 0) return retired;
+  const { data, error } = await sb.from("products").select("id, active").in("id", ids)
+    .returns<Array<{ id: string; active: boolean | null }>>();
+  if (error) throw new Error(`loadRetiredProductIds: ${error.message}`);
+  // `active ?? true` is lib/products.ts loadProductIndex's idiom: a null reads as live.
+  for (const p of data ?? []) if ((p.active ?? true) === false) retired.add(p.id);
+  return retired;
+}
+
 /** content_oz (oz per pack) for one SKU, or null if not configured. */
 async function skuContentOzById(skuId: string): Promise<number | null> {
   const sb = getServiceRoleClient();
@@ -93,7 +126,16 @@ export interface ProductionView {
  *  EVERY member SKU here — because the cook standing at the bench with the backup
  *  vendor's ham is making the same thing, and before this the dropdown derived
  *  purely from pins so they simply could not record it. Both passes stay batched
- *  (`.in(...)`) — the loadRecipeGraph law applies to this module too. */
+ *  (`.in(...)`) — the loadRecipeGraph law applies to this module too.
+ *
+ *  …AND THE AMPLIFIER STOPS AT A RETIRED IDENTITY (wiring audit 2026-08-29). The
+ *  expansion asked only "is this SKU a member of a product some recipe pins", never
+ *  whether that product is still one the kitchen buys — and a retired product's members
+ *  are normally still ACTIVE rows, so the gap was the normal case, not an edge. The
+ *  dropdown therefore kept offering conversions off a discontinued identity forever,
+ *  with no signal, while the costing board, readiness lane and order walk all read the
+ *  same pin as `unresolved`. A retired product's pins are dropped here; the SKU-pin pass
+ *  is untouched, so a SKU that a recipe names DIRECTLY still makes what it always made. */
 async function loadSkuToItems(skuIds: string[]): Promise<Record<string, Array<{ itemId: string; name: string }>>> {
   const out: Record<string, Array<{ itemId: string; name: string }>> = {};
   if (skuIds.length === 0) return out;
@@ -113,7 +155,8 @@ async function loadSkuToItems(skuIds: string[]): Promise<Record<string, Array<{ 
     list.push(m.id);
     membersByProduct.set(m.product_id, list);
   }
-  const productIds = [...membersByProduct.keys()];
+  const retiredProductIds = await loadRetiredProductIds(sb, [...membersByProduct.keys()]);
+  const productIds = [...membersByProduct.keys()].filter((id) => !retiredProductIds.has(id));
   const productIns: Array<{ recipe_id: string; component_sku_id: string }> = [];
   if (productIds.length > 0) {
     const { data: pins } = await sb.from("recipe_inputs").select("recipe_id, component_product_id")
@@ -253,25 +296,51 @@ export async function recordProduction(actor: AuthContext, input: RecordProducti
   // A recipe pinning this SKU's PRODUCT counts as a valid conversion for EVERY
   // member (0179) — the same expansion loadSkuToItems does for the dropdown, so a
   // cook offered the backup SKU does not then hit `invalid_conversion` on submit.
+  // …unless the PRODUCT is retired, which is rung ⓪ and refuses (see
+  // loadRetiredProductIds). The two authorities are tracked SEPARATELY rather than
+  // merged into one id set, because the answer to "why was this refused" differs: a
+  // direct SKU pin is unaffected by any product's retirement, and only a conversion
+  // that the retired pin ALONE would have authorised gets the named refusal.
   let productRecipeIds: string[] = [];
+  let productRetired = false;
   if (sku.product_id != null) {
+    productRetired = (await loadRetiredProductIds(sb, [sku.product_id])).has(sku.product_id);
     const { data: pinRows } = await sb.from("recipe_inputs").select("recipe_id").eq("component_product_id", sku.product_id)
       .returns<Array<{ recipe_id: string }>>();
     productRecipeIds = (pinRows ?? []).map((r) => r.recipe_id);
   }
-  const skuRecipeIds = [...new Set([...(inRows ?? []).map((r) => r.recipe_id), ...productRecipeIds])];
-  let validConversion = false;
-  if (skuRecipeIds.length > 0) {
-    const { data: outRows } = await sb.from("recipe_outputs").select("recipe_id").eq("output_item_id", input.outputItemId).in("recipe_id", skuRecipeIds)
+  const skuPinnedRecipeIds = new Set((inRows ?? []).map((r) => r.recipe_id));
+  const productPinnedRecipeIds = new Set(productRecipeIds);
+  const candidateSourceIds = [...new Set([...skuPinnedRecipeIds, ...productPinnedRecipeIds])];
+  let validBySkuPin = false;
+  let validByProductPin = false;
+  if (candidateSourceIds.length > 0) {
+    const { data: outRows } = await sb.from("recipe_outputs").select("recipe_id").eq("output_item_id", input.outputItemId).in("recipe_id", candidateSourceIds)
       .returns<Array<{ recipe_id: string }>>();
     const candidateRecipeIds = [...new Set((outRows ?? []).map((r) => r.recipe_id))];
     if (candidateRecipeIds.length > 0) {
-      const { data: active } = await sb.from("recipes").select("id").in("id", candidateRecipeIds).eq("active", true).limit(1)
+      // No `.limit(1)`: WHICH active recipe answered decides the error message below,
+      // so the set is needed, not merely its emptiness. It is bounded by the recipes
+      // that both consume this SKU/product and output this item — a handful.
+      const { data: active } = await sb.from("recipes").select("id").in("id", candidateRecipeIds).eq("active", true)
         .returns<Array<{ id: string }>>();
-      validConversion = !!(active && active.length > 0);
+      for (const r of active ?? []) {
+        if (skuPinnedRecipeIds.has(r.id)) validBySkuPin = true;
+        if (productPinnedRecipeIds.has(r.id)) validByProductPin = true;
+      }
     }
   }
-  if (!validConversion) throw new ProductionError(400, "invalid_conversion", "That item is not made from that SKU");
+  if (!(validBySkuPin || (validByProductPin && !productRetired))) {
+    // LOUD, AND IT NAMES THE ERRAND (Juan's retirement ruling A+): "discontinued" sends
+    // the manager to the recipe or the products page, where `invalid_conversion` would
+    // have sent a cook hunting a SKU/item mismatch that does not exist. The dropdown no
+    // longer offers this, so in practice it catches a page loaded before the retirement
+    // — which is exactly the case a silent success would have recorded.
+    if (validByProductPin && productRetired) {
+      throw new ProductionError(409, "retired_product", "That product is discontinued");
+    }
+    throw new ProductionError(400, "invalid_conversion", "That item is not made from that SKU");
+  }
 
   // Resolve consumed oz for the single SKU line: inputQty (packs) × content_oz (oz/pack).
   const contentOz = await skuContentOzById(input.inputSkuId);

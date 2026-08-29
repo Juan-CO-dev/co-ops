@@ -263,6 +263,16 @@ export interface RecipeDraft {
  * The model assumes ONE active producing recipe per item — readiness, the items
  * page, and the consumption engine each pick a different arbitrary winner when
  * that's violated. Two-step (not an embedded filter) per the AGENTS.md RLS note.
+ *
+ * KNOWN GAP, DELIBERATELY NOT PAPERED OVER (wiring audit 2026-08-29): this check and
+ * the insert that follows it are NOT atomic, and there is no DB backstop — `active`
+ * lives on `recipes`, not on `recipe_outputs`, so the state cannot be expressed as a
+ * partial unique index on the outputs table (0103 creates only plain indexes). Two
+ * genuinely concurrent writes can therefore both pass and commit two active producers
+ * for one item. Closing it needs either a trigger / denormalised active mirror or an
+ * advisory lock inside `create_recipe_full` — a migration, and its own decision. The
+ * UI double-submit path is already covered client-side (both builders disable while
+ * busy); what remains is two actors at once.
  */
 async function activeProducerExists(
   sb: ReturnType<typeof getServiceRoleClient>,
@@ -364,6 +374,13 @@ export async function deactivateRecipe(actor: AuthContext, id: string): Promise<
 export async function createMenuItem(actor: AuthContext, input: { name: string; nameEs?: string | null; menuPrice?: number | null }): Promise<{ id: string }> {
   requireLevel(actor, RECIPE_WRITE_MIN);
   if (input.menuPrice != null) requireLevel(actor, MENU_PRICE_MIN);
+  // The same NaN-serialises-to-null / CHECK-violation-becomes-a-500 pair as
+  // setItemSoldDirectly below, against THIS table's own constraint — `menu_items.menu_price`
+  // is `is null or >= 0` (migration 0103), so 0 stays legal here and only non-finite or
+  // negative is refused. Each writer validates to the CHECK it actually faces.
+  if (input.menuPrice !== undefined && input.menuPrice !== null && (!Number.isFinite(input.menuPrice) || input.menuPrice < 0)) {
+    throw new RecipeError(400, "invalid_menu_price");
+  }
   if (!normStr(input.name)) throw new RecipeError(400, "invalid_name");
   const sb = getServiceRoleClient();
   const { data, error } = await sb.from("menu_items").insert({ name: normStr(input.name), name_es: normStr(input.nameEs), menu_price: input.menuPrice ?? null, active: true, created_by: actor.user.id })
@@ -465,24 +482,46 @@ export async function removeRecipeEdge(actor: AuthContext, args: { table: "recip
 
 export const SOLD_DIRECT_WRITE_MIN = 7;
 
-/** Flag a production item as sold-directly (antipasta-side model): set sold_directly +
+/**
+ * Flag a production item as sold-directly (antipasta-side model): set sold_directly +
  * optional sell portion/unit; clearing the flag nulls the portion fields. menu_price is
- * MoO+-gated (MENU_PRICE_MIN) when provided. GM+ (SOLD_DIRECT_WRITE_MIN) for the flag itself. */
+ * MoO+-gated (MENU_PRICE_MIN) when provided. GM+ (SOLD_DIRECT_WRITE_MIN) for the flag itself.
+ *
+ * MENU_PRICE IS NOT A SOLD-DIRECTLY FIELD, and writing it inside that branch dropped
+ * real edits on the floor (wiring audit 2026-08-29). `items.menu_price` is ALSO the
+ * catering regular price (lib/admin/catering/menu.ts, lib/admin/catering/package-pricing.ts)
+ * and the menu-costing board's price (lib/admin/menu-costing.ts) — all read regardless of
+ * `sold_directly`. ItemRow.tsx renders the price input in BOTH branches and always POSTs
+ * it, so a manager editing only the price on a non-sold-directly item got a 200 ok, a
+ * refresh, and their number silently back to what it was. The field is written whenever
+ * the caller SUPPLIES it (`!== undefined`) and left alone when they don't.
+ */
 export async function setItemSoldDirectly(actor: AuthContext, args: { itemId: string; soldDirectly: boolean; sellPortion?: number | null; sellPortionUnit?: string | null; menuPrice?: number | null }): Promise<void> {
   requireLevel(actor, SOLD_DIRECT_WRITE_MIN);
   if (args.menuPrice != null) requireLevel(actor, MENU_PRICE_MIN);
+  // menu_price carries the SAME guard its other writer already has
+  // (lib/admin/templates.ts updateRegistryItemDefinition), because both failure modes
+  // are silent-or-opaque rather than a clean 400: supabase-js JSON-serialises NaN to
+  // `null`, so a non-numeric price CLEARS the column with a 200 ok (and flips
+  // readiness's sellPortionComplete, which requires menu_price > 0); a value <= 0
+  // violates the `menu_price is null or menu_price > 0` CHECK (migration 0099) and
+  // surfaces as an unhandled 500 rather than a message. The `invalid_menu_price` code
+  // is already resolvable in en + es (components/admin/templates/shared.ts).
+  if (args.menuPrice !== undefined && args.menuPrice !== null && (!Number.isFinite(args.menuPrice) || args.menuPrice <= 0)) {
+    throw new RecipeError(400, "invalid_menu_price");
+  }
   const upd: Record<string, unknown> = { sold_directly: args.soldDirectly, updated_at: new Date().toISOString(), updated_by: actor.user.id };
   if (args.soldDirectly) {
     if (args.sellPortion != null && !(args.sellPortion > 0)) throw new RecipeError(400, "invalid_sell_portion");
     upd.sell_portion = args.sellPortion ?? null;
     upd.sell_portion_unit = normStr(args.sellPortionUnit);
-    if (args.menuPrice !== undefined) upd.menu_price = args.menuPrice;
   } else {
     upd.sell_portion = null; upd.sell_portion_unit = null;
   }
+  if (args.menuPrice !== undefined) upd.menu_price = args.menuPrice;
   const sb = getServiceRoleClient();
   const { error, count } = await sb.from("items").update(upd, { count: "exact" }).eq("id", args.itemId);
   if (error) throw new Error(`setItemSoldDirectly: ${error.message}`);
   if (count === 0) throw new RecipeError(404, "not_found");
-  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "item.set_sold_directly", resourceTable: "items", resourceId: args.itemId, metadata: { sold_directly: args.soldDirectly, sell_portion: args.sellPortion ?? null, sell_portion_unit: args.sellPortionUnit ?? null }, ipAddress: null, userAgent: null });
+  await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "item.set_sold_directly", resourceTable: "items", resourceId: args.itemId, metadata: { sold_directly: args.soldDirectly, sell_portion: args.sellPortion ?? null, sell_portion_unit: args.sellPortionUnit ?? null, ...(args.menuPrice !== undefined ? { menu_price: args.menuPrice } : {}) }, ipAddress: null, userAgent: null });
 }
