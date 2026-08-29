@@ -7,6 +7,10 @@
  * Service-role bypasses RLS by design, consistent with lib/admin/vendors.ts and
  * lib/admin/skus.ts.
  *
+ * The per-action re-check includes the LOCATION BIND on every write — the role floor
+ * (6) is below the all-locations grant (9), so it cannot say which store's row an actor
+ * may touch. See assertFaqLocationWritable.
+ *
  * Append-only: removals flip `active=false`, never DELETE.
  *
  * Schema (catering_faq):
@@ -21,6 +25,7 @@
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
+import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 
@@ -49,6 +54,32 @@ function normalizeOptional(s: string | null | undefined): string | null {
   if (typeof s !== "string") return null;
   const t = s.trim();
   return t || null;
+}
+
+function actorLoc(actor: AuthContext): LocationActor {
+  return { role: actor.user.role, locations: actor.locations };
+}
+
+/**
+ * The write-target bind, mirroring lib/admin/catering/zones.ts's requireAccessibleLocation
+ * — minus its DB round trip, because the answer is pure: a location the actor does not
+ * hold is refused whether or not the row exists.
+ *
+ * FAQ_WRITE_MIN is 6 and lockLocationContext's all-locations grant starts at 9, so the
+ * floor alone never says WHICH store's FAQ this touches. At CO every level 6/7/8 actor
+ * holds exactly one shop, so without this an AGM at one store could author, retitle or
+ * deactivate the other store's row — a config write into a shop they have no stake in.
+ *
+ * A NULL location_id is the tenant-wide row and is DELIBERATELY NOT bound here: publishing
+ * globally is an existing sanctioned capability of this editor at level 6 (the form's
+ * location picker defaults to the Global sentinel), and moving that floor is a role-gate
+ * decision that takes the lib+RLS+UI sweep, not a bug fix. It is filed for the chair.
+ */
+function assertFaqLocationWritable(actor: AuthContext, locationId: string | null): void {
+  if (locationId === null) return;
+  if (!lockLocationContext(actorLoc(actor), locationId)) {
+    throw new AdminCateringError(403, "forbidden", "Location is outside your assignments");
+  }
 }
 
 /**
@@ -155,6 +186,8 @@ export async function createFaq(
   input: CreateFaqInput,
 ): Promise<{ id: string; slug: string }> {
   requireLevel(actor, FAQ_WRITE_MIN);
+  const locationId = input.locationId ?? null;
+  assertFaqLocationWritable(actor, locationId);
 
   const questionEn = input.questionEn.trim();
   if (!questionEn) throw new AdminCateringError(400, "invalid_label", "question_en cannot be empty");
@@ -162,7 +195,6 @@ export async function createFaq(
   if (!answerEn) throw new AdminCateringError(400, "invalid_label", "answer_en cannot be empty");
 
   const slug = slugifyQuestion(questionEn);
-  const locationId = input.locationId ?? null;
   const questionEs = normalizeOptional(input.questionEs);
   const answerEs = normalizeOptional(input.answerEs);
 
@@ -253,6 +285,7 @@ export async function updateFaqText(
 ): Promise<void> {
   requireLevel(actor, FAQ_EDIT_MIN);
   const existing = await requireFaqRow(args.id);
+  assertFaqLocationWritable(actor, existing.location_id);
 
   const update: Record<string, unknown> = {};
   const { changes } = args;
@@ -310,6 +343,7 @@ export async function updateFaqText(
     resourceTable: "catering_faq",
     resourceId: args.id,
     metadata: {
+      location_id: existing.location_id,
       fields: Object.keys(update).filter((k) => k !== "updated_by" && k !== "updated_at"),
       ...(newSlug ? { slug_changed_to: newSlug } : {}),
     },
@@ -324,7 +358,8 @@ export async function deactivateFaq(
   args: { id: string; active: boolean },
 ): Promise<void> {
   requireLevel(actor, FAQ_DEACT_MIN);
-  await requireFaqRow(args.id);
+  const existing = await requireFaqRow(args.id);
+  assertFaqLocationWritable(actor, existing.location_id);
 
   const sb = getServiceRoleClient();
   const { error } = await sb
@@ -343,7 +378,7 @@ export async function deactivateFaq(
     action: args.active ? "catering.kb.faq.activate" : "catering.kb.faq.deactivate",
     resourceTable: "catering_faq",
     resourceId: args.id,
-    metadata: {},
+    metadata: { location_id: existing.location_id, slug: existing.slug },
     ipAddress: null,
     userAgent: null,
   });

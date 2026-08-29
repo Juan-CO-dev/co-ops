@@ -25,7 +25,7 @@ import { createCustomerSession } from "./session";
 import { checkAndRecord } from "./rate-limit";
 import { createDraftFromIntake } from "./draft";
 import type { DraftIntake } from "./draft";
-import { extractDomain, normalizeEmail, resolveCompanyForEmail, escapeLike } from "@/lib/catering/companies";
+import { extractDomain, normalizeEmail, resolveCompanyForEmail, escapeLike, reviveInactiveContact } from "@/lib/catering/companies";
 import { sendEmail } from "@/lib/email";
 import { renderMagicLinkEmail } from "@/lib/email-templates/magic-link";
 import { audit } from "@/lib/audit";
@@ -103,12 +103,24 @@ export async function consumeMagicLink(input: { token: string; ip?: string | nul
   return { ok: true, session, quoteId };
 }
 
-/** Un-gated resolve-or-create keyed on lower(email); auto-attributes corporate domains. */
+/**
+ * Un-gated resolve-or-create keyed on lower(email); auto-attributes corporate domains.
+ *
+ * Order matters: active row → DEACTIVATED row (revived, same id) → new row. Skipping the
+ * middle rung is how one person becomes two customer_ids and loses sight of their own
+ * quotes and payments in the portal, because `catering_customers_one_active_email` is a
+ * PARTIAL index that lets a second active row exist beside a deactivated one. The full
+ * account is on reviveInactiveContact.
+ */
 export async function resolveOrCreatePortalCustomer(emailRaw: string, name?: string | null): Promise<string> {
   const email = normalizeEmail(emailRaw);
   const sb = getServiceRoleClient();
   const { data: existing } = await sb.from("catering_customers").select("id").eq("active", true).ilike("email", escapeLike(email)).maybeSingle<{ id: string }>();
   if (existing) return existing.id;
+  // No actor: the customer's own magic link drives this, so the audit row carries the
+  // system's null actor and names the path, the same way the nightly writers do.
+  const revived = await reviveInactiveContact(email, { actorId: null, actorRole: null, via: "portal_magic_link" });
+  if (revived) return revived.id;
   const companyId = await resolveCompanyForEmail(email);
   const { data: inserted, error } = await sb.from("catering_customers").insert({ name: name?.trim() || email, email, company_id: companyId, active: true, created_by: null }).select("id").single<{ id: string }>();
   if (error) {

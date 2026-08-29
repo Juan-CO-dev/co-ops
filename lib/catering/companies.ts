@@ -14,7 +14,7 @@
  */
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
-import { getRoleLevel } from "@/lib/roles";
+import { getRoleLevel, type RoleCode } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 
@@ -163,6 +163,81 @@ export async function resolveCompanyForEmail(email: string): Promise<string | nu
     .maybeSingle<{ company_id: string }>();
   if (error) throw new Error(`resolveCompanyForEmail: ${error.message}`);
   return data?.company_id ?? null;
+}
+
+// ── Identity continuity: the deactivated contact ────────────────────────────────
+/**
+ * Revive the DEACTIVATED contact that owns this email, if there is one.
+ *
+ * THE FORK THIS CLOSES. `catering_customers_one_active_email` (migration 0122) is a
+ * PARTIAL unique index — `ON (lower(email)) WHERE active AND email IS NOT NULL` — so
+ * uniqueness holds only among ACTIVE rows. Every resolve-or-create path looks the contact
+ * up with `.eq("active", true)`, so once a row is deactivated the lookup misses it and the
+ * insert that follows is perfectly legal: a SECOND customer_id for the same human. Nothing
+ * errors, and nothing points the two rows at each other. The portal then signs that person
+ * in under the new id while lib/portal/quotes.ts gates every read on `customer_id`
+ * equality — so their quotes, deposits and payment history, still hanging off the
+ * deactivated id, go permanently invisible to them. It also strands the operator: flipping
+ * the old row back on now collides with the new row's active email (23505).
+ *
+ * REACTIVATING IS NOT AN AUTHORIZATION DECISION, because `active` never gated anything on
+ * this path. The pre-fix code already handed the requester a working portal session — just
+ * under a fresh identity — so reviving the row grants nothing new and only preserves the
+ * history. If "deactivated" is ever meant to BLOCK sign-in, that is a separate capability
+ * and belongs at the session boundary, not in a resolve-or-create.
+ *
+ * Returns null when there is nothing to revive, INCLUDING when a concurrent request
+ * revived or re-created the active row first — callers fall through to their insert, whose
+ * existing 23505 branch re-reads and lands on the winner.
+ */
+export async function reviveInactiveContact(
+  emailRaw: string,
+  attribution: { actorId: string | null; actorRole: RoleCode | null; via: string },
+): Promise<{ id: string; companyId: string | null } | null> {
+  const email = normalizeEmail(emailRaw);
+  const sb = getServiceRoleClient();
+  // `active` is nullable (0108: `boolean DEFAULT true`), and the partial index reads a
+  // NULL as not-active — so "not active" must cover NULL too, or a NULL-active row forks
+  // exactly like a false one.
+  const { data: rows, error } = await sb
+    .from("catering_customers")
+    .select("id, company_id")
+    .or("active.is.null,active.is.false")
+    .ilike("email", escapeLike(email))
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .returns<Array<{ id: string; company_id: string | null }>>();
+  if (error) throw new Error(`reviveInactiveContact lookup: ${error.message}`);
+  const row = rows[0];
+  if (!row) return null;
+
+  // Guarded flip: the `active` predicate makes this a compare-and-set, so the loser of a
+  // double request gets 0 rows rather than a second revival.
+  const { data: revived, error: uErr } = await sb
+    .from("catering_customers")
+    .update({ active: true })
+    .eq("id", row.id)
+    .or("active.is.null,active.is.false")
+    .select("id, company_id")
+    .maybeSingle<{ id: string; company_id: string | null }>();
+  if (uErr) {
+    // 23505 = someone else already put an active row on this email. Not our error.
+    if (uErr.code === "23505") return null;
+    throw new Error(`reviveInactiveContact update: ${uErr.message}`);
+  }
+  if (!revived) return null;
+
+  void audit({
+    actorId: attribution.actorId,
+    actorRole: attribution.actorRole,
+    action: "catering.customer.activate",
+    resourceTable: "catering_customers",
+    resourceId: revived.id,
+    metadata: { via: attribution.via, email, reason: "revived_instead_of_forking_identity" },
+    ipAddress: null,
+    userAgent: null,
+  });
+  return { id: revived.id, companyId: revived.company_id };
 }
 
 // ── Mutations: companies ────────────────────────────────────────────────────────
@@ -319,6 +394,15 @@ export async function resolveOrCreateContact(actor: AuthContext, input: ResolveC
     .maybeSingle<{ id: string; company_id: string | null }>();
   if (lErr) throw new Error(`resolveOrCreateContact lookup: ${lErr.message}`);
   if (existing) return { id: existing.id, companyId: existing.company_id, created: false };
+
+  // Before minting a new contact: this email may belong to a DEACTIVATED one. Inserting
+  // beside it would fork the person in two — see reviveInactiveContact.
+  const revived = await reviveInactiveContact(email, {
+    actorId: actor.user.id,
+    actorRole: actor.user.role,
+    via: "quote_capture",
+  });
+  if (revived) return { id: revived.id, companyId: revived.companyId, created: false };
 
   const companyId = await resolveCompanyForEmail(email);
   const { data: inserted, error: iErr } = await sb
