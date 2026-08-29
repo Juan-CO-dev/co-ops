@@ -22,6 +22,70 @@ export const OVERSIGHT_ACTIONS = [
   "report.drop",
 ];
 
+// ─────────────────────────────────────────────────────────────────────────────
+// OVERSIGHT — THE LOCATION BIND (audit fix 2026-08-29)
+//
+// Every other category on this page is location-scoped by construction: tasks and
+// notes ride the location's own instance ids, finalizations come from that instance
+// list, cash and pm rows are filtered on location_id. Oversight was the exception —
+// `audit_log` was read by actor_id alone, so a person active at two shops carried the
+// revokes they did at one INTO the other's roster and into their own /my-performance
+// read. The 2026-06-18 plan recorded that as a deliberate v1 impurity, on the premise
+// that audit_log is "not reliably location-tagged".
+//
+// THAT PREMISE NO LONGER HOLDS FOR THIS CURATED SET. Each of the five actions hangs
+// off exactly one checklist_instance, and every emission site says so:
+//   · checklist_completion.revoke / .revoke_by_authority / .tag_actual_completer
+//        → resource_table "checklist_completions", metadata.instance_id  (lib/checklists.ts)
+//   · report.update
+//        → resource_table "checklist_submissions", metadata.report_instance_id
+//          (migrations 0044 / 0048 / 0050 / 0053 / 0055 — all five build the same key)
+//   · report.drop
+//        → resource_table "checklist_instances", resource_id IS the instance id, and
+//          metadata carries location_id besides  (lib/checklists.ts dropInstance)
+// Live-verified against prod 2026-08-29: 44 of 44 oversight rows resolve this way, none
+// unresolvable. So the bind is a metadata read, not a join, and it costs no query.
+//
+// An UNATTRIBUTABLE row is not counted here. A per-location metric may not claim an act
+// it cannot place at this location, and counting it at BOTH shops would score one act
+// twice — the very thing this bind exists to stop.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The audit_log columns the oversight bind reads. */
+export interface OversightAuditRow {
+  resource_table: string | null;
+  resource_id: string | null;
+  metadata: Record<string, unknown> | null;
+}
+
+/** The checklist_instance an oversight row is ABOUT, or null when it names none. */
+export function oversightInstanceId(row: OversightAuditRow): string | null {
+  const meta = row.metadata ?? {};
+  for (const key of ["instance_id", "report_instance_id"] as const) {
+    const v = meta[key];
+    if (typeof v === "string" && v !== "") return v;
+  }
+  if (row.resource_table === "checklist_instances" && row.resource_id) return row.resource_id;
+  return null;
+}
+
+/**
+ * True when an oversight row belongs to THIS location. The instance link is preferred —
+ * membership in the location's own instance list is a fact about our data, where
+ * metadata.location_id is a value the writer supplied — and metadata.location_id is the
+ * fallback for a row that names a location but no instance.
+ */
+export function oversightRowAtLocation(
+  row: OversightAuditRow,
+  locationId: string,
+  locationInstanceIds: ReadonlySet<string>,
+): boolean {
+  const instanceId = oversightInstanceId(row);
+  if (instanceId !== null) return locationInstanceIds.has(instanceId);
+  const loc = row.metadata?.location_id;
+  return typeof loc === "string" && loc === locationId;
+}
+
 /**
  * Inclusive UTC upper-bound for a query whose rows are BUCKETED by ET etCalendarDate.
  * The window is [loadFrom, toInclusive] in ET days, but the columns are UTC
@@ -190,16 +254,19 @@ export async function loadTeamOperatingHealth(
     }
   }
 
-  // 4. OVERSIGHT (audit_log by actor_id — window-global; audit_log grows fastest, so paginate)
-  const auditRows = await selectAllRows<{ actor_id: string | null; occurred_at: string }>(
+  // 4. OVERSIGHT (audit_log by actor_id, bound to THIS location's instances — see the
+  //    OVERSIGHT LOCATION BIND note at the top; audit_log grows fastest, so paginate)
+  const auditRows = await selectAllRows<OversightAuditRow & { actor_id: string | null; occurred_at: string }>(
     (from, to) => service
-      .from("audit_log").select("actor_id, action, occurred_at")
+      .from("audit_log").select("actor_id, action, occurred_at, resource_table, resource_id, metadata")
       .in("actor_id", memberIds).in("action", OVERSIGHT_ACTIONS)
       .gte("occurred_at", `${loadFrom}T00:00:00Z`).lte("occurred_at", upperTs)
       .order("id", { ascending: true }).range(from, to),
   );
   for (const a of auditRows) {
-    if (a.actor_id) place(a.actor_id, a.occurred_at, "oversight");
+    if (!a.actor_id) continue;
+    if (!oversightRowAtLocation(a, args.locationId, locInstanceIds)) continue;
+    place(a.actor_id, a.occurred_at, "oversight");
   }
 
   // ── materialize ──
@@ -408,13 +475,20 @@ async function computePersonMetrics(
     }
   }
 
-  const auditRows = await selectAllRows<{ occurred_at: string }>(
+  // The roster loader's twin — the same location bind, for the same reason (this is the
+  // path /my-performance runs, and it applies no RANKED_MAX_LEVEL ceiling, so it is
+  // where a multi-location actor's cross-shop oversight actually surfaces today).
+  const locInstanceIdSet = new Set(locInstanceIds);
+  const auditRows = await selectAllRows<OversightAuditRow & { occurred_at: string }>(
     (from, to) => service
-      .from("audit_log").select("occurred_at").eq("actor_id", args.personId).in("action", OVERSIGHT_ACTIONS)
+      .from("audit_log").select("occurred_at, resource_table, resource_id, metadata")
+      .eq("actor_id", args.personId).in("action", OVERSIGHT_ACTIONS)
       .gte("occurred_at", `${loadFrom}T00:00:00Z`).lte("occurred_at", upperTsP)
       .order("id", { ascending: true }).range(from, to),
   );
-  for (const a of auditRows) add(a.occurred_at, "oversight");
+  for (const a of auditRows) {
+    if (oversightRowAtLocation(a, args.locationId, locInstanceIdSet)) add(a.occurred_at, "oversight");
+  }
 
   const score = scoreFromCounts(args.role, current);
   const previousScore = args.compare ? scoreFromCounts(args.role, previous) : null;
