@@ -229,3 +229,95 @@ export function removeIntakeDraft<T extends IntakeDraftIdentity>(
 ): T[] {
   return shelf.filter((d) => !(d.vendorId === vendorId && d.startedAt === startedAt));
 }
+
+// ── THE avg_oz_per_each FOLD POLICY: what a delivery observation may overwrite ─
+//
+// Receiving folds a line's observed oz/each into `vendor_items.avg_oz_per_each`
+// (the A2 refinement, council L8). TWO genuinely different questions gate that
+// write, which is why they resolve in ONE ordered decision here instead of two
+// scattered checks at the call site:
+//
+//   1. WHICH CONTAINER does the number denominate? A chained SKU's observation is
+//      level-scoped and belongs on the line — folding it would corrupt the
+//      count/volume leaf the chain resolves through. That gate shipped with 0160.
+//   2. WHOSE NUMBER IS ALREADY THERE? Migration 0179 added the provenance quartet
+//      (weight_class / weight_source_note / weight_established_at / _by) and the
+//      weigh session (`lib/weights.ts`, floor WEIGHT_WRITE_MIN = 7) writes all
+//      four together when a GM puts a case on a scale. Receiving's floor is
+//      RECEIVE_MIN = 4, and the fold used to write `avg_oz_per_each` while
+//      touching NONE of the quartet — so a key-holder's rolling delivery average
+//      silently replaced a GM's scale reading while the weight board went on
+//      rendering the GM's name, the GM's date and "scale reading" over it. Worse,
+//      the one advisory built to show that disagreement (`InvoiceDrift` =
+//      observed − believed) collapsed to exactly 0, because the believed number
+//      had just been overwritten WITH the observed mean.
+//
+// THE RULE IS THE ONE `disposeTub` ALREADY STATES for scale readings
+// (`lib/tub-weights.ts` → CONFLICT_PRESENT_ONLY): a reading that contradicts a
+// weight OUR OWN scale produced is PRESENTED, never written. Skipping the fold
+// loses no information — it is precisely what lets the drift advisory speak.
+//
+// WRITABLE IS AN ALLOW-LIST, NOT `!isMeasuredWeightClass(...)`, and the asymmetry
+// is deliberate. That predicate answers "has a scale produced this?", and it gives
+// an unrecognised term `false` because an unknown term has not EARNED the measured
+// claim. Here the question is the opposite one — may we OVERWRITE it — so an
+// unrecognised term is PROTECTED rather than folded: a class this build has never
+// heard of is not a class it may overrule. `INVOICE_DERIVED` is on the list
+// because this fold is what MAINTAINS it ("refreshed as new invoices land" —
+// WEIGHT_CLASS_MEANING / HERB_WEIGHT_POLICY, `lib/angel-wave4.ts`); `SPEC` and
+// `ESTIMATE` are on it because an invoice average outranks a label and a guess
+// (WEIGHT_CLASS_RANK); `null` is on it because an unexplained number gains a story.
+
+/** What receiving is allowed to do with one observed oz/each, and why. */
+export type AvgFoldDisposition =
+  /** Write the mean AND stamp the provenance quartet that explains it. */
+  | "FOLD"
+  /** The SKU has an active pack chain — the observation stays level-scoped. */
+  | "SKIP_CHAINED"
+  /** A class receiving may not overrule stands on the row. Present, never write. */
+  | "SKIP_PROTECTED_CLASS";
+
+/**
+ * The `weight_class` values a delivery fold may overwrite. A NULL class is writable
+ * too and is handled separately below (a set cannot hold "the absence of a value"
+ * without a sentinel, and a sentinel is the silent-wrong-number trap 0161 named).
+ * Everything absent from this list — `OPERATIONAL` today, plus any term a later
+ * wave mints — is PROTECTED.
+ */
+export const AVG_FOLD_WRITABLE_CLASSES: readonly string[] = ["SPEC", "ESTIMATE", "INVOICE_DERIVED"];
+
+/**
+ * The class a fold WRITES. An average of what the vendor actually delivered is the
+ * textbook definition of `INVOICE_DERIVED` (`lib/angel-wave4.ts`), so the fold
+ * claims that and nothing stronger — never `OPERATIONAL`, which means a scale here.
+ */
+export const AVG_FOLD_WEIGHT_CLASS = "INVOICE_DERIVED";
+
+/**
+ * Which of the three outcomes one observed SKU gets. PURE, and THE ORDER OF THE
+ * CHECKS IS THE POLICY — chain first, because "this number denominates a different
+ * container" is a stronger objection than "this number came from somebody else":
+ * a chained SKU is skipped no matter what class it carries, and no class ever
+ * unlocks a chained fold.
+ */
+export function disposeAvgFold(input: {
+  chained: boolean;
+  liveWeightClass: string | null;
+}): AvgFoldDisposition {
+  if (input.chained) return "SKIP_CHAINED";
+  if (input.liveWeightClass == null) return "FOLD";
+  return AVG_FOLD_WRITABLE_CLASSES.includes(input.liveWeightClass) ? "FOLD" : "SKIP_PROTECTED_CLASS";
+}
+
+/**
+ * The `weight_source_note` a fold leaves behind. It names the mechanism and the
+ * sample size, because the board renders this string as the answer to "where did
+ * this number come from" and "a delivery average" without an N is not an answer.
+ */
+export function avgFoldSourceNote(sampleCount: number): string {
+  return (
+    `Delivery-observation fold: mean of ${sampleCount} observed oz/each recorded on ` +
+    `intake lines (lib/receiving.ts A2). Refreshed as new invoices land; a scale ` +
+    `reading (weigh session) supersedes it and is never overwritten by this fold.`
+  );
+}

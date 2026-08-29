@@ -3,12 +3,21 @@
  * Pins: credit derivation for short/over/damaged/substitution lines, qty-delta
  * arithmetic, amount-cents derivation from intake price (spec D1), and the
  * addDeliveryLines double-submit multiset guard (isDuplicateAppend), and the
- * offline intake-draft shelf (one slot per vendor, newest first, capped).
+ * offline intake-draft shelf (one slot per vendor, newest first, capped), and the
+ * avg_oz_per_each FOLD POLICY (what a delivery observation may overwrite).
  */
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { describe, it, expect } from "vitest";
 import {
+  AVG_FOLD_WEIGHT_CLASS,
+  AVG_FOLD_WRITABLE_CLASSES,
+  avgFoldSourceNote,
   deriveCreditDrafts,
   deriveMissingCreditDrafts,
+  disposeAvgFold,
   findVendorMismatch,
   isDuplicateAppend,
   upsertIntakeDraft,
@@ -18,6 +27,7 @@ import {
   type IntakeLineForCredits,
   type SkuVendorBinding,
 } from "../lib/receiving-shared";
+import { isMeasuredWeightClass, WEIGHT_CLASS_RANK } from "../lib/angel-wave4";
 
 const line = (over: Partial<IntakeLineForCredits>): IntakeLineForCredits => ({
   deliveryItemId: "item-1",
@@ -217,5 +227,149 @@ describe("findVendorMismatch", () => {
 
   it("passes on an empty line set", () => {
     expect(findVendorMismatch("v-1", [])).toBeNull();
+  });
+});
+
+// ── THE avg_oz_per_each FOLD POLICY ──────────────────────────────────────────
+//
+// The regression this pins: a GM weighs a case (recordWeightMeasurement writes
+// avg_oz_per_each + weight_class 'OPERATIONAL' + note + established_at/_by at
+// WEIGHT_WRITE_MIN = 7), and days later a key-holder (RECEIVE_MIN = 4) types an
+// observed oz/each at the door. The fold used to recompute the mean of every
+// historical observation and write avg_oz_per_each ALONE — so the weight board
+// went on reporting the GM's name, the GM's date and "scale reading" over a number
+// that had quietly become a delivery-clerk average, and the invoice-drift advisory
+// (observed − believed) read a permanent 0 because believed had just been set to
+// observed.
+
+describe("disposeAvgFold", () => {
+  it("folds onto an UNCLASSED SKU — an unexplained number gains a story", () => {
+    expect(disposeAvgFold({ chained: false, liveWeightClass: null })).toBe("FOLD");
+  });
+
+  it("REFUSES an OPERATIONAL weight — a delivery average never overrules our scale", () => {
+    // The regression, stated as one assertion. CONFLICT_PRESENT_ONLY, in disposeTub's
+    // words: the line's observed_oz_per_each is still persisted, so the board's
+    // invoice-drift advisory presents the disagreement instead of erasing it.
+    expect(disposeAvgFold({ chained: false, liveWeightClass: "OPERATIONAL" })).toBe(
+      "SKIP_PROTECTED_CLASS",
+    );
+  });
+
+  it("KEEPS refreshing INVOICE_DERIVED — this fold is what maintains that class", () => {
+    // HERB_WEIGHT_POLICY: "the AVERAGE of the derived invoice weights, refreshed as
+    // new invoices land". A blanket isMeasuredWeightClass() skip would freeze the
+    // bunch/catch-weight produce rows this class exists for.
+    expect(disposeAvgFold({ chained: false, liveWeightClass: "INVOICE_DERIVED" })).toBe("FOLD");
+  });
+
+  it("folds over SPEC and ESTIMATE — an invoice average outranks a label and a guess", () => {
+    expect(disposeAvgFold({ chained: false, liveWeightClass: "SPEC" })).toBe("FOLD");
+    expect(disposeAvgFold({ chained: false, liveWeightClass: "ESTIMATE" })).toBe("FOLD");
+  });
+
+  it("PROTECTS a class this build has never heard of", () => {
+    // The deliberate asymmetry with isMeasuredWeightClass: that predicate denies an
+    // unknown term the MEASURED claim; this one denies an unknown term nothing —
+    // it refuses to overrule what it cannot interpret.
+    expect(disposeAvgFold({ chained: false, liveWeightClass: "SOMETHING_A_LATER_WAVE_MINTED" }))
+      .toBe("SKIP_PROTECTED_CLASS");
+    expect(disposeAvgFold({ chained: false, liveWeightClass: "operational" })).toBe(
+      "SKIP_PROTECTED_CLASS", // case-sensitive, like every other reader of this column
+    );
+  });
+
+  it("chain beats class in BOTH directions — the order of the checks is the policy", () => {
+    // A chained SKU is skipped whatever it carries, and no class ever unlocks a
+    // chained fold: the objection is that the number denominates another container.
+    expect(disposeAvgFold({ chained: true, liveWeightClass: null })).toBe("SKIP_CHAINED");
+    expect(disposeAvgFold({ chained: true, liveWeightClass: "OPERATIONAL" })).toBe("SKIP_CHAINED");
+    expect(disposeAvgFold({ chained: true, liveWeightClass: "INVOICE_DERIVED" })).toBe("SKIP_CHAINED");
+  });
+
+  it("never claims a class stronger than what a delivery average is", () => {
+    // The fold writes INVOICE_DERIVED — the vendor's scale, averaged — and never
+    // OPERATIONAL, which asserts somebody weighed it HERE.
+    expect(AVG_FOLD_WEIGHT_CLASS).toBe("INVOICE_DERIVED");
+    expect(AVG_FOLD_WEIGHT_CLASS).not.toBe("OPERATIONAL");
+    expect(isMeasuredWeightClass(AVG_FOLD_WEIGHT_CLASS)).toBe(true);
+    // …and it writes a class it is itself allowed to refresh next delivery.
+    expect(AVG_FOLD_WRITABLE_CLASSES).toContain(AVG_FOLD_WEIGHT_CLASS);
+  });
+
+  it("keeps the allow-list coupled to the weight-class ranking", () => {
+    // Every writable class is either BELOW measured (SPEC, ESTIMATE) or is the fold's
+    // own class. If a future wave mints a measured class and drops it in here without
+    // a ruling, this fails — which is the point.
+    for (const cls of AVG_FOLD_WRITABLE_CLASSES) {
+      if (cls === AVG_FOLD_WEIGHT_CLASS) continue;
+      expect(isMeasuredWeightClass(cls)).toBe(false);
+      expect(WEIGHT_CLASS_RANK[cls as keyof typeof WEIGHT_CLASS_RANK]).toBeLessThan(2);
+    }
+    expect(AVG_FOLD_WRITABLE_CLASSES).not.toContain("OPERATIONAL");
+  });
+
+  it("names the sample size in the note it leaves behind", () => {
+    // The board renders this string as "where did this number come from"; a delivery
+    // average without an N is not an answer.
+    expect(avgFoldSourceNote(7)).toContain("7");
+    expect(avgFoldSourceNote(1)).toMatch(/observed oz\/each/);
+  });
+});
+
+// ── THE FOLD'S I/O HALF, AT THE SOURCE ───────────────────────────────────────
+//
+// recordDelivery is DB-coupled, so no unit test over its exports can see that the
+// write carries the provenance quartet — and "these four columns always move with
+// the number" is exactly the guarantee whose ABSENCE caused the defect. Reading the
+// source is the assertion available, the same posture tests/dynamic-pars-walker.ts
+// takes for loadWalkerData's structural rules.
+
+describe("recordDelivery's fold, at the source", () => {
+  const src = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "lib", "receiving.ts"),
+    "utf8",
+  );
+
+  it("routes the fold through the ONE policy function, not a bare chain check", () => {
+    expect(src.includes("const disposition = disposeAvgFold({")).toBe(true);
+    expect(src.includes('if (disposition === "SKIP_PROTECTED_CLASS")')).toBe(true);
+  });
+
+  it("stamps ALL FOUR provenance columns on the same update as the value", () => {
+    const updateAt = src.indexOf('await sb.from("vendor_items").update({');
+    expect(updateAt).toBeGreaterThan(-1);
+    const stmt = src.slice(updateAt, src.indexOf('.eq("id", id)', updateAt));
+    for (const col of [
+      "avg_oz_per_each",
+      "weight_class",
+      "weight_source_note",
+      "weight_established_at",
+      "weight_established_by",
+    ]) {
+      expect(stmt).toContain(col);
+    }
+  });
+
+  it("reads the live class off the select that already touches every line's SKU", () => {
+    // A second round trip for one column would be the per-node read the
+    // loadRecipeGraph law exists to prevent.
+    expect(src).toContain("avg_oz_per_each, weight_class");
+    expect(src).toContain("weightClassBySku");
+  });
+
+  it("checks the rowcount on the fold's UPDATE (silent-UPDATE law)", () => {
+    // Bounded to THIS statement: a `{ count: "exact" }` further down the file
+    // (completeDelivery's guarded flip) must not be able to satisfy the assertion.
+    const updateAt = src.indexOf('await sb.from("vendor_items").update({');
+    const stmtEnd = src.indexOf('.eq("id", id)', updateAt);
+    expect(updateAt).toBeGreaterThan(-1);
+    expect(stmtEnd).toBeGreaterThan(updateAt);
+    expect(src.slice(updateAt, stmtEnd + 40)).toContain('{ count: "exact" }');
+    expect(src.slice(stmtEnd, stmtEnd + 600)).toContain("if (count === 0)");
+  });
+
+  it("records the refusal in the delivery's audit row", () => {
+    expect(src).toContain("avg_skipped_protected: avgSkippedProtected");
   });
 });
