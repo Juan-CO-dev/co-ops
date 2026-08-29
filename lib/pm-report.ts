@@ -293,16 +293,47 @@ export async function setMvp(
   if (error) throw new Error(`setMvp: ${error.message}`);
 }
 
+/**
+ * Submit today's report → notify every evaluated employee, once.
+ *
+ * THE STATUS FLIP IS THE LINEARIZATION POINT (audit fix 2026-08-29), the same shape
+ * lib/purchase-orders.ts confirmPO and lib/prep.ts finalizeMidDayPhase2 already use:
+ * a guarded `open → submitted` UPDATE with a checked rowcount, ahead of every effect.
+ *
+ * It shipped unguarded (`.eq("id")` + `.is("superseded_at", null)` only), and nothing
+ * upstream closes that hole: the client's lock is a SERVER re-render after
+ * `router.refresh()`, and the route re-enters through `getOrCreatePmReport`, which
+ * returns the existing row whatever its status. So two near-simultaneous submits — two
+ * managers on the floor, or one client retrying after a perceived timeout — both landed
+ * their UPDATE and both ran the effects:
+ *   · `enqueueNotification` has NO dedupe (lib/notifications.ts) — it inserts a fresh
+ *     notification plus one recipient row per employee on every call, so every evaluated
+ *     employee got the same shift-feedback notification twice;
+ *   · a second `pm_report.submit` audit row landed for a submission that already happened;
+ *   · `submitted_by` / `submitted_at` were overwritten by whoever arrived last, which is
+ *     the value the submitted banner names and the row lib/team-metrics.ts scores as that
+ *     person's finalization.
+ *
+ * A losing submit is a NO-OP, not an error: the report IS submitted, so the honest answer
+ * is to do nothing further and let the caller's refresh render the submitted banner naming
+ * the actor who really landed it. `notified: 0` says exactly that — this call notified
+ * nobody, because it had nobody left to notify.
+ */
 export async function submitPmReport(
   service: SupabaseClient,
   args: { pmReportId: string; locationId: string; actor: PmActor },
 ): Promise<{ notified: number }> {
-  const { error } = await service
+  const { error, count } = await service
     .from("pm_reports")
-    .update({ status: "submitted", submitted_at: new Date().toISOString(), submitted_by: args.actor.userId })
+    .update(
+      { status: "submitted", submitted_at: new Date().toISOString(), submitted_by: args.actor.userId },
+      { count: "exact" },
+    )
     .eq("id", args.pmReportId)
+    .eq("status", "open")
     .is("superseded_at", null);
   if (error) throw new Error(`submitPmReport: ${error.message}`);
+  if (count === 0) return { notified: 0 };
 
   // Notify each evaluated employee (one notification, recipients = the evaluated set).
   const { data: evalRows } = await service
