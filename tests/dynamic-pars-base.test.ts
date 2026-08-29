@@ -13,11 +13,13 @@
 import { describe, it, expect } from "vitest";
 import {
   DYNAMIC_PARS,
+  classifyParReason,
   computeBaseRate,
   dayClassForDate,
   type BaseRateInput,
   type WindowDay,
 } from "../lib/dynamic-pars-shared";
+import { deriveLaneStart } from "@/lib/dynamic-pars";
 
 /** N consecutive ET calendar days, oldest first. */
 function daysFrom(startEt: string, n: number): string[] {
@@ -377,5 +379,148 @@ describe("computeBaseRate — product grain and the series", () => {
       }),
     );
     expect(res.series.map((s) => s.dateEt)).toEqual([dates[1]!, dates[3]!]);
+  });
+});
+
+// ── deriveLaneStart — the clamp's INPUT (lib/dynamic-pars.ts) ─────────────────
+//
+// The clamp above is only ever as right as the date it is handed. This block pins that
+// date, and pins it through the chain the nightly actually runs:
+//   loadDemandInputs.deriveLaneStart -> computeBaseRate -> classifyParReason
+// because the failure this fixes is a REASON failure — a prep-mediated SKU being told it
+// has never produced data here when its flattened lane is lit every trading day.
+
+const SKU = "sku-under-test";
+
+/** date -> (skuId -> oz): the per-date rollup shape loadDemandInputs builds. */
+function laneOf(oz: ReadonlyMap<string, number>): Map<string, Map<string, number>> {
+  return new Map([...oz].map(([d, v]) => [d, new Map([[SKU, v]])]));
+}
+
+const DARK: Map<string, Map<string, number>> = new Map();
+
+/** The four days 2026-08-24 (Mon) … 2026-08-27 (Thu). */
+const FOUR = daysFrom("2026-08-24", 4);
+
+function laneStart(over: {
+  direct?: Map<string, Map<string, number>>;
+  production?: Map<string, Map<string, number>>;
+  flattened?: Map<string, Map<string, number>>;
+  window?: WindowDay[];
+} = {}): string | null {
+  return deriveLaneStart({
+    window: over.window ?? FOUR.map((d) => day(d)),
+    skuId: SKU,
+    directOzByDate: over.direct ?? DARK,
+    productionOzByDate: over.production ?? DARK,
+    flattenedOzByDate: over.flattened ?? DARK,
+  });
+}
+
+/** The reason ladder's other inputs held at "nothing else is wrong with this SKU". */
+function reasonFor(res: ReturnType<typeof computeBaseRate>, thin = false) {
+  return classifyParReason({
+    inventoryOnly: false,
+    productRetired: false,
+    depletionCurrent: true,
+    laneNeverStarted: res.laneNeverStarted,
+    laneComplete: res.laneComplete,
+    perOrderUnitOz: 16,
+    hasPackChain: true,
+    hasRhythm: true,
+    thin,
+    slotExists: true,
+    noLocalHistory: false,
+  });
+}
+
+describe("deriveLaneStart — three lanes, because a depletion row has three ways to be lit", () => {
+  it("a PREP-MEDIATED SKU has a lane start, and its errand is production capture — NOT `no_lane_start`", () => {
+    // materializeDailyDepletion writes the row when direct_oz OR flattened_oz is positive,
+    // so this SKU — never sold directly, only consumed through a prep recipe — is lit every
+    // trading day with direct_oz 0.00. Testing only direct + production called that "no lane
+    // has EVER produced data for this SKU here", which is false about the kitchen and aims
+    // the wrong errand: `laneNeverStarted` outranks `laneComplete` in the ladder, so the
+    // production-capture chore could never surface for exactly the SKUs that need it.
+    const start = laneStart({ flattened: laneOf(flat(FOUR, 12)) });
+    expect(start).toBe(FOUR[0]);
+
+    const res = computeBaseRate(
+      input({
+        window: FOUR.map((d) => day(d)),
+        laneStartAt: start,
+        flattenedOzByDate: flat(FOUR, 12),
+      }),
+    );
+    expect(res.laneNeverStarted).toBe(false);
+    expect(res.laneComplete).toBe(false); // prep-mediated, production lane dark
+    expect(reasonFor(res)).toBe("no_production_capture");
+  });
+
+  it("READS the flattened lane as a PREDICATE and never as a term — the double-count law", () => {
+    // The widened lane start must not widen what is SUMMED. 12 oz of flattened demand a day
+    // with a dark direct lane is still a rate of zero, with the cause named.
+    const res = computeBaseRate(
+      input({
+        window: FOUR.map((d) => day(d)),
+        laneStartAt: laneStart({ flattened: laneOf(flat(FOUR, 12)) }),
+        flattenedOzByDate: flat(FOUR, 12),
+      }),
+    );
+    expect(res.byDayClass.weekday.ozPerDay).toBe(0);
+    expect(res.series.every((s) => s.oz === 0)).toBe(true);
+  });
+
+  it("the DIRECT lane still lights it, on the first day it moves", () => {
+    expect(laneStart({ direct: laneOf(new Map([[FOUR[2]!, 5]])) })).toBe(FOUR[2]);
+  });
+
+  it("the PRODUCTION lane still lights it, on its own", () => {
+    expect(laneStart({ production: laneOf(new Map([[FOUR[1]!, 3]])) })).toBe(FOUR[1]);
+  });
+
+  it("takes the EARLIEST lit day across all three lanes, not the earliest of one", () => {
+    const start = laneStart({
+      direct: laneOf(new Map([[FOUR[3]!, 9]])),
+      flattened: laneOf(new Map([[FOUR[1]!, 4]])),
+    });
+    expect(start).toBe(FOUR[1]);
+  });
+
+  it("a genuinely dark SKU is still NULL, and still lands on `no_lane_start`", () => {
+    const start = laneStart();
+    expect(start).toBeNull();
+    const res = computeBaseRate(input({ window: FOUR.map((d) => day(d)), laneStartAt: start }));
+    expect(res.laneNeverStarted).toBe(true);
+    expect(reasonFor(res)).toBe("no_lane_start");
+  });
+
+  it("a zero-oz entry is not a lit lane — an explicit 0 reads exactly like an absent row", () => {
+    expect(laneStart({ direct: laneOf(flat(FOUR, 0)) })).toBeNull();
+  });
+
+  // ── THE STATED RESIDUAL, PINNED SO IT CANNOT BE FORGOTTEN ────────────────────
+  it("STILL clamps a leading TRUE ZERO on a direct-lane SKU — the documented v1 bias", () => {
+    // "First day a lane produced" remains a PROXY for "first day the lane existed". A SKU
+    // that was live all four days and simply did not sell on Monday loses Monday from the
+    // denominator while the numerator is unchanged, so the rate reads high: 10 oz over 3
+    // observed days, not over 4. Separating this from a genuinely new SKU needs the recipe/
+    // crosswalk authoring date, which this loader does not load — a NAMED v2 enabler. The
+    // assertion exists so the bias is a decision on the record, not a surprise.
+    const direct = new Map([[FOUR[1]!, 10]]);
+    const start = laneStart({ direct: laneOf(direct) });
+    expect(start).toBe(FOUR[1]); // Monday dropped, though the register ran
+
+    const res = computeBaseRate(
+      input({
+        window: FOUR.map((d) => day(d)),
+        laneStartAt: start,
+        directOzByDate: direct,
+      }),
+    );
+    expect(res.byDayClass.weekday.observedDays).toBe(3);
+    expect(res.byDayClass.weekday.ozPerDay).toBeCloseTo(10 / 3, 6);
+    // What the true-zero law alone would give, for the record:
+    expect(res.byDayClass.weekday.ozPerDay).not.toBeCloseTo(10 / 4, 6);
   });
 });
