@@ -13,7 +13,7 @@ import {
 } from "@/lib/admin/vendors";
 
 // GET — fetch one vendor (≥6). PATCH — one concern per call:
-//   core  {name,paymentTerms,accountNumber} → MoO+ (≥8), Tier B
+//   core  {name,paymentTerms,accountNumber,orderMinimum} → MoO+ (≥8), Tier B
 //   notes {notes}                           → GM+  (≥7)
 //   active {active}                         → MoO+ (≥8), Tier B
 // (Classification — categories / order types — is GM+ via the dedicated
@@ -34,7 +34,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   }
 }
 
-const CORE_KEYS = ["name", "paymentTerms", "accountNumber"] as const;
+// `orderMinimum` (migration 0184) is a core field: same MoO+ / Tier-B floor as its
+// siblings. The client omits it entirely while the 0184 probe is false, and the lib
+// refuses it with a named 503 if it arrives anyway.
+const CORE_KEYS = ["name", "paymentTerms", "accountNumber", "orderMinimum"] as const;
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -97,6 +100,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if ("accountNumber" in b) {
       changes.accountNumber = b.accountNumber === null ? null : typeof b.accountNumber === "string" ? b.accountNumber : undefined;
       if (changes.accountNumber === undefined) return jsonError(400, "invalid_payload", { field: "accountNumber" });
+    }
+    if ("orderMinimum" in b) {
+      changes.orderMinimum = b.orderMinimum === null ? null : typeof b.orderMinimum === "string" ? b.orderMinimum : undefined;
+      if (changes.orderMinimum === undefined) return jsonError(400, "invalid_payload", { field: "orderMinimum" });
     }
     await updateVendorCore(ctx, { id, changes });
     return jsonOk({ ok: true });
