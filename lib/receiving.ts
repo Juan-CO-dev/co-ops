@@ -21,13 +21,22 @@
  *
  * ── A2: avg_oz_per_each REFINEMENT GATING (council L8) ─────────────────────────
  * The legacy refinement (feed observed oz/each into vendor_items.avg_oz_per_each)
- * is now GATED: we only fold an observation into the SKU-level average when the
+ * is GATED: we only fold an observation into the SKU-level average when the
  * line's entered level is the SKU's LEGACY each/no-chain semantics — i.e. the SKU
  * has NO active pack chain. For a CHAINED SKU observed at some level, the mean
  * would corrupt the count/volume-leaf avg the chain depends on, so we DO NOT touch
  * avg_oz_per_each — the observation is level-scoped and persisted on the line
  * (via observed_oz_per_each + received_level_label). We NEVER mutate
  * sku_pack_levels from receiving.
+ *
+ * ── A2 PROVENANCE GATE (2026-08-29, the second half of that same fold) ─────────
+ * The fold also answers to migration 0179's provenance quartet, which landed after
+ * it: a fold now REFUSES to overwrite a weight class it may not overrule (today,
+ * `OPERATIONAL` — a GM's scale reading, written at WEIGHT_WRITE_MIN = 7 while this
+ * door runs at RECEIVE_MIN = 4), and when it DOES write it stamps the quartet so
+ * the weight board attributes the number to the fold instead of to whoever last
+ * weighed the SKU. `disposeAvgFold` (lib/receiving-shared.ts) is the one place
+ * that policy lives; the long why is in its comment block.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { selectAllRows } from "@/lib/supabase-paginate";
@@ -39,8 +48,11 @@ import { loadMeasures, loadSkuPackChains } from "@/lib/prep-consumption";
 import { ozForRecipeInput, skuContentOz, type MeasureUnitFactor, type RecipeInputSku } from "@/lib/recipe-math";
 import type { PackChainLevel } from "@/lib/pack-chain-shared";
 import {
+  AVG_FOLD_WEIGHT_CLASS,
+  avgFoldSourceNote,
   deriveCreditDrafts,
   deriveMissingCreditDrafts,
+  disposeAvgFold,
   findVendorMismatch,
   isDuplicateAppend,
   type AppendLine,
@@ -501,24 +513,60 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   // observation is level-scoped and stays on the line (observed_oz_per_each +
   // received_level_label) — mutating the SKU average would corrupt the
   // count/volume-leaf avg the chain depends on. We NEVER mutate sku_pack_levels.
+  //
+  // AND it answers to the provenance quartet (0179): `disposeAvgFold` refuses a SKU
+  // whose live weight_class this door may not overrule, and a fold that DOES run
+  // stamps class + note + established_at/_by so the weight board never attributes a
+  // delivery average to the person who last put the SKU on a scale.
   const observedSkuIds = [...new Set(input.lines.filter((l) => l.observedOzPerEach != null).map((l) => l.skuId))];
   const avgUpdated: string[] = [];
   const avgSkippedChained: string[] = [];
+  const avgSkippedProtected: string[] = [];
+  const avgSkippedMissing: string[] = [];
   for (const id of observedSkuIds) {
-    if (resolved.chained.has(id)) { avgSkippedChained.push(id); continue; }
+    const disposition = disposeAvgFold({
+      chained: resolved.chained.has(id),
+      liveWeightClass: resolved.weightClassBySku.get(id) ?? null,
+    });
+    if (disposition === "SKIP_CHAINED") { avgSkippedChained.push(id); continue; }
+    // A measured-here weight is PRESENTED, never overwritten (lib/tub-weights.ts's
+    // CONFLICT_PRESENT_ONLY). The line's observed_oz_per_each is already persisted
+    // above, so the weight board's invoice-drift advisory renders the disagreement —
+    // which it could not do while the fold kept overwriting the believed value with
+    // the observed mean and driving the delta to a permanent 0.
+    if (disposition === "SKIP_PROTECTED_CLASS") { avgSkippedProtected.push(id); continue; }
     const { data: obs } = await sb.from("vendor_delivery_items").select("observed_oz_per_each").eq("vendor_item_id", id).not("observed_oz_per_each", "is", null).returns<Array<{ observed_oz_per_each: number | string }>>();
     const vals = (obs ?? []).map((o) => num(o.observed_oz_per_each)).filter((v): v is number => v != null);
     if (vals.length === 0) continue;
     const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
-    const { error: uErr } = await sb.from("vendor_items").update({ avg_oz_per_each: mean, updated_by: actor.user.id, updated_at: new Date().toISOString() }).eq("id", id);
+    const foldAt = new Date().toISOString();
+    const { error: uErr, count } = await sb.from("vendor_items").update({
+      avg_oz_per_each: mean,
+      // The quartet moves WITH the number, always — a value whose provenance columns
+      // describe a different value is the defect this branch was written to end.
+      weight_class: AVG_FOLD_WEIGHT_CLASS,
+      weight_source_note: avgFoldSourceNote(vals.length),
+      weight_established_at: foldAt,
+      weight_established_by: actor.user.id,
+      updated_by: actor.user.id,
+      updated_at: foldAt,
+    }, { count: "exact" }).eq("id", id);
     if (uErr) throw new Error(`recordDelivery avg update: ${uErr.message}`);
+    // Silent-UPDATE law: rowcount is the only signal. 0 here means the SKU vanished
+    // between validation and this write — recorded in the audit row rather than
+    // thrown, because the delivery is already durably written and a bookkeeping
+    // refinement must never fail an intake the manager already counted.
+    if (count === 0) { avgSkippedMissing.push(id); continue; }
     avgUpdated.push(id);
   }
 
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
     action: "delivery.received", resourceTable: "vendor_deliveries", resourceId: header.id,
-    metadata: { vendor_id: input.vendorId, location_id: input.locationId, line_count: input.lines.length, priced_lines: priced.length, avg_oz_updated: avgUpdated, avg_skipped_chained: avgSkippedChained, purchase_order_id: poId, missing_expected_credits: missingCreditCount },
+    // avg_skipped_protected = SKUs whose weight_class this door may not overrule.
+    // It is the forensic answer to "why didn't the average move after that intake",
+    // and the only record that the disagreement exists at all.
+    metadata: { vendor_id: input.vendorId, location_id: input.locationId, line_count: input.lines.length, priced_lines: priced.length, avg_oz_updated: avgUpdated, avg_skipped_chained: avgSkippedChained, avg_skipped_protected: avgSkippedProtected, avg_skipped_missing: avgSkippedMissing, purchase_order_id: poId, missing_expected_credits: missingCreditCount },
     ipAddress: null, userAgent: null,
   });
 
@@ -599,6 +647,13 @@ interface ResolvedLines {
   /** SKU ids that have an active pack chain (avg-refinement gate, council L8). */
   chained: Set<string>;
   /**
+   * Each referenced SKU's LIVE `weight_class` (0179's provenance quartet), null when
+   * the row carries none. Read here rather than in the fold loop because this select
+   * already touches every referenced SKU — a second round trip for a column one
+   * query away is the per-node read the loadRecipeGraph law exists to prevent.
+   */
+  weightClassBySku: Map<string, string | null>;
+  /**
    * Each referenced SKU's OWN vendor_id (P3) — persisted onto the line so migration
    * 0178's composite FKs can hold the binding at the DB floor. Deliberately the SKU's
    * vendor, not the delivery's: for a vendorless SKU this is null, which is exactly
@@ -631,9 +686,9 @@ async function validateAndResolveDeliveryLines(
   }
   const skuIds = [...new Set(lines.map((l) => l.skuId))];
   const { data: activeSkus } = await sb.from("vendor_items")
-    .select("id, vendor_id, pack_format, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each")
+    .select("id, vendor_id, pack_format, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each, weight_class")
     .in("id", skuIds).eq("active", true)
-    .returns<Array<{ id: string; vendor_id: string | null; pack_format: string | null; each_container_label: string | null; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>>();
+    .returns<Array<{ id: string; vendor_id: string | null; pack_format: string | null; each_container_label: string | null; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null; weight_class: string | null }>>();
   const activeSet = new Set((activeSkus ?? []).map((s) => s.id));
   for (const id of skuIds) if (!activeSet.has(id)) throw new ReceivingError(400, "invalid_sku", "A SKU is not found or inactive");
 
@@ -665,7 +720,8 @@ async function validateAndResolveDeliveryLines(
   const chained = new Set([...chainsBySku.entries()].filter(([, lv]) => lv.length > 0).map(([id]) => id));
   const resolvedOzByLineIdx = lines.map((l) => resolveReceivedOz(l, skuById.get(l.skuId), chainsBySku.get(l.skuId) ?? null, measures));
   const vendorIdBySku = new Map((activeSkus ?? []).map((s) => [s.id, s.vendor_id]));
-  return { resolvedOzByLineIdx, chained, vendorIdBySku };
+  const weightClassBySku = new Map((activeSkus ?? []).map((s) => [s.id, s.weight_class]));
+  return { resolvedOzByLineIdx, chained, vendorIdBySku, weightClassBySku };
 }
 
 /** Build the vendor_delivery_items rows for a set of input lines (shared shape for
