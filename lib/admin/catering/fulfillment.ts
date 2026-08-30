@@ -6,6 +6,7 @@
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
+import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import type { AuthContext } from "@/lib/session";
 import { audit } from "@/lib/audit";
 import { milesToMeters, metersToMiles } from "@/lib/geo";
@@ -27,6 +28,10 @@ function requireLevel(actor: AuthContext, min: number): void {
   if (getRoleLevel(actor.user.role) < min) throw new FulfillmentError(403, "forbidden", "Insufficient role level");
 }
 
+function actorLoc(actor: AuthContext): LocationActor {
+  return { role: actor.user.role, locations: actor.locations };
+}
+
 export interface FulfillmentNodeView {
   locationId: string;
   locationName: string;
@@ -39,24 +44,32 @@ export interface FulfillmentNodeView {
   active: boolean;
 }
 
-/** Every active location + its node row (if any), so the admin sees configured + unconfigured stores. */
+/**
+ * Every ACCESSIBLE active location + its node row (if any), so the admin sees configured +
+ * unconfigured stores.
+ *
+ * Scoped to the actor's assignments (≥9 = all), matching loadZoneGroups in the sibling
+ * zones editor: the picker this feeds IS the write-target list, so offering a store the
+ * upsert will refuse would render a dead option that 403s on Save.
+ */
 export async function loadFulfillmentNodes(actor: AuthContext): Promise<FulfillmentNodeView[]> {
   requireLevel(actor, FULFILLMENT_MIN);
   const sb = getServiceRoleClient();
-  const { data: locs, error: lErr } = await sb
+  const { data: allLocs, error: lErr } = await sb
     .from("locations")
     .select("id, name")
     .eq("active", true)
     .order("name", { ascending: true })
     .returns<Array<{ id: string; name: string }>>();
   if (lErr) throw new Error(`loadFulfillmentNodes locations: ${lErr.message}`);
+  const locs = (allLocs ?? []).filter((l) => lockLocationContext(actorLoc(actor), l.id));
   const { data: nodes, error: nErr } = await sb
     .from("catering_fulfillment_nodes")
     .select("location_id, lat, lng, delivery_radius_meters, offers_delivery, offers_pickup, active")
     .returns<Array<{ location_id: string; lat: number; lng: number; delivery_radius_meters: number; offers_delivery: boolean; offers_pickup: boolean; active: boolean }>>();
   if (nErr) throw new Error(`loadFulfillmentNodes nodes: ${nErr.message}`);
   const byLoc = new Map((nodes ?? []).map((n) => [n.location_id, n]));
-  return (locs ?? []).map((l) => {
+  return locs.map((l) => {
     const n = byLoc.get(l.id);
     return {
       locationId: l.id,
@@ -81,9 +94,21 @@ export interface UpsertFulfillmentNodeInput {
   offersPickup: boolean;
 }
 
-/** Create-or-update the node for a location (>=7; Tier-A step-up enforced at the route). */
+/**
+ * Create-or-update the node for a location (>=7; Tier-A step-up enforced at the route).
+ *
+ * THE BIND RUNS FIRST, BEFORE VALIDATION AND BEFORE ANY I/O. FULFILLMENT_MIN is 7 and
+ * the all-locations grant starts at 9, so "GM" alone never names a store — at CO each GM
+ * holds exactly one. `locationId` rides in on the request body, and this row is not
+ * cosmetic: lib/catering/fulfillment-routing.ts reads the centre + radius to decide which
+ * shop a customer's delivery is routed to, so an unbound write lets one store silently
+ * reshape the other's delivery map.
+ */
 export async function upsertFulfillmentNode(actor: AuthContext, input: UpsertFulfillmentNodeInput): Promise<{ id: string }> {
   requireLevel(actor, FULFILLMENT_MIN);
+  if (!lockLocationContext(actorLoc(actor), input.locationId)) {
+    throw new FulfillmentError(403, "forbidden", "Location is outside your assignments");
+  }
   if (!Number.isFinite(input.lat) || !Number.isFinite(input.lng) || Math.abs(input.lat) > 90 || Math.abs(input.lng) > 180) {
     throw new FulfillmentError(400, "invalid_coords", "lat/lng out of range");
   }

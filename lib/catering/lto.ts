@@ -6,6 +6,7 @@
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
+import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import type { AuthContext } from "@/lib/session";
 import { audit } from "@/lib/audit";
 import { pushLtoToPos } from "@/lib/catering/lto-pos-push";
@@ -22,6 +23,9 @@ export class LtoError extends Error {
 }
 function requireLevel(actor: AuthContext, min: number): void {
   if (getRoleLevel(actor.user.role) < min) throw new LtoError(403, "forbidden", "Insufficient role level");
+}
+function actorLoc(actor: AuthContext): LocationActor {
+  return { role: actor.user.role, locations: actor.locations };
 }
 
 export type LtoKind = "lto" | "discount";
@@ -61,9 +65,22 @@ export interface LtoEventView {
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-/** Create an LTO/discount from surplus. ≥ LTO_MIN + Tier-A step-up (route). */
+/**
+ * Create an LTO/discount from surplus. ≥ LTO_MIN + Tier-A step-up (route).
+ *
+ * THE LOCATION BIND LIVES HERE, AND IT RUNS BEFORE ANY I/O. `LTO_MIN` is 6 and
+ * lockLocationContext's all-locations grant starts at 9, so the role floor alone never
+ * says WHICH shop's discount board this writes to — every level 6/7/8 actor at CO holds
+ * exactly one store. `locationId` arrives from the client on the request body, so an
+ * unbound create is a plain IDOR: a catering_mgr at one shop could publish a live price
+ * directive into the other shop's board. Refusing before the location-exists SELECT keeps
+ * the refusal a pure authorization answer that no lookup result can colour.
+ */
 export async function createLtoEvent(actor: AuthContext, input: CreateLtoEventInput): Promise<{ id: string }> {
   requireLevel(actor, LTO_MIN);
+  if (!lockLocationContext(actorLoc(actor), input.locationId)) {
+    throw new LtoError(403, "forbidden", "Location is outside your assignments");
+  }
 
   if (input.kind !== "lto" && input.kind !== "discount") throw new LtoError(400, "invalid_kind");
   const name = (input.name ?? "").trim();
@@ -129,7 +146,20 @@ export async function createLtoEvent(actor: AuthContext, input: CreateLtoEventIn
   return { id: ev.id };
 }
 
-/** List LTO/discount events for a location. activeOnly = the staff directive (active + not past-window). */
+/**
+ * List LTO/discount events for a location. activeOnly = the staff directive (active + not
+ * past-window).
+ *
+ * KNOWN, DELIBERATE GAP — the READ is not location-bound yet, and adding the bind here
+ * alone would break two live pages. Both callers (`app/(authed)/lto/page.tsx` and
+ * `app/admin/catering/lto/page.tsx`) get their location list from `loadPackageLocations`,
+ * which returns EVERY active location to every reader; a bind that throws would therefore
+ * 500 the staff LTO page for any actor who does not hold both shops (today: both GMs and
+ * the AGM). Scoping that shared loader is a change to the catering-packages surface — the
+ * five KB editors read it — so it is filed as its own item rather than smuggled in behind
+ * a one-line guard here. The WRITES above are bound, which is what stops another store's
+ * board from being altered.
+ */
 export async function listLtoEvents(actor: AuthContext, args: { locationId: string; activeOnly: boolean }): Promise<LtoEventView[]> {
   requireLevel(actor, LTO_READ_MIN);
   const sb = getServiceRoleClient();
@@ -166,15 +196,31 @@ export async function listLtoEvents(actor: AuthContext, args: { locationId: stri
   }));
 }
 
-/** Cancel an active event (status → cancelled). ≥ LTO_MIN + step-up (route). */
+/**
+ * Cancel an active event (status → cancelled). ≥ LTO_MIN + step-up (route).
+ *
+ * The event is addressed by opaque id, so the bind can only run after the row is read —
+ * and the refusal is a 404, never a 403: a 403 here would confirm that this id names a
+ * live discount at a shop the actor does not hold (the same posture lib/receiving.ts
+ * takes on a delivery id). Killing another store's live price directive is a floor-level
+ * act at that store, which is precisely what the role floor cannot express.
+ */
 export async function cancelLtoEvent(actor: AuthContext, id: string): Promise<void> {
   requireLevel(actor, LTO_MIN);
   const sb = getServiceRoleClient();
+  const { data: ev, error: loadErr } = await sb
+    .from("lto_events")
+    .select("id, location_id").eq("id", id).maybeSingle<{ id: string; location_id: string }>();
+  if (loadErr) throw new Error(`cancelLtoEvent load: ${loadErr.message}`);
+  if (!ev || !lockLocationContext(actorLoc(actor), ev.location_id)) {
+    throw new LtoError(404, "not_found", "Active event not found");
+  }
+
   const { data, error } = await sb
     .from("lto_events")
     .update({ status: "cancelled", cancelled_at: new Date().toISOString(), cancelled_by: actor.user.id })
     .eq("id", id).eq("status", "active").select("id").maybeSingle<{ id: string }>();
   if (error) throw new Error(`cancelLtoEvent: ${error.message}`);
   if (!data) throw new LtoError(404, "not_found", "Active event not found");
-  void audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "lto.event.cancel", resourceTable: "lto_events", resourceId: id, metadata: {}, ipAddress: null, userAgent: null });
+  void audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "lto.event.cancel", resourceTable: "lto_events", resourceId: id, metadata: { location_id: ev.location_id }, ipAddress: null, userAgent: null });
 }
