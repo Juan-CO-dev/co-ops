@@ -7,7 +7,7 @@
 
 import { countNotReady } from "@/lib/admin/readiness-load";
 import { loadCronHealth, loadAdoption, type CronHealth } from "@/lib/admin/ops-health";
-import type { AdoptionSurfaceCount } from "@/lib/admin/ops-health-shared";
+import { cronRunFailureTotal, type AdoptionSurfaceCount } from "@/lib/admin/ops-health-shared";
 import { adminSectionsFor } from "@/lib/admin/sections";
 import { serverT } from "@/lib/i18n/server";
 import { formatDateLabel } from "@/lib/i18n/format";
@@ -101,8 +101,15 @@ export default async function AdminHubPage() {
 /**
  * Cron-failure visibility (Ops guardrails NOW #3). Renders ONLY when there is something
  * to say: a recent (≤48h) toast-sales-pull failure → a danger AlertPill line; else, if
- * the cron has ever succeeded, a quiet "last run OK <date>" heartbeat. DORMANT (never
- * run) → renders nothing (no false alarm before Toast creds land).
+ * the last run swallowed a per-location failure → a warn line naming how many steps
+ * failed; else, if the cron has ever succeeded, a quiet "last run OK <date>" heartbeat.
+ * DORMANT (never run) → renders nothing (no false alarm before Toast creds land).
+ *
+ * THE MIDDLE STATE IS THE POINT (wiring audit 2026-08-29). The cron writes one
+ * `cron.success` row per run whatever happened to the individual locations, so a night
+ * where a shop's whole sales pull died — no depletion ledger, no par run, a frozen
+ * watermark — used to land in the quiet OK line below, indefinitely. Three states, not
+ * two: failed · ran-with-failures · OK.
  */
 function CronHealthCard({ health, lang }: { health: CronHealth | null; lang: Language }) {
   if (!health) return null;
@@ -121,6 +128,23 @@ function CronHealthCard({ health, lang }: { health: CronHealth | null; lang: Lan
         {health.lastFailureError ? (
           <p className="text-xs text-co-text-muted break-words">{health.lastFailureError}</p>
         ) : null}
+      </div>
+    );
+  }
+  if (health.lastSuccessAt && health.lastRunDegraded) {
+    return (
+      <div className="co-card mt-5 flex flex-col gap-1 border-2 border-co-warning-surface p-4">
+        <div className="flex items-center gap-2">
+          <AlertPill tone="warn" uppercase={false}>
+            {serverT(lang, "admin.hub.cron.degraded")}
+          </AlertPill>
+          <span className="text-sm font-bold text-co-text">
+            {serverT(lang, "admin.hub.cron.degraded_line", {
+              date: formatDateLabel(health.lastSuccessAt.slice(0, 10), lang),
+              count: cronRunFailureTotal(health.lastRunFailures),
+            })}
+          </span>
+        </div>
       </div>
     );
   }

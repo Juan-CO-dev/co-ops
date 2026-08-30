@@ -404,6 +404,8 @@
   "admin.hub.arrives": "Llega en la Fase 5",
   "admin.hub.cron.failed": "Falló el cron",
   "admin.hub.cron.failed_line": "La descarga nocturna de ventas falló el {date} — revisa los registros.",
+  "admin.hub.cron.degraded": "Corrió con fallos",
+  "admin.hub.cron.degraded_line": "La descarga nocturna de ventas corrió el {date}, pero fallaron {count} paso(s) — esas tiendas se quedaron sin consumo de ese día.",
   "admin.hub.cron.ok_line": "La descarga nocturna de ventas corrió bien por última vez el {date}.",
   "admin.hub.adoption.title": "Usado esta semana",
   "admin.hub.adoption.all_quiet": "Sin actividad aún",

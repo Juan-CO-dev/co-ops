@@ -17,7 +17,7 @@ import "server-only";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { tokenIsFresh, resolveFixtureKey } from "./client-shared";
+import { tokenIsFresh, resolveFixtureKey, isExhaustedFixturePage } from "./client-shared";
 
 export class ToastApiError extends Error {
   constructor(public status: number, public code: string, message?: string) {
@@ -82,6 +82,10 @@ export async function toastGet<T>(apiPath: string, restaurantGuid: string): Prom
   if (fixtureMode()) {
     const key = resolveFixtureKey(apiPath);
     if (!key) throw new ToastApiError(500, "not_configured", `No fixture for ${apiPath}`);
+    // A single-page fixture must go EMPTY past page 1, or a paging caller re-reads page 1
+    // until its hard cap instead of terminating on a short page (see isExhaustedFixturePage).
+    // Ordered AFTER the key check so an unknown path still fails loudly rather than silently.
+    if (isExhaustedFixturePage(apiPath)) return [] as T;
     return (await readFixture(key)) as T;
   }
   if (!restaurantGuid) throw new ToastApiError(400, "not_configured", "Location has no Toast restaurant GUID");

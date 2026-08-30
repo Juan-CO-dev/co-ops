@@ -1,6 +1,8 @@
 /**
  * Toast sales ingest + depletion projection (read-track 2). SERVER-ONLY,
- * service-role; level floors re-checked here, Tier-A step-up at the routes.
+ * service-role; level floors AND the location bind re-checked here (see
+ * assertLocationAccess — neither floor is all-locations), Tier-A step-up at
+ * the routes.
  *
  * Ledger law: toast_sales_events is APPEND-ONLY and snapshot-versioned per
  * (location, check, selection) — a re-pull appends version+1 only when the
@@ -15,7 +17,9 @@
  * never touches Toast or CO-OPS is a NAMED gap until spec #2b's punch-in.
  */
 import { getServiceRoleClient } from "@/lib/supabase-server";
+import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
+import { lockLocationContext } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 import { fetchToastOrders } from "@/lib/toast/orders";
@@ -51,6 +55,31 @@ function requireLevel(actor: AuthContext, min: number): void {
   if (getRoleLevel(actor.user.role) < min) throw new AdminToastSalesError(403, "forbidden", "Insufficient role level");
 }
 
+/**
+ * Location-access IDOR bind (wiring audit 2026-08-29).
+ *
+ * This module had ZERO location scoping. Its floors are level 7 (write) and 6 (read),
+ * and NEITHER is all-locations — `lockLocationContext` grants that at 9 — so the level
+ * check alone never said WHICH shop an actor was acting on. Prod carries two active GMs
+ * today, each assigned to exactly ONE location, so this is not masked by a solo
+ * all-locations admin the way its sibling was when the same class was found there.
+ *
+ * lib/admin/toast-map.ts closed this exact class as a council P1 on 2026-07-31 and its
+ * fix stopped at its own module boundary; toast-sales never got the same treatment even
+ * though it writes the SALES LEDGER that feeds depletion, counts' drift and Dynamic Pars.
+ * Same helper shape, same 403, deliberately — one spelling of "you do not manage that
+ * location" across the Toast surfaces.
+ *
+ * The ACTOR-LESS cores (`doPull`, `deriveSalesConsumption`, `loadActiveExclusions`) take
+ * no bind and must not: the cron and the mid-shift system triggers iterate every location
+ * by design, and there is no actor there to bind.
+ */
+function assertLocationAccess(actor: AuthContext, locationId: string): void {
+  if (!lockLocationContext({ role: actor.user.role, locations: actor.locations }, locationId)) {
+    throw new AdminToastSalesError(403, "forbidden", "You do not manage that location");
+  }
+}
+
 const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
 function requireYmd(d: string): void {
   if (!YMD_RE.test(d) || Number.isNaN(Date.parse(d))) throw new AdminToastSalesError(400, "invalid_date", "businessDate must be YYYY-MM-DD");
@@ -63,15 +92,51 @@ interface LedgerRow {
   menu_group: string | null; snapshot_version: number;
 }
 
+/**
+ * Latest snapshot version per (check, selection) for one location-day.
+ *
+ * PAGED, AND THE CAP WAS ALREADY BITING IN PRODUCTION (wiring audit 2026-08-29 — this
+ * is a live incident write-up, not a hardening). This read had no `.order()`/`.range()`,
+ * so it silently returned the first 1000 rows (the PR #63 class). CO crosses 1000
+ * selections on a busy day at one shop: P Street logged 1158 rows on 2026-08-08, 1062 on
+ * 2026-08-09 and 1001 on 2026-07-25.
+ *
+ * WHAT THE TRUNCATION DID, END TO END. `doPull` treats "not in this map" as "never
+ * seen", so the ~158 dropped selections were re-derived at `snapshot_version: 1` — which
+ * already exists — and the insert hit the UNIQUE (location, check, selection, version)
+ * constraint. 23505 is mapped to a 409 `concurrent_pull`, so the WHOLE location aborted:
+ * `pullSalesForAllLocations` recorded ok:false, the cron skipped that location's
+ * `materializeDailyDepletion` AND its par run, and the day's depletion for that shop
+ * stayed frozen at whatever an earlier, equally-truncated run had written. The audit log
+ * shows it happening four times — the 2026-08-28 and 2026-08-29 backfills each failed on
+ * exactly those two P-Street days and on no others, every time under a `cron.success`
+ * row carrying `per_location_failures: 1` (see the ops-health fix in this same PR: that
+ * counter is why nobody saw it).
+ *
+ * The second lane is quieter and worse: `deriveSalesConsumption` reads the same map, so
+ * on any day over the cap it resolves consumption from an ARBITRARY 1000-row subset and
+ * writes understated `direct_oz` into toast_daily_depletion — the exact term counts'
+ * drift sums — with no error anywhere.
+ *
+ * `.order("id")` is the house's stable total order for paging (the PK; same treatment
+ * `loadAdoption` gives audit_log). The page callback THROWS on a read error rather than
+ * taking `selectAllRows`' silent `data ?? []`: an empty map here does not degrade, it
+ * re-inserts the whole day at version 1.
+ */
 async function loadLatestVersions(locationId: string, businessDate: string): Promise<Map<string, LedgerRow>> {
   const sb = getServiceRoleClient();
-  const { data, error } = await sb.from("toast_sales_events")
-    .select("check_guid, selection_guid, parent_selection_guid, toast_item_guid, item_name, quantity, price_cents, voided, dining_option, menu_group, snapshot_version")
-    .eq("location_id", locationId).eq("business_date", businessDate)
-    .returns<LedgerRow[]>();
-  if (error) throw new Error(`toast-sales ledger read: ${error.message}`);
+  const rows = await selectAllRows<LedgerRow>(async (from, to) => {
+    const { data, error } = await sb.from("toast_sales_events")
+      .select("check_guid, selection_guid, parent_selection_guid, toast_item_guid, item_name, quantity, price_cents, voided, dining_option, menu_group, snapshot_version")
+      .eq("location_id", locationId).eq("business_date", businessDate)
+      .order("id", { ascending: true })
+      .range(from, to)
+      .returns<LedgerRow[]>();
+    if (error) throw new Error(`toast-sales ledger read: ${error.message}`);
+    return { data };
+  });
   const latest = new Map<string, LedgerRow>();
-  for (const r of data ?? []) {
+  for (const r of rows) {
     const key = `${r.check_guid}:${r.selection_guid}`;
     const cur = latest.get(key);
     if (!cur || r.snapshot_version > cur.snapshot_version) latest.set(key, r);
@@ -166,6 +231,7 @@ async function doPull(
 
 export async function pullSales(actor: AuthContext, locationId: string, businessDate: string): Promise<PullResult> {
   requireLevel(actor, TOAST_SALES_WRITE_MIN);
+  assertLocationAccess(actor, locationId); // before any I/O — a refused pull touches nothing
   return doPull(locationId, businessDate, actor);
 }
 
@@ -413,6 +479,13 @@ export async function addExclusion(
   if (!KINDS.has(input.kind)) throw new AdminToastSalesError(400, "invalid_kind", "Unknown exclusion kind");
   const value = input.value.trim();
   if (value.length === 0 || value.length > 200) throw new AdminToastSalesError(400, "invalid_value", "Value required (≤200 chars)");
+  // A TARGETED exclusion binds its target. `locationId: null` is the GLOBAL row (null =
+  // every location, per matchesExclusion) and is deliberately left at the level floor:
+  // whether a shop-scoped GM may author business-wide ingest config is an authority
+  // question for Juan, not a bind, and today's UI only ever sends null — silently moving
+  // that to level 9 would take a working 6 AM button away from both GMs. Flagged, not
+  // changed. What IS closed here is the cross-shop write the audit named.
+  if (input.locationId != null) assertLocationAccess(actor, input.locationId);
   const sb = getServiceRoleClient();
   const { data, error } = await sb.from("toast_ingest_exclusions")
     .insert({ location_id: input.locationId, kind: input.kind, value, note: input.note ?? null, created_by: actor.user.id })
@@ -431,9 +504,21 @@ export async function addExclusion(
 export async function deactivateExclusion(actor: AuthContext, id: string): Promise<void> {
   requireLevel(actor, TOAST_SALES_WRITE_MIN);
   const sb = getServiceRoleClient();
+  // Load-then-bind (the `mapId` shape of lib/admin/toast-map.ts's bind): an opaque id says
+  // nothing about WHOSE ingest this exclusion reshapes, so the row's own location is what
+  // gets authorized. A global row (location_id null) keeps the level floor — same
+  // deliberate carve-out, and same flag, as addExclusion above.
+  const { data: row, error: loadErr } = await sb.from("toast_ingest_exclusions")
+    .select("id, location_id").eq("id", id).eq("active", true)
+    .maybeSingle<{ id: string; location_id: string | null }>();
+  if (loadErr) throw new Error(`toast-sales exclusion load: ${loadErr.message}`);
+  if (!row) throw new AdminToastSalesError(404, "not_found", "Exclusion not found");
+  if (row.location_id != null) assertLocationAccess(actor, row.location_id);
   const { error, count } = await sb.from("toast_ingest_exclusions")
     .update({ active: false }, { count: "exact" }).eq("id", id).eq("active", true);
   if (error) throw new Error(`toast-sales exclusion deactivate: ${error.message}`);
+  // Rowcount check stays (UPDATE denials are silent): the load above proves the row was
+  // active a moment ago, so a 0 here is a concurrent deactivation, not a bad id.
   if (count === 0) throw new AdminToastSalesError(404, "not_found", "Exclusion not found");
   void audit({
     actorId: actor.user.id, actorRole: actor.user.role,
@@ -463,6 +548,7 @@ export interface SalesConsumption {
 
 export async function salesConsumption(actor: AuthContext, locationId: string, businessDate: string): Promise<SalesConsumption> {
   requireLevel(actor, TOAST_SALES_READ_MIN);
+  assertLocationAccess(actor, locationId);
   return deriveSalesConsumption(locationId, businessDate);
 }
 
