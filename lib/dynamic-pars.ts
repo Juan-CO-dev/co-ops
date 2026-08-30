@@ -247,7 +247,8 @@ export interface DemandInputs {
   directOzByDate: Map<string, Map<string, number>>;
   productionOzByDate: Map<string, Map<string, number>>;
   flattenedOzByDate: Map<string, Map<string, number>>;
-  /** grainKey → the first ET date this SKU's lane produced anything here. */
+  /** grainKey → the first ET date any of this SKU's three lanes was alive here
+   *  (`deriveLaneStart`). Null = none of them ever was. */
   laneStartByGrain: Map<string, string | null>;
   /** ET dates the catering detector flagged (plan D4). */
   suspectDays: Set<string>;
@@ -282,6 +283,58 @@ interface DbSkuRow {
   each_measure: string | null; avg_oz_per_each: number | string | null;
   product_id: string | null; inventory_only: boolean | null;
   cushion_class: string | null; par_step: number | string | null;
+}
+
+/**
+ * THE LONGITUDINAL CLAMP'S INPUT (r2-5), PURE SO IT CAN BE PINNED.
+ *
+ * The earliest window day on which this identity's lane EXISTED at this location — the day
+ * before which every zero is STRUCTURAL (the recipe was not wired yet, so the register could
+ * not have depleted this SKU) rather than a measurement. `computeBaseRate` drops those days
+ * from both the numerator and the denominator; everything at or after this date is a real
+ * observation, including a zero one. Null = no lane has ever produced here → `no_lane_start`.
+ *
+ * ── THREE LANES, BECAUSE A DEPLETION ROW HAS THREE WAYS TO BE LIT ────────────────
+ * `materializeDailyDepletion` writes a `toast_daily_depletion` row when EITHER `direct_oz`
+ * or `flattened_oz` is positive (lib/catering/toast-sales.ts), so a prep-mediated SKU — one
+ * the shop never sells directly, only through a prep recipe — has a lit lane every trading
+ * day while `direct_oz` stays 0.00 on every one of them. Testing only direct + production
+ * therefore called those SKUs `no_lane_start` ("no lane has EVER produced data for this SKU
+ * here"), which is false about the kitchen and, worse, aims the wrong errand: the reason
+ * lane is the product, and the errand that would wake a prep-mediated SKU is PRODUCTION
+ * CAPTURE, not "this SKU has never moved". `classifyParReason` ranks `laneNeverStarted`
+ * above `laneComplete`, so the wrong name won every time. Reading the flattened lane here is
+ * the SAME non-summing use the base rate already makes of it — detecting that a SKU's demand
+ * is prep-mediated — and the double-count law is untouched: `flattened_oz` still enters no
+ * sum anywhere, it only answers "was this lane alive that day".
+ *
+ * ── THE RESIDUAL APPROXIMATION, STATED RATHER THAN PAPERED OVER ──────────────────
+ * "First day a lane produced" is still a PROXY for "first day the lane existed". For a SKU
+ * whose demand is direct and whose first window days happen to be genuine no-sale days, those
+ * days are TRUE ZEROS by this arc's own law and they are nonetheless clamped away — the
+ * numerator is unchanged and the denominator shrinks, so the base rate reads high, and the
+ * sparser the SKU the larger the bias. Distinguishing the two cases needs a fact this loader
+ * does not have: the date the recipe/crosswalk line that connects this SKU to a sold menu
+ * item was authored. That is a NAMED ENABLER for v2 (the same posture the arc takes with the
+ * productions↔quote link), not something to guess at here — a guessed lane start would fake
+ * demand history, which is worse than a bias that is written down.
+ */
+export function deriveLaneStart(input: {
+  window: ReadonlyArray<{ dateEt: string }>;
+  /** The SKU key the rolled-up maps are keyed by (product-grain totals ride on every member). */
+  skuId: string;
+  directOzByDate: ReadonlyMap<string, ReadonlyMap<string, number>>;
+  productionOzByDate: ReadonlyMap<string, ReadonlyMap<string, number>>;
+  /** READ AS A PREDICATE ONLY — never summed. The double-count law. */
+  flattenedOzByDate: ReadonlyMap<string, ReadonlyMap<string, number>>;
+}): string | null {
+  for (const day of input.window) {
+    const direct = input.directOzByDate.get(day.dateEt)?.get(input.skuId) ?? 0;
+    const production = input.productionOzByDate.get(day.dateEt)?.get(input.skuId) ?? 0;
+    const flattened = input.flattenedOzByDate.get(day.dateEt)?.get(input.skuId) ?? 0;
+    if (direct > 0 || production > 0 || flattened > 0) return day.dateEt;
+  }
+  return null;
 }
 
 /**
@@ -557,17 +610,14 @@ export async function loadDemandInputs(
   });
 
   // ── laneStartAt, per GRAIN, in memory ─────────────────────────────────────────
-  // The longitudinal clamp's input (r2-5): the earliest window day on which this identity
-  // produced anything in either lane. Null = it never has, which is `no_lane_start`.
   const laneStartByGrain = new Map<string, string | null>();
   for (const sku of skus) {
-    let start: string | null = null;
-    for (const day of window) {
-      const direct = directOzByDate.get(day.dateEt)?.get(sku.skuId) ?? 0;
-      const production = productionOzByDate.get(day.dateEt)?.get(sku.skuId) ?? 0;
-      if (direct > 0 || production > 0) { start = day.dateEt; break; }
-    }
-    laneStartByGrain.set(sku.grainKey, start);
+    laneStartByGrain.set(
+      sku.grainKey,
+      deriveLaneStart({
+        window, skuId: sku.skuId, directOzByDate, productionOzByDate, flattenedOzByDate,
+      }),
+    );
   }
 
   // ── Signals ───────────────────────────────────────────────────────────────────

@@ -195,15 +195,43 @@ export function nextDeliveryAfter(
  * it (what the par must carry the shop to — plan D3), and every ET day in between.
  *
  * Implemented as two chained nextDeliveryAfter calls, so there is exactly one place that
- * knows about cutoffs, skips and leads. The second call is anchored the day AFTER the first
- * delivery with a walk time of 00:00, because by then the shop is unambiguously ordering
- * against a future day (the cutoff question only ever applies to the walk day itself).
+ * knows about cutoffs, skips and leads.
+ *
+ * ── THE SECOND CALL ANCHORS AT THE FIRST **ORDER** DAY + 1, NOT THE FIRST DELIVERY ──
+ * D2 is "the next chance to REPLENISH", and a chance to replenish is a chance to ORDER —
+ * the review interval of a base-stock policy is the gap between ORDER opportunities, not
+ * between trucks. So the second call starts the day after the first ORDER day, at 00:00
+ * (a walk time of 00:00 because by then the shop is unambiguously ordering against a future
+ * day, and the cutoff question only ever applies to the walk day itself).
+ *
+ * Anchoring at the first DELIVERY instead would be wrong, and wrong in the expensive
+ * direction, on every next-day vendor CO actually has: Boar's Head, Trimark, Cardinal and
+ * Leonard Paper all order Mon–Fri (or daily) at lead 1, so a Monday walk's D1 is Tuesday and
+ * its true D2 is Wednesday — Tuesday's order. Starting the search at Wednesday would skip
+ * Tuesday's order day entirely and return Thursday, padding every one of those pars by a
+ * full extra day of demand. The two anchors agree whenever no order day falls inside the
+ * first order's lead window, which is every rhythm authored at CO today (seed 29: EVERY
+ * pair is lead 1).
+ *
+ * ── STATED LIMITATION: CROSSING LEAD TIMES ARE NOT MODELLED ────────────────────
+ * A vendor with UNEQUAL leads on two order days at one location (say Mon lead 3, Tue lead 1)
+ * makes its orders cross in transit, and then D2's truck can land BEFORE D1's:
+ * `coverThroughDate` comes out earlier than `nextDeliveryDate`, and the covered set is the
+ * short one. That is the honest base-stock answer in inventory POSITION (the Tuesday order
+ * really is the next replenishment) and it under-states the shelf, which physically waits
+ * for Thursday. No such rhythm has been AUTHORED here — `scripts/seed/29-vendor-rhythm.ts`,
+ * the record of Cristian's real schedule, is lead 1 on every pair it writes — but the schema
+ * permits it (`lead_days` is 0..14, per order day, editable on the vendor page), so it is
+ * recorded here and pinned by a test rather than guarded against with arithmetic nobody can
+ * check against real rows. The first unequal-lead pair an admin authors is the trigger to
+ * design for it.
  */
 export function coverageWindow(input: NextDeliveryInput): CoverageWindow | null {
   const first = nextDeliveryAfter(input);
   if (first == null) return null;
   const second = nextDeliveryAfter({
     ...input,
+    // The next chance to ORDER, not the day after the truck — see the block above.
     walkDateEt: addDaysEt(first.orderDateEt, 1),
     walkMinutesEt: 0,
   });

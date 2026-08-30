@@ -276,6 +276,55 @@ describe("coverageWindow", () => {
     expect(w?.coveredDays).toHaveLength(7);
   });
 
+  it("a NEXT-DAY vendor anchors D2 on the next ORDER day, not the day after the truck", () => {
+    // Boar's Head / Trimark / Cardinal / Leonard Paper all order Mon–Fri (or daily) at lead
+    // 1 — the majority of CO's authored rhythm. Walked Monday: the order goes in Monday and
+    // lands Tuesday, and the next chance to REPLENISH is Tuesday's order, landing Wednesday.
+    // The review interval of a base-stock policy is the gap between ORDER opportunities.
+    const rhythm: RhythmRow[] = [1, 2, 3, 4, 5].map((d) => ({
+      vendorId: VENDOR, locationId: LOC_A, orderDow: d, leadDays: 1,
+    }));
+    const cutoffs: CutoffRow[] = [1, 2, 3, 4, 5].map((d) => ({
+      locationId: LOC_A, orderDay: d, cutoffTime: "10:00",
+    }));
+    const w = coverageWindow(walk(MON, at(9, 58), { rhythm, cutoffs }));
+    expect(w?.orderDateEt).toBe(MON);
+    expect(w?.nextDeliveryDate).toBe(TUE);
+    expect(w?.coverThroughDate).toBe(WED);
+    expect(w?.coveredDays).toEqual([TUE]);
+    // Anchoring the second search at the first DELIVERY + 1 (Wednesday) would skip Tuesday's
+    // order day entirely and return Thursday — a full extra day of demand in every one of
+    // these pars. That answer must not appear.
+    expect(w?.coverThroughDate).not.toBe(THU);
+    expect(w?.coveredDays).not.toContain(WED);
+  });
+
+  it("CROSSING LEAD TIMES: D2 can land before D1, and that is the stated limitation", () => {
+    // Monday orders at lead 3 (Thursday truck) while Tuesday orders at lead 1 (Wednesday
+    // truck). The next chance to order is still Tuesday, so `coverThroughDate` comes out
+    // EARLIER than `nextDeliveryDate` and the covered set is the short one. Correct in
+    // inventory POSITION, under-stated on the physical shelf, which waits for Thursday.
+    // No such rhythm has been authored here (scripts/seed/29-vendor-rhythm.ts writes lead 1
+    // on every pair) and the schema permits it, so it is pinned rather than guarded — the
+    // first unequal-lead pair an admin authors is the trigger to design for it.
+    const rhythm: RhythmRow[] = [
+      { vendorId: VENDOR, locationId: LOC_A, orderDow: 1, leadDays: 3 },
+      { vendorId: VENDOR, locationId: LOC_A, orderDow: 2, leadDays: 1 },
+    ];
+    const cutoffs: CutoffRow[] = [
+      { locationId: LOC_A, orderDay: 1, cutoffTime: "10:00" },
+      { locationId: LOC_A, orderDay: 2, cutoffTime: "10:00" },
+    ];
+    const w = coverageWindow(walk(MON, at(9, 58), { rhythm, cutoffs }));
+    expect(w).not.toBeNull();
+    expect(w?.orderDateEt).toBe(MON);
+    expect(w?.nextDeliveryDate).toBe(THU);
+    expect(w?.coverThroughDate).toBe(WED);
+    // The inversion itself, stated as an assertion: D2's truck lands BEFORE D1's.
+    expect(w!.coverThroughDate < w!.nextDeliveryDate).toBe(true);
+    expect(w?.coveredDays).toEqual([TUE]);
+  });
+
   it("returns null when there is no rhythm at all", () => {
     expect(coverageWindow(walk(MON, at(9, 58), { rhythm: [] }))).toBeNull();
   });
