@@ -44,6 +44,9 @@ export { SKU_CLASSES, isSkuClass } from "@/lib/admin/catalog-shared";
 import { isSkuClass } from "@/lib/admin/catalog-shared";
 import { parWriteColumns, type DayClass } from "@/lib/dynamic-pars-shared";
 import { parAutoLaneReady } from "@/lib/dynamic-pars-probes";
+// MEMBERSHIP HAS ONE WRITER, AND IT IS NOT THIS MODULE (0179; audit fix 2026-08-29).
+// See applyMembershipChange below for why updateSku delegates instead of setting the column.
+import { attachMember, detachMember, ProductError } from "@/lib/products";
 
 // ── Authority floors (the lib is the authority per-action) ──────────────────
 export const SKU_READ_MIN = 6; // AGM+ — view the catalog + registries
@@ -632,6 +635,110 @@ export interface UpdateSkuChanges {
   parStep?: number | null;
 }
 
+// ── Product membership: ONE WRITER, ONE ERROR CONTRACT (0179; audit fix) ──────
+//
+// `vendor_items.product_id` is not an ordinary column. It is HALF OF A COMPOSITE FK:
+// `product_primaries_member_fk (primary_sku_id, product_id) → vendor_items(id, product_id)`
+// (migration 0179), which is what makes "the primary is a member" DB-proven rather than
+// app-trusted. Setting the column here directly had three consequences, all of them the
+// same bug wearing different clothes:
+//
+//   · A SKU that a product_primaries row NAMES raised 23503 on the UPDATE, which arrived
+//     as a bare Error and left the route with nothing to map — an unhandled 500, where
+//     /api/admin/products' own member endpoints already answer a named 409
+//     (`primary_must_be_reassigned`). LIVE at fix time: 11 products, 11 primaries, 23
+//     member SKUs, so 11 of 23 member SKUs could 500 the picker in the SKU editor.
+//   · A member that no primary names was SILENTLY RE-PARENTED, with none of
+//     attachMember's `already_member` refusal behind it.
+//   · The only record was a `vendor_item.update` row naming the FIELD — never the product
+//     it left or the product it joined — while the products admin writes
+//     `product.member_attach` / `product.member_detach` for the identical change.
+//
+// So this module does not write the column; it asks the module that owns it. Two surfaces,
+// one writer, one error contract, one audit vocabulary.
+
+/** What a submitted `productId` means against a SKU's current membership. */
+export type MembershipChange = "none" | "attach" | "detach" | "reparent";
+
+/**
+ * PURE. Classify a Product-picker submit.
+ *
+ * "none" matters as much as the rest: the SKU form posts `productId` on EVERY save once any
+ * product exists, so a no-op resubmit is the common case. Delegating it anyway would write a
+ * `product.member_detach` audit row every time an unattached SKU is saved, and would fire
+ * the composite FK's check for nothing.
+ */
+export function classifyMembershipChange(
+  current: string | null,
+  requested: string | null,
+): MembershipChange {
+  if ((current ?? null) === (requested ?? null)) return "none";
+  if (requested == null) return "detach";
+  if (current == null) return "attach";
+  return "reparent";
+}
+
+/**
+ * PURE. Re-clothe a ProductError as this module's AdminSkuError, status and code intact.
+ *
+ * The SKU routes catch AdminSkuError and nothing else — anything foreign is re-thrown into
+ * an unhandled 500, which is the very defect this fix closes. Delegation must therefore not
+ * smuggle another module's error class back out through updateSku. Returns null for
+ * anything that is not a ProductError, so a genuine failure stays a genuine failure.
+ */
+export function membershipErrorAsAdminSkuError(e: unknown): AdminSkuError | null {
+  if (e instanceof ProductError) return new AdminSkuError(e.status, e.code, e.message);
+  return null;
+}
+
+/** PostgREST/Postgres codes that mean "migration 0179 has not been applied here" — the same
+ *  set lib/products.ts's isSchemaPending recognizes. This one read is the only place this
+ *  module touches a 0179 column, and a 500 would be a lie about what is wrong. */
+const PRODUCT_SCHEMA_PENDING_CODES = new Set(["PGRST205", "PGRST204", "42P01", "42703"]);
+
+/** Read the SKU's current membership, classify the submit, and hand any real change to
+ *  lib/products.ts. Never writes `product_id` itself. */
+async function applyMembershipChange(
+  actor: AuthContext,
+  skuId: string,
+  requested: string | null,
+): Promise<void> {
+  const sb = getServiceRoleClient();
+  const { data, error } = await sb
+    .from("vendor_items")
+    .select("id, product_id")
+    .eq("id", skuId)
+    .maybeSingle<{ id: string; product_id: string | null }>();
+  if (error) {
+    if (PRODUCT_SCHEMA_PENDING_CODES.has(error.code ?? "")) {
+      throw new AdminSkuError(
+        503,
+        "products_schema_pending",
+        "Migration 0179 (product identity) has not been applied yet",
+      );
+    }
+    throw new Error(`updateSku membership read failed: ${error.message}`);
+  }
+  if (!data) throw new AdminSkuError(404, "sku_not_found", "SKU not found");
+
+  const change = classifyMembershipChange(data.product_id, requested);
+  if (change === "none") return;
+  try {
+    if (change === "detach") {
+      await detachMember(actor, { skuId });
+    } else {
+      // "reparent" goes to attachMember too: whether a member may move products is
+      // attachMember's ruling to make (it refuses with a named 409), not a second opinion
+      // formed here.
+      await attachMember(actor, { productId: requested!, skuId });
+    }
+  } catch (e) {
+    const mapped = membershipErrorAsAdminSkuError(e);
+    if (mapped) throw mapped;
+    throw e;
+  }
+}
+
 export async function updateSku(
   actor: AuthContext,
   args: { id: string; changes: UpdateSkuChanges },
@@ -674,10 +781,9 @@ export async function updateSku(
     if (!isSkuClass(changes.skuClass)) throw new AdminSkuError(400, "invalid_sku_class", "Unknown SKU class");
     update.sku_class = changes.skuClass;
   }
-  // Membership (0179). Key-present null = detach back to implicit singleton; the
-  // key is absent on every payload that predates the product picker, so an edit
-  // made before migration 0179 lands never touches the column.
-  if (changes.productId !== undefined) update.product_id = changes.productId;
+  // Membership (0179) is DELIBERATELY ABSENT from this payload — it is applied below,
+  // through lib/products.ts, AFTER every other field has validated. See
+  // applyMembershipChange.
 
   // Ordering rhythm (0182, GATE M1). Refuse LOUDLY rather than dropping the write: the
   // form omits these keys entirely while the columns are absent, so an arriving key means
@@ -693,6 +799,19 @@ export async function updateSku(
     }
     if (changes.cushionClass !== undefined) update.cushion_class = normalizeCushionClass(changes.cushionClass);
     if (changes.parStep !== undefined) update.par_step = normalizeParStep(changes.parStep);
+  }
+
+  // MEMBERSHIP FIRST, AND ONLY AFTER THE REST HAS VALIDATED.
+  //
+  // Order is load-bearing in both directions. It runs AFTER the payload above because every
+  // line of it is validation that can throw a 400 — moving a SKU between products and THEN
+  // refusing the save on an empty name would leave half an edit behind. It runs BEFORE the
+  // column write because its own refusals (`already_member`, `primary_must_be_reassigned`)
+  // are the ones a retry cannot clear on its own: fields-first would land the fields, refuse
+  // the membership, and every retry would refuse again. Membership-first converges — the
+  // retry's membership step classifies as "none" and the fields land.
+  if (changes.productId !== undefined) {
+    await applyMembershipChange(actor, args.id, changes.productId);
   }
 
   if (Object.keys(update).length === 0) return;
@@ -842,6 +961,49 @@ export async function loadLocationSkuSettings(
   return out;
 }
 
+/** The three overlay fields the editor owns, as ONE comparable value. */
+export interface OverlayBaseline {
+  activeOverride: boolean | null;
+  weekdayPar: number | null;
+  weekendPar: number | null;
+}
+
+/**
+ * PURE. Which of the editor's three fields MOVED between the load and the save.
+ *
+ * ── WHY THE WHOLE ROW NEEDS A BASELINE (audit fix 2026-08-29) ─────────────────
+ *
+ * This editor is the only par writer that submits BOTH day-classes at once. Every other one
+ * — the walker's accept, a revert, the nightly engine — patches exactly one slot, because
+ * `parWriteColumns` is per-slot by law ("a weekday move cannot stamp the weekend slot's
+ * history"). So the row can legitimately change UNDER an open editor: a GM accepts a weekend
+ * suggestion on /ordering while another GM has /admin/skus/[id] open, and the admin's tab
+ * still holds the weekend number from page load.
+ *
+ * Without a baseline the stale slot is simply written back — the accept is silently
+ * reverted. Worse, `editedSlots` below is computed against the FRESHLY-READ row, so the slot
+ * the admin never touched compares unequal, counts as a direct human edit, and takes the
+ * machine-lane wipe with it: auto value, baseline, stamp AND THE PIN. AGENTS.md is explicit
+ * that "A PIN IS CLEARED ONLY BY A DIRECT HUMAN EDIT AT THE SAME SLOT", and a pin cleared by
+ * a save that never touched the slot is exactly the case that law names.
+ *
+ * The baseline is what the editor SAW. Comparing it to what is there now is the only way the
+ * server can tell "the admin means 8" from "the admin's page is stale at 8".
+ *
+ * Strict `!==` throughout, on purpose: `null` (inherit) and `false` (off here) are different
+ * answers in the activation tri-state, and a loose comparison reads them as the same one.
+ */
+export function overlayBaselineConflicts(
+  expected: OverlayBaseline,
+  actual: OverlayBaseline,
+): string[] {
+  const out: string[] = [];
+  if ((expected.activeOverride ?? null) !== (actual.activeOverride ?? null)) out.push("active_override");
+  if ((expected.weekdayPar ?? null) !== (actual.weekdayPar ?? null)) out.push("weekday_par");
+  if ((expected.weekendPar ?? null) !== (actual.weekendPar ?? null)) out.push("weekend_par");
+  return out;
+}
+
 export interface UpsertLocationSkuSettingsInput {
   skuId: string;
   locationId: string;
@@ -850,6 +1012,16 @@ export interface UpsertLocationSkuSettingsInput {
   /** null = inherit global par. */
   weekdayPar: number | null;
   weekendPar: number | null;
+  /**
+   * OPTIMISTIC CONCURRENCY — the row AS THE EDITOR LOADED IT (audit fix).
+   *
+   * The PUT route requires it; it is optional here so a script or a future caller that
+   * genuinely owns the whole row (nothing does today) can still write without inventing a
+   * baseline it never read. When present and it no longer matches, the save is refused with
+   * `409 overlay_changed` rather than clobbering a slot the operator never saw. A row that
+   * does not exist reads as all-inherit, so a first write is never a conflict.
+   */
+  expected?: OverlayBaseline | null;
 }
 
 /**
@@ -889,11 +1061,35 @@ export async function upsertLocationSkuSettings(
   // that is what clears a pin (r3 — a resubmit of the same number is not an edit).
   const { data: existing, error: exErr } = await sb
     .from("location_sku_settings")
-    .select("id, weekday_par, weekend_par")
+    .select("id, active_override, weekday_par, weekend_par")
     .eq("location_id", input.locationId)
     .eq("sku_id", input.skuId)
-    .maybeSingle<{ id: string; weekday_par: number | string | null; weekend_par: number | string | null }>();
+    .maybeSingle<{
+      id: string;
+      active_override: boolean | null;
+      weekday_par: number | string | null;
+      weekend_par: number | string | null;
+    }>();
   if (exErr) throw new Error(`upsertLocationSkuSettings lookup failed: ${exErr.message}`);
+
+  // ── THE EDITOR MAY NOT OVERWRITE A FIELD IT NEVER SAW (audit fix) ─────────────
+  // See overlayBaselineConflicts for the full reasoning. An absent row is all-inherit, which
+  // is exactly what an editor with no overlay loaded sends, so a first write never conflicts.
+  const live: OverlayBaseline = {
+    activeOverride: existing?.active_override ?? null,
+    weekdayPar: toNum(existing?.weekday_par ?? null),
+    weekendPar: toNum(existing?.weekend_par ?? null),
+  };
+  if (input.expected != null) {
+    const conflicts = overlayBaselineConflicts(input.expected, live);
+    if (conflicts.length > 0) {
+      throw new AdminSkuError(
+        409,
+        "overlay_changed",
+        `This overlay changed since it was loaded (${conflicts.join(", ")}) — reload and re-apply`,
+      );
+    }
+  }
 
   // ── THE MACHINE LANE, THROUGH THE ONE AUTHORITY (Dynamic Pars, Task 3.8) ──────
   //
@@ -915,9 +1111,13 @@ export async function upsertLocationSkuSettings(
   // Probe-gated: pre-0183 the auto columns do not exist, so the payload is byte-identical
   // to the one this function shipped with.
   const autoLaneReady = await parAutoLaneReady(sb);
+  // Compared against `live` — the same freshly-read row the baseline check above cleared.
+  // With the baseline in force this now genuinely means "the human moved this slot": a slot
+  // that moved underneath the editor was refused before reaching here, so it can no longer
+  // be mistaken for a direct edit and take the pin with it.
   const editedSlots: DayClass[] = [];
-  if (weekdayPar !== toNum(existing?.weekday_par ?? null)) editedSlots.push("weekday");
-  if (weekendPar !== toNum(existing?.weekend_par ?? null)) editedSlots.push("weekend");
+  if (weekdayPar !== live.weekdayPar) editedSlots.push("weekday");
+  if (weekendPar !== live.weekendPar) editedSlots.push("weekend");
   const autoPatch: Record<string, number | string | null> = {};
   if (autoLaneReady) {
     for (const dayClass of editedSlots) {

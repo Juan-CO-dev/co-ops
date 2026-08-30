@@ -242,6 +242,11 @@ function validateSubmission(
   return input;
 }
 
+/** One immediate retry for the flat-field mirror below. Enough for a momentary write
+ *  failure, few enough that a genuinely broken write does not multiply the latency of
+ *  every chain save. */
+const SYNC_ATTEMPTS = 2;
+
 /**
  * Sync the legacy flat pack columns on vendor_items from a persisted chain
  * (PR-B sync-on-save). Derives pack_format / units_per_pack / each_size /
@@ -254,26 +259,42 @@ function validateSubmission(
  * the source of truth). `pack_format` NULL from a malformed derive is coalesced
  * to a non-empty placeholder so the NOT-NULL-friendly consumers never see blank
  * (validateSubmission guarantees a well-formed chain reaches here anyway).
+ *
+ * ── NON-FATAL, BUT NO LONGER INVISIBLE (audit fix 2026-08-29) ─────────────────
+ *
+ * Staying non-fatal is the right call and is unchanged. What was wrong was the SILENCE: a
+ * failure reached a server log nobody reads and nothing else — no return value, no audit
+ * trace — so a SKU could sit with a mirror that disagrees with its own chain and no operator
+ * or reviewer could ever learn it. lib/admin/cost.ts's own header names this exact risk
+ * ("the agreement is one failed sync away from breaking, and when it breaks it is silent,
+ * permanent"). So: retry once (most write blips are momentary), then REPORT the outcome —
+ * up through replaceSkuPackChain's return value and onto the `sku.pack_chain_update` audit
+ * row the save already writes. Reporting rides existing metadata rather than a new audit
+ * action, because the action vocabulary is closed and this is not a new event.
  */
 async function syncSkuFlatFieldsFromChain(
   sb: ReturnType<typeof getServiceRoleClient>,
   skuId: string,
   levels: PackChainLevelInput[],
-): Promise<void> {
+): Promise<boolean> {
   const flat = deriveFlatFieldsFromChain(levels);
-  const { error } = await sb
-    .from("vendor_items")
-    .update({
-      pack_format: flat.packFormat ?? "Each (no case)",
-      units_per_pack: flat.unitsPerPack,
-      each_size: flat.eachSize,
-      each_measure: flat.eachMeasure,
-    })
-    .eq("id", skuId);
-  if (error) {
-    // Non-fatal: the chain (source of truth) is already saved.
-    console.error(`syncSkuFlatFieldsFromChain(${skuId}) failed (chain saved; flat fields stale): ${error.message}`);
+  const payload = {
+    pack_format: flat.packFormat ?? "Each (no case)",
+    units_per_pack: flat.unitsPerPack,
+    each_size: flat.eachSize,
+    each_measure: flat.eachMeasure,
+  };
+  let lastMessage = "";
+  for (let attempt = 1; attempt <= SYNC_ATTEMPTS; attempt += 1) {
+    const { error } = await sb.from("vendor_items").update(payload).eq("id", skuId);
+    if (!error) return true;
+    lastMessage = error.message;
   }
+  // Non-fatal: the chain (source of truth) is already saved. The caller audits the outcome.
+  console.error(
+    `syncSkuFlatFieldsFromChain(${skuId}) failed after ${SYNC_ATTEMPTS} attempts (chain saved; flat fields stale): ${lastMessage}`,
+  );
+  return false;
 }
 
 // ── Write (GM+; supersede-as-a-SET) ──────────────────────────────────────────────
@@ -285,11 +306,15 @@ async function syncSkuFlatFieldsFromChain(
  * (a partial failure leaves the old set deactivated + is re-runnable — but the
  * two writes are ordered deactivate→insert so a mid-failure never leaves TWO
  * active chains).
+ *
+ * Returns the level count AND whether the legacy flat-field mirror synced. The chain is
+ * saved either way (`flatFieldsSynced: false` is a partial success, never a failed save) —
+ * the flag exists so a caller can say so, and it is on the audit row regardless.
  */
 export async function replaceSkuPackChain(
   actor: AuthContext,
   args: { skuId: string; levels: PackChainLevelInput[] },
-): Promise<{ levelCount: number }> {
+): Promise<{ levelCount: number; flatFieldsSynced: boolean }> {
   requireLevel(actor, PACK_CHAIN_WRITE_MIN);
   const { avgOzPerEach, skuClass } = await assertSkuExists(args.skuId);
   const [measureLabels, measures] = await Promise.all([loadMeasureLabels(), loadMeasuresMap()]);
@@ -336,7 +361,7 @@ export async function replaceSkuPackChain(
   // touched (it's a SKU-level column set on the create/update payload). A
   // malformed chain derives to all-null — but validateSubmission already rejected
   // those above, so a persisted chain always derives cleanly.
-  await syncSkuFlatFieldsFromChain(sb, args.skuId, validated);
+  const flatFieldsSynced = await syncSkuFlatFieldsFromChain(sb, args.skuId, validated);
 
   await audit({
     actorId: actor.user.id,
@@ -348,10 +373,14 @@ export async function replaceSkuPackChain(
       sku_id: args.skuId,
       level_count: rows.length,
       labels: rows.map((r) => r.label),
+      // THE SIGNAL A SWALLOWED FAILURE USED TO LACK. `false` means the chain is saved and
+      // correct while the legacy flat mirror on vendor_items is stale — findable by a query
+      // rather than only by noticing a wrong number months later.
+      flat_fields_synced: flatFieldsSynced,
     },
     ipAddress: null,
     userAgent: null,
   });
 
-  return { levelCount: rows.length };
+  return { levelCount: rows.length, flatFieldsSynced };
 }

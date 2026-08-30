@@ -50,6 +50,15 @@ export interface LocationSkuOverlayView {
   autoWeekendAppliedAt?: string | null;
 }
 
+/** The three overlay fields as ONE comparable value — the wire's `expected` object
+ *  (mirrors lib/admin/skus.ts's OverlayBaseline; declared here so this client island does
+ *  not import a server module). */
+export interface LocationSkuOverlayBaseline {
+  activeOverride: boolean | null;
+  weekdayPar: number | null;
+  weekendPar: number | null;
+}
+
 type ActiveState = "inherit" | "on" | "off";
 
 function toActiveState(v: boolean | null): ActiveState {
@@ -143,13 +152,36 @@ function LocationRow({
   const [active, setActive] = useState<ActiveState>(toActiveState(overlay?.activeOverride ?? null));
   const [weekdayPar, setWeekdayPar] = useState(overlay?.weekdayPar != null ? String(overlay.weekdayPar) : "");
   const [weekendPar, setWeekendPar] = useState(overlay?.weekendPar != null ? String(overlay.weekendPar) : "");
+  /**
+   * WHAT THIS ROW LOOKED LIKE WHEN IT LOADED — sent as `expected` on every save.
+   *
+   * This form posts BOTH day-class pars at once; /ordering's accept patches exactly ONE of
+   * them. So a weekend par can legitimately move while this tab is open, and the fields
+   * above would post the number from page load straight over it. The server compares this
+   * baseline to the live row and refuses with `overlay_changed` instead of clobbering a slot
+   * the operator never saw.
+   *
+   * Re-baselined after a successful save rather than re-read from props: `router.refresh()`
+   * re-renders the server component but does NOT reset client state, so a props-derived
+   * baseline would stay frozen at the first load and every subsequent save would 409.
+   */
+  const [baseline, setBaseline] = useState<LocationSkuOverlayBaseline>({
+    activeOverride: overlay?.activeOverride ?? null,
+    weekdayPar: overlay?.weekdayPar ?? null,
+    weekendPar: overlay?.weekendPar ?? null,
+  });
   const [busy, setBusy] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
   const parseNum = (s: string): number | null => {
     const trimmed = s.trim();
-    return trimmed === "" ? null : Number(trimmed);
+    if (trimmed === "") return null;
+    const n = Number(trimmed);
+    // A non-finite value already reached the server as `null` (JSON.stringify(NaN) is
+    // "null"), so this changes nothing on the wire — it stops the BASELINE from holding a
+    // NaN the row never stored, which would 409 every subsequent save until a reload.
+    return Number.isFinite(n) ? n : null;
   };
 
   const save = async () => {
@@ -158,18 +190,21 @@ function LocationRow({
     setSaved(false);
     if ((await requestStepUp("A")) !== "ok") return;
     setBusy(true);
+    const sent: LocationSkuOverlayBaseline = {
+      activeOverride: fromActiveState(active),
+      weekdayPar: parseNum(weekdayPar),
+      weekendPar: parseNum(weekendPar),
+    };
     const result = await postJson(
       `/api/admin/skus/${skuId}/location-settings`,
-      {
-        locationId: location.id,
-        activeOverride: fromActiveState(active),
-        weekdayPar: parseNum(weekdayPar),
-        weekendPar: parseNum(weekendPar),
-      },
+      { locationId: location.id, ...sent, expected: baseline },
       "PUT",
     );
     setBusy(false);
     if (result.ok) {
+      // The server stores these values verbatim (normalizePar validates, it never rounds),
+      // so what was sent IS the new truth — and the next save's baseline.
+      setBaseline(sent);
       setSaved(true);
       router.refresh();
     } else {
