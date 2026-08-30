@@ -3246,6 +3246,7 @@
   "production.error.invalid_sku": "Ese SKU no está disponible.",
   "production.error.invalid_item": "Ese artículo no está disponible.",
   "production.error.invalid_conversion": "Ese artículo no se hace de ese SKU.",
+  "production.error.retired_product": "Ese producto está descontinuado — hay que actualizar la receta antes de registrar esto.",
   "production.error.not_found": "No encontrado.",
   "production.error.forbidden": "No tienes permiso para registrar producción.",
   "production.error.generic": "Algo salió mal — inténtalo de nuevo.",
