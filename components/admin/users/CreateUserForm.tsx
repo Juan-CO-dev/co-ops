@@ -1,12 +1,20 @@
 "use client";
 
 /**
- * CreateUserForm — Tier-A "Add user" modal (C.44 Task 13).
+ * CreateUserForm — Tier-B "Add user" modal (C.44 Task 13).
  *
  * Role-conditional fields:
  *   - email + temp password show ONLY when ROLES[role].hasEmailAuth (level >= 6)
  *   - locations multiselect shows ONLY when getRoleLevel(role) < 9
- * Submit: requestStepUp("A") → POST /api/admin/users → close + router.refresh().
+ * Submit: requestStepUp("B") → POST /api/admin/users → close + router.refresh().
+ *
+ * The tier is TIER B because the server says so: POST /api/admin/users runs
+ * assertStepUp(ctx, "B") (WB2-01 — creating a user is a user-lifecycle action).
+ * Asking for Tier A here resolved "ok" with NO password prompt whenever the
+ * client's `unlocked` flag was set, so a >120s-old unlock sent the request with
+ * a stale flag and the admin got a bare 403 step_up_stale with no way to
+ * re-confirm from this action. Client tier and server tier must agree per
+ * action; Tier B always prompts, which is what refreshes step_up_unlocked_at.
  */
 
 import { useState } from "react";
@@ -51,7 +59,7 @@ export function CreateUserForm({
   const handleSubmit = async () => {
     if (submitting || role === "") return;
     setErrorMsg(null);
-    const stepUp = await requestStepUp("A");
+    const stepUp = await requestStepUp("B");
     if (stepUp !== "ok") return;
     setSubmitting(true);
     const result = await postJson("/api/admin/users", {

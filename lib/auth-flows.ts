@@ -105,6 +105,44 @@ export async function isLocked(userId: string): Promise<LockoutState> {
  * Returns {locked: true} only when *this* attempt crossed the threshold (so
  * the route can return 423 immediately rather than 401).
  */
+/**
+ * Write `locked_until`, and PROVE it landed. Returns whether the lock is real.
+ *
+ * The lockout is a security control, not housekeeping. Before this was
+ * rowcount-checked, the UPDATE's error was console.error'd and the flow carried
+ * on to write an `auth_account_locked` audit row and return {locked:true} — so
+ * the route answered 423 while `users.locked_until` stayed null, `isLocked()`
+ * passed the very next attempt, and the audit trail asserted an enforcement
+ * that never happened.
+ *
+ * Two guards, per AGENTS.md ("UPDATE denials are silent — check rowcount";
+ * "never infer success from data"): check the error AND the rowcount, and retry
+ * once, because a transient blip is exactly the failure mode here and rewriting
+ * the same value is idempotent. Never throws — a lock that could not be written
+ * must not also break the response the caller is composing; the caller records
+ * the outcome in the audit metadata instead.
+ */
+async function persistLockout(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  userId: string,
+  lockedUntilIso: string,
+): Promise<boolean> {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const { data, error } = await sb
+      .from("users")
+      .update({ locked_until: lockedUntilIso })
+      .eq("id", userId)
+      .select("id");
+    if (!error && (data?.length ?? 0) > 0) return true;
+    console.error(
+      `[auth-flows] set locked_until failed for user ${userId} (try ${attempt}/2): ${
+        error ? error.message : "0 rows updated"
+      }`,
+    );
+  }
+  return false;
+}
+
 export async function recordFailedAttempt(
   userId: string | null,
   method: AuthMethod,
@@ -116,6 +154,10 @@ export async function recordFailedAttempt(
   let lockedUntilIso: string | null = null;
   let userRole: RoleCode | null = null;
   let newCount = 0;
+  /** True when the counter RPC errored — the attempt was NOT counted (see below). */
+  let counterError = false;
+  /** True only when locked_until is proven written (rowcount-checked). */
+  let lockPersisted = false;
 
   if (userId) {
     const sb = getServiceRoleClient();
@@ -144,7 +186,12 @@ export async function recordFailedAttempt(
           `[auth-flows] increment_failed_login failed for user ${userId}: ${rpcErr.message}`,
         );
         // Counter did not advance; treat this attempt as non-threshold-crossing.
+        // A PERSISTENTLY broken RPC therefore disables lockout entirely, so the
+        // condition must be forensically visible rather than console-only: the
+        // failure audit row below carries counter_error instead of a fabricated
+        // attempt_number of 0 (which reads as "first attempt" in the trail).
         newCount = 0;
+        counterError = true;
       } else {
         newCount = typeof rpcCount === "number" ? rpcCount : 0;
       }
@@ -154,15 +201,7 @@ export async function recordFailedAttempt(
         const until = new Date(Date.now() + LOCKOUT_MINUTES * 60 * 1000);
         lockedUntilIso = until.toISOString();
         lockedThisAttempt = true;
-        const { error: lockErr } = await sb
-          .from("users")
-          .update({ locked_until: lockedUntilIso })
-          .eq("id", userId);
-        if (lockErr) {
-          console.error(
-            `[auth-flows] set locked_until failed for user ${userId}: ${lockErr.message}`,
-          );
-        }
+        lockPersisted = await persistLockout(sb, userId, lockedUntilIso);
       }
 
       if (lockedThisAttempt) {
@@ -177,6 +216,12 @@ export async function recordFailedAttempt(
             lockout_minutes: LOCKOUT_MINUTES,
             locked_until: lockedUntilIso,
             method,
+            // The row asserts the lock WAS enforced, so it must also carry
+            // whether locked_until actually landed. Without this, a swallowed
+            // write leaves an audit trail claiming a lockout that isLocked()
+            // will not see on the attacker's very next attempt.
+            lock_persisted: lockPersisted,
+            ...(lockPersisted ? {} : { lock_persist_failed: true }),
           },
           ipAddress: ctx.ipAddress,
           userAgent: ctx.userAgent,
@@ -201,8 +246,13 @@ export async function recordFailedAttempt(
     resourceId: userId,
     metadata: {
       reason,
-      ...(COUNTABLE_FAILURE_REASONS.has(reason) && userId ? { attempt_number: newCount } : {}),
+      ...(COUNTABLE_FAILURE_REASONS.has(reason) && userId
+        ? counterError
+          ? { counter_error: true } // attempt NOT counted — never claim a number
+          : { attempt_number: newCount }
+        : {}),
       ...(lockedThisAttempt ? { triggered_lockout: true } : {}),
+      ...(lockedThisAttempt && !lockPersisted ? { lock_persist_failed: true } : {}),
       ...(extraMetadata ?? {}),
     },
     ipAddress: ctx.ipAddress,

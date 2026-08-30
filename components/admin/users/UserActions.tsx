@@ -3,9 +3,14 @@
 /**
  * UserActions — per-row Tier-B action controls + edit-profile (C.44 Task 13).
  *
- * Tier-B actions (reset PIN, set password, change role, change locations,
- * deactivate/activate) each require requestStepUp("B") before the fetch.
- * Edit profile is Tier A.
+ * EVERY action here is Tier B (reset PIN, set password, change role, change
+ * locations, edit profile, deactivate/activate) because every route behind them
+ * is: PATCH /api/admin/users/[id] runs assertStepUp(ctx, "B") exactly like its
+ * siblings (WB2-01 — editing another user's profile/email is a user mutation).
+ * Edit profile used to ask for Tier A, which resolves "ok" with no prompt while
+ * the client's `unlocked` flag is set: past the 120s freshness window that sent
+ * the PATCH with a stale flag and returned a bare 403 step_up_stale the admin
+ * could not clear from this action. Client tier follows server tier, per action.
  *
  * canActOn gating happens in the parent (UserRow): this component is only
  * mounted when the actor may act on the target.
@@ -213,7 +218,7 @@ export function UserActions({
                   else if (a.kind === "set_password") void run("B", `${base}/set-password`, { password });
                   else if (a.kind === "change_role") void run("B", `${base}/role`, { role });
                   else if (a.kind === "change_locations") void run("B", `${base}/locations`, { locationIds: locs });
-                  else if (a.kind === "edit_profile") void run("A", base, { name: name.trim() }, "PATCH");
+                  else if (a.kind === "edit_profile") void run("B", base, { name: name.trim() }, "PATCH");
                   else if (a.kind === "deactivate") void run("B", `${base}/deactivate`, {});
                   else if (a.kind === "activate") void run("B", `${base}/activate`, {});
                 }}
