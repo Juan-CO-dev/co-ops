@@ -160,15 +160,62 @@ export async function submitCashReport(
   if (insErr) {
     // Attempt to undo the supersede so the prior row remains live.
     if (prior) {
-      // BUG 4 fix: log a failed rollback — if this errors the prior row stays
-      // superseded with no live row, so surface it for diagnosis (we still
-      // throw the original insert error as the primary failure).
-      const { error: rollbackErr } = await service
-        .from("cash_reports").update({ superseded_at: null }).eq("id", prior.id);
-      if (rollbackErr) {
-        console.error(
-          `[cash] submitCashReport rollback of supersede failed for prior ${prior.id}: ${rollbackErr.message}`,
-        );
+      // The rollback lifts OUR OWN stamp and nobody else's. Two simultaneous
+      // submits both read this same prior row and both supersede it; the loser's
+      // insert then loses to `cash_reports_one_live_per_day`, and an unfiltered
+      // rollback would be asking that same index for a SECOND live row — which it
+      // refuses. Matching on the stamp we wrote makes the no-op explicit instead
+      // of leaving the index to refuse it, and `count` makes the silent UPDATE 0
+      // (someone re-stamped the row) visible per the house rowcount law.
+      const { error: rollbackErr, count: rolledBack } = await service
+        .from("cash_reports")
+        .update({ superseded_at: null }, { count: "exact" })
+        .eq("id", prior.id)
+        .eq("superseded_at", nowIso);
+
+      if (rollbackErr || (rolledBack ?? 0) === 0) {
+        // A FAILED ROLLBACK IS NOT PROOF OF A STRAND (wiring audit, 2026-08-29).
+        // In the concurrent case above the refusal is the index doing its job and
+        // the day is fine; in the single-writer case the prior row is now
+        // superseded with no live successor, and every read surface
+        // (loadCashReport, reports hub, dashboard) filters `superseded_at IS
+        // NULL`, so the location silently reads as having filed no cash report.
+        // The two are indistinguishable from the rollback's error alone, so ask
+        // the question that actually decides it.
+        const { data: liveNow } = await service
+          .from("cash_reports").select("id")
+          .eq("location_id", args.locationId).eq("report_date", args.date)
+          .is("superseded_at", null)
+          .maybeSingle<{ id: string }>();
+
+        if (liveNow) {
+          console.warn(
+            `[cash] submitCashReport rollback refused for prior ${prior.id} — a live report (${liveNow.id}) already covers ${args.locationId}/${args.date}; a concurrent submit won and nothing is stranded.`,
+          );
+        } else {
+          // Forensic row, not just a log line: a strand is invisible on every
+          // read surface, so the evidence has to live somewhere queryable. The
+          // action is the one this write already speaks (`cash_report.supersede`,
+          // closed vocabulary); the outcome names the failure. Awaited because we
+          // throw on the next line — `audit()` is fail-open and never throws.
+          console.error(
+            `[cash] submitCashReport STRANDED prior ${prior.id}: the supersede rolled back neither cleanly (${rollbackErr?.message ?? "0 rows matched"}) nor into a live successor — ${args.locationId}/${args.date} now reads as having no cash report until someone resubmits.`,
+          );
+          await audit({
+            actorId: args.actor.userId, actorRole: args.actor.role,
+            action: "cash_report.supersede",
+            resourceTable: "cash_reports", resourceId: prior.id,
+            metadata: {
+              outcome: "supersede_strand",
+              location_id: args.locationId,
+              report_date: args.date,
+              insert_error: insErr.message,
+              rollback_error: rollbackErr?.message ?? null,
+              rollback_rows: rolledBack ?? null,
+            },
+            ipAddress: null, userAgent: null,
+          });
+        }
       }
     }
     throw new Error(`submitCashReport: insert: ${insErr.message}`);
