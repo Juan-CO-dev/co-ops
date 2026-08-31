@@ -30,6 +30,7 @@ import {
   pullSales,
   salesConsumption,
   addExclusion,
+  listExclusions,
   TOAST_SALES_READ_MIN,
   TOAST_SALES_WRITE_MIN,
 } from "@/lib/catering/toast-sales";
@@ -139,6 +140,97 @@ describe("toast-sales binds the location, not just the level", () => {
       expect(at).toBeGreaterThan(-1);
       expect(src.slice(at, src.indexOf("\n}", at))).not.toContain("assertLocationAccess");
     }
+  });
+});
+
+// ── AN EXCLUSION IS PER-SHOP (Juan's ruling, 2026-08-31) ────────────────────────
+//
+// *"No… it def needs per shop."* The wiring audit (PR #301) flagged and left undecided
+// that `location_id NULL` is the GLOBAL row while the only authoring surface always sent
+// null — a shop-scoped GM writing business-wide ingest config. Juan decided; global
+// authoring is now closed at the type AND at the wire, with no level-9 replacement.
+
+describe("addExclusion authors for ONE shop", () => {
+  it("refuses a null locationId — 400 location_required, before any I/O", async () => {
+    // The type says `string`; this is the wire boundary where an untyped payload lands, and
+    // the old behaviour of that null was "apply to every shop".
+    await expect(
+      addExclusion(gmAtA, {
+        locationId: null as unknown as string,
+        kind: "menu_group",
+        value: "Catering",
+      }),
+    ).rejects.toMatchObject({
+      name: "AdminToastSalesError",
+      status: 400,
+      code: "location_required",
+    });
+  });
+
+  it("refuses an empty-string locationId the same way", async () => {
+    await expect(
+      addExclusion(gmAtA, { locationId: "", kind: "menu_group", value: "Catering" }),
+    ).rejects.toMatchObject({ status: 400, code: "location_required" });
+  });
+
+  it("closes global authoring STRUCTURALLY: the parameter is `string`, not `string | null`", () => {
+    // The runtime guard above is the wire's belt; this is the compiler's braces. A future
+    // caller cannot re-open global authoring without changing this signature on purpose.
+    const at = src.indexOf("export async function addExclusion");
+    const sig = src.slice(at, src.indexOf("): Promise<{ id: string }>", at));
+    expect(at).toBeGreaterThan(-1);
+    expect(sig).toContain("locationId: string;");
+    expect(sig).not.toContain("locationId: string | null");
+    // …and the bind is now UNCONDITIONAL, where it used to hang off `!= null`.
+    const body = src.slice(at, src.indexOf("\n}", at));
+    expect(body).toContain("assertLocationAccess(actor, input.locationId)");
+    expect(body).not.toContain("if (input.locationId != null) assertLocationAccess");
+  });
+
+  it("does NOT mint a level-9 global-authoring path to replace it", () => {
+    // The simpler honouring of the ruling: no second, higher-privileged spelling of a thing
+    // Juan just said should not happen.
+    expect(src).not.toMatch(/requireLevel\(actor,\s*9\)/);
+    expect(src).not.toContain("GLOBAL_EXCLUSION_MIN");
+  });
+
+  it("leaves the two legacy GLOBAL rows matching — the matcher is untouched", () => {
+    // Their disposition (keep-as-global vs split-per-shop) is Juan's, and is not this PR.
+    const shared = readFileSync(join(ROOT, "lib", "catering", "toast-sales-shared.ts"), "utf8");
+    expect(shared).toContain("if (ex.locationId != null && ex.locationId !== target.locationId) continue;");
+    expect(shared).toContain("null = every location");
+  });
+});
+
+describe("listExclusions is scoped to the shop being viewed", () => {
+  it("binds the location — a GM at shop A cannot list shop B's ingest config", async () => {
+    await expect(listExclusions(agmAtA, LOCATION_B)).rejects.toMatchObject({
+      name: "AdminToastSalesError",
+      status: 403,
+      code: "forbidden",
+    });
+  });
+
+  it("returns this shop's own rows PLUS the legacy global ones, and nothing else", () => {
+    // The filter is one line inside a DB-touching function, so it is pinned at the source:
+    // dropping the `== null` half would hide the two live global rows from both shops.
+    const at = src.indexOf("export async function listExclusions");
+    const body = src.slice(at, src.indexOf("\n}", at));
+    expect(at).toBeGreaterThan(-1);
+    expect(body).toContain("assertLocationAccess(actor, locationId)");
+    expect(body).toContain("e.locationId == null || e.locationId === locationId");
+  });
+
+  it("leaves the actor-less ingest read UNFILTERED — the cron serves every shop", () => {
+    // loadActiveExclusions feeds matchesExclusion, which does the location filtering itself
+    // per target. Filtering there would silently drop the other shop's rules mid-pull.
+    const at = src.indexOf("async function loadActiveExclusions");
+    const body = src.slice(at, src.indexOf("\n}", at));
+    expect(at).toBeGreaterThan(-1);
+    // Takes no location parameter at all, and never narrows the select by one.
+    expect(body).toContain("async function loadActiveExclusions(): Promise<ExclusionView[]>");
+    expect(body).not.toContain('.eq("location_id"');
+    expect(body).not.toContain("assertLocationAccess");
   });
 });
 

@@ -18,8 +18,13 @@ export async function POST(req: NextRequest) {
   if (!su.ok) return jsonError(403, su.code);
 
   const b = parsed as Record<string, unknown>;
-  const locationId = b.locationId == null ? null : (typeof b.locationId === "string" && UUID_RE.test(b.locationId) ? b.locationId : undefined);
-  if (locationId === undefined) return jsonError(400, "invalid_payload", { field: "locationId" });
+  // An exclusion is authored FOR ONE SHOP (Juan's ruling, 2026-08-31 — see addExclusion).
+  // A null/absent locationId used to mean "every location"; it is now a 400, and the lib
+  // refuses it a second time behind this.
+  if (typeof b.locationId !== "string" || !UUID_RE.test(b.locationId)) {
+    return jsonError(400, "invalid_payload", { field: "locationId" });
+  }
+  const locationId = b.locationId;
   if (typeof b.kind !== "string" || typeof b.value !== "string") return jsonError(400, "invalid_payload", { field: "kind/value" });
   try {
     const { id } = await addExclusion(ctx, { locationId, kind: b.kind, value: b.value, note: typeof b.note === "string" ? b.note : null });

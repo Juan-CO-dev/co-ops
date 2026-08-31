@@ -452,9 +452,21 @@ export async function materializeDailyDepletion(
 
 export interface ExclusionView extends IngestExclusion { createdAt: string }
 
-export async function listExclusions(actor: AuthContext): Promise<ExclusionView[]> {
+/**
+ * The DISPLAY read, scoped to ONE shop (Juan's ruling, 2026-08-31 — see addExclusion).
+ *
+ * Returns the rows that shape THIS location's ingest: its own, plus the legacy global rows
+ * that still apply to every shop. Before the ruling every row was global, so an unscoped
+ * list was the same list; now that exclusions are per-shop, an unscoped list would show a
+ * manager the OTHER shop's config beside their own with no way to tell them apart — and a
+ * Remove button that 403s on it. The matcher is unchanged and still does the real filtering
+ * at ingest; this is the surface's question, not the engine's.
+ */
+export async function listExclusions(actor: AuthContext, locationId: string): Promise<ExclusionView[]> {
   requireLevel(actor, TOAST_SALES_READ_MIN);
-  return loadActiveExclusions();
+  assertLocationAccess(actor, locationId);
+  const all = await loadActiveExclusions();
+  return all.filter((e) => e.locationId == null || e.locationId === locationId);
 }
 
 /** Actor-less exclusions core (the cron/backfill materializer path — mirrors
@@ -471,21 +483,38 @@ async function loadActiveExclusions(): Promise<ExclusionView[]> {
 
 const KINDS = new Set(["dining_option", "menu_group", "toast_item_guid", "item_name_contains"]);
 
+/**
+ * Author an ingest exclusion FOR ONE SHOP. GM+, and the shop must be one the actor holds.
+ *
+ * ── AN EXCLUSION IS PER-SHOP (Juan's ruling, 2026-08-31) ─────────────────────────
+ * *"No… it def needs per shop."* The wiring audit (PR #301) flagged, and left undecided,
+ * that `location_id NULL` is the GLOBAL row (null = every location, per `matchesExclusion`)
+ * while the only authoring surface always sent null — so a shop-scoped GM was writing
+ * business-wide ingest config from a location-scoped 6 AM screen. Juan has now decided, and
+ * the decision is closed STRUCTURALLY rather than by an authority level: `locationId` is
+ * `string`, so the compiler refuses a global write at every call site, and the runtime guard
+ * below refuses one that arrives over the wire. There is no level-9 global-authoring path,
+ * because a second, higher-privileged spelling of a thing Juan just said should not happen
+ * is a capability with no caller and a hole with a lock on it.
+ *
+ * Global rows still MATCH — the two legacy ones (`Ezcater`, `App Catering Delivery`,
+ * authored 2026-07-25) keep working exactly as they do today, and are NOT migrated here;
+ * their disposition (keep-as-global vs split-per-shop) is Juan's call and its own change.
+ */
 export async function addExclusion(
   actor: AuthContext,
-  input: { locationId: string | null; kind: string; value: string; note?: string | null },
+  input: { locationId: string; kind: string; value: string; note?: string | null },
 ): Promise<{ id: string }> {
   requireLevel(actor, TOAST_SALES_WRITE_MIN);
   if (!KINDS.has(input.kind)) throw new AdminToastSalesError(400, "invalid_kind", "Unknown exclusion kind");
   const value = input.value.trim();
   if (value.length === 0 || value.length > 200) throw new AdminToastSalesError(400, "invalid_value", "Value required (≤200 chars)");
-  // A TARGETED exclusion binds its target. `locationId: null` is the GLOBAL row (null =
-  // every location, per matchesExclusion) and is deliberately left at the level floor:
-  // whether a shop-scoped GM may author business-wide ingest config is an authority
-  // question for Juan, not a bind, and today's UI only ever sends null — silently moving
-  // that to level 9 would take a working 6 AM button away from both GMs. Flagged, not
-  // changed. What IS closed here is the cross-shop write the audit named.
-  if (input.locationId != null) assertLocationAccess(actor, input.locationId);
+  // The runtime half of the ruling: the type says `string`, but this is a wire boundary and
+  // an untyped payload reaches it. A null/blank here is a REFUSAL, never a global row.
+  if (typeof input.locationId !== "string" || input.locationId.length === 0) {
+    throw new AdminToastSalesError(400, "location_required", "An exclusion is authored for one shop");
+  }
+  assertLocationAccess(actor, input.locationId);
   const sb = getServiceRoleClient();
   const { data, error } = await sb.from("toast_ingest_exclusions")
     .insert({ location_id: input.locationId, kind: input.kind, value, note: input.note ?? null, created_by: actor.user.id })
@@ -506,8 +535,15 @@ export async function deactivateExclusion(actor: AuthContext, id: string): Promi
   const sb = getServiceRoleClient();
   // Load-then-bind (the `mapId` shape of lib/admin/toast-map.ts's bind): an opaque id says
   // nothing about WHOSE ingest this exclusion reshapes, so the row's own location is what
-  // gets authorized. A global row (location_id null) keeps the level floor — same
-  // deliberate carve-out, and same flag, as addExclusion above.
+  // gets authorized.
+  //
+  // ⚠ A GLOBAL row (location_id null) still keeps the level floor, and this is now the ONLY
+  // path in the app that acts on business-wide ingest config — addExclusion can no longer
+  // create one (Juan's ruling, above). Left UNCHANGED on purpose: Juan ruled on AUTHORING,
+  // and the two legacy global rows are awaiting his disposition, so raising the removal
+  // floor here could strand them behind a level nobody on the floor holds. Whether removing
+  // a business-wide rule should also be per-shop is the flagged remainder of the same
+  // question, and it rides with that disposition rather than being decided by inference.
   const { data: row, error: loadErr } = await sb.from("toast_ingest_exclusions")
     .select("id, location_id").eq("id", id).eq("active", true)
     .maybeSingle<{ id: string; location_id: string | null }>();

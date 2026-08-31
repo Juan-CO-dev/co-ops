@@ -27,7 +27,7 @@ function yesterdayEt(): string {
 }
 
 const KNOWN = new Set([
-  "forbidden", "invalid_payload", "invalid_date", "invalid_kind", "invalid_value", "not_found",
+  "forbidden", "invalid_payload", "invalid_date", "invalid_kind", "invalid_value", "not_found", "location_required",
   "location_not_found", "not_configured", "auth_failed", "rate_limited", "bad_payload", "concurrent_pull", "invalid_entity", "conflict",
   "step_up_required", "step_up_stale", "generic",
 ]);
@@ -280,7 +280,14 @@ export function SalesTab({ locationId, canPull }: { locationId: string | null; c
                   <span>
                     <span className="font-semibold">{t(`admin.toastsales.kind.${ex.kind}` as TranslationKey)}</span>
                     {" = "}{ex.value}
-                    {ex.locationId == null ? ` · ${t("admin.toastsales.all_locations")}` : ""}
+                    {/* Scope is now a real distinction (Juan, 2026-08-31): the list carries
+                        this shop's own rows plus the legacy business-wide ones, and a row
+                        that reshapes BOTH shops' ingest has to say so out loud. */}
+                    {ex.locationId == null && (
+                      <span className="ml-2 rounded-full bg-co-warning-surface px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] text-co-warning-text">
+                        {t("admin.toastsales.all_locations")}
+                      </span>
+                    )}
                   </span>
                   {canPull && (
                     <button type="button" className={btn} disabled={busy} onClick={() => write(`/api/admin/toast-sales/exclusions/${ex.id}`, { action: "deactivate" })}>
@@ -292,20 +299,27 @@ export function SalesTab({ locationId, canPull }: { locationId: string | null; c
               {exclusions.length === 0 && <li className="text-co-text-muted">{t("admin.toastsales.no_exclusions")}</li>}
             </ul>
             {canPull && (
-              <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-co-border/50 pt-2">
-                <select aria-label={t("admin.toastsales.kind_label")} value={exKind} onChange={(e) => setExKind(e.target.value)} className={inputCls}>
-                  <option value="dining_option">{t("admin.toastsales.kind.dining_option")}</option>
-                  <option value="menu_group">{t("admin.toastsales.kind.menu_group")}</option>
-                  <option value="toast_item_guid">{t("admin.toastsales.kind.toast_item_guid")}</option>
-                  <option value="item_name_contains">{t("admin.toastsales.kind.item_name_contains")}</option>
-                </select>
-                <input aria-label={t("admin.toastsales.value_label")} value={exValue} onChange={(e) => setExValue(e.target.value)} placeholder={t("admin.toastsales.value_label")} className={`${inputCls} w-48`} />
-                <button
-                  type="button" className={btn} disabled={busy || exValue.trim().length === 0}
-                  onClick={() => { void write("/api/admin/toast-sales/exclusions", { locationId: null, kind: exKind, value: exValue.trim() }); setExValue(""); }}
-                >
-                  + {t("admin.toastsales.add_exclusion")}
-                </button>
+              <div className="mt-2 flex flex-col gap-2 border-t border-co-border/50 pt-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <select aria-label={t("admin.toastsales.kind_label")} value={exKind} onChange={(e) => setExKind(e.target.value)} className={inputCls}>
+                    <option value="dining_option">{t("admin.toastsales.kind.dining_option")}</option>
+                    <option value="menu_group">{t("admin.toastsales.kind.menu_group")}</option>
+                    <option value="toast_item_guid">{t("admin.toastsales.kind.toast_item_guid")}</option>
+                    <option value="item_name_contains">{t("admin.toastsales.kind.item_name_contains")}</option>
+                  </select>
+                  <input aria-label={t("admin.toastsales.value_label")} value={exValue} onChange={(e) => setExValue(e.target.value)} placeholder={t("admin.toastsales.value_label")} className={`${inputCls} w-48`} />
+                  <button
+                    type="button" className={btn} disabled={busy || exValue.trim().length === 0}
+                    // PER-SHOP (Juan, 2026-08-31: "it def needs per shop"). This tab is
+                    // already a location-scoped surface, so it authors for the shop it is
+                    // showing — `locationId` is non-null past the guard at the top of the
+                    // component. The route and the lib both refuse a null a second time.
+                    onClick={() => { void write("/api/admin/toast-sales/exclusions", { locationId, kind: exKind, value: exValue.trim() }); setExValue(""); }}
+                  >
+                    + {t("admin.toastsales.add_exclusion")}
+                  </button>
+                </div>
+                <p className="text-xs text-co-text-muted">{t("admin.toastsales.exclusion_scope_note")}</p>
               </div>
             )}
           </div>

@@ -19,7 +19,8 @@ export async function GET(req: NextRequest) {
   try {
     const [report, exclusions, entities] = await Promise.all([
       salesConsumption(ctx, locationId, date),
-      listExclusions(ctx),
+      // Scoped to the shop being viewed — exclusions are per-shop (Juan, 2026-08-31).
+      listExclusions(ctx, locationId),
       listMappableEntities(ctx),
     ]);
     return jsonOk({ report, exclusions, entities });

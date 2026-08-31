@@ -22,6 +22,21 @@
  *   · a delivery lands in the morning, before service, so the coverage tail stops the day
  *     BEFORE coverThrough.
  * Covered days are therefore exactly { d : walkDate < d < coverThrough }.
+ *
+ * ── THE HORIZON IS SELECTED IN ARRIVAL ORDER (Juan's ruling, 2026-08-31) ───────
+ * *"we def need to build for mixed lead times… no cut corners."* The shelf is a physical
+ * thing: it is replenished when a TRUCK LANDS, not when an order is phoned in. So the two
+ * delivery instants that bound the horizon are chosen by ARRIVAL date over the set of
+ * order opportunities this walk can still catch — never by order date. With equal leads
+ * everywhere the two orders coincide (arrival is order + a constant, so the orderings are
+ * identical), which is why CO's real rhythm — 50 live pairs, every one lead 1, live-verified
+ * 2026-08-29 — does not move by a single day. With UNEQUAL leads on one vendor they do NOT
+ * coincide: a Monday order at lead 3 lands Thursday while Tuesday's order at lead 1 lands
+ * Wednesday, so the orders CROSS in transit. Selecting in order-date space then produced a
+ * `coverThroughDate` EARLIER than `nextDeliveryDate` and a covered-day set that understated
+ * the shelf. Arrival-order selection makes that inversion structurally impossible:
+ * `coverThroughDate` is the earliest arrival STRICTLY AFTER `nextDeliveryDate`, so it is
+ * always the later of the two.
  */
 import { etDayFromDate } from "@/lib/et-day-shared";
 
@@ -53,13 +68,23 @@ export interface RhythmSkip {
 }
 
 export interface CoverageWindow {
-  /** The delivery the order placed at this walk will arrive on. */
+  /**
+   * The next truck to LAND — the earliest arrival among the order opportunities this walk
+   * can still catch. Under equal leads that is the arrival of `orderDateEt`'s own order;
+   * under CROSSING leads it may be a later order's truck that overtakes it, which is the
+   * whole point of selecting in arrival order.
+   */
   nextDeliveryDate: string;
-  /** The delivery AFTER that — what this par must carry the shop to. */
+  /** The truck AFTER that — strictly later, always — and what this par must carry the shop to. */
   coverThroughDate: string;
   /** Every ET calendar day strictly between the walk date and coverThroughDate. */
   coveredDays: string[];
-  /** The order day the walk is placing against (may be a later day than the walk). */
+  /**
+   * The order day the walk is placing against (may be a later day than the walk) — ORDER
+   * space, and deliberately not re-homed by the arrival-order selection above: this is the
+   * deadline the walker is working to, not a truck. With crossing leads it can be the order
+   * of a LATER arrival than `nextDeliveryDate`.
+   */
   orderDateEt: string;
 }
 
@@ -152,8 +177,16 @@ export interface NextDeliveryInput {
   horizonDays?: number;
 }
 
+/** One catchable order opportunity and the truck it produces. */
+export interface DeliveryOpportunity {
+  orderDateEt: string;
+  deliveryDateEt: string;
+}
+
 /**
- * The next order opportunity ON OR AFTER the walk instant, and the delivery it produces.
+ * EVERY order opportunity this walk can still catch inside the horizon, with the delivery
+ * each one produces, in ORDER-DATE order. The ONE place that knows about cutoffs, skips and
+ * leads; `nextDeliveryAfter` and `coverageWindow` are two different SELECTIONS over it.
  *
  * A candidate order day qualifies when (a) an active rhythm pair exists for that dow and
  * (b) either the day is in the future, or it is today AND the walk is at or before that
@@ -161,14 +194,14 @@ export interface NextDeliveryInput {
  * TODAY as already missed (the conservative read: never promise a truck we cannot prove
  * the shop can still catch) and future days as available.
  *
- * Returns null when no rhythm is authored, or when nothing qualifies inside the horizon —
- * the caller then degrades to honest delta-nudging with NO coverage claim.
+ * A pair whose truck falls inside an active skip window is DROPPED, not deferred: the
+ * outage cancels that delivery, and the coverage the shop loses is absorbed by the later
+ * arrivals this list still contains.
  */
-export function nextDeliveryAfter(
-  input: NextDeliveryInput,
-): { orderDateEt: string; deliveryDateEt: string } | null {
+export function upcomingDeliveries(input: NextDeliveryInput): DeliveryOpportunity[] {
+  const out: DeliveryOpportunity[] = [];
   const horizon = input.horizonDays ?? 21;
-  if (input.rhythm.length === 0) return null;
+  if (input.rhythm.length === 0) return out;
   const byDow = new Map<number, RhythmRow>();
   for (const r of input.rhythm) if (!byDow.has(r.orderDow)) byDow.set(r.orderDow, r);
 
@@ -185,65 +218,86 @@ export function nextDeliveryAfter(
     }
     const deliveryDateEt = addDaysEt(orderDateEt, pair.leadDays);
     if (isSkipped(deliveryDateEt, input.skips)) continue;
-    return { orderDateEt, deliveryDateEt };
+    out.push({ orderDateEt, deliveryDateEt });
   }
-  return null;
+  return out;
 }
 
 /**
- * The full coverage window for a walk: the delivery this order lands on, the delivery AFTER
- * it (what the par must carry the shop to — plan D3), and every ET day in between.
+ * The next order opportunity ON OR AFTER the walk instant, and the delivery it produces.
+ * ORDER space by definition — this is the deadline question ("what am I ordering against
+ * right now?"), and it is deliberately NOT the arrival question `coverageWindow` asks.
  *
- * Implemented as two chained nextDeliveryAfter calls, so there is exactly one place that
- * knows about cutoffs, skips and leads.
+ * Returns null when no rhythm is authored, or when nothing qualifies inside the horizon —
+ * the caller then degrades to honest delta-nudging with NO coverage claim.
+ */
+export function nextDeliveryAfter(input: NextDeliveryInput): DeliveryOpportunity | null {
+  return upcomingDeliveries(input)[0] ?? null;
+}
+
+/**
+ * The full coverage window for a walk: the next truck to land, the truck AFTER it (what the
+ * par must carry the shop to — plan D3), and every ET day in between.
  *
- * ── THE SECOND CALL ANCHORS AT THE FIRST **ORDER** DAY + 1, NOT THE FIRST DELIVERY ──
- * D2 is "the next chance to REPLENISH", and a chance to replenish is a chance to ORDER —
- * the review interval of a base-stock policy is the gap between ORDER opportunities, not
- * between trucks. So the second call starts the day after the first ORDER day, at 00:00
- * (a walk time of 00:00 because by then the shop is unambiguously ordering against a future
- * day, and the cutoff question only ever applies to the walk day itself).
+ * ── THE SELECTION IS IN ARRIVAL ORDER (Juan's ruling, 2026-08-31) ─────────────────
+ * *"we def need to build for mixed lead times… no cut corners."* `upcomingDeliveries` is
+ * enumerated in ORDER-date order; this function re-sorts it by ARRIVAL and takes:
+ *   · `nextDeliveryDate` — the earliest arrival;
+ *   · `coverThroughDate` — the earliest arrival STRICTLY AFTER it, whenever its own order
+ *     was placed. Strictly-after is doing two jobs: it makes the inversion impossible, and
+ *     it collapses two trucks landing the SAME day into one replenishment instant, which is
+ *     what a shelf actually experiences.
  *
- * Anchoring at the first DELIVERY instead would be wrong, and wrong in the expensive
- * direction, on every next-day vendor CO actually has: Boar's Head, Trimark, Cardinal and
- * Leonard Paper all order Mon–Fri (or daily) at lead 1, so a Monday walk's D1 is Tuesday and
- * its true D2 is Wednesday — Tuesday's order. Starting the search at Wednesday would skip
- * Tuesday's order day entirely and return Thursday, padding every one of those pars by a
- * full extra day of demand. The two anchors agree whenever no order day falls inside the
- * first order's lead window, which is every rhythm authored at CO today (seed 29: EVERY
- * pair is lead 1).
+ * ── THIS IS STILL "THE NEXT CHANCE TO REPLENISH", NOT "THE DAY AFTER THE TRUCK" ───
+ * The next-day vendors — Boar's Head, Trimark, Cardinal, Leonard Paper all order Mon–Fri (or
+ * daily) at lead 1, the bulk of CO's authored rhythm — are exactly why the old
+ * implementation searched from the first ORDER day + 1 rather than the first DELIVERY + 1:
+ * a Monday walk's D1 is Tuesday and its true D2 is Wednesday (Tuesday's order), and
+ * anchoring on the truck would have skipped Tuesday's order day and returned Thursday,
+ * padding every one of those pars by a full extra day of demand. Arrival-order selection
+ * keeps that answer, because Tuesday's order is the second ARRIVAL too. What it fixes is
+ * the case the old anchor got wrong.
  *
- * ── STATED LIMITATION: CROSSING LEAD TIMES ARE NOT MODELLED ────────────────────
- * A vendor with UNEQUAL leads on two order days at one location (say Mon lead 3, Tue lead 1)
- * makes its orders cross in transit, and then D2's truck can land BEFORE D1's:
- * `coverThroughDate` comes out earlier than `nextDeliveryDate`, and the covered set is the
- * short one. That is the honest base-stock answer in inventory POSITION (the Tuesday order
- * really is the next replenishment) and it under-states the shelf, which physically waits
- * for Thursday. No such rhythm has been AUTHORED here — `scripts/seed/29-vendor-rhythm.ts`,
- * the record of Cristian's real schedule, is lead 1 on every pair it writes — but the schema
- * permits it (`lead_days` is 0..14, per order day, editable on the vendor page), so it is
- * recorded here and pinned by a test rather than guarded against with arithmetic nobody can
- * check against real rows. The first unequal-lead pair an admin authors is the trigger to
- * design for it.
+ * ── WHAT CHANGED, AND WHY NOTHING AT CO MOVES ────────────────────────────────────
+ * When every lead on a vendor is equal, arrival = order + a constant, so arrival order and
+ * order order are the SAME order and this function returns byte-identical windows to the
+ * chained-`nextDeliveryAfter` implementation it replaces — pinned by a differential
+ * regression over the uniform-lead fixture matrix in tests/vendor-rhythm-shared.test.ts.
+ * CO's live rhythm is 50 pairs, every one lead 1 (verified against prod 2026-08-29 and
+ * again 2026-08-31), so the walker does not move by a single day for any real vendor.
+ *
+ * With UNEQUAL leads the orders CROSS in transit — Mon at lead 3 lands Thursday while
+ * Tuesday's lead-1 order lands Wednesday — and order-space selection then returned
+ * `coverThroughDate` (Wed) EARLIER than `nextDeliveryDate` (Thu), understating the covered
+ * set to a single day when the shelf really has to survive two. It is now Wed → Thu, in
+ * that order, covering Tue and Wed. The schema has always permitted this (`lead_days` is
+ * 0..14, authored per order day on the vendor page); it is now MODELLED rather than stated.
  */
 export function coverageWindow(input: NextDeliveryInput): CoverageWindow | null {
-  const first = nextDeliveryAfter(input);
-  if (first == null) return null;
-  const second = nextDeliveryAfter({
-    ...input,
-    // The next chance to ORDER, not the day after the truck — see the block above.
-    walkDateEt: addDaysEt(first.orderDateEt, 1),
-    walkMinutesEt: 0,
-  });
+  const pairs = upcomingDeliveries(input);
+  const firstCatchable = pairs[0];
+  if (firstCatchable == null) return null;
+
+  // Ties (two trucks the same day) resolve to the EARLIER order — the one this walk can
+  // actually place — so the tiebreak never invents a deadline later than the real one.
+  const byArrival = [...pairs].sort(
+    (a, b) =>
+      a.deliveryDateEt.localeCompare(b.deliveryDateEt) ||
+      a.orderDateEt.localeCompare(b.orderDateEt),
+  );
+  const nextDeliveryDate = byArrival[0]!.deliveryDateEt;
+  const second = byArrival.find((p) => p.deliveryDateEt > nextDeliveryDate);
   // A single-order-day vendor still has a second truck: one week later.
-  const coverThroughDate = second?.deliveryDateEt ?? addDaysEt(first.deliveryDateEt, 7);
+  const coverThroughDate = second?.deliveryDateEt ?? addDaysEt(nextDeliveryDate, 7);
+
   const coveredDays: string[] = [];
   for (let d = addDaysEt(input.walkDateEt, 1); d < coverThroughDate; d = addDaysEt(d, 1)) {
     coveredDays.push(d);
   }
   return {
-    orderDateEt: first.orderDateEt,
-    nextDeliveryDate: first.deliveryDateEt,
+    // ORDER space — the deadline the walk is working to, not a truck. See CoverageWindow.
+    orderDateEt: firstCatchable.orderDateEt,
+    nextDeliveryDate,
     coverThroughDate,
     coveredDays,
   };
