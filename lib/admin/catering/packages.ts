@@ -376,7 +376,30 @@ export async function loadPackages(actor: AuthContext): Promise<PackageView[]> {
   return hydratePackages(data ?? []);
 }
 
-/** Active locations for the create form's optional per-location select (≥6). */
+/**
+ * Active locations for the create form's optional per-location select (≥6),
+ * SCOPED TO THE ACTOR'S ASSIGNMENTS (level 9+ = all).
+ *
+ * THIS IS THE TENANT'S SHARED CATERING LOCATION LIST. Five surfaces read it — the
+ * staff LTO board (`app/(authed)/lto`), the admin LTO board, the packages editor
+ * (its create picker AND the global-package price-advice preview selector), the
+ * catering hub's surplus badge and the prep-demand board — so an unscoped return
+ * here was not a cosmetic over-offer: each of those pages ITERATES the list and
+ * issues a per-location read, which is how a single-shop GM came to see the other
+ * store's live LTO board and its perishable surplus.
+ *
+ * The scope is `visibleLocationScope`, the same authority `loadPackages` above
+ * already applies to the rows themselves (ALL_LOCATIONS_MIN = 9, which agrees
+ * with `lockLocationContext`'s own threshold — the floor here is 6, so the role
+ * never says WHICH store). Precedent: `loadFulfillmentNodes` (PR #303) — the list
+ * a picker renders IS its write-target list, and offering a store the writer will
+ * refuse ships a dead option that 403s on Save.
+ *
+ * GLOBALS ARE UNAFFECTED. A `location_id`-null package is the tenant-wide row and
+ * is not reached through this list at all: both `PackageForm` and `FaqForm` carry
+ * their own Global sentinel (`<option value="">`), so global authoring keeps
+ * working at level 6 exactly as before.
+ */
 export async function loadPackageLocations(actor: AuthContext): Promise<PackageLocationOption[]> {
   requireLevel(actor, PACKAGE_READ_MIN);
   const sb = getServiceRoleClient();
@@ -387,7 +410,9 @@ export async function loadPackageLocations(actor: AuthContext): Promise<PackageL
     .order("name", { ascending: true })
     .returns<PackageLocationOption[]>();
   if (error) throw new Error(`loadPackageLocations failed: ${error.message}`);
-  return data ?? [];
+  const scope = visibleLocationScope(actor);
+  if (scope === null) return data ?? [];
+  return (data ?? []).filter((l) => scope.includes(l.id));
 }
 
 /** Load a package row (id + slug + location + active) or throw 404. */

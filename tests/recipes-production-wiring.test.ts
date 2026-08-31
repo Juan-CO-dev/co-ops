@@ -106,23 +106,30 @@ describe("menu_price is written whenever it is SUPPLIED, not only when sold_dire
   });
 });
 
-describe("the one-active-producer guard is app-layer only — pin what actually holds", () => {
+describe("the one-active-producer guard — app-layer today, 0187 behind the gate", () => {
   const src = read("lib", "recipes.ts");
 
   it("both write paths still run the check and refuse with the same code", () => {
-    // There is NO DB backstop: `active` lives on `recipes`, not `recipe_outputs`, so the
-    // state cannot be expressed as a partial unique index (0103 creates plain indexes
-    // only), and check-then-insert is not atomic. Closing the race needs a trigger or an
-    // advisory lock inside create_recipe_full — a migration, filed separately. Until then
-    // the app-layer guard is the ONLY guard, so losing it silently is the real hazard.
+    // `active` lives on `recipes`, not `recipe_outputs`, so the state cannot be expressed
+    // as a partial unique index (0103 creates plain indexes only), and check-then-insert
+    // is not atomic. Migration 0187 closes the race with a per-item advisory lock taken
+    // inside create_recipe_full and a new add_recipe_output — but it is AUTHORED AND NOT
+    // APPLIED, so until that gate opens the app-layer guard is still the only live guard
+    // and losing it silently is still the real hazard.
     expect((src.match(/activeProducerExists\(/g) ?? []).length).toBe(3); // 1 definition + 2 call sites
     expect(fnBody(src, "addRecipeOutput")).toContain('throw new RecipeError(409, "duplicate_active_producer")');
     expect(fnBody(src, "createRecipeFull")).toContain('throw new RecipeError(409, "duplicate_active_producer")');
   });
 
-  it("the gap is documented at the guard rather than read as a settled guarantee", () => {
-    expect(src).toContain("KNOWN GAP");
-    expect(src).toContain("NOT atomic");
+  it("the gap is documented at the guard, and now names the migration that closes it", () => {
+    // Updated by the flags-ledger cleanup arc: the comment used to say "KNOWN GAP,
+    // DELIBERATELY NOT PAPERED OVER" and stop there. It must still be honest that the
+    // window is open — a reader who thinks it is shut is the hazard — while pointing at
+    // 0187 so the next person does not re-derive the same migration.
+    expect(src).toContain("THIS CHECK IS THE FAST PATH, NOT THE GUARANTEE");
+    expect(src).toContain("not atomic");
+    expect(src).toContain("0187");
+    expect(src).toContain("Until 0187 is applied, the window is exactly");
   });
 });
 

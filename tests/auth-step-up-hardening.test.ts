@@ -134,10 +134,44 @@ describe("the lockout write is load-bearing, and the audit row says so", () => {
     expect(src).toContain("lock_persist_failed: true");
   });
 
+  /**
+   * The `auth_signin_<method>_failure` audit call, sliced out on its own.
+   *
+   * RE-ANCHORED by the flags-ledger cleanup arc (deferred finding 4). This assertion
+   * used to run over the WHOLE module with a character-distance regex, and that became
+   * ambiguous the moment a second `counterError` reference appeared upstream — the
+   * degraded lockout row now carries the same outcome marker, and it is written EARLIER
+   * in the file, so an unanchored lazy match latched onto the wrong block. Slicing the
+   * one call under test is the fix; the guarantee it pins is unchanged.
+   */
+  const failureAuditMetadata = (() => {
+    const start = src.indexOf("action: `auth_signin_${method}_failure`");
+    expect(start, "the failure audit call").toBeGreaterThan(-1);
+    const end = src.indexOf("userAgent: ctx.userAgent", start);
+    return src.slice(start, end);
+  })();
+
   it("a broken counter RPC is forensically visible instead of logging attempt 0", () => {
     // counter_error must be reached BEFORE attempt_number in the metadata ternary:
     // an uncounted attempt may never publish a fabricated number.
-    expect(src).toMatch(/counterError[\s\S]{0,200}counter_error: true[\s\S]{0,120}attempt_number/);
+    expect(failureAuditMetadata).toMatch(
+      /counterError[\s\S]{0,600}counter_error: true[\s\S]{0,600}attempt_number/,
+    );
+  });
+
+  it("the degraded branch publishes no attempt number at all", () => {
+    // The stronger form: whatever that branch grows into, the uncounted arm must never
+    // contain the key that would read as a counted attempt.
+    const arm = failureAuditMetadata.slice(
+      failureAuditMetadata.indexOf("? counterError"),
+      failureAuditMetadata.indexOf(": { attempt_number"),
+    );
+    expect(arm.length, "the counterError arm of the metadata ternary").toBeGreaterThan(50);
+    // The object KEY, not the word — the arm's own comment names `attempt_number` to
+    // explain why it is absent, and a comment saying so is the opposite of a violation.
+    expect(arm).not.toContain("attempt_number:");
+    expect(arm).toContain("counter_error: true");
+    expect(arm).toContain('outcome: "lockout_count_degraded"');
   });
 
   it("the lock helper never throws — a failed lock must not also fail the response", () => {

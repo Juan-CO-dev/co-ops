@@ -29,6 +29,25 @@ interface Props {
 // Per-card save state.
 type SaveState = "idle" | "saving" | "saved" | "error";
 
+/**
+ * Map a failed /api/pm-report response to a message key.
+ *
+ * `report_already_submitted` (409) is the only code worth naming: it is the one failure
+ * the manager can act on, and it is not an outage — the report is closed, so the work is
+ * to reopen or amend it rather than retry. Everything else stays generic.
+ */
+async function errorKeyForResponse(res: Response): Promise<TranslationKey> {
+  try {
+    const body = (await res.json()) as { code?: string };
+    if (body.code === "report_already_submitted") {
+      return "pm.error.already_submitted" as TranslationKey;
+    }
+  } catch {
+    /* opaque body — fall through to generic */
+  }
+  return "pm.error.generic" as TranslationKey;
+}
+
 // ─── Gradient i18n map — Record<Gradient, TranslationKey> avoids string-concat casts ──
 
 const GRADIENT_LABEL: Record<Gradient, TranslationKey> = {
@@ -111,7 +130,7 @@ function EmployeeEvalCard({
         setTimeout(() => setSaveState("idle"), 2000);
       } else {
         setSaveState("error");
-        setErrorMsg(t("pm.error.generic"));
+        setErrorMsg(t(await errorKeyForResponse(res)));
       }
     } catch {
       setSaveState("error");
@@ -320,6 +339,7 @@ export function PmReportClient({
   const [mvpUserId, setMvpUserId] = useState<string | null>(report?.mvpUserId ?? null);
   const [mvpNote, setMvpNote] = useState(report?.mvpNote ?? "");
   const [mvpSaveState, setMvpSaveState] = useState<SaveState>("idle");
+  const [mvpError, setMvpError] = useState<string | null>(null);
 
   // Employees being evaluated: auto-populate from wrapUp activity + any existing evals
   const wrapUp: ShiftWrapUpRow[] = report?.wrapUp ?? [];
@@ -368,12 +388,18 @@ export function PmReportClient({
       });
       if (res.ok) {
         setMvpSaveState("saved");
+        setMvpError(null);
         setTimeout(() => setMvpSaveState("idle"), 2000);
       } else {
         setMvpSaveState("error");
+        // This card had NO message slot at all: a refused MVP write showed only a button
+        // that stopped saying "Saved", which is the silent-failure shape the guard exists
+        // to end. The 409 now says why.
+        setMvpError(t(await errorKeyForResponse(res)));
       }
     } catch {
       setMvpSaveState("error");
+      setMvpError(t("pm.error.generic"));
     }
   };
 
@@ -392,7 +418,7 @@ export function PmReportClient({
         router.refresh(); // Server re-renders; submitted=true locks the form
       } else {
         setSubmitState("error");
-        setSubmitError(t("pm.error.generic"));
+        setSubmitError(t(await errorKeyForResponse(res)));
       }
     } catch {
       setSubmitState("error");
@@ -499,6 +525,7 @@ export function PmReportClient({
                 ? t("pm.saved")
                 : t("pm.save")}
           </ActionButton>
+          {mvpError && <p className="text-sm text-co-cta-text">{mvpError}</p>}
         </div>
       </section>
 

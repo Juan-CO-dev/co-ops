@@ -18,6 +18,10 @@ import { audit } from "@/lib/audit";
 import type { AuditAction } from "@/lib/audit-actions";
 import { isAllLocationsAccess, lockLocationContext } from "@/lib/locations";
 import { ROLES } from "@/lib/roles";
+// The authority floor for items.menu_price, shared with the other writer of that column
+// (lib/recipes.ts). Imported from the client-safe surface so this stays a constant, not a
+// second literal 8. See the gate in updateRegistryItemDefinition.
+import { MENU_PRICE_MIN } from "@/lib/recipes-shared";
 import {
   TEMPLATE_ITEM_COLUMNS,
   type TemplateItemRow,
@@ -2640,6 +2644,25 @@ export async function updateRegistryItemDefinition(
   }
   if (args.menuPrice !== undefined && args.menuPrice !== null && (!Number.isFinite(args.menuPrice) || args.menuPrice <= 0)) {
     throw new AdminTemplateError(400, "invalid_menu_price", "Menu price must be a positive number or empty");
+  }
+  // ONE COLUMN, TWO WRITERS, ONE FLOOR. `items.menu_price` is also written by
+  // lib/recipes.ts (setItemMenuPrice / setItemSoldDirectly), which gates it at
+  // MENU_PRICE_MIN — and this writer had no role check on the field at all. It was not
+  // exploitable, because the route above hardcodes `level < 8` for the whole PATCH and 8
+  // IS MENU_PRICE_MIN today; that is a coincidence of two literals, not an agreement, and
+  // the day someone lowers the registry route's floor for a cheaper field the price gate
+  // disappears silently. Importing the shared constant makes the two writers drift-proof
+  // by construction, and `tests/menu-price-floor.test.ts` pins that they still agree.
+  //
+  // The predicate is `!= null`, matching lib/recipes.ts EXACTLY rather than improving on
+  // it: there, an explicit null (clearing the price) deliberately skips the MoO+ check
+  // while any non-null value requires it. That asymmetry is a documented authorization
+  // decision of the recipes cluster (PR #298's flag), and aligning means adopting it, not
+  // silently tightening one of the two writers.
+  if (args.menuPrice != null) {
+    if (ROLES[actor.user.role].level < MENU_PRICE_MIN) {
+      throw new AdminTemplateError(403, "forbidden", "Setting a menu price requires MoO+");
+    }
   }
 
   const { data: item, error: rErr } = await sb

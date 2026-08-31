@@ -6,6 +6,7 @@ import { requireSession } from "@/lib/session";
 import { operationalNow } from "@/lib/midshift";
 import {
   PM_REPORT_BASE_LEVEL,
+  PmReportError,
   getOrCreatePmReport,
   saveEmployeeEval,
   setMvp,
@@ -113,6 +114,12 @@ export async function POST(req: NextRequest) {
       });
       return jsonOk({ id });
     } catch (err) {
+      // A CLOSED REPORT IS A REFUSAL, NOT A FAULT. saveEmployeeEval / setMvp guard on
+      // `status = 'open'`; without this branch that refusal fell into the catch-all below
+      // and came back as a 500 the client renders as "something went wrong", which is
+      // indistinguishable from a real outage and tells the manager nothing about the one
+      // thing they can act on — the report is already submitted, so reopen or amend it.
+      if (err instanceof PmReportError) return jsonError(err.status, err.code);
       console.error("[/api/pm-report] save_eval failed:", err instanceof Error ? err.message : err);
       return jsonError(500, "internal_error", { message: "save eval failed" });
     }
@@ -136,6 +143,7 @@ export async function POST(req: NextRequest) {
       });
       return jsonOk({});
     } catch (err) {
+      if (err instanceof PmReportError) return jsonError(err.status, err.code);
       console.error("[/api/pm-report] set_mvp failed:", err instanceof Error ? err.message : err);
       return jsonError(500, "internal_error", { message: "set mvp failed" });
     }

@@ -25,7 +25,7 @@
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
-import { lockLocationContext, type LocationActor } from "@/lib/locations";
+import { isAllLocationsAccess, lockLocationContext, type LocationActor } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
 
@@ -58,6 +58,20 @@ function normalizeOptional(s: string | null | undefined): string | null {
 
 function actorLoc(actor: AuthContext): LocationActor {
   return { role: actor.user.role, locations: actor.locations };
+}
+
+/**
+ * The set of location ids whose rows the actor may READ, or null at the all-locations
+ * grant. Globals (location_id null) are always visible regardless and are added by the
+ * caller's `.or(… ,location_id.is.null)`.
+ *
+ * Mirrors `visibleLocationScope` in the sibling packages editor, but takes its threshold
+ * from `isAllLocationsAccess` so there is exactly ONE definition of "all locations" in
+ * play here — the same one `lockLocationContext` uses for the write bind above.
+ */
+function visibleLocationScope(actor: AuthContext): string[] | null {
+  if (isAllLocationsAccess(actorLoc(actor))) return null;
+  return actor.locations ?? [];
 }
 
 /**
@@ -142,13 +156,30 @@ function rowToView(r: DbFaqRow): FaqView {
 
 // ── Reads ────────────────────────────────────────────────────────────────────
 
-/** Load all FAQs ordered by display_order (active first, then by display_order). AGM+ (≥6). */
+/**
+ * Load the FAQs the actor can see, ordered by display_order (active first). AGM+ (≥6).
+ *
+ * SCOPED: globals (location_id null) PLUS the actor's own assignments; level 9+ sees
+ * every location's rows. This mirrors `loadPackages` in the sibling packages editor —
+ * the same `.or(location_id.in.(…),location_id.is.null)` idiom — and it closes the half
+ * of the read that `assertFaqLocationWritable` (PR #303) left open: since that bind
+ * landed, a single-shop AGM was still SHOWN the other store's FAQ rows in the editor,
+ * every one of which 403s on Save. A row you may not edit does not belong in an editor.
+ */
 export async function loadFaqs(actor: AuthContext): Promise<FaqView[]> {
   requireLevel(actor, FAQ_READ_MIN);
   const sb = getServiceRoleClient();
-  const { data, error } = await sb
-    .from("catering_faq")
-    .select(FAQ_COLS)
+  const scope = visibleLocationScope(actor);
+  let query = sb.from("catering_faq").select(FAQ_COLS);
+  if (scope !== null) {
+    // Own locations OR global (location_id null). PostgREST `.or()` with an
+    // `in.(...)` list plus `is.null` — the loadPackages spelling.
+    const idList = scope.length > 0 ? scope.join(",") : "";
+    query = idList
+      ? query.or(`location_id.in.(${idList}),location_id.is.null`)
+      : query.is("location_id", null);
+  }
+  const { data, error } = await query
     .order("active", { ascending: false, nullsFirst: false })
     .order("display_order", { ascending: true })
     .returns<DbFaqRow[]>();
@@ -156,7 +187,21 @@ export async function loadFaqs(actor: AuthContext): Promise<FaqView[]> {
   return (data ?? []).map(rowToView);
 }
 
-/** Load active locations for the optional location selector. AGM+ (≥6). */
+/**
+ * Load active locations for the optional location selector, SCOPED to the actor's
+ * assignments (level 9+ = all). AGM+ (≥6).
+ *
+ * This list IS the FaqForm's write-target picker, and `assertFaqLocationWritable`
+ * already refuses a location the actor does not hold — so offering the other store
+ * here ships a dead option that 403s on Save (the `loadFulfillmentNodes` precedent,
+ * PR #303).
+ *
+ * THE GLOBAL LANE IS UNTOUCHED AND STAYS AT LEVEL 6 (Juan's ruling, 2026-08-29).
+ * `FaqForm` renders its own Global sentinel — `<option value="">` — independently of
+ * this list, and `assertFaqLocationWritable` returns early on a null location_id, so
+ * a scoped picker changes nothing about global authoring. `tests/catering-authz.test.ts`
+ * pins that deliberate behaviour; this scoping must keep it green.
+ */
 export async function loadFaqLocations(
   actor: AuthContext,
 ): Promise<Array<{ id: string; name: string }>> {
@@ -169,7 +214,7 @@ export async function loadFaqLocations(
     .order("name", { ascending: true })
     .returns<Array<{ id: string; name: string }>>();
   if (error) throw new Error(`loadFaqLocations failed: ${error.message}`);
-  return data ?? [];
+  return (data ?? []).filter((l) => lockLocationContext(actorLoc(actor), l.id));
 }
 
 // ── Create (AGM+ / catering_mgr+; Tier B step-up at route) ──────────────────

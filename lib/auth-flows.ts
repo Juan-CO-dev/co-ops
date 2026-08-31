@@ -156,6 +156,10 @@ export async function recordFailedAttempt(
   let newCount = 0;
   /** True when the counter RPC errored — the attempt was NOT counted (see below). */
   let counterError = false;
+  /** The stored (un-advanced) counter read on the degraded path; null if unreadable. */
+  let degradedStoredCount: number | null = null;
+  /** `stored + 1` — the DECISION input on the degraded path. Never a written value. */
+  let derivedCount: number | null = null;
   /** True only when locked_until is proven written (rowcount-checked). */
   let lockPersisted = false;
 
@@ -185,19 +189,54 @@ export async function recordFailedAttempt(
         console.error(
           `[auth-flows] increment_failed_login failed for user ${userId}: ${rpcErr.message}`,
         );
-        // Counter did not advance; treat this attempt as non-threshold-crossing.
-        // A PERSISTENTLY broken RPC therefore disables lockout entirely, so the
-        // condition must be forensically visible rather than console-only: the
-        // failure audit row below carries counter_error instead of a fabricated
-        // attempt_number of 0 (which reads as "first attempt" in the trail).
-        newCount = 0;
+        // ── DEGRADED LOCKOUT PATH (deferred finding 4, closed here) ──────────────
+        //
+        // The counter did NOT advance, and nothing in this branch pretends otherwise.
+        // What changed: the LOCK DECISION is no longer abandoned along with the write.
+        //
+        // WHY A READ AND NOT A READ-MODIFY-WRITE. The RPC exists precisely because the
+        // old caller-side `read N → write N+1` undercounted under concurrency, and the
+        // audit's own caution is that a fallback "must stay atomic, so it belongs in the
+        // RPC or beside it, not in a caller-side read-then-update branch". So this
+        // fallback WRITES NOTHING to the counter. It reads the stored value and derives
+        // `stored + 1` as the decision input only — a pure lower bound on how many
+        // failures this account has actually seen, since a concurrent attempt can only
+        // have pushed the true number higher. A lower bound can fail to lock; it can
+        // never lock someone who should not be locked, which is the right direction for
+        // an error to point on an auth surface.
+        //
+        // WHY NO NEW RPC WAS AUTHORED FOR THIS. An "atomic fallback for a broken atomic
+        // RPC" is circular: if `sb.rpc(...)` is failing, a second RPC fails with it. The
+        // durable fix for a persistently broken counter is repairing that function, not
+        // minting a twin — and a migration that pretended otherwise would be ceremony.
+        //
+        // THE RESIDUAL, STATED. While the RPC is down the stored count is frozen, so a
+        // fresh account can never climb to the limit and lockout is effectively off for
+        // it. That is unchanged from before; what is new is that an account ALREADY at
+        // or near the limit still locks, and that the condition is greppable in the trail
+        // rather than console-only.
         counterError = true;
+        const { data: stored } = await sb
+          .from("users")
+          .select("failed_login_count")
+          .eq("id", userId)
+          .maybeSingle<{ failed_login_count: number | null }>();
+        const storedCount = typeof stored?.failed_login_count === "number" ? stored.failed_login_count : null;
+        degradedStoredCount = storedCount;
+        // `newCount` stays 0 so the audit row never CLAIMS a counted attempt number —
+        // the derived value below is a separate, separately-labelled fact.
+        newCount = 0;
+        derivedCount = storedCount === null ? null : storedCount + 1;
       } else {
         newCount = typeof rpcCount === "number" ? rpcCount : 0;
       }
 
-      // Derive the lock decision from the RPC's returned count.
-      if (newCount >= FAILURE_LIMIT) {
+      // Derive the lock decision from the RPC's returned count — or, when the RPC
+      // errored, from the read-only lower bound above. `derivedCount` is null only when
+      // the counter could not be READ either, and then there is genuinely nothing to
+      // decide from and the attempt stays non-threshold-crossing as before.
+      const decisionCount = counterError ? (derivedCount ?? 0) : newCount;
+      if (decisionCount >= FAILURE_LIMIT) {
         const until = new Date(Date.now() + LOCKOUT_MINUTES * 60 * 1000);
         lockedUntilIso = until.toISOString();
         lockedThisAttempt = true;
@@ -222,6 +261,16 @@ export async function recordFailedAttempt(
             // will not see on the attacker's very next attempt.
             lock_persisted: lockPersisted,
             ...(lockPersisted ? {} : { lock_persist_failed: true }),
+            // A lock taken off the DEGRADED lower bound is still a real lock, but it was
+            // decided from a counter that did not advance — so the row says which kind of
+            // decision it was rather than leaving `failed_count: 0` to be read as a bug.
+            ...(counterError
+              ? {
+                  outcome: "lockout_count_degraded",
+                  stored_failed_login_count: degradedStoredCount,
+                  decision_count: derivedCount,
+                }
+              : {}),
           },
           ipAddress: ctx.ipAddress,
           userAgent: ctx.userAgent,
@@ -248,7 +297,17 @@ export async function recordFailedAttempt(
       reason,
       ...(COUNTABLE_FAILURE_REASONS.has(reason) && userId
         ? counterError
-          ? { counter_error: true } // attempt NOT counted — never claim a number
+          ? {
+              // The attempt was NOT counted, and the row never claims a number that
+              // would read as "first attempt" in the trail. It now also names the
+              // OUTCOME, so a degraded night is one greppable query rather than an
+              // inference from the absence of attempt_number — and it records the two
+              // facts the lock decision was actually made from.
+              counter_error: true,
+              outcome: "lockout_count_degraded",
+              stored_failed_login_count: degradedStoredCount,
+              decision_count: derivedCount,
+            }
           : { attempt_number: newCount }
         : {}),
       ...(lockedThisAttempt ? { triggered_lockout: true } : {}),

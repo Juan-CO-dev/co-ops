@@ -42,7 +42,6 @@ import { etCalendarDate } from "@/lib/operational-day";
 import { loadMeasures, loadSkuPackChains } from "@/lib/prep-consumption";
 import type { MeasureUnitFactor, RecipeInputSku } from "@/lib/recipe-math";
 import { loadProductIndex } from "@/lib/products";
-import { rollupUsageByProduct } from "@/lib/products-shared";
 import { WALKER_SKU_COLUMNS, perOrderUnitOz } from "@/lib/ordering";
 import { resolveActive, resolveParSlot, type LocationSkuOverlay } from "@/lib/location-sku-shared";
 import {
@@ -535,8 +534,10 @@ export async function loadDemandInputs(
   // ── PRODUCT-GRAIN ROLLUP, per date, through the ONE pure rollup ───────────────
   // r1-3: depletion rows are stamped with the RESOLVED member, so at SKU grain a primary
   // flip reads as demand collapse on one twin and a spike on the other. `rollupUsageByProduct`
-  // is the shipped, test-pinned rollup (lib/products-shared.ts) — applied once per date so
-  // there is no second opinion about how twins net, and the maps stay SKU-keyed.
+  // is the shipped, test-pinned rollup (lib/products-shared.ts) — reached HERE through
+  // `rollupPerDate` (lib/dynamic-pars-run-shared.ts), which applies it once per date so
+  // there is no second opinion about how twins net, and the maps stay SKU-keyed. This
+  // module does not import it directly; naming the path is what keeps the reference true.
   //
   // STATED CONSEQUENCE, and it is the intended one: when TWO members of one product both
   // carry pars, both read the PRODUCT's demand and both therefore compute against the same

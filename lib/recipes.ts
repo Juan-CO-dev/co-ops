@@ -264,15 +264,23 @@ export interface RecipeDraft {
  * page, and the consumption engine each pick a different arbitrary winner when
  * that's violated. Two-step (not an embedded filter) per the AGENTS.md RLS note.
  *
- * KNOWN GAP, DELIBERATELY NOT PAPERED OVER (wiring audit 2026-08-29): this check and
- * the insert that follows it are NOT atomic, and there is no DB backstop — `active`
- * lives on `recipes`, not on `recipe_outputs`, so the state cannot be expressed as a
- * partial unique index on the outputs table (0103 creates only plain indexes). Two
- * genuinely concurrent writes can therefore both pass and commit two active producers
- * for one item. Closing it needs either a trigger / denormalised active mirror or an
- * advisory lock inside `create_recipe_full` — a migration, and its own decision. The
- * UI double-submit path is already covered client-side (both builders disable while
- * busy); what remains is two actors at once.
+ * THIS CHECK IS THE FAST PATH, NOT THE GUARANTEE (wiring audit 2026-08-29 → 0187).
+ * It and the insert that follows it are not atomic: `active` lives on `recipes`, not on
+ * `recipe_outputs`, so the state cannot be expressed as a partial unique index on the
+ * outputs table (0103 creates only plain indexes), and two genuinely concurrent writes
+ * could both pass here and commit two active producers for one item.
+ *
+ * Migration 0187 (AUTHORED, GATED — not applied) closes that window where it actually
+ * lives: a transaction-scoped `pg_advisory_xact_lock` keyed on the item, taken inside
+ * `create_recipe_full` and inside a new `add_recipe_output`, with the same check re-run
+ * under the lock. This function stays because it is the fast path and the one that can
+ * answer a named 409 without going through an exception — but it is no longer the only
+ * guard, and it was never the guarantee. Until 0187 is applied, the window is exactly
+ * what it has always been. The UI double-submit path is already covered client-side
+ * (both builders disable while busy); what remains is two actors at once.
+ *
+ * `addRecipeOutput` is deliberately NOT rewired to the new RPC in the authoring PR —
+ * shipped code cannot call an unapplied function. That is the named follow-up.
  */
 async function activeProducerExists(
   sb: ReturnType<typeof getServiceRoleClient>,
@@ -339,7 +347,18 @@ export async function createRecipeFull(actor: AuthContext, draft: RecipeDraft): 
     p_outputs: draft.outputs.map((o, idx) => ({ output_item_id: o.outputItemId ?? null, output_menu_item_id: o.outputMenuItemId ?? null, yield: o.yield, output_container_label: normStr(o.outputContainerLabel), display_order: idx })),
     p_created_by: actor.user.id,
   });
-  if (error) throw new Error(`createRecipeFull rpc: ${error.message}`);
+  if (error) {
+    // 0187's in-transaction backstop raises P0001 'duplicate_active_producer' when a
+    // concurrent writer won the race the app-layer check above cannot see. Mapping it to
+    // the SAME named 409 the app-layer check returns means the two guards are one answer
+    // to the caller, not two — and it ships NOW, ahead of the gate, because pre-apply the
+    // RPC cannot raise what it does not yet contain. An unmapped raise would land as the
+    // opaque 500 that 0186's header indicts in lib/prep.ts.
+    if (error.code === "P0001" && /duplicate_active_producer/.test(error.message ?? "")) {
+      throw new RecipeError(409, "duplicate_active_producer");
+    }
+    throw new Error(`createRecipeFull rpc: ${error.message}`);
+  }
   const id = typeof data === "string" ? data : (data as { id?: string } | null)?.id;
   if (!id) throw new Error("createRecipeFull returned no id");
   await audit({ actorId: actor.user.id, actorRole: actor.user.role, action: "recipe.create", resourceTable: "recipes", resourceId: id, metadata: { name: draft.name, recipe_type: draft.recipeType, batch_yield: draft.batchYield, input_count: draft.inputs.length, output_count: draft.outputs.length, component_product_ids: draft.inputs.map((i) => i.componentProductId ?? null).filter((v): v is string => v !== null), atomic: true }, ipAddress: null, userAgent: null });

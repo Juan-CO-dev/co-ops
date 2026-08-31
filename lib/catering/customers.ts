@@ -18,6 +18,9 @@ import type { AuthContext } from "@/lib/session";
 export const CUSTOMER_READ_MIN = 5;
 export const CUSTOMER_WRITE_MIN = 6;
 
+/** Postgres unique_violation — `catering_customers_one_active_email` (0122). */
+const PG_UNIQUE_VIOLATION = "23505";
+
 export class CateringCustomerError extends Error {
   constructor(public status: number, public code: string, message?: string) {
     super(message ?? code);
@@ -267,6 +270,17 @@ export async function editCustomer(actor: AuthContext, id: string, input: EditCu
     .from("catering_customers")
     .update(patch, { count: "exact" })
     .eq("id", id);
+  // Same partial index, same answer as setCustomerActive below: retyping an email that an
+  // active row already owns is a claimed address, not a server fault. Mapped here too
+  // because this is the OTHER way a row enters the constrained set (the flag named only
+  // the reactivation path, but the two writers are one line apart and share the defect).
+  if (uErr?.code === PG_UNIQUE_VIOLATION) {
+    throw new CateringCustomerError(
+      409,
+      "email_taken",
+      "Another active contact already uses that email address",
+    );
+  }
   if (uErr) throw new Error(`editCustomer update: ${uErr.message}`);
   if (count === 0) throw new CateringCustomerError(404, "not_found", "Customer not found");
 
@@ -282,6 +296,21 @@ export async function editCustomer(actor: AuthContext, id: string, input: EditCu
   });
 }
 
+/**
+ * Flip a contact's `active` flag.
+ *
+ * REACTIVATION IS 23505-SAFE. `catering_customers_one_active_email` (0122) is a PARTIAL
+ * unique index — `WHERE active AND email IS NOT NULL` — so it constrains ACTIVE rows only.
+ * Flipping a deactivated contact back on therefore ENTERS the constrained set, and if some
+ * other active row has since taken that email the UPDATE raises 23505. PR #303 stopped new
+ * forks from being created; every pair already forked in prod still lands here, and an
+ * unmapped 23505 came back as a bare `Error` → an unhandled 500 the operator reads as
+ * "the app is broken" rather than "another contact owns this address".
+ *
+ * The typed 409 is the honest answer: the row is fine, the EMAIL is claimed, and the
+ * remedy is a human one (merge the two contacts, or clear the email on one). Same posture
+ * as `lib/catering/companies.ts`'s domain_taken and rate-rules' rate_rule_exists.
+ */
 export async function setCustomerActive(actor: AuthContext, id: string, active: boolean): Promise<void> {
   const sb = getServiceRoleClient();
   const { data: row, error: lErr } = await sb
@@ -297,6 +326,13 @@ export async function setCustomerActive(actor: AuthContext, id: string, active: 
     .from("catering_customers")
     .update({ active }, { count: "exact" })
     .eq("id", id);
+  if (uErr?.code === PG_UNIQUE_VIOLATION) {
+    throw new CateringCustomerError(
+      409,
+      "email_taken",
+      "Another active contact already uses that email address",
+    );
+  }
   if (uErr) throw new Error(`setCustomerActive update: ${uErr.message}`);
   if (count === 0) throw new CateringCustomerError(404, "not_found", "Customer not found");
 
