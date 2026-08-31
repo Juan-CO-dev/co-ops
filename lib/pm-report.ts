@@ -247,6 +247,63 @@ export async function getOrCreatePmReport(
   return { id: data.id };
 }
 
+/**
+ * Typed refusal for the PM-report writers, so the route can answer 409 instead of the
+ * bare 500 an untyped `throw` becomes. Same shape as CateringCustomerError / LtoError.
+ */
+export class PmReportError extends Error {
+  constructor(public status: number, public code: string, message?: string) {
+    super(message ?? code);
+    this.name = "PmReportError";
+  }
+}
+
+/**
+ * Read the report's live status, and refuse anything but `open`.
+ *
+ * WHY THIS EXISTS. `submitPmReport` made the status flip the linearization point for
+ * submission itself, but the two CONTENT writers below never looked at status at all:
+ * an eval or an MVP could still be written against an already-submitted report. That is
+ * not a race — it is a standing hole. The client's lock is a server re-render after
+ * `router.refresh()`, so a tab left open on the pre-submit render (a second manager's
+ * phone, a stale tab) keeps posting into a closed report, and `/my-performance` and
+ * `/reports/trends/team` then score feedback the employee's submitted report never
+ * contained.
+ *
+ * HONEST ABOUT ATOMICITY. For `setMvp` the guard is IN the UPDATE (`.eq("status","open")`)
+ * and this read only DIAGNOSES a zero rowcount — 404 vs 409 — so that path is atomic.
+ * `saveEmployeeEval` writes a DIFFERENT table (`pm_employee_evals`), so PostgREST has no
+ * way to carry the parent's status into its own statement: this is a pre-check that
+ * NARROWS the window to one round trip, exactly the posture #304 took on the templates
+ * propagation guard, and it is stated rather than papered over. Closing it completely
+ * needs a transactional RPC, which is a migration, not a guard.
+ */
+async function readReportStatus(
+  service: SupabaseClient,
+  pmReportId: string,
+): Promise<string | null> {
+  const { data, error } = await service
+    .from("pm_reports")
+    .select("status")
+    .eq("id", pmReportId)
+    .is("superseded_at", null)
+    .maybeSingle<{ status: string }>();
+  if (error) throw new Error(`readReportStatus: ${error.message}`);
+  return data?.status ?? null;
+}
+
+/** Throw the typed refusal for a report that is missing or no longer open. */
+function refuseClosedReport(status: string | null): never {
+  if (status === null) {
+    throw new PmReportError(404, "not_found", "Report not found");
+  }
+  throw new PmReportError(
+    409,
+    "report_already_submitted",
+    "That shift report has already been submitted",
+  );
+}
+
 export async function saveEmployeeEval(
   service: SupabaseClient,
   args: {
@@ -256,6 +313,11 @@ export async function saveEmployeeEval(
     actor: PmActor;
   },
 ): Promise<{ id: string }> {
+  // The status guard, ahead of both writes — see readReportStatus for why it is a
+  // pre-check here and an in-UPDATE predicate in setMvp.
+  const status = await readReportStatus(service, args.pmReportId);
+  if (status !== "open") refuseClosedReport(status);
+
   // Supersede any live eval for this (report, employee), then insert the new one.
   // BUG 2 fix: check the supersede error. There is no DB uniqueness backstop on
   // live evals — if the supersede fails silently, the INSERT below creates a 2nd
@@ -281,16 +343,30 @@ export async function saveEmployeeEval(
   return { id: data.id };
 }
 
+/**
+ * Name (or clear) the shift's MVP.
+ *
+ * THE GUARD IS IN THE UPDATE, so this path is atomic: `.eq("status","open")` plus a
+ * checked rowcount is the same shape `submitPmReport` below and `confirmPO` /
+ * `finalizeMidDayPhase2` already use, and it is what AGENTS.md's "UPDATE denials are
+ * silent" law demands of every UPDATE route — `UPDATE 0` raises nothing, so without the
+ * count check an MVP written into a submitted report returned 200 and the client
+ * rendered "Saved" over a write that never happened.
+ *
+ * The zero-rowcount DIAGNOSIS costs one extra read, and only on the refusal path.
+ */
 export async function setMvp(
   service: SupabaseClient,
   args: { pmReportId: string; mvpUserId: string | null; mvpNote: string | null },
 ): Promise<void> {
-  const { error } = await service
+  const { error, count } = await service
     .from("pm_reports")
-    .update({ mvp_user_id: args.mvpUserId, mvp_note: args.mvpNote })
+    .update({ mvp_user_id: args.mvpUserId, mvp_note: args.mvpNote }, { count: "exact" })
     .eq("id", args.pmReportId)
+    .eq("status", "open")
     .is("superseded_at", null);
   if (error) throw new Error(`setMvp: ${error.message}`);
+  if (count === 0) refuseClosedReport(await readReportStatus(service, args.pmReportId));
 }
 
 /**

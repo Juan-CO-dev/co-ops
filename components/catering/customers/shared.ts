@@ -49,6 +49,10 @@ const KNOWN_ERROR_CODES = new Set([
   "invalid_payload",
   "location_access_denied",
   "mixed_concerns",
+  // 409 from a reactivation (or an email edit) that collides with the partial unique index
+  // catering_customers_one_active_email. Without the key here the operator got the generic
+  // "something went wrong" and no idea the remedy is a human one.
+  "email_taken",
   "generic",
 ]);
 

@@ -165,6 +165,13 @@ export function RecipeBuilder({
   // ── LIVE mode: PATCH helpers ──
   const patchField = async (field: string, value: string | number | null) => {
     if (!canEdit || !recipe) return;
+    // TIER PARITY (the CreateUserForm class). PATCH /api/admin/recipes/[id] asserts
+    // Tier B, and this lane asked for nothing at all — so a header edit only ever
+    // succeeded when the actor happened to have unlocked FRESHLY for some other action
+    // on the same screen, and otherwise came back as an opaque error on blur. Every
+    // other write in this file already requests "B"; this one and removeEdge below were
+    // the two that did not.
+    if ((await requestStepUp("B")) !== "ok") return;
     setPatchError(null);
     setPatchBusy(true);
     const result = await postJson(
@@ -204,9 +211,16 @@ export function RecipeBuilder({
   // ── LIVE mode: remove edge ──
   const removeEdge = async (table: "recipe_inputs" | "recipe_outputs", edgeId: string) => {
     if (!canEdit) return;
+    // Same tier-parity fix as patchField: DELETE /api/admin/recipes/edges asserts Tier B.
+    if ((await requestStepUp("B")) !== "ok") return;
+    setPatchError(null);
     const result = await postJson("/api/admin/recipes/edges", { table, id: edgeId }, "DELETE");
     if (result.ok) {
       router.refresh();
+    } else {
+      // The failure was swallowed entirely — no refresh, no message, a row that simply
+      // stayed on screen. A removal that does not happen must say so.
+      setPatchError(t(resolveErrorKey(result.code)));
     }
   };
 

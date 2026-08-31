@@ -150,18 +150,28 @@ export async function createLtoEvent(actor: AuthContext, input: CreateLtoEventIn
  * List LTO/discount events for a location. activeOnly = the staff directive (active + not
  * past-window).
  *
- * KNOWN, DELIBERATE GAP — the READ is not location-bound yet, and adding the bind here
- * alone would break two live pages. Both callers (`app/(authed)/lto/page.tsx` and
- * `app/admin/catering/lto/page.tsx`) get their location list from `loadPackageLocations`,
- * which returns EVERY active location to every reader; a bind that throws would therefore
- * 500 the staff LTO page for any actor who does not hold both shops (today: both GMs and
- * the AGM). Scoping that shared loader is a change to the catering-packages surface — the
- * five KB editors read it — so it is filed as its own item rather than smuggled in behind
- * a one-line guard here. The WRITES above are bound, which is what stops another store's
- * board from being altered.
+ * THE READ IS NOW BOUND — the dependency this comment used to name has been resolved.
+ * `loadPackageLocations` is scoped to the actor's assignments (level 9+ = all), so both
+ * callers (`app/(authed)/lto/page.tsx` and `app/admin/catering/lto/page.tsx`) now iterate
+ * a list the actor actually holds and a throwing bind can no longer 500 the staff board
+ * for a single-shop GM. LTO_READ_MIN is 5 and the all-locations grant starts at 9, so the
+ * floor alone never says WHICH store's directives these are — and `locationId` arrives
+ * from a `?location=` query param on the admin page.
+ *
+ * DEFENCE IN DEPTH, NOT REDUNDANCY (the dynamic-pars posture): the admin page already
+ * filters its param against the scoped list, so from the UI this guard never fires. It
+ * exists because the lib is the authority, and the next caller may not filter.
+ *
+ * The refusal is 403, not the 404 `cancelLtoEvent` uses: a location id is not an opaque
+ * handle whose existence is itself the secret (it rides in the URL and names a store the
+ * tenant openly has), so there is nothing for a 404 to conceal here — and a silent empty
+ * list would read as "no directives" when the truth is "not your board".
  */
 export async function listLtoEvents(actor: AuthContext, args: { locationId: string; activeOnly: boolean }): Promise<LtoEventView[]> {
   requireLevel(actor, LTO_READ_MIN);
+  if (!lockLocationContext(actorLoc(actor), args.locationId)) {
+    throw new LtoError(403, "forbidden", "Location is outside your assignments");
+  }
   const sb = getServiceRoleClient();
   let q = sb
     .from("lto_events")

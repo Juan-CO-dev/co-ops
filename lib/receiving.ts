@@ -64,6 +64,25 @@ import { resolveCreditsRedelivered, loadOpenCreditRowsForVendor, type OpenCredit
 
 export const RECEIVE_MIN = 4; // key_holder+
 
+/**
+ * Trailing window, in days, for the invoice-derived `avg_oz_per_each` fold.
+ *
+ * MIRRORS `USAGE_WINDOW_DAYS` in lib/weights.ts (30), deliberately and by the same
+ * reasoning it states: a weight belief wants RECENT evidence, not lifetime evidence, or a
+ * pack the vendor stopped shipping outvotes the one on today's truck forever. The value is
+ * MIRRORED rather than imported because lib/weights.ts is a heavy `server-only` board
+ * module and the 6 AM receiving path should not pull it in for one integer;
+ * `tests/receiving-fold-window.test.ts` asserts the two numbers stay equal, so the mirror
+ * cannot drift silently.
+ *
+ * LEAD-APPROVED DESIGN CALL, stated for veto at merge: the audit named the unbounded mean
+ * as a weight-arc design question rather than a wiring fix, and this arc's brief
+ * pre-approved the flag's own suggested remedy. It changes a live number the moment a SKU
+ * has observations older than 30 days — today exactly ONE observed_oz_per_each line exists
+ * in all of prod history (PR #299's read-only probe), so the immediate blast radius is nil.
+ */
+const OBSERVED_FOLD_WINDOW_DAYS = 30;
+
 export class ReceivingError extends Error {
   constructor(public status: number, public code: string, message?: string) {
     super(message ?? code);
@@ -535,7 +554,17 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
     // which it could not do while the fold kept overwriting the believed value with
     // the observed mean and driving the delta to a permanent 0.
     if (disposition === "SKIP_PROTECTED_CLASS") { avgSkippedProtected.push(id); continue; }
-    const { data: obs } = await sb.from("vendor_delivery_items").select("observed_oz_per_each").eq("vendor_item_id", id).not("observed_oz_per_each", "is", null).returns<Array<{ observed_oz_per_each: number | string }>>();
+    // THE MEAN IS BOUNDED TO A TRAILING WINDOW (audit flag, PR #299 → this cleanup arc).
+    // It used to span EVERY historical observation, so a year-old invoice weight never
+    // aged out and a vendor who changed their pack a season ago kept dragging the number
+    // toward a fact that stopped being true. `created_at` is the lot instant (the same
+    // column FIFO attribution uses, AGENTS.md § Product identity), so no join is needed.
+    //
+    // The current delivery's own lines were inserted above, before this loop, so the
+    // window always contains at least this observation — bounding can never turn the fold
+    // into a silent no-op, it can only stop old evidence outvoting new.
+    const foldWindowStart = new Date(Date.now() - OBSERVED_FOLD_WINDOW_DAYS * 86_400_000).toISOString();
+    const { data: obs } = await sb.from("vendor_delivery_items").select("observed_oz_per_each").eq("vendor_item_id", id).not("observed_oz_per_each", "is", null).gte("created_at", foldWindowStart).returns<Array<{ observed_oz_per_each: number | string }>>();
     const vals = (obs ?? []).map((o) => num(o.observed_oz_per_each)).filter((v): v is number => v != null);
     if (vals.length === 0) continue;
     const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
