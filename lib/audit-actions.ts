@@ -49,6 +49,7 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "auth_account_locked",
   "auth_email_verified",
   "auth_logout",
+  "auth_password_hash_upgraded",
   "auth_password_reset_requested",
   "auth_password_reset_success",
   "auth_pin_confirm_failure",
