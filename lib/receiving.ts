@@ -507,8 +507,9 @@ export async function recordDelivery(actor: AuthContext, input: RecordDeliveryIn
   if (lErr) throw new Error(`recordDelivery lines: ${lErr.message}`);
 
   // Idempotent vendor credits from any discrepancy-flagged lines (spec D1: the
-  // intake unit_price is the credit price authority). Retry-safe via the 0168
-  // (delivery_item_id, reason) unique index — ignoreDuplicates on re-run.
+  // intake unit_price is the credit price authority). Retry-safe via an app-side pre-read
+  // of the existing (delivery_item_id, reason) pairs, backed by the 0168 partial unique
+  // index — a derive that loses the race gets 23505 and no-ops.
   await deriveAndUpsertCredits(sb, header.id, input.vendorId, input.locationId, actor.user.id);
 
   // Line-less `short` credits for ordered items that never came off the truck. Filed
@@ -775,9 +776,21 @@ function buildLineRows(deliveryId: string, lines: DeliveryLineInput[], resolvedO
 /**
  * Idempotent vendor-credit derivation for a delivery's lines (spec D1). Selects the
  * persisted lines back (so credits key off real delivery_item_ids), feeds the pure
- * deriveCreditDrafts, and UPSERTs into vendor_credits with the 0168 (delivery_item_id,
- * reason) unique index → ignoreDuplicates makes an intake re-run a no-op. On any
- * write error we surface a 500 (credit_write_failed) — a swallowed credit is a real loss.
+ * deriveCreditDrafts, and inserts the drafts that are not already filed.
+ *
+ * IDEMPOTENCY IS APP-SIDE, WITH THE INDEX AS THE BACKSTOP. There is no upsert: the SIM-6
+ * find (2026-08-11) was that `vendor_credits_line_reason_uq` (0168) is a PARTIAL unique
+ * index, Postgres refuses a partial index as a bare ON CONFLICT arbiter, and supabase-js
+ * cannot emit the index predicate — so the upsert 500'd on every lined-discrepancy credit
+ * while the delivery itself saved. The pre-read replaced it, and the index still enforces
+ * the pair, so a CONCURRENT or repeated derive can lose the race and get 23505. That is
+ * the row the pre-read wanted: it no-ops (audit v2 F10). Every other write error surfaces
+ * a 500 (credit_write_failed) — a swallowed credit is a real loss.
+ *
+ * KNOWN, NOT FIXED HERE: the recordDelivery path is not self-healing. A credit-write 500
+ * at that call site leaves the delivery + lines durable, and a retry hits
+ * `vendor_deliveries_dedupe_uq` → 409 duplicate_delivery, so the credits are never
+ * re-derived. That needs a re-derive affordance, and it is a named follow-up.
  */
 async function deriveAndUpsertCredits(
   sb: ServiceClient, deliveryId: string, vendorId: string, locationId: string, createdBy: string,
@@ -823,7 +836,18 @@ async function deriveAndUpsertCredits(
       reason: d.reason, sku_id: d.skuId, qty: d.qty, amount_cents: d.amountCents, created_by: createdBy,
     })),
   );
-  if (cErr) throw new ReceivingError(500, "credit_write_failed", `Credit write failed: ${cErr.message}`);
+  if (cErr) {
+    // 23505 IS THE STATE THE PRE-READ WAS LOOKING FOR (audit v2 F10, BC-037). The read
+    // above is a check-then-act and `vendor_credits_line_reason_uq` (0168) is still
+    // enforced, so two derives against ONE delivery — reachable via addDeliveryLines, which
+    // appends to an in-progress delivery and then re-derives credits for the WHOLE delivery
+    // — both see an empty `have` and the loser trips the index. Raising credit_write_failed
+    // for that re-raises the exact 500 the SIM-6 fix was written to remove, on a delivery
+    // whose own lines already committed. The row exists; that is the desired outcome, so
+    // the only honest answer is a no-op. Every OTHER error still throws.
+    if (cErr.code === "23505") return;
+    throw new ReceivingError(500, "credit_write_failed", `Credit write failed: ${cErr.message}`);
+  }
 }
 
 /**
@@ -1101,8 +1125,14 @@ export async function loadOpenPoTemplate(
  * exist, be location-bound to the actor, and carry delivery_status 'in_progress'
  * (409 delivery_complete otherwise — a completed delivery is closed). Reuses the
  * shared validation/oz-resolution path (no duplicated resolution logic), appends the
- * rows, records price history, and derives+upserts credits for the whole delivery
- * (idempotent — prior lines' credits ignoreDuplicate on the unique index).
+ * rows, records price history, and re-derives credits for the whole delivery.
+ *
+ * IDEMPOTENT, BUT NOT THE WAY THIS COMMENT USED TO SAY (audit v2 F10). There is no upsert
+ * and no conflict-ignoring clause — both went away with the SIM-6 fix, because
+ * `vendor_credits_line_reason_uq` is a PARTIAL index and Postgres refuses one as a bare
+ * ON CONFLICT arbiter. Idempotency is `deriveAndUpsertCredits`' app-side pre-read of the
+ * existing (line, reason) pairs, backed by that same index: a concurrent or repeated derive
+ * that loses the race gets 23505, which the insert treats as a benign no-op.
  */
 export async function addDeliveryLines(
   actor: AuthContext, deliveryId: string, lines: DeliveryLineInput[],
