@@ -25,7 +25,12 @@
 import { type NextRequest } from "next/server";
 
 import { verifyPassword } from "@/lib/auth";
-import { isLocked, recordFailedAttempt, recordSuccessfulAuth } from "@/lib/auth-flows";
+import {
+  isLocked,
+  recordFailedAttempt,
+  recordSuccessfulAuth,
+  upgradeLegacyPasswordHash,
+} from "@/lib/auth-flows";
 import { applySessionCookie } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { jsonError, jsonOk, parseJsonBody, extractIp } from "@/lib/api-helpers";
@@ -148,6 +153,13 @@ export async function POST(req: NextRequest) {
     }
     return jsonError(401, "invalid_credentials");
   }
+
+  // 7b. Rehash-on-login (password scheme v2, 2026-09-01). A legacy pepper-prepended
+  // hash just verified once more above; rewrite it under v2 while the plaintext is
+  // in hand. Non-fatal by construction (never throws) — a correct login must not
+  // become an error because housekeeping failed. NO session revoke: same credential,
+  // same person. See lib/auth-flows.ts upgradeLegacyPasswordHash.
+  await upgradeLegacyPasswordHash(user.id, password, user.password_hash, user.role, ctx, "signin");
 
   // 8. Success
   const session = await recordSuccessfulAuth(user.id, "password", ctx);
