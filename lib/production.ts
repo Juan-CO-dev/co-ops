@@ -141,14 +141,20 @@ async function loadSkuToItems(skuIds: string[]): Promise<Record<string, Array<{ 
   if (skuIds.length === 0) return out;
   const sb = getServiceRoleClient();
   // Recipe inputs that consume one of these SKUs.
-  const { data: ins } = await sb.from("recipe_inputs").select("recipe_id, component_sku_id").in("component_sku_id", skuIds).not("component_sku_id", "is", null)
+  const { data: ins, error: insErr } = await sb.from("recipe_inputs").select("recipe_id, component_sku_id").in("component_sku_id", skuIds).not("component_sku_id", "is", null)
     .returns<Array<{ recipe_id: string; component_sku_id: string }>>();
+  // Every read in this chain narrows the SKU→output-item map, and the failure mode is one
+  // direction only: FEWER options in the prep-capture dropdown. The operator cannot record
+  // a prep they actually did, production capture stays dark, and depletion goes with it —
+  // all of it looking like "this SKU just isn't used in a recipe".
+  if (insErr) throw new Error(`loadSkuToItems recipe_inputs: ${insErr.message}`);
 
   // PRODUCT pass: which of these SKUs are members of a product, and which recipes
   // pin those products. One membership read + one pins read, both batched.
-  const { data: memberRows } = await sb.from("vendor_items").select("id, product_id")
+  const { data: memberRows, error: memErr } = await sb.from("vendor_items").select("id, product_id")
     .in("id", skuIds).not("product_id", "is", null)
     .returns<Array<{ id: string; product_id: string }>>();
+  if (memErr) throw new Error(`loadSkuToItems product membership: ${memErr.message}`);
   const membersByProduct = new Map<string, string[]>();
   for (const m of memberRows ?? []) {
     const list = membersByProduct.get(m.product_id) ?? [];
@@ -159,9 +165,10 @@ async function loadSkuToItems(skuIds: string[]): Promise<Record<string, Array<{ 
   const productIds = [...membersByProduct.keys()].filter((id) => !retiredProductIds.has(id));
   const productIns: Array<{ recipe_id: string; component_sku_id: string }> = [];
   if (productIds.length > 0) {
-    const { data: pins } = await sb.from("recipe_inputs").select("recipe_id, component_product_id")
+    const { data: pins, error: pinErr } = await sb.from("recipe_inputs").select("recipe_id, component_product_id")
       .in("component_product_id", productIds)
       .returns<Array<{ recipe_id: string; component_product_id: string }>>();
+    if (pinErr) throw new Error(`loadSkuToItems product pins: ${pinErr.message}`);
     for (const p of pins ?? []) {
       for (const skuId of membersByProduct.get(p.component_product_id) ?? []) {
         // Flattened into the same shape the SKU pass produces, so ONE downstream
@@ -175,18 +182,23 @@ async function loadSkuToItems(skuIds: string[]): Promise<Record<string, Array<{ 
   const recipeIds = [...new Set(allIns.map((i) => i.recipe_id))];
   if (recipeIds.length === 0) return out;
   // Keep only ACTIVE recipes (inactive-edge rule, per readiness/consumption).
-  const { data: activeRows } = await sb.from("recipes").select("id").in("id", recipeIds).eq("active", true).returns<Array<{ id: string }>>();
+  const { data: activeRows, error: actErr } = await sb.from("recipes").select("id").in("id", recipeIds).eq("active", true).returns<Array<{ id: string }>>();
+  if (actErr) throw new Error(`loadSkuToItems recipes: ${actErr.message}`);
   const activeRecipes = new Set((activeRows ?? []).map((r) => r.id));
   if (activeRecipes.size === 0) return out;
   // Item outputs of those active recipes.
-  const { data: outs } = await sb.from("recipe_outputs").select("recipe_id, output_item_id").in("recipe_id", [...activeRecipes]).not("output_item_id", "is", null)
+  const { data: outs, error: outErr } = await sb.from("recipe_outputs").select("recipe_id, output_item_id").in("recipe_id", [...activeRecipes]).not("output_item_id", "is", null)
     .returns<Array<{ recipe_id: string; output_item_id: string }>>();
+  if (outErr) throw new Error(`loadSkuToItems recipe_outputs: ${outErr.message}`);
   const itemsByRecipe = new Map<string, string[]>();
   for (const o of outs ?? []) { const l = itemsByRecipe.get(o.recipe_id) ?? []; l.push(o.output_item_id); itemsByRecipe.set(o.recipe_id, l); }
   const itemIds = [...new Set((outs ?? []).map((o) => o.output_item_id))];
   const nameById = new Map<string, string>();
   if (itemIds.length > 0) {
-    const { data: items } = await sb.from("items").select("id, name").in("id", itemIds).eq("active", true).returns<Array<{ id: string; name: string }>>();
+    const { data: items, error: itErr } = await sb.from("items").select("id, name").in("id", itemIds).eq("active", true).returns<Array<{ id: string; name: string }>>();
+    // Not cosmetic here: the loop below SKIPS any item with no name ("inactive item"), so a
+    // dropped read silently empties the dropdown rather than mislabelling it.
+    if (itErr) throw new Error(`loadSkuToItems items: ${itErr.message}`);
     for (const it of items ?? []) nameById.set(it.id, it.name);
   }
   // For each SKU input into an active recipe, expose that recipe's output items.
@@ -385,15 +397,20 @@ export async function loadRecentProductions(actor: AuthContext, locationId: stri
 
   // Input lines for these headers → skuName (comma-join) + summed input qty.
   const prodIds = list.map((r) => r.id);
-  const { data: lines } = await sb.from("production_inputs").select("production_id, input_sku_id, qty_entered").in("production_id", prodIds)
+  const { data: lines, error: lErr } = await sb.from("production_inputs").select("production_id, input_sku_id, qty_entered").in("production_id", prodIds)
     .returns<Array<{ production_id: string; input_sku_id: string; qty_entered: number | string | null }>>();
+  // The header read one line up already throws; leaving its own line read silent rendered
+  // every recent prep as "no inputs, 0 qty" — a capture that looks recorded and empty.
+  if (lErr) throw new Error(`loadRecentProductions production_inputs: ${lErr.message}`);
   const lineList = lines ?? [];
   const skuIds = [...new Set(lineList.map((l) => l.input_sku_id))];
   const itemIds = [...new Set(list.map((r) => r.output_item_id))];
-  const [{ data: skus }, { data: items }] = await Promise.all([
-    skuIds.length ? sb.from("vendor_items").select("id, name").in("id", skuIds).returns<Array<{ id: string; name: string }>>() : Promise.resolve({ data: [] as Array<{ id: string; name: string }> }),
+  const [{ data: skus, error: sErr }, { data: items, error: iErr }] = await Promise.all([
+    skuIds.length ? sb.from("vendor_items").select("id, name").in("id", skuIds).returns<Array<{ id: string; name: string }>>() : Promise.resolve({ data: [] as Array<{ id: string; name: string }>, error: null }),
     sb.from("items").select("id, name").in("id", itemIds).returns<Array<{ id: string; name: string }>>(),
   ]);
+  if (sErr) throw new Error(`loadRecentProductions sku names: ${sErr.message}`);
+  if (iErr) throw new Error(`loadRecentProductions item names: ${iErr.message}`);
   const skuName = new Map((skus ?? []).map((s) => [s.id, s.name]));
   const itemName = new Map((items ?? []).map((i) => [i.id, i.name]));
 

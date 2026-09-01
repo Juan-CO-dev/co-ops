@@ -198,18 +198,23 @@ export async function loadCatalogView(actor: AuthContext): Promise<CatalogEntity
   const itemNameById = new Map(items.map((r) => [r.id, r.name]));
   const menuNameById = new Map(menuItems.map((r) => [r.id, r.name]));
 
-  // ── Readiness (items) — failure-open per house posture: default ready so the
-  //    Issues lens never false-positives no_sku_path on a load error. ──
+  // ── Readiness (items) — FAILS LOUD, like the twelve sibling reads above (audit v2
+  //    P2-12, BC-034). The old shape swallowed the failure and defaulted every item to
+  //    READY, on the stated grounds that the Issues lens must never false-positive
+  //    no_sku_path. That trade is backwards: a false "ready" is the ONE direction an
+  //    operator cannot detect, because ready is what they expect to see — they walk to
+  //    the station to make a thing the system just told them it can make. A false
+  //    no_sku_path is visible, annoying and self-correcting on refresh.
+  //
+  //    It is also no longer a live choice: loadGraphReadiness reads the same tables in
+  //    the same Promise.all as loadRecipeGraph, which now throws on a read error itself.
+  //    A blip big enough to fail readiness already fails this loader one line up, so the
+  //    swallow bought nothing but an inconsistent story about the same failure.
   const readyItemIds = new Set<string>();
-  let readinessLoaded = false;
-  try {
-    const g = await loadGraphReadiness(actor);
-    readinessLoaded = true;
-    for (const [id, r] of g.itemReadiness) if (r.status === "ready") readyItemIds.add(id);
-  } catch (e) {
-    console.error("catalog readiness load failed (defaulting ready)", e);
+  for (const [id, r] of (await loadGraphReadiness(actor)).itemReadiness) {
+    if (r.status === "ready") readyItemIds.add(id);
   }
-  const isReady = (itemId: string) => (readinessLoaded ? readyItemIds.has(itemId) : true);
+  const isReady = (itemId: string) => readyItemIds.has(itemId);
 
   // ── Toast GUID counts per entity ──
   const toastByMenuItem = new Map<string, number>();

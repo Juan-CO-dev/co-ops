@@ -74,6 +74,31 @@ function locActor(actor: AuthContext): { role: AuthContext["user"]["role"]; loca
 }
 
 /**
+ * A supplied `customerId` is a WRITE TARGET (BC-022): it must name a contact the actor may
+ * see — active, and homed at one of the actor's shops (or at no shop). Sibling of
+ * requireAssignable, which already validates `assignedTo` right beside it; a bare uuid that
+ * was only shape-checked let a lead be pinned to the other shop's customer and then have that
+ * customer's email surfaced by searchPipeline's enrichment (audit v2 P3, 2026-09-01).
+ * 400 `invalid_customer` (requireAssignable's shape) — a write-target rejection, not a 404.
+ */
+async function requireVisibleCustomer(actor: AuthContext, customerId: string): Promise<void> {
+  const sb = getServiceRoleClient();
+  const { data, error } = await sb
+    .from("catering_customers")
+    .select("id, active, primary_location_id")
+    .eq("id", customerId)
+    .maybeSingle<{ id: string; active: boolean; primary_location_id: string | null }>();
+  if (error) throw new Error(`pipeline customer check: ${error.message}`);
+  const visible =
+    !!data &&
+    data.active &&
+    (data.primary_location_id == null || lockLocationContext(locActor(actor), data.primary_location_id));
+  if (!visible) {
+    throw new CateringPipelineError(400, "invalid_customer", "Customer not found");
+  }
+}
+
+/**
  * A lead is writable when the actor is level >= WRITE_MIN AND either the lead is
  * global (location_id null) or the actor holds that location. Mirrors the scaffold
  * RLS (level >= 6 AND (location null OR location match)).
@@ -357,6 +382,7 @@ export async function createLead(actor: AuthContext, input: CreateLeadInput): Pr
   }
   validateLeadSource(input.leadSource);
   if (input.assignedTo != null) await requireAssignable(input.assignedTo);
+  if (input.customerId != null) await requireVisibleCustomer(actor, input.customerId);
   const sb = getServiceRoleClient();
   const { data: inserted, error } = await sb
     .from("catering_pipeline")
@@ -536,7 +562,10 @@ export async function editLead(actor: AuthContext, id: string, input: EditLeadIn
   }
   if (input.notes !== undefined) patch.notes = input.notes;
   if (input.followUpDate !== undefined) patch.follow_up_date = input.followUpDate;
-  if (input.customerId !== undefined) patch.customer_id = input.customerId;
+  if (input.customerId !== undefined) {
+    if (input.customerId != null) await requireVisibleCustomer(actor, input.customerId);
+    patch.customer_id = input.customerId;
+  }
   if (input.estimatedRevenueCents !== undefined) patch.estimated_revenue_cents = input.estimatedRevenueCents;
 
   // Pre-read the current order lead: the attribution norm (spec #2b) is that

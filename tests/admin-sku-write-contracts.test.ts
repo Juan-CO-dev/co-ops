@@ -174,7 +174,11 @@ describe("upsertLocationSkuSettings refuses below the floor before any I/O", () 
   // AdminSkuError, the permitted one dies on the absent test-env Supabase config — which is
   // the boundary the refused call never reached.
   const agm = { user: { id: "u1", role: "agm" as const, language: "en" as const }, locations: [] };
-  const gm = { user: { id: "u2", role: "gm" as const, language: "en" as const }, locations: [] };
+  // The GM HOLDS the shop it writes: since the tenancy bind (audit v2 P1-2, 2026-09-01) a
+  // level-7 actor with no assignment at that location is refused 404 before the floor
+  // question is even interesting — tests/location-bind-skus.test.ts pins that. This pair
+  // is about the LEVEL gate, so the fixture satisfies the bind.
+  const gm = { user: { id: "u2", role: "gm" as const, language: "en" as const }, locations: ["11111111-1111-4111-8111-111111111111"] };
   const args = {
     skuId: "sku-1",
     locationId: "11111111-1111-4111-8111-111111111111",

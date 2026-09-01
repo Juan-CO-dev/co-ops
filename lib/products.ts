@@ -1105,6 +1105,22 @@ export async function attachMember(
   requireLevel(actor, PRODUCT_WRITE_MIN);
   const sb = getServiceRoleClient();
 
+  // TENANCY BIND (audit v2, differential check 2026-09-01): membership is a write on the
+  // SKU row; a shop-scoped SKU may only be moved by an actor who holds that shop (a GLOBAL
+  // SKU, location_id null, is org-scope). Opaque id → read the shop first, 404-mask.
+  {
+    const { data: loc, error: locErr } = await sb
+      .from("vendor_items")
+      .select("id, location_id")
+      .eq("id", args.skuId)
+      .maybeSingle<{ id: string; location_id: string | null }>();
+    if (locErr) throw new Error(`attachMember bind read failed: ${locErr.message}`);
+    if (!loc) throw new ProductError(404, "sku_not_found", "SKU not found");
+    if (loc.location_id !== null && !lockLocationContext(actorLoc(actor), loc.location_id)) {
+      throw new ProductError(404, "sku_not_found", "SKU not found");
+    }
+  }
+
   const sku = await loadSkuMembership(args.skuId);
   if (sku.product_id === args.productId) return; // already a member — idempotent
   if (sku.product_id != null) {
@@ -1148,6 +1164,20 @@ export async function detachMember(
 ): Promise<void> {
   requireLevel(actor, PRODUCT_WRITE_MIN);
   const sb = getServiceRoleClient();
+
+  // TENANCY BIND (audit v2, differential check 2026-09-01) — same rule as attachMember.
+  {
+    const { data: loc, error: locErr } = await sb
+      .from("vendor_items")
+      .select("id, location_id")
+      .eq("id", args.skuId)
+      .maybeSingle<{ id: string; location_id: string | null }>();
+    if (locErr) throw new Error(`detachMember bind read failed: ${locErr.message}`);
+    if (!loc) throw new ProductError(404, "sku_not_found", "SKU not found");
+    if (loc.location_id !== null && !lockLocationContext(actorLoc(actor), loc.location_id)) {
+      throw new ProductError(404, "sku_not_found", "SKU not found");
+    }
+  }
 
   const naming = await primaryScopesNaming(args.skuId);
   if (naming.length > 0) {
