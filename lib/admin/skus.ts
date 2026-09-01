@@ -36,6 +36,7 @@ import { selectAllRows } from "@/lib/supabase-paginate";
 import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
+import { lockLocationContext, isAllLocationsAccess, type LocationActor } from "@/lib/locations";
 import type { MeasureDimension } from "@/lib/recipe-math";
 import type { SkuClass } from "@/lib/admin/catalog-shared";
 // SKU_CLASSES + isSkuClass live in the client-safe shared module (used by the
@@ -114,6 +115,23 @@ function requireLevel(actor: AuthContext, min: number): void {
     throw new AdminSkuError(403, "forbidden", "Insufficient role level for this action");
   }
 }
+
+/** LocationActor shape for lockLocationContext / isAllLocationsAccess. */
+function actorLoc(actor: AuthContext): LocationActor {
+  return { role: actor.user.role, locations: actor.locations };
+}
+
+// TENANCY BIND (audit v2 P1-2, 2026-09-01). This module gated every write on LEVEL and
+// never on LOCATION — `lockLocationContext`'s all-locations grant starts at 9 and at CO
+// every GM holds ONE shop, so a Capitol Hill GM could PUT a P Street par overlay (a silent
+// stockout), mint a P Street SKU, reassign or deactivate one. AGENTS.md § Dynamic pars:
+// "the location bind lives IN THE LIB… Level 7 is NOT all-locations." The walker's
+// accept/revert obeyed it; this admin path, writing the SAME table, did not.
+// Refusal is 404 `not_found` (the IDOR two-halves 404-mask; lib/products.ts setPrimary's
+// spelling) — a 403 would confirm the foreign shop exists. `null` location = the GLOBAL
+// row and is deliberately org-scope (products.ts' rule), so only a real id is bound.
+// Spelled inline (not a helper) so `lockLocationContext` stays grep-visible to
+// tests/location-bind-differential.test.ts.
 
 function normalizeOptional(s: string | null | undefined): string | null {
   if (typeof s !== "string") return null;
@@ -542,6 +560,11 @@ export interface CreateSkuInput {
 
 export async function createSku(actor: AuthContext, input: CreateSkuInput): Promise<{ id: string }> {
   requireLevel(actor, SKU_WRITE_MIN);
+  // A shop-scoped SKU may only be minted at a shop the actor holds; a GLOBAL SKU
+  // (locationId null) is org-scope and is not bound. Bind precedes validation + I/O.
+  if (input.locationId && !lockLocationContext(actorLoc(actor), input.locationId)) {
+    throw new AdminSkuError(404, "not_found", "Location not found");
+  }
 
   const name = input.name.trim();
   if (!name) throw new AdminSkuError(400, "invalid_name", "SKU name is required");
@@ -748,12 +771,35 @@ export async function updateSku(
   const { changes } = args;
   const update: Record<string, unknown> = {};
 
+  // The SKU is addressed by opaque id, so its shop has to be READ before it can be bound
+  // (the cancelLtoEvent posture). A shop-scoped SKU may only be edited by an actor who
+  // holds that shop; a GLOBAL SKU (location_id null) is org-scope.
+  {
+    const sbBind = getServiceRoleClient();
+    const { data: cur, error: curErr } = await sbBind
+      .from("vendor_items")
+      .select("id, location_id")
+      .eq("id", args.id)
+      .maybeSingle<{ id: string; location_id: string | null }>();
+    if (curErr) throw new Error(`updateSku bind read failed: ${curErr.message}`);
+    if (!cur) throw new AdminSkuError(404, "sku_not_found", "SKU not found");
+    if (cur.location_id !== null && !lockLocationContext(actorLoc(actor), cur.location_id)) {
+      throw new AdminSkuError(404, "not_found", "SKU not found");
+    }
+  }
+
   if (changes.vendorId !== undefined) {
     if (changes.vendorId !== null) await assertVendorActive(changes.vendorId);
     update.vendor_id = changes.vendorId; // null allowed → manual / reassign-off
   }
   if (changes.locationId !== undefined) {
-    if (changes.locationId !== null) await assertLocationActive(changes.locationId);
+    if (changes.locationId !== null) {
+      // Reassignment TARGET: moving a SKU is a write against the destination shop too.
+      if (!lockLocationContext(actorLoc(actor), changes.locationId)) {
+        throw new AdminSkuError(404, "not_found", "Location not found");
+      }
+      await assertLocationActive(changes.locationId);
+    }
     update.location_id = changes.locationId;
   }
   if (changes.name !== undefined) {
@@ -848,6 +894,19 @@ export async function deactivateSku(
   requireLevel(actor, SKU_WRITE_MIN);
 
   const sb = getServiceRoleClient();
+  // Opaque id → read the SKU's shop, bind it, THEN flip. Deactivating another shop's SKU
+  // drops it out of that shop's order walk with no signal — the silent-stockout attack.
+  const { data: cur, error: curErr } = await sb
+    .from("vendor_items")
+    .select("id, location_id")
+    .eq("id", args.id)
+    .maybeSingle<{ id: string; location_id: string | null }>();
+  if (curErr) throw new Error(`deactivateSku bind read failed: ${curErr.message}`);
+  if (!cur) throw new AdminSkuError(404, "sku_not_found", "SKU not found");
+  if (cur.location_id !== null && !lockLocationContext(actorLoc(actor), cur.location_id)) {
+    throw new AdminSkuError(404, "not_found", "SKU not found");
+  }
+
   const { error, count } = await sb
     .from("vendor_items")
     .update(
@@ -930,20 +989,29 @@ export async function loadLocationSkuSettings(
   const ids = [...new Set(skuIds.filter((s): s is string => typeof s === "string" && !!s))];
   if (ids.length === 0) return out;
 
+  // READ SCOPE (audit v2 P1-2): a single-shop GM sees only their own shop's overlays — the
+  // other shop's pars are that shop's operating data. Level 9+ sees every location.
+  const allLocations = isAllLocationsAccess(actorLoc(actor));
+  if (!allLocations && actor.locations.length === 0) return out;
+
   const sb = getServiceRoleClient();
   const autoLane = await parAutoLaneReady(sb);
-  const rows = await selectAllRows<DbLocationSkuSettingRow & { sku_id: string }>((from, to) =>
-    sb
+  const rows = await selectAllRows<DbLocationSkuSettingRow & { sku_id: string }>((from, to) => {
+    let q = sb
       .from("location_sku_settings")
       .select(autoLane ? `${OVERLAY_READ_HUMAN}, ${OVERLAY_READ_AUTO}` : OVERLAY_READ_HUMAN)
-      .in("sku_id", ids)
-      // Opportunistic fix (Dynamic Pars P3 review): paging WITHOUT a stable total order is
-      // the PR #63 class — PostgREST may reorder between pages, so a row can be served
-      // twice and another never, silently dropping an overlay. `id` is the PK.
-      .order("id", { ascending: true })
-      .range(from, to)
-      .returns<Array<DbLocationSkuSettingRow & { sku_id: string }>>(),
-  );
+      .in("sku_id", ids);
+    if (!allLocations) q = q.in("location_id", actor.locations);
+    return (
+      q
+        // Opportunistic fix (Dynamic Pars P3 review): paging WITHOUT a stable total order is
+        // the PR #63 class — PostgREST may reorder between pages, so a row can be served
+        // twice and another never, silently dropping an overlay. `id` is the PK.
+        .order("id", { ascending: true })
+        .range(from, to)
+        .returns<Array<DbLocationSkuSettingRow & { sku_id: string }>>()
+    );
+  });
   for (const r of rows) {
     const arr = out.get(r.sku_id) ?? [];
     arr.push({
@@ -1035,6 +1103,12 @@ export async function upsertLocationSkuSettings(
   input: UpsertLocationSkuSettingsInput,
 ): Promise<void> {
   requireLevel(actor, SKU_WRITE_MIN);
+  // Bind BEFORE payload validation and before any I/O (tests/location-bind-skus.test.ts
+  // proves the order: an out-of-scope actor gets 404 here, an in-scope one gets the
+  // validation error below).
+  if (!lockLocationContext(actorLoc(actor), input.locationId)) {
+    throw new AdminSkuError(404, "not_found", "Location not found");
+  }
 
   if (input.activeOverride !== null && typeof input.activeOverride !== "boolean") {
     throw new AdminSkuError(400, "invalid_active_override", "Active override must be true, false, or null");
