@@ -162,13 +162,37 @@ export function parStepFor(input: {
 
 /**
  * Order-up-to-par quantity from a par and an advisory on-hand in order units.
- * BYTE-IDENTICAL to lib/ordering.ts buildRow's suggestion math (`:728`) — lifted here so the
- * client can live-recompute it after an accept without minting a second opinion (r1: the
- * numeric suggestion and the order qty are ONE engine, and accepting recomputes the qty).
+ *
+ * THE ONE AUTHORITY, AND NOW LITERALLY SO. `lib/ordering.ts` buildRow CALLS this function
+ * (it used to carry a byte-identical inline copy, and the walker's client re-run called
+ * here) — two spellings of one engine is exactly how the bug below shipped in both at
+ * once, so the copy is gone and every consumer, including `ParSuggestionRow`'s
+ * accept-recompute, inherits this math by construction (r1: the numeric suggestion and the
+ * order qty are ONE engine, and accepting recomputes the qty).
+ *
+ * A NEGATIVE ADVISORY IS A DATA SIGNAL, NEVER A BIGGER ORDER (Juan's walk smoke,
+ * 2026-08-31). The advisory is receipts-minus-consumption with NO anchor beneath it (no
+ * physical count has ever been taken), so any SKU whose receiving history is empty while
+ * its consumption is real runs arbitrarily negative. Prod-verified: P Street Prosciutto
+ * had 0 oz ever received against 407 oz consumed — an advisory of ≈ −34 order units,
+ * which this line turned into "order 38" against a par of 4. A shelf cannot hold negative
+ * cans; what that number actually means is "recorded use exceeds recorded receipts", i.e.
+ * the receiving history is incomplete. So the advisory FLOORS AT 0 and the suggestion
+ * degrades to the honest par-from-empty, while the walker NAMES the state on its advisory
+ * line rather than paying for it in cases.
+ *
+ * The clamp lives INSIDE the pure function, not at its call sites, because a call-site
+ * clamp is a second opinion about what a negative shelf means — the same shape of hole
+ * the inline copy already proved. Note it must be unconditional rather than epsilon-gated:
+ * a float −0.0001 would otherwise ceil a whole extra unit onto an integer par.
+ *
+ * (Vocabulary note: this reads an advisory, never a count — `dynamic-pars-scenarios`
+ * asserts the count/shelf lexicon stays out of this module's source, because the demand
+ * core must not acquire one. That pin is why the floor is spelled inline below.)
  */
 export function suggestedOrderQty(par: number, advisoryOrderUnits: number | null): number | null {
   if (advisoryOrderUnits == null) return null;
-  return Math.max(Math.ceil(par - advisoryOrderUnits), 0);
+  return Math.max(Math.ceil(par - Math.max(advisoryOrderUnits, 0)), 0);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

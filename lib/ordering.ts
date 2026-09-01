@@ -70,7 +70,7 @@ import {
   loadParSuggestions, loadParSilence, type ParSkuIndexEntry,
 } from "@/lib/dynamic-pars-walker";
 import {
-  EMPTY_PAR_SILENCE, PAR_WRITE_MIN,
+  EMPTY_PAR_SILENCE, PAR_WRITE_MIN, suggestedOrderQty,
   type ParSilenceSummary, type WalkerParSuggestion,
 } from "@/lib/dynamic-pars-shared";
 import { addDaysEt, minutesOfDayEt } from "@/lib/vendor-rhythm-shared";
@@ -481,10 +481,18 @@ export interface WalkerSku {
    *  never walked. Advisory hint ("last time you ordered N"). */
   lastOrderQty: number | null;
   /** Advisory computed on-hand for the SKU. null when unconvertible / no anchor /
-   *  count-dimension. oz + its order-unit equivalent (oz ÷ per-order-unit-oz) + source. */
+   *  count-dimension. oz + its order-unit equivalent (oz ÷ per-order-unit-oz) + source.
+   *
+   *  MAY BE NEGATIVE, and is deliberately carried through raw: receipts-minus-consumption
+   *  with nothing anchoring it goes below zero whenever a SKU's receiving history is
+   *  incomplete against real consumption. That is an observation about the DATA, and the
+   *  walker renders it as a named state ("use exceeds recorded receipts"). Clamping here
+   *  would erase the only evidence of the gap — the floor belongs to `suggestedQty`. */
   advisoryOnHand: { oz: number; orderUnits: number | null; source: string } | null;
-  /** max(par − advisoryOrderUnits, 0), rounded UP to whole units — only when the
-   *  advisory is convertible to order units; else null (no fabricated suggestion). */
+  /** `suggestedOrderQty(par, advisoryOrderUnits)` — order up to par, rounded UP to whole
+   *  units, with the advisory FLOORED AT 0 first (a negative shelf is a data signal, never
+   *  a bigger order; see that function's header). Only when the advisory is convertible to
+   *  order units; else null (no fabricated suggestion). */
   suggestedQty: number | null;
   /**
    * Is the order-unit→oz conversion DERIVABLE for this SKU (perOrderUnitOz non-null
@@ -870,8 +878,15 @@ export async function loadWalkerData(actor: AuthContext, locationId: string): Pr
       const orderUnits = perUnitOz != null && perUnitOz > 0 ? adv.oz / perUnitOz : null;
       advisoryOnHand = { oz: adv.oz, orderUnits, source: adv.source };
       if (orderUnits != null) {
-        // Suggest ordering up to par: max(par − on-hand-units, 0), ceil to whole units.
-        suggestedQty = Math.max(Math.ceil(par - orderUnits), 0);
+        // Suggest ordering up to par, THROUGH THE ONE AUTHORITY — which also floors a
+        // NEGATIVE advisory at 0 (see `suggestedOrderQty`'s header for the 2026-08-31
+        // walk-smoke diagnosis: an empty receiving history against real consumption made
+        // this suggest 38 cases of prosciutto against a par of 4). This was an inline
+        // byte-identical copy of that math; the copy is gone, because two spellings of one
+        // engine is how the bug shipped in both of them at once. The RAW (possibly
+        // negative) `orderUnits` stays on `advisoryOnHand` so the walker can NAME the
+        // state — the clamp belongs to the suggestion, not to the observation.
+        suggestedQty = suggestedOrderQty(par, orderUnits);
       }
     }
     const entry = s.product_id != null ? productIndex.byProduct.get(s.product_id) ?? null : null;
