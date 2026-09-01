@@ -954,19 +954,29 @@ export async function loadDeliveryDetail(actor: AuthContext, deliveryId: string)
   if (error) throw new Error(`loadDeliveryDetail: ${error.message}`);
   if (!h) throw new ReceivingError(404, "not_found", "Delivery not found");
   if (!lockLocationContext(actorLoc(actor), h.location_id)) throw new ReceivingError(404, "not_found", "Delivery not found");
-  const { data: lineRows } = await sb.from("vendor_delivery_items").select("vendor_item_id, qty_received, unit_price, observed_oz_per_each, notes, received_level_label, resolved_oz, photo_url, discrepancy_type").eq("delivery_id", deliveryId).order("created_at", { ascending: true }).returns<Array<{ vendor_item_id: string; qty_received: number | string; unit_price: number | string | null; observed_oz_per_each: number | string | null; notes: string | null; received_level_label: string | null; resolved_oz: number | string | null; photo_url: string | null; discrepancy_type: "short" | "over" | "damaged" | "substitution" | null }>>();
-  const [{ data: vend }, { data: rx }, { data: po, error: poErr }] = await Promise.all([
+  const { data: lineRows, error: lErr } = await sb.from("vendor_delivery_items").select("vendor_item_id, qty_received, unit_price, observed_oz_per_each, notes, received_level_label, resolved_oz, photo_url, discrepancy_type").eq("delivery_id", deliveryId).order("created_at", { ascending: true }).returns<Array<{ vendor_item_id: string; qty_received: number | string; unit_price: number | string | null; observed_oz_per_each: number | string | null; notes: string | null; received_level_label: string | null; resolved_oz: number | string | null; photo_url: string | null; discrepancy_type: "short" | "over" | "damaged" | "substitution" | null }>>();
+  // A dropped line read renders the delivery with ZERO lines and lineCount 0 — a receipt
+  // that reads as reconciled and empty, on the surface used to dispute an invoice.
+  if (lErr) throw new Error(`loadDeliveryDetail lines: ${lErr.message}`);
+  const [{ data: vend, error: vErr }, { data: rx, error: rxErr }, { data: po, error: poErr }] = await Promise.all([
     sb.from("vendors").select("name").eq("id", h.vendor_id).maybeSingle<{ name: string }>(),
-    h.received_by ? sb.from("users").select("name").eq("id", h.received_by).maybeSingle<{ name: string }>() : Promise.resolve({ data: null }),
+    h.received_by ? sb.from("users").select("name").eq("id", h.received_by).maybeSingle<{ name: string }>() : Promise.resolve({ data: null, error: null }),
     // The id thread: the linked PO's human code, shown on the detail header and used to
     // link back to the ordering board's panel. Null when this was a walk-in drop.
     h.purchase_order_id
       ? sb.from("purchase_orders").select("display_code").eq("id", h.purchase_order_id).maybeSingle<{ display_code: string }>()
       : Promise.resolve({ data: null, error: null }),
   ]);
+  if (vErr) throw new Error(`loadDeliveryDetail vendor: ${vErr.message}`);
+  if (rxErr) throw new Error(`loadDeliveryDetail receiver: ${rxErr.message}`);
   if (poErr) throw new Error(`loadDeliveryDetail purchase_order: ${poErr.message}`);
   const skuIds = [...new Set((lineRows ?? []).map((l) => l.vendor_item_id))];
-  const { data: skus } = skuIds.length ? await sb.from("vendor_items").select("id, name").in("id", skuIds).returns<Array<{ id: string; name: string }>>() : { data: [] as Array<{ id: string; name: string }> };
+  const { data: skus, error: sErr } = skuIds.length
+    ? await sb.from("vendor_items").select("id, name").in("id", skuIds).returns<Array<{ id: string; name: string }>>()
+    : { data: [] as Array<{ id: string; name: string }>, error: null };
+  // Lower stakes than the lines (a missed name renders "(sku)") but the same law — and
+  // leaving untouched drops inside a fixed function is how this class grew in the first place.
+  if (sErr) throw new Error(`loadDeliveryDetail sku names: ${sErr.message}`);
   const skuName = new Map((skus ?? []).map((s) => [s.id, s.name]));
   return {
     id: h.id, vendorName: vend?.name ?? "(vendor)", deliveryDate: h.delivery_date, invoiceNumber: h.invoice_number,
