@@ -59,7 +59,14 @@ describe("JWT sign/verify (HS256, hex-interpreted secret, issuer co-ops)", () =>
     expect(verified.session_id).toBe(CLAIMS.session_id);
     expect(verified.role).toBe("authenticated"); // PostgREST DB-role claim
     expect(verified.iss).toBe("co-ops");
-    expect(verified.exp - verified.iat).toBe(12 * 3600); // 12h hard ceiling
+    // 12h hard ceiling. jose stamps `iat` (setIssuedAt) and `exp` (setExpirationTime("12h"))
+    // at two different instants, each truncated to whole seconds — so when the wall clock
+    // crosses a second boundary between them the difference is 43201, not 43200. That flaked
+    // CI on PR #321 (2026-09-01) on a diff that never touched auth. Tolerate the boundary;
+    // the ceiling is still pinned to the second.
+    const ttl = verified.exp - verified.iat;
+    expect(ttl).toBeGreaterThanOrEqual(12 * 3600);
+    expect(ttl).toBeLessThanOrEqual(12 * 3600 + 1);
   });
 
   it("rejects tampered tokens, and isJwtExpired() is false for tamper rejections", async () => {
