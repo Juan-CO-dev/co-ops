@@ -17,6 +17,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel, type RoleCode } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
+import { lockLocationContext, isAllLocationsAccess, type LocationActor } from "@/lib/locations";
 
 export const COMPANY_READ_MIN = 5;
 export const COMPANY_WRITE_MIN = 6;
@@ -43,6 +44,39 @@ function requireLevel(actor: AuthContext, min: number): void {
   if (getRoleLevel(actor.user.role) < min) {
     throw new CateringCompanyError(403, "forbidden", "Insufficient role level");
   }
+}
+
+// ── CONTACT TENANCY (audit v2 P2-4, 2026-09-01) ─────────────────────────────────────
+// A catering_company is CROSS-LOCATION by design (header); the CONTACT row in
+// catering_customers is per-shop, and lib/catering/customers.ts scopes every access to it
+// by primary_location_id. This module read and wrote the SAME table with a bare level gate
+// on a service-role client — an email-existence + UUID oracle across the whole customer
+// base (attachContactByEmail), a cross-shop mutation by id (setContactCompany), the other
+// shop's contacts on the company page (loadCompany), and an INSERT stamped with a
+// caller-chosen primaryLocationId that landed BEFORE createQuote's own location check
+// (resolveOrCreateContact via the quotes route — append-only, so the 403 left a row).
+// The three helpers below are customers.ts' spellings, verbatim, so the two siblings
+// refuse the same way (403 location_access_denied) and scope reads the same way.
+
+function locActor(actor: AuthContext): LocationActor {
+  return { role: actor.user.role, locations: actor.locations };
+}
+
+/** Write gate on a contact's home shop: level floor + location bind. `null` = no home shop, not bound. */
+function assertCanWrite(actor: AuthContext, primaryLocationId: string | null): void {
+  requireLevel(actor, COMPANY_WRITE_MIN);
+  if (primaryLocationId != null && !lockLocationContext(locActor(actor), primaryLocationId)) {
+    throw new CateringCompanyError(403, "location_access_denied", "You do not manage that location");
+  }
+}
+
+/** Read-scope `.or()` filter on primary_location_id (no-home-shop + actor's shops), or null for L9+. */
+function readScopeOr(actor: AuthContext): string | null {
+  if (isAllLocationsAccess(locActor(actor))) return null;
+  const ids = actor.locations;
+  return ids.length === 0
+    ? "primary_location_id.is.null"
+    : `primary_location_id.is.null,primary_location_id.in.(${ids.join(",")})`;
 }
 
 /** The domain part of an email, lowercased, or null if unparseable. */
@@ -142,9 +176,13 @@ export async function loadCompany(actor: AuthContext, id: string): Promise<Compa
   if (error) throw new Error(`loadCompany: ${error.message}`);
   if (!row) return null;
 
+  // Contacts are per-shop rows: list only the ones this actor may see (customers.ts' scope).
+  let contactsQuery = sb.from("catering_customers").select("id, name, email, active").eq("company_id", id);
+  const scope = readScopeOr(actor);
+  if (scope) contactsQuery = contactsQuery.or(scope);
   const [{ data: domains }, { data: contacts }] = await Promise.all([
     sb.from("catering_company_domains").select("id, domain, active").eq("company_id", id).eq("active", true).order("domain", { ascending: true }).returns<CompanyDomain[]>(),
-    sb.from("catering_customers").select("id, name, email, active").eq("company_id", id).order("name", { ascending: true }).returns<CompanyContact[]>(),
+    contactsQuery.order("name", { ascending: true }).returns<CompanyContact[]>(),
   ]);
   return { company: mapCompany(row), domains: domains ?? [], contacts: contacts ?? [] };
 }
@@ -337,6 +375,15 @@ export async function removeDomain(actor: AuthContext, domainId: string): Promis
 export async function setContactCompany(actor: AuthContext, contactId: string, companyId: string | null): Promise<void> {
   requireLevel(actor, COMPANY_WRITE_MIN);
   const sb = getServiceRoleClient();
+  // Opaque id → read the contact's home shop, bind it, THEN write (customers.ts' posture).
+  const { data: row, error: rErr } = await sb
+    .from("catering_customers")
+    .select("id, primary_location_id")
+    .eq("id", contactId)
+    .maybeSingle<{ id: string; primary_location_id: string | null }>();
+  if (rErr) throw new Error(`setContactCompany read: ${rErr.message}`);
+  if (!row) throw new CateringCompanyError(404, "not_found", "Contact not found");
+  assertCanWrite(actor, row.primary_location_id);
   const { error, count } = await sb.from("catering_customers").update({ company_id: companyId }, { count: "exact" }).eq("id", contactId);
   if (error) throw new Error(`setContactCompany: ${error.message}`);
   if (count === 0) throw new CateringCompanyError(404, "not_found", "Contact not found");
@@ -353,7 +400,12 @@ export async function attachContactByEmail(actor: AuthContext, companyId: string
   requireLevel(actor, COMPANY_WRITE_MIN);
   const email = normalizeEmail(emailRaw);
   const sb = getServiceRoleClient();
-  const { data, error } = await sb.from("catering_customers").select("id").eq("active", true).ilike("email", escapeLike(email)).maybeSingle<{ id: string }>();
+  // The LOOKUP itself carries the read scope — a post-hoc refusal would still leak "exists
+  // at the other shop" through shape/timing (the existence oracle the audit named).
+  let lookup = sb.from("catering_customers").select("id").eq("active", true).ilike("email", escapeLike(email));
+  const scope = readScopeOr(actor);
+  if (scope) lookup = lookup.or(scope);
+  const { data, error } = await lookup.maybeSingle<{ id: string }>();
   if (error) throw new Error(`attachContactByEmail lookup: ${error.message}`);
   if (!data) throw new CateringCompanyError(404, "contact_not_found", "No active contact with that email");
   await setContactCompany(actor, data.id, companyId);
@@ -379,7 +431,10 @@ export interface ResolvedContact {
  * (trim+lowercase) so the unique index and lookups agree.
  */
 export async function resolveOrCreateContact(actor: AuthContext, input: ResolveContactInput): Promise<ResolvedContact> {
-  requireLevel(actor, COMPANY_WRITE_MIN);
+  // Bind the caller-chosen home shop BEFORE validation and I/O — so the quotes route's
+  // order (resolve contact, THEN createQuote's location check) can no longer commit an
+  // append-only row for a shop the actor does not hold.
+  assertCanWrite(actor, input.primaryLocationId ?? null);
   const email = normalizeEmail(input.email);
   if (!email || extractDomain(email) === null) {
     throw new CateringCompanyError(400, "invalid_payload", "A valid email is required");
