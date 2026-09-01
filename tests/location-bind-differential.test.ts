@@ -85,21 +85,9 @@ const FILES = [
  * in this body, and what retires the entry. Every line here is a reviewable claim.
  */
 const ALLOWLIST: Record<string, string> = {
-  // catering_companies is a CROSS-LOCATION account by design (companies.ts header); these
-  // touch catering_customers only to READ company_id for attribution, never to write a
-  // shop's row. reviveInactiveContact takes no actor (internal, called after a bound caller).
-  // — Batch B2 (packages): nine writers reached through opaque line/option ids. The bind is
-  //   a read-through chain (option → package_item → package → location_id). Named here so the
-  //   debt is visible; retired by the packages PR that follows Batch B.
-  "lib/admin/catering/packages.ts#createPackage": "B2 follow-up: bind input.locationId (null = global)",
-  "lib/admin/catering/packages.ts#updatePackage": "B2 follow-up: read package.location_id → bind",
-  "lib/admin/catering/packages.ts#deactivatePackage": "B2 follow-up: read package.location_id → bind",
-  "lib/admin/catering/packages.ts#addPackageLine": "B2 follow-up: read package.location_id → bind",
-  "lib/admin/catering/packages.ts#addPackageLineItem": "B2 follow-up: read-through chain → bind",
-  "lib/admin/catering/packages.ts#addSlotOption": "B2 follow-up: read-through chain → bind",
-  "lib/admin/catering/packages.ts#setSlotOptionClassic": "B2 follow-up: read-through chain → bind",
-  "lib/admin/catering/packages.ts#removeSlotOption": "B2 follow-up: read-through chain → bind",
-  "lib/admin/catering/packages.ts#removePackageLineItem": "B2 follow-up: read-through chain → bind",
+  // (empty — Batch B2 retired the nine lib/admin/catering/packages.ts debt lines by binding
+  // every writer through its read-through chain. Add a line here ONLY with a reason a reviewer
+  // can check and the follow-up that retires it.)
 };
 
 interface Fn { name: string; params: string; body: string }
@@ -115,8 +103,19 @@ function exportedAsyncFunctions(source: string): Fn[] {
     let i = re.lastIndex; let depth = 1;
     while (i < source.length && depth > 0) { const c = source[i]; if (c === "(") depth++; else if (c === ")") depth--; i++; }
     const params = source.slice(re.lastIndex, i - 1);
-    // body: from the first "{" after the signature to its matching "}"
-    const open = source.indexOf("{", i);
+    // body: the FIRST "{" after the signature that (a) sits at generic depth 0 — a return type
+    // like `Promise<{ id: string }>` puts an object-literal brace INSIDE `<…>` first — and
+    // (b) opens a block (followed by a newline; an inline object type is followed by a space).
+    // Found live 2026-09-01: without (a)/(b) three packages.ts writers "had" 14-char bodies
+    // (`{ id: string }`) and were never inspected. The sanity `it` below makes that loud.
+    let open = -1; let gen = 0;
+    for (let k = i; k < source.length; k++) {
+      const c = source[k];
+      if (c === "<") gen++;
+      else if (c === ">") gen = Math.max(0, gen - 1);
+      else if (c === "{" && gen === 0 && /^\{[ \t]*\r?\n/.test(source.slice(k, k + 4))) { open = k; break; }
+      else if (c === ";" && gen === 0) break; // a declaration without a body (overload) — skip
+    }
     if (open === -1) continue;
     let j = open + 1; depth = 1;
     while (j < source.length && depth > 0) { const c = source[j]; if (c === "{") depth++; else if (c === "}") depth--; j++; }
@@ -144,6 +143,21 @@ describe("differential location-bind check — every actor-taking writer of a te
       it("has at least one actor-taking exported function (the parser found the file's shape)", () => {
         expect(fns.length).toBeGreaterThan(0);
       });
+
+      it("found a REAL body for every actor-taking function (a tiny body = the parser grabbed a type literal)", () => {
+        // 2026-09-01: three packages.ts writers "had" 14-char bodies — `{ id: string }` from the
+        // return type — and were silently never inspected. A parser miss must fail, not pass.
+        for (const f of fns) expect(f.body.length, `${rel}#${f.name} body looks truncated`).toBeGreaterThan(60);
+      });
+
+      if (rel === "lib/admin/catering/packages.ts") {
+        it("detects all eight package writers (regression pin for the parser)", () => {
+          const names = writers.map((w) => w.f.name).sort();
+          for (const n of ["createPackage", "updatePackage", "deactivatePackage", "addPackageLine", "addSlotOption", "setSlotOptionClassic", "removeSlotOption", "removePackageLineItem"]) {
+            expect(names, `${n} must be detected as a writer`).toContain(n);
+          }
+        });
+      }
 
       for (const { f, table } of writers) {
         const key = `${rel}#${f.name}`;
