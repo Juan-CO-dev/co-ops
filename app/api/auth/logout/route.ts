@@ -6,6 +6,17 @@
  * even when the session is invalid/revoked/idle — the user's intent is
  * "kill my cookie", and we honor it unconditionally.
  *
+ * NO CSRF ORIGIN GUARD, DELIBERATELY (P2-6 adjudication). Its siblings
+ * /api/auth/pin and /api/auth/pin-confirm both took assertSameOrigin; this one
+ * does not, and the asymmetry is the decision. Forced logout is a
+ * nuisance-grade CSRF. A logout that can answer 403 is worse, because the
+ * policy below is that the user's intent to kill their own cookie is honoured
+ * UNCONDITIONALLY — a guard that misfires (a stripped Origin header, a
+ * non-browser client) leaves an operator signed in on a shared 6 AM tablet,
+ * which is a security problem of its own. tests/auth-pin-source-throttle.ts
+ * pins this absence so it reads as a ruling, not an oversight. Revisit with a
+ * decision, never by pattern-matching the siblings.
+ *
  * Response policy (locked Phase 2 Session 3):
  *   Always 200 { ok: true } with the session cookie cleared. The audit row
  *   captures the actual state (cookie missing, JWT invalid, session not found,
