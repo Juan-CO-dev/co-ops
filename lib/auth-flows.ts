@@ -23,7 +23,7 @@
  */
 
 import { audit } from "./audit";
-import { verifyPin } from "./auth";
+import { verifyPin, hashPassword, isLegacyPasswordHash } from "./auth";
 import { createSession, type AuthMethod, type CreateSessionResult } from "./session";
 import { getServiceRoleClient } from "./supabase-server";
 import type { RoleCode } from "./roles";
@@ -390,4 +390,88 @@ export async function verifyActorPin(userId: string, pin: string): Promise<boole
     .maybeSingle<{ pin_hash: string | null }>();
   if (error || !data?.pin_hash) return false;
   return verifyPin(pin, data.pin_hash);
+}
+
+// ─── Rehash-on-login (password scheme v2 migration, 2026-09-01) ─────────────────
+//
+// The pre-v2 password scheme let bcrypt's 72-byte cap truncate every password to its
+// first 8 bytes (lib/auth.ts). The only moment a stored hash can be rewritten under
+// the new scheme is a SUCCESSFUL verify, because that is the only time the plaintext
+// exists. So: verify legacy once more → hash v2 → compare-and-set → audit. Lazy and
+// per-account by nature — the migration finishes for an account the next time it
+// logs in (or steps up), and the straggler accounts get an admin `setPassword`,
+// which already hashes v2. Track progress with:
+//   select count(*) from users where password_hash is not null
+//     and password_hash not like 'hmac2$%';
+
+/** The pure decision: upgrade ONLY a legacy hash, and ONLY after a successful verify.
+ *  A failed login must never rewrite a credential; a v2 hash has nothing to migrate. */
+export function shouldUpgradePasswordHash(
+  storedHash: string | null | undefined,
+  verified: boolean,
+): boolean {
+  return verified && isLegacyPasswordHash(storedHash);
+}
+
+export type PasswordHashUpgradeOutcome = "upgraded" | "not_legacy" | "raced" | "failed";
+
+/**
+ * Rewrite a just-verified LEGACY password hash under scheme v2.
+ *
+ *   - NEVER THROWS. A correct login must not become an error because housekeeping
+ *     failed; a failed upgrade is logged + audited and simply retries next login.
+ *   - COMPARE-AND-SET on the exact hash we verified (`.eq("password_hash", storedHash)`)
+ *     + rowcount, per the silent-UPDATE law: a concurrent login that upgraded first, or
+ *     an admin reset landing in between, makes this a 0-row `raced` no-op — never a
+ *     clobber of a newer credential.
+ *   - NO SESSION REVOKE. Same credential, same person; revoke is for credential CHANGES.
+ *   - Audited as `auth_password_hash_upgraded` (non-destructive: a system act on a
+ *     security-relevant field, not a human changing config) with the outcome, so the
+ *     migration's progress is one greppable query.
+ */
+export async function upgradeLegacyPasswordHash(
+  userId: string,
+  plaintext: string,
+  storedHash: string,
+  actorRole: RoleCode | null,
+  ctx: AuthAttemptContext,
+  surface: "signin" | "step_up",
+): Promise<{ outcome: PasswordHashUpgradeOutcome }> {
+  if (!shouldUpgradePasswordHash(storedHash, true)) return { outcome: "not_legacy" };
+
+  let outcome: PasswordHashUpgradeOutcome;
+  let errMsg: string | null = null;
+  try {
+    const newHash = await hashPassword(plaintext);
+    const sb = getServiceRoleClient();
+    const { error, count } = await sb
+      .from("users")
+      .update({ password_hash: newHash }, { count: "exact" })
+      .eq("id", userId)
+      .eq("password_hash", storedHash);
+    if (error) {
+      outcome = "failed";
+      errMsg = error.message;
+    } else {
+      outcome = (count ?? 0) > 0 ? "upgraded" : "raced";
+    }
+  } catch (e) {
+    outcome = "failed";
+    errMsg = e instanceof Error ? e.message : String(e);
+  }
+  if (outcome === "failed") {
+    console.error(`[auth-flows] password hash upgrade failed for user ${userId} (${surface}): ${errMsg}`);
+  }
+
+  await audit({
+    actorId: userId,
+    actorRole,
+    action: "auth_password_hash_upgraded",
+    resourceTable: "users",
+    resourceId: userId,
+    metadata: { outcome, surface, scheme: "hmac2", ...(errMsg ? { error: errMsg } : {}) },
+    ipAddress: ctx.ipAddress,
+    userAgent: ctx.userAgent,
+  });
+  return { outcome };
 }
