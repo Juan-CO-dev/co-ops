@@ -33,6 +33,7 @@ import { NameTile } from "@/components/auth/NameTile";
 import { PinKeypad, type PinKeypadError } from "@/components/auth/PinKeypad";
 import { ManagerLoginForm } from "@/components/auth/ManagerLoginForm";
 import { BrandMark } from "@/components/BrandMark";
+import { safeNextPath } from "@/lib/nav-redirect";
 import type { RoleCode } from "@/lib/roles";
 import { TranslationProvider, useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -127,9 +128,12 @@ function LoginPageContent() {
     if (toastTimer.current !== null) window.clearTimeout(toastTimer.current);
   }, []);
 
+  // P2-5 — `?next=` is attacker-controlled and `startsWith("/")` used to be
+  // the whole check; `//evil.com` and `/\evil.com` pass it while being
+  // protocol-relative URLs a browser resolves to a third-party origin. The
+  // one sanitizer lives in lib/nav-redirect.ts (pure, zero-I/O, unit-tested).
   const navigateToDashboard = useCallback(() => {
-    const next = searchParams?.get("next");
-    router.push(next && next.startsWith("/") ? next : "/dashboard");
+    router.push(safeNextPath(searchParams?.get("next")));
   }, [router, searchParams]);
 
   // Initial location load.
