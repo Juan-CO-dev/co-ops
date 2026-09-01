@@ -346,6 +346,77 @@ export interface DraftLineEdit {
 }
 
 /**
+ * PURE: split a submit into the lines the PO already carries (UPDATE in place) and the
+ * genuinely-new ones (INSERT). `existingSkuIds` is the set read from `po_lines`.
+ *
+ * Extracted from updateDraftLines because it is asked TWICE — once against the set the
+ * pre-read saw, and again against a RE-READ set after the unique index (migration 0190,
+ * `po_lines_po_sku_uq`) refuses a racing INSERT with 23505. The second answer is what
+ * converts a would-be duplicate line into a last-writer-wins qty UPDATE, so the decision
+ * has to be one function with one meaning rather than two inline filters.
+ *
+ * A qty-0 line is NOT special here: append-only means a removal is qty 0, and a removal of
+ * a line that does not exist yet still has to land as a row.
+ */
+export function partitionDraftLines(
+  lines: readonly DraftLineEdit[],
+  existingSkuIds: ReadonlySet<string>,
+): { toUpdate: DraftLineEdit[]; toInsert: DraftLineEdit[] } {
+  const toUpdate: DraftLineEdit[] = [];
+  const toInsert: DraftLineEdit[] = [];
+  for (const l of lines) {
+    (existingSkuIds.has(l.skuId) ? toUpdate : toInsert).push(l);
+  }
+  return { toUpdate, toInsert };
+}
+
+/** Bounded laps for the draft-line create-if-absent (see updateDraftLines). Two is the
+ *  worst case a double-tap can produce; three leaves headroom without spinning. */
+const DRAFT_LINE_LAPS = 3;
+
+/**
+ * INSERT genuinely-new draft lines (fetch their current guide positions in one batch).
+ * Returns the PostgREST error instead of throwing so the caller can read its `code` —
+ * a 23505 from `po_lines_po_sku_uq` (0190) is a re-partition signal, not a failure.
+ *
+ * PRODUCT RETIREMENT DOES NOT GATE THIS, DELIBERATELY (Juan's ruling, 2026-08-21).
+ * Retirement stops the par pass from SUGGESTING a product; a draft PO line that was
+ * already placed — or one a manager adds on purpose to burn down the last of it —
+ * must still go through, for the same reason receiving still accepts the truck
+ * (lib/receiving.ts). Ordering stops at the suggestion layer, not at the door.
+ *
+ * This module reads no `products` at all, so a "discontinued" badge on the PO panel
+ * is a new loader integration rather than a widened read; filed as debt in
+ * docs/ROADMAP.md alongside the receiving one. NOTE the pre-existing, unrelated gap
+ * this read already has: it does not check `active`, existence, or vendor-match on
+ * an incoming skuId (sim P2 territory) — do not mistake the retirement note for
+ * coverage of that.
+ */
+async function insertNewDraftLines(
+  sb: ServiceClient,
+  poId: string,
+  toInsert: readonly DraftLineEdit[],
+): Promise<{ code?: string; message: string } | null> {
+  if (toInsert.length === 0) return null;
+  const newSkuIds = toInsert.map((l) => l.skuId);
+  const { data: skuRows, error: sErr } = await sb.from("vendor_items")
+    .select("id, guide_position").in("id", newSkuIds)
+    .returns<Array<{ id: string; guide_position: number | null }>>();
+  if (sErr) throw new Error(`updateDraftLines new skus: ${sErr.message}`);
+  const guidePosBySku = new Map((skuRows ?? []).map((s) => [s.id, s.guide_position]));
+  const { error: iErr } = await sb.from("po_lines").insert(
+    toInsert.map((l) => ({
+      po_id: poId,
+      sku_id: l.skuId,
+      order_qty: l.orderQty,
+      guide_position_snapshot: guidePosBySku.get(l.skuId) ?? null,
+      note: l.note?.trim() || null,
+    })),
+  );
+  return iErr ? { code: iErr.code, message: iErr.message } : null;
+}
+
+/**
  * Edit a draft PO's lines (KH+ + location-bind). DRAFT-ONLY: a non-draft PO 409s
  * `not_draft` (frozen after Confirm). APPEND-ONLY: replace-by-delete is
  * FORBIDDEN — we UPDATE existing (po_id, sku_id) rows' qty/note (rowcount-checked)
@@ -386,57 +457,59 @@ export async function updateDraftLines(
     throw new PurchaseOrderError(409, "not_draft", "Only draft orders can be edited");
   }
 
-  // Which SKUs already have a line on this PO (batch)?
-  const { data: existing, error: exErr } = await sb.from("po_lines")
-    .select("sku_id, guide_position_snapshot").eq("po_id", poId)
-    .returns<Array<{ sku_id: string; guide_position_snapshot: number | null }>>();
-  if (exErr) throw new Error(`updateDraftLines existing: ${exErr.message}`);
-  const existingSkus = new Set((existing ?? []).map((r) => r.sku_id));
+  // ── THE CREATE-IF-ABSENT LAP (audit v2 F1, BC-037) ───────────────────────────────
+  // Read-which-exist → insert-the-rest is a check-then-act, and until migration 0190 there
+  // was nothing behind it: two PATCHes for the same new SKU (a Save double-tap, a retry,
+  // two managers on one draft) both read an `existing` without it and both INSERTed. The
+  // duplicate then rides confirmPO's verbatim snapshot into the vendor email at FULL QTY,
+  // and po-match's ORDERED leg double-counts it — silently, because the later
+  // `.eq("po_id").eq("sku_id")` UPDATE matches 2 rows and reports count 2.
+  //
+  // `po_lines_po_sku_uq` (0190) makes the second INSERT impossible; this lap is what turns
+  // its 23505 into the RIGHT answer instead of a 500. We re-read the SKU set, re-partition
+  // against it — the winner's row is now visible, so our submit lands on the UPDATE leg —
+  // and retry. Last-writer-wins on qty, which is the same semantic two sequential saves
+  // already have.
+  //
+  // SAFE BEFORE THE INDEX EXISTS (BC-038, deploy ordering): with no index there is no
+  // 23505 to catch, so the branch is dead code and the lap runs exactly once — byte-for-byte
+  // today's behaviour. Nothing here waits on the gate.
+  let landed = false;
+  for (let lap = 0; lap < DRAFT_LINE_LAPS && !landed; lap++) {
+    // Which SKUs already have a line on this PO (batch)?
+    const { data: existing, error: exErr } = await sb.from("po_lines")
+      .select("sku_id").eq("po_id", poId)
+      .returns<Array<{ sku_id: string }>>();
+    if (exErr) throw new Error(`updateDraftLines existing: ${exErr.message}`);
+    const existingSkus = new Set((existing ?? []).map((r) => r.sku_id));
 
-  const toUpdate = lines.filter((l) => existingSkus.has(l.skuId));
-  const toInsert = lines.filter((l) => !existingSkus.has(l.skuId));
+    const { toUpdate, toInsert } = partitionDraftLines(lines, existingSkus);
 
-  // UPDATE each existing line in place (rowcount-checked per the silent-UPDATE law).
-  for (const l of toUpdate) {
-    const { error: uErr, count } = await sb.from("po_lines")
-      .update({ order_qty: l.orderQty, note: l.note?.trim() || null }, { count: "exact" })
-      .eq("po_id", poId).eq("sku_id", l.skuId);
-    if (uErr) throw new Error(`updateDraftLines update: ${uErr.message}`);
-    if (count === 0) throw new PurchaseOrderError(404, "not_found", "Line not found");
+    // UPDATE each existing line in place (rowcount-checked per the silent-UPDATE law).
+    for (const l of toUpdate) {
+      const { error: uErr, count } = await sb.from("po_lines")
+        .update({ order_qty: l.orderQty, note: l.note?.trim() || null }, { count: "exact" })
+        .eq("po_id", poId).eq("sku_id", l.skuId);
+      if (uErr) throw new Error(`updateDraftLines update: ${uErr.message}`);
+      if (count === 0) throw new PurchaseOrderError(404, "not_found", "Line not found");
+    }
+
+    const insertErr = await insertNewDraftLines(sb, poId, toInsert);
+    if (insertErr) {
+      // 23505 = a rival landed this (po_id, sku_id) between our read and our insert. Re-read
+      // and re-partition: the row is now in `existingSkus`, so the next lap UPDATEs it.
+      if (insertErr.code === "23505") continue;
+      throw new Error(`updateDraftLines insert: ${insertErr.message}`);
+    }
+    landed = true;
+  }
+  if (!landed) {
+    // Sustained contention on ONE draft's lines. Never observed; the lap converges in two
+    // (the loser's second pass has nothing left to insert). A named 409 beats a false
+    // success — the editor reloads and sees the winner's numbers.
+    throw new PurchaseOrderError(409, "lines_contended", "This order's lines are being edited concurrently — reload and retry");
   }
 
-  // INSERT genuinely-new SKUs (fetch their current guide positions in one batch).
-  //
-  // PRODUCT RETIREMENT DOES NOT GATE THIS, DELIBERATELY (Juan's ruling, 2026-08-21).
-  // Retirement stops the par pass from SUGGESTING a product; a draft PO line that was
-  // already placed — or one a manager adds on purpose to burn down the last of it —
-  // must still go through, for the same reason receiving still accepts the truck
-  // (lib/receiving.ts). Ordering stops at the suggestion layer, not at the door.
-  //
-  // This module reads no `products` at all, so a "discontinued" badge on the PO panel
-  // is a new loader integration rather than a widened read; filed as debt in
-  // docs/ROADMAP.md alongside the receiving one. NOTE the pre-existing, unrelated gap
-  // this read already has: it does not check `active`, existence, or vendor-match on
-  // an incoming skuId (sim P2 territory) — do not mistake the retirement note for
-  // coverage of that.
-  if (toInsert.length > 0) {
-    const newSkuIds = toInsert.map((l) => l.skuId);
-    const { data: skuRows, error: sErr } = await sb.from("vendor_items")
-      .select("id, guide_position").in("id", newSkuIds)
-      .returns<Array<{ id: string; guide_position: number | null }>>();
-    if (sErr) throw new Error(`updateDraftLines new skus: ${sErr.message}`);
-    const guidePosBySku = new Map((skuRows ?? []).map((s) => [s.id, s.guide_position]));
-    const { error: iErr } = await sb.from("po_lines").insert(
-      toInsert.map((l) => ({
-        po_id: poId,
-        sku_id: l.skuId,
-        order_qty: l.orderQty,
-        guide_position_snapshot: guidePosBySku.get(l.skuId) ?? null,
-        note: l.note?.trim() || null,
-      })),
-    );
-    if (iErr) throw new Error(`updateDraftLines insert: ${iErr.message}`);
-  }
 
   // TOCTOU close (Fix 3): our draft-only guard above is a check-then-act — a concurrent
   // confirmPO can flip draft→confirmed AFTER we passed the guard but our po_lines writes
@@ -484,15 +557,29 @@ interface ConfirmedSnapshot {
  * builds the confirmed_snapshot jsonb (spec §2.2 shape), and stamps
  * cutoff_at_confirm when a vendor_cutoffs row governs today's ET day-of-week.
  *
- * ── LINEARIZATION: the status flip is STEP 1 (TOCTOU fix) ───────────────────────
- * The guarded draft→confirmed UPDATE (`.eq("status","draft")` + rowcount) runs
- * FIRST — it is the linearization point. Only after the row is ours do we load the
- * lines, price them, and write the snapshot (a SECOND, unguarded UPDATE — we own
- * the row now). This way any updateDraftLines writes that landed BEFORE the flip
- * are INCLUDED in the snapshot, and updateDraftLines' own post-write status
- * re-check (409 `confirmed_during_edit`) tells an editor whose write landed AFTER
- * the flip that it missed the snapshot. A concurrent double-confirm still loses the
- * race here (the second flip sees no draft row → 409). Audited `po.confirmed`.
+ * ── LINEARIZATION: ONE GUARDED WRITE CARRIES BOTH (audit v2 F2, BC-036) ─────────
+ * The status flip and the snapshot land in a SINGLE guarded UPDATE
+ * (`.eq("status","draft")` + rowcount) — it is the linearization point, and it is
+ * the LAST statement that can fail. Everything expensive happens before it: the
+ * line load, the batched SKU/vendor/user reads, the PAGED price scan, the cutoff
+ * resolve, the snapshot build. Any of those throwing now leaves the PO a DRAFT,
+ * which the manager simply confirms again.
+ *
+ * It used to flip FIRST and write the snapshot ~8 statements later. Anything
+ * throwing in between — including a serverless timeout — left a `confirmed` PO with
+ * `confirmed_snapshot = NULL` and NO repair path: re-confirming 409s `not_draft`,
+ * and `markPlaced` / `sendOrderEmail` accepted the row happily enough to transmit a
+ * blank order to the vendor.
+ *
+ * A concurrent double-confirm still loses the race (the second UPDATE sees no draft
+ * row → 409 `not_draft`), and updateDraftLines' post-write status re-check still
+ * throws `confirmed_during_edit` for an editor whose write landed after this flip.
+ * THE COST, STATED: the window in which a draft edit can miss the snapshot now
+ * opens at the LINE READ rather than at the flip, because the snapshot is built
+ * from lines read before the row is ours. That is a wider window on a RECOVERABLE
+ * outcome (a qty edit absent from an otherwise-correct frozen order, which the
+ * editor is told about) in exchange for closing an UNRECOVERABLE one (a confirmed
+ * PO that can never acquire a snapshot). Audited `po.confirmed`.
  */
 export async function confirmPO(actor: AuthContext, poId: string): Promise<void> {
   requireLevel(actor, PO_MIN);
@@ -510,19 +597,9 @@ export async function confirmPO(actor: AuthContext, poId: string): Promise<void>
     throw new PurchaseOrderError(409, "not_draft", "Only draft orders can be confirmed");
   }
 
-  // STEP 1 — the LINEARIZATION POINT: guarded draft→confirmed flip FIRST. Only a
-  // still-draft row transitions (race-safe: a concurrent double-confirm loses here).
-  // Everything below runs on a row we now exclusively own — no further status guard
-  // is needed for the snapshot write, and any updateDraftLines edit that raced ahead
-  // of this flip is already visible to the line load that follows.
+  // Load the lines to price + snapshot. This read is BEFORE the flip (see the header):
+  // the snapshot has to exist before the status claims it does.
   const confirmedAt = new Date().toISOString();
-  const { error: flipErr, count: flipCount } = await sb.from("purchase_orders")
-    .update({ status: "confirmed", confirmed_by: actor.user.id, confirmed_at: confirmedAt }, { count: "exact" })
-    .eq("id", poId).eq("status", "draft");
-  if (flipErr) throw new Error(`confirmPO flip: ${flipErr.message}`);
-  if (flipCount === 0) throw new PurchaseOrderError(409, "not_draft", "Order is no longer a draft");
-
-  // Load the lines to price + snapshot (post-flip: includes any pre-flip edits).
   const { data: lineRows, error: lErr } = await sb.from("po_lines")
     .select("id, sku_id, order_qty, order_unit_label, guide_position_snapshot")
     .eq("po_id", poId).order("created_at", { ascending: true })
@@ -546,19 +623,6 @@ export async function confirmPO(actor: AuthContext, poId: string): Promise<void>
   if (vErr) throw new Error(`confirmPO vendor: ${vErr.message}`);
   if (uuErr) throw new Error(`confirmPO user: ${uuErr.message}`);
   const skuById = new Map((skuRows ?? []).map((s) => [s.id, s]));
-
-  // Freeze the price onto each line (rowcount-checked). Null price → leave null.
-  for (const l of lines) {
-    const priceCents = priceBySku.get(l.sku_id) ?? null;
-    const { error: puErr, count } = await sb.from("po_lines")
-      .update({ price_cents_at_order: priceCents }, { count: "exact" })
-      .eq("id", l.id);
-    if (puErr) throw new Error(`confirmPO price update: ${puErr.message}`);
-    // count === 0 tolerated: po_lines are append-only (a line cannot vanish) and we are
-    // PAST the status flip — throwing here would strand the row confirmed-without-snapshot.
-    // A missing price on one line is advisory-null anyway; log and continue.
-    if (count === 0) console.error(`confirmPO: line ${l.id} missing during price freeze (po ${poId}) — continuing`);
-  }
 
   // Governing cutoff for today's ET day-of-week (location null-or-match, active).
   const { dateEt, dow } = etToday();
@@ -591,20 +655,40 @@ export async function confirmPO(actor: AuthContext, poId: string): Promise<void>
     confirmedAtEt: formatTime(confirmedAt, actor.user.language),
   };
 
-  // STEP 2 — write the snapshot + cutoff onto the row we already own (status flipped
-  // to confirmed in step 1). NO status guard needed here: the linearization already
-  // happened, so this UPDATE cannot lose a race (only this call owns the confirmed
-  // transition). confirmed_by/at were stamped in step 1; we set them again idempotently
-  // for a single coherent confirmed record.
-  const { error: cErr } = await sb.from("purchase_orders")
+  // ── THE LINEARIZATION POINT — status AND snapshot, one guarded UPDATE ────────────
+  // Guarded on `status = 'draft'` + rowcount (the silent-UPDATE law): only a still-draft
+  // row transitions, so a concurrent double-confirm loses here with a 409. Because the
+  // snapshot, the cutoff and the confirmer all ride THIS statement, there is no longer a
+  // window in which the row can read `confirmed` without a snapshot — the state the audit
+  // found had no repair path at all.
+  const { error: flipErr, count: flipCount } = await sb.from("purchase_orders")
     .update({
+      status: "confirmed",
       confirmed_snapshot: snapshot,
       confirmed_by: actor.user.id,
       confirmed_at: confirmedAt,
       cutoff_at_confirm: cutoffAtConfirm,
-    })
-    .eq("id", poId);
-  if (cErr) throw new Error(`confirmPO snapshot: ${cErr.message}`);
+    }, { count: "exact" })
+    .eq("id", poId).eq("status", "draft");
+  if (flipErr) throw new Error(`confirmPO confirm: ${flipErr.message}`);
+  if (flipCount === 0) throw new PurchaseOrderError(409, "not_draft", "Order is no longer a draft");
+
+  // Freeze the price onto each line (rowcount-checked). Null price → leave null.
+  //
+  // THE ONE THING THAT RUNS AFTER THE FLIP, AND IT IS ADVISORY. `price_cents_at_order` is
+  // a convenience column for line-level queries; the SNAPSHOT — which is authoritative for
+  // transmission and disputes — already carries these same prices from the same map, and
+  // was written above. So a failure here cannot change what the vendor is sent, and
+  // throwing past the point of no return is exactly what this fix exists to stop. Log and
+  // continue, for a rowcount 0 (append-only: a line cannot vanish) and for an error alike.
+  for (const l of lines) {
+    const priceCents = priceBySku.get(l.sku_id) ?? null;
+    const { error: puErr, count } = await sb.from("po_lines")
+      .update({ price_cents_at_order: priceCents }, { count: "exact" })
+      .eq("id", l.id);
+    if (puErr) console.error(`confirmPO: price freeze failed on line ${l.id} (po ${poId}): ${puErr.message} — snapshot already holds the price; continuing`);
+    else if (count === 0) console.error(`confirmPO: line ${l.id} missing during price freeze (po ${poId}) — continuing`);
+  }
 
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,
