@@ -9,16 +9,23 @@
  * crashing the calling route because Resend hiccupped is worse — the route
  * can audit the send failure and respond cleanly.
  *
- * Resend constraints (locked Phase 2 Session 3):
- *   - EMAIL_FROM = onboarding@resend.dev (Resend default sender). Domain
- *     verification of complimentsonlysubs.com is queued for Phase 5+ once
- *     Pete approves DNS configuration.
- *   - Default sender restricts deliverable recipients to the verified Resend
- *     account email only — i.e., juan@complimentsonlysubs.com. Until domain
- *     verification, any production email path that targets a non-Juan address
- *     will silently 422 from Resend's side.
- *   - text fallback is required by Resend best practices (deliverability +
- *     accessibility). Every caller must supply both html and text.
+ * Sender scheme (Juan-ratified 2026-09-01; sending domain = complimentsonlyoperations.com,
+ * added to Resend 2026-09-01, DNS verification pending at GoDaddy):
+ *   - EMAIL_FROM             — the CUSTOMER-facing default (catering@...). Portal magic
+ *     links, quote emails, order drafts: every send that lands in a customer inbox.
+ *   - EMAIL_FROM_TEAM        — staff/internal sends (team@...): password resets today,
+ *     internal digests later. Unset → falls back to EMAIL_FROM (see teamFrom()).
+ *   - vendor/B2B (ops) sends do NOT use an env sender: the PO leg sends FROM each
+ *     location's own `locations.receipt_email_address` alias so vendor replies
+ *     self-sort per store (V2-D3). That leg stays dormant until an alias is set AND
+ *     EMAIL_FROM's domain is real (lib/po-email-shared.ts emailOrderingAvailable).
+ *
+ * Until DNS verification completes, EMAIL_FROM remains onboarding@resend.dev, which
+ * restricts deliverable recipients to the Resend account email (juan@) — any other
+ * recipient silently 422s on Resend's side.
+ *
+ * text fallback is required by Resend best practices (deliverability +
+ * accessibility). Every caller must supply both html and text.
  */
 
 import { Resend } from "resend";
@@ -37,6 +44,13 @@ function getFrom(): string {
   const from = process.env.EMAIL_FROM;
   if (!from) throw new Error("EMAIL_FROM is not set");
   return from;
+}
+
+/** Sender for staff/internal mail (password resets, future digests). Returns the
+ *  EMAIL_FROM_TEAM override, or undefined so sendEmail falls through to EMAIL_FROM —
+ *  callers pass it straight as `from` and unset env = exactly today's behavior. */
+export function teamFrom(): string | undefined {
+  return process.env.EMAIL_FROM_TEAM?.trim() || undefined;
 }
 
 export interface SendEmailInput {
