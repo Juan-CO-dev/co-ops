@@ -346,6 +346,77 @@ export interface DraftLineEdit {
 }
 
 /**
+ * PURE: split a submit into the lines the PO already carries (UPDATE in place) and the
+ * genuinely-new ones (INSERT). `existingSkuIds` is the set read from `po_lines`.
+ *
+ * Extracted from updateDraftLines because it is asked TWICE — once against the set the
+ * pre-read saw, and again against a RE-READ set after the unique index (migration 0190,
+ * `po_lines_po_sku_uq`) refuses a racing INSERT with 23505. The second answer is what
+ * converts a would-be duplicate line into a last-writer-wins qty UPDATE, so the decision
+ * has to be one function with one meaning rather than two inline filters.
+ *
+ * A qty-0 line is NOT special here: append-only means a removal is qty 0, and a removal of
+ * a line that does not exist yet still has to land as a row.
+ */
+export function partitionDraftLines(
+  lines: readonly DraftLineEdit[],
+  existingSkuIds: ReadonlySet<string>,
+): { toUpdate: DraftLineEdit[]; toInsert: DraftLineEdit[] } {
+  const toUpdate: DraftLineEdit[] = [];
+  const toInsert: DraftLineEdit[] = [];
+  for (const l of lines) {
+    (existingSkuIds.has(l.skuId) ? toUpdate : toInsert).push(l);
+  }
+  return { toUpdate, toInsert };
+}
+
+/** Bounded laps for the draft-line create-if-absent (see updateDraftLines). Two is the
+ *  worst case a double-tap can produce; three leaves headroom without spinning. */
+const DRAFT_LINE_LAPS = 3;
+
+/**
+ * INSERT genuinely-new draft lines (fetch their current guide positions in one batch).
+ * Returns the PostgREST error instead of throwing so the caller can read its `code` —
+ * a 23505 from `po_lines_po_sku_uq` (0190) is a re-partition signal, not a failure.
+ *
+ * PRODUCT RETIREMENT DOES NOT GATE THIS, DELIBERATELY (Juan's ruling, 2026-08-21).
+ * Retirement stops the par pass from SUGGESTING a product; a draft PO line that was
+ * already placed — or one a manager adds on purpose to burn down the last of it —
+ * must still go through, for the same reason receiving still accepts the truck
+ * (lib/receiving.ts). Ordering stops at the suggestion layer, not at the door.
+ *
+ * This module reads no `products` at all, so a "discontinued" badge on the PO panel
+ * is a new loader integration rather than a widened read; filed as debt in
+ * docs/ROADMAP.md alongside the receiving one. NOTE the pre-existing, unrelated gap
+ * this read already has: it does not check `active`, existence, or vendor-match on
+ * an incoming skuId (sim P2 territory) — do not mistake the retirement note for
+ * coverage of that.
+ */
+async function insertNewDraftLines(
+  sb: ServiceClient,
+  poId: string,
+  toInsert: readonly DraftLineEdit[],
+): Promise<{ code?: string; message: string } | null> {
+  if (toInsert.length === 0) return null;
+  const newSkuIds = toInsert.map((l) => l.skuId);
+  const { data: skuRows, error: sErr } = await sb.from("vendor_items")
+    .select("id, guide_position").in("id", newSkuIds)
+    .returns<Array<{ id: string; guide_position: number | null }>>();
+  if (sErr) throw new Error(`updateDraftLines new skus: ${sErr.message}`);
+  const guidePosBySku = new Map((skuRows ?? []).map((s) => [s.id, s.guide_position]));
+  const { error: iErr } = await sb.from("po_lines").insert(
+    toInsert.map((l) => ({
+      po_id: poId,
+      sku_id: l.skuId,
+      order_qty: l.orderQty,
+      guide_position_snapshot: guidePosBySku.get(l.skuId) ?? null,
+      note: l.note?.trim() || null,
+    })),
+  );
+  return iErr ? { code: iErr.code, message: iErr.message } : null;
+}
+
+/**
  * Edit a draft PO's lines (KH+ + location-bind). DRAFT-ONLY: a non-draft PO 409s
  * `not_draft` (frozen after Confirm). APPEND-ONLY: replace-by-delete is
  * FORBIDDEN — we UPDATE existing (po_id, sku_id) rows' qty/note (rowcount-checked)
@@ -386,57 +457,59 @@ export async function updateDraftLines(
     throw new PurchaseOrderError(409, "not_draft", "Only draft orders can be edited");
   }
 
-  // Which SKUs already have a line on this PO (batch)?
-  const { data: existing, error: exErr } = await sb.from("po_lines")
-    .select("sku_id, guide_position_snapshot").eq("po_id", poId)
-    .returns<Array<{ sku_id: string; guide_position_snapshot: number | null }>>();
-  if (exErr) throw new Error(`updateDraftLines existing: ${exErr.message}`);
-  const existingSkus = new Set((existing ?? []).map((r) => r.sku_id));
+  // ── THE CREATE-IF-ABSENT LAP (audit v2 F1, BC-037) ───────────────────────────────
+  // Read-which-exist → insert-the-rest is a check-then-act, and until migration 0190 there
+  // was nothing behind it: two PATCHes for the same new SKU (a Save double-tap, a retry,
+  // two managers on one draft) both read an `existing` without it and both INSERTed. The
+  // duplicate then rides confirmPO's verbatim snapshot into the vendor email at FULL QTY,
+  // and po-match's ORDERED leg double-counts it — silently, because the later
+  // `.eq("po_id").eq("sku_id")` UPDATE matches 2 rows and reports count 2.
+  //
+  // `po_lines_po_sku_uq` (0190) makes the second INSERT impossible; this lap is what turns
+  // its 23505 into the RIGHT answer instead of a 500. We re-read the SKU set, re-partition
+  // against it — the winner's row is now visible, so our submit lands on the UPDATE leg —
+  // and retry. Last-writer-wins on qty, which is the same semantic two sequential saves
+  // already have.
+  //
+  // SAFE BEFORE THE INDEX EXISTS (BC-038, deploy ordering): with no index there is no
+  // 23505 to catch, so the branch is dead code and the lap runs exactly once — byte-for-byte
+  // today's behaviour. Nothing here waits on the gate.
+  let landed = false;
+  for (let lap = 0; lap < DRAFT_LINE_LAPS && !landed; lap++) {
+    // Which SKUs already have a line on this PO (batch)?
+    const { data: existing, error: exErr } = await sb.from("po_lines")
+      .select("sku_id").eq("po_id", poId)
+      .returns<Array<{ sku_id: string }>>();
+    if (exErr) throw new Error(`updateDraftLines existing: ${exErr.message}`);
+    const existingSkus = new Set((existing ?? []).map((r) => r.sku_id));
 
-  const toUpdate = lines.filter((l) => existingSkus.has(l.skuId));
-  const toInsert = lines.filter((l) => !existingSkus.has(l.skuId));
+    const { toUpdate, toInsert } = partitionDraftLines(lines, existingSkus);
 
-  // UPDATE each existing line in place (rowcount-checked per the silent-UPDATE law).
-  for (const l of toUpdate) {
-    const { error: uErr, count } = await sb.from("po_lines")
-      .update({ order_qty: l.orderQty, note: l.note?.trim() || null }, { count: "exact" })
-      .eq("po_id", poId).eq("sku_id", l.skuId);
-    if (uErr) throw new Error(`updateDraftLines update: ${uErr.message}`);
-    if (count === 0) throw new PurchaseOrderError(404, "not_found", "Line not found");
+    // UPDATE each existing line in place (rowcount-checked per the silent-UPDATE law).
+    for (const l of toUpdate) {
+      const { error: uErr, count } = await sb.from("po_lines")
+        .update({ order_qty: l.orderQty, note: l.note?.trim() || null }, { count: "exact" })
+        .eq("po_id", poId).eq("sku_id", l.skuId);
+      if (uErr) throw new Error(`updateDraftLines update: ${uErr.message}`);
+      if (count === 0) throw new PurchaseOrderError(404, "not_found", "Line not found");
+    }
+
+    const insertErr = await insertNewDraftLines(sb, poId, toInsert);
+    if (insertErr) {
+      // 23505 = a rival landed this (po_id, sku_id) between our read and our insert. Re-read
+      // and re-partition: the row is now in `existingSkus`, so the next lap UPDATEs it.
+      if (insertErr.code === "23505") continue;
+      throw new Error(`updateDraftLines insert: ${insertErr.message}`);
+    }
+    landed = true;
+  }
+  if (!landed) {
+    // Sustained contention on ONE draft's lines. Never observed; the lap converges in two
+    // (the loser's second pass has nothing left to insert). A named 409 beats a false
+    // success — the editor reloads and sees the winner's numbers.
+    throw new PurchaseOrderError(409, "lines_contended", "This order's lines are being edited concurrently — reload and retry");
   }
 
-  // INSERT genuinely-new SKUs (fetch their current guide positions in one batch).
-  //
-  // PRODUCT RETIREMENT DOES NOT GATE THIS, DELIBERATELY (Juan's ruling, 2026-08-21).
-  // Retirement stops the par pass from SUGGESTING a product; a draft PO line that was
-  // already placed — or one a manager adds on purpose to burn down the last of it —
-  // must still go through, for the same reason receiving still accepts the truck
-  // (lib/receiving.ts). Ordering stops at the suggestion layer, not at the door.
-  //
-  // This module reads no `products` at all, so a "discontinued" badge on the PO panel
-  // is a new loader integration rather than a widened read; filed as debt in
-  // docs/ROADMAP.md alongside the receiving one. NOTE the pre-existing, unrelated gap
-  // this read already has: it does not check `active`, existence, or vendor-match on
-  // an incoming skuId (sim P2 territory) — do not mistake the retirement note for
-  // coverage of that.
-  if (toInsert.length > 0) {
-    const newSkuIds = toInsert.map((l) => l.skuId);
-    const { data: skuRows, error: sErr } = await sb.from("vendor_items")
-      .select("id, guide_position").in("id", newSkuIds)
-      .returns<Array<{ id: string; guide_position: number | null }>>();
-    if (sErr) throw new Error(`updateDraftLines new skus: ${sErr.message}`);
-    const guidePosBySku = new Map((skuRows ?? []).map((s) => [s.id, s.guide_position]));
-    const { error: iErr } = await sb.from("po_lines").insert(
-      toInsert.map((l) => ({
-        po_id: poId,
-        sku_id: l.skuId,
-        order_qty: l.orderQty,
-        guide_position_snapshot: guidePosBySku.get(l.skuId) ?? null,
-        note: l.note?.trim() || null,
-      })),
-    );
-    if (iErr) throw new Error(`updateDraftLines insert: ${iErr.message}`);
-  }
 
   // TOCTOU close (Fix 3): our draft-only guard above is a check-then-act — a concurrent
   // confirmPO can flip draft→confirmed AFTER we passed the guard but our po_lines writes

@@ -1,0 +1,74 @@
+-- Migration 0190_po_lines_po_sku_unique
+-- AUTHORED 2026-09-01. NOT YET APPLIED — GATE (LEAD/JUAN).
+--
+-- 0190: po_lines_po_sku_uq — one line per (PO, SKU), so the draft-line create-if-absent
+-- has an arbiter instead of a hope.
+--
+-- ── PROVENANCE (full audit v2, seat C5 finding F1 · BC-037) ───────────────────────────
+-- `updateDraftLines` (lib/purchase-orders.ts) edits a draft PO's lines by reading which
+-- SKUs already have a row, UPDATEing those, and INSERTing the rest. That is a check-then-
+-- act, and until this file there was nothing behind it — `0174_vendor_ordering.sql:103`
+-- creates only `po_lines_po_ix (po_id)`, and no migration between 0175 and 0189 mentions
+-- the table at all.
+--
+-- Two PATCHes to /api/operations/ordering/po for the SAME new SKU — a Save double-tap on
+-- the PO panel, a retry after a flaky response, two managers on one draft — both read an
+-- `existing` set without it, both classify it as new, and both INSERT. The duplicate then
+-- rides `confirmPO`'s verbatim snapshot (`confirmed_snapshot.lines`) into the vendor email
+-- AT FULL QTY, and `lib/po-match.ts`'s ORDERED leg double-counts it against the delivery.
+-- Nothing complains: the later `.eq("po_id").eq("sku_id")` UPDATE matches 2 rows and
+-- reports count 2, which passes the rowcount check.
+--
+-- The order that leaves the building is wrong, and the three-way match agrees with it.
+--
+-- ── WHY THIS INDEX CANNOT FAIL TO BUILD ──────────────────────────────────────────────
+-- Probed live on prod by the audit seat that raised F1 (2026-09-01, project
+-- bgcvurheqzylyfehqgzh) — the LIVE-CHECK recorded with the finding, not re-run here:
+--
+--     select po_id, sku_id, count(*) from po_lines group by 1,2 having count(*) > 1;
+--     → 0 rows. 0 duplicate (po_id, sku_id) pairs exist today.
+--
+-- RE-RUN THAT QUERY AT THE GATE before applying. It is the whole precondition: a nonzero
+-- result means the index build FAILS and the duplicates must be reconciled by hand first
+-- (append-only — a duplicate is reconciled by zeroing one line's qty, never by DELETE).
+--
+-- So this is a pure constraint addition over already-conforming data: no backfill, no
+-- de-duplication step, no data written. (The hazard is real but has not yet been HIT —
+-- the PO panel has had few enough concurrent editors that the race has not landed. It is
+-- a matter of traffic, not of design safety.)
+--
+-- ── DEPLOY ORDERING (BC-038): THE CODE IS SAFE ON BOTH SIDES OF THIS GATE ─────────────
+-- PR "fix/state-machine-integrity" ships `updateDraftLines` with a bounded re-partition
+-- lap that treats 23505 on the line INSERT as "a rival already created this line — re-read
+-- and UPDATE it instead". That branch is reachable ONLY when this index exists:
+--
+--   · BEFORE apply — no unique index, therefore no 23505 can be raised on that INSERT, so
+--     the branch is unreachable dead code and the lap runs exactly once. The function's
+--     behaviour is byte-for-byte what it is on main today (the duplicate still lands; the
+--     finding is not yet fixed, but nothing is made worse and nothing errors).
+--   · AFTER apply — the index refuses the second INSERT, the branch catches it, and the
+--     duplicate becomes a last-writer-wins qty UPDATE, which is exactly the semantic two
+--     SEQUENTIAL saves already have.
+--
+-- Neither order of (deploy code, apply migration) produces a broken intermediate state, so
+-- this file carries no coordination requirement with the deploy.
+--
+-- ── SHAPE ────────────────────────────────────────────────────────────────────────────
+-- A plain UNIQUE INDEX, not a table constraint: PostgREST reports both as 23505, and an
+-- index keeps the option of a CONCURRENTLY rebuild without an ALTER TABLE lock. Not
+-- partial — `po_lines` is append-only with no soft-delete column (a removed line is qty 0,
+-- an ordinary row), so EVERY row participates. `po_lines_po_ix (po_id)` stays: it serves
+-- the by-PO line loads, and while this index's leading column could cover them, dropping a
+-- live index is a separate decision with its own evidence and is not smuggled in here.
+--
+-- ── VERIFIED BEFORE AUTHORING (source, 2026-09-01) ───────────────────────────────────
+--   · `po_lines` DDL: 0174_vendor_ordering.sql:88-105 (columns, the po_id index, RLS
+--     enable + REVOKE). Re-read from that file, not from a JS helper.
+--   · No 0175-0189 migration touches `po_lines`.
+--   · No RLS or grant change is needed or made here: an index is not a privilege.
+
+CREATE UNIQUE INDEX IF NOT EXISTS po_lines_po_sku_uq
+  ON public.po_lines (po_id, sku_id);
+
+COMMENT ON INDEX public.po_lines_po_sku_uq IS
+  'One line per (purchase order, SKU). The arbiter behind updateDraftLines'' create-if-absent: a concurrent second INSERT of the same SKU raises 23505, which the caller re-reads and turns into an UPDATE. Audit v2 seat C5 finding F1 (BC-037).';
