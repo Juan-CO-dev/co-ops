@@ -557,15 +557,29 @@ interface ConfirmedSnapshot {
  * builds the confirmed_snapshot jsonb (spec §2.2 shape), and stamps
  * cutoff_at_confirm when a vendor_cutoffs row governs today's ET day-of-week.
  *
- * ── LINEARIZATION: the status flip is STEP 1 (TOCTOU fix) ───────────────────────
- * The guarded draft→confirmed UPDATE (`.eq("status","draft")` + rowcount) runs
- * FIRST — it is the linearization point. Only after the row is ours do we load the
- * lines, price them, and write the snapshot (a SECOND, unguarded UPDATE — we own
- * the row now). This way any updateDraftLines writes that landed BEFORE the flip
- * are INCLUDED in the snapshot, and updateDraftLines' own post-write status
- * re-check (409 `confirmed_during_edit`) tells an editor whose write landed AFTER
- * the flip that it missed the snapshot. A concurrent double-confirm still loses the
- * race here (the second flip sees no draft row → 409). Audited `po.confirmed`.
+ * ── LINEARIZATION: ONE GUARDED WRITE CARRIES BOTH (audit v2 F2, BC-036) ─────────
+ * The status flip and the snapshot land in a SINGLE guarded UPDATE
+ * (`.eq("status","draft")` + rowcount) — it is the linearization point, and it is
+ * the LAST statement that can fail. Everything expensive happens before it: the
+ * line load, the batched SKU/vendor/user reads, the PAGED price scan, the cutoff
+ * resolve, the snapshot build. Any of those throwing now leaves the PO a DRAFT,
+ * which the manager simply confirms again.
+ *
+ * It used to flip FIRST and write the snapshot ~8 statements later. Anything
+ * throwing in between — including a serverless timeout — left a `confirmed` PO with
+ * `confirmed_snapshot = NULL` and NO repair path: re-confirming 409s `not_draft`,
+ * and `markPlaced` / `sendOrderEmail` accepted the row happily enough to transmit a
+ * blank order to the vendor.
+ *
+ * A concurrent double-confirm still loses the race (the second UPDATE sees no draft
+ * row → 409 `not_draft`), and updateDraftLines' post-write status re-check still
+ * throws `confirmed_during_edit` for an editor whose write landed after this flip.
+ * THE COST, STATED: the window in which a draft edit can miss the snapshot now
+ * opens at the LINE READ rather than at the flip, because the snapshot is built
+ * from lines read before the row is ours. That is a wider window on a RECOVERABLE
+ * outcome (a qty edit absent from an otherwise-correct frozen order, which the
+ * editor is told about) in exchange for closing an UNRECOVERABLE one (a confirmed
+ * PO that can never acquire a snapshot). Audited `po.confirmed`.
  */
 export async function confirmPO(actor: AuthContext, poId: string): Promise<void> {
   requireLevel(actor, PO_MIN);
@@ -583,19 +597,9 @@ export async function confirmPO(actor: AuthContext, poId: string): Promise<void>
     throw new PurchaseOrderError(409, "not_draft", "Only draft orders can be confirmed");
   }
 
-  // STEP 1 — the LINEARIZATION POINT: guarded draft→confirmed flip FIRST. Only a
-  // still-draft row transitions (race-safe: a concurrent double-confirm loses here).
-  // Everything below runs on a row we now exclusively own — no further status guard
-  // is needed for the snapshot write, and any updateDraftLines edit that raced ahead
-  // of this flip is already visible to the line load that follows.
+  // Load the lines to price + snapshot. This read is BEFORE the flip (see the header):
+  // the snapshot has to exist before the status claims it does.
   const confirmedAt = new Date().toISOString();
-  const { error: flipErr, count: flipCount } = await sb.from("purchase_orders")
-    .update({ status: "confirmed", confirmed_by: actor.user.id, confirmed_at: confirmedAt }, { count: "exact" })
-    .eq("id", poId).eq("status", "draft");
-  if (flipErr) throw new Error(`confirmPO flip: ${flipErr.message}`);
-  if (flipCount === 0) throw new PurchaseOrderError(409, "not_draft", "Order is no longer a draft");
-
-  // Load the lines to price + snapshot (post-flip: includes any pre-flip edits).
   const { data: lineRows, error: lErr } = await sb.from("po_lines")
     .select("id, sku_id, order_qty, order_unit_label, guide_position_snapshot")
     .eq("po_id", poId).order("created_at", { ascending: true })
@@ -619,19 +623,6 @@ export async function confirmPO(actor: AuthContext, poId: string): Promise<void>
   if (vErr) throw new Error(`confirmPO vendor: ${vErr.message}`);
   if (uuErr) throw new Error(`confirmPO user: ${uuErr.message}`);
   const skuById = new Map((skuRows ?? []).map((s) => [s.id, s]));
-
-  // Freeze the price onto each line (rowcount-checked). Null price → leave null.
-  for (const l of lines) {
-    const priceCents = priceBySku.get(l.sku_id) ?? null;
-    const { error: puErr, count } = await sb.from("po_lines")
-      .update({ price_cents_at_order: priceCents }, { count: "exact" })
-      .eq("id", l.id);
-    if (puErr) throw new Error(`confirmPO price update: ${puErr.message}`);
-    // count === 0 tolerated: po_lines are append-only (a line cannot vanish) and we are
-    // PAST the status flip — throwing here would strand the row confirmed-without-snapshot.
-    // A missing price on one line is advisory-null anyway; log and continue.
-    if (count === 0) console.error(`confirmPO: line ${l.id} missing during price freeze (po ${poId}) — continuing`);
-  }
 
   // Governing cutoff for today's ET day-of-week (location null-or-match, active).
   const { dateEt, dow } = etToday();
@@ -664,20 +655,40 @@ export async function confirmPO(actor: AuthContext, poId: string): Promise<void>
     confirmedAtEt: formatTime(confirmedAt, actor.user.language),
   };
 
-  // STEP 2 — write the snapshot + cutoff onto the row we already own (status flipped
-  // to confirmed in step 1). NO status guard needed here: the linearization already
-  // happened, so this UPDATE cannot lose a race (only this call owns the confirmed
-  // transition). confirmed_by/at were stamped in step 1; we set them again idempotently
-  // for a single coherent confirmed record.
-  const { error: cErr } = await sb.from("purchase_orders")
+  // ── THE LINEARIZATION POINT — status AND snapshot, one guarded UPDATE ────────────
+  // Guarded on `status = 'draft'` + rowcount (the silent-UPDATE law): only a still-draft
+  // row transitions, so a concurrent double-confirm loses here with a 409. Because the
+  // snapshot, the cutoff and the confirmer all ride THIS statement, there is no longer a
+  // window in which the row can read `confirmed` without a snapshot — the state the audit
+  // found had no repair path at all.
+  const { error: flipErr, count: flipCount } = await sb.from("purchase_orders")
     .update({
+      status: "confirmed",
       confirmed_snapshot: snapshot,
       confirmed_by: actor.user.id,
       confirmed_at: confirmedAt,
       cutoff_at_confirm: cutoffAtConfirm,
-    })
-    .eq("id", poId);
-  if (cErr) throw new Error(`confirmPO snapshot: ${cErr.message}`);
+    }, { count: "exact" })
+    .eq("id", poId).eq("status", "draft");
+  if (flipErr) throw new Error(`confirmPO confirm: ${flipErr.message}`);
+  if (flipCount === 0) throw new PurchaseOrderError(409, "not_draft", "Order is no longer a draft");
+
+  // Freeze the price onto each line (rowcount-checked). Null price → leave null.
+  //
+  // THE ONE THING THAT RUNS AFTER THE FLIP, AND IT IS ADVISORY. `price_cents_at_order` is
+  // a convenience column for line-level queries; the SNAPSHOT — which is authoritative for
+  // transmission and disputes — already carries these same prices from the same map, and
+  // was written above. So a failure here cannot change what the vendor is sent, and
+  // throwing past the point of no return is exactly what this fix exists to stop. Log and
+  // continue, for a rowcount 0 (append-only: a line cannot vanish) and for an error alike.
+  for (const l of lines) {
+    const priceCents = priceBySku.get(l.sku_id) ?? null;
+    const { error: puErr, count } = await sb.from("po_lines")
+      .update({ price_cents_at_order: priceCents }, { count: "exact" })
+      .eq("id", l.id);
+    if (puErr) console.error(`confirmPO: price freeze failed on line ${l.id} (po ${poId}): ${puErr.message} — snapshot already holds the price; continuing`);
+    else if (count === 0) console.error(`confirmPO: line ${l.id} missing during price freeze (po ${poId}) — continuing`);
+  }
 
   await audit({
     actorId: actor.user.id, actorRole: actor.user.role,

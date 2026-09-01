@@ -166,3 +166,118 @@ describe("migration 0190 puts the index behind the create-if-absent", () => {
     expect(sql()).toMatch(/RE-RUN THAT QUERY AT THE GATE/);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// F2 · confirmPO — the snapshot exists BEFORE the status says it does
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("confirmPO writes the status and the snapshot in ONE guarded statement", () => {
+  const body = bodyOf(poSrc, "export async function confirmPO(");
+
+  /** Character offset of a marker inside confirmPO's body (asserted present). */
+  const at = (needle: string | RegExp) => {
+    const i = typeof needle === "string" ? body.indexOf(needle) : body.search(needle);
+    expect(i, `confirmPO body is missing ${needle}`).toBeGreaterThan(-1);
+    return i;
+  };
+
+  it("has exactly ONE write that sets status to confirmed", () => {
+    // THE WHOLE FINDING. Two writes — flip, then snapshot — means every statement between
+    // them can leave a `confirmed` PO with confirmed_snapshot NULL, and re-confirming is
+    // impossible (`:509` and the guarded flip both 409 `not_draft`). One write cannot.
+    const flips = body.match(/status:\s*"confirmed"/g) ?? [];
+    expect(flips).toHaveLength(1);
+  });
+
+  it("carries confirmed_snapshot in that same statement", () => {
+    const flipIdx = at(/status:\s*"confirmed"/);
+    const stmtEnd = body.indexOf(".eq(", flipIdx);
+    expect(stmtEnd).toBeGreaterThan(flipIdx);
+    expect(body.slice(flipIdx, stmtEnd)).toMatch(/confirmed_snapshot:/);
+  });
+
+  it("builds the snapshot BEFORE that statement, not after it", () => {
+    expect(at("const snapshot: ConfirmedSnapshot")).toBeLessThan(at(/status:\s*"confirmed"/));
+  });
+
+  it("resolves the governing cutoff before it too — it rides the same write", () => {
+    expect(at("resolveGoverningCutoffIso(")).toBeLessThan(at(/status:\s*"confirmed"/));
+    const flipIdx = at(/status:\s*"confirmed"/);
+    expect(body.slice(flipIdx, body.indexOf(".eq(", flipIdx))).toMatch(/cutoff_at_confirm:/);
+  });
+
+  it("loads the lines and prices before it — nothing that can throw runs after the flip", () => {
+    const flipIdx = at(/status:\s*"confirmed"/);
+    expect(at("loadLatestPriceCentsBySku(")).toBeLessThan(flipIdx);
+    expect(at('.from("po_lines")')).toBeLessThan(flipIdx);
+  });
+
+  it("keeps the draft guard and the rowcount check on that one write", () => {
+    // Still the linearization point: a concurrent double-confirm must still lose the race
+    // with a 409 rather than both writing a snapshot.
+    expect(body).toMatch(/\.eq\("status", "draft"\)/);
+    expect(body).toMatch(/flipCount === 0/);
+    expect(body).toMatch(/"not_draft"/);
+  });
+
+  it("tolerates a failed post-flip price freeze instead of throwing past the point of no return", () => {
+    // The per-line price_cents_at_order write is the ONE thing left after the flip, and it
+    // is advisory: the snapshot already carries the prices from the same map, so a failed
+    // column write cannot change what the vendor is sent.
+    const freeze = body.slice(at("price_cents_at_order:"));
+    expect(freeze).toMatch(/console\.error/);
+    expect(freeze.slice(0, freeze.indexOf("await audit("))).not.toMatch(/throw new Error/);
+  });
+});
+
+describe("sendOrderEmail refuses to transmit an order with no lines", () => {
+  const emailSrc = read("lib/po-email.ts");
+  const body = bodyOf(emailSrc, "export async function sendOrderEmail(");
+
+  it("gates on an empty line set with a named 409", () => {
+    // The pre-fix reachable state: a `confirmed` PO whose snapshot never landed passes the
+    // dormancy and recipient gates, flips to `placed`, and emails a body with zero items.
+    expect(body).toMatch(/ctx\.lines\.length === 0/);
+    expect(body).toMatch(/"no_order_lines"/);
+  });
+
+  it("refuses BEFORE recordPlacement, so a refused send never touches PO status", () => {
+    const guard = body.indexOf("ctx.lines.length === 0");
+    const place = body.indexOf("recordPlacement(");
+    expect(guard).toBeGreaterThan(-1);
+    expect(place).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(place);
+  });
+
+  it("sits with the other two pre-flip gates, not somewhere else", () => {
+    expect(body.indexOf("email_dormant")).toBeLessThan(body.indexOf("recordPlacement("));
+    expect(body.indexOf("no_email_target")).toBeLessThan(body.indexOf("recordPlacement("));
+  });
+
+  it("the stale comment claiming a caller-side no-lines path is gone", () => {
+    // lib/po-email.ts:145-146 asserted "the caller's no-lines path never fabricates order
+    // content". There was no such caller path — the claim was the finding.
+    expect(emailSrc).not.toMatch(/caller's no-lines path never fabricates/);
+  });
+
+  it("the refusal is localized in BOTH languages, never the generic error", () => {
+    for (const lang of ["en", "es"] as const) {
+      expect(read(`lib/i18n/${lang}.json`)).toContain("no_order_lines");
+    }
+  });
+});
+
+describe("both new PO refusals are translate-from-day-one", () => {
+  it("`lines_contended` and `no_order_lines` have en + es keys", () => {
+    // A named 409 the panel renders as its own raw code is half a fix; the panel builds
+    // `ordering.po.error.<code>` dynamically, so the key IS the wiring.
+    for (const lang of ["en", "es"] as const) {
+      const dict = JSON.parse(read(`lib/i18n/${lang}.json`)) as Record<string, string>;
+      for (const code of ["lines_contended", "no_order_lines"]) {
+        const v = dict[`ordering.po.error.${code}`];
+        expect(v, `${lang}: ${code}`).toBeTruthy();
+        expect(v).not.toBe(`ordering.po.error.${code}`);
+      }
+    }
+  });
+});
