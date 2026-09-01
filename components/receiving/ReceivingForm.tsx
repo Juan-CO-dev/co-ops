@@ -49,6 +49,22 @@
  *   - localStorage access fully try/catch guarded (private-mode Safari).
  *   - Corrupt/unparseable payload = treated as absent + cleared.
  *
+ * PRICE MODE (2026-08-31) — "receiving becomes the price feed":
+ *   A non-null unitPrice on a delivery line is the ONE trigger that writes
+ *   vendor_price_history, and it worked in prod from day one — but the box lived on the
+ *   EXPANDED row while this form seeds every templated line collapsed, so the ordinary
+ *   receive never asked. One line in the history of the app carries a price.
+ *   The fix is ONE switch above the list, not a chip per row: prices come off ONE invoice
+ *   in ONE pass, so N per-row reveals would be N taps to do a single job, and each chip
+ *   would also have to fit beside the ✓ on a 360px phone. Off (the default) the list is
+ *   byte-for-byte the ceremony it always was; on, every collapsed row grows a price input
+ *   and the whole list becomes an invoice-entry pass. The choice PERSISTS per location
+ *   (localStorage), so a manager who prices deliveries taps this once, ever — the field
+ *   has to stop being something you rediscover.
+ *   Prices already entered are never hidden by an off switch: the aggregate "N priced"
+ *   readout sits beside the toggle whatever its state, and resuming a draft that carries
+ *   prices turns the mode on explicitly.
+ *
  * The key holds a LIST (newest first, capped) rather than one draft, and the
  * writer stands down while the resume banner is up. Both are data-loss fixes:
  *   - ONE SLOT PER LOCATION meant two same-hour deliveries clobbered each
@@ -73,6 +89,7 @@ import type { ReceivingFormData, ReceivingSkuOption } from "@/lib/receiving";
 import type { OpenCreditRow } from "@/lib/credits";
 import {
   INTAKE_DRAFT_CAP,
+  pricedLineCount,
   removeIntakeDraft,
   upsertIntakeDraft,
   type IntakeDraftIdentity,
@@ -232,6 +249,34 @@ function clearDrafts(locationId: string): void {
   }
 }
 
+// ── Price-mode preference ─────────────────────────────────────────────────────
+// A PREFERENCE, not draft state: it says how this shop's manager works, so it lives in
+// its own key and is deliberately absent from the draft payload (resuming a draft must
+// not re-decide how the list renders) and from resetForm (a successful submit must not
+// make the operator re-find the switch). Same guarded-localStorage idiom as the shelf —
+// private-mode Safari and a full quota both fall back to "off", never to a crash.
+
+function priceModeKey(locationId: string): string {
+  return `coops.intake.prices.${locationId}`;
+}
+
+function readPriceMode(locationId: string): boolean {
+  try {
+    return localStorage.getItem(priceModeKey(locationId)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writePriceMode(locationId: string, on: boolean): void {
+  try {
+    if (on) localStorage.setItem(priceModeKey(locationId), "1");
+    else localStorage.removeItem(priceModeKey(locationId));
+  } catch {
+    // Private-mode Safari or storage full — the switch still works for this session.
+  }
+}
+
 const field =
   "min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-60";
 const stepHeadClass = "flex items-center gap-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text";
@@ -300,10 +345,18 @@ export function ReceivingForm({
   const [armComplete, setArmComplete] = useState(false);
   const [notArrived, setNotArrived] = useState<Record<string, true>>({});
 
-  // On mount: read the shelf and offer a per-draft Resume/Discard.
+  // Price mode — the one switch that puts a price input on every collapsed row.
+  // Starts false so the FIRST render is always the plain ceremony (localStorage is not
+  // readable during SSR); the mount effect below adopts the stored preference.
+  const [priceMode, setPriceMode] = useState(false);
+
+  // On mount: read the shelf and offer a per-draft Resume/Discard, and adopt this
+  // location's stored price-mode preference. Both are the same locationId-scoped
+  // localStorage read, so they share one effect rather than racing as two.
   useEffect(() => {
     const drafts = readDrafts(locationId);
     if (drafts.length > 0) setPendingDrafts(drafts);
+    setPriceMode(readPriceMode(locationId));
   }, [locationId]);
 
   // Debounced draft save. Fires 500 ms after the last state change.
@@ -373,8 +426,24 @@ export function ReceivingForm({
 
   // A line is "ready" for submission if it names a SKU and has a positive qty.
   const readyLines = lines.filter((l) => l.skuId !== "" && l.qty.trim() !== "" && Number(l.qty) > 0);
+
   const canSubmit =
     vendorId !== "" && date !== "" && readyLines.length > 0 && (receiptPhotoId !== null || photoLater) && !busy;
+
+  // How many lines carry a price the server will accept. Rendered beside the toggle in
+  // BOTH states — it is what keeps an entered price from ever being invisible while the
+  // strip is hidden (and, once the mode is on, the running tally of the invoice pass).
+  // Deliberately NOT part of canSubmit: a price is optional at the door, and an intake
+  // that files no price is a complete, correct delivery.
+  const pricedCount = pricedLineCount(lines);
+
+  /** Flip price mode and remember it for this location. The write rides the tap (not a
+   *  render effect) so nothing persists unless the operator actually chose it. */
+  const togglePriceMode = () => {
+    const next = !priceMode;
+    setPriceMode(next);
+    writePriceMode(locationId, next);
+  };
 
   // ── Missing-item honesty gate ──────────────────────────────────────────────
   // UNCONFIRMED EXPECTED ROWS. Only PRE-FILLED rows can be missed (expectedQty != null —
@@ -469,6 +538,10 @@ export function ReceivingForm({
     startedAtRef.current = draft.startedAt;
     setPendingDrafts([]);
     setSavedAt(draft.savedAt);
+    // A draft that already carries prices opens WITH the strip visible — resuming must
+    // never hand back an intake whose typed prices are behind a switch. One-way on
+    // purpose: a price-less draft leaves the stored preference alone.
+    if (pricedLineCount(draft.lines) > 0) setPriceMode(true);
   };
 
   /** Throw ONE draft away — the others on the shelf are untouched. */
@@ -818,19 +891,53 @@ export function ReceivingForm({
               {t("receiving.door.prefilling")}
             </p>
           ) : (
-            <div className="flex flex-col gap-2.5">
-              {lines.map((l, i) => (
-                <IntakeLineRow
-                  key={l.key}
-                  line={l}
-                  levels={levelsFor(l.skuId)}
-                  busy={busy}
-                  locationId={locationId}
-                  onChange={(patch) => setLine(i, patch)}
-                  onRemove={lines.length > 1 ? () => setLines((ls) => ls.filter((_, j) => j !== i)) : null}
-                />
-              ))}
-            </div>
+            <>
+              {/* PRICE MODE — one switch for the whole list, sitting where the operator
+                  already is when the invoice comes out of the box. Same chip spelling as
+                  the flag chips inside each row (44px floor + items-center, rounded-full,
+                  aria-pressed); active reads as a pressed control (co-surface-2 + ink
+                  edge) rather than a status colour, because this is a mode, not an
+                  alert. */}
+              <div className="mb-2.5 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={togglePriceMode}
+                  aria-pressed={priceMode}
+                  className={
+                    "inline-flex min-h-[44px] items-center rounded-full border-2 px-4 text-sm font-bold transition " +
+                    (priceMode
+                      ? "border-co-text bg-co-surface-2 text-co-text"
+                      : "border-co-border bg-co-surface text-co-text-dim hover:border-co-text")
+                  }
+                >
+                  {t("receiving.door.prices_toggle")}
+                </button>
+                {pricedCount > 0 ? (
+                  <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-co-confirm-text">
+                    {t("receiving.door.prices_counted", { n: pricedCount })}
+                  </span>
+                ) : null}
+              </div>
+              {priceMode ? (
+                <p className="mb-2.5 text-[12px] text-co-text-dim">{t("receiving.door.prices_help")}</p>
+              ) : null}
+
+              <div className="flex flex-col gap-2.5">
+                {lines.map((l, i) => (
+                  <IntakeLineRow
+                    key={l.key}
+                    line={l}
+                    levels={levelsFor(l.skuId)}
+                    busy={busy}
+                    locationId={locationId}
+                    showPrice={priceMode}
+                    onChange={(patch) => setLine(i, patch)}
+                    onRemove={lines.length > 1 ? () => setLines((ls) => ls.filter((_, j) => j !== i)) : null}
+                  />
+                ))}
+              </div>
+            </>
           )}
 
           {/* Overages / substitutions: the "Add item" affordance opens a fresh

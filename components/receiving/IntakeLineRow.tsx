@@ -15,10 +15,20 @@
  *
  * Disclosure state is useState-only (no effects for prop-driven resets). The
  * parent owns the line array and passes each line's value + an onChange patch.
+ *
+ * THE PRICE STRIP (2026-08-31): a non-null unitPrice on a delivery line is the ONE
+ * trigger that writes vendor_price_history, and the field used to render on the EXPANDED
+ * row only — while the door ceremony builds every templated line COLLAPSED. So the
+ * ordinary receive never showed it, and across every delivery ever filed exactly one line
+ * carried a price (docs/seed/source/angel-wave6-dryrun.md § E). The collapsed row now
+ * carries its own compact price input, gated by the parent's ONE `showPrice` switch — see
+ * ReceivingForm's price-mode comment for why the switch is per-form and not per-row.
+ * When `showPrice` is false the collapsed row is exactly what it always was.
  */
 import { PhotoCapture } from "@/components/photos/PhotoCapture";
 import { useTranslation } from "@/lib/i18n/provider";
 import type { TranslationKey } from "@/lib/i18n/types";
+import { collapsedPriceNotice } from "@/lib/receiving-shared";
 
 export type DiscrepancyFlag = "short" | "over" | "damaged" | "substitution";
 
@@ -61,6 +71,29 @@ const flagKey: Record<DiscrepancyFlag, TranslationKey> = {
 const field =
   "min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface px-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-60";
 
+/** The collapsed price input. Same control as `field` at the same 44px floor, with the
+ *  left padding spelled explicitly (`pl-7 pr-3`) rather than layered over `px-3` — the
+ *  "$" adornment sits in that gutter and the class must not depend on Tailwind's
+ *  utility-emission order to win. `field` itself is untouched: the expanded row's own
+ *  price + observed inputs must keep rendering byte-for-byte as they always have. */
+const priceField =
+  "min-h-[44px] w-full rounded-lg border-2 border-co-border bg-co-surface pl-7 pr-3 text-base text-co-text focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60 disabled:opacity-60";
+
+/** The two things the collapsed price strip may have to say, and how loudly.
+ *  `invalid` is a REFUSAL — the server will 400 the whole delivery on it — so it takes the
+ *  red TEXT role (`co-cta-text`, the light-ground spelling; `co-cta` is a fill).
+ *  `not_counted` is an advisory about a different field and keeps the dim hint voice the
+ *  flag auto-suggest already uses one row up. Cause-attributed loudness: a row that must
+ *  be fixed does not look like a row that is merely being explained. */
+const noticeKey: Record<"invalid" | "not_counted", TranslationKey> = {
+  invalid: "receiving.door.price_invalid",
+  not_counted: "receiving.door.price_not_counted",
+};
+const noticeClass: Record<"invalid" | "not_counted", string> = {
+  invalid: "text-co-cta-text",
+  not_counted: "text-co-text-dim",
+};
+
 /** The flag qty vs expected auto-suggests. Numeric-parse of the qty string;
  *  blank/NaN → no suggestion. */
 function suggestFlag(qty: string, expected: number | null): DiscrepancyFlag | null {
@@ -81,6 +114,7 @@ export function IntakeLineRow({
   onChange,
   onRemove,
   locationId,
+  showPrice = false,
 }: {
   line: IntakeLine;
   levels: string[];
@@ -88,6 +122,10 @@ export function IntakeLineRow({
   onChange: (patch: Partial<IntakeLine>) => void;
   onRemove: (() => void) | null;
   locationId: string;
+  /** Parent's price-mode switch. Adds the compact price strip to the COLLAPSED row only;
+   *  the expanded editor has always had its own price field and is unaffected either way.
+   *  Defaults false so an omitted prop can never change a caller's rendering. */
+  showPrice?: boolean;
 }) {
   const { t } = useTranslation();
   const expectedLabel = line.level.trim() || t("receiving.door.level_generic");
@@ -108,6 +146,10 @@ export function IntakeLineRow({
   // overage line has no expected number and is born expanded, so it never collapses.
   const collapsed = !line.expanded && (line.expectedQty != null || isOffered);
   const hasQty = line.qty.trim() !== "" && Number(line.qty) > 0;
+  // What the collapsed price strip must say about this line, if anything. `hasQty` is
+  // EXACTLY the parent's readyLines test for a named SKU, so "not_counted" fires on
+  // precisely the lines the submit payload will drop.
+  const notice = collapsedPriceNotice(line.unitPrice, hasQty);
 
   const confirm = () => {
     // Tap ✓ → accept the expected qty exactly, mark confirmed, stays collapsed.
@@ -190,6 +232,56 @@ export function IntakeLineRow({
             </button>
           )}
         </div>
+
+        {/* THE PRICE STRIP — its own row UNDER the summary, never beside it.
+            Beside the ✓ it would eat ~80px of a ~272px card on a 360px phone and shred
+            the SKU name onto three lines (overflow discipline / phone = the spec); under
+            it, the name keeps its full width and the input gets a fat, full-width target.
+            Rendered for EVERY collapsed row while price mode is on — never keyed to
+            `confirmed`/`hasQty` — so tapping ✓ down the list moves nothing underneath the
+            operator's thumb. The two costs of that (a price typed on an uncounted line,
+            a value the server will refuse) are STATED by collapsedPriceNotice below
+            rather than silently dropped. */}
+        {showPrice ? (
+          <>
+            {/* A real <label>, so the word itself is part of the tap target on a phone.
+                The input keeps an aria-label because eight identical "$" boxes down a
+                list are indistinguishable to a screen reader without the item name — and
+                that label OPENS with the visible text, so the accessible name contains
+                what the eye reads (WCAG label-in-name). */}
+            <label className="mt-2 flex items-center gap-2">
+              <span className="shrink-0 text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">
+                {t("receiving.door.price_label")}
+              </span>
+              {/* flex, not a bare inline wrapper: an inline-block <input> leaves a
+                  baseline descender gap under itself, which would make the absolutely
+                  positioned "$" (inset-y-0) centre against a box a few px taller than the
+                  control it sits in. */}
+              <span className="relative flex flex-1">
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute inset-y-0 left-0 flex w-7 items-center justify-center text-base font-bold text-co-text-dim"
+                >
+                  $
+                </span>
+                <input
+                  className={priceField}
+                  type="number"
+                  min={0}
+                  step="any"
+                  inputMode="decimal"
+                  value={line.unitPrice}
+                  disabled={busy}
+                  onChange={(e) => onChange({ unitPrice: e.target.value })}
+                  aria-label={t("receiving.door.price_aria", { sku: line.skuName })}
+                />
+              </span>
+            </label>
+            {notice ? (
+              <p className={`mt-1 text-[11px] ${noticeClass[notice]}`}>{t(noticeKey[notice])}</p>
+            ) : null}
+          </>
+        ) : null}
       </div>
     );
   }
@@ -338,7 +430,11 @@ export function IntakeLineRow({
         ) : null}
       </div>
 
-      {/* Optional unit price + observed oz/each — expanded only; collapsed path untouched. */}
+      {/* Optional unit price + observed oz/each. UNCHANGED — this pair is the expanded
+          row's own, and the collapsed price strip above is an ADDITION beside it, not a
+          move: both write the same line.unitPrice, so a price typed either way is one
+          value. (The old "expanded only; collapsed path untouched" note here was the
+          literal statement of the gap the price strip closes.) */}
       <div className="mt-3 grid grid-cols-2 gap-2">
         <label className="block">
           <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">

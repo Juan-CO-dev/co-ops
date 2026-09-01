@@ -321,3 +321,64 @@ export function avgFoldSourceNote(sampleCount: number): string {
     `reading (weigh session) supersedes it and is never overwritten by this fold.`
   );
 }
+
+// ── The door's price entry (the price feed) ────────────────────────────────────────
+//
+// A non-null `unitPrice` on a delivery line is the ONE trigger that writes
+// `vendor_price_history` (lib/receiving.ts:522 recordDelivery, :1150 addDeliveryLines).
+// Everything below is the CLIENT-side reading of the raw string an operator typed into
+// the door form, kept pure here so both the collapsed price strip and its tests read the
+// same rule the server enforces.
+//
+// THE SERVER'S RULE IS THE ONE THIS MIRRORS, and it is not `>= 0`:
+// validateAndResolveDeliveryLines (lib/receiving.ts:712) throws 400 `invalid_price` for
+// any price that is not finite AND > 0. So "0" is a REFUSAL, not a free item — a $0 line
+// would land in the price ledger as a real observation and then flow out through
+// lib/purchase-orders.ts's `price_cents_at_order` as the vendor's price. The door says so
+// inline rather than letting the whole delivery bounce on a round trip.
+
+/** How the door reads one raw price string. `empty` is the ordinary state — a blank
+ *  price is never an error, because pricing a line is optional at the door. */
+export type PriceEntryState = "empty" | "ok" | "invalid";
+
+/** Pure read of the operator's raw price text. Whitespace-only is `empty` (the field was
+ *  touched and left blank, which is the same as never touched). */
+export function priceEntryState(raw: string): PriceEntryState {
+  const v = raw.trim();
+  if (v === "") return "empty";
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return "invalid";
+  return "ok";
+}
+
+/**
+ * What (if anything) the collapsed price strip must SAY about this line. Two honest
+ * failures, and neither may be silent:
+ *
+ *  • `invalid` — a value the server will refuse (0, negative, non-numeric). Named here so
+ *    the operator fixes it at the row instead of discovering it as a 400 on the whole
+ *    delivery.
+ *  • `not_counted` — a price typed on a line carrying NO quantity. `readyLines` drops such
+ *    a line from the submit payload entirely (ReceivingForm: skuId set + qty > 0), so the
+ *    price goes with it. That is correct — a price with no receipt is not an observation —
+ *    but it must be STATED, because the operator typed a number and watched it vanish.
+ *    This is the same posture as the missing-item honesty gate: not a block, a sentence.
+ *
+ * `invalid` outranks `not_counted`: a malformed value is wrong whatever the qty is, and
+ * fixing it is the errand the operator can act on immediately.
+ */
+export type CollapsedPriceNotice = null | "invalid" | "not_counted";
+
+export function collapsedPriceNotice(rawPrice: string, hasQty: boolean): CollapsedPriceNotice {
+  const state = priceEntryState(rawPrice);
+  if (state === "invalid") return "invalid";
+  if (state === "ok" && !hasQty) return "not_counted";
+  return null;
+}
+
+/** How many of these lines carry a price the server will accept. Drives the door's
+ *  AGGREGATE "N priced" readout — the one signal that survives the price strip being
+ *  hidden, so a priced line is never invisible. */
+export function pricedLineCount(lines: ReadonlyArray<{ unitPrice: string }>): number {
+  return lines.filter((l) => priceEntryState(l.unitPrice) === "ok").length;
+}
