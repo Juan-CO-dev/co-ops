@@ -121,6 +121,48 @@ describe("suggestedOrderQty — one engine for the par and the order line", () =
     expect(suggestedOrderQty(3, 4)).toBe(0);
     expect(suggestedOrderQty(3, 3)).toBe(0);
   });
+
+  // ── A NEGATIVE ADVISORY IS A DATA SIGNAL, NEVER A BIGGER ORDER (2026-08-31) ──────
+  //
+  // Juan's walk smoke found the Suggest chip offering ~19 on a drink whose par is a
+  // fraction of that. Diagnosis against prod: the advisory on-hand is receipts minus
+  // consumption with NO count anchor (zero sku_count_events exist), so a SKU with an
+  // EMPTY receiving history and real consumption runs arbitrarily negative — P Street
+  // Prosciutto had 0 oz ever received against 407 oz consumed, ≈ −34 order units, and
+  // `par − (−34)` suggested 38 cases against a par of 4. A shelf cannot hold negative
+  // cans, so a negative means "recorded use exceeds recorded receipts" (the receiving
+  // history is incomplete) and the honest suggestion is par-from-empty.
+  it("FLOORS a negative advisory at zero — the prod prosciutto case", () => {
+    expect(suggestedOrderQty(4, -34)).toBe(4); // was 38.
+    expect(suggestedOrderQty(4, -34)).not.toBe(38);
+  });
+
+  it("degrades a negative advisory to exactly the par-from-empty answer, for any par", () => {
+    // The clamp must be indistinguishable from "the shelf is empty" — not a partial
+    // credit for the negative, and not a refusal (null) either: the par is still real.
+    for (const par of [1, 4, 7.5, 12]) {
+      expect(suggestedOrderQty(par, -34)).toBe(suggestedOrderQty(par, 0));
+      expect(suggestedOrderQty(par, -0.0001)).toBe(suggestedOrderQty(par, 0));
+    }
+  });
+
+  it("clamps UNCONDITIONALLY, so float residue can never ceil an extra unit on", () => {
+    // The renderer's named-state threshold is epsilon-gated (display grain); this math is
+    // deliberately NOT. Un-clamped, ceil(4 − (−0.0001)) = 5 — a whole phantom case.
+    expect(suggestedOrderQty(4, -0.0001)).toBe(4);
+    expect(suggestedOrderQty(4, -0.5)).toBe(4);
+  });
+
+  it("keeps the clamp INSIDE the authority, so every consumer inherits it", () => {
+    // The clamp is not applied at call sites: lib/ordering.ts buildRow and
+    // ParSuggestionRow's accept-recompute both route here, and a call-site clamp would be
+    // a second opinion about what a negative shelf means — the same shape of hole the
+    // former byte-identical inline copy already proved. Asserted behaviourally: the
+    // function itself, called with a raw negative, must already be safe.
+    expect(suggestedOrderQty(4, -34)).toBe(4);
+    // ...and the null contract is unchanged by the clamp (unknown ≠ empty).
+    expect(suggestedOrderQty(4, null)).toBeNull();
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

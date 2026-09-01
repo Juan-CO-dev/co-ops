@@ -327,4 +327,76 @@ describe("loadWalkerData's row rules, at the source", () => {
     // second `new Date().getDay()` could disagree with the weekend badge on the same page.
     expect(src.includes('dayClass: (weekend ? "weekend" : "weekday")')).toBe(true);
   });
+
+  it("THE SUGGEST CHIP GOES THROUGH THE ONE AUTHORITY — no second spelling of the math", () => {
+    // 2026-08-31: `suggestedOrderQty` and this line were byte-identical copies, which is
+    // how the negative-on-hand bug shipped in BOTH at once (a clamp landing in one would
+    // have left the other suggesting 38 cases of prosciutto against a par of 4). The copy
+    // is gone; buildRow calls the shared authority, so the clamp is inherited, not
+    // re-implemented. If this assertion ever fails because someone re-inlined the math,
+    // that is the regression, not the test.
+    expect(src.includes("suggestedQty = suggestedOrderQty(par, orderUnits)")).toBe(true);
+    expect(src.includes("Math.ceil(par - orderUnits)")).toBe(false);
+  });
+
+  it("the RAW advisory survives the clamp — the observation is not overwritten", () => {
+    // The clamp belongs to the SUGGESTION, not to the observation: `advisoryOnHand` keeps
+    // the possibly-negative `orderUnits` so the walker can NAME the state ("use exceeds
+    // recorded receipts") instead of rendering a silently-zeroed shelf. Clamping at the
+    // source would destroy the only evidence the receiving history is incomplete.
+    expect(src.includes("advisoryOnHand = { oz: adv.oz, orderUnits, source: adv.source }")).toBe(true);
+  });
+});
+
+// ── THE NEGATIVE ADVISORY NAMES ITSELF, AT THE SOURCE (2026-08-31) ───────────────
+//
+// The render branch is inside a client component with no exported pure surface, so the
+// source is again the only available assertion — same posture as the rules above.
+
+describe("the walker's negative-advisory state", () => {
+  const src = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "components", "ordering", "ParPassWalker.tsx"),
+    "utf8",
+  );
+  const en = JSON.parse(
+    readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "lib", "i18n", "en.json"), "utf8"),
+  ) as Record<string, string>;
+  const es = JSON.parse(
+    readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "lib", "i18n", "es.json"), "utf8"),
+  ) as Record<string, string>;
+
+  it("renders a NAMED state, not the raw negative number and not silence", () => {
+    expect(src.includes('t("ordering.row.advisory_negative")')).toBe(true);
+    // The named branch is chosen by the sign, guarded by the display grain so float
+    // residue (which already renders as "0") cannot cry wolf.
+    expect(src.includes("sku.advisoryOnHand.orderUnits <= -DISPLAY_GRAIN")).toBe(true);
+    expect(src.includes("const DISPLAY_GRAIN = 0.05")).toBe(true);
+  });
+
+  it("speaks in the warn lane's TEXT token, never the fill token", () => {
+    // AGENTS.md token law: `co-warning` is a fill/dot/border role and measures 1.95:1 as
+    // text; `co-warning-text` is the text role. The named state must use the latter.
+    const at = src.indexOf('t("ordering.row.advisory_negative")');
+    expect(at).toBeGreaterThan(-1);
+    const block = src.slice(Math.max(0, at - 900), at);
+    expect(block.includes("text-co-warning-text")).toBe(true);
+    expect(/className="text-co-warning"/.test(block)).toBe(false);
+  });
+
+  it("keeps the raw negative reachable in the tooltip rather than destroying it", () => {
+    expect(src.includes('t("ordering.row.advisory_negative_detail"')).toBe(true);
+  });
+
+  it("ships en + es for every new string INCLUDING the ARIA label (i18n law)", () => {
+    for (const key of [
+      "ordering.row.advisory_negative",
+      "ordering.row.advisory_negative_aria",
+      "ordering.row.advisory_negative_detail",
+    ]) {
+      expect(en[key], `en missing ${key}`).toBeTruthy();
+      expect(es[key], `es missing ${key}`).toBeTruthy();
+      expect(es[key], `es untranslated for ${key}`).not.toBe(en[key]);
+    }
+    expect(src.includes('aria-label={t("ordering.row.advisory_negative_aria"')).toBe(true);
+  });
 });

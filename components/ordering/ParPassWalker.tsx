@@ -66,6 +66,16 @@ const SOURCE_KEY: Record<string, TranslationKey> = {
   inferred: "ordering.source.inferred",
 };
 
+/**
+ * Half of `roundUnits`' one-decimal display grain — the point below which a negative
+ * advisory is float residue rather than a receiving gap, and so must NOT trip the named
+ * negative state. Anything closer to zero than this already renders as "0" / "-0", and a
+ * lane that cries wolf gets scrolled past. The SUGGESTION's clamp is deliberately not
+ * epsilon-gated (see `suggestedOrderQty`): naming a state and computing a case count have
+ * different tolerances, and −0.0001 must still not buy a case.
+ */
+const DISPLAY_GRAIN = 0.05;
+
 /** Parse a raw qty string → a non-negative finite number, or null when blank/invalid. */
 function parseQty(raw: string): number | null {
   const v = raw.trim();
@@ -779,15 +789,41 @@ function SkuRow({
             {t("ordering.row.no_weight")}
           </span>
         )}
-        {sku.advisoryOnHand && sku.advisoryOnHand.orderUnits != null && (
-          <span className="text-co-text-dim">
-            {t("ordering.row.advisory", {
-              units: roundUnits(sku.advisoryOnHand.orderUnits),
-              unit,
-              source: t(SOURCE_KEY[sku.advisoryOnHand.source] ?? "ordering.source.inferred"),
-            })}
-          </span>
-        )}
+        {sku.advisoryOnHand &&
+          sku.advisoryOnHand.orderUnits != null &&
+          (sku.advisoryOnHand.orderUnits <= -DISPLAY_GRAIN ? (
+            /* A NEGATIVE ADVISORY IS A DATA SIGNAL, AND IT NAMES ITSELF (Juan's walk
+               smoke, 2026-08-31). The advisory is receipts-minus-consumption with no count
+               anchor, so it runs negative wherever a SKU's receiving history is EMPTY
+               while its consumption is real (prod: P St Prosciutto, 0 oz ever received vs
+               407 oz consumed → ≈ −34 order units). Rendering "~-34 on hand" would state a
+               falsehood a shelf cannot hold, and rendering nothing would hide the errand —
+               so the STATE gets a name, and the name says which errand fixes it (the
+               receiving history, not the par). Warn-lane VOICE without a warn surface:
+               `co-warning-text` is the text role, `co-warning` is a fill/dot/border role
+               and is never text. The Suggest chip beside this line is already the honest
+               par-from-empty — `suggestedOrderQty` floors on-hand at 0 upstream — and the
+               raw figure stays one hover away rather than being destroyed. */
+            <span
+              className="text-co-warning-text"
+              title={t("ordering.row.advisory_negative_detail", {
+                units: roundUnits(sku.advisoryOnHand.orderUnits),
+                unit,
+                source: t(SOURCE_KEY[sku.advisoryOnHand.source] ?? "ordering.source.inferred"),
+              })}
+              aria-label={t("ordering.row.advisory_negative_aria", { sku: sku.name })}
+            >
+              {t("ordering.row.advisory_negative")}
+            </span>
+          ) : (
+            <span className="text-co-text-dim">
+              {t("ordering.row.advisory", {
+                units: roundUnits(sku.advisoryOnHand.orderUnits),
+                unit,
+                source: t(SOURCE_KEY[sku.advisoryOnHand.source] ?? "ordering.source.inferred"),
+              })}
+            </span>
+          ))}
         {sku.lastOrderQty != null && (
           <span className="text-co-text-muted">{t("ordering.row.last", { n: sku.lastOrderQty })}</span>
         )}
