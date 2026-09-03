@@ -29,3 +29,22 @@ export function allowlistMatches(raw: string | undefined, email: string): boolea
     .filter(Boolean)
     .includes(email.toLowerCase());
 }
+
+/**
+ * Subject line for the magic-link email — DISTINCT per request on purpose.
+ *
+ * Gmail threads same-subject/same-sender mail into one conversation; on the 2026-09-03
+ * first-live test the customer tapped the SIGN IN button of an OLDER message in that thread
+ * twice, consuming stale tokens (one with no intake → empty account page; one carrying the
+ * PREVIOUS form's store). Stamping the Eastern request time makes every subject unique, and
+ * the wording tells the reader whether this link finishes an order or just signs them in.
+ * Whitespace is normalized to ASCII spaces (ICU emits U+202F before AM/PM).
+ */
+export function magicLinkSubject(args: { tenantName: string; hasIntake: boolean; requestedAt: Date }): string {
+  const time = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" })
+    .format(args.requestedAt)
+    .replace(/\s+/g, " ");
+  return args.hasIntake
+    ? `Finish your ${args.tenantName} order — sign in (${time} ET)`
+    : `Your ${args.tenantName} sign-in link (${time} ET)`;
+}

@@ -28,7 +28,8 @@ import { createDraftFromIntake } from "./draft";
 import type { DraftIntake } from "./draft";
 import { extractDomain, normalizeEmail, resolveCompanyForEmail, escapeLike, reviveInactiveContact } from "@/lib/catering/companies";
 import { sendEmail } from "@/lib/email";
-import { allowlistMatches } from "./magic-link-shared";
+import { allowlistMatches, magicLinkSubject } from "./magic-link-shared";
+import { TENANT_NAME } from "@/lib/tenant";
 import { renderMagicLinkEmail } from "@/lib/email-templates/magic-link";
 import { audit } from "@/lib/audit";
 
@@ -55,17 +56,32 @@ export async function requestMagicLink(input: { email: string; name?: string | n
   const sb = getServiceRoleClient();
   const rawToken = generateToken();
   const tokenHash = await hashToken(rawToken);
-  const expiresAt = new Date(Date.now() + TOKEN_TTL_MIN * 60 * 1000).toISOString();
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + TOKEN_TTL_MIN * 60 * 1000).toISOString();
+  // LATEST LINK WINS: retire every still-live token for this email before minting the new one.
+  // Root cause (2026-09-03 first-live): Gmail threads same-subject mail, and the customer tapped
+  // an OLDER message's button — consuming a stale token that carried no intake (→ empty account
+  // page) and then one carrying the PREVIOUS form's store. A superseded link now lands on the
+  // honest "expired / replaced" page instead of silently doing the wrong thing. Best-effort: a
+  // failure here must not block the new link (constant shape), so it is audited and ignored.
+  const { error: supersedeError } = await sb.from("catering_portal_tokens")
+    .update({ expires_at: now.toISOString() })
+    .eq("email", email).is("consumed_at", null).gt("expires_at", now.toISOString());
+  if (supersedeError) { void audit({ actorId: null, actorRole: null, action: "portal.magic_link_supersede_failed", resourceTable: "catering_portal_tokens", resourceId: null, metadata: { email, error: supersedeError.message }, ipAddress: input.ip ?? null, userAgent: null }); }
   const { error } = await sb.from("catering_portal_tokens").insert({ email, token_hash: tokenHash, name: input.name?.trim() || null, expires_at: expiresAt, ip_address: input.ip ?? null, intake: input.intake ?? null });
   if (error) { void audit({ actorId: null, actorRole: null, action: "portal.magic_link_insert_failed", resourceTable: "catering_portal_tokens", resourceId: null, metadata: { email, error: error.message }, ipAddress: input.ip ?? null, userAgent: null }); return; }
   const appUrl = process.env.NEXT_PUBLIC_APP_URL;
   if (allowlisted(email) && appUrl) {
     const link = `${appUrl}/order/verify?token=${rawToken}`;
+    const hasIntake = Boolean(input.intake);
     await sendEmail({
       to: email,
-      subject: "Your Compliments Only sign-in link",
-      html: renderMagicLinkEmail({ link }),
-      text: `Sign in to Compliments Only: ${link}\n\nThis link works once and expires in 30 minutes. If you didn't request this, you can safely ignore this email.`,
+      // Distinct per request (ET time stamp) so mail clients never thread two links together.
+      subject: magicLinkSubject({ tenantName: TENANT_NAME, hasIntake, requestedAt: now }),
+      html: renderMagicLinkEmail({ link, hasIntake }),
+      text: `${hasIntake ? `Finish your ${TENANT_NAME} order` : `Sign in to ${TENANT_NAME}`}: ${link}
+
+This link works once and expires in 30 minutes. It replaces any earlier sign-in link we sent you. If you didn't request this, you can safely ignore this email.`,
     });
   }
   void audit({ actorId: null, actorRole: null, action: "portal.magic_link_requested", resourceTable: "catering_portal_tokens", resourceId: null, metadata: { email, allowlisted: allowlisted(email) }, ipAddress: input.ip ?? null, userAgent: null });

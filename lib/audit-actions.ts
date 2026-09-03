@@ -231,6 +231,7 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "lto.event.create",
   "portal.magic_link_consumed",
   "portal.magic_link_insert_failed",
+  "portal.magic_link_supersede_failed",
   "portal.magic_link_requested",
   "portal.magic_link_throttled",
   "sms.received",

@@ -80,7 +80,7 @@ export default function OrderVerify() {
                 <div className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-co-border/40 text-3xl">🔗</div>
                 <h1 className="mt-5 text-2xl font-extrabold text-co-text">Link expired</h1>
                 <p className="mx-auto mt-2 max-w-sm text-co-text-muted">
-                  This link has expired or was already used. Magic links work once and expire in 30 minutes.
+                  This link has expired, was already used, or was replaced by a newer one. Only your most recent link works, and links expire after 30 minutes.
                 </p>
                 <Link
                   href="/order/start"
