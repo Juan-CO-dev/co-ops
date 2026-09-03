@@ -30,6 +30,29 @@ export function catForSection(section: string | null | undefined): MenuCat {
   return "main";
 }
 
+/**
+ * Portal heading for a Toast section. Drinks / sides / desserts MERGE into one section per
+ * type (Juan, 2026-09-03: "Drinks" + "Catering Drinks" are one shelf to a customer; same for
+ * "Sides" + "Catering Sides" + "Chips"). Mains keep their own heading (Subs, Build Your Own…);
+ * a missing heading reads as "More". Labels round-trip through catForSection, so ordering
+ * by label and ordering by raw section can never disagree.
+ */
+export function sectionLabel(section: string | null | undefined): string {
+  const cat = catForSection(section);
+  if (cat === "drink") return "Drinks";
+  if (cat === "side") return "Sides";
+  if (cat === "sweet") return "Desserts";
+  return section && section.trim() ? section : "More";
+}
+
+/** Inside a section: catering-size rows (catering_only) on top, à la carte singles under. Stable. */
+export function orderWithinSection<T extends { cateringOnly: boolean }>(rows: readonly T[]): T[] {
+  return rows
+    .map((r, i) => ({ r, i, rank: r.cateringOnly ? 0 : 1 }))
+    .sort((a, b) => a.rank - b.rank || a.i - b.i)
+    .map((x) => x.r);
+}
+
 /** Stable sort of section groups into customer decision order. Never mutates the input. */
 export function orderSections<T extends { label: string }>(groups: readonly T[]): T[] {
   return groups

@@ -44,7 +44,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { CateringMenuItem } from "@/lib/catering/menu";
 import { TranslationProvider, useTranslation } from "@/lib/i18n/provider";
-import { catForSection, orderSections, type MenuCat } from "@/lib/portal/menu-order-shared";
+import { catForSection, orderSections, orderWithinSection, sectionLabel, type MenuCat } from "@/lib/portal/menu-order-shared";
 
 type Cat = MenuCat;
 /** Portion selector for portionable subs. Matches the draft-lines API portion values. */
@@ -308,19 +308,22 @@ function OrderBuild() {
   const menu = useMemo(() => draft?.menu ?? [], [draft]);
   const cards = useMemo(() => expandCards(menu), [menu]);
   const menuByKey = useMemo(() => new Map(cards.map((c) => [c.key, c] as const)), [cards]);
-  // Group the sellable cards by section (section as heading). A sized item shows one row per size.
+  // Group the sellable cards by PORTAL section (Toast's "Drinks"/"Catering Drinks" etc. merge into
+  // one heading per type — sectionLabel). A sized item shows one row per size.
   const groups = useMemo(() => {
     const map = new Map<string, MenuCard[]>();
     for (const c of cards) {
-      const section = c.item.section ?? "More";
-      const arr = map.get(section) ?? [];
+      const label = sectionLabel(c.item.section);
+      const arr = map.get(label) ?? [];
       arr.push(c);
-      map.set(section, arr);
+      map.set(label, arr);
     }
-    // Customer decision order (Juan, 2026-09-03): drinks → sides → desserts → à la carte.
-    // Packages render ABOVE all of these (see the JSX) — the page reads top-down the way a
-    // customer actually decides.
-    return orderSections(Array.from(map.entries()).map(([label, items]) => ({ label, items })));
+    // Customer decision order (Juan, 2026-09-03): drinks → sides → desserts → à la carte, and
+    // inside each section the catering-size rows on top, singles under. Packages render ABOVE
+    // all of these (see the JSX) — the page reads top-down the way a customer actually decides.
+    return orderSections(
+      Array.from(map.entries()).map(([label, items]) => ({ label, items: orderWithinSection(items.map((c) => ({ ...c, cateringOnly: c.item.cateringOnly }))) })),
+    );
   }, [cards]);
 
   const packages = useMemo(() => draft?.packages ?? [], [draft]);
