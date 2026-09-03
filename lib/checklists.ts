@@ -906,15 +906,25 @@ export async function completeItem(
     // Claim: supersede whatever live head currently exists for this item (0 rows
     // is fine — no prior, or a rival already superseded it). Guarded on
     // superseded_at IS NULL so we never re-stamp a settled row.
+    //
+    // The stamp is captured as a VALUE, not written inline: the compensation below has
+    // to match on the exact instant we wrote, and a second `new Date()` would produce a
+    // different one and revert nothing.
+    const claimStamp = new Date().toISOString();
     const { data: superseded, error: supErr } = await sb
       .from("checklist_completions")
-      .update({ superseded_at: new Date().toISOString() })
+      .update({ superseded_at: claimStamp })
       .eq("instance_id", instanceId)
       .eq("template_item_id", templateItemId)
       .is("superseded_at", null)
       .is("revoked_at", null)
       .select("id");
     if (supErr) throw new Error(`completeItem supersede: ${supErr.message}`);
+    // What THIS lap claimed, kept apart from the accumulated `supersededPriorId` (which
+    // deliberately carries across laps so the back-pointer survives a 23505 retry).
+    // Compensating with the accumulated id would revert a stamp from an EARLIER lap that
+    // a rival has since settled.
+    const claimed = superseded?.[0]?.id ? { id: superseded[0]!.id, stamp: claimStamp } : null;
     supersededPriorId = superseded?.[0]?.id ?? supersededPriorId;
 
     // Insert the new live head (authed; RLS checks completed_by = current_user_id,
@@ -933,6 +943,34 @@ export async function completeItem(
       .maybeSingle<CompletionRow>();
     if (insertErr) {
       if (insertErr.code === "23505") continue; // a rival won the slot — re-claim + retry
+      // ── COMPENSATION (audit v2 F4, BC-037) ──────────────────────────────────────────
+      // Every OTHER insert error used to throw with the prior head already stamped, and
+      // there is no route back: completeItem 409s on a closed instance, so a previously-
+      // completed item silently reads as NOT DONE. The reachable sequence is ordinary —
+      // the supersede runs service-role (bypasses RLS) while the insert runs authed, so a
+      // GM's confirmInstance landing in between denies our insert; an FK failure on
+      // photo_id does the same with no race at all.
+      //
+      // Revert OUR OWN stamp and nobody else's: an unfiltered revert would lift a
+      // concurrent writer's supersede too. The idiom is lib/cash.ts's compare-and-set.
+      if (claimed) {
+        const { error: revertErr, count: reverted } = await sb
+          .from("checklist_completions")
+          .update({ superseded_at: null }, { count: "exact" })
+          .eq("id", claimed.id)
+          .eq("superseded_at", claimed.stamp);
+        if (revertErr || (reverted ?? 0) === 0) {
+          // Not necessarily a strand: if a rival has since landed a live head, the partial
+          // unique index `checklist_completions_one_live_head` REFUSES this revert, which
+          // is the index doing its job and leaves nothing orphaned. The two cases are
+          // indistinguishable from here, so say what happened rather than what it means —
+          // the LIVE-CHECK is `superseded_at IS NOT NULL AND superseded_by IS NULL AND
+          // revoked_at IS NULL` on this (instance, item).
+          console.error(
+            `[checklists] completeItem could not un-supersede prior head ${claimed.id} after a failed insert on instance ${instanceId} item ${templateItemId}: ${revertErr?.message ?? "no row matched our stamp"} — a rival live head may already cover it; verify before treating it as an orphaned claim.`,
+          );
+        }
+      }
       throw new Error(`completeItem insert: ${insertErr.message}`);
     }
     if (!row) throw new Error(`completeItem insert returned no row`);

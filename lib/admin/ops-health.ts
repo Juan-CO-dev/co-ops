@@ -30,6 +30,31 @@ import {
 /** How far back the hub looks for a cron failure (the alert window). */
 const CRON_FAILURE_WINDOW_HOURS = 48;
 
+/**
+ * WHICH cron this card reports on (audit v2 P2-13, BC-033).
+ *
+ * THREE crons write the SAME `cron.success` / `cron.failure` action with the SAME
+ * `resource_table: "cron"` — toast-sales-pull, parse-receipts and prune-sessions — and
+ * only `metadata.job` tells them apart. The reads below took the newest row of each
+ * action and reported it as this card's, which was harmless only because parse-receipts
+ * is dormant (it needs ANTHROPIC_API_KEY) and prune-sessions had not yet shipped its
+ * heartbeat. The moment parse-receipts wakes it becomes the newest `cron.success` row
+ * EVERY NIGHT, `cronRunFailures` reads ITS metadata, and the toast per-location failure
+ * counters read all-zero forever — the exact P-Street blind spot ("last run OK" through
+ * four runs whose sales pull had died for one shop) re-opened through a new mechanism,
+ * two months after it was closed.
+ *
+ * The string is the one app/api/cron/toast-sales-pull/route.ts writes on BOTH its rows.
+ * `metadata->>job` is the PostgREST spelling of the JSONB text accessor.
+ *
+ * NOT FIXED HERE, and named so it is not mistaken for covered: the other two crons now
+ * have no failure surface at all. They never had a correct one — an unfiltered newest-row
+ * read would have shown a parse-receipts failure under a toast-sales-pull heading — so
+ * this trades a mislabelled signal for an honest gap. A per-job health card is its own
+ * (small) piece of work.
+ */
+const CRON_JOB = "toast-sales-pull";
+
 export interface CronHealth {
   /** a cron.failure row landed within the last CRON_FAILURE_WINDOW_HOURS. */
   hasRecentFailure: boolean;
@@ -74,6 +99,7 @@ export async function loadCronHealth(): Promise<CronHealth> {
       .select("occurred_at, metadata")
       .eq("action", "cron.failure")
       .eq("resource_table", "cron")
+      .eq("metadata->>job", CRON_JOB)
       .gte("occurred_at", sinceTs)
       .order("occurred_at", { ascending: false })
       .limit(1)
@@ -83,6 +109,7 @@ export async function loadCronHealth(): Promise<CronHealth> {
       .select("occurred_at, metadata")
       .eq("action", "cron.success")
       .eq("resource_table", "cron")
+      .eq("metadata->>job", CRON_JOB)
       .order("occurred_at", { ascending: false })
       .limit(1)
       .maybeSingle<{ occurred_at: string; metadata: Record<string, unknown> | null }>(),

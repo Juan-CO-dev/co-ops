@@ -1,6 +1,15 @@
 /**
  * Prep-consumption engine (Item/Inventory Spine — production-in-prep fold). SERVER-ONLY,
- * service-role. Recursively flattens an item's item_components recipe to leaf-SKU oz consumed
+ * service-role.
+ *
+ * EVERY READ IN THIS MODULE THROWS ON `error` (audit v2 P1-3, BC-032). This graph is the
+ * inventory moat's foundation — depletion, ordering suggestions, readiness and counts all
+ * compute on it — and a dropped `error` here does not produce an obvious failure, it
+ * produces a SMALLER GRAPH: fewer recipes, fewer edges, a SKU with no pack basis, an item
+ * with no par basis. Every consumer then reports a confident, plausible, wrong number, and
+ * nothing downstream can tell that graph from a correct one. A partial recipe graph must
+ * never exist, so a failed read is fatal to the whole build rather than survivable by it.
+ * Recursively flattens an item's item_components recipe to leaf-SKU oz consumed
  * per par-unit, mirroring recipe-math's per-batch ÷ batch_yield semantics —
  * but ACCUMULATING PER LEAF SKU instead of summing. Returns oz-per-output-unit; callers scale.
  */
@@ -26,17 +35,24 @@ function num(v: number | string | null): number | null {
 
 export async function loadMeasures(): Promise<Map<string, MeasureUnitFactor>> {
   const sb = getServiceRoleClient();
-  const { data } = await sb.from("measure_units").select("label, dimension, to_base_factor").eq("active", true).returns<Array<{ label: string; dimension: "weight" | "volume" | "count"; to_base_factor: number | string }>>();
+  const { data, error } = await sb.from("measure_units").select("label, dimension, to_base_factor").eq("active", true).returns<Array<{ label: string; dimension: "weight" | "volume" | "count"; to_base_factor: number | string }>>();
+  // A missing unit is not a missing conversion — it is a SILENT ZERO. `toBaseFactor`
+  // defaults to 0 below, so a dropped registry read turns every recipe quantity into 0 oz.
+  if (error) throw new Error(`loadMeasures: ${error.message}`);
   return new Map((data ?? []).map((m) => [m.label, { dimension: m.dimension, toBaseFactor: num(m.to_base_factor) ?? 0 }]));
 }
 
 async function loadSkuPack(skuIds: string[]): Promise<Map<string, RecipeInputSku>> {
   if (skuIds.length === 0) return new Map();
   const sb = getServiceRoleClient();
-  const { data } = await sb.from("vendor_items")
+  const { data, error } = await sb.from("vendor_items")
     .select("id, pack_format, each_container_label, units_per_pack, each_size, each_measure, avg_oz_per_each")
     .in("id", skuIds)
     .returns<Array<{ id: string; pack_format: string | null; each_container_label: string | null; units_per_pack: number | null; each_size: number | string | null; each_measure: string | null; avg_oz_per_each: number | string | null }>>();
+  // A SKU absent from this map has no pack basis, which reads downstream as "we cannot
+  // weigh this" — the honest answer for a genuinely unweighed SKU and a lie for a
+  // weighed one the read simply failed to return.
+  if (error) throw new Error(`loadSkuPack: ${error.message}`);
   // ONE batch query for the whole universe's active chain levels (loadRecipeGraph
   // law — never per-SKU). Pack-hierarchy 0159; SKUs without a chain get [].
   const chainsBySku = await loadSkuPackChains(skuIds);
@@ -58,12 +74,15 @@ export async function loadSkuPackChains(skuIds: string[]): Promise<Map<string, P
   const out = new Map<string, PackChainLevel[]>();
   if (skuIds.length === 0) return out;
   const sb = getServiceRoleClient();
-  const { data } = await sb.from("sku_pack_levels")
+  const { data, error } = await sb.from("sku_pack_levels")
     .select("id, sku_id, label, contains_qty, contains_level_id, contains_measure_unit, display_ordinal")
     .in("sku_id", skuIds)
     .eq("active", true)
     .order("display_ordinal", { ascending: true })
     .returns<Array<{ id: string; sku_id: string; label: string; contains_qty: number | string; contains_level_id: string | null; contains_measure_unit: string | null; display_ordinal: number }>>();
+  // "No chain" is a MEANINGFUL answer here (it routes the SKU to the legacy flat-field
+  // path), so a swallowed failure silently re-denominates every chained SKU in the graph.
+  if (error) throw new Error(`loadSkuPackChains: ${error.message}`);
   for (const r of data ?? []) {
     const list = out.get(r.sku_id) ?? [];
     list.push({
@@ -87,8 +106,11 @@ async function loadItemParBasis(
 ): Promise<Map<string, { ozPerParUnit: number | null; parUnitLabel: string | null }>> {
   if (itemIds.length === 0) return new Map();
   const sb = getServiceRoleClient();
-  const { data } = await sb.from("items").select("id, oz_per_par_unit, default_par_unit").in("id", itemIds)
+  const { data, error } = await sb.from("items").select("id, oz_per_par_unit, default_par_unit").in("id", itemIds)
     .returns<Array<{ id: string; oz_per_par_unit: number | string | null; default_par_unit: string | null }>>();
+  // A missing basis nulls the output's fan-out weight AND its par-unit label, which is how
+  // a recipe line denominated in the item's own par unit becomes an unknown-unit refusal.
+  if (error) throw new Error(`loadItemParBasis: ${error.message}`);
   return new Map((data ?? []).map((r) => [r.id, {
     ozPerParUnit: num(r.oz_per_par_unit),
     parUnitLabel: r.default_par_unit,
@@ -122,7 +144,7 @@ export async function loadRecipeGraph(opts?: { locationId?: string | null }): Pr
   const locationId = opts?.locationId ?? null;
   const sb = getServiceRoleClient();
   const measures = await loadMeasures();
-  const [{ data: recRows }, { data: inRows }, { data: outRows }] = await Promise.all([
+  const [{ data: recRows, error: recErr }, { data: inRows, error: inErr }, { data: outRows, error: outErr }] = await Promise.all([
     // ACTIVE ONLY (multi-vendor audit P5, second half — 2026-08-20). An inactive
     // recipe is a RETIRED one: `active = false` is how this codebase deactivates
     // config rows, and nothing else in the app treats a retired recipe as live
@@ -154,6 +176,16 @@ export async function loadRecipeGraph(opts?: { locationId?: string | null }): Pr
     sb.from("recipe_outputs").select("recipe_id, output_item_id, output_menu_item_id, yield")
       .returns<Array<{ recipe_id: string; output_item_id: string | null; output_menu_item_id: string | null; yield: number | string }>>(),
   ]);
+  // FAIL LOUD, BEFORE ANY INDEXING. These three reads ARE the graph: a dropped recipes read
+  // yields a graph with no producers ("nothing has a recipe"), a dropped inputs read yields
+  // recipes that consume nothing (every cost 0, every depletion 0), and a dropped outputs
+  // read yields recipes that produce nothing. All three are silent, all three are plausible,
+  // and none of them is distinguishable downstream from a genuinely sparse catalog.
+  for (const [label, err] of [
+    ["recipes", recErr], ["recipe_inputs", inErr], ["recipe_outputs", outErr],
+  ] as const) {
+    if (err) throw new Error(`loadRecipeGraph ${label}: ${err.message}`);
+  }
   const outputItemIds = [...new Set((outRows ?? []).filter((o) => o.output_item_id).map((o) => o.output_item_id!))];
   const skuIds = [...new Set((inRows ?? []).filter((c) => c.component_sku_id).map((c) => c.component_sku_id!))];
   const productIds = [...new Set((inRows ?? []).filter((c) => c.component_product_id).map((c) => c.component_product_id!))];

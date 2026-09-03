@@ -7,6 +7,7 @@
  * Body: { pin: string }
  *
  * Flow:
+ *   0. assertSameOrigin — cross-site POST is 403 bad_origin (P2-6).
  *   1. requireSession — actor must be fully authenticated.
  *   2. Parse + validate body shape.
  *   3. verifyActorPin — bcrypt compare against users.pin_hash.
@@ -25,9 +26,18 @@ import { type NextRequest } from "next/server";
 import { jsonError, jsonOk, parseJsonBody, extractIp } from "@/lib/api-helpers";
 import { verifyActorPin } from "@/lib/auth-flows";
 import { audit } from "@/lib/audit";
+import { assertSameOrigin } from "@/lib/portal/csrf";
 import { requireSession } from "@/lib/session";
 
 export async function POST(req: NextRequest) {
+  // 0. CSRF (P2-6). A cookie-authenticated POST is the textbook CSRF shape,
+  // and this route has no live caller today (PinConfirmModal attests in place
+  // and never calls it) — which makes now the cheapest possible moment to
+  // close it, before there is any traffic to regress. Fails closed on a
+  // missing Origin; a script driving this route must send one.
+  const originDenied = assertSameOrigin(req);
+  if (originDenied) return originDenied;
+
   // 1. Require authenticated session
   const ctx = await requireSession(req, "/api/auth/pin-confirm");
   if (ctx instanceof Response) return ctx;

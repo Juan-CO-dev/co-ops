@@ -7,6 +7,10 @@
  * Design locks (Phase 2 Session 1 + 2):
  *   - bcryptjs cost 12 for both PIN and password (cross-platform, edge-safe pure JS).
  *   - PINs peppered with AUTH_PIN_PEPPER, passwords with AUTH_PASSWORD_PEPPER.
+ *   - BCRYPT IGNORES EVERY INPUT BYTE PAST 72 (2026-09-01). A prepended 64-byte pepper
+ *     left only 8 bytes of password in the hash. Passwords therefore pre-hash with
+ *     HMAC-SHA256 (constant 64 bytes) before bcrypt — scheme `hmac2$`, below. PINs stay
+ *     pepper-prepended (64 + 4 = 68 < 72). Never prepend a pepper to bcrypt input again.
  *   - 4-digit PINs for all roles (matches Toast/7shifts punch-in convention).
  *   - Lockout: fixed 5 failures / 15 min → 15-min lock; no escalation.
  *   - JWT: HS256 via jose, signed with AUTH_JWT_SECRET interpreted as hex
@@ -57,12 +61,57 @@ export async function verifyPin(pin: string, hash: string): Promise<boolean> {
   return bcrypt.compare(getPinPepper() + pin, hash);
 }
 
+// ─── Password scheme v2 (2026-09-01) — see the bcrypt 72-byte cap note above ─────
+//
+// LEGACY (v1): `bcrypt(PEPPER + password)`. With the 64-byte production pepper only
+// the first 8 bytes of the PASSWORD reached bcrypt, so any password sharing a user's
+// first 8 characters verified (found live by Juan). PINs were never affected:
+// 64 + 4 = 68 < 72, every digit counts — hashPin/verifyPin are deliberately unchanged.
+//
+// V2: `hmac2$` + `bcrypt(hex(HMAC-SHA256(PEPPER, password)))`. The pre-hash is a
+// constant 64 bytes (< 72) and depends on EVERY password byte, so the pepper can no
+// longer eat the password's share of bcrypt's budget. The tag makes a stored hash
+// self-describing, which is what lets verifyPassword keep verifying a legacy hash
+// exactly once more (rehash-on-login upgrades it; see lib/auth-flows.ts
+// upgradeLegacyPasswordHash) — no schema column, no deploy-ordering hazard.
+//
+// Web Crypto HMAC, not node:crypto: proxy.ts (edge runtime) imports this module.
+
+export const PASSWORD_HASH_PREFIX = "hmac2$";
+
+/** True for a stored password hash produced by the pre-2026-09-01 scheme (bare bcrypt
+ *  of PEPPER+password). False for v2 hashes AND for null/empty (nothing to migrate). */
+export function isLegacyPasswordHash(hash: string | null | undefined): boolean {
+  return typeof hash === "string" && hash.length > 0 && !hash.startsWith(PASSWORD_HASH_PREFIX);
+}
+
+async function hmacSha256Hex(key: string, message: string): Promise<string> {
+  const enc = new TextEncoder();
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(key),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", cryptoKey, enc.encode(message));
+  return Array.from(new Uint8Array(sig), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export async function hashPassword(password: string): Promise<string> {
-  return bcrypt.hash(getPasswordPepper() + password, BCRYPT_COST);
+  const prehash = await hmacSha256Hex(getPasswordPepper(), password);
+  return PASSWORD_HASH_PREFIX + (await bcrypt.hash(prehash, BCRYPT_COST));
 }
 
 export async function verifyPassword(password: string, hash: string): Promise<boolean> {
-  return bcrypt.compare(getPasswordPepper() + password, hash);
+  if (isLegacyPasswordHash(hash)) {
+    // MIGRATION-ONLY path: the truncating legacy comparison, kept so an un-migrated
+    // account can verify once more and be upgraded on that login. Delete this branch
+    // once no `users.password_hash` lacks the v2 tag.
+    return bcrypt.compare(getPasswordPepper() + password, hash);
+  }
+  const prehash = await hmacSha256Hex(getPasswordPepper(), password);
+  return bcrypt.compare(prehash, hash.slice(PASSWORD_HASH_PREFIX.length));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -498,8 +498,9 @@ export async function loadDemandInputs(
   // the filter is identical, just split into disjoint chunks whose union is exactly the
   // one-shot result, so there is no parity question to verify (which matters: production_
   // inputs has 0 rows in prod today, so a semantic change could not be parity-checked).
-  // loadSkuUsageRank (lib/ordering.ts) still spends the whole list; that is pre-existing and
-  // is NOT fixed here, but this path does not inherit it.
+  // loadSkuUsageRank (lib/ordering.ts) chunks the same way against the same table, with its
+  // own PRODUCTION_ID_CHUNK (PR #296). The note here used to say it did not, and outlived
+  // that fact — pointing the next reader at a 414 cliff on the par walk that no longer exists.
   const productionInputs: Array<{ production_id: string; input_sku_id: string; input_oz: number | string | null }> = [];
   for (let i = 0; i < prodIds.length; i += PRODUCTION_ID_CHUNK) {
     const chunk = prodIds.slice(i, i + PRODUCTION_ID_CHUNK);

@@ -80,17 +80,21 @@ async function loadInstanceStatus(
   // instance across ALL active rows of the type instead (the am-prep page
   // pattern) — version-immune for today AND for the historical dates the
   // reports hub passes.
-  const { data: tmpls } = await service
+  const { data: tmpls, error: tErr } = await service
     .from("checklist_templates")
     .select("id")
     .eq("location_id", args.locationId)
     .eq("type", args.type)
     .eq("active", true)
     .returns<Array<{ id: string }>>();
+  // A dropped read here returns ZERO templates, and the early return below turns that
+  // into a null status — which the pulse renders as "not started". A finished opening
+  // report would read as never begun, at 6 AM, to the manager checking whether it was.
+  if (tErr) throw new Error(`loadInstanceStatus checklist_templates: ${tErr.message}`);
   const tmplIds = (tmpls ?? []).map((t) => t.id);
   if (tmplIds.length === 0) return { status: null, confirmedAt: null, confirmedBy: null };
 
-  const { data: inst } = await service
+  const { data: inst, error: iErr } = await service
     .from("checklist_instances")
     .select("status, confirmed_at, confirmed_by")
     .in("template_id", tmplIds)
@@ -101,6 +105,7 @@ async function loadInstanceStatus(
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle<{ status: string; confirmed_at: string | null; confirmed_by: string | null }>();
+  if (iErr) throw new Error(`loadInstanceStatus checklist_instances: ${iErr.message}`);
   if (!inst) return { status: null, confirmedAt: null, confirmedBy: null };
   return { status: inst.status ?? null, confirmedAt: inst.confirmed_at ?? null, confirmedBy: inst.confirmed_by ?? null };
 }
@@ -132,11 +137,12 @@ export async function loadReportStatuses(
   const confirmerIds = [...new Set([opening.confirmedBy, closing.confirmedBy].filter((v): v is string => v != null))];
   const nameById = new Map<string, string>();
   if (confirmerIds.length > 0) {
-    const { data: users } = await service
+    const { data: users, error: uErr } = await service
       .from("users")
       .select("id, name")
       .in("id", confirmerIds)
       .returns<Array<{ id: string; name: string }>>();
+    if (uErr) throw new Error(`loadReportStatuses users: ${uErr.message}`);
     for (const u of users ?? []) nameById.set(u.id, u.name);
   }
 
@@ -201,7 +207,7 @@ async function loadActiveToday(
   args: { locationId: string; date: string },
 ): Promise<ActiveStaff[]> {
   // Today's instances (id + template + confirmer, one query) ∥ cash signers.
-  const [{ data: insts }, { data: cash }] = await Promise.all([
+  const [{ data: insts, error: instErr }, { data: cash, error: cashErr }] = await Promise.all([
     service
       .from("checklist_instances")
       .select("id, template_id, confirmed_by")
@@ -216,6 +222,10 @@ async function loadActiveToday(
       .is("superseded_at", null)
       .returns<Array<{ signed_by: string | null }>>(),
   ]);
+  // Fabricating here reports a fully-staffed shift as EMPTY — nobody worked today —
+  // which is the pulse's "who is on the floor" answer and is read as a fact.
+  if (instErr) throw new Error(`loadActiveToday checklist_instances: ${instErr.message}`);
+  if (cashErr) throw new Error(`loadActiveToday cash_reports: ${cashErr.message}`);
 
   const instRows = insts ?? [];
   const instanceIds = instRows.map((r) => r.id);
@@ -231,7 +241,10 @@ async function loadActiveToday(
           .is("superseded_at", null)
           .is("revoked_at", null)
           .returns<Array<{ completed_by: string | null; instance_id: string }>>()
-          .then((r) => r.data ?? [])
+          .then((r) => {
+            if (r.error) throw new Error(`loadActiveToday checklist_completions: ${r.error.message}`);
+            return r.data ?? [];
+          })
       : Promise.resolve([] as Array<{ completed_by: string | null; instance_id: string }>),
     templateIds.length > 0
       ? service
@@ -239,7 +252,10 @@ async function loadActiveToday(
           .select("id, type, prep_subtype")
           .in("id", templateIds)
           .returns<Array<{ id: string; type: string; prep_subtype: string | null }>>()
-          .then((r) => r.data ?? [])
+          .then((r) => {
+            if (r.error) throw new Error(`loadActiveToday checklist_templates: ${r.error.message}`);
+            return r.data ?? [];
+          })
       : Promise.resolve([] as Array<{ id: string; type: string; prep_subtype: string | null }>),
   ]);
 
@@ -263,11 +279,12 @@ async function loadActiveToday(
   for (const r of cash ?? []) touch(r.signed_by, "cash");
 
   if (touched.size === 0) return [];
-  const { data: users } = await service
+  const { data: users, error: uErr } = await service
     .from("users")
     .select("id, name")
     .in("id", [...touched.keys()])
     .returns<Array<{ id: string; name: string }>>();
+  if (uErr) throw new Error(`loadActiveToday users: ${uErr.message}`);
   const nameById = new Map((users ?? []).map((u) => [u.id, u.name]));
 
   // Stable render order: report keys in the pulse's canonical row order.
@@ -290,7 +307,7 @@ async function loadCateringDueToday(
   service: SupabaseClient,
   args: { locationId: string; date: string },
 ): Promise<CateringDueItem[]> {
-  const { data } = await service
+  const { data, error } = await service
     .from("catering_pipeline")
     .select("id, event_name, company, contact_name, headcount, time_window, delivery_address")
     .eq("location_id", args.locationId)
@@ -307,6 +324,10 @@ async function loadCateringDueToday(
         delivery_address: string | null;
       }>
     >();
+  // THE WORST FABRICATION ON THIS SURFACE. An empty list reads as "no events today", the
+  // kitchen preps nothing extra, and the order is late — with no error anywhere to explain
+  // it afterwards. A confirmed catering day is never allowed to render as a clear one.
+  if (error) throw new Error(`loadCateringDueToday catering_pipeline: ${error.message}`);
   return (data ?? [])
     .map((r) => ({
       id: r.id,
@@ -383,6 +404,9 @@ export async function loadMidShiftPulse(
   }));
   const fridgeFlagCount = fridges.filter((f) => f.outOfRange).length;
 
+  // A HEAD count read drops its error the same way a row read does, and `?? 0` renders
+  // the failure as a clean "no notes logged today" on the attention lane.
+  if (notesRes.error) throw new Error(`loadMidShiftPulse maintenance_notes: ${notesRes.error.message}`);
   const maintenanceNotesToday = notesRes.count ?? 0;
 
   // Fridges with NO reading yet today (council 2026-07-31 F4): "nobody has

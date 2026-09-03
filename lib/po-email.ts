@@ -12,6 +12,7 @@
  *     1. re-load the CONFIRMED PO (409 `po_not_confirmed` otherwise; location-bind 404 mask),
  *     2. gate: 409 `email_dormant` when the auto leg isn't awake (alias × EMAIL_FROM domain),
  *     3. gate: 409 `no_email_target` when zero plausible email recipients,
+ *     3b. gate: 409 `no_order_lines` when the snapshot yields zero sendable lines,
  *     4. sendEmail(from=alias, replyTo=alias, to=[recipients]) — on {error}, throw a
  *        502-shaped `send_failed` and leave the PO CONFIRMED (manual affordances remain —
  *        no pipe failure blocks ordering),
@@ -140,8 +141,11 @@ async function loadPoEmailContext(actor: AuthContext, poId: string): Promise<PoE
     recipients.push(v);
   }
 
-  // Prefer the frozen snapshot's lines (authoritative). Fall back to nothing if the
-  // snapshot is malformed — the caller's no-lines path never fabricates order content.
+  // Prefer the frozen snapshot's lines (authoritative). A missing or malformed snapshot
+  // yields ZERO lines, and zero lines is a REFUSAL at the send gate below — never a blank
+  // order rendered as if it were real. (This comment used to claim "the caller's no-lines
+  // path never fabricates order content"; there was no such caller path, which is audit v2
+  // finding F2's second half. The path exists now.)
   const snapshot = (po.confirmed_snapshot ?? null) as { lines?: unknown } | null;
   const snapshotLines = snapshot?.lines;
   const rawLines: unknown[] = Array.isArray(snapshotLines) ? snapshotLines : [];
@@ -283,6 +287,9 @@ export async function orderEmailPreview(actor: AuthContext, poId: string): Promi
  *   - 409 `po_not_confirmed` (via loadPoEmailContext) — a mis-tapped Confirm never emails.
  *   - 409 `email_dormant` when the auto leg isn't awake (alias × EMAIL_FROM domain).
  *   - 409 `no_email_target` when zero plausible recipients.
+ *   - 409 `no_order_lines` when the frozen snapshot yields no sendable line (audit v2 F2):
+ *     a `confirmed` PO whose snapshot never landed, or one whose every line is qty 0, would
+ *     otherwise pass both gates above, flip to `placed`, and transmit a body with no items.
  *
  * FLIP-FIRST (V2-D1): the send runs INSIDE recordPlacement's transmit callback, AFTER the
  * guarded confirmed→placed flip. Two concurrent taps → one wins the flip and sends; the
@@ -303,6 +310,15 @@ export async function sendOrderEmail(actor: AuthContext, poId: string): Promise<
   // NO recipients → nothing to send (V2-D3).
   if (ctx.recipients.length === 0) {
     throw new PurchaseOrderError(409, "no_email_target", "This vendor has no email address on file for orders");
+  }
+  // NO LINES → nothing to order (audit v2 F2). The third pre-flip gate, and the only one
+  // about the ORDER rather than the pipe. `ctx.lines` is the frozen snapshot filtered to
+  // qty > 0; it is empty when the snapshot is absent or malformed (the state F2's first
+  // half made unreachable, but a PO confirmed before that fix can still be in it) and when
+  // every line was zeroed out. Both mean the same thing to the vendor: an email that
+  // orders nothing. Refuse BEFORE recordPlacement so a refused send never touches status.
+  if (ctx.lines.length === 0) {
+    throw new PurchaseOrderError(409, "no_order_lines", "This order has no lines to send — reopen it and add at least one");
   }
 
   const alias = ctx.receiptEmail!.trim(); // non-empty (guaranteed by emailOrderingAvailable)
