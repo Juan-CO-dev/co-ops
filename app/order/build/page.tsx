@@ -44,8 +44,9 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { CateringMenuItem } from "@/lib/catering/menu";
 import { TranslationProvider, useTranslation } from "@/lib/i18n/provider";
+import { catForSection, orderSections, type MenuCat } from "@/lib/portal/menu-order-shared";
 
-type Cat = "main" | "side" | "sweet" | "drink";
+type Cat = MenuCat;
 /** Portion selector for portionable subs. Matches the draft-lines API portion values. */
 type Portion = "quarter" | "half" | "whole";
 
@@ -160,12 +161,8 @@ function expandCards(menu: CateringMenuItem[]): MenuCard[] {
 
 /** Derive a coverage category from the row's section (best-effort — the real menu has no `cat`). */
 function catFor(item: CateringMenuItem): Cat {
-  const s = (item.section ?? "").toLowerCase();
-  if (/(side|chip|salad)/.test(s)) return "side";
-  if (/(sweet|cookie|dessert|cannoli|treat)/.test(s)) return "sweet";
-  if (/(drink|soda|water|beverage)/.test(s)) return "drink";
-  // subs/platters/sandwiches and anything unclassified count as mains.
-  return "main";
+  // Shared with the section ordering so the coverage meter and the page order can never disagree.
+  return catForSection(item.section);
 }
 
 /** Human summary of a customized line (portion / size / subs / drink / allergen holds / notes) — display only. */
@@ -320,7 +317,10 @@ function OrderBuild() {
       arr.push(c);
       map.set(section, arr);
     }
-    return Array.from(map.entries()).map(([label, items]) => ({ label, items }));
+    // Customer decision order (Juan, 2026-09-03): drinks → sides → desserts → à la carte.
+    // Packages render ABOVE all of these (see the JSX) — the page reads top-down the way a
+    // customer actually decides.
+    return orderSections(Array.from(map.entries()).map(([label, items]) => ({ label, items })));
   }, [cards]);
 
   const packages = useMemo(() => draft?.packages ?? [], [draft]);
@@ -552,6 +552,39 @@ function OrderBuild() {
 
       <div className="mx-auto grid max-w-6xl grid-cols-1 gap-8 px-5 py-8 lg:grid-cols-[1fr_360px]">
         <div className="flex flex-col gap-10">
+          {/* ── Packages FIRST — customers choose a package before anything else; only rendered when packages exist ── */}
+          {packages.length > 0 && (
+            <section>
+              <h2 className="mb-4 text-xs font-bold uppercase tracking-[0.2em] text-co-text-dim">Packages</h2>
+              <div className="flex flex-col divide-y divide-co-border/60 overflow-hidden rounded-2xl border border-co-border/70 bg-co-surface">
+                {packages.map((pkg) => {
+                  const advisory: string[] = [];
+                  if (pkg.minHeadcount != null) advisory.push(`min ${pkg.minHeadcount} guests`);
+                  if (pkg.leadTimeHours != null) advisory.push(`${pkg.leadTimeHours}h notice`);
+                  return (
+                    <div key={pkg.id} className="flex items-center justify-between gap-4 p-4">
+                      <div className="min-w-0">
+                        <h3 className="text-sm font-extrabold text-co-text">{pkg.labelEn}</h3>
+                        {advisory.length > 0 && (
+                          <p className="mt-0.5 text-[11px] text-co-text-dim">{advisory.join(" · ")}</p>
+                        )}
+                      </div>
+                      <div className="flex shrink-0 items-center gap-3">
+                        <span className="text-sm font-bold text-co-cta-text">from {money(pkg.priceCents)}</span>
+                        <button
+                          type="button"
+                          onClick={() => openPkgAdd(pkg)}
+                          className="inline-flex min-h-[44px] items-center justify-center rounded-full bg-co-text px-4 text-xs font-bold uppercase tracking-[0.08em] text-co-cta transition hover:bg-co-text/90 focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
+                        >
+                          Choose / Build →
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
           {groups.length === 0 ? (
             <div className="rounded-2xl border border-co-border/70 bg-co-surface px-6 py-10 text-center">
               <p className="text-sm font-semibold text-co-text">Our catering menu is being finalized.</p>
@@ -587,39 +620,6 @@ function OrderBuild() {
             </section>
           ))}
 
-          {/* ── Packages section — only rendered when packages exist ── */}
-          {packages.length > 0 && (
-            <section>
-              <h2 className="mb-4 text-xs font-bold uppercase tracking-[0.2em] text-co-text-dim">Packages</h2>
-              <div className="flex flex-col divide-y divide-co-border/60 overflow-hidden rounded-2xl border border-co-border/70 bg-co-surface">
-                {packages.map((pkg) => {
-                  const advisory: string[] = [];
-                  if (pkg.minHeadcount != null) advisory.push(`min ${pkg.minHeadcount} guests`);
-                  if (pkg.leadTimeHours != null) advisory.push(`${pkg.leadTimeHours}h notice`);
-                  return (
-                    <div key={pkg.id} className="flex items-center justify-between gap-4 p-4">
-                      <div className="min-w-0">
-                        <h3 className="text-sm font-extrabold text-co-text">{pkg.labelEn}</h3>
-                        {advisory.length > 0 && (
-                          <p className="mt-0.5 text-[11px] text-co-text-dim">{advisory.join(" · ")}</p>
-                        )}
-                      </div>
-                      <div className="flex shrink-0 items-center gap-3">
-                        <span className="text-sm font-bold text-co-cta-text">from {money(pkg.priceCents)}</span>
-                        <button
-                          type="button"
-                          onClick={() => openPkgAdd(pkg)}
-                          className="inline-flex min-h-[44px] items-center justify-center rounded-full bg-co-text px-4 text-xs font-bold uppercase tracking-[0.08em] text-co-cta transition hover:bg-co-text/90 focus:outline-none focus-visible:ring-4 focus-visible:ring-co-gold/60"
-                        >
-                          Choose / Build →
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-          )}
         </div>
 
         <aside className="hidden lg:block"><div className="sticky top-24 flex flex-col gap-4">
