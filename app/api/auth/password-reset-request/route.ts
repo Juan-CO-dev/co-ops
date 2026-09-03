@@ -30,7 +30,7 @@ import { type NextRequest } from "next/server";
 
 import { generateToken, hashToken } from "@/lib/auth";
 import { audit } from "@/lib/audit";
-import { sendEmail } from "@/lib/email";
+import { sendEmail, teamFrom } from "@/lib/email";
 import { renderPasswordResetEmail } from "@/lib/email-templates/password-reset";
 import { ROLES, type RoleCode } from "@/lib/roles";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -168,6 +168,8 @@ export async function POST(req: NextRequest) {
     subject: "Reset your password — CO-OPS",
     html,
     text,
+    // Staff-facing send: team@ sender when EMAIL_FROM_TEAM is set (sender-split 2026-09-01).
+    from: teamFrom(),
   });
 
   await audit({
