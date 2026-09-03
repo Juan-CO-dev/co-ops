@@ -26,7 +26,7 @@ export function groupAdminRows(items: readonly AdminMenuItem[]): MenuGroup[] {
   for (const it of items) {
     const label = sectionLabel(it.section);
     const g = map.get(label) ?? { rawSections: [], rows: [] };
-    const raw = it.section && it.section.trim() ? it.section : "";
+    const raw = it.section ? it.section.trim() : "";
     if (raw && !g.rawSections.includes(raw)) g.rawSections.push(raw);
     g.rows.push(it);
     map.set(label, g);

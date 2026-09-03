@@ -58,6 +58,12 @@ describe("groupAdminRows", () => {
     expect(total).toBe(CATALOG.length);
     expect(CATALOG).toEqual(copy);
   });
+
+  it("an empty catalog yields no groups; raw sections are stored trimmed", () => {
+    expect(groupAdminRows([])).toEqual([]);
+    const g = groupAdminRows([row({ name: "Padded", section: " Sides " })]);
+    expect(g[0]?.rawSections).toEqual(["Sides"]);
+  });
 });
 
 describe("filterAdminRows", () => {
@@ -75,6 +81,10 @@ describe("filterAdminRows", () => {
     expect(filterAdminRows(CATALOG, { chip: "all", query: "  coke " }).map((r) => r.name)).toEqual(["Coke"]);
     expect(filterAdminRows(CATALOG, { chip: "all", query: "ENSALADA" }).map((r) => r.name)).toEqual(["Egg Salad"]);
     expect(filterAdminRows(CATALOG, { chip: "all", query: "zzz" })).toEqual([]);
+  });
+
+  it("a whitespace-only query returns everything (same as empty)", () => {
+    expect(filterAdminRows(CATALOG, { chip: "all", query: "   " })).toHaveLength(CATALOG.length);
   });
 
   it("chip and search combine", () => {
