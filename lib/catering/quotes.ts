@@ -613,8 +613,30 @@ export interface ReviseQuoteInput {
 /**
  * Supersede the current revision and insert version+1 (recomputed against CURRENT pricing,
  * reset to 'draft'). Append-only: the prior row stays immutable. The payload is fully
- * validated + the new stack computed BEFORE the supersede UPDATE, so a failed insert can't
- * strand the family without a live revision.
+ * validated + the new stack computed BEFORE the supersede UPDATE, which removes every
+ * AVOIDABLE failure from below it.
+ *
+ * ── THE TWO STRANDS BELOW THE SUPERSEDE (audit v2, seat C5 finding F8 · BC-036) ──────
+ * Validating early does NOT make an INSERT infallible, and this docstring used to promise
+ * that it did. Three round trips, no transaction, two ways to strand:
+ *
+ *   A. THE HEADER INSERT FAILS. The family then has no `superseded_at IS NULL` row at
+ *      all: `loadCurrentQuote` returns null, the pipeline surface shows no quote, and
+ *      reviseQuote on the old id 409s `not_current` from here on — unrecoverable through
+ *      this function. COMPENSATED below with lib/cash.ts's compare-and-set revert.
+ *
+ *   B. `insertQuoteItems` FAILS. The new revision is LIVE with zero line items and a
+ *      non-zero snapshot total, so `resolveQuoteDemand` returns [] and prep demand
+ *      silently reserves nothing for a real event. NOT rolled back, deliberately: undoing
+ *      it means superseding the new revision AND un-superseding the old one — two more
+ *      un-transactional writes whose own partial failure lands the family in strand A,
+ *      the unrecoverable state this fix just closed. A repair path that can produce a
+ *      worse outcome than the fault is not a repair. The correct fix is ONE RPC holding
+ *      all three writes in a single transaction (migration 0188's shape for cash), which
+ *      is an authored-and-gated migration plus a wiring PR, not a code change here.
+ *      Meanwhile the failure is made QUERYABLE rather than silent — an audit row on the
+ *      action this write already speaks, carrying `outcome: "items_insert_failed"`.
+ *      LIVE-CHECK: a live revision with `total_cents > 0` and no `catering_quote_items`.
  */
 export async function reviseQuote(actor: AuthContext, quoteId: string, input: ReviseQuoteInput): Promise<{ id: string; version: number; pipelineId: string | null }> {
   const sb = getServiceRoleClient();
@@ -637,10 +659,13 @@ export async function reviseQuote(actor: AuthContext, quoteId: string, input: Re
   const deliveryFee = await resolveDeliveryFee(pricing, isDelivery, input.deliveryZoneId ?? null);
   const stack = computeChargeStack(lines.map((l) => l.lineTotalCents), deliveryFee, pricing.rates);
 
-  // Supersede the current revision (guard: exactly the still-live row).
+  // Supersede the current revision (guard: exactly the still-live row). The stamp is a
+  // VALUE, not written inline: the compensation below matches on the exact instant we
+  // wrote, and a second `new Date()` would produce a different one and revert nothing.
+  const supersededAt = new Date().toISOString();
   const { error: sErr, count } = await sb
     .from("catering_quotes")
-    .update({ superseded_at: new Date().toISOString() }, { count: "exact" })
+    .update({ superseded_at: supersededAt }, { count: "exact" })
     .eq("id", quoteId)
     .is("superseded_at", null);
   if (sErr) throw new Error(`reviseQuote supersede: ${sErr.message}`);
@@ -665,9 +690,50 @@ export async function reviseQuote(actor: AuthContext, quoteId: string, input: Re
     })
     .select("id, version")
     .single<{ id: string; version: number }>();
-  if (iErr) throw new Error(`reviseQuote insert: ${iErr.message}`);
+  if (iErr) {
+    // STRAND A — put the live revision back. The revert lifts OUR OWN stamp and nobody
+    // else's: two revisers racing both read `current`, and an unfiltered revert would lift
+    // the winner's supersede as well as ours. Rowcount-checked per the silent-UPDATE law.
+    const { error: revertErr, count: reverted } = await sb
+      .from("catering_quotes")
+      .update({ superseded_at: null }, { count: "exact" })
+      .eq("id", quoteId)
+      .eq("superseded_at", supersededAt);
+    if (revertErr || (reverted ?? 0) === 0) {
+      console.error(
+        `[catering] reviseQuote could not restore quote ${quoteId} after a failed revision insert: ${revertErr?.message ?? "no row matched our stamp"} — the family may have NO live revision. LIVE-CHECK: select coalesce(root_id, id) from catering_quotes where coalesce(root_id, id) = the family and superseded_at is null.`,
+      );
+    }
+    throw new Error(`reviseQuote insert: ${iErr.message}`);
+  }
 
-  await insertQuoteItems(sb, inserted.id, lines, actor.user.id);
+  try {
+    await insertQuoteItems(sb, inserted.id, lines, actor.user.id);
+  } catch (itemsErr) {
+    // STRAND B — the new revision is live and EMPTY. Not rolled back (see the header); made
+    // queryable instead. `catering.quote.revise` is already in the closed action vocabulary,
+    // so the signal rides its metadata rather than inventing a name. Awaited because we
+    // throw on the next line — audit() is fail-open and never throws.
+    await audit({
+      actorId: actor.user.id,
+      actorRole: actor.user.role,
+      action: "catering.quote.revise",
+      resourceTable: "catering_quotes",
+      resourceId: inserted.id,
+      metadata: {
+        outcome: "items_insert_failed",
+        from_quote_id: quoteId,
+        root_id: rootId,
+        version: inserted.version,
+        total_cents: stack.totalCents,
+        expected_line_count: lines.length,
+        error: itemsErr instanceof Error ? itemsErr.message : String(itemsErr),
+      },
+      ipAddress: null,
+      userAgent: null,
+    });
+    throw itemsErr;
+  }
 
   void audit({
     actorId: actor.user.id,

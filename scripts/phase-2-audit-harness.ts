@@ -119,6 +119,10 @@ async function call(
   const headers: Record<string, string> = {
     "content-type": "application/json",
     "user-agent": "phase-2-audit-harness",
+    // /api/auth/pin runs assertSameOrigin (P2-6), which fails CLOSED on a
+    // missing Origin. A browser always sends one; a script must say so itself
+    // or every sign-in probe here comes back 403 bad_origin.
+    origin: new URL(BASE_URL).origin,
   };
   if (init.cookieJwt !== undefined) {
     headers["cookie"] = `${COOKIE_NAME}=${init.cookieJwt}`;

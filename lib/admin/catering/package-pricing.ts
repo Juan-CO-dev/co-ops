@@ -8,6 +8,7 @@
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
 import type { AuthContext } from "@/lib/session";
+import { lockLocationContext, type LocationActor } from "@/lib/locations";
 import { loadActiveRateRules } from "@/lib/catering/rate-rules";
 import { cateringUnitPriceCents, resolveRateBps, impliedRateBps } from "@/lib/catering/pricing-derivation";
 
@@ -76,6 +77,15 @@ export async function recommendPackagePrice(
     .maybeSingle<{ id: string; location_id: string | null; price_cents: number }>();
   if (pErr) throw new Error(`recommendPackagePrice package: ${pErr.message}`);
   if (!pkg) throw new Error("recommendPackagePrice: package not found");
+  // TENANCY BIND (audit v2 B2): a shop-scoped package's price basis is that shop's data —
+  // a single-shop actor may not preview the other shop's package. Constant shape with the
+  // not-found above (this advisory read has no typed error class); null = global, unbound.
+  if (
+    pkg.location_id !== null &&
+    !lockLocationContext({ role: actor.user.role, locations: actor.locations } satisfies LocationActor, pkg.location_id)
+  ) {
+    throw new Error("recommendPackagePrice: package not found");
+  }
 
   const basisLocation = pkg.location_id ?? args.locationId; // package location wins; else the preview location
   const priceCents = pkg.price_cents;

@@ -38,6 +38,7 @@ import { getServiceRoleClient } from "@/lib/supabase-server";
 import { getRoleLevel } from "@/lib/roles";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
+import { lockLocationContext, type LocationActor } from "@/lib/locations";
 
 // ── Authority floors (the lib is the authority per-action) ──────────────────
 export const PACKAGE_READ_MIN = 6; // catering_mgr/AGM+ — view the KB
@@ -207,6 +208,20 @@ function visibleLocationScope(actor: AuthContext): string[] | null {
   if (getRoleLevel(actor.user.role) >= ALL_LOCATIONS_MIN) return null;
   return actor.locations ?? [];
 }
+
+/** LocationActor shape for lockLocationContext. */
+function actorLoc(actor: AuthContext): LocationActor {
+  return { role: actor.user.role, locations: actor.locations };
+}
+
+// TENANCY BIND ON WRITES (audit v2 Batch B2, 2026-09-01). Reads were scoped
+// (visibleLocationScope); the nine writers gated on level only, and every one is reached
+// through an opaque id (package → line item → slot option) — so a catering_mgr at one
+// shop could edit, deactivate, re-line or re-option the other shop's package. Each writer
+// now reads through its chain to the package's `location_id` and binds INLINE (grep-visible
+// to tests/location-bind-differential.test.ts). A GLOBAL package (location_id null) is the
+// tenant-wide row and is not bound. Refusal is 404 `not_found` — the module's own
+// not-found spelling and the IDOR two-halves 404-mask.
 
 interface DbPackageRow {
   id: string;
@@ -449,6 +464,10 @@ export async function createPackage(
   input: CreatePackageInput,
 ): Promise<{ id: string; slug: string }> {
   requireLevel(actor, PACKAGE_WRITE_MIN);
+  // Bind the caller-chosen shop BEFORE validation + I/O (null = GLOBAL, unbound).
+  if (input.locationId && !lockLocationContext(actorLoc(actor), input.locationId)) {
+    throw new AdminCateringError(404, "not_found", "Package not found");
+  }
 
   const labelEn = input.labelEn?.trim() ?? "";
   if (!labelEn) throw new AdminCateringError(400, "invalid_label", "Package name is required");
@@ -582,7 +601,10 @@ export async function updatePackage(
   args: { id: string; changes: UpdatePackageChanges },
 ): Promise<void> {
   requireLevel(actor, PACKAGE_WRITE_MIN);
-  await requirePackageRow(args.id);
+  const pkg = await requirePackageRow(args.id);
+  if (pkg.location_id !== null && !lockLocationContext(actorLoc(actor), pkg.location_id)) {
+    throw new AdminCateringError(404, "not_found", "Package not found");
+  }
 
   const { changes } = args;
   const update: Record<string, unknown> = {};
@@ -632,6 +654,9 @@ export async function deactivatePackage(
 ): Promise<void> {
   requireLevel(actor, PACKAGE_WRITE_MIN);
   const row = await requirePackageRow(args.id);
+  if (row.location_id !== null && !lockLocationContext(actorLoc(actor), row.location_id)) {
+    throw new AdminCateringError(404, "not_found", "Package not found");
+  }
 
   // Reactivating: guard against a live one-active-per-(location,slug) collision.
   if (args.active && row.active === false) {
@@ -703,7 +728,10 @@ export interface AddPackageLineInput {
 
 export async function addPackageLine(actor: AuthContext, input: AddPackageLineInput): Promise<{ id: string }> {
   requireLevel(actor, PACKAGE_WRITE_MIN);
-  await requirePackageRow(input.packageId);
+  const pkg = await requirePackageRow(input.packageId);
+  if (pkg.location_id !== null && !lockLocationContext(actorLoc(actor), pkg.location_id)) {
+    throw new AdminCateringError(404, "not_found", "Package not found");
+  }
   const quantity = normalizeQuantity(input.quantity);
   const description = normalizeOptional(input.description);
 
@@ -782,11 +810,17 @@ export async function addSlotOption(
   const sb = getServiceRoleClient();
   const { data: line, error: lErr } = await sb
     .from("catering_package_items")
-    .select("id, slot_type")
+    .select("id, slot_type, package_id")
     .eq("id", args.lineItemId)
-    .maybeSingle<{ id: string; slot_type: string }>();
+    .maybeSingle<{ id: string; slot_type: string; package_id: string }>();
   if (lErr) throw new Error(`addSlotOption line load: ${lErr.message}`);
   if (!line) throw new AdminCateringError(404, "not_found", "Line item not found");
+  {
+    const pkg = await requirePackageRow(line.package_id);
+    if (pkg.location_id !== null && !lockLocationContext(actorLoc(actor), pkg.location_id)) {
+      throw new AdminCateringError(404, "not_found", "Line item not found");
+    }
+  }
   if (line.slot_type !== "choice") throw new AdminCateringError(409, "not_choice", "Options can only be added to a choice slot");
   await assertCateringRef(args.ref);
 
@@ -836,6 +870,13 @@ export async function setSlotOptionClassic(
 ): Promise<void> {
   requireLevel(actor, PACKAGE_WRITE_MIN);
   const sb = getServiceRoleClient();
+  {
+    // option → package_item_id → package → location_id, then bind.
+    const chain = await requireOptionChain(args.optionId);
+    if (chain.location_id !== null && !lockLocationContext(actorLoc(actor), chain.location_id)) {
+      throw new AdminCateringError(404, "not_found", "Option not found or removed");
+    }
+  }
   const { error, count } = await sb
     .from("catering_package_slot_options")
     .update({ classic: args.classic }, { count: "exact" })
@@ -859,6 +900,13 @@ export async function setSlotOptionClassic(
 export async function removeSlotOption(actor: AuthContext, args: { optionId: string }): Promise<void> {
   requireLevel(actor, PACKAGE_WRITE_MIN);
   const sb = getServiceRoleClient();
+  {
+    // option → package_item_id → package → location_id, then bind.
+    const chain = await requireOptionChain(args.optionId);
+    if (chain.location_id !== null && !lockLocationContext(actorLoc(actor), chain.location_id)) {
+      throw new AdminCateringError(404, "not_found", "Option not found or already removed");
+    }
+  }
   const { error, count } = await sb
     .from("catering_package_slot_options")
     .update({ active: false }, { count: "exact" })
@@ -892,6 +940,24 @@ async function requireLineItemRow(itemId: string): Promise<{ id: string; package
   return data;
 }
 
+/** Read a slot option THROUGH to its package's shop (option → package_item_id → line →
+ *  package.location_id), or throw 404. The tenancy bind for the two option writers. */
+async function requireOptionChain(
+  optionId: string,
+): Promise<{ id: string; package_item_id: string; package_id: string; location_id: string | null }> {
+  const sb = getServiceRoleClient();
+  const { data: opt, error: oErr } = await sb
+    .from("catering_package_slot_options")
+    .select("id, package_item_id")
+    .eq("id", optionId)
+    .maybeSingle<{ id: string; package_item_id: string }>();
+  if (oErr) throw new Error(`requireOptionChain option failed: ${oErr.message}`);
+  if (!opt) throw new AdminCateringError(404, "not_found", "Option not found");
+  const line = await requireLineItemRow(opt.package_item_id);
+  const pkg = await requirePackageRow(line.package_id);
+  return { id: opt.id, package_item_id: opt.package_item_id, package_id: pkg.id, location_id: pkg.location_id };
+}
+
 /** Remove a line item — append-only: flip active=false, never DELETE. Tier A. */
 export async function removePackageLineItem(
   actor: AuthContext,
@@ -899,6 +965,12 @@ export async function removePackageLineItem(
 ): Promise<void> {
   requireLevel(actor, PACKAGE_WRITE_MIN);
   const row = await requireLineItemRow(args.itemId);
+  {
+    const pkg = await requirePackageRow(row.package_id);
+    if (pkg.location_id !== null && !lockLocationContext(actorLoc(actor), pkg.location_id)) {
+      throw new AdminCateringError(404, "not_found", "Line item not found");
+    }
+  }
 
   const sb = getServiceRoleClient();
   const { error, count } = await sb

@@ -24,6 +24,7 @@
 import { type NextRequest } from "next/server";
 
 import { verifyPassword } from "@/lib/auth";
+import { upgradeLegacyPasswordHash } from "@/lib/auth-flows";
 import { audit } from "@/lib/audit";
 import { requireSession, unlockStepUp } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -118,6 +119,13 @@ export async function POST(req: NextRequest) {
     });
     return jsonError(401, "invalid_credentials");
   }
+
+  // 4b. Rehash-on-verify (password scheme v2, 2026-09-01): step-up is the other place the
+  // plaintext exists, so a manager who never signs in with a password (PIN + step-up
+  // habit) still gets migrated. Non-fatal; no session revoke (same credential).
+  await upgradeLegacyPasswordHash(
+    user.id, password, pwRow.password_hash, user.role, { ipAddress, userAgent }, "step_up",
+  );
 
   // 5. Success
   await unlockStepUp(session.id);
