@@ -45,6 +45,7 @@ import Link from "next/link";
 import type { CateringMenuItem } from "@/lib/catering/menu";
 import { TranslationProvider, useTranslation } from "@/lib/i18n/provider";
 import { catForSection, orderSections, orderWithinSection, sectionLabel, type MenuCat } from "@/lib/portal/menu-order-shared";
+import { coverageSegments } from "@/lib/portal/coverage-shared";
 
 type Cat = MenuCat;
 /** Portion selector for portionable subs. Matches the draft-lines API portion values. */
@@ -240,7 +241,6 @@ function OrderBuild() {
   const [headcount, setHeadcount] = useState(0);
   const [modalKey, setModalKey] = useState<string | null>(null);
   const [coverageOpen, setCoverageOpen] = useState(false); // mobile bottom-sheet toggle
-  const [hintIdx, setHintIdx] = useState(0);
   // Server-authoritative subtotal (cents) from the last persisted lines POST. Falls back to draft.stack.
   const [subtotalCents, setSubtotalCents] = useState(0);
   // Portal session expired mid-cart (a 401 on a persist POST). Renders a sticky
@@ -433,12 +433,6 @@ function OrderBuild() {
     drink: servedBy("drink"),
   };
 
-  const hints = coverageHints(lines, coverage, headcount);
-  useEffect(() => {
-    if (hints.length <= 1) return;
-    const t = window.setInterval(() => setHintIdx((i) => i + 1), 3800);
-    return () => window.clearInterval(t);
-  }, [hints.length]);
 
   // ── Debounced persistence (D20 — references + qty + portion + sizeId only, never prices) ──
   const persistTimer = useRef<number | null>(null);
@@ -625,13 +619,21 @@ function OrderBuild() {
 
         </div>
 
-        <aside className="hidden lg:block"><div className="sticky top-24 flex flex-col gap-4">
+        <aside className="hidden lg:block"><div className="sticky top-24 flex max-h-[calc(100vh-7rem)] flex-col gap-4 overflow-y-auto pr-1">
+          {/* At-a-glance FIRST (Juan, 2026-09-03: it was buried under the cart lines, so on a laptop it
+              only appeared at the very bottom of the page). The cart's line list scrolls on its own
+              below it, so the guide stays in view while the customer scrolls the menu. */}
+          <div className="rounded-2xl border border-co-border/70 bg-co-surface px-5 py-4 shadow-sm">
+            <h2 className="text-sm font-extrabold uppercase tracking-[0.14em] text-co-text">At-a-glance coverage</h2>
+            <div className="-mt-2"><CoveragePanel coverage={coverage} headcount={headcount} setHeadcount={setHeadcount} gapNudge={computeGapNudge(lines, coverage, headcount)} /></div>
+          </div>
           {/* "Good to know" rides with the sticky cart. */}
           <div className="rounded-2xl border border-co-border/70 bg-co-surface px-5 py-4 shadow-sm">
             <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-co-text-dim">💡 Good to know</p>
             <p key={factIdx} className="mt-1.5 min-h-[2.75em] text-sm leading-snug text-co-text-muted transition-opacity duration-500">{facts[factIdx % facts.length]}</p>
           </div>
           <Cart
+            showCoverage={false}
             lines={lines}
             pkgEntries={pkgEntries}
             subtotalCents={displaySubtotalCents}
@@ -677,7 +679,8 @@ function OrderBuild() {
               aria-expanded={coverageOpen}
               className="flex min-h-[44px] w-full items-center justify-between gap-3 border-b border-co-border/60 px-5 py-2 text-left focus:outline-none focus-visible:ring-4 focus-visible:ring-inset focus-visible:ring-co-gold/60"
             >
-              <span key={hintIdx} className="min-w-0 flex-1 truncate text-xs font-semibold text-co-text transition-opacity duration-500">{hints.length > 0 ? hints[hintIdx % hints.length] : "See who's covered — sizes vs your guest count"}</span>
+              {/* Collapsed strip shows WHAT IS BEING FILLED (Juan, 2026-09-03) — the hint lives in the sheet. */}
+              <CoverageStrip coverage={coverage} headcount={headcount} />
               <span
                 className={`grid h-6 w-6 shrink-0 place-items-center rounded-full text-sm font-extrabold leading-none transition-transform motion-safe:duration-300 ${
                   coverageOpen
@@ -765,6 +768,26 @@ function computeGapNudge(lines: CartEntry[], coverage: { main: number; side: num
   return coverageHints(lines, coverage, headcount)[0] ?? null;
 }
 
+/** Compact "what's being filled" line for the collapsed mobile bar: four mini fills with numbers. */
+function CoverageStrip({ coverage, headcount }: { coverage: { main: number; side: number; sweet: number; drink: number }; headcount: number }) {
+  const segs = coverageSegments(coverage, headcount);
+  return (
+    <span className="grid min-w-0 flex-1 grid-cols-4 gap-2" aria-label={segs.map((s) => `${s.label} ${s.served} of ${s.headcount}`).join(", ")}>
+      {segs.map((s) => (
+        <span key={s.key} className="min-w-0">
+          <span className="flex items-baseline justify-between gap-1 text-[10px] font-bold uppercase tracking-wide text-co-text-dim">
+            <span className="truncate">{s.label}</span>
+            <span className={`tabular-nums ${s.covered ? "text-co-confirm-text" : "text-co-text"}`}>{s.served}/{s.headcount}</span>
+          </span>
+          <span className="mt-0.5 block h-1.5 overflow-hidden rounded-full bg-co-border/70">
+            <span className={`block h-full rounded-full transition-[width] duration-500 ${s.covered ? "bg-co-confirm-text" : "bg-co-gold"}`} style={{ width: `${s.pct}%` }} />
+          </span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
 // The at-a-glance coverage guide — over/under bars + headcount input + soft nudge. Reused on desktop
 // (inside Cart) and mobile (inside the bottom sheet).
 function CoveragePanel({ coverage, headcount, setHeadcount, gapNudge }: {
@@ -788,8 +811,10 @@ function CoveragePanel({ coverage, headcount, setHeadcount, gapNudge }: {
   );
 }
 
-function Cart({ lines, pkgEntries, subtotalCents, headcount, setHeadcount, coverage, onCustomize, dec, add, onContinue, onPkgEdit, onPkgDec, onPkgInc }: {
+function Cart({ lines, pkgEntries, subtotalCents, headcount, setHeadcount, coverage, onCustomize, dec, add, onContinue, onPkgEdit, onPkgDec, onPkgInc, showCoverage = true }: {
   lines: CartEntry[]; pkgEntries: PkgEntry[]; subtotalCents: number; headcount: number; setHeadcount: (n: number) => void;
+  /** Desktop renders the coverage panel ABOVE the cart; pass false there so it isn't shown twice. */
+  showCoverage?: boolean;
   coverage: { main: number; side: number; sweet: number; drink: number }; onCustomize: (key: string) => void; dec: (key: string) => void; add: (key: string) => void; onContinue: () => void;
   onPkgEdit: (key: string, pkg: PkgView) => void; onPkgDec: (key: string) => void; onPkgInc: (key: string) => void;
 }) {
@@ -804,7 +829,7 @@ function Cart({ lines, pkgEntries, subtotalCents, headcount, setHeadcount, cover
         {!hasItems ? (
           <p className="text-sm text-co-text-muted">Tap an item to customize, or use + for a quick add. Your order builds here.</p>
         ) : (
-          <ul className="flex flex-col gap-3">
+          <ul className="flex max-h-[40vh] flex-col gap-3 overflow-y-auto pr-1">
             {lines.map((e) => {
               const portionable = isPortionable(e.item);
               const displayCents = unitCents(e.item, e.line);
@@ -859,7 +884,7 @@ function Cart({ lines, pkgEntries, subtotalCents, headcount, setHeadcount, cover
 
         {hasItems && <div className="mt-5 flex items-center justify-between border-t border-co-border pt-4"><span className="text-sm font-semibold text-co-text-muted">Subtotal</span><span className="text-lg font-extrabold text-co-text">{money(subtotalCents)}</span></div>}
 
-        <CoveragePanel coverage={coverage} headcount={headcount} setHeadcount={setHeadcount} gapNudge={gapNudge} />
+        {showCoverage && <CoveragePanel coverage={coverage} headcount={headcount} setHeadcount={setHeadcount} gapNudge={gapNudge} />}
 
         {hasItems && <p className="mt-3 rounded-xl bg-co-bg px-3 py-2 text-xs text-co-text-muted">Deposit locks your date; balance due 48h before. We confirm within a few hours — no charge until we do.</p>}
 
