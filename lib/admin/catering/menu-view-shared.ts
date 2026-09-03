@@ -35,3 +35,34 @@ export function groupAdminRows(items: readonly AdminMenuItem[]): MenuGroup[] {
     Array.from(map.entries()).map(([label, g]) => ({ label, rawSections: g.rawSections, rows: orderWithinSection(g.rows) })),
   );
 }
+
+export type MenuFilterChip = "all" | "on_menu" | "hidden" | "toast" | "catering";
+
+/** Chip predicate + case-insensitive substring search over name and Spanish name. Pure. */
+export function filterAdminRows(items: readonly AdminMenuItem[], f: { chip: MenuFilterChip; query: string }): AdminMenuItem[] {
+  const q = f.query.trim().toLowerCase();
+  return items.filter((it) => {
+    if (f.chip === "on_menu" && !it.cateringAvailable) return false;
+    if (f.chip === "hidden" && it.cateringAvailable) return false;
+    if (f.chip === "toast" && it.kind !== "menu_item") return false;
+    if (f.chip === "catering" && it.kind !== "item") return false;
+    if (!q) return true;
+    return it.name.toLowerCase().includes(q) || (it.nameEs ?? "").toLowerCase().includes(q);
+  });
+}
+
+/** "N on the menu of M" for a section header. */
+export function sectionSummary(rows: readonly AdminMenuItem[]): { on: number; total: number } {
+  return { on: rows.reduce((n, r) => n + (r.cateringAvailable ? 1 : 0), 0), total: rows.length };
+}
+
+export type RowBadge = "toast_item" | "catering_item" | "catering_only" | "seasonal" | "hidden";
+
+/** What a row IS, in a fixed reading order: source → catering-only → seasonal → hidden. */
+export function rowBadges(it: AdminMenuItem): RowBadge[] {
+  const out: RowBadge[] = [it.kind === "menu_item" ? "toast_item" : "catering_item"];
+  if (it.cateringOnly) out.push("catering_only");
+  if (it.seasonal) out.push("seasonal");
+  if (!it.cateringAvailable) out.push("hidden");
+  return out;
+}

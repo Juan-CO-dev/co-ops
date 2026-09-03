@@ -3,7 +3,7 @@
 // lib/portal/menu-order-shared.ts), so a manager sees the same "Sides" a customer sees.
 import { describe, expect, it } from "vitest";
 import type { AdminMenuItem } from "@/lib/admin/catering/menu";
-import { groupAdminRows } from "@/lib/admin/catering/menu-view-shared";
+import { filterAdminRows, groupAdminRows, rowBadges, sectionSummary } from "@/lib/admin/catering/menu-view-shared";
 
 function row(over: Partial<AdminMenuItem> & { name: string }): AdminMenuItem {
   return {
@@ -57,5 +57,56 @@ describe("groupAdminRows", () => {
     const total = groupAdminRows(CATALOG).reduce((n, g) => n + g.rows.length, 0);
     expect(total).toBe(CATALOG.length);
     expect(CATALOG).toEqual(copy);
+  });
+});
+
+describe("filterAdminRows", () => {
+  it("chips", () => {
+    const names = (chip: Parameters<typeof filterAdminRows>[1]["chip"]) => filterAdminRows(CATALOG, { chip, query: "" }).map((r) => r.name);
+    expect(names("all")).toHaveLength(CATALOG.length);
+    expect(names("hidden")).toEqual(["Hidden Thing"]);
+    expect(names("on_menu")).not.toContain("Hidden Thing");
+    expect(names("on_menu")).toHaveLength(CATALOG.length - 1);
+    expect(names("toast")).not.toContain("Egg Salad");
+    expect(names("catering")).toEqual(["Egg Salad"]);
+  });
+
+  it("search matches name and Spanish name, case-insensitive, trimmed", () => {
+    expect(filterAdminRows(CATALOG, { chip: "all", query: "  coke " }).map((r) => r.name)).toEqual(["Coke"]);
+    expect(filterAdminRows(CATALOG, { chip: "all", query: "ENSALADA" }).map((r) => r.name)).toEqual(["Egg Salad"]);
+    expect(filterAdminRows(CATALOG, { chip: "all", query: "zzz" })).toEqual([]);
+  });
+
+  it("chip and search combine", () => {
+    expect(filterAdminRows(CATALOG, { chip: "hidden", query: "coke" })).toEqual([]);
+    expect(filterAdminRows(CATALOG, { chip: "on_menu", query: "chips" }).map((r) => r.name)).toEqual(["Case of Mini Chips (24)", "Utz Original Chips"]);
+  });
+
+  it("empty groups disappear after filtering", () => {
+    const groups = groupAdminRows(filterAdminRows(CATALOG, { chip: "all", query: "coke" }));
+    expect(groups.map((g) => g.label)).toEqual(["Drinks"]);
+  });
+});
+
+describe("sectionSummary", () => {
+  it("counts rows customers can order against the total", () => {
+    const gear = groupAdminRows(CATALOG).find((g) => g.label === "Gear")!;
+    expect(sectionSummary(gear.rows)).toEqual({ on: 0, total: 1 });
+    const sides = groupAdminRows(CATALOG).find((g) => g.label === "Sides")!;
+    expect(sectionSummary(sides.rows)).toEqual({ on: 4, total: 4 });
+  });
+});
+
+describe("rowBadges", () => {
+  it("names the source, then the flags, in a fixed order", () => {
+    expect(rowBadges(row({ name: "a" }))).toEqual(["toast_item"]);
+    expect(rowBadges(row({ name: "b", kind: "item" }))).toEqual(["catering_item"]);
+    expect(rowBadges(row({ name: "c", cateringOnly: true }))).toEqual(["toast_item", "catering_only"]);
+    expect(rowBadges(row({ name: "d", kind: "item", cateringOnly: true, seasonal: true, cateringAvailable: false }))).toEqual([
+      "catering_item",
+      "catering_only",
+      "seasonal",
+      "hidden",
+    ]);
   });
 });
