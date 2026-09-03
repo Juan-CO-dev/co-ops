@@ -14,9 +14,10 @@
  *      answers {ok:true}; internal disposition lives ONLY in audit rows (enumeration
  *      defense — never leak whether an email exists).
  *
- * Delivery is allowlist-gated (PORTAL_MAGIC_LINK_ALLOWLIST) until Resend DNS for
- * complimentsonlysubs.com is verified — non-allowlisted requests still mint + store the
- * token (constant shape/timing) but skip the send.
+ * Delivery is allowlist-gated (PORTAL_MAGIC_LINK_ALLOWLIST — semantics in
+ * lib/portal/magic-link-shared.ts; "*" = open, the go-live posture once the
+ * complimentsonlyoperations.com sending domain verifies). Non-allowlisted requests still
+ * mint + store the token (constant shape/timing) but skip the send.
  */
 
 import { getServiceRoleClient } from "@/lib/supabase-server";
@@ -27,6 +28,7 @@ import { createDraftFromIntake } from "./draft";
 import type { DraftIntake } from "./draft";
 import { extractDomain, normalizeEmail, resolveCompanyForEmail, escapeLike, reviveInactiveContact } from "@/lib/catering/companies";
 import { sendEmail } from "@/lib/email";
+import { allowlistMatches } from "./magic-link-shared";
 import { renderMagicLinkEmail } from "@/lib/email-templates/magic-link";
 import { audit } from "@/lib/audit";
 
@@ -37,8 +39,7 @@ const TOKEN_TTL_MIN = 30;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function allowlisted(email: string): boolean {
-  const raw = process.env.PORTAL_MAGIC_LINK_ALLOWLIST ?? "juan@complimentsonlysubs.com";
-  return raw.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean).includes(email.toLowerCase());
+  return allowlistMatches(process.env.PORTAL_MAGIC_LINK_ALLOWLIST, email);
 }
 
 /** Constant-shape: always resolves; internal disposition is audited only (enumeration defense). */
