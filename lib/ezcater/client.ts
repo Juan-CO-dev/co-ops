@@ -16,8 +16,9 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 // Official May-2024 guide says api.ezcater.com; ezCater's live docs portal
-// shows api.ezcater.io (review finding #5). Env-overridable; settled at the
-// mandatory first-live verification pass.
+// shows api.ezcater.io (review finding #5). Env-overridable. SETTLED at the
+// first-live pass 2026-09-03: api.ezcater.com answers allCaterers/createSubscriber
+// with the production token; .com stays the default.
 const ENDPOINT = process.env.EZCATER_API_HOSTNAME
   ? `${process.env.EZCATER_API_HOSTNAME.replace(/\/$/, "")}/graphql`
   : "https://api.ezcater.com/graphql";
