@@ -18,7 +18,7 @@ import type { AdminMenuItem, AdminSize } from "@/lib/admin/catering/menu";
 import { filterAdminRows, groupAdminRows, type FlagChanges, type MenuFilterChip, type SizeInput } from "@/lib/admin/catering/menu-view-shared";
 import { MenuLegend } from "./MenuLegend";
 import { MenuToolbar } from "./MenuToolbar";
-import { MenuSectionList } from "./MenuSectionList";
+import { MenuSectionList, PackagesCard } from "./MenuSectionList";
 import { MenuPreview } from "./MenuPreview";
 import { MenuRow } from "./MenuRow";
 
@@ -114,14 +114,14 @@ export function MenuClient({ items: initial, canWrite, packageCount }: { items: 
       {errorKey && <p className="text-sm font-semibold text-co-cta-text">{t(errorKey)}</p>}
       <MenuLegend t={t} />
       <MenuToolbar chip={chip} onChip={setChip} query={query} onQuery={setQuery} preview={preview} onPreview={setPreview} t={t} />
+      <PackagesCard packageCount={packageCount} t={t} />
       {items.length === 0 ? (
         <p className="co-card p-6 text-sm text-co-text-muted">{t("admin.catering.menu.empty")}</p>
       ) : preview ? (
-        <MenuPreview groups={groups} language={language} money={money} t={t} />
+        <MenuPreview groups={groups} language={language} money={money} t={t} filtered={chip !== "all" || query.trim() !== ""} />
       ) : (
         <MenuSectionList
           groups={groups}
-          packageCount={packageCount}
           t={t}
           renderRow={(it) => (
             <MenuRow

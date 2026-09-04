@@ -15,7 +15,7 @@ import { serverT } from "@/lib/i18n/server";
 import { loadAdminCateringMenu, MENU_ADMIN_MIN } from "@/lib/admin/catering/menu";
 import { loadToastMapState } from "@/lib/admin/toast-map";
 import { loadEzcaterAdminState } from "@/lib/admin/ezcater-map";
-import { loadPackages } from "@/lib/admin/catering/packages";
+import { countActivePackages } from "@/lib/admin/catering/packages";
 import { MenuTabs } from "@/components/admin/catering/menu/MenuTabs";
 import { PageHeader } from "@/components/ui/PageHeader";
 
@@ -25,13 +25,12 @@ export default async function AdminCateringMenuPage() {
   if (level < MENU_ADMIN_MIN) redirect("/dashboard");
   const lang = auth.user.language;
 
-  const [items, toastState, ezcaterState, packages] = await Promise.all([
+  const [items, toastState, ezcaterState, packageCount] = await Promise.all([
     loadAdminCateringMenu(auth),
     loadToastMapState(auth),
     loadEzcaterAdminState(auth),
-    loadPackages(auth),
+    countActivePackages(auth),
   ]);
-  const packageCount = packages.filter((p) => p.active).length;
 
   return (
     <div>

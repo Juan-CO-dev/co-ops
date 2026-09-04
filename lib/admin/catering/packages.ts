@@ -391,6 +391,21 @@ export async function loadPackages(actor: AuthContext): Promise<PackageView[]> {
   return hydratePackages(data ?? []);
 }
 
+/** Active-package COUNT for summary chips (one head-only query; same visibility scope as loadPackages). */
+export async function countActivePackages(actor: AuthContext): Promise<number> {
+  requireLevel(actor, PACKAGE_READ_MIN);
+  const sb = getServiceRoleClient();
+  const scope = visibleLocationScope(actor);
+  let query = sb.from("catering_packages").select("id", { count: "exact", head: true }).eq("active", true);
+  if (scope !== null) {
+    const idList = scope.length > 0 ? scope.join(",") : "";
+    query = idList ? query.or(`location_id.in.(${idList}),location_id.is.null`) : query.is("location_id", null);
+  }
+  const { count, error } = await query;
+  if (error) throw new Error(`countActivePackages failed: ${error.message}`);
+  return count ?? 0;
+}
+
 /**
  * Active locations for the create form's optional per-location select (≥6),
  * SCOPED TO THE ACTOR'S ASSIGNMENTS (level 9+ = all).

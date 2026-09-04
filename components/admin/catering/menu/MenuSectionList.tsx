@@ -13,27 +13,32 @@ import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import type { AdminMenuItem } from "@/lib/admin/catering/menu";
 import { groupTitleKey, sectionSummary, type MenuGroup, type Translate } from "@/lib/admin/catering/menu-view-shared";
 
-export function MenuSectionList({ groups, packageCount, t, renderRow }: {
+/** Packages card — always rendered above the list (customers see packages first), in every state. */
+export function PackagesCard({ packageCount, t }: { packageCount: number; t: Translate }) {
+  return (
+    <div className="co-card flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
+      <span className="min-w-0">
+        <span className="block text-sm font-bold text-co-text">{t("admin.catering.menu.packages_title")}</span>
+        <span className="block text-xs text-co-text-muted">{t("admin.catering.menu.packages_body")}</span>
+      </span>
+      <span className="flex items-center gap-3">
+        <span className="text-xs text-co-text-muted">{t("admin.catering.menu.packages_count", { n: packageCount })}</span>
+        <a href="/admin/catering/packages" className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-4 text-xs font-bold text-co-text transition hover:text-co-cta-text">
+          {t("admin.catering.menu.packages_link")}
+        </a>
+      </span>
+    </div>
+  );
+}
+
+export function MenuSectionList({ groups, t, renderRow }: {
   groups: MenuGroup[];
-  packageCount: number;
   t: Translate;
   /** Renders one row; the caller need not key it — MenuSectionList wraps each in a keyed Fragment (`${kind}:${id}`). */
   renderRow: (item: AdminMenuItem) => ReactNode;
 }) {
   return (
     <div className="flex flex-col gap-4">
-      <div className="co-card flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
-        <span className="min-w-0">
-          <span className="block text-sm font-bold text-co-text">{t("admin.catering.menu.packages_title")}</span>
-          <span className="block text-xs text-co-text-muted">{t("admin.catering.menu.packages_body")}</span>
-        </span>
-        <span className="flex items-center gap-3">
-          <span className="text-xs text-co-text-muted">{t("admin.catering.menu.packages_count", { n: packageCount })}</span>
-          <a href="/admin/catering/packages" className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-4 text-xs font-bold text-co-text transition hover:text-co-cta-text">
-            {t("admin.catering.menu.packages_link")}
-          </a>
-        </span>
-      </div>
 
       {groups.length === 0 && <p className="co-card p-6 text-sm text-co-text-muted">{t("admin.catering.menu.no_results")}</p>}
 

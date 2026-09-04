@@ -13,16 +13,18 @@ import { displayName, groupTitleKey, type MenuGroup, type Translate } from "@/li
 /** One rendered preview row — an item with active sizes expands into one row per size. */
 type PreviewRow = { key: string; name: string; price: string; feeds: number | null; cateringOnly: boolean };
 
-export function MenuPreview({ groups, language, money, t }: {
+export function MenuPreview({ groups, language, money, t, filtered = false }: {
   groups: MenuGroup[];
   language: Language;
   money: (c: number | null) => string;
   t: Translate;
+  /** True when a chip or search is narrowing the rows — the empty state then names the filter, not the menu. */
+  filtered?: boolean;
 }) {
   const visible = groups
     .map((g) => ({ ...g, rows: g.rows.filter((r) => r.cateringAvailable) }))
     .filter((g) => g.rows.length > 0);
-  if (visible.length === 0) return <p className="co-card p-6 text-sm text-co-text-muted">{t("admin.catering.menu.preview_empty")}</p>;
+  if (visible.length === 0) return <p className="co-card p-6 text-sm text-co-text-muted">{t(filtered ? "admin.catering.menu.no_results" : "admin.catering.menu.preview_empty")}</p>;
 
   // Mirrors the real order builder: a registry item's ACTIVE sizes are separate purchasable
   // lines (one row each); with no active sizes it sells as a single unit at its menu price.
