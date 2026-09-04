@@ -140,7 +140,8 @@ async function refreshLead(sb: ReturnType<typeof getServiceRoleClient>, lead: { 
   if (error) return false;
   // catering_pipeline_events.to_stage is NOT NULL: a same-stage row is a NOTE, not a
   // transition, so a refresh writes from_stage = to_stage = the lead's current stage.
-  await sb.from("catering_pipeline_events").insert({ pipeline_id: lead.id, from_stage: lead.stage, to_stage: lead.stage, note, actor_id: null });
+  const { error: evErr } = await sb.from("catering_pipeline_events").insert({ pipeline_id: lead.id, from_stage: lead.stage, to_stage: lead.stage, note, actor_id: null });
+  if (evErr) return false; // fields landed, the trail did not — report it, never claim success
   void audit({ actorId: null, actorRole: null, action: "catering.pipeline.edit", resourceTable: "catering_pipeline", resourceId: lead.id, metadata: { actor_context: "ezcater_webhook", reason: "ezcater_order_modified" }, ipAddress: null, userAgent: null });
   return true;
 }
@@ -148,8 +149,9 @@ async function refreshLead(sb: ReturnType<typeof getServiceRoleClient>, lead: { 
 /** Note-only ledger row (uncancelled / succeeded* / relish_finalized / illegal_transition).
  *  Same NOT-NULL reasoning as refreshLead above: from_stage = to_stage = the lead's current
  *  stage — a same-stage row is a note, not a transition. */
-async function noteLead(sb: ReturnType<typeof getServiceRoleClient>, lead: { id: string; stage: string }, note: string): Promise<void> {
-  await sb.from("catering_pipeline_events").insert({ pipeline_id: lead.id, from_stage: lead.stage, to_stage: lead.stage, note, actor_id: null });
+async function noteLead(sb: ReturnType<typeof getServiceRoleClient>, lead: { id: string; stage: string }, note: string): Promise<boolean> {
+  const { error } = await sb.from("catering_pipeline_events").insert({ pipeline_id: lead.id, from_stage: lead.stage, to_stage: lead.stage, note, actor_id: null });
+  return !error;
 }
 
 /** Entry point for the webhook route. Body already signature-checked; NEVER throws
@@ -197,9 +199,10 @@ export async function processEzcaterDelivery(rawBody: string, signatureValid: bo
     case "duplicate": { await appendEvent({ notification, raw, signatureValid, result: "duplicate", leadId: existing?.id ?? null }); return { result: "duplicate" }; }
     case "unmatched": { await appendEvent({ notification, raw, signatureValid, result: "unmatched" }); return { result: "unmatched" }; }
     case "note": {
-      if (existing) await noteLead(sb, existing, label);
-      await appendEvent({ notification, raw, signatureValid, result: "noted", leadId: existing?.id ?? null });
-      return { result: "noted" };
+      const noted = existing ? await noteLead(sb, existing, label) : true;
+      const result: EzcaterProcessingResult = noted ? "noted" : "error:note";
+      await appendEvent({ notification, raw, signatureValid, result, leadId: existing?.id ?? null });
+      return { result };
     }
     case "illegal_transition": {
       if (existing) await noteLead(sb, existing, `${label} — not applied: ${existing.stage} → ${plan.stage} is not a legal move; needs a human`);
