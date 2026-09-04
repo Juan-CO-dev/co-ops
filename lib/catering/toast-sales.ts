@@ -471,7 +471,7 @@ export async function listExclusions(actor: AuthContext, locationId: string): Pr
 
 /** Actor-less exclusions core (the cron/backfill materializer path — mirrors
  *  the doPull(…, actor|null) convention). */
-async function loadActiveExclusions(): Promise<ExclusionView[]> {
+export async function loadActiveExclusions(): Promise<ExclusionView[]> {
   const sb = getServiceRoleClient();
   const { data, error } = await sb.from("toast_ingest_exclusions")
     .select("id, location_id, kind, value, note, created_at").eq("active", true)
