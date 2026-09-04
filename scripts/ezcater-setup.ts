@@ -2,9 +2,19 @@
  * One-shot ezCater integration setup (spec #2c). Run AFTER Juan's ezManage
  * errand puts EZCATER_API_TOKEN in the environment.
  *
- *   npx tsx scripts/ezcater-setup.ts                     # list caterers (uuid ↔ store)
- *   npx tsx scripts/ezcater-setup.ts --create-subscriber https://<domain>/api/webhooks/ezcater
- *   npx tsx scripts/ezcater-setup.ts --subscribe <subscriberId> <catererUuid> [...more uuids]
+ * lib/ezcater/client.ts imports "server-only", which THROWS outside a React
+ * Server Components runtime — run this script under the react-server condition:
+ *
+ *   npx tsx --conditions=react-server --env-file=.env.local scripts/ezcater-setup.ts
+ *   npx tsx --conditions=react-server --env-file=.env.local scripts/ezcater-setup.ts --create-subscriber https://<domain>/api/webhooks/ezcater
+ *   npx tsx --conditions=react-server --env-file=.env.local scripts/ezcater-setup.ts --subscribe <subscriberId> <catererUuid> [...more uuids]
+ *
+ * LIVE SCHEMA (introspected 2026-09-03, api.ezcater.com): the input types are
+ * `CreateSubscriberFields` / `CreateSubscriptionFields` (the May-2024 guide's
+ * `SubscriberParams` / `SubscriptionParams` no longer exist), and the webhook
+ * secret is returned ONLY on the createSubscriber payload (`NewSubscriber`);
+ * the `Subscriber` type read back by allSubscribers does not carry it.
+ * First-live run 2026-09-03: subscriber "CO-OPS" + accepted/cancelled for both caterers.
  *
  * createSubscriber prints the webhookSecret ONCE (ezCater never shows it
  * again) — save it to EZCATER_WEBHOOK_SECRET immediately. ONE subscriber per
@@ -31,7 +41,7 @@ async function listCaterers(): Promise<void> {
 async function createSubscriber(webhookUrl: string): Promise<void> {
   const res = await ezcaterGraphql<{ data?: { createSubscriber?: { subscriber?: { id: string; webhookSecret: string } } } }>(
     "createSubscriber",
-    `mutation createSubscriber($params: SubscriberParams!) {
+    `mutation createSubscriber($params: CreateSubscriberFields!) {
       createSubscriber(subscriberParams: $params) { subscriber { id name webhookUrl webhookSecret } }
     }`,
     { params: { name: "CO-OPS", webhookUrl } },
@@ -48,7 +58,7 @@ async function subscribe(subscriberId: string, catererUuids: string[]): Promise<
     for (const eventKey of ["accepted", "cancelled"]) {
       const res = await ezcaterGraphql<{ data?: { createSubscription?: { subscription?: Record<string, unknown> } } }>(
         "createSubscription",
-        `mutation createSubscription($params: SubscriptionParams!) {
+        `mutation createSubscription($params: CreateSubscriptionFields!) {
           createSubscription(subscriptionParams: $params) { subscription { parentEntity parentId eventKey eventEntity } }
         }`,
         { params: { subscriberId, eventKey, eventEntity: "Order", parentEntity: "Caterer", parentId: catererUuid } },
