@@ -19,7 +19,7 @@ export function mergeMachineNotes(source: string, existing: string | null | unde
   const wrapped = wrapMachineNotes(source, block, endLabel);
   const cur = existing ?? "";
   const start = cur.indexOf(m.begin);
-  const end = cur.indexOf(m.end);
+  const end = start >= 0 ? cur.indexOf(m.end, start + m.begin.length) : -1;
   if (start >= 0 && end > start) {
     const before = cur.slice(0, start).replace(/\s+$/, "");
     const after = cur.slice(end + m.end.length).replace(/^\s+/, "");

@@ -11,6 +11,9 @@ import { scanToastCateringForAllLocations } from "@/lib/catering/toast-catering-
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
+
+const MAX_DATE_SKEW_DAYS = 14;
 
 function truncateErr(e: unknown): string { const m = e instanceof Error ? e.message : String(e); return m.length > 500 ? `${m.slice(0, 500)}…` : m; }
 function secretOk(req: NextRequest): boolean {
@@ -27,12 +30,17 @@ export async function GET(req: NextRequest) {
   const today = etCalendarDate(new Date().toISOString());
   const param = req.nextUrl.searchParams.get("date");
   if (param && !/^\d{4}-\d{2}-\d{2}$/.test(param)) return jsonError(400, "invalid_date");
+  if (param) {
+    const earliest = etYmdMinusDays(today, MAX_DATE_SKEW_DAYS);
+    const latest = etYmdMinusDays(today, -MAX_DATE_SKEW_DAYS);
+    if (param < earliest || param > latest) return jsonError(400, "date_out_of_range");
+  }
   const dates = param ? [param] : [today, etYmdMinusDays(today, 1)];
   try {
     const results = await scanToastCateringForAllLocations(dates);
-    const sum = (k: "seen" | "catering" | "ezcater" | "createdLeads" | "lostLeads" | "refreshed") => results.reduce((n, r) => n + r[k], 0);
+    const sum = (k: "seen" | "catering" | "attributed" | "createdLeads" | "lostLeads" | "refreshed" | "skipped" | "errors") => results.reduce((n, r) => n + r[k], 0);
     void audit({ actorId: null, actorRole: null, action: "cron.success", resourceTable: "cron", resourceId: null,
-      metadata: { job: "toast-catering-scan", dates, seen: sum("seen"), catering: sum("catering"), ezcater: sum("ezcater"), created_leads: sum("createdLeads"), lost_leads: sum("lostLeads"), refreshed: sum("refreshed"), per_location_failures: results.filter((r) => !r.ok).length },
+      metadata: { job: "toast-catering-scan", dates, seen: sum("seen"), catering: sum("catering"), attributed: sum("attributed"), created_leads: sum("createdLeads"), lost_leads: sum("lostLeads"), refreshed: sum("refreshed"), skipped: sum("skipped"), errors: sum("errors"), per_location_failures: results.filter((r) => !r.ok).length },
       ipAddress: null, userAgent: null });
     return jsonOk({ dates, results });
   } catch (e) {

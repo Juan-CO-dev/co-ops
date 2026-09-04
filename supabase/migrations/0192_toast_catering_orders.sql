@@ -3,9 +3,10 @@
 --
 -- 0192: toast_catering_orders — the Toast catering scan's per-order ledger (catering inbox A1.2).
 --
--- One row per Toast order the scan CLASSIFIED (catering · ezcater ring · voided later), keyed
--- on the Toast order guid. Ledger-first: the row lands before any lead write. The scan is
--- idempotent on (order_guid, toast_modified_at): unchanged orders are no-ops. System-only
+-- One row per Toast order the scan CLASSIFIED (catering · ezcater ring · third-party ring ·
+-- voided later), keyed on the Toast order guid. Ledger-first: the row lands before any lead
+-- write. Idempotency is app-level: the scan compares Toast's modifiedDate as an INSTANT against
+-- toast_modified_at (no constraint on the pair) — unchanged orders are no-ops. System-only
 -- (service role): no user reads/writes — mirrors ezcater_events (0149).
 
 create table public.toast_catering_orders (
@@ -15,7 +16,7 @@ create table public.toast_catering_orders (
   business_date      date not null,
   source             text,
   dining_option      text,
-  classification     text not null check (classification in ('catering','ezcater')),
+  classification     text not null check (classification in ('catering','ezcater','third_party')),
   voided             boolean not null default false,
   promised_at        timestamptz,
   toast_modified_at  timestamptz,
@@ -24,7 +25,12 @@ create table public.toast_catering_orders (
   headcount          integer,
   total_cents        integer not null default 0,
   items              jsonb not null default '[]'::jsonb,
-  lead_id            uuid references public.catering_pipeline(id),
+  lead_id            uuid references public.catering_pipeline(id) on delete set null,
+  -- processing_result vocabulary: pending_lead · created_lead · created_lead_no_trail ·
+  -- duplicate_external_ref · adopted_lead · error:lead_insert · voided_before_seen · refreshed ·
+  -- refreshed_no_lead · voided_lead_lost · voided_<outcome> · voided_illegal_transition ·
+  -- voided_after_out_needs_review · attributed_to_ezcater · attributed_to_third_party ·
+  -- skipped:<reason>
   processing_result  text not null,
   first_seen_at      timestamptz not null default now(),
   last_seen_at       timestamptz not null default now()
@@ -40,3 +46,4 @@ create policy toast_catering_orders_no_user_delete on public.toast_catering_orde
 
 -- Verify after apply:
 --   select count(*) from pg_policies where tablename = 'toast_catering_orders';  -- 4
+--   select relrowsecurity from pg_class where oid = 'public.toast_catering_orders'::regclass;  -- true
