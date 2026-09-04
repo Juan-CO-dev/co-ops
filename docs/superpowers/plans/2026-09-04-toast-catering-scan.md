@@ -178,7 +178,7 @@ describe("toastLeadFields / toastOrderNotes", () => {
     expect(f.notes).toContain("All vegetarian");
   });
   it("falls back to the business date and a generic name when the order has no promise or customer", () => {
-    const [o] = extractToastOrders([order({ promisedDate: null, checks: [{ guid: "c", voided: false, totalAmount: 10, customer: null, selections: [] }] })]);
+    const [o] = extractToastOrders([order({ promisedDate: null, deliveryInfo: null, checks: [{ guid: "c", voided: false, totalAmount: 10, customer: null, selections: [] }] })]);
     const f = toastLeadFields(o!, { diningOptionName: null });
     expect(f.event_date).toBe("2026-09-04");
     expect(f.time_window).toBeNull();
