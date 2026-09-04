@@ -3,7 +3,7 @@
 // and move the lead along automatically through every stage we can observe; confirmation
 // stays human (the ezManage acceptance IS the human act); `lost` is terminal.
 import { describe, expect, it } from "vitest";
-import { EZCATER_ORDER_EVENT_KEYS, planEzcaterEvent } from "@/lib/ezcater/lifecycle-shared";
+import { EZCATER_ORDER_EVENT_KEYS, mergeEzcaterNotes, planEzcaterEvent } from "@/lib/ezcater/lifecycle-shared";
 
 describe("EZCATER_ORDER_EVENT_KEYS", () => {
   it("is the live enum introspected 2026-09-03 (subscribe to all of them)", () => {
@@ -70,5 +70,19 @@ describe("planEzcaterEvent — lead exists", () => {
   it("an unknown key is ignored", () => {
     expect(planEzcaterEvent("something_new", "inquiry")).toEqual({ action: "ignore" });
     expect(planEzcaterEvent("something_new", null)).toEqual({ action: "ignore" });
+  });
+});
+
+describe("mergeEzcaterNotes", () => {
+  it("first write is just the marked block", () => {
+    expect(mergeEzcaterNotes(null, "EZCater order 1\n• 2× Sub")).toBe("--- ezCater order (auto) ---\nEZCater order 1\n• 2× Sub\n--- end ezCater ---");
+  });
+  it("a refresh replaces only the marked block and keeps human text before and after", () => {
+    const before = "Keith: customer wants gluten-free labels\n\n--- ezCater order (auto) ---\nold\n--- end ezCater ---\n\nPS call at 2pm";
+    const out = mergeEzcaterNotes(before, "new block");
+    expect(out).toBe("Keith: customer wants gluten-free labels\n\n--- ezCater order (auto) ---\nnew block\n--- end ezCater ---\n\nPS call at 2pm");
+  });
+  it("human notes without a marked block are kept and the block is appended", () => {
+    expect(mergeEzcaterNotes("just a human note", "b")).toBe("just a human note\n\n--- ezCater order (auto) ---\nb\n--- end ezCater ---");
   });
 });

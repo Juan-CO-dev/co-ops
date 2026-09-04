@@ -33,7 +33,6 @@ const CREATE_STAGE: Partial<Record<EzcaterEventKey, "inquiry" | "confirmed">> = 
   updated: "inquiry",
   accepted: "confirmed",
 };
-const LOST_KEYS: ReadonlySet<string> = new Set(["cancelled", "rejected", "failed"]);
 const NOTE_KEYS: ReadonlySet<string> = new Set(["uncancelled", "succeeded", "succeeded_with_warnings", "relish_finalized"]);
 
 function isKnown(key: string): key is EzcaterEventKey {
@@ -51,7 +50,30 @@ export function planEzcaterEvent(key: string, existingStage: PipelineStage | nul
   if (key === "modified" || key === "updated") return { action: "refresh" };
   if (NOTE_KEYS.has(key)) return { action: "note" };
   const target: PipelineStage = key === "accepted" ? "confirmed" : "lost";
-  if (!LOST_KEYS.has(key) && key !== "accepted") return { action: "ignore" };
   if (existingStage === target) return { action: "duplicate" };
   return canTransition(existingStage, target) ? { action: "move", stage: target } : { action: "illegal_transition", stage: target };
+}
+
+export const EZCATER_NOTES_BEGIN = "--- ezCater order (auto) ---";
+export const EZCATER_NOTES_END = "--- end ezCater ---";
+
+/** Wrap the machine-written order block in markers so a refresh can replace it without touching human text. */
+export function wrapEzcaterNotes(block: string): string {
+  return `${EZCATER_NOTES_BEGIN}\n${block.trim()}\n${EZCATER_NOTES_END}`;
+}
+
+/** Replace the marked machine block inside existing notes (human text before/after is preserved);
+ *  if no marked block exists, append one after the human text. Never drops a character a human wrote. */
+export function mergeEzcaterNotes(existing: string | null | undefined, block: string): string {
+  const wrapped = wrapEzcaterNotes(block);
+  const cur = existing ?? "";
+  const start = cur.indexOf(EZCATER_NOTES_BEGIN);
+  const end = cur.indexOf(EZCATER_NOTES_END);
+  if (start >= 0 && end > start) {
+    const before = cur.slice(0, start).replace(/\s+$/, "");
+    const after = cur.slice(end + EZCATER_NOTES_END.length).replace(/^\s+/, "");
+    return [before, wrapped, after].filter((s) => s.length > 0).join("\n\n");
+  }
+  const human = cur.trim();
+  return human ? `${human}\n\n${wrapped}` : wrapped;
 }
