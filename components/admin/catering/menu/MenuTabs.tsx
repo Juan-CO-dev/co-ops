@@ -14,11 +14,12 @@ import type { AdminMenuItem } from "@/lib/admin/catering/menu";
 import type { ToastMapState } from "@/lib/admin/toast-map";
 import type { EzcaterAdminState } from "@/lib/admin/ezcater-map";
 
-export function MenuTabs({ items, toastState, ezcaterState, canWrite }: {
+export function MenuTabs({ items, toastState, ezcaterState, canWrite, packageCount }: {
   items: AdminMenuItem[];
   toastState: ToastMapState;
   ezcaterState: EzcaterAdminState;
   canWrite: boolean;
+  packageCount: number;
 }) {
   const { t } = useTranslation();
   const [tab, setTab] = useState<"menu" | "toast">("menu");
@@ -36,7 +37,7 @@ export function MenuTabs({ items, toastState, ezcaterState, canWrite }: {
           {t("admin.toast.tab_toast")}
         </button>
       </div>
-      {tab === "menu" ? <MenuClient items={items} canWrite={canWrite} /> : <ToastTab state={toastState} ezcater={ezcaterState} canWrite={canWrite} />}
+      {tab === "menu" ? <MenuClient items={items} canWrite={canWrite} packageCount={packageCount} /> : <ToastTab state={toastState} ezcater={ezcaterState} canWrite={canWrite} />}
     </div>
   );
 }
