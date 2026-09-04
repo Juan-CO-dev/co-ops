@@ -29,8 +29,9 @@ create table public.toast_catering_orders (
   -- processing_result vocabulary: pending_lead · created_lead · created_lead_no_trail ·
   -- duplicate_external_ref · adopted_lead · error:lead_insert · voided_before_seen · refreshed ·
   -- refreshed_no_lead · voided_lead_lost · voided_<outcome> · voided_illegal_transition ·
-  -- voided_after_out_needs_review · attributed_to_ezcater · attributed_to_third_party ·
-  -- skipped:<reason>
+  -- voided_after_out_needs_review · attributed_to_ezcater · attributed_to_third_party.
+  -- (An order with no parseable businessDate is never ledgered — the scan counts it as
+  -- `skipped` in the run heartbeat instead.)
   processing_result  text not null,
   first_seen_at      timestamptz not null default now(),
   last_seen_at       timestamptz not null default now()

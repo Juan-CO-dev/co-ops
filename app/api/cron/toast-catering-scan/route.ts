@@ -38,9 +38,9 @@ export async function GET(req: NextRequest) {
   const dates = param ? [param] : [today, etYmdMinusDays(today, 1)];
   try {
     const results = await scanToastCateringForAllLocations(dates);
-    const sum = (k: "seen" | "catering" | "attributed" | "createdLeads" | "lostLeads" | "refreshed" | "skipped" | "errors") => results.reduce((n, r) => n + r[k], 0);
+    const sum = (k: "seen" | "catering" | "attributed" | "createdLeads" | "lostLeads" | "refreshed" | "skipped" | "errors" | "unparsedAmounts") => results.reduce((n, r) => n + r[k], 0);
     void audit({ actorId: null, actorRole: null, action: "cron.success", resourceTable: "cron", resourceId: null,
-      metadata: { job: "toast-catering-scan", dates, seen: sum("seen"), catering: sum("catering"), attributed: sum("attributed"), created_leads: sum("createdLeads"), lost_leads: sum("lostLeads"), refreshed: sum("refreshed"), skipped: sum("skipped"), errors: sum("errors"), per_location_failures: results.filter((r) => !r.ok).length },
+      metadata: { job: "toast-catering-scan", dates, seen: sum("seen"), catering: sum("catering"), attributed: sum("attributed"), created_leads: sum("createdLeads"), lost_leads: sum("lostLeads"), refreshed: sum("refreshed"), skipped: sum("skipped"), errors: sum("errors"), unparsed_amounts: sum("unparsedAmounts"), per_location_failures: results.filter((r) => !r.ok).length },
       ipAddress: null, userAgent: null });
     return jsonOk({ dates, results });
   } catch (e) {

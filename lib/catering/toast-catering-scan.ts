@@ -42,6 +42,8 @@ export interface ScanLocationResult {
   /** ezcater ring + third-party ring orders, ledgered but never a lead. */
   attributed: number;
   createdLeads: number; lostLeads: number; refreshed: number; skipped: number; errors: number;
+  /** Checks whose totalAmount did not parse — the lead total is short by that much and this says so. */
+  unparsedAmounts: number;
 }
 
 type ServiceClient = ReturnType<typeof getServiceRoleClient>;
@@ -102,7 +104,7 @@ async function fetchOrders(restaurantGuid: string, ymd: string): Promise<ToastOr
 type LedgerRow = { id: string; voided: boolean; toast_modified_at: string | null; lead_id: string | null; processing_result: string };
 
 function emptyResult(locationId: string, ok: boolean, error?: string): ScanLocationResult {
-  return { locationId, ok, error, seen: 0, catering: 0, attributed: 0, createdLeads: 0, lostLeads: 0, refreshed: 0, skipped: 0, errors: 0 };
+  return { locationId, ok, error, seen: 0, catering: 0, attributed: 0, createdLeads: 0, lostLeads: 0, refreshed: 0, skipped: 0, errors: 0, unparsedAmounts: 0 };
 }
 
 async function scanLocation(locationId: string, restaurantGuid: string, dates: string[]): Promise<ScanLocationResult> {
@@ -117,6 +119,7 @@ async function scanLocation(locationId: string, restaurantGuid: string, dates: s
     const orders = await fetchOrders(restaurantGuid, ymd);
     for (const o of orders) {
       res.seen += 1;
+      res.unparsedAmounts += o.unparsedAmounts;
       const cls = classifyToastOrder(o, { diningOptionNames: names, cateringDiningOptions });
       if (cls === "not_catering") continue;
       if (o.businessDate === null) { res.skipped += 1; continue; } // NOT NULL column; never guess the date
