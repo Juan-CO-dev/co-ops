@@ -34,6 +34,7 @@ const CREATE_STAGE: Partial<Record<EzcaterEventKey, "inquiry" | "confirmed">> = 
   accepted: "confirmed",
 };
 const NOTE_KEYS: ReadonlySet<string> = new Set(["uncancelled", "succeeded", "succeeded_with_warnings", "relish_finalized"]);
+const LOSS_KEYS: ReadonlySet<string> = new Set(["cancelled", "rejected", "failed"]);
 
 function isKnown(key: string): key is EzcaterEventKey {
   return (EZCATER_ORDER_EVENT_KEYS as readonly string[]).includes(key);
@@ -49,6 +50,9 @@ export function planEzcaterEvent(key: string, existingStage: PipelineStage | nul
   if (key === "submitted") return { action: "duplicate" };
   if (key === "modified" || key === "updated") return { action: "refresh" };
   if (NOTE_KEYS.has(key)) return { action: "note" };
+  // Safe default for any FUTURE key added to EZCATER_ORDER_EVENT_KEYS (the setup script subscribes
+  // to all of them): a key that is not a create, note, accept, or loss is ignored — never a move.
+  if (!LOSS_KEYS.has(key) && key !== "accepted") return { action: "ignore" };
   const target: PipelineStage = key === "accepted" ? "confirmed" : "lost";
   if (existingStage === target) return { action: "duplicate" };
   return canTransition(existingStage, target) ? { action: "move", stage: target } : { action: "illegal_transition", stage: target };

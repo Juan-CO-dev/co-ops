@@ -191,7 +191,8 @@ async function applyPlanToExisting(
  *  before/after the markers is preserved verbatim; the other order-derived fields still receive
  *  a plain overwrite. */
 async function refreshLead(sb: ReturnType<typeof getServiceRoleClient>, lead: ExistingLead, order: EzcaterOrder, note: string): Promise<boolean> {
-  const { data: current } = await sb.from("catering_pipeline").select("notes").eq("id", lead.id).maybeSingle<{ notes: string | null }>();
+  const { data: current, error: readErr } = await sb.from("catering_pipeline").select("notes").eq("id", lead.id).maybeSingle<{ notes: string | null }>();
+  if (readErr) return false; // a DB error is not "no existing notes" — never overwrite what we could not read
   const { error, count } = await sb.from("catering_pipeline").update({
     headcount: order.headcount,
     event_date: order.eventTimestamp ? order.eventTimestamp.slice(0, 10) : null,
@@ -345,9 +346,13 @@ export async function processEzcaterDelivery(rawBody: string, signatureValid: bo
     // the fresh plan is a move, apply it exactly like the main "move" case would have.
     // Anything else (including another "create" or "duplicate") ledgers duplicate — this is
     // a single re-plan, never a retry loop.
-    const { data: retryRow } = await sb.from("catering_pipeline")
+    const { data: retryRow, error: retryErr } = await sb.from("catering_pipeline")
       .select("id, stage").eq("external_ref", notification.entityId)
       .maybeSingle<{ id: string; stage: string }>();
+    if (retryErr) {
+      await appendEvent({ notification, raw, signatureValid, result: "error:replan_lookup" });
+      return { result: "error:replan_lookup" };
+    }
     if (retryRow && isPipelineStage(retryRow.stage)) {
       const retryLead: ExistingLead = { id: retryRow.id, stage: retryRow.stage };
       const retryPlan = planEzcaterEvent(notification.key, retryLead.stage);
