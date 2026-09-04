@@ -8,7 +8,7 @@
 
 import { useState, useSyncExternalStore } from "react";
 
-import type { T } from "./MenuRow";
+import type { Translate } from "@/lib/admin/catering/menu-view-shared";
 
 const KEY = "co.admin.menu.legend.v1";
 
@@ -30,7 +30,7 @@ function getServerSnapshot(): boolean {
   return false;
 }
 
-export function MenuLegend({ t }: { t: T }) {
+export function MenuLegend({ t }: { t: Translate }) {
   const storedDismissed = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const [forceDismissed, setForceDismissed] = useState(false);
   const dismissed = storedDismissed || forceDismissed;

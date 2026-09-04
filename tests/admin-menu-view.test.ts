@@ -3,7 +3,8 @@
 // lib/portal/menu-order-shared.ts), so a manager sees the same "Sides" a customer sees.
 import { describe, expect, it } from "vitest";
 import type { AdminMenuItem } from "@/lib/admin/catering/menu";
-import { filterAdminRows, groupAdminRows, rowBadges, sectionSummary } from "@/lib/admin/catering/menu-view-shared";
+import { displayName, filterAdminRows, groupAdminRows, groupTitleKey, rowBadges, sectionSummary } from "@/lib/admin/catering/menu-view-shared";
+import { MERGED_LABEL } from "@/lib/portal/menu-order-shared";
 
 function row(over: Partial<AdminMenuItem> & { name: string }): AdminMenuItem {
   return {
@@ -118,5 +119,20 @@ describe("rowBadges", () => {
       "seasonal",
       "hidden",
     ]);
+  });
+});
+
+describe("groupTitleKey / displayName", () => {
+  it("maps every merged heading to a key and leaves Toast headings alone", () => {
+    expect(groupTitleKey(MERGED_LABEL.drink)).toBe("admin.catering.menu.section_drinks");
+    expect(groupTitleKey(MERGED_LABEL.side)).toBe("admin.catering.menu.section_sides");
+    expect(groupTitleKey(MERGED_LABEL.sweet)).toBe("admin.catering.menu.section_desserts");
+    expect(groupTitleKey(MERGED_LABEL.more)).toBe("admin.catering.menu.section_more");
+    expect(groupTitleKey("Subs")).toBeNull();
+  });
+  it("displayName prefers Spanish only when present", () => {
+    expect(displayName({ name: "Egg Salad", nameEs: "Ensalada de huevo" }, "es")).toBe("Ensalada de huevo");
+    expect(displayName({ name: "Coke", nameEs: null }, "es")).toBe("Coke");
+    expect(displayName({ name: "Coke", nameEs: "Coca" }, "en")).toBe("Coke");
   });
 });

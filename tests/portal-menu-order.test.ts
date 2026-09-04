@@ -9,7 +9,7 @@
 //  3. Inside a merged section the catering-size rows (catering_only) sit on top; à la carte
 //     singles underneath.
 import { describe, expect, it } from "vitest";
-import { catForSection, orderSections, orderWithinSection, sectionLabel, SECTION_RANK } from "@/lib/portal/menu-order-shared";
+import { catForSection, MERGED_LABEL, orderSections, orderWithinSection, sectionLabel, SECTION_RANK } from "@/lib/portal/menu-order-shared";
 
 describe("catForSection", () => {
   it("classifies the live section headings", () => {
@@ -51,6 +51,12 @@ describe("sectionLabel", () => {
     expect(catForSection(sectionLabel("Catering Drinks"))).toBe("drink");
     expect(catForSection(sectionLabel("Chips"))).toBe("side");
     expect(catForSection(sectionLabel("Sweets"))).toBe("sweet");
+  });
+
+  it("trims main-course headings and exposes the merged words as constants", () => {
+    expect(sectionLabel(" Subs ")).toBe("Subs");
+    expect(sectionLabel("   ")).toBe(MERGED_LABEL.more);
+    expect(sectionLabel("Catering Drinks")).toBe(MERGED_LABEL.drink);
   });
 });
 

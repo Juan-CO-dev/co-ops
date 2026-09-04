@@ -9,8 +9,30 @@
  * Type-only import from the server module: `AdminMenuItem` erases at build; this file must never
  * import a value from lib/admin/catering/menu.ts (service-role client behind it).
  */
+import type { TranslationKey, Language } from "@/lib/i18n/types";
 import type { AdminMenuItem } from "./menu";
-import { orderSections, orderWithinSection, sectionLabel } from "@/lib/portal/menu-order-shared";
+import { MERGED_LABEL, orderSections, orderWithinSection, sectionLabel } from "@/lib/portal/menu-order-shared";
+
+/** Translator signature shared by every admin-menu component (the i18n provider's `t`). */
+export type Translate = (k: TranslationKey, params?: Record<string, string | number>) => string;
+export type FlagChanges = { cateringAvailable?: boolean; cateringOnly?: boolean; cateringPortionable?: boolean; serves?: number | null };
+export type SizeInput = { label: string; priceCents: number; serves: number | null };
+
+/** i18n key for a merged portal heading; null for a Toast heading (tenant data, rendered verbatim). */
+export function groupTitleKey(label: string): TranslationKey | null {
+  switch (label) {
+    case MERGED_LABEL.drink: return "admin.catering.menu.section_drinks";
+    case MERGED_LABEL.side: return "admin.catering.menu.section_sides";
+    case MERGED_LABEL.sweet: return "admin.catering.menu.section_desserts";
+    case MERGED_LABEL.more: return "admin.catering.menu.section_more";
+    default: return null;
+  }
+}
+
+/** Display name in the operator's language, falling back to English. */
+export function displayName(it: Pick<AdminMenuItem, "name" | "nameEs">, language: Language): string {
+  return language === "es" ? (it.nameEs ?? it.name) : it.name;
+}
 
 export interface MenuGroup {
   /** Portal heading — "Drinks" | "Sides" | "Desserts" | a main-course Toast heading | "More". */

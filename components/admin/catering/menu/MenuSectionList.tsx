@@ -7,30 +7,17 @@
  * sections that fed the group. Sections with ≤ 6 rows default open (existing rule).
  */
 
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 
-import type { TranslationKey } from "@/lib/i18n/types";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import type { AdminMenuItem } from "@/lib/admin/catering/menu";
-import { sectionSummary, type MenuGroup } from "@/lib/admin/catering/menu-view-shared";
-import type { T } from "./MenuRow";
-
-/** Merged labels are code-owned words → translated; Toast headings are tenant data → verbatim. */
-export function groupTitle(label: string, t: T): string {
-  const key: Record<string, TranslationKey> = {
-    Drinks: "admin.catering.menu.section_drinks",
-    Sides: "admin.catering.menu.section_sides",
-    Desserts: "admin.catering.menu.section_desserts",
-    More: "admin.catering.menu.section_more",
-  };
-  const k = key[label];
-  return k ? t(k) : label;
-}
+import { groupTitleKey, sectionSummary, type MenuGroup, type Translate } from "@/lib/admin/catering/menu-view-shared";
 
 export function MenuSectionList({ groups, packageCount, t, renderRow }: {
   groups: MenuGroup[];
   packageCount: number;
-  t: T;
+  t: Translate;
+  /** Renders one row; the caller need not key it — MenuSectionList wraps each in a keyed Fragment (`${kind}:${id}`). */
   renderRow: (item: AdminMenuItem) => ReactNode;
 }) {
   return (
@@ -53,11 +40,12 @@ export function MenuSectionList({ groups, packageCount, t, renderRow }: {
       {groups.map((g) => {
         const s = sectionSummary(g.rows);
         const id = `menu-section-${g.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+        const key = groupTitleKey(g.label);
         return (
           <CollapsibleSection
             key={g.label}
             idBase={id}
-            title={groupTitle(g.label, t)}
+            title={key ? t(key) : g.label}
             count={t("admin.catering.menu.section_summary", { on: s.on, total: s.total })}
             defaultOpen={g.rows.length <= 6}
             badge={
@@ -66,7 +54,9 @@ export function MenuSectionList({ groups, packageCount, t, renderRow }: {
               ) : null
             }
           >
-            <ul className="flex flex-col gap-1.5">{g.rows.map((it) => renderRow(it))}</ul>
+            <ul className="flex flex-col gap-1.5">
+              {g.rows.map((it) => <Fragment key={`${it.kind}:${it.id}`}>{renderRow(it)}</Fragment>)}
+            </ul>
           </CollapsibleSection>
         );
       })}

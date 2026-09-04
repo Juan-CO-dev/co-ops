@@ -13,6 +13,9 @@
 
 export type MenuCat = "main" | "side" | "sweet" | "drink";
 
+/** The merged portal headings — the only code-owned section words. Consumers key on these, never on string literals. */
+export const MERGED_LABEL = { drink: "Drinks", side: "Sides", sweet: "Desserts", more: "More" } as const;
+
 /** Customer decision order. Lower renders first. */
 export const SECTION_RANK: Readonly<Record<MenuCat, number>> = {
   drink: 0,
@@ -39,10 +42,11 @@ export function catForSection(section: string | null | undefined): MenuCat {
  */
 export function sectionLabel(section: string | null | undefined): string {
   const cat = catForSection(section);
-  if (cat === "drink") return "Drinks";
-  if (cat === "side") return "Sides";
-  if (cat === "sweet") return "Desserts";
-  return section && section.trim() ? section : "More";
+  if (cat === "drink") return MERGED_LABEL.drink;
+  if (cat === "side") return MERGED_LABEL.side;
+  if (cat === "sweet") return MERGED_LABEL.sweet;
+  const s = section?.trim();
+  return s ? s : MERGED_LABEL.more;
 }
 
 /** Inside a section: catering-size rows (catering_only) on top, à la carte singles under. Stable. */

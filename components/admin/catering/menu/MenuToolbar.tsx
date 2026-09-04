@@ -3,8 +3,7 @@
 /** MenuToolbar — filter chips (single select) + search + "Preview as customer" switch. Pure client state, owned by MenuClient. */
 
 import type { TranslationKey } from "@/lib/i18n/types";
-import type { MenuFilterChip } from "@/lib/admin/catering/menu-view-shared";
-import type { T } from "./MenuRow";
+import type { MenuFilterChip, Translate } from "@/lib/admin/catering/menu-view-shared";
 
 const CHIPS: Array<{ id: MenuFilterChip; key: TranslationKey }> = [
   { id: "all", key: "admin.catering.menu.chip_all" },
@@ -21,7 +20,7 @@ export function MenuToolbar({ chip, onChip, query, onQuery, preview, onPreview, 
   onQuery: (q: string) => void;
   preview: boolean;
   onPreview: (v: boolean) => void;
-  t: T;
+  t: Translate;
 }) {
   const chipCls = (on: boolean) =>
     `inline-flex min-h-[44px] items-center rounded-full border-2 px-3 text-xs font-bold transition ${
@@ -46,7 +45,7 @@ export function MenuToolbar({ chip, onChip, query, onQuery, preview, onPreview, 
           className="min-h-[44px] w-full rounded-lg border-2 border-co-border-2 bg-co-surface px-3 text-sm text-co-text lg:w-56"
         />
         <label className="flex min-h-[44px] shrink-0 cursor-pointer items-center gap-2 text-xs font-bold text-co-text" title={t("admin.catering.menu.preview_hint")}>
-          <input type="checkbox" checked={preview} onChange={(e) => onPreview(e.target.checked)} className="h-5 w-5 accent-co-gold" />
+          <input type="checkbox" checked={preview} onChange={(e) => onPreview(e.target.checked)} aria-label={t("admin.catering.menu.preview_toggle")} className="h-5 w-5 accent-co-gold" />
           {t("admin.catering.menu.preview_toggle")}
         </label>
       </div>

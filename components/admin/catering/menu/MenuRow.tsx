@@ -9,13 +9,9 @@
 
 import { useState } from "react";
 
-import type { TranslationKey } from "@/lib/i18n/types";
+import type { TranslationKey, Language } from "@/lib/i18n/types";
 import type { AdminMenuItem, AdminSize } from "@/lib/admin/catering/menu";
-import { rowBadges, type RowBadge } from "@/lib/admin/catering/menu-view-shared";
-
-export type FlagChanges = { cateringAvailable?: boolean; cateringOnly?: boolean; cateringPortionable?: boolean; serves?: number | null };
-export type SizeInput = { label: string; priceCents: number; serves: number | null };
-export type T = (k: TranslationKey, params?: Record<string, string | number>) => string;
+import { displayName, rowBadges, type FlagChanges, type RowBadge, type SizeInput, type Translate } from "@/lib/admin/catering/menu-view-shared";
 
 const BADGE_KEY: Record<RowBadge, TranslationKey> = {
   toast_item: "admin.catering.menu.badge_toast_item",
@@ -26,7 +22,7 @@ const BADGE_KEY: Record<RowBadge, TranslationKey> = {
 };
 const BADGE_CLS: Record<RowBadge, string> = {
   toast_item: "bg-co-surface-inset text-co-text-muted",
-  catering_item: "bg-co-gold/20 text-co-text",
+  catering_item: "bg-co-surface-inset text-co-text-muted",
   catering_only: "bg-co-gold/20 text-co-text",
   seasonal: "bg-co-surface-inset text-co-text-muted",
   hidden: "bg-co-warning-surface text-co-warning-text",
@@ -35,9 +31,9 @@ const BADGE_CLS: Record<RowBadge, string> = {
 export function MenuRow({ item, canWrite, language, money, t, expanded, onToggleExpand, onFlags, onAddSize, onEditSize, onRemoveSize }: {
   item: AdminMenuItem;
   canWrite: boolean;
-  language: string;
+  language: Language;
   money: (c: number | null) => string;
-  t: T;
+  t: Translate;
   expanded: boolean;
   onToggleExpand: (id: string) => void;
   onFlags: (it: AdminMenuItem, changes: FlagChanges) => void;
@@ -46,12 +42,11 @@ export function MenuRow({ item, canWrite, language, money, t, expanded, onToggle
   onRemoveSize: (itemId: string, sizeId: string) => void;
 }) {
   const badges = rowBadges(item);
-  const hidden = !item.cateringAvailable;
   return (
-    <li className={`co-card p-3 ${hidden ? "opacity-70" : ""}`}>
+    <li className="co-card p-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <span className="min-w-0">
-          <span className="block truncate text-sm font-semibold text-co-text">{language === "es" ? item.nameEs ?? item.name : item.name}</span>
+          <span className="block truncate text-sm font-semibold text-co-text">{displayName(item, language)}</span>
           <span className="mt-1 flex flex-wrap items-center gap-1.5">
             {badges.map((b) => (
               <span key={b} className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] ${BADGE_CLS[b]}`}>{t(BADGE_KEY[b])}</span>
@@ -70,6 +65,7 @@ export function MenuRow({ item, canWrite, language, money, t, expanded, onToggle
               onClick={() => onToggleExpand(item.id)}
               title={t("admin.catering.menu.hint_sizes")}
               aria-expanded={expanded}
+              aria-controls={`sizes-${item.id}`}
               className="inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 text-xs font-bold text-co-text-dim transition hover:text-co-text"
             >
               {t("admin.catering.menu.sizes")} ({item.sizes.length}){expanded ? " ▾" : " ▸"}
@@ -89,7 +85,7 @@ export function MenuRow({ item, canWrite, language, money, t, expanded, onToggle
   );
 }
 
-function ServesBox({ it, canWrite, onSave, t }: { it: AdminMenuItem; canWrite: boolean; onSave: (it: AdminMenuItem, serves: number | null) => void; t: T }) {
+function ServesBox({ it, canWrite, onSave, t }: { it: AdminMenuItem; canWrite: boolean; onSave: (it: AdminMenuItem, serves: number | null) => void; t: Translate }) {
   const [draft, setDraft] = useState(it.serves != null ? String(it.serves) : "");
   const dirty = draft !== (it.serves != null ? String(it.serves) : "");
   const save = () => {
@@ -108,7 +104,7 @@ function ServesBox({ it, canWrite, onSave, t }: { it: AdminMenuItem; canWrite: b
         inputMode="decimal"
         placeholder="1"
         disabled={!canWrite}
-        aria-label={t("admin.catering.menu.hint_feeds")}
+        aria-label={t("admin.catering.menu.label_feeds")}
         className="min-h-[44px] w-12 rounded-md border border-co-border-2 bg-co-surface px-1.5 py-0.5 text-xs font-bold text-co-text"
       />
       {t("admin.catering.menu.label_feeds_suffix")}
@@ -133,11 +129,11 @@ function Toggle({ label, hint, on, disabled, onClick }: { label: string; hint: s
   );
 }
 
-/** Inline catering-size editor for a sized item: list + edit + remove + add. Prices in dollars → cents. (Moved verbatim from MenuClient.) */
+/** Inline catering-size editor for a sized item: list + edit + remove + add. Prices in dollars → cents. (Moved from MenuClient; the serves string is now translated.) */
 function SizeEditor({ item, canWrite, t, money, onAdd, onEdit, onRemove }: {
   item: AdminMenuItem;
   canWrite: boolean;
-  t: T;
+  t: Translate;
   money: (c: number | null) => string;
   onAdd: (itemId: string, input: SizeInput) => void;
   onEdit: (itemId: string, sizeId: string, input: SizeInput) => void;
@@ -163,7 +159,7 @@ function SizeEditor({ item, canWrite, t, money, onAdd, onEdit, onRemove }: {
   const btnCls = "inline-flex min-h-[44px] items-center rounded-full border-2 border-co-border-2 bg-co-surface px-3 text-xs font-bold text-co-text-dim transition hover:text-co-text disabled:opacity-50";
 
   return (
-    <div className="mt-2 rounded-xl border border-co-border/60 bg-co-bg/40 p-3">
+    <div id={`sizes-${item.id}`} className="mt-2 rounded-xl border border-co-border/60 bg-co-bg/40 p-3">
       <ul className="flex flex-col gap-1.5">
         {item.sizes.map((s) => (
           <li key={s.id} className="flex flex-wrap items-center justify-between gap-2">
