@@ -18,12 +18,15 @@
  *
  * createSubscriber prints the webhookSecret ONCE (ezCater never shows it
  * again) — save it to EZCATER_WEBHOOK_SECRET immediately. ONE subscriber per
- * API user (their limit); accepted + cancelled subscriptions are created per
- * caterer uuid. Operations are NAMED per ezCater's conventions.
+ * API user (their limit); `--subscribe` creates one Order subscription per
+ * event key in EZCATER_ORDER_EVENT_KEYS for each caterer; re-running for an
+ * already-subscribed pair is reported as FAILED by ezCater and is harmless.
+ * Operations are NAMED per ezCater's conventions.
  */
 import { pathToFileURL } from "node:url";
 
 import { ezcaterGraphql, ezcaterConfigured } from "@/lib/ezcater/client";
+import { EZCATER_ORDER_EVENT_KEYS } from "@/lib/ezcater/lifecycle-shared";
 
 async function listCaterers(): Promise<void> {
   const res = await ezcaterGraphql<{ data?: { caterers?: Array<{ uuid: string; name: string; storeNumber: string | null; address?: { street?: string; city?: string } }> } }>(
@@ -55,7 +58,7 @@ async function createSubscriber(webhookUrl: string): Promise<void> {
 
 async function subscribe(subscriberId: string, catererUuids: string[]): Promise<void> {
   for (const catererUuid of catererUuids) {
-    for (const eventKey of ["accepted", "cancelled"]) {
+    for (const eventKey of EZCATER_ORDER_EVENT_KEYS) {
       const res = await ezcaterGraphql<{ data?: { createSubscription?: { subscription?: Record<string, unknown> } } }>(
         "createSubscription",
         `mutation createSubscription($params: CreateSubscriptionFields!) {
