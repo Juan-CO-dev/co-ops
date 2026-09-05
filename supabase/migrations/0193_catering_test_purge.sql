@@ -28,6 +28,9 @@ begin
    where lower(email) in ('juan@complimentsonlysubs.com', 'contactmgb202@gmail.com');
   assert cardinality(v_customers) = 2, format('expected 2 test customers, found %s', cardinality(v_customers));
   assert (select count(*) from public.catering_customers) = 2, 'expected the test customers to be the ONLY customers';
+  -- catering_orders.customer_id / pipeline_id reference the rows below with NO on-delete action:
+  -- the table has never been written; refuse rather than trip an FK mid-purge if that changed.
+  assert (select count(*) from public.catering_orders) = 0, 'catering_orders is not empty — stop and look';
 
   select coalesce(array_agg(id), '{}') into v_leads
     from public.catering_pipeline
@@ -36,6 +39,8 @@ begin
   assert (select count(*) from public.catering_pipeline where id <> all (v_leads)) = 5, 'expected exactly 5 real leads to remain';
   assert (select count(*) from public.catering_pipeline where id <> all (v_leads) and lead_source not in ('toast_catering','ezcater')) = 0,
          'a remaining lead is neither toast nor ezcater — stop and look';
+  assert (select count(*) from public.ezcater_events where lead_id = any (v_leads)) = 0, 'an ezcater event points at a test lead — stop and look';
+  assert (select count(*) from public.toast_catering_orders where lead_id = any (v_leads)) = 0, 'a toast order points at a test lead — stop and look';
 
   select coalesce(array_agg(id), '{}') into v_quotes
     from public.catering_quotes
