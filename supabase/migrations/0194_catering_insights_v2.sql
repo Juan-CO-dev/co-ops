@@ -9,6 +9,10 @@
 -- estimated_revenue_cents (the Toast/ezCater actual), a calendar of booked events −30…+90 days.
 -- SECURITY DEFINER + REVOKE from anon, PUBLIC AND authenticated (0189 lesson: the staff JWT is
 -- a valid PostgREST bearer; the lib enforces the level-5 floor).
+-- It also BACKFILLS `catering_pipeline.time_window`: ezCater intake wrote the raw handoff ISO
+-- instant into that free-text column before `handoffLabel` (this branch), leaving three shapes
+-- in one column. The backfill at the foot rewrites those rows to the same ET clock label the
+-- intake writes from now on, so the stored data has one shape.
 
 create or replace function public.catering_insights_window(p_location_ids uuid[], p_from date, p_to date)
 returns jsonb
@@ -30,7 +34,7 @@ language sql stable security definer set search_path = pg_catalog, public as $$
   settled   as (select * from created where stage in ('confirmed','out','completed','lost'))
   select jsonb_build_object(
     'leads_new',   (select count(*)::int from created),
-    'by_source',   coalesce((select jsonb_object_agg(coalesce(lead_source, 'unknown'), c)
+    'by_source',   coalesce((select jsonb_object_agg(coalesce(lead_source, 'other'), c)
                              from (select lead_source, count(*)::int c from created group by lead_source) s), '{}'::jsonb),
     'by_stage',    coalesce((select jsonb_object_agg(stage, c)
                              from (select stage, count(*)::int c from happening group by stage) s), '{}'::jsonb),
@@ -40,7 +44,7 @@ language sql stable security definer set search_path = pg_catalog, public as $$
     'win_rate_bps',       (select case when count(*) = 0 then null
                                        else round(10000.0 * count(*) filter (where stage <> 'lost') / count(*))::int end
                              from settled),
-    'avg_headcount',      (select round(avg(headcount))::int from booked where headcount is not null),
+    'avg_headcount',      (select round(avg(headcount))::int from booked),
     'pipeline_open_value_cents', (select coalesce(sum(value_cents), 0)::bigint from leads where stage in ('inquiry','quote_sent'))
   );
 $$;
@@ -78,5 +82,11 @@ $$;
 
 revoke execute on function public.catering_insights_window(uuid[], date, date) from anon, public, authenticated;
 revoke execute on function public.catering_insights_v2(uuid[], date)           from anon, public, authenticated;
+
+-- Backfill: ezCater intake wrote raw ISO instants into time_window before handoffLabel (this branch);
+-- store the ET clock label the intake writes from now on, so stored data has one shape.
+update public.catering_pipeline
+   set time_window = to_char((time_window::timestamptz at time zone 'America/New_York'), 'FMHH12:MI AM')
+ where time_window ~ '^\d{4}-\d{2}-\d{2}T';
 
 drop function if exists public.catering_insights(uuid[]);

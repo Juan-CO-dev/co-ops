@@ -81,9 +81,12 @@ export function mergeEzcaterNotes(existing: string | null | undefined, block: st
  * ezCater's `catererHandoffFoodTime` is a raw ISO instant ("2026-09-08T15:30:00Z"), and
  * writing it straight into the column put an ISO timestamp in front of a manager (live
  * finding 2026-09-05: the column is free text and holds Toast's "13:15" and the portal's
- * "11:30 AM–12:00 PM" alongside it). New writes store the operational-TZ clock label; rows
- * written before this keep their ISO and are normalized at DISPLAY time by
- * `timeWindowLabel`, so nothing needs a backfill.
+ * "11:30 AM–12:00 PM" alongside it). New writes store the operational-TZ clock label; the rows
+ * written before this ARE BACKFILLED to the same label by 0194, so the stored data has one
+ * shape. (`timeWindowLabel` still normalizes an ISO at DISPLAY time — a row that predates the
+ * backfill, or arrives from anywhere else, must still render readably — but display-time
+ * normalization was never sufficient on its own: `timeWindowMinutes` scraped the UTC digits
+ * out of a raw instant and SORTED it hours late until the same fix.)
  *
  * Written in "en" deliberately: this is STORED DATA read by both languages, not a render.
  * An absent handoff stays null; anything unparseable is stored verbatim rather than

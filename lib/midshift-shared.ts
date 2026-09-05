@@ -117,6 +117,14 @@ export function pulseScore(items: AttentionItem[]): PulseScore {
   return items.some((i) => RED_KINDS.has(i.kind)) ? "red" : "yellow";
 }
 
+/** The operational-clock reader for an ISO instant (see `timeWindowMinutes`). */
+const ET_CLOCK = new Intl.DateTimeFormat("en-US", {
+  timeZone: OPERATIONAL_TZ,
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
 /**
  * Parse a delivery/pickup window's LEADING clock time to minutes-of-day for
  * chronological sorting. Handles the fixed-dropdown shapes ("10:00–10:30 AM",
@@ -124,9 +132,27 @@ export function pulseScore(items: AttentionItem[]): PulseScore {
  * 24-hour free text ("13:00-14:00"). `time_window` is free text (ezCater
  * handoff strings etc.), so anything unparseable — and null — sorts LAST
  * (Infinity), never interleaved by lexicographic accident.
+ *
+ * A RAW ISO INSTANT IS HANDLED FIRST, and it has to be. ezCater-born rows stored the raw
+ * handoff instant ("2026-09-08T15:30:00Z"), and the leading-clock regex below scrapes the
+ * UTC digits out of one — "15:30" → 930 — sorting an 11:30 AM event four hours late,
+ * behind everything the kitchen actually owes after it. So an ISO-shaped string is
+ * converted to the OPERATIONAL clock before any digit-scraping; one that is not a real
+ * instant sorts last rather than at a scraped hour.
  */
 export function timeWindowMinutes(window: string | null): number {
   if (window == null) return Infinity;
+  if (/^\d{4}-\d{2}-\d{2}T/.test(window)) {
+    const ms = Date.parse(window);
+    if (Number.isNaN(ms)) return Infinity;
+    const parts = ET_CLOCK.formatToParts(new Date(ms));
+    const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+    const isoHour = parseInt(get("hour"), 10);
+    const isoMinute = parseInt(get("minute"), 10);
+    if (Number.isNaN(isoHour) || Number.isNaN(isoMinute)) return Infinity;
+    // h23 yields 00–23, but a "24" from an engine quirk means midnight, not hour 24.
+    return (isoHour === 24 ? 0 : isoHour) * 60 + isoMinute;
+  }
   const m = /(\d{1,2}):(\d{2})/.exec(window);
   if (!m) return Infinity;
   let hour = Number(m[1]);
@@ -148,7 +174,9 @@ export function timeWindowMinutes(window: string | null): number {
  * holds three shapes at once (live finding 2026-09-05): Toast-born leads store a 24-hour
  * clock (`"13:15"`), ezCater-born leads store the raw handoff INSTANT (`"2026-09-08T15:30:00Z"`),
  * portal intakes store a human range (`"11:30 AM–12:00 PM"`). `timeWindowMinutes` sorts all
- * three correctly; rendering the raw string would put an ISO timestamp in front of a manager.
+ * three correctly ONLY because it converts an ISO instant to the ET clock first (it did not,
+ * until this fix — it scraped the UTC digits); rendering the raw string would likewise put an
+ * ISO timestamp in front of a manager.
  *
  *   ISO instant  → the ET clock time (formatTime — operational TZ, language-aware).
  *   "HH:MM"      → a 12-hour label by plain integer arithmetic. NO Date: the string carries
@@ -224,8 +252,8 @@ export function tomorrowSummary(windows: Array<string | null>): CateringTomorrow
  */
 export function stageChip(stage: DueStage): { className: string; labelKey: TranslationKey } {
   return stage === "out"
-    ? { className: "bg-co-text text-co-bg", labelKey: "catering.pipeline.stage.out" as TranslationKey }
-    : { className: "bg-co-gold/20 text-co-gold-text", labelKey: "catering.pipeline.stage.confirmed" as TranslationKey };
+    ? { className: "bg-co-text text-co-bg", labelKey: "catering.pipeline.stage.out" }
+    : { className: "bg-co-gold/20 text-co-gold-text", labelKey: "catering.pipeline.stage.confirmed" };
 }
 
 export interface MidShiftPulse {
