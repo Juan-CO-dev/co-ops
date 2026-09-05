@@ -6,6 +6,9 @@
  * import paths).
  */
 
+import { formatTime } from "@/lib/i18n/format";
+import type { Language } from "@/lib/i18n/types";
+
 export const MIDSHIFT_BASE_LEVEL = 4; // KH+ (key_holder = 4 in lib/roles.ts)
 
 /** Operational timezone — CO is DC-only; hardcoded per the dashboard's convention. */
@@ -138,6 +141,39 @@ export function timeWindowMinutes(window: string | null): number {
     if (!isPm && hour === 12) hour = 0;
   }
   return hour * 60 + minute;
+}
+
+/**
+ * DISPLAY label for a `catering_pipeline.time_window`. The column is FREE TEXT and prod
+ * holds three shapes at once (live finding 2026-09-05): Toast-born leads store a 24-hour
+ * clock (`"13:15"`), ezCater-born leads store the raw handoff INSTANT (`"2026-09-08T15:30:00Z"`),
+ * portal intakes store a human range (`"11:30 AM–12:00 PM"`). `timeWindowMinutes` sorts all
+ * three correctly; rendering the raw string would put an ISO timestamp in front of a manager.
+ *
+ *   ISO instant  → the ET clock time (formatTime — operational TZ, language-aware).
+ *   "HH:MM"      → a 12-hour label by plain integer arithmetic. NO Date: the string carries
+ *                  no date and no zone, so anchoring it to one would invent a day and could
+ *                  shift the hour; the meridiem word follows the language the same way
+ *                  formatTime's es-US output does.
+ *   anything else→ verbatim (a human wrote it; it is already a label).
+ *
+ * Pure. Every RENDER of a time window goes through here; the raw column is for sorting only.
+ */
+export function timeWindowLabel(tw: string | null, language: Language): string | null {
+  if (tw == null) return null;
+  if (/^\d{4}-\d{2}-\d{2}T/.test(tw)) {
+    const formatted = formatTime(tw, language);
+    return formatted === "" ? tw : formatted; // an unparseable instant renders verbatim, never blank
+  }
+  const m = /^(\d{2}):(\d{2})$/.exec(tw);
+  if (!m) return tw;
+  const hour24 = Number(m[1]);
+  const minute = Number(m[2]);
+  if (hour24 > 23 || minute > 59) return tw;
+  const isPm = hour24 >= 12;
+  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+  const meridiem = language === "es" ? (isPm ? "p. m." : "a. m.") : isPm ? "PM" : "AM";
+  return `${hour12}:${m[2]} ${meridiem}`;
 }
 
 /** A confirmed catering event due out today (the mid-shift "what's coming"

@@ -11,6 +11,8 @@
  * registry app-layer — no DB CHECK, so adding a source is additive.
  */
 
+import type { TranslationKey } from "@/lib/i18n/types";
+
 export const LEAD_SOURCES = [
   "portal",
   "staff",
@@ -31,4 +33,17 @@ export function isLeadSource(v: string): v is LeadSource {
 /** i18n key for a registry code; null for legacy free-text values (render verbatim). */
 export function leadSourceKey(v: string | null): string | null {
   return v != null && isLeadSource(v) ? `catering.intake.source.${v}` : null;
+}
+
+/**
+ * DISPLAY resolution for a lead source: a registry code renders through its i18n key,
+ * legacy free text renders VERBATIM (never translated — the system-key rule), and an
+ * absent source falls to the registry's own `other`. Returned as a discriminated pair
+ * so the caller decides which of t()/serverT() it holds; this module stays pure.
+ */
+export function leadSourceLabelKey(source: string | null): { key: TranslationKey } | { verbatim: string } {
+  if (source == null || source === "") return { key: "catering.intake.source.other" as TranslationKey };
+  return isLeadSource(source)
+    ? { key: `catering.intake.source.${source}` as TranslationKey }
+    : { verbatim: source };
 }
