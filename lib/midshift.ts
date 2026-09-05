@@ -11,7 +11,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { operationalDayUtcRange } from "@/lib/operational-day";
+import { etYmdMinusDays, operationalDayUtcRange } from "@/lib/operational-day";
 import { loadAmPrepDashboardState, loadMidDayPrepDashboardState } from "@/lib/prep";
 import { loadCashDashboardState } from "@/lib/cash";
 import { loadMaintenanceOverview } from "@/lib/maintenance";
@@ -25,9 +25,12 @@ import {
   isSubmitted,
   operationalNow,
   timeWindowMinutes,
+  tomorrowSummary,
   type ActiveStaff,
   type AttentionItem,
   type CateringDueItem,
+  type CateringTomorrow,
+  type DueStage,
   type MidShiftPulse,
   type PulseFridge,
   type ReportKey,
@@ -42,11 +45,16 @@ export {
   MIDSHIFT_BASE_LEVEL,
   operationalNow,
   pulseScore,
+  stageChip,
+  timeWindowLabel,
+  tomorrowSummary,
 } from "@/lib/midshift-shared";
 export type {
   ActiveStaff,
   AttentionItem,
   CateringDueItem,
+  CateringTomorrow,
+  DueStage,
   MidShiftPulse,
   OverdueState,
   PulseFridge,
@@ -309,7 +317,7 @@ async function loadCateringDueToday(
 ): Promise<CateringDueItem[]> {
   const { data, error } = await service
     .from("catering_pipeline")
-    .select("id, event_name, company, contact_name, headcount, time_window, delivery_address")
+    .select("id, event_name, company, contact_name, headcount, time_window, delivery_address, stage, lead_source")
     .eq("location_id", args.locationId)
     .eq("event_date", args.date)
     .in("stage", ["confirmed", "out"])
@@ -322,6 +330,8 @@ async function loadCateringDueToday(
         headcount: number | null;
         time_window: string | null;
         delivery_address: string | null;
+        stage: DueStage;
+        lead_source: string | null;
       }>
     >();
   // THE WORST FABRICATION ON THIS SURFACE. An empty list reads as "no events today", the
@@ -335,6 +345,8 @@ async function loadCateringDueToday(
       name: r.event_name ?? r.company ?? r.contact_name,
       headcount: r.headcount,
       isDelivery: r.delivery_address != null && r.delivery_address !== "",
+      stage: r.stage,
+      source: r.lead_source,
     }))
     // Chronological, not lexicographic — "1:00 PM" must not beat "10:00 AM".
     // Unparseable/null windows sort last; equal keys tiebreak on the raw text.
@@ -343,6 +355,28 @@ async function loadCateringDueToday(
         timeWindowMinutes(a.timeWindow) - timeWindowMinutes(b.timeWindow) ||
         (a.timeWindow ?? "").localeCompare(b.timeWindow ?? ""),
     );
+}
+
+/**
+ * Tomorrow's booked catering — count + the earliest window, nothing else. The look-ahead a
+ * manager needs at 3pm is "is there catering tomorrow, and how early", not a second list;
+ * the full list is /catering's job. Same fabrication rule as today's lane: a read error
+ * THROWS, because an empty look-ahead reads as "nothing tomorrow" and preps nothing.
+ */
+async function loadCateringTomorrow(
+  service: SupabaseClient,
+  args: { locationId: string; date: string },
+): Promise<CateringTomorrow> {
+  const tomorrow = etYmdMinusDays(args.date, -1);
+  const { data, error } = await service
+    .from("catering_pipeline")
+    .select("time_window")
+    .eq("location_id", args.locationId)
+    .eq("event_date", tomorrow)
+    .in("stage", ["confirmed", "out"])
+    .returns<Array<{ time_window: string | null }>>();
+  if (error) throw new Error(`loadCateringTomorrow catering_pipeline: ${error.message}`);
+  return tomorrowSummary((data ?? []).map((r) => r.time_window));
 }
 
 export async function loadMidShiftPulse(
@@ -368,7 +402,7 @@ export async function loadMidShiftPulse(
   const { startIso, endExclusiveIso } = operationalDayUtcRange(args.date);
 
   // The five top-level loads are independent — one parallel group.
-  const [statuses, overview, notesRes, activeToday, cateringToday] = await Promise.all([
+  const [statuses, overview, notesRes, activeToday, cateringToday, cateringTomorrow] = await Promise.all([
     loadReportStatuses(service, { locationId: args.locationId, date: args.date, actor: args.actor }),
     loadMaintenanceOverview(service, { locationId: args.locationId, today: args.date, sinceDate: args.date }),
     service
@@ -379,6 +413,7 @@ export async function loadMidShiftPulse(
       .lt("created_at", endExclusiveIso),
     loadActiveToday(service, { locationId: args.locationId, date: args.date }),
     loadCateringDueToday(service, { locationId: args.locationId, date: args.date }),
+    loadCateringTomorrow(service, { locationId: args.locationId, date: args.date }),
   ]);
   const { rows, closingDone, midDayDoneCount } = statuses;
 
@@ -469,6 +504,7 @@ export async function loadMidShiftPulse(
     maintenanceNotesToday,
     activeToday,
     cateringToday,
+    cateringTomorrow,
     attention,
   };
 }

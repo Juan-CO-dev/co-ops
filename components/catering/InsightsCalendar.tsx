@@ -13,7 +13,7 @@
 import { useMemo, useState } from "react";
 
 import { useTranslation } from "@/lib/i18n/provider";
-import { formatCents, formatMonthLabel, formatWeekday } from "@/lib/i18n/format";
+import { formatCents, formatDateLabel, formatMonthLabel, formatWeekday } from "@/lib/i18n/format";
 import {
   groupEventsByDate,
   monthGrid,
@@ -76,7 +76,9 @@ export function InsightsCalendar({ events, today }: { events: CalendarEvent[]; t
               type="button"
               onClick={() => setSelected(d.date)}
               aria-pressed={isSel}
-              aria-label={`${d.date}${evs.length > 0 ? ` · ${evs.length}` : ""}`}
+              aria-label={`${formatDateLabel(d.date, language)}${
+                evs.length > 0 ? ` · ${t("catering.insights.calendar_count", { n: evs.length })}` : ""
+              }`}
               className={`flex min-h-[44px] flex-col items-center justify-start gap-0.5 rounded-lg border-2 p-1 text-xs tabular-nums ${
                 isSel ? "border-co-text bg-co-surface-2" : "border-co-border bg-co-surface"
               } ${d.inMonth ? "text-co-text" : "text-co-text-dim"} ${d.date === today ? "font-extrabold" : ""}`}

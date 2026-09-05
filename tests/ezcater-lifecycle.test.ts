@@ -3,7 +3,7 @@
 // and move the lead along automatically through every stage we can observe; confirmation
 // stays human (the ezManage acceptance IS the human act); `lost` is terminal.
 import { describe, expect, it } from "vitest";
-import { EZCATER_ORDER_EVENT_KEYS, mergeEzcaterNotes, planEzcaterEvent } from "@/lib/ezcater/lifecycle-shared";
+import { EZCATER_ORDER_EVENT_KEYS, handoffLabel, mergeEzcaterNotes, planEzcaterEvent } from "@/lib/ezcater/lifecycle-shared";
 
 describe("EZCATER_ORDER_EVENT_KEYS", () => {
   it("is the live enum introspected 2026-09-03 (subscribe to all of them)", () => {
@@ -84,5 +84,20 @@ describe("mergeEzcaterNotes", () => {
   });
   it("human notes without a marked block are kept and the block is appended", () => {
     expect(mergeEzcaterNotes("just a human note", "b")).toBe("just a human note\n\n--- ezCater order (auto) ---\nb\n--- end ezCater ---");
+  });
+});
+
+describe("handoffLabel", () => {
+  // ezCater hands us a raw INSTANT; storing it in catering_pipeline.time_window put an ISO
+  // timestamp in front of a manager (live finding 2026-09-05). New writes store the ET clock
+  // label instead; existing rows keep their ISO and are handled at display time.
+  it("renders an ISO instant as its ET clock label", () => {
+    expect(handoffLabel("2026-09-08T15:30:00Z")).toBe("11:30 AM");
+  });
+  it("passes an absent or unparseable handoff through instead of inventing a time", () => {
+    expect(handoffLabel(null)).toBeNull();
+    expect(handoffLabel("")).toBeNull();
+    expect(handoffLabel("as soon as possible")).toBe("as soon as possible");
+    expect(handoffLabel("2026-13-45T99:00:00Z")).toBe("2026-13-45T99:00:00Z");
   });
 });

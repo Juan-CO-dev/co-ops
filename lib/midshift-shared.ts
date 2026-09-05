@@ -7,7 +7,7 @@
  */
 
 import { formatTime } from "@/lib/i18n/format";
-import type { Language } from "@/lib/i18n/types";
+import type { Language, TranslationKey } from "@/lib/i18n/types";
 
 export const MIDSHIFT_BASE_LEVEL = 4; // KH+ (key_holder = 4 in lib/roles.ts)
 
@@ -162,8 +162,10 @@ export function timeWindowMinutes(window: string | null): number {
 export function timeWindowLabel(tw: string | null, language: Language): string | null {
   if (tw == null) return null;
   if (/^\d{4}-\d{2}-\d{2}T/.test(tw)) {
-    const formatted = formatTime(tw, language);
-    return formatted === "" ? tw : formatted; // an unparseable instant renders verbatim, never blank
+    // An ISO-SHAPED string that is not a real instant must render verbatim: toLocaleTimeString
+    // yields the literal "Invalid Date" for one, and printing that to a manager is worse than
+    // printing the raw text.
+    return Number.isNaN(Date.parse(tw)) ? tw : formatTime(tw, language);
   }
   const m = /^(\d{2}):(\d{2})$/.exec(tw);
   if (!m) return tw;
@@ -176,6 +178,10 @@ export function timeWindowLabel(tw: string | null, language: Language): string |
   return `${hour12}:${m[2]} ${meridiem}`;
 }
 
+/** The two stages a catering event can be in while it is still DUE — `confirmed` (kitchen
+ *  owes it) and `out` (it has left). The pulse never shows any other stage. */
+export type DueStage = "confirmed" | "out";
+
 /** A confirmed catering event due out today (the mid-shift "what's coming"
  *  strip — time front and center). No revenue on this surface. */
 export interface CateringDueItem {
@@ -184,6 +190,42 @@ export interface CateringDueItem {
   name: string;
   headcount: number | null;
   isDelivery: boolean;
+  /** v2: confirmed vs already out — the difference between "the kitchen still owes this"
+   *  and "it left", which the strip previously hid by rendering both identically. */
+  stage: DueStage;
+  /** v2: where the lead came from (registry code or legacy free text; null = unlabelled). */
+  source: string | null;
+}
+
+/** Tomorrow's booked catering, as one line under today's list. */
+export interface CateringTomorrow {
+  count: number;
+  firstWindow: string | null;
+}
+
+/**
+ * Tomorrow's summary from tomorrow's raw time windows. COUNT IS EVERY BOOKED EVENT — a
+ * window nobody can parse is still an event the kitchen owes — while `firstWindow` is the
+ * earliest window that actually parses, so the line can only ever claim a time it knows.
+ * Pure; the raw window is rendered through `timeWindowLabel`, never directly.
+ */
+export function tomorrowSummary(windows: Array<string | null>): CateringTomorrow {
+  const parseable = windows
+    .filter((w): w is string => w != null && timeWindowMinutes(w) !== Infinity)
+    .sort((a, b) => timeWindowMinutes(a) - timeWindowMinutes(b));
+  return { count: windows.length, firstWindow: parseable[0] ?? null };
+}
+
+/**
+ * The stage chip's token roles. `bg-co-gold/20` is the documented brand-badge tint and
+ * `co-gold-text` the AA gold TEXT role; `out` is the ink fill (it is the louder state —
+ * the food has left the building). No status-colour text anywhere: co-success and its
+ * siblings are fill/dot roles only.
+ */
+export function stageChip(stage: DueStage): { className: string; labelKey: TranslationKey } {
+  return stage === "out"
+    ? { className: "bg-co-text text-co-bg", labelKey: "catering.pipeline.stage.out" as TranslationKey }
+    : { className: "bg-co-gold/20 text-co-gold-text", labelKey: "catering.pipeline.stage.confirmed" as TranslationKey };
 }
 
 export interface MidShiftPulse {
@@ -196,6 +238,8 @@ export interface MidShiftPulse {
   activeToday: ActiveStaff[];
   /** Confirmed catering events due out today, soonest window first. */
   cateringToday: CateringDueItem[];
+  /** Tomorrow's booked catering — the one-line look-ahead under today's list. */
+  cateringTomorrow: CateringTomorrow;
   /** Derived attention items, highest priority first, for the banner. */
   attention: AttentionItem[];
 }
