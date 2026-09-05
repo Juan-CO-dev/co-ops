@@ -277,10 +277,12 @@ export async function pullSalesForAllLocations(businessDate: string): Promise<Ar
  * the on-visit debounce keys off the latest pull attempt — success OR failure
  * — so a Toast outage cannot storm the API on every page load.
  */
+export type SystemPullContext = "closing_confirm" | "midshift_on_visit" | "pinger";
+
 export async function pullSalesSystemTrigger(
   locationId: string,
   businessDate: string,
-  opts: { context: "closing_confirm" | "midshift_on_visit" },
+  opts: { context: SystemPullContext },
 ): Promise<void> {
   try {
     const sb = getServiceRoleClient();
@@ -317,15 +319,36 @@ export async function pullSalesSystemTrigger(
 const ON_VISIT_DEBOUNCE_MS = 45 * 60 * 1000;
 
 /**
- * Mid-shift on-visit freshness trigger: pull today's events IF the last pull
- * ATTEMPT for this location is older than the debounce window (or was for a
- * different business date). The marker is the latest `toast_sales.pull` OR
- * `toast_sales.pull_failed` audit row — independent of whether rows were
- * inserted (a zero-sales morning doesn't re-pull per load) AND of outcome
- * (a Toast outage doesn't storm the API per load — review C2). Best-effort;
- * never throws.
+ * Debounce window for the same-day pinger (catering-truth arc 2026-09-05). The CO desktop
+ * calls the route every 10 minutes; 8 minutes lets every cycle through while still refusing
+ * a second pull if the pinger is ever run twice inside one cycle (or a manager's /mid-shift
+ * visit and the pinger land together).
  */
-export async function maybeRefreshTodaySales(locationId: string, businessDate: string): Promise<void> {
+export const PINGER_DEBOUNCE_MS = 8 * 60 * 1000;
+
+/** What one location's freshness pass actually did. `unknown` = the debounce evidence could
+ *  not be read, so NOTHING was pulled — never silently reported as "fresh". */
+export type RefreshOutcome = "pulled" | "fresh" | "no_toast" | "unknown";
+
+/**
+ * Same-day freshness trigger for ONE location: pull today's events IF the last pull
+ * ATTEMPT for this location is older than `debounceMs` (or was for a different business
+ * date). The marker is the latest `toast_sales.pull` OR `toast_sales.pull_failed` audit
+ * row — independent of whether rows were inserted (a zero-sales morning doesn't re-pull
+ * per load) AND of outcome (a Toast outage doesn't storm the API per load — review C2).
+ *
+ * EVENTS-ONLY, always: this path never materializes the depletion ledger (see
+ * `pullSalesSystemTrigger` — the nightly T-1 cron is the sole materializer).
+ *
+ * Best-effort; NEVER throws (the mid-shift caller runs it inside `after()`), so every
+ * failure mode is reported through the return value instead.
+ */
+export async function refreshTodaySalesIfStale(
+  locationId: string,
+  businessDate: string,
+  debounceMs: number,
+  context: SystemPullContext,
+): Promise<RefreshOutcome> {
   try {
     const sb = getServiceRoleClient();
     // `occurred_at`, NOT `created_at` — audit_log has no created_at column, and this
@@ -348,21 +371,76 @@ export async function maybeRefreshTodaySales(locationId: string, businessDate: s
       // A failed debounce READ must not be read as "no recent attempt" — that is what
       // turned this into a pull-per-render. Skip the trigger and let the next visit
       // (or the cron) decide with real evidence.
-      console.error(`[toast-sales midshift_on_visit] debounce read failed for ${locationId}:`, error.message);
-      return;
+      console.error(`[toast-sales ${context}] debounce read failed for ${locationId}:`, error.message);
+      return "unknown";
     }
     const attemptedRecently =
       data != null &&
       data.metadata?.business_date === businessDate &&
-      Date.now() - new Date(data.occurred_at).getTime() < ON_VISIT_DEBOUNCE_MS;
-    if (attemptedRecently) return;
-    await pullSalesSystemTrigger(locationId, businessDate, { context: "midshift_on_visit" });
+      Date.now() - new Date(data.occurred_at).getTime() < debounceMs;
+    if (attemptedRecently) return "fresh";
+    // A location with no Toast GUID is a NO-OP, not a failure (pullSalesSystemTrigger
+    // checks this too and stays the authority; this read is what lets the pinger's
+    // audit row distinguish "nothing to pull" from "pulled").
+    const { data: loc, error: locErr } = await sb
+      .from("locations")
+      .select("toast_restaurant_guid")
+      .eq("id", locationId)
+      .maybeSingle<{ toast_restaurant_guid: string | null }>();
+    if (locErr) {
+      console.error(`[toast-sales ${context}] location read failed for ${locationId}:`, locErr.message);
+      return "unknown";
+    }
+    if (!loc?.toast_restaurant_guid) return "no_toast";
+    await pullSalesSystemTrigger(locationId, businessDate, { context });
+    return "pulled";
   } catch (e) {
     console.error(
-      `[toast-sales midshift_on_visit] debounce check failed for ${locationId}:`,
+      `[toast-sales ${context}] debounce check failed for ${locationId}:`,
       e instanceof Error ? e.message : String(e),
     );
+    return "unknown";
   }
+}
+
+/**
+ * Mid-shift on-visit freshness trigger — the 45-minute-debounced wrapper the pulse page
+ * calls inside `after()`. Signature unchanged; the body is `refreshTodaySalesIfStale`.
+ */
+export async function maybeRefreshTodaySales(locationId: string, businessDate: string): Promise<void> {
+  await refreshTodaySalesIfStale(locationId, businessDate, ON_VISIT_DEBOUNCE_MS, "midshift_on_visit");
+}
+
+/**
+ * Pinger entry: every active Toast-configured location, TODAY, events-only, pinger-debounced.
+ * Serial (like the nightly cron) — two locations, and a burst of parallel Toast calls buys
+ * nothing. Never throws per location: a failure is reported as `error` on that row so one
+ * shop's outage cannot hide the other shop's pull.
+ */
+export async function pullTodaySalesForAllLocations(
+  todayEt: string,
+): Promise<Array<{ locationId: string; result: RefreshOutcome | "error"; error?: string }>> {
+  requireYmd(todayEt);
+  const sb = getServiceRoleClient();
+  const { data, error } = await sb
+    .from("locations")
+    .select("id")
+    .eq("active", true)
+    .not("toast_restaurant_guid", "is", null)
+    .returns<Array<{ id: string }>>();
+  if (error) throw new Error(`pullTodaySalesForAllLocations locations: ${error.message}`);
+  const out: Array<{ locationId: string; result: RefreshOutcome | "error"; error?: string }> = [];
+  for (const loc of data ?? []) {
+    try {
+      out.push({
+        locationId: loc.id,
+        result: await refreshTodaySalesIfStale(loc.id, todayEt, PINGER_DEBOUNCE_MS, "pinger"),
+      });
+    } catch (e) {
+      out.push({ locationId: loc.id, result: "error", error: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  return out;
 }
 
 // ─── Daily depletion materializer (drift spec 2026-07-31) ────────────────────
