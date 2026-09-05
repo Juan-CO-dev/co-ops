@@ -12,10 +12,10 @@ import { timeWindowMinutes } from "@/lib/midshift-shared";
 export type WindowKey = "this_week" | "this_month" | "last_30" | "all_time";
 
 export const INSIGHT_WINDOWS: ReadonlyArray<{ key: WindowKey; labelKey: TranslationKey }> = [
-  { key: "this_week", labelKey: "catering.insights.window.this_week" as TranslationKey },
-  { key: "this_month", labelKey: "catering.insights.window.this_month" as TranslationKey },
-  { key: "last_30", labelKey: "catering.insights.window.last_30" as TranslationKey },
-  { key: "all_time", labelKey: "catering.insights.window.all_time" as TranslationKey },
+  { key: "this_week", labelKey: "catering.insights.window.this_week" },
+  { key: "this_month", labelKey: "catering.insights.window.this_month" },
+  { key: "last_30", labelKey: "catering.insights.window.last_30" },
+  { key: "all_time", labelKey: "catering.insights.window.all_time" },
 ];
 
 export type BookedStage = "confirmed" | "out" | "completed";
@@ -85,7 +85,11 @@ export function groupEventsByDate(events: CalendarEvent[]): Map<string, Calendar
     timeWindowMinutes(a.timeWindow) - timeWindowMinutes(b.timeWindow) ||
     (a.timeWindow ?? "").localeCompare(b.timeWindow ?? ""));
   const out = new Map<string, CalendarEvent[]>();
-  for (const e of sorted) (out.get(e.eventDate) ?? out.set(e.eventDate, []).get(e.eventDate)!).push(e);
+  for (const e of sorted) {
+    const day = out.get(e.eventDate);
+    if (day) day.push(e);
+    else out.set(e.eventDate, [e]);
+  }
   return out;
 }
 

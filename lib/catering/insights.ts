@@ -76,17 +76,23 @@ interface RawV2 {
   feedback?: { average_rating?: number | null; count?: number };
 }
 
-function win(r: RawWindow | undefined): WindowStats {
+/**
+ * One window's stats. `r` is REQUIRED — a missing window is a broken RPC contract, not a
+ * quiet zero (see the throw in the loader). The per-FIELD `?? 0` below is different in kind
+ * and stays: an absent aggregate inside a window the RPC did return is a real empty set,
+ * because `count(*)`/`coalesce(sum(…), 0)` cannot come back missing for a window it built.
+ */
+function win(r: RawWindow): WindowStats {
   return {
-    leadsNew: r?.leads_new ?? 0,
-    bySource: r?.by_source ?? {},
-    byStage: r?.by_stage ?? {},
-    bookedEvents: r?.booked_events ?? 0,
-    bookedValueCents: Number(r?.booked_value_cents ?? 0),
-    lost: r?.lost ?? 0,
-    winRateBps: r?.win_rate_bps ?? null,
-    avgHeadcount: r?.avg_headcount ?? null,
-    pipelineOpenValueCents: Number(r?.pipeline_open_value_cents ?? 0),
+    leadsNew: r.leads_new ?? 0,
+    bySource: r.by_source ?? {},
+    byStage: r.by_stage ?? {},
+    bookedEvents: r.booked_events ?? 0,
+    bookedValueCents: Number(r.booked_value_cents ?? 0),
+    lost: r.lost ?? 0,
+    winRateBps: r.win_rate_bps ?? null,
+    avgHeadcount: r.avg_headcount ?? null,
+    pipelineOpenValueCents: Number(r.pipeline_open_value_cents ?? 0),
   };
 }
 
@@ -101,6 +107,12 @@ export async function loadCateringInsightsV2(actor: AuthContext, todayEt: string
   const { data, error } = await sb.rpc("catering_insights_v2", { p_location_ids: scope, p_today: todayEt });
   if (error) throw new Error(`loadCateringInsightsV2 rpc: ${error.message}`);
   const raw = (data ?? {}) as RawV2;
+  // A MISSING WINDOW IS A FAILURE, NOT A ZERO. Defaulting to zeros here renders a confident
+  // "$0 booked · 0 leads" — indistinguishable from a genuinely quiet week, and exactly the
+  // fabrication v2 exists to end (v1's $0 against ≈$2,800 of real catering).
+  if (!raw.this_week || !raw.this_month || !raw.last_30 || !raw.all_time) {
+    throw new Error("loadCateringInsightsV2: RPC returned no windows");
+  }
 
   // Recent catering feedback (bounded list — not an aggregation).
   let fq = sb

@@ -23,6 +23,13 @@ declare
   n int;
   v_options int; v_rate int;
 begin
+  -- Every count below is guarded by an ASSERT, and plpgsql compiles ASSERT to a NO-OP when
+  -- plpgsql.check_asserts is off — the purge would then delete on a drifted prod exactly as
+  -- if it had verified nothing. Refuse instead of running blind.
+  if current_setting('plpgsql.check_asserts', true) = 'off' then
+    raise exception '0193: plpgsql.check_asserts is off — the purge relies on ASSERT guards; refusing';
+  end if;
+
   select coalesce(array_agg(id), '{}') into v_customers
     from public.catering_customers
    where lower(email) in ('juan@complimentsonlysubs.com', 'contactmgb202@gmail.com');
@@ -31,6 +38,9 @@ begin
   -- catering_orders.customer_id / pipeline_id reference the rows below with NO on-delete action:
   -- the table has never been written; refuse rather than trip an FK mid-purge if that changed.
   assert (select count(*) from public.catering_orders) = 0, 'catering_orders is not empty — stop and look';
+  -- catering_companies.claimed_by_customer_id -> catering_customers(id) ON DELETE SET NULL (0124/0126):
+  -- deleting the test customers would silently unclaim a company instead of failing.
+  assert (select count(*) from public.catering_companies) = 0, 'catering_companies is not empty — claimed_by_customer_id would silently null; stop and look';
 
   select coalesce(array_agg(id), '{}') into v_leads
     from public.catering_pipeline

@@ -30,6 +30,14 @@ export function InsightsCalendar({ events, today }: { events: CalendarEvent[]; t
   const [month, setMonth] = useState(() => monthKey(today));
   const [selected, setSelected] = useState<string | null>(today);
 
+  // Changing month CLEARS the selection: `selected` is a date in the month you left, so the
+  // day list underneath kept rendering that month's events while the grid showed another —
+  // a list of events with no highlighted day to explain them.
+  const goToMonth = (next: string) => {
+    setMonth(next);
+    setSelected(null);
+  };
+
   const grid = useMemo(() => monthGrid(month), [month]);
   const byDate = useMemo(() => groupEventsByDate(events), [events]);
   const dayEvents = selected ? byDate.get(selected) ?? [] : [];
@@ -41,7 +49,7 @@ export function InsightsCalendar({ events, today }: { events: CalendarEvent[]; t
       <div className="flex items-center justify-between gap-2">
         <button
           type="button"
-          onClick={() => setMonth(shiftMonth(month, -1))}
+          onClick={() => goToMonth(shiftMonth(month, -1))}
           aria-label={t("catering.insights.calendar.prev")}
           className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg border-2 border-co-border-2 bg-co-surface text-co-text"
         >
@@ -50,7 +58,7 @@ export function InsightsCalendar({ events, today }: { events: CalendarEvent[]; t
         <span className="text-sm font-bold text-co-text">{formatMonthLabel(month, language)}</span>
         <button
           type="button"
-          onClick={() => setMonth(shiftMonth(month, 1))}
+          onClick={() => goToMonth(shiftMonth(month, 1))}
           aria-label={t("catering.insights.calendar.next")}
           className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg border-2 border-co-border-2 bg-co-surface text-co-text"
         >
@@ -97,7 +105,15 @@ export function InsightsCalendar({ events, today }: { events: CalendarEvent[]; t
         })}
       </div>
 
-      <ul className="mt-3 flex flex-col gap-2" aria-live="polite">
+      {selected && (
+        // Names the day the list belongs to — the grid's selected border is the only other
+        // signal, and it is off-screen once the list is long. A formatted date, so no key.
+        <p className="mt-3 text-xs font-bold uppercase tracking-[0.12em] text-co-text-dim">
+          {formatDateLabel(selected, language)}
+        </p>
+      )}
+
+      <ul className="mt-2 flex flex-col gap-2" aria-live="polite">
         {selected && dayEvents.length === 0 && (
           <li className="text-sm text-co-text-muted">{t("catering.insights.calendar.empty_day")}</li>
         )}

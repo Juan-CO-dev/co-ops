@@ -132,10 +132,12 @@ export function InsightsClient({ data }: { data: CateringInsightsV2 }) {
         count={t("catering.insights.calendar_count", { n: data.calendar.length })}
         defaultOpen
       >
+        {/* The legend names the same three stages the pipeline chips do, so it reads the
+            STAGE vocabulary rather than a private copy that can drift word-for-word. */}
         <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-co-text-muted">
-          <LegendDot stage="confirmed" label={t("catering.insights.calendar.legend.confirmed")} />
-          <LegendDot stage="out" label={t("catering.insights.calendar.legend.out")} />
-          <LegendDot stage="completed" label={t("catering.insights.calendar.legend.completed")} />
+          <LegendDot stage="confirmed" label={t("catering.pipeline.stage.confirmed")} />
+          <LegendDot stage="out" label={t("catering.pipeline.stage.out")} />
+          <LegendDot stage="completed" label={t("catering.pipeline.stage.completed")} />
         </div>
         <InsightsCalendar events={data.calendar} today={data.today} />
       </CollapsibleSection>
