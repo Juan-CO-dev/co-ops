@@ -259,6 +259,10 @@ export const RESERVED_ACTIONS = [
   // Emitted from SQL only (submit_am_prep_atomic and friends set destructive=true
   // directly on the INSERT) — real, live, and invisible to a JS-side scan.
   "report.update",
+  // Emitted from SQL only — migration 0193's purge block INSERTs the audit row itself
+  // and sets destructive=true literally. There is no TypeScript call site and there may
+  // never be one: no app code path deletes catering rows.
+  "catering.test_data_purge",
   // Convention documented in AGENTS.md, written by hand during incident recovery
   // rather than by any code path.
   "audit.gap_recovery",
