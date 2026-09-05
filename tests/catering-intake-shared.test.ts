@@ -4,7 +4,7 @@
  * (unknown values render verbatim, never crash, never translate).
  */
 import { describe, it, expect } from "vitest";
-import { LEAD_SOURCES, isLeadSource, leadSourceKey } from "@/lib/catering/intake-shared";
+import { LEAD_SOURCES, isLeadSource, leadSourceKey, leadSourceLabelKey } from "@/lib/catering/intake-shared";
 
 describe("lead source registry", () => {
   it("pins the spec #2b source codes", () => {
@@ -23,5 +23,14 @@ describe("lead source registry", () => {
     expect(leadSourceKey("toast_catering")).toBe("catering.intake.source.toast_catering");
     expect(leadSourceKey("word of mouth")).toBeNull();
     expect(leadSourceKey(null)).toBeNull();
+  });
+});
+
+describe("leadSourceLabelKey", () => {
+  it("maps registry sources to their i18n key and leaves legacy free text verbatim", () => {
+    expect(leadSourceLabelKey("ezcater")).toEqual({ key: "catering.intake.source.ezcater" });
+    expect(leadSourceLabelKey("Referral from Cris")).toEqual({ verbatim: "Referral from Cris" });
+    expect(leadSourceLabelKey(null)).toEqual({ key: "catering.intake.source.other" });
+    expect(leadSourceLabelKey("")).toEqual({ key: "catering.intake.source.other" });
   });
 });

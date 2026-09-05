@@ -188,3 +188,20 @@ export function formatCents(cents: number, language: Language): string {
     currency: "USD",
   }).format(cents / 100);
 }
+
+/**
+ * Month + year header label for a "YYYY-MM" key ("September 2026" / "septiembre de 2026").
+ * Language-aware and UTC-pinned like formatDateLabel — the key IS the calendar month, so no
+ * timezone math may shift it. Returns the input verbatim on parse failure (defensive, like
+ * its siblings). Lives here because ALL date formatting goes through this module (AGENTS.md:
+ * never a new inline Intl copy at a call site).
+ */
+export function formatMonthLabel(yyyymm: string, language: Language): string {
+  const [y, m] = yyyymm.split("-").map(Number);
+  if (!y || !m || m < 1 || m > 12) return yyyymm;
+  return new Intl.DateTimeFormat(language === "es" ? "es-US" : "en-US", {
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(Date.UTC(y, m - 1, 1)));
+}

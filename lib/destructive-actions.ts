@@ -339,6 +339,13 @@ export const DESTRUCTIVE_ACTIONS = [
   //   nulls the auto column, and SETS the pin. Consumes the weekly budget (r2-8 final).
   "par.auto_tune_revert",
 
+  // ── Catering test-data purge (0193, 2026-09-05) ───────────────────────────
+  // catering.test_data_purge = the ONE-TIME migration-only purge of builder test artifacts
+  //   (0193, Juan's ruling 2026-09-05: "the law is for the people using it, not for us making
+  //   it"). Emitted from SQL only — no TypeScript call site exists or may exist; listed here so
+  //   the vocabulary stays closed and the row reads destructive=true in the admin hub.
+  "catering.test_data_purge",
+
   // Bulk / sensitive
   "reports.bulk_export",
   "reports.bulk_correct",

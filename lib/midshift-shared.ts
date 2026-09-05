@@ -6,6 +6,9 @@
  * import paths).
  */
 
+import { formatTime } from "@/lib/i18n/format";
+import type { Language, TranslationKey } from "@/lib/i18n/types";
+
 export const MIDSHIFT_BASE_LEVEL = 4; // KH+ (key_holder = 4 in lib/roles.ts)
 
 /** Operational timezone — CO is DC-only; hardcoded per the dashboard's convention. */
@@ -114,6 +117,14 @@ export function pulseScore(items: AttentionItem[]): PulseScore {
   return items.some((i) => RED_KINDS.has(i.kind)) ? "red" : "yellow";
 }
 
+/** The operational-clock reader for an ISO instant (see `timeWindowMinutes`). */
+const ET_CLOCK = new Intl.DateTimeFormat("en-US", {
+  timeZone: OPERATIONAL_TZ,
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
 /**
  * Parse a delivery/pickup window's LEADING clock time to minutes-of-day for
  * chronological sorting. Handles the fixed-dropdown shapes ("10:00–10:30 AM",
@@ -121,9 +132,27 @@ export function pulseScore(items: AttentionItem[]): PulseScore {
  * 24-hour free text ("13:00-14:00"). `time_window` is free text (ezCater
  * handoff strings etc.), so anything unparseable — and null — sorts LAST
  * (Infinity), never interleaved by lexicographic accident.
+ *
+ * A RAW ISO INSTANT IS HANDLED FIRST, and it has to be. ezCater-born rows stored the raw
+ * handoff instant ("2026-09-08T15:30:00Z"), and the leading-clock regex below scrapes the
+ * UTC digits out of one — "15:30" → 930 — sorting an 11:30 AM event four hours late,
+ * behind everything the kitchen actually owes after it. So an ISO-shaped string is
+ * converted to the OPERATIONAL clock before any digit-scraping; one that is not a real
+ * instant sorts last rather than at a scraped hour.
  */
 export function timeWindowMinutes(window: string | null): number {
   if (window == null) return Infinity;
+  if (/^\d{4}-\d{2}-\d{2}T/.test(window)) {
+    const ms = Date.parse(window);
+    if (Number.isNaN(ms)) return Infinity;
+    const parts = ET_CLOCK.formatToParts(new Date(ms));
+    const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+    const isoHour = parseInt(get("hour"), 10);
+    const isoMinute = parseInt(get("minute"), 10);
+    if (Number.isNaN(isoHour) || Number.isNaN(isoMinute)) return Infinity;
+    // h23 yields 00–23, but a "24" from an engine quirk means midnight, not hour 24.
+    return (isoHour === 24 ? 0 : isoHour) * 60 + isoMinute;
+  }
   const m = /(\d{1,2}):(\d{2})/.exec(window);
   if (!m) return Infinity;
   let hour = Number(m[1]);
@@ -140,6 +169,47 @@ export function timeWindowMinutes(window: string | null): number {
   return hour * 60 + minute;
 }
 
+/**
+ * DISPLAY label for a `catering_pipeline.time_window`. The column is FREE TEXT and prod
+ * holds three shapes at once (live finding 2026-09-05): Toast-born leads store a 24-hour
+ * clock (`"13:15"`), ezCater-born leads store the raw handoff INSTANT (`"2026-09-08T15:30:00Z"`),
+ * portal intakes store a human range (`"11:30 AM–12:00 PM"`). `timeWindowMinutes` sorts all
+ * three correctly ONLY because it converts an ISO instant to the ET clock first (it did not,
+ * until this fix — it scraped the UTC digits); rendering the raw string would likewise put an
+ * ISO timestamp in front of a manager.
+ *
+ *   ISO instant  → the ET clock time (formatTime — operational TZ, language-aware).
+ *   "HH:MM"      → a 12-hour label by plain integer arithmetic. NO Date: the string carries
+ *                  no date and no zone, so anchoring it to one would invent a day and could
+ *                  shift the hour; the meridiem word follows the language the same way
+ *                  formatTime's es-US output does.
+ *   anything else→ verbatim (a human wrote it; it is already a label).
+ *
+ * Pure. Every RENDER of a time window goes through here; the raw column is for sorting only.
+ */
+export function timeWindowLabel(tw: string | null, language: Language): string | null {
+  if (tw == null) return null;
+  if (/^\d{4}-\d{2}-\d{2}T/.test(tw)) {
+    // An ISO-SHAPED string that is not a real instant must render verbatim: toLocaleTimeString
+    // yields the literal "Invalid Date" for one, and printing that to a manager is worse than
+    // printing the raw text.
+    return Number.isNaN(Date.parse(tw)) ? tw : formatTime(tw, language);
+  }
+  const m = /^(\d{2}):(\d{2})$/.exec(tw);
+  if (!m) return tw;
+  const hour24 = Number(m[1]);
+  const minute = Number(m[2]);
+  if (hour24 > 23 || minute > 59) return tw;
+  const isPm = hour24 >= 12;
+  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+  const meridiem = language === "es" ? (isPm ? "p. m." : "a. m.") : isPm ? "PM" : "AM";
+  return `${hour12}:${m[2]} ${meridiem}`;
+}
+
+/** The two stages a catering event can be in while it is still DUE — `confirmed` (kitchen
+ *  owes it) and `out` (it has left). The pulse never shows any other stage. */
+export type DueStage = "confirmed" | "out";
+
 /** A confirmed catering event due out today (the mid-shift "what's coming"
  *  strip — time front and center). No revenue on this surface. */
 export interface CateringDueItem {
@@ -148,6 +218,42 @@ export interface CateringDueItem {
   name: string;
   headcount: number | null;
   isDelivery: boolean;
+  /** v2: confirmed vs already out — the difference between "the kitchen still owes this"
+   *  and "it left", which the strip previously hid by rendering both identically. */
+  stage: DueStage;
+  /** v2: where the lead came from (registry code or legacy free text; null = unlabelled). */
+  source: string | null;
+}
+
+/** Tomorrow's booked catering, as one line under today's list. */
+export interface CateringTomorrow {
+  count: number;
+  firstWindow: string | null;
+}
+
+/**
+ * Tomorrow's summary from tomorrow's raw time windows. COUNT IS EVERY BOOKED EVENT — a
+ * window nobody can parse is still an event the kitchen owes — while `firstWindow` is the
+ * earliest window that actually parses, so the line can only ever claim a time it knows.
+ * Pure; the raw window is rendered through `timeWindowLabel`, never directly.
+ */
+export function tomorrowSummary(windows: Array<string | null>): CateringTomorrow {
+  const parseable = windows
+    .filter((w): w is string => w != null && timeWindowMinutes(w) !== Infinity)
+    .sort((a, b) => timeWindowMinutes(a) - timeWindowMinutes(b));
+  return { count: windows.length, firstWindow: parseable[0] ?? null };
+}
+
+/**
+ * The stage chip's token roles. `bg-co-gold/20` is the documented brand-badge tint and
+ * `co-gold-text` the AA gold TEXT role; `out` is the ink fill (it is the louder state —
+ * the food has left the building). No status-colour text anywhere: co-success and its
+ * siblings are fill/dot roles only.
+ */
+export function stageChip(stage: DueStage): { className: string; labelKey: TranslationKey } {
+  return stage === "out"
+    ? { className: "bg-co-text text-co-bg", labelKey: "catering.pipeline.stage.out" }
+    : { className: "bg-co-gold/20 text-co-gold-text", labelKey: "catering.pipeline.stage.confirmed" };
 }
 
 export interface MidShiftPulse {
@@ -160,6 +266,8 @@ export interface MidShiftPulse {
   activeToday: ActiveStaff[];
   /** Confirmed catering events due out today, soonest window first. */
   cateringToday: CateringDueItem[];
+  /** Tomorrow's booked catering — the one-line look-ahead under today's list. */
+  cateringTomorrow: CateringTomorrow;
   /** Derived attention items, highest priority first, for the banner. */
   attention: AttentionItem[];
 }

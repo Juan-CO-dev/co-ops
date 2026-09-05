@@ -216,6 +216,16 @@ describe("lib/midshift.ts — the 6 AM pulse never invents an all-clear", () => 
     expect(body).toContain("loadCateringDueToday catering_pipeline:");
   });
 
+  it("loadCateringTomorrow throws rather than reporting tomorrow as EMPTY", () => {
+    // The sibling of the above, and it fails the same way one day earlier: a fabricated
+    // empty makes the look-ahead line read "nothing booked tomorrow", so nobody preps for
+    // it tonight. `tomorrowSummary` counts EVERY row it is handed — which is only honest
+    // if the read that produced them could not have silently returned none.
+    const body = fnBody(src, "async function loadCateringTomorrow(");
+    expect(droppedErrorReads(body)).toEqual([]);
+    expect(body).toContain("loadCateringTomorrow catering_pipeline:");
+  });
+
   it("the maintenance-notes HEAD count throws rather than fabricating zero", () => {
     const body = fnBody(src, "export async function loadMidShiftPulse(");
     expect(body).toContain("loadMidShiftPulse maintenance_notes:");

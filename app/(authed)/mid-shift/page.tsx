@@ -226,7 +226,7 @@ export default async function MidShiftPage({
         )}
       </div>
       <AttentionBanner items={pulse.attention} locationId={locationId} language={language} />
-      <CateringToday items={pulse.cateringToday} language={language} />
+      <CateringToday items={pulse.cateringToday} tomorrow={pulse.cateringTomorrow} language={language} />
       <OperationalStrip
         language={language}
         locationId={locationId}

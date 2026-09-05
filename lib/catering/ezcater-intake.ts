@@ -38,7 +38,7 @@ import { audit } from "@/lib/audit";
 import { parseEzcaterNotification, type EzcaterNotification } from "@/lib/ezcater/webhook-shared";
 import { fetchEzcaterOrder } from "@/lib/ezcater/orders";
 import type { EzcaterOrder } from "@/lib/ezcater/orders-shared";
-import { mergeEzcaterNotes, planEzcaterEvent, wrapEzcaterNotes } from "@/lib/ezcater/lifecycle-shared";
+import { handoffLabel, mergeEzcaterNotes, planEzcaterEvent, wrapEzcaterNotes } from "@/lib/ezcater/lifecycle-shared";
 import { isPipelineStage } from "@/lib/catering/pipeline";
 import type { PipelineStage } from "@/lib/catering/pipeline-shared";
 import { resolveCateringManager, systemMoveStage, type ExistingLead } from "@/lib/catering/system-intake";
@@ -129,7 +129,7 @@ async function refreshLead(sb: ReturnType<typeof getServiceRoleClient>, lead: Ex
   const { error, count } = await sb.from("catering_pipeline").update({
     headcount: order.headcount,
     event_date: order.eventTimestamp ? order.eventTimestamp.slice(0, 10) : null,
-    time_window: order.handoffTime,
+    time_window: handoffLabel(order.handoffTime),
     estimated_revenue_cents: order.totalDueCents,
     notes: mergeEzcaterNotes(current?.notes, leadNotes(order)),
     updated_at: new Date().toISOString(),
@@ -263,7 +263,7 @@ export async function processEzcaterDelivery(rawBody: string, signatureValid: bo
     location_id: loc.id,
     headcount: order.headcount,
     event_date: order.eventTimestamp ? order.eventTimestamp.slice(0, 10) : null,
-    time_window: order.handoffTime,
+    time_window: handoffLabel(order.handoffTime),
     estimated_revenue_cents: order.totalDueCents,
     notes: wrapEzcaterNotes(leadNotes(order)),
     assigned_to: assignedTo,

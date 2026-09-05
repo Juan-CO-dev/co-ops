@@ -9,6 +9,7 @@
  * Event keys = the live Order `EventKey` enum introspected on api.ezcater.com 2026-09-03.
  */
 import { canTransition, type PipelineStage } from "@/lib/catering/pipeline-shared";
+import { formatTime } from "@/lib/i18n/format";
 import { machineNotesMarkers, mergeMachineNotes, wrapMachineNotes } from "@/lib/catering/machine-notes-shared";
 
 export const EZCATER_ORDER_EVENT_KEYS = [
@@ -71,4 +72,29 @@ export function wrapEzcaterNotes(block: string): string {
  *  if no marked block exists, append one after the human text. Never drops a character a human wrote. */
 export function mergeEzcaterNotes(existing: string | null | undefined, block: string): string {
   return mergeMachineNotes("ezCater order", existing, block, "ezCater");
+}
+
+/**
+ * The ET clock label for an ezCater handoff instant — what gets STORED in
+ * `catering_pipeline.time_window`.
+ *
+ * ezCater's `catererHandoffFoodTime` is a raw ISO instant ("2026-09-08T15:30:00Z"), and
+ * writing it straight into the column put an ISO timestamp in front of a manager (live
+ * finding 2026-09-05: the column is free text and holds Toast's "13:15" and the portal's
+ * "11:30 AM–12:00 PM" alongside it). New writes store the operational-TZ clock label; the rows
+ * written before this ARE BACKFILLED to the same label by 0194, so the stored data has one
+ * shape. (`timeWindowLabel` still normalizes an ISO at DISPLAY time — a row that predates the
+ * backfill, or arrives from anywhere else, must still render readably — but display-time
+ * normalization was never sufficient on its own: `timeWindowMinutes` scraped the UTC digits
+ * out of a raw instant and SORTED it hours late until the same fix.)
+ *
+ * Written in "en" deliberately: this is STORED DATA read by both languages, not a render.
+ * An absent handoff stays null; anything unparseable is stored verbatim rather than
+ * replaced by an invented time.
+ */
+export function handoffLabel(iso: string | null): string | null {
+  if (iso == null || iso === "") return null;
+  if (Number.isNaN(Date.parse(iso))) return iso;
+  const label = formatTime(iso, "en");
+  return label === "" ? iso : label;
 }
