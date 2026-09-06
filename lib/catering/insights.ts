@@ -51,6 +51,11 @@ interface RawWindow {
   booked_events?: number;
   /** bigint — PostgREST hands bigints back as strings; Number() at the boundary. */
   booked_value_cents?: number | string;
+  /** Money split (0195) — REQUIRED at runtime; see the guard in `win()`. */
+  confirmed_events?: number;
+  confirmed_value_cents?: number | string;
+  completed_events?: number;
+  completed_value_cents?: number | string;
   lost?: number;
   win_rate_bps?: number | null;
   avg_headcount?: number | null;
@@ -81,14 +86,31 @@ interface RawV2 {
  * quiet zero (see the throw in the loader). The per-FIELD `?? 0` below is different in kind
  * and stays: an absent aggregate inside a window the RPC did return is a real empty set,
  * because `count(*)`/`coalesce(sum(…), 0)` cannot come back missing for a window it built.
+ * The four 0195 money-split keys are the exception — they CAN be missing (a pre-0195 function),
+ * so they are checked and thrown on. See the guard.
  */
-function win(r: RawWindow): WindowStats {
+function win(key: WindowKey, r: RawWindow): WindowStats {
+  // THE FOUR MONEY-SPLIT KEYS (0195) ARE THE ONE EXCEPTION TO THE `?? 0` ABOVE. They are absent
+  // exactly when the deployed function is still 0194's — a real, reachable state (this loader
+  // ships in the same PR as the migration, and prod runs the old function until it is applied).
+  // Defaulting them would render a confident "Confirmed $0 · Completed $0" over real booked
+  // money: the same fabrication v2 exists to end. Absence is an RPC contract error, not a zero.
+  if (
+    r.confirmed_events === undefined || r.confirmed_value_cents === undefined ||
+    r.completed_events === undefined || r.completed_value_cents === undefined
+  ) {
+    throw new Error(`loadCateringInsightsV2: window "${key}" is missing the money-split keys (migration 0195 not applied?)`);
+  }
   return {
     leadsNew: r.leads_new ?? 0,
     bySource: r.by_source ?? {},
     byStage: r.by_stage ?? {},
     bookedEvents: r.booked_events ?? 0,
     bookedValueCents: Number(r.booked_value_cents ?? 0),
+    confirmedEvents: r.confirmed_events,
+    confirmedValueCents: Number(r.confirmed_value_cents),
+    completedEvents: r.completed_events,
+    completedValueCents: Number(r.completed_value_cents),
     lost: r.lost ?? 0,
     winRateBps: r.win_rate_bps ?? null,
     avgHeadcount: r.avg_headcount ?? null,
@@ -129,10 +151,10 @@ export async function loadCateringInsightsV2(actor: AuthContext, todayEt: string
   return {
     today: todayEt,
     windows: {
-      this_week: win(raw.this_week),
-      this_month: win(raw.this_month),
-      last_30: win(raw.last_30),
-      all_time: win(raw.all_time),
+      this_week: win("this_week", raw.this_week),
+      this_month: win("this_month", raw.this_month),
+      last_30: win("last_30", raw.last_30),
+      all_time: win("all_time", raw.all_time),
     },
     calendar: (raw.calendar ?? []).map((e) => ({
       id: e.id,

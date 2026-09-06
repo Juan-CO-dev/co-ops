@@ -76,7 +76,20 @@ export function InsightsClient({ data }: { data: CateringInsightsV2 }) {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label={t("catering.insights.stat.leads_new")} value={String(stats.leadsNew)} />
         <StatCard label={t("catering.insights.stat.booked_events")} value={String(stats.bookedEvents)} />
-        <StatCard label={t("catering.insights.stat.booked_value")} value={money(stats.bookedValueCents)} accent />
+        {/* The booked money, split by whether the event has happened yet (Juan 2026-09-05:
+            "we need money confirmed and money completed"). The two cards partition the
+            "Booked events" total above them; each carries its own event count underneath. */}
+        <StatCard
+          label={t("catering.insights.stat.confirmed_value")}
+          value={money(stats.confirmedValueCents)}
+          sub={t("catering.insights.stat.events_count", { count: stats.confirmedEvents })}
+          accent
+        />
+        <StatCard
+          label={t("catering.insights.stat.completed_value")}
+          value={money(stats.completedValueCents)}
+          sub={t("catering.insights.stat.events_count", { count: stats.completedEvents })}
+        />
         <StatCard
           label={t("catering.insights.stat.win_rate")}
           value={stats.winRateBps == null ? "—" : `${Math.round(stats.winRateBps / 100)}%`}
@@ -191,11 +204,14 @@ export function InsightsClient({ data }: { data: CateringInsightsV2 }) {
   );
 }
 
-function StatCard({ label, value, note, accent }: { label: string; value: string; note?: string; accent?: boolean }) {
+/** `sub` is the quiet line under the number (the money cards' event count); `note` stays the
+ *  explanatory aside ("No settled leads yet"). Both are optional, both live below the value. */
+function StatCard({ label, value, sub, note, accent }: { label: string; value: string; sub?: string; note?: string; accent?: boolean }) {
   return (
     <div className={`co-card p-3 ${accent ? "ring-2 ring-co-gold/40" : ""}`}>
       <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-co-text-dim">{label}</p>
       <p className="mt-1 text-xl font-extrabold tabular-nums text-co-text">{value}</p>
+      {sub && <p className="mt-0.5 text-xs text-co-text-dim">{sub}</p>}
       {note && <p className="mt-0.5 text-[10px] text-co-text-muted">{note}</p>}
     </div>
   );

@@ -38,6 +38,12 @@ export interface WindowStats {
   byStage: Record<string, number>;
   bookedEvents: number;
   bookedValueCents: number;
+  /** Money split (0195): `confirmed`+`out` = still to be earned, `completed` = earned.
+   *  The two pairs sum to the booked pair — they are a partition of it, not extra rows. */
+  confirmedEvents: number;
+  confirmedValueCents: number;
+  completedEvents: number;
+  completedValueCents: number;
   lost: number;
   winRateBps: number | null;
   avgHeadcount: number | null;
