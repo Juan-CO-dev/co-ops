@@ -7,6 +7,7 @@ import { type NextRequest } from "next/server";
 import { jsonError, jsonOk } from "@/lib/api-helpers";
 import { audit } from "@/lib/audit";
 import { pullSalesForAllLocations, materializeDailyDepletion } from "@/lib/catering/toast-sales";
+import { completeElapsedCateringEvents } from "@/lib/catering/system-intake";
 import { etCalendarDate, etYmdMinusDays } from "@/lib/operational-day";
 import { loadDepletionWatermark } from "@/lib/counts";
 import { runParShadowForLocation, recordParRunSkipped } from "@/lib/dynamic-pars";
@@ -31,8 +32,12 @@ function secretOk(req: NextRequest): boolean {
 /** Yesterday in the operational timezone (business dates close overnight).
  *  DST-safe: ET calendar date first, then pure grid math — the previous
  *  toLocaleString round-trip computed D-2 all winter on UTC servers. */
+function todayYmd(): string {
+  return etCalendarDate(new Date().toISOString());
+}
+
 function yesterdayYmd(): string {
-  return etYmdMinusDays(etCalendarDate(new Date().toISOString()), 1);
+  return etYmdMinusDays(todayYmd(), 1);
 }
 
 export async function GET(req: NextRequest) {
@@ -41,6 +46,30 @@ export async function GET(req: NextRequest) {
   const businessDate = req.nextUrl.searchParams.get("date") ?? yesterdayYmd();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(businessDate)) return jsonError(400, "invalid_date");
   try {
+    // ── Catering: elapsed events complete themselves (spec 2026-09-05 §1) ────────────
+    // FIRST, before the sales pull: this is the ET day rollover, and a confirmed/out lead whose
+    // event date has passed is a served event nobody clicked done on. Juan: "if it's passed, it
+    // already completed." Chained here rather than scheduled — the nightly cron already IS the
+    // rollover, so no second vercel.json entry, no second secret, no clock to keep in sync.
+    //
+    // TODAY, not `businessDate`: the predicate is "the event date is behind us", which is about
+    // the wall clock, not the sales day being pulled. On a `?date=` backfill run this still
+    // completes today's elapsed events — correct and idempotent (a second pass finds nothing).
+    //
+    // BEST-EFFORT, exactly like the depletion and par steps below: a failure here is caught,
+    // recorded in the heartbeat as `elapsed_error`, and never aborts the sales pull it precedes.
+    let elapsedCompleted = 0;
+    let elapsedFailed = 0;
+    let elapsedError: string | null = null;
+    try {
+      const elapsed = await completeElapsedCateringEvents(todayYmd());
+      elapsedCompleted = elapsed.completed.length;
+      elapsedFailed = elapsed.failed.length;
+    } catch (e) {
+      elapsedError = truncateErr(e);
+      console.error("[cron toast-sales-pull] catering elapsed completion failed:", elapsedError);
+    }
+
     const results = await pullSalesForAllLocations(businessDate);
 
     // Drift spec 2026-07-31: materialize the day's depletion ledger for every
@@ -119,7 +148,7 @@ export async function GET(req: NextRequest) {
       action: "cron.success",
       resourceTable: "cron",
       resourceId: null,
-      metadata: { job: "toast-sales-pull", business_date: businessDate, rows_pulled: rowsPulled, per_location_failures: perLocationFailures, depletion_rows: depletionRows, depletion_failures: depletionFailures, par_rows: parRows, par_run_failures: parRunFailures },
+      metadata: { job: "toast-sales-pull", business_date: businessDate, rows_pulled: rowsPulled, per_location_failures: perLocationFailures, depletion_rows: depletionRows, depletion_failures: depletionFailures, par_rows: parRows, par_run_failures: parRunFailures, elapsed_completed: elapsedCompleted, elapsed_failed: elapsedFailed, elapsed_error: elapsedError },
       ipAddress: null,
       userAgent: null,
     });
