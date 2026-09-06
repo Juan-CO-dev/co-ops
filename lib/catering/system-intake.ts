@@ -79,3 +79,70 @@ export async function systemMoveStage(
   void audit({ actorId: null, actorRole: null, action: "catering.pipeline.stage_move", resourceTable: "catering_pipeline", resourceId: lead.id, metadata: { actor_context: actorContext, from_stage: lead.stage, to_stage: toStage }, ipAddress: null, userAgent: null });
   return "moved";
 }
+
+/** What one nightly completion pass did. `completed` carries the lead ids that genuinely moved
+ *  to `completed`; `stageChanged` counts leads a human moved between the select and the update
+ *  (not a failure — the guarded UPDATE's whole job); `failed` carries the ids whose move did
+ *  not happen, with the outcome that says why. */
+export interface ElapsedCompletionResult {
+  completed: string[];
+  stageChanged: number;
+  failed: Array<{ id: string; result: string }>;
+}
+
+/**
+ * THE ET DAY ROLLOVER COMPLETES ITS OWN EVENTS (spec 2026-09-05 §1; Juan: "if it's passed, it
+ * already completed"). Every lead still sitting in `confirmed` or `out` with an `event_date`
+ * before `todayEt` is moved to `completed` by the system, once a night, from the daily cron.
+ *
+ * NOT at read time (a stage is state — every surface must agree on it, and a read that writes
+ * is how loadOnHand earned its warning) and NOT on the 10-minute pinger (which would race a
+ * manager marking a lead `out` late in the evening of its own event day).
+ *
+ * `out` is deliberately NOT skipped: a lead left in `out` past its date is a delivered order
+ * nobody clicked done on, and the events ledger keeps the honest `out → completed` row with the
+ * auto note. `lost` stays lost; `inquiry`/`quote_sent` stay open — an unanswered inquiry with a
+ * past date is a stale lead, not a served event, and the pipeline board should keep saying so.
+ *
+ * All locations (the cron is system context, no actor). PER-LEAD FAILURE NEVER THROWS — one bad
+ * lead must not cost the other five, nor the sales pull this runs in front of. Only a failure of
+ * the SELECT throws, because then the candidate set is unknown and reporting "0 completed" would
+ * be a fabrication.
+ */
+export async function completeElapsedCateringEvents(todayEt: string): Promise<ElapsedCompletionResult> {
+  const sb = getServiceRoleClient();
+  // `event_date < todayEt` — a lead whose event is TODAY is untouched (the day is not over).
+  // Rows with a null event_date never match (`null < x` is null), which is the right answer:
+  // an undated lead has no elapsed date to pass.
+  const { data, error } = await sb.from("catering_pipeline")
+    .select("id, stage, location_id")
+    .in("stage", ["confirmed", "out"])
+    .lt("event_date", todayEt)
+    .returns<Array<{ id: string; stage: PipelineStage; location_id: string }>>();
+  if (error) throw new Error(`completeElapsedCateringEvents select: ${error.message}`);
+
+  const out: ElapsedCompletionResult = { completed: [], stageChanged: 0, failed: [] };
+  for (const lead of data ?? []) {
+    let outcome: SystemMoveOutcome;
+    try {
+      outcome = await systemMoveStage(sb, { id: lead.id, stage: lead.stage }, "completed", "auto: event date passed", "cron_rollover");
+    } catch (e) {
+      out.failed.push({ id: lead.id, result: "threw" });
+      console.error(`[catering rollover] complete threw for lead ${lead.id} (location ${lead.location_id}):`, e instanceof Error ? e.message : String(e));
+      continue;
+    }
+    if (outcome === "moved") { out.completed.push(lead.id); continue; }
+    if (outcome === "event_failed") {
+      // The stage UPDATE committed — the lead IS completed. Only the ledger row is missing, and
+      // systemMoveStage's contract is explicit that this must not be reported as a failed move.
+      // It is counted as completed and the trail gap is logged, never counted as a failure.
+      out.completed.push(lead.id);
+      console.error(`[catering rollover] lead ${lead.id} completed but its pipeline_events row did not land (trail gap)`);
+      continue;
+    }
+    if (outcome === "stage_changed") { out.stageChanged += 1; continue; }
+    out.failed.push({ id: lead.id, result: outcome });
+    console.error(`[catering rollover] complete failed for lead ${lead.id} (location ${lead.location_id}): ${outcome}`);
+  }
+  return out;
+}
