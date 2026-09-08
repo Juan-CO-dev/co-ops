@@ -16,7 +16,7 @@ Morning: the **opening report**. Staff walk the stations and fill it in; **Submi
 
 Through the day: log every delivery as it lands, log what you cook down from raw stock, and read **Mid-Shift Pulse** to see what the shop still owes.
 
-Evening: the **PM report** — grade the crew, name an MVP. Then the **cash deposit**. Then the closing checklist's final confirm, which needs the walk-out items done and the deposit already filed.
+Evening: the **PM report** — grade the crew, name an MVP. Then the **cash deposit**. Then the closing checklist's final confirm, which needs the walk-out items done and the deposit already filed. Any required line still unfinished needs a written reason first.
 
 Two ceremonies ask you to prove it is you:
 
@@ -202,6 +202,134 @@ This step could not be photographed: on this walk every prep row failed to save,
 - It writes a production record for each item — what you made, and the raw stock it used — from the numbers you entered. That is how prep shows up in stock.
 - **It does not touch last night's closing.** Nothing in the opening ticks a closing line; the closing is confirmed on its own, by hand.
 - There is **no PIN and no password** on this step. One tap finishes it.
+
+---
+
+## Confirming the closing
+
+The last thing that happens at night. The crew ticks the list as they go; the confirm at the end is yours, and it is a signature.
+
+### 1. See where the closing stands
+
+**What you see**
+
+![Dashboard tile reading "Closing checklist — In progress · 3 of 61 items" with a Continue closing link](img/manager/64-dashboard-closing-in-progress.png)
+
+**What to do** — Read the tile, then tap **Continue closing**.
+
+**Worth knowing**
+
+- Unlike the opening, **the closing saves every tap as it happens**. Whatever the crew has ticked is already on the record before you arrive.
+- Check the **Cash Deposit** and **PM Report** tiles on the same screen first. Both feed the closing, and one of them can stop it dead — see step 5.
+
+### 2. Open the checklist
+
+**What you see**
+
+![Closing checklist with a progress bar and the ten station cards](img/manager/65-closing-checklist-arrival.png)
+
+**What to do** — Work down the stations, finishing whatever the crew left.
+
+**Worth knowing**
+
+- Lines somebody else ticked carry **their** name and time, and any note they left shows on the row. Read the notes on your way down — that is where "we ran out of rags" lives.
+- **Progress** counts required items across the whole list. Each station header carries its own count.
+- Some lines are greyed out as waiting on a higher role. Those are the ones the crew could not tap; they are yours.
+
+### 3. The Walk-Out Verification station
+
+**What you see**
+
+![The Walk-Out Verification card reading "0 of 5 required done" with five untouched lines](img/manager/66-walkout-verification-section.png)
+
+**What to do** — Leave this station until you are genuinely the last one out. Then tick all five.
+
+**Worth knowing**
+
+- **Walk-Out Verification is the gate.** Every line in this station has to be ticked before the confirm control appears at all. There is no reason path and no override here — while it is short you get *"Walk-Out Verification not complete — finalize unlocks once all 5 walk-out items are checked off."*
+- **Only a key holder or above can confirm the closing.** Below that the page says *"Only Key Holder or higher can finalize the closing."* Both of these are enforced on the server as well as on screen, so there is no way around them.
+- The **Closing Manager** card's *"Cash deposited"* and *"PM Report submitted"* rows tick themselves when those reports are filed, with the filer's name and time. You do not tap them.
+
+### 4. Everything you can tick, ticked
+
+**What you see**
+
+![Every station at its full count, with a floating bar reading "Review & submit (incomplete) · 58 of 61 required done"](img/manager/67-closing-checklist-fully-done.png)
+
+**What to do** — Check every station card reads its full count, then tap the **Review & submit** bar.
+
+**Worth knowing**
+
+- **Three Closing Manager lines cannot be ticked from this page: AM Prep List, Opening verified, and Mid-day Prep.** They read *"Pending — submit from the dashboard"* and each one is a link out to that report's own page. They tick themselves when their report is submitted.
+- So **61 of 61 is not reachable from the closing checklist alone.** If you want a clean close, finish those three reports first. If you cannot, the next step is where you say why.
+
+### 5. If the cash deposit is missing — *not shown*
+
+This did not come up on the walk, because the deposit and the PM report were already filed. It is worth knowing before it happens to you at 11 PM.
+
+**What to do** — File the cash deposit, then come back.
+
+**Worth knowing**
+
+- **With the walk-out done but no cash deposit on file, the confirm control never appears.** In its place you get a banner reading *"Cash deposit required before you can finalize the closing."* and a **Do the cash deposit** button that takes you there.
+- **This is a hard gate. There is no explain-why path for it**, and the server refuses it too — the deposit has to exist.
+- A template can mark any other line the same way. A hard-gated line that is not done blocks the whole submission and the app names the line; no reason will get you past it. Everything else that is required takes a written reason instead.
+
+### 6. Review and explain
+
+**What you see**
+
+![The Review & submit panel headed "Some required items aren't done — explain why" with a reason box per unfinished line](img/manager/68-review-submit-explain-why.png)
+
+**What to do** — Write a real sentence in each box, then tap **Continue**.
+
+**Worth knowing**
+
+- Each box is labelled with the station and the line — *"Closing Manager · AM Prep List"* — so you know what you are explaining. The placeholder asks the question plainly: *"Why couldn't this be completed?"*
+- **Continue stays disabled until every box has something in it.** A space does not count.
+- If nothing is outstanding, this same panel just reads **All required items complete** and there is nothing to write.
+- **The reason is stored against that line — but nothing in the app reads it back to you.** It is not on the saved report and it is not on the checklist afterwards. If tomorrow morning needs to know, tell the opener as well.
+
+### 7. Confirm with your PIN
+
+**What you see**
+
+![The "Confirm with your PIN" dialog with the four-digit keypad](img/manager/69-confirm-pin-prompt.png)
+
+**What to do** — Enter your four digits. The fourth one submits.
+
+**Worth knowing**
+
+- **The closing is confirmed with your PIN, not your password.** The cash deposit and the closing are the two PIN ceremonies in the app; the inventory audit and Admin use your password instead.
+- Your name goes on the confirmation and on every reason you just wrote. Do not let somebody else tap it in for you.
+
+### 8. The confirmed closing
+
+**What you see**
+
+![The banner reading "Closing submitted with incomplete items · 4:04 AM by you" over a locked checklist](img/manager/70-closing-confirmed-state.png)
+
+**What to do** — Read the banner, then leave.
+
+**Worth knowing**
+
+- The banner reads **"Closing submitted with incomplete items"** when you explained your way past something, and **"Closing confirmed"** when the list was clean. The difference is on the record.
+- **Every line locks for everybody.** No more ticking, no more notes, no undo — and the cash deposit for that night can no longer be corrected either.
+- Confirming happens once. There is no reopening it.
+
+### 9. Back on the dashboard
+
+**What you see**
+
+![The dashboard tile now reading "Closed with items incomplete" with a Review closing link](img/manager/71-dashboard-closed-incomplete.png)
+
+**What to do** — Check the tile flipped. **Review closing** is now read-only.
+
+**Worth knowing**
+
+- The tile reads **"Closed with items incomplete"**, or just **"Closed"** when nothing was outstanding.
+- **A closing left unconfirmed blocks tomorrow morning's opening.** The opener cannot start until last night's closing is finished. So confirm it with honest reasons rather than walking out on an open list — an explained close costs the shop nothing; an open one costs the opener their morning.
+- Lines you could not finish count against **Checklist Completion** on the Trends page. That is the point: the number is supposed to move when the night was short.
 
 ---
 
