@@ -285,3 +285,79 @@
 - Action: Opened the user menu and clicked "Sign out".
 - Saw: Returned to the location-tile screen: "Compliments Only", "Operations", "Manager login →", heading "Where are you?" with tiles "Capitol Hill" (MEP) and "P Street" (EM).
 - Shot: img/catering/39-logged-out.png
+
+# Supplement B — quote builder re-shoot (Marcus Webb, 2026-09-08)
+
+## Step 40 — new-quote-form-filled
+- URL: /catering/quotes
+- Persona / viewport: Marcus Webb, General Manager / 1280x800
+- Action: Logged in fresh (P Street → General Manager → Marcus Webb → PIN 9999; carried over from Supplement A's session), opened /catering/quotes, clicked "New quote", set Location to "P Street", Pipeline lead to the existing "Erin Walsh · Hill Staffers LLC", and typed Client email "erin.walsh@hillstaffers.com", Client name "Erin Walsh", Company "Hill Staffers LLC", Event date "2026-09-18", Headcount "25".
+- Saw: The "New quote" panel with every field holding the typed value; picking the pipeline lead did NOT auto-fill client email/name/company — those still had to be typed by hand.
+- Confused: The Client email field is a combobox (has a dropdown arrow) but accepted free-typed text with no visible suggestion list.
+- Shot: img/catering/40-new-quote-form-filled.png
+
+## Step 41 — quote-builder-with-lines
+- URL: /catering/quotes
+- Persona / viewport: Marcus Webb, General Manager / 1280x800
+- Action: From "Add package" selected "16 pc platter — $115.00" (auto-inserted a "Choose your subs (×8)" line, Qty 8, Unit price blank) and typed 115 into its Unit price; then selected "Full Lunch — $19.99" (auto-inserted a second "Choose your sub" line, Qty 1, Unit price blank) and typed 19.99 into its Unit price; then from "Add à la carte" selected "Napkins & Utensils — $20.00" only (no other à-la-carte item touched); then ticked "Delivery" (a "Delivery zone" dropdown appeared, left at "None").
+- Saw: Three line-item rows — "Choose your subs (×8)" qty 8 @ 115, "Choose your sub" qty 1 @ 19.99, "Napkins & Utensils" qty 1 @ 20 — sitting above the package/à-la-carte pickers and the now-checked Delivery box.
+- Confused: The "Choose your subs (×8)" line prices as Unit price × Qty (115 × 8 = $920), not as a flat $115 package price — typing the package's listed price into Unit price the way the task described inflates that line to 8× the sticker price.
+- Shot: img/catering/41-quote-builder-with-lines.png
+
+## Step 42 — quote-totals-area
+- URL: /catering/quotes
+- Persona / viewport: Marcus Webb, General Manager / 1280x800
+- Action: Scrolled to the bottom of the builder to read the totals block.
+- Saw: "Subtotal $959.99" / "Tax $96.00" / "Total $1,055.99" / "Deposit due $264.00" — a tax line now renders (it did not in the earlier Capitol Hill attempt, which banner-warned "No pricing rule for this location"), computed at 10% of subtotal ($96.00 on $959.99, rounded). No gratuity line and no separate service-charge line appear anywhere in the totals block.
+- Shot: img/catering/42-quote-totals-area.png
+
+## Step 43 — quote-saved-draft-detail
+- URL: /catering/quotes
+- Persona / viewport: Marcus Webb, General Manager / 1280x800
+- Action: Clicked "Save draft".
+- Saw: The draft saved on the FIRST TRY with no error — the screen swapped straight from the builder to the quote's own detail view: a "draft" status label, "$1,055.99" / "2026-09-18 · 25 covers" / "Expires: Tue, Sep 22", a "Line items" list already showing all three rows with their prices, the same Subtotal/Tax/Total/Deposit-due block, and three actions — "Send quote", "Revise", "Print labels". There was no separate toast or banner reading "saved" — landing on this detail page WAS the success signal.
+- Shot: img/catering/43-quote-saved-draft-detail.png
+
+## Step 44 — quote-detail-line-items
+- URL: /catering/quotes
+- Persona / viewport: Marcus Webb, General Manager / 1280x800
+- Action: Navigated back to /catering/quotes, found the new "$1,055.99 · 2026-09-18 · 25 covers · draft" tile under "draft · 3", and clicked it to reopen the saved quote's detail.
+- Saw: A "DRAFT" status pill at the top right, and the "Line items" section listing "Choose your subs (×8) × 8 — $920.00", "Choose your sub × 1 — $19.99", "Napkins & Utensils × 1 — $20.00" — confirming the rows persisted correctly after the save/reload round-trip.
+- Shot: img/catering/44-quote-detail-line-items.png
+
+## Step 45 — send-quote-password-stepup
+- URL: /catering/quotes
+- Persona / viewport: Marcus Webb, General Manager / 1280x800
+- Action: Clicked "Send quote".
+- Saw: A dialog headed "Confirm your password" with body "Re-enter your password to confirm this action." and a single Password field with "Confirm" / "Cancel" buttons — a password step-up, not a PIN pad (unlike the closing checklist's confirm in Supplement A).
+- Shot: img/catering/45-send-quote-password-stepup.png
+
+## Step 46 — quote-sent-state
+- URL: /catering/quotes
+- Persona / viewport: Marcus Webb, General Manager / 1280x800
+- Action: Typed the password "sim-marcus-pw" and clicked "Confirm".
+- Saw: The status pill flipped to "sent" and a line appeared reading exactly: "Quote marked sent. No customer email on file, so nothing was emailed." The action buttons changed to "Resend", "Revise", "Mark accepted", "Mark declined", "Print labels".
+- Bug?: The quote WAS built with a client email ("erin.walsh@hillstaffers.com" typed into the builder's Client email field in Step 40), yet the send confirmation claims no customer email is on file — the typed email evidently isn't being read as "on file" for the send-notification check, or it lives on a different record (e.g. a customer/company row) than the one this check reads.
+- Shot: img/catering/46-quote-sent-state.png
+
+## Step 47 — quote-label-page
+- URL: /catering/quotes/fdd2b4fa-5aed-499e-84a5-d0c665aa50b0/label
+- Persona / viewport: Marcus Webb, General Manager / 1280x800
+- Action: Clicked "Print labels" (opened in a new tab) and switched to it.
+- Saw: Heading "Food Labels" / "Print allergen labels for this quote's items." with a "Print" button, and one label block per line item — "Choose your subs (×8)" Qty 8, "Choose your sub" Qty 1, "Napkins & Utensils" Qty 1 — each carrying "⚠ Allergen info not on file — verify before serving."
+- Shot: img/catering/47-quote-label-page.png
+
+## Step 48 — pipeline-hillstaffers-quotesent
+- URL: /catering/pipeline
+- Persona / viewport: Marcus Webb, General Manager / 1280x800
+- Action: Closed the label tab and opened /catering/pipeline to find the Hill Staffers lead.
+- Saw: The lead now sits under "Quote sent · 2" as "Erin Walsh / Hill Staffers LLC / Fri, Sep 18 / 25 ppl / Phone / @Marcus Webb" — moved into the Quote-sent column with an owner badge, but (unlike its column-mate "Maybe Corp … $900.00") it carries NO dollar-amount badge, even though the quote behind it totals $1,055.99.
+- Confused: Why the Erin Walsh card shows no price chip while the other "Quote sent" card does — possibly because this lead's quote total is read from the pipeline lead's own stored value rather than the just-sent quote, and that field was never populated by this flow.
+- Shot: img/catering/48-pipeline-hillstaffers-quotesent.png
+
+## Step 49 — logged-out
+- URL: /
+- Persona / viewport: logged out / 1280x800
+- Action: Opened the user menu and clicked "Sign out".
+- Saw: Returned to the location-tile screen — "Compliments Only" / "Operations" / "Manager login →" and "Where are you?" with tiles "Capitol Hill" (MEP) and "P Street" (EM).
+- Shot: img/catering/49-logged-out.png

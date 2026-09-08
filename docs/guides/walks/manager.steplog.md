@@ -445,3 +445,62 @@
 - Action: Clicked "Log out".
 - Saw: Landed back on the tile-login home screen — "Compliments Only" / "Operations", "Manager login →" link, and "Where are you?" with the two location tiles (Capitol Hill, P Street) — matching Step 01's starting screen.
 - Shot: img/manager/63-logged-out.png
+
+# Supplement A — confirming the closing (Marcus Webb, 2026-09-08)
+
+## Step 64 — dashboard-closing-in-progress
+- URL: /dashboard?loc=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Marcus Webb, General Manager / 1280x800
+- Action: Logged in fresh (P Street → General Manager → Marcus Webb → PIN 9999), then switched the location switcher to "EM · P Street".
+- Saw: "Today's operations at P Street" / "EM · P Street" / "Tue, Sep 8" tile, showing "Closing checklist" — "In progress · 3 of 61 items" — with a "Continue closing" link. Cash Deposit already read "Deposited at 3:22 AM by Marcus Webb" and PM Report "Submitted 3:21 AM by Marcus Webb".
+- Shot: img/manager/64-dashboard-closing-in-progress.png
+
+## Step 65 — closing-checklist-arrival
+- URL: /operations/closing?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Marcus Webb, General Manager / 1280x800
+- Action: Clicked "Continue closing".
+- Saw: Heading "Closing checklist" / "EM · P Street" with a "Progress" bar reading "5/61", followed by station cards — Crunchy Boi Station (3 of 6 done, with earlier completions logged by Maya Torres, one carrying the note "Ran out of clean rags halfway through — used paper towels to finish, someone should restock the rag bin."), 3rd Party Station, Walk Ins Station, Prep Fridge, Shut Down Back Line, Expo Station, Clean front of house, Prep Area, Closing Manager, and Walk-Out Verification, each starting at 0 of its required count except Crunchy Boi.
+- Shot: img/manager/65-closing-checklist-arrival.png
+
+## Step 66 — walkout-verification-section
+- URL: /operations/closing?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Marcus Webb, General Manager / 1280x800
+- Action: Ticked every remaining line across all eight cleaning stations, typing a plausible reading into each "Count" box where a fridge-temp step asked for one (Crunchy Boi 38°, 3rd-Party 39°, Walk-In 37°, Sauce/Prep Fridge 36°, Back-Line Drinks 39°, Deli Display 40°, FOH Drinks 38°, 3-Door 37°), then scrolled to the Walk-Out Verification card.
+- Saw: Overall "Progress" at "53/61"; "WALK-OUT VERIFICATION" reading "0 of 5 required done" with five untouched lines — Lights off, Devices charging, Oven off, Front doors locked, Back door locked — next to the Closing Manager card's already-satisfied "Cash deposited — Submitted by Marcus Webb at 4:00 AM" and "PM Report submitted — Submitted by Marcus Webb at 4:00 AM" rows.
+- Shot: img/manager/66-walkout-verification-section.png
+
+## Step 67 — closing-checklist-fully-done
+- URL: /operations/closing?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Marcus Webb, General Manager / 1280x800
+- Action: Ticked all five Walk-Out Verification lines (Lights off, Devices charging, Oven off, Front doors locked, Back door locked) and the two remaining Closing Manager lines (Count the drawer, Count and secure tips).
+- Saw: Every cleaning-station card now at its full count (e.g. "Walk-Out Verification — 5 of 5 required done", "Prep Area — 9 of 9 required done"), overall "Progress" reading "58 of 61 required items complete", and a floating bar at the bottom reading "Review & submit (incomplete)" / "58 of 61 required done".
+- Confused: Three Closing Manager lines — "AM Prep List", "Opening verified", "Mid-day Prep" — stayed "Pending — submit from the dashboard" the entire walk; each is a link out to a different page (am-prep, opening, mid-day) rather than a completable line on this screen, so 61/61 is not reachable from the closing checklist alone.
+- Shot: img/manager/67-closing-checklist-fully-done.png
+
+## Step 68 — review-submit-explain-why
+- URL: /operations/closing?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Marcus Webb, General Manager / 1280x800
+- Action: Tapped the "Review & submit · 58/61" bar.
+- Saw: A "Review & submit" panel opened with heading "Some required items aren't done — explain why" and subtext "58 of 61 required done", listing three fields labeled "Closing Manager · AM Prep List", "Closing Manager · Opening verified", and "Closing Manager · Mid-day Prep", each a textbox placeholder-reading "Why couldn't this be completed?", with a "Continue" button that stayed disabled until all three were filled.
+- Shot: img/manager/68-review-submit-explain-why.png
+
+## Step 69 — confirm-pin-prompt
+- URL: /operations/closing?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Marcus Webb, General Manager / 1280x800
+- Action: Typed a reason into each of the three boxes ("Opener never logged an AM Prep List today — checked with the morning crew, nothing was saved." / "Opening report was never submitted this morning — following up with the opener tomorrow." / "Mid-day Prep #1 is still in progress (Phase 1 — counting), not finished before close.") and tapped "Continue".
+- Saw: A dialog headed "Confirm with your PIN" with body text "Enter your 4-digit PIN to confirm this action.", a "PIN entry: 0 of 4 digits entered" tracker, and a numeric keypad. This was a PIN step-up, not the password step-up used elsewhere in the app.
+- Shot: img/manager/69-confirm-pin-prompt.png
+
+## Step 70 — closing-confirmed-state
+- URL: /operations/closing?location=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Marcus Webb, General Manager / 1280x800
+- Action: Entered PIN 9999 (pressed 9 four times) on the confirm dialog.
+- Saw: The dialog closed and a banner appeared reading "Closing submitted with incomplete items · 4:04 AM by you". Every line on every station card is now shown greyed out and locked (each button disabled, its accessible name suffixed "instance incomplete_confirmed"), with "Progress" frozen at "58/61". No refusal appeared at any point — cash deposit and PM report were already on file from earlier in the shift (both stamped 4:00 AM by Marcus Webb going into this walk), so confirm never asked for either again.
+- Shot: img/manager/70-closing-confirmed-state.png
+
+## Step 71 — dashboard-closed-incomplete
+- URL: /dashboard?loc=d2cced11-b167-49fa-bab6-86ec9bf4ff09
+- Persona / viewport: Marcus Webb, General Manager / 1280x800
+- Action: Navigated back to the dashboard.
+- Saw: "Today's operations at P Street" now reads "Closing checklist" / "Closed with items incomplete" with a "Review closing" link in place of the earlier "Continue closing"; the Trends tile "Checklist Completion" moved from "—" to "75%".
+- Shot: img/manager/71-dashboard-closed-incomplete.png
