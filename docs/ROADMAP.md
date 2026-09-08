@@ -411,6 +411,12 @@ Logged-deferred → DEBT table.
   surfaces; want Written Reports live first) · staff Recipes viewer (cheap read) ·
   Rollups / AI Insights (need months of data) · Module #17 LTO measurement (needs
   lto_events volume) · admin Audit/Locations/Pars pages.
+- **Training — the in-app guides (surface, don't write)** — the guides EXIST as of
+  2026-09-08: `docs/guides/` (staff · manager · catering; sim screenshots; walk scripts
+  for re-shoots). `/training`'s remaining job is to render them (Spanish edition
+  first, then role-aware surfacing). The guide walks also found real defects — the
+  opening Phase 2 live-head collision (P1, latent), the quote builder's menu-item
+  à-la-carte FK (P2), non-atomic quote create — tracked in CHIEF bugs + the guides PR.
 - **Food-cost % / margin dashboard** — the owner's number; natural fast-follow once
   Toast sales + inventory costs are both live. Not yet designed; on the radar.
 - **Tenant-config T1** — GATE UNCHANGED: 30 consecutive days of real CO use OR a
