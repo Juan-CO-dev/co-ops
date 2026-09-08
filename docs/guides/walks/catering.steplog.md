@@ -1,5 +1,7 @@
 # Catering walk — step log (Marcus Webb, 2026-09-08)
 
+> Images 08–15 (first quote run: hit the menu-item à-la-carte save defect + missing pricing rule) and 49 (duplicate of 39) were removed from the repo; Supplement B (40–48) is the clean run the guide uses. The defect is tracked in the PR body and CHIEF bugs.
+
 ## Step 01 — catering-hub
 - URL: /catering
 - Persona / viewport: Marcus Webb, General Manager / 1280x800
