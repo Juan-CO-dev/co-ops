@@ -3,7 +3,7 @@
 Work P Street unless a goal says otherwise. Photograph every distinct screen and the state after each action.
 Shots go to `docs/guides/img/manager/NN-slug.png`; the log goes to `walks/manager.steplog.md`.
 
-1. LOGIN as Marcus; tour the dashboard as a manager. Note which tiles and chips appear that staff do not get. Shots.
+1. LOGIN as Marcus (tile login: "Where are you?" P Street → "What's your role?" General Manager → "Who are you?" Marcus Webb → PIN 9999; the "Manager login →" link at the top is the email+password route — shoot it too but use the tiles); tour the dashboard as a manager. Note which tiles and chips appear that staff do not get. Shots.
 2. CONFIRM OPENING: open today's opening; finish any open items; run the confirm ceremony (PIN or password when asked). Shots: before confirm, the ceremony prompt, after confirm. If the GM path skips the ceremony, log out and repeat as Rosa Delgado (key holder, PIN 4444).
 3. RECEIVING: operations → receiving → log a delivery from any produce vendor; receive most expected items but leave ONE short; at completion read the options for the short item and pick one. Shots: the vendor pick, a line entry, the short-item prompt, the finished receipt.
 4. COUNTS: operations → counts; start a count; enter 3–4 on-hand values; submit. Shots.

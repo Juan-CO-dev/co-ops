@@ -3,7 +3,7 @@
 Shots go to `docs/guides/img/catering/NN-slug.png`; the log goes to `walks/catering.steplog.md`.
 The customer funnel (goal 6) is walked logged out.
 
-1. LOGIN as Marcus → /catering. Shot of the hub.
+1. LOGIN as Marcus (tiles: P Street → General Manager → Marcus Webb → PIN 9999) → /catering. Shot of the hub.
 2. PIPELINE: /catering/pipeline; shot the board; open one lead; move it one stage forward; add a note. Shots: board, lead detail, the stage change, the note. If the board is EMPTY, create a lead first (fake company "Hill Staffers LLC", 25 people, next Friday).
 3. QUOTES: /catering/quotes; open or create a quote for that lead (2 packages + 1 à-la-carte item); mark it sent if offered; open the /catering/quotes/<id>/label page. Shots: the list, the builder, the totals, the label.
 4. CUSTOMERS + COMPANIES: /catering/customers and /catering/companies; open one of each. Shots.
