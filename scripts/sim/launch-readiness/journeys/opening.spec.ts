@@ -68,7 +68,9 @@ for (const [code, employeeAlias, khAlias] of [["EM", "maya", "rosa"], ["MEP", "l
     // evidence. Both contexts use the harness login and network/screenshot guard.
     const context = await browser.newContext({ baseURL: SIM_APP_ORIGIN, viewport: page.viewportSize(), locale: kh.language, serviceWorkers: "block" });
     const manager = await context.newPage();
-    await context.tracing.start({ screenshots: true, snapshots: true, sources: false });
+    // Playwright already traces contexts made through the `browser` fixture (trace: retain-on-failure);
+    // a manual start here throws "Tracing has been already started" (CC full run, 2026-09-09).
+    try { await context.tracing.start({ screenshots: true, snapshots: true, sources: false }); } catch { /* auto-traced */ }
     await contract.trackPage(manager);
     try {
       await login(manager, kh, code);
@@ -299,7 +301,7 @@ for (const [code, employeeAlias, khAlias] of [["EM", "maya", "rosa"], ["MEP", "l
       await contract.screenshot("outcome", manager);
     } finally {
       if (info.errors.length) await contract.screenshot("failure-kh", manager);
-      await context.tracing.stop({ path: info.outputPath("kh-private-trace.zip") });
+      try { await context.tracing.stop({ path: info.outputPath("kh-private-trace.zip") }); } catch { /* the runner's own trace handling owns this context */ }
       await context.close();
     }
   });
