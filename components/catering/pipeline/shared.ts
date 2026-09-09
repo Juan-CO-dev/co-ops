@@ -53,7 +53,8 @@ const KNOWN_ERROR_CODES = new Set([
   "location_access_denied",
   "invalid_stage",
   "mixed_concerns",
-  "stage_changed", // guarded moveStage 409 (concurrent move) — actionable, not generic
+  "stage_changed",
+  "illegal_transition", // guarded moveStage 409 (concurrent move) — actionable, not generic
   "generic",
 ]);
 

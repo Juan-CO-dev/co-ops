@@ -196,10 +196,19 @@ export function CountForm({ skus, products, locationId }: {
       setAdvisories(Array.isArray(body?.advisories) ? body.advisories : []);
       return;
     }
-    const j = await res.json().catch(() => ({} as { code?: string }));
+    const j = await res.json().catch(() => ({} as { code?: string; detail?: { levelLabel?: string | null; skuName?: string | null; skuId?: string | null } | null }));
     if (j?.code === "step_up_required" || j?.code === "step_up_stale") {
       pendingRef.current = () => void submit();
       setStepUpOpen(true);
+      return;
+    }
+    if (j?.code === "unresolvable_line" && j.detail?.levelLabel) {
+      const name = j.detail.skuName ?? (j.detail.skuId ? (skuById.get(j.detail.skuId)?.name ?? null) : null);
+      setErr(
+        name
+          ? t("counts.error.unresolvable_line_named", { name, unit: j.detail.levelLabel })
+          : t("counts.error.unresolvable_line_unit", { unit: j.detail.levelLabel }),
+      );
       return;
     }
     setErr(t(("counts.error." + (j?.code ?? "generic")) as never));

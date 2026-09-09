@@ -22,7 +22,7 @@ import { checkCateringCapacity, type CateringCapacityResult } from "@/lib/cateri
 import { reservePrepDemand, consumePrepDemand, releasePrepDemand } from "@/lib/catering/prep-demand";
 
 // ── Stage vocabulary ─────────────────────────────────────────────────────────
-import { PIPELINE_STAGES, type PipelineStage } from "./pipeline-shared";
+import { PIPELINE_STAGES, type PipelineStage, canTransition } from "./pipeline-shared";
 import { isLeadSource } from "./intake-shared";
 // Client-safe stage vocabulary lives in pipeline-shared.ts; re-exported for
 // existing server consumers.
@@ -451,6 +451,14 @@ export async function moveStage(
 
   const fromStage = isPipelineStage(lead.stage) ? lead.stage : null;
   if (fromStage === args.toStage) return; // no-op
+
+  // LEGAL MOVES ONLY. LEGAL_TRANSITIONS (pipeline-shared) existed since the ezCater lifecycle but
+  // moveStage never consulted it — the board offered every other stage on one tap, so a Completed
+  // lead could be dragged back to Inquiry and prep demand flipped with it (guide-walk sim, 2026-09-08).
+  // canTransition is TOTAL: a legacy/unknown label on the row is refused, never guessed.
+  if (fromStage === null || !canTransition(fromStage, args.toStage)) {
+    throw new CateringPipelineError(409, "illegal_transition", `A lead cannot move from ${lead.stage} to ${args.toStage}`);
+  }
 
   // Guard on the stage the pre-read saw (silent-UPDATE law): the event row below records
   // from_stage from that read, so an unguarded UPDATE would let a concurrent move write a

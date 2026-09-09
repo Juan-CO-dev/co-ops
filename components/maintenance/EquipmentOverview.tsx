@@ -128,6 +128,28 @@ export function EquipmentOverview({
           </ul>
         </section>
       )}
+
+      {overview.otherNotes.length > 0 && (
+        <section>
+          <h2 className="mb-2 text-xs font-bold uppercase tracking-[0.14em] text-co-gold-text">
+            {serverT(language, "maintenance.overview.other_heading")}
+          </h2>
+          <ul className="flex flex-col gap-2">
+            {overview.otherNotes.map((n) => (
+              <li key={n.id} className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-2">
+                <div className="text-sm font-bold text-co-text">
+                  {n.otherLabel ?? serverT(language, "maintenance.overview.other_unlabeled")}
+                </div>
+                <div className="mt-1 text-xs text-co-text">{n.note}</div>
+                <div className="mt-1 text-[11px] text-co-text-muted">
+                  {formatDateLabel(n.at.slice(0, 10), language)}
+                  {n.byName ? ` · ${n.byName}` : ""}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }

@@ -427,8 +427,16 @@ export function ReceivingForm({
   // A line is "ready" for submission if it names a SKU and has a positive qty.
   const readyLines = lines.filter((l) => l.skuId !== "" && l.qty.trim() !== "" && Number(l.qty) > 0);
 
+  // A line the operator TYPED INTO but never attached to an item (the blank "New item" card
+  // with a qty, a price or a note) used to fall out of readyLines and vanish on submit with
+  // no warning (guide-walk sim, 2026-09-08: qty 12 · $3.25 · a note — gone). Block the
+  // submit and say so; an untouched blank card still costs nothing.
+  const orphanLines = lines.filter(
+    (l) => l.skuId === "" && (l.qty.trim() !== "" || l.note.trim() !== "" || l.unitPrice.trim() !== ""),
+  );
+
   const canSubmit =
-    vendorId !== "" && date !== "" && readyLines.length > 0 && (receiptPhotoId !== null || photoLater) && !busy;
+    vendorId !== "" && date !== "" && readyLines.length > 0 && orphanLines.length === 0 && (receiptPhotoId !== null || photoLater) && !busy;
 
   // How many lines carry a price the server will accept. Rendered beside the toggle in
   // BOTH states — it is what keeps an entered price from ever being invisible while the
@@ -1190,6 +1198,11 @@ export function ReceivingForm({
       {/* ── STEP 3 · Submit (sticky at the bottom of the viewport) ───────── */}
       <div className="fixed inset-x-0 bottom-0 z-20 border-t-2 border-co-border bg-co-bg/95 px-4 py-3 backdrop-blur sm:px-6">
         <div className="mx-auto flex max-w-2xl flex-col gap-2">
+          {orphanLines.length > 0 ? (
+            <p role="alert" className="rounded-lg border-2 border-co-warning bg-co-warning-surface px-3 py-2 text-xs font-semibold text-co-warning-text">
+              {t("receiving.orphan_lines", { n: orphanLines.length })}
+            </p>
+          ) : null}
           <div className="flex items-center gap-2">
             <span className={stepNumClass}>3</span>
             <button

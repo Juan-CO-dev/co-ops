@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
     // place — and what to do about it.
     return jsonOk({ countEventId: res.countEventId, advisories: res.advisories }, 201);
   } catch (e) {
-    if (e instanceof CountError) return jsonError(e.status, e.code, { message: e.message });
+    if (e instanceof CountError) return jsonError(e.status, e.code, { message: e.message, detail: e.detail ?? null });
     throw e;
   }
 }

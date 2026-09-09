@@ -83,6 +83,18 @@ export function MaintenanceReportDetailView({ detail, language }: Props) {
             ))}
           </li>
         ))}
+        {detail.otherNotes.length > 0 ? (
+          <li className="rounded-lg border-2 border-co-border bg-co-surface px-3 py-2 text-sm">
+            <span className="font-medium text-co-text">{t("reports.maint.other_heading")}</span>
+            {detail.otherNotes.map((n) => (
+              <div key={n.id} className="mt-1 rounded bg-co-bg px-2 py-1 text-xs text-co-text">
+                {n.otherLabel ? <span className="font-semibold">{n.otherLabel}: </span> : null}
+                {n.note}
+                {n.byName !== null ? ` — ${n.byName}` : ""}
+              </div>
+            ))}
+          </li>
+        ) : null}
       </ul>
     </div>
   );
