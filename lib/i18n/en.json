@@ -3490,6 +3490,7 @@
   "catering.quotes.error.generic": "Something went wrong. Please try again.",
   "catering.quotes.error.forbidden": "You do not have permission for that.",
   "catering.quotes.error.not_found": "Not found.",
+  "catering.quotes.error.unknown_item": "One of the lines points at an item that is no longer on the menu. Remove that line and add it again from the picker.",
   "catering.quotes.error.invalid_payload": "Check the fields and try again.",
   "catering.quotes.error.location_access_denied": "You do not manage that location.",
   "catering.quotes.error.mixed_concerns": "Save one change at a time.",
