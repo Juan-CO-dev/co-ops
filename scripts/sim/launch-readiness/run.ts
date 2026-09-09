@@ -64,7 +64,8 @@ async function waitReady(child: ChildProcess, cancelled: () => boolean) {
 async function verifyDev(html: string, child: ChildProcess, started: number) {
   if (!child.pid || child.exitCode !== null) throw new Error("server identity mismatch");
   if (process.platform === "win32") {
-    const listeners = spawnSync("netstat.exe", ["-ano", "-p", "tcp"], { encoding: "utf8", windowsHide: true });
+    // No `-p tcp`: on Windows that filter is IPv4-only and `-H localhost` binds `[::1]` (CC boot, 2026-09-09).
+    const listeners = spawnSync("netstat.exe", ["-ano"], { encoding: "utf8", windowsHide: true });
     if (listeners.status !== 0) throw new Error("listener identity unavailable");
     const pids = listeners.stdout.split(/\r?\n/).filter(line => /(?:127\.0\.0\.1|\[::1\]):3100\s+\S+\s+LISTENING\s+\d+/.test(line)).map(line => Number(line.trim().split(/\s+/).at(-1)));
     if (!pids.length) throw new Error("listener identity missing");
@@ -85,7 +86,11 @@ async function verifyDev(html: string, child: ChildProcess, started: number) {
   if (url.origin !== SIM_APP_ORIGIN) throw new Error("dev asset origin mismatch");
   const file = resolve(".next-sim-launch/dev", decodeURIComponent(url.pathname.slice("/_next/".length)));
   const { statSync } = await import("node:fs");
-  if (!file.startsWith(resolve(".next-sim-launch/dev/static") + requireSeparator()) || statSync(file).mtimeMs < started - 2000) throw new Error("stale dev asset");
+  // Dev identity = listener ancestry (above) + byte equality of a served chunk with the file on disk.
+  // No mtime freshness rule: Turbopack legitimately reuses cached chunks across dev boots (CC boot, 2026-09-09);
+  // the F5 production target carries a BUILD_ID receipt instead. `started` stays for the manifest.
+  void started;
+  if (!file.startsWith(resolve(".next-sim-launch/dev/static") + requireSeparator()) || !statSync(file).isFile()) throw new Error("stale dev asset");
   const response = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(5000) });
   const served = Buffer.from(await response.arrayBuffer());
   if (!response.ok || !served.equals(readFileSync(file))) throw new Error("dev asset identity mismatch");

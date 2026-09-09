@@ -87,7 +87,11 @@ export const ALLOWED_PREFERENCE_KEYS = [
   "CRON_SECRET", "CATERING_SCAN_SECRET", "EMAIL_FROM", "EMAIL_FROM_TEAM",
 ] as const;
 const OPTIONAL_KEYS = ["AUTH_JWT_SECRET", "SIM_LEGACY_JWT_SECRET", "NEXT_PUBLIC_APP_URL", "PORTAL_MAGIC_LINK_ALLOWLIST", "TOAST_ENABLED", "TWILIO_ENABLED"];
-const knownKeys = new Set<string>([...REQUIRED_SIM_KEYS, ...ALLOWED_PREFERENCE_KEYS, ...PROVIDER_KEYS_CLOSED_INVENTORY, ...OPTIONAL_KEYS]);
+/** Runner-owned sim credentials (the seed's deliberately-public sim PINs). Recognised in `.env.sim`
+ * so the file validates, but NEVER passed to the app child — the F4 runner lifts them into its
+ * private process env for the real-UI login specs. */
+export const RUNNER_PRIVATE_KEYS = ["SIM_PIN_MARCUS", "SIM_PIN_ROSA", "SIM_PIN_ANGEL"] as const;
+const knownKeys = new Set<string>([...REQUIRED_SIM_KEYS, ...ALLOWED_PREFERENCE_KEYS, ...PROVIDER_KEYS_CLOSED_INVENTORY, ...OPTIONAL_KEYS, ...RUNNER_PRIVATE_KEYS]);
 
 function legacyHex(value: string): string {
   return Array.from(new TextEncoder().encode(value), (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -128,6 +132,7 @@ export function buildChildEnv(parentEnv: Env, simFile: Record<string, string>): 
   }
   for (const key of PROVIDER_KEYS_CLOSED_INVENTORY) child[key] = "";
   Object.assign(child, simFile);
+  for (const key of RUNNER_PRIVATE_KEYS) delete child[key]; // runner-owned; the app never sees them
   child.AUTH_JWT_SECRET = simFile.AUTH_JWT_SECRET || legacyHex(simFile.SIM_LEGACY_JWT_SECRET!);
   child.SIM_LEGACY_JWT_SECRET = "";
   Object.assign(child, {

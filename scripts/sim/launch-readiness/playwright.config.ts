@@ -6,6 +6,7 @@ import { Evidence, projectNetwork, type Projection, type Manifest } from "./evid
 import { assertHeld } from "./lease.mjs";
 import { SIM_APP_ORIGIN } from "../../../lib/sim-isolation-shared";
 import { SIM_LOCATIONS, type SimPersona, type LocationCode } from "../personas-shared";
+import { ROLES } from "../../../lib/roles";
 import * as driver from "../concurrency/driver.mjs";
 import en from "../../../lib/i18n/en.json";
 import es from "../../../lib/i18n/es.json";
@@ -60,8 +61,15 @@ export { expect, driver };
 export async function selectPersona(page: Page, persona: SimPersona, code: LocationCode) {
   await page.goto("/");
   await page.getByRole("button", { name: new RegExp(SIM_LOCATIONS[code].name) }).click();
+  // The role tile's accessible name is `<shortLabel><label>` ("GMGeneral Manager"); a bare label regex
+  // also matches AGM's "…Assistant General Manager" → strict-mode violation (CC boot, 2026-09-09).
   const key = `role.${persona.role}` as keyof typeof en;
-  await page.getByRole("button", { name: new RegExp(`${en[key]}|${es[key]}`) }).click();
+  const short = ROLES[persona.role].shortLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // Accessible name is the tile's aria-label "Select role General Manager" (es: "… rol …"); the badge
+  // form is tolerated too. Anchored at the end and requiring the label to START right after "role "
+  // (or the badge), so AGM's "…Assistant General Manager" can never match GM. (aria snapshot, CC 2026-09-09)
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  await page.getByRole("button", { name: new RegExp(`^(?:.*\\b(?:role|rol)\\s+)?(?:${short}\\s*)?(?:${esc(en[key])}|${esc(es[key])})$`) }).click();
 }
 export async function login(page: Page, persona: SimPersona, code: LocationCode) {
   const alias = persona.email.split("@")[0]!.toUpperCase(), pin = process.env[`SIM_PIN_${alias}`];
