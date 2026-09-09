@@ -1,3 +1,5 @@
+import { pathToFileURL } from "node:url";
+import { init, personaFor } from "./driver.mjs";
 /**
  * ORDERING RACES (sim-2, 2026-08-11). Needs a seeded low census on-hand so the
  * PFG walk has suggestions (else generate_draft 409s no_suggestions — the pilot's
@@ -12,10 +14,10 @@ import { Session, findUser, fireSimultaneous, makeReport, db, LOC } from "./driv
 const loc = LOC.EM;
 const PFG = "a0d8986c-e097-46f0-9e3f-e70943d4291b";
 
-async function run() {
+export async function run() {
   const { check, done } = makeReport("ORDERING RACES");
-  const rosa = await new Session(await findUser(loc, "key_holder"), "4444").login(loc);
-  const tommy = await new Session(await findUser(loc, "shift_lead"), "6666").login(loc);
+  const rosa = await new Session(await findUser(loc, "key_holder", personaFor({ locationCode: "EM", role: "key_holder", name: "Rosa Delgado" }).name), "4444").login(loc);
+  const tommy = await new Session(await findUser(loc, "shift_lead", personaFor({ locationCode: "EM", role: "shift_lead", name: "Tommy Nguyen" }).name), "6666").login(loc);
 
   // Sanity: does the seed make PFG suggestable? A single generate_draft should
   // succeed (or the whole test is vacuous). We check AFTER the race.
@@ -50,6 +52,7 @@ async function run() {
     const { data: poAfter } = await db.from("purchase_orders").select("status").eq("id", po.id).maybeSingle();
     check("D · two deliveries vs one PO: PO advanced to received (guarded flip, no corruption)", poAfter?.status === "received",
       `status=${poAfter?.status}, ${deliveries} deliveries linked, responses ${del.map((r) => r.status + (r.code ? "/" + r.code : "")).join(",")}`);
+    // LEGACY oracle — non-certifying (replaced by G1-O)
     check("D · at most the dedupe-allowed deliveries linked (no silent double-file)", (deliveries ?? 0) >= 1,
       `${deliveries} linked (dedupe guard governs exact count)`);
   } else {
@@ -58,4 +61,6 @@ async function run() {
 
   return done();
 }
-run().then((r) => process.exit(r.fails.length ? 1 : 0)).catch((e) => { console.error(e); process.exit(2); });
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  init().then(() => run()).catch(() => { console.error("F4 runner required; initialize under its lease"); process.exitCode = 2; });
+}
