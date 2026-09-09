@@ -1,47 +1,29 @@
-/**
- * SIM ONLY — launch the dev server against the co-ops-sim sandbox.
- *
- * Next.js env precedence: SHELL env beats .env.local. This launcher loads
- * .env.sim into the child's environment so every value there (sim Supabase,
- * sim peppers, sim JWT secret) OVERRIDES .env.local's prod values without
- * touching that file. Port 3100 so a normal dev server can coexist.
- *
- * Refuses to start unless .env.sim points at the sim project ref.
- *
- * Run:  node scripts/sim/dev-sim.mjs
+/** SIM ONLY. Explicit .env.sim, shared preflight, localhost:3100.
+ * Run: node scripts/sim/dev-sim.mjs
+ * The concurrency drivers keep the same file, port and JWT scheme.
  */
-
-import { readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { tsImport } from "tsx/esm/api";
 
-const SIM_REF = "jepgzucrvklhqpthowsc";
-const raw = readFileSync(".env.sim", "utf8");
-const env = { ...process.env };
-for (const line of raw.split(/\r?\n/)) {
-  const m = /^([A-Z_][A-Z0-9_]*)=(.*)$/.exec(line.trim());
-  if (m) env[m[1]] = m[2].replace(/^"|"$/g, "");
-}
-// The app hex-decodes AUTH_JWT_SECRET; PostgREST verifies with the project's
-// legacy JWT secret as UTF-8 bytes. Juan pastes the RAW legacy secret and we
-// derive the hex here — no dashboard changes needed.
-if (!env.AUTH_JWT_SECRET && env.SIM_LEGACY_JWT_SECRET) {
-  env.AUTH_JWT_SECRET = Buffer.from(env.SIM_LEGACY_JWT_SECRET, "utf8").toString("hex");
-}
-if (!(env.NEXT_PUBLIC_SUPABASE_URL ?? "").includes(SIM_REF)) {
-  console.error(`REFUSING: .env.sim NEXT_PUBLIC_SUPABASE_URL must point at ${SIM_REF}`);
+const { loadSimEnv } = await tsImport("./launch-readiness/env.ts", import.meta.url);
+const root = fileURLToPath(new URL("../../", import.meta.url));
+const result = loadSimEnv(root);
+if (!result.ok) {
+  console.error(`REFUSING: ${result.reasons.join("; ")}`);
   process.exit(1);
 }
-// Belt + suspenders: dormant legs stay dormant in sim regardless of stray values.
-// SET to empty (never delete): Next fills absent keys from .env.local (prod!) —
-// an empty string blocks the backfill AND fails every truthiness gate.
-for (const k of ["RESEND_API_KEY", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER", "ANTHROPIC_API_KEY", "TOAST_API_HOSTNAME", "TOAST_CLIENT_ID", "TOAST_CLIENT_SECRET", "SEVENSHIFTS_API_KEY"]) {
-  env[k] = "";
-}
-env.TOAST_ENABLED = "false";
-env.TWILIO_ENABLED = "false";
-env.NEXT_PUBLIC_APP_URL = "http://localhost:3100";
-
-const child = spawn("npx", ["next", "dev", "-p", "3100"], {
-  env, stdio: "inherit", shell: true,
+// Dev compiles on demand, so next/font fetches happen at request time here: phase "build"
+// keeps the documented fonts exception open in dev. Release evidence uses the F5 production target.
+const env = { ...result.env, NODE_ENV: "development", SIM_PHASE: "build" };
+// Propagate the preload into Next workers. The wrapper owns NODE_OPTIONS;
+// CC's inheritance simplification otherwise stays intact.
+const tsx = import.meta.resolve("tsx");
+const guard = new URL("./launch-readiness/network.ts", import.meta.url).href;
+env.NODE_OPTIONS = `--import=${tsx} --import=${guard}`;
+const child = spawn(process.execPath, [fileURLToPath(new URL("../../node_modules/next/dist/bin/next", import.meta.url)), "dev", "-p", "3100", "-H", "localhost"], {
+  cwd: root, env, stdio: "inherit", shell: false,
 });
-child.on("exit", (code) => process.exit(code ?? 0));
+child.on("error", () => { console.error("Sim dev process could not start"); process.exitCode = 1; });
+child.on("exit", (code, signal) => { process.exitCode = code ?? (signal ? 1 : 0); });
+for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => child.kill(signal));

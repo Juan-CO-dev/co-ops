@@ -1,8 +1,12 @@
 import type { NextConfig } from "next";
 
 import { SECURITY_HEADERS } from "./lib/security-headers";
+import { assertSimTarget } from "./lib/sim-isolation-shared";
+
+if (process.env.SIM_MODE) assertSimTarget(process.env.NEXT_PUBLIC_SUPABASE_URL);
 
 const nextConfig: NextConfig = {
+  ...(process.env.SIM_MODE ? { distDir: ".next-sim-launch" } : {}),
   // Next 16 dev mode blocks cross-origin requests to /_next/* dev resources by
   // default. When loading the dev server from a phone on the LAN
   // (http://10.0.0.20:3000), the HTML loads but client bundles + HMR socket
