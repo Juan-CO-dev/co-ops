@@ -1,0 +1,1843 @@
+{
+  "expectedTableCount": 141,
+  "inventory": {
+    "CONFIG": [
+      "locations",
+      "categories",
+      "vendor_categories",
+      "units",
+      "measure_units",
+      "sku_pack_formats",
+      "order_types",
+      "prep_sections",
+      "vendors",
+      "vendor_contacts",
+      "vendor_ordering_details",
+      "vendor_order_types",
+      "vendor_cutoffs",
+      "vendor_delivery_rhythm",
+      "vendor_items",
+      "sku_pack_levels",
+      "sku_inferred_baselines",
+      "vendor_price_history",
+      "location_sku_settings",
+      "products",
+      "product_primaries",
+      "items",
+      "item_par_levels",
+      "item_sizes",
+      "item_components",
+      "item_questions",
+      "section_questions",
+      "recipes",
+      "recipe_inputs",
+      "recipe_outputs",
+      "recipe_ingredients",
+      "recipe_steps",
+      "menu_items",
+      "toast_menu_map",
+      "toast_menu_cache",
+      "toast_ingest_exclusions",
+      "checklist_templates",
+      "checklist_template_items",
+      "maintenance_equipment",
+      "catering_packages",
+      "catering_package_items",
+      "catering_package_slot_options",
+      "catering_pricing_rules",
+      "catering_rate_rules",
+      "catering_allergen_types",
+      "catering_fulfillment_nodes",
+      "notification_recipients",
+      "positions",
+      "position_responsibilities",
+      "training_modules",
+      "deep_clean_tasks",
+      "catering_faq",
+      "catering_food_facts",
+      "catering_delivery_zones",
+      "catering_blackout_dates",
+      "catering_capacity_policy"
+    ],
+    "AUTH": [
+      "users",
+      "user_locations",
+      "sessions",
+      "password_resets",
+      "email_verifications",
+      "user_notification_prefs",
+      "catering_customers",
+      "catering_companies",
+      "catering_company_domains",
+      "catering_portal_sessions",
+      "catering_portal_tokens",
+      "catering_portal_rate_limits"
+    ],
+    "HISTORY": [
+      "checklist_instances",
+      "checklist_completions",
+      "checklist_submissions",
+      "checklist_incomplete_reasons",
+      "opening_closer_count_snapshots",
+      "opening_section_verifications",
+      "opening_setup_items",
+      "opening_setup_verifications",
+      "report_assignments",
+      "report_views",
+      "report_photos",
+      "cash_reports",
+      "pm_reports",
+      "pm_employee_evals",
+      "written_reports",
+      "ai_reports",
+      "weekly_rollups",
+      "shifts_daily_data",
+      "shift_overlays",
+      "shift_overlay_corrections",
+      "maintenance_notes",
+      "maintenance_tickets",
+      "productions",
+      "production_inputs",
+      "prep_list_resolutions",
+      "sku_count_events",
+      "sku_count_lines",
+      "par_levels",
+      "par_pass_events",
+      "par_pass_lines",
+      "purchase_orders",
+      "po_lines",
+      "po_transmissions",
+      "vendor_orders",
+      "vendor_deliveries",
+      "vendor_delivery_items",
+      "vendor_credits",
+      "vendor_rhythm_skips",
+      "email_receipts",
+      "photos",
+      "par_auto_moves",
+      "par_suggestion_actions",
+      "toast_sales_events",
+      "toast_daily_depletion",
+      "toast_daily_sales_signals",
+      "toast_daily_data",
+      "toast_catering_orders",
+      "catering_pipeline",
+      "catering_pipeline_events",
+      "catering_quotes",
+      "catering_quote_items",
+      "catering_quote_item_options",
+      "catering_orders",
+      "catering_order_items",
+      "catering_payments",
+      "catering_prep_demand",
+      "catering_allergens",
+      "customer_feedback",
+      "ezcater_events",
+      "lto_events",
+      "lto_event_items",
+      "lto_performance",
+      "notifications",
+      "announcements",
+      "announcement_acknowledgements",
+      "sms_messages",
+      "sms_queue",
+      "training_progress",
+      "training_reports",
+      "tip_pools",
+      "tip_pool_distributions",
+      "audit_log"
+    ]
+  },
+  "primaryKeys": {
+    "cash_reports": [
+      "id"
+    ],
+    "categories": [
+      "id"
+    ],
+    "catering_allergen_types": [
+      "id"
+    ],
+    "catering_allergens": [
+      "id"
+    ],
+    "catering_blackout_dates": [
+      "id"
+    ],
+    "catering_capacity_policy": [
+      "id"
+    ],
+    "catering_companies": [
+      "id"
+    ],
+    "catering_company_domains": [
+      "id"
+    ],
+    "catering_customers": [
+      "id"
+    ],
+    "catering_delivery_zones": [
+      "id"
+    ],
+    "catering_faq": [
+      "id"
+    ],
+    "catering_food_facts": [
+      "id"
+    ],
+    "catering_fulfillment_nodes": [
+      "id"
+    ],
+    "catering_order_items": [
+      "id"
+    ],
+    "catering_orders": [
+      "id"
+    ],
+    "catering_package_items": [
+      "id"
+    ],
+    "catering_package_slot_options": [
+      "id"
+    ],
+    "catering_packages": [
+      "id"
+    ],
+    "catering_payments": [
+      "id"
+    ],
+    "catering_pipeline": [
+      "id"
+    ],
+    "catering_pipeline_events": [
+      "id"
+    ],
+    "catering_portal_rate_limits": [
+      "id"
+    ],
+    "catering_portal_sessions": [
+      "id"
+    ],
+    "catering_portal_tokens": [
+      "id"
+    ],
+    "catering_prep_demand": [
+      "id"
+    ],
+    "catering_pricing_rules": [
+      "id"
+    ],
+    "catering_quote_item_options": [
+      "id"
+    ],
+    "catering_quote_items": [
+      "id"
+    ],
+    "catering_quotes": [
+      "id"
+    ],
+    "catering_rate_rules": [
+      "id"
+    ],
+    "customer_feedback": [
+      "id"
+    ],
+    "email_receipts": [
+      "id"
+    ],
+    "ezcater_events": [
+      "id"
+    ],
+    "item_components": [
+      "id"
+    ],
+    "item_par_levels": [
+      "id"
+    ],
+    "item_questions": [
+      "id"
+    ],
+    "item_sizes": [
+      "id"
+    ],
+    "items": [
+      "id"
+    ],
+    "location_sku_settings": [
+      "id"
+    ],
+    "lto_event_items": [
+      "id"
+    ],
+    "lto_events": [
+      "id"
+    ],
+    "maintenance_equipment": [
+      "id"
+    ],
+    "maintenance_notes": [
+      "id"
+    ],
+    "measure_units": [
+      "id"
+    ],
+    "menu_items": [
+      "id"
+    ],
+    "opening_closer_count_snapshots": [
+      "id"
+    ],
+    "opening_section_verifications": [
+      "id"
+    ],
+    "opening_setup_items": [
+      "id"
+    ],
+    "opening_setup_verifications": [
+      "id"
+    ],
+    "order_types": [
+      "id"
+    ],
+    "par_auto_moves": [
+      "id"
+    ],
+    "par_pass_events": [
+      "id"
+    ],
+    "par_pass_lines": [
+      "id"
+    ],
+    "par_suggestion_actions": [
+      "id"
+    ],
+    "photos": [
+      "id"
+    ],
+    "pm_employee_evals": [
+      "id"
+    ],
+    "pm_reports": [
+      "id"
+    ],
+    "po_lines": [
+      "id"
+    ],
+    "po_transmissions": [
+      "id"
+    ],
+    "prep_sections": [
+      "id"
+    ],
+    "product_primaries": [
+      "id"
+    ],
+    "production_inputs": [
+      "id"
+    ],
+    "productions": [
+      "id"
+    ],
+    "products": [
+      "id"
+    ],
+    "purchase_orders": [
+      "id"
+    ],
+    "recipe_inputs": [
+      "id"
+    ],
+    "recipe_outputs": [
+      "id"
+    ],
+    "section_questions": [
+      "id"
+    ],
+    "sku_count_events": [
+      "id"
+    ],
+    "sku_count_lines": [
+      "id"
+    ],
+    "sku_inferred_baselines": [
+      "id"
+    ],
+    "sku_pack_formats": [
+      "id"
+    ],
+    "sku_pack_levels": [
+      "id"
+    ],
+    "sms_messages": [
+      "id"
+    ],
+    "toast_catering_orders": [
+      "id"
+    ],
+    "toast_daily_depletion": [
+      "id"
+    ],
+    "toast_daily_sales_signals": [
+      "id"
+    ],
+    "toast_ingest_exclusions": [
+      "id"
+    ],
+    "toast_menu_cache": [
+      "restaurant_guid"
+    ],
+    "toast_menu_map": [
+      "id"
+    ],
+    "toast_sales_events": [
+      "id"
+    ],
+    "units": [
+      "id"
+    ],
+    "vendor_categories": [
+      "id"
+    ],
+    "vendor_contacts": [
+      "id"
+    ],
+    "vendor_credits": [
+      "id"
+    ],
+    "vendor_cutoffs": [
+      "id"
+    ],
+    "vendor_delivery_items": [
+      "id"
+    ],
+    "vendor_delivery_rhythm": [
+      "id"
+    ],
+    "vendor_order_types": [
+      "id"
+    ],
+    "vendor_ordering_details": [
+      "id"
+    ],
+    "vendor_rhythm_skips": [
+      "id"
+    ]
+  },
+  "foreignKeys": [
+    {
+      "child": "cash_reports",
+      "parent": "cash_reports"
+    },
+    {
+      "child": "cash_reports",
+      "parent": "locations"
+    },
+    {
+      "child": "cash_reports",
+      "parent": "users"
+    },
+    {
+      "child": "categories",
+      "parent": "users"
+    },
+    {
+      "child": "catering_allergen_types",
+      "parent": "users"
+    },
+    {
+      "child": "catering_allergens",
+      "parent": "catering_allergen_types"
+    },
+    {
+      "child": "catering_allergens",
+      "parent": "items"
+    },
+    {
+      "child": "catering_allergens",
+      "parent": "menu_items"
+    },
+    {
+      "child": "catering_allergens",
+      "parent": "users"
+    },
+    {
+      "child": "catering_blackout_dates",
+      "parent": "locations"
+    },
+    {
+      "child": "catering_blackout_dates",
+      "parent": "users"
+    },
+    {
+      "child": "catering_capacity_policy",
+      "parent": "locations"
+    },
+    {
+      "child": "catering_capacity_policy",
+      "parent": "users"
+    },
+    {
+      "child": "catering_companies",
+      "parent": "catering_customers"
+    },
+    {
+      "child": "catering_companies",
+      "parent": "users"
+    },
+    {
+      "child": "catering_company_domains",
+      "parent": "catering_companies"
+    },
+    {
+      "child": "catering_company_domains",
+      "parent": "users"
+    },
+    {
+      "child": "catering_customers",
+      "parent": "catering_companies"
+    },
+    {
+      "child": "catering_customers",
+      "parent": "locations"
+    },
+    {
+      "child": "catering_customers",
+      "parent": "users"
+    },
+    {
+      "child": "catering_delivery_zones",
+      "parent": "locations"
+    },
+    {
+      "child": "catering_delivery_zones",
+      "parent": "users"
+    },
+    {
+      "child": "catering_faq",
+      "parent": "locations"
+    },
+    {
+      "child": "catering_faq",
+      "parent": "users"
+    },
+    {
+      "child": "catering_food_facts",
+      "parent": "items"
+    },
+    {
+      "child": "catering_food_facts",
+      "parent": "menu_items"
+    },
+    {
+      "child": "catering_food_facts",
+      "parent": "users"
+    },
+    {
+      "child": "catering_fulfillment_nodes",
+      "parent": "locations"
+    },
+    {
+      "child": "catering_fulfillment_nodes",
+      "parent": "users"
+    },
+    {
+      "child": "catering_order_items",
+      "parent": "catering_orders"
+    },
+    {
+      "child": "catering_order_items",
+      "parent": "items"
+    },
+    {
+      "child": "catering_order_items",
+      "parent": "locations"
+    },
+    {
+      "child": "catering_order_items",
+      "parent": "menu_items"
+    },
+    {
+      "child": "catering_order_items",
+      "parent": "users"
+    },
+    {
+      "child": "catering_orders",
+      "parent": "catering_customers"
+    },
+    {
+      "child": "catering_orders",
+      "parent": "catering_pipeline"
+    },
+    {
+      "child": "catering_orders",
+      "parent": "locations"
+    },
+    {
+      "child": "catering_orders",
+      "parent": "users"
+    },
+    {
+      "child": "catering_package_items",
+      "parent": "catering_packages"
+    },
+    {
+      "child": "catering_package_items",
+      "parent": "items"
+    },
+    {
+      "child": "catering_package_items",
+      "parent": "menu_items"
+    },
+    {
+      "child": "catering_package_items",
+      "parent": "users"
+    },
+    {
+      "child": "catering_package_slot_options",
+      "parent": "catering_package_items"
+    },
+    {
+      "child": "catering_package_slot_options",
+      "parent": "items"
+    },
+    {
+      "child": "catering_package_slot_options",
+      "parent": "menu_items"
+    },
+    {
+      "child": "catering_package_slot_options",
+      "parent": "users"
+    },
+    {
+      "child": "catering_packages",
+      "parent": "locations"
+    },
+    {
+      "child": "catering_packages",
+      "parent": "users"
+    },
+    {
+      "child": "catering_payments",
+      "parent": "catering_customers"
+    },
+    {
+      "child": "catering_payments",
+      "parent": "catering_quotes"
+    },
+    {
+      "child": "catering_pipeline",
+      "parent": "catering_customers"
+    },
+    {
+      "child": "catering_pipeline",
+      "parent": "locations"
+    },
+    {
+      "child": "catering_pipeline",
+      "parent": "users"
+    },
+    {
+      "child": "catering_pipeline_events",
+      "parent": "catering_pipeline"
+    },
+    {
+      "child": "catering_pipeline_events",
+      "parent": "locations"
+    },
+    {
+      "child": "catering_pipeline_events",
+      "parent": "users"
+    },
+    {
+      "child": "catering_portal_sessions",
+      "parent": "catering_customers"
+    },
+    {
+      "child": "catering_prep_demand",
+      "parent": "catering_package_items"
+    },
+    {
+      "child": "catering_prep_demand",
+      "parent": "catering_pipeline"
+    },
+    {
+      "child": "catering_prep_demand",
+      "parent": "catering_quotes"
+    },
+    {
+      "child": "catering_prep_demand",
+      "parent": "items"
+    },
+    {
+      "child": "catering_prep_demand",
+      "parent": "locations"
+    },
+    {
+      "child": "catering_prep_demand",
+      "parent": "menu_items"
+    },
+    {
+      "child": "catering_prep_demand",
+      "parent": "users"
+    },
+    {
+      "child": "catering_pricing_rules",
+      "parent": "locations"
+    },
+    {
+      "child": "catering_pricing_rules",
+      "parent": "users"
+    },
+    {
+      "child": "catering_quote_item_options",
+      "parent": "catering_package_items"
+    },
+    {
+      "child": "catering_quote_item_options",
+      "parent": "catering_quote_items"
+    },
+    {
+      "child": "catering_quote_item_options",
+      "parent": "items"
+    },
+    {
+      "child": "catering_quote_item_options",
+      "parent": "menu_items"
+    },
+    {
+      "child": "catering_quote_items",
+      "parent": "catering_packages"
+    },
+    {
+      "child": "catering_quote_items",
+      "parent": "catering_quotes"
+    },
+    {
+      "child": "catering_quote_items",
+      "parent": "item_sizes"
+    },
+    {
+      "child": "catering_quote_items",
+      "parent": "items"
+    },
+    {
+      "child": "catering_quote_items",
+      "parent": "menu_items"
+    },
+    {
+      "child": "catering_quote_items",
+      "parent": "users"
+    },
+    {
+      "child": "catering_quotes",
+      "parent": "catering_customers"
+    },
+    {
+      "child": "catering_quotes",
+      "parent": "catering_delivery_zones"
+    },
+    {
+      "child": "catering_quotes",
+      "parent": "catering_pipeline"
+    },
+    {
+      "child": "catering_quotes",
+      "parent": "catering_quotes"
+    },
+    {
+      "child": "catering_quotes",
+      "parent": "locations"
+    },
+    {
+      "child": "catering_quotes",
+      "parent": "users"
+    },
+    {
+      "child": "catering_rate_rules",
+      "parent": "locations"
+    },
+    {
+      "child": "catering_rate_rules",
+      "parent": "users"
+    },
+    {
+      "child": "checklist_completions",
+      "parent": "checklist_instances"
+    },
+    {
+      "child": "checklist_instances",
+      "parent": "users"
+    },
+    {
+      "child": "checklist_template_items",
+      "parent": "checklist_template_items"
+    },
+    {
+      "child": "checklist_template_items",
+      "parent": "item_questions"
+    },
+    {
+      "child": "checklist_template_items",
+      "parent": "items"
+    },
+    {
+      "child": "checklist_template_items",
+      "parent": "maintenance_equipment"
+    },
+    {
+      "child": "checklist_template_items",
+      "parent": "section_questions"
+    },
+    {
+      "child": "checklist_templates",
+      "parent": "checklist_templates"
+    },
+    {
+      "child": "customer_feedback",
+      "parent": "catering_orders"
+    },
+    {
+      "child": "customer_feedback",
+      "parent": "locations"
+    },
+    {
+      "child": "customer_feedback",
+      "parent": "users"
+    },
+    {
+      "child": "email_receipts",
+      "parent": "locations"
+    },
+    {
+      "child": "email_receipts",
+      "parent": "purchase_orders"
+    },
+    {
+      "child": "email_receipts",
+      "parent": "users"
+    },
+    {
+      "child": "email_receipts",
+      "parent": "vendor_deliveries"
+    },
+    {
+      "child": "email_receipts",
+      "parent": "vendors"
+    },
+    {
+      "child": "ezcater_events",
+      "parent": "catering_pipeline"
+    },
+    {
+      "child": "item_components",
+      "parent": "items"
+    },
+    {
+      "child": "item_components",
+      "parent": "vendor_items"
+    },
+    {
+      "child": "item_par_levels",
+      "parent": "items"
+    },
+    {
+      "child": "item_par_levels",
+      "parent": "locations"
+    },
+    {
+      "child": "item_par_levels",
+      "parent": "users"
+    },
+    {
+      "child": "item_questions",
+      "parent": "items"
+    },
+    {
+      "child": "item_questions",
+      "parent": "users"
+    },
+    {
+      "child": "item_sizes",
+      "parent": "items"
+    },
+    {
+      "child": "items",
+      "parent": "locations"
+    },
+    {
+      "child": "location_sku_settings",
+      "parent": "locations"
+    },
+    {
+      "child": "location_sku_settings",
+      "parent": "users"
+    },
+    {
+      "child": "location_sku_settings",
+      "parent": "vendor_items"
+    },
+    {
+      "child": "lto_event_items",
+      "parent": "items"
+    },
+    {
+      "child": "lto_event_items",
+      "parent": "lto_events"
+    },
+    {
+      "child": "lto_event_items",
+      "parent": "menu_items"
+    },
+    {
+      "child": "lto_events",
+      "parent": "locations"
+    },
+    {
+      "child": "lto_events",
+      "parent": "users"
+    },
+    {
+      "child": "maintenance_equipment",
+      "parent": "checklist_template_items"
+    },
+    {
+      "child": "maintenance_equipment",
+      "parent": "locations"
+    },
+    {
+      "child": "maintenance_notes",
+      "parent": "locations"
+    },
+    {
+      "child": "maintenance_notes",
+      "parent": "maintenance_equipment"
+    },
+    {
+      "child": "maintenance_notes",
+      "parent": "users"
+    },
+    {
+      "child": "measure_units",
+      "parent": "users"
+    },
+    {
+      "child": "opening_closer_count_snapshots",
+      "parent": "checklist_instances"
+    },
+    {
+      "child": "opening_closer_count_snapshots",
+      "parent": "checklist_template_items"
+    },
+    {
+      "child": "opening_closer_count_snapshots",
+      "parent": "users"
+    },
+    {
+      "child": "opening_section_verifications",
+      "parent": "checklist_instances"
+    },
+    {
+      "child": "opening_section_verifications",
+      "parent": "users"
+    },
+    {
+      "child": "opening_setup_items",
+      "parent": "locations"
+    },
+    {
+      "child": "opening_setup_verifications",
+      "parent": "checklist_instances"
+    },
+    {
+      "child": "opening_setup_verifications",
+      "parent": "opening_setup_items"
+    },
+    {
+      "child": "opening_setup_verifications",
+      "parent": "users"
+    },
+    {
+      "child": "order_types",
+      "parent": "users"
+    },
+    {
+      "child": "par_auto_moves",
+      "parent": "locations"
+    },
+    {
+      "child": "par_auto_moves",
+      "parent": "vendor_items"
+    },
+    {
+      "child": "par_pass_events",
+      "parent": "locations"
+    },
+    {
+      "child": "par_pass_events",
+      "parent": "users"
+    },
+    {
+      "child": "par_pass_lines",
+      "parent": "par_pass_events"
+    },
+    {
+      "child": "par_pass_lines",
+      "parent": "vendor_items"
+    },
+    {
+      "child": "par_pass_lines",
+      "parent": "vendors"
+    },
+    {
+      "child": "par_suggestion_actions",
+      "parent": "locations"
+    },
+    {
+      "child": "par_suggestion_actions",
+      "parent": "users"
+    },
+    {
+      "child": "par_suggestion_actions",
+      "parent": "vendor_items"
+    },
+    {
+      "child": "photos",
+      "parent": "locations"
+    },
+    {
+      "child": "photos",
+      "parent": "users"
+    },
+    {
+      "child": "pm_employee_evals",
+      "parent": "locations"
+    },
+    {
+      "child": "pm_employee_evals",
+      "parent": "pm_reports"
+    },
+    {
+      "child": "pm_employee_evals",
+      "parent": "users"
+    },
+    {
+      "child": "pm_reports",
+      "parent": "locations"
+    },
+    {
+      "child": "pm_reports",
+      "parent": "users"
+    },
+    {
+      "child": "po_lines",
+      "parent": "purchase_orders"
+    },
+    {
+      "child": "po_lines",
+      "parent": "vendor_items"
+    },
+    {
+      "child": "po_transmissions",
+      "parent": "purchase_orders"
+    },
+    {
+      "child": "po_transmissions",
+      "parent": "users"
+    },
+    {
+      "child": "prep_sections",
+      "parent": "users"
+    },
+    {
+      "child": "product_primaries",
+      "parent": "locations"
+    },
+    {
+      "child": "product_primaries",
+      "parent": "products"
+    },
+    {
+      "child": "product_primaries",
+      "parent": "users"
+    },
+    {
+      "child": "product_primaries",
+      "parent": "vendor_items"
+    },
+    {
+      "child": "production_inputs",
+      "parent": "productions"
+    },
+    {
+      "child": "production_inputs",
+      "parent": "vendor_items"
+    },
+    {
+      "child": "productions",
+      "parent": "checklist_instances"
+    },
+    {
+      "child": "productions",
+      "parent": "checklist_template_items"
+    },
+    {
+      "child": "productions",
+      "parent": "items"
+    },
+    {
+      "child": "productions",
+      "parent": "locations"
+    },
+    {
+      "child": "productions",
+      "parent": "vendor_items"
+    },
+    {
+      "child": "products",
+      "parent": "users"
+    },
+    {
+      "child": "purchase_orders",
+      "parent": "locations"
+    },
+    {
+      "child": "purchase_orders",
+      "parent": "par_pass_events"
+    },
+    {
+      "child": "purchase_orders",
+      "parent": "users"
+    },
+    {
+      "child": "purchase_orders",
+      "parent": "vendors"
+    },
+    {
+      "child": "recipe_inputs",
+      "parent": "items"
+    },
+    {
+      "child": "recipe_inputs",
+      "parent": "products"
+    },
+    {
+      "child": "recipe_inputs",
+      "parent": "recipes"
+    },
+    {
+      "child": "recipe_inputs",
+      "parent": "vendor_items"
+    },
+    {
+      "child": "recipe_outputs",
+      "parent": "items"
+    },
+    {
+      "child": "recipe_outputs",
+      "parent": "menu_items"
+    },
+    {
+      "child": "recipe_outputs",
+      "parent": "recipes"
+    },
+    {
+      "child": "section_questions",
+      "parent": "prep_sections"
+    },
+    {
+      "child": "section_questions",
+      "parent": "users"
+    },
+    {
+      "child": "sku_count_events",
+      "parent": "locations"
+    },
+    {
+      "child": "sku_count_events",
+      "parent": "users"
+    },
+    {
+      "child": "sku_count_lines",
+      "parent": "products"
+    },
+    {
+      "child": "sku_count_lines",
+      "parent": "sku_count_events"
+    },
+    {
+      "child": "sku_count_lines",
+      "parent": "vendor_items"
+    },
+    {
+      "child": "sku_inferred_baselines",
+      "parent": "locations"
+    },
+    {
+      "child": "sku_inferred_baselines",
+      "parent": "vendor_items"
+    },
+    {
+      "child": "sku_pack_formats",
+      "parent": "users"
+    },
+    {
+      "child": "sku_pack_levels",
+      "parent": "sku_pack_levels"
+    },
+    {
+      "child": "sku_pack_levels",
+      "parent": "users"
+    },
+    {
+      "child": "sku_pack_levels",
+      "parent": "vendor_items"
+    },
+    {
+      "child": "sms_messages",
+      "parent": "locations"
+    },
+    {
+      "child": "sms_messages",
+      "parent": "purchase_orders"
+    },
+    {
+      "child": "sms_messages",
+      "parent": "vendors"
+    },
+    {
+      "child": "toast_catering_orders",
+      "parent": "catering_pipeline"
+    },
+    {
+      "child": "toast_catering_orders",
+      "parent": "locations"
+    },
+    {
+      "child": "toast_daily_depletion",
+      "parent": "locations"
+    },
+    {
+      "child": "toast_daily_depletion",
+      "parent": "vendor_items"
+    },
+    {
+      "child": "toast_daily_sales_signals",
+      "parent": "locations"
+    },
+    {
+      "child": "toast_ingest_exclusions",
+      "parent": "locations"
+    },
+    {
+      "child": "toast_menu_map",
+      "parent": "catering_packages"
+    },
+    {
+      "child": "toast_menu_map",
+      "parent": "items"
+    },
+    {
+      "child": "toast_menu_map",
+      "parent": "locations"
+    },
+    {
+      "child": "toast_menu_map",
+      "parent": "menu_items"
+    },
+    {
+      "child": "toast_menu_map",
+      "parent": "vendor_items"
+    },
+    {
+      "child": "toast_sales_events",
+      "parent": "locations"
+    },
+    {
+      "child": "units",
+      "parent": "users"
+    },
+    {
+      "child": "user_locations",
+      "parent": "users"
+    },
+    {
+      "child": "vendor_categories",
+      "parent": "categories"
+    },
+    {
+      "child": "vendor_categories",
+      "parent": "users"
+    },
+    {
+      "child": "vendor_categories",
+      "parent": "vendors"
+    },
+    {
+      "child": "vendor_contacts",
+      "parent": "users"
+    },
+    {
+      "child": "vendor_contacts",
+      "parent": "vendors"
+    },
+    {
+      "child": "vendor_credits",
+      "parent": "locations"
+    },
+    {
+      "child": "vendor_credits",
+      "parent": "users"
+    },
+    {
+      "child": "vendor_credits",
+      "parent": "vendor_deliveries"
+    },
+    {
+      "child": "vendor_credits",
+      "parent": "vendor_delivery_items"
+    },
+    {
+      "child": "vendor_credits",
+      "parent": "vendor_items"
+    },
+    {
+      "child": "vendor_credits",
+      "parent": "vendors"
+    },
+    {
+      "child": "vendor_cutoffs",
+      "parent": "locations"
+    },
+    {
+      "child": "vendor_cutoffs",
+      "parent": "vendors"
+    },
+    {
+      "child": "vendor_deliveries",
+      "parent": "email_receipts"
+    },
+    {
+      "child": "vendor_deliveries",
+      "parent": "purchase_orders"
+    },
+    {
+      "child": "vendor_delivery_items",
+      "parent": "vendor_deliveries"
+    },
+    {
+      "child": "vendor_delivery_items",
+      "parent": "vendor_items"
+    },
+    {
+      "child": "vendor_delivery_rhythm",
+      "parent": "locations"
+    },
+    {
+      "child": "vendor_delivery_rhythm",
+      "parent": "users"
+    },
+    {
+      "child": "vendor_delivery_rhythm",
+      "parent": "vendors"
+    },
+    {
+      "child": "vendor_items",
+      "parent": "locations"
+    },
+    {
+      "child": "vendor_items",
+      "parent": "products"
+    },
+    {
+      "child": "vendor_items",
+      "parent": "users"
+    },
+    {
+      "child": "vendor_order_types",
+      "parent": "order_types"
+    },
+    {
+      "child": "vendor_order_types",
+      "parent": "users"
+    },
+    {
+      "child": "vendor_order_types",
+      "parent": "vendors"
+    },
+    {
+      "child": "vendor_ordering_details",
+      "parent": "users"
+    },
+    {
+      "child": "vendor_ordering_details",
+      "parent": "vendors"
+    },
+    {
+      "child": "vendor_rhythm_skips",
+      "parent": "locations"
+    },
+    {
+      "child": "vendor_rhythm_skips",
+      "parent": "users"
+    },
+    {
+      "child": "vendor_rhythm_skips",
+      "parent": "vendors"
+    },
+    {
+      "child": "vendors",
+      "parent": "categories"
+    },
+    {
+      "child": "vendors",
+      "parent": "users"
+    }
+  ],
+  "configLoadOrder": [
+    "categories",
+    "catering_allergen_types",
+    "checklist_templates",
+    "deep_clean_tasks",
+    "locations",
+    "measure_units",
+    "menu_items",
+    "notification_recipients",
+    "order_types",
+    "position_responsibilities",
+    "positions",
+    "prep_sections",
+    "products",
+    "recipe_ingredients",
+    "recipe_steps",
+    "recipes",
+    "sku_pack_formats",
+    "toast_menu_cache",
+    "training_modules",
+    "units",
+    "vendor_price_history",
+    "catering_blackout_dates",
+    "catering_capacity_policy",
+    "catering_delivery_zones",
+    "catering_faq",
+    "catering_fulfillment_nodes",
+    "catering_packages",
+    "catering_pricing_rules",
+    "catering_rate_rules",
+    "items",
+    "section_questions",
+    "toast_ingest_exclusions",
+    "vendor_items",
+    "vendors",
+    "catering_food_facts",
+    "catering_package_items",
+    "item_components",
+    "item_par_levels",
+    "item_questions",
+    "item_sizes",
+    "location_sku_settings",
+    "product_primaries",
+    "recipe_inputs",
+    "recipe_outputs",
+    "sku_inferred_baselines",
+    "sku_pack_levels",
+    "toast_menu_map",
+    "vendor_categories",
+    "vendor_contacts",
+    "vendor_cutoffs",
+    "vendor_delivery_rhythm",
+    "vendor_order_types",
+    "vendor_ordering_details",
+    "catering_package_slot_options"
+  ],
+  "deleteOrder": [
+    "sms_messages",
+    "po_transmissions",
+    "po_lines",
+    "vendor_rhythm_skips",
+    "vendor_ordering_details",
+    "vendor_order_types",
+    "vendor_delivery_rhythm",
+    "vendor_cutoffs",
+    "vendor_contacts",
+    "vendor_categories",
+    "toast_menu_map",
+    "toast_daily_depletion",
+    "sku_pack_levels",
+    "sku_inferred_baselines",
+    "sku_count_lines",
+    "recipe_inputs",
+    "purchase_orders",
+    "product_primaries",
+    "par_suggestion_actions",
+    "par_pass_lines",
+    "par_auto_moves",
+    "location_sku_settings",
+    "item_components",
+    "catering_package_slot_options",
+    "vendors",
+    "vendor_items",
+    "section_questions",
+    "recipe_outputs",
+    "pm_employee_evals",
+    "opening_setup_verifications",
+    "opening_section_verifications",
+    "lto_event_items",
+    "item_sizes",
+    "item_questions",
+    "item_par_levels",
+    "checklist_completions",
+    "catering_package_items",
+    "catering_food_facts",
+    "catering_allergens",
+    "user_locations",
+    "units",
+    "toast_sales_events",
+    "toast_ingest_exclusions",
+    "toast_daily_sales_signals",
+    "sku_pack_formats",
+    "sku_count_events",
+    "products",
+    "prep_sections",
+    "pm_reports",
+    "photos",
+    "par_pass_events",
+    "order_types",
+    "opening_setup_items",
+    "measure_units",
+    "lto_events",
+    "items",
+    "checklist_instances",
+    "catering_rate_rules",
+    "catering_pricing_rules",
+    "catering_packages",
+    "catering_fulfillment_nodes",
+    "catering_faq",
+    "catering_delivery_zones",
+    "catering_capacity_policy",
+    "catering_blackout_dates",
+    "catering_allergen_types",
+    "categories",
+    "cash_reports",
+    "written_reports",
+    "weekly_rollups",
+    "vendor_price_history",
+    "vendor_orders",
+    "users",
+    "user_notification_prefs",
+    "training_reports",
+    "training_progress",
+    "training_modules",
+    "toast_menu_cache",
+    "toast_daily_data",
+    "tip_pools",
+    "tip_pool_distributions",
+    "sms_queue",
+    "shifts_daily_data",
+    "shift_overlays",
+    "shift_overlay_corrections",
+    "sessions",
+    "report_views",
+    "report_photos",
+    "report_assignments",
+    "recipes",
+    "recipe_steps",
+    "recipe_ingredients",
+    "prep_list_resolutions",
+    "positions",
+    "position_responsibilities",
+    "password_resets",
+    "par_levels",
+    "notifications",
+    "notification_recipients",
+    "menu_items",
+    "maintenance_tickets",
+    "lto_performance",
+    "locations",
+    "email_verifications",
+    "deep_clean_tasks",
+    "checklist_templates",
+    "checklist_submissions",
+    "checklist_incomplete_reasons",
+    "catering_portal_tokens",
+    "catering_portal_rate_limits",
+    "audit_log",
+    "announcements",
+    "announcement_acknowledgements",
+    "ai_reports"
+  ],
+  "blocked": [
+    "CONFIG-INVENTORY.md expands to 140 distinct tables (56 CONFIG, 12 AUTH, 72 HISTORY), not required 141. deep_clean_assignments exists in 0058 but is absent from the inventory; CC must classify the missing table.",
+    "Complete schema PK/FK authority is unavailable: local migrations omit original CREATE TABLE definitions. Missing verified primary keys: ai_reports, announcement_acknowledgements, announcements, audit_log, checklist_completions, checklist_incomplete_reasons, checklist_instances, checklist_submissions, checklist_template_items, checklist_templates, deep_clean_tasks, email_verifications, locations, lto_performance, maintenance_tickets, notification_recipients, notifications, par_levels, password_resets, position_responsibilities, positions, prep_list_resolutions, recipe_ingredients, recipe_steps, recipes, report_assignments, report_photos, report_views, sessions, shift_overlay_corrections, shift_overlays, shifts_daily_data, sms_queue, tip_pool_distributions, tip_pools, toast_daily_data, training_modules, training_progress, training_reports, user_locations, user_notification_prefs, users, vendor_deliveries, vendor_items, vendor_orders, vendor_price_history, vendors, weekly_rollups, written_reports",
+    "CONFIG load order is incomplete because maintenance_equipment references checklist_template_items (0070) and checklist_template_items references maintenance_equipment (0181). Plain POST-only restoration cannot restore this cycle.",
+    "DELETE order is incomplete because vendor_deliveries.email_receipt_id and email_receipts.linked_delivery_id form a cycle (0170), and the equipment/template cycle also blocks deletion.",
+    "Self-references (including sku_pack_levels.contains_level_id) require row dependency ordering before 500-row load batching; table order alone is insufficient.",
+    "Known FK map combines CREATE/ALTER TABLE evidence and two explicitly requested existing contracts; it is not a complete live-schema receipt. Every successful reset requires the authoritative missing schema metadata.",
+    "The conservative FK topology also includes catering_companies/customer mutual references. The companies.claimed_by_customer_id edge is ON DELETE SET NULL (0124), so deleting customers before companies can resolve that deletion cycle; config equipment and receipt cycles have no such action."
+  ],
+  "recipes": [
+    {
+      "id": "cold-empty",
+      "recipeVersion": "f2-v1:cold-empty",
+      "anchorDateEt": "2026-09-08",
+      "handles": {},
+      "synthetic": [],
+      "expected": {
+        "counts": {
+          "checklist_instances": 0,
+          "checklist_completions": 0,
+          "checklist_submissions": 0,
+          "checklist_incomplete_reasons": 0,
+          "opening_closer_count_snapshots": 0,
+          "opening_section_verifications": 0,
+          "opening_setup_items": 0,
+          "opening_setup_verifications": 0,
+          "report_assignments": 0,
+          "report_views": 0,
+          "report_photos": 0,
+          "cash_reports": 0,
+          "pm_reports": 0,
+          "pm_employee_evals": 0,
+          "written_reports": 0,
+          "ai_reports": 0,
+          "weekly_rollups": 0,
+          "shifts_daily_data": 0,
+          "shift_overlays": 0,
+          "shift_overlay_corrections": 0,
+          "maintenance_notes": 0,
+          "maintenance_tickets": 0,
+          "productions": 0,
+          "production_inputs": 0,
+          "prep_list_resolutions": 0,
+          "sku_count_events": 0,
+          "sku_count_lines": 0,
+          "par_levels": 0,
+          "par_pass_events": 0,
+          "par_pass_lines": 0,
+          "purchase_orders": 0,
+          "po_lines": 0,
+          "po_transmissions": 0,
+          "vendor_orders": 0,
+          "vendor_deliveries": 0,
+          "vendor_delivery_items": 0,
+          "vendor_credits": 0,
+          "vendor_rhythm_skips": 0,
+          "email_receipts": 0,
+          "photos": 0,
+          "par_auto_moves": 0,
+          "par_suggestion_actions": 0,
+          "toast_sales_events": 0,
+          "toast_daily_depletion": 0,
+          "toast_daily_sales_signals": 0,
+          "toast_daily_data": 0,
+          "toast_catering_orders": 0,
+          "catering_pipeline": 0,
+          "catering_pipeline_events": 0,
+          "catering_quotes": 0,
+          "catering_quote_items": 0,
+          "catering_quote_item_options": 0,
+          "catering_orders": 0,
+          "catering_order_items": 0,
+          "catering_payments": 0,
+          "catering_prep_demand": 0,
+          "catering_allergens": 0,
+          "customer_feedback": 0,
+          "ezcater_events": 0,
+          "lto_events": 0,
+          "lto_event_items": 0,
+          "lto_performance": 0,
+          "notifications": 0,
+          "announcements": 0,
+          "announcement_acknowledgements": 0,
+          "sms_messages": 0,
+          "sms_queue": 0,
+          "training_progress": 0,
+          "training_reports": 0,
+          "tip_pools": 0,
+          "tip_pool_distributions": 0,
+          "audit_log": 0,
+          "users": 9,
+          "user_locations": 10,
+          "sessions": 0,
+          "password_resets": 0,
+          "email_verifications": 0,
+          "user_notification_prefs": 0,
+          "catering_customers": 0,
+          "catering_companies": 0,
+          "catering_company_domains": 0,
+          "catering_portal_sessions": 0,
+          "catering_portal_tokens": 0,
+          "catering_portal_rate_limits": 0
+        },
+        "configCounts": "snapshot manifest rows; dropped CONFIG tables remain zero",
+        "money": "no transactional money observations",
+        "quantity": "no transactional quantity observations"
+      }
+    },
+    {
+      "id": "warm-history",
+      "recipeVersion": "f2-v1:warm-history",
+      "anchorDateEt": "2026-09-08",
+      "handles": {
+        "sku:PFG:Ham": {
+          "resolve": "snapshot",
+          "table": "vendor_items",
+          "vendor": "PFG",
+          "match": {
+            "name": "Ham"
+          }
+        },
+        "product:HAM": {
+          "resolve": "snapshot",
+          "table": "products",
+          "match": {
+            "name": "HAM"
+          }
+        }
+      },
+      "synthetic": [],
+      "expected": {
+        "counts": {},
+        "windowDays": 21,
+        "priorDay": "2026-09-07",
+        "currentDayOpening": "unstarted",
+        "currentDayPurchaseOrders": 0,
+        "quotes": 0,
+        "customerSessions": 0
+      },
+      "blocked": "CC-approved prior-day source rows, 21-day demand cohort, observed-zero/gap dates, chain quantities and independent money oracles have not been supplied. Aggregate inventory counts cannot supply these."
+    },
+    {
+      "id": "incomplete-pack",
+      "recipeVersion": "f2-v1:incomplete-pack",
+      "anchorDateEt": "2026-09-08",
+      "handles": {},
+      "synthetic": [],
+      "expected": {
+        "counts": {},
+        "status": "unresolved",
+        "numericTotal": null,
+        "dependency": "warm-history"
+      },
+      "blocked": "Depends on blocked warm-history. No evidenced incomplete SKU, missing denominator/link and complete control have been provided; never manufacture an operational deficiency."
+    },
+    {
+      "id": "over-1000",
+      "recipeVersion": "f2-v1:over-1000",
+      "anchorDateEt": "2026-09-08",
+      "handles": {
+        "sku:PFG:Ham": {
+          "resolve": "snapshot",
+          "table": "vendor_items",
+          "vendor": "PFG",
+          "match": {
+            "name": "Ham"
+          }
+        }
+      },
+      "synthetic": [
+        {
+          "table": "vendor_deliveries",
+          "handle": "delivery:page",
+          "repeat": 1205,
+          "row": {
+            "location_id": {
+              "$handle": "location:EM"
+            },
+            "created_at": "2026-09-06T16:00:00.000Z"
+          }
+        },
+        {
+          "table": "vendor_delivery_items",
+          "handle": "delivery-item:page",
+          "repeat": 1205,
+          "row": {
+            "delivery_id": {
+              "$sequence": "delivery:page"
+            },
+            "vendor_item_id": {
+              "$handle": "sku:PFG:Ham"
+            },
+            "qty_received": "1",
+            "unit_price": null,
+            "resolved_oz": null,
+            "created_at": "2026-09-06T16:00:00.000Z",
+            "created_by": {
+              "$handle": "persona:rosa"
+            }
+          },
+          "sentinel": {
+            "created_at": "2026-09-07T20:00:00.000Z"
+          }
+        }
+      ],
+      "expected": {
+        "counts": {
+          "vendor_deliveries": 1205,
+          "vendor_delivery_items": 1205
+        },
+        "sentinelPkRank": 1205,
+        "lastReceivedAt": "2026-09-07T20:00:00.000Z",
+        "qtyReceivedPerItem": "1",
+        "unitPrice": null,
+        "resolvedOz": null,
+        "dependency": "warm-history",
+        "blocked": "Header required fields, complete chain measurement and two-member fallback oracle unprovisioned; fragment is never restored while blocked."
+      },
+      "blocked": "Receipt fragment is deterministic but not a complete warm fixture: second HAM member, chain level/oz/price, no-primary scope, other-shop control and warm-history prerequisites require CC snapshot approval. The single named SKU below does not prove product failover."
+    },
+    {
+      "id": "two-shop-divergent",
+      "recipeVersion": "f2-v1:two-shop-divergent",
+      "anchorDateEt": "2026-09-08",
+      "handles": {},
+      "synthetic": [
+        {
+          "table": "sku_count_events",
+          "handle": "count:EM",
+          "row": {
+            "location_id": {
+              "$handle": "location:EM"
+            },
+            "counted_by": {
+              "$handle": "persona:rosa"
+            },
+            "counted_at": "2026-09-07T18:00:00.000Z",
+            "created_at": "2026-09-07T18:00:00.000Z",
+            "active": true,
+            "note": "synthetic f2 count scope; quantity oracle blocked"
+          }
+        },
+        {
+          "table": "sku_count_events",
+          "handle": "count:MEP",
+          "row": {
+            "location_id": {
+              "$handle": "location:MEP"
+            },
+            "counted_by": {
+              "$handle": "persona:angel"
+            },
+            "counted_at": "2026-09-07T19:00:00.000Z",
+            "created_at": "2026-09-07T19:00:00.000Z",
+            "active": true,
+            "note": "synthetic f2 count scope; quantity oracle blocked"
+          }
+        }
+      ],
+      "expected": {
+        "counts": {
+          "sku_count_events": 2
+        },
+        "locations": [
+          "d2cced11-b167-49fa-bab6-86ec9bf4ff09",
+          "54ce1029-400e-4a92-9c2b-0ccb3b031f0a"
+        ],
+        "dependency": "warm-history",
+        "orderQuantities": {
+          "blocked": "CC independent measurements required"
+        }
+      },
+      "blocked": "Depends on blocked warm-history. Opposing actual HAM members/primaries, local par overrides, on-hand quantities and independently computed order quantities not supplied. Count-event headers alone are not quantity evidence."
+    }
+  ]
+}
