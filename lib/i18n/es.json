@@ -3500,6 +3500,7 @@
   "catering.quotes.error.generic": "Algo salió mal. Inténtalo de nuevo.",
   "catering.quotes.error.forbidden": "No tienes permiso para eso.",
   "catering.quotes.error.not_found": "No encontrado.",
+  "catering.quotes.error.unknown_item": "Una de las líneas apunta a un artículo que ya no está en el menú. Quita esa línea y vuelve a agregarla desde el selector.",
   "catering.quotes.error.invalid_payload": "Revisa los campos e inténtalo de nuevo.",
   "catering.quotes.error.location_access_denied": "No administras esa ubicación.",
   "catering.quotes.error.mixed_concerns": "Guarda un cambio a la vez.",
