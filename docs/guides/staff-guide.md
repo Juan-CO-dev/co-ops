@@ -220,7 +220,7 @@ You do this once a day, before the doors open. The question it asks is not "did 
 
 - The line underneath tells you exactly what is still blocking the button — *"40 items not yet verified"*, or a named fridge that still needs a temperature, or *"Verify all sections before submitting."*
 - **Submit Opening** turns on only when all three are true: every line ticked, every temperature box filled, and every count section verified. There is no partial submit.
-- **You cannot submit the opening yourself unless you are a key holder or above.** If you tap it as an employee you get *"Your role can't submit Opening — contact a manager."* Fill it in, then hand the tablet to your key holder.
+- **You cannot submit the opening yourself unless you are a key holder or above.** For an employee the button reads **Hand to a key holder** and stays off, and the hint underneath says why. Fill it in, then hand the tablet to your key holder.
 - The submit is once per day. After it lands, the verification half is read-only for everybody.
 
 ### Prep is a key-holder job
@@ -234,7 +234,7 @@ You do this once a day, before the doors open. The question it asks is not "did 
 **Worth knowing**
 
 - **AM prep** bounces you straight back to the dashboard, even from the link inside the closing checklist. That is the role gate, not a broken link. A manager can assign you the AM prep for a specific day, and then it opens.
-- **Mid-day prep** loads but shows this empty message for an employee, whether or not the shop has a mid-day list. Same gate, different wording.
+- **Mid-day prep** loads but tells an employee it is a key-holder task, whether or not the shop has a mid-day list. (Older screens showed *"No mid-day prep template"* instead — same gate, misleading wording, since fixed.)
 - If you have been told to do prep, ask the manager to assign it to you for the day, or to open it on their own login.
 
 ---

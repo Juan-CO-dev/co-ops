@@ -153,7 +153,7 @@ You do this once a day, before the doors open. The crew can fill the whole thing
 
 **Worth knowing**
 
-- **Submit Opening is key holder and up.** An employee who taps it gets *"Your role can't submit Opening — contact a manager."* They fill it in; you finish it.
+- **Submit Opening is key holder and up.** For an employee the button reads **Hand to a key holder** and stays off. They fill it in; you finish it.
 - The button turns on only when all three counters are full: every line ticked, every temperature box filled, every count section verified. There is no partial submit.
 - **"No prior closing data detected"** appears when items had no closing count last night and the opener recounted them instead. Pick the true one: **"Location was closed (planned)"** or **"Closing was missed / I don't know"**.
 - Both options do the same thing to the numbers — the recount becomes the day's count either way — and both send the same urgent notice to key holders and up. What differs is the sentence printed on the saved report, which is how tomorrow's reader knows whether a closing was skipped or the shop was shut. Answer it honestly.
