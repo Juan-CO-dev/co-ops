@@ -18,9 +18,7 @@ export type Recipe = {
   expected: { counts: Record<string, number>; [key: string]: unknown };
 };
 export type Catalog = {
-  expectedTableCount: number; inventory: Inventory; primaryKeys: Record<string, string[]>;
-  foreignKeys: { child: string; parent: string }[];
-  configLoadOrder: string[]; deleteOrder: string[]; blocked: string[];
+  expectedTableCount: number; inventory: Inventory; blocked: string[];
   recipes: Recipe[];
 };
 export const sha256 = (value: string | Uint8Array) => createHash("sha256").update(value).digest("hex");
@@ -82,7 +80,7 @@ export function loadSnapshot(dir: string, manifest: SnapshotManifest): Snapshot 
   }
   return snapshot;
 }
-export function ordered(tables: string[], fks: Catalog["foreignKeys"]): string[] {
+export function ordered(tables: string[], fks: { child: string; parent: string }[]): string[] {
   if (new Set(tables).size !== tables.length) throw new Error("Duplicate order entry");
   const remaining = new Set(tables), out: string[] = [];
   while (remaining.size) {
@@ -92,8 +90,6 @@ export function ordered(tables: string[], fks: Catalog["foreignKeys"]): string[]
   }
   return out;
 }
-export const loadOrder = (catalog: Catalog) => ordered(catalog.inventory.CONFIG, catalog.foreignKeys);
-export const deleteOrder = (catalog: Catalog) => ordered(Object.values(catalog.inventory).flat(), catalog.foreignKeys).reverse();
 export function resolveHandle(snapshot: Snapshot, handle: Handle): Row {
   if (handle.resolve !== "snapshot") throw new Error("Unknown handle resolution");
   if (handle.blocked) throw new Error(`Blocked handle: ${handle.blocked}`);

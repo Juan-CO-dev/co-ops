@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import rawCatalog from "../scripts/sim/launch-readiness/fixtures/manifest.json";
-import { canonical, classifyTables, deleteOrder, fingerprint, loadSnapshot, loadSnapshotManifest, ordered, parseExactJson, resolveHandle, sha256, sortedRows, stableId, synthesize, type Catalog, type FingerprintState, type Inventory, type SnapshotManifest } from "../scripts/sim/launch-readiness/fixtures";
+import { canonical, classifyTables, fingerprint, loadSnapshot, loadSnapshotManifest, ordered, parseExactJson, resolveHandle, sha256, sortedRows, stableId, synthesize, type Catalog, type FingerprintState, type Inventory, type SnapshotManifest } from "../scripts/sim/launch-readiness/fixtures";
+import { deriveOrders, leafFirst, planConfig, type SchemaMeta } from "../scripts/sim/launch-readiness/schema-order";
 import { exactCount } from "../scripts/sim/launch-readiness/reset";
 import { SIM_LOCATIONS } from "../scripts/sim/personas-shared";
 
@@ -58,16 +59,14 @@ describe("F2 pure fixtures", () => {
     expect(() => resolveHandle({ ...snapshot, vendor_items: [...snapshot.vendor_items, ...snapshot.vendor_items] }, handle)).toThrow(/exactly once/);
     expect(() => resolveHandle({ ...snapshot, vendors: [...snapshot.vendors, ...snapshot.vendors] }, handle)).toThrow(/exactly once/);
   });
-  it("enforces exactly 141 disjoint classifications; supplied 140-table inventory stays blocked", () => {
-    expect(new Set(Object.values(catalog.inventory).flat()).size).toBe(140);
-    expect(() => classifyTables(manifestFor(catalog.inventory), catalog.inventory)).toThrow(/141 tables; found 140/);
-    expect(catalog.blocked.length).toBeGreaterThan(0);
-    // Pure validator positive control, NOT a claim that this is the missing real table.
-    const complete = { ...catalog.inventory, HISTORY: [...catalog.inventory.HISTORY, "synthetic_validator_only"] };
-    expect(classifyTables(manifestFor(complete), complete).size).toBe(141);
-    expect(() => classifyTables(manifestFor(complete), { ...complete, AUTH: [...complete.AUTH, "users"] })).toThrow(/disjoint/);
-    const extra = manifestFor(complete); extra.tables.sessions = { rows: 0, sha256: sha256("[]") };
-    expect(() => classifyTables(extra, complete)).toThrow(/unexpected table/);
+  it("classifies the authoritative 141-table set without overlaps", () => {
+    expect(new Set(Object.values(catalog.inventory).flat()).size).toBe(141);
+    expect(catalog.inventory.HISTORY).toContain("deep_clean_assignments");
+    expect(catalog.blocked).toEqual([]);
+    expect(classifyTables(manifestFor(catalog.inventory), catalog.inventory).size).toBe(141);
+    expect(() => classifyTables(manifestFor(catalog.inventory), { ...catalog.inventory, AUTH: [...catalog.inventory.AUTH, "users"] })).toThrow(/disjoint/);
+    const extra = manifestFor(catalog.inventory); extra.tables.sessions = { rows: 0, sha256: sha256("[]") };
+    expect(() => classifyTables(extra, catalog.inventory)).toThrow(/unexpected table/);
   });
   it("deletes children before parents for the relevant FK families, and refuses cycles", () => {
     const foreignKeys = [
@@ -80,7 +79,7 @@ describe("F2 pure fixtures", () => {
     const tables = [...new Set(foreignKeys.flatMap(fk => [fk.child, fk.parent]))];
     const order = ordered(tables, foreignKeys).reverse();
     for (const fk of foreignKeys) expect(order.indexOf(fk.child)).toBeLessThan(order.indexOf(fk.parent));
-    expect(() => deleteOrder(catalog)).toThrow(/cycle/);
+    expect(() => ordered(["a", "b"], [{ child: "a", parent: "b" }, { child: "b", parent: "a" }])).toThrow(/cycle/);
   });
   it("produces stable v5 IDs and exactly 1205 header/item planning rows with the sentinel after1000", () => {
     const recipe = catalog.recipes.find(row => row.id === "over-1000")!;
@@ -104,5 +103,82 @@ describe("F2 pure fixtures", () => {
     expect(exactCount(new Response(null, { headers: { "content-range": "*/0" } }))).toBe(0);
     expect(exactCount(new Response(null, { headers: { "content-range": "0-499/1205" } }))).toBe(1205);
     for (const value of ["", "*/*", "0-499/*"]) expect(() => exactCount(new Response(null, { headers: { "content-range": value } }))).toThrow();
+  });
+});
+
+describe("F2 schema-derived restore plan", () => {
+  const inventory: Inventory = { CONFIG: ["checklist_template_items", "maintenance_equipment"], AUTH: [], HISTORY: [] };
+  const schema: SchemaMeta = {
+    tables: [...inventory.CONFIG], primary_keys: { checklist_template_items: ["id"], maintenance_equipment: ["id"] },
+    foreign_keys: [
+      { child: "checklist_template_items", parent: "maintenance_equipment", name: "equipment_fk", columns: ["equipment_id"] },
+      { child: "maintenance_equipment", parent: "checklist_template_items", name: "template_fk", columns: ["template_item_id"] },
+    ],
+    columns_nullable: { "checklist_template_items.equipment_id": true, "maintenance_equipment.template_item_id": true },
+  };
+  it("breaks only the approved mutual edge, and refuses NOT NULL or unknown nullability", () => {
+    const plan = deriveOrders(schema, inventory);
+    expect(plan.loadOrder).toEqual(["checklist_template_items", "maintenance_equipment"]);
+    expect(plan.deleteOrder).toEqual([...plan.loadOrder].reverse());
+    expect(plan.loadStages.map(s => `${s.child}.${s.column}`)).toEqual(["checklist_template_items.equipment_id"]);
+    expect(() => deriveOrders({ ...schema, columns_nullable: { ...schema.columns_nullable, "checklist_template_items.equipment_id": false } }, inventory)).toThrow(/NOT NULL/);
+    expect(() => deriveOrders({ ...schema, columns_nullable: {} }, inventory)).toThrow(/incomplete/);
+    expect(() => deriveOrders({ ...schema, tables: [...schema.tables, "extra"] }, inventory)).toThrow(/table set/);
+    const unknown = { ...schema, foreign_keys: schema.foreign_keys.map(f => ({ ...f, child: f.child === "checklist_template_items" ? "other" : f.child, parent: f.parent === "checklist_template_items" ? "other" : f.parent })), tables: ["other", "maintenance_equipment"], primary_keys: { other: ["id"], maintenance_equipment: ["id"] }, columns_nullable: { "other.equipment_id": true, "maintenance_equipment.template_item_id": true } };
+    expect(() => deriveOrders(unknown, { CONFIG: unknown.tables, AUTH: [], HISTORY: [] })).toThrow(/cycle/);
+  });
+  const self = [{ child: "sku_pack_levels", parent: "sku_pack_levels", name: "contains_fk", columns: ["contains_level_id"] }];
+  it("preserves the XOR check and every value across a reverse-ordered 1002-row chain", () => {
+    const rows = Array.from({ length: 1002 }, (_, index) => ({ id: String(index).padStart(4, "0"), contains_level_id: index === 1001 ? null : String(index + 1).padStart(4, "0"), contains_measure_unit: index === 1001 ? "oz" : null, amount: "1.000000000000000001" }));
+    const before = canonical(rows), result = leafFirst("sku_pack_levels", rows, ["id"], self);
+    const seen = new Set<unknown>();
+    for (const row of result) {
+      expect(Number(row.contains_level_id !== null) + Number(row.contains_measure_unit !== null)).toBe(1);
+      if (row.contains_level_id !== null) expect(seen.has(row.contains_level_id)).toBe(true);
+      seen.add(row.id);
+    }
+    expect(canonical(rows)).toBe(before);
+    expect(sortedRows(result, ["id"])).toEqual(rows);
+  });
+  it("fails closed with the unresolved row PK for dangling, cyclic, missing and self pointers", () => {
+    for (const rows of [
+      [{ id: "a", contains_level_id: "missing" }],
+      [{ id: "a", contains_level_id: "b" }, { id: "b", contains_level_id: "a" }],
+      [{ id: "a", contains_level_id: "a" }], [{ id: "a" }],
+    ]) expect(() => leafFirst("sku_pack_levels", rows, ["id"], self)).toThrow(/PK=\["a"\]/);
+  });
+  // The private receipt is intentionally absent in CI; synthetic graph tests always run.
+  it.skipIf(!existsSync(resolve("scripts/sim/launch-readiness/.private/snapshot/schema-meta.json")))("validates the real schema and all snapshot files without database access", () => {
+    const dir = resolve("scripts/sim/launch-readiness/.private/snapshot");
+    const real = JSON.parse(readFileSync(resolve(dir, "schema-meta.json"), "utf8")) as SchemaMeta;
+    const manifest = loadSnapshotManifest(dir), snapshot = loadSnapshot(dir, manifest);
+    expect(classifyTables(manifest, catalog.inventory).size).toBe(141);
+    expect(real.foreign_keys).toHaveLength(372);
+    const before = canonical(snapshot), plan = planConfig(real, catalog.inventory, snapshot);
+    expect(plan.deleteOrder).toHaveLength(141);
+    expect(plan.loadOrder).toHaveLength(56);
+    expect(plan.deleteStages.map(s => `${s.child}.${s.column}`)).toEqual([
+      "catering_companies.claimed_by_customer_id", "email_receipts.linked_delivery_id", "checklist_template_items.equipment_id",
+    ]);
+    for (const fk of real.foreign_keys) {
+      if (fk.child === fk.parent || plan.deleteStages.some(s => s.child === fk.child && s.parent === fk.parent)) continue;
+      expect(plan.deleteOrder.indexOf(fk.child)).toBeLessThan(plan.deleteOrder.indexOf(fk.parent));
+      if (plan.loadOrder.includes(fk.child) && plan.loadOrder.includes(fk.parent)) expect(plan.loadOrder.indexOf(fk.parent)).toBeLessThan(plan.loadOrder.indexOf(fk.child));
+    }
+    for (const [table, count] of Object.entries(plan.leafFirstCounts)) {
+      expect(count).toBe(manifest.tables[table]!.rows);
+      const seen = new Set<unknown>();
+      for (const row of plan.rows[table]!) {
+        for (const fk of real.foreign_keys.filter(f => f.child === table && f.parent === table)) {
+          const pointer = row[fk.columns[0]!];
+          if (pointer !== null) expect(seen.has(pointer)).toBe(true);
+        }
+        seen.add(row.id);
+      }
+    }
+    expect(canonical(snapshot)).toBe(before);
+    expect(real.primary_keys.toast_menu_cache).toEqual(["restaurant_guid"]);
+    expect(real.primary_keys.user_locations).toEqual(["user_id", "location_id"]);
+    expect(real.primary_keys.user_notification_prefs).toEqual(["user_id"]);
   });
 });

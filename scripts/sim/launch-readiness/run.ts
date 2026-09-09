@@ -200,6 +200,8 @@ export async function main(args = process.argv.slice(2)) {
     }
     const safeReasons = new Set(["sim environment blocked", "invalid private PIN control", "candidate identity unavailable", "port occupied", "server readiness timeout", "server stopped before readiness", "dev asset identity missing", "dev asset origin mismatch", "stale dev asset", "dev asset identity mismatch", "listener identity unavailable", "listener identity missing", "process ancestry unavailable", "listener does not belong to runner child", "location identity mismatch", "second runner was not refused by this lease"]);
     if (error instanceof Error && safeReasons.has(error.message)) evidence.manifest.reason = error.message;
+    // Local diagnostics only: the raw message goes to stderr, never into evidence (CC, 2026-09-09).
+    if (process.env.LRA_DEBUG) console.error(`[lra debug] stage=${stage}: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
     try { await stopped(playwright); await stopped(server); if (server) await portFree(); }
     catch { evidence.manifest.status = "fail"; evidence.manifest.reason = "child cleanup or port release failed"; }
