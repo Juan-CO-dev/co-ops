@@ -14,6 +14,7 @@ import { SIM_LOCATIONS, SIM_PERSONAS } from "../personas-shared";
 import * as driver from "../concurrency/driver.mjs";
 import { resetFixture, assertClean } from "./reset";
 import type { Catalog } from "./fixtures";
+import { startProduction, buildReceiptPath, buildAssetsFromHtml, type BuildReceipt } from "./target";
 
 export const SUITES = ["runner", "isolation", "personas", "fixtures"] as const;
 export const FIXTURES = ["warm-history", "cold-empty", "incomplete-pack", "over-1000", "two-shop-divergent"] as const;
@@ -40,7 +41,8 @@ async function portFree() {
   await new Promise<void>((ok, fail) => { const probe = net.createServer(); probe.once("error", () => fail(new Error("port occupied"))); probe.listen(3100, "localhost", () => probe.close(() => ok())); });
 }
 function launch(args: string[], env: Record<string, string | undefined>): ChildProcess {
-  return spawn(process.execPath, args, { cwd: process.cwd(), env: { ...env, NODE_ENV: env.NODE_ENV === "development" ? "development" : "production" }, shell: false, windowsHide: true, detached: process.platform !== "win32", stdio: "ignore" });
+  // LRA_DEBUG: inherit child stdio so startup failures are visible locally (never in evidence).
+  return spawn(process.execPath, args, { cwd: process.cwd(), env: { ...env, NODE_ENV: env.NODE_ENV === "development" ? "development" : "production" }, shell: false, windowsHide: true, detached: process.platform !== "win32", stdio: process.env.LRA_DEBUG ? "inherit" : "ignore" });
 }
 async function stopped(child: ChildProcess | undefined) {
   if (!child?.pid) return;
@@ -65,7 +67,7 @@ async function waitReady(child: ChildProcess, cancelled: () => boolean) {
   }
   throw new Error("server readiness timeout");
 }
-async function verifyDev(html: string, child: ChildProcess, started: number) {
+function verifyListener(child: ChildProcess) {
   if (!child.pid || child.exitCode !== null) throw new Error("server identity mismatch");
   if (process.platform === "win32") {
     // No `-p tcp`: on Windows that filter is IPv4-only and `-H localhost` binds `[::1]` (CC boot, 2026-09-09).
@@ -84,6 +86,23 @@ async function verifyDev(html: string, child: ChildProcess, started: number) {
       if (current !== child.pid) throw new Error("listener does not belong to runner child");
     }
   }
+}
+async function verifyProd(html: string, child: ChildProcess, receipt: BuildReceipt) {
+  verifyListener(child);
+  // App Router HTML carries NO buildId in its asset paths (chunks are content-hashed under /_next/static/chunks/),
+  // so the HTML can only contradict the receipt, never prove it (CC prod boot, 2026-09-09). The proof is the served
+  // build manifest under the receipt's buildId being byte-identical to the file this checkout just built.
+  const assets = buildAssetsFromHtml(html);
+  if (assets.some(asset => asset.buildId !== receipt.buildId)) throw new Error("production buildId asset identity mismatch");
+  const response = await fetch(`${SIM_APP_ORIGIN}/_next/static/${receipt.buildId}/_buildManifest.js`, { redirect: "error", signal: AbortSignal.timeout(5000) });
+  if (response.status !== 200) { await response.body?.cancel(); throw new Error("production buildId manifest unavailable"); }
+  const served = Buffer.from(await response.arrayBuffer());
+  const onDisk = readFileSync(resolve(".next-sim-launch/static", receipt.buildId, "_buildManifest.js"));
+  if (!served.equals(onDisk)) throw new Error("production buildId asset identity mismatch");
+  return receipt.buildId;
+}
+async function verifyDev(html: string, child: ChildProcess, started: number) {
+  verifyListener(child);
   const asset = [...html.matchAll(/(?:src|href)="([^" ]*\/_next\/static\/[^" ]+)"/g)].map(m => m[1]!).find(s => s.includes(".js"));
   if (!asset) throw new Error("dev asset identity missing");
   const url = new URL(asset.replaceAll("&amp;", "&"), SIM_APP_ORIGIN);
@@ -133,6 +152,25 @@ export async function main(args = process.argv.slice(2)) {
     configFile = resolve(privateDir, ".env.sim");
     writeFileSync(configFile, Object.entries(parsed).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join("\n"), { mode: 0o600 });
     const loaded = loadSimEnv(privateDir); if (!loaded.ok) throw new Error("sim environment blocked");
+    const startServer = async () => {
+      stage = "server";
+      assertClean(); await portFree(); assertHeld(runId);
+      const started = Date.now();
+      let receipt: BuildReceipt | undefined;
+      if (options.dev) {
+        server = launch(["node_modules/next/dist/bin/next", "dev", "-p", "3100", "-H", "localhost"], { ...loaded.env, NODE_ENV: "development", SIM_PHASE: "build", LRA_RUN_ID: runId });
+      } else {
+        const production = startProduction({ env: { ...loaded.env, LRA_RUN_ID: runId }, receiptPath: buildReceiptPath });
+        server = production.child; receipt = production.receipt;
+      }
+      let failed = false; server.once("error", () => { failed = true; });
+      const html = await waitReady(server, () => interrupted || failed);
+      stage = "identity";
+      await driver.init({ root: privateDir, assertLease: () => assertHeld(runId), verifyServer: async () => {
+        evidence.manifest.buildId = receipt ? await verifyProd(html, server!, receipt) : await verifyDev(html, server!, started);
+        evidence.manifest.identity.server = true;
+      } });
+    };
     const git = (args: string[]) => spawnSync("git", args, { encoding: "utf8", windowsHide: true });
     const sha = git(["rev-parse", "HEAD"]), dirty = git(["status", "--porcelain"]);
     if (sha.status !== 0 || dirty.status !== 0) throw new Error("candidate identity unavailable");
@@ -154,14 +192,7 @@ export async function main(args = process.argv.slice(2)) {
       const catalog = JSON.parse(readFileSync(resolve("scripts/sim/launch-readiness/fixtures/manifest.json"), "utf8")) as Catalog;
       const results = await runFixtureContracts(catalog.recipes, {
         restore,
-        start: async () => {
-          assertClean(); await portFree(); assertHeld(runId);
-          const started = Date.now();
-          server = launch(["node_modules/next/dist/bin/next", "dev", "-p", "3100", "-H", "localhost"], { ...loaded.env, NODE_ENV: "development", SIM_PHASE: "build", LRA_RUN_ID: runId });
-          let failed = false; server.once("error", () => { failed = true; });
-          const html = await waitReady(server, () => interrupted || failed);
-          await driver.init({ root: privateDir, assertLease: () => assertHeld(runId), verifyServer: async () => { evidence.manifest.buildId = await verifyDev(html, server!, started); } });
-        },
+        start: startServer,
         stop: async () => { await stopped(server); await portFree(); server = undefined; },
       }, pins.SIM_PIN_ROSA ?? "");
       evidence.write("results.json", { status: "pass", tests: results });
@@ -170,15 +201,8 @@ export async function main(args = process.argv.slice(2)) {
       if (!options.noRestore) await restore(options.fixture);
       assertClean();
       stage = "server";
-      // Development is the temporary default too; F5 will implement build/start.
-      await portFree(); assertHeld(runId);
-      const env = { ...loaded.env, NODE_ENV: "development", SIM_PHASE: "build", LRA_RUN_ID: runId };
-      const started = Date.now();
-      server = launch(["node_modules/next/dist/bin/next", "dev", "-p", "3100", "-H", "localhost"], env);
-      let spawnFailed = false; server.once("error", () => { spawnFailed = true; });
-      const html = await waitReady(server, () => interrupted || spawnFailed);
+      await startServer();
       stage = "identity";
-      await driver.init({ root: privateDir, assertLease: () => assertHeld(runId), verifyServer: async () => { evidence.manifest.buildId = await verifyDev(html, server!, started); evidence.manifest.identity.server = true; } });
       // init itself validates both locations and all nine identities. Re-read via
       // its now-initialized, SELECT-only oracle before allowing any browser login.
       const { data } = await driver.db.from("locations").select("id,code,name").order("code");
@@ -187,9 +211,9 @@ export async function main(args = process.argv.slice(2)) {
       evidence.manifest.identity.locations = true; evidence.manifest.identity.personas = true;
       evidence.write("manifest.json", evidence.manifest);
       stage = "playwright";
-      playwright = launch(["node_modules/@playwright/test/cli.js", "test", "--config", "scripts/sim/launch-readiness/playwright.config.ts", `--repeat-each=${options.repeat}`], { ...loaded.env, ...pins, LRA_RUN_ID: runId, LRA_SUITE: options.suite, LRA_FIXTURE: options.fixture, LRA_CONFIG_ROOT: privateDir });
+      playwright = launch(["node_modules/@playwright/test/cli.js", "test", "--config", "scripts/sim/launch-readiness/playwright.config.ts", `--repeat-each=${options.repeat}`], { ...loaded.env, ...pins, LRA_DEV: options.dev ? "1" : "0", LRA_RUN_ID: runId, LRA_SUITE: options.suite, LRA_FIXTURE: options.fixture, LRA_CONFIG_ROOT: privateDir });
       const code = await new Promise<number | null>((ok, fail) => { playwright!.once("error", fail); playwright!.once("exit", ok); });
-      evidence.manifest.status = code === 0 && !interrupted ? "pass" : "fail"; evidence.manifest.reason = code === 0 ? "contracts passed; F5 production build unverified" : "Playwright failed";
+      evidence.manifest.status = code === 0 && !interrupted ? "pass" : "fail"; evidence.manifest.reason = interrupted ? "interrupted" : code === 0 ? options.dev ? "contracts passed (development mode; not release evidence)" : "production contracts passed" : "Playwright failed";
     }
   } catch (error) {
     evidence.manifest.status = stage === "playwright" || stage === "identity" ? "fail" : "blocked";
@@ -200,6 +224,7 @@ export async function main(args = process.argv.slice(2)) {
     }
     const safeReasons = new Set(["sim environment blocked", "invalid private PIN control", "candidate identity unavailable", "port occupied", "server readiness timeout", "server stopped before readiness", "dev asset identity missing", "dev asset origin mismatch", "stale dev asset", "dev asset identity mismatch", "listener identity unavailable", "listener identity missing", "process ancestry unavailable", "listener does not belong to runner child", "location identity mismatch", "second runner was not refused by this lease"]);
     if (error instanceof Error && safeReasons.has(error.message)) evidence.manifest.reason = error.message;
+    if (error instanceof Error && (/^build receipt mismatch: (candidateSha|dirty|lockfileSha256|policyVersion|publicConfigDigest|buildId|builtAt|nodeVersion|nextVersion|receipt)$/.test(error.message) || ["production buildId asset identity mismatch", "production buildId manifest unavailable"].includes(error.message))) evidence.manifest.reason = error.message;
     // Local diagnostics only: the raw message goes to stderr, never into evidence (CC, 2026-09-09).
     if (process.env.LRA_DEBUG) console.error(`[lra debug] stage=${stage}: ${error instanceof Error ? error.message : String(error)}`);
   } finally {

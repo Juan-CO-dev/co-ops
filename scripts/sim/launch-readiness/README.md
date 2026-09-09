@@ -52,7 +52,29 @@ Fixture recipes:
 
 The non-cold fragments are planner tests, not complete fixtures. No expected fingerprint is copied from a mutable sim. Complete content is compared to the supplied snapshot and declared synthetic rows before fingerprinting. CC must complete/review the missing semantic manifests and execute the live contracts before accepting F2. Local tests validate the real schema and all snapshot hashes/counts and self-FK ordering without DB access. This private-data test is explicitly skipped in CI when the snapshot is absent; embedded graph, refusal and 1,002-row chain tests always run. The four synthetic recipes retain their planner-only blocked reasons, and the reset explicitly admits only cold-empty.
 
-F5 production build/start is not implemented. Both the temporary default and `--dev` launch the local Next binary with `dev -p 3100 -H localhost`, F1 child env, `NODE_ENV=development`, and `SIM_PHASE=build`. The runner refuses an occupied port, checks fresh locally generated dev asset bytes against the served asset, and on Windows verifies the listener PID descends from its child. It initializes the driver and compares real `locations` readback with both `SIM_LOCATIONS`; the driver also validates all nine personas. This is dev identity only, not a production BUILD_ID receipt. Next's F1 instrumentation guards server fetch/HTTP; the temporary dev phase retains the reviewed font build exception. The isolation suite's no-external projection is browser evidence, not a claim of complete server-network telemetry. No existing GET API route with an external fetch was found in the current route scan.
+F5 production mode is the default and is required for release evidence. From the dedicated checkout, after provisioning the fixture/reset controls above:
+
+```powershell
+node --import tsx scripts/sim/launch-readiness/target.ts build
+node --import tsx scripts/sim/launch-readiness/run.ts --suite runner --fixture cold-empty
+# Development smoke only:
+node --import tsx scripts/sim/launch-readiness/run.ts --suite runner --fixture cold-empty --dev
+```
+
+Stop on any nonzero exit. `target.ts start` refuses with `use run.ts` (exit 2): only the runner owns the restore/start lifecycle. Build acquires the same shared lease, validates `.env.sim` and rejects Next autoload filenames before spawning the local Next binary. It restores nothing and performs no fixture writes. Build uses `NODE_ENV=production`, `SIM_MODE=1`, `SIM_PHASE=build`; runtime uses the same F1 sim environment with `SIM_PHASE=runtime`. The existing `next.config.ts` selects `.next-sim-launch/`. Google Fonts hosts are a BUILD-TIME-ONLY allowlist exception; runtime denies them. No font localization is involved. The sandbox cannot run this network-dependent build; CC runs it outside the sandbox.
+
+A successful build writes `.next-sim-launch/lra-build-receipt.json`, read back after writing:
+
+- `candidateSha`, `dirty`: current Git HEAD and whether `git status --porcelain` is nonempty.
+- `lockfileSha256`, `policyVersion`: dependency lock hash and F1 policy revision.
+- `publicConfigDigest`: SHA-256 of sorted `NEXT_PUBLIC_*` keys paired with hashed values from the child env. No configuration values are stored; non-public keys do not affect this digest.
+- `buildId`: `.next-sim-launch/BUILD_ID`, plus `builtAt`, `nodeVersion`, and installed `nextVersion`.
+
+Start refuses missing/malformed receipts, changed SHA, dirty flag, lockfile, policy, public configuration, BUILD_ID, Node or Next version. `builtAt` must be a valid timestamp; it is historical metadata, not an expiry. A rebuild removes the old receipt before invoking Next, so a failed build cannot reuse it. Checkout identity is also checked across the build. **Rebuild after every source edit**, including edits while already dirty: the prescribed boolean dirty flag is not a content hash and cannot detect dirty-to-dirty changes. CC committing the candidate changes its SHA and requires a fresh build.
+
+After restore, the runner refuses an occupied port, verifies the receipt, and starts `next start -p 3100 -H localhost`. It checks listener ancestry on Windows, requires the served HTML to contain a local `/_next/static/<buildId>/...` asset, rejects mixed build IDs, and requires that build's `_buildManifest.js` to return 200. Generic hashed chunk paths alone do not establish this identity: if the installed App Router emits no BUILD_ID asset path, the run fails closed and CC must adjudicate the identity contract before accepting release evidence. The manifest records the receipt's BUILD_ID and sets `identity.server` only after verification. The driver independently reads both locations and all nine personas before login. The `runner production identity` browser contract repeats the HTML check; it is skipped under `--dev`. Existing PIN login and secure cookie settings are unchanged.
+
+`--dev` retains `dev -p 3100 -H localhost`, `NODE_ENV=development`, `SIM_PHASE=build`, and served dev-chunk byte equality against disk. It does not require a production receipt and cannot supply release evidence. The fixture suite also respects the selected production/development mode. The isolation suite's no-external projection is browser evidence, not complete server-network telemetry.
 
 Published evidence lives under `.artifacts/<runId>/`:
 

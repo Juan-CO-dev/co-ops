@@ -78,6 +78,8 @@ export default class PublicProjectionReporter implements Reporter {
   }
   onError(error: TestError) {
     for (const key of Object.keys(error)) delete (error as Record<string, unknown>)[key];
+    // Local diagnostics only (stderr, never evidence): the raw message before it is scrubbed.
+    if (process.env.LRA_DEBUG) console.error(`[lra debug] playwright: ${error.message ?? ""}\n${error.stack ?? ""}`.slice(0, 1500));
     error.message = "Runner infrastructure failure";
   }
 }
