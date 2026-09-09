@@ -2,11 +2,18 @@
  * Run: node scripts/sim/dev-sim.mjs
  * The concurrency drivers keep the same file, port and JWT scheme.
  */
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { tsImport } from "tsx/esm/api";
 
-const { loadSimEnv } = await tsImport("./launch-readiness/env.ts", import.meta.url);
+// Re-exec under the FULL tsx loader: tsx's `tsImport` API resolves only the file it is handed and
+// not that file's own TS imports (ERR_MODULE_NOT_FOUND on lib/sim-isolation-shared, 2026-09-09).
+if (!process.env.SIM_LAUNCHER_TSX) {
+  const r = spawnSync(process.execPath, ["--import", "tsx", fileURLToPath(import.meta.url), ...process.argv.slice(2)], {
+    stdio: "inherit", env: { ...process.env, SIM_LAUNCHER_TSX: "1" },
+  });
+  process.exit(r.status ?? 1);
+}
+const { loadSimEnv } = await import("./launch-readiness/env.ts");
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const result = loadSimEnv(root);
 if (!result.ok) {
@@ -16,11 +23,10 @@ if (!result.ok) {
 // Dev compiles on demand, so next/font fetches happen at request time here: phase "build"
 // keeps the documented fonts exception open in dev. Release evidence uses the F5 production target.
 const env = { ...result.env, NODE_ENV: "development", SIM_PHASE: "build" };
-// Propagate the preload into Next workers. The wrapper owns NODE_OPTIONS;
-// CC's inheritance simplification otherwise stays intact.
-const tsx = import.meta.resolve("tsx");
-const guard = new URL("./launch-readiness/network.ts", import.meta.url).href;
-env.NODE_OPTIONS = `--import=${tsx} --import=${guard}`;
+// The Node-side network guard is installed by `instrumentation.ts` (Next's server-init hook)
+// whenever SIM_MODE is set — NOT via NODE_OPTIONS: a tsx loader preload makes `next dev`
+// (Turbopack) hang silently before it ever listens (probed 2026-09-09, CC F1 review).
+delete env.NODE_OPTIONS;
 const child = spawn(process.execPath, [fileURLToPath(new URL("../../node_modules/next/dist/bin/next", import.meta.url)), "dev", "-p", "3100", "-H", "localhost"], {
   cwd: root, env, stdio: "inherit", shell: false,
 });

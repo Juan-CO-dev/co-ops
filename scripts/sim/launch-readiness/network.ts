@@ -106,4 +106,5 @@ export function installNetworkGuard(env: Record<string, string | undefined>): vo
   syncBuiltinESMExports();
 }
 
-if (process.env.SIM_MODE) installNetworkGuard(process.env);
+// No import-time side effect: `instrumentation.ts` calls installNetworkGuard() once per server
+// instance in sim mode (Next's `register()` hook, Node runtime only).
