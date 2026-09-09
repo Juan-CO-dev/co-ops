@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useTranslation } from "@/lib/i18n/provider";
 import { formatCents, formatDateLabel } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/types";
-import { PIPELINE_STAGES, type PipelineStage } from "@/lib/catering/pipeline-shared";
+import { LEGAL_TRANSITIONS, PIPELINE_STAGES, type PipelineStage } from "@/lib/catering/pipeline-shared";
 import type { PipelineLead, PipelineSearchResult, AssignableStaff } from "@/lib/catering/pipeline";
 import { LEAD_SOURCES, leadSourceKey } from "@/lib/catering/intake-shared";
 import type { CateringCapacityResult } from "@/lib/catering/capacity";
@@ -375,7 +375,8 @@ function LeadDetail({
   );
 
   const rev = money(lead.estimatedRevenueCents);
-  const otherStages = PIPELINE_STAGES.filter((s) => s !== lead.stage);
+  // Only the moves the server will accept (LEGAL_TRANSITIONS); a closed lead (Completed / Lost) has none.
+  const otherStages: readonly PipelineStage[] = LEGAL_TRANSITIONS[lead.stage] ?? [];
 
   return (
     <div className="mt-3 border-t border-co-border pt-3 text-sm">
@@ -414,6 +415,9 @@ function LeadDetail({
       {canWrite && (
         <div className="mt-3">
           <div className="text-xs font-semibold text-co-text-muted">{t("catering.pipeline.move_to")}</div>
+          {otherStages.length === 0 && (
+            <p className="mt-1 text-xs text-co-text-muted">{t("catering.pipeline.no_moves")}</p>
+          )}
           <div className="mt-1 flex flex-wrap gap-1.5">
             {otherStages.map((s) => (
               <button

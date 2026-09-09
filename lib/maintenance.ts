@@ -161,6 +161,9 @@ export interface OverviewFridge {
 export interface MaintenanceOverview {
   fridges: OverviewFridge[];
   equipment: Array<{ equip: Equipment; lastNote: MaintenanceNote | null }>;
+  /** Notes filed under "Other…" (no equipment row) since `sinceDate`, newest first. Until
+   *  2026-09-09 these were saved and audited but rendered on NO surface (guide-walk finding). */
+  otherNotes: MaintenanceNote[];
 }
 
 export async function loadMaintenanceOverview(
@@ -208,11 +211,33 @@ export async function loadMaintenanceOverview(
     equip.push({ equip: e, lastNote });
   }
 
+  // "Other..." notes — equipment_id IS NULL — over the same window as the fridge sparklines.
+  const { data: otherRows, error: otherErr } = await service
+    .from("maintenance_notes")
+    .select("id, note, other_label, created_by, created_at")
+    .eq("location_id", args.locationId)
+    .is("equipment_id", null)
+    .gte("created_at", `${args.sinceDate}T00:00:00Z`)
+    .order("created_at", { ascending: false })
+    .limit(20)
+    .returns<Array<{ id: string; note: string; other_label: string | null; created_by: string | null; created_at: string }>>();
+  if (otherErr) throw new Error(`loadMaintenanceOverview other notes: ${otherErr.message}`);
+  const otherAuthorIds = [...new Set((otherRows ?? []).map((r) => r.created_by).filter((v): v is string => !!v))];
+  const otherNames = new Map<string, string>();
+  if (otherAuthorIds.length) {
+    const { data: us } = await service.from("users").select("id, name").in("id", otherAuthorIds);
+    for (const u of (us ?? []) as Array<{ id: string; name: string }>) otherNames.set(u.id, u.name);
+  }
+  const otherNotes: MaintenanceNote[] = (otherRows ?? []).map((r) => ({
+    id: r.id, equipmentId: null, otherLabel: r.other_label, note: r.note,
+    byName: r.created_by ? (otherNames.get(r.created_by) ?? null) : null, at: r.created_at,
+  }));
+
   // out-of-range fridges first
   fridges.sort(
     (a, b) => (a.status === "out_of_range" ? 0 : 1) - (b.status === "out_of_range" ? 0 : 1),
   );
-  return { fridges, equipment: equip };
+  return { fridges, equipment: equip, otherNotes };
 }
 
 export interface EquipmentDetail {
@@ -417,6 +442,8 @@ export interface MaintenanceReportDetail {
   locationId: string;
   equipment: MaintenanceReportEquip[];
   flagCount: number;           // out-of-range fridge count (== list tempFlags)
+  /** That date's notes filed under "Other…" (no equipment row), newest first. */
+  otherNotes: MaintenanceNote[];
 }
 
 /**
@@ -555,5 +582,5 @@ export async function loadMaintenanceReportDetail(
       status, readings, notes: notesByEquip.get(e.id) ?? [],
     });
   }
-  return { kind: "maintenance", type: "maintenance", date, locationId, equipment: out, flagCount };
+  return { kind: "maintenance", type: "maintenance", date, locationId, equipment: out, flagCount, otherNotes: notesByEquip.get("__other__") ?? [] };
 }

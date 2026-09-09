@@ -506,6 +506,39 @@ export default async function ClosingPage({ searchParams }: PageProps) {
     }
   }
 
+  // Reasons the closer gave at confirm for required lines left undone. Written by
+  // confirmInstance into checklist_incomplete_reasons and, until 2026-09-09, read back by
+  // NOTHING (guide-walk finding) — the "explain why" ceremony produced a record nobody saw.
+  // Loaded only once the instance is confirmed (before that the Review panel is the live
+  // surface); the client lists them under the status banner, read-only.
+  let incompleteReasons: ClosingInitialState["incompleteReasons"] = [];
+  if (instanceRow.status === "confirmed" || instanceRow.status === "incomplete_confirmed") {
+    const { data: reasonRows, error: rErr } = await sb
+      .from("checklist_incomplete_reasons")
+      .select("template_item_id, reason, reported_by, reported_at")
+      .eq("instance_id", instanceRow.id)
+      .order("reported_at", { ascending: true })
+      .returns<Array<{ template_item_id: string; reason: string; reported_by: string | null; reported_at: string }>>();
+    if (rErr) throw new Error(`load incomplete reasons: ${rErr.message}`);
+    const rows = reasonRows ?? [];
+    const missingIds = [...new Set(rows.map((r) => r.reported_by).filter((v): v is string => !!v && !(v in authors)))];
+    const extraNames = new Map<string, string>();
+    if (missingIds.length > 0) {
+      const { data: us } = await sb.from("users").select("id, name").in("id", missingIds);
+      for (const u of (us ?? []) as Array<{ id: string; name: string }>) extraNames.set(u.id, u.name);
+    }
+    // newest per item wins (append-only table; a retried confirm reuses rows)
+    const byItem = new Map<string, { templateItemId: string; reason: string; byName: string | null }>();
+    for (const r of rows) {
+      byItem.set(r.template_item_id, {
+        templateItemId: r.template_item_id,
+        reason: r.reason,
+        byName: r.reported_by ? (authors[r.reported_by] ?? extraNames.get(r.reported_by) ?? null) : null,
+      });
+    }
+    incompleteReasons = [...byItem.values()];
+  }
+
   const initialState: ClosingInitialState = {
     location: locationRow,
     instance: rowToInstance(instanceRow),
@@ -520,6 +553,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
     reportRefChains,
     reportRefCanEdit,
     amPrepGap,
+    incompleteReasons,
   };
 
   return <ClosingClient initialState={initialState} />;

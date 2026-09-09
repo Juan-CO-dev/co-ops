@@ -332,6 +332,11 @@ export interface ChecklistDetailItem {
   /** Attached completion photo id (photo uploader seam, 0164); null when none.
    *  Rendered as a /api/photos/{id} link — visible to any viewer of the report. */
   photoId: string | null;
+  /** The reason the closer gave at confirm for leaving this required line undone
+   *  (checklist_incomplete_reasons). Written by confirmInstance and READ BY NOTHING until
+   *  2026-09-09 (guide-walk finding). Same redaction gate as notes; null when the line is
+   *  done, when no reason was given, or below REPORTS_HUB_NOTES_LEVEL. */
+  incompleteReason: { text: string; byName: string | null } | null;
 }
 
 /**
@@ -426,11 +431,26 @@ async function loadChecklistDetail(
     compByItem.set(c.template_item_id, c);
   }
 
+  // Reasons given at confirm for lines left undone. Append-only table; a retried confirm
+  // reuses rows, so >1 per item is rare — the newest (last in reported_at order) wins.
+  const reasonRows = await selectAllRows<{ template_item_id: string; reason: string; reported_by: string | null; reported_at: string }>(
+    (from, to) =>
+      service
+        .from("checklist_incomplete_reasons")
+        .select("template_item_id, reason, reported_by, reported_at")
+        .eq("instance_id", args.instanceId)
+        .order("reported_at", { ascending: true })
+        .range(from, to),
+  );
+  const reasonByItem = new Map<string, { reason: string; reported_by: string | null }>();
+  for (const r of reasonRows) reasonByItem.set(r.template_item_id, r);
+
   const byIds = [
     ...new Set(
-      [...compByItem.values()]
-        .map((c) => c.completed_by)
-        .filter((v): v is string => !!v),
+      [
+        ...[...compByItem.values()].map((c) => c.completed_by),
+        ...[...reasonByItem.values()].map((r) => r.reported_by),
+      ].filter((v): v is string => !!v),
     ),
   ];
   const nameById = new Map<string, string>();
@@ -457,6 +477,11 @@ async function loadChecklistDetail(
       isTempFlag: tempItemIds.has(ti.id) && countValue !== null && countValue > FRIDGE_DEFAULT_SAFE_MAX_F,
       photoId: c?.photo_id ?? null,
       inputType: ti.input_type,
+      incompleteReason: (() => {
+        if (c || !showNotes) return null;
+        const r = reasonByItem.get(ti.id);
+        return r ? { text: r.reason, byName: r.reported_by ? (nameById.get(r.reported_by) ?? null) : null } : null;
+      })(),
     };
   });
 

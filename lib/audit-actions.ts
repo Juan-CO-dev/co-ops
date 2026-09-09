@@ -266,6 +266,10 @@ export const RESERVED_ACTIONS = [
   // Convention documented in AGENTS.md, written by hand during incident recovery
   // rather than by any code path.
   "audit.gap_recovery",
+  // Emitted from SQL only — migration 0196 restores the 342 Phase 1 completion rows that 0176's
+  // collapse superseded under their live Phase 2 siblings, and writes this row itself with
+  // destructive=true. No TypeScript call site: no app code path un-supersedes a completion.
+  "checklist_completion.restore",
   // Location lifecycle — the admin surface for it does not exist yet.
   "location.create",
   "location.activate",

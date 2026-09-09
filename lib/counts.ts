@@ -95,9 +95,12 @@ export const COUNT_READ_MIN = 6; // AGM+
 export const COUNT_WRITE_MIN = 6; // AGM+ (Tier-A step-up enforced at the route)
 
 export class CountError extends Error {
-  constructor(public status: number, public code: string, message?: string) {
+  /** Structured facts the client can translate (e.g. which line could not be anchored). */
+  public detail: Record<string, string | null> | undefined;
+  constructor(public status: number, public code: string, message?: string, detail?: Record<string, string | null>) {
     super(message ?? code);
     this.name = "CountError";
+    this.detail = detail;
   }
 }
 
@@ -501,7 +504,12 @@ export async function createCountEvent(actor: AuthContext, input: CreateCountEve
   const [measures, recipeSkus] = await Promise.all([loadMeasures(), loadRecipeSkus(skuIds)]);
   const resolution = resolveCountLinesDim(lines, recipeSkus, measures);
   if (!resolution.ok) {
-    throw new CountError(400, "unresolvable_line", `Can't anchor "${resolution.badLine.levelLabel}" for a SKU — set the SKU's pack chain (a count leaf like "each" is enough for packaging) or its avg oz first`);
+    // Name the line: one unreadable unit fails the WHOLE audit (atomic by design), so the
+    // operator must be told WHICH row to fix or drop (guide-walk finding, 2026-09-08).
+    const { data: badSku } = await sb.from("vendor_items").select("name").eq("id", resolution.badLine.skuId).maybeSingle<{ name: string }>();
+    throw new CountError(400, "unresolvable_line",
+      `Can't anchor "${resolution.badLine.levelLabel}" for ${badSku?.name ? `"${badSku.name}"` : "a SKU"} — set the SKU's pack chain (a count leaf like "each" is enough for packaging) or its avg oz first`,
+      { levelLabel: resolution.badLine.levelLabel, skuName: badSku?.name ?? null, skuId: resolution.badLine.skuId });
   }
   if (resolution.resolved.length === 0 && allocated.length === 0) {
     throw new CountError(400, "no_lines", "At least one count line is required");
@@ -675,7 +683,8 @@ async function allocateProductLines(
       measures,
     );
     if (!resolved.ok) {
-      throw new CountError(400, "unresolvable_line", `Can't anchor "${line.levelLabel}" for "${entry.name}" — set the primary vendor's pack chain or avg oz first`);
+      throw new CountError(400, "unresolvable_line", `Can't anchor "${line.levelLabel}" for "${entry.name}" — set the primary vendor's pack chain or avg oz first`,
+        { levelLabel: line.levelLabel, skuName: entry.name, skuId: null });
     }
     const only = resolved.resolved[0]!;
     if (only.anchorDimension !== "weight" || only.resolvedOz == null) {
