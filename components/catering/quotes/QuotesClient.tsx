@@ -280,8 +280,11 @@ function QuoteBuilder({
       description: item.name,
       quantity: "1",
       unitPrice: item.unitPriceCents ? (item.unitPriceCents / 100).toString() : "",
-      itemId: item.id,
-      menuItemId: null,
+      // `id` is an items id OR a menu_items id per `kind` (lib/catering/menu.ts). The two land in
+      // different FK columns; writing a menu item's id into itemId failed the line insert after
+      // the header was saved (guide-walk sim, 2026-09-08).
+      itemId: item.kind === "item" ? item.id : null,
+      menuItemId: item.kind === "menu_item" ? item.id : null,
       packageId: null,
     };
     setLines((prev) => [...prev, line]);
