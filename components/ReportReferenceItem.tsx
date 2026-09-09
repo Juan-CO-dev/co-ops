@@ -110,6 +110,9 @@ interface ReportReferenceItemProps {
   locationId: string;
   /** Read-only override — disables empty-state tap when closing is finalized. */
   readOnly: boolean;
+  /** The viewer's role level. AM prep / mid-day prep pages are key-holder-and-up; below that
+   *  the row must not be a link that bounces to the dashboard (guide-walk finding, 2026-09-08). */
+  actorLevel?: number;
   /**
    * C.46 — full AM Prep submission chain (head + updates) for chained
    * attribution rendering. Empty/null when chain not loaded or single-entry
@@ -129,6 +132,7 @@ export function ReportReferenceItem({
   completionAuthor,
   locationId,
   readOnly,
+  actorLevel,
   chainAttribution,
   canEdit = false,
 }: ReportReferenceItemProps) {
@@ -216,6 +220,29 @@ export function ReportReferenceItem({
 
   const subtitleText = t("closing.report_ref.empty_subtitle");
   const tapHref = `${baseRoute}?location=${locationId}`;
+
+  // AM prep and mid-day prep open at key holder and up (AM_PREP_BASE_LEVEL = 4). Below that
+  // the page redirects to the dashboard with no message — so the row is a plain note, never
+  // a dead link. The opening page has no such floor (employees fill Phase 1).
+  const khOnlyTarget = baseRoute.includes("/am-prep") || baseRoute.includes("/mid-day");
+  const canOpenTarget = !khOnlyTarget || actorLevel == null || actorLevel >= 4;
+  if (!readOnly && !canOpenTarget) {
+    return (
+      <div
+        role="note"
+        aria-label={t("closing.report_ref.kh_only_aria", { label: resolved.label })}
+        className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 min-h-[56px] border border-co-border bg-co-surface"
+      >
+        <span aria-hidden className="flex h-12 w-12 shrink-0 items-center justify-center">
+          <EmptyCircleIcon />
+        </span>
+        <span className="flex flex-1 flex-col items-start gap-0.5 min-w-0">
+          <span className="text-sm font-semibold leading-tight text-co-text">{resolved.label}</span>
+          <span className="text-[11px] italic text-co-text-dim">{t("closing.report_ref.kh_only")}</span>
+        </span>
+      </div>
+    );
+  }
 
   // Tappable when the closing is still open (closer can navigate to AM
   // Prep and submit it from there).

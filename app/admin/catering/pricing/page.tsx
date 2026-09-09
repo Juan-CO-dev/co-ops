@@ -21,7 +21,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 export default async function AdminCateringPricingPage() {
   const auth = await requireSessionFromHeaders("/admin");
   const level = ROLES[auth.user.role].level;
-  if (level < PRICING_MIN) redirect("/dashboard");
+  if (level < PRICING_MIN) redirect("/admin?denied=pricing");
   const lang = auth.user.language;
 
   const [rules] = await Promise.all([loadPricingRules(auth)]);

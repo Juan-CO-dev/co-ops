@@ -307,6 +307,14 @@ function QuoteBuilder({
     if (newLines.length === 0) {
       lineKeySeq += 1;
       newLines.push({ key: `l${lineKeySeq}`, description: pkg.labelEn, quantity: "1", unitPrice: (pkg.priceCents / 100).toString(), itemId: null, menuItemId: null, packageId: pkg.id });
+    } else if (pkg.priceCents > 0 && newLines.every((l) => l.unitPrice === "")) {
+      // A package whose composition is all "choose your own" slots expands into lines with
+      // no price behind them; the package price then arrived nowhere and the builder totaled
+      // to $0 unless the manager typed it — usually into a ×8 slot line (guide-walk finding:
+      // $115 × 8). Carry the package price on ONE line at Qty 1; the slot lines stay as the
+      // customer's picks at no charge.
+      lineKeySeq += 1;
+      newLines.unshift({ key: `l${lineKeySeq}`, description: pkg.labelEn, quantity: "1", unitPrice: (pkg.priceCents / 100).toString(), itemId: null, menuItemId: null, packageId: pkg.id });
     }
     setLines((prev) => [...prev, ...newLines]);
   };
@@ -697,7 +705,18 @@ function QuoteDetailPanel({
     setBusy(false);
     if (res.ok) {
       setStepUpOpen(false);
-      setFlashKey(res.data.emailed ? "catering.quotes.sent_emailed" : "catering.quotes.sent_no_email");
+      // One line used to cover three different facts (no customer · no address · the send
+      // failed); the closer could not tell whether to fix the record or call the GM.
+      const outcome = res.data.emailOutcome;
+      setFlashKey(
+        outcome === "sent" || res.data.emailed
+          ? "catering.quotes.sent_emailed"
+          : outcome === "send_failed"
+            ? "catering.quotes.sent_send_failed"
+            : outcome === "no_address"
+              ? "catering.quotes.sent_no_address"
+              : "catering.quotes.sent_no_customer",
+      );
       await load();
       return true;
     }

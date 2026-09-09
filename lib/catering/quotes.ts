@@ -935,6 +935,8 @@ export async function loadLabelData(actor: AuthContext, quoteId: string): Promis
 
 export interface SendQuoteResult {
   emailed: boolean;
+  /** Why `emailed` is false, when it is. `sent` when it is true. */
+  emailOutcome: "sent" | "no_customer" | "no_address" | "send_failed";
   recipient: string | null;
   emailError: string | null;
 }
@@ -970,9 +972,11 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
 
   // Best-effort customer email (only delivers to Juan until Resend DNS is verified).
   let emailed = false;
+  let emailOutcome: "sent" | "no_customer" | "no_address" | "send_failed" = "no_customer";
   let recipient: string | null = null;
   let emailError: string | null = null;
   if (row.customer_id) {
+    emailOutcome = "no_address";
     const { data: cust } = await sb
       .from("catering_customers")
       .select("email, name")
@@ -997,8 +1001,13 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
         html: `<p>Hi ${safeName},</p><p>Your catering quote is ready. Estimated total: <strong>${total}</strong>.</p>${htmlLink}<p>Our team will follow up shortly to confirm the details.</p>`,
         text: `Hi ${cust.name ?? "there"},\n\nYour catering quote is ready. Estimated total: ${total}.${textLink}\n\nOur team will follow up shortly to confirm the details.`,
       });
-      if ("id" in res) emailed = true;
-      else emailError = res.error;
+      if ("id" in res) {
+        emailed = true;
+        emailOutcome = "sent";
+      } else {
+        emailError = res.error;
+        emailOutcome = "send_failed";
+      }
     }
   }
 
@@ -1008,9 +1017,9 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
     action: "catering.quote.send",
     resourceTable: "catering_quotes",
     resourceId: id,
-    metadata: { emailed, recipient, email_error: emailError, total_cents: row.total_cents },
+    metadata: { emailed, email_outcome: emailOutcome, recipient, email_error: emailError, total_cents: row.total_cents },
     ipAddress: null,
     userAgent: null,
   });
-  return { emailed, recipient, emailError };
+  return { emailed, emailOutcome, recipient, emailError };
 }

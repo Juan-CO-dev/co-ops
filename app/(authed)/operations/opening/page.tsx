@@ -258,6 +258,7 @@ export default async function OpeningPage({ searchParams }: OpeningPageProps) {
         managers={managers}
         saverNames={{ ...state.authors, [auth.user.id]: auth.user.name }}
         language={language}
+        actorLevel={auth.level}
       />
     </AuthShell>
   );

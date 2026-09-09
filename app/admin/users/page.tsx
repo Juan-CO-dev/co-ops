@@ -13,7 +13,7 @@ export default async function AdminUsersPage({
   searchParams,
 }: { searchParams: Promise<{ role?: string; status?: string; location?: string; q?: string }> }) {
   const auth = await requireSessionFromHeaders("/admin");
-  if (ROLES[auth.user.role].level < 8) redirect("/dashboard");
+  if (ROLES[auth.user.role].level < 8) redirect("/admin?denied=users");
   const lang = auth.user.language;
   const sp = await searchParams;
 
