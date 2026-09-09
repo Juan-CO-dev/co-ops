@@ -38,7 +38,14 @@ export function MidDayPrepTile({
         {serverT(language, "dashboard.mid_day_prep.tile_label")}
       </p>
 
-      {!state.hasTemplate ? (
+      {!state.isVisibleToActor ? (
+        // Below the key-holder floor the loader short-circuits with hasTemplate:false; until
+        // 2026-09-09 that rendered as "no template" and sent employees looking for a manager
+        // to configure one (guide-walk finding). Say what is actually true.
+        <p className="mt-2 text-[11px] italic text-co-text-muted">
+          {serverT(language, "dashboard.mid_day_prep.role_gate")}
+        </p>
+      ) : !state.hasTemplate ? (
         <p className="mt-2 text-[11px] italic text-co-text-muted">
           {serverT(language, "dashboard.mid_day_prep.no_template")}
         </p>

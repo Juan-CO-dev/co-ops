@@ -1227,6 +1227,7 @@ function StationGroup({
                   completionAuthor={author}
                   locationId={locationId}
                   readOnly={readOnly}
+                  actorLevel={actor.level}
                   chainAttribution={reportRefChains[it.id] ?? null}
                   canEdit={reportRefCanEdit[it.id] ?? false}
                 />

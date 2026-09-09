@@ -26,7 +26,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   try {
     const result = await sendQuote(ctx, id);
-    return jsonOk({ ok: true, emailed: result.emailed, recipient: result.recipient });
+    return jsonOk({ ok: true, emailed: result.emailed, emailOutcome: result.emailOutcome, recipient: result.recipient });
   } catch (e) {
     if (e instanceof CateringQuoteError) return jsonError(e.status, e.code, { message: e.message });
     throw e;

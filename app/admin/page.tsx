@@ -17,8 +17,18 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { AlertPill } from "@/components/ui/AlertPill";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 
-export default async function AdminHubPage() {
+const DENIED_KEYS = {
+  users: "admin.hub.denied.users",
+  pricing: "admin.hub.denied.pricing",
+  rate_rules: "admin.hub.denied.rate_rules",
+} as const;
+
+export default async function AdminHubPage({ searchParams }: { searchParams: Promise<{ denied?: string }> }) {
   const auth = await requireSessionFromHeaders("/admin");
+  // A level-8 page (users · pricing · rate rules) sends a GM here with ?denied= instead of
+  // bouncing to the dashboard with no message (guide-walk finding, 2026-09-08).
+  const { denied } = await searchParams;
+  const deniedKey = denied && denied in DENIED_KEYS ? DENIED_KEYS[denied as keyof typeof DENIED_KEYS] : null;
   const lang = auth.user.language;
   const sections = adminSectionsFor(auth.level);
 
@@ -56,6 +66,11 @@ export default async function AdminHubPage() {
         title={serverT(lang, "admin.hub.heading")}
         subtitle={serverT(lang, "admin.hub.subtitle")}
       />
+      {deniedKey ? (
+        <p role="status" className="mt-3 rounded-lg border-2 border-co-border bg-co-surface-inset px-3 py-2 text-sm text-co-text">
+          {serverT(lang, deniedKey)}
+        </p>
+      ) : null}
 
       <CronHealthCard health={cronHealth} lang={lang} />
       <AdoptionCard surfaces={adoption} lang={lang} />

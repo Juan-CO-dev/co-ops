@@ -105,6 +105,9 @@ interface OpeningClientProps {
    */
   saverNames: Record<string, string>;
   language: Language;
+  /** Viewer's role level. Submit Opening is key holder and up (OPENING_BASE_LEVEL = 4); the
+   *  server refuses below it, and since 2026-09-09 the button says so instead of 403ing. */
+  actorLevel: number;
 }
 
 interface SubmitState {
@@ -330,6 +333,7 @@ export function OpeningClient({
   managers,
   saverNames,
   language,
+  actorLevel,
 }: OpeningClientProps) {
   const { t } = useTranslation();
   const router = useRouter();
@@ -834,8 +838,12 @@ export function OpeningClient({
     instance.status === "phase1_complete" &&
     outstandingCount === 0 &&
     submitState.status !== "submitting";
+  // Phase 1 submit floor mirrors the server (submitPhase1Atomic: actor.level < OPENING_BASE_LEVEL
+  // → role_level_insufficient). An employee fills the walk in and hands the tablet over; the
+  // button tells them that instead of letting them tap into a 403 (guide-walk finding).
+  const roleCanSubmitPhase1 = actorLevel >= 4;
   const submitEnabled =
-    activePhase === "verification" ? phase1SubmitEnabled : phase2SubmitEnabled;
+    activePhase === "verification" ? phase1SubmitEnabled && roleCanSubmitPhase1 : phase2SubmitEnabled;
 
   // Status-driven spinner reset (React "adjust state when a prop changes"
   // pattern — react.dev/learn/you-might-not-need-an-effect). handlePhase1Submit
@@ -1594,7 +1602,7 @@ export function OpeningClient({
                   total: totalTempItems,
                 })}
               </span>
-              {totalPhase2Items > 0 ? (
+              {activePhase !== "verification" && totalPhase2Items > 0 ? (
                 <>
                   {" · "}
                   <span className="font-bold text-co-text">
@@ -1615,7 +1623,7 @@ export function OpeningClient({
                 duplicate messaging would be noise. */}
             <p className="text-[11px] text-co-text-dim">
               {submitEnabled
-                ? t("opening.submit.gate_ready")
+                ? (roleCanSubmitPhase1 ? t("opening.submit.gate_ready") : t("opening.submit.gate_role"))
                 : activePhase === "verification"
                   ? !allTicked
                     ? t("opening.submit.gate_disabled_items_remaining", {
@@ -1645,7 +1653,7 @@ export function OpeningClient({
             {submitState.status === "submitting"
               ? t("opening.submit.submitting")
               : activePhase === "verification"
-                ? t("opening.submit.button_label")
+                ? (roleCanSubmitPhase1 ? t("opening.submit.button_label") : t("opening.submit.button_label_hand_off"))
                 : phase2AlreadyFinalized
                   ? t("opening.finalize.button_label_finalized")
                   : outstandingCount > 0
