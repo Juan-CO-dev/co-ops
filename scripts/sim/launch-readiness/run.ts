@@ -9,14 +9,14 @@ import { setTimeout as delay } from "node:timers/promises";
 import { loadSimEnv } from "./env";
 import { Evidence } from "./evidence";
 import { acquire, assertHeld, release } from "./lease.mjs";
-import { SIM_APP_ORIGIN } from "../../../lib/sim-isolation-shared";
+import { SIM_APP_ORIGIN, RUNNER_PRIVATE_KEYS } from "../../../lib/sim-isolation-shared";
 import { SIM_LOCATIONS, SIM_PERSONAS } from "../personas-shared";
 import * as driver from "../concurrency/driver.mjs";
 import { resetFixture, assertClean } from "./reset";
 import type { Catalog } from "./fixtures";
 import { startProduction, buildReceiptPath, buildAssetsFromHtml, type BuildReceipt } from "./target";
 
-export const SUITES = ["runner", "isolation", "personas", "fixtures"] as const;
+export const SUITES = ["runner", "isolation", "personas", "fixtures", "opening"] as const;
 export const FIXTURES = ["warm-history", "cold-empty", "incomplete-pack", "over-1000", "two-shop-divergent"] as const;
 export function parseArgs(args: string[]) {
   let suite = "runner", fixture = "cold-empty", dev = false, noRestore = false, repeat = 1, restoreOnly = false;
@@ -34,6 +34,7 @@ export function parseArgs(args: string[]) {
   }
   if (!(SUITES as readonly string[]).includes(suite) || !(FIXTURES as readonly string[]).includes(fixture) || !Number.isSafeInteger(repeat)) throw new Error("usage");
   if (noRestore && (suite !== "runner" || restoreOnly)) throw new Error("usage");
+  if (suite === "opening" && fixture !== "cold-empty") throw new Error("usage");
   return { suite, fixture, dev, noRestore, repeat, restoreOnly };
 }
 export const restoreFixture = resetFixture;
@@ -124,12 +125,13 @@ function requireSeparator() { return process.platform === "win32" ? "\\" : "/"; 
 export async function main(args = process.argv.slice(2)) {
   const runId = randomUUID();
   let options: ReturnType<typeof parseArgs>;
-  try { options = parseArgs(args); } catch { const e = new Evidence(runId, "invalid"); e.manifest.reason = "usage: --suite runner|isolation|personas|fixtures --fixture <known-id> [--dev] [--no-restore] [--repeat N] or --restore-only <known-id>"; e.finalize([]); return 2; }
+  try { options = parseArgs(args); } catch { const e = new Evidence(runId, "invalid"); e.manifest.reason = "usage: --suite runner|isolation|personas|fixtures|opening --fixture <known-id> [--dev] [--no-restore] [--repeat N] or --restore-only <known-id>; opening requires cold-empty"; e.finalize([]); return 2; }
   const evidence = new Evidence(runId, options.fixture);
   let held = false, server: ChildProcess | undefined, playwright: ChildProcess | undefined, interrupted = false, stage = "lease", configFile: string | undefined;
   const signal = () => { interrupted = true; void stopped(playwright).catch(() => {}); void stopped(server).catch(() => {}); };
   process.on("SIGINT", signal); process.on("SIGTERM", signal);
   const privateDir = resolve("scripts/sim/launch-readiness/.private", runId);
+  const openingArtifacts: string[] = [];
   try {
     acquire({ runId }); held = true;
     // Exercise the actual CLI while we hold the lease, BEFORE config or DB work.
@@ -140,11 +142,11 @@ export async function main(args = process.argv.slice(2)) {
     // F1 remains authoritative for autoload filenames and unknown keys. Only
     // the closed, runner-owned PIN controls are extracted to a private copy.
     const initial = loadSimEnv(process.cwd());
-    if (!initial.ok && initial.reasons.some(r => !/^SIM_PIN_(MARCUS|ROSA|ANGEL): unknown key$/.test(r))) throw new Error("sim environment blocked");
+    if (!initial.ok) throw new Error("sim environment blocked");
     const parsed = parseEnv(readFileSync(resolve(".env.sim"), "utf8"));
     const pins: Record<string, string> = {};
-    for (const alias of ["MARCUS", "ROSA", "ANGEL"]) {
-      const key = `SIM_PIN_${alias}`, pin = parsed[key] ?? process.env[key];
+    for (const key of RUNNER_PRIVATE_KEYS) {
+      const pin = parsed[key] ?? process.env[key];
       if (pin !== undefined) { if (!/^\d{4}$/.test(pin)) throw new Error("invalid private PIN control"); pins[key] = pin; }
       delete parsed[key];
     }
@@ -197,6 +199,54 @@ export async function main(args = process.argv.slice(2)) {
       }, pins.SIM_PIN_ROSA ?? "");
       evidence.write("results.json", { status: "pass", tests: results });
       evidence.manifest.status = "pass"; evidence.manifest.reason = "fixture Node contracts passed";
+    } else if (options.suite === "opening") {
+      // Today's opening is a singleton per shop. Every Node pass and viewport
+      // must start from cold-empty under this SAME lease, with the app stopped.
+      const { runOpeningContracts } = await import("./contracts/opening.spec");
+      const nodeResults: Awaited<ReturnType<typeof runOpeningContracts>> = [];
+      const slices: { project: string; attempt: number; status: string; report: string }[] = [];
+      let failed = false;
+      const stopOpening = async () => { await stopped(server); await portFree(); server = undefined; };
+      for (let attempt = 1; attempt <= options.repeat && !interrupted; attempt++) {
+        await restore("cold-empty"); await startServer();
+        stage = "identity";
+        evidence.manifest.identity.locations = true; evidence.manifest.identity.personas = true;
+        const results = await runOpeningContracts(pins);
+        nodeResults.push(...results);
+        for (const result of results) {
+          evidence.manifest.tests.push({ ...result, id: `${result.id}-${attempt}`, viewport: null, project: "node-opening", attempt });
+          failed ||= result.status !== "passed";
+        }
+        evidence.write("opening-contracts.json", nodeResults);
+        await stopOpening();
+        // LRA_PROJECTS (comma list) narrows the viewport slices for local iteration; release evidence runs all four.
+        const allProjects = ["phone-en", "phone-es", "tablet-en", "tablet-es"];
+        const wanted = (process.env.LRA_PROJECTS ?? "").split(",").map(s => s.trim()).filter(Boolean);
+        const projects = wanted.length ? allProjects.filter(p => wanted.includes(p)) : allProjects;
+        if (wanted.length) evidence.manifest.reason = "partial viewport matrix (LRA_PROJECTS) — not release evidence";
+        for (const project of projects) {
+          if (interrupted) break;
+          stage = "fixture";
+          await restore("cold-empty"); await startServer();
+          evidence.write("manifest.json", evidence.manifest);
+          stage = "playwright";
+          const slice = `${project}-${attempt}`;
+          playwright = launch(["node_modules/@playwright/test/cli.js", "test", "--config", "scripts/sim/launch-readiness/playwright.config.ts", `--project=${project}`], { ...loaded.env, ...pins, LRA_DEV: options.dev ? "1" : "0", LRA_RUN_ID: runId, LRA_SUITE: "opening", LRA_FIXTURE: "cold-empty", LRA_CONFIG_ROOT: privateDir, LRA_OPENING_SLICE: slice });
+          const code = await new Promise<number | null>((ok, fail) => { playwright!.once("error", fail); playwright!.once("exit", ok); });
+          failed ||= code !== 0;
+          const report = `opening/${slice}/results.json`, html = `opening/${slice}/html/index.html`;
+          openingArtifacts.push(report, html);
+          slices.push({ project, attempt, status: code === 0 ? "passed" : "failed", report });
+          await stopped(playwright); playwright = undefined;
+          await stopOpening();
+        }
+      }
+      openingArtifacts.push("opening-contracts.json");
+      evidence.write("results.json", { node: nodeResults, browser: slices });
+      mkdirSync(resolve(evidence.directory, "html"), { recursive: true });
+      writeFileSync(resolve(evidence.directory, "html/index.html"), `<!doctype html><title>Opening contracts</title><p>See manifest.json for assertion IDs and opening-contracts.json for Node results.</p><ul>${slices.map(s => `<li><a href="../opening/${s.project}-${s.attempt}/html/index.html">${s.project} attempt ${s.attempt}: ${s.status}</a></li>`).join("")}</ul>`);
+      evidence.manifest.status = failed || interrupted ? "fail" : "pass";
+      evidence.manifest.reason = interrupted ? "interrupted" : failed ? "opening findings; inspect failedAssertionIds in manifest" : options.dev ? "opening passed (development mode; not release evidence)" : "opening contracts passed";
     } else {
       if (!options.noRestore) await restore(options.fixture);
       assertClean();
@@ -250,7 +300,7 @@ export async function main(args = process.argv.slice(2)) {
         if (stage === "playwright") { evidence.manifest.status = "fail"; evidence.manifest.reason = "missing Playwright HTML report"; }
         mkdirSync(resolve(evidence.directory, "html"), { recursive: true }); writeFileSync(resolve(evidence.directory, "html/index.html"), "<!doctype html><title>Blocked runner</title><p>No browser results. See manifest.json.</p>");
       }
-      evidence.finalize(["results.json", "html/index.html", "network.json", "console.json", "claims.json", ...shots]);
+      evidence.finalize(["results.json", "html/index.html", "network.json", "console.json", "claims.json", ...openingArtifacts, ...shots]);
     } finally {
       try {
         if (configFile && existsSync(configFile)) unlinkSync(configFile);

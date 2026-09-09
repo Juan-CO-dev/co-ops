@@ -90,7 +90,7 @@ const OPTIONAL_KEYS = ["AUTH_JWT_SECRET", "SIM_LEGACY_JWT_SECRET", "NEXT_PUBLIC_
 /** Runner-owned sim credentials (the seed's deliberately-public sim PINs). Recognised in `.env.sim`
  * so the file validates, but NEVER passed to the app child — the F4 runner lifts them into its
  * private process env for the real-UI login specs. */
-export const RUNNER_PRIVATE_KEYS = ["SIM_PIN_MARCUS", "SIM_PIN_ROSA", "SIM_PIN_ANGEL"] as const;
+export const RUNNER_PRIVATE_KEYS = ["SIM_PIN_MARCUS", "SIM_PIN_ROSA", "SIM_PIN_ANGEL", "SIM_PIN_MAYA", "SIM_PIN_LUIS"] as const;
 const knownKeys = new Set<string>([...REQUIRED_SIM_KEYS, ...ALLOWED_PREFERENCE_KEYS, ...PROVIDER_KEYS_CLOSED_INVENTORY, ...OPTIONAL_KEYS, ...RUNNER_PRIVATE_KEYS]);
 
 function legacyHex(value: string): string {

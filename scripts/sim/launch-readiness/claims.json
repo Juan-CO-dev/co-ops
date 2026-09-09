@@ -1,1 +1,245 @@
-{ "schemaVersion": 1, "claims": [] }
+{
+  "schemaVersion": 1,
+  "claims": [
+    {
+      "id": "opening.employee-handoff-label",
+      "guide": {
+        "path": "docs/guides/staff-guide.md",
+        "revision": "5241016",
+        "section": "The opening report (Phase 1 — Verification) / 6. Read the counter at the bottom",
+        "quote": "For an employee the button reads **Hand to a key holder** and stays off, and the hint underneath says why.",
+        "quoteSha256": "a8e6eb6d3c9169badde18f2a7350ba17669d7be7e8f7d7551fbb7d14fdff83f3"
+      },
+      "actor": "employee (Maya at EM; Luis at MEP)",
+      "preconditions": "Fixture cold-empty. Employee has verified stations.",
+      "expected": "The employee handoff control uses the key-holder label and is disabled.",
+      "assertionId": "opening.phase1.employee-handoff",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.employee-handoff-continuity",
+      "guide": {
+        "path": "docs/guides/staff-guide.md",
+        "revision": "5241016",
+        "section": "The opening report (Phase 1 — Verification) / 6. Read the counter at the bottom",
+        "quote": "Fill it in, then hand the tablet to your key holder.",
+        "quoteSha256": "073a548c6883ccbcc4d4042607948bb4c2d8ed97cec69c20f2d60781f0de42d0"
+      },
+      "actor": "employee to key holder (Maya to Rosa at EM; Luis to Angel at MEP)",
+      "preconditions": "Fixture cold-empty. Employee entered ticks, a temperature and a comment; key holder signs in in a fresh context.",
+      "expected": "The key holder can continue employee verification; lost pre-submit work is LRA-121, not successful handoff.",
+      "assertionId": "opening.phase1.persist-before-submit",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.station-verification",
+      "guide": {
+        "path": "docs/guides/staff-guide.md",
+        "revision": "5241016",
+        "section": "The opening report (Phase 1 — Verification) / 3. Verify a station",
+        "quote": "Every bullet under that heading flips to a checkmark together.",
+        "quoteSha256": "224819d1d36a075932f55a9829599872054ce3b5f6c9be1c101c04cc34e29d89"
+      },
+      "actor": "employee (Maya at EM; Luis at MEP)",
+      "preconditions": "Fixture cold-empty. A Phase 1 station is unverified.",
+      "expected": "Verifying a station marks its checklist lines together.",
+      "assertionId": "opening.phase1.employee-handoff",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.temperature-required",
+      "guide": {
+        "path": "docs/guides/staff-guide.md",
+        "revision": "5241016",
+        "section": "The opening report (Phase 1 — Verification) / 2. Type the fridge temperatures",
+        "quote": "Every temperature box has to have a number in it before the opening can be submitted.",
+        "quoteSha256": "684cdf74dd591ef13f29d2b3a299b2fdf2891f1923fef68addf19f8c1c93e8aa"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty. Phase 1 is open.",
+      "expected": "All required temperatures are supplied before successful Phase 1 submission.",
+      "assertionId": "opening.phase1.status",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.cold-recount-required",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "The opening report / 1. Phase 1 — verification",
+        "quote": "A prep section's **Verify section** button stays greyed out with *\"Recount items without closer data first\"* until every item with no closer count has a recount typed in.",
+        "quoteSha256": "793f6d91403776cb55084a00478f2bffe64852d0fc6b90c22258a428299c59f3"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty. cold-empty; no prior closing counts exist.",
+      "expected": "Missing closer counts require opener recounts before section verification.",
+      "assertionId": "opening.phase1.cold-attestation",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.cold-attestation",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "The opening report / 2. Submit the verification",
+        "quote": "**\"No prior closing data detected\"** appears when items had no closing count last night and the opener recounted them instead.",
+        "quoteSha256": "43e3417b48be7b090786ee8c164990ab5a5c85c01c18872d81a1f9536a0d1b7b"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty. Missing closer counts have been recounted.",
+      "expected": "The missing-source attestation appears before Phase 1 submission.",
+      "assertionId": "opening.phase1.cold-attestation",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.phase1-submit-floor",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "The opening report / 2. Submit the verification",
+        "quote": "**Submit Opening is key holder and up.**",
+        "quoteSha256": "c34de4820804190fd6bb4adf90b9d7cd704a52ce3849949299911bf480ae8ae1"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty. All stations, readings, recounts, sections and attestation are complete.",
+      "expected": "A key holder submits verification and advances open to phase1_complete.",
+      "assertionId": "opening.phase1.status",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.phase2-blur-save",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "The opening report / 3. Phase 2 — prep entry",
+        "quote": "**Rows save one at a time, when you leave the box.**",
+        "quoteSha256": "dfb10cecca50fc2aa34198be31f431c1f1094a4db93cfda0f59d301cccd680f4"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty. Phase 1 is complete; a prep value and any required reason are valid.",
+      "expected": "Leaving a prep input saves a live Phase 2 completion through the real route.",
+      "assertionId": "opening.phase2.save",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.phase2-save-failure",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "The opening report / 4. When a row will not save",
+        "quote": "A row that has not saved shows **Save failed** with **Retry** right there, and the bottom bar counts it as outstanding.",
+        "quoteSha256": "ee9ed740baa448370c5406ad9c1ee663c14dc2ab494b1df78826ef3e1b14fb04"
+      },
+      "actor": "key holder (Rosa at EM)",
+      "preconditions": "Fixture cold-empty. Exactly one browser prep-save request is aborted.",
+      "expected": "Save failed and Retry are visible; the row remains outstanding with no new completion.",
+      "assertionId": "opening.phase2.failure-retry",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.phase2-retry",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "The opening report / 4. When a row will not save",
+        "quote": "Tap **Retry** on the row.",
+        "quoteSha256": "a1a1ed47759fb5bc7fa6d23c6fa09b518507ea720eb4ea4ba7b0d3d04a719e03"
+      },
+      "actor": "key holder (Rosa at EM)",
+      "preconditions": "Fixture cold-empty. The single injected request failure is visible and the injection is consumed.",
+      "expected": "Retry persists the failed prep value and report readback remains truthful.",
+      "assertionId": "opening.phase2.failure-retry",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.phase2-incomplete-ui",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "The opening report / 4. When a row will not save",
+        "quote": "**Finalize Phase 2** stays disabled while any row is outstanding, and it names how many.",
+        "quoteSha256": "e6b2e2eb1af13799f7ccf5e6077b500cbe6509191ec232b6868fd82adde585dd"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty. A prep row is outstanding.",
+      "expected": "The finalize control stays disabled while prep saves remain outstanding.",
+      "assertionId": "opening.phase2.incomplete",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.phase2-incomplete-server",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "The opening report / 5. Finalize Phase 2 — *not shown*",
+        "quote": "It refuses until **every** prep item on the list has a saved row.",
+        "quoteSha256": "2be18d36c6c0e8347b6b47a375b085eed07a0a88fb3e76a2df9530a5066d1fbb"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty. A required prep item has no saved Phase 2 row.",
+      "expected": "Finalize returns 422 phase2_incomplete without advancing the instance status.",
+      "assertionId": "opening.phase2.incomplete",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.phase2-finalize",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "The opening report / 5. Finalize Phase 2 — *not shown*",
+        "quote": "It closes the opening report and stamps your name and the time on it.",
+        "quoteSha256": "b81a59ba6c350a6debe17b85a454740bd91a68818ea2b37777830d4f2d7698f3"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty. All required prep rows have saved.",
+      "expected": "Finalization advances to phase2_complete and persists finalizer provenance.",
+      "assertionId": "opening.phase2.finalize",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.report-actor-values",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Reports and trends / 2. Read a saved report",
+        "quote": "Every line carries the name of whoever ticked it and the temperature or count they entered.",
+        "quoteSha256": "5c9c200990fd3659c6eff652b20401b779937f5228a9006b80cd0ce831881c95"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty. Both phases are complete; the viewer reloads and signs in again.",
+      "expected": "The report preserves Phase 1 verification, actor and temperatures alongside Phase 2 entries.",
+      "assertionId": "opening.report.truth",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.report-cold-baseline",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Reports and trends / 2. Read a saved report",
+        "quote": "On an opening, the prep rows read *\"Recount\"*, *\"Ground truth\"* and *\"prep need\"* so you can see where the day's numbers came from — and the note at the top says whether there was a prior closing to check against.",
+        "quoteSha256": "309558b461482cd1700d727155575d9f988f81bc09b2a84676a4cdc4ff98a011"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty. cold-empty opening completed with recounts and missing-source attestation.",
+      "expected": "The report discloses no prior baseline, shows recount/prep data, and invents no closer count.",
+      "assertionId": "opening.report.truth",
+      "evidence": null,
+      "status": "pending"
+    }
+  ]
+}
