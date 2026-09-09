@@ -6,8 +6,9 @@
 --
 -- THE DEFECT (LRA-202, P1, live on prod). `submit_phase2_atomic` builds the Phase 2
 -- completeness universe from EVERY template item flagged `openingPhase2`, with no
--- `active` predicate — while the opening screen, the per-item save and the Phase 1
--- verification only ever enumerate ACTIVE template items. The moment one Phase 2 item
+-- `active` predicate — while the opening SCREEN only ever enumerates ACTIVE template items
+-- (lib/opening.ts:668), so its per-item saves and Phase 1 entries only ever target active
+-- ones in practice (the RPCs themselves do not enforce activity — see LRA-204). The moment one Phase 2 item
 -- is deactivated (both shops' "Standard Opening v1" carry a deactivated "Chicken Cutlet"),
 -- finalize answers `phase2_incomplete — 1 item(s) have no live completion` forever, and
 -- no opening can reach `phase2_complete`. Prod's last `phase2_complete` at either shop is
