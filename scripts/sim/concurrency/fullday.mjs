@@ -1,3 +1,5 @@
+import { pathToFileURL } from "node:url";
+import { init, personaFor } from "./driver.mjs";
 /**
  * FULL DIRECTED-CREW DAY — concurrency orchestrator (sim-2, 2026-08-11).
  *
@@ -22,16 +24,34 @@ import { CREW } from "./schedule.mjs";
 
 const loc = LOC.EM, date = todayEt();
 
-async function sess(key) {
-  const c = CREW[key];
-  const u = await findUser(loc, roleOf(c.level), c.name).catch(() => findUser(loc, roleOf(c.level)));
-  return new Session(u, c.pin).login(loc);
+/** Matches the 0196 partial index key; callers select BOTH live predicates. */
+export function completionHeadKey(row) {
+  const phase2 = row.prep_data != null && Object.prototype.hasOwnProperty.call(row.prep_data, "phase2");
+  return `${row.instance_id}|${row.template_item_id}|${phase2}`;
 }
-function roleOf(level) {
-  return { 3: "employee", 4: "key_holder", 5: "shift_lead", 6: "agm", 7: "gm" }[level];
+export function allIntendedItemsLanded(intendedIds, liveIds) {
+  const live = new Set(liveIds);
+  return intendedIds.length > 0 && intendedIds.every(id => live.has(id));
 }
 
-async function run() {
+const PERSONAS = {
+  kh_em: personaFor({ locationCode: "EM", role: "key_holder", name: "Rosa Delgado" }),
+  sl_em: personaFor({ locationCode: "EM", role: "shift_lead", name: "Tommy Nguyen" }),
+  emp_maya: personaFor({ locationCode: "EM", role: "employee", name: "Maya Torres" }),
+  emp_deshawn: personaFor({ locationCode: "EM", role: "employee", name: "Deshawn Carter" }),
+  kh_mep: personaFor({ locationCode: "MEP", role: "key_holder", name: "Angel Reyes" }),
+  gm: personaFor({ locationCode: "EM", role: "gm", name: "Marcus Webb" }),
+};
+async function sess(key) {
+  const c = CREW[key];
+  const persona = PERSONAS[key];
+  if (!persona || !c) throw new Error("Unbound crew persona");
+  const locationId = LOC[persona.locations[0]];
+  const u = await findUser(locationId, persona.role, persona.name);
+  return new Session(u, c.pin).login(locationId);
+}
+
+export async function run() {
   const { check, done } = makeReport("FULL DIRECTED-CREW DAY");
 
   const { data: tmpl } = await db.from("checklist_templates")
@@ -69,9 +89,9 @@ async function run() {
     .select("template_item_id").eq("instance_id", instanceId).is("superseded_at", null).is("revoked_at", null);
   const seen = new Set(), dups = new Set();
   for (const r of dupRows ?? []) { if (seen.has(r.template_item_id)) dups.add(r.template_item_id); seen.add(r.template_item_id); }
-  landed = seen.size;
+  landed = plain.filter(item => seen.has(item.id)).length;
   check("A · concurrent multi-writer waves: NO duplicate live heads (0176 holds under load)", dups.size === 0, `${dups.size} dup items across ${liveHeads} live heads`);
-  check("A · every wave item landed (no lost write)", landed >= plain.length * 0.95, `${landed}/${plain.length} items live`);
+  check("A · every wave item landed (no lost write)", allIntendedItemsLanded(plain.map(item => item.id), seen), `${landed}/${plain.length} items live`);
 
   // ── SCENARIO F · completion-race regression under full load ──
   // Two crew hammer ONE fresh item simultaneously ×8; assert never >1 live.
@@ -123,13 +143,15 @@ async function run() {
 
   // ── FINAL INTEGRITY SWEEP ──
   const { data: forked } = await db.from("checklist_completions")
-    .select("instance_id, template_item_id").is("superseded_at", null).is("revoked_at", null);
+    .select("instance_id, template_item_id, prep_data").is("superseded_at", null).is("revoked_at", null);
   const grp = new Map();
-  for (const r of forked ?? []) { const k = `${r.instance_id}|${r.template_item_id}`; grp.set(k, (grp.get(k) ?? 0) + 1); }
+  for (const r of forked ?? []) { const k = completionHeadKey(r); grp.set(k, (grp.get(k) ?? 0) + 1); }
   const anyFork = [...grp.values()].some((v) => v > 1);
   check("SWEEP · no forked live-head anywhere after the full day", !anyFork, `${[...grp.values()].filter((v) => v > 1).length} forked groups`);
 
   return done();
 }
 
-run().then((r) => process.exit(r.fails.length ? 1 : 0)).catch((e) => { console.error(e); process.exit(2); });
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  init().then(() => run()).catch(() => { console.error("F4 runner required; initialize under its lease"); process.exitCode = 2; });
+}

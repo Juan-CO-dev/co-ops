@@ -1,3 +1,5 @@
+import { pathToFileURL } from "node:url";
+import { init, personaFor } from "./driver.mjs";
 /**
  * CONCURRENCY HARNESS — authority-coverage hunt (sim-2, 2026-08-11).
  *
@@ -44,7 +46,7 @@ const ACTIONS = [
 
 const LEVEL = { employee: 3, key_holder: 4, shift_lead: 5, agm: 6, gm: 7 };
 
-async function run() {
+export async function run() {
   const { check, done } = makeReport("COVERAGE-GAP HUNT");
   const loc = LOC.EM;
 
@@ -82,8 +84,8 @@ async function run() {
   // LIVE enforcement probes — confirm the app actually gates as grounded (a
   // floor that's documented but not enforced is its own finding).
   console.log("\n── Live enforcement probes (KH session) ──");
-  const khUser = await findUser(loc, "key_holder", "Rosa Delgado").catch(() => null)
-    ?? await findUser(loc, "key_holder");
+  const rosa = personaFor({ locationCode: "EM", role: "key_holder", name: "Rosa Delgado" });
+  const khUser = await findUser(loc, rosa.role, rosa.name);
   const kh = await new Session(khUser, "4444").login(loc);
 
   // KH → counts write should 403 (floor 6). Confirms the gap is real & enforced.
@@ -98,4 +100,6 @@ async function run() {
   return done();
 }
 
-run().then((r) => process.exit(r.fails.length ? 1 : 0)).catch((e) => { console.error(e); process.exit(2); });
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  init().then(() => run()).catch(() => { console.error("F4 runner required; initialize under its lease"); process.exitCode = 2; });
+}

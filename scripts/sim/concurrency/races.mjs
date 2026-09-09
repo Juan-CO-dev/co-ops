@@ -1,3 +1,5 @@
+import { pathToFileURL } from "node:url";
+import { init, personaFor } from "./driver.mjs";
 /**
  * CONCURRENCY HARNESS — race-injection battery (sim-2, 2026-08-11).
  *
@@ -29,7 +31,7 @@ async function firstOpenItems(templateId, n) {
   return (data ?? []).filter((i) => (i.min_role_level ?? 0) <= 4).slice(0, n).map((i) => i.id);
 }
 
-async function run() {
+export async function run() {
   const { check, done } = makeReport("RACE-INJECTION BATTERY");
   const loc = LOC.EM;
   const date = todayEt();
@@ -37,8 +39,8 @@ async function run() {
   if (!templateId) { console.log("no active closing template — aborting"); return done(); }
 
   // Two staggered closers (KH + SL), both write to the ONE closing instance.
-  const rosa = await new Session(await findUser(loc, "key_holder"), "4444").login(loc);
-  const tommy = await new Session(await findUser(loc, "shift_lead"), "6666").login(loc);
+  const rosa = await new Session(await findUser(loc, "key_holder", personaFor({ locationCode: "EM", role: "key_holder", name: "Rosa Delgado" }).name), "4444").login(loc);
+  const tommy = await new Session(await findUser(loc, "shift_lead", personaFor({ locationCode: "EM", role: "shift_lead", name: "Tommy Nguyen" }).name), "6666").login(loc);
 
   // Ensure today's closing instance exists (idempotent get-or-create).
   const inst = await rosa.call("POST", "/api/checklist/instances", { templateId, locationId: loc, date });
@@ -128,4 +130,6 @@ async function run() {
   return done();
 }
 
-run().then((r) => process.exit(r.fails.length ? 1 : 0)).catch((e) => { console.error(e); process.exit(2); });
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  init().then(() => run()).catch(() => { console.error("F4 runner required; initialize under its lease"); process.exitCode = 2; });
+}
