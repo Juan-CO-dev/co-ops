@@ -1,5 +1,21 @@
 import { test, expect, login } from "../playwright.config";
 import { SIM_LOCATIONS, personaByEmail } from "../../personas-shared";
+import { buildAssetsFromHtml } from "../build-identity"; // pure module: target.ts uses import.meta, which CJS-transpiled specs cannot load
+
+test("runner production identity", async ({ page, contract }) => {
+  test.skip(process.env.LRA_DEV === "1", "Development mode is not production release evidence");
+  contract.assertionIds.push("runner.production-identity");
+  const response = await page.goto("/");
+  expect(response?.status()).toBe(200);
+  // App Router HTML carries no buildId asset paths; any that appear must match, and the build manifest
+  // must be served under the receipt's buildId (the runner already proved it byte-identical to disk).
+  const assets = buildAssetsFromHtml(await response!.text());
+  expect(assets.every(asset => asset.buildId === contract.manifest.buildId)).toBe(true);
+  expect(contract.manifest.buildId).not.toBe("dev");
+  const manifest = await page.request.get(`/_next/static/${contract.manifest.buildId}/_buildManifest.js`);
+  expect(manifest.status()).toBe(200);
+  expect(contract.manifest.identity.server).toBe(true);
+});
 
 test("runner tile login and manifest identity", async ({ page, contract }) => {
   contract.assertionIds.push("runner.tile-login", "runner.identity");
