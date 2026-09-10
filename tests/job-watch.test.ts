@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { decideJobWatch, easternBoundary, easternDay } from "@/lib/job-watch";
 import { JOBS_REGISTRY } from "@/lib/jobs-registry";
 
+const JOB_WATCH_SCHEDULE = "0 17 * * *"; // 12:00 EST / 13:00 EDT — inside the 06–22 ET pinger window either side of DST
 const pinger = JOBS_REGISTRY[3];
 const daily = JOBS_REGISTRY[0];
 const decide = (now: string, last: string | null, alert: string | null = null) =>
@@ -85,11 +86,35 @@ describe("LRA-228: cadence, Eastern windows, and once-per-day decisions", () => 
     expect(decide("2026-09-10T12:00:00Z", "2026-09-10T13:00:00Z").silent).toBe(false);
   });
 
-  it("keeps five closed registry entries and schedules its own hourly check", () => {
+  it("keeps five closed registry entries and schedules its own daily check", () => {
     expect(JOBS_REGISTRY.map((j) => j.job)).toEqual([
       "toast-sales-pull", "prune-sessions", "parse-receipts", "toast-catering-scan", "toast-sales-today",
     ]);
     const config = JSON.parse(readFileSync("vercel.json", "utf8"));
-    expect(config.crons).toContainEqual({ path: "/api/cron/job-watch", schedule: "0 * * * *" });
+    // Vercel Hobby refuses any cron that runs more than once per day at DEPLOY time
+    // (PR #352's first deployment failed on "0 * * * *"); an hourly watch needs the Pro plan.
+    expect(config.crons).toContainEqual({ path: "/api/cron/job-watch", schedule: JOB_WATCH_SCHEDULE });
+  });
+
+  it("the daily check lands inside every pinger window on both sides of DST (Hobby precision is ±59 min)", () => {
+    const [minute, hour] = JOB_WATCH_SCHEDULE.split(" ");
+    for (const day of ["2026-01-15", "2026-07-15", "2026-03-08", "2026-11-01"]) {
+      for (const skew of [-59, 0, 59]) {
+        const at = new Date(Date.parse(`${day}T${hour!.padStart(2, "0")}:${minute!.padStart(2, "0")}:00Z`) + skew * 60_000);
+        for (const job of JOBS_REGISTRY) {
+          if (!job.window) continue;
+          expect(at >= easternBoundary(easternDay(at), job.window.startHourET)).toBe(true);
+          expect(at < easternBoundary(easternDay(at), job.window.endHourET)).toBe(true);
+        }
+      }
+    }
+  });
+
+  it("a pinger that died last night is caught by the next daily check; a dead daily cron by the check after its second miss", () => {
+    // Pinger: last heartbeat 21:50 ET on the 9th; 20 active minutes of grace carry to 06:20 ET on the 10th.
+    expect(decide("2026-09-10T17:00:00Z", "2026-09-10T01:50:00Z").silent).toBe(true);
+    // Daily cron: last success 09:00 UTC on the 8th; the deadline is 48 h later, so the 9th's check is quiet and the 10th's alerts.
+    expect(decideJobWatch(daily, new Date("2026-09-09T17:00:00Z"), "2026-09-08T09:00:00Z", null).silent).toBe(false);
+    expect(decideJobWatch(daily, new Date("2026-09-10T17:00:00Z"), "2026-09-08T09:00:00Z", null).silent).toBe(true);
   });
 });

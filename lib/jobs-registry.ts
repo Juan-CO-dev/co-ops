@@ -1,4 +1,8 @@
-/** Closed heartbeat registry. Daily cadences follow vercel.json (UTC schedules). */
+/** Closed heartbeat registry. Daily cadences follow vercel.json (UTC schedules).
+ * The watcher itself runs ONCE A DAY (17:00 UTC, vercel.json): Vercel Hobby refuses sub-daily crons at deploy time,
+ * so a dead pinger is caught by the next day's check (~15 h worst case) and a dead daily cron after its second miss.
+ * Moving to Pro allows "0 * * * *" — change the schedule and tests/job-watch.test.ts together.
+ */
 export interface RegisteredJob {
   job: string;
   cadenceMinutes: number;
