@@ -183,16 +183,156 @@ describe("mapping and newer-evidence refusals", () => {
     const d = planRow(row(), snapshot(), [invoice(undefined, { date: "Aug 01, 2026" })], measures, AS_OF);
     expect(d.intent?.price.effective_date).toBe("2026-08-01");
   });
-  it("refuses competing selected rows even when prices happen to agree", () => {
+  it("selects a stable row of record when invoice date, lines and prices tie", () => {
     const a = row(), b = row({ row_n: 2 }); b.angel = { ...a.angel, brand: "OTHER BRAND", source_line: 3 };
     const decisions = planWave7({ wave: SOURCE, built_by: "test", rows: [a, b] }, new Map([[ID, snapshot()]]), [invoice(a), invoice(b)], measures, AS_OF);
     expect(decisions).toHaveLength(2);
-    for (const d of decisions) { expect(d.intent).toBeNull(); expect(codes(d)).toContain("DUPLICATE_CLUSTER"); }
+    expect(decisions[0]?.intent?.duplicate_decision).toEqual({ row_n: 1, rejected_row_ns: [2] });
+    expect(decisions[1]).toMatchObject({ intent: null, rejected: true, refusals: [] });
   });
   it("does not let a rejected competitor block the selected record", () => {
     const a = row(), b = row({ row_n: 2, decision: "rejected" });
     const d = planWave7({ wave: SOURCE, built_by: "test", rows: [a, b] }, new Map([[ID, snapshot()]]), [invoice()], measures, AS_OF);
     expect(d[0]?.intent).not.toBeNull(); expect(d[1]?.intent).toBeNull();
+  });
+});
+
+describe("revision 2 row of record", () => {
+  function cluster() {
+    const a = row(), b = row({ row_n: 2 });
+    b.angel = { ...b.angel, product: "OTHER BUTTER", brand: "OTHER BRAND" };
+    return { a, b, run: (history: PurchaseRow[], s = snapshot()) => planWave7({ wave: SOURCE, built_by: "test", rows: [b, a] }, new Map([[ID, s]]), history, measures, AS_OF) };
+  }
+  it("chooses latest history date, ignoring manifest recency and order", () => {
+    const { a, b, run } = cluster(); a.angel.last_seen = "Sep 10, 2026";
+    const ds = run([invoice(a), invoice(b, { date: "Sep 02, 2026" })]);
+    expect(ds[0]?.intent?.duplicate_decision).toEqual({ row_n: 2, rejected_row_ns: [1] });
+    expect(ds[1]?.selection).toContain("rejected: older latest invoice");
+  });
+  it("breaks date ties by joined purchase_lines", () => {
+    const { a, b, run } = cluster(); a.angel.purchase_lines = 999;
+    const ds = run([invoice(a), invoice(b), invoice(b, { date: "Aug 31, 2026" })]);
+    expect(ds[0]?.intent?.duplicate_decision?.row_n).toBe(2);
+    expect(ds[1]?.selection).toContain("fewer purchase_lines");
+  });
+  it("eliminates an incompatible newer pack without refusing the competitor", () => {
+    const { a, b, run } = cluster(); b.angel.pack_size = "4/1 GA";
+    const ds = run([invoice(a), invoice(b, { date: "Sep 02, 2026" })]);
+    expect(ds[1]?.intent?.duplicate_decision?.row_n).toBe(1);
+    expect(ds[0]).toMatchObject({ intent: null, rejected: true, refusals: [] });
+    expect(ds[0]?.selection).toContain("PACK_PREMISE_BROKEN");
+  });
+  it("rejects a non-integer divisor even though mass arithmetic is possible", () => {
+    const { a, b, run } = cluster(); b.angel.pack_size = "1/1.5 LB";
+    const ds = run([invoice(a), invoice(b, { date: "Sep 02, 2026" })]);
+    expect(ds[1]?.intent?.duplicate_decision?.row_n).toBe(1);
+    expect(ds[0]?.selection).toContain("not exact or an integer divisor");
+  });
+  it("keeps PACK_PREMISE_BROKEN if no competitor resolves", () => {
+    const { a, b, run } = cluster(); a.angel.pack_size = b.angel.pack_size = "4/1 GA";
+    for (const d of run([invoice(a), invoice(b)])) {
+      expect(d.intent).toBeNull(); expect(codes(d)).toContain("PACK_PREMISE_BROKEN"); expect(d.rejected).not.toBe(true);
+    }
+  });
+  it("does not report an equal price as correct when every competing divisor is ineligible", () => {
+    const { a, b, run } = cluster(); a.angel.pack_size = b.angel.pack_size = "1/1.5 LB";
+    const s = snapshot({ price: { unit_price: 54.07, source: "angel-wave4", effective_date: "2026-08-01" } });
+    for (const d of run([invoice(a), invoice(b)], s)) {
+      expect(codes(d)).toContain("PACK_PREMISE_BROKEN"); expect(codes(d)).not.toContain("ALREADY_CORRECT");
+    }
+  });
+  it.each([[115, false], [116, true]])("warns strictly above 15%% (%s)", (price, warn) => {
+    const { a, b, run } = cluster(); a.angel.pack_size = b.angel.pack_size = "1/1 LB";
+    const ds = run([invoice(a, { unitPricePerCase: 100, lineTotal: 100 }), invoice(b, { date: "Sep 02, 2026", unitPricePerCase: price, lineTotal: price })]);
+    expect(ds[0]?.intent?.price.unit_price).toBe(price);
+    expect(ds[0]?.warnings?.length ?? 0).toBe(warn ? 1 : 0);
+    if (warn) expect(ds[0]?.warnings?.[0]).toMatch(/WARN.*OTHER BUTTER.*TEST BUTTER/);
+  });
+  it("compares normalized pack prices instead of invoice case prices", () => {
+    const { a, b, run } = cluster(); a.angel.pack_size = "1/1 LB"; b.angel.pack_size = "2/1 LB";
+    const ds = run([invoice(a, { unitPricePerCase: 10, lineTotal: 10 }), invoice(b, { unitPricePerCase: 20, lineTotal: 20, date: "Sep 02, 2026" })]);
+    expect(ds[0]?.intent?.price.unit_price).toBe(10); expect(ds[0]?.warnings).toBeUndefined();
+  });
+  it("does not fall back to an older competitor around a newer app price", () => {
+    const { a, b, run } = cluster();
+    const ds = run([invoice(a), invoice(b, { date: "Sep 02, 2026" })], snapshot({ price: { unit_price: 2.25, source: "manual", effective_date: "2026-09-03" } }));
+    expect(codes(ds[0]!)).toContain("NEWER_PRICE_EXISTS"); expect(ds[1]?.rejected).toBe(true);
+    expect(ds.every(d => !d.intent)).toBe(true);
+  });
+  it("never suppresses pending or vendor-drift rows as rejected competitors", () => {
+    const { a, b } = cluster();
+    const drift = row({ row_n: 3, vendor_binding: "VENDOR_DRIFT" }), pending = row({ row_n: 4, decision: "pending" });
+    const ds = planWave7({ wave: SOURCE, built_by: "test", rows: [a, b, drift, pending] }, new Map([[ID, snapshot()]]), [invoice(a), invoice(b)], measures, AS_OF);
+    expect(codes(ds[2]!)).toEqual(["VENDOR_DRIFT"]); expect(codes(ds[3]!)).toEqual(["MAPPING_UNCONFIRMED"]);
+  });
+});
+
+describe("revision 2 measured purchase pack", () => {
+  function unpriced(pack = "4/5 LB") {
+    const { r, s } = withPack(pack, { each_size: null, units_per_pack: null, each_measure: null, pack_format: null });
+    r.selected_sku!.pack_format = null; r.angel.weight_source = "invoice_catch_weight";
+    return { r, s };
+  }
+  function measured(r: ManifestRow, pounds: number, quantity = 1, date = "Sep 01, 2026") {
+    return invoice(r, { date, quantity, lineTotal: 81.11 * quantity, weightSource: "invoice_catch_weight", netWeightLbs: pounds * quantity, lbsPerUnit: pounds });
+  }
+  it("writes price and quantity-weighted net pack ounces together", () => {
+    const { r, s } = unpriced();
+    const d = planRow(r, s, [measured(r, 20, 3), measured(r, 20.4, 1, "Aug 31, 2026")], measures, AS_OF);
+    expect(d.intent?.price.unit_price).toBe(81.11);
+    expect(d.intent?.chain).toEqual([{ label: "case", containsQty: 321.6, containsIndex: null, containsMeasureUnit: "oz" }]);
+    expect(d.intent?.evidence).toMatchObject({ afterOz: 321.6, packWeightClass: "INVOICE_DERIVED" });
+    expect(d.intent?.weight).toBeNull();
+  });
+  it("accepts one measured fixed-weight line", () => {
+    const { r, s } = unpriced("1/5 LB");
+    expect(planRow(r, s, [measured(r, 5)], measures, AS_OF).intent?.chain?.[0]).toMatchObject({ label: "pack", containsQty: 80 });
+  });
+  it.each(["1/12 CT", "4/1 GA"])("rejects single measured non-fixed-weight pack %s", pack => {
+    const { r, s } = unpriced(pack); const d = planRow(r, s, [measured(r, 5)], measures, AS_OF);
+    expect(d.intent).toBeNull(); expect(codes(d)).toContain("SCALE_GATED");
+  });
+  it.each([[19.5, 20.5, true], [19.49, 20.51, false]])("gates the 5%% spread boundary (%s,%s)", (lo, hi, allowed) => {
+    const { r, s } = unpriced(); const d = planRow(r, s, [measured(r, lo), measured(r, hi, 1, "Aug 31, 2026")], measures, AS_OF);
+    expect(!!d.intent).toBe(allowed); if (!allowed) expect(codes(d)).toContain("SCALE_GATED");
+  });
+  it("refuses fabricated weights despite a fixed-weight string", () => {
+    const { r, s } = unpriced("1/5 LB");
+    const d = planRow(r, s, [invoice(r, { netWeightLbs: 5, lbsPerUnit: 5 })], measures, AS_OF);
+    expect(d.intent).toBeNull(); expect(codes(d)).toContain("SCALE_GATED");
+  });
+  it("does not redefine a partially specified existing pack", () => {
+    const { r, s } = unpriced(); s.sku.units_per_pack = 1;
+    const d = planRow(r, s, [measured(r, 20)], measures, AS_OF);
+    expect(d.intent).toBeNull(); expect(codes(d)).toContain("OUR_PACK_UNRESOLVABLE");
+  });
+});
+
+describe("revision 2 Angel cent no-op", () => {
+  it("reconstructs audited operations for exact replay verification despite a near-equal predecessor", () => {
+    const s = snapshot({ price: { id: "prior", unit_price: 2.25, source: "angel-wave4", effective_date: "2026-08-01" } });
+    const manifest = { wave: SOURCE, built_by: "test", rows: [row()] };
+    expect(planWave7(manifest, new Map([[ID, s]]), [invoice()], measures, AS_OF)[0]?.intent).toBeNull();
+    const replay = planWave7(manifest, new Map([[ID, s]]), [invoice()], measures, AS_OF, new Set([ID]));
+    expect(replay[0]?.intent?.price.unit_price).toBe(2.25);
+    expect(replay[0]?.intent?.duplicate_decision).toBeUndefined();
+  });
+  it.each([58.18, 58.19, 58.20])("writes nothing within one cent of %s", current => {
+    const { r, s } = withPack("1/1 LB", {}); s.price = { id: "old", unit_price: current, source: "angel-wave4", effective_date: "2026-09-05" };
+    const d = planRow(r, s, [invoice(r, { unitPricePerCase: 58.19, lineTotal: 58.19 })], measures, AS_OF);
+    expect(d.intent).toBeNull(); expect(codes(d)).toEqual(["ALREADY_CORRECT"]);
+  });
+  it("still refuses a more-than-cent change behind newer evidence", () => {
+    const s = snapshot({ price: { unit_price: 2.27, source: "angel-wave4", effective_date: "2026-09-05" } });
+    expect(codes(planRow(row(), s, [invoice()], measures, AS_OF))).toContain("NEWER_PRICE_EXISTS");
+  });
+  it("writes a more-than-cent change with newer invoice evidence", () => {
+    const s = snapshot({ price: { unit_price: 2.27, source: "angel-wave4", effective_date: "2026-08-01" } });
+    expect(planRow(row(), s, [invoice()], measures, AS_OF).intent?.price.unit_price).toBe(2.25);
+  });
+  it("does not call an equal app price an Angel no-op", () => {
+    const s = snapshot({ price: { unit_price: 2.25, source: "manual", effective_date: "2026-09-01" } });
+    expect(codes(planRow(row(), s, [invoice()], measures, AS_OF))).toContain("NEWER_PRICE_EXISTS");
   });
 });
 

@@ -158,14 +158,15 @@ const PIECES: Readonly<Record<string, string>> = {
 };
 export interface Intent {
   source: typeof SOURCE; revision: string;
+  duplicate_decision?: { row_n: number; rejected_row_ns: number[] };
   price: { unit_price: number; effective_date: string; source_note: string };
   chain: StarterChainLevel[] | null;
   weight: { avg_oz_per_each: number; weight_source_note: string; weight_established_at: string } | null;
   previous_price_id: string | null;
   evidence: { manifest: ManifestRow; observations: PurchaseRow[]; arithmetic: string; grain: string; average: ReturnType<typeof invoiceAverageLbs>; beforeOz: number | null; afterOz: number | null; packWeightClass: "INVOICE_DERIVED" | null };
 }
-export interface Decision { row: ManifestRow; snapshot: Snapshot | null; refusals: Refusal[]; intent: Intent | null }
-export function planRow(row: ManifestRow, snapshot: Snapshot | null, history: readonly PurchaseRow[], measures: Map<string, MeasureUnitFactor>, asOf: string): Decision {
+export interface Decision { row: ManifestRow; snapshot: Snapshot | null; refusals: Refusal[]; intent: Intent | null; packRatio?: number; selection?: string; rejected?: boolean; warnings?: string[] }
+export function planRow(row: ManifestRow, snapshot: Snapshot | null, history: readonly PurchaseRow[], measures: Map<string, MeasureUnitFactor>, asOf: string, deferPricePolicy = false, replay = false): Decision {
   const result: Decision = { row, snapshot, refusals: [], intent: null };
   const a = row.angel, selected = row.selected_sku;
   const ctx = { row: `${a.source_file}:${a.source_line} ${a.product}`, SKU: selected?.name ?? a.product };
@@ -191,10 +192,6 @@ export function planRow(row: ManifestRow, snapshot: Snapshot | null, history: re
   if ("code" in source) { result.refusals.push(source); return result; }
   const currentDate = snapshot.price && String(snapshot.price.effective_date);
   const appPrice = snapshot.price != null && (snapshot.price.recorded_by != null || !String(snapshot.price.source ?? "").startsWith("angel-"));
-  if (currentDate && (currentDate > source.date || (currentDate === source.date && appPrice))) {
-    return currentDate > source.date && dateAge(source.date, asOf) > STALE_DAYS && appPrice
-      ? hold("STALE_ANGEL_PRICE", { date: [source.date, currentDate], age: dateAge(source.date, asOf) }, "price") : hold("NEWER_PRICE_EXISTS", {}, "price");
-  }
   const parsed = parsePack(a.pack_size), ours = physicalContents(snapshot, measures);
   const beforeOz = packOz(snapshot, measures);
   let afterOz = beforeOz, chain: StarterChainLevel[] | null = null, weight: Intent["weight"] = null;
@@ -202,7 +199,19 @@ export function planRow(row: ManifestRow, snapshot: Snapshot | null, history: re
   let price = source.latest.unitPricePerCase!;
   const piece = PIECES[a.product];
   const root = snapshot.chain.length ? chainRootLabel(buildPackChain(chainLevels(snapshot.chain))) : String(s.pack_format ?? "");
-  if (piece) {
+  const undefinedPack = !snapshot.chain.length && s.each_size == null && s.units_per_pack == null && s.sku_class === "raw"
+    && !piece && a.product !== "IMP LAYER BACON 12/14" && a.product !== "CHEESE MOZZ 1OZ SLCD LOG 32 CT";
+  if (undefinedPack && parsed) {
+    const average = source.average;
+    if (a.weight_source !== "invoice_catch_weight" || source.latest.weightSource !== "invoice_catch_weight" || !average || average.spreadFraction > 0.05 + 1e-12 || (average.lines < 2 && parsed.dimension !== "weight")) return hold("SCALE_GATED", {}, "bundle", "Supply measured net weights with at most 5% spread across two lines, or one fixed-weight invoice line.");
+    afterOz = round(average.meanLbs * 16, 2);
+    if (!positive(afterOz) || measures.get("oz")?.dimension !== "weight" || measures.get("oz")?.toBaseFactor !== 1) return hold("INVALID_CHAIN", { "collision/cycle/multiple roots/dangling pointer/invalid quantity": "invalid measured ounces or unregistered ounce leaf" });
+    // The entire purchase unit is now our pack. Do not invent inner-container names.
+    const purchaseRoot = parsed.dimension === "roll" ? "roll" : parsed.groups > 1 ? "case" : "pack";
+    chain = [{ label: purchaseRoot, containsQty: afterOz, containsIndex: null, containsMeasureUnit: "oz" }];
+    ratio = 1; grain = "measured invoice purchase pack; portion weight is separate";
+    arithmetic = `case $${price.toFixed(4)} = ${average.totalLbs} net lb / ${average.units} invoice units × 16 = our ${afterOz} oz pack → $${round(price, 2).toFixed(2)} per pack`;
+  } else if (piece) {
     if (piece !== selected.name) return hold("AMBIGUOUS_PRODUCT_IDENTITY", { "Angel product": a.product, "SKU identity": selected.name });
     if (!source.average || !positive(source.latest.pricePerLb)) return hold("NO_MEASURED_INVOICE_WEIGHT", { source: a.weight_source }, "weight");
     if (!root || !/^(piece|log)$/i.test(root)) return hold("OUR_PACK_UNRESOLVABLE");
@@ -276,27 +285,68 @@ export function planRow(row: ManifestRow, snapshot: Snapshot | null, history: re
   }
   if (weight) afterOz = packOz({ ...snapshot, sku: { ...s, avg_oz_per_each: weight.avg_oz_per_each } }, measures);
   if (!positive(price) || round(price, 2) <= 0) return hold("INVALID_SOURCE_DATA", { field: "computed price" });
+  result.packRatio = ratio!;
+  if (!deferPricePolicy) {
+    const currentPrice = num(snapshot.price?.unit_price);
+    if (!replay && String(snapshot.price?.source ?? "").startsWith("angel-") && currentPrice != null && Math.abs(round(price, 2) - currentPrice) <= 0.01 + 1e-9) {
+      result.refusals = [refusal("ALREADY_CORRECT", ctx, "price", "None: Angel price is within one cent; re-derivation is not new evidence.")];
+      result.refusals[0]!.message = `ALREADY_CORRECT ${selected.name}: Angel head $${currentPrice.toFixed(2)} and proposed $${round(price, 2).toFixed(2)} differ by at most one cent; zero writes.`;
+      return result;
+    }
+    if (currentDate && (currentDate > source.date || (currentDate === source.date && appPrice))) {
+      result.refusals = [];
+      return currentDate > source.date && dateAge(source.date, asOf) > STALE_DAYS && appPrice
+        ? hold("STALE_ANGEL_PRICE", { date: [source.date, currentDate], age: dateAge(source.date, asOf) }, "price") : hold("NEWER_PRICE_EXISTS", {}, "price");
+    }
+  }
   const previous = snapshot.price?.source === SOURCE ? String(snapshot.price.id) : null;
   const note = `${a.product} [${a.brand}] ${a.pack_size} | ${arithmetic} | vendor ${a.vendor}; invoice ${source.date}; decision ${row.revision}; preceding price ${snapshot.price?.id ?? "none"}`;
   result.intent = { source: SOURCE, revision: row.revision, price: { unit_price: round(price, 2), effective_date: source.date, source_note: note }, chain, weight, previous_price_id: previous, evidence: { manifest: row, observations: source.rows, arithmetic, grain, average, beforeOz, afterOz, packWeightClass: chain && s.sku_class === "raw" && average ? "INVOICE_DERIVED" : null } };
   return result;
 }
-export function planWave7(manifest: Manifest, snapshots: ReadonlyMap<string, Snapshot>, history: readonly PurchaseRow[], measures: Map<string, MeasureUnitFactor>, asOf: string): Decision[] {
+export function planWave7(manifest: Manifest, snapshots: ReadonlyMap<string, Snapshot>, history: readonly PurchaseRow[], measures: Map<string, MeasureUnitFactor>, asOf: string, replaySkus: ReadonlySet<string> = new Set()): Decision[] {
   if (isoDate(asOf) !== asOf) throw new Error("Invalid as-of date");
   const clusters = new Map<string, ManifestRow[]>();
   for (const row of manifest.rows) if (row.decision === "selected" && row.vendor_binding === "vendor-match" && row.selected_sku) clusters.set(row.selected_sku.id, [...(clusters.get(row.selected_sku.id) ?? []), row]);
-  return manifest.rows.map(row => {
+  const decisions = manifest.rows.map(row => {
     const id = row.selected_sku?.id;
-    const decision = planRow(row, id ? snapshots.get(id) ?? null : null, history, measures, asOf);
-    const cluster = id && clusters.get(id);
-    if (cluster && cluster.length > 1) {
-      decision.intent = null;
-      const prices = cluster.map(r => {
-        const invoice = selectInvoices(r, history, asOf);
-        return `${r.angel.product} [${r.angel.brand}]: ${"code" in invoice ? invoice.code : `$${invoice.latest.unitPricePerCase} per invoice pack (${invoice.date})`}`;
-      }).join(" / ");
-      decision.refusals.push(refusal("DUPLICATE_CLUSTER", { SKU: row.selected_sku!.name, prices }, "bundle", "Select exactly one row of record, including when prices agree."));
-    }
-    return decision;
+    return planRow(row, id ? snapshots.get(id) ?? null : null, history, measures, asOf, false, !!id && replaySkus.has(id));
   });
+  for (const [id, cluster] of clusters) {
+    if (cluster.length < 2) continue;
+    // Resolve the physical relationship before considering the current price head.
+    // A newer app price must not cause fallback to an older competing product.
+    const candidates = cluster.map(row => planRow(row, snapshots.get(id) ?? null, history, measures, asOf, true));
+    const eligible = candidates.filter(d => d.intent && d.packRatio != null && Math.abs(1 / d.packRatio - Math.round(1 / d.packRatio)) < 1e-9 && 1 / d.packRatio >= 1);
+    eligible.sort((a, b) => b.intent!.price.effective_date.localeCompare(a.intent!.price.effective_date)
+      || b.intent!.evidence.observations.length - a.intent!.evidence.observations.length || a.row.row_n - b.row.row_n);
+    const chosen = eligible[0];
+    if (!chosen) {
+      for (const candidate of candidates) {
+        const d = decisions.find(d => d.row.row_n === candidate.row.row_n)!;
+        d.intent = null;
+        d.refusals = d.refusals.filter(r => r.code !== "ALREADY_CORRECT");
+        if (!d.refusals.some(r => r.code === "PACK_PREMISE_BROKEN")) d.refusals.push(refusal("PACK_PREMISE_BROKEN", { SKU: d.row.selected_sku!.name, pack: [d.row.angel.pack_size, "no exact or integer-divisor competitor"] }));
+        d.selection = "no row of record: no eligible exact or integer-divisor pack relationship";
+      }
+      continue;
+    }
+    const winner = decisions.find(d => d.row.row_n === chosen.row.row_n)!;
+    winner.selection = `row of record #${chosen.row.row_n}: latest invoice ${chosen.intent!.price.effective_date}; purchase_lines ${chosen.intent!.evidence.observations.length}; exact/integer-divisor pack relationship`;
+    const rejected = candidates.filter(d => d !== chosen);
+    if (winner.intent) winner.intent.duplicate_decision = { row_n: chosen.row.row_n, rejected_row_ns: rejected.map(d => d.row.row_n).sort((a, b) => a - b) };
+    for (const candidate of rejected) {
+      const d = decisions.find(d => d.row.row_n === candidate.row.row_n)!;
+      const reason = !candidate.intent ? candidate.refusals.map(r => r.code).join(", ") : !eligible.includes(candidate) ? "pack relationship is not exact or an integer divisor" : candidate.intent.price.effective_date !== chosen.intent!.price.effective_date ? "older latest invoice" : candidate.intent.evidence.observations.length !== chosen.intent!.evidence.observations.length ? "fewer purchase_lines" : "equal date and purchase_lines; stable row_n tie-break";
+      d.intent = null; d.refusals = []; d.rejected = true;
+      d.selection = `rejected: ${reason}; row of record #${chosen.row.row_n}`;
+      if (candidate.intent) {
+        const selectedPrice = chosen.intent!.price.unit_price, competingPrice = candidate.intent!.price.unit_price;
+        if (Math.abs(selectedPrice - competingPrice) / competingPrice > 0.15 + 1e-12) {
+          (winner.warnings ??= []).push(`WARN ${winner.row.selected_sku!.name}: ${chosen.row.angel.product} [${chosen.row.angel.brand}] (#${chosen.row.row_n}) $${selectedPrice.toFixed(2)} versus ${candidate.row.angel.product} [${candidate.row.angel.brand}] (#${candidate.row.row_n}) $${competingPrice.toFixed(2)} per our pack differs by more than 15%; writing row of record when price policy permits.`);
+        }
+      }
+    }
+  }
+  return decisions;
 }

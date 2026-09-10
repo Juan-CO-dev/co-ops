@@ -151,12 +151,18 @@ async function context(config: Target) {
   }
   // Rebuild the original immutable plan on retries. End-state is independently
   // verified below; source hashes and re-derived payload must still match.
+  const replaySkus = new Set<string>();
   for (const r of source.manifest.rows) if (r.selected_sku) {
     const opId = operationUuid(`${SOURCE}/${r.selected_sku.id}/${r.revision}`);
     const metadata = auditById.get(opId)?.metadata as RawRow | undefined;
-    if (metadata?.expected) snapshots.set(r.selected_sku.id, metadata.expected as Snapshot);
+    if (metadata?.expected) {
+      snapshots.set(r.selected_sku.id, metadata.expected as Snapshot);
+      replaySkus.add(r.selected_sku.id);
+    }
   }
-  const decisions = planWave7(source.manifest, snapshots, source.history, measures, config.asOf);
+  // Existing audited operations still undergo exact payload/end-state validation.
+  // The cent no-op applies to new proposals, never hides a changed replay payload.
+  const decisions = planWave7(source.manifest, snapshots, source.history, measures, config.asOf, replaySkus);
   const operations: Operation[] = [];
   for (const decision of decisions) {
     if (!decision.intent || !decision.snapshot || !decision.row.selected_sku) continue;
@@ -197,10 +203,15 @@ function printReport(config: Target, ctx: Awaited<ReturnType<typeof context>>) {
   heading(0); console.log(`${config.execute ? "EXECUTION REQUEST — review output before gate" : "DRY RUN"} | ${config.target} | project ${config.projectRef} | ${SOURCE} | as-of ${config.asOf}`);
   console.log(`Manifest ${source.manifest.rows.length} rows; purchase history ${source.history.length} lines; plan digest ${digest}`);
   console.log(JSON.stringify(source.hashes, null, 2));
-  heading(1); console.log(`${operations.filter(o => !o.applied && !o.expected.price).length} newly priced; ${operations.filter(o => !o.applied && o.bundle.chain).length} changed pack denominators; ${operations.filter(o => !o.applied && o.bundle.weight).length} changed portion weights; ${decisions.filter(d => !d.intent).length} held/excluded mapping rows.`);
+  const held = decisions.filter(d => !d.intent && !d.rejected && !d.refusals.some(r => r.code === "ALREADY_CORRECT")).length;
+  heading(1); console.log(`${operations.filter(o => !o.applied && !o.expected.price).length} newly priced; ${operations.filter(o => !o.applied && o.bundle.chain).length} changed pack denominators; ${operations.filter(o => !o.applied && o.bundle.weight).length} changed portion weights; ${held} held/excluded mapping rows.`);
+  console.log(`${decisions.filter(d => d.rejected).length} rejected competitors (not refusals); ${decisions.filter(d => d.refusals.some(r => r.code === "ALREADY_CORRECT")).length} ALREADY_CORRECT.`);
   console.log("Invoice dates stay historical. Pack changes do not certify slice or sprig weights. Errand counts overlap.");
   heading(2);
-  for (const d of decisions.filter(d => d.row.decision === "selected")) console.log(`${d.row.angel.product} → ${d.row.selected_sku?.name ?? "unresolved"} (${d.row.selected_sku?.vendor ?? "no vendor"}); ${d.row.evidence}; ${d.intent?.evidence.arithmetic ?? "relationship refused — see ledger"}`);
+  for (const d of decisions.filter(d => d.row.decision === "selected")) {
+    console.log(`${d.row.angel.product} [${d.row.angel.brand}] (#${d.row.row_n}) → ${d.row.selected_sku?.name ?? "unresolved"} (${d.row.selected_sku?.vendor ?? "no vendor"}); ${d.row.evidence}; ${d.selection ?? "single selected row"}; ${d.intent?.evidence.arithmetic ?? (d.rejected ? "competitor excluded" : d.refusals.some(r => r.code === "ALREADY_CORRECT") ? "ALREADY_CORRECT" : "relationship refused — see ledger")}`);
+    for (const warning of d.warnings ?? []) console.log(warning);
+  }
   heading(3);
   for (const d of decisions.filter(d => d.intent)) console.log(`${d.row.selected_sku!.name}: current ${d.snapshot?.price ? `$${d.snapshot.price.unit_price} / ${d.snapshot.price.effective_date} / ${d.snapshot.price.source ?? "app"}` : "unpriced"}; proposed $${d.intent!.price.unit_price} / ${d.intent!.price.effective_date}; ${d.intent!.evidence.arithmetic}; pack oz ${d.intent!.evidence.beforeOz ?? "unresolved"} → ${d.intent!.evidence.afterOz ?? "unresolved"}`);
   heading(4);
@@ -217,7 +228,7 @@ function printReport(config: Target, ctx: Awaited<ReturnType<typeof context>>) {
   printWave7Comparison(before, after, "Projected (only verified applied changes retire errands)");
   heading(9);
   console.log(`NOTHING WAS WRITTEN. Plan digest: ${digest}`);
-  console.log(`${decisions.filter(d => !d.intent).length} unresolved/excluded rows remain; execute writes only the displayed eligible bundles.`);
+  console.log(`${held} unresolved/excluded rows remain; execute writes only the displayed eligible bundles.`);
   console.log(`npx tsx --conditions=react-server --env-file=${config.target === "sim" ? ".env.sim" : ".env.local"} scripts/seed/26-angel-wave7.ts --target ${config.target} --as-of ${config.asOf} --execute --plan-digest ${digest}`);
 }
 export async function runWave7Verification(args: string[]): Promise<void> {
