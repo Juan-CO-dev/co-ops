@@ -1,4 +1,5 @@
 import { SIM_PERSONAS, SIM_LOCATIONS, assertPersonaRow, personaByEmail } from "../../personas-shared";
+import { SIM_APP_ORIGIN } from "../../../../lib/sim-isolation-shared";
 
 // F3's import-safety contract remains valid outside a leased Playwright run.
 if (process.env.LRA_RUN_ID) {
@@ -82,6 +83,40 @@ test("personas column grants: self-promotion refused, hashes unreadable, prefere
   expect(pref.status, "personas.grants.self-preference-allowed").toBe(200);
   expect((await pref.json())[0]?.language, "personas.grants.self-preference-allowed").toBe(flip);
   expect((await rest(maya.jwt, `users?id=eq.${maya.id}`, { method: "PATCH", headers: minimal, body: JSON.stringify({ language: maya.language }) })).status).toBe(204);
+});
+
+
+// 0200 (LRA-013): current_user_id() is session-bound. The SAME staff JWT that reads its own users row through
+// PostgREST reads NOTHING after the app revokes the session — the curl path dies with the session, not with the
+// token's 12-hour expiry.
+test("personas session-bound helper: a revoked JWT is nobody to RLS on the PostgREST path (0200)", async ({ contract }) => {
+  contract.assertionIds.push("personas.session.live-token-reads-self", "personas.session.revoked-token-reads-nothing", "personas.session.revoked-token-app-401");
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL, anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  expect(Boolean(url && anon)).toBe(true);
+  const persona = personaByEmail("luis@sim.co-ops");
+  const { data: row } = await driver.db.from("users").select("id,name,role").eq("email", persona.email).single();
+  const pin = process.env.SIM_PIN_LUIS; expect(Boolean(pin), "SIM_PIN_LUIS").toBe(true);
+  const session = new driver.Session({ id: row.id, name: row.name, role: row.role }, pin);
+  await session.login(SIM_LOCATIONS.MEP.id);
+  const cookie = String(session.cookie);
+  const jwt = cookie.split("; ").find((c: string) => c.startsWith("co_ops_session="))!.slice("co_ops_session=".length);
+  const rest = (path: string) => fetch(`${url}/rest/v1/${path}`, { headers: { apikey: anon!, authorization: `Bearer ${jwt}` } });
+  // Live: the token resolves to Luis and users_read_self returns exactly his row.
+  const live = await rest(`users?select=id&id=eq.${row.id}`);
+  expect(live.status, "personas.session.live-token-reads-self").toBe(200);
+  expect(await live.json(), "personas.session.live-token-reads-self").toEqual([{ id: row.id }]);
+  // Revoke through the real app (logout), not the oracle.
+  const logout = await fetch(`${SIM_APP_ORIGIN}/api/auth/logout`, { method: "POST", headers: { cookie, origin: SIM_APP_ORIGIN }, redirect: "manual" });
+  expect([200, 204, 302, 303, 307], "logout").toContain(logout.status);
+  const { data: stored } = await driver.db.from("sessions").select("revoked_at").eq("id", String((session.claims as { session_id: string }).session_id)).single();
+  expect(stored.revoked_at, "session revoked in the oracle").not.toBeNull();
+  // Same unexpired JWT: RLS now resolves nobody — no rows, not an error (the token is still a valid bearer).
+  const dead = await rest(`users?select=id&id=eq.${row.id}`);
+  expect(dead.status, "personas.session.revoked-token-reads-nothing").toBe(200);
+  expect(await dead.json(), "personas.session.revoked-token-reads-nothing").toEqual([]);
+  // And the app path refuses it outright (dual verification, unchanged).
+  const app = await fetch(`${SIM_APP_ORIGIN}/api/users/me/language`, { method: "POST", headers: { cookie, origin: SIM_APP_ORIGIN, "content-type": "application/json" }, body: JSON.stringify({ language: "en" }), redirect: "manual" });
+  expect([401, 307], "personas.session.revoked-token-app-401").toContain(app.status);
 });
 
 }
