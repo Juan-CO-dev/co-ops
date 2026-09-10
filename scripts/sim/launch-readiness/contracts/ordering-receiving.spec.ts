@@ -167,13 +167,15 @@ export async function checkThreeWay(session: Session, poId: string, ledger: Awai
 }
 
 export async function runOrderingContracts(pins: Record<string, string | undefined>) {
-  const results: { id: string; assertionIds: string[]; status: "passed" | "failed"; failedAssertionIds: string[]; findingIds: string[]; skippedAssertionIds: string[]; race: { status: number; acknowledged: boolean }[] }[] = [];
+  const results: { id: string; assertionIds: string[]; status: "passed" | "failed"; failedAssertionIds: string[]; failures: { assertionId: string; message: string }[]; findingIds: string[]; skippedAssertionIds: string[]; race: { status: number; acknowledged: boolean }[] }[] = [];
   for (const code of ["EM", "MEP"] as const) {
-    const result = { id: `ordering-contract-${code}`, assertionIds: [] as string[], status: "passed" as "passed" | "failed", failedAssertionIds: [] as string[], findingIds: [] as string[], skippedAssertionIds: [] as string[], race: [] as { status: number; acknowledged: boolean }[] };
+    const result = { id: `ordering-contract-${code}`, assertionIds: [] as string[], status: "passed" as "passed" | "failed", failedAssertionIds: [] as string[], failures: [] as { assertionId: string; message: string }[], findingIds: [] as string[], skippedAssertionIds: [] as string[], race: [] as { status: number; acknowledged: boolean }[] };
     results.push(result);
     let current = "ordering.walk.decisions";
     const mark = (id: string) => { current = id; if (!result.assertionIds.includes(id)) result.assertionIds.push(id); };
-    const fail = (error: unknown) => { const id = error instanceof Error ? error.message.match(/ordering\.[a-z0-9.-]+/)?.[0] ?? current : current; mark(id); result.status = "failed"; if (!result.failedAssertionIds.includes(id)) result.failedAssertionIds.push(id); };
+    // The id is what the run manifest ranks on; the MESSAGE is what a reviewer needs to act (an id alone cost a
+    // full 12-minute rerun on 2026-09-10 - CC). Keep `current` as the fallback id; record the message beside it.
+    const fail = (error: unknown) => { const id = error instanceof Error ? error.message.match(/ordering\.[a-z0-9.-]+/)?.[0] ?? current : current; mark(id); result.status = "failed"; if (!result.failedAssertionIds.includes(id)) result.failedAssertionIds.push(id); result.failures.push({ assertionId: id, message: String(error instanceof Error ? error.message : error).slice(0, 2000) }); };
     const soft = async (id: string, check: () => Promise<void>) => { mark(id); try { await check(); } catch (error) { fail(error); } };
     try {
       mark(current);
