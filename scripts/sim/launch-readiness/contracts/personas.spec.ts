@@ -115,7 +115,7 @@ test("personas session-bound helper: a revoked JWT is nobody to RLS on the Postg
   expect(dead.status, "personas.session.revoked-token-reads-nothing").toBe(200);
   expect(await dead.json(), "personas.session.revoked-token-reads-nothing").toEqual([]);
   // And the app path refuses it outright (dual verification, unchanged).
-  const app = await fetch(`${SIM_APP_ORIGIN}/api/users/me/language`, { method: "POST", headers: { cookie, origin: SIM_APP_ORIGIN, "content-type": "application/json" }, body: JSON.stringify({ language: "en" }), redirect: "manual" });
+  const app = await fetch(`${SIM_APP_ORIGIN}/api/users/me/language`, { method: "PATCH", headers: { cookie, origin: SIM_APP_ORIGIN, "content-type": "application/json" }, body: JSON.stringify({ language: "en" }), redirect: "manual" });
   expect([401, 307], "personas.session.revoked-token-app-401").toContain(app.status);
 });
 
