@@ -16,7 +16,7 @@ import { resetFixture, assertClean } from "./reset";
 import type { Catalog } from "./fixtures";
 import { startProduction, buildReceiptPath, buildAssetsFromHtml, type BuildReceipt } from "./target";
 
-export const SUITES = ["runner", "isolation", "personas", "fixtures", "opening", "ordering"] as const;
+export const SUITES = ["runner", "isolation", "personas", "fixtures", "opening", "ordering", "customer"] as const;
 export const FIXTURES = ["warm-history", "cold-empty", "incomplete-pack", "over-1000", "two-shop-divergent"] as const;
 export function parseArgs(args: string[]) {
   let suite = "runner", fixture = "cold-empty", dev = false, noRestore = false, repeat = 1, restoreOnly = false;
@@ -34,7 +34,8 @@ export function parseArgs(args: string[]) {
   }
   if (!(SUITES as readonly string[]).includes(suite) || !(FIXTURES as readonly string[]).includes(fixture) || !Number.isSafeInteger(repeat)) throw new Error("usage");
   if (noRestore && (suite !== "runner" || restoreOnly)) throw new Error("usage");
-  if ((suite === "opening" || suite === "ordering") && fixture !== "cold-empty") throw new Error("usage");
+  if (["opening", "ordering", "customer"].includes(suite) && fixture !== "cold-empty") throw new Error("usage");
+  if (suite === "customer" && dev) throw new Error("usage"); // action IDs come from the attested production build
   return { suite, fixture, dev, noRestore, repeat, restoreOnly };
 }
 export const restoreFixture = resetFixture;
@@ -127,7 +128,7 @@ function requireSeparator() { return process.platform === "win32" ? "\\" : "/"; 
 export async function main(args = process.argv.slice(2)) {
   const runId = randomUUID();
   let options: ReturnType<typeof parseArgs>;
-  try { options = parseArgs(args); } catch { const e = new Evidence(runId, "invalid"); e.manifest.reason = "usage: --suite runner|isolation|personas|fixtures|opening|ordering --fixture <known-id> [--dev] [--no-restore] [--repeat N] or --restore-only <known-id>; opening and ordering require cold-empty"; e.finalize([]); return 2; }
+  try { options = parseArgs(args); } catch { const e = new Evidence(runId, "invalid"); e.manifest.reason = "usage: --suite runner|isolation|personas|fixtures|opening|ordering|customer --fixture <known-id> [--dev] [--no-restore] [--repeat N] or --restore-only <known-id>; opening, ordering and customer require cold-empty; customer requires production mode"; e.finalize([]); return 2; }
   const evidence = new Evidence(runId, options.fixture);
   // Heartbeat (2026-09-10): a watcher must never mistake silence for progress. Touched every 30 s while the run lives;
   // lra-watch.sh alerts when it stops moving or the pid disappears without a terminal LRA line.
@@ -173,6 +174,11 @@ export async function main(args = process.argv.slice(2)) {
     writeFileSync(configFile, Object.entries(parsed).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join("\n"), { mode: 0o600 });
     const loaded = loadSimEnv(privateDir); if (!loaded.ok) throw new Error("sim environment blocked");
     delete loaded.env.SIM_PIN_TOMMY;
+    // Runner-owned preference, never accepted from .env.sim. buildChildEnv preserves SIM_;
+    // no F1 preference allowlist change is needed. Override any inherited capture location.
+    const mailDir = resolve(privateDir, "mail");
+    loaded.env.SIM_EMAIL_CAPTURE_DIR = options.suite === "customer" ? mailDir : "";
+    if (options.suite === "customer") mkdirSync(mailDir, { recursive: true, mode: 0o700 });
     const startServer = async () => {
       stage = "server";
       assertClean(); await portFree(); assertHeld(runId);
@@ -218,22 +224,23 @@ export async function main(args = process.argv.slice(2)) {
       }, pins.SIM_PIN_ROSA ?? "");
       evidence.write("results.json", { status: "pass", tests: results });
       evidence.manifest.status = "pass"; evidence.manifest.reason = "fixture Node contracts passed";
-    } else if (options.suite === "opening" || options.suite === "ordering") {
+    } else if (["opening", "ordering", "customer"].includes(options.suite)) {
       // Today's opening and vendor PO are singletons. Every Node pass and viewport
       // must start from cold-empty under this SAME lease, with the app stopped.
       const suite = options.suite;
       const runContracts = suite === "opening"
         ? (await import("./contracts/opening.spec")).runOpeningContracts
-        : (await import("./contracts/ordering-receiving.spec")).runOrderingContracts;
-      const nodeResults: Awaited<ReturnType<typeof runContracts>> = [];
-      const slices: { project: string; attempt: number; status: string; report: string }[] = [];
+        : suite === "ordering" ? (await import("./contracts/ordering-receiving.spec")).runOrderingContracts
+        : (await import("./contracts/customer-first-use.spec")).runCustomerContracts;
+      const nodeResults: Awaited<ReturnType<typeof runContracts>>[number][] = [];
+      const slices: { project: string; attempt: number; status: string; report: string; html: string }[] = [];
       let failed = false;
       const stopSlice = async () => { await stopped(server); await portFree(); server = undefined; };
       for (let attempt = 1; attempt <= options.repeat && !interrupted; attempt++) {
         await restore("cold-empty"); await startServer();
         stage = "identity";
         evidence.manifest.identity.locations = true; evidence.manifest.identity.personas = true;
-        const results = await runContracts(pins);
+        const results = await runContracts({ ...pins, LRA_MAIL_DIR: mailDir, LRA_RUN_ID: runId });
         nodeResults.push(...results);
         for (const result of results) {
           evidence.manifest.tests.push({ ...result, id: `${result.id}-${attempt}`, viewport: null, project: `node-${suite}`, attempt });
@@ -245,20 +252,21 @@ export async function main(args = process.argv.slice(2)) {
         const allProjects = ["phone-en", "phone-es", "tablet-en", "tablet-es"];
         const wanted = (process.env.LRA_PROJECTS ?? "").split(",").map(s => s.trim()).filter(Boolean);
         const projects = wanted.length ? allProjects.filter(p => wanted.includes(p)) : allProjects;
+        if (!projects.length || wanted.some(p => !allProjects.includes(p))) throw new Error("unknown viewport project");
         if (wanted.length) evidence.manifest.reason = "partial viewport matrix (LRA_PROJECTS) — not release evidence";
-        for (const project of projects) {
+        for (const project of projects) for (const shop of suite === "customer" ? ["EM", "MEP"] : [""]) {
           if (interrupted) break;
           stage = "fixture";
           await restore("cold-empty"); await startServer();
           evidence.write("manifest.json", evidence.manifest);
           stage = "playwright";
-          const slice = `${project}-${attempt}`;
-          playwright = launch(["node_modules/@playwright/test/cli.js", "test", "--config", "scripts/sim/launch-readiness/playwright.config.ts", `--project=${project}`], { ...loaded.env, ...pins, LRA_DEV: options.dev ? "1" : "0", LRA_RUN_ID: runId, LRA_SUITE: suite, LRA_FIXTURE: "cold-empty", LRA_CONFIG_ROOT: privateDir, [suite === "opening" ? "LRA_OPENING_SLICE" : "LRA_ORDERING_SLICE"]: slice });
+          const slice = `${project}-${attempt}${shop ? `-${shop}` : ""}`;
+          playwright = launch(["node_modules/@playwright/test/cli.js", "test", "--config", "scripts/sim/launch-readiness/playwright.config.ts", `--project=${project}`, ...(shop ? ["--grep", ` customer ${shop} `] : [])], { ...loaded.env, ...pins, LRA_DEV: options.dev ? "1" : "0", LRA_RUN_ID: runId, LRA_SUITE: suite, LRA_FIXTURE: "cold-empty", LRA_CONFIG_ROOT: privateDir, LRA_MAIL_DIR: mailDir, [suite === "opening" ? "LRA_OPENING_SLICE" : suite === "ordering" ? "LRA_ORDERING_SLICE" : "LRA_CUSTOMER_SLICE"]: slice });
           const code = await new Promise<number | null>((ok, fail) => { playwright!.once("error", fail); playwright!.once("exit", ok); });
           failed ||= code !== 0;
           const report = `${suite}/${slice}/results.json`, html = `${suite}/${slice}/html/index.html`;
           journeyArtifacts.push(report, html);
-          slices.push({ project, attempt, status: code === 0 ? "passed" : "failed", report });
+          slices.push({ project, attempt, status: code === 0 ? "passed" : "failed", report, html });
           await stopped(playwright); playwright = undefined;
           await stopSlice();
         }
@@ -266,7 +274,7 @@ export async function main(args = process.argv.slice(2)) {
       journeyArtifacts.push(`${suite}-contracts.json`);
       evidence.write("results.json", { node: nodeResults, browser: slices });
       mkdirSync(resolve(evidence.directory, "html"), { recursive: true });
-      writeFileSync(resolve(evidence.directory, "html/index.html"), `<!doctype html><title>${suite === "opening" ? "Opening" : "Ordering"} contracts</title><p>See manifest.json for assertion IDs and ${suite}-contracts.json for Node results.</p><ul>${slices.map(s => `<li><a href="../${suite}/${s.project}-${s.attempt}/html/index.html">${s.project} attempt ${s.attempt}: ${s.status}</a></li>`).join("")}</ul>`);
+      writeFileSync(resolve(evidence.directory, "html/index.html"), `<!doctype html><title>${suite} contracts</title><p>See manifest.json for assertion IDs and ${suite}-contracts.json for Node results.</p><ul>${slices.map(s => `<li><a href="../${s.html}">${s.project} attempt ${s.attempt}: ${s.status}</a></li>`).join("")}</ul>`);
       evidence.manifest.status = failed || interrupted ? "fail" : "pass";
       evidence.manifest.reason = interrupted ? "interrupted" : failed ? `${suite} findings; inspect failedAssertionIds in manifest` : options.dev ? `${suite} passed (development mode; not release evidence)` : `${suite} contracts passed`;
     } else {
@@ -308,6 +316,17 @@ export async function main(args = process.argv.slice(2)) {
       const network: unknown[] = [], consoleProjection: unknown[] = [], shots: string[] = [];
       for (const file of fragments) {
         const part = JSON.parse(readFileSync(resolve(privateDir, "projections", file), "utf8"));
+        if (options.suite === "customer") {
+          const findings: Record<string, string> = {
+            "customer.storefront.spanish": "LRA-005", "customer.portal.spanish": "LRA-097",
+            "customer.email.spanish": "LRA-097", "customer.cart.last-edit": "LRA-007",
+            "customer.delivery.failure-visible": "LRA-044", "customer.email.failure-honesty": "LRA-009",
+            "customer.payment.copy-honest": "LRA-210", "customer.ownership.soft-404": "LRA-211", "customer.a11y.field-label": "LRA-212",
+          };
+          part.test.findingIds = [...new Set((part.test.failedAssertionIds as string[]).flatMap(id => findings[id] ? [findings[id]] : []))];
+          // A successful stub contract never clears provider activation.
+          part.test.blocked = ["LRA-008", "customer.email.activation", "customer.landing-photos", "customer.delivery.activation"];
+        }
         evidence.manifest.tests.push(part.test); network.push(...part.network); consoleProjection.push(...part.console); shots.push(...part.shots);
         evidence.manifest.expectedDenials += part.expectedDenials;
         for (const [key, count] of Object.entries(part.denied)) evidence.manifest.deniedDestinations[key] = (evidence.manifest.deniedDestinations[key] ?? 0) + Number(count);
