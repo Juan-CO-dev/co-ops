@@ -267,6 +267,8 @@ export const RESERVED_ACTIONS = [
   // (LRA-001 credential columns readable, LRA-214 self-promotion via PATCH) and INSERTs its own
   // audit row with destructive=true literally. Grant changes never go through app code.
   "security.grants_change",
+  // SQL-only: 0201 atomically imports one reviewed Angel price/pack/weight bundle.
+  "sku.angel_import",
   // Convention documented in AGENTS.md, written by hand during incident recovery
   // rather than by any code path.
   "audit.gap_recovery",
