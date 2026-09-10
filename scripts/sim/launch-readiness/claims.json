@@ -240,6 +240,246 @@
       "assertionId": "opening.report.truth",
       "evidence": null,
       "status": "pending"
+    },
+    {
+      "id": "ordering.key-holder-floor",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Ordering and purchase orders",
+        "quote": "The 6 AM job. Walk the shelves, say what is there, and the app works out the order. Key holder and up.",
+        "quoteSha256": "efef55fdd6e4893d75d77609b0d97aa7af41c85e40b65be3b3cea049476d2f50"
+      },
+      "actor": "employee (Maya at EM; Luis at MEP)",
+      "preconditions": "Fixture cold-empty; employee opens ordering and attempts a PO mutation.",
+      "expected": "Ordering and PO mutations are gated at key holder; employees cannot generate or place.",
+      "assertionId": "ordering.employee.denied",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.empty-shelf",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Ordering and purchase orders / 2. Say what is on the shelf",
+        "quote": "**Empty · order N** orders the full par. It is the other extreme: the shelf is bare.",
+        "quoteSha256": "effbdad66480243a0704308bad3f71ba1ff718a7fba895194ae44c886cfcbd7d"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; a SKU has a positive global par.",
+      "expected": "The empty-shelf decision orders the full par in order units.",
+      "assertionId": "ordering.walk.decisions",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.suggested-quantity",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Ordering and purchase orders / 2. Say what is on the shelf",
+        "quote": "**Suggest N** appears only where the app has an on-hand estimate to work from. It is the par minus that estimate, rounded up to whole order units. No estimate, no chip — it will not invent a number.",
+        "quoteSha256": "0ffae5e269d9d391eb748c09b52f60089565ed05319ee5102d89c123fb043b91"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; at least three SKUs offer a suggested-order control.",
+      "expected": "Suggested-order controls populate independently computed order quantities; report any disagreement with the guide about cold-empty estimates.",
+      "assertionId": "ordering.walk.decisions",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.full-shelf-zero",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Ordering and purchase orders / 2. Say what is on the shelf",
+        "quote": "**A blank box is not an answer.** A line you never touch is not submitted at all. **We're full · 0** is a real answer — it says the shelf is at par, orders nothing, and records that you looked.",
+        "quoteSha256": "6c23825009ea1313e90c0e69cb44e5a322c36128eea0aa4026c0a082c8874985"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; one SKU is explicitly marked full and another is untouched.",
+      "expected": "An explicit full decision persists as zero; an untouched SKU is not a submitted decision.",
+      "assertionId": "ordering.walk.persisted",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.draft-positive-lines",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Ordering and purchase orders / 4. The draft order",
+        "quote": "**One draft order per vendor**, covering only the lines above zero. The zeros stay on the walk record as evidence you checked.",
+        "quoteSha256": "cdd5e2e814fa472d6e2f4ddc8cf0e496f3a5782582aaebeeae497865f483898b"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; positive decisions and an explicit zero have been recorded.",
+      "expected": "Exactly one vendor/shop/day draft contains the positive walker entries with matching SKU ids, quantities and order units; the zero remains on the walk.",
+      "assertionId": "ordering.draft.matches-walk",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.confirm-freezes-snapshot",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Ordering and purchase orders / 4. The draft order",
+        "quote": "**Confirm** freezes the prices and the line list; it does not send anything. Confirming twice is refused.",
+        "quoteSha256": "dab7a4866819fc0f3b2ebdc4a4fb2b14a952e9f270da603ece9b9274d52bff0c"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; a draft has positive lines and integer-cent prices.",
+      "expected": "Confirmation freezes the line list and prices into confirmed_snapshot.",
+      "assertionId": "ordering.po.snapshot",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.manual-placement",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Ordering and purchase orders / 4. The draft order",
+        "quote": "**Sending is a separate tap**, and the email is rebuilt on the server from the confirmed order — not from anything on your screen. If the vendor has no ordering email on file, the app says so and leaves the order alone; use the phone or portal link instead and mark it placed.",
+        "quoteSha256": "b03bbfc6d77beae5e784aaf14780adae01f759ecd07c78963c24e03e92a9b146"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; a confirmed PO is placed through phone or in_person.",
+      "expected": "Manual placement records the human action separately from confirmation, creates one transmission record, and does not claim the app contacted the vendor.",
+      "assertionId": "ordering.po.manual",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.receiving-vendor-lines",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Receiving a delivery / 1. Pick the vendor",
+        "quote": "**Pick the vendor first.** The page loads that vendor's usual order once you do, and the item picker is limited to what that vendor sells.",
+        "quoteSha256": "7850b84b8a344bf6dd54130975f0925459cb57085d94e33d54e2138c2f193cf9"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; a placed Boar's Head PO exists at the selected shop.",
+      "expected": "Selecting the vendor loads its PO lines for receipt entry.",
+      "assertionId": "ordering.receiving.quantities",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.invoice-duplicate-serial",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Receiving a delivery / 1. Pick the vendor",
+        "quote": "The invoice number is the duplicate guard: the same vendor, the same day and the same invoice number is refused as already received. That is what stops a driver's second copy of the paperwork being filed twice.",
+        "quoteSha256": "b884dc3947b86ac3b0b194f4da0395c915c663aabdb85bc8df5c770914975789"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; the same vendor/day/invoice receipt is submitted twice serially.",
+      "expected": "The retry returns 409 duplicate_delivery and exactly one delivery remains.",
+      "assertionId": "ordering.invoice.serial",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.invoice-duplicate-race",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Receiving a delivery / 1. Pick the vendor",
+        "quote": "The invoice number is the duplicate guard: the same vendor, the same day and the same invoice number is refused as already received. That is what stops a driver's second copy of the paperwork being filed twice.",
+        "quoteSha256": "b884dc3947b86ac3b0b194f4da0395c915c663aabdb85bc8df5c770914975789"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; two real sessions concurrently submit the same vendor/day/invoice.",
+      "expected": "Exactly one submission returns 201 and the other returns 409 duplicate_delivery; one delivery remains.",
+      "assertionId": "ordering.invoice.race",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.receiving-arrived-quantities",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Receiving a delivery / 4. Flag a problem",
+        "quote": "**The quantity you type is what arrived, not what was ordered.** The flag is the story; the number is the count.",
+        "quoteSha256": "34368b1d15b7d4a437607fd923074d884b5eaeb98d3c22ac33e0efc59aa060a1"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; PO lines include short, damaged, missing and complete control cases.",
+      "expected": "Delivery item quantities equal the actual submitted received quantities, including the zero for a fully missing PO line.",
+      "assertionId": "ordering.receiving.quantities",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.receiving-credit-on-confirm",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Receiving a delivery / 4. Flag a problem",
+        "quote": "Nothing happens on screen when you tap the flag. The vendor credit is filed when you tap **Delivery confirmed**, and it shows up on the delivery afterwards.",
+        "quoteSha256": "cfcea6dddfe2efc5fed107229fcd2ef6b40fe7dfdad0e2a5c20a4a487fce0fc2"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; discrepancy flags are selected and the delivery is confirmed.",
+      "expected": "Confirmation persists credits for short, damaged and missing PO lines with independently computed amounts.",
+      "assertionId": "ordering.receiving.credits",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.receiving-photo-later",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Receiving a delivery / 4. Flag a problem",
+        "quote": "**Delivery confirmed** stays off until there is a receipt photo or **Photo later** is ticked. It submits immediately, with no \"are you sure\".",
+        "quoteSha256": "872321390edc1deb23ff333ef2ba4109d90357688382fa1e8ddd031dbf13aef7"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; no receipt photo is supplied and all other required fields are valid.",
+      "expected": "Photo later is the sanctioned way to enable delivery confirmation without a photo; no PIN or confirmation ceremony intervenes.",
+      "assertionId": "ordering.receiving.quantities",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.receiving-history",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Receiving a delivery / 5. Read the finished delivery",
+        "quote": "**What to do** — Open the delivery from **Recent deliveries** and check the item list against your paperwork before the driver leaves.",
+        "quoteSha256": "f11830bbd7facae78cd253ad30a258f2b8eded5a8e561d0257c6342312ca0e0a"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; a discrepancy delivery is confirmed, then the page is reloaded and the actor signs in again.",
+      "expected": "Recent deliveries opens the saved delivery with its exact item quantities, discrepancies and open credits.",
+      "assertionId": "ordering.receiving.history",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.receiving-po-credit-amount",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Receiving a delivery / 5. Read the finished delivery",
+        "quote": "A **Short** flag on a line that was not on a purchase order records the problem but no quantity and no dollar amount, because there is no ordered quantity to subtract from. That is the *\"Short — — —\"* row you are looking at. Flag shorts against a purchase order when there is one, and the amount fills itself in.",
+        "quoteSha256": "6382c1657d643b7c5be1c68a4235832c9f03c2b612ec24020983f2c2f7503a59"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; a placed PO supplies ordered quantities and frozen unit prices for a short and missing line.",
+      "expected": "Short and missing credits equal (ordered - received) times the independently read frozen unit price; the damaged credit follows its documented code rule.",
+      "assertionId": "ordering.receiving.credits",
+      "evidence": null,
+      "status": "pending"
     }
   ]
 }
