@@ -33,4 +33,55 @@ test("personas wrong shop cannot select Rosa for PIN login", async ({ page, cont
   expect((await page.context().cookies()).some(cookie => cookie.name === "co_ops_session")).toBe(false);
   await contract.screenshot("refused");
 });
+
+// 0198 (LRA-001 + LRA-214): the PostgREST roles hold COLUMN grants on users. Real persona JWTs as bearers
+// against the sim's PostgREST, never the app: a level-3 employee cannot promote herself, a GM cannot read a hash,
+// and the one self-editable preference still writes — proving the grant is narrow in BOTH directions.
+test("personas column grants: self-promotion refused, hashes unreadable, preference still writable (0198)", async ({ contract }) => {
+  contract.assertionIds.push("personas.grants.self-promote-refused", "personas.grants.hash-unreadable", "personas.grants.self-preference-allowed");
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL, anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  expect(Boolean(url && anon), "sim PostgREST origin + anon key in the runner env").toBe(true);
+  const bearer = async (alias: string, code: "EM" | "MEP") => {
+    const persona = personaByEmail(`${alias}@sim.co-ops`);
+    const { data: row } = await driver.db.from("users").select("id,name,role,language").eq("email", persona.email).single();
+    const pin = process.env[`SIM_PIN_${alias.toUpperCase()}`]; expect(Boolean(pin), `SIM_PIN_${alias.toUpperCase()}`).toBe(true);
+    const session = new driver.Session({ id: row.id, name: row.name, role: row.role }, pin);
+    await session.login(SIM_LOCATIONS[code].id);
+    const jwt = String(session.cookie).split("; ").find((c: string) => c.startsWith("co_ops_session="))!.slice("co_ops_session=".length);
+    return { id: row.id as string, role: row.role as string, language: row.language as string, jwt };
+  };
+  const rest = (jwt: string, path: string, init: RequestInit & { headers?: Record<string, string> } = {}) =>
+    fetch(`${url}/rest/v1/${path}`, { ...init, headers: { apikey: anon!, authorization: `Bearer ${jwt}`, "content-type": "application/json", prefer: "return=representation", ...(init.headers ?? {}) } });
+  const maya = await bearer("maya", "EM"), marcus = await bearer("marcus", "EM");
+  expect(maya.role).toBe("employee"); expect(marcus.role).toBe("gm");
+
+  // LRA-214: PATCH own role → refused by the column grant (PostgREST 401/403), row untouched.
+  // return=minimal: the ONLY privilege exercised is UPDATE on the named column (a representation would also need SELECT on every column).
+  const minimal = { prefer: "return=minimal" };
+  const promote = await rest(maya.jwt, `users?id=eq.${maya.id}`, { method: "PATCH", headers: minimal, body: JSON.stringify({ role: "owner" }) });
+  expect([401, 403], "personas.grants.self-promote-refused").toContain(promote.status);
+  const { data: after } = await driver.db.from("users").select("role,active").eq("id", maya.id).single();
+  expect(after.role, "personas.grants.self-promote-refused").toBe("employee"); expect(after.active).toBe(true);
+  for (const body of [{ active: false }, { pin_hash: "x" }, { password_hash: "x" }, { locked_until: null }]) {
+    expect([401, 403], `personas.grants.self-promote-refused ${Object.keys(body)[0]}`).toContain((await rest(maya.jwt, `users?id=eq.${maya.id}`, { method: "PATCH", headers: minimal, body: JSON.stringify(body) })).status);
+  }
+
+  // LRA-001: a GM token cannot select either hash — for anyone, including itself.
+  for (const column of ["pin_hash", "password_hash"]) {
+    const read = await rest(marcus.jwt, `users?select=id,${column}&limit=1`, { method: "GET" });
+    expect([401, 403], `personas.grants.hash-unreadable ${column}`).toContain(read.status);
+    expect(await read.text(), "personas.grants.hash-unreadable").not.toMatch(/\$2[aby]\$|hmac2\$/);
+  }
+  const safe = await rest(marcus.jwt, `users?select=id,name,role&limit=1`, { method: "GET" });
+  expect(safe.status, "personas.grants.hash-unreadable: safe columns still readable").toBe(200);
+
+  // Positive control: the self-editable preference still writes through the same bearer, then is restored.
+  const flip = maya.language === "es" ? "en" : "es";
+  // Positive control asks for exactly the granted columns back — the shape /api/users/me/language uses (`.select("id, language")`).
+  const pref = await rest(maya.jwt, `users?id=eq.${maya.id}&select=id,language`, { method: "PATCH", body: JSON.stringify({ language: flip }) });
+  expect(pref.status, "personas.grants.self-preference-allowed").toBe(200);
+  expect((await pref.json())[0]?.language, "personas.grants.self-preference-allowed").toBe(flip);
+  expect((await rest(maya.jwt, `users?id=eq.${maya.id}`, { method: "PATCH", headers: minimal, body: JSON.stringify({ language: maya.language }) })).status).toBe(204);
+});
+
 }

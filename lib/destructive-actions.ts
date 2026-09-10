@@ -229,6 +229,10 @@ export const DESTRUCTIVE_ACTIONS = [
   // returns true for "report.update" via the registry membership check.
   "report.update",
 
+  // Migration-emitted grant rewrite on public.users (0198, LRA-001/214): a change to who may
+  // read or write which columns is an alteration of the accountability perimeter itself.
+  "security.grants_change",
+
   // Closing auto-finalize without manual confirmation (Build #3 PR 1).
   // — destructive because the operational record transitions to
   // 'auto_finalized' without the closer's PIN-attestation. Three release
