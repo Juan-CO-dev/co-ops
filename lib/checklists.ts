@@ -1354,10 +1354,11 @@ export async function confirmInstance(
     throw new ChecklistExtraReasonError(extraReasonIds);
   }
 
-  // PIN attestation. Authed-client self-read on the actor's own row —
-  // RLS users_read_self permits the read. Minimum-privilege over service
-  // role: the actor IS the row, no privilege escalation justified here.
-  const { data: userRow, error: userErr } = await authed
+  // PIN attestation. Service-role read of the actor's own row: since 0198 the
+  // PostgREST roles hold NO grant on pin_hash/password_hash (LRA-001/214), so a
+  // user-context select of the hash is a permission error by design. The row
+  // is still pinned to the actor (eq id); the client is the only thing that moved.
+  const { data: userRow, error: userErr } = await getServiceRoleClient()
     .from("users")
     .select("id, pin_hash")
     .eq("id", actor.userId)
