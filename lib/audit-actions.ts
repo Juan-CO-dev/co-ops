@@ -263,6 +263,10 @@ export const RESERVED_ACTIONS = [
   // and sets destructive=true literally. There is no TypeScript call site and there may
   // never be one: no app code path deletes catering rows.
   "catering.test_data_purge",
+  // Emitted from SQL only — migration 0198 rewrote the PostgREST-role grants on public.users
+  // (LRA-001 credential columns readable, LRA-214 self-promotion via PATCH) and INSERTs its own
+  // audit row with destructive=true literally. Grant changes never go through app code.
+  "security.grants_change",
   // Convention documented in AGENTS.md, written by hand during incident recovery
   // rather than by any code path.
   "audit.gap_recovery",
