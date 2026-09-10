@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { decideJobWatch, easternBoundary, easternDay } from "@/lib/job-watch";
 import { JOBS_REGISTRY, type RegisteredJob } from "@/lib/jobs-registry";
 
-const JOB_WATCH_SCHEDULE = "0 17 * * *"; // 12:00 EST / 13:00 EDT — inside the 06–22 ET pinger window either side of DST
+const JOB_WATCH_SCHEDULE = "0 17 * * *"; // 12:00 EST / 13:00 EDT â€” inside the 06â€“22 ET pinger window either side of DST
 const pinger = JOBS_REGISTRY[3];
 const daily = JOBS_REGISTRY[0];
 const decide = (now: string, last: string | null, alert: string | null = null) =>
@@ -96,7 +96,7 @@ describe("LRA-228: cadence, Eastern windows, and once-per-day decisions", () => 
     expect(config.crons).toContainEqual({ path: "/api/cron/job-watch", schedule: JOB_WATCH_SCHEDULE });
   });
 
-  it("the daily check lands inside every pinger window on both sides of DST (Hobby precision is ±59 min)", () => {
+  it("the daily check lands inside every pinger window on both sides of DST (Hobby precision is Â±59 min)", () => {
     const [minute, hour] = JOB_WATCH_SCHEDULE.split(" ");
     for (const day of ["2026-01-15", "2026-07-15", "2026-03-08", "2026-11-01"]) {
       for (const skew of [-59, 0, 59]) {
