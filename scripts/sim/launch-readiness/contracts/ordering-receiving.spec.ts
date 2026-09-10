@@ -262,14 +262,20 @@ export async function runOrderingContracts(pins: Record<string, string | undefin
         const controlWalk = await call(kh, "GET", `/api/operations/ordering?locationId=${SIM_LOCATIONS[code].id}`);
         assert.equal(controlWalk.status, 200, current);
         let controlVendor: WalkerVendor | undefined;
+        let control: WalkerVendor["skus"][number] | undefined;
         for (const candidate of (controlWalk.json as { walker: { vendors: WalkerVendor[] } }).walker.vendors) {
-          if (candidate.skus.some(s => s.parToday > 0 && s.orderUnitLabel && s.canImplyOz) && (await orders(code, candidate.vendorId)).length === 0) {
-            controlVendor = candidate;
-            break;
+          if ((await orders(code, candidate.vendorId)).length !== 0) continue;
+          for (const s of candidate.skus) {
+            if (!(s.parToday > 0 && s.orderUnitLabel && s.canImplyOz)) continue;
+            // The control must confirm with a FROZEN price (the receive line and the price assertion below need
+            // one). Unpriced SKUs are legitimate catalog rows (111 per shop after Angel wave 7), so an unused vendor
+            // whose first par'd SKU has no vendor_price_history row is not a valid control. (CC, 2026-09-10 rerun)
+            const prices = await readRows<{ unit_price: number | string }>("vendor_price_history", "unit_price", { vendor_item_id: s.skuId });
+            if (prices.length > 0 && prices.every(r => Number(r.unit_price) > 0)) { controlVendor = candidate; control = s; break; }
           }
+          if (control) break;
         }
-        assert(controlVendor, "ordering.reconcile.control: unused vendor required");
-        const control = controlVendor.skus.find(s => s.parToday > 0 && s.orderUnitLabel && s.canImplyOz)!;
+        assert(controlVendor && control, "ordering.reconcile.control: unused vendor with a priced SKU required");
         const submitted = await call(kh, "POST", "/api/operations/ordering", { locationId: SIM_LOCATIONS[code].id, lines: [{ skuId: control.skuId, orderQty: 2 }] });
         assert.equal(submitted.status, 201, current);
         const controlPoId = (submitted.json as { pos: { poId: string }[] }).pos[0]!.poId;
