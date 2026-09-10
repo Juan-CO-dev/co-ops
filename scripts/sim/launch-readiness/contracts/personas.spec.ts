@@ -56,12 +56,14 @@ test("personas column grants: self-promotion refused, hashes unreadable, prefere
   expect(maya.role).toBe("employee"); expect(marcus.role).toBe("gm");
 
   // LRA-214: PATCH own role → refused by the column grant (PostgREST 401/403), row untouched.
-  const promote = await rest(maya.jwt, `users?id=eq.${maya.id}`, { method: "PATCH", body: JSON.stringify({ role: "owner" }) });
+  // return=minimal: the ONLY privilege exercised is UPDATE on the named column (a representation would also need SELECT on every column).
+  const minimal = { prefer: "return=minimal" };
+  const promote = await rest(maya.jwt, `users?id=eq.${maya.id}`, { method: "PATCH", headers: minimal, body: JSON.stringify({ role: "owner" }) });
   expect([401, 403], "personas.grants.self-promote-refused").toContain(promote.status);
   const { data: after } = await driver.db.from("users").select("role,active").eq("id", maya.id).single();
   expect(after.role, "personas.grants.self-promote-refused").toBe("employee"); expect(after.active).toBe(true);
   for (const body of [{ active: false }, { pin_hash: "x" }, { password_hash: "x" }, { locked_until: null }]) {
-    expect([401, 403], `personas.grants.self-promote-refused ${Object.keys(body)[0]}`).toContain((await rest(maya.jwt, `users?id=eq.${maya.id}`, { method: "PATCH", body: JSON.stringify(body) })).status);
+    expect([401, 403], `personas.grants.self-promote-refused ${Object.keys(body)[0]}`).toContain((await rest(maya.jwt, `users?id=eq.${maya.id}`, { method: "PATCH", headers: minimal, body: JSON.stringify(body) })).status);
   }
 
   // LRA-001: a GM token cannot select either hash — for anyone, including itself.
@@ -75,10 +77,11 @@ test("personas column grants: self-promotion refused, hashes unreadable, prefere
 
   // Positive control: the self-editable preference still writes through the same bearer, then is restored.
   const flip = maya.language === "es" ? "en" : "es";
-  const pref = await rest(maya.jwt, `users?id=eq.${maya.id}`, { method: "PATCH", body: JSON.stringify({ language: flip }) });
+  // Positive control asks for exactly the granted columns back — the shape /api/users/me/language uses (`.select("id, language")`).
+  const pref = await rest(maya.jwt, `users?id=eq.${maya.id}&select=id,language`, { method: "PATCH", body: JSON.stringify({ language: flip }) });
   expect(pref.status, "personas.grants.self-preference-allowed").toBe(200);
   expect((await pref.json())[0]?.language, "personas.grants.self-preference-allowed").toBe(flip);
-  expect((await rest(maya.jwt, `users?id=eq.${maya.id}`, { method: "PATCH", body: JSON.stringify({ language: maya.language }) })).status).toBe(200);
+  expect((await rest(maya.jwt, `users?id=eq.${maya.id}`, { method: "PATCH", headers: minimal, body: JSON.stringify({ language: maya.language }) })).status).toBe(204);
 });
 
 }
