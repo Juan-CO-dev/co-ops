@@ -180,16 +180,15 @@ export interface CreatedDraft {
  * Emits ONE `po.draft_created` audit row for the whole batch with the po_ids +
  * source. Vendors with no lines are skipped. Append-only.
  *
- * opts.noCodeSuffixRetry (generateDraftForVendor path): repurpose the display-code
- * unique index as the DAY-IDEMPOTENCY arbiter for a single-vendor generate. Instead
+ * opts.noCodeSuffixRetry (cutoff draft and walk-submit paths): repurpose the display-code
+ * unique index as the DAY-IDEMPOTENCY arbiter for each vendor. Instead
  * of retrying the 23505 at the next suffix (-2, -3…), attempt ONLY the unsuffixed
  * base code and, on a unique-violation, throw PurchaseOrderError(409, "po_exists").
  * This closes the double-call race generateDraftForVendor's pre-check can't (two
  * concurrent generates both pass the pre-check, then only ONE wins the base code).
  * TRADEOFF (documented): a PO that was PLACED earlier today already holds the base
  * code → a later generate 409s. Accepted — an order already went out for this
- * vendor today, so re-generating is exactly what we want to block; the walker path
- * (multi-vendor births, retry ON) is unaffected and still handles genuine seconds.
+ * vendor today, so both ordering entry points refuse another order.
  */
 export async function createDraftsFromLines(
   actor: AuthContext,
@@ -257,16 +256,16 @@ export async function createDraftsFromLines(
     // 23505 race retry: another request may claim a code between our in-memory scan
     // and the INSERT. On a unique-violation we add that code to takenCodes and
     // re-scan — nextFreeCode then skips it and yields the next free suffix. Bounded.
-    // opts.noCodeSuffixRetry (generate path): ONE attempt at the base code only; a
+    // opts.noCodeSuffixRetry (ordering paths): ONE attempt at the base code only; a
     // 23505 means a PO already holds today's base code for this vendor → treat the
     // unique index as the day-idempotency arbiter and 409 `po_exists` (never suffix).
-    // Day-idempotency (generate path, noCodeSuffixRetry): the base code IS the
+    // Day-idempotency (ordering paths, noCodeSuffixRetry): the base code IS the
     // whole allocation — never a suffix. A concurrent double-generate loses either
     // (a) at the in-memory scan (a rival's base already present → nextFreeCode
     // would have suffixed, silently defeating idempotency — the sim-2 bug), or
     // (b) at the INSERT (23505). BOTH mean an order for this vendor already exists
-    // today → 409 po_exists, never a -2 second order. The suffix loop is the WALKER-
-    // birth path only (deliberate seconds to the same vendor).
+    // today → 409 po_exists, never a -2 second order. The suffix loop remains only
+    // for callers that do not opt into day idempotency.
     if (opts?.noCodeSuffixRetry && takenCodes.has(base)) {
       throw new PurchaseOrderError(409, "po_exists", "A draft or confirmed order already exists today for this vendor");
     }
@@ -289,7 +288,7 @@ export async function createDraftsFromLines(
             // generate rather than mint a -2 second order for the same day.
             throw new PurchaseOrderError(409, "po_exists", "A draft or confirmed order already exists today for this vendor");
           }
-          // Walker path: mark taken and re-scan for the next free suffix.
+          // Retry-enabled caller: mark taken and re-scan for the next free suffix.
           takenCodes.add(code);
           continue;
         }
