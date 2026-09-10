@@ -99,12 +99,26 @@ export async function resetFixture(options: {
     async function request(table: string, method: "GET" | "POST" | "DELETE" | "PATCH", query: URLSearchParams, rows?: Row[] | Row) {
       assertHeld(runId);
       if (!deletes.includes(table)) throw new Error("Unclassified write target");
-      const response = await fetch(`${base}${table}?${query}`, {
+      // Transient transport failures ("fetch failed", 5xx, 429) blocked two restores on 2026-09-09/10. Retry with
+      // backoff; every verb here is safe to repeat (GET/DELETE-by-filter/PATCH are idempotent; a repeated POST hits
+      // the PK and fails closed with 409 → DIRTY, never a silent duplicate). Non-transient statuses are not retried.
+      const attempt = async (): Promise<Response> => fetch(`${base}${table}?${query}`, {
         method, redirect: "error", signal: AbortSignal.timeout(30_000),
         headers: { apikey: env.SUPABASE_SERVICE_ROLE_KEY!, Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY!}`,
           "Content-Type": "application/json", Prefer: method === "POST" ? "return=minimal" : "count=exact,return=minimal" },
         body: rows === undefined ? undefined : JSON.stringify(rows),
       });
+      let response: Response | undefined;
+      for (let tries = 0; tries < 4; tries++) {
+        try { response = await attempt(); }
+        catch (error) { if (tries === 3) throw error; if (process.env.LRA_DEBUG) console.error(`[lra debug] reset ${method} ${table}: transport error, retry ${tries + 1}`); await new Promise(r => setTimeout(r, 1500 * 2 ** tries)); continue; }
+        if (response.ok || !(response.status === 429 || response.status >= 500)) break;
+        await response.body?.cancel();
+        if (tries === 3) break;
+        if (process.env.LRA_DEBUG) console.error(`[lra debug] reset ${method} ${table}: HTTP ${response.status}, retry ${tries + 1}`);
+        await new Promise(r => setTimeout(r, 1500 * 2 ** tries));
+      }
+      if (!response) throw new Error(`Reset ${method} failed: ${table}`);
       if (!response.ok) {
         // The PostgREST error body is surfaced ONLY under LRA_DEBUG (stderr, never evidence); it may name columns.
         const detail = process.env.LRA_DEBUG ? ` ${response.status} ${(await response.text()).slice(0, 400)}` : "";

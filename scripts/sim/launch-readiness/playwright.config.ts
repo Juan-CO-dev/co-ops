@@ -14,44 +14,56 @@ import es from "../../../lib/i18n/es.json";
 const runId = process.env.LRA_RUN_ID;
 if (!runId || !/^[a-zA-Z0-9-]+$/.test(runId)) throw new Error("Use run.ts under a host lease");
 const suite = process.env.LRA_SUITE;
-if (!["runner", "isolation", "personas"].includes(suite ?? "")) throw new Error("Unknown suite");
+if (!["runner", "isolation", "personas", "opening"].includes(suite ?? "")) throw new Error("Unknown suite");
+const slice = process.env.LRA_OPENING_SLICE ?? "";
+if (suite === "opening" && !/^(phone|tablet)-(en|es)-[1-9]\d*$/.test(slice)) throw new Error("Opening requires parent-owned cold restores");
 const artifacts = resolve("scripts/sim/launch-readiness/.artifacts", runId);
+const reports = slice ? resolve(artifacts, "opening", slice) : artifacts;
 const privateDir = resolve("scripts/sim/launch-readiness/.private", runId);
 export default defineConfig({
-  testDir: "./contracts", testMatch: `${suite}.spec.ts`, workers: 1, fullyParallel: false, retries: 0, timeout: 90_000,
-  outputDir: resolve(privateDir, "pw"),
+  // Opening's Node contract is invoked by run.ts; only its journey needs a browser.
+  testDir: ".", testMatch: suite === "opening" ? "**/journeys/opening.spec.ts" : `**/contracts/${suite}.spec.ts`, workers: 1, fullyParallel: false, retries: 0, timeout: suite === "opening" ? 300_000 : 90_000,
+  outputDir: resolve(privateDir, "pw", slice),
   use: { browserName: "chromium", baseURL: SIM_APP_ORIGIN, serviceWorkers: "block", trace: "retain-on-failure", screenshot: "off", video: "off" },
   projects: ["phone", "tablet"].flatMap(device => ["en", "es"].map(locale => ({ name: `${device}-${locale}`, metadata: { locale }, use: { viewport: device === "phone" ? { width: 390, height: 844 } : { width: 1280, height: 800 }, locale } }))),
-  reporter: [["./evidence.ts"], ["list"], ["json", { outputFile: resolve(artifacts, "results.json") }], ["html", { outputFolder: resolve(artifacts, "html"), open: "never" }]],
+  reporter: [["./evidence.ts"], ["list"], ["json", { outputFile: resolve(reports, "results.json") }], ["html", { outputFolder: resolve(reports, "html"), open: "never" }]],
 });
-type Contract = { manifest: Manifest; network: Projection[]; denied: Record<string, number>; expectedDenials: number; assertionIds: string[]; screenshot: (label: string) => Promise<void> };
+type OpeningObservations = { handoff?: { ticksRetained: boolean; temperatureRetained: boolean; commentRetained: boolean; completionRows: number }; race?: { status: number; acknowledged: boolean }[] };
+type Contract = { manifest: Manifest; network: Projection[]; denied: Record<string, number>; expectedDenials: number; assertionIds: string[]; opening: OpeningObservations; trackPage: (page: Page) => Promise<void>; screenshot: (label: string, page?: Page) => Promise<void> };
 export const test = base.extend<{ contract: Contract }>({
   contract: [async ({ page }, use, info) => {
     assertHeld(runId);
     const manifest = JSON.parse(readFileSync(resolve(artifacts, "manifest.json"), "utf8")) as Manifest;
     if (manifest.runId !== runId || !Object.values(manifest.identity).every(Boolean)) throw new Error("Parent identity receipt incomplete");
     await driver.init({ root: process.env.LRA_CONFIG_ROOT, assertLease: () => { assertHeld(runId); }, verifyServer: async () => { if (!manifest.identity.server) throw new Error("Unverified server"); } });
-    const id = createHash("sha256").update(`${info.project.name}:${info.testId}:${info.repeatEachIndex}`).digest("hex").slice(0, 20);
+    const id = createHash("sha256").update(`${slice}:${info.project.name}:${info.testId}:${info.repeatEachIndex}`).digest("hex").slice(0, 20);
     const evidence = new Evidence(runId, process.env.LRA_FIXTURE ?? "cold-empty");
     const shots: string[] = [], network: Projection[] = [], consoleEvents: { type: string }[] = [], denied: Record<string, number> = {};
-    const contract: Contract = { manifest, network, denied, expectedDenials: 0, assertionIds: [], screenshot: async label => { shots.push(await evidence.screenshot(page, id, label)); } };
+    const contract: Contract = { manifest, network, denied, expectedDenials: 0, assertionIds: [], opening: {}, trackPage: async () => {}, screenshot: async (label, target = page) => { shots.push(await evidence.screenshot(target, id, label)); } };
     const guard: Parameters<Page["route"]>[1] = async route => {
       const request = route.request(), projection = projectNetwork(request.method(), request.url());
       if (projection.category === "app" || projection.category === "sim-db") await route.continue();
       else { denied[projection.category] = (denied[projection.category] ?? 0) + 1; network.push(projection); await route.abort("blockedbyclient"); }
     };
     // Context guard covers popup first requests too; page guard precedes navigation.
-    await page.context().route("**/*", guard); await page.route("**/*", guard);
-    page.on("response", response => { const request = response.request(), timing = request.timing(); network.push(projectNetwork(request.method(), response.url(), response.status(), timing.responseEnd < 0 ? 0 : timing.responseEnd)); });
-    page.on("console", message => { consoleEvents.push({ type: ["error", "warning", "info", "log", "debug"].includes(message.type()) ? message.type() : "other" }); });
-    page.on("pageerror", () => { consoleEvents.push({ type: "pageerror" }); });
+    contract.trackPage = async target => {
+      await target.context().route("**/*", guard); await target.route("**/*", guard);
+      target.on("response", response => { const request = response.request(), timing = request.timing(); network.push(projectNetwork(request.method(), response.url(), response.status(), timing.responseEnd < 0 ? 0 : timing.responseEnd)); });
+      target.on("console", message => { consoleEvents.push({ type: ["error", "warning", "info", "log", "debug"].includes(message.type()) ? message.type() : "other" }); });
+      target.on("pageerror", () => { consoleEvents.push({ type: "pageerror" }); });
+    };
+    await contract.trackPage(page);
     try { await use(contract); }
     finally {
       if (info.status !== "passed" && !page.isClosed()) await contract.screenshot("failure");
+      // Local diagnostics only (stderr, never evidence): raw test errors before the reporter scrubs them.
+      if (process.env.LRA_DEBUG && info.status !== "passed") for (const e of info.errors) console.error(`[lra debug] ${info.project.name} ${info.title}: ${(e.message ?? "").replace(/\x1b\[[0-9;]*m/g, "").slice(0, 900)}`);
       const actualDenials = Object.values(denied).reduce((a,b) => a+b, 0);
       mkdirSync(resolve(privateDir, "projections"), { recursive: true });
       const file = resolve(privateDir, "projections", `${id}.json`);
-      writeFileSync(file, JSON.stringify({ test: { id, assertionIds: contract.assertionIds, viewport: page.viewportSize(), project: info.project.name, status: info.status, attempt: info.repeatEachIndex + 1 }, shots, network, console: consoleEvents, denied, expectedDenials: contract.expectedDenials }));
+      // Closed IDs survive the stock reporter's deliberate raw-error redaction.
+      const failedAssertionIds = contract.assertionIds.filter(id => info.errors.some(error => error.message?.includes(id)));
+      writeFileSync(file, JSON.stringify({ test: { id, assertionIds: contract.assertionIds, failedAssertionIds, opening: contract.opening, findingIds: failedAssertionIds.includes("opening.phase1.persist-before-submit") ? ["LRA-121"] : [], viewport: page.viewportSize(), project: info.project.name, status: info.status, attempt: slice ? Number(slice.split("-").at(-1)) : info.repeatEachIndex + 1 }, shots, network, console: consoleEvents, denied, expectedDenials: contract.expectedDenials }));
       if (!readFileSync(file).length) throw new Error("Missing test projection");
       expect(actualDenials, "only deliberate destination refusals are permitted").toBe(contract.expectedDenials);
     }
@@ -77,7 +89,9 @@ export async function login(page: Page, persona: SimPersona, code: LocationCode)
   await selectPersona(page, persona, code);
   await page.getByRole("button", { name: new RegExp(persona.name) }).click();
   // No screenshots or trace recording during credential entry.
-  await page.context().tracing.stop();
+  // Traces are local-only (.private, never exported); pausing them around PIN entry is belt-and-braces.
+  // A test that logs in twice in one context would otherwise hit "Tracing has been already started".
+  try { await page.context().tracing.stop(); } catch { /* not started under this mode */ }
   try {
     await expect(page.getByRole("heading", { name: persona.name })).toBeVisible();
     const response = page.waitForResponse(r => new URL(r.url()).pathname === "/api/auth/pin" && r.request().method() === "POST");
@@ -86,5 +100,5 @@ export async function login(page: Page, persona: SimPersona, code: LocationCode)
     await page.waitForURL(url => url.pathname === "/dashboard");
     await expect(page.locator("html")).toHaveAttribute("lang", persona.language);
   } catch { throw new Error("Real UI PIN login failed"); }
-  finally { await page.context().tracing.start({ screenshots: true, snapshots: true, sources: false }); }
+  finally { try { await page.context().tracing.start({ screenshots: true, snapshots: true, sources: false }); } catch { /* already recording */ } }
 }
