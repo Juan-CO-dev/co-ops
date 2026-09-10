@@ -5705,9 +5705,9 @@
     "item_number": "5488748"
    },
    "decision": "selected",
-   "vendor_binding": "owner-confirmed:2026-09-10",
+   "vendor_binding": "vendor-match",
    "confidence": "high",
-   "evidence": "CC: Deer Park loose bottles \u2014 one-off",
+   "evidence": "CC: Deer Park loose bottles \u2014 one-off | binding evidence: Juan 2026-09-10: 'Deerpark loose is the employee waters'",
    "meaning": "Deer Park brand bottled spring water",
    "owner_question": "",
    "owner_answer": "Juan 2026-09-10: 'Deerpark loose is the employee waters'",
