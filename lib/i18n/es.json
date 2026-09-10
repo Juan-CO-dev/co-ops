@@ -3028,6 +3028,7 @@
   "ordering.done.new_walk": "Iniciar un nuevo recorrido",
   "ordering.done.po_code": "OC {code}",
   "ordering.done.po_error": "El recorrido se guardó, pero no se pudieron crear los pedidos borrador. Puedes generarlos desde la página de pedidos.",
+  "ordering.done.po_skipped": "{vendor}: el pedido de hoy ya existe — no se duplicó",
   "ordering.done.order_minimum": "Mínimo: {value}",
   "ordering.shrinkage.badge": "Revisar",
   "ordering.shrinkage.title": "El pase-par difiere de la existencia calculada en {n} SKUs",

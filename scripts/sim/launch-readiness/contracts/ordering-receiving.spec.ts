@@ -197,7 +197,7 @@ export async function runOrderingContracts(pins: Record<string, string | undefin
       const expected = decisions.filter(d => d.orderQty > 0).map(d => ({ skuId: d.skuId, qty: d.orderQty, unit: d.orderUnitLabel }));
       assert.deepEqual(lineShape(await poLines(poId)), sortSku(expected), current);
       assert.equal((await orders(code, vendor.vendorId)).length, 1, current);
-      await soft("ordering.walk.duplicate-po", async () => {
+      await soft("ordering.draft.duplicate-po", async () => {
         const refused = await call(kh, "POST", PO_API, request);
         assert.deepEqual({ status: refused.status, code: refused.code }, { status: 409, code: "po_exists" }, current);
         assert.equal((await orders(code, vendor.vendorId)).length, 1, current);
@@ -321,17 +321,20 @@ export async function runOrderingContracts(pins: Record<string, string | undefin
           assert.deepEqual(generatedLines, sortSku(typed), "ordering.draft.ignores-typed: LRA-207 system draft ignores pending walk decisions");
         });
         await soft("ordering.walk.duplicate-po", async () => {
-          // Serial refusal must not persist a walk, its lines, or another PO.
-          const beforeEvents = await readRows<{ id: string }>("par_pass_events", "id", { location_id: SIM_LOCATIONS[code].id });
+          // A cutoff draft suppresses only its PO; every walk observation still lands.
           const beforeLines = await poLines(created[0]!.id);
           const recorded = await call(kh, "POST", "/api/operations/ordering", { locationId: SIM_LOCATIONS[code].id, lines: typed.map(l => ({ skuId: l.skuId, orderQty: l.qty })) });
           const after = await orders(code, fresh.vendorId);
           if (after.length !== 1) result.findingIds.push("LRA-206");
-          assert.deepEqual({ status: recorded.status, code: recorded.code }, { status: 409, code: "po_exists" }, current);
+          assert.equal(recorded.status, 201, current);
+          const walk = recorded.json as { eventId: string; poError: boolean; pos: { vendorId: string }[]; poSkipped: { vendorId: string; vendorName: string; reason: string; existingPoId: string }[] };
+          assert.equal(walk.poError, false, current);
+          assert.equal(walk.pos.some(p => p.vendorId === fresh.vendorId), false, current);
+          assert.deepEqual(walk.poSkipped, [{ vendorId: fresh.vendorId, vendorName: fresh.name, reason: "po_exists", existingPoId: created[0]!.id }], current);
           assert.deepEqual(after, created, "ordering.walk.duplicate-po: no second PO");
           assert.deepEqual(await poLines(created[0]!.id), beforeLines, current);
-          const afterEvents = await readRows<{ id: string }>("par_pass_events", "id", { location_id: SIM_LOCATIONS[code].id });
-          assert.deepEqual(afterEvents.map(e => e.id).sort(), beforeEvents.map(e => e.id).sort(), "ordering.walk.duplicate-po: no walk persisted on serial refusal");
+          const persisted = await readRows<{ sku_id: string; order_qty: number | string; order_unit_label: string | null }>("par_pass_lines", "sku_id,order_qty,order_unit_label", { event_id: walk.eventId });
+          assert.deepEqual(sortSku(persisted.map(l => ({ skuId: l.sku_id, qty: Number(l.order_qty), unit: l.order_unit_label }))), sortSku(typed), "ordering.walk.duplicate-po: observations persisted");
         });
       });
     } catch (error) { fail(error); }

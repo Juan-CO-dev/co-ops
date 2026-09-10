@@ -3028,6 +3028,7 @@
   "ordering.done.new_walk": "Start a new walk",
   "ordering.done.po_code": "PO {code}",
   "ordering.done.po_error": "The walk was saved, but draft orders couldn't be created. You can generate them from the ordering page.",
+  "ordering.done.po_skipped": "{vendor}: today's order already exists — not duplicated",
   "ordering.done.order_minimum": "Minimum: {value}",
   "ordering.shrinkage.badge": "Check",
   "ordering.shrinkage.title": "Par-pass differs from computed on-hand for {n} SKUs",

@@ -56,7 +56,7 @@ export const PO_RECONCILE_MIN = 5; // shift_lead+ (Juan 2026-08-11: SLs are trai
 type ServiceClient = ReturnType<typeof getServiceRoleClient>;
 
 export class PurchaseOrderError extends Error {
-  constructor(public status: number, public code: string, message?: string) {
+  constructor(public status: number, public code: string, message?: string, public displayCode?: string) {
     super(message ?? code);
     this.name = "PurchaseOrderError";
   }
@@ -188,7 +188,7 @@ export interface CreatedDraft {
  * concurrent generates both pass the pre-check, then only ONE wins the base code).
  * TRADEOFF (documented): a PO that was PLACED earlier today already holds the base
  * code → a later generate 409s. Accepted — an order already went out for this
- * vendor today, so both ordering entry points refuse another order.
+ * vendor today. Cutoff generation refuses; walk submission reports a vendor skip.
  */
 export async function createDraftsFromLines(
   actor: AuthContext,
@@ -267,7 +267,7 @@ export async function createDraftsFromLines(
     // today → 409 po_exists, never a -2 second order. The suffix loop remains only
     // for callers that do not opt into day idempotency.
     if (opts?.noCodeSuffixRetry && takenCodes.has(base)) {
-      throw new PurchaseOrderError(409, "po_exists", "A draft or confirmed order already exists today for this vendor");
+      throw new PurchaseOrderError(409, "po_exists", "A draft or confirmed order already exists today for this vendor", base);
     }
     for (let attempt = 0; attempt < 25; attempt++) {
       const code = opts?.noCodeSuffixRetry ? base : nextFreeCode(base, takenCodes);
@@ -286,7 +286,7 @@ export async function createDraftsFromLines(
             // The base code is already taken today → an order for this vendor already
             // exists (draft/confirmed/placed). Day-idempotency: reject the duplicate
             // generate rather than mint a -2 second order for the same day.
-            throw new PurchaseOrderError(409, "po_exists", "A draft or confirmed order already exists today for this vendor");
+            throw new PurchaseOrderError(409, "po_exists", "A draft or confirmed order already exists today for this vendor", code);
           }
           // Retry-enabled caller: mark taken and re-scan for the next free suffix.
           takenCodes.add(code);
