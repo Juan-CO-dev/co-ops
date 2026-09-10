@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { decideJobWatch, easternBoundary, easternDay } from "@/lib/job-watch";
-import { JOBS_REGISTRY } from "@/lib/jobs-registry";
+import { JOBS_REGISTRY, type RegisteredJob } from "@/lib/jobs-registry";
 
 const JOB_WATCH_SCHEDULE = "0 17 * * *"; // 12:00 EST / 13:00 EDT — inside the 06–22 ET pinger window either side of DST
 const pinger = JOBS_REGISTRY[3];
@@ -101,7 +101,7 @@ describe("LRA-228: cadence, Eastern windows, and once-per-day decisions", () => 
     for (const day of ["2026-01-15", "2026-07-15", "2026-03-08", "2026-11-01"]) {
       for (const skew of [-59, 0, 59]) {
         const at = new Date(Date.parse(`${day}T${hour!.padStart(2, "0")}:${minute!.padStart(2, "0")}:00Z`) + skew * 60_000);
-        for (const job of JOBS_REGISTRY) {
+        for (const job of JOBS_REGISTRY as readonly RegisteredJob[]) {
           if (!job.window) continue;
           expect(at >= easternBoundary(easternDay(at), job.window.startHourET)).toBe(true);
           expect(at < easternBoundary(easternDay(at), job.window.endHourET)).toBe(true);
