@@ -3964,7 +3964,7 @@
    "row_n": 108
   },
   {
-   "revision": "wave7-r2-2026-09-10",
+   "revision": "wave7-r3-2026-09-10",
    "angel": {
     "product": "CONT PLAS 32 OZ DELI W/LID CLR",
     "brand": "PLACON",
@@ -3986,15 +3986,15 @@
    "selected_sku": {
     "id": "2b36cfe8-06cb-46cf-b5d2-7f30abacc498",
     "name": "Quart (Large)",
-    "vendor": "Webstaurant",
+    "vendor": "PFG",
     "pack_format": "",
     "active": true,
     "item_number": ""
    },
    "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "vendor_binding": "vendor-match",
    "confidence": "medium",
-   "evidence": "CC override: 32 oz clear deli w/ lid = the round bowl SKU family (n58/n98); floor-confirm",
+   "evidence": "CC override: 32 oz clear deli w/ lid = the round bowl SKU family (n58/n98); floor-confirm | 0202 re-vendored Quart (Large) to PFG (Juan 2026-09-10)",
    "meaning": "Clear 32 oz plastic deli container with lid",
    "owner_question": "",
    "owner_answer": "Juan 2026-09-10: quart containers = Quart (Large); SKU vendor is Webstaurant, invoice is PFG \u2192 held until the SKU is re-vendored to PFG (errand)",
