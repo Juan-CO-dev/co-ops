@@ -455,8 +455,8 @@ async function verifyLineRefs(sb: ReturnType<typeof getServiceRoleClient>, lines
   const ids = [...new Set(lines.flatMap((l) => [l.itemId, l.menuItemId].filter((v): v is string => v != null)))];
   if (ids.length === 0) return lines;
   const [items, menu] = await Promise.all([
-    sb.from("items").select("id").in("id", ids).returns<Array<{ id: string }>>(),
-    sb.from("menu_items").select("id").in("id", ids).returns<Array<{ id: string }>>(),
+    sb.from("items").select("id").in("id", ids).eq("active", true).returns<Array<{ id: string }>>(),
+    sb.from("menu_items").select("id").in("id", ids).eq("active", true).returns<Array<{ id: string }>>(),
   ]);
   if (items.error) throw new Error(`verifyLineRefs items: ${items.error.message}`);
   if (menu.error) throw new Error(`verifyLineRefs menu_items: ${menu.error.message}`);

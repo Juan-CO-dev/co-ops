@@ -4141,5 +4141,19 @@
   "maintenance.detail.lines_heading": "Where these readings come from",
   "maintenance.detail.lines_pending": "Checklist lines will name themselves here once the equipment link is switched on.",
   "maintenance.detail.lines_empty": "No checklist line points at this asset yet.",
-  "maintenance.detail.line_inactive": "inactive"
+  "maintenance.detail.line_inactive": "inactive",
+  "order.review.deposit_explanation": "Your deposit is recorded. Our team will confirm your order, date, and payment arrangements with you.",
+  "order.review.deposit_record": "Record your {percent} deposit",
+  "order.review.balance_confirm": "Balance — confirmed with you by our team",
+  "order.review.payment_heading": "How your deposit works",
+  "order.review.no_online_payment": "No money is taken online. The deposit is a record, not a payment.",
+  "order.review.confirm_heading": "We confirm the details with you",
+  "order.review.deposit_label": "Deposit to record",
+  "order.review.submitting": "Placing order…",
+  "order.review.submit": "Record deposit & submit order →",
+  "jobWatch.subject": "CO-OPS: {job} has been silent since {time}",
+  "jobWatch.never": "no heartbeat recorded",
+  "jobWatch.body": "Job: {job}. Last heartbeat: {time}.",
+  "jobWatch.check_pinger": "Check the pinger machine and its scheduled task.",
+  "jobWatch.check_vercel": "Check Vercel crons for this job."
 }
