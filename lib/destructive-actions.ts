@@ -232,6 +232,8 @@ export const DESTRUCTIVE_ACTIONS = [
   // Migration-emitted grant rewrite on public.users (0198, LRA-001/214): a change to who may
   // read or write which columns is an alteration of the accountability perimeter itself.
   "security.grants_change",
+  // SQL-only 0201 bundle: changes the shared purchase and costing basis; literal true in RPC.
+  "sku.angel_import",
 
   // Closing auto-finalize without manual confirmation (Build #3 PR 1).
   // — destructive because the operational record transitions to
