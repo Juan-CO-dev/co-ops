@@ -14,17 +14,18 @@ import es from "../../../lib/i18n/es.json";
 const runId = process.env.LRA_RUN_ID;
 if (!runId || !/^[a-zA-Z0-9-]+$/.test(runId)) throw new Error("Use run.ts under a host lease");
 const suite = process.env.LRA_SUITE;
-if (!["runner", "isolation", "personas", "opening", "ordering"].includes(suite ?? "")) throw new Error("Unknown suite");
-const journeySuite = suite === "opening" || suite === "ordering";
-const slice = (suite === "ordering" ? process.env.LRA_ORDERING_SLICE : process.env.LRA_OPENING_SLICE) ?? "";
-if (suite === "opening" && !/^(phone|tablet)-(en|es)-[1-9]\d*$/.test(slice)) throw new Error("Opening requires parent-owned cold restores");
-if (suite === "ordering" && !/^(phone|tablet)-(en|es)-[1-9]\d*$/.test(slice)) throw new Error("Ordering requires parent-owned cold restores");
+if (!["runner", "isolation", "personas", "opening", "ordering", "customer"].includes(suite ?? "")) throw new Error("Unknown suite");
+const journeySuite = suite === "opening" || suite === "ordering" || suite === "customer";
+const journeyFile: Record<string, string> = { opening: "opening", ordering: "ordering-receiving", customer: "customer-first-use" };
+const slice = (suite === "ordering" ? process.env.LRA_ORDERING_SLICE : suite === "customer" ? process.env.LRA_CUSTOMER_SLICE : process.env.LRA_OPENING_SLICE) ?? "";
+// Slice label = `<project>-<attempt>` plus `-<shop>` for the customer suite, which restores per shop (run.ts).
+if (journeySuite && !/^(phone|tablet)-(en|es)-[1-9]\d*(-(EM|MEP))?$/.test(slice)) throw new Error(`${suite} requires parent-owned cold restores`);
 const artifacts = resolve("scripts/sim/launch-readiness/.artifacts", runId);
-const reports = slice ? resolve(artifacts, suite === "ordering" ? "ordering" : "opening", slice) : artifacts;
+const reports = slice ? resolve(artifacts, suite ?? "opening", slice) : artifacts;
 const privateDir = resolve("scripts/sim/launch-readiness/.private", runId);
 export default defineConfig({
   // Journey suites' Node contracts are invoked by run.ts before each browser matrix.
-  testDir: ".", testMatch: journeySuite ? `**/journeys/${suite === "ordering" ? "ordering-receiving" : "opening"}.spec.ts` : `**/contracts/${suite}.spec.ts`, workers: 1, fullyParallel: false, retries: 0, timeout: journeySuite ? 300_000 : 90_000,
+  testDir: ".", testMatch: journeySuite ? `**/journeys/${journeyFile[suite!]}.spec.ts` : `**/contracts/${suite}.spec.ts`, workers: 1, fullyParallel: false, retries: 0, timeout: journeySuite ? 300_000 : 90_000,
   outputDir: resolve(privateDir, "pw", slice),
   use: { browserName: "chromium", baseURL: SIM_APP_ORIGIN, serviceWorkers: "block", trace: "retain-on-failure", screenshot: "off", video: "off" },
   projects: ["phone", "tablet"].flatMap(device => ["en", "es"].map(locale => ({ name: `${device}-${locale}`, metadata: { locale }, use: { viewport: device === "phone" ? { width: 390, height: 844 } : { width: 1280, height: 800 }, locale } }))),

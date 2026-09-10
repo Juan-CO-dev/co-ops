@@ -480,6 +480,294 @@
       "assertionId": "ordering.receiving.credits",
       "evidence": null,
       "status": "pending"
+    },
+    {
+      "id": "customer.storefront.public",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 1. The storefront",
+        "quote": "No sign-in to look. Anyone can read the menu.",
+        "quoteSha256": "3f6740a57e2eee058d2a2b3c1f5bd3b9e97e3a1b5c65bee52e508a8c077d80e7"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "Anonymous customers can read the storefront.",
+      "assertionId": "customer.storefront.public",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.intake.pickup",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 2. The order form",
+        "quote": "**Nearest shop** is theirs to pick, and it decides everything downstream — the menu, the delivery zone, the tax, and which of your shops gets the lead.",
+        "quoteSha256": "143ed0850234e1f218742b75d7eb43f7a9eaea4cd57f7a0ba70f7f86a5ed811e"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "Pickup intake retains the explicitly chosen shop.",
+      "assertionId": "customer.intake.pickup",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.link.constant-shape",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 3. They send it",
+        "quote": "**What to do** — Nothing. **Continue →** turns on once the required fields are in.",
+        "quoteSha256": "8686c3c20ece098d6343f17845b9e63924528ce19cb60ae6521b277eefa19085"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "The real form requests a link with constant-shape success.",
+      "assertionId": "customer.link.constant-shape",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.link.no-preverify-artifact",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 4. Check your email",
+        "quote": "**Nothing exists on your side yet.** No lead, no quote, no customer. The form is held with the emailed link and nothing else.",
+        "quoteSha256": "d7e187316f3d42e74d4246f729c0e8e3f906cafc783ee1ca5fa7c4bfb8a3ca5e"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "No customer, lead or quote is created before verification.",
+      "assertionId": "customer.link.no-preverify-artifact",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.link.session-cookie",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 5. The link, and everything after it",
+        "quote": "**What to do** — They tap the link. It signs them in, and **that is the moment their order appears on your board**: a lead in **Inquiry**, source **Online portal**, with a draft quote already attached and their customer record created.",
+        "quoteSha256": "d37dffe7aa8169e6b2ba45a6bd9a33b8629f25a2d09141985a1888a2ba0a489e"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "The minted link establishes an httpOnly customer session.",
+      "assertionId": "customer.link.session-cookie",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.link.verified-draft",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 5. The link, and everything after it",
+        "quote": "**What to do** — They tap the link. It signs them in, and **that is the moment their order appears on your board**: a lead in **Inquiry**, source **Online portal**, with a draft quote already attached and their customer record created.",
+        "quoteSha256": "d37dffe7aa8169e6b2ba45a6bd9a33b8629f25a2d09141985a1888a2ba0a489e"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "Verification creates exactly one customer, Inquiry lead and draft at the chosen shop.",
+      "assertionId": "customer.link.verified-draft",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.link.reuse-refused",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 4. Check your email",
+        "quote": "*\"The link works once and expires in 30 minutes.\"* Both halves are true: single use, and dead after thirty minutes.",
+        "quoteSha256": "c4e7aed320d0cfc8d8ead3032bac8202ea352786eef39b5ad9ce410de5b640af"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "A consumed link is refused without creating another draft.",
+      "assertionId": "customer.link.reuse-refused",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.link.latest-wins",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 4. Check your email",
+        "quote": "**Only their most recent link works.** Asking for a new one kills the older ones immediately. This is the most common call you will get — somebody digs an older message out of the thread and taps that. Tell them to use the newest one.",
+        "quoteSha256": "ab57fc221d148501ee3573826b2efbec196b0123b466aef9772d318d46149541"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "Requesting a replacement expires the first token.",
+      "assertionId": "customer.link.latest-wins",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.link.malformed-refused",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 7. An old link",
+        "quote": "One message covers all three cases: *\"This link has expired, was already used, or was replaced by a newer one.\"* You cannot tell which from the screen, and it does not matter — the fix is the same.",
+        "quoteSha256": "3632905be26861c9b130756e7518e781e9990a732cbf100928bef738c57a725f"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "Malformed and reused tokens show the honest expired/replaced page.",
+      "assertionId": "customer.link.malformed-refused",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.cart.two-lines",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 5. The link, and everything after it",
+        "quote": "Then they **build** — packages first, then the à la carte sections — with a running cart and a coverage panel telling them whether they have enough food. Prices come from your shop's catering menu; there is nothing on that screen they can type a price into.",
+        "quoteSha256": "129c1de349bb41f9bec0dbbac347d0c89b46485ce627a1fd84568f987390db9f"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "Two real menu references can be added through the UI.",
+      "assertionId": "customer.cart.two-lines",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.cart.server-price",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 5. The link, and everything after it",
+        "quote": "Then they **build** — packages first, then the à la carte sections — with a running cart and a coverage panel telling them whether they have enough food. Prices come from your shop's catering menu; there is nothing on that screen they can type a price into.",
+        "quoteSha256": "129c1de349bb41f9bec0dbbac347d0c89b46485ce627a1fd84568f987390db9f"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "Persisted unit cents match the chosen shop menu.",
+      "assertionId": "customer.cart.server-price",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.cart.last-edit",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 5. The link, and everything after it",
+        "quote": "Then they **build** — packages first, then the à la carte sections — with a running cart and a coverage panel telling them whether they have enough food. Prices come from your shop's catering menu; there is nothing on that screen they can type a price into.",
+        "quoteSha256": "129c1de349bb41f9bec0dbbac347d0c89b46485ce627a1fd84568f987390db9f"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "The final edit survives immediate review, reload and real relogin; LRA-007 is a soft finding.",
+      "assertionId": "customer.cart.last-edit",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.review.persisted-total",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 5. The link, and everything after it",
+        "quote": "Then they **review**: the whole order, the full totals, and the deposit that holds the date. Placing it turns their draft into a submitted order and records the deposit as **due**.",
+        "quoteSha256": "a6c0357da2c8170ade51594416f27d0a5b79c8032aaa2cea844386839c753a1e"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "Persisted subtotal equals line totals and submitted charge stack matches review.",
+      "assertionId": "customer.review.persisted-total",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.submit.once",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 5. The link, and everything after it",
+        "quote": "Then they **review**: the whole order, the full totals, and the deposit that holds the date. Placing it turns their draft into a submitted order and records the deposit as **due**.",
+        "quoteSha256": "a6c0357da2c8170ade51594416f27d0a5b79c8032aaa2cea844386839c753a1e"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "Concurrent submissions produce one submitted quote and deposit due; Inquiry has zero prep demand.",
+      "assertionId": "customer.submit.once",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.payment.stub",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 5. The link, and everything after it",
+        "quote": "**No money is taken online.** The deposit is a record, not a payment. It is marked paid on the quote's own page, under **Payments**, by an AGM or above, once you have actually collected it.",
+        "quoteSha256": "7a91a04e14a316bf200a29a20860a82ead6b0e9ca5dfd75ce2023904d7f72e12"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "Payment returns an honest stub and no paid/provider record; real activation stays blocked.",
+      "assertionId": "customer.payment.stub",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.account.owned-order",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 5. The link, and everything after it",
+        "quote": "Their account page — **Your orders** — keeps their orders and their saved details for next time.",
+        "quoteSha256": "e1b373959a0f6a2b9f7dff0bf218b2631ae730bbefc3a115ee5e0d8a5b453ac3"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "The customer account links to the submitted order.",
+      "assertionId": "customer.account.owned-order",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.ownership.denied",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 5. The link, and everything after it",
+        "quote": "Their account page — **Your orders** — keeps their orders and their saved details for next time.",
+        "quoteSha256": "e1b373959a0f6a2b9f7dff0bf218b2631ae730bbefc3a115ee5e0d8a5b453ac3"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "A second customer cannot read, edit, submit or pay the first customer quote.",
+      "assertionId": "customer.ownership.denied",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.email.failure-honesty",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 4. Check your email",
+        "quote": "**What to do** — If somebody rings you stuck here, tell them to look for the email and to use **the newest one**.",
+        "quoteSha256": "60e9f0f50256cc14c03e2b3fb6fc6614059efa7ac94dad444b4da0f56359d28d"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "Suppressed delivery is not proven delivery; response remains constant shape.",
+      "assertionId": "customer.email.failure-honesty",
+      "evidence": null,
+      "status": "pending"
     }
   ]
 }

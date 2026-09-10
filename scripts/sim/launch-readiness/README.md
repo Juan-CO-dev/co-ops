@@ -1,5 +1,66 @@
 # Launch-readiness runner (F4 / F2)
 
+## G1-C customer first use
+
+`customer` adds Node contracts and the real anonymous-to-customer Playwright journey. It requires
+`cold-empty` and a production build. The parent stops the app and restores before the Node pass
+and before **each shop in each viewport**, so customer A is new at both EM and MEP. Repetitions
+also restore. CC runs (Git Bash):
+
+```sh
+LRA_PROJECTS=phone-en node ~/.claude/hooks/lra-suite.mjs <checkout> customer cold-empty
+# Complete matrix / repeated evidence, after CC builds the candidate:
+node --import tsx scripts/sim/launch-readiness/run.ts --suite customer --fixture cold-empty --repeat 2
+```
+
+Integration wiring prerequisite: the shared `playwright.config.ts` currently rejects `customer`.
+It needs the customer journey selector, `LRA_CUSTOMER_SLICE` validation
+(`phone|tablet` + `en|es` + attempt + `EM|MEP`), customer report directories and numeric attempt
+extraction before CC can execute this suite. That file was excluded from G1-C's authorized file
+list; scope clarification is pending. The runner and specs do not bypass the shared fixture.
+
+Mail is private: after `loadSimEnv`, the runner sets `SIM_EMAIL_CAPTURE_DIR` to
+`.private/<run-id>/mail` and passes that same path to specs as `LRA_MAIL_DIR`. It overrides any
+inherited capture directory. Neither name belongs in `.env.sim` or `ALLOWED_PREFERENCE_KEYS`;
+`buildChildEnv` preserves `SIM_` names, and `startProduction` passes the runner's environment.
+`RESEND_API_KEY` remains empty. Only `customer-a@sim.invalid` and `customer-b@sim.invalid` can be
+captured. A message is `<timestamp>-<sha8>.json`, containing recipient, subject, text, HTML and
+hrefs; `sendEmail` returns `{ id: "sim-<sha8>" }` or `{ error }`, never a provider receipt.
+**Never export, attach, log or commit these files:** they contain live one-use links. They remain
+with local traces until the private run directory is removed. Public artifacts contain closed
+assertion/finding IDs, statuses and counts, never mail or tokens. Specs consume only files added
+after their request, preventing stale captures from satisfying a restored slice.
+
+Sequence: storefront and denied photos; denied-geocoder error observation; pickup intake;
+constant-shape request; real captured link and cookie; customer/draft/Inquiry oracle;
+reused/malformed link refusal; two persisted menu lines; immediate final edit/review and real
+relogin; concurrent UI submit plus HTTP peer; exact quote/pipeline/payment/demand cardinality;
+payment hold; account order; customer B and anonymous refusals; suppressed-mail honesty.
+Screenshots cover start, decisions and outcomes. The cart race uses the real UI handlers inside
+one browser task, without delaying the persistence endpoint. Submit dispatches its peer while
+the UI request is intercepted, then releases both to the app; both responses and persisted effects
+must agree. Inquiry produces **zero** prep-demand rows, not a fabricated reservation.
+
+Node contracts cover newest-link replacement, request six in the same fixed 15-minute bucket
+(including audit readback), app allowlist suppression separately from `sim_recipient_refused`,
+and draft failure through a valid-shaped nonexistent location (no oracle mutations). The delivery
+contract resolves `routeDeliveryAction` from the attested build's manifest and makes 12 anonymous
+HTTP action calls, requiring real routed/out-of-zone/no-capacity results before naming LRA-053.
+A rate-window rollover fails evidence rather than being called a throttle pass.
+
+Findings are soft in the browser and individually recorded in Node results: LRA-005/097 language,
+LRA-006 silent draft failure, LRA-007 lost last edit, LRA-009 false delivery claim, LRA-044 missing
+error after a denied geocoder, LRA-053 no routing throttle. The denied geocoder is evidence of the
+intake error surface; it does not exercise a successfully geocoded pin followed by a failed server
+action. That delivery path remains blocked pending the approved geocoder fixture packet.
+LRA-008 is **blocked payment activation**, independently of the required `stub: true` / `due`
+assertions and the soft assertion against review copy claiming payment through Stripe. Local
+capture does not prove Resend/DNS delivery (LRA-139). Known photo/geocoder requests count as
+`expectedDenials` only for the specific reviewed host/path pairs; unknown destinations still fail.
+The 18 new guide claims remain pending at revision `5241016`, with literal quote hashes; no sim
+walk has been claimed by implementation or unit-test results. No i18n keys or product fixes land
+in this packet.
+
 Run from the dedicated checkout with Node 22. CC commits and reviews the working tree. Never point this harness at production.
 
 ```powershell
