@@ -3,7 +3,7 @@
  "built_by": "CC 2026-09-10 (matcher + 4 Sonnet agents + CC review; Juan's floor facts)",
  "rows": [
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "OVENGOLD TURKEY",
     "brand": "\u2014",
@@ -40,7 +40,7 @@
    "row_n": 1
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "MAYO HD",
     "brand": "DUKES",
@@ -77,7 +77,7 @@
    "row_n": 2
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "OIL OLIVE 100% EXTRA VIRGIN",
     "brand": "ASSOLUTI",
@@ -114,7 +114,7 @@
    "row_n": 3
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "HAM 35% WATER FC 4X6 TFF",
     "brand": "ROMA",
@@ -151,7 +151,7 @@
    "row_n": 4
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "LONDON BROIL",
     "brand": "\u2014",
@@ -188,7 +188,7 @@
    "row_n": 5
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "MILD PROVOLONE",
     "brand": "\u2014",
@@ -225,7 +225,7 @@
    "row_n": 6
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "LETTUCE ICEBERG LINER",
     "brand": "PEAK FRS",
@@ -262,7 +262,7 @@
    "row_n": 7
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "CHEESE MOZZ 1OZ SLCD LOG 32 CT",
     "brand": "ROMA",
@@ -299,7 +299,7 @@
    "row_n": 8
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "ARUGULA BABY",
     "brand": "PACKER",
@@ -336,7 +336,7 @@
    "row_n": 9
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "BEEF GRND BULK 80/20",
     "brand": "WEST CRK",
@@ -373,7 +373,7 @@
    "row_n": 10
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "DILANDRI GENOA SALAME",
     "brand": "\u2014",
@@ -410,7 +410,7 @@
    "row_n": 11
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "BAG PAPER KRAFT SHOPPER BISTRO",
     "brand": "FRST MRK",
@@ -437,17 +437,17 @@
     "active": true,
     "item_number": "228833"
    },
-   "decision": "pending",
-   "vendor_binding": "pending",
+   "decision": "selected",
+   "vendor_binding": "vendor-match",
    "confidence": "medium",
    "evidence": "CC override: PFG 'Bistro' shopper = the ~10-inch handled bag = our small; floor-confirm",
    "meaning": "Kraft paper take-out shopper bag, bistro size",
    "owner_question": "Kraft shopper bags: is PFG 'Bistro' our SMALL 10x5x13 and 'Regal' our LARGE 12x9x13? (I set them that way.)",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: '#12 you did right' (Bistro = small 10x5x13, Regal = large 12x9x13)",
    "row_n": 12
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "HOT BUTT CAPPY",
     "brand": "\u2014",
@@ -484,7 +484,7 @@
    "row_n": 13
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Lettuce, Iceberg Cleaned & Trimmed Fresh Ref",
     "brand": "Cross Valley Farms",
@@ -511,17 +511,17 @@
     "active": true,
     "item_number": "ICE1/5326426"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "Product is explicitly iceberg C&T like the PFG SKU, but this invoice line is from US Foods not PFG.",
    "meaning": "Iceberg lettuce, cleaned and trimmed",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 14
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "TOMATO 5X6",
     "brand": "PEAK FRS",
@@ -558,7 +558,7 @@
    "row_n": 15
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "PICKLES CHIPS 1/4",
     "brand": "\u2014",
@@ -595,7 +595,7 @@
    "row_n": 16
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Bag, Shopping 10x6.75x12 Paper Kraft Brown W/ Handle Carry-Out",
     "brand": "Monogram",
@@ -622,17 +622,17 @@
     "active": true,
     "item_number": "228833"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "CC override: 10x6.75x12 handled kraft = our small bag",
    "meaning": "Brown kraft paper carry-out bag with handles",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "(US Foods row; legacy)",
    "row_n": 17
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "ONION YLW COLOSSAL BAG",
     "brand": "PEAK",
@@ -669,7 +669,7 @@
    "row_n": 18
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "IMP LAYER BACON 12/14",
     "brand": "\u2014",
@@ -706,7 +706,7 @@
    "row_n": 19
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Mayonnaise, Heavy Plastic Shelf Stable",
     "brand": "Dukes",
@@ -733,17 +733,17 @@
     "active": true,
     "item_number": "32118"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "high",
    "evidence": "Brand Dukes and product mayonnaise map directly to the only Duke's Mayo SKU; invoice vendor is US Foods but this is the identical product listed under PFG.",
    "meaning": "Duke's mayonnaise, 4 one-gallon jugs per case",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 20
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "JUICE LEMONADE NAT",
     "brand": "NATALIES",
@@ -780,7 +780,7 @@
    "row_n": 21
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "PORK GRND 80/20 ALL NAT FZ",
     "brand": "WEST CRK",
@@ -817,7 +817,7 @@
    "row_n": 22
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Juice, Lemonade Drink 22% Natural Ss Plastic Bottle Ref",
     "brand": "Natalie's",
@@ -844,17 +844,17 @@
     "active": true,
     "item_number": "1020546"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "Brand is Natalie's and product is lemonade; catalog only lists it under PFG though this invoice line is US Foods, and no separate US Foods SKU exists.",
    "meaning": "Natalie's brand lemonade drink",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 23
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "DIET COKE",
     "brand": "\u2014",
@@ -891,7 +891,7 @@
    "row_n": 24
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "HOT CHERRY PEPPERS",
     "brand": "\u2014",
@@ -928,7 +928,7 @@
    "row_n": 25
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "CHEESE MOZZ LMWM SHRED",
     "brand": "GPREMIO",
@@ -965,7 +965,7 @@
    "row_n": 26
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "JUICE LEMON ALL NAT",
     "brand": "NATALIES",
@@ -1002,7 +1002,7 @@
    "row_n": 27
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "TUNA CHNK LIGHT CHN",
     "brand": "WRLDDCK",
@@ -1039,7 +1039,7 @@
    "row_n": 28
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "GARLIC WHL PLD DOM",
     "brand": "PEAK FRS",
@@ -1076,7 +1076,7 @@
    "row_n": 29
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Food Service Prosciutto",
     "brand": "\u2014",
@@ -1113,7 +1113,7 @@
    "row_n": 30
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "COKE",
     "brand": "\u2014",
@@ -1150,7 +1150,7 @@
    "row_n": 31
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "CHEESE CHED SHARP WHI BLOCK TF",
     "brand": "LOL",
@@ -1187,7 +1187,7 @@
    "row_n": 32
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Glove, Latex Medium Powder-Free Natural Imported Thailand Ambidextrous",
     "brand": "Monogram",
@@ -1214,17 +1214,17 @@
     "active": true,
     "item_number": "240782"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "high",
    "evidence": "Glove size (Medium) is unambiguous; only the vendor differs (US Foods vs PFG), so per rule the active PFG SKU is used.",
    "meaning": "Medium-size latex powder-free disposable gloves",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 33
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "TOMATO CRUSHED EXTRA HVY PUREE",
     "brand": "SAPORITO",
@@ -1261,7 +1261,7 @@
    "row_n": 34
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "BAG PAPER SHOPPER REGAL",
     "brand": "FRST MRK",
@@ -1294,11 +1294,11 @@
    "evidence": "CC override: PFG 'Regal' shopper = the large kraft bag; floor-confirm",
    "meaning": "Kraft paper carry-out/shopper bag",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: '#12 you did right' (Bistro = small 10x5x13, Regal = large 12x9x13)",
    "row_n": 35
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Arugula, Baby Cleaned Loose Leaf Wild Fresh Ref Bag",
     "brand": "Cross Valley Farms",
@@ -1325,17 +1325,17 @@
     "active": true,
     "item_number": "242470"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "Only arugula SKU in catalog; invoice vendor is US Foods but catalog lists it under PFG, so picking the active match.",
    "meaning": "Fresh baby arugula, bagged",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 36
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "EVERROAST CHICKEN",
     "brand": "\u2014",
@@ -1372,7 +1372,7 @@
    "row_n": 37
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Pepperoni Slicing",
     "brand": "\u2014",
@@ -1409,7 +1409,7 @@
    "row_n": 38
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "SALT KSHR COARSE",
     "brand": "DMND CRY",
@@ -1446,7 +1446,7 @@
    "row_n": 39
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Glove, Latex Large Powder-Free Natural Imported Thailand Ambidextrous",
     "brand": "Monogram",
@@ -1473,17 +1473,17 @@
     "active": true,
     "item_number": "265693"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "Size Large gloves match the only Gloves Large SKU; vendor is US Foods vs catalog's PFG.",
    "meaning": "Latex exam gloves, size Large",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 40
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "WATER SPRKLNG SPRING GLASS",
     "brand": "SARATOGA",
@@ -1520,7 +1520,7 @@
    "row_n": 41
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "CHIVES FRSH",
     "brand": "PEAK FRS",
@@ -1557,7 +1557,7 @@
    "row_n": 42
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "SWEET PEPPERS",
     "brand": "\u2014",
@@ -1594,7 +1594,7 @@
    "row_n": 43
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "CHEESE MOZZ PROV 50/50 SHRED",
     "brand": "GALBANI",
@@ -1621,17 +1621,17 @@
     "active": true,
     "item_number": "1715"
    },
-   "decision": "pending",
-   "vendor_binding": "pending",
+   "decision": "selected",
+   "vendor_binding": "vendor-match",
    "confidence": "medium",
    "evidence": "Closest shredded-cheese SKU, but catalog has no dedicated mozz/provolone blend item.",
    "meaning": "Shredded 50/50 mozzarella-provolone cheese blend",
    "owner_question": "'MOZZ PROV 50/50 SHRED' (PFG 6/5 lb) \u2014 is our Shredded Mozz now this mozz-provolone blend?",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: '#44 is def the shredded mozz we have, we used to call it 50/50 to differentiate'",
    "row_n": 44
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Compliments Branded Water",
     "brand": "\u2014",
@@ -1668,7 +1668,7 @@
    "row_n": 45
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "CREAM HVY WHIPPING 40% TFF",
     "brand": "NTRSBST",
@@ -1705,7 +1705,7 @@
    "row_n": 46
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "CHEESE PARMESAN GRATED TUB",
     "brand": "ROMA",
@@ -1742,7 +1742,7 @@
    "row_n": 47
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "BASIL FRSH",
     "brand": "FRSH ADV",
@@ -1779,7 +1779,7 @@
    "row_n": 48
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "CUCUMBER EURO SDLS",
     "brand": "PACKER",
@@ -1816,7 +1816,7 @@
    "row_n": 49
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "5 GALLON GARLIC PICKLES",
     "brand": "\u2014",
@@ -1853,7 +1853,7 @@
    "row_n": 50
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "CONT PLAS 8 OZ DELI CLR PP",
     "brand": "FRST MRK",
@@ -1890,7 +1890,7 @@
    "row_n": 51
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Ham, Cooked Rectangle 4x6 Hwp 39% Ref 1-Diamond Pork",
     "brand": "Patuxent Farms",
@@ -1917,17 +1917,17 @@
     "active": true,
     "item_number": ""
    },
-   "decision": "pending",
-   "vendor_binding": "pending",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "Same ham product family as row 4 but invoice vendor is US Foods, matching neither Ham SKU's listed vendor (PFG or Baldor); chose the Baldor entry as the closer case-pack match.",
    "meaning": "Foodservice cooked deli ham, rectangular 4x6 pieces",
    "owner_question": "Ham 2/13 lb from US FOODS ($384 Jul\u2013Aug) \u2014 do we buy ham from US Foods now, or was that a one-off? (Our Ham SKUs are PFG and Baldor.)",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: US Foods ham \u2014 legacy vendor; our Ham SKUs are PFG/Baldor",
    "row_n": 52
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "GARLIC PWDR",
     "brand": "MAGELLAN",
@@ -1964,7 +1964,7 @@
    "row_n": 53
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "EGG HRD CKD PLD DRY PACK",
     "brand": "NTRSBST",
@@ -2001,7 +2001,7 @@
    "row_n": 54
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "GLOVE LATEX XL PWDR FREE",
     "brand": "SLVR SRC",
@@ -2038,7 +2038,7 @@
    "row_n": 55
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "ROLL REGISTER 3.13X200 THERMAL",
     "brand": "FRST MRK",
@@ -2075,7 +2075,7 @@
    "row_n": 56
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "CHICKEN BRST RAND B/F B/S HALA",
     "brand": "MNTAIRE",
@@ -2112,7 +2112,7 @@
    "row_n": 57
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Bowl, Pla Plastic 24 Oz Clear W/ Lid Combo Salad",
     "brand": "Eco-Products",
@@ -2139,17 +2139,17 @@
     "active": true,
     "item_number": "146809"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "Product matches 'salad bowl + lid' description; vendor is US Foods not PFG but no US Foods equivalent exists.",
    "meaning": "24oz clear plastic salad bowl with lid",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 58
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "CELERY SPLIT",
     "brand": "PEAK FRS",
@@ -2186,7 +2186,7 @@
    "row_n": 59
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "CREAM HVY 36% TFF",
     "brand": "NTRSBST",
@@ -2223,7 +2223,7 @@
    "row_n": 60
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "BUTTER SOLID UNSLTD",
     "brand": "SLVR SRC",
@@ -2260,7 +2260,7 @@
    "row_n": 61
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Ham, Cooked Hwp 35% Ref Pork",
     "brand": "Hormel",
@@ -2287,17 +2287,17 @@
     "active": true,
     "item_number": ""
    },
-   "decision": "pending",
-   "vendor_binding": "pending",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "Catalog has two active 'Ham' SKUs (Baldor, PFG); chose Baldor since its 'case' pack better matches the 2/13 LB case format, but neither vendor matches US Foods.",
    "meaning": "Cooked deli ham",
    "owner_question": "(same answer as #52)",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: US Foods ham \u2014 legacy vendor; our Ham SKUs are PFG/Baldor",
    "row_n": 62
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Tomato, Crushed Pear Canned",
     "brand": "Saporito",
@@ -2324,17 +2324,17 @@
     "active": true,
     "item_number": "844771"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "6/#10 CN pack matches the SKU's '(10#)' can-size notation; vendor differs (US Foods vs PFG) but no US Foods equivalent exists.",
    "meaning": "Canned crushed tomatoes, #10 can",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 63
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "OREGANO LEAVES",
     "brand": "ROMA",
@@ -2371,7 +2371,7 @@
    "row_n": 64
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "NAPKIN FOR DSPNSR 13X12 WHI",
     "brand": "FRST MRK",
@@ -2408,7 +2408,7 @@
    "row_n": 65
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Large Hero Hearth",
     "brand": "\u2014",
@@ -2445,7 +2445,7 @@
    "row_n": 66
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "PEPPER BLK WHL",
     "brand": "ROMA",
@@ -2482,7 +2482,7 @@
    "row_n": 67
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Glove, Latex Xl Powder-Free Natural Imported Thailand Ambidextrous",
     "brand": "Monogram",
@@ -2509,17 +2509,17 @@
     "active": true,
     "item_number": "240767"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "Size XL gloves match the Gloves Extra Large SKU by food/product knowledge, overriding the string matcher's wrong Medium-size guess; vendor is US Foods vs catalog PFG.",
    "meaning": "Latex exam gloves, size XL",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 68
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Bag, Shopping 12x9x15.75 Paper Kraft Brown W/ Twist Handle Carry-Out",
     "brand": "Monogram",
@@ -2546,17 +2546,17 @@
     "active": true,
     "item_number": "228850"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "Two of three dimensions (12x9) match the Large Bags SKU exactly; only height differs and vendor is US Foods vs PFG, so the active PFG SKU is used per rule.",
    "meaning": "Brown kraft paper carry-out bag with twist handles",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 69
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "LETTUCE ICEBERG C&T",
     "brand": "PACKER",
@@ -2593,7 +2593,7 @@
    "row_n": 70
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "BASIL FRSH",
     "brand": "PEAK FRS",
@@ -2630,7 +2630,7 @@
    "row_n": 71
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "GLOVE LATEX LG PWDR FREE",
     "brand": "SLVR SRC",
@@ -2667,7 +2667,7 @@
    "row_n": 72
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "CHEESE RICOTTA IMPASTATA WM",
     "brand": "ROMA",
@@ -2704,7 +2704,7 @@
    "row_n": 73
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "MUSTARD DIJON",
     "brand": "ESPRTDPR",
@@ -2741,7 +2741,7 @@
    "row_n": 74
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "GLOVE LATEX MED PWDR",
     "brand": "SLVR SRC",
@@ -2778,7 +2778,7 @@
    "row_n": 75
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "CAN LINER 45 GA XHW BLK 40X46",
     "brand": "FRST MRK",
@@ -2815,7 +2815,7 @@
    "row_n": 76
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "SHELL CANNOLI SM",
     "brand": "ROMA",
@@ -2852,7 +2852,7 @@
    "row_n": 77
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Tomato, Paste 26% Light Shelf Stable Canned",
     "brand": "Full Red",
@@ -2879,17 +2879,17 @@
     "active": true,
     "item_number": "231869"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "Product matches directly; vendor is US Foods not PFG but no other Tomato Paste SKU exists.",
    "meaning": "Canned tomato paste",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 78
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "PARSLEY FRSH FLAT ITAL",
     "brand": "PEAK FRS",
@@ -2926,7 +2926,7 @@
    "row_n": 79
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Napkin, Dinner Blue 15.5x15.5 Ultra Ply 1/8 Fold Paper Fashnpoint",
     "brand": "Fashnpoint",
@@ -2953,17 +2953,17 @@
     "active": true,
     "item_number": ""
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "A colored 1/8-fold dinner napkin is a specialty/event napkin, closer to 'Fancy Napkins' than to C-Fold (which is a paper-towel style).",
    "meaning": "Colored 1/8-fold dinner napkins",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 80
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Just Dragon Green Can",
     "brand": "\u2014",
@@ -2989,11 +2989,11 @@
    "evidence": "CC: 'Just' green can: unidentified canned drink; not modelled",
    "meaning": "Unclear product, described only by a green can",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'the just tea is our Just Ice Tea drinks we carry\u2026 packs of 12 12oz cans' \u2014 NOT in the catalog yet \u2192 errand: add Just Ice Tea SKUs (3 flavors, Delmar, 12\u00d712 oz)",
    "row_n": 81
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Just Raspberry Tea Can",
     "brand": "\u2014",
@@ -3019,11 +3019,11 @@
    "evidence": "CC: canned tea not modelled",
    "meaning": "Canned raspberry iced tea",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'the just tea is our Just Ice Tea drinks we carry\u2026 packs of 12 12oz cans' \u2014 NOT in the catalog yet \u2192 errand: add Just Ice Tea SKUs (3 flavors, Delmar, 12\u00d712 oz)",
    "row_n": 82
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Just Lemon Tea Can",
     "brand": "\u2014",
@@ -3049,11 +3049,11 @@
    "evidence": "CC: canned tea not modelled",
    "meaning": "Canned lemon iced tea beverage",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'the just tea is our Just Ice Tea drinks we carry\u2026 packs of 12 12oz cans' \u2014 NOT in the catalog yet \u2192 errand: add Just Ice Tea SKUs (3 flavors, Delmar, 12\u00d712 oz)",
    "row_n": 83
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "BLACK CHERRY DR. BROWNS",
     "brand": "\u2014",
@@ -3090,7 +3090,7 @@
    "row_n": 84
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Onion, Yellow Jumbo 3\"+ Fresh Ref Bag",
     "brand": "Cross Valley Farms",
@@ -3117,17 +3117,17 @@
     "active": true,
     "item_number": ""
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "Catalog only distinguishes White and Red onions by color; this generic bulk 'Onions' (Baldor) SKU is the best fit for yellow cooking onions despite the vendor (US Foods) not matching.",
    "meaning": "Fresh jumbo yellow cooking onions, 50 lb bag",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 85
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "CHEESE CHED WHI MED LOAF",
     "brand": "TILLAMK",
@@ -3164,7 +3164,7 @@
    "row_n": 86
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "LETTUCE CELLO ICEBERG CA",
     "brand": "PACKER",
@@ -3201,7 +3201,7 @@
    "row_n": 87
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "PEPPERS RED FIRE RSTD",
     "brand": "ASSOLUTI",
@@ -3238,7 +3238,7 @@
    "row_n": 88
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "LID CONT PLAS 8-32 OZ DELI PP",
     "brand": "FRST MRK",
@@ -3264,11 +3264,11 @@
    "evidence": "CC: deli lids 8-32 oz not modelled",
    "meaning": "Plastic lids for 8-32 oz deli containers",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'the other stuff is probably bought individually or a part of specials'",
    "row_n": 89
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "SOUR CREAM REAL",
     "brand": "DAISY",
@@ -3305,7 +3305,7 @@
    "row_n": 90
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "RADISH WATERMELON",
     "brand": "PACKER",
@@ -3342,7 +3342,7 @@
    "row_n": 91
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Towel, Paper 10.25x13 C Fold White 1 Ply",
     "brand": "Valu Plus",
@@ -3368,11 +3368,11 @@
    "evidence": "CC: US Foods C-fold paper TOWEL \u2014 we model no paper-towel SKU; catalog gap",
    "meaning": "White C-fold paper hand towels",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'the other stuff is probably bought individually or a part of specials'",
    "row_n": 92
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "ROOT BEER DR. BROWNS",
     "brand": "\u2014",
@@ -3409,7 +3409,7 @@
    "row_n": 93
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "CREAM DR. BROWNS",
     "brand": "\u2014",
@@ -3446,7 +3446,7 @@
    "row_n": 94
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "GLOVE LATEX MED PWDR FREE",
     "brand": "FRST MRK",
@@ -3483,7 +3483,7 @@
    "row_n": 95
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "BREAD CRUMBS TOASTED PANKO",
     "brand": "KIKKOMAN",
@@ -3520,7 +3520,7 @@
    "row_n": 96
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "OIL CANOLA CLR FRY",
     "brand": "PACKER",
@@ -3557,7 +3557,7 @@
    "row_n": 97
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Container, 32 Oz 1 Cmpt Plastic W/ Lid Combo Clear Round Carry-Out",
     "brand": "Wy Industries",
@@ -3584,17 +3584,17 @@
     "active": true,
     "item_number": "146809"
    },
-   "decision": "pending",
-   "vendor_binding": "pending",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "low",
    "evidence": "Closest existing container+lid SKU, but this is a carry-out container not specifically a salad bowl.",
    "meaning": "32oz round clear plastic carry-out container with lid",
    "owner_question": "32 oz round containers with lids \u2014 are those the 'Round Salad Bowls & Lids' SKU, or a different container?",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: '#98 those are heat resistant quart containers' \u2014 identity = Quart (Large); US Foods purchase is historical",
    "row_n": 98
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Foil, Aluminum 18\"X500' Heavy-Duty Roll Cutter Box 100% Recycled Wrap",
     "brand": "Monogram",
@@ -3621,17 +3621,17 @@
     "active": true,
     "item_number": "240288"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "Same generic foil roll product; vendor differs (US Foods vs PFG) but no US Foods foil SKU exists.",
    "meaning": "Heavy-duty aluminum foil roll",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 99
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "DIET CREAM DR. BROWNS",
     "brand": "\u2014",
@@ -3668,7 +3668,7 @@
    "row_n": 100
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Tuna, Light Skipjack Chunk In Water Can Shelf Stable Imported",
     "brand": "Harvest Value",
@@ -3695,17 +3695,17 @@
     "active": true,
     "item_number": "SEA2"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "high",
    "evidence": "Only Tuna SKU in the catalog; product is unambiguous, only vendor differs (US Foods vs PFG), so the active PFG SKU is used per rule.",
    "meaning": "Canned chunk light tuna in water",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 101
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Water, Sparkling Glass Bottle Blue Carbonated Seltzer",
     "brand": "Saratoga Spring Water",
@@ -3732,17 +3732,17 @@
     "active": true,
     "item_number": "1292481"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "high",
    "evidence": "Brand name 'Saratoga Spring Water' matches the catalog's Saratoga SKU directly, overriding the vendor (PFG vs US Foods) mismatch.",
    "meaning": "Saratoga sparkling water, glass bottles",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 102
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "BANANA PEPPER RINGS",
     "brand": "Boar's Head",
@@ -3779,7 +3779,7 @@
    "row_n": 103
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Sauce, Hot Plastic Jug Shelf Stable Original",
     "brand": "Cholula",
@@ -3806,17 +3806,17 @@
     "active": true,
     "item_number": "SAUCE6B"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "high",
    "evidence": "Brand Cholula matches the only Cholula SKU; invoice vendor US Foods vs catalog Baldor.",
    "meaning": "Cholula original hot sauce",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 104
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "TOMATO 6X6",
     "brand": "PEAK FRS",
@@ -3853,7 +3853,7 @@
    "row_n": 105
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "CONT PLAS PP 8 OZ COMBO DELI",
     "brand": "NEWSPRNG",
@@ -3890,7 +3890,7 @@
    "row_n": 106
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "VINEGAR BALSAMIC",
     "brand": "PIANCONE",
@@ -3927,7 +3927,7 @@
    "row_n": 107
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "WATER PURIFIED DRINKING",
     "brand": "ASCEND",
@@ -3964,7 +3964,7 @@
    "row_n": 108
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "CONT PLAS 32 OZ DELI W/LID CLR",
     "brand": "PLACON",
@@ -3984,24 +3984,24 @@
     "total_spend": "63.71"
    },
    "selected_sku": {
-    "id": "d228f056-03eb-49ae-a30d-6977825c8e63",
-    "name": "Round Salad Bowls & Lids",
-    "vendor": "PFG",
-    "pack_format": "Case",
+    "id": "2b36cfe8-06cb-46cf-b5d2-7f30abacc498",
+    "name": "Quart (Large)",
+    "vendor": "Webstaurant",
+    "pack_format": "",
     "active": true,
-    "item_number": "146809"
+    "item_number": ""
    },
    "decision": "selected",
-   "vendor_binding": "vendor-match",
+   "vendor_binding": "VENDOR_DRIFT",
    "confidence": "medium",
    "evidence": "CC override: 32 oz clear deli w/ lid = the round bowl SKU family (n58/n98); floor-confirm",
    "meaning": "Clear 32 oz plastic deli container with lid",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: quart containers = Quart (Large); SKU vendor is Webstaurant, invoice is PFG \u2192 held until the SKU is re-vendored to PFG (errand)",
    "row_n": 109
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Tomato, Round 4x5 #1 Grade Fresh Ref 2 Layer Box",
     "brand": "Cross Valley Farms",
@@ -4028,17 +4028,17 @@
     "active": true,
     "item_number": "878065"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "Fresh tomatoes match the generic PFG Tomatoes SKU; vendor is US Foods not PFG but no other Tomatoes SKU exists.",
    "meaning": "Fresh round tomatoes",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 110
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "JUICE LEMON FZ",
     "brand": "NATALIES",
@@ -4075,7 +4075,7 @@
    "row_n": 111
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "BASE BEEF NO MSG",
     "brand": "MINORS",
@@ -4112,7 +4112,7 @@
    "row_n": 112
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "ONION YLW JUMBO",
     "brand": "PEAK FRS",
@@ -4149,7 +4149,7 @@
    "row_n": 113
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Egg, Hard Cooked Peeled Whole Ref Dry Pillow Pack",
     "brand": "Glenview Farms",
@@ -4176,17 +4176,17 @@
     "active": true,
     "item_number": "439686"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "Explicitly hard-cooked eggs; vendor is US Foods not PFG but no other cooked-egg SKU exists.",
    "meaning": "Hard-cooked peeled eggs",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 114
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Cleaner, Oven & Grill K44 Aerosol Can Clear Odorless",
     "brand": "Monogram / Clean Force",
@@ -4223,7 +4223,7 @@
    "row_n": 115
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Radish, Fresh Ref",
     "brand": "Packer",
@@ -4250,17 +4250,17 @@
     "active": true,
     "item_number": "299885"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "Owner confirmed watermelon radish is the only radish used (Never Been Cheddar sub); invoice is generic 'Radish' from US Foods vs catalog PFG.",
    "meaning": "Fresh radish",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 116
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Wrap, 12x10.75 Wax Paper White Interfold",
     "brand": "Monogram",
@@ -4287,17 +4287,17 @@
     "active": true,
     "item_number": "427652"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "high",
    "evidence": "Product description (interfold wax paper wrap) matches the catalog's wax-paper deli sheets exactly; vendor (US Foods vs PFG) is the only mismatch, so the active PFG SKU is used, overriding the string matcher's bad 'White Cheddar' guess.",
    "meaning": "White interfolded deli wax paper sheets",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 117
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "EGG WHI LG AA LOOSE",
     "brand": "NTRSBST",
@@ -4334,7 +4334,7 @@
    "row_n": 118
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Water, Purified Plastic Bottle Twist Cap Shelf Stable",
     "brand": "Thirster",
@@ -4361,17 +4361,17 @@
     "active": true,
     "item_number": "5488748"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "The Webstaurant '16/32 oz Bottles' SKUs are generic squeeze/sauce bottles from a packaging supplier, not drinking water; bulk bottled water fits Employee Water better.",
    "meaning": "Bottled drinking water, 24-pack",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 119
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "OREGANO LEAVES",
     "brand": "ROMA",
@@ -4408,7 +4408,7 @@
    "row_n": 120
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Cheese, Cheddar White Sharp Print Vacuum-Pack Ref",
     "brand": "Glenview Farms",
@@ -4435,17 +4435,17 @@
     "active": true,
     "item_number": ""
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "high",
    "evidence": "Direct product match; only vendor differs (US Foods vs Baldor), so the active Baldor SKU is used per rule.",
    "meaning": "Sharp white cheddar cheese, vacuum packed",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 121
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Plate, 9\" Molded Fiber Round Natural Compostable No Pfas Added Paper",
     "brand": "Monogram",
@@ -4472,17 +4472,17 @@
     "active": true,
     "item_number": "237730"
    },
-   "decision": "pending",
-   "vendor_binding": "pending",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "Only plate SKU in catalog is 8 inch; this invoice item is 9 inch, so it may be a different plate line.",
    "meaning": "9-inch compostable fiber plate",
    "owner_question": "9-inch fiber plates (US Foods) \u2014 do we use 9-inch now, or is our 'Plates 8\"' SKU the same plate mislabeled?",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: '#122 I don't know what that is honestly' \u2014 US Foods 9-inch plate; historical",
    "row_n": 122
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Celery, Stalk Fresh Ref Box",
     "brand": "Cross Valley Farms",
@@ -4509,17 +4509,17 @@
     "active": true,
     "item_number": "865009"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "Same product as n=59; vendor differs (US Foods vs PFG) but no US Foods celery SKU exists.",
    "meaning": "Fresh celery stalks, boxed",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 123
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Cream, Whipping Heavy 40% Butterfat Uht Dairy Carton Gable Top Ref",
     "brand": "Glenview Farms",
@@ -4546,17 +4546,17 @@
     "active": true,
     "item_number": "199406"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "Only heavy-cream SKU in catalog; invoice vendor US Foods vs catalog PFG.",
    "meaning": "Heavy whipping cream, carton",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 124
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "CONT PP 16 OZ COMBO DELI NAT",
     "brand": "NEWSPRNG",
@@ -4582,11 +4582,11 @@
    "evidence": "CC: 16 oz combo container not modelled",
    "meaning": "16 oz natural polypropylene deli combo container (base+lid)",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'the other stuff is probably bought individually or a part of specials'",
    "row_n": 125
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Towel, Paper 9.5x9 Multifold Brown 1 Ply",
     "brand": "Monogram",
@@ -4612,11 +4612,11 @@
    "evidence": "CC: multifold paper towel \u2014 catalog gap",
    "meaning": "Multifold paper hand towels",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'the other stuff is probably bought individually or a part of specials'",
    "row_n": 126
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Cheese, Ricotta Impastata Whole Milk Tub Ref Del Pastaio",
     "brand": "Grande Cheese Company",
@@ -4643,17 +4643,17 @@
     "active": true,
     "item_number": "138065"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "Vendor differs (US Foods vs PFG) but no US Foods ricotta SKU exists.",
    "meaning": "Whole-milk ricotta cheese",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 127
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Juice, Lemon Not-From-Concentrate Plastic Bottle Ref",
     "brand": "Natalie's",
@@ -4680,17 +4680,17 @@
     "active": true,
     "item_number": "495063"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "Lemon juice (an ingredient) matches the catalog's 'Lemon Juice' SKU, not the unrelated 'Natalie's Lemonade' beverage despite the shared Natalie's brand name; vendor is US Foods vs catalog PFG.",
    "meaning": "Lemon juice, not-from-concentrate",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 128
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "PASTA FUSILLI",
     "brand": "DECECCO",
@@ -4727,7 +4727,7 @@
    "row_n": 129
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Fork, Mediumweight Black Polystyrene Bulk Plastic",
     "brand": "Dixie Foodservice",
@@ -4754,17 +4754,17 @@
     "active": true,
     "item_number": "230367"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "Direct product match; vendor is US Foods not PFG but no other plastic-forks SKU exists.",
    "meaning": "Black plastic forks, bulk",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 130
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Vinegar, Balsamic Imported Italy",
     "brand": "Harvest Value",
@@ -4791,17 +4791,17 @@
     "active": true,
     "item_number": "233067"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "Same product as n=107; string matcher's Utz-chips guess is wrong. Vendor differs (US Foods vs PFG), no US Foods equivalent exists.",
    "meaning": "Imported Italian balsamic vinegar",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 131
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "HONEY AMBER EXTRA LIGHT",
     "brand": "WEST CRK",
@@ -4838,7 +4838,7 @@
    "row_n": 132
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Water, Spring Plastic Bottle Special Print",
     "brand": "Kala Falls",
@@ -4865,17 +4865,17 @@
     "active": true,
     "item_number": ""
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "CC override: special-print bottled water = the customer-facing water SKU",
    "meaning": "Custom-label bottled spring water, 16.9 oz",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 133
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "ONION PWDR",
     "brand": "ROMA",
@@ -4912,7 +4912,7 @@
    "row_n": 134
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "CONT PLAS 24 OZ RND BLK COMBO",
     "brand": "FORMAN",
@@ -4938,11 +4938,11 @@
    "evidence": "CC: 24 oz black combo not modelled",
    "meaning": "24oz round black to-go container w/ lid",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'the other stuff is probably bought individually or a part of specials'",
    "row_n": 135
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Container, 8 Oz Round 1 Cmpt Polypropylene Deli Clear Carry-Out Plastic",
     "brand": "Valu Plus",
@@ -4969,17 +4969,17 @@
     "active": true,
     "item_number": "271779"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "8 oz round hard plastic container matches 'Half Pint 8oz (hard)' by size/material, overriding the string matcher's irrelevant plastic-wrap guess; vendor is US Foods vs catalog PFG.",
    "meaning": "8 oz round clear plastic deli/to-go container",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 136
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Spice, Oregano Leaf Dried Plastic Jug Shelf Stable Seasoning",
     "brand": "Monarch",
@@ -5006,17 +5006,17 @@
     "active": true,
     "item_number": "261432"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "high",
    "evidence": "Product and even pack style (jug) match exactly; only vendor differs (US Foods vs PFG), so the active PFG SKU is used per rule.",
    "meaning": "Dried oregano leaf seasoning, in a jug",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 137
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "BASE BEEF NO MSG JAR",
     "brand": "RDGCRST",
@@ -5053,7 +5053,7 @@
    "row_n": 138
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "ONION RED JUMBO",
     "brand": "PEAK FRS",
@@ -5090,7 +5090,7 @@
    "row_n": 139
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Garlic, White Whole Clove Peeled Fresh Ref",
     "brand": "Cross Valley Farms",
@@ -5117,17 +5117,17 @@
     "active": true,
     "item_number": "283987"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "high",
    "evidence": "Only garlic SKU in catalog; vendor is US Foods vs catalog PFG.",
    "meaning": "Fresh peeled garlic cloves",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 140
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "STRAWBERRIES",
     "brand": "PACKER",
@@ -5153,11 +5153,11 @@
    "evidence": "No strawberry SKU exists anywhere in the catalog under any vendor.",
    "meaning": "Fresh strawberries",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'the other stuff is probably bought individually or a part of specials'",
    "row_n": 141
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Flour, White Bread Unbleached Special Spring",
     "brand": "King Arthur Flour",
@@ -5183,11 +5183,11 @@
    "evidence": "CC: flour not modelled",
    "meaning": "Unbleached bread flour",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'the other stuff is probably bought individually or a part of specials'",
    "row_n": 142
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Horseradish, Prepared Ref",
     "brand": "Monarch",
@@ -5214,17 +5214,17 @@
     "active": true,
     "item_number": "490122"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "Vendor differs (US Foods vs PFG) but no US Foods horseradish SKU exists.",
    "meaning": "Prepared horseradish",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 143
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Cucumber, Large English Seedless Hot House Bulk Fresh Ref",
     "brand": "Packer",
@@ -5251,17 +5251,17 @@
     "active": true,
     "item_number": "23280"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "high",
    "evidence": "Only cucumber SKU in catalog; vendor is US Foods vs catalog PFG.",
    "meaning": "English seedless cucumbers",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 144
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "WRAP WAX PAPER 15X10.75 WHI",
     "brand": "SLVR SRC",
@@ -5298,7 +5298,7 @@
    "row_n": 145
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "MINT FRSH",
     "brand": "PEAK FRS",
@@ -5324,11 +5324,11 @@
    "evidence": "CC: fresh mint not modelled",
    "meaning": "Fresh mint",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'the other stuff is probably bought individually or a part of specials'",
    "row_n": 146
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "CEL-RAY DR. BROWNS",
     "brand": "Boar's Head",
@@ -5365,7 +5365,7 @@
    "row_n": 147
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "THYME FRSH",
     "brand": "PEAK FRS",
@@ -5402,7 +5402,7 @@
    "row_n": 148
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "DIET CHERRY DR. BROWNS",
     "brand": "\u2014",
@@ -5439,7 +5439,7 @@
    "row_n": 149
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "VINEGAR WHI DISTILLED 40 GRAIN",
     "brand": "WEST CRK",
@@ -5465,11 +5465,11 @@
    "evidence": "CC: white vinegar not modelled",
    "meaning": "White distilled vinegar",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'the other stuff is probably bought individually or a part of specials'",
    "row_n": 150
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Basil, Fresh Herb",
     "brand": "Cross Valley Farms",
@@ -5496,17 +5496,17 @@
     "active": true,
     "item_number": "23097"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "Same product as n=71; vendor differs (US Foods vs PFG), no US Foods basil SKU exists.",
    "meaning": "Fresh basil herb",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 151
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "VINEGAR APPLE CIDER 5% ACIDITY",
     "brand": "WEST CRK",
@@ -5532,11 +5532,11 @@
    "evidence": "CC: apple cider vinegar not modelled",
    "meaning": "Apple cider vinegar",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'the other stuff is probably bought individually or a part of specials'",
    "row_n": 152
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "EGG WHI MED AA LOOSE",
     "brand": "NTRSBST",
@@ -5573,7 +5573,7 @@
    "row_n": 153
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "STRAWBERRIES FRSH",
     "brand": "PACKER",
@@ -5599,11 +5599,11 @@
    "evidence": "CC: strawberries not modelled",
    "meaning": "Fresh strawberries",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'the other stuff is probably bought individually or a part of specials'",
    "row_n": 154
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Spice, Chive Chopped Plastic Shaker Shelf Stable Seasoning",
     "brand": "Monarch",
@@ -5640,7 +5640,7 @@
    "row_n": 155
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Sour Cream, Cultured All Natural Rbst Free Tub Ref",
     "brand": "Glenview Farms",
@@ -5667,17 +5667,17 @@
     "active": true,
     "item_number": "247189"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "high",
    "evidence": "Only sour cream SKU in catalog; vendor is US Foods vs catalog PFG.",
    "meaning": "Cultured sour cream, tub",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 156
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Deer Park Loose",
     "brand": "\u2014",
@@ -5696,18 +5696,25 @@
     "last_seen": "Jul 30, 2026",
     "total_spend": "8.5"
    },
-   "selected_sku": null,
-   "decision": "rejected",
-   "vendor_binding": "n/a",
+   "selected_sku": {
+    "id": "e9817760-0b15-4b79-b37b-cbf376432dad",
+    "name": "Employee Water",
+    "vendor": "PFG",
+    "pack_format": "Case",
+    "active": true,
+    "item_number": "5488748"
+   },
+   "decision": "selected",
+   "vendor_binding": "vendor-match",
    "confidence": "high",
-   "evidence": "CC: Deer Park loose bottles \u2014 one-off",
+   "evidence": "CC: Deer Park loose bottles \u2014 one-off | binding evidence: Juan 2026-09-10: 'Deerpark loose is the employee waters'",
    "meaning": "Deer Park brand bottled spring water",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'Deerpark loose is the employee waters'",
    "row_n": 157
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "WRAP DELI PAPER WAX 12X10.75",
     "brand": "SLVR SRC",
@@ -5744,7 +5751,7 @@
    "row_n": 158
   },
   {
-   "revision": "wave7-r1-2026-09-10",
+   "revision": "wave7-r2-2026-09-10",
    "angel": {
     "product": "Glove, Vinyl Medium Powder-Free Natural Ambidextrous",
     "brand": "Monogram",
@@ -5771,14 +5778,15 @@
     "active": true,
     "item_number": "240782"
    },
-   "decision": "selected",
-   "vendor_binding": "VENDOR_DRIFT",
+   "decision": "rejected",
+   "vendor_binding": "n/a",
    "confidence": "medium",
    "evidence": "Same size category as Gloves Medium; vendor (US Foods) and material (vinyl vs latex) differ, no US Foods glove SKU exists.",
    "meaning": "Medium vinyl powder-free gloves",
    "owner_question": "",
-   "owner_answer": "",
+   "owner_answer": "Juan 2026-09-10: 'we have mostly moved away from US Foods and mostly use PFG now' \u2014 historical purchase, no US Foods twin, never prices another vendor's SKU",
    "row_n": 159
   }
- ]
+ ],
+ "revision_note": "r2 \u2014 Juan 2026-09-10 floor answers applied: US Foods = legacy vendor (43 rows rejected as historical), bags confirmed, 50/50 shred = Shredded Mozz, quart containers = Quart (Large) (PFG re-vendor errand), Deer Park = Employee Water (owner-confirmed binding), Just Ice Tea = catalog gap errand, rest = specials/one-offs"
 }
