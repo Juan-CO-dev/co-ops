@@ -31,7 +31,7 @@ beforeEach(() => {
       select: () => query,
       eq: (key: string, value: string) => { if (key === "action") action = value; return query; },
       order: () => query, limit: () => query,
-      maybeSingle: async () => ({ data: action === "cron.success" ? { created_at: "2026-09-05T23:06:00Z" } : null, error: null }),
+      maybeSingle: async () => ({ data: action === "cron.success" ? { occurred_at: "2026-09-05T23:06:00Z" } : null, error: null }),
     };
     return query;
   };

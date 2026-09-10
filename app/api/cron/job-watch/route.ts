@@ -38,16 +38,16 @@ export async function GET(req: NextRequest) {
     let alerted = 0;
     for (const job of JOBS_REGISTRY) {
       const [success, failure] = await Promise.all([
-        sb.from("audit_log").select("created_at").eq("action", "cron.success")
-          .eq("metadata->>job", job.job).order("created_at", { ascending: false })
-          .limit(1).maybeSingle<{ created_at: string }>(),
-        sb.from("audit_log").select("created_at").eq("action", "cron.failure")
+        sb.from("audit_log").select("occurred_at").eq("action", "cron.success")
+          .eq("metadata->>job", job.job).order("occurred_at", { ascending: false })
+          .limit(1).maybeSingle<{ occurred_at: string }>(),
+        sb.from("audit_log").select("occurred_at").eq("action", "cron.failure")
           .eq("metadata->>job", job.job).eq("metadata->>detector", "job-watch")
-          .order("created_at", { ascending: false }).limit(1).maybeSingle<{ created_at: string }>(),
+          .order("occurred_at", { ascending: false }).limit(1).maybeSingle<{ occurred_at: string }>(),
       ]);
       if (success.error || failure.error) throw new Error("Heartbeat lookup failed");
-      const lastSuccessAt = success.data?.created_at ?? null;
-      const decision = decideJobWatch(job, now, lastSuccessAt, failure.data?.created_at ?? null);
+      const lastSuccessAt = success.data?.occurred_at ?? null;
+      const decision = decideJobWatch(job, now, lastSuccessAt, failure.data?.occurred_at ?? null);
       if (!decision.shouldAlert) continue;
 
       // Existing atomic RPC (0131/0132), used directly to FAIL CLOSED on errors.
