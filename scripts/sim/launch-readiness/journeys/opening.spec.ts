@@ -28,13 +28,13 @@ const prepResponse = (page: Page, itemId: string) => page.waitForResponse(respon
 // projects/repeats; tests never borrow a finalized singleton from an earlier run.
 for (const [code, employeeAlias, khAlias] of [["EM", "maya", "rosa"], ["MEP", "luis", "angel"]] as const) {
   test(`opening ${code} employee handoff, prep, failure recovery and report`, async ({ page, browser, contract }, info) => {
-    expect(process.env.LRA_FIXTURE).toBe("cold-empty");
+    expect(process.env.LRA_FIXTURE, "opening.phase1.status").toBe("cold-empty");
     const mark = (id: string) => { if (!contract.assertionIds.includes(id)) contract.assertionIds.push(id); };
     mark("opening.phase1.status");
     const employee = personaByEmail(`${employeeAlias}@sim.co-ops`), kh = personaByEmail(`${khAlias}@sim.co-ops`);
     await login(page, employee, code);
     await page.goto(openingUrl(code));
-    await expect(page.getByRole("button", { name: text(employee.language, "opening.phase.tab_phase1"), exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: text(employee.language, "opening.phase.tab_phase1"), exact: true }), "opening.phase1.status").toBeVisible();
     const state = await openingState(code), instanceId = state.instance.id;
     expect(state.instance.status, "opening.phase1.status: cold instance").toBe("open");
     expect(await completions(instanceId), "opening.phase1.status: no borrowed history").toEqual([]);
@@ -51,12 +51,12 @@ for (const [code, employeeAlias, khAlias] of [["EM", "maya", "rosa"], ["MEP", "l
       await page.getByRole("button", { name: text(employee.language, "opening.station.tick_aria", { station: station(item, employee.language) }), exact: true }).click();
       const region = page.getByRole("region", { name: text(employee.language, "opening.station.aria", { station: station(item, employee.language) }), exact: true });
       const ticks = region.locator("li > div > span[aria-hidden]");
-      expect(await ticks.count()).toBeGreaterThan(0);
+      expect(await ticks.count(), "opening.phase1.employee-handoff").toBeGreaterThan(0);
       for (const tick of await ticks.all()) await expect(tick, "opening.phase1.employee-handoff: all station lines tick together").toHaveText("\u2713");
     }
     await rowFor(page, tempItem!, employee.language).getByRole("textbox", { name: text(employee.language, "opening.item.count_input_aria", { item: label(tempItem!, employee.language) }), exact: true }).fill("38");
     const noteItem = ordinary.find(item => !item.expects_count)!;
-    expect(noteItem).toBeTruthy();
+    expect(noteItem, "opening.phase1.employee-handoff").toBeTruthy();
     const note = `Synthetic G1-A ${code}: station checked; tablet charging.`;
     await rowFor(page, noteItem, employee.language).getByRole("button", { name: text(employee.language, "opening.item.add_addon"), exact: true }).click();
     await rowFor(page, noteItem, employee.language).locator("textarea").fill(note);
@@ -75,8 +75,8 @@ for (const [code, employeeAlias, khAlias] of [["EM", "maya", "rosa"], ["MEP", "l
     try {
       await login(manager, kh, code);
       await manager.goto(openingUrl(code));
-      await expect(manager.getByRole("button", { name: text(kh.language, "opening.phase.tab_phase1"), exact: true })).toBeVisible();
-      expect((await openingState(code)).instance.id).toBe(instanceId);
+      await expect(manager.getByRole("button", { name: text(kh.language, "opening.phase.tab_phase1"), exact: true }), "opening.phase1.employee-handoff").toBeVisible();
+      expect((await openingState(code)).instance.id, "opening.phase1.employee-handoff").toBe(instanceId);
       mark("opening.phase1.persist-before-submit");
       const managerNote = rowFor(manager, noteItem, kh.language);
       if (await managerNote.locator("textarea").count() === 0) await managerNote.getByRole("button", { name: text(kh.language, "opening.item.add_addon"), exact: true }).click();
@@ -92,32 +92,73 @@ for (const [code, employeeAlias, khAlias] of [["EM", "maya", "rosa"], ["MEP", "l
       await contract.screenshot("handoff-readback", manager);
 
       mark("opening.phase1.cold-attestation");
-      expect(state.snapshots.length).toBeGreaterThan(0);
+      expect(state.snapshots.length, "opening.phase1.cold-attestation").toBeGreaterThan(0);
       for (const snapshot of state.snapshots) {
         expect(snapshot.closer_count, "opening.phase1.cold-attestation: unknown is not zero").toBeNull();
-        expect(snapshot.closing_instance_id).toBeNull();
+        expect(snapshot.closing_instance_id, "opening.phase1.cold-attestation").toBeNull();
       }
-      const recounts = manager.getByRole("spinbutton");
-      await expect(recounts).toHaveCount(state.snapshots.length);
-      const sectionButtons = manager.getByRole("button", { name: new RegExp(`^${exact(text(kh.language, "opening.section_verify.cta")).source}`) });
-      for (const button of await sectionButtons.all()) await expect(button, "opening.phase1.cold-attestation: recount before section verification").toBeDisabled();
-      for (const recount of await recounts.all()) await recount.fill("2");
-      for (const button of await sectionButtons.all()) { await expect(button).toBeEnabled(); await button.click(); }
-      const tickButtons = manager.locator('section header button[aria-pressed="false"]');
-      for (const button of await tickButtons.all()) await button.click();
-      const temps = manager.locator('input[type="text"][inputmode="decimal"]');
-      expect(await temps.count()).toBeGreaterThan(0);
-      for (const input of await temps.all()) await input.fill("38");
+      // Names change after verification. Match both states so .all()'s nth
+      // locators keep their identity instead of skipping a shrinking result set.
+      const namePattern = (key: Key, param: string) =>
+        exact(text(kh.language, key, { [param]: "__NAME__" })).source.replace("__NAME__", ".+");
+      const temps = manager.getByRole("textbox", {
+        name: new RegExp(`^${namePattern("opening.item.count_input_aria", "item")}$`),
+      });
+      await expect(temps, "opening.phase1.status: all temperature inputs loaded").toHaveCount(ordinary.filter(item => item.expects_count).length);
+      expect(await temps.count(), "opening.phase1.status: temperature fixture is nonempty").toBeGreaterThan(0);
+      for (const input of await temps.all()) {
+        await input.fill("38");
+        await input.blur();
+        await expect(input, "opening.phase1.status: temperature entered").toHaveValue("38");
+      }
+      const tickButtons = manager.getByRole("button", {
+        name: new RegExp(`^(?:${namePattern("opening.station.tick_aria", "station")}|${namePattern("opening.station.untick_aria", "station")})$`),
+      });
+      await expect(tickButtons, "opening.phase1.status: all station controls loaded").toHaveCount(new Set(ordinary.map(item => item.station)).size);
+      for (const button of await tickButtons.all()) {
+        if (await button.getAttribute("aria-pressed") !== "true") await button.click();
+        await expect(button, "opening.phase1.status: station verified").toHaveAttribute("aria-pressed", "true");
+      }
+
+      const recountName = new RegExp(`^${exact(text(kh.language, "opening.recount.label")).source} \u2014 .+$`);
+      const recounts = manager.getByRole("spinbutton", { name: recountName });
+      await expect(recounts, "opening.phase1.cold-attestation: all recounts loaded").toHaveCount(state.snapshots.length);
+      const sectionName = new RegExp(`^(?:${exact(text(kh.language, "opening.section_verify.cta")).source}|${exact(text(kh.language, "opening.section_verify.verified_button")).source}) \u2014 .+$`);
+      const sections = manager.getByRole("region", {
+        name: new RegExp(`^${namePattern("opening.station.aria", "station")}$`),
+      }).filter({ has: manager.getByRole("button", { name: sectionName }) });
+      await expect(sections, "opening.phase1.cold-attestation: all recount sections loaded").toHaveCount(new Set(state.items.filter(item => spotIds.has(item.id)).map(item => item.station)).size);
+      for (const section of await sections.all()) {
+        const button = section.getByRole("button", { name: sectionName });
+        const sectionRecounts = section.getByRole("spinbutton", { name: recountName });
+        expect(await sectionRecounts.count(), "opening.phase1.cold-attestation: section has recounts").toBeGreaterThan(0);
+        // OpeningVerificationStation gates on non-null openerRecount for every
+        // null-source item. The controlled input writes that via onChange.
+        for (const recount of await sectionRecounts.all()) {
+          await recount.fill("2");
+          await recount.dispatchEvent("change");
+          await recount.blur();
+          await expect(recount, "opening.phase1.cold-attestation: recount entered").toHaveValue("2");
+        }
+        await expect(button, "opening.phase1.cold-attestation: recounts enable section verification").toBeEnabled();
+        if (await button.getAttribute("aria-pressed") !== "true") await button.click();
+        await expect(button, "opening.phase1.cold-attestation: section verified").toHaveAttribute("aria-pressed", "true");
+      }
       await managerNote.locator("textarea").fill(note);
+      await expect(manager.getByText(text(kh.language, "opening.phase1.attestation.title"), { exact: true }), "opening.phase1.cold-attestation: attestation shown").toBeVisible();
+      const attestation = manager.getByRole("radio", { name: text(kh.language, "opening.phase1.attestation.option.missed_or_unknown"), exact: true });
+      await attestation.check();
+      await expect(attestation, "opening.phase1.cold-attestation: reason selected").toBeChecked();
       const submit = manager.getByRole("button", { name: text(kh.language, "opening.submit.button_label"), exact: true });
-      await expect(submit, "opening.phase1.cold-attestation: attestation required").toBeDisabled();
-      await expect(manager.getByText(text(kh.language, "opening.phase1.attestation.title"), { exact: true })).toBeVisible();
-      await manager.getByRole("radio", { name: text(kh.language, "opening.phase1.attestation.option.missed_or_unknown"), exact: true }).check();
+      await expect(submit, "opening.phase1.status: submit appears after verification and attestation").toBeVisible();
+      await expect(submit, "opening.phase1.status: complete form enables submit").toBeEnabled();
       mark("opening.phase1.status");
       await temps.first().fill("");
+      await temps.first().blur();
       await expect(submit, "opening.phase1.status: missing temperature blocks submit").toBeDisabled();
       await temps.first().fill("38");
-      await expect(submit).toBeEnabled();
+      await temps.first().blur();
+      await expect(submit, "opening.phase1.status: restored temperature enables submit").toBeEnabled();
 
       const api = await sessionFor(khAlias, code);
       mark("opening.cross-shop");
@@ -140,14 +181,14 @@ for (const [code, employeeAlias, khAlias] of [["EM", "maya", "rosa"], ["MEP", "l
       for (const item of state.items.filter(item => spotIds.has(item.id) || !item.prep_meta?.openingPhase2)) {
         const row = live(p1Rows).find(row => row.template_item_id === item.id && !row.prep_data?.phase2);
         expect(row, "opening.phase1.status: every verification persisted").toBeTruthy();
-        expect(row!.completed_by).toBe(api.user.id);
+        expect(row!.completed_by, "opening.phase2.saved-provenance").toBe(api.user.id);
         if (spotIds.has(item.id)) {
           expect(row!.prep_data?.phase1, "opening.phase1.cold-attestation").toMatchObject({ closer_count: null, opener_recount: 2, ground_truth_count: 2 });
-          expect(row!.count_provenance).toBe("reconstructed_morning");
-        } else if (item.expects_count) expect(row!.count_value).toBe(38);
-        if (item.id === noteItem.id) expect(row!.notes).toBe(note);
+          expect(row!.count_provenance, "opening.phase2.saved-provenance").toBe("reconstructed_morning");
+        } else if (item.expects_count) expect(row!.count_value, "opening.phase2.saved-provenance").toBe(38);
+        if (item.id === noteItem.id) expect(row!.notes, "opening.phase2.saved-provenance").toBe(note);
       }
-      expect((await openingState(code)).instance.opener_no_prior_data_reason).toBe("missed_or_unknown");
+      expect((await openingState(code)).instance.opener_no_prior_data_reason, "opening.phase2.saved-provenance").toBe("missed_or_unknown");
       await manager.getByRole("button", { name: text(kh.language, "opening.phase.tab_phase2"), exact: true }).click();
       const prepItems = state.items.filter(item => item.prep_meta?.openingPhase2);
       expect(prepItems.length, "opening.phase2.save: fixture requires at least three prep rows").toBeGreaterThanOrEqual(3);
@@ -168,7 +209,7 @@ for (const [code, employeeAlias, khAlias] of [["EM", "maya", "rosa"], ["MEP", "l
       mark("opening.phase2.incomplete");
       const refused = await api.call("POST", "/api/opening/submit/phase2", { instanceId });
       expect({ status: refused.status, code: refused.code }, "opening.phase2.incomplete").toEqual({ status: 422, code: "phase2_incomplete" });
-      expect((await openingState(code)).instance.status).toBe("phase1_complete");
+      expect((await openingState(code)).instance.status, "opening.phase2.incomplete").toBe("phase1_complete");
 
       mark("opening.phase2.failure-retry");
       const injectedItem = prepItems[0]!, value = need(injectedItem) ?? 0;
@@ -194,8 +235,8 @@ for (const [code, employeeAlias, khAlias] of [["EM", "maya", "rosa"], ["MEP", "l
       await manager.getByRole("button", { name: text(kh.language, "opening.phase2.save.retry_aria", { item: label(injectedItem, kh.language) }), exact: true }).click();
       expect((await retried).status(), "opening.phase2.failure-retry").toBe(200);
       assertSaved(await completions(instanceId), injectedItem.id, value, api.user.id);
-      expect(injected).toBe(1);
-      await expect(manager.getByText(text(kh.language, "opening.phase2.save.failed"), { exact: true })).toHaveCount(0);
+      expect(injected, "opening.phase2.failure-retry").toBe(1);
+      await expect(manager.getByText(text(kh.language, "opening.phase2.save.failed"), { exact: true }), "opening.phase2.failure-retry").toHaveCount(0);
       await contract.screenshot("retry-persisted", manager);
 
       mark("opening.phase2.save");
@@ -236,7 +277,7 @@ for (const [code, employeeAlias, khAlias] of [["EM", "maya", "rosa"], ["MEP", "l
         if (result.status === 200) {
           const saved = raced.find(row => row.id === result.json?.completionId);
           expect(saved?.prep_data?.phase2?.opener_prepped, "opening.phase2.concurrent-save: every acknowledged value retained").toBe(raceValues[index]);
-          expect(saved?.completed_by).toBe(api.user.id);
+          expect(saved?.completed_by, "opening.phase2.concurrent-save").toBe(api.user.id);
         }
       }
 
@@ -258,8 +299,8 @@ for (const [code, employeeAlias, khAlias] of [["EM", "maya", "rosa"], ["MEP", "l
       const finalIds = live(await completions(instanceId)).filter(row => row.prep_data?.phase2).map(row => row.id).sort();
       const finalSubmission = submissions.find(row => JSON.stringify([...row.completion_ids].sort()) === JSON.stringify(finalIds));
       expect(finalSubmission, "opening.phase2.finalize: persisted submission provenance").toBeTruthy();
-      expect(finalSubmission!.submitted_by).toBe(api.user.id);
-      expect(Number.isFinite(Date.parse(finalSubmission!.submitted_at))).toBe(true);
+      expect(finalSubmission!.submitted_by, "opening.phase2.finalize").toBe(api.user.id);
+      expect(Number.isFinite(Date.parse(finalSubmission!.submitted_at)), "opening.phase2.finalize").toBe(true);
       expect(finalSubmission!.is_final_confirmation, "opening.phase2.finalize: not Phase 3 confirmation").toBe(false);
       await manager.reload();
       await manager.goto("/dashboard");
@@ -301,7 +342,8 @@ for (const [code, employeeAlias, khAlias] of [["EM", "maya", "rosa"], ["MEP", "l
       await contract.screenshot("outcome", manager);
     } finally {
       if (info.errors.length) await contract.screenshot("failure-kh", manager);
-      try { await context.tracing.stop({ path: info.outputPath("kh-private-trace.zip") }); } catch { /* the runner's own trace handling owns this context */ }
+      // No manual stop: Playwright owns this context's trace (retain-on-failure) and stops it itself;
+      // a manual stop here made teardown throw "Must start tracing before stopping" (CC run a9018f4c).
       await context.close();
     }
   });

@@ -127,6 +127,12 @@ export async function main(args = process.argv.slice(2)) {
   let options: ReturnType<typeof parseArgs>;
   try { options = parseArgs(args); } catch { const e = new Evidence(runId, "invalid"); e.manifest.reason = "usage: --suite runner|isolation|personas|fixtures|opening --fixture <known-id> [--dev] [--no-restore] [--repeat N] or --restore-only <known-id>; opening requires cold-empty"; e.finalize([]); return 2; }
   const evidence = new Evidence(runId, options.fixture);
+  // Heartbeat (2026-09-10): a watcher must never mistake silence for progress. Touched every 30 s while the run lives;
+  // lra-watch.sh alerts when it stops moving or the pid disappears without a terminal LRA line.
+  const heartbeatFile = resolve("scripts/sim/launch-readiness/.artifacts", runId, "heartbeat");
+  mkdirSync(resolve("scripts/sim/launch-readiness/.artifacts", runId), { recursive: true });
+  const heartbeat = setInterval(() => { try { writeFileSync(heartbeatFile, new Date().toISOString()); } catch { /* best effort */ } }, 30_000);
+  heartbeat.unref?.();
   let held = false, server: ChildProcess | undefined, playwright: ChildProcess | undefined, interrupted = false, stage = "lease", configFile: string | undefined;
   const signal = () => { interrupted = true; void stopped(playwright).catch(() => {}); void stopped(server).catch(() => {}); };
   process.on("SIGINT", signal); process.on("SIGTERM", signal);
@@ -278,6 +284,7 @@ export async function main(args = process.argv.slice(2)) {
     // Local diagnostics only: the raw message goes to stderr, never into evidence (CC, 2026-09-09).
     if (process.env.LRA_DEBUG) console.error(`[lra debug] stage=${stage}: ${error instanceof Error ? error.message : String(error)}`);
   } finally {
+    clearInterval(heartbeat);
     try { await stopped(playwright); await stopped(server); if (server) await portFree(); }
     catch { evidence.manifest.status = "fail"; evidence.manifest.reason = "child cleanup or port release failed"; }
     try {

@@ -169,7 +169,7 @@ export async function runOpeningContracts(pins: Record<string, string | undefine
       if (process.env.LRA_DEBUG) {
         const mine = rows.filter(row => row.template_item_id === first.id && row.prep_data?.phase2);
         console.error(`[lra debug] ${current} race responses: ${JSON.stringify(race.map(r => ({ status: r.status, completionId: (r.json as { completionId?: string } | undefined)?.completionId })))}`);
-        console.error(`[lra debug] ${current} phase2 rows for item ${first.id}: ${JSON.stringify(mine.map(row => ({ id: row.id, live: !row.superseded_at && !row.revoked_at, superseded_by: row.superseded_by, prepped: row.prep_data?.phase2?.opener_prepped })))}`);
+        console.error(`[lra debug] ${current} phase2 rows for item ${first.id}: ${JSON.stringify(mine.map(row => ({ id: row.id, live: !row.superseded_at && !row.revoked_at, supersededAt: row.superseded_at, prepped: row.prep_data?.phase2?.opener_prepped })))}`);
       }
       try {
         assert(race.every(response => response.status === 200 || response.status === 409), current);
