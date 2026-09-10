@@ -11,6 +11,7 @@ import { loadAll, operationUuid, reviewDigest, validateTarget } from "@/scripts/
 import { evaluateWave7Tables, verifyWave7Scope } from "@/scripts/parity-angel";
 import { SIM_PROJECT_REF } from "@/lib/sim-isolation-shared";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import wave7Manifest from "@/docs/angel-wave7-manifest.json";
 
 const AS_OF = "2026-09-10";
 const ID = "00000000-0000-4000-8000-000000000001";
@@ -131,6 +132,43 @@ describe("physical price and pack plans", () => {
   it("refuses a supply whose existing order root is unresolved", () => {
     const { r, s } = withPack("10/100 CT", { sku_class: "packaging", pack_format: "unknown", each_size: null, each_measure: null });
     expect(codes(planRow(r, s, [invoice(r)], measures, AS_OF))).toContain("OUR_PACK_UNRESOLVABLE");
+  });
+  it.each(["1/240 CT", "240/1 CT", "1/240 EA", "240/1 EA", "240 EA"])("infers a missing supply order root from %s", pack => {
+    for (const classification of [{ sku_class: "packaging" }, { sku_class: "raw", inventory_only: true }]) {
+      const { r, s } = withPack(pack, { ...classification, pack_format: "", units_per_pack: null, each_size: null, each_measure: null });
+      const d = planRow(r, s, [invoice(r)], measures, AS_OF);
+      expect(d.intent?.chain).toEqual([{ label: "Case", containsQty: 240, containsIndex: null, containsMeasureUnit: "each" }]);
+      expect(d.intent?.price.unit_price).toBe(81.11);
+      expect(d.intent?.evidence.afterOz).toBeNull();
+    }
+  });
+  it("does not infer a missing root for multiple inner groups or a food SKU", () => {
+    for (const [pack, sku_class, refusalCode] of [["10/100 CT", "packaging", "OUR_PACK_UNRESOLVABLE"], ["1/240 CT", "raw", "SCALE_GATED"]] as const) {
+      const { r, s } = withPack(pack, { sku_class, pack_format: "", units_per_pack: null, each_size: null, each_measure: null });
+      const d = planRow(r, s, [invoice(r)], measures, AS_OF);
+      expect(codes(d)).toContain(refusalCode);
+      expect(d.intent).toBeNull();
+    }
+  });
+  it("resolves manifest Quart (Large) after the r3 vendor refusal is adjudicated", () => {
+    const r = readManifest(JSON.stringify(wave7Manifest)).rows.find(r => r.row_n === 109)!;
+    expect(r.angel.pack_size).toBe("1/240 CT");
+    expect(r.selected_sku).toMatchObject({ name: "Quart (Large)", vendor: "PFG", pack_format: "" });
+    const s = snapshot();
+    Object.assign(s.sku, r.selected_sku, { vendor_id: "vendor-1", sku_class: "packaging", inventory_only: true, units_per_pack: null, each_size: null, each_measure: null });
+    s.vendor = { id: "vendor-1", name: "PFG", active: true };
+    const history = [invoice(r, { date: "Aug 7, 2026", unitPricePerCase: 63.71, lineTotal: 63.71 })];
+    // Archived wave7-dryrun-sim-r3.txt:357 predates the 0202 PFG re-vendor.
+    const r3Refusal = "VENDOR_DRIFT | Quart (Large) | bundle | missing fact: Resolve the fact named above.";
+    const historical = planRow({ ...r, vendor_binding: "VENDOR_DRIFT", selected_sku: { ...r.selected_sku!, vendor: "Webstaurant" } }, s, history, measures, AS_OF);
+    const held = historical.refusals[0]!;
+    expect(`${held.code} | ${r.selected_sku!.name} | ${held.operation} | missing fact: ${held.missingFact}`).toBe(r3Refusal);
+    expect(historical.intent).toBeNull();
+    const d = planRow(r, s, history, measures, AS_OF);
+    expect(codes(d)).not.toContain("OUR_PACK_UNRESOLVABLE");
+    expect(d.intent?.chain).toEqual([{ label: "Case", containsQty: 240, containsIndex: null, containsMeasureUnit: "each" }]);
+    expect(d.intent?.price.unit_price).toBe(63.71);
+    expect(d.intent?.evidence.afterOz).toBeNull();
   });
   it("uses the actual count registry label when each is absent", () => {
     const registry = new Map(measures); registry.delete("each"); registry.set("count", { dimension: "count", toBaseFactor: 1 });

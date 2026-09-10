@@ -199,7 +199,7 @@ export function planRow(row: ManifestRow, snapshot: Snapshot | null, history: re
   let price = source.latest.unitPricePerCase!;
   const piece = PIECES[a.product];
   const root = snapshot.chain.length ? chainRootLabel(buildPackChain(chainLevels(snapshot.chain))) : String(s.pack_format ?? "");
-  const undefinedPack = !snapshot.chain.length && s.each_size == null && s.units_per_pack == null && s.sku_class === "raw"
+  const undefinedPack = !snapshot.chain.length && s.each_size == null && s.units_per_pack == null && s.sku_class === "raw" && s.inventory_only !== true
     && !piece && a.product !== "IMP LAYER BACON 12/14" && a.product !== "CHEESE MOZZ 1OZ SLCD LOG 32 CT";
   if (undefinedPack && parsed) {
     const average = source.average;
@@ -240,16 +240,20 @@ export function planRow(row: ManifestRow, snapshot: Snapshot | null, history: re
       if (!root || !beforeOz || (Math.abs(beforeOz - variable.ourPackOzExpected) > 0.02 && Math.abs(beforeOz - invoiceOz) > 0.02)) return hold("PACK_PREMISE_BROKEN", { pack: [a.pack_size, `${beforeOz ?? "unknown"} oz`] });
       ratio = 1; afterOz = invoiceOz;
       if (beforeOz !== afterOz) chain = [{ label: root, containsQty: afterOz, containsIndex: null, containsMeasureUnit: "oz" }];
-    } else if (["packaging", "cleaning", "misc"].includes(String(s.sku_class)) && !snapshot.chain.length) {
-      // An explicit case/box order root is necessary even with perfect leaf counts.
-      if (!root || !/^(case|box|pack|roll)$/i.test(root)) return hold("OUR_PACK_UNRESOLVABLE");
+    } else if ((["packaging", "cleaning", "misc"].includes(String(s.sku_class)) || s.inventory_only === true) && !snapshot.chain.length) {
+      // A single count group (1/N, N/1, or N CT/EA) proves a case of items,
+      // without inventing inner sleeves. Preserve any explicit order-root premise.
+      const countCase = (s.sku_class === "packaging" || s.inventory_only === true)
+        && parsed.dimension === "count" && (parsed.groups === 1 || parsed.size === 1);
+      const supplyRoot = root || (countCase ? "Case" : "");
+      if (!supplyRoot || !/^(case|box|pack|roll)$/i.test(supplyRoot)) return hold("OUR_PACK_UNRESOLVABLE");
       const count: number | null = parsed.dimension === "count" || parsed.dimension === "roll" ? parsed.total : s.sku_class === "cleaning" && parsed.dimension === "weight" ? parsed.groups : null;
       if (!count) return hold("UNSUPPORTED_PACK_SYNTAX", { text: a.pack_size });
       if (ours && (ours.dimension !== "count" || ours.total !== count)) return hold("PACK_PREMISE_BROKEN", { pack: [a.pack_size, `${ours.total} ${ours.leaf}`] });
       const leaf = ["each", "count"].find(label => measures.get(label)?.dimension === "count" && measures.get(label)?.toBaseFactor === 1);
       if (!leaf) return hold("INVALID_CHAIN", { "collision/cycle/multiple roots/dangling pointer/invalid quantity": "unregistered count leaf" });
       // Flatten to actual items; pack text alone does not name sleeves or inner boxes.
-      chain = [{ label: root, containsQty: count, containsIndex: null, containsMeasureUnit: leaf }];
+      chain = [{ label: supplyRoot, containsQty: count, containsIndex: null, containsMeasureUnit: leaf }];
       ratio = 1; grain = "supply items (no ounce claim)";
     } else if (ours && ours.dimension === parsed.dimension) {
       ratio = ours.total / parsed.total;
