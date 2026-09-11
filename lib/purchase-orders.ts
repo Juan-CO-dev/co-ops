@@ -1445,7 +1445,10 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
     .order("guide_position", { ascending: true, nullsFirst: false }).order("name", { ascending: true })
     .returns<Array<{ id: string; name: string; item_number: string | null; pack_format: string | null; guide_position: number | null }>>();
   if (vsErr) throw new Error(`loadPoDetail vendor skus: ${vsErr.message}`);
-  const onPo = new Set((lineRows ?? []).map((l) => l.sku_id));
+  // A DRAFT's picker excludes what is already on the order (edit that row instead). Past
+  // draft, the picker feeds an ADD-ON — "two more cases of the same thing" is the common
+  // case — so every active SKU stays offered (LRA-230, CC 2026-09-11).
+  const onPo = new Set(po.status === "draft" ? (lineRows ?? []).map((l) => l.sku_id) : []);
   const availableSkus = (vendorSkuRows ?? []).filter((s) => !onPo.has(s.id));
   const chains = await loadSkuPackChains(availableSkus.map((s) => s.id));
   const vendorSkus = availableSkus.map((s) => ({
