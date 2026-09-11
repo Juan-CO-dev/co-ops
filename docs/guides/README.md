@@ -2,6 +2,8 @@
 
 Three guides, one per job. They are written for people who know sandwiches, not software.
 
+Content updated as of 2026-09-11: ordering edits and add-ons, SKU data readiness, customer deposit wording, sign-out behavior and catering updates. Existing screenshots are retained; some show earlier screens.
+
 | Guide | Who reads it |
 |---|---|
 | [Staff guide](staff-guide.md) | Anyone on the line (employee). Login, checklists, prep, notes, maintenance, feedback. |

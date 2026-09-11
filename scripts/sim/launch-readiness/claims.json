@@ -743,8 +743,8 @@
         "path": "docs/guides/catering-guide.md",
         "revision": "5241016",
         "section": "What the customer sees (the order funnel) / 5. The link, and everything after it",
-        "quote": "Then they **review**: the whole order, the full totals, and the deposit that holds the date. Placing it turns their draft into a submitted order and records the deposit as **due**.",
-        "quoteSha256": "a6c0357da2c8170ade51594416f27d0a5b79c8032aaa2cea844386839c753a1e"
+        "quote": "Then they **review**: the whole order, the full totals, and the **Deposit to record**. **Record deposit & submit order →** turns their draft into a submitted order and records the deposit as **due**.",
+        "quoteSha256": "83ce754255dcf5886d73d0cf18a76f339fd47a2d90b097bf9f76eea5631692fe"
       },
       "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
       "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
@@ -759,8 +759,8 @@
         "path": "docs/guides/catering-guide.md",
         "revision": "5241016",
         "section": "What the customer sees (the order funnel) / 5. The link, and everything after it",
-        "quote": "Then they **review**: the whole order, the full totals, and the deposit that holds the date. Placing it turns their draft into a submitted order and records the deposit as **due**.",
-        "quoteSha256": "a6c0357da2c8170ade51594416f27d0a5b79c8032aaa2cea844386839c753a1e"
+        "quote": "Then they **review**: the whole order, the full totals, and the **Deposit to record**. **Record deposit & submit order →** turns their draft into a submitted order and records the deposit as **due**.",
+        "quoteSha256": "83ce754255dcf5886d73d0cf18a76f339fd47a2d90b097bf9f76eea5631692fe"
       },
       "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
       "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",

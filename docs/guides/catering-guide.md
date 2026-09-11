@@ -186,9 +186,10 @@ A quote is a priced document with a version number. You build it, you send it, a
 **Worth knowing**
 
 - **Every line is Qty × Unit price, and the quote is the sum of the lines.** Nothing else prices anything. **Unit price is the price of ONE.**
-- **A package arrives as its price on one line, plus its picks.** Picking a package drops in one line for the package itself at Qty 1 and its listed price, then one line for each thing the package contains. A line the customer chooses for themselves — *"Choose your subs (×8)"* — is a pick, not a charge: it arrives with **the quantity filled in and Unit price blank**, and it stays that way.
+- **A package with unpriced picks arrives as its price on one line, plus its picks.** When every pick has a blank price, picking a package with a listed price drops in one line for the package itself at Qty 1 and that price, then one line for each thing the package contains. If the contents already carry prices, those prices come across instead, with no extra package-price line. A package with no contents arrives as one line at Qty 1 and its listed price. A line the customer chooses for themselves — *"Choose your subs (×8)"* — is a pick, not a charge: it arrives with **the quantity filled in and Unit price blank**, and it stays that way.
 - **Leave the pick lines at a blank price.** Typing the package's sticker price into a line that came in at Qty 8 charges the package eight times over: $115 × 8 is the $920.00 line in the picture. The price belongs on the package line only, and the app now puts it there for you.
 - An **à la carte** item behaves differently — it arrives with its description and its price already filled in. Change the quantity and leave the price alone.
+- The pickers offer active menu items and active packages. If an old draft or a package still points at a retired item, saving the quote is refused until you swap that line for an active item. The message says: *"One of the lines points at an item that is no longer on the menu. Remove that line and add it again from the picker."*
 - **A line you type in yourself is money only.** Lines that came from the menu or from a package carry through to the kitchen's prep list and to the allergen labels. A hand-typed line does neither. Use the pickers whenever the thing exists on the menu.
 - Ticking **Delivery** reveals **Delivery zone**, and the zone is what carries the delivery fee. If the only choice is **None**, no zones are set up for that shop and no delivery fee will be charged — see [Setting up catering](#setting-up-catering-admin).
 
@@ -308,7 +309,7 @@ Two directories sitting under the board. **Customers** are people. **Companies**
 - *"Customer directory grouped by company, with lead and order history."*
 - **The group headings are just the Company box typed on each customer.** They are free text, not company accounts. A heading here proves nothing about the account in [Companies](#3-company-accounts).
 - Most records make themselves: typing a client's email into the quote builder creates one, and so does a customer signing in to order online.
-- **Reading is shift lead and up. Adding and editing is AGM and up.**
+- **Reading is shift lead and up. Adding and editing is AGM and up.** Emails are stored lower-case with spaces trimmed from either end, so `Ana@Example.com` and `ana@example.com` identify the same customer.
 
 ### 2. One customer
 
@@ -453,8 +454,9 @@ These screens could not be photographed, because reaching them needs the emailed
 **Worth knowing**
 
 - Then they **build** — packages first, then the à la carte sections — with a running cart and a coverage panel telling them whether they have enough food. Prices come from your shop's catering menu; there is nothing on that screen they can type a price into.
-- Then they **review**: the whole order, the full totals, and the deposit that holds the date. Placing it turns their draft into a submitted order and records the deposit as **due**.
+- Then they **review**: the whole order, the full totals, and the **Deposit to record**. **Record deposit & submit order →** turns their draft into a submitted order and records the deposit as **due**.
 - **No money is taken online.** The deposit is a record, not a payment. It is marked paid on the quote's own page, under **Payments**, by an AGM or above, once you have actually collected it.
+- The review screen names no payment provider. Under **How your deposit works**, it tells them: *"No money is taken online. The deposit is a record, not a payment."* **We confirm the details with you** explains that your team will confirm the order, date and payment arrangements. The balance reads **Balance — confirmed with you by our team**.
 - Their account page — **Your orders** — keeps their orders and their saved details for next time.
 - The lead stays in **Inquiry** until you move it. Nothing about placing an order confirms it.
 
@@ -529,8 +531,8 @@ Do this once, then leave it alone. Every change you save in Admin asks for your 
 
 **Worth knowing**
 
-- **Packages are per shop.** The same package appears once for each location, and editing one does not touch the other. Check the shop name before you edit.
-- What you set here — the price, the minimum headcount, the lead time, what is inside — is what customers order from online. On a staff-built quote only the contents come across; **the price does not.** See [Quotes, step 3](#quotes).
+- **Packages can belong to one shop or be Global.** Editing a shop's package does not change a separate copy at another shop; editing a Global package changes the shared package. Check the shop name or **Global** label before you edit.
+- What you set here — the price, the minimum headcount, the lead time, what is inside — is what customers order from online. On a staff-built quote, priced contents bring their own prices. If all the picks are unpriced, the listed package price comes across on a separate line at Qty 1; a package with no contents also comes across as one priced line. See [Quotes, step 3](#quotes).
 
 ### 4. Delivery Zones
 
@@ -628,6 +630,7 @@ Some leads you never type. Know which, so you do not chase an order that is alre
 - **Catering orders rung up in the store become leads too**, and they arrive already **Confirmed**, because they were paid when they were placed. If one is voided later, the lead moves to **Lost** on its own.
 - Both kinds arrive **assigned to the catering manager**, and both carry the order's total — which is where the dollar figure on those cards comes from.
 - **They carry no quote.** Do not build one to "match" the order; the money is already on the card.
+- The app checks once a day, around noon or early afternoon Eastern, that the Toast catering scan, the same-day sales pull and the scheduled overnight sales pull, session cleanup and receipt parsing are still reporting. If a job has gone quiet, it emails the operations address at most once per day for that job, naming it and the last time it reported successfully (or saying it has never reported). The message says whether to check the store computer, which runs the scans, or the hosting service's scheduled jobs. You do not need to do anything with this as a manager; it exists so silence is never mistaken for *"nothing happened."*
 - **Catering enquiries arriving by email are not collected anywhere.** There is no inbox digest. Coming soon.
 
 ---

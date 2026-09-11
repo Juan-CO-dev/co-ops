@@ -527,4 +527,5 @@ Do this every time you walk away from the tablet.
 
 - The app signs you out on its own after about ten minutes of no touching, and warns you thirty seconds before. If you are still working, tap **Stay signed in**.
 - Log out anyway. Anything tapped while you are signed in is recorded under your name.
+- **Log out** ends your current sign-in immediately. If an admin deactivates your account or changes your role, or you reset your password or set your first password, every sign-in you had open on any device ends at once. Those old sign-ins need a fresh login; a deactivated account must be reactivated first. Setting your first password signs you back in automatically on the device where you set it.
 - Half-finished work behaves differently depending on where you were. Closing checklist ticks and notes are already saved. **An opening report you have not submitted is not saved** — if you are mid-walk, finish it and hand it to a key holder before you go.

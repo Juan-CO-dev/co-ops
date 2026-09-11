@@ -12,7 +12,7 @@ If you also work the line, the [staff guide](staff-guide.md) covers the parts of
 
 You sign in like everyone else, but your dashboard carries the jobs nobody below you can finish.
 
-Morning: the **opening report**. Staff walk the stations and fill it in; **Submit Opening** is yours — key holder and up. Then the prep half of that same report, then **AM prep**. Around 6 AM, before the vendor cutoffs, walk **Ordering**: say what is on each shelf, review it, record the walk. That creates a draft order per vendor, which you confirm and send.
+Morning: the **opening report**. Staff walk the stations and fill it in; **Submit Opening** is yours — key holder and up. Then the prep half of that same report, then **AM prep**. Around 6 AM, before the vendor cutoffs, walk **Ordering**: say what is on each shelf, review it, record the walk. That creates or updates today's draft order per vendor, which you confirm and send; an order already confirmed or placed is left alone.
 
 Through the day: log every delivery as it lands, log what you cook down from raw stock, and read **Mid-Shift Pulse** to see what the shop still owes.
 
@@ -190,7 +190,7 @@ You do this once a day, before the doors open. The crew can fill the whole thing
 
 ### 5. Finalize Phase 2 — *not shown*
 
-This step could not be photographed: on this walk every prep row failed to save, so the finalize button never became available. That failure is being handled separately. What the button does is written into the app, and it is this:
+This step could not be photographed: on the original walk every prep row failed to save, so the finalize button never became available. That save failure has since been fixed. What the button does is written into the app, and it is this:
 
 **What to do** — When every prep row has saved, tap **Finalize Phase 2**.
 
@@ -609,6 +609,7 @@ The 6 AM job. Walk the shelves, say what is there, and the app works out the ord
 **Worth knowing**
 
 - **Nothing is sent to any vendor at this point.** The note says so: delivery options appear after you submit.
+- **Generate draft**, the cutoff shortcut beside the list, drafts from the app's suggestions, not the quantities you typed on the walk. Your typed walk quantities only become an order through **Record walk**.
 
 ### 4. The draft order
 
@@ -621,9 +622,54 @@ The 6 AM job. Walk the shelves, say what is there, and the app works out the ord
 **Worth knowing**
 
 - **One draft order per vendor**, covering only the lines above zero. The zeros stay on the walk record as evidence you checked.
+- The walk and the cutoff shortcut never create two orders for the same vendor at the same shop on one day. If a draft already exists, **Record walk** puts your positive walk quantities into that draft: a matching line takes the quantity you typed, new lines are added, and other lines stay as they were. The screen says **added to today's draft**. The quantities are not added together, and a zero on the walk does not remove an existing draft line.
+- If today's order is already confirmed or placed, the walk still records your observations but leaves that order unchanged, and the screen says so. **Generate draft** refuses to create another order when one already exists for that vendor today. A deliberate **Add-on order** is the separate path after placement, below.
 - The order's code is your shop's code, today's date, and the vendor — so `EM-20260908-PFG` reads at a glance.
-- **Confirm** freezes the prices and the line list; it does not send anything. Confirming twice is refused.
+- **Confirm** freezes the prices and the line list; it does not send anything. Confirming twice is refused. To change a confirmed order before it is placed, unlock it first, as in step 6.
 - **Sending is a separate tap**, and the email is rebuilt on the server from the confirmed order — not from anything on your screen. If the vendor has no ordering email on file, the app says so and leaves the order alone; use the phone or portal link instead and mark it placed.
+
+### 5. Edit the draft
+
+**What you see**
+
+![Draft order with Add an item open and the vendor's item picker](img/manager/32b-ordering-draft-add-item.png)
+
+**What to do** — Change quantities in the boxes or with the steppers. Tap **Add an item**, choose what you need, set its quantity, then tap **Save changes**.
+
+**Worth knowing**
+
+- **Add an item** offers any of this vendor's active SKUs that are not already on the order, including ones that were not on your walk. An item already on the order is edited on its existing row.
+- Set a draft line to **0** to remove it from what you will order. The row stays, struck through, because it is part of the history.
+- Typing does not save. **Save changes** writes your edits and keeps the order as a draft. **Confirm** takes two taps and also saves pending edits before freezing the order.
+
+### 6. Unlock a confirmed order
+
+**What you see**
+
+![Confirmed order with Mark placed and Unlock to edit beneath it](img/manager/32c-ordering-confirmed-unlock.png)
+
+**What to do** — If you need to change an order that has not been placed, tap **Unlock to edit**, then **Tap again to unlock**. Edit the draft, save your changes and **Confirm** again when it is right.
+
+**Worth knowing**
+
+- Unlocking unfreezes prices. Confirming again takes the current prices and lines; the earlier confirmation remains in the history.
+- **Mark placed** records that you ordered through the phone, portal or another channel. Sending the order with the app's email send button also marks it placed.
+- Once it is placed, you cannot unlock it. Use **Add-on order** if you need more.
+
+### 7. Make an add-on order
+
+**What you see**
+
+![Placed order with the Add-on order form open](img/manager/32d-ordering-placed-add-on.png)
+
+**What to do** — Open the placed order, tap **Add-on order**, choose the extra items and enter their quantities. Tap **Create add-on order**, then open the new draft to check, confirm and send it.
+
+**Worth knowing**
+
+- This is a deliberate second order for the same vendor at this shop today. It starts as a draft with a **-2** at the end of today's order code; another add-on takes the next free number.
+- Enter only the extra quantities you need. The placed order stays as it was, and creating the add-on does not send it.
+- The add-on picker currently only offers this vendor's active items that are not on the original order. It does not offer another quantity of a line already on that order.
+- A later walk can update this new draft. The cutoff **Generate draft** shortcut still refuses another order for that vendor today.
 
 ---
 
@@ -983,11 +1029,19 @@ Business configuration: who you buy from, what you buy, what the lists say. **Ad
 
 ![The SKU Catalog with category filters, a "No pack info" filter and per-SKU readiness](img/manager/58-admin-skus.png)
 
-**What to do** — Use the **No pack info** filter to find the items that are holding everything else up.
+![SKU data readiness header with blocked and degraded counts for each shop](img/manager/58b-admin-skus-readiness.png)
+
+![An open SKU drawer showing the data errands for that item](img/manager/58c-admin-skus-readiness-drawer.png)
+
+**What to do** — Read **SKU data readiness for tomorrow**, then use **Needs an errand** to find the items that need attention and open a row to see what to do. **No pack info** still narrows the list to missing pack information.
 
 **Worth knowing**
 
-- This is where the pack sizes live — and a missing pack size is what makes an item uncountable on an audit and unsuggestable on an ordering walk. **Not ready** tells you exactly what is missing: no price, no pack size, no delivery ever received.
+- This is where the pack sizes live. **ORDER · COUNT · COST** are three separate chips for each SKU included in daily operations, each marked **usable**, **degraded** or **blocked**. Usable means no data errand for that job; degraded means information needs attention; blocked means required information is missing. One job can be usable while another is blocked.
+- The header gives blocked and degraded counts for each job at each shop you can see. The row chips show the worst state across those shops; the drawer explains any differences. **Same at both shops** means the results agree.
+- The drawer gives you the errand in plain words: *"Enter the invoice price in this SKU's order unit."*, *"Read the package label and enter the case → piece chain."*, *"Tare and weigh the standard portion."* or *"Count the shelf and enter the standing par."* Follow the errand for that item rather than guessing from a general readiness badge.
+- **Not included in this shop's daily operations.** means the SKU is outside the set being checked for that shop, not broken. If readiness cannot load, the page says so; refresh rather than treating it as no errands.
+- The price of record is the latest recorded invoice price. The September 2026 Angel purchase-history import seeded prices and pack information for about 20 SKUs and records its own source. You do not need to type those imported values again. New invoice prices come through receiving; if a price needs recording separately, use the invoice and the SKU's order unit.
 
 ### 8. Items
 
@@ -1044,6 +1098,7 @@ Business configuration: who you buy from, what you buy, what the lists say. **Ad
 
 - The app signs you out on its own after about ten minutes of no touching, and warns you first.
 - Log out anyway, every time you walk away. Anything tapped while you are signed in is recorded under your name — including a cash deposit and a closing confirmation.
+- **Log out** ends your current sign-in immediately. If an admin deactivates your account or changes your role, or you reset your password or set your first password, every sign-in you had open on any device ends at once. Those old sign-ins need a fresh login; a deactivated account must be reactivated first. Setting your first password signs you back in automatically on the device where you set it.
 
 ### 3. You are out
 
