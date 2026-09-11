@@ -25,6 +25,8 @@ import { buildPackChain, isChainUnverified, type PackChainLevel } from "@/lib/pa
 import type { MeasureUnitFactor } from "@/lib/recipe-math";
 import { SkuCatalogClient } from "@/components/admin/skus/SkuCatalogClient";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { loadSkuDataReadiness } from "@/lib/sku-data-readiness-load";
+import type { SkuDataShop } from "@/lib/sku-data-readiness";
 
 export default async function AdminSkusPage() {
   const auth = await requireSessionFromHeaders("/admin");
@@ -130,6 +132,16 @@ export default async function AdminSkusPage() {
   // Ordering-rhythm group then does not render and neither key is sent.
   const parsReady = await parsColumnsReady();
 
+  let skuDataShops: SkuDataShop[] = [];
+  let skuDataUnavailable = false;
+  try {
+    skuDataShops = await loadSkuDataReadiness(auth);
+  } catch {
+    // A failed batch is unavailable, never a zero-errand claim. Keep the existing
+    // catalog usable and disclose the unavailable lane alongside its header.
+    skuDataUnavailable = true;
+  }
+
   return (
     <div>
       <PageHeader
@@ -146,6 +158,8 @@ export default async function AdminSkusPage() {
         skuLedger={skuLedger}
         skuConsumption={skuConsumption}
         skuReadiness={skuReadinessMap}
+        skuDataShops={skuDataShops}
+        skuDataUnavailable={skuDataUnavailable}
         chainsBySku={chainsBySku}
         chainUnverifiedBySku={chainUnverifiedBySku}
         overlaysBySku={overlaysBySku}
