@@ -969,13 +969,15 @@ async function loadInferredConsumedOz(
  * re-reading the row we wrote. The persisted row only matters for FUTURE loads;
  * ignoreDuplicates makes the insert race-safe (a concurrent request that wrote first
  * wins — the compute is deterministic over the same window, so any winner is fine).
- * Pre-existing baselines anchor at their stored computed_at.
+ * Pre-existing baselines anchor at their stored computed_at. With seedBaselines
+ * false, the same merge computes this render without writing future anchors.
  */
 async function loadInferredRows(
   sb: ReturnType<typeof getServiceRoleClient>,
   locationId: string,
   censusSkuIds: ReadonlySet<string>,
   now: number,
+  { seedBaselines }: { seedBaselines: boolean } = { seedBaselines: true },
 ): Promise<OnHandRow[]> {
   // Active SKU roster (global; the item spine is location-scoped via deliveries, not
   // the vendor_items row) minus any SKU already carrying a census anchor.
@@ -1036,7 +1038,7 @@ async function loadInferredRows(
         },
       });
     }
-    if (toInsert.length > 0) {
+    if (seedBaselines && toInsert.length > 0) {
       // Computed ONCE, race-safe: a concurrent loader that wrote first keeps its row;
       // ignoreDuplicates makes our insert a no-op there. We keep our in-memory values
       // for THIS render (they only matter for future loads — see the merge note).
@@ -1281,7 +1283,7 @@ export async function loadOnHand(actor: AuthContext, locationId: string, now: nu
   requireLevel(actor, COUNT_READ_MIN);
   // The counts SURFACE gets the product grain; the advisory derivation below does not
   // (see withProducts). This is the only entry point that renders a two-grain panel.
-  return loadOnHandDerived(actor, locationId, now, { withProducts: true });
+  return loadOnHandDerived(actor, locationId, now, { withProducts: true, seedBaselines: false });
 }
 
 /** KH+ floor for the ADVISORY on-hand derivation — matches the ordering walker's
@@ -1308,11 +1310,14 @@ export async function loadOnHandDerived(
    * the order walk consumes this loader as advisory and would pay ~8 extra queries
    * (product index + receipt lots) for a view it never renders. The counts surface
    * turns it on; every other caller keeps its cost byte-identical to today.
+   * `seedBaselines` defaults to true for the ordering walk. Read surfaces MUST
+   * pass false: inferred values still merge in memory without persisting them.
    */
-  opts: { withProducts?: boolean } = {},
+  opts: { withProducts?: boolean; seedBaselines?: boolean } = {},
 ): Promise<OnHandView> {
   requireLevel(actor, ON_HAND_DERIVED_MIN);
   const withProducts = opts.withProducts === true;
+  const seedBaselines = opts.seedBaselines ?? true;
   if (!lockLocationContext(actorLoc(actor), locationId)) throw new CountError(404, "not_found", "Location not found");
   const sb = getServiceRoleClient();
   const salesThrough = await loadDepletionWatermark(locationId, sb);
@@ -1345,7 +1350,7 @@ export async function loadOnHandDerived(
     // rest. No census SKUs → both tiers see the full active roster; inference EXCLUDES
     // whatever par_estimate already anchored.
     const parEstimate = await loadParEstimateRows(sb, locationId, new Set<string>(), now);
-    const inferredRows = await loadInferredRows(sb, locationId, new Set(parEstimate.skuIds), now);
+    const inferredRows = await loadInferredRows(sb, locationId, new Set(parEstimate.skuIds), now, { seedBaselines });
     const rows = [...parEstimate.rows, ...inferredRows].sort((a, b) => a.skuName.localeCompare(b.skuName));
     return { locationId, anchorAt: null, salesThrough, rows, products: await loadProductOnHandRows(sb, locationId, rows, withProducts) };
   }
@@ -1414,7 +1419,7 @@ export async function loadOnHandDerived(
     // Events exist but resolved to no anchors (edge) — still run the par_estimate then
     // inference tiers (par_estimate first; inference excludes what it anchored).
     const parEstimate = await loadParEstimateRows(sb, locationId, new Set<string>(), now);
-    const inferredRows = await loadInferredRows(sb, locationId, new Set(parEstimate.skuIds), now);
+    const inferredRows = await loadInferredRows(sb, locationId, new Set(parEstimate.skuIds), now, { seedBaselines });
     const rows = [...parEstimate.rows, ...inferredRows].sort((a, b) => a.skuName.localeCompare(b.skuName));
     return { locationId, anchorAt: locationLastCountedAt, salesThrough, rows, products: await loadProductOnHandRows(sb, locationId, rows, withProducts) };
   }
@@ -1595,7 +1600,7 @@ export async function loadOnHandDerived(
   // inference never shadows a counted OR par-pass-estimated SKU (census > par_estimate >
   // inferred precedence).
   const inferredExcluded = new Set([...skuIds, ...parEstimate.skuIds]);
-  const inferredRows = await loadInferredRows(sb, locationId, inferredExcluded, now);
+  const inferredRows = await loadInferredRows(sb, locationId, inferredExcluded, now, { seedBaselines });
 
   const rows = [...weightRows, ...countRows, ...parEstimate.rows, ...inferredRows].sort((a, b) => a.skuName.localeCompare(b.skuName));
   return { locationId, anchorAt: locationLastCountedAt, salesThrough, rows, products: await loadProductOnHandRows(sb, locationId, rows, withProducts) };

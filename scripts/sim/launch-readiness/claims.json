@@ -306,6 +306,22 @@
       "status": "pending"
     },
     {
+      "id": "ordering.walk-duplicate-po",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Ordering and purchase orders / 4. The draft order",
+        "quote": "**One draft order per vendor**, covering only the lines above zero. The zeros stay on the walk record as evidence you checked.",
+        "quoteSha256": "cdd5e2e814fa472d6e2f4ddc8cf0e496f3a5782582aaebeeae497865f483898b"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "A cutoff draft already exists for this vendor/shop today; a key holder submits a walk with positive quantities for the same vendor.",
+      "expected": "Walk submit returns 201 and persists every observation. Exactly one PO remains for the vendor/shop/day; poSkipped names the vendor and existing PO with reason po_exists. No duplicate PO or replacement lines are written.",
+      "assertionId": "ordering.walk.duplicate-po",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
       "id": "ordering.draft-positive-lines",
       "guide": {
         "path": "docs/guides/manager-guide.md",

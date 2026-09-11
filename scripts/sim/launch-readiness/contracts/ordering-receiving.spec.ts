@@ -167,13 +167,15 @@ export async function checkThreeWay(session: Session, poId: string, ledger: Awai
 }
 
 export async function runOrderingContracts(pins: Record<string, string | undefined>) {
-  const results: { id: string; assertionIds: string[]; status: "passed" | "failed"; failedAssertionIds: string[]; findingIds: string[]; skippedAssertionIds: string[]; race: { status: number; acknowledged: boolean }[] }[] = [];
+  const results: { id: string; assertionIds: string[]; status: "passed" | "failed"; failedAssertionIds: string[]; failures: { assertionId: string; message: string }[]; findingIds: string[]; skippedAssertionIds: string[]; race: { status: number; acknowledged: boolean }[] }[] = [];
   for (const code of ["EM", "MEP"] as const) {
-    const result = { id: `ordering-contract-${code}`, assertionIds: [] as string[], status: "passed" as "passed" | "failed", failedAssertionIds: [] as string[], findingIds: [] as string[], skippedAssertionIds: [] as string[], race: [] as { status: number; acknowledged: boolean }[] };
+    const result = { id: `ordering-contract-${code}`, assertionIds: [] as string[], status: "passed" as "passed" | "failed", failedAssertionIds: [] as string[], failures: [] as { assertionId: string; message: string }[], findingIds: [] as string[], skippedAssertionIds: [] as string[], race: [] as { status: number; acknowledged: boolean }[] };
     results.push(result);
     let current = "ordering.walk.decisions";
     const mark = (id: string) => { current = id; if (!result.assertionIds.includes(id)) result.assertionIds.push(id); };
-    const fail = (error: unknown) => { const id = error instanceof Error ? error.message.match(/ordering\.[a-z0-9.-]+/)?.[0] ?? current : current; mark(id); result.status = "failed"; if (!result.failedAssertionIds.includes(id)) result.failedAssertionIds.push(id); };
+    // The id is what the run manifest ranks on; the MESSAGE is what a reviewer needs to act (an id alone cost a
+    // full 12-minute rerun on 2026-09-10 - CC). Keep `current` as the fallback id; record the message beside it.
+    const fail = (error: unknown) => { const id = error instanceof Error ? error.message.match(/ordering\.[a-z0-9.-]+/)?.[0] ?? current : current; mark(id); result.status = "failed"; if (!result.failedAssertionIds.includes(id)) result.failedAssertionIds.push(id); result.failures.push({ assertionId: id, message: String(error instanceof Error ? error.message : error).slice(0, 2000) }); };
     const soft = async (id: string, check: () => Promise<void>) => { mark(id); try { await check(); } catch (error) { fail(error); } };
     try {
       mark(current);
@@ -197,7 +199,7 @@ export async function runOrderingContracts(pins: Record<string, string | undefin
       const expected = decisions.filter(d => d.orderQty > 0).map(d => ({ skuId: d.skuId, qty: d.orderQty, unit: d.orderUnitLabel }));
       assert.deepEqual(lineShape(await poLines(poId)), sortSku(expected), current);
       assert.equal((await orders(code, vendor.vendorId)).length, 1, current);
-      await soft("ordering.walk.duplicate-po", async () => {
+      await soft("ordering.draft.duplicate-po", async () => {
         const refused = await call(kh, "POST", PO_API, request);
         assert.deepEqual({ status: refused.status, code: refused.code }, { status: 409, code: "po_exists" }, current);
         assert.equal((await orders(code, vendor.vendorId)).length, 1, current);
@@ -255,7 +257,25 @@ export async function runOrderingContracts(pins: Record<string, string | undefin
         const manager = await sessionFor(code === "EM" ? "tommy" : "marcus", code, pins);
         const blocked = await call(manager, "POST", PO_API, { action: "reconcile", poId });
         assert.deepEqual({ status: blocked.status, code: blocked.code }, { status: 409, code: "open_credits" }, current);
-        const control = decisions.find(d => d.name === "Capicola")!;
+        // LRA-206: a second same-day order for the original vendor now conflicts.
+        // Select a fresh vendor for the independent clean reconciliation control.
+        const controlWalk = await call(kh, "GET", `/api/operations/ordering?locationId=${SIM_LOCATIONS[code].id}`);
+        assert.equal(controlWalk.status, 200, current);
+        let controlVendor: WalkerVendor | undefined;
+        let control: WalkerVendor["skus"][number] | undefined;
+        for (const candidate of (controlWalk.json as { walker: { vendors: WalkerVendor[] } }).walker.vendors) {
+          if ((await orders(code, candidate.vendorId)).length !== 0) continue;
+          for (const s of candidate.skus) {
+            if (!(s.parToday > 0 && s.orderUnitLabel && s.canImplyOz)) continue;
+            // The control must confirm with a FROZEN price (the receive line and the price assertion below need
+            // one). Unpriced SKUs are legitimate catalog rows (111 per shop after Angel wave 7), so an unused vendor
+            // whose first par'd SKU has no vendor_price_history row is not a valid control. (CC, 2026-09-10 rerun)
+            const prices = await readRows<{ unit_price: number | string }>("vendor_price_history", "unit_price", { vendor_item_id: s.skuId });
+            if (prices.length > 0 && prices.every(r => Number(r.unit_price) > 0)) { controlVendor = candidate; control = s; break; }
+          }
+          if (control) break;
+        }
+        assert(controlVendor && control, "ordering.reconcile.control: unused vendor with a priced SKU required");
         const submitted = await call(kh, "POST", "/api/operations/ordering", { locationId: SIM_LOCATIONS[code].id, lines: [{ skuId: control.skuId, orderQty: 2 }] });
         assert.equal(submitted.status, 201, current);
         const controlPoId = (submitted.json as { pos: { poId: string }[] }).pos[0]!.poId;
@@ -263,7 +283,7 @@ export async function runOrderingContracts(pins: Record<string, string | undefin
         assert.equal((await call(kh, "POST", PO_API, { action: "place", poId: controlPoId, channel: "in_person" })).status, 200, current);
         const controlPrice = (await poById(controlPoId)).confirmed_snapshot!.lines[0]!.priceCents;
         assert(Number.isInteger(controlPrice) && controlPrice! > 0, current);
-        const received = await call(kh, "POST", RECEIVE_API, { vendorId: vendor.vendorId, locationId: SIM_LOCATIONS[code].id, purchaseOrderId: controlPoId, invoiceNumber: `SIM-BH-${code}-CONTROL`, deliveryDate: driver.todayEt(), lines: [{ skuId: control.skuId, qtyReceived: 2, expectedQty: 2, unitPrice: controlPrice! / 100 }] });
+        const received = await call(kh, "POST", RECEIVE_API, { vendorId: controlVendor.vendorId, locationId: SIM_LOCATIONS[code].id, purchaseOrderId: controlPoId, invoiceNumber: `SIM-BH-${code}-CONTROL`, deliveryDate: driver.todayEt(), lines: [{ skuId: control.skuId, qtyReceived: 2, expectedQty: 2, unitPrice: controlPrice! / 100 }] });
         assert.equal(received.status, 201, current);
         assert.equal((await call(kh, "POST", PO_API, { action: "reconcile", poId: controlPoId })).status, 403, current);
         assert.equal((await call(manager, "POST", PO_API, { action: "reconcile", poId: controlPoId })).status, 200, current);
@@ -309,20 +329,20 @@ export async function runOrderingContracts(pins: Record<string, string | undefin
           assert.deepEqual(generatedLines, sortSku(typed), "ordering.draft.ignores-typed: LRA-207 system draft ignores pending walk decisions");
         });
         await soft("ordering.walk.duplicate-po", async () => {
+          // A cutoff draft suppresses only its PO; every walk observation still lands.
+          const beforeLines = await poLines(created[0]!.id);
           const recorded = await call(kh, "POST", "/api/operations/ordering", { locationId: SIM_LOCATIONS[code].id, lines: typed.map(l => ({ skuId: l.skuId, orderQty: l.qty })) });
-          assert.equal(recorded.status, 201, current);
-          const walk = recorded.json as { eventId: string; poError: boolean; pos: { vendorId: string; poId: string }[] };
           const after = await orders(code, fresh.vendorId);
-          const duplicate = after.find(p => p.id !== created[0]!.id && p.par_pass_event_id === walk.eventId);
-          if (duplicate) {
-            result.findingIds.push("LRA-206");
-            assert.equal(walk.poError, false, current);
-            assert.equal(after.length, 2, current);
-            assert(walk.pos.some(p => p.vendorId === fresh.vendorId && p.poId === duplicate.id), current);
-            assert.deepEqual(lineShape(await poLines(duplicate.id)), sortSku(typed), current);
-          }
-          // A reproduced finding stays RED, while all remaining shops still run.
-          assert.equal(after.length, 1, "ordering.walk.duplicate-po: LRA-206 generate then Record walk creates a second PO");
+          if (after.length !== 1) result.findingIds.push("LRA-206");
+          assert.equal(recorded.status, 201, current);
+          const walk = recorded.json as { eventId: string; poError: boolean; pos: { vendorId: string }[]; poSkipped: { vendorId: string; vendorName: string; reason: string; existingPoId: string }[] };
+          assert.equal(walk.poError, false, current);
+          assert.equal(walk.pos.some(p => p.vendorId === fresh.vendorId), false, current);
+          assert.deepEqual(walk.poSkipped, [{ vendorId: fresh.vendorId, vendorName: fresh.name, reason: "po_exists", existingPoId: created[0]!.id }], current);
+          assert.deepEqual(after, created, "ordering.walk.duplicate-po: no second PO");
+          assert.deepEqual(await poLines(created[0]!.id), beforeLines, current);
+          const persisted = await readRows<{ sku_id: string; order_qty: number | string; order_unit_label: string | null }>("par_pass_lines", "sku_id,order_qty,order_unit_label", { event_id: walk.eventId });
+          assert.deepEqual(sortSku(persisted.map(l => ({ skuId: l.sku_id, qty: Number(l.order_qty), unit: l.order_unit_label }))), sortSku(typed), "ordering.walk.duplicate-po: observations persisted");
         });
       });
     } catch (error) { fail(error); }

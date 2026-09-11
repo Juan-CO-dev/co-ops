@@ -103,7 +103,7 @@ const EVENT_ADVISORY_HORIZON_DAYS = 14;
 export const PAR_PASS_MIN = 4; // key_holder+
 
 export class OrderingError extends Error {
-  constructor(public status: number, public code: string, message?: string) {
+  constructor(public status: number, public code: string, message?: string, public existingPoId?: string) {
     super(message ?? code);
     this.name = "OrderingError";
   }
@@ -1416,6 +1416,13 @@ function shrinkageDiverges(
   return Math.abs(impliedOz - computedOz) > threshold;
 }
 
+export interface SkippedWalkPo {
+  vendorId: string;
+  vendorName: string;
+  reason: "po_exists";
+  existingPoId: string;
+}
+
 /**
  * Record a par-pass EVENT + its lines (KH+, location-bind, NO step-up). Validates the
  * batch (non-empty; each SKU active + par'd today + orderQty finite ≥ 0), snapshots the
@@ -1437,11 +1444,13 @@ export async function submitParPass(
   draftOrders: DraftOrder[];
   shrinkage: ShrinkageNotice[];
   /** The birthed draft POs (one per vendor with orderQty > 0 lines). Empty when
-   *  nothing was ordered OR draft-PO creation failed (poError true). */
+   *  nothing was ordered, every vendor was skipped, or PO creation failed (poError true). */
   pos: Array<{ vendorId: string; poId: string; displayCode: string }>;
-  /** True when draft-PO creation threw — the par-pass (observation data) is still
+  /** True when a PO check or draft-PO creation failed — the par-pass (observation data) is still
    *  saved; the manager can re-generate drafts from the cutoff path. */
   poError: boolean;
+  /** Existing orders preserved while this walk's observations were recorded. */
+  poSkipped: SkippedWalkPo[];
 }> {
   requireLevel(actor, PAR_PASS_MIN);
   if (!lockLocationContext(actorLoc(actor), locationId)) {
@@ -1544,6 +1553,41 @@ export async function submitParPass(
     });
   }
 
+  const orderLines = resolved.filter((r) => r.input.orderQty > 0);
+  const byVendor = new Map<string, DraftLineInput[]>();
+  for (const r of orderLines) {
+    const vid = r.sku.vendor_id;
+    if (vid == null) continue; // a line with no vendor can't be ordered (never a PO).
+    const arr = byVendor.get(vid) ?? [];
+    arr.push({
+      skuId: r.sku.id,
+      orderQty: r.input.orderQty,
+      orderUnitLabel: r.orderUnitLabel,
+      note: r.input.note ?? null,
+    });
+    byVendor.set(vid, arr);
+  }
+  const skippedByVendor = new Map<string, string>();
+  let poError = false;
+  // PO checks may suppress orders, but must never refuse the observations.
+  try {
+    for (const vendorId of byVendor.keys()) {
+      try {
+        await assertNoLivePoToday(sb, locationId, vendorId);
+      } catch (err) {
+        if (err instanceof OrderingError && err.code === "po_exists" && err.existingPoId) {
+          skippedByVendor.set(vendorId, err.existingPoId);
+          byVendor.delete(vendorId);
+          continue;
+        }
+        throw err;
+      }
+    }
+  } catch (err) {
+    poError = true;
+    console.error("submitParPass PO pre-check failed", err);
+  }
+
   // 1) Insert the event header (status submitted; append-only). House sequential pattern.
   const { data: ev, error: evErr } = await sb.from("par_pass_events").insert({
     location_id: locationId, walked_by: actor.user.id, status: "submitted", note: null,
@@ -1574,36 +1618,38 @@ export async function submitParPass(
   });
 
   // ── Draft-PO birth (spec D2): group the orderQty > 0 lines by vendor and create one
-  // `draft` PO per vendor. THE WALK IS SACRED: a PurchaseOrderError (or any throw) must
+  // `draft` PO per vendor. THE WALK IS SACRED: a PO failure must
   // NOT lose the par-pass — the observation rows are already committed above. We wrap the
-  // birth, log the failure, and return pos: [] with poError true; the manager re-generates
-  // drafts from the cutoff path. On success, each vendor's display code threads into the
+  // birth; po_exists skips one vendor, other failures return pos: [] with poError true;
+  // the manager re-generates drafts from the cutoff path. On success, each vendor's display code threads into the
   // draft card + copy/mailto body ("PO {displayCode}"). ──
-  const orderLines = resolved.filter((r) => r.input.orderQty > 0);
-  const byVendor = new Map<string, DraftLineInput[]>();
-  for (const r of orderLines) {
-    const vid = r.sku.vendor_id;
-    if (vid == null) continue; // a line with no vendor can't be ordered (never a PO).
-    const arr = byVendor.get(vid) ?? [];
-    arr.push({
-      skuId: r.sku.id,
-      orderQty: r.input.orderQty,
-      orderUnitLabel: r.orderUnitLabel,
-      note: r.input.note ?? null,
-    });
-    byVendor.set(vid, arr);
-  }
   let pos: CreatedDraft[] = [];
-  let poError = false;
-  if (byVendor.size > 0) {
+  if (!poError && byVendor.size > 0) {
     try {
-      pos = await createDraftsFromLines(actor, locationId, byVendor, ev.id);
+      for (const [vendorId, vendorLines] of byVendor) {
+        try {
+          pos.push(...await createDraftsFromLines(actor, locationId, new Map([[vendorId, vendorLines]]), ev.id, { noCodeSuffixRetry: true }));
+        } catch (err) {
+          if (err instanceof PurchaseOrderError && err.code === "po_exists" && err.displayCode) {
+            // Read the exact arbiter winner, including a PO placed since the pre-check.
+            const { data: existing, error } = await sb.from("purchase_orders")
+              .select("id").eq("location_id", locationId).eq("display_code", err.displayCode)
+              .maybeSingle<{ id: string }>();
+            if (error) throw new Error(`submitParPass race winner: ${error.message}`);
+            if (!existing) throw new Error("submitParPass race winner missing");
+            skippedByVendor.set(vendorId, existing.id);
+            continue;
+          }
+          throw err;
+        }
+      }
     } catch (err) {
       // The par-pass is already persisted (event + lines above). A draft-PO failure is
       // isolated: log, flag poError, keep going — the walk's data is never poisoned. Both
       // PurchaseOrderError (typed lifecycle rejects, e.g. display_code_exhausted) and any
       // unexpected throw are swallowed here; the manager re-generates via the cutoff path.
       poError = true;
+      pos = [];
       const kind = err instanceof PurchaseOrderError ? `PurchaseOrderError(${err.code})` : "error";
       console.error(`submitParPass draft-PO creation failed [${kind}]`, err);
     }
@@ -1634,10 +1680,16 @@ export async function submitParPass(
 
   return {
     eventId: ev.id,
-    draftOrders,
+    draftOrders: draftOrders.filter((order) => !skippedByVendor.has(order.vendorId)),
     shrinkage,
     pos: pos.map((p) => ({ vendorId: p.vendorId, poId: p.poId, displayCode: p.displayCode })),
     poError,
+    poSkipped: draftOrders.filter((order) => skippedByVendor.has(order.vendorId)).map((order) => ({
+      vendorId: order.vendorId,
+      vendorName: order.vendorName,
+      reason: "po_exists",
+      existingPoId: skippedByVendor.get(order.vendorId)!,
+    })),
   };
 }
 
@@ -1751,7 +1803,7 @@ export async function loadShrinkageSignals(
   // Current computed on-hand + SKU names (batched).
   const skuIds = [...new Set(lines.map((l) => l.sku_id))];
   const [onHandView, { data: skuRows, error: nErr }] = await Promise.all([
-    loadOnHandDerived(actor, locationId),
+    loadOnHandDerived(actor, locationId, Date.now(), { seedBaselines: false }),
     sb.from("vendor_items").select("id, name").in("id", skuIds).returns<Array<{ id: string; name: string }>>(),
   ]);
   if (nErr) throw new Error(`loadShrinkageSignals sku names: ${nErr.message}`);
@@ -1949,6 +2001,26 @@ export async function loadParPassDetail(actor: AuthContext, eventId: string): Pr
   };
 }
 
+/** Shared serial guard; the display-code INSERT arbitrates concurrent requests. */
+async function assertNoLivePoToday(
+  sb: ReturnType<typeof getServiceRoleClient>,
+  locationId: string,
+  vendorId: string,
+): Promise<void> {
+  // A draft/confirmed PO already today for this vendor at this location → don't duplicate.
+  const { walkDateEt: dateEt } = etWalkDay();
+  const { startIso, endExclusiveIso } = operationalDayUtcRange(dateEt);
+  const { data: existing, error: exErr } = await sb.from("purchase_orders")
+    .select("id")
+    .eq("location_id", locationId).eq("vendor_id", vendorId)
+    .in("status", ["draft", "confirmed"])
+    .gte("created_at", startIso).lt("created_at", endExclusiveIso)
+    .limit(1)
+    .maybeSingle<{ id: string }>();
+  if (exErr) throw new Error(`generateDraftForVendor existing PO: ${exErr.message}`);
+  if (existing) throw new OrderingError(409, "po_exists", "A draft or confirmed order already exists today for this vendor", existing.id);
+}
+
 // ── generateDraftForVendor: a walk-less draft PO from suggested qtys (cutoff path) ────────
 /**
  * Build one `draft` PO for a single vendor from the walker's suggestedQty — the cutoff
@@ -1979,18 +2051,7 @@ export async function generateDraftForVendor(
   }
   const sb = getServiceRoleClient();
 
-  // A draft/confirmed PO already today for this vendor at this location → don't duplicate.
-  const { walkDateEt: dateEt } = etWalkDay();
-  const { startIso, endExclusiveIso } = operationalDayUtcRange(dateEt);
-  const { data: existing, error: exErr } = await sb.from("purchase_orders")
-    .select("id")
-    .eq("location_id", locationId).eq("vendor_id", vendorId)
-    .in("status", ["draft", "confirmed"])
-    .gte("created_at", startIso).lt("created_at", endExclusiveIso)
-    .limit(1)
-    .maybeSingle<{ id: string }>();
-  if (exErr) throw new Error(`generateDraftForVendor existing PO: ${exErr.message}`);
-  if (existing) throw new OrderingError(409, "po_exists", "A draft or confirmed order already exists today for this vendor");
+  await assertNoLivePoToday(sb, locationId, vendorId);
 
   // Reuse the walker payload (per-location overlay + suggested qtys are computed there).
   const walker = await loadWalkerData(actor, locationId);
