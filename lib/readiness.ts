@@ -53,6 +53,10 @@ export type ReasonCode = (typeof KNOWN_REASONS)[number];
 export interface Reason { code: ReasonCode; count?: number }
 export interface Readiness { status: ReadinessStatus; reasons: Reason[] }
 
+// Data errands extend this vocabulary without changing entity readiness semantics.
+export { DATA_ERRAND_CODES, skuDataReadiness } from "@/lib/sku-data-readiness";
+export type { DataErrandCode, DataErrand, JourneyState, SkuDataReadiness } from "@/lib/sku-data-readiness";
+
 const READY: Readiness = { status: "ready", reasons: [] };
 
 /**
