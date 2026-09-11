@@ -257,7 +257,7 @@ export default async function ClosingPage({ searchParams }: PageProps) {
       templateId: templateRow.id,
       locationId: locationParam,
       date: today,
-      actor: { userId: auth.user.id, role: auth.role, level: auth.level },
+      actor: { userId: auth.user.id, role: auth.role, level: auth.level, locations: auth.locations },
     });
     instanceRow = {
       id: result.instance.id,

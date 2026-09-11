@@ -14,6 +14,7 @@ import { getRoleLevel } from "@/lib/roles";
 import { lockLocationContext, isAllLocationsAccess } from "@/lib/locations";
 import { audit } from "@/lib/audit";
 import type { AuthContext } from "@/lib/session";
+import { normalizeEmail } from "@/lib/catering/companies";
 
 export const CUSTOMER_READ_MIN = 5;
 export const CUSTOMER_WRITE_MIN = 6;
@@ -208,7 +209,7 @@ export async function createCustomer(actor: AuthContext, input: CreateCustomerIn
       name: input.name.trim(),
       company: input.company ?? null,
       contact_person: input.contactPerson ?? null,
-      email: input.email ?? null,
+      email: normalizeEmail(input.email ?? "") || null,
       phone: input.phone ?? null,
       primary_location_id: primaryLocationId,
       notes: input.notes ?? null,
@@ -261,7 +262,7 @@ export async function editCustomer(actor: AuthContext, id: string, input: EditCu
   }
   if (input.company !== undefined) patch.company = input.company;
   if (input.contactPerson !== undefined) patch.contact_person = input.contactPerson;
-  if (input.email !== undefined) patch.email = input.email;
+  if (input.email !== undefined) patch.email = normalizeEmail(input.email ?? "") || null;
   if (input.phone !== undefined) patch.phone = input.phone;
   if (input.notes !== undefined) patch.notes = input.notes;
   if (Object.keys(patch).length === 0) return;
