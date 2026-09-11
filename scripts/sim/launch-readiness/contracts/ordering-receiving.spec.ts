@@ -304,7 +304,7 @@ export async function runOrderingContracts(pins: Record<string, string | undefin
         }
         if (!fresh) {
           // No restore or fixture mutation just to manufacture a suggestion.
-          result.skippedAssertionIds.push("ordering.draft.race", "ordering.draft.ignores-typed", "ordering.walk.duplicate-po");
+          result.skippedAssertionIds.push("ordering.draft.race", "ordering.draft.ignores-typed", "ordering.walk.merge-into-draft", "ordering.walk.duplicate-po", "ordering.po.reopen", "ordering.po.add-on");
           return;
         }
         const suggestions = fresh.skus.filter(s => s.suggestedQty !== null && s.suggestedQty > 0);
@@ -328,21 +328,79 @@ export async function runOrderingContracts(pins: Record<string, string | undefin
           if (JSON.stringify(generatedLines) !== JSON.stringify(sortSku(typed))) result.findingIds.push("LRA-207");
           assert.deepEqual(generatedLines, sortSku(typed), "ordering.draft.ignores-typed: LRA-207 system draft ignores pending walk decisions");
         });
-        await soft("ordering.walk.duplicate-po", async () => {
-          // A cutoff draft suppresses only its PO; every walk observation still lands.
+        // Touch a subset when possible so the merge also proves untouched lines survive.
+        const mergeTyped = typed.slice(0, Math.max(1, typed.length - 1));
+        await soft("ordering.walk.merge-into-draft", async () => {
           const beforeLines = await poLines(created[0]!.id);
-          const recorded = await call(kh, "POST", "/api/operations/ordering", { locationId: SIM_LOCATIONS[code].id, lines: typed.map(l => ({ skuId: l.skuId, orderQty: l.qty })) });
+          const recorded = await call(kh, "POST", "/api/operations/ordering", { locationId: SIM_LOCATIONS[code].id, lines: mergeTyped.map(l => ({ skuId: l.skuId, orderQty: l.qty })) });
           const after = await orders(code, fresh.vendorId);
           if (after.length !== 1) result.findingIds.push("LRA-206");
           assert.equal(recorded.status, 201, current);
-          const walk = recorded.json as { eventId: string; poError: boolean; pos: { vendorId: string }[]; poSkipped: { vendorId: string; vendorName: string; reason: string; existingPoId: string }[] };
+          const walk = recorded.json as { eventId: string; poError: boolean; pos: { vendorId: string }[]; poMerged: { vendorId: string; vendorName: string; poId: string; displayCode: string; linesUpdated: number; linesAdded: number }[]; poSkipped: { vendorId: string }[] };
           assert.equal(walk.poError, false, current);
           assert.equal(walk.pos.some(p => p.vendorId === fresh.vendorId), false, current);
-          assert.deepEqual(walk.poSkipped, [{ vendorId: fresh.vendorId, vendorName: fresh.name, reason: "po_exists", existingPoId: created[0]!.id }], current);
-          assert.deepEqual(after, created, "ordering.walk.duplicate-po: no second PO");
+          assert.deepEqual(walk.poSkipped, [], current);
+          assert.deepEqual(walk.poMerged, [{ vendorId: fresh.vendorId, vendorName: fresh.name, poId: created[0]!.id, displayCode: created[0]!.display_code, linesUpdated: mergeTyped.length, linesAdded: 0 }], current);
+          assert.equal(after.length, 1, current);
+          assert.equal(after[0]!.id, created[0]!.id, current);
+          const touched = new Map(mergeTyped.map(l => [l.skuId, l.qty]));
+          assert.deepEqual(lineShape(await poLines(created[0]!.id)), lineShape(beforeLines.map(l => ({ ...l, order_qty: touched.get(l.sku_id) ?? l.order_qty }))), `${current}: typed quantities win; untouched lines survive`);
+          const persisted = await readRows<{ sku_id: string; order_qty: number | string; order_unit_label: string | null }>("par_pass_lines", "sku_id,order_qty,order_unit_label", { event_id: walk.eventId });
+          assert.deepEqual(sortSku(persisted.map(l => ({ skuId: l.sku_id, qty: Number(l.order_qty), unit: l.order_unit_label }))), sortSku(mergeTyped), `${current}: observations persisted`);
+        });
+        await soft("ordering.walk.duplicate-po", async () => {
+          assert.equal((await call(kh, "POST", PO_API, { action: "confirm", poId: created[0]!.id })).status, 200, current);
+          const before = await orders(code, fresh.vendorId);
+          const beforeLines = await poLines(created[0]!.id);
+          // Different quantities prove the confirmed snapshot and lines cannot be changed by a walk.
+          const confirmedTyped = mergeTyped.map(l => ({ ...l, qty: l.qty + 1 }));
+          const recorded = await call(kh, "POST", "/api/operations/ordering", { locationId: SIM_LOCATIONS[code].id, lines: confirmedTyped.map(l => ({ skuId: l.skuId, orderQty: l.qty })) });
+          assert.equal(recorded.status, 201, current);
+          const walk = recorded.json as { eventId: string; poError: boolean; pos: { vendorId: string }[]; poMerged: { vendorId: string }[]; poSkipped: { vendorId: string; vendorName: string; reason: string; existingPoId: string; existingStatus: string }[] };
+          assert.equal(walk.poError, false, current);
+          assert.equal(walk.pos.some(p => p.vendorId === fresh.vendorId), false, current);
+          assert.deepEqual(walk.poMerged, [], current);
+          assert.deepEqual(walk.poSkipped, [{ vendorId: fresh.vendorId, vendorName: fresh.name, reason: "po_exists", existingPoId: created[0]!.id, existingStatus: "confirmed" }], current);
+          assert.deepEqual(await orders(code, fresh.vendorId), before, "ordering.walk.duplicate-po: no second PO or changed snapshot");
           assert.deepEqual(await poLines(created[0]!.id), beforeLines, current);
           const persisted = await readRows<{ sku_id: string; order_qty: number | string; order_unit_label: string | null }>("par_pass_lines", "sku_id,order_qty,order_unit_label", { event_id: walk.eventId });
-          assert.deepEqual(sortSku(persisted.map(l => ({ skuId: l.sku_id, qty: Number(l.order_qty), unit: l.order_unit_label }))), sortSku(typed), "ordering.walk.duplicate-po: observations persisted");
+          assert.deepEqual(sortSku(persisted.map(l => ({ skuId: l.sku_id, qty: Number(l.order_qty), unit: l.order_unit_label }))), sortSku(confirmedTyped), "ordering.walk.duplicate-po: observations persisted");
+        });
+        await soft("ordering.po.reopen", async () => {
+          const before = await poById(created[0]!.id);
+          assert.equal(before.status, "confirmed", current);
+          assert.equal((await call(kh, "POST", PO_API, { action: "reopen", poId: before.id })).status, 200, `${current}: key holder allowed`);
+          const reopened = await poById(before.id);
+          assert.equal(reopened.status, "draft", current);
+          assert.deepEqual(reopened.confirmed_snapshot, before.confirmed_snapshot, `${current}: history retained until re-confirm`);
+          const edited = { skuId: mergeTyped[0]!.skuId, orderQty: mergeTyped[0]!.qty + 2 };
+          assert.equal((await call(kh, "PATCH", PO_API, { poId: before.id, lines: [edited] })).status, 200, current);
+          assert.equal((await call(kh, "POST", PO_API, { action: "confirm", poId: before.id })).status, 200, current);
+          const confirmed = await poById(before.id);
+          assert.equal(confirmed.status, "confirmed", current);
+          assert.equal(confirmed.confirmed_snapshot!.lines.find(l => l.skuId === edited.skuId)!.qty, edited.orderQty, `${current}: new snapshot reflects edit`);
+          assert.notDeepEqual(confirmed.confirmed_snapshot, before.confirmed_snapshot, current);
+        });
+        await soft("ordering.po.add-on", async () => {
+          assert.equal((await call(kh, "POST", PO_API, { action: "place", poId: created[0]!.id, channel: "in_person" })).status, 200, current);
+          const parent = await poById(created[0]!.id), parentLines = await poLines(parent.id);
+          assert.equal(parent.status, "placed", current);
+          const line = { skuId: mergeTyped[0]!.skuId, orderQty: 1, orderUnitLabel: mergeTyped[0]!.unit };
+          const added = await call(kh, "POST", PO_API, { action: "add_on", poId: parent.id, lines: [line] });
+          assert.equal(added.status, 201, current);
+          const payload = added.json as { poId: string; displayCode: string };
+          assert.notEqual(payload.poId, parent.id, current);
+          assert.equal(payload.displayCode, `${parent.display_code}-2`, current);
+          const all = await orders(code, fresh.vendorId);
+          assert.equal(all.length, 2, current);
+          const addOn = all.find(p => p.id === payload.poId);
+          assert(addOn, current);
+          assert.equal(addOn.status, "draft", current);
+          assert.equal(addOn.display_code, payload.displayCode, current);
+          assert.equal(addOn.par_pass_event_id, null, current);
+          assert.deepEqual(lineShape(await poLines(addOn.id)), [{ skuId: line.skuId, qty: 1, unit: mergeTyped[0]!.unit }], current);
+          assert.deepEqual(await poById(parent.id), parent, `${current}: parent unchanged`);
+          assert.deepEqual(await poLines(parent.id), parentLines, `${current}: parent lines unchanged`);
         });
       });
     } catch (error) { fail(error); }
