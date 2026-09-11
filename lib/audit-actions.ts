@@ -194,6 +194,8 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "par.suggestion_dismiss",
   "par_pass.submitted",
   "po.confirmed",
+  // "po.reopened" reverses accountability: registered in DESTRUCTIVE_ACTIONS,
+  // included in AUDIT_ACTIONS below, never in this non-destructive list.
   "po.draft_created",
   "po.email_sent",
   "po.placed",

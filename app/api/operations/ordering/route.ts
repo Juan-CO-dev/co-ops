@@ -84,6 +84,7 @@ export async function POST(req: NextRequest) {
         pos: res.pos,
         poError: res.poError,
         poSkipped: res.poSkipped,
+        poMerged: res.poMerged,
       },
       201,
     );

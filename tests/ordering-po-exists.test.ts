@@ -18,7 +18,7 @@ function execute(name: string, dependencies: Record<string, unknown>) {
   return new Function(...Object.keys(dependencies), `${js}; return ${name};`)(...Object.values(dependencies));
 }
 class OrderingError extends Error {
-  constructor(public status: number, public code: string, message?: string, public existingPoId?: string) { super(message); }
+  constructor(public status: number, public code: string, message?: string, public existingPoId?: string, public existingPoStatus?: string) { super(message); }
 }
 class PurchaseOrderError extends Error {
   constructor(public status: number, public code: string, message?: string, public displayCode?: string) { super(message); }
@@ -27,6 +27,7 @@ function setup() {
   const writes: { table: string; data: unknown }[] = [];
   const filters: [string, unknown][] = [];
   const skus = ["a", "b", "c"].map(id => ({ id, vendor_id: id, active: true, weekday_par: 4, name: id, product_id: null }));
+  const poRead = vi.fn().mockResolvedValue({ data: { id: "existing-race", status: "confirmed", display_code: "SHOP-DATE-B" }, error: null });
   const sb = { from: (table: string) => {
     const query = {
       select: () => query,
@@ -34,7 +35,7 @@ function setup() {
       eq: (column: string, value: unknown) => { filters.push([column, value]); return query; },
       insert: (data: unknown) => { writes.push({ table, data }); return query; },
       returns: async () => ({ data: skus, error: null }),
-      maybeSingle: async () => ({ data: { id: table === "purchase_orders" ? "existing-race" : "walk" }, error: null }),
+      maybeSingle: async () => table === "purchase_orders" ? poRead() : ({ data: { id: "walk" }, error: null }),
     };
     return query;
   } };
@@ -42,6 +43,11 @@ function setup() {
   const create = vi.fn(async (_actor: unknown, _loc: string, vendors: Map<string, unknown>) =>
     [...vendors.keys()].map(vendorId => ({ vendorId, poId: `po-${vendorId}`, displayCode: vendorId })));
   const audit = vi.fn();
+  const update = vi.fn().mockImplementation(async () => {
+    expect(writes.map(w => w.table)).toEqual(["par_pass_events", "par_pass_lines"]);
+    expect(audit).toHaveBeenCalledWith(expect.objectContaining({ action: "par_pass.submitted" }));
+    return { updated: 1, inserted: 0 };
+  });
   const log = vi.fn();
   const deps = {
     OrderingError, PurchaseOrderError, PAR_PASS_MIN: 4, WALKER_SKU_COLUMNS: "id",
@@ -50,25 +56,84 @@ function setup() {
     loadSkuPackChains: async () => new Map(), loadMeasures: async () => new Map(), loadOverlayBySku: async () => new Map(),
     resolveActive: () => true, num: Number, resolvePar: () => 4,
     perOrderUnitOz: () => 1, orderUnitLabelFor: () => "case",
-    assertNoLivePoToday: guard, createDraftsFromLines: create, audit,
+    assertNoLivePoToday: guard, createDraftsFromLines: create, updateDraftLines: update, audit,
     buildDraftOrders: async (_sb: unknown, entries: { vendorId: string }[]) => entries.map(e => ({ vendorId: e.vendorId, vendorName: `Vendor ${e.vendorId}` })),
     loadOnHandDerived: async () => [], advisoryOnHandBySku: () => new Map(),
     console: { error: log },
   };
   const submit = execute("submitParPass", deps) as typeof import("@/lib/ordering").submitParPass;
   const run = () => submit({ user: { id: "kh", role: "key_holder" } } as Parameters<typeof submit>[0], "shop", skus.map(s => ({ skuId: s.id, orderQty: 2 })));
-  return { writes, filters, guard, create, audit, run, log };
+  return { writes, filters, guard, create, update, poRead, audit, run, log };
 }
 
-describe("LRA-206: a PO conflict never refuses the walk", () => {
+describe("LRA-206 / LRA-229: a PO conflict never refuses the walk", () => {
+  it("merges a draft only after the walk and audit land, returning line counts", async () => {
+    const f = setup();
+    f.guard.mockImplementation(async (_sb, _loc, vendor) => {
+      if (vendor === "b") throw new OrderingError(409, "po_exists", "exists", "existing-b", "draft");
+    });
+    f.update.mockImplementationOnce(async (...args: unknown[]) => {
+      expect(f.writes[1]!.data).toHaveLength(3);
+      expect(f.audit).toHaveBeenCalled();
+      expect(args).toEqual([expect.objectContaining({ user: { id: "kh", role: "key_holder" } }), "existing-b", [{ skuId: "b", orderQty: 2, orderUnitLabel: "case", note: null }]]);
+      return { updated: 0, inserted: 1 };
+    });
+    const result = await f.run();
+    expect(result.poMerged).toEqual([{ vendorId: "b", vendorName: "Vendor b", poId: "existing-b", displayCode: "SHOP-DATE-B", linesUpdated: 0, linesAdded: 1 }]);
+    expect(result.poSkipped).toEqual([]);
+    expect(result.poError).toBe(false);
+    expect(result.draftOrders.map(p => p.vendorId)).toEqual(["a", "c"]);
+    expect(f.create.mock.calls.map(c => [...c[2].keys()])).toEqual([["a"], ["c"]]);
+  });
+
+  it("merges the display-code race winner when it is still a draft", async () => {
+    const f = setup();
+    f.create.mockRejectedValueOnce(new PurchaseOrderError(409, "po_exists", "race", "SHOP-DATE-B"));
+    f.poRead.mockResolvedValue({ data: { id: "existing-race", status: "draft", display_code: "SHOP-DATE-B" }, error: null });
+    const result = await f.run();
+    expect(f.update).toHaveBeenCalledWith(expect.anything(), "existing-race", [{ skuId: "a", orderQty: 2, orderUnitLabel: "case", note: null }]);
+    expect(result.poMerged).toEqual([{ vendorId: "a", vendorName: "Vendor a", poId: "existing-race", displayCode: "SHOP-DATE-B", linesUpdated: 1, linesAdded: 0 }]);
+    expect(result.poSkipped).toEqual([]);
+    expect(result.poError).toBe(false);
+  });
+
+  it.each(["not_draft", "confirmed_during_edit", "unexpected"])("degrades a %s merge failure to a skip with the refreshed status", async code => {
+    const f = setup();
+    f.guard.mockImplementation(async (_sb, _loc, vendor) => {
+      if (vendor === "b") throw new OrderingError(409, "po_exists", "exists", "existing-b", "draft");
+    });
+    f.update.mockRejectedValueOnce(code === "unexpected" ? new Error("write failed") : new PurchaseOrderError(409, code));
+    const result = await f.run();
+    expect(result.poSkipped).toEqual([{ vendorId: "b", vendorName: "Vendor b", reason: "po_exists", existingPoId: "existing-b", existingStatus: "confirmed" }]);
+    expect(result.poMerged).toEqual([]);
+    expect(result.poError).toBe(false);
+    expect(result.pos.map(p => p.vendorId)).toEqual(["a", "c"]);
+    expect(f.writes[1]!.data).toHaveLength(3);
+  });
+
+  it("contains a failed status refresh after a merge failure without claiming a stale draft status", async () => {
+    const f = setup();
+    f.guard.mockImplementation(async (_sb, _loc, vendor) => {
+      if (vendor === "b") throw new OrderingError(409, "po_exists", "exists", "existing-b", "draft");
+    });
+    f.update.mockRejectedValueOnce(new Error("write failed"));
+    f.poRead.mockRejectedValue(new Error("refresh failed"));
+    const result = await f.run();
+    expect(result.poSkipped).toEqual([{ vendorId: "b", vendorName: "Vendor b", reason: "po_exists", existingPoId: "existing-b", existingStatus: undefined }]);
+    expect(result.poError).toBe(false);
+    expect(result.pos.map(p => p.vendorId)).toEqual(["a", "c"]);
+  });
+
   it("excludes a pre-existing vendor before PO writes, reports it, and persists every observation", async () => {
     const f = setup();
     f.guard.mockImplementation(async (_sb, _loc, vendor) => {
-      if (vendor === "b") throw new OrderingError(409, "po_exists", "exists", "existing-b");
+      if (vendor === "b") throw new OrderingError(409, "po_exists", "exists", "existing-b", "confirmed");
     });
     const result = await f.run();
     expect(f.create.mock.calls.map(c => [...c[2].keys()])).toEqual([["a"], ["c"]]);
-    expect(result.poSkipped).toEqual([{ vendorId: "b", vendorName: "Vendor b", reason: "po_exists", existingPoId: "existing-b" }]);
+    expect(result.poSkipped).toEqual([{ vendorId: "b", vendorName: "Vendor b", reason: "po_exists", existingPoId: "existing-b", existingStatus: "confirmed" }]);
+    expect(result.poMerged).toEqual([]);
+    expect(f.update).not.toHaveBeenCalled();
     expect(result.poError).toBe(false);
     expect(result.pos.map(p => p.vendorId)).toEqual(["a", "c"]);
     expect(result.draftOrders.map(p => p.vendorId)).toEqual(["a", "c"]);
@@ -86,7 +151,7 @@ describe("LRA-206: a PO conflict never refuses the walk", () => {
       return [{ vendorId, poId: vendorId, displayCode: vendorId }];
     });
     const result = await f.run();
-    expect(result.poSkipped).toEqual([{ vendorId: "b", vendorName: "Vendor b", reason: "po_exists", existingPoId: "existing-race" }]);
+    expect(result.poSkipped).toEqual([{ vendorId: "b", vendorName: "Vendor b", reason: "po_exists", existingPoId: "existing-race", existingStatus: "confirmed" }]);
     expect(result.pos.map(p => p.vendorId)).toEqual(["a", "c"]);
     expect(result.poError).toBe(false);
     expect(f.filters).toContainEqual(["display_code", "SHOP-DATE-B"]);

@@ -47,6 +47,8 @@ import { etCalendarDate, operationalDayUtcRange } from "@/lib/operational-day";
 import { etDayFromDate } from "@/lib/et-day-shared";
 import { loadCreditsForDelivery } from "@/lib/credits";
 import { emailOrderingAvailable, isPlausibleEmail } from "@/lib/po-email-shared";
+import { loadSkuPackChains } from "@/lib/prep-consumption";
+import { buildPackChain, chainRootLabel } from "@/lib/pack-chain-shared";
 
 /** KH+ read/write floor for the PO lifecycle (draft/confirm/place/receive + reads). */
 export const PO_MIN = 4; // key_holder+
@@ -195,7 +197,7 @@ export async function createDraftsFromLines(
   locationId: string,
   byVendor: Map<string, DraftLineInput[]>,
   parPassEventId: string | null,
-  opts?: { noCodeSuffixRetry?: boolean },
+  opts?: { noCodeSuffixRetry?: boolean; source?: "add_on"; parentPoId?: string },
 ): Promise<CreatedDraft[]> {
   requireLevel(actor, PO_MIN);
   if (!lockLocationContext(actorLoc(actor), locationId)) {
@@ -328,7 +330,8 @@ export async function createDraftsFromLines(
     metadata: {
       po_ids: created.map((c) => c.poId),
       location_id: locationId,
-      source: parPassEventId ? "par_pass" : "cutoff_draft",
+      source: opts?.source ?? (parPassEventId ? "par_pass" : "cutoff_draft"),
+      ...(opts?.parentPoId ? { parent_po_id: opts.parentPoId } : {}),
       par_pass_event_id: parPassEventId,
     },
     ipAddress: null, userAgent: null,
@@ -341,7 +344,39 @@ export async function createDraftsFromLines(
 export interface DraftLineEdit {
   skuId: string;
   orderQty: number;
+  orderUnitLabel?: string | null;
   note?: string | null;
+}
+
+/** A deliberate second order: the ONE caller opting out of day idempotency on
+ * purpose. The suffix allocator yields -2/-3 as needed; parent linkage is audit
+ * metadata only. A later walk merges into this live draft; cutoff generation 409s. */
+export async function createAddOnOrder(actor: AuthContext, poId: string, lines: DraftLineEdit[]): Promise<CreatedDraft> {
+  requireLevel(actor, PO_MIN);
+  const sb = getServiceRoleClient();
+  const { data: parent, error: poErr } = await sb.from("purchase_orders")
+    .select("id, location_id, vendor_id, status").eq("id", poId)
+    .maybeSingle<{ id: string; location_id: string; vendor_id: string; status: string }>();
+  if (poErr) throw new Error(`createAddOnOrder load: ${poErr.message}`);
+  if (!parent) throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
+  if (!lockLocationContext(actorLoc(actor), parent.location_id)) {
+    throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
+  }
+  if (!["placed", "invoiced", "received", "reconciled"].includes(parent.status)) {
+    throw new PurchaseOrderError(409, "not_placed", "Only placed orders can have an add-on");
+  }
+  if (!Array.isArray(lines) || lines.length === 0) throw new PurchaseOrderError(400, "no_lines", "At least one line is required");
+  for (const l of lines) {
+    if (!l || typeof l.skuId !== "string" || !l.skuId) throw new PurchaseOrderError(400, "invalid_sku", "Each line needs a SKU");
+    if (!Number.isFinite(l.orderQty) || l.orderQty <= 0) throw new PurchaseOrderError(400, "invalid_qty", "Order qty must be greater than zero");
+    if (l.note != null && typeof l.note !== "string") throw new PurchaseOrderError(400, "invalid_payload", "Invalid note");
+    if (l.orderUnitLabel != null && typeof l.orderUnitLabel !== "string") throw new PurchaseOrderError(400, "invalid_payload", "Invalid unit label");
+  }
+  if (new Set(lines.map((l) => l.skuId)).size !== lines.length) throw new PurchaseOrderError(400, "duplicate_sku", "A SKU appears more than once");
+  const created = await createDraftsFromLines(actor, parent.location_id, new Map([[parent.vendor_id, lines]]), null,
+    { noCodeSuffixRetry: false, source: "add_on", parentPoId: poId });
+  if (!created[0]) throw new Error("createAddOnOrder returned no draft");
+  return created[0];
 }
 
 /**
@@ -409,6 +444,7 @@ async function insertNewDraftLines(
       sku_id: l.skuId,
       order_qty: l.orderQty,
       guide_position_snapshot: guidePosBySku.get(l.skuId) ?? null,
+      order_unit_label: l.orderUnitLabel ?? null,
       note: l.note?.trim() || null,
     })),
   );
@@ -429,7 +465,7 @@ export async function updateDraftLines(
   actor: AuthContext,
   poId: string,
   lines: DraftLineEdit[],
-): Promise<void> {
+): Promise<{ updated: number; inserted: number }> {
   requireLevel(actor, PO_MIN);
   if (!Array.isArray(lines) || lines.length === 0) {
     throw new PurchaseOrderError(400, "no_lines", "At least one line is required");
@@ -474,6 +510,7 @@ export async function updateDraftLines(
   // 23505 to catch, so the branch is dead code and the lap runs exactly once — byte-for-byte
   // today's behaviour. Nothing here waits on the gate.
   let landed = false;
+  let counts = { updated: 0, inserted: 0 };
   for (let lap = 0; lap < DRAFT_LINE_LAPS && !landed; lap++) {
     // Which SKUs already have a line on this PO (batch)?
     const { data: existing, error: exErr } = await sb.from("po_lines")
@@ -500,6 +537,7 @@ export async function updateDraftLines(
       if (insertErr.code === "23505") continue;
       throw new Error(`updateDraftLines insert: ${insertErr.message}`);
     }
+    counts = { updated: toUpdate.length, inserted: toInsert.length };
     landed = true;
   }
   if (!landed) {
@@ -527,6 +565,7 @@ export async function updateDraftLines(
       "This order was confirmed while you were editing — your last change did not make it into the confirmed snapshot",
     );
   }
+  return counts;
 }
 
 // ── confirmPO: freeze the snapshot + governing cutoff ─────────────────────────────
@@ -545,6 +584,32 @@ interface ConfirmedSnapshot {
   lines: SnapshotLine[];
   confirmedBy: { id: string; name: string | null };
   confirmedAtEt: string;
+}
+
+/** Reopen a confirmed order while preserving its last confirmation as history. */
+export async function reopenPO(actor: AuthContext, poId: string): Promise<void> {
+  requireLevel(actor, PO_MIN);
+  const sb = getServiceRoleClient();
+  const { data: po, error: poErr } = await sb.from("purchase_orders")
+    .select("id, location_id, status, display_code, confirmed_at, confirmed_by").eq("id", poId)
+    .maybeSingle<{ id: string; location_id: string; status: string; display_code: string; confirmed_at: string | null; confirmed_by: string | null }>();
+  if (poErr) throw new Error(`reopenPO load: ${poErr.message}`);
+  if (!po) throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
+  if (!lockLocationContext(actorLoc(actor), po.location_id)) {
+    throw new PurchaseOrderError(404, "not_found", "Purchase order not found");
+  }
+  if (po.status !== "confirmed") throw new PurchaseOrderError(409, "not_confirmed", "Only confirmed orders can be reopened");
+  // Preserve confirmation history. confirmPO replaces all four freeze fields on re-confirm.
+  const { error, count } = await sb.from("purchase_orders")
+    .update({ status: "draft" }, { count: "exact" }).eq("id", poId).eq("status", "confirmed");
+  if (error) throw new Error(`reopenPO update: ${error.message}`);
+  if (count === 0) throw new PurchaseOrderError(409, "not_confirmed", "Order is no longer confirmed");
+  await audit({
+    actorId: actor.user.id, actorRole: actor.user.role,
+    action: "po.reopened", resourceTable: "purchase_orders", resourceId: poId,
+    metadata: { display_code: po.display_code, prior_confirmed_at: po.confirmed_at, prior_confirmed_by: po.confirmed_by },
+    ipAddress: null, userAgent: null,
+  });
 }
 
 /**
@@ -1236,7 +1301,16 @@ export interface PoAckInfo {
   additionalCount: number;
 }
 
+export interface VendorPoSku {
+  skuId: string;
+  name: string;
+  itemNumber: string | null;
+  orderUnitLabel: string | null;
+  guidePosition: number | null;
+}
+
 export interface PoDetail {
+  vendorSkus: VendorPoSku[];
   poId: string;
   displayCode: string;
   locationId: string;
@@ -1363,6 +1437,22 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
   if (locErr) throw new Error(`loadPoDetail location: ${locErr.message}`);
   if (smsErr) throw new Error(`loadPoDetail sms: ${smsErr.message}`);
 
+  // One vendor catalog read for every status. Exclusion stays in memory, avoiding
+  // an unbounded NOT IN request line. Pack-chain labels use the walk's authority.
+  const { data: vendorSkuRows, error: vsErr } = await sb.from("vendor_items")
+    .select("id, name, item_number, pack_format, guide_position")
+    .eq("vendor_id", po.vendor_id).eq("active", true)
+    .order("guide_position", { ascending: true, nullsFirst: false }).order("name", { ascending: true })
+    .returns<Array<{ id: string; name: string; item_number: string | null; pack_format: string | null; guide_position: number | null }>>();
+  if (vsErr) throw new Error(`loadPoDetail vendor skus: ${vsErr.message}`);
+  const onPo = new Set((lineRows ?? []).map((l) => l.sku_id));
+  const availableSkus = (vendorSkuRows ?? []).filter((s) => !onPo.has(s.id));
+  const chains = await loadSkuPackChains(availableSkus.map((s) => s.id));
+  const vendorSkus = availableSkus.map((s) => ({
+    skuId: s.id, name: s.name, itemNumber: s.item_number, guidePosition: s.guide_position,
+    orderUnitLabel: chainRootLabel(buildPackChain(chains.get(s.id) ?? [])) ?? s.pack_format,
+  }));
+
   // The transmit block (spec §3): tier + portal + active contacts (accepts_text_orders
   // badged) + ordering-detail affordances. Tier defaults to manual (D4 — every vendor
   // seeds at the lowest pipe); an unexpected value falls back to manual, never crashes.
@@ -1445,6 +1535,7 @@ export async function loadPoDetail(actor: AuthContext, poId: string): Promise<Po
 
   return {
     poId: po.id,
+    vendorSkus,
     displayCode: po.display_code,
     locationId: po.location_id,
     vendorId: po.vendor_id,
