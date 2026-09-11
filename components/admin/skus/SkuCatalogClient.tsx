@@ -35,6 +35,8 @@ import type {
   SkuFormVendorOption,
 } from "./SkuBuilder";
 import type { LocationSkuOverlayView } from "./SkuLocationOverlay";
+import type { SkuDataShop } from "@/lib/sku-data-readiness";
+import { SkuDataChips, SkuDataDrawer, SkuDataHeader } from "./SkuDataLane";
 
 // Vendor-select sentinels distinct from any real vendor id.
 const FILTER_ALL = "__all__";
@@ -58,6 +60,8 @@ export function SkuCatalogClient({
   skuLedger,
   skuConsumption,
   skuReadiness,
+  skuDataShops,
+  skuDataUnavailable = false,
   chainsBySku,
   chainUnverifiedBySku,
   overlaysBySku,
@@ -76,6 +80,8 @@ export function SkuCatalogClient({
   skuLedger: Record<string, SkuReceivingLedger>;
   skuConsumption: Record<string, SkuConsumption>;
   skuReadiness: Record<string, Readiness>;
+  skuDataShops: SkuDataShop[];
+  skuDataUnavailable?: boolean;
   /** Server batch-loaded active chains per SKU (no lazy GET). Absent = unchained. */
   chainsBySku: Record<string, PackChainLevel[]>;
   /** Server flag: the chain fails reachability/termination ("chain unverified"). */
@@ -101,6 +107,7 @@ export function SkuCatalogClient({
   const [vendorFilter, setVendorFilter] = useState<string>(FILTER_ALL);
   const [lens, setLens] = useState<Lens>("all");
   const [query, setQuery] = useState("");
+  const [needsErrand, setNeedsErrand] = useState(false);
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [confirmDeactivateId, setConfirmDeactivateId] = useState<string | null>(null);
@@ -161,11 +168,12 @@ export function SkuCatalogClient({
       if (vendorFilter === FILTER_MANUAL) { if (s.vendorId !== null) return false; }
       else if (vendorFilter !== FILTER_ALL) { if (s.vendorId !== vendorFilter) return false; }
       if (!matchesLens(s, lens)) return false;
+      if (needsErrand && !skuDataUnavailable && !skuDataShops.some(shop => (shop.bySku[s.id]?.errands.length ?? 0) > 0)) return false;
       if (!q) return true;
       return s.name.toLowerCase().includes(q) || (s.itemNumber?.toLowerCase().includes(q) ?? false);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [skus, vendorFilter, lens, query, chainsBySku, chainUnverifiedBySku]);
+  }, [skus, vendorFilter, lens, query, chainsBySku, chainUnverifiedBySku, needsErrand, skuDataShops, skuDataUnavailable]);
 
   // Group the filtered set by CLASS (the manager's mental shelf), in the fixed
   // SKU_CLASSES order; each group header carries an i18n'd count (D5).
@@ -298,6 +306,7 @@ export function SkuCatalogClient({
           sku={s}
           chain={chainsBySku[s.id] ?? null}
           readiness={skuReadiness[s.id] ?? null}
+          dataShops={skuDataShops}
           chained={isChained(s.id)}
           unverified={isUnverified(s.id)}
           canManage={canManage}
@@ -335,8 +344,12 @@ export function SkuCatalogClient({
 
   return (
     <div className="mt-5 flex flex-col gap-4">
+      <SkuDataHeader shops={skuDataShops} unavailable={skuDataUnavailable} />
       {/* Lens chips (D6): class set + the two cross-cutting status lenses. */}
       <div className="flex flex-wrap gap-2">
+        <button type="button" className={chipCls(needsErrand)} aria-pressed={needsErrand} disabled={skuDataUnavailable} onClick={() => setNeedsErrand(value => !value)}>
+          {t("admin.skus.data.needs_errand")}
+        </button>
         {LENSES.map((l) => (
           <button
             key={l}
@@ -469,6 +482,7 @@ function CatalogRow({
   sku: s,
   chain,
   readiness,
+  dataShops,
   chained,
   unverified,
   canManage,
@@ -488,6 +502,7 @@ function CatalogRow({
   sku: SkuView;
   chain: PackChainLevel[] | null;
   readiness: Readiness | null;
+  dataShops: SkuDataShop[];
   chained: boolean;
   unverified: boolean;
   canManage: boolean;
@@ -552,6 +567,7 @@ function CatalogRow({
           ) : null}
           {readiness ? <StatusBadge status={readiness.status as "incomplete" | "upstream_gaps"} /> : null}
           {readiness ? <ReadinessReasons reasons={readiness.reasons} /> : null}
+          <SkuDataChips skuId={s.id} shops={dataShops} />
           {/* Management actions (D4 triggers) — reachable without expanding. */}
           {canManage ? (
             confirming ? (
@@ -578,6 +594,7 @@ function CatalogRow({
         </>
       }
     >
+      <SkuDataDrawer skuId={s.id} shops={dataShops} />
       <SkuCostPanel
         skuId={s.id}
         cost={cost}
