@@ -30,6 +30,7 @@
 import "server-only";
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { assertSimTarget } from "./sim-isolation-shared";
 
 function getUrl(): string {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -56,6 +57,7 @@ function getServiceRoleKey(): string {
  * `role` claim and exposes the verified payload to RLS.
  */
 export function createAuthedClient(jwt: string): SupabaseClient {
+  if (process.env.SIM_MODE) assertSimTarget(process.env.NEXT_PUBLIC_SUPABASE_URL);
   return createClient(getUrl(), getAnonKey(), {
     global: { headers: { Authorization: `Bearer ${jwt}` } },
     auth: {
@@ -69,6 +71,7 @@ export function createAuthedClient(jwt: string): SupabaseClient {
 let cachedServiceRole: SupabaseClient | null = null;
 
 export function getServiceRoleClient(): SupabaseClient {
+  if (process.env.SIM_MODE) assertSimTarget(process.env.NEXT_PUBLIC_SUPABASE_URL);
   if (cachedServiceRole) return cachedServiceRole;
   cachedServiceRole = createClient(getUrl(), getServiceRoleKey(), {
     auth: {

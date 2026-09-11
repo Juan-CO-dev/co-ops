@@ -54,6 +54,7 @@ import { verifyPin } from "./auth";
 import { audit } from "./audit";
 import { getServiceRoleClient } from "./supabase-server";
 import { getRoleLevel, type RoleCode } from "./roles";
+import { lockLocationContext } from "./locations";
 import { CLOSING_CONFIRM_FLOOR_LEVEL } from "./admin/template-builder-shared";
 import { evaluateLockUpGate } from "./checklist-constants";
 import {
@@ -694,12 +695,15 @@ export async function getOrCreateInstance(
     templateId: string;
     locationId: string;
     date: string;
-    actor: ChecklistActor;
+    actor: ChecklistActor & { locations: string[] };
     ipAddress?: string | null;
     userAgent?: string | null;
   },
 ): Promise<{ instance: ChecklistInstance; created: boolean }> {
   const { templateId, locationId, date, actor } = args;
+  if (!lockLocationContext(actor, locationId)) {
+    throw new ChecklistRoleViolationError(3, actor.level, "You do not manage that location");
+  }
 
   // Fast path: already exists?
   const { data: existing, error: readErr } = await authed
@@ -1354,10 +1358,11 @@ export async function confirmInstance(
     throw new ChecklistExtraReasonError(extraReasonIds);
   }
 
-  // PIN attestation. Authed-client self-read on the actor's own row —
-  // RLS users_read_self permits the read. Minimum-privilege over service
-  // role: the actor IS the row, no privilege escalation justified here.
-  const { data: userRow, error: userErr } = await authed
+  // PIN attestation. Service-role read of the actor's own row: since 0198 the
+  // PostgREST roles hold NO grant on pin_hash/password_hash (LRA-001/214), so a
+  // user-context select of the hash is a permission error by design. The row
+  // is still pinned to the actor (eq id); the client is the only thing that moved.
+  const { data: userRow, error: userErr } = await getServiceRoleClient()
     .from("users")
     .select("id, pin_hash")
     .eq("id", actor.userId)
@@ -1441,9 +1446,7 @@ export async function confirmInstance(
     if (cur && cur.status !== "open") {
       throw new ChecklistInstanceClosedError(instanceId, cur.status); // → 409 instance_closed
     }
-    throw new Error(
-      `confirmInstance update returned 0 rows for ${instanceId} — RLS denial (status still ${cur?.status ?? "unknown"})`,
-    );
+    throw new ChecklistRoleViolationError(3, actor.level, "Confirmation is not permitted for this instance");
   }
 
   // 2+3. Dependent rows only AFTER owning the claim. If either insert fails,

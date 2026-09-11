@@ -32,6 +32,7 @@ import { audit } from "@/lib/audit";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { jsonError, jsonOk, parseJsonBody, extractIp } from "@/lib/api-helpers";
 import type { RoleCode } from "@/lib/roles";
+import { revokeAllUserSessions } from "@/lib/session";
 
 interface PasswordResetBody {
   token: string;
@@ -166,14 +167,10 @@ export async function POST(req: NextRequest) {
     return jsonError(500, "internal_error", { message: "password update failed" });
   }
 
-  // 5. Revoke all active sessions for this user (defense: assume compromise)
-  const { data: revoked } = await sb
-    .from("sessions")
-    .update({ revoked_at: nowIso })
-    .eq("user_id", row.user_id)
-    .is("revoked_at", null)
-    .select("id");
-  const revokedCount = revoked?.length ?? 0;
+  // 5. Revoke all active sessions for this user (defense: assume compromise).
+  // LRA-216: the bare update here dropped its `error`, so a failed revocation was reported as 0 revoked
+  // and the old sessions lived on. revokeAllUserSessions THROWS on a database error (→ 500, no false success).
+  const { count: revokedCount } = await revokeAllUserSessions(row.user_id);
 
   // 6. Audit
   await audit({

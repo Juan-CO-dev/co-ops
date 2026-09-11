@@ -36,6 +36,9 @@
  */
 
 export const DESTRUCTIVE_ACTIONS = [
+  // Purchase-order accountability
+  "po.reopened",
+
   // User lifecycle
   "user.create",
   "user.activate",
@@ -229,6 +232,12 @@ export const DESTRUCTIVE_ACTIONS = [
   // returns true for "report.update" via the registry membership check.
   "report.update",
 
+  // Migration-emitted grant rewrite on public.users (0198, LRA-001/214): a change to who may
+  // read or write which columns is an alteration of the accountability perimeter itself.
+  "security.grants_change",
+  // SQL-only 0201 bundle: changes the shared purchase and costing basis; literal true in RPC.
+  "sku.angel_import",
+
   // Closing auto-finalize without manual confirmation (Build #3 PR 1).
   // — destructive because the operational record transitions to
   // 'auto_finalized' without the closer's PIN-attestation. Three release
@@ -263,6 +272,9 @@ export const DESTRUCTIVE_ACTIONS = [
   // metadata.orphaned_changes (op-by-op array), metadata.resolving_audit_row_id
   // (forward link to the row that completed the work in the recovery run).
   "audit.gap_recovery",
+  // checklist_completion.restore = migration 0196's ONE-TIME reversal of 0176's collapse
+  //   (342 Phase 1 rows un-superseded). SQL-emitted; the migration sets destructive=true literally.
+  "checklist_completion.restore",
 
   // ── Product identity (0179–0181; sim P2 sweep, 2026-08-21) ────────────────
   // The registry gap the product-identity sim filed. Every one of these is a

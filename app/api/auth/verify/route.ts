@@ -26,7 +26,7 @@ import { type NextRequest } from "next/server";
 import { hashPassword, hashToken } from "@/lib/auth";
 import { audit } from "@/lib/audit";
 import { recordSuccessfulAuth } from "@/lib/auth-flows";
-import { applySessionCookie } from "@/lib/session";
+import { applySessionCookie, revokeAllUserSessions } from "@/lib/session";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { jsonError, jsonOk, parseJsonBody, extractIp } from "@/lib/api-helpers";
 import type { RoleCode } from "@/lib/roles";
@@ -163,6 +163,8 @@ export async function POST(req: NextRequest) {
   if (updateUserErr || !updatedUser) {
     return jsonError(500, "internal_error", { message: "user update failed" });
   }
+  // A first password is a credential change too: retire pre-activation PIN sessions.
+  const { count: revokedCount } = await revokeAllUserSessions(row.user_id);
   if (!updatedUser.active) {
     // Defensive: don't auto-sign-in an inactive user even with a valid token.
     // Token was consumed; admin will need to re-invite if reactivated.
@@ -172,7 +174,7 @@ export async function POST(req: NextRequest) {
       action: "auth_email_verified",
       resourceTable: "users",
       resourceId: updatedUser.id,
-      metadata: { verification_id: row.id, sign_in_skipped_inactive: true },
+      metadata: { verification_id: row.id, sessions_revoked: revokedCount, sign_in_skipped_inactive: true },
       ipAddress,
       userAgent,
     });
@@ -186,7 +188,7 @@ export async function POST(req: NextRequest) {
     action: "auth_email_verified",
     resourceTable: "users",
     resourceId: updatedUser.id,
-    metadata: { verification_id: row.id },
+    metadata: { verification_id: row.id, sessions_revoked: revokedCount },
     ipAddress,
     userAgent,
   });

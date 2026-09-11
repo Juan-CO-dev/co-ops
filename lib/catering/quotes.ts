@@ -75,7 +75,7 @@ function canSeeLocation(actor: AuthContext, locationId: string): boolean {
 }
 
 // ── Charge stack (pure) — lives in quotes-shared.ts; re-exported for server consumers ──
-import { computeChargeStack, lineTotalCents, type ChargeRates, type ChargeStack } from "./quotes-shared";
+import { computeChargeStack, lineTotalCents, type ChargeRates, type ChargeStack, reclassifyQuoteLineRefs } from "./quotes-shared";
 export { computeChargeStack, lineTotalCents, type ChargeRates, type ChargeStack };
 
 // ── Pricing context ───────────────────────────────────────────────────────────
@@ -443,6 +443,37 @@ function resolveLines(lines: QuoteLineInput[]): ResolvedLine[] {
   });
 }
 
+/**
+ * Put every line reference on the FK side it exists on, or refuse before any write.
+ * `catering_quote_items.item_id` → items · `menu_item_id` → menu_items. The staff builder used to
+ * send a menu item's id as `itemId` (fixed client-side in the same PR); a stale tab, a second
+ * client, or a future regression would otherwise surface as an FK 500 AFTER the quote header is
+ * inserted. One round trip for the ids the payload names; a reference on neither side names the
+ * line as a 400 `unknown_item` instead of a raw constraint error.
+ */
+async function verifyLineRefs(sb: ReturnType<typeof getServiceRoleClient>, lines: ResolvedLine[]): Promise<ResolvedLine[]> {
+  const ids = [...new Set(lines.flatMap((l) => [l.itemId, l.menuItemId].filter((v): v is string => v != null)))];
+  if (ids.length === 0) return lines;
+  const [items, menu] = await Promise.all([
+    sb.from("items").select("id").in("id", ids).eq("active", true).returns<Array<{ id: string }>>(),
+    sb.from("menu_items").select("id").in("id", ids).eq("active", true).returns<Array<{ id: string }>>(),
+  ]);
+  if (items.error) throw new Error(`verifyLineRefs items: ${items.error.message}`);
+  if (menu.error) throw new Error(`verifyLineRefs menu_items: ${menu.error.message}`);
+  const r = reclassifyQuoteLineRefs(lines, {
+    itemIds: new Set((items.data ?? []).map((x) => x.id)),
+    menuItemIds: new Set((menu.data ?? []).map((x) => x.id)),
+  });
+  if (r.unknown.length > 0) {
+    const u = r.unknown[0]!;
+    throw new CateringQuoteError(400, "unknown_item", `Line ${u.index + 1}: ${u.field} ${u.id} is not a catalog item or a menu item`);
+  }
+  if (r.moved > 0) {
+    console.warn(`[catering] verifyLineRefs: ${r.moved} line reference(s) were on the wrong side and were reclassified — a client is sending menu item ids as itemId (or vice versa)`);
+  }
+  return r.lines;
+}
+
 /** Resolve the delivery fee: 0 unless a zone (belonging to this active location) is chosen. */
 async function resolveDeliveryFee(
   ctx: PricingContext,
@@ -558,13 +589,13 @@ export async function createQuote(actor: AuthContext, input: CreateQuoteInput): 
   if (!locationId) throw new CateringQuoteError(400, "invalid_payload", "locationId is required");
   assertCanWrite(actor, locationId);
 
-  const lines = resolveLines(input.lines);
+  const sb = getServiceRoleClient();
+  const lines = await verifyLineRefs(sb, resolveLines(input.lines));
   const pricing = await loadPricingContext(actor, locationId);
   const isDelivery = input.isDelivery ?? false;
   const deliveryFee = await resolveDeliveryFee(pricing, isDelivery, input.deliveryZoneId ?? null);
   const stack = computeChargeStack(lines.map((l) => l.lineTotalCents), deliveryFee, pricing.rates);
 
-  const sb = getServiceRoleClient();
   const { data: inserted, error } = await sb
     .from("catering_quotes")
     .insert({
@@ -585,7 +616,39 @@ export async function createQuote(actor: AuthContext, input: CreateQuoteInput): 
     .single<{ id: string; version: number }>();
   if (error) throw new Error(`createQuote: ${error.message}`);
 
-  await insertQuoteItems(sb, inserted.id, lines, actor.user.id);
+  try {
+    await insertQuoteItems(sb, inserted.id, lines, actor.user.id);
+  } catch (itemsErr) {
+    // The header is live and EMPTY — a v1 draft with a non-zero snapshot total and no lines.
+    // Unlike reviseQuote's strand B there is no prior revision to un-supersede, so retiring
+    // the orphan is ONE compare-and-set write whose own failure leaves exactly today's state
+    // (the orphan stands) — a repair that cannot produce a worse outcome than the fault.
+    // Append-only: superseded, never deleted. The guide-walk sim (2026-09-08) made three of
+    // these in a row from one mis-sided line reference.
+    const msg = itemsErr instanceof Error ? itemsErr.message : String(itemsErr);
+    const { error: supErr, count } = await sb
+      .from("catering_quotes")
+      .update({ superseded_at: new Date().toISOString() }, { count: "exact" })
+      .eq("id", inserted.id)
+      .is("superseded_at", null);
+    const retired = !supErr && (count ?? 0) === 1;
+    if (!retired) {
+      console.error(
+        `[catering] createQuote could not retire empty draft ${inserted.id} after a failed line insert: ${supErr?.message ?? "no row matched"} — LIVE-CHECK: a live draft with total_cents > 0 and no catering_quote_items.`,
+      );
+    }
+    await audit({
+      actorId: actor.user.id,
+      actorRole: actor.user.role,
+      action: "catering.quote.create",
+      resourceTable: "catering_quotes",
+      resourceId: inserted.id,
+      metadata: { outcome: "items_insert_failed", orphan_retired: retired, error: msg, location_id: locationId, lines: lines.length },
+      ipAddress: null,
+      userAgent: null,
+    });
+    throw itemsErr;
+  }
 
   void audit({
     actorId: actor.user.id,
@@ -653,7 +716,7 @@ export async function reviseQuote(actor: AuthContext, quoteId: string, input: Re
   }
 
   // Validate + compute the new revision fully before touching the current row.
-  const lines = resolveLines(input.lines);
+  const lines = await verifyLineRefs(sb, resolveLines(input.lines));
   const pricing = await loadPricingContext(actor, current.location_id);
   const isDelivery = input.isDelivery ?? false;
   const deliveryFee = await resolveDeliveryFee(pricing, isDelivery, input.deliveryZoneId ?? null);
@@ -872,6 +935,8 @@ export async function loadLabelData(actor: AuthContext, quoteId: string): Promis
 
 export interface SendQuoteResult {
   emailed: boolean;
+  /** Why `emailed` is false, when it is. `sent` when it is true. */
+  emailOutcome: "sent" | "no_customer" | "no_address" | "send_failed";
   recipient: string | null;
   emailError: string | null;
 }
@@ -907,9 +972,11 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
 
   // Best-effort customer email (only delivers to Juan until Resend DNS is verified).
   let emailed = false;
+  let emailOutcome: "sent" | "no_customer" | "no_address" | "send_failed" = "no_customer";
   let recipient: string | null = null;
   let emailError: string | null = null;
   if (row.customer_id) {
+    emailOutcome = "no_address";
     const { data: cust } = await sb
       .from("catering_customers")
       .select("email, name")
@@ -934,8 +1001,13 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
         html: `<p>Hi ${safeName},</p><p>Your catering quote is ready. Estimated total: <strong>${total}</strong>.</p>${htmlLink}<p>Our team will follow up shortly to confirm the details.</p>`,
         text: `Hi ${cust.name ?? "there"},\n\nYour catering quote is ready. Estimated total: ${total}.${textLink}\n\nOur team will follow up shortly to confirm the details.`,
       });
-      if ("id" in res) emailed = true;
-      else emailError = res.error;
+      if ("id" in res) {
+        emailed = true;
+        emailOutcome = "sent";
+      } else {
+        emailError = res.error;
+        emailOutcome = "send_failed";
+      }
     }
   }
 
@@ -945,9 +1017,9 @@ export async function sendQuote(actor: AuthContext, id: string): Promise<SendQuo
     action: "catering.quote.send",
     resourceTable: "catering_quotes",
     resourceId: id,
-    metadata: { emailed, recipient, email_error: emailError, total_cents: row.total_cents },
+    metadata: { emailed, email_outcome: emailOutcome, recipient, email_error: emailError, total_cents: row.total_cents },
     ipAddress: null,
     userAgent: null,
   });
-  return { emailed, recipient, emailError };
+  return { emailed, emailOutcome, recipient, emailError };
 }

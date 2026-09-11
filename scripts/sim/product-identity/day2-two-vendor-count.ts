@@ -352,7 +352,7 @@ async function main(): Promise<void> {
   // ── SCENE 6 — the on-hand panel, and the death of the mirrored SHORT/OVER ────
   h("scene 6 — the on-hand panel: two grains, and the audit's mirrored alarm");
   clearRewriters();
-  const view = await loadOnHandDerived(actor, loc.id, Date.now(), { withProducts: true });
+  const view = await loadOnHandDerived(actor, loc.id, Date.now(), { withProducts: true, seedBaselines: false });
   const hamRow = view.products.find((r) => r.productId === prod.id) ?? null;
   p(`  product rows on the panel: ${view.products.length}`);
   if (hamRow) {

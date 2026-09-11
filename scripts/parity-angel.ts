@@ -8,13 +8,16 @@
  * same builds with the same prices tells us whether our engine agrees with a
  * product an operator pays for, and WHERE it doesn't.
  *
- * MANUAL RUN, NOT CI. It reads live prod, depends on hand-built name maps, and
- * its interesting output is FINDINGS, not pass/fail. It always exits 0 — a
- * delta is something to go look at, never a broken build.
+ * The default historical-fixture mode reports diagnostic deltas without failing
+ * on the delta. Live --wave7 / --readiness modes validate the configured target,
+ * use fully paginated data, and fail on violated import/readiness invariants.
  *
  * Run with the react-server condition so the lib's `server-only` guard resolves
  * (the house pattern — cf. scripts/backfill-toast-depletion.ts):
  *   npx tsx --conditions=react-server --env-file=.env.local scripts/parity-angel.ts
+ * With the seed's target environment configured:
+ *   npx tsx --conditions=react-server scripts/parity-angel.ts --target sim --wave7
+ *   npx tsx --conditions=react-server scripts/parity-angel.ts --target sim --readiness --as-of 2026-09-11
  *
  * ── WHAT IS AND ISN'T A VALID ORACLE ────────────────────────────────────────
  *
@@ -43,6 +46,138 @@ import { pathToFileURL } from "node:url";
 import { getServiceRoleClient } from "@/lib/supabase-server";
 import { loadRecipeGraph } from "@/lib/prep-consumption";
 import { perUnitSkuOzForItemFromGraph } from "@/lib/prep-consumption-graph";
+import type { Wave7Snapshot } from "./seed/26-angel-wave7";
+import { canonical, SOURCE } from "@/lib/angel-wave7";
+
+import { evaluateWave7Tables as evaluateTables, type LiveTables, type LiveRow, type Wave7ReadinessReport } from "@/lib/sku-data-readiness";
+export type { LiveTables, Wave7ReadinessReport } from "@/lib/sku-data-readiness";
+/** Preserve CLI's present-day column while the pure evaluator takes an explicit clock. */
+export function evaluateWave7Tables(tables: LiveTables, overrides = new Map<string, Wave7Snapshot>(), asOf = "2026-09-11"): Wave7ReadinessReport {
+  return evaluateTables(tables, overrides, asOf, new Date().toISOString().slice(0, 10));
+}
+
+function liveText(value: unknown): string | null { return typeof value === "string" ? value : null; }
+function liveId(row: LiveRow): string {
+  const id = liveText(row.id); if (!id) throw new Error("SCHEMA_MISMATCH: missing row id"); return id;
+}
+function liveIndex(rows: LiveRow[]): Map<string, LiveRow> {
+  const index = new Map(rows.map(r => [liveId(r), r]));
+  if (index.size !== rows.length) throw new Error("INCOMPLETE_GRAPH: duplicate row ids");
+  return index;
+}
+export async function loadWave7ReadinessTables(sb: ReturnType<typeof getServiceRoleClient>): Promise<LiveTables> {
+  const { loadAll } = await import("./seed/26-angel-wave7");
+  const names = ["vendor_items", "vendors", "locations", "location_sku_settings", "sku_pack_levels", "vendor_price_history", "measure_units", "products", "product_primaries", "vendor_deliveries", "vendor_delivery_items", "recipes", "recipe_inputs", "recipe_outputs", "items", "menu_items", "vendor_cutoffs", "vendor_delivery_rhythm"];
+  const loaded = await Promise.all(names.map(async table => [table, await loadAll(sb, table)] as const));
+  return Object.fromEntries(loaded);
+}
+
+export async function evaluateWave7Readiness(sb: ReturnType<typeof getServiceRoleClient>, overrides = new Map<string, Wave7Snapshot>(), asOf = "2026-09-11"): Promise<Wave7ReadinessReport> {
+  return evaluateWave7Tables(await loadWave7ReadinessTables(sb), overrides, asOf);
+}
+
+/** Compare every loaded row, including history and unselected SKUs. Only the exact
+ * verified RPC result snapshots and their predecessor-chain deactivations may differ.
+ * Concurrent unrelated edits are an explicit failed verification, never hidden drift. */
+export function verifyWave7Scope(before: LiveTables, after: LiveTables, appliedSnapshots: Map<string, Wave7Snapshot>, operationIds = new Set<string>()): void {
+  const expected = new Map<string, Map<string, LiveRow>>();
+  if (Object.keys(before).sort().join() !== Object.keys(after).sort().join()) throw new Error("WAVE7_SCOPE_TABLES_CHANGED");
+  for (const [table, rows] of Object.entries(before)) expected.set(table, liveIndex(rows));
+  const requireTable = (table: string) => {
+    const rows = expected.get(table); if (!rows) throw new Error(`WAVE7_SCOPE_TABLE_MISSING: ${table}`); return rows;
+  };
+  const skus = requireTable("vendor_items"), chains = requireTable("sku_pack_levels"), prices = requireTable("vendor_price_history");
+  for (const [skuId, snapshot] of appliedSnapshots) {
+    if (liveId(snapshot.sku) !== skuId || !skus.has(skuId)) throw new Error("WAVE7_SCOPE_UNKNOWN_SKU");
+    skus.set(skuId, snapshot.sku);
+    const replacement = liveIndex(snapshot.chain);
+    for (const [id, row] of chains) if (row.sku_id === skuId && row.active === true && !replacement.has(id)) chains.set(id, { ...row, active: false });
+    for (const [id, row] of replacement) {
+      if (row.sku_id !== skuId || row.active !== true) throw new Error("WAVE7_SCOPE_CHAIN_OWNER");
+      const old = chains.get(id);
+      if (old && canonical(old) !== canonical(row)) throw new Error("WAVE7_SCOPE_CHAIN_HISTORY_CHANGED");
+      chains.set(id, row);
+    }
+    if (snapshot.price) {
+      const id = liveId(snapshot.price), old = prices.get(id);
+      if (snapshot.price.vendor_item_id !== skuId || (old && canonical(old) !== canonical(snapshot.price))) throw new Error("WAVE7_SCOPE_PRICE_HISTORY_CHANGED");
+      if (!old && snapshot.price.source !== SOURCE) throw new Error("WAVE7_SCOPE_PRICE_SOURCE");
+      prices.set(id, snapshot.price);
+    }
+  }
+  for (const [table, rows] of Object.entries(after)) {
+    const actual = liveIndex(rows), planned = requireTable(table);
+    // Audit is optional in the supplied table universe. Its old rows are immutable;
+    // new rows must exactly exhaust the caller's expected operation IDs.
+    if (table === "audit_log") {
+      for (const [id, row] of actual) if (!planned.has(id)) {
+        if (!operationIds.has(id) || row.action !== "sku.angel_import") throw new Error("WAVE7_SCOPE_UNEXPECTED_AUDIT");
+        planned.set(id, row);
+      }
+      for (const id of operationIds) if (!actual.has(id)) throw new Error("WAVE7_SCOPE_MISSING_AUDIT");
+    }
+    if (canonical([...planned.values()].sort((a, b) => liveId(a).localeCompare(liveId(b)))) !== canonical([...actual.values()].sort((a, b) => liveId(a).localeCompare(liveId(b))))) throw new Error(`WAVE7_SCOPE_CHANGED: ${table}`);
+  }
+}
+
+export function printWave7Comparison(before: Wave7ReadinessReport, after: Wave7ReadinessReport, label = "projected"): void {
+  if (before.asOf !== after.asOf) throw new Error("READINESS_DATE_MISMATCH");
+  console.log(`PER-SHOP ERRANDS / MATRIX — ${label}; evaluation ${after.asOf}`);
+  console.log(`Complete table counts: ${JSON.stringify(after.counts)}`);
+  for (const shop of after.shops) {
+    const prior = before.shops.find(s => s.id === shop.id); if (!prior) throw new Error("READINESS_SCOPE_CHANGED");
+    if (prior.rows.map(r => r.id).sort().join() !== shop.rows.map(r => r.id).sort().join()) throw new Error("READINESS_DENOMINATOR_CHANGED");
+    console.log(`${shop.name}: ${prior.rows.length} → ${shop.rows.length} launch SKUs`);
+    for (const [metric, title] of [["unpriced", "Errand 1 / unpriced"], ["chainless", "Errand 2 / chain-less supplies"], ["rawPackMissing", "Errand 4 / raw pack ounces missing"], ["estimate", "Errand 6 / actual unit ESTIMATE"]] as const) {
+      const old = prior.rows.filter(r => r[metric]), next = shop.rows.filter(r => r[metric]), closed = old.filter(r => !next.some(n => n.id === r.id));
+      console.log(`  ${title}: ${old.length} → ${next.length}; closed: ${closed.map(r => r.name).join(", ") || "none"}; remaining: ${next.map(r => r.name).join(", ") || "none"}`);
+    }
+    for (const journey of ["order", "count", "cost"] as const) {
+      console.log(`  ${journey.toUpperCase()}: ${["usable", "degraded", "blocked"].map(state => `${state} ${prior.rows.filter(r => r[journey] === state).length} → ${shop.rows.filter(r => r[journey] === state).length}`).join("; ")}`);
+      for (const row of shop.rows) { const old = prior.rows.find(r => r.id === row.id)!; if (old[journey] !== row[journey]) console.log(`    ${row.name}: ${old[journey]} → ${row[journey]}`); }
+    }
+    console.log("  PRICE AGE — evaluation date / today (days)");
+    for (const row of shop.rows.filter(r => r.age != null)) console.log(`    ${row.name}: ${row.age} / ${row.presentAge}`);
+    console.log("  NAMED RECIPE EFFECTS — batch dollars / resolved input ounces");
+    const changed = new Set(shop.rows.filter(r => prior.rows.find(p => p.id === r.id)?.consumerBasis !== r.consumerBasis).map(r => r.id));
+    for (const recipe of shop.recipes) {
+      const old = prior.recipes.find(r => r.id === recipe.id); if (!old) throw new Error("RECIPE_SCOPE_CHANGED");
+      if (old.cost !== recipe.cost || old.oz !== recipe.oz) {
+        const causes = recipe.dependencies.filter(id => changed.has(id));
+        if (!causes.length) throw new Error(`UNEXPLAINED_RECIPE_CHANGE: ${recipe.name}`);
+        console.log(`    ${recipe.name}: $${fmt(old.cost)} → $${fmt(recipe.cost)}; ${fmt(old.oz)} oz → ${fmt(recipe.oz)} oz; changed inputs: ${causes.map(id => shop.rows.find(r => r.id === id)!.name).join(", ")}`);
+      }
+    }
+    console.log("  PRODUCT CONSUMERS — selected member / portion ounces (product units preserved)");
+    for (const product of shop.products) {
+      const old = prior.products.find(p => p.id === product.id); if (!old) throw new Error("PRODUCT_SCOPE_CHANGED");
+      if (old.skuId !== product.skuId) throw new Error(`PRODUCT_RESOLUTION_CHANGED: ${product.name}`);
+      console.log(`    ${product.name}: ${product.sku ?? "unresolved"}; ${fmt(old.basis)} → ${fmt(product.basis)} oz${old.basis !== product.basis ? " — MEMBER WEIGHT FALLBACK EFFECT" : ""}`);
+    }
+  }
+  console.log("Errands overlap; closures are not summed. Physical counts and failure/concurrency injection require separate sim evidence.");
+}
+
+async function liveWave7Main(args: string[]): Promise<void> {
+  const seed = await import("./seed/26-angel-wave7");
+  if (args.includes("--execute")) throw new Error("Parity is read-only");
+  const config = seed.validateTarget(args), sb = seed.createWave7Client(config);
+  if (args.includes("--wave7")) await seed.runWave7Verification(args);
+  const overrides = new Map<string, Wave7Snapshot>();
+  const audit = (await seed.loadAll(sb, "audit_log", "id,action,metadata,occurred_at", { column: "action", value: "sku.angel_import" })).filter(r => (r.metadata as LiveRow | null)?.source === SOURCE).sort((a, b) => String(a.occurred_at).localeCompare(String(b.occurred_at)) || liveId(a).localeCompare(liveId(b)));
+  for (const row of audit) {
+    const metadata = row.metadata as LiveRow | null;
+    const expected = metadata?.expected as Wave7Snapshot | undefined;
+    if (!expected?.sku || !Array.isArray(expected.chain)) throw new Error("WAVE7_BASELINE_MISSING: audit expected snapshot");
+    const id = liveId(expected.sku); if (!overrides.has(id)) overrides.set(id, expected);
+  }
+  const asOf = args.includes("--as-of") ? args[args.indexOf("--as-of") + 1] : "2026-09-11";
+  if (!asOf) throw new Error("INVALID_AS_OF");
+  const tables = await loadWave7ReadinessTables(sb);
+  const before = evaluateWave7Tables(tables, overrides, asOf), after = evaluateWave7Tables(tables, undefined, asOf);
+  printWave7Comparison(before, after, audit.length ? "verified live versus reconstructed pre-wave baseline" : "no wave-7 operations recorded; current → current");
+  console.log("NOTHING WAS WRITTEN — read-only live parity");
+}
 
 /** Angel's published batch cost + cost-per-lb (docs/angel-spend-insights.md §6.1). */
 interface AngelRecipe {
@@ -396,8 +531,9 @@ async function main(): Promise<void> {
   console.log("  to the raw input sum, which UNDERSTATES $/lb for anything that cooks down.");
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]!).href) {
-  main().catch((err) => {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const args = process.argv.slice(2);
+  (args.includes("--wave7") || args.includes("--readiness") ? liveWave7Main(args) : main()).catch((err) => {
     console.error(err);
     process.exit(1);
   });

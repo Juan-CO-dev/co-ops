@@ -1,0 +1,837 @@
+{
+  "schemaVersion": 1,
+  "claims": [
+    {
+      "id": "opening.employee-handoff-label",
+      "guide": {
+        "path": "docs/guides/staff-guide.md",
+        "revision": "5241016",
+        "section": "The opening report (Phase 1 — Verification) / 6. Read the counter at the bottom",
+        "quote": "For an employee the button reads **Hand to a key holder** and stays off, and the hint underneath says why.",
+        "quoteSha256": "a8e6eb6d3c9169badde18f2a7350ba17669d7be7e8f7d7551fbb7d14fdff83f3"
+      },
+      "actor": "employee (Maya at EM; Luis at MEP)",
+      "preconditions": "Fixture cold-empty. Employee has verified stations.",
+      "expected": "The employee handoff control uses the key-holder label and is disabled.",
+      "assertionId": "opening.phase1.employee-handoff",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.employee-handoff-continuity",
+      "guide": {
+        "path": "docs/guides/staff-guide.md",
+        "revision": "5241016",
+        "section": "The opening report (Phase 1 — Verification) / 6. Read the counter at the bottom",
+        "quote": "Fill it in, then hand the tablet to your key holder.",
+        "quoteSha256": "073a548c6883ccbcc4d4042607948bb4c2d8ed97cec69c20f2d60781f0de42d0"
+      },
+      "actor": "employee to key holder (Maya to Rosa at EM; Luis to Angel at MEP)",
+      "preconditions": "Fixture cold-empty. Employee entered ticks, a temperature and a comment; key holder signs in in a fresh context.",
+      "expected": "The key holder can continue employee verification; lost pre-submit work is LRA-121, not successful handoff.",
+      "assertionId": "opening.phase1.persist-before-submit",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.station-verification",
+      "guide": {
+        "path": "docs/guides/staff-guide.md",
+        "revision": "5241016",
+        "section": "The opening report (Phase 1 — Verification) / 3. Verify a station",
+        "quote": "Every bullet under that heading flips to a checkmark together.",
+        "quoteSha256": "224819d1d36a075932f55a9829599872054ce3b5f6c9be1c101c04cc34e29d89"
+      },
+      "actor": "employee (Maya at EM; Luis at MEP)",
+      "preconditions": "Fixture cold-empty. A Phase 1 station is unverified.",
+      "expected": "Verifying a station marks its checklist lines together.",
+      "assertionId": "opening.phase1.employee-handoff",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.temperature-required",
+      "guide": {
+        "path": "docs/guides/staff-guide.md",
+        "revision": "5241016",
+        "section": "The opening report (Phase 1 — Verification) / 2. Type the fridge temperatures",
+        "quote": "Every temperature box has to have a number in it before the opening can be submitted.",
+        "quoteSha256": "684cdf74dd591ef13f29d2b3a299b2fdf2891f1923fef68addf19f8c1c93e8aa"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty. Phase 1 is open.",
+      "expected": "All required temperatures are supplied before successful Phase 1 submission.",
+      "assertionId": "opening.phase1.status",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.cold-recount-required",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "The opening report / 1. Phase 1 — verification",
+        "quote": "A prep section's **Verify section** button stays greyed out with *\"Recount items without closer data first\"* until every item with no closer count has a recount typed in.",
+        "quoteSha256": "793f6d91403776cb55084a00478f2bffe64852d0fc6b90c22258a428299c59f3"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty. cold-empty; no prior closing counts exist.",
+      "expected": "Missing closer counts require opener recounts before section verification.",
+      "assertionId": "opening.phase1.cold-attestation",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.cold-attestation",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "The opening report / 2. Submit the verification",
+        "quote": "**\"No prior closing data detected\"** appears when items had no closing count last night and the opener recounted them instead.",
+        "quoteSha256": "43e3417b48be7b090786ee8c164990ab5a5c85c01c18872d81a1f9536a0d1b7b"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty. Missing closer counts have been recounted.",
+      "expected": "The missing-source attestation appears before Phase 1 submission.",
+      "assertionId": "opening.phase1.cold-attestation",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.phase1-submit-floor",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "The opening report / 2. Submit the verification",
+        "quote": "**Submit Opening is key holder and up.**",
+        "quoteSha256": "c34de4820804190fd6bb4adf90b9d7cd704a52ce3849949299911bf480ae8ae1"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty. All stations, readings, recounts, sections and attestation are complete.",
+      "expected": "A key holder submits verification and advances open to phase1_complete.",
+      "assertionId": "opening.phase1.status",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.phase2-blur-save",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "The opening report / 3. Phase 2 — prep entry",
+        "quote": "**Rows save one at a time, when you leave the box.**",
+        "quoteSha256": "dfb10cecca50fc2aa34198be31f431c1f1094a4db93cfda0f59d301cccd680f4"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty. Phase 1 is complete; a prep value and any required reason are valid.",
+      "expected": "Leaving a prep input saves a live Phase 2 completion through the real route.",
+      "assertionId": "opening.phase2.save",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.phase2-save-failure",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "The opening report / 4. When a row will not save",
+        "quote": "A row that has not saved shows **Save failed** with **Retry** right there, and the bottom bar counts it as outstanding.",
+        "quoteSha256": "ee9ed740baa448370c5406ad9c1ee663c14dc2ab494b1df78826ef3e1b14fb04"
+      },
+      "actor": "key holder (Rosa at EM)",
+      "preconditions": "Fixture cold-empty. Exactly one browser prep-save request is aborted.",
+      "expected": "Save failed and Retry are visible; the row remains outstanding with no new completion.",
+      "assertionId": "opening.phase2.failure-retry",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.phase2-retry",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "The opening report / 4. When a row will not save",
+        "quote": "Tap **Retry** on the row.",
+        "quoteSha256": "a1a1ed47759fb5bc7fa6d23c6fa09b518507ea720eb4ea4ba7b0d3d04a719e03"
+      },
+      "actor": "key holder (Rosa at EM)",
+      "preconditions": "Fixture cold-empty. The single injected request failure is visible and the injection is consumed.",
+      "expected": "Retry persists the failed prep value and report readback remains truthful.",
+      "assertionId": "opening.phase2.failure-retry",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.phase2-incomplete-ui",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "The opening report / 4. When a row will not save",
+        "quote": "**Finalize Phase 2** stays disabled while any row is outstanding, and it names how many.",
+        "quoteSha256": "e6b2e2eb1af13799f7ccf5e6077b500cbe6509191ec232b6868fd82adde585dd"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty. A prep row is outstanding.",
+      "expected": "The finalize control stays disabled while prep saves remain outstanding.",
+      "assertionId": "opening.phase2.incomplete",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.phase2-incomplete-server",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "The opening report / 5. Finalize Phase 2 — *not shown*",
+        "quote": "It refuses until **every** prep item on the list has a saved row.",
+        "quoteSha256": "2be18d36c6c0e8347b6b47a375b085eed07a0a88fb3e76a2df9530a5066d1fbb"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty. A required prep item has no saved Phase 2 row.",
+      "expected": "Finalize returns 422 phase2_incomplete without advancing the instance status.",
+      "assertionId": "opening.phase2.incomplete",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.phase2-finalize",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "The opening report / 5. Finalize Phase 2 — *not shown*",
+        "quote": "It closes the opening report and stamps your name and the time on it.",
+        "quoteSha256": "b81a59ba6c350a6debe17b85a454740bd91a68818ea2b37777830d4f2d7698f3"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty. All required prep rows have saved.",
+      "expected": "Finalization advances to phase2_complete and persists finalizer provenance.",
+      "assertionId": "opening.phase2.finalize",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.report-actor-values",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Reports and trends / 2. Read a saved report",
+        "quote": "Every line carries the name of whoever ticked it and the temperature or count they entered.",
+        "quoteSha256": "5c9c200990fd3659c6eff652b20401b779937f5228a9006b80cd0ce831881c95"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty. Both phases are complete; the viewer reloads and signs in again.",
+      "expected": "The report preserves Phase 1 verification, actor and temperatures alongside Phase 2 entries.",
+      "assertionId": "opening.report.truth",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "opening.report-cold-baseline",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Reports and trends / 2. Read a saved report",
+        "quote": "On an opening, the prep rows read *\"Recount\"*, *\"Ground truth\"* and *\"prep need\"* so you can see where the day's numbers came from — and the note at the top says whether there was a prior closing to check against.",
+        "quoteSha256": "309558b461482cd1700d727155575d9f988f81bc09b2a84676a4cdc4ff98a011"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty. cold-empty opening completed with recounts and missing-source attestation.",
+      "expected": "The report discloses no prior baseline, shows recount/prep data, and invents no closer count.",
+      "assertionId": "opening.report.truth",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.key-holder-floor",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Ordering and purchase orders",
+        "quote": "The 6 AM job. Walk the shelves, say what is there, and the app works out the order. Key holder and up.",
+        "quoteSha256": "efef55fdd6e4893d75d77609b0d97aa7af41c85e40b65be3b3cea049476d2f50"
+      },
+      "actor": "employee (Maya at EM; Luis at MEP)",
+      "preconditions": "Fixture cold-empty; employee opens ordering and attempts a PO mutation.",
+      "expected": "Ordering and PO mutations are gated at key holder; employees cannot generate or place.",
+      "assertionId": "ordering.employee.denied",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.empty-shelf",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Ordering and purchase orders / 2. Say what is on the shelf",
+        "quote": "**Empty · order N** orders the full par. It is the other extreme: the shelf is bare.",
+        "quoteSha256": "effbdad66480243a0704308bad3f71ba1ff718a7fba895194ae44c886cfcbd7d"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; a SKU has a positive global par.",
+      "expected": "The empty-shelf decision orders the full par in order units.",
+      "assertionId": "ordering.walk.decisions",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.suggested-quantity",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Ordering and purchase orders / 2. Say what is on the shelf",
+        "quote": "**Suggest N** appears only where the app has an on-hand estimate to work from. It is the par minus that estimate, rounded up to whole order units. No estimate, no chip — it will not invent a number.",
+        "quoteSha256": "0ffae5e269d9d391eb748c09b52f60089565ed05319ee5102d89c123fb043b91"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; at least three SKUs offer a suggested-order control.",
+      "expected": "Suggested-order controls populate independently computed order quantities; report any disagreement with the guide about cold-empty estimates.",
+      "assertionId": "ordering.walk.decisions",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.full-shelf-zero",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Ordering and purchase orders / 2. Say what is on the shelf",
+        "quote": "**A blank box is not an answer.** A line you never touch is not submitted at all. **We're full · 0** is a real answer — it says the shelf is at par, orders nothing, and records that you looked.",
+        "quoteSha256": "6c23825009ea1313e90c0e69cb44e5a322c36128eea0aa4026c0a082c8874985"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; one SKU is explicitly marked full and another is untouched.",
+      "expected": "An explicit full decision persists as zero; an untouched SKU is not a submitted decision.",
+      "assertionId": "ordering.walk.persisted",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.walk-duplicate-po",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Ordering and purchase orders / 4. The draft order",
+        "quote": "**One draft order per vendor**, covering only the lines above zero. The zeros stay on the walk record as evidence you checked.",
+        "quoteSha256": "cdd5e2e814fa472d6e2f4ddc8cf0e496f3a5782582aaebeeae497865f483898b"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "A cutoff draft for this vendor/shop today has been confirmed; a key holder submits a walk with different positive quantities for the same vendor.",
+      "expected": "Walk submit returns 201 and persists every observation. Exactly one PO remains for the vendor/shop/day; poSkipped names the vendor and existing PO with reason po_exists and existingStatus confirmed. The confirmed PO, snapshot and lines remain unchanged.",
+      "assertionId": "ordering.walk.duplicate-po",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.walk-merge-into-draft",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Ordering and purchase orders / 4. The draft order",
+        "quote": "**One draft order per vendor**, covering only the lines above zero. The zeros stay on the walk record as evidence you checked.",
+        "quoteSha256": "cdd5e2e814fa472d6e2f4ddc8cf0e496f3a5782582aaebeeae497865f483898b"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "A fresh vendor has a cutoff draft today and a positive suggestion; a key holder submits different typed walk quantities, leaving an existing line untouched when the fixture has multiple lines.",
+      "expected": "LRA-229: walk submit returns 201, poMerged names the vendor and existing draft, and exactly one PO remains for the vendor/shop/day. Touched draft quantities equal the typed walk quantities; untouched lines survive; every walk observation persists.",
+      "assertionId": "ordering.walk.merge-into-draft",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.po-reopen",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Ordering and purchase orders / 4. The draft order",
+        "quote": "**One draft order per vendor**, covering only the lines above zero. The zeros stay on the walk record as evidence you checked.",
+        "quoteSha256": "cdd5e2e814fa472d6e2f4ddc8cf0e496f3a5782582aaebeeae497865f483898b"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "A confirmed PO exists for the key holder's shop. The governing guide quote establishes draft identity; reopening is the LRA-229 approved extension, not yet described in the guide.",
+      "expected": "LRA-229: a level-4 key holder can reopen the confirmed PO to draft, retaining its old snapshot until re-confirmation, PATCH a quantity and confirm again. The replacement confirmed_snapshot contains the edited quantity.",
+      "assertionId": "ordering.po.reopen",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.po-add-on",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Ordering and purchase orders / 4. The draft order",
+        "quote": "**One draft order per vendor**, covering only the lines above zero. The zeros stay on the walk record as evidence you checked.",
+        "quoteSha256": "cdd5e2e814fa472d6e2f4ddc8cf0e496f3a5782582aaebeeae497865f483898b"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Exactly one PO exists for the vendor/shop/day and is placed. The governing guide quote establishes draft identity; intentional add-on orders are the LRA-229 approved extension, not yet described in the guide.",
+      "expected": "LRA-229: add_on with one positive line returns 201 and creates exactly one second PO for the vendor/shop/day, in draft status with display code <parent base>-2 and the requested line. The placed parent and its lines remain unchanged.",
+      "assertionId": "ordering.po.add-on",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.draft-positive-lines",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Ordering and purchase orders / 4. The draft order",
+        "quote": "**One draft order per vendor**, covering only the lines above zero. The zeros stay on the walk record as evidence you checked.",
+        "quoteSha256": "cdd5e2e814fa472d6e2f4ddc8cf0e496f3a5782582aaebeeae497865f483898b"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; positive decisions and an explicit zero have been recorded.",
+      "expected": "Exactly one vendor/shop/day draft contains the positive walker entries with matching SKU ids, quantities and order units; the zero remains on the walk.",
+      "assertionId": "ordering.draft.matches-walk",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.confirm-freezes-snapshot",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Ordering and purchase orders / 4. The draft order",
+        "quote": "**Confirm** freezes the prices and the line list; it does not send anything. Confirming twice is refused.",
+        "quoteSha256": "dab7a4866819fc0f3b2ebdc4a4fb2b14a952e9f270da603ece9b9274d52bff0c"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; a draft has positive lines and integer-cent prices.",
+      "expected": "Confirmation freezes the line list and prices into confirmed_snapshot.",
+      "assertionId": "ordering.po.snapshot",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.manual-placement",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Ordering and purchase orders / 4. The draft order",
+        "quote": "**Sending is a separate tap**, and the email is rebuilt on the server from the confirmed order — not from anything on your screen. If the vendor has no ordering email on file, the app says so and leaves the order alone; use the phone or portal link instead and mark it placed.",
+        "quoteSha256": "b03bbfc6d77beae5e784aaf14780adae01f759ecd07c78963c24e03e92a9b146"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; a confirmed PO is placed through phone or in_person.",
+      "expected": "Manual placement records the human action separately from confirmation, creates one transmission record, and does not claim the app contacted the vendor.",
+      "assertionId": "ordering.po.manual",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.receiving-vendor-lines",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Receiving a delivery / 1. Pick the vendor",
+        "quote": "**Pick the vendor first.** The page loads that vendor's usual order once you do, and the item picker is limited to what that vendor sells.",
+        "quoteSha256": "7850b84b8a344bf6dd54130975f0925459cb57085d94e33d54e2138c2f193cf9"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; a placed Boar's Head PO exists at the selected shop.",
+      "expected": "Selecting the vendor loads its PO lines for receipt entry.",
+      "assertionId": "ordering.receiving.quantities",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.invoice-duplicate-serial",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Receiving a delivery / 1. Pick the vendor",
+        "quote": "The invoice number is the duplicate guard: the same vendor, the same day and the same invoice number is refused as already received. That is what stops a driver's second copy of the paperwork being filed twice.",
+        "quoteSha256": "b884dc3947b86ac3b0b194f4da0395c915c663aabdb85bc8df5c770914975789"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; the same vendor/day/invoice receipt is submitted twice serially.",
+      "expected": "The retry returns 409 duplicate_delivery and exactly one delivery remains.",
+      "assertionId": "ordering.invoice.serial",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.invoice-duplicate-race",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Receiving a delivery / 1. Pick the vendor",
+        "quote": "The invoice number is the duplicate guard: the same vendor, the same day and the same invoice number is refused as already received. That is what stops a driver's second copy of the paperwork being filed twice.",
+        "quoteSha256": "b884dc3947b86ac3b0b194f4da0395c915c663aabdb85bc8df5c770914975789"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; two real sessions concurrently submit the same vendor/day/invoice.",
+      "expected": "Exactly one submission returns 201 and the other returns 409 duplicate_delivery; one delivery remains.",
+      "assertionId": "ordering.invoice.race",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.receiving-arrived-quantities",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Receiving a delivery / 4. Flag a problem",
+        "quote": "**The quantity you type is what arrived, not what was ordered.** The flag is the story; the number is the count.",
+        "quoteSha256": "34368b1d15b7d4a437607fd923074d884b5eaeb98d3c22ac33e0efc59aa060a1"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; PO lines include short, damaged, missing and complete control cases.",
+      "expected": "Delivery item quantities equal the actual submitted received quantities, including the zero for a fully missing PO line.",
+      "assertionId": "ordering.receiving.quantities",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.receiving-credit-on-confirm",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Receiving a delivery / 4. Flag a problem",
+        "quote": "Nothing happens on screen when you tap the flag. The vendor credit is filed when you tap **Delivery confirmed**, and it shows up on the delivery afterwards.",
+        "quoteSha256": "cfcea6dddfe2efc5fed107229fcd2ef6b40fe7dfdad0e2a5c20a4a487fce0fc2"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; discrepancy flags are selected and the delivery is confirmed.",
+      "expected": "Confirmation persists credits for short, damaged and missing PO lines with independently computed amounts.",
+      "assertionId": "ordering.receiving.credits",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.receiving-photo-later",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Receiving a delivery / 4. Flag a problem",
+        "quote": "**Delivery confirmed** stays off until there is a receipt photo or **Photo later** is ticked. It submits immediately, with no \"are you sure\".",
+        "quoteSha256": "872321390edc1deb23ff333ef2ba4109d90357688382fa1e8ddd031dbf13aef7"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; no receipt photo is supplied and all other required fields are valid.",
+      "expected": "Photo later is the sanctioned way to enable delivery confirmation without a photo; no PIN or confirmation ceremony intervenes.",
+      "assertionId": "ordering.receiving.quantities",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.receiving-history",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Receiving a delivery / 5. Read the finished delivery",
+        "quote": "**What to do** — Open the delivery from **Recent deliveries** and check the item list against your paperwork before the driver leaves.",
+        "quoteSha256": "f11830bbd7facae78cd253ad30a258f2b8eded5a8e561d0257c6342312ca0e0a"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; a discrepancy delivery is confirmed, then the page is reloaded and the actor signs in again.",
+      "expected": "Recent deliveries opens the saved delivery with its exact item quantities, discrepancies and open credits.",
+      "assertionId": "ordering.receiving.history",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "ordering.receiving-po-credit-amount",
+      "guide": {
+        "path": "docs/guides/manager-guide.md",
+        "revision": "5241016",
+        "section": "Receiving a delivery / 5. Read the finished delivery",
+        "quote": "A **Short** flag on a line that was not on a purchase order records the problem but no quantity and no dollar amount, because there is no ordered quantity to subtract from. That is the *\"Short — — —\"* row you are looking at. Flag shorts against a purchase order when there is one, and the amount fills itself in.",
+        "quoteSha256": "6382c1657d643b7c5be1c68a4235832c9f03c2b612ec24020983f2c2f7503a59"
+      },
+      "actor": "key holder (Rosa at EM; Angel at MEP)",
+      "preconditions": "Fixture cold-empty; a placed PO supplies ordered quantities and frozen unit prices for a short and missing line.",
+      "expected": "Short and missing credits equal (ordered - received) times the independently read frozen unit price; the damaged credit follows its documented code rule.",
+      "assertionId": "ordering.receiving.credits",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.storefront.public",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 1. The storefront",
+        "quote": "No sign-in to look. Anyone can read the menu.",
+        "quoteSha256": "3f6740a57e2eee058d2a2b3c1f5bd3b9e97e3a1b5c65bee52e508a8c077d80e7"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "Anonymous customers can read the storefront.",
+      "assertionId": "customer.storefront.public",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.intake.pickup",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 2. The order form",
+        "quote": "**Nearest shop** is theirs to pick, and it decides everything downstream — the menu, the delivery zone, the tax, and which of your shops gets the lead.",
+        "quoteSha256": "143ed0850234e1f218742b75d7eb43f7a9eaea4cd57f7a0ba70f7f86a5ed811e"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "Pickup intake retains the explicitly chosen shop.",
+      "assertionId": "customer.intake.pickup",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.link.constant-shape",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 3. They send it",
+        "quote": "**What to do** — Nothing. **Continue →** turns on once the required fields are in.",
+        "quoteSha256": "8686c3c20ece098d6343f17845b9e63924528ce19cb60ae6521b277eefa19085"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "The real form requests a link with constant-shape success.",
+      "assertionId": "customer.link.constant-shape",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.link.no-preverify-artifact",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 4. Check your email",
+        "quote": "**Nothing exists on your side yet.** No lead, no quote, no customer. The form is held with the emailed link and nothing else.",
+        "quoteSha256": "d7e187316f3d42e74d4246f729c0e8e3f906cafc783ee1ca5fa7c4bfb8a3ca5e"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "No customer, lead or quote is created before verification.",
+      "assertionId": "customer.link.no-preverify-artifact",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.link.session-cookie",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 5. The link, and everything after it",
+        "quote": "**What to do** — They tap the link. It signs them in, and **that is the moment their order appears on your board**: a lead in **Inquiry**, source **Online portal**, with a draft quote already attached and their customer record created.",
+        "quoteSha256": "d37dffe7aa8169e6b2ba45a6bd9a33b8629f25a2d09141985a1888a2ba0a489e"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "The minted link establishes an httpOnly customer session.",
+      "assertionId": "customer.link.session-cookie",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.link.verified-draft",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 5. The link, and everything after it",
+        "quote": "**What to do** — They tap the link. It signs them in, and **that is the moment their order appears on your board**: a lead in **Inquiry**, source **Online portal**, with a draft quote already attached and their customer record created.",
+        "quoteSha256": "d37dffe7aa8169e6b2ba45a6bd9a33b8629f25a2d09141985a1888a2ba0a489e"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "Verification creates exactly one customer, Inquiry lead and draft at the chosen shop.",
+      "assertionId": "customer.link.verified-draft",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.link.reuse-refused",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 4. Check your email",
+        "quote": "*\"The link works once and expires in 30 minutes.\"* Both halves are true: single use, and dead after thirty minutes.",
+        "quoteSha256": "c4e7aed320d0cfc8d8ead3032bac8202ea352786eef39b5ad9ce410de5b640af"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "A consumed link is refused without creating another draft.",
+      "assertionId": "customer.link.reuse-refused",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.link.latest-wins",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 4. Check your email",
+        "quote": "**Only their most recent link works.** Asking for a new one kills the older ones immediately. This is the most common call you will get — somebody digs an older message out of the thread and taps that. Tell them to use the newest one.",
+        "quoteSha256": "ab57fc221d148501ee3573826b2efbec196b0123b466aef9772d318d46149541"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "Requesting a replacement expires the first token.",
+      "assertionId": "customer.link.latest-wins",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.link.malformed-refused",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 7. An old link",
+        "quote": "One message covers all three cases: *\"This link has expired, was already used, or was replaced by a newer one.\"* You cannot tell which from the screen, and it does not matter — the fix is the same.",
+        "quoteSha256": "3632905be26861c9b130756e7518e781e9990a732cbf100928bef738c57a725f"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "Malformed and reused tokens show the honest expired/replaced page.",
+      "assertionId": "customer.link.malformed-refused",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.cart.two-lines",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 5. The link, and everything after it",
+        "quote": "Then they **build** — packages first, then the à la carte sections — with a running cart and a coverage panel telling them whether they have enough food. Prices come from your shop's catering menu; there is nothing on that screen they can type a price into.",
+        "quoteSha256": "129c1de349bb41f9bec0dbbac347d0c89b46485ce627a1fd84568f987390db9f"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "Two real menu references can be added through the UI.",
+      "assertionId": "customer.cart.two-lines",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.cart.server-price",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 5. The link, and everything after it",
+        "quote": "Then they **build** — packages first, then the à la carte sections — with a running cart and a coverage panel telling them whether they have enough food. Prices come from your shop's catering menu; there is nothing on that screen they can type a price into.",
+        "quoteSha256": "129c1de349bb41f9bec0dbbac347d0c89b46485ce627a1fd84568f987390db9f"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "Persisted unit cents match the chosen shop menu.",
+      "assertionId": "customer.cart.server-price",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.cart.last-edit",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 5. The link, and everything after it",
+        "quote": "Then they **build** — packages first, then the à la carte sections — with a running cart and a coverage panel telling them whether they have enough food. Prices come from your shop's catering menu; there is nothing on that screen they can type a price into.",
+        "quoteSha256": "129c1de349bb41f9bec0dbbac347d0c89b46485ce627a1fd84568f987390db9f"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "The final edit survives immediate review, reload and real relogin; LRA-007 is a soft finding.",
+      "assertionId": "customer.cart.last-edit",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.review.persisted-total",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 5. The link, and everything after it",
+        "quote": "Then they **review**: the whole order, the full totals, and the deposit that holds the date. Placing it turns their draft into a submitted order and records the deposit as **due**.",
+        "quoteSha256": "a6c0357da2c8170ade51594416f27d0a5b79c8032aaa2cea844386839c753a1e"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "Persisted subtotal equals line totals and submitted charge stack matches review.",
+      "assertionId": "customer.review.persisted-total",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.submit.once",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 5. The link, and everything after it",
+        "quote": "Then they **review**: the whole order, the full totals, and the deposit that holds the date. Placing it turns their draft into a submitted order and records the deposit as **due**.",
+        "quoteSha256": "a6c0357da2c8170ade51594416f27d0a5b79c8032aaa2cea844386839c753a1e"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "Concurrent submissions produce one submitted quote and deposit due; Inquiry has zero prep demand.",
+      "assertionId": "customer.submit.once",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.payment.stub",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 5. The link, and everything after it",
+        "quote": "**No money is taken online.** The deposit is a record, not a payment. It is marked paid on the quote's own page, under **Payments**, by an AGM or above, once you have actually collected it.",
+        "quoteSha256": "7a91a04e14a316bf200a29a20860a82ead6b0e9ca5dfd75ce2023904d7f72e12"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "Payment returns an honest stub and no paid/provider record; real activation stays blocked.",
+      "assertionId": "customer.payment.stub",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.account.owned-order",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 5. The link, and everything after it",
+        "quote": "Their account page — **Your orders** — keeps their orders and their saved details for next time.",
+        "quoteSha256": "e1b373959a0f6a2b9f7dff0bf218b2631ae730bbefc3a115ee5e0d8a5b453ac3"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "The customer account links to the submitted order.",
+      "assertionId": "customer.account.owned-order",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.ownership.denied",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 5. The link, and everything after it",
+        "quote": "Their account page — **Your orders** — keeps their orders and their saved details for next time.",
+        "quoteSha256": "e1b373959a0f6a2b9f7dff0bf218b2631ae730bbefc3a115ee5e0d8a5b453ac3"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "A second customer cannot read, edit, submit or pay the first customer quote.",
+      "assertionId": "customer.ownership.denied",
+      "evidence": null,
+      "status": "pending"
+    },
+    {
+      "id": "customer.email.failure-honesty",
+      "guide": {
+        "path": "docs/guides/catering-guide.md",
+        "revision": "5241016",
+        "section": "What the customer sees (the order funnel) / 4. Check your email",
+        "quote": "**What to do** — If somebody rings you stuck here, tell them to look for the email and to use **the newest one**.",
+        "quoteSha256": "60e9f0f50256cc14c03e2b3fb6fc6614059efa7ac94dad444b4da0f56359d28d"
+      },
+      "actor": "anonymous to synthetic customer A; synthetic customer B for ownership",
+      "preconditions": "cold-empty, independently restored per shop and viewport; private sim capture, real minted links",
+      "expected": "Suppressed delivery is not proven delivery; response remains constant shape.",
+      "assertionId": "customer.email.failure-honesty",
+      "evidence": null,
+      "status": "pending"
+    }
+  ]
+}

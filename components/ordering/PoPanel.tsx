@@ -44,7 +44,7 @@ import {
   linkBtn,
 } from "@/components/ordering/delivery-affordances";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
-import type { PoDetail } from "@/lib/purchase-orders";
+import type { PoDetail, VendorPoSku } from "@/lib/purchase-orders";
 import type { OrderEmailPreview } from "@/lib/po-email-shared";
 import type { ThreeWayView, ThreeWayLine, ThreeWayFlag } from "@/lib/po-match-shared";
 import type { TranslationKey } from "@/lib/i18n/types";
@@ -72,6 +72,7 @@ function money(cents: number | null): string {
 }
 
 interface DraftEdit {
+  orderUnitLabel?: string | null;
   qty: string; // raw input
   note: string | null;
 }
@@ -114,6 +115,7 @@ export function PoPanel({
   const [edits, setEdits] = useState<Record<string, DraftEdit>>({});
   // Second-tap arming for irreversible actions.
   const [armConfirm, setArmConfirm] = useState(false);
+  const [armReopen, setArmReopen] = useState(false);
   const [armReconcile, setArmReconcile] = useState(false);
   // Mark-placed dialog state. channel prefilled from the last transmit affordance tapped.
   const [placeOpen, setPlaceOpen] = useState(false);
@@ -127,7 +129,7 @@ export function PoPanel({
       return;
     }
     const next: Record<string, DraftEdit> = {};
-    for (const l of d.lines) next[l.skuId] = { qty: String(l.orderQty), note: l.note };
+    for (const l of d.lines) next[l.skuId] = { qty: String(l.orderQty), note: l.note, orderUnitLabel: l.orderUnitLabel };
     setEdits(next);
   }, []);
 
@@ -159,6 +161,7 @@ export function PoPanel({
       seedEdits(j.detail);
       // Reset transient action arming after every (re)load — never carry a stale arm.
       setArmConfirm(false);
+      setArmReopen(false);
       setArmReconcile(false);
       setPlaceOpen(false);
       setLoadState("loaded");
@@ -181,14 +184,14 @@ export function PoPanel({
       return { ...m, [skuId]: { ...cur, qty: String(next) } };
     });
   const setQty = (skuId: string, qty: string) =>
-    setEdits((m) => ({ ...m, [skuId]: { qty, note: m[skuId]?.note ?? null } }));
+    setEdits((m) => ({ ...m, [skuId]: { ...m[skuId], qty, note: m[skuId]?.note ?? null } }));
 
   // The PATCH payload: every seeded line at its (possibly edited) qty. A qty of 0 keeps the
   // line as a "removed" row (append-only: the lib stores qty 0, transmission skips it).
   const editPayload = useMemo(
     () =>
       Object.entries(edits)
-        .map(([skuId, e]) => ({ skuId, orderQty: Number(e.qty), note: e.note }))
+        .map(([skuId, e]) => ({ skuId, orderQty: Number(e.qty), note: e.note, orderUnitLabel: e.orderUnitLabel }))
         .filter((l) => Number.isFinite(l.orderQty) && l.orderQty >= 0),
     [edits],
   );
@@ -267,6 +270,12 @@ export function PoPanel({
       await load();
       onChanged();
     }
+  };
+
+  const reopen = async () => {
+    if (!armReopen) { setArmReopen(true); return; }
+    const res = await doAction({ action: "reopen", poId }, "POST");
+    if (res.ok) { await load(); onChanged(); }
   };
 
   const openPlace = (channel: Channel, target: string | null) => {
@@ -395,6 +404,7 @@ export function PoPanel({
               <DraftView
                 detail={detail}
                 edits={edits}
+                onAdd={(sku) => setEdits((m) => ({ ...m, [sku.skuId]: { qty: "1", note: null, orderUnitLabel: sku.orderUnitLabel } }))}
                 onStep={stepQty}
                 onQty={setQty}
                 onSave={() => void saveDraft()}
@@ -412,6 +422,8 @@ export function PoPanel({
                 body={bodyText}
                 emailPreview={emailPreview}
                 busy={busy}
+                armReopen={armReopen}
+                onReopen={() => void reopen()}
                 onSend={() => void sendEmail()}
                 onUse={openPlace}
                 onOpenPlace={() => openPlace("in_person", null)}
@@ -419,16 +431,20 @@ export function PoPanel({
             )}
 
             {(detail.status === "placed" || detail.status === "received" || detail.status === "reconciled" || detail.status === "invoiced") && (
-              <TrailView
-                detail={detail}
-                language={language}
-                actorLevel={actorLevel}
-                armReconcile={armReconcile}
-                busy={busy}
-                onReconcile={() => void reconcile()}
-                threeWay={threeWay}
-                openCreditSkuIds={openCreditSkuIds}
-              />
+              <>
+                <TrailView
+                  detail={detail}
+                  language={language}
+                  actorLevel={actorLevel}
+                  armReconcile={armReconcile}
+                  busy={busy}
+                  onReconcile={() => void reconcile()}
+                  threeWay={threeWay}
+                  openCreditSkuIds={openCreditSkuIds}
+                />
+                {/* LRA-229: a deliberate second order for this vendor today, under the trail (D2: the record first). */}
+                <AddOnForm detail={detail} />
+              </>
             )}
           </>
         )}
@@ -452,10 +468,72 @@ export function PoPanel({
   );
 }
 
-// ── DRAFT: editable lines + Save + Confirm ──────────────────────────────────────────
+// An explicit add-on remains open while it contains unsaved lines (D10).
+function AddOnForm({ detail }: { detail: PoDetail }) {
+  const { t } = useTranslation();
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  const [lines, setLines] = useState<Array<{ sku: VendorPoSku; qty: string }>>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(false);
+  const invalid = lines.length === 0 || lines.some((l) => !Number.isFinite(Number(l.qty)) || Number(l.qty) <= 0);
+  const setQty = (skuId: string, qty: string) => setLines((rows) => rows.map((l) => l.sku.skuId === skuId ? { ...l, qty } : l));
+  const create = async () => {
+    if (busy || invalid) return;
+    setBusy(true); setError(false);
+    try {
+      const res = await fetch("/api/operations/ordering/po", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "add_on", poId: detail.poId, lines: lines.map(({ sku, qty }) => ({ skuId: sku.skuId, orderQty: Number(qty), orderUnitLabel: sku.orderUnitLabel })) }),
+      });
+      const data = await res.json() as { poId?: string };
+      if (res.status !== 201 || !data.poId) { setError(true); return; }
+      window.location.assign(`/ordering?location=${encodeURIComponent(detail.locationId)}&po=${encodeURIComponent(data.poId)}`);
+    } catch { setError(true); }
+    finally { setBusy(false); }
+  };
+  return <div className="mt-4">
+    <ActionButton variant="secondary" className="w-full" disabled={busy || (open && lines.length > 0)} aria-expanded={open} aria-controls={id} onClick={() => setOpen((v) => !v)}>
+      {t("ordering.po.add_on")}
+      {lines.length > 0 && <span>{t("ordering.po.line_count", { n: lines.length })}</span>}
+    </ActionButton>
+    {open && <div id={id} className="mt-3 flex flex-col gap-3">
+      <p className="text-[13px] text-co-text-dim">{t("ordering.po.add_on_help")}</p>
+      <VendorSkuPicker skus={detail.vendorSkus.filter((sku) => !lines.some((l) => l.sku.skuId === sku.skuId))} busy={busy} onPick={(sku) => setLines((rows) => [...rows, { sku, qty: "1" }])} />
+      {lines.map(({ sku, qty }) => <div key={sku.skuId}>
+        <span className="text-sm font-bold text-co-text">{sku.name} ({sku.orderUnitLabel ?? t("ordering.unit_generic")})</span>
+        <div className="mt-1 flex items-center gap-2">
+          <button type="button" className={stepBtn} disabled={busy} aria-label={t("ordering.po.decrement", { sku: sku.name })} onClick={() => setQty(sku.skuId, String(Math.max(1, (Number(qty) || 1) - 1)))}>-</button>
+          <input className="flex min-h-[44px] min-w-0 flex-1 items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-center text-co-text" type="number" min={0} step="any" inputMode="decimal" disabled={busy} value={qty} aria-label={t("ordering.po.qty_for", { sku: sku.name })} onChange={(e) => setQty(sku.skuId, e.target.value)} />
+          <button type="button" className={stepBtn} disabled={busy} aria-label={t("ordering.po.increment", { sku: sku.name })} onClick={() => setQty(sku.skuId, String((Number(qty) || 0) + 1))}>+</button>
+        </div>
+      </div>)}
+      {error && <p role="alert" className="text-sm text-co-cta-text">{t("ordering.po.error.generic")}</p>}
+      <ActionButton disabled={busy || invalid} onClick={() => void create()}>{t("ordering.po.add_on_create")}</ActionButton>
+    </div>}
+  </div>;
+}
+
+function VendorSkuPicker({ skus, busy, onPick }: { skus: VendorPoSku[]; busy: boolean; onPick: (sku: VendorPoSku) => void }) {
+  const { t } = useTranslation();
+  const id = useId();
+  if (skus.length === 0) return <p className="text-[13px] text-co-text-dim">{t("ordering.po.add_item_none")}</p>;
+  return <div>
+    <label htmlFor={id} className="block text-[11px] font-bold uppercase tracking-[0.12em] text-co-text-dim">{t("ordering.po.add_item_label")}</label>
+    <select id={id} value="" disabled={busy} className="flex min-h-[44px] w-full items-center rounded-lg border-2 border-co-border bg-co-surface px-3 text-co-text" onChange={(e) => {
+      const sku = skus.find((s) => s.skuId === e.target.value);
+      if (sku) onPick(sku);
+    }}>
+      <option value="" disabled>{t("ordering.po.add_item_label")}</option>
+      {skus.map((sku) => <option key={sku.skuId} value={sku.skuId}>{sku.name}{sku.itemNumber ? ` #${sku.itemNumber}` : ""}{sku.orderUnitLabel ? ` (${sku.orderUnitLabel})` : ""}</option>)}
+    </select>
+  </div>;
+}
+
 function DraftView({
   detail,
   edits,
+  onAdd,
   onStep,
   onQty,
   onSave,
@@ -466,6 +544,7 @@ function DraftView({
 }: {
   detail: PoDetail;
   edits: Record<string, DraftEdit>;
+  onAdd: (sku: VendorPoSku) => void;
   onStep: (skuId: string, delta: number) => void;
   onQty: (skuId: string, qty: string) => void;
   onSave: () => void;
@@ -475,12 +554,18 @@ function DraftView({
   anyInvalid: boolean;
 }) {
   const { t } = useTranslation();
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const pickerId = useId();
+  const newLines = detail.vendorSkus.filter((sku) => edits[sku.skuId]).map((sku) => ({
+    skuId: sku.skuId, skuName: sku.name, itemNumber: sku.itemNumber,
+    orderUnitLabel: sku.orderUnitLabel, orderQty: 1, note: null,
+  }));
   return (
     <div className="mt-4 flex flex-col gap-3">
       <p className="text-[13px] text-co-text-dim">{t("ordering.po.draft_help")}</p>
       <div className="flex flex-col gap-2">
-        {detail.lines.map((l) => {
-          const e = edits[l.skuId] ?? { qty: String(l.orderQty), note: l.note };
+        {[...detail.lines, ...newLines].map((l) => {
+          const e = edits[l.skuId] ?? { qty: String(l.orderQty), note: l.note, orderUnitLabel: l.orderUnitLabel };
           const qtyNum = Number(e.qty);
           const removed = Number.isFinite(qtyNum) && qtyNum === 0;
           const invalid = !Number.isFinite(qtyNum) || qtyNum < 0;
@@ -506,6 +591,9 @@ function DraftView({
                     {l.orderUnitLabel ?? t("ordering.unit_generic")}
                   </span>
                 </div>
+                {newLines.some((n) => n.skuId === l.skuId) && (
+                  <AlertPill tone="info" uppercase={false}>{t("ordering.po.new_line")}</AlertPill>
+                )}
                 {removed && (
                   <AlertPill tone="info" uppercase={false}>
                     {t("ordering.po.removed")}
@@ -545,6 +633,11 @@ function DraftView({
         })}
       </div>
 
+      <ActionButton variant="secondary" className="w-full" disabled={busy} aria-expanded={pickerOpen} aria-controls={pickerId} onClick={() => setPickerOpen((v) => !v)}>
+        {t("ordering.po.add_item")}
+        <span>{t("ordering.vendor.sku_count", { n: detail.vendorSkus.filter((sku) => !edits[sku.skuId]).length })}</span>
+      </ActionButton>
+      {pickerOpen && <div id={pickerId}><VendorSkuPicker skus={detail.vendorSkus.filter((sku) => !edits[sku.skuId])} busy={busy} onPick={onAdd} /></div>}
       <div className="mt-1 flex gap-2">
         <button
           type="button"
@@ -579,6 +672,8 @@ function ConfirmedView({
   body,
   emailPreview,
   busy,
+  armReopen,
+  onReopen,
   onSend,
   onUse,
   onOpenPlace,
@@ -589,6 +684,8 @@ function ConfirmedView({
   /** Server-rendered auto-tier email preview (null unless the auto leg is awake). */
   emailPreview: OrderEmailPreview | null;
   busy: boolean;
+  armReopen: boolean;
+  onReopen: () => void;
   onSend: () => void;
   onUse: (channel: "email" | "sms" | "phone" | "portal" | "in_person", target: string | null) => void;
   onOpenPlace: () => void;
@@ -808,6 +905,14 @@ function ConfirmedView({
 
       {/* Mark placed. */}
       <ActionButton onClick={onOpenPlace}>{t("ordering.po.mark_placed")}</ActionButton>
+
+      {/* LRA-229: unlock is the rarer act — it sits under the primary, two-tap armed like Confirm. */}
+      <div>
+        <ActionButton variant="secondary" className="w-full" disabled={busy} onClick={onReopen}>
+          {t(armReopen ? "ordering.po.reopen_armed" : "ordering.po.reopen")}
+        </ActionButton>
+        <p className="mt-2 text-[13px] text-co-text-dim">{t("ordering.po.reopen_help")}</p>
+      </div>
     </div>
   );
 }

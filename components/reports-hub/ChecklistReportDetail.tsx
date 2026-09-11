@@ -279,6 +279,12 @@ export function ChecklistReportDetailView({ detail, language }: Props) {
                       {item.done ? t("reports.detail.done") : t("reports.detail.not_done")}
                     </span>
                   </div>
+                  {item.incompleteReason ? (
+                    <div className="mt-1 rounded bg-co-bg px-2 py-1 text-xs text-co-text">
+                      <span className="font-semibold">{t("reports.detail.incomplete_reason")}</span> {item.incompleteReason.text}
+                      {item.incompleteReason.byName ? ` — ${item.incompleteReason.byName}` : ""}
+                    </div>
+                  ) : null}
 
                   {/* by-name + answer/count. Question lines (yes_no / free_text)
                       render their ANSWER via interpretAnswer; count/tick lines keep

@@ -8,6 +8,8 @@ import {
   loadPoDetail,
   updateDraftLines,
   confirmPO,
+  reopenPO,
+  createAddOnOrder,
   markPlaced,
   markReconciled,
   PurchaseOrderError,
@@ -135,6 +137,17 @@ export async function POST(req: NextRequest) {
 
   try {
     switch (action) {
+      case "add_on": {
+        if (typeof b.poId !== "string" || !b.poId) return jsonError(400, "invalid_payload", { field: "poId" });
+        if (!Array.isArray(b.lines)) return jsonError(400, "no_lines");
+        const created = await createAddOnOrder(ctx, b.poId, b.lines as DraftLineEdit[]);
+        return jsonOk({ poId: created.poId, displayCode: created.displayCode }, 201);
+      }
+      case "reopen": {
+        if (typeof b.poId !== "string" || !b.poId) return jsonError(400, "invalid_payload", { field: "poId" });
+        await reopenPO(ctx, b.poId);
+        return jsonOk({ poId: b.poId, status: "draft" });
+      }
       case "confirm": {
         if (typeof b.poId !== "string" || !b.poId) return jsonError(400, "invalid_payload", { field: "poId" });
         await confirmPO(ctx, b.poId);

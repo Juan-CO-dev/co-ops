@@ -126,6 +126,13 @@ export interface ClosingInitialState {
    * finalize (council: no hard gate on AM prep). False on historical views.
    */
   amPrepGap: boolean;
+  /**
+   * Reasons given at confirm for required lines left undone (checklist_incomplete_reasons),
+   * one per template item, newest wins. Empty until the instance is confirmed. Rendered
+   * read-only under the status banner so the record the closer wrote is finally visible
+   * (2026-09-09 — it had no reader before).
+   */
+  incompleteReasons: Array<{ templateItemId: string; reason: string; byName: string | null }>;
   // NOTE: actorName / actorEmail / actorLanguage no longer carried here —
   // UserMenu mounts at the (authed) route group layout (per
   // SPEC_AMENDMENTS.md C.39); TranslationProvider is layout-owned and
@@ -229,6 +236,7 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
     reportRefChains,
     reportRefCanEdit,
     amPrepGap,
+    incompleteReasons,
   } = initialState;
 
   // Live state.
@@ -807,6 +815,27 @@ export function ClosingClient({ initialState }: { initialState: ClosingInitialSt
       {/* Status banner */}
       {banner ? <BannerView banner={banner} /> : null}
 
+      {/* Reasons written at confirm for lines left undone — read-only record */}
+      {readOnly && incompleteReasons.length > 0 ? (
+        <section aria-label={t("closing.reasons.heading")} className="mt-3 rounded-xl border-2 border-co-border bg-co-surface px-4 py-3">
+          <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-co-text-dim">{t("closing.reasons.heading")}</h2>
+          <ul className="mt-2 flex flex-col gap-2">
+            {incompleteReasons.map((r) => {
+              const item = templateItems.find((ti) => ti.id === r.templateItemId);
+              const label = item ? item.label : r.templateItemId;
+              return (
+                <li key={r.templateItemId} className="text-sm text-co-text">
+                  <span className="font-semibold">{label}</span>
+                  <span className="text-co-text-muted"> — </span>
+                  {r.reason}
+                  {r.byName ? <span className="text-co-text-muted"> · {r.byName}</span> : null}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ) : null}
+
       {/* Sticky top progress bar */}
       <div className="sticky top-0 z-20 -mx-4 mt-4 border-b border-co-border bg-co-bg/90 px-4 py-2 backdrop-blur-sm sm:-mx-6 sm:px-6">
         <div className="flex items-center justify-between gap-3">
@@ -1227,6 +1256,7 @@ function StationGroup({
                   completionAuthor={author}
                   locationId={locationId}
                   readOnly={readOnly}
+                  actorLevel={actor.level}
                   chainAttribution={reportRefChains[it.id] ?? null}
                   canEdit={reportRefCanEdit[it.id] ?? false}
                 />

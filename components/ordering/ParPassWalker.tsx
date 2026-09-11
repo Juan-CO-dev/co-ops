@@ -48,6 +48,8 @@ import type {
   DraftOrder,
   ShrinkageNotice,
   ParPassSummary,
+  SkippedWalkPo,
+  MergedWalkPo,
 } from "@/lib/ordering";
 import type { TranslationKey } from "@/lib/i18n/types";
 
@@ -118,6 +120,8 @@ export function ParPassWalker({
     draftOrders: DraftOrder[];
     shrinkage: ShrinkageNotice[];
     poError: boolean;
+    poSkipped: SkippedWalkPo[];
+    poMerged: MergedWalkPo[];
   } | null>(null);
 
   const setSku = (skuId: string, patch: Partial<Obs>) =>
@@ -197,6 +201,8 @@ export function ParPassWalker({
         draftOrders?: DraftOrder[];
         shrinkage?: ShrinkageNotice[];
         poError?: boolean;
+        poSkipped?: SkippedWalkPo[];
+        poMerged?: MergedWalkPo[];
         code?: string;
       };
       if (!res.ok) {
@@ -204,7 +210,7 @@ export function ParPassWalker({
         setBusy(false);
         return;
       }
-      setResult({ draftOrders: j.draftOrders ?? [], shrinkage: j.shrinkage ?? [], poError: j.poError ?? false });
+      setResult({ draftOrders: j.draftOrders ?? [], shrinkage: j.shrinkage ?? [], poError: j.poError ?? false, poSkipped: j.poSkipped ?? [], poMerged: j.poMerged ?? [] });
       setPhase("done");
       // SIM-18b: a completed walk CREATES draft POs, so the server payload above
       // this island (OrderingSurfaces' "Today's orders" + the draftless-cutoff
@@ -253,6 +259,23 @@ export function ParPassWalker({
           </div>
         )}
 
+        {result.poMerged.map((merged) => (
+          <div key={merged.vendorId} role="status" className="rounded-xl border-2 border-co-success bg-co-success-surface px-4 py-3 text-[13px] text-co-confirm-text">
+            <a className="inline-flex min-h-[44px] items-center underline" href={`/ordering?location=${encodeURIComponent(locationId)}&po=${encodeURIComponent(merged.poId)}`}>
+              {t("ordering.done.po_merged", { vendor: merged.vendorName, code: merged.displayCode })}
+            </a>
+          </div>
+        ))}
+
+        {result.poSkipped.map((skipped) => (
+          <div key={skipped.vendorId} role="status" className="rounded-xl border-2 border-co-warning bg-co-warning-surface px-4 py-3 text-[13px] text-co-warning-text">
+            {/* A full navigation seeds OrderingSurfaces' initialPoId and opens the panel. */}
+            <a className="inline-flex min-h-[44px] items-center underline" href={`/ordering?location=${encodeURIComponent(locationId)}&po=${encodeURIComponent(skipped.existingPoId)}`}>
+              {t(skipped.existingStatus && skipped.existingStatus !== "draft" ? "ordering.done.po_skipped_confirmed" : "ordering.done.po_skipped", { vendor: skipped.vendorName, status: t(("ordering.po.status." + skipped.existingStatus) as TranslationKey) })}
+            </a>
+          </div>
+        ))}
+
         {result.shrinkage.length > 0 && (
           <div className="rounded-xl border-2 border-co-warning bg-co-warning-surface p-4">
             <div className="flex items-center gap-2">
@@ -275,7 +298,7 @@ export function ParPassWalker({
         <h2 className="text-sm font-bold uppercase tracking-[0.14em] text-co-text-dim">
           {t("ordering.done.orders_title")}
         </h2>
-        {result.draftOrders.length === 0 ? (
+        {result.draftOrders.length === 0 && result.poSkipped.length === 0 && result.poMerged.length === 0 ? (
           <p className="text-[13px] italic text-co-text-muted">{t("ordering.done.no_orders")}</p>
         ) : (
           result.draftOrders.map((o) => (

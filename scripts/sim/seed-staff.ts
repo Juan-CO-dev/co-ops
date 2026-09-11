@@ -1,8 +1,8 @@
 /**
  * SIM ONLY — seed the simulation staff roster into the co-ops-sim project.
  *
- * NEVER run against prod: the script refuses unless the Supabase URL contains
- * the sim project ref. Credentials below are DELIBERATELY known plaintext —
+ * NEVER run against prod: the script refuses unless the Supabase URL is the exact
+ * sim origin. Credentials below are DELIBERATELY known plaintext —
  * they exist so AI persona agents can log in to the sandbox. The sim project
  * has its own peppers/JWT secret (.env.sim); these hashes are worthless
  * anywhere else.
@@ -15,76 +15,75 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { hashPassword, hashPin } from "../../lib/auth";
-import type { RoleCode } from "../../lib/roles";
+import { pathToFileURL } from "node:url";
+import { assertSimTarget } from "../../lib/sim-isolation-shared";
+import { SIM_PERSONAS, SIM_LOCATIONS, assertPersonaRow, type SimPersona } from "./personas-shared";
 
-const SIM_REF = "jepgzucrvklhqpthowsc";
+const credentials: Record<string, { pin: string; password: string }> = {
+  "maya@sim.co-ops": { pin: "1111", password: "sim-maya-pw" },
+  "deshawn@sim.co-ops": { pin: "2222", password: "sim-deshawn-pw" },
+  "luis@sim.co-ops": { pin: "3333", password: "sim-luis-pw" },
+  "rosa@sim.co-ops": { pin: "4444", password: "sim-rosa-pw" },
+  "angel@sim.co-ops": { pin: "5555", password: "sim-angel-pw" },
+  "tommy@sim.co-ops": { pin: "6666", password: "sim-tommy-pw" },
+  "priya@sim.co-ops": { pin: "7777", password: "sim-priya-pw" },
+  "nicole@sim.co-ops": { pin: "8888", password: "sim-nicole-pw" },
+  "marcus@sim.co-ops": { pin: "9999", password: "sim-marcus-pw" },
+};
 
-// Location UUIDs carry over verbatim from the prod config clone.
-const LOC_MEP = "54ce1029-400e-4a92-9c2b-0ccb3b031f0a"; // P Street
-const LOC_EM = "d2cced11-b167-49fa-bab6-86ec9bf4ff09"; // Eastern Market
+type UserRow = {
+  id: string; email: string; name: string; role: string; active: boolean;
+  language: string; pin_hash: string | null; password_hash: string | null;
+};
+const columns = "id,email,name,role,active,language,pin_hash,password_hash";
 
-interface SimStaff {
-  email: string;
-  name: string;
-  role: RoleCode;
-  language: "en" | "es";
-  pin: string; // 4 digits — known sim credential
-  password: string; // known sim credential (step-up needs it for AGM+)
-  locations: string[];
-}
-
-// The cast. Casting law (Juan): employee=haiku · KH/SL=sonnet · AGM+=opus.
-// Two Spanish-language personas exercise the es UX end to end.
-// Deshawn is the designated gremlin (double-taps, abandons forms, junk input).
-export const SIM_STAFF: SimStaff[] = [
-  { email: "maya@sim.co-ops", name: "Maya Torres", role: "employee", language: "en", pin: "1111", password: "sim-maya-pw", locations: [LOC_EM] },
-  { email: "deshawn@sim.co-ops", name: "Deshawn Carter", role: "employee", language: "en", pin: "2222", password: "sim-deshawn-pw", locations: [LOC_EM] },
-  { email: "luis@sim.co-ops", name: "Luis Herrera", role: "employee", language: "es", pin: "3333", password: "sim-luis-pw", locations: [LOC_MEP] },
-  { email: "rosa@sim.co-ops", name: "Rosa Delgado", role: "key_holder", language: "es", pin: "4444", password: "sim-rosa-pw", locations: [LOC_EM] },
-  { email: "angel@sim.co-ops", name: "Angel Reyes", role: "key_holder", language: "en", pin: "5555", password: "sim-angel-pw", locations: [LOC_MEP] },
-  { email: "tommy@sim.co-ops", name: "Tommy Nguyen", role: "shift_lead", language: "en", pin: "6666", password: "sim-tommy-pw", locations: [LOC_EM] },
-  { email: "priya@sim.co-ops", name: "Priya Shah", role: "agm", language: "en", pin: "7777", password: "sim-priya-pw", locations: [LOC_EM] },
-  { email: "nicole@sim.co-ops", name: "Nicole Boyd", role: "agm", language: "en", pin: "8888", password: "sim-nicole-pw", locations: [LOC_MEP] },
-  { email: "marcus@sim.co-ops", name: "Marcus Webb", role: "gm", language: "en", pin: "9999", password: "sim-marcus-pw", locations: [LOC_EM, LOC_MEP] },
-];
-
-async function main(): Promise<void> {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-  if (!url.includes(SIM_REF)) {
-    throw new Error(`REFUSING: NEXT_PUBLIC_SUPABASE_URL does not point at the sim project (${SIM_REF}). Run with --env-file=.env.sim.`);
-  }
+export async function main(): Promise<void> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  assertSimTarget(url);
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!key) throw new Error("SUPABASE_SERVICE_ROLE_KEY missing from .env.sim");
-  const sb = createClient(url, key, { auth: { persistSession: false } });
-
-  for (const s of SIM_STAFF) {
-    const { data: existing, error: exErr } = await sb
-      .from("users").select("id").ilike("email", s.email).maybeSingle<{ id: string }>();
-    if (exErr) throw new Error(`${s.email} pre-flight: ${exErr.message}`);
-    if (existing) { console.log(`= ${s.email} already seeded`); continue; }
-
-    const pinHash = await hashPin(s.pin);
-    const passwordHash = await hashPassword(s.password);
-    const { data: row, error: insErr } = await sb
-      .from("users")
-      .insert({
-        email: s.email, name: s.name, role: s.role,
-        pin_hash: pinHash, password_hash: passwordHash,
-        active: true, language: s.language,
-      })
-      .select("id").maybeSingle<{ id: string }>();
-    if (insErr) throw new Error(`${s.email} insert: ${insErr.message}`);
-    if (!row) throw new Error(`${s.email}: insert returned no row`);
-
-    for (const loc of s.locations) {
-      const { error: locErr } = await sb
-        .from("user_locations")
-        .insert({ user_id: row.id, location_id: loc, active: true });
-      if (locErr) throw new Error(`${s.email} user_locations: ${locErr.message}`);
-    }
-    console.log(`+ ${s.name} (${s.role}, ${s.language}) @ ${s.locations.length} location(s)`);
+  if (!key) throw new Error("SUPABASE_SERVICE_ROLE_KEY missing from sim environment");
+  const sb = createClient(url!, key, { auth: { persistSession: false } });
+  const ids: Record<string, string> = {};
+  const missing: SimPersona[] = [];
+  async function readUser(s: SimPersona) {
+    const { data, error } = await sb.from("users").select(columns).ilike("email", s.email).maybeSingle<UserRow>();
+    if (error) throw new Error(`${s.email}: users read failed; full fixture restore required`);
+    return data;
   }
-  console.log("SIM STAFF SEEDED.");
+  async function verify(s: SimPersona, row: UserRow) {
+    const { data, error } = await sb.from("user_locations").select("location_id,active").eq("user_id", row.id);
+    if (error || !data) throw new Error(`${s.email}: user_locations read failed; full fixture restore required`);
+    assertPersonaRow(s, row, data);
+    const bcrypt = /^\$2[aby]\$12\$[./A-Za-z0-9]{53}$/;
+    if (!row.pin_hash || !bcrypt.test(row.pin_hash)) throw new Error(`${s.email}: pin credential scheme mismatch; full fixture restore required`);
+    if (!row.password_hash?.startsWith("hmac2$") || !bcrypt.test(row.password_hash.slice(6))) throw new Error(`${s.email}: password credential scheme mismatch; full fixture restore required`);
+    ids[s.email] = row.id;
+  }
+  // Preflight the ENTIRE existing roster before creating even one missing user.
+  for (const s of SIM_PERSONAS) {
+    const row = await readUser(s);
+    if (row) await verify(s, row);
+    else missing.push(s);
+  }
+  for (const s of missing) {
+    const credential = credentials[s.email];
+    if (!credential) throw new Error(`${s.email}: private credential missing`);
+    const { data: row, error } = await sb.from("users").insert({
+      email: s.email, name: s.name, role: s.role, language: s.language, active: true,
+      pin_hash: await hashPin(credential.pin), password_hash: await hashPassword(credential.password),
+    }).select("id").maybeSingle<{ id: string }>();
+    if (error || !row) throw new Error(`${s.email}: users insert failed; full fixture restore required`);
+    for (const code of s.locations) {
+      const { error } = await sb.from("user_locations").insert({ user_id: row.id, location_id: SIM_LOCATIONS[code].id, active: true });
+      if (error) throw new Error(`${s.email}: user_locations insert failed; full fixture restore required`);
+    }
+    const readback = await readUser(s);
+    if (!readback) throw new Error(`${s.email}: missing readback; full fixture restore required`);
+    await verify(s, readback);
+  }
+  if (process.argv.includes("--print-map")) console.log(JSON.stringify(ids));
 }
 
-void main();
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  void main().catch(error => { process.exitCode = 1; console.error(error instanceof Error && /^(?:[a-z]+@sim\.co-ops:|NEXT_PUBLIC_SUPABASE_URL:|SUPABASE_SERVICE_ROLE_KEY)/.test(error.message) ? error.message : "Sim seed failed; full fixture restore required"); });
+}

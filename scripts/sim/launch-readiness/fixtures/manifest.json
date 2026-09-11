@@ -1,0 +1,420 @@
+{
+  "expectedTableCount": 141,
+  "inventory": {
+    "CONFIG": [
+      "locations",
+      "categories",
+      "vendor_categories",
+      "units",
+      "measure_units",
+      "sku_pack_formats",
+      "order_types",
+      "prep_sections",
+      "vendors",
+      "vendor_contacts",
+      "vendor_ordering_details",
+      "vendor_order_types",
+      "vendor_cutoffs",
+      "vendor_delivery_rhythm",
+      "vendor_items",
+      "sku_pack_levels",
+      "sku_inferred_baselines",
+      "vendor_price_history",
+      "location_sku_settings",
+      "products",
+      "product_primaries",
+      "items",
+      "item_par_levels",
+      "item_sizes",
+      "item_components",
+      "item_questions",
+      "section_questions",
+      "recipes",
+      "recipe_inputs",
+      "recipe_outputs",
+      "recipe_ingredients",
+      "recipe_steps",
+      "menu_items",
+      "toast_menu_map",
+      "toast_menu_cache",
+      "toast_ingest_exclusions",
+      "checklist_templates",
+      "checklist_template_items",
+      "maintenance_equipment",
+      "catering_packages",
+      "catering_package_items",
+      "catering_package_slot_options",
+      "catering_pricing_rules",
+      "catering_rate_rules",
+      "catering_allergen_types",
+      "catering_fulfillment_nodes",
+      "notification_recipients",
+      "positions",
+      "position_responsibilities",
+      "training_modules",
+      "deep_clean_tasks",
+      "catering_faq",
+      "catering_food_facts",
+      "catering_delivery_zones",
+      "catering_blackout_dates",
+      "catering_capacity_policy"
+    ],
+    "AUTH": [
+      "users",
+      "user_locations",
+      "sessions",
+      "password_resets",
+      "email_verifications",
+      "user_notification_prefs",
+      "catering_customers",
+      "catering_companies",
+      "catering_company_domains",
+      "catering_portal_sessions",
+      "catering_portal_tokens",
+      "catering_portal_rate_limits"
+    ],
+    "HISTORY": [
+      "checklist_instances",
+      "checklist_completions",
+      "checklist_submissions",
+      "checklist_incomplete_reasons",
+      "opening_closer_count_snapshots",
+      "opening_section_verifications",
+      "opening_setup_items",
+      "opening_setup_verifications",
+      "report_assignments",
+      "report_views",
+      "report_photos",
+      "cash_reports",
+      "pm_reports",
+      "pm_employee_evals",
+      "written_reports",
+      "ai_reports",
+      "weekly_rollups",
+      "shifts_daily_data",
+      "shift_overlays",
+      "shift_overlay_corrections",
+      "maintenance_notes",
+      "maintenance_tickets",
+      "productions",
+      "production_inputs",
+      "prep_list_resolutions",
+      "sku_count_events",
+      "sku_count_lines",
+      "par_levels",
+      "par_pass_events",
+      "par_pass_lines",
+      "purchase_orders",
+      "po_lines",
+      "po_transmissions",
+      "vendor_orders",
+      "vendor_deliveries",
+      "vendor_delivery_items",
+      "vendor_credits",
+      "vendor_rhythm_skips",
+      "email_receipts",
+      "photos",
+      "par_auto_moves",
+      "par_suggestion_actions",
+      "toast_sales_events",
+      "toast_daily_depletion",
+      "toast_daily_sales_signals",
+      "toast_daily_data",
+      "toast_catering_orders",
+      "catering_pipeline",
+      "catering_pipeline_events",
+      "catering_quotes",
+      "catering_quote_items",
+      "catering_quote_item_options",
+      "catering_orders",
+      "catering_order_items",
+      "catering_payments",
+      "catering_prep_demand",
+      "catering_allergens",
+      "customer_feedback",
+      "ezcater_events",
+      "lto_events",
+      "lto_event_items",
+      "lto_performance",
+      "notifications",
+      "announcements",
+      "announcement_acknowledgements",
+      "sms_messages",
+      "sms_queue",
+      "training_progress",
+      "training_reports",
+      "tip_pools",
+      "tip_pool_distributions",
+      "audit_log",
+      "deep_clean_assignments"
+    ]
+  },
+  "blocked": [],
+  "recipes": [
+    {
+      "id": "cold-empty",
+      "recipeVersion": "f2-v1:cold-empty",
+      "anchorDateEt": "2026-09-08",
+      "handles": {},
+      "synthetic": [],
+      "expected": {
+        "counts": {
+          "checklist_instances": 0,
+          "checklist_completions": 0,
+          "checklist_submissions": 0,
+          "checklist_incomplete_reasons": 0,
+          "opening_closer_count_snapshots": 0,
+          "opening_section_verifications": 0,
+          "opening_setup_items": 0,
+          "opening_setup_verifications": 0,
+          "report_assignments": 0,
+          "report_views": 0,
+          "report_photos": 0,
+          "cash_reports": 0,
+          "pm_reports": 0,
+          "pm_employee_evals": 0,
+          "written_reports": 0,
+          "ai_reports": 0,
+          "weekly_rollups": 0,
+          "shifts_daily_data": 0,
+          "shift_overlays": 0,
+          "shift_overlay_corrections": 0,
+          "maintenance_notes": 0,
+          "maintenance_tickets": 0,
+          "productions": 0,
+          "production_inputs": 0,
+          "prep_list_resolutions": 0,
+          "sku_count_events": 0,
+          "sku_count_lines": 0,
+          "par_levels": 0,
+          "par_pass_events": 0,
+          "par_pass_lines": 0,
+          "purchase_orders": 0,
+          "po_lines": 0,
+          "po_transmissions": 0,
+          "vendor_orders": 0,
+          "vendor_deliveries": 0,
+          "vendor_delivery_items": 0,
+          "vendor_credits": 0,
+          "vendor_rhythm_skips": 0,
+          "email_receipts": 0,
+          "photos": 0,
+          "par_auto_moves": 0,
+          "par_suggestion_actions": 0,
+          "toast_sales_events": 0,
+          "toast_daily_depletion": 0,
+          "toast_daily_sales_signals": 0,
+          "toast_daily_data": 0,
+          "toast_catering_orders": 0,
+          "catering_pipeline": 0,
+          "catering_pipeline_events": 0,
+          "catering_quotes": 0,
+          "catering_quote_items": 0,
+          "catering_quote_item_options": 0,
+          "catering_orders": 0,
+          "catering_order_items": 0,
+          "catering_payments": 0,
+          "catering_prep_demand": 0,
+          "catering_allergens": 0,
+          "customer_feedback": 0,
+          "ezcater_events": 0,
+          "lto_events": 0,
+          "lto_event_items": 0,
+          "lto_performance": 0,
+          "notifications": 0,
+          "announcements": 0,
+          "announcement_acknowledgements": 0,
+          "sms_messages": 0,
+          "sms_queue": 0,
+          "training_progress": 0,
+          "training_reports": 0,
+          "tip_pools": 0,
+          "tip_pool_distributions": 0,
+          "audit_log": 0,
+          "users": 9,
+          "user_locations": 10,
+          "sessions": 0,
+          "password_resets": 0,
+          "email_verifications": 0,
+          "user_notification_prefs": 0,
+          "catering_customers": 0,
+          "catering_companies": 0,
+          "catering_company_domains": 0,
+          "catering_portal_sessions": 0,
+          "catering_portal_tokens": 0,
+          "catering_portal_rate_limits": 0,
+          "deep_clean_assignments": 0
+        },
+        "configCounts": "snapshot manifest rows; dropped CONFIG tables remain zero",
+        "money": "no transactional money observations",
+        "quantity": "no transactional quantity observations"
+      }
+    },
+    {
+      "id": "warm-history",
+      "recipeVersion": "f2-v1:warm-history",
+      "anchorDateEt": "2026-09-08",
+      "handles": {
+        "sku:PFG:Ham": {
+          "resolve": "snapshot",
+          "table": "vendor_items",
+          "vendor": "PFG",
+          "match": {
+            "name": "Ham"
+          }
+        },
+        "product:HAM": {
+          "resolve": "snapshot",
+          "table": "products",
+          "match": {
+            "name": "HAM"
+          }
+        }
+      },
+      "synthetic": [],
+      "expected": {
+        "counts": {},
+        "windowDays": 21,
+        "priorDay": "2026-09-07",
+        "currentDayOpening": "unstarted",
+        "currentDayPurchaseOrders": 0,
+        "quotes": 0,
+        "customerSessions": 0
+      },
+      "blocked": "CC-approved prior-day source rows, 21-day demand cohort, observed-zero/gap dates, chain quantities and independent money oracles have not been supplied. Aggregate inventory counts cannot supply these."
+    },
+    {
+      "id": "incomplete-pack",
+      "recipeVersion": "f2-v1:incomplete-pack",
+      "anchorDateEt": "2026-09-08",
+      "handles": {},
+      "synthetic": [],
+      "expected": {
+        "counts": {},
+        "status": "unresolved",
+        "numericTotal": null,
+        "dependency": "warm-history"
+      },
+      "blocked": "Depends on blocked warm-history. No evidenced incomplete SKU, missing denominator/link and complete control have been provided; never manufacture an operational deficiency."
+    },
+    {
+      "id": "over-1000",
+      "recipeVersion": "f2-v1:over-1000",
+      "anchorDateEt": "2026-09-08",
+      "handles": {
+        "sku:PFG:Ham": {
+          "resolve": "snapshot",
+          "table": "vendor_items",
+          "vendor": "PFG",
+          "match": {
+            "name": "Ham"
+          }
+        }
+      },
+      "synthetic": [
+        {
+          "table": "vendor_deliveries",
+          "handle": "delivery:page",
+          "repeat": 1205,
+          "row": {
+            "location_id": {
+              "$handle": "location:EM"
+            },
+            "created_at": "2026-09-06T16:00:00.000Z"
+          }
+        },
+        {
+          "table": "vendor_delivery_items",
+          "handle": "delivery-item:page",
+          "repeat": 1205,
+          "row": {
+            "delivery_id": {
+              "$sequence": "delivery:page"
+            },
+            "vendor_item_id": {
+              "$handle": "sku:PFG:Ham"
+            },
+            "qty_received": "1",
+            "unit_price": null,
+            "resolved_oz": null,
+            "created_at": "2026-09-06T16:00:00.000Z",
+            "created_by": {
+              "$handle": "persona:rosa"
+            }
+          },
+          "sentinel": {
+            "created_at": "2026-09-07T20:00:00.000Z"
+          }
+        }
+      ],
+      "expected": {
+        "counts": {
+          "vendor_deliveries": 1205,
+          "vendor_delivery_items": 1205
+        },
+        "sentinelPkRank": 1205,
+        "lastReceivedAt": "2026-09-07T20:00:00.000Z",
+        "qtyReceivedPerItem": "1",
+        "unitPrice": null,
+        "resolvedOz": null,
+        "dependency": "warm-history",
+        "blocked": "Header required fields, complete chain measurement and two-member fallback oracle unprovisioned; fragment is never restored while blocked."
+      },
+      "blocked": "Receipt fragment is deterministic but not a complete warm fixture: second HAM member, chain level/oz/price, no-primary scope, other-shop control and warm-history prerequisites require CC snapshot approval. The single named SKU below does not prove product failover."
+    },
+    {
+      "id": "two-shop-divergent",
+      "recipeVersion": "f2-v1:two-shop-divergent",
+      "anchorDateEt": "2026-09-08",
+      "handles": {},
+      "synthetic": [
+        {
+          "table": "sku_count_events",
+          "handle": "count:EM",
+          "row": {
+            "location_id": {
+              "$handle": "location:EM"
+            },
+            "counted_by": {
+              "$handle": "persona:rosa"
+            },
+            "counted_at": "2026-09-07T18:00:00.000Z",
+            "created_at": "2026-09-07T18:00:00.000Z",
+            "active": true,
+            "note": "synthetic f2 count scope; quantity oracle blocked"
+          }
+        },
+        {
+          "table": "sku_count_events",
+          "handle": "count:MEP",
+          "row": {
+            "location_id": {
+              "$handle": "location:MEP"
+            },
+            "counted_by": {
+              "$handle": "persona:angel"
+            },
+            "counted_at": "2026-09-07T19:00:00.000Z",
+            "created_at": "2026-09-07T19:00:00.000Z",
+            "active": true,
+            "note": "synthetic f2 count scope; quantity oracle blocked"
+          }
+        }
+      ],
+      "expected": {
+        "counts": {
+          "sku_count_events": 2
+        },
+        "locations": [
+          "d2cced11-b167-49fa-bab6-86ec9bf4ff09",
+          "54ce1029-400e-4a92-9c2b-0ccb3b031f0a"
+        ],
+        "dependency": "warm-history",
+        "orderQuantities": {
+          "blocked": "CC independent measurements required"
+        }
+      },
+      "blocked": "Depends on blocked warm-history. Opposing actual HAM members/primaries, local par overrides, on-hand quantities and independently computed order quantities not supplied. Count-event headers alone are not quantity evidence."
+    }
+  ]
+}

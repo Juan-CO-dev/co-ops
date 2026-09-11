@@ -194,6 +194,8 @@ export const NON_DESTRUCTIVE_ACTIONS = [
   "par.suggestion_dismiss",
   "par_pass.submitted",
   "po.confirmed",
+  // "po.reopened" reverses accountability: registered in DESTRUCTIVE_ACTIONS,
+  // included in AUDIT_ACTIONS below, never in this non-destructive list.
   "po.draft_created",
   "po.email_sent",
   "po.placed",
@@ -263,9 +265,19 @@ export const RESERVED_ACTIONS = [
   // and sets destructive=true literally. There is no TypeScript call site and there may
   // never be one: no app code path deletes catering rows.
   "catering.test_data_purge",
+  // Emitted from SQL only — migration 0198 rewrote the PostgREST-role grants on public.users
+  // (LRA-001 credential columns readable, LRA-214 self-promotion via PATCH) and INSERTs its own
+  // audit row with destructive=true literally. Grant changes never go through app code.
+  "security.grants_change",
+  // SQL-only: 0201 atomically imports one reviewed Angel price/pack/weight bundle.
+  "sku.angel_import",
   // Convention documented in AGENTS.md, written by hand during incident recovery
   // rather than by any code path.
   "audit.gap_recovery",
+  // Emitted from SQL only — migration 0196 restores the 342 Phase 1 completion rows that 0176's
+  // collapse superseded under their live Phase 2 siblings, and writes this row itself with
+  // destructive=true. No TypeScript call site: no app code path un-supersedes a completion.
+  "checklist_completion.restore",
   // Location lifecycle — the admin surface for it does not exist yet.
   "location.create",
   "location.activate",

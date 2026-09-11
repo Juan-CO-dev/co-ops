@@ -58,7 +58,7 @@ export interface LocationRateData {
 export default async function AdminCateringRateRulesPage() {
   const auth = await requireSessionFromHeaders("/admin");
   const level = ROLES[auth.user.role].level;
-  if (level < RATE_MIN) redirect("/dashboard");
+  if (level < RATE_MIN) redirect("/admin?denied=rate_rules");
   const lang = auth.user.language;
 
   const locations = await getManageableLocations(auth);

@@ -83,6 +83,8 @@ export async function POST(req: NextRequest) {
         shrinkage: res.shrinkage,
         pos: res.pos,
         poError: res.poError,
+        poSkipped: res.poSkipped,
+        poMerged: res.poMerged,
       },
       201,
     );

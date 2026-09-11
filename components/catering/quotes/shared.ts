@@ -47,6 +47,7 @@ const KNOWN_ERROR_CODES = new Set([
   "forbidden",
   "not_found",
   "invalid_payload",
+  "unknown_item",
   "location_access_denied",
   "mixed_concerns",
   "not_current",

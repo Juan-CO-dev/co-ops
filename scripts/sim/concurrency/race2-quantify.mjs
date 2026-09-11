@@ -1,3 +1,5 @@
+import { pathToFileURL } from "node:url";
+import { init, personaFor } from "./driver.mjs";
 /**
  * Quantify RACE2 (sim-2): the non-atomic completion-supersede under two
  * SIMULTANEOUS completers on one item. completeItem's own docstring predicts
@@ -9,12 +11,12 @@ import { Session, findUser, fireSimultaneous, db, LOC, todayEt } from "./driver.
 
 const N = 20;
 
-async function run() {
+export async function run() {
   const loc = LOC.EM, date = todayEt();
   const { data: tmpl } = await db.from("checklist_templates")
     .select("id").eq("type", "closing").eq("location_id", loc).eq("active", true).maybeSingle();
-  const rosa = await new Session(await findUser(loc, "key_holder"), "4444").login(loc);
-  const tommy = await new Session(await findUser(loc, "shift_lead"), "6666").login(loc);
+  const rosa = await new Session(await findUser(loc, "key_holder", personaFor({ locationCode: "EM", role: "key_holder", name: "Rosa Delgado" }).name), "4444").login(loc);
+  const tommy = await new Session(await findUser(loc, "shift_lead", personaFor({ locationCode: "EM", role: "shift_lead", name: "Tommy Nguyen" }).name), "6666").login(loc);
   const inst = await rosa.call("POST", "/api/checklist/instances", { templateId: tmpl.id, locationId: loc, date });
   const instanceId = inst.json?.instance?.id ?? inst.json?.id ?? inst.json?.instanceId;
 
@@ -42,4 +44,6 @@ async function run() {
   console.log(`  app surfaced supersede_failed guard:             ${surfaced}/${trials}`);
   console.log(dupes ? `  → REAL intermittent race: the two-phase insert+supersede is not atomic under simultaneity.` : `  → not reproduced this run (still timing-dependent; try more trials).`);
 }
-run().catch((e) => { console.error(e); process.exit(2); });
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  init().then(() => run()).catch(() => { console.error("F4 runner required; initialize under its lease"); process.exitCode = 2; });
+}

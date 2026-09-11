@@ -39,3 +39,11 @@ APP, not of you — if something confuses you, that confusion is valuable data.
   dashboard tiles. Receiving ("log a delivery") and Counts live under
   operations. The ordering walk is the "Ordering" nav chip.
 - Your location matters: make sure you're working YOUR shop.
+
+Suite lease: no interactive humans on the sim while a suite holds the lease.
+Identity comes from `personas-shared.ts`: EM = P Street; MEP = Capitol Hill.
+Angel belongs to MEP; Rosa belongs to EM; Marcus belongs to both shops.
+No first-user fallback: require the exact persona name, role, and verified location
+membership. Missing, duplicate, or stale identities stop the run; restore the fixture.
+Concurrency drivers run through F4 with `node --import tsx`; F4 calls `init({ assertLease, verifyServer })`
+before an exported `run()`. Direct legacy execution refuses without those prerequisites.

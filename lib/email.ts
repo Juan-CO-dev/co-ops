@@ -79,6 +79,7 @@ function toLabel(to: string | string[]): string {
 }
 
 export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult> {
+  if (process.env.SIM_MODE && process.env.SIM_EMAIL_CAPTURE_DIR) return import("./sim-email").then(({ captureEmail }) => captureEmail(input)).catch(() => ({ error: "sim_capture_failed" }));
   const label = toLabel(input.to);
   try {
     // `from` defaults to EMAIL_FROM (getFrom) — existing callers pass no `from`,

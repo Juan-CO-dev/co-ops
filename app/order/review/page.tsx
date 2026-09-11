@@ -21,6 +21,7 @@ import { GoodToKnow, FaqOpen } from "@/components/portal/GoodToKnow";
 import { FAQ, GTK } from "@/components/portal/portal-content";
 import type { DraftLoad } from "@/lib/portal/draft";
 import type { ChargeStack } from "@/lib/catering/quotes";
+import { TranslationProvider, useTranslation } from "@/lib/i18n/provider";
 
 // ── Tip presets ──────────────────────────────────────────────────────────────────────
 const TIP_PRESETS = [0, 0.15, 0.18, 0.2] as const;
@@ -74,7 +75,13 @@ function packageComposition(
 
 // ── Main component ────────────────────────────────────────────────────────────────────
 
-export default function OrderReview() {
+export default function OrderReviewPage() {
+  // Same language default as the existing order/build storefront surface.
+  return <TranslationProvider initialLanguage="en"><OrderReview /></TranslationProvider>;
+}
+
+function OrderReview() {
+  const { t } = useTranslation();
   const router = useRouter();
 
   const [draft, setDraft] = useState<DraftLoad | null>(null);
@@ -215,7 +222,7 @@ export default function OrderReview() {
         <Reveal>
           <p className="text-xs font-bold uppercase tracking-[0.28em] text-co-text-dim">Last step</p>
           <h1 className="mt-2 text-3xl font-extrabold tracking-tight text-co-text sm:text-4xl">Review, then lock in your date.</h1>
-          <p className="mt-2 text-co-text-muted">Here&apos;s everything in one place. Your deposit locks your date &amp; requirements while a team member confirms your order — usually within 24 hours — then we email you to pay the balance before the event.</p>
+          <p className="mt-2 text-co-text-muted">{t("order.review.deposit_explanation")}</p>
         </Reveal>
 
         {/* Event details */}
@@ -374,15 +381,15 @@ export default function OrderReview() {
             <div className="border-t border-co-border/60 bg-co-text px-6 py-5 text-co-bg">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-extrabold text-co-gold">Deposit to lock in your date</p>
+                  <p className="text-sm font-extrabold text-co-gold">{t("order.review.deposit_label")}</p>
                   <p className="mt-0.5 text-xs text-co-bg/60">
-                    {depositLabel(stack.depositCents, stack.totalCents)} now · locks your date &amp; requirements
+                    {t("order.review.deposit_record", { percent: depositLabel(stack.depositCents, stack.totalCents) })}
                   </p>
                 </div>
                 <span className="text-2xl font-extrabold tabular-nums text-co-bg">{centsToMoney(stack.depositCents)}</span>
               </div>
               <div className="mt-3 flex items-center justify-between border-t border-white/10 pt-3">
-                <p className="text-xs font-semibold text-co-bg/70">Balance — pay by 48h before, or forfeit</p>
+                <p className="text-xs font-semibold text-co-bg/70">{t("order.review.balance_confirm")}</p>
                 <span className="text-sm font-bold tabular-nums text-co-bg/90">
                   {centsToMoney(stack.totalCents - stack.depositCents)}
                 </span>
@@ -394,21 +401,13 @@ export default function OrderReview() {
         {/* How payment works — surfaced plainly, not hidden behind a click */}
         <Reveal className="mt-5">
           <section className="rounded-3xl border border-co-gold/50 bg-co-gold/10 p-6">
-            <h2 className="text-sm font-extrabold text-co-text">How payment works</h2>
+            <h2 className="text-sm font-extrabold text-co-text">{t("order.review.payment_heading")}</h2>
             <ol className="mt-3 flex flex-col gap-3 text-sm text-co-text">
-              <PayStep n="1" title={`Pay your ${depositLabel(stack.depositCents, stack.totalCents)} deposit — securely via Stripe.`}>
-                It locks in your date and requirements while a team member reviews your order. We never see or store your card.
+              <PayStep n="1" title={t("order.review.deposit_record", { percent: depositLabel(stack.depositCents, stack.totalCents) })}>
+                {t("order.review.no_online_payment")}
               </PayStep>
-              <PayStep n="2" title="We confirm your order — usually within 24 hours.">
-                If we can&apos;t accommodate your date, your deposit is refunded in full.
-              </PayStep>
-              <PayStep n="3" title="We email you to pay the balance.">
-                {isCompany
-                  ? <>Pay anytime up to 48h before — or use {lead?.company}&apos;s Net-30 / Net-60 terms. We&apos;ll remind you daily.</>
-                  : <>Pay the balance anytime up to 48 hours before your event. We&apos;ll remind you daily so it&apos;s easy.</>}
-              </PayStep>
-              <PayStep n="4" title="Miss the 48h deadline and the deposit is forfeited.">
-                So we nudge you daily until it&apos;s paid — then we build &amp; deliver.
+              <PayStep n="2" title={t("order.review.confirm_heading")}>
+                {t("order.review.deposit_explanation")}
               </PayStep>
             </ol>
           </section>
@@ -427,7 +426,7 @@ export default function OrderReview() {
           )}
           <div className="flex items-center justify-between gap-4">
             <div className="min-w-0">
-              <p className="text-xs text-co-text-dim">Deposit to lock in</p>
+              <p className="text-xs text-co-text-dim">{t("order.review.deposit_label")}</p>
               <p className="text-lg font-extrabold tabular-nums text-co-text">
                 {centsToMoney(stack.depositCents)}
                 <span className="ml-1.5 text-xs font-semibold text-co-text-dim">of {centsToMoney(stack.totalCents)}</span>
@@ -439,7 +438,7 @@ export default function OrderReview() {
               disabled={submitting}
               className="inline-flex min-h-[54px] flex-1 items-center justify-center rounded-full bg-co-text px-6 text-sm font-bold uppercase tracking-[0.08em] text-co-cta shadow-xl shadow-black/20 transition hover:bg-co-text/90 disabled:opacity-50 sm:flex-none sm:px-10"
             >
-              {submitting ? "Placing order…" : "Pay deposit & lock my date →"}
+              {submitting ? t("order.review.submitting") : t("order.review.submit")}
             </button>
           </div>
         </div>

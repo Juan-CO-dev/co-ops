@@ -15,6 +15,10 @@
 
 # next.js
 /.next/
+.next-sim-launch/
+scripts/sim/launch-readiness/.artifacts/
+scripts/sim/launch-readiness/.private/
+.env.sim
 /out/
 
 # production

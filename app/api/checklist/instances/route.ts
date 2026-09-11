@@ -113,7 +113,7 @@ export async function POST(req: NextRequest) {
       templateId,
       locationId,
       date,
-      actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level },
+      actor: { userId: ctx.user.id, role: ctx.role, level: ctx.level, locations: ctx.locations },
       ipAddress: extractIp(req),
       userAgent: req.headers.get("user-agent"),
     });
