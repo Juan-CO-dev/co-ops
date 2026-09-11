@@ -495,7 +495,7 @@ function AddOnForm({ detail }: { detail: PoDetail }) {
   return <div className="mt-4">
     <ActionButton variant="secondary" className="w-full" disabled={busy || (open && lines.length > 0)} aria-expanded={open} aria-controls={id} onClick={() => setOpen((v) => !v)}>
       {t("ordering.po.add_on")}
-      <span>{t("ordering.po.line_count", { n: lines.length })}</span>
+      {lines.length > 0 && <span>{t("ordering.po.line_count", { n: lines.length })}</span>}
     </ActionButton>
     {open && <div id={id} className="mt-3 flex flex-col gap-3">
       <p className="text-[13px] text-co-text-dim">{t("ordering.po.add_on_help")}</p>
