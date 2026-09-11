@@ -17,17 +17,27 @@ describe("LRA-229: the PO's vendor SKU picker", () => {
     expect(catalog).toContain('"id, name, item_number, pack_format, guide_position"');
   });
 
-  it("excludes every existing PO line including removed zero-quantity lines", () => {
+  it("on a DRAFT excludes every existing PO line including removed zero-quantity lines", () => {
     const start = body.indexOf("const onPo");
     const end = body.indexOf("const chains", start);
     expect(start).toBeGreaterThan(0);
     expect(end).toBeGreaterThan(start);
     const js = ts.transpile(body.slice(start, end), { target: ts.ScriptTarget.ES2022 });
-    const exclude = new Function("lineRows", "vendorSkuRows", `${js}; return availableSkus;`);
-    expect(exclude([{ sku_id: "present", order_qty: 2 }, { sku_id: "removed", order_qty: 0 }], [
+    const exclude = new Function("po", "lineRows", "vendorSkuRows", `${js}; return availableSkus;`);
+    expect(exclude({ status: "draft" }, [{ sku_id: "present", order_qty: 2 }, { sku_id: "removed", order_qty: 0 }], [
       { id: "present" }, { id: "new" }, { id: "removed" },
     ])).toEqual([{ id: "new" }]);
-    expect(exclude(null, null)).toEqual([]);
+    expect(exclude({ status: "draft" }, null, null)).toEqual([]);
+  });
+
+  it("LRA-230: past draft (the add-on picker) offers every active SKU, including ones already on the order", () => {
+    const start = body.indexOf("const onPo");
+    const end = body.indexOf("const chains", start);
+    const js = ts.transpile(body.slice(start, end), { target: ts.ScriptTarget.ES2022 });
+    const exclude = new Function("po", "lineRows", "vendorSkuRows", `${js}; return availableSkus;`);
+    for (const status of ["confirmed", "placed", "invoiced", "received", "reconciled"]) {
+      expect(exclude({ status }, [{ sku_id: "present", order_qty: 2 }], [{ id: "present" }, { id: "new" }])).toEqual([{ id: "present" }, { id: "new" }]);
+    }
   });
 
   it("loads the picker without a draft-only guard and returns it in the detail", () => {
